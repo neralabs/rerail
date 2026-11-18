@@ -1989,6 +1989,27 @@ impl Drop for Deciding {
     }
 }
 
+/// Decisions made before, stated again as made now (decision 0385): a pass run over an edit, where the decisions it
+/// made over the whole stand, says what it said then, to the profile and to every open step (`Deciding`).
+pub fn restate(made: &[Decided]) {
+    if made.is_empty() || QUIET.get() {
+        return;
+    }
+    DECIDING.with(|d| {
+        for step in d.borrow_mut().iter_mut() {
+            for (k, n) in made {
+                *step.entry(k.clone()).or_default() += n;
+            }
+        }
+    });
+    if on() {
+        let mut state = state();
+        for (k, n) in made {
+            *state.decisions.entry(k.clone()).or_default() += n;
+        }
+    }
+}
+
 /// The decisions a version this run reused made when it was made (decision 0269), taken from `from` (`memory`,
 /// `store`): the run states them as its own, as a run that made the version would.
 pub fn reused(from: &'static str, made: &[Decided]) {

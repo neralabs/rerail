@@ -180,10 +180,31 @@ fn a_session_keeps_its_cross_part_across_a_file_local_edit() {
 /// and every run's findings are a full run's.
 #[test]
 fn a_session_maintains_a_recursive_cross_file_stratum() {
-    recursive_cross_file_stratum();
+    let ran = recursive_cross_file_stratum();
+    assert!(ran.recursive > 0, "the recursive stratum is maintained");
 }
 
-fn recursive_cross_file_stratum() {
+/// What a session's edits did with their cross-file strata, summed over the edits.
+#[derive(Default)]
+struct Ran {
+    /// Strata the maintain mode maintained (`cross_maintained.0`), recursive ones (`.1`), and `.2`.
+    mode: usize,
+    recursive: usize,
+    third: usize,
+    /// Strata derived again past 0090 §4's threshold (0364 R4).
+    past_theta: usize,
+}
+
+impl Ran {
+    fn add(&mut self, report: &super::super::Report) {
+        self.mode += report.cross_maintained.0;
+        self.recursive += report.cross_maintained.1;
+        self.third += report.cross_maintained.2;
+        self.past_theta += report.cross_again.get(crate::code_rule_dsl::logic::plan::corpus::maintain::reason_class(crate::code_rule_dsl::logic::plan::corpus::maintain::THRESHOLD)).copied().unwrap_or(0);
+    }
+}
+
+fn recursive_cross_file_stratum() -> Ran {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-reach");
     let (src, out) = (base.join("src"), base.join("out"));
     std::fs::create_dir_all(&src).unwrap();
@@ -230,7 +251,7 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
         ("b.py", "x = 2\n"),
         ("b.py", "from c import y\n"),
     ];
-    let mut recursive = 0;
+    let mut ran = Ran::default();
     let unsized_before = crate::code_rule_dsl::logic::plan::unsized_deltas();
     for (path, text) in edits {
         std::fs::write(src.join(path), text).unwrap();
@@ -238,14 +259,14 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
         let got = findings();
         assert_eq!(got, full(), "after editing {path}, the session's findings are a full run's");
         eprintln!("{path}: {:?} strata run, {:?} maintained (recursive); {} findings", report.cross_strata, report.cross_maintained, got.len());
-        recursive += report.cross_maintained.1;
+        ran.add(&report);
     }
-    assert!(recursive > 0, "the recursive stratum is maintained");
     // Every input delta the maintained forms read was priced by its size, not the default's 1,000 rows.
     let unsized_reads = crate::code_rule_dsl::logic::plan::unsized_deltas() - unsized_before;
     assert_eq!(unsized_reads, 0, "reads of an input delta priced with no size");
     drop(session);
     let _ = std::fs::remove_dir_all(&base);
+    ran
 }
 
 /// A maintained stratum whose deltas are all empty is passed on as its kept relations, not opened (decision 0101
@@ -412,33 +433,45 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
 /// importers counted, up and down to none, give a full run's findings.
 #[test]
 fn a_session_maintains_a_cross_file_aggregate() {
-    cross_file_aggregate();
+    let ran = cross_file_aggregate();
+    assert_eq!(ran.third, 0, "no stratum is derived again");
+    assert!(ran.mode > 0);
 }
 
-/// Decision 0090 §4: every maintained stratum whose inputs changed derived again instead (no θ, no floor, no
-/// pricing). Its relations and their deltas are what the strata above read, maintained or not, so the findings
-/// stay a full run's: over recursion, counting's supports and aggregates.
+/// Decision 0090 §4 (0364 R4): with no θ and no floor, every stratum an edit reaches is derived again past the
+/// threshold, none maintained. Its relations' changes are what the strata above read, so the findings stay a full
+/// run's: over recursion and aggregates.
 #[test]
 fn a_session_derives_again_the_strata_its_deltas_outgrow() {
-    derive_again_with(&[("RERAIL_AGAIN_THETA", "0"), ("RERAIL_AGAIN_MIN", "0"), ("RERAIL_AGAIN_PRICED", "off")]);
+    let ran = derive_again_with(&[("RERAIL_AGAIN_THETA", "0"), ("RERAIL_AGAIN_MIN", "0")]);
+    assert!(ran.past_theta > 0, "strata derived again past θ");
+    assert_eq!(ran.mode, 0, "none maintained");
 }
 
-/// §4 with its pricing: past θ (here every stratum whose inputs changed), each stratum takes the form priced
-/// cheaper, so some are maintained and some derived again in one run; the findings stay a full run's.
+/// §4 at its θ with no floor: in one session a stratum is derived again where an edit reaches past θ of its kept
+/// rows and maintained where it reaches less, and the findings stay a full run's. (The forms' pricing that once
+/// chose between them is retired with the forms, 0364.)
 #[test]
-fn a_session_derives_again_only_the_strata_priced_cheaper_so() {
-    derive_again_with(&[("RERAIL_AGAIN_THETA", "0"), ("RERAIL_AGAIN_MIN", "0")]);
+fn a_session_derives_again_past_theta_and_maintains_below_it() {
+    let ran = derive_again_with(&[("RERAIL_AGAIN_MIN", "0")]);
+    assert!(ran.past_theta > 0 && ran.mode > 0, "both: {} past θ, {} maintained", ran.past_theta, ran.mode);
 }
 
-fn derive_again_with(vars: &[(&str, &str)]) {
+fn derive_again_with(vars: &[(&str, &str)]) -> Ran {
     let switched = super::super::switches::set(vars);
     let run = std::panic::catch_unwind(|| {
-        recursive_cross_file_stratum();
-        cross_file_aggregate();
+        let mut ran = recursive_cross_file_stratum();
+        let more = cross_file_aggregate();
+        ran.mode += more.mode;
+        ran.recursive += more.recursive;
+        ran.third += more.third;
+        ran.past_theta += more.past_theta;
+        ran
     });
     drop(switched);
-    if let Err(e) = run {
-        std::panic::resume_unwind(e);
+    match run {
+        Ok(ran) => ran,
+        Err(e) => std::panic::resume_unwind(e),
     }
 }
 
@@ -559,7 +592,7 @@ fn wave0_a_compacted_start() {
     );
 }
 
-fn cross_file_aggregate() {
+fn cross_file_aggregate() -> Ran {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-count");
     let (src, out) = (base.join("src"), base.join("out"));
     std::fs::create_dir_all(&src).unwrap();
@@ -609,19 +642,18 @@ LEAF(i) :- impmod(i, m), doc(b, _, m), leaf(b).
         ("b.py", "from c import y\nfrom d import q\n"),
         ("d.py", "x = 1\n"),
     ];
-    let mut maintained = 0;
+    let mut ran = Ran::default();
     for (path, text) in edits {
         std::fs::write(src.join(path), text).unwrap();
         let report = run();
         let got = findings();
         assert_eq!(got, full(), "after editing {path}, the session's findings are a full run's");
         eprintln!("{path}: {:?} strata run, {:?} maintained (recursive, derived again); {} findings", report.cross_strata, report.cross_maintained, got.len());
-        assert_eq!(report.cross_maintained.2, 0, "no stratum is derived again");
-        maintained += report.cross_maintained.0;
+        ran.add(&report);
     }
-    assert!(maintained > 0);
     drop(session);
     let _ = std::fs::remove_dir_all(&base);
+    ran
 }
 
 /// A negation with a wildcard, `!dep(a, _)`, over a relation that loses one of two rows: the negation still fails

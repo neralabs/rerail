@@ -53,7 +53,8 @@ pub use crate::code_rule_dsl::facts::span_prefilter::RanOn;
 /// A batch of span programs as a launch of the executor (decision 0100 §13), the same structure as every other
 /// dispatch: priced by its bytes and operations, placed on the cores or the GPU, claimed by whichever lane reaches it,
 /// run on that lane's worker, and scored. Its GPU form is the generated block program (on the one device and queue);
-/// its cores' form the interpreter, which the GPU's runs instead when the device refuses the batch.
+/// its cores' form the interpreter, which the GPU's runs instead where the batch needs a form Metal lacks (recorded,
+/// `metal-form`). Any other failure on the device is the launch's error (decision 0382).
 struct SpanEnds {
     filters: Vec<std::sync::Arc<SpanPrefilter>>,
     /// Each document's source, once; `files` are (document, program) pairs.
@@ -77,10 +78,12 @@ impl SpanEnds {
     }
 
     #[cfg(target_os = "macos")]
-    fn metal(&self) -> Option<(Vec<Vec<u64>>, RanOn)> {
+    /// The batch on the device; `Ok(None)` with no device, or a form it lacks (recorded: `span_ends`).
+    fn metal(&self) -> Result<Option<(Vec<Vec<u64>>, RanOn)>, String> {
         let natives: Vec<&super::native_ir::BlockNative> = self.filters.iter().map(|f| &f.native).collect();
-        let ends = super::device::matcher()?.span_ends(&natives, &self.batch())?;
-        Some((ends, RanOn::Metal))
+        let Some(device) = super::device::matcher() else { return Ok(None) };
+        let ends = device.span_ends(&natives, &self.batch()).map_err(|error| format!("span prefilter on Metal: {error:?}"))?;
+        Ok(ends.map(|ends| (ends, RanOn::Metal)))
     }
 }
 
@@ -104,7 +107,7 @@ impl rerail_accel::kernel::Program for SpanEnds {
     fn run(&self, lane: rerail_accel::Lane) -> Result<rerail_accel::kernel::ProgramOutput, String> {
         #[cfg(target_os = "macos")]
         if lane == rerail_accel::Lane::Gpu
-            && let Some(r) = self.metal()
+            && let Some(r) = self.metal()?
         {
             return Ok(std::sync::Arc::new(r));
         }

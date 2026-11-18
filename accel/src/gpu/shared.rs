@@ -286,7 +286,7 @@ pub fn lease_block_within(kind: u32, bytes: usize) -> Result<rerail_blocks::Bloc
 /// pooled buffer of the relation's size, leased as a join's buffer is (`lease_for_join`: bounded by the budget inside
 /// `within_budget`, where a refusal runs the work on the CPU), and back in the pool when the relation goes. No slab's
 /// least size: shared 16 MB blocks, kept by any relation in them, refused small views their room. The block policy's
-/// alone (`Size::Exact` in `Budget::Join`, Q142): every block is leased through it.
+/// alone (`Size::Exact` in `Budget::Join`, Q205): every block is leased through it.
 pub(crate) fn lease_block_for_join(kind: u32, bytes: usize) -> Result<rerail_blocks::Block, String> {
     let slab = lease_for_join(bytes.max(rerail_blocks::alloc::EXACT_MIN), false)?;
     Ok(rerail_blocks::Block::over(kind, Box::new(slab)))

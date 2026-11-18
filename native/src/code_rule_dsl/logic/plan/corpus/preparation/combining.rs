@@ -1,15 +1,15 @@
-//! Combining's passes on the combined program's version (decision 0281's path, step 7a): what `combine_read` does
-//! to the programs merged, one manager pass each, checked against the tree's in a debug build.
+//! Combining's passes on the combined program's version (decision 0281's path, step 7a): what the combine's tail
+//! (`corpus::tail_version`) does to the programs merged, one manager pass each.
 //!
-//! - `FactSpaces`: `scoping::guard`, the canonical relations and each narrower policy's guards (decision 0091).
-//! - `same_relations`: `corpus::same_relations`, the relations that are one made one after combining.
-//! - `FoldOwn`: `hiding::fold_own`, the copies hiding made for guests in the run's own language folded back.
+//! - `FactSpaces`: the canonical relations and each narrower policy's guards (decision 0091).
+//! - `same_relations`: the relations that are one made one after combining.
+//! - `FoldOwn`: the copies hiding made for guests in the run's own language folded back.
 
 use super::simplify::{Made, Out, Tm, write_rule};
 use crate::code_rule_dsl::logic::front;
 use crate::code_rule_dsl::logic::plan::corpus::scoping::{Policy, Report};
 use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
-use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW, RuleOut, RulePass, Select, Step};
+use crate::code_rule_dsl::logic::program_image::manager::{Cx, Last, ProgramPass, ProgramW, RuleOut, RulePass, Select, Step};
 use crate::code_rule_dsl::logic::program_image::build::{Rewrite, Site, T};
 use crate::code_rule_dsl::logic::program_image::{AtomId, AtomRef, Cell, CmpOp, Lit, RuleRef, TermRef, Version};
 use crate::code_rule_dsl::typing::file_local::FileLocal;
@@ -17,29 +17,22 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 type Result<T> = std::result::Result<T, String>;
 
-/// `scoping::guard` on the version: the guards and the canonical relations of the policies combined.
+/// The guards and the canonical relations of the policies combined (`scoping`'s module says what each is).
 pub(in crate::code_rule_dsl::logic::plan::corpus) struct FactSpaces<'a> {
     pub(in crate::code_rule_dsl::logic::plan::corpus) policies: &'a [Policy],
     pub(in crate::code_rule_dsl::logic::plan::corpus) report: Report,
+    /// What `again` reads back (decision 0393): the canonical and shared relations, when guards were written.
+    kept: Option<(BTreeSet<String>, BTreeSet<String>)>,
 }
 
 impl<'a> FactSpaces<'a> {
     pub(in crate::code_rule_dsl::logic::plan::corpus) fn new(policies: &'a [Policy]) -> Self {
-        FactSpaces { policies, report: Report::default() }
+        FactSpaces { policies, report: Report::default(), kept: None }
     }
-}
 
-impl ProgramPass for FactSpaces<'_> {
-    const NAME: &'static str = "fact spaces";
-    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<()> {
-        let v = cx.v();
-        let d = cx.get::<FieldsData>()?;
-        let f = Fields::over(v, &d);
-        let policies = self.policies;
-        let report = &mut self.report;
-        let s_classes = crate::code_rule_dsl::logic::profile::span(|| "fact spaces: congruence classes".into());
-        let classes = super::merge::congruence(v, f, false);
-        drop(s_classes);
+    /// The canonical relations of `classes` (the congruence classes), the report's canonical, engine and demoted
+    /// relations made beside them; an error where a global relation is defined two ways.
+    fn canonical(policies: &[Policy], classes: &[Vec<String>], report: &mut Report) -> Result<BTreeSet<String>> {
         let class_of: BTreeMap<&str, usize> = classes.iter().enumerate().flat_map(|(k, c)| c.iter().map(move |r| (r.as_str(), k))).collect();
         let mut canonical: BTreeSet<String> = BTreeSet::new();
         let names: BTreeSet<&String> = policies.iter().flat_map(|p| p.named.iter().chain(&p.library)).collect();
@@ -51,6 +44,7 @@ impl ProgramPass for FactSpaces<'_> {
                 .map(|(i, p)| (i, format!("{}{name}", p.prefix)))
                 .filter(|(i, r)| policies[*i].own.contains(r))
                 .collect();
+            // A library held once (decision 0089) left the policies no copy of it.
             if copies.is_empty() {
                 continue;
             }
@@ -66,14 +60,64 @@ impl ProgramPass for FactSpaces<'_> {
                 report.demoted.push(name.clone());
             }
         }
+        // The engine's relations (`rr_…`: lowering's helpers, guest contexts, aggregates), alike in several policies,
+        // are canonical too: they are made from the library's rules as much as from a policy's. The scope's own are
+        // not.
         let engine = |rel: &str| policies.iter().find_map(|p| rel.strip_prefix(p.prefix.as_str())).is_some_and(|r| r.starts_with(front::RESERVED) && !r.starts_with("rr_scope") && !r.starts_with("rr_report"));
-        for class in &classes {
+        for class in classes {
             let spaces: BTreeSet<usize> = class.iter().filter_map(|r| policies.iter().position(|p| p.own.contains(r))).collect();
             if spaces.len() > 1 && class.iter().all(|r| engine(r)) {
                 report.engine += class.len();
                 canonical.extend(class.iter().cloned());
             }
         }
+        Ok(canonical)
+    }
+
+    /// The groups of relations each narrower policy guards (its own, but the shared and its machinery), each with
+    /// its outside relation.
+    fn groups(policies: &[Policy], shared: &BTreeSet<String>) -> Vec<(BTreeSet<String>, String)> {
+        let n = policies.len();
+        let scope_of = |i: usize| policies[i].scope.as_ref().map(|s| s.iter().cloned().collect::<BTreeSet<_>>());
+        let outside_of = |i: usize| format!("{}{}", policies[i].prefix, front::SCOPE_NOT);
+        let narrows = |i: usize| scope_of(i).is_some() && policies[i].own.contains(&outside_of(i)) && (0..n).any(|j| scope_of(j) != scope_of(i));
+        let mut groups: Vec<(BTreeSet<String>, String)> = Vec::new();
+        for i in (0..n).filter(|&i| narrows(i)) {
+            let heads = policies[i].own.iter().filter(|r| !shared.contains(*r) && !machinery(policies, r)).cloned().collect();
+            groups.push((heads, outside_of(i)));
+        }
+        groups
+    }
+}
+
+/// A relation's places for its guards: its document, node and span columns (`derived`: by the file-local split's
+/// locations; an input's by its declared types).
+fn place_of(f: Fields<'_>, locations: &BTreeMap<String, Vec<usize>>, derived: bool, rel: &str) -> (Vec<usize>, Vec<usize>, Vec<usize>) {
+    let typed = |c: usize, ty: &[&str]| f.column_type(rel, c).is_some_and(|t| ty.contains(&t));
+    let width = f.columns(rel).map_or(0, |c| c.len());
+    if derived {
+        let cols = locations.get(rel).cloned().unwrap_or_default();
+        let of = |ty: &[&str]| cols.iter().copied().filter(|&c| typed(c, ty)).collect::<Vec<_>>();
+        (of(&["int", "number"]), of(&["node"]), of(&["loc", "span"]))
+    } else {
+        let of = |ty: &[&str]| (0..width).filter(|&c| typed(c, ty)).collect::<Vec<_>>();
+        (crate::code_rule_dsl::typing::file_local::document_column(rel).into_iter().collect(), of(&["node"]), of(&["loc", "span"]))
+    }
+}
+
+impl ProgramPass for FactSpaces<'_> {
+    const NAME: &'static str = "fact spaces";
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<()> {
+        let v = cx.v();
+        let d = cx.get::<FieldsData>()?;
+        let f = Fields::over(v, &d);
+        let policies = self.policies;
+        let report = &mut self.report;
+        let s_classes = crate::code_rule_dsl::logic::profile::span(|| "fact spaces: congruence classes".into());
+        let classes = cx.get::<super::merge::Congruence>()?.groups.clone();
+        drop(s_classes);
+        let canonical = Self::canonical(policies, &classes, report)?;
+        let canon = canonical.clone();
         // Shared: the canonical relations and every relation of a policy they read, to a fixpoint.
         let s_shared = crate::code_rule_dsl::logic::profile::span(|| "fact spaces: the shared relations".into());
         let owned: BTreeSet<&String> = policies.iter().flat_map(|p| &p.own).collect();
@@ -93,36 +137,18 @@ impl ProgramPass for FactSpaces<'_> {
             }
         }
         drop(s_shared);
-        let n = policies.len();
-        let scope_of = |i: usize| policies[i].scope.as_ref().map(|s| s.iter().cloned().collect::<BTreeSet<_>>());
-        let outside_of = |i: usize| format!("{}{}", policies[i].prefix, front::SCOPE_NOT);
-        let narrows = |i: usize| scope_of(i).is_some() && policies[i].own.contains(&outside_of(i)) && (0..n).any(|j| scope_of(j) != scope_of(i));
-        let mut groups: Vec<(BTreeSet<String>, String)> = Vec::new();
-        for i in (0..n).filter(|&i| narrows(i)) {
-            let heads = policies[i].own.iter().filter(|r| !shared.contains(*r) && !machinery(policies, r)).cloned().collect();
-            groups.push((heads, outside_of(i)));
-        }
+        let groups = Self::groups(policies, &shared);
         if groups.is_empty() || std::env::var("RERAIL_SCOPE_GUARDS").is_ok_and(|x| x == "off") {
             return Ok(());
         }
-        let locations = {
+        let split = {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "fact spaces: the file-local split's locations".into());
-            cx.get::<FileLocal>()?.locations.clone()
+            cx.get::<FileLocal>()?
         };
+        let locations = &split.locations;
         let derived: BTreeSet<String> =
             v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).chain(f.natives().iter().map(|n| v.rel_name(n.rel).to_owned())).filter(|r| !f.is_input(r)).collect();
-        let typed = |rel: &str, c: usize, ty: &[&str]| f.column_type(rel, c).is_some_and(|t| ty.contains(&t));
-        let place = |rel: &str| -> (Vec<usize>, Vec<usize>, Vec<usize>) {
-            let width = f.columns(rel).map_or(0, |c| c.len());
-            if derived.contains(rel) {
-                let cols = locations.get(rel).cloned().unwrap_or_default();
-                let of = |ty: &[&str]| cols.iter().copied().filter(|&c| typed(rel, c, ty)).collect::<Vec<_>>();
-                (of(&["int", "number"]), of(&["node"]), of(&["loc", "span"]))
-            } else {
-                let of = |ty: &[&str]| (0..width).filter(|&c| typed(rel, c, ty)).collect::<Vec<_>>();
-                (crate::code_rule_dsl::typing::file_local::document_column(rel).into_iter().collect(), of(&["node"]), of(&["loc", "span"]))
-            }
-        };
+        let place = |rel: &str| place_of(f, &locations, derived.contains(rel), rel);
         // Each relation's places, asked once.
         let s_places = crate::code_rule_dsl::logic::profile::span(|| "fact spaces: the places".into());
         let mut places: BTreeMap<String, (Vec<usize>, Vec<usize>, Vec<usize>)> = BTreeMap::new();
@@ -136,6 +162,7 @@ impl ProgramPass for FactSpaces<'_> {
                 }
             }
         }
+        // Each rule's groups, in order: one pass over the rules, not one per group.
         let mut groups_of: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         for (k, (heads, _)) in groups.iter().enumerate() {
             for h in heads {
@@ -149,7 +176,141 @@ impl ProgramPass for FactSpaces<'_> {
         for ((_, outside), n) in groups.iter().zip(&guards.added) {
             report.guarded.push((outside.clone(), *n));
         }
+        self.kept = Some((canon, shared));
         Ok(())
+    }
+
+    fn plan(&self) -> Vec<crate::code_rule_dsl::logic::program_image::manager::Row> {
+        use crate::code_rule_dsl::logic::front::Value;
+        let Some((canonical, shared)) = &self.kept else { return Vec::new() };
+        let s = |x: &str| Value::Str(x.to_owned().into());
+        let n = |k: usize| Value::Int(k as i64);
+        let mut rows = vec![vec![s("guards")], vec![s("engine"), n(self.report.engine)]];
+        rows.extend(canonical.iter().map(|r| vec![s("canon"), s(r)]));
+        rows.extend(shared.iter().map(|r| vec![s("shared"), s(r)]));
+        rows.extend(self.report.canonical.iter().map(|(r, k)| vec![s("canonical"), s(r), n(*k)]));
+        rows.extend(self.report.demoted.iter().map(|r| vec![s("demoted"), s(r)]));
+        rows.extend(self.report.guarded.iter().map(|(r, k)| vec![s("guarded"), s(r), n(*k)]));
+        rows
+    }
+
+    /// Over an edit (decision 0393): the guards of the edit's added rules alone, onto the last output, where its
+    /// decisions over the whole are the last run's. The canonical relations are made again from the congruence
+    /// classes and must be the last run's; no rule of the edit may have a shared head (so the shared relations are
+    /// the last run's); the file-local split must place every relation as it did; and a head the edit changed must
+    /// stay derived or not as it was. Otherwise it runs whole.
+    fn again(&mut self, cx: &Cx<'_>, last: &Last<'_>, w: &mut ProgramW<'_>) -> Result<bool> {
+        use crate::code_rule_dsl::logic::front::Value;
+        if !last.delta.decls.is_empty() || std::env::var("RERAIL_SCOPE_GUARDS").is_ok_and(|x| x == "off") {
+            return Ok(false);
+        }
+        let text = |x: &Value| if let Value::Str(s) = x { Some(s.to_string()) } else { None };
+        let int = |x: &Value| if let Value::Int(n) = x { usize::try_from(*n).ok() } else { None };
+        let (mut canon, mut shared, mut was, mut ran) = (BTreeSet::new(), BTreeSet::new(), Report::default(), false);
+        for r in last.plan {
+            let Some(kind) = r.first().and_then(text) else { return Ok(false) };
+            match (kind.as_str(), &r[1..]) {
+                ("guards", []) => ran = true,
+                ("engine", [k]) => was.engine = int(k).ok_or("a fact spaces plan's count")?,
+                ("canon", [x]) => drop(canon.insert(text(x).ok_or("a fact spaces plan's relation")?)),
+                ("shared", [x]) => drop(shared.insert(text(x).ok_or("a fact spaces plan's relation")?)),
+                ("canonical", [x, k]) => drop(was.canonical.insert(text(x).ok_or("a fact spaces plan's name")?, int(k).ok_or("a fact spaces plan's count")?)),
+                ("demoted", [x]) => was.demoted.push(text(x).ok_or("a fact spaces plan's name")?),
+                ("guarded", [x, k]) => was.guarded.push((text(x).ok_or("a fact spaces plan's relation")?, int(k).ok_or("a fact spaces plan's count")?)),
+                _ => return Ok(false),
+            }
+        }
+        if !ran {
+            return Ok(false);
+        }
+        let v = cx.v();
+        let mut heads: BTreeSet<String> = BTreeSet::new();
+        for id in last.delta.removed.iter() {
+            let r = last.input.rule(id).ok_or("a removed rule is not its last input's")?;
+            heads.insert(last.input.rel_name(r.head().rel()).to_owned());
+        }
+        for &id in &last.delta.added {
+            let r = v.rule(id).ok_or("an added rule is not its input's")?;
+            heads.insert(v.rel_name(r.head().rel()).to_owned());
+        }
+        if heads.iter().any(|h| shared.contains(h)) {
+            return Ok(false);
+        }
+        let d = cx.get::<FieldsData>()?;
+        let f = Fields::over(v, &d);
+        let policies = self.policies;
+        let classes = {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "fact spaces: congruence classes".into());
+            cx.get::<super::merge::Congruence>()?.groups.clone()
+        };
+        let mut report = Report::default();
+        if Self::canonical(policies, &classes, &mut report)? != canon || report.canonical != was.canonical || report.demoted != was.demoted || report.engine != was.engine {
+            return Ok(false);
+        }
+        let derived_in = |of: &Version, rel: &str| of.rel(rel).is_some_and(|id| of.heads(id).next().is_some());
+        let natives: BTreeSet<&str> = f.natives().iter().map(|n| v.rel_name(n.rel)).collect();
+        if heads.iter().any(|h| derived_in(&**v, h) != derived_in(&**last.input, h)) {
+            return Ok(false);
+        }
+        let split = {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "fact spaces: the file-local split's locations".into());
+            let now = cx.get::<FileLocal>()?;
+            let then = crate::code_rule_dsl::logic::program_image::manager::analysis::<FileLocal>(last.input)?;
+            if now.locations != then.locations {
+                return Ok(false);
+            }
+            now
+        };
+        let locations = &split.locations;
+        // Every removed rule made one rule of the last output (a guard keeps or rewrites a rule, never drops one).
+        if last.delta.removed.iter().any(|id| last.output.derived(id).count() != 1) {
+            return Ok(false);
+        }
+        let groups = Self::groups(policies, &shared);
+        let mut groups_of: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        for (k, (heads, _)) in groups.iter().enumerate() {
+            for h in heads {
+                groups_of.entry(h.clone()).or_default().push(k);
+            }
+        }
+        let is_derived = |rel: &str| (derived_in(&**v, rel) || natives.contains(rel)) && !f.is_input(rel);
+        let mut places: BTreeMap<String, (Vec<usize>, Vec<usize>, Vec<usize>)> = BTreeMap::new();
+        let mut derived: BTreeSet<String> = BTreeSet::new();
+        let mut note = |rel: &str| {
+            if !places.contains_key(rel) {
+                let dv = is_derived(rel);
+                if dv {
+                    derived.insert(rel.to_owned());
+                }
+                places.insert(rel.to_owned(), place_of(f, &locations, dv, rel));
+            }
+        };
+        note("docof");
+        for &id in &last.delta.added {
+            let r = v.rule(id).ok_or("an added rule is not its input's")?;
+            for a in r.body().filter_map(|l| l.atom()) {
+                note(v.rel_name(a.rel()));
+            }
+        }
+        // The guards each removed rule had, taken off the last run's counts.
+        let outside: Vec<&str> = groups.iter().map(|(_, o)| o.as_str()).collect();
+        let guards_in = |of: &Version, r: RuleRef<'_>, o: &str| r.body().filter_map(|l| l.atom()).filter(|a| a.neg() && of.rel_name(a.rel()) == o).count();
+        let mut counts: Vec<usize> = was.guarded.iter().map(|(_, k)| *k).collect();
+        if counts.len() != groups.len() || was.guarded.iter().zip(&outside).any(|((o, _), g)| o != g) {
+            return Ok(false);
+        }
+        for id in last.delta.removed.iter() {
+            let (Some(src), Some(made)) = (last.input.rule(id), last.output.derived(id).next()) else { return Ok(false) };
+            for (k, o) in outside.iter().enumerate() {
+                counts[k] = counts[k].saturating_sub(guards_in(&**last.output, made, o).saturating_sub(guards_in(&**last.input, src, o)));
+            }
+        }
+        let mut guards = Guards { policies, groups: &groups, groups_of, places, derived, added: vec![0; groups.len()] };
+        crate::code_rule_dsl::logic::program_image::manager::rules_again(&mut &mut guards, cx, last, w)?;
+        report.guarded = outside.iter().zip(counts.iter().zip(&guards.added)).map(|(o, (k, a))| ((*o).to_owned(), k + a)).collect();
+        self.report = report;
+        self.kept = Some((canon, shared));
+        Ok(true)
     }
 }
 
@@ -193,7 +354,8 @@ impl RulePass for &mut Guards<'_> {
 }
 
 impl Guards<'_> {
-    /// `scoping::guard`'s `guard_rule` over a body some groups guarded already.
+    /// One rule's guards, on each read whose location no read of `covers` gives, over a body some groups guarded
+    /// already. `added`: the guards added.
     fn guard<'v>(&self, cx: &Cx<'v>, r: RuleRef<'v>, body: Vec<Out<'v>>, covers: &BTreeSet<String>, outside: &str, added: &mut usize) -> Vec<Out<'v>> {
         let v = cx.v();
         let empty = (Vec::new(), Vec::new(), Vec::new());
@@ -219,8 +381,9 @@ impl Guards<'_> {
             covered.extend(docs.iter().chain(nodes).chain(spans).filter_map(|&c| var(args.get(c).cloned())));
         }
         let mut guards: Vec<(usize, Vec<Made>)> = Vec::new();
-        // The variables the tree names `rr_sd<k>`, numbered per group from 0.
+        // The guards' variables, `rr_sd<k>`, numbered per group from 0.
         let mut fresh = 0;
+        // A check of a bound document, never a relation to start from: the documents out of the scope, negated.
         let at = |d: &str| Made::Atom { rel: outside.to_owned(), args: vec![Tm::Var(d.to_owned())], neg: true, gated: false };
         let of_node = |n: &str, fresh: &mut usize| -> Vec<Made> {
             let g = format!("{}{}", crate::code_rule_dsl::logic::simplify::GUARD_VAR, *fresh);
@@ -252,7 +415,10 @@ impl Guards<'_> {
             let svs: Vec<String> = spans.iter().filter_map(|&c| var(args.get(c).cloned())).collect();
             let mut g = Vec::new();
             if !self.derived.contains(&rel) {
+                // A base row is one document's: one guard, unless a location of it is covered.
                 if !dvs.iter().chain(&nvs).chain(&svs).any(|x| covered.contains(x)) {
+                    // By the node where there is one (a shift: the read stays a test of that node, which `simplify`
+                    // inlines), else the document column, else a span's `docof`.
                     g = match (nvs.first(), dvs.first(), svs.first()) {
                         (Some(n), ..) => of_node(n, &mut fresh),
                         (None, Some(d), _) => vec![at(d)],
@@ -262,6 +428,7 @@ impl Guards<'_> {
                 }
                 covered.extend(dvs.into_iter().chain(nvs).chain(svs));
             } else {
+                // A shared relation's located columns may be of several documents: each guarded.
                 for d in dvs {
                     if covered.insert(d.clone()) {
                         g.push(at(&d));
@@ -291,8 +458,14 @@ impl Guards<'_> {
     }
 }
 
-/// `corpus::same_relations` on the version: the relations that are one relation under two names made one, between
-/// two drops of repeated rules (`RERAIL_SAME=off` keeps them apart), and its decision.
+/// The relations that are one relation under two names made one, after the transforms that run after `simplify`
+/// (guest hiding's copies, the programs combined, their fact spaces): `simplify`'s congruence again
+/// (`MergeIdentical`), between two drops of repeated rules (`DropRepeated`), and its decision. Hiding copied `rr_ctx…`
+/// helpers and copies of copies (`rr_in_annotation_0_annotation_2_wrap`) whose rules are another's. One merge finds
+/// every class at once: its congruence is the greatest, and it compares a relation's rules as a set, so a repeated rule
+/// does not keep a relation from its twin. The merge's renaming can make rules repeat; they are dropped after it, and
+/// make nothing more mergeable. (A loop of merges until no rule repeated was 2-3 congruences a call, 1.5 s of the dl1
+/// batch's 13.8 s CPU.) `RERAIL_SAME=off` keeps them apart.
 pub(in crate::code_rule_dsl::logic::plan::corpus) fn same_relations(p: &mut crate::code_rule_dsl::logic::program_image::manager::Pipeline<'_>) -> Result<()> {
     if std::env::var("RERAIL_SAME").is_ok_and(|x| x == "off") {
         return Ok(());
@@ -333,21 +506,14 @@ pub(in crate::code_rule_dsl::logic::plan::corpus) fn fold_own_guests(v: std::syn
     Ok(p.finish()?.0)
 }
 
-/// `hiding::bound` on the version: the bound of the shown documents, files and the run language's guests unless
-/// `.guests off`.
-pub(in crate::code_rule_dsl::logic::plan::corpus) fn bound(v: &Version, f: Fields<'_>) -> u32 {
-    use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, GUEST_KEYS, GUEST_POLICY};
-    let off = f.facts(GUEST_POLICY).is_some_and(|rows| {
-        rows.rows().any(|row| {
-            let row: Vec<Cell> = row.collect();
-            matches!(row.as_slice(), [Cell::Str(k), Cell::Str(x)] if v.text(*k) == "library" && v.text(*x) == "off")
-        })
-    });
-    if off { GUEST_KEYS } else { ANNOTATION_KEYS }
-}
-
-/// `hiding::fold_own` on the version (see there): the copies of `label`'s own guests folded into their originals.
-/// How many copies and kind sets it folded.
+/// Folds the copies hiding made for guests in the run's own language back into their originals, once the run's
+/// language (`label`) is known (decision 0058). Such a guest's documents are shown (`GUEST_KEYS..HIDDEN_KEYS`, a
+/// guest whose grammar's label is the run's: `guests::key`) and its kinds are the run's (`python:x` resolves as `x`),
+/// so a copy specialized to it holds its original's rows: its rules differ only by the seeded column's bound, which
+/// those documents are under, and by the qualified kinds. Its readers read the original, its rules go, and a
+/// qualified kind of `label` is written plainly; a clone (O110) is then its rule again, dropped as a repeat by
+/// `DropRepeated`. With guests not shown (`bound`, `.guests off`) nothing is folded.
+/// `folded`: how many copies and kind sets it folded. `RERAIL_SHOWN_COPIES=on` keeps them (to measure what they cost).
 pub(in crate::code_rule_dsl::logic::plan::corpus) struct FoldOwn<'a> {
     pub(in crate::code_rule_dsl::logic::plan::corpus) label: &'a str,
     pub(in crate::code_rule_dsl::logic::plan::corpus) folded: usize,
@@ -361,10 +527,11 @@ impl ProgramPass for FoldOwn<'_> {
         let d = cx.get::<FieldsData>()?;
         let f = Fields::over(v, &d);
         let label = self.label;
-        if bound(v, f) != ANNOTATION_KEYS || std::env::var("RERAIL_SHOWN_COPIES").is_ok_and(|x| x == "on") {
+        if super::super::hiding::bound(&**v) != ANNOTATION_KEYS || std::env::var("RERAIL_SHOWN_COPIES").is_ok_and(|x| x == "on") {
             return Ok(());
         }
         let dialect = crate::code_rule_dsl::logic::plan::corpus::hiding::dialect_label;
+        // `rr_in_<g>_<c>_…<orig>`, every `<g>` the run's own (as `Hide` names them: `g` with non-alphanumerics as `_`).
         let grammars: Vec<&str> = ["annotation", label].into_iter().filter(|g| dialect(g) == label).collect();
         let own_mid = |mut mid: &str| -> bool {
             if mid.is_empty() {
@@ -382,6 +549,7 @@ impl ProgramPass for FoldOwn<'_> {
         let mut folded: HashMap<String, String> = HashMap::new();
         for rel in declared.iter().filter(|r| r.starts_with("rr_in_")) {
             let tail = &rel["rr_in_".len()..];
+            // The longest original that leaves an own prefix.
             let orig = (0..tail.len()).filter(|&i| tail.is_char_boundary(i)).map(|i| (&tail[..i], &tail[i..])).find(|(mid, orig)| !orig.starts_with("rr_in_") && declared.contains(*orig) && own_mid(mid));
             if let Some((_, orig)) = orig {
                 folded.insert((*rel).to_owned(), orig.to_owned());
@@ -398,6 +566,8 @@ impl ProgramPass for FoldOwn<'_> {
         if folded.is_empty() && sets.is_empty() {
             return Ok(());
         }
+        // An original holds its copies' rows: its rules' bounds take the annotations in (`ANNOTATION_KEYS` to
+        // `HIDDEN_KEYS`), as its copies' seeded columns did. A rule that does not reach an annotation keeps the bound.
         let originals: BTreeSet<String> = folded.values().cloned().collect();
         let (narrow, wide) = (i64::from(ANNOTATION_KEYS), i64::from(HIDDEN_KEYS));
         let plain = format!("{label}:");
@@ -449,7 +619,7 @@ impl ProgramPass for FoldOwn<'_> {
     }
 }
 
-/// `fold_own`'s edit of each rule.
+/// `FoldOwn`'s edit of each rule.
 struct Folding<'a> {
     folded: &'a HashMap<String, String>,
     sets: &'a HashMap<String, String>,

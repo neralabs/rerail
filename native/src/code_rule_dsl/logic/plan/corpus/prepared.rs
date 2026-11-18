@@ -9,7 +9,7 @@
 //!   programs' digests (`prepared_program`). A run reads the pointer and the two texts; when any is gone it prepares.
 //!
 //! The plan names what preparing reads besides the texts: the engine build, the grammar version, the dialect and what
-//! the run added to the program (`prepared_key`). The split (`file_local::programs`) is a function of the lowered
+//! the run added to the program (`prepared_key`). The split (`file_local::programs_of`) is a function of the lowered
 //! program, and what it found is kept too (`prepared_file_local`, `prepared_constant`, `prepared_location` …): finding
 //! it again cost about 0.6 s of the Python pack's warm run. Its two parts are not kept: each is a part of the lowered
 //! program's rules, made from it again on reading (`file_local::assemble`). The text tests' matchers are made again
@@ -78,7 +78,7 @@ pub fn schema() -> BTreeMap<String, Vec<(String, String)>> {
         // The vocabulary's `match_all` regexes (their sources) and `fstring_template` markers, in order.
         ("prepared_match", &["k:int", "regex:sym"]),
         ("prepared_marker", &["k:int", "marker:sym"]),
-        // The split (`file_local::programs`): what it found, the file-local relations and those of constants. Its two
+        // The split (`file_local::programs_of`): what it found, the file-local relations and those of constants. Its two
         // parts are the lowered program's rules, a part each, made from it again on reading (`file_local::assemble`).
         // The per-file memo's strata of the file-local part (`memo::Strata`, decision 0246 §4): the part's digest,
         // each relation's strata identity and the leaves it reaches.
@@ -92,10 +92,6 @@ pub fn schema() -> BTreeMap<String, Vec<(String, String)>> {
         ("prepared_same_doc", &["rel:sym", "i:int", "col:int"]),
         // The decisions preparing made (decision 0269): a run that reuses the program states them.
         ("prepared_decided", &["k:int", "topic:sym", "text:sym", "count:int"]),
-        // The pipelines' runs it was prepared by (decision 0333): the digest they are kept under and their images'
-        // digests, so a run that takes the program whole names them as the run that made it did (work queue Q129).
-        ("prepared_runs", &["named:sym"]),
-        ("prepared_run_image", &["k:int", "digest:sym"]),
     ];
     SCHEMA
         .iter()
@@ -218,21 +214,7 @@ fn rest_of(prepared: &Prepared) -> Facts {
     for (k, ((topic, text), count)) in prepared.decided.iter().enumerate() {
         row("prepared_decided", vec![n(k), s(topic), s(text), Value::Int(*count as i64)]);
     }
-    if let Some(runs) = &prepared.runs {
-        row("prepared_runs", vec![s(&hex(&runs.named))]);
-        for (k, image) in runs.images.iter().enumerate() {
-            row("prepared_run_image", vec![n(k), s(&hex(image))]);
-        }
-    }
     facts
-}
-
-/// The pipelines' runs of a pointer's facts (`prepared_runs`); `None` for a program prepared by parts, or kept before.
-fn runs_of(facts: &Facts) -> Result<Option<super::KeptRuns>, String> {
-    let Some(named) = facts.get("prepared_runs").and_then(|r| r.first()) else { return Ok(None) };
-    let digest = |v: &Value| text(v).and_then(|t| unhex(&t).ok_or_else(|| bad("a run's digest is not one")));
-    let images = indexed(facts, "prepared_run_image")?.iter().map(|(_, r)| digest(&r[0])).collect::<Result<_, _>>()?;
-    Ok(Some(super::KeptRuns { named: digest(&named[0])?, images }))
 }
 
 fn bad(what: impl std::fmt::Display) -> String {
@@ -285,7 +267,6 @@ pub fn prepared_of(
     source: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
     version: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
     dialect: GrammarDialect,
-    lists: &crate::code_rule_dsl::logic::front::Lists,
 ) -> Result<Prepared, String> {
     let mut by_rel: BTreeMap<String, Vec<(i64, lower::Domain)>> = BTreeMap::new();
     for r in facts.get("prepared_domain").into_iter().flatten() {
@@ -377,7 +358,6 @@ pub fn prepared_of(
             crate::code_rule_dsl::typing::file_local::programs_of(version.clone())?
         }
     };
-    let head = source.header(lists)?;
     // The memo's strata, when the program was kept with them; else the first run makes them.
     let memo_strata = std::sync::OnceLock::new();
     if let Some(part) = facts.get("prepared_memo_part").and_then(|rows| rows.first()) {
@@ -398,10 +378,9 @@ pub fn prepared_of(
     }
     Ok(Prepared {
         source,
-        head,
         vocabulary: Arc::new(vocabulary),
         // Its stored image alone: the tree read is the split's, made above, and dropped.
-        lowered: lower::Lowered { version, maint: None, domains, ops, dialect },
+        lowered: lower::Lowered { version, domains, ops, dialect },
         sets,
         matchers,
         demanded: list("prepared_demanded")?,
@@ -416,7 +395,6 @@ pub fn prepared_of(
         maintained: Default::default(),
         parts: Default::default(),
         decided: indexed(facts, "prepared_decided")?.iter().map(|(_, r)| Ok(((text(&r[0])?, text(&r[1])?), int(&r[2])? as u64))).collect::<Result<_, String>>()?,
-        runs: runs_of(facts)?,
         memo_strata,
     })
 }
@@ -517,12 +495,7 @@ pub(super) fn lookup(store: &ContentStore, source: Option<SourceId>, dialect: Gr
         }
         None => return Ok(None),
     };
-    let got = prepared_of(&facts, source, version, dialect, lists);
-    if let Ok(p) = &got
-        && let Some(runs) = &p.runs
-    {
-        documents.extend(program_text::run_sources(store, &runs.keys(), &runs.images)?);
-    }
+    let got = prepared_of(&facts, source, version, dialect);
     if std::env::var_os("RERAIL_PREPARED_TRACE").is_some() {
         eprintln!("RERAIL_PREPARED_TRACE lookup ({}): {:.1} kB of facts; read {:.3} s, to a prepared program {:.3} s{}",
             super::phases::current().unwrap_or_else(|| "main".into()), entry.len() as f64 / 1e3, read.as_secs_f64(), at.elapsed().as_secs_f64(),
@@ -575,8 +548,8 @@ pub fn relocate(
     Some(Some(moved))
 }
 
-/// The sources of the programs' texts the program `key` names under `source` (`lookup`'s), and of its pipelines' runs,
-/// with neither program read: for a run that holds the prepared program in memory. Empty when the store keeps none.
+/// The sources of the programs' texts the program `key` names under `source` (`lookup`'s), with neither program read:
+/// for a run that holds the prepared program in memory. Empty when the store keeps none.
 pub(super) fn documents(store: &ContentStore, source: SourceId, key: &[u8; 32]) -> StoreResult<Vec<SourceId>> {
     let set = pointer_plan(key);
     let memo = store.facts_memo(FactsMemoKey { source, fact_schema: POINTER, path: PATH })?;
@@ -591,11 +564,7 @@ pub(super) fn documents(store: &ContentStore, source: SourceId, key: &[u8; 32]) 
             digests.push(digest);
         }
     }
-    let mut sources = program_text::sources(store, &digests)?;
-    if let Ok(Some(runs)) = runs_of(&facts) {
-        sources.extend(program_text::run_sources(store, &runs.keys(), &runs.images)?);
-    }
-    Ok(sources)
+    program_text::sources(store, &digests)
 }
 
 /// What the write of the program `key` is queued under (`write_back`, decision 0102).

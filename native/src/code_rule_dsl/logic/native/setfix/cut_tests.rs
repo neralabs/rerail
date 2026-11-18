@@ -401,7 +401,7 @@ fn counts_and_cpu_are_reported_by_the_plan_step_that_made_the_steps() {
     assert_eq!(plan_counts(&from, 3, &counts[..3]), counts[..3].to_vec());
 }
 
-/// Work queue Q146: past the step that binds the head's last slot (`tail`), a fused step (an atom with its filters,
+/// Work queue Q240: past the step that binds the head's last slot (`tail`), a fused step (an atom with its filters,
 /// a chunk of candidates at a time) ends its loop at the first row made, as the row-by-row walk does.
 /// `r(d) :- k(d), m(d, n), d != n, l(n)`: each of 20 documents needs one node of its 500 that `l` holds. Before, the
 /// fused `m` step passed every node on (10,000 rows into `l`); the planner, pricing that step as one witness, then

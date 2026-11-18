@@ -1,6 +1,6 @@
 # 0378: A kept input's documents are laid out where first asked, from what its frame recorded
 
-Status: built (2026-11-17), measured on ep2 below. Work queue Q133 (Q18's kept inputs).
+Status: built (2026-11-17), measured on ep2 below. Work queue Q91 (Q18's kept inputs).
 
 ## Intro
 

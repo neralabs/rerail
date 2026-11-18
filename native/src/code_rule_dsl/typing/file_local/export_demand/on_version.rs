@@ -1,7 +1,7 @@
-//! `demand_exports` on the version (decision 0281's path, step 5): the tree pass of `export_demand`, one for one,
-//! reading the split from the version (`FileLocal`). Variables are read by name, as the tree pass reads them, so
-//! every set and search runs in its order and makes its rules; each round's cut is a version of its own, split
-//! again to check it stays file-local.
+//! The export demand's cut (`export_demand`'s module comment), on the version (decision 0281's path, step 5),
+//! reading the split from the version (`FileLocal`). Variables are read by name, so every set and search runs in a
+//! fixed order and makes its rules; each round's cut is a version of its own, split again to check it stays
+//! file-local.
 
 use super::super::FileLocal;
 use super::{MAX_KEYS, ROUNDS, on};
@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 type Key = (String, usize);
 
-/// Each export cut to its cross-file readers' demand (`demand_exports`): the lines it reports.
+/// Each export cut to its cross-file readers' demand: a line per export cut, and why the pass made none.
 #[derive(Default)]
 pub struct DemandExports {
     pub lines: Vec<String>,
@@ -67,8 +67,9 @@ fn find(alias: &BTreeMap<String, String>, v: &str) -> String {
     v
 }
 
-/// A superset rule (`export_demand::Shape`): of `rule`, its head variable, the literals kept, the supersets it
-/// filters by, and the variables the kept atoms and comparisons bind.
+/// A superset rule before the supersets that are `top` are known: of `rule`, its head variable, the literals kept, the
+/// supersets it filters by, `(key, variable)`, and the variables the kept atoms and comparisons bind, without the
+/// filters.
 struct Shape<'v> {
     rule: RuleRef<'v>,
     head: String,
@@ -85,8 +86,8 @@ enum Const {
     Branded(crate::code_rule_dsl::logic::front::Branded),
 }
 
-/// A reader's filter on an export (`export_demand::Filter`): a file-local atom's column (its constants kept), or a
-/// superset.
+/// A reader's filter on an export it reads: a file-local atom on the variable at its column `at` (its constants kept),
+/// read through its distinct keys there (`key_name`), or a superset.
 enum Filter {
     Atom { rel: String, width: usize, at: usize, consts: Vec<(usize, Const)>, v: String },
     Key(Key, String),
@@ -103,6 +104,7 @@ struct Pass<'a> {
 }
 
 impl<'a> Pass<'a> {
+    /// A relation the chunk holds by document: file-local or a base input of the chunk.
     fn usable(&self, rel: &str) -> bool {
         (self.local.contains(rel) || self.f.is_input(rel)) && !matches!(rel, "reference_edge" | "reference_open") && self.same_doc.contains_key(rel)
     }
@@ -116,6 +118,7 @@ impl<'a> Pass<'a> {
         self.v.rel_name(a.rel())
     }
 
+    /// The superset of `key`'s column, explored with every key it reads: `None` when it is `top` from the start.
     fn explore(&mut self, key: Key) {
         let mut work = vec![key];
         while let Some(key) = work.pop() {
@@ -142,7 +145,7 @@ impl<'a> Pass<'a> {
         rules.iter().map(|r| self.shape(*r, *at)).collect()
     }
 
-    /// `export_demand::Pass::shape`.
+    /// One rule of a cross-file relation, cut to the literals in the document of its column `at`.
     fn shape(&self, rule: RuleRef<'a>, at: usize) -> Option<Shape<'a>> {
         let v = self.v;
         let Some(TermRef::Var(h)) = rule.head().args().nth(at) else { return None };
@@ -254,7 +257,8 @@ impl<'a> Pass<'a> {
         Some(one_group(v, rule, head, &alias, kept, filters))
     }
 
-    /// `export_demand::Pass::tops`.
+    /// The keys that are `top`: from the start, `forced`, or a rule whose head only a `top` filter binds. To a
+    /// fixpoint.
     fn tops(&self, forced: &BTreeSet<Key>) -> BTreeSet<Key> {
         let mut top: BTreeSet<Key> = self.shapes.iter().filter(|(_, s)| s.is_none()).map(|(k, _)| k.clone()).collect();
         top.extend(forced.iter().cloned());
@@ -278,7 +282,11 @@ impl<'a> Pass<'a> {
     }
 }
 
-/// `export_demand::one_group`: the shortest chain from the head to a literal that cuts.
+/// Of a superset rule's literals, the shortest chain from the head to one that cuts: a filter (another superset) or
+/// an atom with a constant. Any part of a rule's body that binds the head is a superset of its column, so the chain
+/// alone is one; the rest only narrows it, at the cost of joining it. Joined whole, independent groups meeting at a
+/// node enumerate every combination of their rows (`within(c1, n), within(c2, n), within(c3, n)`: 475 M rows on one
+/// file). With nothing that cuts, the head is left unbound: the superset is everything (`top`).
 fn one_group<'v>(v: &Version, rule: RuleRef<'v>, head: String, alias: &BTreeMap<String, String>, kept: Vec<LitRef<'v>>, filters: Vec<(Key, String)>) -> Shape<'v> {
     let h = find(alias, &head);
     let n_kept = kept.len();
@@ -386,7 +394,10 @@ fn may_name((rel, at): &Key) -> String {
     format!("dm_{rel}_{at}")
 }
 
-/// `export_demand::key_rel`'s name: the constants hashed as the tree's terms print (`{j}=Int(1)`, `{j}=Str("s")`).
+/// The name of the relation of a file-local atom's distinct values at column `at`, the other columns its constants or
+/// anything: a filter that tests a row exists. Joined as the atom itself, a filter on a column of many rows per key
+/// (`fz_b(_, p)`, siblings per parent) enumerates them all for every row it filters. The constants are hashed as the
+/// tree's terms printed (`{j}=Int(1)`, `{j}=Str("s")`), so the names stay those stored programs hold.
 fn key_name(v: &Version, rel: &str, at: usize, consts: &[(usize, Const)]) -> String {
     use std::hash::{Hash, Hasher};
     let constants: Vec<String> = consts

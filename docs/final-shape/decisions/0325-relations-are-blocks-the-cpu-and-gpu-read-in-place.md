@@ -156,7 +156,7 @@ Step by step, each leaving the engine working (see the commits that name this de
   - Open: a block is given back when its last part goes, so a long session's kept relations hold the blocks they
     were made in, with whatever else died there. If the memory profile shows it, a freeze copies a kept segment
     out of a block that is mostly dead.
-  - Built for anonymous blocks (2026-11-17, Q99): a relation's last holder gives its chunks' pages back to the OS,
+  - Built for anonymous blocks (2026-11-17, Q76): a relation's last holder gives its chunks' pages back to the OS,
     so a dead relation no longer holds memory while its block lives (about 500 MB at a 300-file cold peak).
   - Compares read the columns they compare (`RowData::value`, `cmp_ids`), not the row copied. A `Row` keeps 16
     values on the stack, and a wider one goes on the heap. On posthog/hogql the CPU binding is then level with
@@ -281,7 +281,8 @@ Step by step, each leaving the engine working (see the commits that name this de
   through `rel_get` and `rows_at`. `rget` and `rel_hash` read only through `clif_rel_get`. A text's names and a
   test's verdict bits are words (`DevRel::words`), not relations.
   - A relation's chunks are not zeroed (`Block::try_alloc_raw`): a value is read only below `len`, and a dirty
-    pooled block would otherwise pay a memset for every view.
+    pooled block would otherwise pay a memset for every view. Since the merge of django-bugs (36f3475c0) this is
+    0342's `Block::try_alloc_chunk_any`, which also takes a chunk from the block's free list.
   - On hogql (load 38–41, interleaved): Metal 67.5–72.0 B instructions against 68.2–68.7 B, peak 724–785 MB
     against 739–783 MB, findings 1,629. Budget refusals 0–4 a run against 2–5.
 - **Step 5, the device's probes read the relation's own index** (2026-11-17): `Batch::index` finds the relation's
@@ -337,15 +338,18 @@ Step by step, each leaving the engine working (see the commits that name this de
   block whole; and the blocks were the device pool's pinned buffers even with no device bound. The memory line
   (`RUN_MB`) then cut 3,409 chunks against 2,563, and user CPU rose 14–20 s at the same instructions.
 - **Decided**:
-  - A chunk's relations go in blocks of its own (`facts::rows::in_chunk`, re-exported by setfix, around the chunk's `evaluate`; decision
-    0289, a chunk is a block). The scope is the run's context (`facts::rows::CHUNK`, carried), so the jobs a chunk starts
+  - A chunk's relations go in blocks of its own (`setfix::in_chunk`, around the chunk's `evaluate`; decision
+    0289, a chunk is a block). The scope is the run's context (`rows::CHUNK`, carried), so the jobs a chunk starts
     write in its blocks too. Its blocks go back with the last of its rows. Outside a chunk the run's open block is
     used as before. The profile counts the blocks still held when a chunk's evaluation ends (`a chunk's blocks
     outlived it`): on PostHog those are the rows each hands on until it is filed, almost all under 1 MB.
   - A block is the pool's only in a run bound to the device (`placement::device()`); a CPU run's is anonymous,
     resident only where written. The device can still read an anonymous block in place (a no-copy buffer).
 - **Pinned by**: `a_chunks_relations_go_in_its_own_blocks_and_go_with_it`,
-  `a_job_of_the_chunk_puts_its_relations_in_the_chunks_block`, `a_cpu_run_takes_anonymous_blocks`, `a_dropped_relations_chunks_are_taken_by_the_next`, `a_reader_in_place_keeps_the_relation` (`facts::rows`, moved there by step 3 with the rows).
+  `a_job_of_the_chunk_puts_its_relations_in_the_chunks_block`, `a_cpu_run_takes_anonymous_blocks` (setfix::rows;
+  `facts::rows` since the merge into Final-shape-quality, where the rows' storage lives, step 3 above);
+  `a_dropped_relations_chunks_are_taken_by_the_next`, `a_reader_in_place_keeps_the_relation` (`facts::rows`). There a
+  chunk's open blocks are one a `Life`.
 - **Measured** (M3, PostHog cold, profiled, two runs, load 26–35): user CPU 205.5 and 217.8 s (before 0325:
   204.1–210.8; with it: 224.6 twice); chunks 2,797 and 2,982 (2,563; 3,409); median footprint 1,189 and 1,194 MB
   (1,155–1,161; 1,306–1,382); Metal driver and leased MB 0 (256–320 and 192–256). Findings 29,747, the same hash.
@@ -353,7 +357,7 @@ Step by step, each leaving the engine working (see the commits that name this de
   block is bump-allocated, so a relation a chunk drops (or a tail moved to a bigger place) keeps its written pages
   until the chunk ends, where a vector's memory went back at once.
 
-## Exports held where they lie (2026-11-17, Q103)
+## Exports held where they lie (2026-11-17, Q156)
 
 A chunk's exports used to be copied into heap columns (`Exports::add`), with a hash set over them. The cross-file
 part then read that copy. At 300 files the copy took 140 MB at the peak ("hold the export").
@@ -376,21 +380,57 @@ part then read that copy. At 300 files the copy took 140 MB at the peak ("hold t
   - findings: the reference's (30,449 rows);
   - strict 10-file outputs: byte-identical.
 
+## Held rows probed by their own indexes (2026-11-17, Q165)
+
+A relation held in memory for the runs that read it (`columns_source`: a base relation's rows, the cross part's `r__old`)
+was a set of heap columns. A column was sorted into a host index on its first probe (`Stored`, `Sorted`), and a key of
+several columns into a lexicographic order. At 300 files those sorted ids took 120–140 MB at the peak, the largest
+host index left.
+
+- **One relation in a block.** The rows are now one relation alone in a `Life::Kept` block (`setfix/held.rs`,
+  `Rows::with_index_room`), with room past its rows for its indexes. Columns no rule reads are not held, and read as 0.
+- **Its own indexes.** A probe of a column, or of a key of several, reads the relation's own hashed index there
+  (`InBlock::own_index_for`). The same index serves the device. Its buckets are sized to the key's distinct values: 4
+  bytes a row and about 4 a value. The sorted index was 4 a row and 12 a value. A whole view of such a source is bound
+  to that index (`Source::own_index`, ahead of the source's lookups). Other sources keep their lookups, and get a block
+  index only where nothing else answers (Q162).
+- **Statistics** are measured a column at a time, by a sort that is dropped once it is measured.
+- **Past the directory.** A source with more probed columns than the directory's 8 entries has its other columns
+  probed by a host sorted index. The profile counts this as "held rows: a column's index on the host".
+- **The carry is gone.** Decision 0101 §5 carried last run's sorted columns into this run's copy. It is removed:
+  nothing is sorted any more, and an index is hashed on its first probe.
+- `Stored` is left for SQL tables, whose columns load as a statement asks for them.
+- **Measured** (cold, 300 files, profiling build, load 47–72):
+  - sorted columns at the peak: 122.9 MB before, 0 after;
+  - the cross part's live heap at the peak: 380 MB before, 248 MB after;
+  - CPU of every head: 34.5 s before, 25.0 s after;
+  - the peak footprint stays 2.29–2.35 GB. The file-local chunks running beside the cross part set it now: 592 MB at
+    the peak before, 702 MB after, because the cross part finishes sooner and overlaps more of them;
+  - findings: the reference's;
+  - strict 10-file outputs: byte-identical.
+
 ## Merged with django-bugs's frames and free lists (2026-11-17)
 
 Both lines changed how a dead relation's memory goes back and how frames are written. The merge keeps one form of
 each, with both sides' properties:
 
 - **A dead relation's pages.** django-bugs gave its chunks to the block's free list (0342), to be reused; this line
-  gave their pages to the OS (Q99, Q76 at 837f4b40d), but never reused the room. Now a chunk freed in an anonymous
+  gave their pages to the OS (Q76), but never reused the room. Now a chunk freed in an anonymous
   block goes on the free list and its whole pages past the list's link go back to the OS (`Block::free_chunk`); the
   list marks them in use again when it hands the chunk out (`reuse_pages`). A pooled slab's or a file's pages stay.
   Pinned by `a_dead_relations_pages_go_back_and_its_neighbours_rows_stay` (`rerail_blocks::rows`): the bytes given
   back, the neighbour's rows, and the next relation taking the freed chunks.
-- **Frames.** django-bugs encoded each frame straight into its write's segments (`FramePlacer`, Q95); this line read
+- **Frames.** django-bugs encoded each frame straight into its write's segments (`FramePlacer`, Q89); this line read
   the rows part by part (`each_live_batch`), wrote the inputs' frames before the run, and handed derived relations
   off after their last reader (Q74). Kept: this line's structure, with every frame placed. An input's job places
   its granules in a placer of its own and queues it with them; the cross part opens its write's placer before the
   run, so a handed-off relation is encoded into it then (no bytes on the heap until `write_frames`), and one whose
   rows are the stored ones keeps its frame (its reads retagged). The heap form is left only where no segment takes
   a frame, encoded through the same `encode_windows`; the column-at-a-time encoder is gone.
+
+At the hub's merge of django-bugs (2026-11-18) the hub had made the same merge its own way. It kept both row readers
+(`each_live_window` beside `each_live_batch`), both digests (`rows_digest_windows` beside `held_digest`) and the
+column-at-a-time encoder, and its handed-off relations were encoded on the heap. One of each is kept now:
+`each_live_batch`, `held_digest`, and the hub's `encode_windows`, which encodes outside the placer's lock. A handed-off
+relation is placed in the cross part's write, and one whose rows are stored keeps its frame. The dead relation's pages
+take the form above. The hub's `Owned` hold is folded into the relation's last holder (`Held`'s drop).

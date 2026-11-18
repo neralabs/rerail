@@ -103,6 +103,8 @@ pub use rerail_program_image::code_rule_dsl::logic::program_facts;
 pub mod program_image {
     pub use rerail_program_image::code_rule_dsl::logic::program_image::*;
     pub mod analyses;
+    /// Each relation's layout, declared or inferred (decision 0361 step 3).
+    pub mod layouts;
     pub mod manager;
     pub mod passes;
     pub use analyses::{Edges, Strata};
@@ -119,6 +121,7 @@ pub mod sql;
 pub mod simplify;
 /// The reach index's form found in a program (decision 0119).
 pub mod reach_form;
+pub mod rank_form;
 // Its files are its test modules alone.
 #[cfg_attr(any(test, feature = "test-hooks"), path = "logic/strings")]
 pub mod strings {

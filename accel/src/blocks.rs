@@ -115,7 +115,7 @@ mod tests {
         assert!(!may.in_slab());
     }
 
-    /// A device run's own relation (Q142): an exact block counted in a join's budget is a pooled buffer of its
+    /// A device run's own relation (Q205): an exact block counted in a join's budget is a pooled buffer of its
     /// size, not a slab's least; an exact block no device reads is host memory of its size.
     #[test]
     fn an_exact_device_block_in_a_joins_budget_is_its_size() {

@@ -89,6 +89,12 @@ languages. That batch made about 100k probes of a few kinds (kind 1204 alone 25,
 A probe that binds the document as well as the kind reads that document alone (`View::find_keyed` through
 `Source::lookup_in`). B-now does not bind it. The 50-file run is 316 G now.
 
+At the hub's merge of Typing-support (2026-11-18), the two met, and a probe by kind read the batch's kind index
+(`Batch::of_kind_rows`). At the hub's merge of django-bugs the same day, the index was removed (below). It made
+`node`'s rows into a `Vec`, a copy that 0353 refuses. The reads in place (`of_tag`) are kept, with the join's reuse of
+its last probe (`Ctx::last`).
+
+
 ## The kind index not taken (merge of final-rerail-shape-phased-facts, 2026-11-17)
 
 That line answered the same probes with a kind index of the batch (`Batch::kinds`): `node`'s rows read once, placed
@@ -96,4 +102,4 @@ by kind in a `Vec` of their own, and a probe read its run. Measured there, the p
 cold run's 53 s (`assign_name`'s delta probing a kind no file holds 27 times a chunk). The index is `node`'s rows
 made: 0353 holds that a view is a read of the tape and nothing makes its rows, so the merge keeps this record's
 reads in place (`of_tag`, the step's last probe) and not the index. Whether they cover that line's case (a kind
-counted 0, probed per delta row) is Q110.
+counted 0, probed per delta row) is Q167.

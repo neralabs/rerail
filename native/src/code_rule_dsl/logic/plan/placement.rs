@@ -240,7 +240,7 @@ pub(in crate::code_rule_dsl) fn set_device(on: bool) -> bool {
 
 /// What a block this run makes for the device to read asks of the block policy (decision 0342): the device may
 /// read it when the run is bound to the device; a CPU run's never.
-pub(in crate::code_rule_dsl) fn block_device() -> rerail_blocks::alloc::Device {
+pub fn block_device() -> rerail_blocks::alloc::Device {
     if device() { rerail_blocks::alloc::Device::May } else { rerail_blocks::alloc::Device::No }
 }
 

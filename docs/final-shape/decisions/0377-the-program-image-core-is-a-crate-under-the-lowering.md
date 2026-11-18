@@ -1,6 +1,6 @@
 # 0377: The program image's core is a crate under the lowering
 
-**Numbered 0365 until 2026-11-17** (0365 is three other branches' records; its commits name it so). Its work queue items Q81 and Q101 are Q130 and Q84 since its merge into django-bugs.
+**Numbered 0365 until 2026-11-17** (0365 is three other branches' records; its commits name it so). Its work queue items Q81 and Q101 are Q130 and Q84 since its merge into django-bugs, and Q81 and Q84 since django-bugs' merge into cost-classifier (the hub's numbers).
 
 **Status:** building (the user's choice, 2026-11-17).
 
@@ -52,7 +52,7 @@ moved up), the user chose: "move it down into a new crate under rerail-rr".
   as a version. The seeds number no helpers and hold no `helper_once` keys, so link's renames and merges never
   fire there; the one rename that could (a Python candidates relation named as a seeds' native) is avoided by
   the walk, which now skips the natives' names as well as the declarations'. `link` says whether it edited the
-  rules, and `link_seeded_parts` refuses a module it did. Tests: 489 of 490 lowering, link and scope tests (Q130
+  rules, and `link_seeded_parts` refuses a module it did. Tests: 489 of 490 lowering, link and scope tests (Q81
   fails, as before); ep2's 317 policies over 10 files, fresh stores, debug: 0 rows.
 - **Step 3b**: a text's own rules are written as a version in the walk. The lowerer writes every rule through
   `Lowerer::write`, to `Out::Tree` (`prog.rules`: a module kept as parts, the unseeded link, `lower`) or
@@ -67,7 +67,7 @@ moved up), the user chose: "move it down into a new crate under rerail-rr".
     takes them anyway (its seeds hold no helpers, and the walk wrote each once).
   - Checks: a debug build lowers each text's tree too and asserts the two versions are one program
     (`lowered_own`); `a_texts_rules_are_written_as_a_version_in_its_walk` (two aggregates of two literals: fails with
-    the merge put back). Tests: 550 of 551 lowering, link, scope, image and on-the-version tests (Q130); ep2's 317
+    the merge put back). Tests: 550 of 551 lowering, link, scope, image and on-the-version tests (Q81); ep2's 317
     policies over 10 files, fresh stores, debug: 0 rows, every text's walk version the tree's.
 - **Step 4: library modules as versions.** A library's module is written as a version in its walk too
   (`lower_module_in_written`), kept as `Module::version` (finished at the walk's end, `l.prog` its header). Its
@@ -85,7 +85,7 @@ moved up), the user chose: "move it down into a new crate under rerail-rr".
     the core; `a_rewrite_renames_an_aggregates_result_too`.
   - Checks: a debug build links each library as a tree too and asserts one program;
     `library_modules_link_to_the_lowering_of_them_together` (every pack's libraries) also links their images on
-    versions and compares. Tests: 682 of 684 lowering, library, image, request and corpus tests (Q130 and Q84, both
+    versions and compares. Tests: 682 of 684 lowering, library, image, request and corpus tests (Q81 and Q84, both
     failing at `caa1bfdb2` too); ep2's 317 policies over 10 files, cold then warm on one store, debug: 0 rows.
 - **What still reads rules as trees** (2026-11-17), so `front::Program`'s rules stay: the planner's front passes
   decode versions (`plan.rs`: normalize, inline, demand, form), policies are parsed by `rr::parse`/`parse_own` into

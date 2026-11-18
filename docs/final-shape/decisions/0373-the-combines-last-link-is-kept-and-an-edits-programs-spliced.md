@@ -51,7 +51,7 @@ program. Yet each edit decoded all 308 headers (0.10–0.14 s), merged them (0.0
 `RERAIL_COMBINE_LINK=check` splices, links the programs whole beside it, and asserts that the two are one program
 (size and digest) with one tail (hiding and policies). On ep2's edit (e49) they were. `RERAIL_COMBINE_LINK=whole`
 links whole every run. A debug build's own check (the trees linked beside the versions, `combine_tail`) cannot
-reach the splice on ep2's rules yet: the lowering's debug checks fail first (work queue Q132).
+reach the splice on ep2's rules yet: the lowering's debug checks fail first (work queue Q157).
 
 ## Measured
 

@@ -74,7 +74,7 @@ fn a_maintained_component_kills_the_candidates_no_rule_derives_and_adds_the_new_
     );
     open(&db, &spec).unwrap();
     run(&db, "mm_h", 0).unwrap();
-    // Each line's work by its plan steps, for the planning budget (Q145): the removal read a's row gone and found
+    // Each line's work by its plan steps, for the planning budget (Q208): the removal read a's row gone and found
     // its two candidates; each recheck ran; the counts restart once read.
     let [removes, adds, rechecks] = maint_step_counts(&db, "mm_h").unwrap();
     let worked = |line: &Vec<(i64, i64)>| line.iter().any(|&(i, o)| i > 0 || o > 0);
@@ -132,7 +132,7 @@ fn a_recheck_takes_no_rule_whose_head_constants_differ_from_the_candidate() {
     assert_eq!(unpadded(live(&held(&db, "mc_h").expect("held"))), vec![vec![1, 6], vec![2, 5]]);
 }
 
-/// A recursive component's drivers report their work (Q145's gap): `p(x, y) :- e(x, y).  p(x, z) :- p(x, y), e(y, z).`
+/// A recursive component's drivers report their work (Q208's gap): `p(x, y) :- e(x, y).  p(x, z) :- p(x, y), e(y, z).`
 /// with (2, 3) gone from `e` below. The removal's candidate p(2, 3) is killed, and the driver made from the delta
 /// probe (its join less `p`) finds the rows that read it from the row: e(3, z), so p(2, 4). Its counts are given
 /// with the probe it is made from, the second (after the seed), whose kept plan its work goes to.

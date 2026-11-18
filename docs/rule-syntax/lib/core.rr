@@ -36,22 +36,32 @@
 .decl path_part(d: number, s: symbol)                    // each directory of the document's path, and its file name
 // file_name(d, "main.py") for the same document.
 .decl file_name(d: number, s: symbol)                    // the last component of the document's path
+// `.layout r …` (decision 0361) states what a relation's rows are, for the planner: a key (a probe on it returns
+// one row at most), a fan-out class, a size, local (no row crosses documents), an order, a tree, a column's values.
 // Every node of every document, with its grammar kind and byte range [start, end). Offsets are what the
 // tree relations below compare: a is an ancestor of n exactly when a's range encloses n's.
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.layout node key(n) size(per n) local
+.layout node values(d, documents) values(kind, kinds) values(start, many) values(end, many)
 // kind(n, "call_expression"): the tree-sitter node type. Kind names are the grammar's own (see .language).
 .decl kind(n: node, k: symbol)                           // a node's grammar kind
+.layout kind key(n) size(per n) local values(k, kinds)
 // In `f(x)`: field(call, "function", f) and field(call, "arguments", args). Field names come from the grammar.
 .decl field(p: node, f: symbol, c: node)                 // c is p's child in field f
+.layout field key(c) fanout(p -> c, few) tree(p -> c) local values(f, ~50)
 // In `f(a, b)`, the argument list has child(args, a, 0) and child(args, b, 1). Anonymous tokens (`(`, `,`)
 // are not named children and are not counted. Comments are named children (tree-sitter's extras) and are
 // counted: in `f(# c` / `a)`, child(args, comment, 0), child(args, a, 1). Where an index must not count them,
 // the libraries filter them (`!kind(c, "comment")`, python/ast's body_stmt, tsx's call_arg).
 .decl child(p: node, c: node, i: number)                 // c is p's i-th named child, from 0
+// A node is one parent's child, at one index; a parent's indexes are 0, 1, 2, … (decision 0361).
+.layout child key(c) key(p, i) fanout(p -> c, few)
+.layout child order(i dense in p) tree(p -> c) local
 // text(n, "foo") for the identifier `foo`; text(call, "f(a, b)") for the call. Every node's and span's source
 // text exactly as written, comments and spacing inside it included. Interned, so equal texts compare as equal
 // symbols cheaply. For an identifier's or a dotted name's text, `name` (below) is the typed relation.
 .decl text(n: loc, s: symbol)                            // source text, interned
+.layout text key(n) local values(s, rows / 5)
 // Every anonymous token child of n, punctuation included: in `a + b`, op(binary, "+"); in `a not in b`,
 // op(cmp, "not in") (one token); in `async def f()`, op(def, "async"); in `f(a, b)`,
 // op(args, ","); in `static readonly x`, op(field, "static") and op(field, "readonly"). These tokens have no
@@ -59,8 +69,10 @@
 .decl op(n: node, s: symbol)                             // an anonymous token child: operators, keywords, punctuation
 // docof(n, d): the document node n was parsed from. Joins a node to doc(d, path, module).
 .decl docof(n: loc, d: number)
+.layout docof key(n) local values(d, documents)
 // line(n, 12): used in messages ("at line {outer.line}") and line-based suppressions.
 .decl line(n: loc, l: number)                            // 1-based start line
+.layout line key(n) local values(l, within document)
 // unset(x): one row, the empty value. A rule translated from ast-grep binds a metavariable that its match left
 // empty to it: an `any` alternative that does not mention $X, as ast-grep allows. text(x, "") holds, and no
 // tree relation has it, so `kind(X, …)` on an empty metavariable is false, as in ast-grep.
@@ -79,6 +91,7 @@
 // name(n, "a.b.c"): an identifier's text, or the dotted text of an attribute chain or dotted name, no spaces.
 // The usual subject of a text test: names hold only word characters and dots.
 .decl name(n: node, s: symbol)
+.layout name key(n) local values(s, rows / 5)
 // comment(n, "noqa: E501"): a comment's text without its marker (`#`, `//`).
 .decl comment(n: node, s: symbol)
 // With `const M = "react"; import(M)`, static_value(arg, "react"). Follows only constants in the same file.
@@ -314,6 +327,7 @@
 // function, with each nested unit standing for its kind and name. An edit to a method's body changes only the method's.
 .decl def_digest(n: node, s: symbol)
 .decl visit_index(n: node, i: number)                    // the same order as a number, from 0 per document
+.layout visit_index key(n) local values(i, within document)
 .decl ast_depth(n: node, k: number)                      // depth in the language's AST, for breadth-first "first"
 // ---- ordered first match (data-layer/DESIGN.md, addition 7) ----
 // dfs_first(r, hit, first, edge, target): hit is the first node of `target` that a depth-first search from r
@@ -514,6 +528,9 @@
 .functor ast_dump(n: node): symbol
 // @py_repr(s): CPython's repr of the str s: 'it' for it, "it's" for it's, a non-printable character escaped.
 .functor py_repr(s: symbol): symbol
+// @shell_unquote(w): a POSIX shell word's value, its quotes and backslashes undone: `-DNAME="a b"` is `-DNAME=a b`.
+// A command's words are its `match_all` of `(?:[^\s'"\\]|\\.|'[^']*'|"(?:[^"\\]|\\.)*")+` (`c/compile-commands.rr`).
+.functor shell_unquote(s: symbol): symbol
 
 
 // ---- repository inputs (native readers, one derivation per file) ---------------------------------------------

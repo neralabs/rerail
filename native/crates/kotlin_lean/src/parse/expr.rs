@@ -37,9 +37,18 @@ impl<'a> P<'a> {
     /// An expression whose operators all bind tighter than `min`.
     pub(super) fn expr(&mut self, min: u8) -> R<u32> {
         self.deeper()?;
+        let kw = if self.i == self.kw_at {
+            self.kw_at = usize::MAX;
+            Some(std::mem::replace(&mut self.kw_depth, self.depth))
+        } else {
+            None
+        };
         let m = self.mark();
         let at = self.t.mark_child(m);
         let r = self.expr_in(m, min);
+        if let Some(k) = kw {
+            self.kw_depth = k;
+        }
         self.depth -= 1;
         r?;
         self.t.unmark(m);
@@ -91,6 +100,8 @@ impl<'a> P<'a> {
                 T::Name if !t.tick && (t.word == w::IN || t.word == w::IS) => (K::CheckExpression, prec::CHECK),
                 T::Name if !t.tick && t.word == w::AS => (K::AsExpression, prec::AS),
                 T::Name if t.tick || ident_word(t.word) => (K::InfixExpression, prec::INFIX),
+                // A keyword as an infix name where keywords are names (not `in`, `is`, `as`).
+                T::Name if self.kw_name(t) => (K::InfixExpression, prec::INFIX),
                 _ => return Ok(()),
             };
             if p <= min {
@@ -107,17 +118,25 @@ impl<'a> P<'a> {
                         self.expr(p)?;
                     } else {
                         self.tk(K::TIs)?;
+                        if self.split_type(m, n)? {
+                            continue;
+                        }
                         self.ty()?;
-                        self.type_args_at_line_end()?;
                     }
                 }
                 K::AsExpression => {
                     self.as_operator()?;
+                    if self.split_type(m, n)? {
+                        continue;
+                    }
                     self.ty()?;
-                    self.type_args_at_line_end()?;
                 }
                 K::InfixExpression => {
-                    self.simple_identifier()?;
+                    if self.kw_name(t) {
+                        self.leaf(K::SimpleIdentifier, f::NONE)?;
+                    } else {
+                        self.simple_identifier()?;
+                    }
                     self.expr(p)?;
                 }
                 _ => {
@@ -130,17 +149,114 @@ impl<'a> P<'a> {
         }
     }
 
-    /// Refused: a type closing its type arguments at a line's end, a generic call's name and `<`
-    /// on the next. tree-sitter's GLR parse keeps the reading where the type's `<` and `>` are
-    /// comparisons (the next line their operand), and which reading it takes depends on more than
-    /// this parser follows.
-    fn type_args_at_line_end(&mut self) -> R<()> {
-        let t = self.tok();
-        let closed = self.src[..t.start as usize].iter().rev().find(|c| !c.is_ascii_whitespace()) == Some(&b'>');
-        if closed && t.nl && t.kind == T::Name && self.kind_at(1) == T::Lt {
-            return self.refuse();
+    /// After `as`, `as?` or `is` (node `n` open since `m`): its type, where tree-sitter splits it
+    /// (`as_split`): `x as a`, the rest navigations over it (closing `n`), then a call's type
+    /// arguments where `(` or `{` starts the next line; else the comparisons are the operator
+    /// loop's, over all the operation at their precedence. Whether it split.
+    fn split_type(&mut self, m: Mark, n: crate::tw::Node) -> R<bool> {
+        let Some((split, j)) = self.as_split(0) else { return Ok(false) };
+        let at = self.i + j;
+        if let Split::Compare = split {
+            if !self.split_operand_reads(j) {
+                return Ok(false);
+            }
         }
-        Ok(())
+        let stop = std::mem::replace(&mut self.type_stop, self.i + 1);
+        let r = self.ty();
+        self.type_stop = stop;
+        r?;
+        self.close(n);
+        while self.peek() == T::Dot {
+            self.navigation(m)?;
+        }
+        if let Split::Compare = split {
+            // The operand's keywords are names when the loop reads it.
+            self.kw_at = at;
+        }
+        if let Split::Call = split {
+            let c = self.t.wrap(m, K::CallExpression, f::NONE);
+            let s = self.open(K::CallSuffix);
+            self.type_arguments()?;
+            if self.peek() == T::LParen {
+                self.value_arguments()?;
+                if !self.no_lambda && self.lambda_ahead() {
+                    self.annotated_lambda()?;
+                }
+            } else {
+                self.annotated_lambda()?;
+            }
+            self.close(s);
+            self.close(c);
+            self.postfix(m, usize::MAX, false)?;
+        }
+        Ok(true)
+    }
+
+    /// After `as` (`k` tokens ahead): whether tree-sitter splits the type `a.b.C<T>` (one name or
+    /// path as its argument, `>` at the line's end; probed). A declaration on the next line, a
+    /// token no expression starts with, an argument of more than names, or a name alone keep the
+    /// type.
+    fn as_split(&mut self, k: usize) -> Option<(Split, usize)> {
+        let mut j = k;
+        if !self.is_ident_at(j) {
+            return None;
+        }
+        let mut dots = 0;
+        while self.kind_at(j + 1) == T::Dot && self.is_ident_at(j + 2) && !self.peek_at(j + 1).nl {
+            j += 2;
+            dots += 1;
+        }
+        if dots == 0 || self.kind_at(j + 1) != T::Lt || !self.is_ident_at(j + 2) {
+            return None;
+        }
+        j += 2;
+        while self.kind_at(j + 1) == T::Dot && self.is_ident_at(j + 2) {
+            j += 2;
+        }
+        if self.kind_at(j + 1) != T::Gt {
+            return None;
+        }
+        let nx = self.peek_at(j + 2);
+        if !nx.nl {
+            return None;
+        }
+        match nx.kind {
+            T::LParen | T::LBrace => Some((Split::Call, j + 2)),
+            T::Name | T::Int | T::Hex | T::Bin | T::Real | T::Char | T::Str | T::Minus | T::Plus | T::Bang | T::PlusPlus | T::MinusMinus | T::At => Some((Split::Compare, j + 2)),
+            _ => None,
+        }
+    }
+
+    /// Whether the next line, from `k` tokens ahead, reads as the split's comparison operand to
+    /// the statement's end (tree-sitter's comparison reading survives only then): a trial read,
+    /// rewound. In it, as tree-sitter lexes it where only a name is valid, a keyword no expression
+    /// starts with is a name (`for (…) {}` a call, `class D` an infix that fails).
+    fn split_operand_reads(&mut self, k: usize) -> bool {
+        let saved = (self.t.save(), self.i, self.depth, self.far, self.stmt, self.cx, self.asi_memo, self.no_lambda, self.type_stop, self.kw_depth);
+        self.i += k;
+        self.kw_at = self.i;
+        let r = self.expr(prec::COMPARISON);
+        self.kw_at = usize::MAX;
+        let ok = r.is_ok() && {
+            let t = self.tok();
+            t.nl || matches!(t.kind, T::Semi | T::RBrace | T::Eof)
+        };
+        let (t, i, depth, far, stmt, cx, asi, nl, ts, kw) = saved;
+        self.t.rewind(t);
+        (self.i, self.depth, self.far, self.stmt, self.cx, self.asi_memo, self.no_lambda, self.type_stop, self.kw_depth) = (i, depth, far, stmt, cx, asi, nl, ts, kw);
+        ok
+    }
+
+    /// Whether a keyword is read as a name here (`kw_depth`): one no expression starts with.
+    #[inline]
+    fn kw_name(&self, t: crate::lex::Tok) -> bool {
+        self.depth == self.kw_depth
+            && t.kind == T::Name
+            && !t.tick
+            && t.word != 0
+            && t.word < w::SOFT
+            && !ident_word(t.word)
+            && !matches!(t.word, w::TRUE | w::FALSE | w::NULL | w::THIS | w::SUPER | w::IF | w::WHEN | w::TRY | w::RETURN | w::THROW | w::BREAK | w::CONTINUE | w::OBJECT | w::FUN)
     }
 
     /// `as` or `as?` (one token where the `?` touches it).
@@ -423,6 +539,7 @@ impl<'a> P<'a> {
                 self.close(n);
                 Ok(())
             }
+            T::Name if self.kw_name(t) => self.leaf(K::SimpleIdentifier, f::NONE).map(|_| ()),
             T::Name if !t.tick => match t.word {
                 w::TRUE | w::FALSE => {
                     let n = self.open(K::BooleanLiteral);
@@ -531,6 +648,7 @@ impl<'a> P<'a> {
         let triple = src[i..].starts_with(b"\"\"\"");
         i += if triple { 3 } else { 1 };
         let at = |k: usize| src.get(k).copied().unwrap_or(0);
+        let mut interpolated = false;
         // One scanner call from `i` a step: a piece, or the end.
         let end = 'string: loop {
             let mut j = i;
@@ -570,6 +688,7 @@ impl<'a> P<'a> {
                             }
                             self.t.leaf(K::InterpolationExpressionStart, f::NONE, i as u32, j as u32 + 1);
                             i = self.interpolation(j + 1)?;
+                            interpolated = true;
                         } else {
                             self.t.leaf(K::InterpolationIdentifierStart, f::NONE, i as u32, j as u32);
                             let (e, _) = self.lx.name_end(j)?;
@@ -641,14 +760,18 @@ impl<'a> P<'a> {
                     }
                     break 'string j + 1;
                 }
-                j += char_len(src, j);
+                // Content to the next `"`, `\\` or `$` (the block masks' string stops).
+                j = self.lx.blocks.string_stop(j + 1);
                 has = true;
             }
         };
         // The interpolations' tokens out of the buffer: the string is one token, as the indices
-        // read ahead of it count it.
+        // read ahead of it count it. Without an interpolation's, the tokens read after it are
+        // those lexed from its end already.
         self.i = base;
-        self.relex_at(end);
+        if interpolated || end != t.end as usize {
+            self.relex_at(end);
+        }
         self.t.last_end = end as u32;
         self.t.close_at(n, end as u32);
         Ok(())
@@ -1157,4 +1280,13 @@ fn char_len(src: &[u8], j: usize) -> usize {
         c if c >= 0xe0 => 3,
         _ => 2,
     }
+}
+
+/// How tree-sitter reads `x as a.b.C<T>` at a line's end (`P::as_split`).
+#[derive(Clone, Copy)]
+enum Split {
+    /// `C<T>` and the next line a call (`(…)` or `{ … }`).
+    Call,
+    /// `C < T > next`: two comparisons.
+    Compare,
 }

@@ -59,6 +59,38 @@ pub struct DeviceView<'a> {
     pub rows: usize,
     /// An axis's pairs in the block (`device_chunk::VIEW_AXIS`), else 0.
     pub pairs: usize,
+    /// Where a stage reads the view in place (decision 0353 step 4d), when it can: nothing makes its rows.
+    #[cfg(target_os = "macos")]
+    pub in_place: Option<ViewInPlace>,
+}
+
+/// A view a stage reads in place (decision 0353 step 4d): its batch's directory's GPU address, the view's number in
+/// the kernels' reads (1 + `device_chunk::VIEW_*`), the buffers its reads reach by address, and what keeps them.
+/// A 16z batch's views read their blocks through its cache (`cache`, decision 0353 step 4b), which its reads write:
+/// a stage that reads the view is refused when the cache's failures rise past `failed` (no room found).
+#[cfg(target_os = "macos")]
+#[derive(Clone)]
+pub struct ViewInPlace {
+    pub dir: u64,
+    pub kind: u32,
+    pub buffers: Vec<metal::Buffer>,
+    pub cache: Option<metal::Buffer>,
+    pub failed: u32,
+    pub keep: Arc<dyn std::any::Any + Send + Sync>,
+}
+
+#[cfg(target_os = "macos")]
+impl ViewInPlace {
+    /// Its batch's cache's counts (`None` without one): for tuning, in the statistics mode (`RERAIL_ZCACHE_STATS`).
+    pub fn cache_counts(&self) -> Option<rerail_clif::view::cache::Counts> {
+        // SAFETY: the cache's header, in a shared buffer this view keeps.
+        self.cache.as_ref().map(|c| unsafe { rerail_clif::view::cache::Counts::read(c.contents().cast::<u8>()) })
+    }
+
+    /// The failures its batch's cache has counted (0 without one).
+    pub fn cache_failed(&self) -> u32 {
+        self.cache_counts().map_or(0, |c| c.failed)
+    }
 }
 
 pub trait Source: Send + Sync {
@@ -86,7 +118,7 @@ pub trait Source: Send + Sync {
         Err(rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_READONLY),None))
     }
     fn text_column(&self, _column: usize) -> bool { false }
-    /// The source as itself, for a caller that carries state between two of one kind (`carry_sorted`).
+    /// The source as itself, for a caller that reads a kind's own parts (a derived relation's rows).
     fn as_any(&self) -> Option<&dyn std::any::Any> { None }
     fn columns(&self) -> Vec<String>;
     fn len(&self) -> usize;
@@ -105,6 +137,25 @@ pub trait Source: Send + Sync {
         for r in 0..self.len() {
             self.row_at(r, columns, &mut row);
             each(r, &row);
+        }
+    }
+    /// The rows whose `column` is `value`, each with its values of `columns` (at most 8), given to `each`, as
+    /// `lookup` and `row_at` would; `false` (nothing given) where the source has no such read. A view of the tape
+    /// gives each match's values from what the lookup found it by (its tape node, its own or its parent's id), not
+    /// a point read a row (decision 0353 step 2).
+    fn lookup_read(&self, _column: usize, _value: i64, _columns: &[usize], _each: &mut dyn FnMut(usize, &[i64])) -> bool {
+        false
+    }
+    /// `for_rows` over rows `range` alone, until `each` returns false: a join step's scan of a view reads its rows
+    /// so (decision 0353 step 2), a view of a batch's documents walking the documents the range holds once, each row's
+    /// node, id and parent coming from the walk, not a point read a row.
+    fn for_rows_in(&self, range: Range<usize>, columns: &[usize], each: &mut dyn FnMut(usize, &[i64]) -> bool) {
+        let mut row = vec![0i64; columns.len()];
+        for r in range {
+            self.row_at(r, columns, &mut row);
+            if !each(r, &row) {
+                return;
+            }
         }
     }
     /// Each row's document: the high 32 bits of the id in `column` (a value below `1 << 32` is its own document), row
@@ -184,6 +235,13 @@ pub trait Source: Send + Sync {
     /// device reads where they lie (decision 0325 step 3). `None`: the device copies them (`device_view`, `row_at`).
     #[cfg(target_os = "macos")]
     fn in_block(&self) -> Option<super::rows::InBlock> {
+        None
+    }
+    /// Its own index on `columns` (decision 0325 step 5), where the source holds its rows to be probed so (`held`):
+    /// found or built in its block, its number with the relation it indexes. A probe reads a bucket's rows, candidates
+    /// whose key it checks. `None` by default: a source answers its lookups, and a whole one in a block is given an
+    /// index there only when nothing else answers (`InRel::index`).
+    fn own_index(&self, _columns: &[usize]) -> Option<(super::rows::InBlock, usize)> {
         None
     }
     /// Rows are made per looked-up value, so reading them all (a scan, a hash index of every row)

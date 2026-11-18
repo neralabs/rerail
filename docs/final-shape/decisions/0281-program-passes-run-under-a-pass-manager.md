@@ -629,7 +629,7 @@ step 3 replaces what is under the writer.
      ep2's 317 policies, 60 of them aggregating: 0 rows, every check passes. Then `front::finish`: its rewrites on
      the version (`lowering_tail::OrderNodes`, nodes compared by `node_order` and a `min`/`max` over nodes through a
      helper, with `RuleBuilder::agg` to write the helper's aggregate; `DeclareAxes`), its checks through a decoded
-     tree for now (`front::finish_checks`; work queue Q131: `cycles::check` reads a tree). A text's version is made
+     tree for now (`front::finish_checks`; work queue Q83: `cycles::check` reads a tree). A text's version is made
      from the lowerer's program as `whole()` leaves it. Test: `finishs_rewrites_run_on_the_version` (each pass left
      out fails it); ep2's 317 policies: 0 rows, every check passes. Then `whole()`'s last passes before `finish`
      (`lower::whole_back` on the tree): `lowering_tail::BooleanRelations` (a nullary relation's unit column, through

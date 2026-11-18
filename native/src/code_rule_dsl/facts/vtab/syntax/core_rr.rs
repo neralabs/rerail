@@ -103,15 +103,26 @@ impl Family {
     }
 }
 
-/// A document's lines: where each starts and where its text ends (before its terminator).
+/// A document's lines: where each starts and where its text ends (before its terminator), as u32 words `[ns,
+/// starts[ns], ne, ends[ne]]`. A projection's are a derived fact, written once into its block where they are first
+/// read (decision 0353 step 4d): the `Loc` views' reads read them there (`rerail_clif::view_reads`).
 pub struct Lines {
     source: std::sync::Arc<String>,
     python: bool,
-    index: std::sync::OnceLock<LineIndex>,
+    block: Option<std::sync::Arc<super::cells::Block>>,
+    index: std::sync::OnceLock<Words>,
 }
-struct LineIndex {
-    starts: Vec<u32>,
-    ends: Vec<u32>,
+enum Words {
+    Own(Vec<u32>),
+    Placed(super::cells::Cells<u32>),
+}
+impl Words {
+    fn words(&self) -> &[u32] {
+        match self {
+            Words::Own(w) => w,
+            Words::Placed(c) => c,
+        }
+    }
 }
 
 impl Lines {
@@ -146,74 +157,140 @@ impl Lines {
     /// so an empty file has one empty line, as `split('\n')` gives).
     pub fn new(src: &str, python: bool) -> Self {
         // A borrowed, one-shot source is indexed immediately without copying its text.
-        Self { source: std::sync::Arc::new(String::new()), python, index: std::sync::OnceLock::from(Self::build(src, python)) }
+        let (ns, ne, _) = Self::shape(src, python);
+        let mut w = vec![0u32; 2 + ns + ne];
+        Self::fill(&mut w, src, python, ns, ne);
+        Self { source: std::sync::Arc::new(String::new()), python, block: None, index: std::sync::OnceLock::from(Words::Own(w)) }
     }
-    pub(super) fn shared(source: std::sync::Arc<String>, python: bool) -> Self {
-        Self { source, python, index: Default::default() }
+    /// The lines of `source`, indexed on their first read into `block` (a projection's).
+    pub(super) fn shared(source: std::sync::Arc<String>, python: bool, block: &std::sync::Arc<super::cells::Block>) -> Self {
+        Self { source, python, block: Some(std::sync::Arc::clone(block)), index: Default::default() }
     }
-    /// Each line's first byte, from line 1 (the device's `Loc` views read them in a chunk block).
+    /// The lines of `source`, indexed on their first read into words of their own (a read apart from any
+    /// projection: a verdict's first error).
+    pub(super) fn apart(source: std::sync::Arc<String>, python: bool) -> Self {
+        Self { source, python, block: None, index: Default::default() }
+    }
+    /// The words, `[ns, starts[ns], ne, ends[ne]]`, where the views' reads read them.
+    pub(super) fn words(&self) -> &[u32] {
+        self.index().words()
+    }
+    /// Whether the words are in `block` (a projection's), where an entry of it refers to them.
+    pub(super) fn in_block(&self, block: &std::sync::Arc<super::cells::Block>) -> bool {
+        matches!(self.index(), Words::Placed(c) if std::sync::Arc::ptr_eq(c.block(), block))
+    }
+    /// Each line's first byte, from line 1.
     pub(super) fn starts(&self) -> &[u32] {
-        &self.index().starts
+        let w = self.words();
+        &w[1..1 + w[0] as usize]
     }
-    fn index(&self) -> &LineIndex {
+    fn ends(&self) -> &[u32] {
+        let w = self.words();
+        let ns = w[0] as usize;
+        &w[2 + ns..2 + ns + w[1 + ns] as usize]
+    }
+    fn index(&self) -> &Words {
         self.index.get_or_init(|| {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "projection lines".into());
-            Self::build(&self.source, self.python)
+            let (ns, ne, _) = Self::shape(&self.source, self.python);
+            match &self.block {
+                // A derived fact, written once where it is computed (decision 0353).
+                Some(block) => Words::Placed(
+                    super::cells::Cells::build(block, 2 + ns + ne, |w| {
+                        Self::fill(w, &self.source, self.python, ns, ne);
+                        2 + ns + ne
+                    })
+                    .expect("a batch's block holds its projection"),
+                ),
+                None => {
+                    let mut w = vec![0u32; 2 + ns + ne];
+                    Self::fill(&mut w, &self.source, self.python, ns, ne);
+                    Words::Own(w)
+                }
+            }
         })
     }
-    fn build(src: &str, python: bool) -> LineIndex {
+    /// Each terminator, `(text_end, next)`: where its line's text ends (a `\r` before a `\n` left out of it but
+    /// for Python) and the next line starts. Python ends a line at `\n`, `\r\n` or a lone `\r`; the others at
+    /// `\n`. A chunked search (`memchr`), never a byte at a time.
+    fn terminators(src: &str, python: bool, mut each: impl FnMut(usize, usize)) {
         let b = src.as_bytes();
-        let (mut starts, mut ends) = (vec![0u32], Vec::new());
-        let mut i = 0;
-        while i < b.len() {
-            let end = match b[i] {
-                b'\n' => Some((i, i + 1)),
-                b'\r' if python && b.get(i + 1) == Some(&b'\n') => Some((i, i + 2)),
-                b'\r' if python => Some((i, i + 1)),
-                _ => None,
-            };
-            if let Some((text_end, next)) = end {
-                let text_end = if !python && text_end > 0 && b[text_end - 1] == b'\r' && text_end - 1 >= *starts.last().unwrap() as usize {
-                    text_end - 1
+        let mut start = 0;
+        let mut one = |i: usize, next: usize| {
+            let text_end = if !python && i > 0 && b[i - 1] == b'\r' && i - 1 >= start { i - 1 } else { i };
+            each(text_end, next);
+            start = next;
+        };
+        if python {
+            let mut skip = usize::MAX;
+            for i in memchr::memchr2_iter(b'\n', b'\r', b) {
+                if i == skip {
+                    continue;
+                }
+                if b[i] == b'\r' && b.get(i + 1) == Some(&b'\n') {
+                    skip = i + 1;
+                    one(i, i + 2);
                 } else {
-                    text_end
-                };
-                ends.push(text_end as u32);
-                starts.push(next as u32);
-                i = next;
-            } else {
-                i += 1;
+                    one(i, i + 1);
+                }
+            }
+        } else {
+            for i in memchr::memchr_iter(b'\n', b) {
+                one(i, i + 1);
             }
         }
-        let last = *starts.last().unwrap() as usize;
-        if (python && last < b.len()) || (!python && !src.ends_with('\n')) {
+    }
+    /// The starts' and ends' counts, and whether a last line without a terminator counts: when it is not empty
+    /// (Python) or always (the others, so an empty file has one empty line, as `split('\n')` gives).
+    fn shape(src: &str, python: bool) -> (usize, usize, bool) {
+        let (mut n, mut last) = (0, 0);
+        Self::terminators(src, python, |_, next| {
+            n += 1;
+            last = next;
+        });
+        let tail = (python && last < src.len()) || (!python && !src.ends_with('\n'));
+        let ns = if tail { n + 1 } else { n.max(1) };
+        (ns, n + usize::from(tail), tail)
+    }
+    /// `w` (`2 + ns + ne`): the counts, the starts, the ends.
+    fn fill(w: &mut [u32], src: &str, python: bool, ns: usize, ne: usize) {
+        let word = |at: usize| u32::try_from(at).expect("a file within 4 GB");
+        let b = src.as_bytes();
+        w[0] = word(ns);
+        w[1 + ns] = word(ne);
+        let (mut k, mut last) = (0, 0);
+        Self::terminators(src, python, |text_end, next| {
+            w[2 + ns + k] = word(text_end);
+            k += 1;
+            // A start after the last terminator only where a last line follows it (`shape`).
+            if k < ns {
+                w[1 + k] = word(next);
+            }
+            last = next;
+        });
+        w[1] = 0;
+        if ne > k {
             let end = if !python && b.last() == Some(&b'\r') { b.len() - 1 } else { b.len() };
-            ends.push(end.max(last) as u32);
-        } else {
-            starts.pop();
+            w[2 + ns + k] = word(end.max(last));
         }
-        if starts.is_empty() {
-            starts.push(0);
-        }
-        LineIndex { starts, ends }
     }
     /// Physical lines, as `src_line` numbers them.
     pub fn count(&self) -> usize {
-        self.index().ends.len()
+        self.ends().len()
     }
     /// Line `l`'s text, `[start, end)`, from 1.
     pub fn span(&self, l: usize) -> [u32; 2] {
-        [self.index().starts[l - 1], self.index().ends[l - 1]]
+        [self.starts()[l - 1], self.ends()[l - 1]]
     }
     /// The 1-based line holding byte `at`.
     pub fn line(&self, at: u32) -> u32 {
-        self.index().starts.partition_point(|&s| s <= at).max(1) as u32
+        self.starts().partition_point(|&s| s <= at).max(1) as u32
     }
     /// A span's first line, last line (of its last character) and 0-based start column (bytes).
     pub fn place(&self, [start, end]: [u32; 2]) -> (u32, u32, u32) {
         let line = self.line(start);
         let last = if end > start { self.line(end - 1) } else { line };
-        (line, last, start - self.index().starts[line as usize - 1])
+        (line, last, start - self.starts()[line as usize - 1])
     }
 }
 
@@ -548,7 +625,7 @@ pub(super) fn verdict(f: &Facts, dialect: &Dialect) -> Result<Option<(u32, Strin
     if let Some(own) = dialect_facts(dialect.family).and_then(|facts| facts.verdict(f)) {
         return own;
     }
-    Ok(first_error(f, &Lines::shared(std::sync::Arc::clone(&f.source), dialect.family == Family::Python), &|id| dialect.name(f, id)))
+    Ok(first_error(f, &Lines::apart(std::sync::Arc::clone(&f.source), dialect.family == Family::Python), &|id| dialect.name(f, id)))
 }
 
 /// The first error of a document, in preorder: its line and message (`syntax_error/3`). tree-sitter's ERROR and
@@ -593,7 +670,6 @@ pub(super) struct CoreRows {
     value: Vec<[i64; 3]>,
     comment: Vec<[i64; 2]>,
     spread: Vec<i64>,
-    next_sibling: Vec<[i64; 2]>,
     syntax_error: Vec<[i64; 3]>,
     source: Vec<[i64; 2]>,
     src_line: Vec<[i64; 3]>,
@@ -633,7 +709,6 @@ pub(super) enum Visits {
 pub(super) struct Skip {
     /// `op`, `op_at`.
     pub(super) ops: bool,
-    pub(super) next_sibling: bool,
     pub(super) comment: bool,
     pub(super) spread: bool,
     pub(super) name: bool,
@@ -685,7 +760,7 @@ impl CoreRows {
     /// its rows without a second walk of every node of every document (the main phase's).
     pub(super) fn visits(&self, wants_text: bool, wants_parts: bool, wants_part_starts: bool, wants_words: bool) -> Visits {
         let s = &self.skip;
-        let only_text = s.ops && s.structural && s.next_sibling && s.comment && s.spread && s.name && s.literal_rows
+        let only_text = s.ops && s.structural && s.comment && s.spread && s.name && s.literal_rows
             && !(wants_parts || wants_part_starts || wants_words);
         match (only_text, wants_text, self.text_nodes.is_some()) {
             (false, _, _) | (true, true, false) => Visits::All,
@@ -753,13 +828,6 @@ impl CoreRows {
                 self.structural_before.push([c_global, string(between(a, f.start(c))) as i64]);
                 self.structural_after.push([c_global, string(between(f.end(c), b)) as i64]);
             }
-        }
-        let mut prev = None;
-        for c in p.children_of_node(id).filter(|_| !self.skip.next_sibling) {
-            if let Some(a) = prev {
-                self.next_sibling.push([p.global(a), p.global(c)]);
-            }
-            prev = Some(c);
         }
         let mut token_like = children.is_empty();
         if is_comment(kind) {
@@ -1117,7 +1185,6 @@ impl CoreRows {
             ("value_type", make(&["v", "t"], &value_type, [true, true], atom)),
             ("comment", node_sym(&self.comment)),
             ("spread", make(&["n"], &spread, [false], atom)),
-            ("next_sibling", pair(&["a", "b"], &self.next_sibling)),
             ("syntax_error", make(&["d", "l", "msg"], &self.syntax_error, [false, false, true], atom)),
             ("source", pair(&["d", "sp"], &self.source)),
             ("src_line", make(&["d", "l", "sp"], &self.src_line, [false, false, false], atom)),

@@ -63,7 +63,7 @@ fn base(f: &Fields<'_>, rel: &str, a: AtomRef<'_>) -> bool {
 /// input, and its column of each of the view's. A view is the input's rows, so it is a base relation here: taken as
 /// derived, `kind(o, "type_alias_statement")` bound nothing, a definition's `field(o, "left", l)` (8,152 rows in a
 /// chunk of PostHog) made `tp_name` large and so demanded, and `tp_ref`'s split made every identifier with each of
-/// its ancestors (55 M rows a cold run; work queue Q94's measurement).
+/// its ancestors (55 M rows a cold run; work queue Q88's measurement).
 fn view_of<'v>(f: &Fields<'v>, a: AtomRef<'_>) -> Option<(String, Vec<usize>)> {
     if f.is_input(f.v.rel_name(a.rel())) {
         return None;
@@ -495,7 +495,7 @@ mod tests {
 
     /// A view of an input's columns (Q37) is a base relation to the split, read as its input's columns: `kind(o, 7)`
     /// is `node(_, o, 7, _, _)`, whose postings bound the scan. Taken as derived, a definition's `tp_name` was large by
-    /// its `field` atom alone, and demanded (work queue Q94's measurement).
+    /// its `field` atom alone, and demanded (work queue Q88's measurement).
     #[test]
     fn a_view_of_an_input_reads_as_the_inputs_columns() {
         let p = r#"

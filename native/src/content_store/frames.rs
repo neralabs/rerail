@@ -674,7 +674,7 @@ impl ContentStore {
 
     /// `frames`, from the store's file past the snapshot (queued writes first): asked before the first wave of a
     /// process whose snapshot an earlier run installed, which leaves every root's cross space out until
-    /// `preload_frames_live` reads the run's own (the kept route's check, Q69).
+    /// `preload_frames_live` reads the run's own (the kept route's check, Q151).
     pub fn frames_stored(&self, space: &[u8; 32], rels: &[Rel], part: i64) -> StoreResult<HashMap<Rel, Stored>> {
         let keys: Vec<_> = rels.iter().cloned().map(|r| (r, part)).collect();
         Ok(self.read_frame_parts_from(space, &keys, false, false)?.into_iter().map(|((r, _), f)| (r, f.stored.clone())).collect())
@@ -1581,7 +1581,7 @@ impl Put {
         if width == 0 {
             return out;
         }
-        let _ = super::cross_rows::encode_windows(width, each, |len, fill| {
+        let _ = super::cross_rows::encode_windows(width, each, &mut Vec::new(), |len, fill| {
             out = vec![0u8; len];
             fill(&mut out);
             Ok::<(), std::convert::Infallible>(())
@@ -1594,7 +1594,7 @@ impl Put {
     }
 }
 
-/// A write's frames encoded where they are stored (decision 0295 §1, Q95): its segments' writer, shared by the jobs
+/// A write's frames encoded where they are stored (decision 0295 §1, Q89): its segments' writer, shared by the jobs
 /// that make the frames, each frame's bytes written into its entry as its rows are read. Made whole on the heap
 /// first, every frame of a write was held at once until it was queued: the cross part's frames, the peak of a cold
 /// PostHog run.
@@ -1608,15 +1608,17 @@ pub struct Placed {
 }
 
 impl FramePlacer {
-    /// Encodes rows of `width` columns, given a window at a time (`each`, called twice), into the next entry, as
-    /// `encode_rows` encodes them: counted outside the lock, written under it. `None` where no segment takes it
+    /// Encodes rows of `width` columns, given a window at a time (`each`, called once), into the next entry, as
+    /// `encode_rows` encodes them: encoded outside the lock, copied into the entry under it. `None` where no segment takes it
     /// (the caller encodes it on the heap as before).
     pub fn place_rows(&self, width: usize, part: i64, each: &dyn Fn(&mut dyn FnMut(&[i64]))) -> Option<Placed> {
         if width == 0 {
             return None;
         }
         let mut at = None;
-        super::cross_rows::encode_windows(width, each, |len, fill| {
+        let mut cols = Vec::new();
+        // copy: not block data (a frame's encoded bytes, built once, then written into their entry)
+        super::cross_rows::encode_windows(width, each, &mut cols, |len, fill| {
             let mut w = self.w.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             w.put(len, part, &[0; 32], |out| fill(out))?;
             at = Some(w.len() - 1);
@@ -1833,7 +1835,7 @@ mod tests {
             "128 demands must use full-key probes, not scan 8192 stored frames: {} VM instructions", work.load(Ordering::Relaxed));
     }
 
-    /// A frame encoded straight into the write's segments as its rows come (Q95), a window at a time: its bytes are
+    /// A frame encoded straight into the write's segments as its rows come (Q89), a window at a time: its bytes are
     /// `encode`'s, and it reads back as a frame queued whole does, queued and stored, beside one queued as before.
     #[test]
     fn a_frame_placed_as_it_is_encoded_reads_back_as_one_queued_whole() {

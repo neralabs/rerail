@@ -59,7 +59,7 @@ pub const INDEX_BITS: u32 = rerail_clif::ids::INDEX_BITS;
 pub const INDEX: u32 = 1 << INDEX_BITS;
 const SLOTS: u32 = 1 << SLOT_BITS;
 /// The top slots, from `SLOTS - 1` down, hold a document's spans: up to `SPAN_SLOTS << INDEX_BITS` of them.
-pub(super) const SPAN_SLOTS: u32 = 16;
+pub(super) const SPAN_SLOTS: u32 = rerail_clif::ids::SPAN_SLOTS;
 /// The positions (`span_low`) a document may have: past them a run fails (`super::Batch::build`), never wraps.
 pub const POSITIONS: u64 = SPAN_SLOTS as u64 * INDEX as u64;
 /// The first slot of the spans'.
@@ -585,7 +585,13 @@ pub struct Table {
     /// before its subtree's end. With them a numbered item's id is read from its number alone, no select.
     rank_starts: [Cells<u32>; 2],
     rank_ends: [Cells<u32>; 2],
+    /// By item, the last granule starting at or before item number `JUMP * b`, for each `b`: a number's granule is
+    /// searched between two of them (`num_granule`), not among all the granules. 4 bytes a `JUMP` items.
+    jumps: [Cells<u32>; 2],
 }
+
+/// The items one of `Table::jumps` stands for.
+const JUMP: u32 = rerail_clif::ids::JUMP;
 
 /// `v`, a table column being computed, written into `block`.
 fn placed<T: Cell>(block: &Arc<Block>, v: &[T]) -> Cells<T> {
@@ -673,6 +679,10 @@ impl Table {
         // Written once into the projection's block, beside its rank index (decision 0353 step 2), where the device's
         // reads will find them too.
         let b = r.block();
+        let jumped = |at: &[u32], item: Item| {
+            (0..=r.count(item) / JUMP).map(|q| at.partition_point(|&s| s <= q * JUMP).saturating_sub(1) as u32).collect::<Vec<u32>>()
+        };
+        let jumps = [jumped(&rank_starts[0], Item::Node), jumped(&rank_starts[1], Item::Token)];
         let [rs0, rs1] = rank_starts;
         let [re0, re1] = rank_ends;
         let table = Table {
@@ -691,6 +701,7 @@ impl Table {
             preorder_keys,
             rank_starts: [placed(b, &rs0), placed(b, &rs1)],
             rank_ends: [placed(b, &re0), placed(b, &re1)],
+            jumps: [placed(b, &jumps[0]), placed(b, &jumps[1])],
         };
         table.describe(r);
         table
@@ -722,6 +733,7 @@ impl Table {
             for i in 0..2 {
                 set(&raw mut (*d).rank_starts[i], &self.rank_starts[i]);
                 set(&raw mut (*d).rank_ends[i], &self.rank_ends[i]);
+                set(&raw mut (*d).jumps[i], &self.jumps[i]);
             }
         }
     }
@@ -733,6 +745,25 @@ impl Table {
         // SAFETY: the projection's descriptor, whose runs point at this table and `r`.
         let low = unsafe { id_reads::num_low_of(r.desc(), item as u32, k) };
         (low != u32::MAX).then_some(low)
+    }
+
+    /// The start of the innermost granule whose subtree holds tape node `x` below its start (an ancestor of `x`),
+    /// 0 when none does: where a parent search may start (`Facts::parent_within`).
+    pub fn holding(&self, x: u32) -> u32 {
+        let mut g = self.starts.partition_point(|&s| s < x);
+        while g > 0 {
+            g -= 1;
+            if self.starts[g] < x && self.ends[g] > x {
+                return self.starts[g];
+            }
+            // An earlier granule's subtree ended before `x`, or it starts at `x`: its parent's may hold it.
+            let up = self.parents[g];
+            if up == u32::MAX {
+                return 0;
+            }
+            g = up as usize + 1;
+        }
+        0
     }
 
     /// The item whose id's low 32 bits are `low` (`low_of`'s inverse): what it is and its number (`num_number_of`).
@@ -771,7 +802,7 @@ impl Table {
 
     /// Bytes the table holds.
     pub fn bytes(&self) -> usize {
-        4 * (self.starts.len() * 3 + self.nodes.len() * 2 + self.at.len() + self.slots.len() + 3 * self.by_slot.len() + self.first_kid.len() + self.runs.len() + 2 * self.run_at.len() + 4 * self.starts.len())
+        4 * (self.starts.len() * 3 + self.nodes.len() * 2 + self.at.len() + self.slots.len() + 3 * self.by_slot.len() + self.first_kid.len() + self.runs.len() + 2 * self.run_at.len() + 4 * self.starts.len() + self.jumps[0].len() + self.jumps[1].len())
             + std::mem::size_of::<Kid>() * self.kids.len()
     }
 

@@ -15,7 +15,7 @@
 //! 5. **Merging.** States that act alike on every token are one (Moore's refinement).
 
 use bitlex::syntax::{Gram, Stmt};
-use std::collections::HashMap;
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 /// A state of tier 2's state machine (docs/parser-generators/18-tree-as-grammar.md §2): the
 /// tree section's grammar, one level per nested node. State 0 is the root's start.
@@ -56,6 +56,9 @@ pub enum Act {
     /// A token the grammar implies (`implied`): no node; the extras pending before it stay where
     /// they are, as its leaf's would.
     Settle,
+    /// A settling mark taken (`mark … , settles`), where its leaf would be: the extras pending
+    /// before its bit stay where they are, those after it stay pending (`program::SETTLE`).
+    SettleMark,
     /// An extra's leaf, deferred: the nodes closed before the next node leave it out, so it goes
     /// where the next token puts it (`with_extras`).
     Extra,
@@ -151,6 +154,7 @@ pub fn text(states: &[StateRow], arms: &[ArmRow]) -> String {
                 }
                 Act::Extra => acts.push_str(" extra"),
                 Act::Settle => acts.push_str(" settle"),
+                Act::SettleMark => acts.push_str(" settlemark"),
                 Act::ExtraNow => acts.push_str(" extra now"),
                 Act::Retag { kind } => {
                     let _ = write!(acts, " retag {kind}");
@@ -666,7 +670,7 @@ fn level_ways(levels: &[Level], positions: &[(usize, Pos)], level_of_rule: &Hash
     // A way so far: its position, its depth, the nodes made at the level, whether the last of
     // them has a field of its own, whether a field of the level's is pending for the next.
     type Way = (Option<usize>, u8, u8, bool, bool);
-    let mut seen: std::collections::HashSet<Way> = std::collections::HashSet::new();
+    let mut seen: HashSet<Way> = HashSet::default();
     let mut work: Vec<Way> = vec![(None, 0, entered.0, entered.1, entered.2)];
     let ok = 'all: {
         while let Some(way) = work.pop() {
@@ -1238,7 +1242,7 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
     let state_of = |p: usize| p + 1;
     let marks = by_rules.then_some(ids.marks);
     let starts = if by_rules { levels.len() - 1 } else { 0 };
-    let mut returned: HashMap<usize, u16> = HashMap::new();
+    let mut returned: HashMap<usize, u16> = HashMap::default();
     for k in 0..1 + positions.len() + starts {
         let (level, from) = if k == 0 {
             (0, None)
@@ -1265,7 +1269,7 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
         };
         for (i, a) in arms.iter().enumerate() {
             if arms[..i].iter().any(|b| b.0 == a.0) {
-                let name = ids.tokens.iter().find(|t| (ids.kind)(t).ok() == Some(a.0)).cloned().unwrap_or_else(|| format!("kind {}", a.0));
+                let name = ids.tokens.iter().find(|t| (ids.kind)(t).ok() == Some(a.0)).cloned().unwrap_or_else(|| if ids.marks.contains(&a.0) { format!("a mark (kind {})", a.0) } else { format!("kind {}", a.0) });
                 let rule = &b.rules[level_rules[level]].kind;
                 return Err(format!("the grammar is not LL(1): two ways on {name} at one place in {rule}'s level"));
             }
@@ -1319,7 +1323,7 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
         }
     }
     // Number the classes in the order they are reached from the start.
-    let mut number: HashMap<usize, u16> = HashMap::new();
+    let mut number: HashMap<usize, u16> = HashMap::default();
     let mut order: Vec<usize> = Vec::new();
     let mut queue = std::collections::VecDeque::from([0usize]);
     while let Some(i) = queue.pop_front() {
@@ -1344,7 +1348,7 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
         joined[l] = r;
         r
     }
-    let mut first_of: HashMap<usize, usize> = HashMap::new();
+    let mut first_of: HashMap<usize, usize> = HashMap::default();
     for (i, r) in raw.iter().enumerate() {
         let other = *first_of.entry(class[i]).or_insert(r.level);
         let (a, b) = (find(&mut joined, other), find(&mut joined, r.level));
@@ -1468,7 +1472,7 @@ pub fn with_extras(
     }
     // The states an arm of which merges into the leaf before, or calls one that does: the
     // extras before its token are that leaf's text, pending in the caller's state too.
-    let mut merging: std::collections::HashSet<u16> = arms.iter().filter(|a| a.acts.iter().any(|x| matches!(x, Act::Merge { .. }))).map(|a| a.from).collect();
+    let mut merging: HashSet<u16> = arms.iter().filter(|a| a.acts.iter().any(|x| matches!(x, Act::Merge { .. }))).map(|a| a.from).collect();
     loop {
         let more: Vec<u16> = arms.iter().filter(|a| a.call && merging.contains(&a.to) && !merging.contains(&a.from)).map(|a| a.from).collect();
         if more.is_empty() {
@@ -1477,7 +1481,7 @@ pub fn with_extras(
         merging.extend(more);
     }
     // Every other state, and the copies made on the way.
-    let mut copies: HashMap<(u16, usize), u16> = HashMap::new();
+    let mut copies: HashMap<(u16, usize), u16> = HashMap::default();
     while usize::from(s) < states.len() {
         let mine: Vec<ArmRow> = arms.iter().filter(|a| a.from == s).cloned().collect();
         let nested = states[usize::from(s)].level != root;
@@ -1570,11 +1574,14 @@ pub fn with_extras(
 
 /// The arms on marks (tokens of no width) write no leaf: a mark makes no node. A field or a
 /// supertype on one would name a node that is not there.
-pub fn without_mark_leaves(arms: &mut [ArmRow], marks: &[u16]) -> Result<(), String> {
+pub fn without_mark_leaves(arms: &mut [ArmRow], marks: &[u16], settling: &[u16]) -> Result<(), String> {
     for a in arms.iter_mut().filter(|a| marks.contains(&a.token)) {
         let mut acts = Vec::with_capacity(a.acts.len());
         for act in std::mem::take(&mut a.acts) {
             match act {
+                // A settling mark settles where its leaf was: after the closes of the levels that
+                // end before it, before those of the levels it ends.
+                Act::Leaf { field: 0, supers, kind: 0 } if supers.is_empty() && settling.contains(&a.token) => acts.push(Act::SettleMark),
                 Act::Leaf { field: 0, supers, kind: 0 } if supers.is_empty() => {}
                 Act::Leaf { .. } => return Err(format!("mark kind {} with a field or a supertype: a mark makes no node", a.token)),
                 other => acts.push(other),
@@ -1691,14 +1698,14 @@ fn merge(accept: &[bool], arms: &[(u16, [u64; 4], u16)]) -> (Vec<bool>, Vec<(u16
                 })
             })
             .collect();
-        let stable = sigs.len() == class.iter().collect::<std::collections::HashSet<_>>().len();
+        let stable = sigs.len() == class.iter().collect::<HashSet<_>>().len();
         class = next;
         if stable {
             break;
         }
     }
     // Number the classes from the start, in the order the arms reach them.
-    let mut number: HashMap<usize, u16> = HashMap::new();
+    let mut number: HashMap<usize, u16> = HashMap::default();
     let mut order = vec![0usize];
     number.insert(class[0], 0);
     let mut at = 0;

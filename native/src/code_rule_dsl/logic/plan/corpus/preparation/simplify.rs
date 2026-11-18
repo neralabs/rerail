@@ -604,18 +604,48 @@ impl ProgramPass for DecidedFactTests {
         if !any {
             return Ok(());
         }
+        // A relation whose every rule went is empty (it had rules, so nothing outside fills it): a positive read of it
+        // cannot hold, and its rule goes; a negated one holds, and is dropped. To a fixpoint, as each emptied relation
+        // may empty its readers (the tree's `decided_fact_tests`).
+        let rules: Vec<RuleRef<'_>> = v.rules().collect();
+        let mut alive: Vec<bool> = decided.iter().map(Option::is_some).collect();
+        self.0 += alive.iter().filter(|a| !**a).count();
+        let mut drops: Vec<HashSet<u32>> = decided.into_iter().map(Option::unwrap_or_default).collect();
+        self.0 += drops.iter().map(HashSet::len).sum::<usize>();
+        let live = |alive: &[bool]| -> BTreeSet<String> { rules.iter().zip(alive).filter(|(_, a)| **a).map(|(r, _)| v.rel_name(r.head().rel()).to_owned()).collect() };
+        let empty_among = |alive: &[bool], among: BTreeSet<String>| -> BTreeSet<String> {
+            let live = live(alive);
+            among.into_iter().filter(|r| !live.contains(r) && !f.has_facts(r) && !fixed(&f, r) && !(f.is_input(r) || f.native(r).is_some())).collect()
+        };
+        let mut emptied = empty_among(&alive, derived.iter().map(|r| (*r).to_owned()).collect());
+        while !emptied.is_empty() {
+            let before = live(&alive);
+            for (i, r) in rules.iter().enumerate() {
+                if !alive[i] {
+                    continue;
+                }
+                let reads = |l: LitRef<'_>, neg: bool| !drops[i].contains(&l.node()) && matches!(l.view(), Lit::Atom(a) if a.neg() == neg && emptied.contains(v.rel_name(a.rel())));
+                if r.body().any(|l| reads(l, false)) {
+                    alive[i] = false;
+                    self.0 += 1;
+                    continue;
+                }
+                let negated: Vec<u32> = r.body().filter(|&l| reads(l, true)).map(|l| l.node()).collect();
+                self.0 += negated.len();
+                drops[i].extend(negated);
+            }
+            emptied = empty_among(&alive, before);
+        }
         let input = w.input().clone();
         let b = w.derive()?;
-        for (r, d) in input.rules().zip(decided) {
-            match d {
-                None => self.0 += 1,
-                Some(drop) if drop.is_empty() => {
-                    b.keep(&input, r);
-                }
-                Some(drop) => {
-                    self.0 += drop.len();
-                    b.rewrite(&input, r, &mut Subst { drop, ..Default::default() }).finish()?;
-                }
+        for ((r, keep), drop) in input.rules().zip(alive).zip(drops) {
+            if !keep {
+                continue;
+            }
+            if drop.is_empty() {
+                b.keep(&input, r);
+            } else {
+                b.rewrite(&input, r, &mut Subst { drop, ..Default::default() }).finish()?;
             }
         }
         Ok(())
@@ -2485,6 +2515,13 @@ impl ProgramPass for DropUnread {
                     b.keep(&input, r);
                 }
             }
+            // A request relation dropped has no rules, so no entry in the request record (decision 0331).
+            let was = b.asked();
+            let mut asked = was.clone();
+            asked.retain(|req, _| !unread.contains(req.as_str()));
+            if asked != was {
+                b.set_asked(&asked);
+            }
         }
         self.0 = unread.into_iter().map(str::to_owned).collect();
         Ok(())
@@ -2787,7 +2824,8 @@ pub fn decide(report: &Report) {
 
 // ---- before the prune: the program as the batches bind it ----
 
-/// `corpus::base_inputs`: the base relations the program reads and does not derive are inputs.
+/// The base relations the program reads and does not derive are inputs (`select::input_columns` names a base
+/// relation).
 #[derive(Default)]
 pub struct BaseInputs;
 
@@ -2815,10 +2853,16 @@ impl ProgramPass for BaseInputs {
     }
 }
 
-/// `corpus::CPYTHON_FUNCTORS`.
+/// core.rr's functors only CPython gives, each of a node, and the relations the batches bind them as
+/// (`facts::vtab::syntax::cpython`): `@py_unparse(n)` is the `s` of `cpython_unparse(n, s)`. `@unparse` is decision
+/// 0058's, a tape's text (`rr::lower`, `unparse_of`), not intercepted here.
 const CPYTHON_FUNCTORS: [(&str, &str); 2] = [("py_unparse", crate::code_rule_dsl::facts::core::cpython_relations::UNPARSE), ("ast_dump", crate::code_rule_dsl::facts::core::cpython_relations::AST_DUMP)];
 
-/// `corpus::cpython_functors`: each call of a functor only CPython gives, a variable its relation binds in the body.
+/// Each call of a functor only CPython gives (`CPYTHON_FUNCTORS`) in a rule, lowered to a variable its relation binds
+/// in the rule's body: `v(@sha256(@ast_dump(n))) :- kind(n, "call").` is `v(@sha256(x)) :- kind(n, "call"),
+/// cpython_ast_dump(n, x).` (one variable per functor and argument). Where the node has no value (no `ast` node of its
+/// kind at its span, or CPython raises) the rule has no row, as a functor's undefined value gives none. A call in an
+/// aggregate's atom is refused: its relation would have to be read inside the aggregate.
 #[derive(Default)]
 pub struct CpythonFunctors;
 
@@ -2905,3 +2949,6 @@ impl ProgramPass for CpythonFunctors {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests;

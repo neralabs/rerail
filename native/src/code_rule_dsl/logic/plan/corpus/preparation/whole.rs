@@ -1,11 +1,21 @@
 //! The passes on the whole combined program, once its parts are linked (decision 0281's path, step 7a-1), on its
-//! version: `combine_read`'s tail. Each is the tree's pass of the same name, which a debug build runs beside it.
+//! version: the combine's tail (`corpus::tail_version`).
 
-use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
-use crate::code_rule_dsl::logic::program_image::{Lit, TermRef};
+use crate::code_rule_dsl::logic::program_image::manager::{Cx, Last, ProgramPass, ProgramW, Reads, edit_as_is};
+use crate::code_rule_dsl::logic::program_image::{Lit, RuleRef, TermRef, Version};
 use std::collections::BTreeMap;
 
 type Result<T> = std::result::Result<T, String>;
+
+/// Whether an edit of rules alone (no header) neither removes nor adds a rule `heads` names: a pass deciding from
+/// those heads' rules and the header decides as it did (decision 0385).
+fn edit_misses(cx: &Cx<'_>, last: &Last<'_>, heads: impl Fn(&str) -> bool) -> bool {
+    let v = cx.v();
+    let of = |at: &Version, r: RuleRef<'_>| heads(at.rel_name(r.head().rel()));
+    last.delta.touched == Reads::RULES
+        && last.delta.removed.iter().all(|id| last.input.rule(id).is_some_and(|r| !of(last.input, r)))
+        && last.delta.added.iter().all(|&id| v.rule(id).is_some_and(|r| !of(v, r)))
+}
 
 /// core.rr's `kind(n, k)` and `docof(n, d)` are projections of `node` in a part that reads them (`rr::lower`'s
 /// `projections`) and inputs in one that does not: once one part projects them, they are no inputs of the combined
@@ -15,6 +25,14 @@ pub(in crate::code_rule_dsl::logic::plan::corpus) struct Projected;
 
 impl ProgramPass for Projected {
     const NAME: &'static str = "projected inputs";
+    /// Over an edit (decision 0385): the edit as it is, where it has no rule of `kind` or `docof` and leaves the
+    /// header (the inputs) as it was.
+    fn again(&mut self, cx: &Cx<'_>, last: &Last<'_>, w: &mut ProgramW<'_>) -> Result<bool> {
+        if !edit_misses(cx, last, |h| h == "kind" || h == "docof") {
+            return Ok(false);
+        }
+        edit_as_is(cx, last, w)
+    }
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<()> {
         let v = cx.v();
         let projected: Vec<&str> = ["kind", "docof"]
@@ -44,6 +62,15 @@ pub(in crate::code_rule_dsl::logic::plan::corpus) struct RetypeHelpers;
 
 impl ProgramPass for RetypeHelpers {
     const NAME: &'static str = "retype helpers";
+    /// Over an edit (decision 0385): the edit as it is, where it has no helper's rule and leaves the declarations as
+    /// they were; a helper's type is read from its rules and the declarations alone.
+    fn again(&mut self, cx: &Cx<'_>, last: &Last<'_>, w: &mut ProgramW<'_>) -> Result<bool> {
+        use crate::code_rule_dsl::logic::rr::aggregate_demand::helper;
+        if !edit_misses(cx, last, helper) {
+            return Ok(false);
+        }
+        edit_as_is(cx, last, w)
+    }
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<()> {
         use crate::code_rule_dsl::logic::rr::aggregate_demand::helper;
         let v = cx.v();

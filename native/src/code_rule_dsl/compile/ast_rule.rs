@@ -1080,7 +1080,7 @@ pub(in crate::code_rule_dsl) fn gap_test(key: &str, relation: &Value, language: 
     if past.is_some() && !object.get("stopBy").and_then(|stop| stop.get("not")).is_some_and(passable) {
         return None;
     }
-    Some(GapTest { place, regex, grammar: Default::default(), dialect: language, past })
+    Some(GapTest { place, regex, dialect: language, past })
 }
 
 /// A relation's term, or it or the gap test.

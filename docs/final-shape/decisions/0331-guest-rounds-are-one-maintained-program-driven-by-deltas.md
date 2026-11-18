@@ -198,6 +198,15 @@ CPU:
 
 Outputs identical, cold and edit (660 relations, 30,449 rows); the embed slice 491 rules, 285 relations.
 
+### The record on the version's front passes (at the hub's merge, 2026-11-18)
+
+The hub runs the passes before lowering on the version too (0281), and a debug build checks each stage against the
+tree's. Two of the tree's record changes above are made there as well. An inlined relation that the record names among
+a request rule's readers is replaced by the relations that read it (`InlineNodeTests`, `InlineFilters`). A relation
+that `DecidedFactTests` empties decides its readers' reads of it, to a fixpoint. The pass manager's carry takes a
+record the step's output states whole as its word for a rule it knows nothing of (`hide` rebuilds rules with no
+source and leaves the record as it was); before, such a rule fell back to the request's own name.
+
 ## The request narrowing merged (2026-11-17, benchmarks-on-integration into django-bugs)
 
 Two lines fixed the dropping family's narrowing independently: benchmarks-on-integration in 4dbc395b2 (Q119, its
@@ -236,3 +245,28 @@ version has to state the same readers in the same order. What it takes:
   did), so the version's order is not the tree's, and the record by place differs while the program is one. And the
   digest alone took a record whose readers sat on the wrong rules for the right one: the rows are the same by place
   and the digest is a sum (`a_record_by_place_is_compared_by_rule`).
+
+### On the version's passes (the merge into Typing-support-final-shape, 2026-11-17)
+
+Merged with the passes that run on the version (0281 step 6, 0276), the record held at the tree's checks but not on
+the version's own passes, nor where a pipeline stores or folds. Each is fixed where it breaks:
+
+- The version's `hide` writes its rules with their sources and states the record as the tree's `push_rule_from`
+  leaves it: a copy of a request rule serves its source's readers, and a reader's copy is a reader wherever its
+  source is. `FoldOwn` renames folded readers (`rename_readers`). The version's `prune` keeps a request whose
+  reader is gone and drops the readers it prunes, as the tree's does.
+- A record whose length is not its relation's rule count gates nothing: every reader of it checks the length
+  (`prune`, the embed slice, lowering). `AskedByRule` carries such an entry as no record, and the tree-against-
+  version checks compare it so (`program_image::record_as`).
+- A rule made again alike keeps its readers by its source first and its content second. Readers are unioned by
+  content only for a repeat the step dropped (before, every rule of a content took every reader of it). An
+  edit folded in `Builder::finish` (`folding_edit`) names the step's input in its rules' sources. The base fold
+  (`Builder::folding`) keeps the older ones, which name no rule of the input.
+- A pipeline that begins without a record (the lowering's tail) carries the first one a step states. A request a
+  later step states first (a second round on request) joins the carried record.
+- The record is stated again at a pipeline's end and at each step a keyed pipeline stores (0281 §6). It is not
+  stated at every step: a part (Retain, then PartOf) stays a view with one overlay of fields.
+- The record is by place, and a version's digest does not read its rules' order. So two equal programs whose
+  passes placed a rule apart differ in their records alone (the tree's merge renames a rule in place, the
+  version's writes it after the rest). The checks restate the tree's record in the version's order, matched by
+  content (`record_as`). The record by place goes with front::Program (0276).

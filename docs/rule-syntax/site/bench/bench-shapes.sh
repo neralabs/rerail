@@ -5,6 +5,8 @@
 #   one-rule  300 files x 1 rule (B101):   cold warm append rule
 # Inputs (never clean them up): corpus0, corpus1, pack-B/home-B, pack-1/home-1, rules/B-now, rules/B-one, rs-now.
 # CPU = user + sys from /usr/bin/time -l; peak = footprint (RSS also shown: it counts the store's file map).
+# LOGIC_ARGS: more arguments to the engine's `logic` (`--metal`); SKIP_MAIN=1: main is not run (a second engine pass);
+# PROFILE_DIR: each step's engine profile in PROFILE_DIR/<step> (RERAIL_PROFILE; it costs CPU: attribution only).
 set -u
 SP=${SP:-${RERAIL_SHARED:-$HOME/orca/rerail-shared}/bench/step-vs-main}
 CLI=${CLI:-$SP/main-pkg/node_modules/@neralabs/rerail/dist/cli/cli.js}
@@ -21,6 +23,8 @@ mkdir -p "$R"
 # the shared inputs (a home's pack link is relative: ../../../../pack-X, so the two stay side by side).
 rm -rf "$R/$(basename $PACK)" "$R/$(basename $HOME_)"; cp -R "$PACK" "$HOME_" "$R/"
 PACK=$R/$(basename $PACK); HOME_=$R/$(basename $HOME_)
+# A run directory used before holds the last run's copies: `cp -R` would copy into them (the corpus twice over).
+rm -rf "$R/corpus-dl" "$R/corpus-main" "$R/rules" "$R/packs" "$R"/dl-* "$R"/main-* "$R/store.sqlite"*
 cp -R $CORPUS $R/corpus-dl; cp -R $CORPUS $R/corpus-main
 (cd $R/corpus-main && git init -q && find . -name "*.py" -print0 | xargs -0 git add -- && git -c user.email=b@example.com -c user.name=bench commit -qm corpus)
 cp -R $RULES $R/rules; cp -R $SP/rs-now/packs $R/packs
@@ -49,9 +53,11 @@ for r in $STEPS; do
   elif [ $r != cold ] && [ $r != warm ]; then
     edit $r $R/corpus-dl; edit $r $R/corpus-main
   fi
-  env "${EXTRA[@]}" RERAIL_TAPE_CACHE=$R/store.sqlite RERAIL_RR_LIB=$SP/rs-now/lib nice -n 19 /usr/bin/time -l "$ENGINE" logic $R/rules $R/corpus-dl $R/dl-$r --chunk 1000000 > $R/dl-$r.log 2>&1
+  P=(); [ -n "${PROFILE_DIR:-}" ] && P=("RERAIL_PROFILE=$PROFILE_DIR/$r")
+  env "${EXTRA[@]}" ${P[@]+"${P[@]}"} RERAIL_TAPE_CACHE=$R/store.sqlite RERAIL_RR_LIB=$SP/rs-now/lib nice -n 19 /usr/bin/time -l "$ENGINE" logic $R/rules $R/corpus-dl $R/dl-$r --chunk 1000000 ${LOGIC_ARGS:-} > $R/dl-$r.log 2>&1
   rc=$?; "$ENGINE" csv $R/dl-$r > /dev/null 2>&1; f=$( [ -f $R/dl-$r/violation.csv ] && wc -l < $R/dl-$r/violation.csv | tr -d ' ' || echo '?')
   set -- $(measure $R/dl-$r.log); printf "%-8s %-8s %8s %8s %8s %8s %9s  %s\n" $r datalog $1 $2 $3 $4 $f "rc=$rc $(grep -o '[0-9]* components native' $R/dl-$r.log | head -1)"
+  [ "${SKIP_MAIN:-}" = 1 ] && continue
   RERAIL_HOME=$HOME_ RERAIL_AUTOSTART=0 nice -n 19 /usr/bin/time -l node $CLI scan --repo $R/corpus-main --scope repository --pack python --json --no-send > $R/main-$r.json 2> $R/main-$r.log
   rc=$?; f=$(python3 -I -c 'import json,sys; j=json.load(open(sys.argv[1])); print(len(j["violations"]))' $R/main-$r.json 2>/dev/null || echo '?')
   set -- $(measure $R/main-$r.log); printf "%-8s %-8s %8s %8s %8s %8s %9s  %s\n" $r main $1 $2 $3 $4 $f "rc=$rc"

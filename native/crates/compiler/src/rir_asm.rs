@@ -61,6 +61,35 @@ pub const OPCODES: &[(u8, &str)] = &[
     (FLAG, "FLAG"),
     (COUNT, "COUNT"),
     (CHECK, "CHECK"),
+    (SETTLE, "SETTLE"),
+    (READ, "READ"),
+    (LINE, "LINE"),
+    (IS, "IS"),
+    (PEEK, "PEEK"),
+    (LOOKUP, "LOOKUP"),
+    (MACRO, "MACRO"),
+    (PAINT, "PAINT"),
+    (PUT, "PUT"),
+    (FRAME, "FRAME"),
+    (ARG, "ARG"),
+    (PRE, "PRE"),
+    (KEEP, "KEEP"),
+    (DEFINE, "DEFINE"),
+    (UNDEF, "UNDEF"),
+    (SKIPLINE, "SKIPLINE"),
+    (SKIP, "SKIP"),
+    (COND, "COND"),
+    (IF, "IF"),
+    (DEFINED, "DEFINED"),
+    (INCLUDE, "INCLUDE"),
+    (PRAGMA, "PRAGMA"),
+    (BUILTIN, "BUILTIN"),
+    (LINEDIR, "LINEDIR"),
+    (EMBED, "EMBED"),
+    (SUB, "SUB"),
+    (STR, "STR"),
+    (GLUE, "GLUE"),
+    (EXPR, "EXPR"),
 ];
 
 /// How an opcode's operand prints.
@@ -84,7 +113,8 @@ pub fn operand(opcode: u8, mode: u8) -> Operand {
     match opcode {
         RETAG if mode == 3 => Operand::Number,
         FORK | GOTO | PUSH => Operand::Target,
-        WORD_IS => Operand::String,
+        WORD_IS | PEEK => Operand::String,
+        IS if mode == 1 => Operand::String,
         SWITCH => Operand::Switch,
         OPEN | LEAF | NODE_SUPER | RETAG | MERGE | WRAP | REMEMBER => Operand::Kind,
         NODE_FIELD => Operand::Field,
@@ -416,6 +446,17 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
         }
         "switch" => switch_row(parts, line)?,
         "reading" => reading_row(parts, line)?,
+        "ppop" => {
+            let s = line.number("s")?;
+            if line.peek_word().as_deref() == Some("cpp") {
+                line.word()?;
+                parts.pp.cpp_ops.push(s);
+            } else {
+                parts.pp.ops.push(s);
+            }
+        }
+        "ppsuffix" => parts.pp.suffix = true,
+        "ppcpp" => parts.pp.cpp = true,
         "rule" => {
             index(line, parts.rules.len(), "rule")?;
             parts.rules.push(line.number("@")?);
@@ -465,7 +506,7 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     let offset = o.parse().map_err(|_| format!("a bad offset `{w}`"))?;
                     let k = line.word()?;
                     let kinds = k.strip_prefix('k').and_then(|h| u64::from_str_radix(h, 16).ok()).ok_or_else(|| format!("a bad kind set `{k}`"))?;
-                    elems.push(crate::program::TokenElem { offset, kinds, words: Vec::new(), not: false, end: false });
+                    elems.push(crate::program::TokenElem { offset, kinds, words: Vec::new(), except: Vec::new(), not: false, end: false });
                 } else if w == "not" {
                     elems.last_mut().ok_or("a `not` before its element")?.not = true;
                 } else if w == "end" {
@@ -473,6 +514,9 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 } else if let Some(s) = w.strip_prefix('s') {
                     let s: u16 = s.parse().map_err(|_| format!("a bad word `{w}`"))?;
                     elems.last_mut().ok_or("a word before its element")?.words.push(s);
+                } else if let Some(s) = w.strip_prefix('x') {
+                    let s: u16 = s.parse().map_err(|_| format!("a bad keyword `{w}`"))?;
+                    elems.last_mut().ok_or("a keyword before its element")?.except.push(s);
                 } else {
                     return Err(format!("a bad token mark's part `{w}`"));
                 }
@@ -559,12 +603,13 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 }
                 program.rounds.push(group);
             } else if first == "region" {
-                // `block N region G %opener %closer %open %fill B [outside] [else %e M]`: a
+                // `block N region G %opener %closer %open %fill B [outside] [else %e M] [or %c M]
+                // [after MASK]`: a
                 // kind of a walk of rounds group G (`crate::block::Walk`), kinds in order.
                 let group: u16 = line.number("")?;
                 let (opener, closer, open, fill): (u16, u16, u16, u16) = (line.number("%")?, line.number("%")?, line.number("%")?, line.number("%")?);
                 let bytes: u8 = line.number("")?;
-                let (mut outside, mut empty) = (false, None);
+                let (mut outside, mut empty, mut or, mut after) = (false, None, None, 0u16);
                 while let Some(w) = line.peek_word() {
                     if w == "outside" {
                         line.word()?;
@@ -572,11 +617,17 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     } else if w == "else" {
                         line.word()?;
                         empty = Some((line.number("%")?, line.number("")?));
+                    } else if w == "or" {
+                        line.word()?;
+                        or = Some((line.number("%")?, line.number("")?));
+                    } else if w == "after" {
+                        line.word()?;
+                        after = line.number("")?;
                     } else {
-                        return Err(format!("block {at} region: `outside` or `else %e M`, not {w}"));
+                        return Err(format!("block {at} region: `outside`, `else %e M`, `or %c M` or `after MASK`, not {w}"));
                     }
                 }
-                let kind = crate::block::WalkKind { opener, closer, open, fill, bytes, outside, empty };
+                let kind = crate::block::WalkKind { opener, closer, open, fill, bytes, outside, empty, or, after };
                 match program.walks.last_mut() {
                     Some(w) if w.group == group => w.kinds.push(kind),
                     _ => {
@@ -595,10 +646,16 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 let kinds = line.word()?;
                 let hex = kinds.strip_prefix("kinds=").ok_or("`records S L kinds=…`")?;
                 let kinds: Vec<u8> = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)).collect::<Result<_, _>>().map_err(|_| "a bad kind")?;
-                program.records = Some(crate::records::Records { starts, lasts, kinds, words: Vec::new(), marks: Vec::new(), ends: Vec::new(), rules: Vec::new(), skip: None, gaps: 0, extra: None, untaken: Vec::new(), unless: Vec::new(), unplaced: 0, checks: Vec::new(), readers: Vec::new(), retags: Vec::new(), nexts: Vec::new(), tested_only: 0, check_masks: Vec::new() });
+                program.records = Some(crate::records::Records { starts, lasts, kinds, words: Vec::new(), marks: Vec::new(), ends: Vec::new(), rules: Vec::new(), skip: None, gaps: 0, extra: None, untaken: Vec::new(), unless: Vec::new(), unplaced: 0, checks: Vec::new(), readers: Vec::new(), retags: Vec::new(), nexts: Vec::new(), tested_only: 0, check_masks: Vec::new(), prefix: Vec::new(), gap: None });
             } else if first == "word" {
                 let r = program.records.as_mut().ok_or(format!("block {at} word before its records"))?;
                 r.words.push(line.quoted()?);
+            } else if first == "recgap" {
+                let r = program
+                    .records
+                    .as_mut()
+                    .ok_or(format!("block {at} recgap before its records"))?;
+                r.gap = Some(line.number("")?);
             } else if first == "recends" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recends before its records"))?;
                 let hex = line.word()?;
@@ -633,7 +690,7 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     Ok(w) if w == "retag" => Some((line.number("")?, line.number("")?)),
                     _ => None,
                 };
-                r.readers.push(crate::records::Reader { arms: Vec::new(), other, retag });
+                r.readers.push(crate::records::Reader { arms: Vec::new(), other, retag, parts: Vec::new(), split: crate::records::Split::Tier1, quiet: false });
             } else if first == "recretag" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recretag before its records"))?;
                 let (o, kind, marks): (u16, u8, u32) = (line.number("")?, line.number("")?, line.number("")?);
@@ -648,26 +705,62 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     "end" => crate::records::ReadNone::End,
                     w => crate::records::ReadNone::Bytes(w.strip_prefix("bytes").and_then(|m| m.parse().ok()).ok_or(format!("block {at} recarm: `refuse`, `end` or `bytesM`, not {w}"))?),
                 };
+                let (mut retag, mut last) = (None, None);
+                while let Ok(w) = line.word() {
+                    match w.as_str() {
+                        "retag" => retag = Some((line.number("")?, line.number("")?)),
+                        "last" => last = Some(line.number("")?),
+                        w => return Err(format!("block {at} recarm: `retag` or `last`, not {w}")),
+                    }
+                }
                 let rd = r.readers.get_mut(k).ok_or(format!("block {at} recarm {k}: no such reader"))?;
-                rd.arms.push(crate::records::ReadArm { opener, closer, off, none });
+                rd.arms.push(crate::records::ReadArm { opener, closer, off, last, none, retag });
+            } else if first == "recpart" {
+                // `recpart K START BYTES [last O]`: a part of reader K's region (`Reader::parts`).
+                let r = program.records.as_mut().ok_or(format!("block {at} recpart before its records"))?;
+                let k: usize = line.number("")?;
+                let (start, bytes): (u16, u8) = (line.number("")?, line.number("")?);
+                let last = match line.word() {
+                    Ok(w) if w == "last" => Some(line.number("")?),
+                    _ => None,
+                };
+                let rd = r.readers.get_mut(k).ok_or(format!("block {at} recpart {k}: no such reader"))?;
+                rd.parts.push(crate::records::ReadPart { start, bytes, last });
+            } else if first == "recquiet" {
+                // `recquiet K`: reader K's region holds no mask mark (`Reader::quiet`).
+                let r = program.records.as_mut().ok_or(format!("block {at} recquiet before its records"))?;
+                let k: usize = line.number("")?;
+                r.readers.get_mut(k).ok_or(format!("block {at} recquiet {k}: no such reader"))?.quiet = true;
+            } else if first == "recsplit" {
+                // `recsplit K tier2`: reader K's parts split by tier 2's token fetch.
+                let r = program.records.as_mut().ok_or(format!("block {at} recsplit before its records"))?;
+                let k: usize = line.number("")?;
+                let rd = r.readers.get_mut(k).ok_or(format!("block {at} recsplit {k}: no such reader"))?;
+                rd.split = match line.word()?.as_str() {
+                    "tier1" => crate::records::Split::Tier1,
+                    "tier2" => crate::records::Split::Tier2,
+                    w => return Err(format!("block {at} recsplit: `tier1` or `tier2`, not {w}")),
+                };
             } else if first == "recuntaken" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recuntaken before its records"))?;
                 r.untaken.push(line.number("")?);
             } else if first == "reccheck" {
                 let r = program.records.as_mut().ok_or(format!("block {at} reccheck before its records"))?;
                 let rule: u8 = line.number("")?;
-                let count = match line.word()?.as_str() {
-                    "count" => true,
-                    "run" => false,
-                    w => return Err(format!("block {at} reccheck: `count` or `run`, not {w}")),
+                let (count, all) = match line.word()?.as_str() {
+                    "count" => (true, false),
+                    "run" => (false, false),
+                    "all" => (false, true),
+                    w => return Err(format!("block {at} reccheck: `count`, `run` or `all`, not {w}")),
                 };
                 let (o, least): (u16, u32) = (line.number("")?, line.number("")?);
                 let then = match line.word() {
                     Ok(w) if w == "at" => crate::records::CheckThen::At(line.number("")?),
                     Ok(w) if w == "after" => crate::records::CheckThen::After(line.number("")?),
+                    Ok(w) if w == "cut" => crate::records::CheckThen::Cut,
                     _ => crate::records::CheckThen::Escape,
                 };
-                r.checks.push(crate::records::TokenCheck { rule, count, o, least, then });
+                r.checks.push(crate::records::TokenCheck { rule, count, o, least, then, all });
             } else if first == "recchecked" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recchecked before its records"))?;
                 r.check_masks.push(line.number("")?);
@@ -690,6 +783,13 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
             } else if first == "recskip" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recskip before its records"))?;
                 r.skip = Some(line.number("")?);
+            } else if first == "recprefix" {
+                let r = program.records.as_mut().ok_or(format!("block {at} recprefix before its records"))?;
+                let k: usize = line.number("")?;
+                if !(1..=8).contains(&k) {
+                    return Err(format!("block {at} recprefix of {k} bytes: one to eight"));
+                }
+                r.prefix = (0..k).map(|_| line.number("")).collect::<Result<_, _>>()?;
             } else if first == "recmark" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recmark before its records"))?;
                 let (o, w): (u16, u16) = (line.number("")?, line.number("")?);
@@ -807,6 +907,9 @@ pub fn validate(program: &Words) -> Result<(), Error> {
     if program.labels.iter().any(|&label| program.strings.get(usize::from(label)).is_none_or(|s| std::str::from_utf8(s).is_err())) {
         return Err(Error::InvalidOperand(0));
     }
+    if program.words.iter().any(|&w| crate::pp_words::is_pp(split(w).0)) {
+        return crate::pp_words::validate(program);
+    }
     if program.words.iter().any(|&w| crate::stream::is_stream(split(w).0)) {
         return crate::stream::validate_tier2(program);
     }
@@ -841,6 +944,18 @@ pub fn head_rows(out: &mut String, program: &Words) {
     crate::rir_text::count_rows(out, &program.counts);
     crate::rir_text::local_check_rows(out, &program.local_checks);
     crate::rir_text::rule_rows(out, &program.rules);
+    for s in &program.pp.ops {
+        let _ = writeln!(out, "  ppop s{s}");
+    }
+    for s in &program.pp.cpp_ops {
+        let _ = writeln!(out, "  ppop s{s} cpp");
+    }
+    if program.pp.suffix {
+        let _ = writeln!(out, "  ppsuffix");
+    }
+    if program.pp.cpp {
+        let _ = writeln!(out, "  ppcpp");
+    }
 }
 
 /// Each block program's rows (`block::block_rows`).
@@ -901,6 +1016,10 @@ pub fn disassemble(program: &Words) -> String {
 /// A local check's words (`localcheck`, `reclocal`): `mM dD` and its ops.
 fn local_check(line: &mut Line<'_>) -> Result<crate::program::LocalCheck, String> {
     use crate::program::LocalOp;
+    let token = line.peek_word().as_deref() == Some("t");
+    if token {
+        line.word()?;
+    }
     let mask: u16 = line.number("m")?;
     let delay: u8 = line.number("d")?;
     let mut ops = Vec::new();
@@ -908,6 +1027,10 @@ fn local_check(line: &mut Line<'_>) -> Result<crate::program::LocalCheck, String
                 line.word()?;
                 let bad = || format!("a bad local op `{w}`");
                 let (tag, rest) = w.split_at(1);
+                if rest.is_empty() && (tag == "s" || tag == "l") {
+                    ops.push(if tag == "s" { LocalOp::Start } else { LocalOp::Last });
+                    continue;
+                }
                 let nums = |r: &str| -> Result<Vec<u64>, String> { r.split('.').map(|x| u64::from_str_radix(x, if tag == "b" || tag == "c" { 16 } else { 10 }).map_err(|_| bad())).collect() };
                 let v = nums(rest)?;
                 let two = |v: &[u64]| -> Result<(u16, u16), String> { if v.len() == 2 { Ok((v[0] as u16, v[1] as u16)) } else { Err(bad()) } };
@@ -921,8 +1044,24 @@ fn local_check(line: &mut Line<'_>) -> Result<crate::program::LocalCheck, String
                     "x" => { let (a, b) = two(&v)?; LocalOp::Xor(a, b) }
                     "m" => { let (a, b) = two(&v)?; LocalOp::AndNot(a, b) }
                     "p" => { let (a, k) = two(&v)?; LocalOp::Prev(a, k as u8) }
+                    "f" => { let (a, b) = two(&v)?; LocalOp::Fill(a, b) }
                     _ => return Err(bad()),
                 });
             }
-            Ok(crate::program::LocalCheck { mask, delay, ops })
+            Ok(crate::program::LocalCheck { mask, delay, ops, token })
+}
+
+#[cfg(test)]
+mod opcode_tests {
+    /// Every opcode has a number of its own: two words with one number read as whichever the
+    /// decoder matches first (SETTLE and the preprocessor's READ were both 0x67 after a merge).
+    #[test]
+    fn every_opcode_has_its_own_number() {
+        let mut seen = std::collections::HashMap::new();
+        for &(code, name) in super::OPCODES {
+            if let Some(other) = seen.insert(code, name) {
+                panic!("{name} and {other} are both {code:#x}");
+            }
+        }
+    }
 }

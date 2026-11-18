@@ -1,7 +1,7 @@
 # 0352. A slow line's measure is kept, and acted on
 
 Status: built (2026-11-17). Amends decisions 0203 §3 (a slow line is flagged and planned again), 0206 (the handoff)
-and 0271 (a slow line is bounded on every path). Work queue Q117.
+and 0271 (a slow line is bounded on every path). Work queue Q80.
 
 ## Intro
 

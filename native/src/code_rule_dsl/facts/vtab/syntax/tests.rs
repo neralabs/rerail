@@ -887,11 +887,10 @@ fn candidate_demands_preserve_document_scope_and_receiver_independence() {
 }
 
 #[test]
-fn projection_axes_and_token_spans_are_demanded_without_renumbering() {
+fn projection_axes_and_token_spans_are_read_without_renumbering() {
     let f = facts("a.py", "f(a + 1)\ng(b)\n");
     let dialect = Dialect::new(tape_tag(GrammarDialect::Python).unwrap()).unwrap();
     let p = Projected::new(7, Arc::clone(&f), Some(&dialect), Shape::Core, false, None);
-    assert!(p.extra.as_ref().unwrap().token_spans.get().is_none());
     // Independent eager reference: the named nodes' tokens in preorder (by start: they do not overlap), then source
     // and lines.
     let mut expected = Vec::new();
@@ -907,9 +906,7 @@ fn projection_axes_and_token_spans_are_demanded_without_renumbering() {
     expected.extend((1..=lines.count()).map(|l|lines.span(l)));
     assert_eq!(p.extra.as_ref().unwrap().tokens as usize,tokens);
     assert_eq!(p.locs(),p.len()+expected.len() as u32);
-    // Counting and source/line access never allocate token spans.
     for i in tokens..expected.len() { assert_eq!(p.span(p.len()+i as u32),expected[i]); }
-    assert!(p.extra.as_ref().unwrap().token_spans.get().is_none());
     for (i,&span) in expected.iter().enumerate() { assert_eq!(p.span(p.len()+i as u32),span); }
     for l in 0..(p.len() as usize) {
         let parent=p.parent(l);
@@ -1551,46 +1548,6 @@ fn granule_kinds_are_a_table_by_kind_code() {
     }
 }
 
-/// An axis's row count is counted from the tree, without its batch's solve: a guest round digests each input by its
-/// length, and the solve, every node's chain of member ancestors as pairs, was made for that count alone (780 MB of
-/// a PostHog run's 2.5 GB peak). A scan over `0..len` still reads every pair, solved then.
-#[test]
-fn an_axis_counts_its_rows_without_its_solve() {
-    use crate::code_rule_dsl::facts::core::kind_atom;
-    use crate::code_rule_dsl::typing::file_local::Binding;
-    let store = ContentStore::open(&temp("axes-len")).unwrap();
-    let docs: Vec<Document> = documents().into_iter().take(4).collect();
-    let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
-    let nodes = *batch.nodes.last().unwrap();
-    let kind = |r: usize| {
-        let (p, local) = batch.locate(View::Node, r);
-        let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(p.node(local as u32)));
-        i64::from(kind_atom(p.tag, batch.dialects[p.tag].canonical.get(usize::from(code)).copied().unwrap_or(code)))
-    };
-    let set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();
-    let sources = [
-        ("containment", within::Within::new(Arc::clone(&batch), within::Mode::Tree)),
-        ("nearest", within::Within::axis(Arc::clone(&batch), within::Axis::Nearest, &set, Binding::Cpu)),
-        ("inside", within::Within::axis(Arc::clone(&batch), within::Axis::Inside, &set, Binding::Cpu)),
-    ];
-    // The last two documents' nodes, as a guest round's new documents (`retain::owners_delta`).
-    let new_from = batch.nodes[2];
-    let new_ids: BTreeSet<i64> = (new_from..nodes).map(|r| batch.id(r)).collect();
-    for (name, source) in sources {
-        let len = source.len();
-        assert!(len > 0, "{name}");
-        assert!(!source.is_solved(), "{name}: counted without its solve");
-        let owned: BTreeSet<(i64, i64)> = source.rows_owned(0, &|n| new_ids.contains(&n)).expect("a batch's view finds a document's rows").into_iter().map(|r| (source.value(r, 0), source.value(r, 1))).collect();
-        assert!(!source.is_solved(), "{name}: the new documents' rows found without its solve");
-        let scanned: BTreeSet<(i64, i64)> = (0..len).map(|r| (source.value(r, 0), source.value(r, 1))).collect();
-        assert!(!owned.is_empty(), "{name}");
-        assert_eq!(owned, scanned.iter().filter(|(n, _)| new_ids.contains(n)).copied().collect(), "{name}: exactly the new documents' rows");
-        assert_eq!(scanned.len(), len, "{name}: a scan reads every pair once");
-        assert!(source.is_solved(), "{name}: solved by the scan");
-        assert_eq!(source.len(), len, "{name}");
-    }
-}
-
 /// Decision 0353 step 2: the granule table answers every node's and token's id, equal to `DefIds::low`'s, in formats
 /// 15, 16 and 16z, in both shapes, for every language with a granule rule and a document folded past the slots;
 /// `Table::node` inverts it; the scan gives the same ids in preorder; and no other tape node has one.
@@ -1637,6 +1594,12 @@ fn node_ids_in_place_equal_the_numbered_ones() {
                 for (l, _, q) in p.walk() {
                     assert_eq!(q, p.parent(l as usize), "{label} {format:?} {shape:?}: the parent of local {l}");
                 }
+                // A parent searched from the innermost granule holding the node is the tape's (`Tape::parent_within`).
+                if let Some(t) = p.table() {
+                    for x in 1..f.len() as u32 {
+                        assert_eq!(f.parent_within(x, t.holding(x)), f.parent(x), "{label} {format:?} {shape:?}: tape node {x}'s parent");
+                    }
+                }
                 // A node's place among its parent's children and its depth, read off the tape (decision 0353 step 3),
                 // are the walk's.
                 let (mut next, mut depth) = (vec![0u32; p.len() as usize], vec![0u32; p.len() as usize]);
@@ -1645,6 +1608,27 @@ fn node_ids_in_place_equal_the_numbered_ones() {
                     next[q as usize] += 1;
                     depth[l as usize] = depth[q as usize] + 1;
                     assert_eq!(p.depth(l as usize), depth[l as usize], "{label} {format:?} {shape:?}: the depth of local {l}");
+                }
+                // `next_sibling` (a view, decision 0353 step 3): its pairs are each numbered node's numbered direct
+                // children, consecutive, as core.rr's rows were made; each read both ways off the tape.
+                let mut pairs = Vec::new();
+                for (_, x) in p.nodes() {
+                    let mut prev = None;
+                    for c in p.children_of_node(x) {
+                        pairs.extend(prev.map(|a| (a, c)));
+                        prev = Some(c);
+                    }
+                }
+                pairs.sort_unstable();
+                let mut read: Vec<(u32, u32)> = p.ranks().iter(Item::Sibling).map(|(_, x)| {
+                    let b = p.ranks().rank(Item::Node, x);
+                    (p.prev_sibling(b).expect("a sibling before"), b)
+                }).collect();
+                read.sort_unstable();
+                assert_eq!(read, pairs, "{label} {format:?} {shape:?} {narrowed}: next_sibling's pairs");
+                let after: HashMap<u32, u32> = pairs.iter().copied().collect();
+                for l in 0..p.len() {
+                    assert_eq!(p.next_sibling(l), after.get(&l).copied(), "{label} {format:?} {shape:?} {narrowed}: the sibling after local {l}");
                 }
                 let reference = p.reference(&dialect);
                 let low = &reference.low[..];
@@ -1687,7 +1671,7 @@ fn node_ids_in_place_equal_the_numbered_ones() {
                 }
                 // The rank index's point reads (written once, `id_reads`) agree with its walk over the set bits.
                 let r = p.ranks();
-                for item in [Item::Node, Item::Token, Item::Field] {
+                for item in [Item::Node, Item::Token, Item::Field, Item::Sibling] {
                     let walked: Vec<(u32, u32)> = r.iter(item).collect();
                     assert_eq!(walked.len() as u32, r.count(item), "{at}: {item:?}'s count");
                     let set: HashMap<u32, u32> = walked.iter().map(|&(k, x)| (x, k)).collect();
@@ -1711,6 +1695,46 @@ fn node_ids_in_place_equal_the_numbered_ones() {
         }
     }
     assert!(narrower >= 6, "anchored projections narrower than the whole: {narrower}");
+}
+
+/// An axis's row count is counted from the tree, without its batch's solve: a guest round digests each input by its
+/// length, and the solve, every node's chain of member ancestors as pairs, was made for that count alone (780 MB of
+/// a PostHog run's 2.5 GB peak). A scan over `0..len` still reads every pair, solved then.
+#[test]
+fn an_axis_counts_its_rows_without_its_solve() {
+    use crate::code_rule_dsl::facts::core::kind_atom;
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let store = ContentStore::open(&temp("axes-len")).unwrap();
+    let docs: Vec<Document> = documents().into_iter().take(4).collect();
+    let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
+    let nodes = *batch.nodes.last().unwrap();
+    let kind = |r: usize| {
+        let (p, local) = batch.locate(View::Node, r);
+        let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(p.node(local as u32)));
+        i64::from(kind_atom(p.tag, batch.dialects[p.tag].canonical.get(usize::from(code)).copied().unwrap_or(code)))
+    };
+    let set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();
+    let sources = [
+        ("containment", within::Within::new(Arc::clone(&batch), within::Mode::Tree)),
+        ("nearest", within::Within::axis(Arc::clone(&batch), within::Axis::Nearest, &set, Binding::Cpu)),
+        ("inside", within::Within::axis(Arc::clone(&batch), within::Axis::Inside, &set, Binding::Cpu)),
+    ];
+    // The last two documents' nodes, as a guest round's new documents (`retain::owners_delta`).
+    let new_from = batch.nodes[2];
+    let new_ids: BTreeSet<i64> = (new_from..nodes).map(|r| batch.id(r)).collect();
+    for (name, source) in sources {
+        let len = source.len();
+        assert!(len > 0, "{name}");
+        assert!(!source.is_solved(), "{name}: counted without its solve");
+        let owned: BTreeSet<(i64, i64)> = source.rows_owned(0, &|n| new_ids.contains(&n)).expect("a batch's view finds a document's rows").into_iter().map(|r| (source.value(r, 0), source.value(r, 1))).collect();
+        assert!(!source.is_solved(), "{name}: the new documents' rows found without its solve");
+        let scanned: BTreeSet<(i64, i64)> = (0..len).map(|r| (source.value(r, 0), source.value(r, 1))).collect();
+        assert!(!owned.is_empty(), "{name}");
+        assert_eq!(owned, scanned.iter().filter(|(n, _)| new_ids.contains(n)).copied().collect(), "{name}: exactly the new documents' rows");
+        assert_eq!(scanned.len(), len, "{name}: a scan reads every pair once");
+        assert!(source.is_solved(), "{name}: solved by the scan");
+        assert_eq!(source.len(), len, "{name}");
+    }
 }
 
 /// Decision 0353 step 2: the numbering's reads as MSL (`id_reads.metal`, written once in CLIF), run on the device
@@ -1816,4 +1840,182 @@ kernel void ids_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[b
         }
     }
     assert_eq!(tried, 3 * 3 * 3, "every case, format and shape");
+}
+
+/// Decision 0353 step 4c: the `node`, `child`, `field`, `core_node` and `line` views' rows read through the views' reads (written once in CLIF), by the JIT on
+/// the host and as MSL on the device, over the document's entry, its numbering where it lies in its block and its
+/// tape where it is read in place, are the host's rows (`Viewed::value_of`): every numbered node's document, id, kind,
+/// start and end; each child's parent, id and place; each fielded node's parent, field and id; each node's tape node;
+/// each node's line, by its lines where they lie (step 4d). In all three formats, whole and narrowed.
+#[cfg(target_os = "macos")]
+#[test]
+fn the_view_reads_are_the_hosts_rows() {
+    use crate::code_rule_dsl::lines::{LineTable, Terminators};
+    use crate::code_rule_dsl::tape::{Grammar, TapeImage, formats::Format};
+    use metal::{CompileOptions, Device, MTLResourceOptions, MTLSize};
+    use ranks::Item;
+    use rerail_clif::view::TapeView;
+    const WIDE: usize = 16;
+    const KERNEL: &str = r#"
+// The tape is reached by its GPU address (a pointer in the stage's constants, the buffer made resident): no binding.
+struct Tapes { device const uchar* tt; device const uchar* ll; };
+kernel void view_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[buffer(1)]], constant uint& n [[buffer(2)]],
+                       constant Tapes& tapes [[buffer(3)]], constant uint* tv [[buffer(4)]], device long* out [[buffer(5)]],
+                       constant uint& nf [[buffer(6)]], uint l [[thread_position_in_grid]]) {
+    if (l >= n) return;
+    device const uchar* tt = tapes.tt;
+    device const uchar* ll = tapes.ll;
+    uint v[29];
+    for (uint k = 0u; k < 29u; k++) v[k] = tv[k];
+    device long* o = out + l * 16u;
+    for (uint c = 0u; c < 5u; c++) o[c] = long(clif_view_node(b, d, tt, v, ll, l, c));
+    for (uint c = 0u; c < 3u; c++) o[5u + c] = l + 1u < n ? long(clif_view_child(b, d, tt, v, ll, l, c)) : 0;
+    for (uint c = 0u; c < 3u; c++) o[8u + c] = l < nf ? long(clif_view_field(b, d, tt, v, ll, l, c)) : 0;
+    for (uint c = 0u; c < 3u; c++) o[11u + c] = long(clif_view_core(b, d, tt, v, ll, l, c));
+    for (uint c = 0u; c < 2u; c++) o[14u + c] = long(clif_view_line(b, d, tt, v, ll, l, c));
+}
+"#;
+    const _: () = assert!(std::mem::size_of::<TapeView>() == 29 * 4);
+    let jit = rerail_clif::jit::Reads::new();
+    // SAFETY: `view_node`'s signature: the entry, the tape's base, its view, the lines' base, a local, a column.
+    let read = |name: &str| -> extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, u32, u32) -> i64 { unsafe { std::mem::transmute(jit.function(name)) } };
+    let (node, child, field, core_node, line) = (read("view_node"), read("view_child"), read("view_field"), read("view_core"), read("view_line"));
+    let device = Device::system_default();
+    let pipe = device.as_ref().map(|device| {
+        let source = format!(
+            "#include <metal_stdlib>\nusing namespace metal;\n{}{}{}{KERNEL}",
+            include_str!("../../../transducer/packed/metal_tape_reads_z.metal"),
+            include_str!("id_reads.metal"),
+            include_str!("view_reads.metal")
+        );
+        let lib = device.new_library_with_source(&source, &CompileOptions::new()).expect("the view reads compile");
+        (device.new_compute_pipeline_state_with_function(&lib.get_function("view_probe", None).unwrap()).unwrap(), device.new_command_queue())
+    });
+    let cases: &[(&str, &str)] = &[
+        ("python", "import os\nX = 1\n@dec\ndef f(a, b=2):\n    '''doc'''\n    return [x for x in a if x]\n\nclass C(B):\n    def m(self):\n        def inner():\n            pass\n        return inner\n"),
+        ("typescript", "import { a } from 'b';\nexport const App = () => 1;\nclass K { x = 1; m(): number { return this.x; } }\nfunction g(n: number) { if (n) { return n; } }\n"),
+    ];
+    let anchors: BTreeSet<String> = ["call", "call_expression", "function_definition", "method_definition", "class_declaration"].iter().map(|s| (*s).to_owned()).collect();
+    let mut tried = 0;
+    for &(label, source) in cases {
+        let lang = dialect_by_label(label).unwrap();
+        let grammar = Grammar::new(lang).unwrap();
+        let source = Arc::new(source.to_owned());
+        let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
+        for format in Format::ALL {
+            let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
+            let words: Vec<u32> = lines.words().to_vec();
+            let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image.clone().in_format(format, source.as_bytes()), lines).unwrap());
+            let dialect = Dialect::new(core::facts_tag(&facts)).unwrap();
+            let (tape, view) = facts.tape.as_ref().unwrap().in_place().unwrap();
+            // A 16z tape's reads decode its blocks into the reader's slots (0353 step 4b).
+            let reader = rerail_clif::view::Reader::new(&view, tape.as_ptr());
+            let v = reader.view();
+            for (shape, narrowed) in [(Shape::Core, false), (Shape::T, false), (Shape::Core, true)] {
+                let p = if narrowed { Projected::anchored(7, Arc::clone(&facts), Some(&dialect), shape, &anchors) } else { Projected::new(7, Arc::clone(&facts), Some(&dialect), shape, false, None) };
+                let at = format!("{label} {} {shape:?}{}", format.name(), if narrowed { " narrowed" } else { "" });
+                let block = p.ranks().block();
+                let entry = view_docs::ViewEntry::new(block, &p, &dialect);
+                let n = p.len();
+                let nf = p.ranks().count(Item::Field);
+                let parent = |l: u32| match p.parent(l as usize) {
+                    NONE => -1,
+                    q => p.global(q),
+                };
+                // Each local's rows: its `node` row, then `child` row `l` (of local `l + 1`), `field` row `l`, `core_node` row.
+                let want: Vec<i64> = (0..n)
+                    .flat_map(|l| {
+                        let x = p.ranks().select(Item::Node, l).unwrap();
+                        let c = l + 1;
+                        let child = if c < n { [parent(c), p.global(c), i64::from(p.idx(c as usize))] } else { [0; 3] };
+                        let field = if l < nf {
+                            let fx = p.ranks().select(Item::Field, l).unwrap();
+                            let fl = p.ranks().rank(Item::Node, fx);
+                            [parent(fl), i64::from(field_atom(p.tag, facts.field(fx))), p.global(fl)]
+                        } else {
+                            [0; 3]
+                        };
+                        let mut row = vec![i64::from(p.key), p.global(l), i64::from(dialect.kind_of_atom(facts.kind(x))), i64::from(facts.start(x)), i64::from(facts.end(x))];
+                        row.extend(child);
+                        row.extend(field);
+                        row.extend([i64::from(p.key), i64::from(x), p.global(l)]);
+                        row.extend([p.global(l), i64::from(facts.start_line(x))]);
+                        row
+                    })
+                    .collect();
+                let e = entry.desc();
+                let t = tape.as_ptr();
+                let ll = words.as_ptr().cast::<u8>();
+                let jitted: Vec<i64> = (0..n)
+                    .flat_map(|l| {
+                        let mut row: Vec<i64> = (0..5).map(|c| node(e, t, v, ll, l, c)).collect();
+                        row.extend((0..3).map(|c| if l + 1 < n { child(e, t, v, ll, l, c) } else { 0 }));
+                        row.extend((0..3).map(|c| if l < nf { field(e, t, v, ll, l, c) } else { 0 }));
+                        row.extend((0..3).map(|c| core_node(e, t, v, ll, l, c)));
+                        row.extend((0..2).map(|c| line(e, t, v, ll, l, c)));
+                        row
+                    })
+                    .collect();
+                assert_eq!(jitted, want, "{at}: the JIT's rows");
+                if let (Some(device), Some((pipe, queue))) = (&device, &pipe) {
+                    let d = block.offset_of(entry.desc()) as u64;
+                    // The tape where the device reads it: a test's buffer of its bytes, a word of room past them.
+                    let mut bytes = tape.to_vec();
+                    bytes.resize(tape.len() + 16, 0);
+                    let tt = device.new_buffer_with_data(bytes.as_ptr().cast(), bytes.len() as u64, MTLResourceOptions::StorageModeShared);
+                    let out = device.new_buffer(u64::from(n.max(1)) * WIDE as u64 * 8, MTLResourceOptions::StorageModeShared);
+                    // A 16z tape's blocks through a cache every thread shares (0353 step 4b): one of a block a
+                    // generation, which turns all the time and may find no room (a failure counted: the device
+                    // refuses the batch), and one with room.
+                    for room in [1u32, 4, 64] {
+                    let cmd = queue.new_command_buffer();
+                    let enc = cmd.new_compute_command_encoder();
+                    enc.set_compute_pipeline_state(pipe);
+                    enc.set_buffer(0, Some(&block.gpu_buffer(device)), 0);
+                    enc.set_bytes(1, 8, (&raw const d).cast());
+                    enc.set_bytes(2, 4, (&raw const n).cast());
+                    // Its lines where the device reads them: a test's buffer of their words.
+                    let lb = device.new_buffer_with_data(words.as_ptr().cast(), 4 * words.len() as u64, MTLResourceOptions::StorageModeShared);
+                    let address = [tt.gpu_address(), lb.gpu_address()];
+                    let mut view = view;
+                    let spec = rerail_clif::view::cache::Spec::new(3, room, view.columns[3] as usize).with_stats();
+                    let cache = device.new_buffer(spec.bytes() as u64, MTLResourceOptions::StorageModeShared);
+                    if view.format == rerail_clif::view::F16Z_FORMAT {
+                        // SAFETY: the buffer's bytes, shared with the host, not yet read by the device.
+                        spec.init(unsafe { std::slice::from_raw_parts_mut(cache.contents().cast::<u8>(), spec.bytes()) }).unwrap();
+                        let rel = cache.gpu_address().wrapping_sub(tt.gpu_address()) as i64;
+                        (view.side[0], view.side[1], view.columns[3], view.columns[4]) = (rel as u32, (rel >> 32) as u32, spec.entry_bytes() as u32, 1);
+                    }
+                    enc.use_resource(&cache, metal::MTLResourceUsage::Read | metal::MTLResourceUsage::Write);
+                    enc.set_bytes(3, 16, address.as_ptr().cast());
+                    enc.use_resource(&tt, metal::MTLResourceUsage::Read);
+                    enc.use_resource(&lb, metal::MTLResourceUsage::Read);
+                    enc.set_bytes(4, std::mem::size_of::<TapeView>() as u64, (&raw const view).cast());
+                    enc.set_buffer(5, Some(&out), 0);
+                    enc.set_bytes(6, 4, (&raw const nf).cast());
+                    enc.dispatch_threads(MTLSize::new(u64::from(n), 1, 1), MTLSize::new(64, 1, 1));
+                    enc.end_encoding();
+                    cmd.commit();
+                    cmd.wait_until_completed();
+                    // SAFETY: the kernel wrote WIDE longs a row, and its command completed.
+                    let got = unsafe { std::slice::from_raw_parts(out.contents().cast::<i64>(), want.len()) };
+                    // SAFETY: the cache's header, its command completed.
+                    let word = |at: i32| unsafe { *cache.contents().cast::<u8>().add(at as usize).cast::<u32>() };
+                    if view.format == rerail_clif::view::F16Z_FORMAT {
+                        // SAFETY: the cache's header, its command completed.
+                        let counts = unsafe { rerail_clif::view::cache::Counts::read(cache.contents().cast::<u8>()) };
+                        eprintln!("{at}, {room} a generation: the device's cache: {counts:?}, hit ratio {:.3}", counts.hit_ratio());
+                    }
+                    let failed = word(rerail_clif::view::cache::FAILED);
+                    assert!(room == 1 || failed == 0, "{at}: the device's cache with room failed {failed} times");
+                    if failed == 0 {
+                        assert_eq!(got, &want[..], "{at}, {room} a generation: the device's rows");
+                    }
+                    }
+                }
+                tried += 1;
+            }
+        }
+    }
+    assert_eq!(tried, 2 * 3 * 3, "every case, format and shape");
 }

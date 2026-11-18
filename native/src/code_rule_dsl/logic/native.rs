@@ -27,6 +27,7 @@ pub mod aggregation;
 pub mod dfs_first;
 /// `components` (`core.rr`, decision 0063): each document's import component and its Merkle key.
 pub mod components;
+pub mod rank;
 /// The reach index (decision 0119): a transitive closure as one bitmap per start.
 pub mod reach;
 pub mod match_all;
@@ -45,7 +46,7 @@ pub mod component {
     pub use super::setfix::{DeviceReport, device_report};
     pub use super::setfix::probed;
     pub use super::setfix::{CutReport, TrialRun, symbol_id, cut_counts, cut_step, keep_trial_rows, set_budgets, take_cut, thread_cpu, trial, trial_ids, trial_over, trial_own};
-    pub use super::setfix::{InRel, Ver, LIVE_BATCH, RelMark, add, cat_symbols, prime, adopt, adopted, close, carry_sorted, columns_source, columns_source_measured, derived, forget_derived, forget_inputs_of, held, held_rows, each_held_batch, hold_as, hold_empty, hold_source, hold_view, hold_view_in_place, held_source, live, materialize, open_spec, pending, defer, prefetch_joins, prefetch_tables, level_clear, level_counts, release, reprobe_spec, retain, run, step_counts, maint_step_counts, driver_step_counts, step_cpu, step_histograms, unindex, hold_rows, kept_rows, live_changed, table_source, tables_built, output_rows, source_rows, finding_rows};
+    pub use super::setfix::{InRel, Ver, LIVE_BATCH, RelMark, add, cat_symbols, prime, adopt, adopted, close, columns_source, columns_source_measured, derived, forget_derived, forget_inputs_of, held, held_rows, each_held_batch, hold_as, hold_empty, hold_source, hold_view, hold_view_in_place, held_source, live, give_versions, take_versions, materialize, open_spec, pending, defer, prefetch_joins, prefetch_tables, level_clear, level_counts, release, reprobe_spec, retain, run, step_counts, maint_step_counts, driver_step_counts, step_cpu, step_histograms, unindex, hold_rows, kept_rows, live_changed, table_source, tables_built, output_rows, source_rows, finding_rows};
 }
 use rusqlite::ffi;
 use rusqlite::functions::{Aggregate, Context, FunctionFlags};

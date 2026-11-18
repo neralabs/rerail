@@ -17,8 +17,10 @@
 //! The lint: `C` and `K` are declared and differ; every rule of `K` in the program puts a constant in its head (the
 //! version tag); every rule of `C` reads `K`, positively.
 
-use super::view::{LitView, RuleView, TermView};
-use super::{Error, Program};
+use super::Error;
+use crate::code_rule_dsl::logic::program_image::Version;
+use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
+use crate::code_rule_dsl::logic::program_image::handles::{Lit, TermRef};
 use std::collections::BTreeSet;
 
 /// A cache `out` by its key `key`.
@@ -29,17 +31,11 @@ pub struct Cache {
 }
 
 /// The program's caches, linted (decision 0103); an error names what the lint refuses.
-pub fn caches(prog: &Program) -> Result<Vec<Cache>, Error> {
-    caches_of(prog, &prog.rules.iter().map(RuleView::Tree).collect::<Vec<_>>())
-}
-
-/// `caches` over `rules` (a tree's or a version's, work queue Q131), with the settings and declarations from `prog`
-/// (a version's header).
-pub fn caches_of(prog: &Program, rules: &[RuleView<'_>]) -> Result<Vec<Cache>, Error> {
+pub fn caches(v: &Version) -> Result<Vec<Cache>, Error> {
     let bad = |msg: String| Error::Syntax(format!(".cache: {msg} (decision 0103: a cache is a key rule with a version tag and an output rule that reads it)"));
     let mut out = Vec::new();
     let mut named = BTreeSet::new();
-    for (_, text) in prog.settings.iter().filter(|(k, _)| k == "cache") {
+    for (_, text) in ProgramFields::settings(v).iter().filter(|(k, _)| k == "cache") {
         let words: Vec<&str> = text.split_whitespace().collect();
         let [c, "by", k] = words.as_slice() else { return Err(bad(format!("`.cache {text}`: write `.cache C by K`"))) };
         let (c, k) = (c.trim_end_matches('.').to_owned(), k.trim_end_matches('.').to_owned());
@@ -50,18 +46,18 @@ pub fn caches_of(prog: &Program, rules: &[RuleView<'_>]) -> Result<Vec<Cache>, E
             return Err(bad(format!("{c} is its own key")));
         }
         for rel in [&c, &k] {
-            if !prog.decls.contains_key(rel.as_str()) {
+            if !v.declares(rel) {
                 return Err(bad(format!("{rel} is not declared")));
             }
         }
-        for rule in rules.iter().filter(|r| r.rel() == k) {
-            if !rule.head().args.iter().any(|t| matches!(t, TermView::Str(_) | TermView::Int(_))) {
-                return Err(bad(format!("the key rule `{}` has no version tag: put a constant in its head, as `{k}(x, \"v1\")`", rule.shown())));
+        for rule in v.rules().filter(|r| v.rel_name(r.head().rel()) == k) {
+            if !rule.head().args().any(|t| matches!(t, TermRef::Str(_) | TermRef::Int(_))) {
+                return Err(bad(format!("the key rule `{}` has no version tag: put a constant in its head, as `{k}(x, \"v1\")`", v.show_rule(rule))));
             }
         }
-        for rule in rules.iter().filter(|r| r.rel() == c) {
-            if !rule.body().iter().any(|l| matches!(l, LitView::Atom(a) if a.rel == k && !a.neg)) {
-                return Err(bad(format!("the output rule `{}` does not read {k}", rule.shown())));
+        for rule in v.rules().filter(|r| v.rel_name(r.head().rel()) == c) {
+            if !rule.body().any(|l| matches!(l.view(), Lit::Atom(a) if v.rel_name(a.rel()) == k && !a.neg())) {
+                return Err(bad(format!("the output rule `{}` does not read {k}", v.show_rule(rule))));
             }
         }
         out.push(Cache { out: c, key: k });

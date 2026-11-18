@@ -152,19 +152,27 @@ mask hashword   = fill(directive, ~(code & word))
 mask w          = code & word & ~hashword
 mask ident      = fill(w & alpha, ~w)           # from a run's first letter to its end
 mask num        = w & ~ident                    # the digits before it
-# A float, `1.5`: a `.` between digits (`f_dot`); the digits after it, its fraction. Read as
-# simdjson reads one, straight through: digits, a `.`, digits, and the float ends. A float's
-# `.` right after a fraction (`1.2.3`) is a chain no file has: the engine reads it, so no
-# float's `.` waits on the one before it. Checked at the number's token (below).
-mask f_dot      = code & dot & prev(num) & next(digit)
+# A float, `1.5`: a `.` between digits (`f_dot`); the digits after it, its fraction. A `.`
+# after a fraction is no float's, as the engine reads it: `1.2.3` is `1.2`, `.` and `3`, and
+# `1.2.3.4` is `1.2`, `.` and `3.4`. The token loop reads that as a lexer does: a number's run
+# takes one `.` and stops at the next (`once`, below). The masks say the same of every byte at
+# once, for the tokens' starts (which the CPU's loop finds, and makes no mask of): a chain's
+# dots between digits (`c_dot`) are a float's by turns, the first, the third, …, their parity
+# in the chain, the parity so far (a prefix xor, `toggle`) against the parity at the chain's
+# first digit, filled over the chain.
+mask c_dot      = code & dot & prev(num) & next(digit)
+mask chain      = num | c_dot
+mask c_par      = toggle(c_dot)
+mask c_odd      = fill(chain & ~prev(chain) & c_par, ~chain)
+mask f_dot      = c_dot & (c_par ^ c_odd)
 mask frac       = fill(prev(f_dot), ~digit)
 mask int        = num & ~frac                   # an integer's digits
 # A float is one token, as simdjson's number is one scalar: a number with a `.`. It marks the
 # token after it (`float_after`, below), and tier 2 makes the number it took a float there.
 # The engine reads an integer as an i64: one of 19 or more digits (leading zeros aside) is
-# checked by it. A float's digits are its text: no limit. A number of 19 digits or more goes to
-# the engine, with its leading zeros, or a fraction after it (the engine's tape either way).
-# Checked at the number's token (below).
+# checked by it, so it goes to the engine, with its leading zeros (the engine's tape either
+# way). A float's digits are its text: no limit. Checked at the number's token (below): a token
+# of digits alone, 19 at least.
 
 # Directives the engine refuses by the token after them: token marks, after the other marks.
 
@@ -184,12 +192,12 @@ mask p          = code & punct & ~f_dot
 mask p_start    = p & ~second
 mask p_last     = (p_start & ~two_start) | second
 
-error "a byte no token takes" by tokens when code & ~ws & ~hashword & ~ident & ~num & ~p & ~f_dot
+error "a byte no token takes" by tokens when code & ~ws & ~hashword & ~ident & ~num & ~punct
 
 # A token ended by a rule (`run`, `pair`) ends at its start on the CPU, by its run or its pair
 # bit (decision 0177); the others by their last byte's mask. The rules read no `code`: the token
 # loop starts each token after the one before, so never inside a region (2c). A number's run is
-# its digits and a float's `.` between two digits.
+# its digits and its `.`s between digits, one of them (`once dot`): the second ends it.
 mask num_run    = digit | (dot & prev(digit) & next(digit))
 # --- Tokens ------------------------------------------------------------------------------------
 
@@ -203,11 +211,9 @@ keywords hash_word { "#include" } required
 token identifier = start alpha & ident & ~prev(ident) run word
 # A float's `.` and fraction are its number's: one token.
 mask numeral    = int | f_dot | frac
-token number     = start digit & int & ~prev(int) run num_run
-# A number's checks, at its token as a lexer reads it: a second `.` (`1.2.3`), and 19 digits
-# from its first.
-escape "a float's `.` after a fraction" at number when count(dot) at least 2
-escape "a number of 19 digits or more" at number when run(digit) at least 19
+token number     = start digit & int & ~prev(int) run num_run once dot
+# A number's check, at its token as a lexer reads it: an integer of 19 digits or more.
+escape "a number of 19 digits or more" at number when all(digit) at least 19
 token punct      = start punct & p_start pair two_start
 # The directives' words are words, keywords only where a statement's `.` comes before them;
 # `_`, only where a term can be a wildcard; `must` and `may`, only at a head's start; the

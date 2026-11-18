@@ -40,17 +40,22 @@ impl Added {
 
     /// `prog` given the rows of each relation it declares, and the dialect as its language when it names one. A
     /// program that declares none of them and names no language is as it was.
-    pub fn add_to(&self, prog: &mut front::Program) {
+    pub fn add_to(&self, prog: &mut (impl crate::code_rule_dsl::logic::program_image::fields::FieldsMut + ?Sized)) {
         if let Some(dialect) = &self.1 {
-            for (key, value) in &mut prog.settings {
-                if key == "language" {
-                    *value = dialect.clone();
+            let mut settings = prog.settings();
+            if settings.iter().any(|(key, value)| key == "language" && value != dialect) {
+                for (key, value) in &mut settings {
+                    if key == "language" {
+                        *value = dialect.clone();
+                    }
                 }
+                prog.set_field(crate::code_rule_dsl::logic::program_facts::Field::Settings(&settings));
             }
         }
         for (rel, rows) in &self.0 {
-            if prog.decls.contains_key(rel.as_str()) {
-                prog.facts.entry(rel.clone()).or_default().extend(rows.iter().map(|r| front::List::from(r.clone())));
+            if prog.declares(rel) {
+                let rows: Vec<front::List<front::Value>> = rows.iter().map(|r| front::List::from(r.clone())).collect();
+                prog.add_facts(rel, &rows);
             }
         }
     }

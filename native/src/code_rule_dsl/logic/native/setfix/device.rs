@@ -33,6 +33,7 @@ use crate::code_rule_dsl::transducer::packed::metal_join as mj;
 use crate::code_rule_dsl::logic::device::{ColumnStats, StatColumn};
 use crate::code_rule_dsl::logic::device::caps;
 use crate::code_rule_dsl::logic::profile;
+use crate::code_rule_dsl::facts::rows::{BlockVec, Part};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -1351,7 +1352,21 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                     (Owner::Src(_), Some(view)) if ids.is_none() && view.whole() => view.src.device_view().filter(|d| d.rows == n),
                     _ => None,
                 };
-                if let Some(d) = made {
+                // A view the views' reads answer is read in place (decision 0353 step 4d): its relation holds no
+                // value, only the indexes its probes build, and the entry holds every column (the view's own).
+                let in_place = made.as_ref().and_then(|d| d.in_place.clone().map(|v| (d.view, v)));
+                if let Some((view, v)) = in_place {
+                    let ncols = rel.view.as_ref().map_or(0, |view| view.src.columns().len());
+                    let dev = mj::DevRel::view(ncols, n, v).map_err(|e| format!("{e:?}: a view of {n} rows read in place"))?;
+                    rep.in_place += 1;
+                    // By the view's device code (`device_chunk::VIEW_*`), as `view_made` counts them.
+                    crate::code_rule_dsl::prof::count(["device.view_read.node", "device.view_read.child", "device.view_read.field", "device.view_read.core", "device.view_read.axis", "device.view_read.line", "device.view_read.end_line", "device.view_read.col", "device.view_read.docof", "device.view_read.tline"].get(view as usize).copied().unwrap_or("device.view_read.other"), n);
+                    let bytes = old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.verdicts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
+                    let (texts, verdicts, mapped) = old.map_or_else(Default::default, |o| (o.texts, o.verdicts, o.mapped));
+                    res.entries.push(Entry { owner, cols: (0..ncols).collect(), dev: Rc::new(dev), indexes: Vec::new(), texts, verdicts, mapped, bytes, used: clock });
+                    res.bytes = res.bytes();
+                    res.entries.len() - 1
+                } else if let Some(d) = made {
                     let device = rerail_accel::gpu::join::device()?;
                     let block = d.block.gpu_buffer(device);
                     let dev = mj::DevRel::empty(k, n).map_err(|e| format!("{e:?}: a view of {n} rows, {k} columns"))?;
@@ -1359,6 +1374,8 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                     rep.uploads += 1;
                     rep.upload_cpu += thread_cpu() - c0;
                     let by = &mut rep.upload_by[profile::UPLOAD_MADE];
+                    // By view (`device_chunk::VIEW_*`), for the profile: what step 4 removes, view by view.
+                    crate::code_rule_dsl::prof::count(["device.view_made.node", "device.view_made.child", "device.view_made.field", "device.view_made.core", "device.view_made.axis", "device.view_made.line", "device.view_made.end_line", "device.view_made.col", "device.view_made.docof", "device.view_made.tline"].get(d.view as usize).copied().unwrap_or("device.view_made.other"), dev.bytes());
                     by.0 += dev.bytes() as u64;
                     by.1 += thread_cpu() - c0;
                     let bytes = dev.bytes() + old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.verdicts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
@@ -1454,7 +1471,8 @@ pub fn column_stats(cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStat
                 let owner = Owner::of(rel);
                 let e = res.entries.iter().find(|e| e.owner.same(&owner))?;
                 let at = e.cols.iter().position(|&w| w == owner_col(rel, *col))?;
-                (e.dev.rows == rel.len() - rel.ndead && at < e.dev.cols).then(|| (e.dev.clone(), at))
+                // A view read in place holds no column where it lies (its rows are its reads').
+                (e.dev.rows == rel.len() - rel.ndead && at < e.dev.cols && e.dev.view.is_none()).then(|| (e.dev.clone(), at))
             })
             .collect()
     });
@@ -1717,9 +1735,9 @@ impl<'p> Run<'p> {
                 counter.push(None);
             }
         }
-        let totals = mj::Words::zeroed(slot + 2).map_err(|e| format!("{e:?}"))?;
+        let totals = mj::Words::zeroed(slot + 2).map_err(|e| format!("{e:?}: the totals of {} stages", slot + 2))?;
         totals.set(0, 1);
-        let counters = mj::Words::zeroed(ncounters.max(1)).map_err(|e| format!("{e:?}"))?;
+        let counters = mj::Words::zeroed(ncounters.max(1)).map_err(|e| format!("{e:?}: {} counters", ncounters.max(1)))?;
         let mut tables: Vec<Option<mj::Table>> = (0..=slot).map(|_| None).collect();
         tables[0] = Some(mj::Table::one(plan.nslots, &[]).map_err(|e| format!("{e:?}"))?);
         let mut caps = vec![0; slot + 1];
@@ -1857,7 +1875,7 @@ impl<'p> Run<'p> {
         let last = self.io.last().map_or(0, |io| io.1);
         let table = self.tables[last].as_ref().expect("the last table");
         let uniq = mj::Table::new(self.uniq_cols.len(), table.cap).map_err(|e| format!("{e:?}: the head's table of {} rows", table.cap))?;
-        batch.dedup(table, &self.uniq_cols, last, self.totals.len - 1, &self.totals, &uniq).map_err(|e| format!("{e:?}"))?;
+        batch.dedup(table, &self.uniq_cols, last, self.totals.len - 1, &self.totals, &uniq).map_err(|e| format!("{e:?}: the head's dedup over {} rows", table.cap))?;
         self.uniq = Some(uniq);
         Ok(())
     }
@@ -1886,6 +1904,11 @@ impl<'p> Run<'p> {
         }
         if self.arena_full() {
             return Some(format!("its texts past the device's text arena of {} bytes", arena_max()));
+        }
+        // A 16z view's blocks: a read that found no room in its batch's cache read the dead entry (0353 step 4b).
+        #[cfg(target_os = "macos")]
+        if self.rels.iter().flatten().filter_map(|(r, _)| r.view.as_ref()).any(|v| v.cache_failed() > v.failed) {
+            return Some("a 16z block found no room in its batch's cache".to_owned());
         }
         None
     }
@@ -1987,10 +2010,6 @@ fn run_here(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner
 }
 
 thread_local! {
-    /// The level's open command buffer (decision 0113 §3's wave): the strata placed on the device encode their joins
-    /// into it and wait for the wave, so a level's small strata go out in one commit and one wait. Its number, and
-    /// whether it is open.
-    static WAVE: RefCell<Option<(u64, mj::Batch)>> = const { RefCell::new(None) };
     /// The waves flushed, by number: their completion (or why they failed), and the device's seconds not yet
     /// counted by a stratum.
     static FLUSHED: RefCell<HashMap<u64, Result<Option<mj::Done>, String>>> = RefCell::new(HashMap::new());
@@ -2027,9 +2046,16 @@ fn shared_batch(arena: &Rc<mj::Arena>) -> Result<mj::Batch, String> {
     mj::Batch::with_shared_arena(Rc::clone(arena)).map_err(|e| format!("{e:?}"))
 }
 
-/// The thread's open wave, committed (`direct_batch`).
+/// The level's wave (decision 0113 §3): the strata placed on the device encode their joins into its batch and wait
+/// for it, so a level's strata wait once. Its number and its batch. It is the job's open submission
+/// (`lanes::wave::with_open`, decision 0386), not its thread's: a job nested on a thread opens a wave of its own, and
+/// the wave is finished by the job that opened it.
+type Wave = (u64, mj::Batch);
+
+/// The job's open wave, committed (`direct_batch`). Its batch holds no open command buffer between strata (`submit`
+/// commits before it returns, decision 0386): this commits only what a stratum's own encoding left.
 fn commit_wave() -> Result<(), String> {
-    WAVE.with_borrow_mut(|w| match w {
+    crate::code_rule_dsl::logic::lanes::wave::with_open::<Wave, _>(|w| match w {
         Some((_, wave)) => wave.commit_open().map_err(|e| format!("{e:?}")),
         None => Ok(()),
     })
@@ -2056,35 +2082,45 @@ fn submit_(rules: &[(&Plan, &JoinRule, usize)], names: &Interner) -> Result<Opti
     let rules = &some[..];
     let c0 = thread_cpu();
     let mut rep = Report { rules: rules.len() as u32, stages: rules.iter().map(|r| r.0.stages.len() as u32).sum(), ..Report::default() };
-    let opened = WAVE.with_borrow(Option::is_none);
+    use crate::code_rule_dsl::logic::lanes::wave::with_open;
+    // A process that did not make the pool (`threads::configure`: a test's) gets the job scopes at its first wave.
+    crate::code_rule_dsl::logic::lanes::wave::install_job_scope();
+    let opened = with_open::<Wave, _>(|w| w.is_none());
     if opened {
         let n = WAVES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-        WAVE.with_borrow_mut(|w| -> Result<(), String> {
+        with_open::<Wave, _>(|w| -> Result<(), String> {
             *w = Some((n, mj::Batch::new().map_err(|e| format!("{e:?}"))?));
             Ok(())
         })?;
         crate::code_rule_dsl::logic::lanes::wave::defer(Box::new(move || {
-            let Some((n, mut batch)) = WAVE.with_borrow_mut(Option::take) else { return Ok(()) };
+            let Some((n, mut batch)) = with_open::<Wave, _>(Option::take) else { return Ok(()) };
             let done = on_lane("stratum joins (a wave)", 1, || batch.finish().map_err(|e| format!("{e:?}")));
             // A failed wave fails its strata, which then run on the CPU: the flush itself goes on.
             FLUSHED.with_borrow_mut(|f| f.insert(n, done.map(Some)));
             Ok(())
         }));
     }
-    let encoded = WAVE.with_borrow_mut(|w| {
+    // Encoded and committed before it returns (decision 0386): the wave's batch holds its strata's committed command
+    // buffers, waited for once when the wave is flushed, and no open one. An open command buffer outliving this call
+    // would be held by a thread that then waits, or goes idle: past the queue's 64, every thread asking for one waits.
+    let encoded = with_open::<Wave, _>(|w| {
         let (n, batch) = w.as_mut().expect("the open wave");
-        encode_runs(rules, batch, &mut rep, names).map(|runs| (*n, runs))
+        let runs = encode_runs(rules, batch, &mut rep, names);
+        let committed = batch.commit_open().map_err(|e| format!("{e:?}"));
+        runs.and_then(|runs| committed.map(|()| (*n, runs)))
     })?;
     let (wave, runs) = encoded;
     if runs.len() < rules.len() {
         // Encoded work it will not wait for: the wave runs it and nothing reads it, but it writes the runs' buffers,
         // which the wave keeps until it is done (back in the pool, another job's would be written).
-        WAVE.with_borrow_mut(|w| w.as_mut().expect("the open wave").1.hold(Box::new(runs)));
+        with_open::<Wave, _>(|w| w.as_mut().expect("the open wave").1.hold(Box::new(runs)));
         return Ok(None);
     }
     rep.encode_cpu = thread_cpu() - c0 - rep.upload_cpu;
     let t = TICKETS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
     SUSPENDED.with_borrow_mut(|s| s.insert(t, (runs, wave, rep, live)));
+    // Its stratum resumes on this thread, which holds its runs and its wave (`lanes::wave::kept_here`).
+    crate::code_rule_dsl::logic::lanes::wave::joined();
     Ok(Some(t))
 }
 
@@ -2240,7 +2276,7 @@ fn complete(mut runs: Vec<Run<'static>>, rules: &[(&Plan, &JoinRule, usize)], st
     }
     // Each head's rows written in place, in a relation of a block, which the store takes as they lie (decision 0325
     // step 4); the heads `place` cannot take read back below.
-    let placed = place(&runs, rules, store, rep)?;
+    let placed = place(&runs, rules, store, fresh, rep)?;
     // The rows into the store, and each step's counts.
     let d0 = thread_cpu();
     let _h = crate::code_rule_dsl::logic::lanes::prof::host("device join (decision 0095)", "decode: rows into the store");
@@ -2305,19 +2341,60 @@ fn complete(mut runs: Vec<Run<'static>>, rules: &[(&Plan, &JoinRule, usize)], st
     Ok(out)
 }
 
-/// The heads whose rows `place` wrote in place, and their parts.
+/// The heads whose rows `place` wrote in place, and where it wrote them.
 #[derive(Default)]
-struct Placed {
-    parts: Vec<(usize, crate::code_rule_dsl::facts::rows::Part)>,
+struct PlacedHeads {
+    parts: Vec<(usize, super::Placed)>,
     heads: Vec<usize>,
 }
 
-impl Placed {
+impl PlacedHeads {
     fn contains(&self, head: &usize) -> bool {
         self.heads.contains(head)
     }
-    fn into_parts(self) -> Vec<(usize, crate::code_rule_dsl::facts::rows::Part)> {
+    fn into_parts(self) -> Vec<(usize, super::Placed)> {
         self.parts
+    }
+}
+
+/// Where the device writes `n` new rows of `rel` (`k` columns), whose rows written so far and not yet taken are
+/// `fresh`'s: after the last of those (a stratum's earlier group's, for the same head), else past its tail's rows, in
+/// room reserved in their block (decision 0384 step 3: the relation stays one, and a reader binds it whole), else a
+/// relation of their own (`Part::for_writes`) that becomes its tail. The rows' place, and the relation bound for the
+/// writes.
+fn head_room(rel: &super::Rel, fresh: &super::Fresh, k: usize, n: usize) -> Result<(super::Placed, mj::DevRel, usize), String> {
+    // A block with no room for them: the relation's rows moved into one with room (`Part::moved_room`), which the
+    // claim makes its tail, so it stays one relation.
+    let moved = |l: Option<crate::code_rule_dsl::facts::rows::Lent>, why: &'static str| l.inspect(|_| crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", why, 1));
+    let room = match fresh.last_placed() {
+        Some(super::Placed::Part(p)) => p.room(n).or_else(|| moved(Some(p.moved_room(p.len(), n)), "heads' relations moved to room for a next lot")),
+        Some(super::Placed::Tail { lent, n: written }) => lent.after(*written, n).or_else(|| moved(Some(lent.moved(*written, n)), "heads' relations moved to room for a next lot")),
+        None => rel.tail_room(n).or_else(|| moved(rel.tail_moved(n), "heads' tails moved to room for the device's rows")),
+    };
+    if let Some(lent) = room {
+        let at = lent.at;
+        let dst = mj::DevRel::in_block(&lent.tail().in_block(at + n as u32), k).map_err(|e| format!("{e:?}: a head's tail in its block"))?;
+        crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "heads' rows written into their own tail", 1);
+        return Ok((super::Placed::Tail { lent: std::sync::Arc::new(lent), n: 0 }, dst, at as usize));
+    }
+    crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "heads' rows written into a relation of their own (no tail with rows)", 1);
+    let part = Part::for_writes(k, n);
+    let dst = mj::DevRel::in_block(&part.in_block(n as u32), k).map_err(|e| format!("{e:?}: a head's rows in their block"))?;
+    Ok((super::Placed::Part(part), dst, 0))
+}
+
+/// `room` (`head_room`'s) with its `n` rows written: the rows the store takes.
+///
+/// # Safety
+/// The batch that wrote them is finished, and wrote every value of rows `0..n` of the room (`n` within it).
+unsafe fn written(room: super::Placed, n: usize) -> super::Placed {
+    match room {
+        // SAFETY: the caller's.
+        super::Placed::Part(part) => {
+            unsafe { part.written(n as u32) };
+            super::Placed::Part(part)
+        }
+        super::Placed::Tail { lent, .. } => super::Placed::Tail { lent, n: n as u32 },
     }
 }
 
@@ -2330,14 +2407,14 @@ impl Placed {
 /// A head is left to the rows read back (not in the result) when a rule of it makes texts (arena values, symbols only
 /// once the host names them), when it folds (a lattice), or when the rows it holds have more columns than a probe's
 /// keys.
-fn place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], store: &Store, rep: &mut Report) -> Result<Placed, String> {
-    let mut placed = Placed::default();
+fn place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], store: &Store, fresh: &[Fresh], rep: &mut Report) -> Result<PlacedHeads, String> {
+    let mut placed = PlacedHeads::default();
     let mut heads: Vec<usize> = rules.iter().map(|r| r.2).collect();
     heads.sort_unstable();
     heads.dedup();
     let mut batch: Option<mj::Batch> = None;
     // Per head: its part, the slot its count is in (`None`: the union's, known), the words, and what the work reads.
-    let mut pending: Vec<(usize, crate::code_rule_dsl::facts::rows::Part, Option<usize>, usize, mj::Words)> = Vec::new();
+    let mut pending: Vec<(usize, super::Placed, Option<usize>, usize, mj::Words)> = Vec::new();
     let mut hold: Vec<mj::Table> = Vec::new();
     let mut hold_rels: Vec<(mj::DevRel, mj::DevIndex)> = Vec::new();
     for h in heads {
@@ -2403,22 +2480,21 @@ fn place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], store: &Sto
             }
             _ => (rows, slot),
         };
-        let part = crate::code_rule_dsl::facts::rows::Part::for_writes(k, cap);
+        let (room, dst, at) = head_room(rel, &fresh[h], k, cap)?;
         let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
-        let dst = mj::DevRel::in_block(&crate::code_rule_dsl::facts::rows::InBlock { facts: part.facts().clone(), at: part.rel_at(), rows: cap as u32, dead: 0, part: Some(part.clone()) }, k).map_err(|e| format!("{e:?}"))?;
-        b.place_rows(mj::Rows::Table(&rows), cap, slot, &words, &ident, dst).map_err(|e| format!("{e:?}"))?;
+        b.place_rows(mj::Rows::Table(&rows), cap, slot, &words, &ident, dst, at).map_err(|e| format!("{e:?}: a head's rows placed"))?;
         hold.push(rows);
-        pending.push((h, part, slot, cap, words));
+        pending.push((h, room, slot, cap, words));
     }
     if let Some(mut b) = batch {
         finish_timed(&mut b, rep)?;
     }
     drop((hold, hold_rels));
-    for (h, part, slot, cap, words) in pending {
+    for (h, room, slot, cap, words) in pending {
         let n = slot.map_or(cap, |s| words.get(s) as usize).min(cap);
-        // SAFETY: the batch is finished, and `rows_place` wrote every column of rows `0..n` (`n` within `cap`, the
-        // rows `for_writes` reserved).
-        unsafe { part.written(n as u32) };
+        // SAFETY: the batch is finished, and `rows_place` wrote every column of rows `0..n` of the room (`n` within
+        // `cap`, the rows `head_room` reserved).
+        let part = unsafe { written(room, n) };
         rep.distinct += n as u64;
         rep.placed += n as u64;
         placed.parts.push((h, part));
@@ -2563,6 +2639,19 @@ fn fixpoint_(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRule, u
     on_lane("stratum rounds", seeds.len() + deltas.len(), || fixpoint_here(seeds, deltas, heads, store, names, fresh))
 }
 
+/// A lattice head of a device fixpoint (decision 0384 step 5): its fold; its relation, made at its first round, with
+/// room in its block to grow there; its rows held (`had`); its key map, in its block.
+struct LatHead { code: mj::LatCode, part: Option<Part>, had: usize, map: Option<super::keys::KeyMap> }
+
+/// A lattice head's block's room past its first round's rows: address space, memory only as its rows and key map are
+/// written. A head past it refuses its stratum.
+const LAT_ROOM: usize = 256 << 20;
+
+/// A key map where it lies, for the device to bind.
+fn map_at(m: &super::keys::KeyMap) -> mj::LatMap<'_> {
+    mj::LatMap { home: m.facts().expect("a map in a block"), at: m.words().offset(), places: m.places() }
+}
+
 fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "device fixpoint".into());
     let c0 = thread_cpu();
@@ -2607,12 +2696,13 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         }
     }
     let mut own = Own::default();
-    // A lattice head folds each round by key on the device (decision 0124): its fold, and its key table.
-    let mut lattices: HashMap<usize, (mj::LatCode, mj::LatKeys)> = HashMap::new();
+    // A lattice head folds each round by key on the device (decision 0124), into its one relation through its key map
+    // in its block (decision 0384 step 5).
+    let mut lattices: HashMap<usize, LatHead> = HashMap::new();
     for &h in heads {
         if let Some(lat) = store.rels[h].device_lattice() {
             let (code, top, after) = lat?;
-            lattices.insert(h, (mj::LatCode { code, top, after }, mj::LatKeys::default()));
+            lattices.insert(h, LatHead { code: mj::LatCode { code, top, after }, part: None, had: 0, map: None });
         }
     }
     // A head that keeps levels (decision 0311): each row's round, its level. A set head's rows are appended a round
@@ -2634,8 +2724,10 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         // relation's rows: its new rows.
         let mut batch = direct_batch(None)?;
         let mut news: Vec<(usize, mj::Table, mj::Words, bool)> = Vec::new();
-        // A lattice head's round: its new keys' rows (with their change counts), its changed rows, their counts.
-        let mut folded: Vec<(usize, mj::Table, mj::Table, mj::Words)> = Vec::new();
+        // A lattice head's round: its changed rows, their counts (`[changed, new]`).
+        let mut folded: Vec<(usize, mj::Table, mj::Words)> = Vec::new();
+        // A lattice head's key map before it grew, read by the growing; held until the work completes.
+        let mut old_maps: Vec<super::keys::KeyMap> = Vec::new();
         // What the encoded work reads, held until it completes (a pooled buffer dropped early is written again).
         let mut hold: Vec<mj::Table> = Vec::new();
         for &h in heads {
@@ -2664,14 +2756,44 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
                 batch.copy_rows(mj::Rows::Table(r.uniq.as_ref().expect("the head's rows")), *n, &cols, mj::Rows::Table(&union), at).map_err(|e| format!("{e:?}"))?;
                 at += n;
             }
-            if let Some((lat, keys)) = lattices.get_mut(&h) {
-                let new_keys = mj::Table::new(k + 1 + usize::from(leveled(h)), cap).map_err(|e| format!("{e:?}"))?;
+            if let Some(lh) = lattices.get_mut(&h) {
+                // The head's relation, made at its first round (it had no rows), with room in its block to go on
+                // growing there: room for this round's new keys' rows past its rows, which the fold writes in place.
+                let part = match &lh.part {
+                    Some(p) => p,
+                    None => lh.part.insert(Part::for_writes_with_room(k, cap, LAT_ROOM).map_err(|e| format!("a lattice head's relation: {e}"))?),
+                };
+                if !part.reserve((lh.had + cap) as u64) {
+                    return Err(format!("a lattice head of {} rows past its block's room", lh.had + cap));
+                }
+                // Its key map, in its block: made, or grown past half full (every key placed again on the device).
+                let need = (2 * (lh.had + cap)).next_power_of_two().max(16);
+                let first_map = match lh.map.take() {
+                    Some(m) if m.places() >= need => {
+                        lh.map = Some(m);
+                        None
+                    }
+                    old => {
+                        // SAFETY: the fold's first pass writes every slot (`lat_hclear`) before any read.
+                        let words = unsafe { BlockVec::unwritten_in(Some(&part.home()), need * super::keys::SLOT) };
+                        lh.map = Some(super::keys::KeyMap::of(words, lh.had));
+                        Some(old)
+                    }
+                };
+                let map = lh.map.as_ref().expect("a key map");
+                let first = match &first_map {
+                    None => mj::MapFirst::Ready,
+                    Some(None) => mj::MapFirst::Clear,
+                    Some(Some(old)) => mj::MapFirst::Grow(map_at(old)),
+                };
+                // Bound after the room and the map were made in the block, so its buffer reaches them.
+                let r = mj::DevRel::in_block(&part.in_block(lh.had as u32), k).map_err(|e| format!("{e:?}"))?;
                 let changed = mj::Table::new(k, cap).map_err(|e| format!("{e:?}"))?;
                 let counters = mj::Words::zeroed(2).map_err(|e| format!("{e:?}"))?;
-                let total = own.total.get(&h).cloned();
                 let level = leveled(h).then_some(rounds as u32);
-                batch.lattice_fold(&union, cap, total.as_deref(), k - 1, *lat, keys, &counters, &new_keys, &changed, shared.as_deref(), level).map_err(|e| format!("{e:?}"))?;
-                folded.push((h, new_keys, changed, counters));
+                batch.lattice_fold(&union, cap, &r, lh.had, k - 1, lh.code, map_at(map), first, &counters, &changed, shared.as_deref(), level).map_err(|e| format!("{e:?}"))?;
+                old_maps.extend(first_map.flatten());
+                folded.push((h, changed, counters));
                 hold.push(union);
                 continue;
             }
@@ -2708,7 +2830,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         rep.gpu_seconds += done.gpu_seconds;
         rep.sized += done.sized;
         drop(ran);
-        drop(hold);
+        drop((hold, old_maps));
         // The new rows onto each relation, and as its next delta; a relation with none has no delta.
         let mut batch = direct_batch(None)?;
         let mut any = false;
@@ -2741,32 +2863,37 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
             own.sorts.retain(|(r, _, _), _| *r != h);
             rows_held.push(rows);
         }
-        // A lattice head: its held rows were updated in place; its new keys' rows onto it, its changed rows its delta.
-        for (h, new_keys, changed, counters) in folded {
+        // A lattice head: its held rows were updated in place and its new keys' rows written past them, in its one
+        // relation (decision 0384 step 5), which claims them; its changed rows its delta.
+        for (h, changed, counters) in folded {
             let (n, added) = (counters.get(0) as usize, counters.get(1) as usize);
             own.sorts.retain(|(r, _, _), _| *r != h);
+            let k = store.rels[h].k;
+            let lh = lattices.get_mut(&h).expect("a lattice head");
+            let part = lh.part.as_ref().expect("its relation");
+            // SAFETY: the batch is finished, and `lat_merge` wrote every value of its `added` new keys' rows.
+            unsafe { part.written_more(added as u32) };
+            // Its held rows' values changed where they lie: an index built on it before holds no more.
+            if n > 0 {
+                // SAFETY: the batch that probed its indexes finished, and its sorts are dropped (above).
+                unsafe { part.forget_indexes() };
+            }
+            lh.had += added;
+            // One live row a key: the map holds a key a row.
+            lh.map.as_mut().expect("its key map").held(lh.had);
+            if added > 0 || !own.total.contains_key(&h) {
+                let total = mj::DevRel::in_block(&part.in_block(lh.had as u32), k).map_err(|e| format!("{e:?}"))?;
+                old.extend(own.total.insert(h, Rc::new(total)));
+            }
             if n == 0 {
                 own.delta.remove(&h);
                 continue;
             }
             any = true;
-            let k = store.rels[h].k;
-            if added > 0 {
-                let width = k + 1 + usize::from(leveled(h));
-                let ident: Vec<mj::Col> = (0..width).map(mj::Col::From).collect();
-                let had = own.total.get(&h).map_or(0, |t| t.rows);
-                let total = mj::DevRel::empty(width, had + added).map_err(|e| format!("{e:?}: a relation of {} rows", had + added))?;
-                if let Some(old) = own.total.get(&h) {
-                    batch.copy_rows(mj::Rows::Rel(old), had, &ident, mj::Rows::Rel(&total), 0).map_err(|e| format!("{e:?}"))?;
-                }
-                batch.copy_rows(mj::Rows::Table(&new_keys), added, &ident, mj::Rows::Rel(&total), had).map_err(|e| format!("{e:?}"))?;
-                old.extend(own.total.insert(h, Rc::new(total)));
-            }
             let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
             let delta = mj::DevRel::empty(k, n).map_err(|e| format!("{e:?}"))?;
             batch.copy_rows(mj::Rows::Table(&changed), n, &ident, mj::Rows::Rel(&delta), 0).map_err(|e| format!("{e:?}"))?;
             own.delta.insert(h, Rc::new(delta));
-            rows_held.push(new_keys);
             rows_held.push(changed);
         }
         let done = batch.finish().map_err(|e| format!("{e:?}"))?;
@@ -2782,7 +2909,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
     // A set head's rows written in place (decision 0325 step 4): its total, every row new (its relation had none
     // before the run), into a relation of a block the store takes as it lies, each row with its round where the
     // head keeps levels. One submission for the component's set heads.
-    let mut parts: Vec<(usize, crate::code_rule_dsl::facts::rows::Part, usize)> = Vec::new();
+    let mut parts: Vec<(usize, super::Placed, usize)> = Vec::new();
     let mut batch: Option<mj::Batch> = None;
     // No count slot: each total's rows are known. Held until the batch completes.
     let no_counts = mj::Words::zeroed(1).map_err(|e| format!("{e:?}"))?;
@@ -2798,69 +2925,63 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         };
 // copy (0353 step 6): the fixpoint's total copied into a run's block. It goes: the total lives in a block
 // of the run's life from its start (decision 0353).
-        let part = crate::code_rule_dsl::facts::rows::Part::for_writes(k, total.rows);
+        let (room, dst, at) = head_room(&store.rels[h], &fresh[h], k, total.rows)?;
         let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
-        let dst = mj::DevRel::in_block(&crate::code_rule_dsl::facts::rows::InBlock { facts: part.facts().clone(), at: part.rel_at(), rows: total.rows as u32, dead: 0, part: Some(part.clone()) }, k).map_err(|e| format!("{e:?}"))?;
-        b.place_rows(mj::Rows::Rel(total), total.rows, None, &no_counts, &ident, dst).map_err(|e| format!("{e:?}"))?;
-        parts.push((h, part, total.rows));
+        b.place_rows(mj::Rows::Rel(total), total.rows, None, &no_counts, &ident, dst, at).map_err(|e| format!("{e:?}: a component's rows placed"))?;
+        parts.push((h, room, total.rows));
     }
     if let Some(mut b) = batch {
         finish_timed(&mut b, &mut rep)?;
     }
     drop(no_counts);
-    let placed_heads: Vec<usize> = parts.iter().map(|p| p.0).collect();
-    for (h, part, n) in parts {
-        // SAFETY: the batch is finished, and `rows_place` wrote every column of the `n` rows reserved.
-        unsafe { part.written(n as u32) };
+    for (h, room, n) in parts {
+        // SAFETY: the batch is finished, and `rows_place` wrote every column of the `n` rows of the room.
+        let part = unsafe { written(room, n) };
         let rounds = set_levels.get(&h).filter(|_| leveled(h)).map(|r| (0..n).map(|x| r.get(x).copied().unwrap_or(0)).collect());
         fresh[h].place(part, rounds);
         rep.distinct += n as u64;
         rep.placed += n as u64;
     }
-    // The rest into the store: a lattice head's rows, read back.
+    // A lattice head's relation as it lies (decision 0384 step 5): one live row a key, folded in place round after
+    // round, taken by the store with its key map. Nothing read back.
     let d0 = thread_cpu();
     for &h in heads {
-        let Some(total) = own.total.get(&h) else { continue };
-        if placed_heads.contains(&h) {
+        let Some(LatHead { part: Some(part), had, map: Some(map), .. }) = lattices.remove(&h) else { continue };
+        if had == 0 {
             continue;
         }
         let k = store.rels[h].k;
-        let cols: Vec<Vec<i64>> = (0..k).map(|c| total.column(c)).collect();
-        // A shortlex_min value is an arena text (decision 0307): stored as a symbol, all of the head's at once.
-        let symbols: Option<HashMap<i64, i64>> = match &shared {
-            Some(a) if text_head(h) => {
+        // A shortlex_min value is an arena text (decision 0307): stored as its symbol, put where the value lies.
+        if let Some(a) = shared.as_ref().filter(|_| text_head(h)) {
+            // copy: not block data: the head's distinct texts, interned at once.
+            let mut values: Vec<i64> = (0..had as u32).map(|x| part.get(x, k - 1)).filter(|&v| v & mj::ARENA_TEXT != 0 && v != -1).collect();
+            values.sort_unstable();
+            values.dedup();
+            let strs = values.iter().map(|&v| {
+                let b = a.text(v).ok_or("a shortlex_min value past the arena")?;
+                std::str::from_utf8(b).map_err(|_| "an arena text that is not UTF-8".to_owned())
+            }).collect::<Result<Vec<&str>, String>>()?;
+            let ids = names.atoms().intern_all(&strs).map_err(|e| format!("the component's texts' symbols: {e}"))?;
+            let symbols: HashMap<i64, i64> = values.into_iter().zip(ids).map(|(v, id)| (v, i64::from(id))).collect();
+            for x in 0..had as u32 {
                 // The top (no arena text) stays as it is.
-                let mut values: Vec<i64> = cols[k - 1].iter().copied().filter(|&v| v & mj::ARENA_TEXT != 0 && v != -1).collect();
-                values.sort_unstable();
-                values.dedup();
-                let strs = values.iter().map(|&v| {
-                    let b = a.text(v).ok_or("a shortlex_min value past the arena")?;
-                    std::str::from_utf8(b).map_err(|_| "an arena text that is not UTF-8".to_owned())
-                }).collect::<Result<Vec<&str>, String>>()?;
-                let ids = names.atoms().intern_all(&strs).map_err(|e| format!("the component's texts' symbols: {e}"))?;
-                Some(values.into_iter().zip(ids).map(|(v, id)| (v, i64::from(id))).collect())
-            }
-            _ => None,
-        };
-        // Each row's round where the head keeps levels: a lattice's column after its changes, a set's kept by row.
-        let lattice_levels = (lattices.contains_key(&h) && leveled(h)).then(|| total.column(k + 1));
-        let levels: Option<&[i64]> = lattice_levels.as_deref();
-        let set_rounds = set_levels.get(&h).filter(|_| !lattices.contains_key(&h) && leveled(h));
-        let mut row = vec![0i64; k];
-        for x in 0..total.rows {
-            for c in 0..k {
-                row[c] = cols[c][x];
-            }
-            if let Some(m) = &symbols && let Some(&id) = m.get(&row[k - 1]) {
-                row[k - 1] = id;
-            }
-            match (levels, set_rounds) {
-                (Some(l), _) => fresh[h].add_leveled(&row, l[x] as u32),
-                (None, Some(r)) => fresh[h].add_leveled(&row, r.get(x).copied().unwrap_or(0)),
-                (None, None) => fresh[h].add(&row),
+                if let Some(&id) = symbols.get(&part.get(x, k - 1)) {
+                    // SAFETY: the device's work completed; this thread alone holds the relation now.
+                    unsafe { part.put(x, k - 1, id) };
+                }
             }
         }
-        rep.distinct += total.rows as u64;
+        // Each row's round where the head keeps levels: its key's slot's.
+        let rounds = leveled(h).then(|| {
+            let mut r = vec![0u32; had];
+            for (row, _, round) in map.each() {
+                r[row as usize] = round;
+            }
+            r
+        });
+        fresh[h].place_folded(super::Placed::Part(part), rounds, map);
+        rep.distinct += had as u64;
+        rep.placed += had as u64;
     }
     rep.decode_cpu += thread_cpu() - d0;
     rep.rounds = rounds as u32;

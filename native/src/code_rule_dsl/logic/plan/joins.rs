@@ -185,7 +185,7 @@ pub(super) fn logging() -> bool {
     *ON
 }
 
-pub(super) fn log(what: impl FnOnce() -> String) {
+pub(in crate::code_rule_dsl) fn log(what: impl FnOnce() -> String) {
     if logging() {
         eprintln!("joins: {}", what());
     }
@@ -457,7 +457,7 @@ pub(super) fn count_handoff(back: bool) {
 /// A line ran slow: `ran` rows of work where its order `order` was priced at `est`. Its next replan skips the
 /// budget.
 ///
-/// Q117: what the order measured is kept as an order tried, so that the line's next choice (`choose`) prices the
+/// Q80: what the order measured is kept as an order tried, so that the line's next choice (`choose`) prices the
 /// order at it. Its work over its price is a floor, as a cut trial's is (decision 0267): it was cut while it ran, and
 /// it raises the order's kept ratio, never lowers it. Not kept, the next chunk's plan took the same order at the same
 /// price (`pre_546` on hogql: priced 360 to 513 for 102 K rows of work, at each of its trips).
@@ -482,7 +482,7 @@ pub(super) fn flag_slow(key: PlanKey, rule: u64, order: &[Step], est: f64, ran: 
     }
 }
 
-/// Q117: the order to put in place of a slow line's running order, where planning it again with the exact statistics
+/// Q80: the order to put in place of a slow line's running order, where planning it again with the exact statistics
 /// found the order it runs. Of the search's runners-up `others` (each priced for the rows left), the least priced,
 /// where its price is under what the running order measured: `ran` rows of work over its first `done` lead rows, at
 /// that rate over the `left` rows left (an order that finished no row costs at least its work again). A replacement

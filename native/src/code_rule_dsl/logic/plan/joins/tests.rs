@@ -274,7 +274,7 @@ fn trials_are_taken_once_and_their_ratios_kept() {
     clear();
 }
 
-/// Q117: a slow line keeps what it measured. Its flag measures its rule's exact statistics, which no longer key its
+/// Q80: a slow line keeps what it measured. Its flag measures its rule's exact statistics, which no longer key its
 /// plans anew: the line's note, flag and measured order stay under its key. Its next choice prices the order it ran
 /// at what it measured, and takes another; a flag holds for the order it flagged.
 #[test]
@@ -441,7 +441,7 @@ fn the_measured_critical_path_follows_what_each_stratum_waited_for() {
 /// Decision 0209 §4: `h(a, b, c) :- r(f, a), r(f, b), r(f, c)` over a key of 100 values of one row and one of 300. A
 /// fanout (sq / rows) prices the third atom as the second: 20.3 M rows. Its heavy values price each step by the
 /// binding drawn through the atoms before it, so the third reads cube / sq a binding: Σ count³, 27.0 M, exact. (The
-/// head reads `c`: one that did not would need one witness of the third atom a binding, Q146.)
+/// head reads `c`: one that did not would need one witness of the third atom a binding, Q240.)
 #[test]
 fn heavy_values_price_a_skewed_three_way_self_join_by_its_third_moment() {
     let p = parse(".decl r(f: number, x: number)\n.decl h(a: number, b: number, c: number)\nh(a, b, c) :- r(f, a), r(f, b), r(f, c).\n.output h\n").unwrap();
@@ -764,7 +764,7 @@ fn a_maintenance_rule_starts_from_its_source_rules_order() {
     b.rule().head("g__ins", &[x.clone(), z.clone()]).atom("a__plus", &[x.clone()]).atom("e", &[x.clone(), y.clone()]).atom("c", &[y.clone(), z.clone()]).source(placed.id(1)).finish().unwrap();
     let (form, _) = b.finish().unwrap();
     let mut vs = Versions::of_placed(placed);
-    let k = vs.push(Placed::derived(form, None));
+    let k = vs.push(Placed::whole(form));
     let del = vs.at(RuleKey::new(k, 0));
     let src = del.origin().expect("the overdelete's source rule");
     assert_eq!(src.rel(src.head()), "h");

@@ -11,9 +11,9 @@
 //!   there;
 //! - a pass over the nodes walks the set bits (`iter`).
 //!
-//! Each group is five words: the nodes', the tokens' and the fielded nodes' bits, the nodes and tokens before it (low
-//! and high 32 bits), and the fielded nodes before it. 40 bytes for 64 tape nodes, in the batch's block beside the
-//! projection's other cells. `local`, `core`, `up` and `fielded` were up to 16 bytes a node.
+//! Each group is six words: the nodes', the tokens', the fielded nodes' and the nodes after a sibling's bits, the
+//! nodes and tokens before it (low and high 32 bits), and the fielded nodes and nodes after a sibling before it. 48
+//! bytes for 64 tape nodes, in the batch's block beside the projection's other cells. `local`, `core`, `up` and `fielded` were up to 16 bytes a node.
 
 use super::cells::{Block, Cells, Desc};
 use super::id_reads;
@@ -27,6 +27,9 @@ pub enum Item {
     Token = 1,
     /// A node below the root that hangs from its parent under a field (the `field` view's rows).
     Field = 2,
+    /// A node after a numbered sibling: its parent's child past the first (the `next_sibling` view's rows, by the
+    /// later node).
+    Sibling = 3,
 }
 
 /// The items, as `Item`'s numbers.
@@ -41,6 +44,7 @@ fn before_of(g: &[u64; WORDS], item: Item) -> u32 {
         Item::Node => g[ITEMS] as u32,
         Item::Token => (g[ITEMS] >> 32) as u32,
         Item::Field => g[ITEMS + 1] as u32,
+        Item::Sibling => (g[ITEMS + 1] >> 32) as u32,
     }
 }
 
@@ -50,8 +54,8 @@ const SAMPLE: u32 = rerail_clif::ids::SAMPLE;
 pub struct Ranks {
     /// The first group's number (its first tape node over 64).
     first: u32,
-    /// Five words a group: the bits of each item, the nodes before | the tokens before << 32, the fielded nodes
-    /// before. One group past the last numbered item, so a rank at the end reads a group.
+    /// Six words a group: the bits of each item, the nodes before | the tokens before << 32, the fielded nodes
+    /// before | the nodes after a sibling before << 32. One group past the last numbered item, so a rank at the end reads a group.
     groups: Cells<[u64; WORDS]>,
     /// The group of item `SAMPLE * k`, by item.
     samples: [Cells<u32>; ITEMS],
@@ -88,7 +92,7 @@ impl Ranks {
             walk(&mut Marks { first, groups });
             for g in groups.iter_mut() {
                 g[ITEMS] = u64::from(count[0]) | u64::from(count[1]) << 32;
-                g[ITEMS + 1] = u64::from(count[2]);
+                g[ITEMS + 1] = u64::from(count[2]) | u64::from(count[3]) << 32;
                 for (c, bits) in count.iter_mut().zip(&g[..ITEMS]) {
                     *c += bits.count_ones();
                 }
@@ -111,7 +115,7 @@ impl Ranks {
             })
             .expect("a batch's block holds its projection")
         };
-        let samples = [sample(Item::Node), sample(Item::Token), sample(Item::Field)];
+        let samples = [sample(Item::Node), sample(Item::Token), sample(Item::Field), sample(Item::Sibling)];
         let desc = Desc::<Numbering>::new(block);
         let d = desc.as_ptr();
         // SAFETY: the descriptor is this build's alone, and the runs point at cells of the same block, which live

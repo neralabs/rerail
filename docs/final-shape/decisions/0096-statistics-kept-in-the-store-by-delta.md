@@ -345,7 +345,7 @@ What steps 3 and 4 need:
 The measurement aids stay: `RERAIL_STATS_SKEW`, `RERAIL_STATS_SKEW_LOG` and `RERAIL_STATS_SHADOW`. Each step's
 claim is checked by running them again.
 
-## The corpus's chunk totals: HyperLogLog and AMS (user, 2026-11-17, Q95)
+## The corpus's chunk totals: HyperLogLog and AMS (user, 2026-11-17, Q89)
 
 The cross-file part's statistics of the exports are summed over the chunks (`corpus::Totals`). A value column's
 values cross chunks, so its `ndv` and `sq` are of each value's total: they were kept exactly, as a count per

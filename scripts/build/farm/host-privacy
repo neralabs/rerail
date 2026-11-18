@@ -62,8 +62,8 @@ def main(argv):
     paths = " ".join(shlex.quote(p) for p in PATHS)
     status = 0
     for host in farm.hosts():
-        if not host.get("enabled", True):
-            continue
+        if not host.get("enabled", True) or farm.host_os(host) != "macos":
+            continue  # a Linux host has no Time Machine or Spotlight
         name = host["name"]
         if "--spotlight" in argv:
             print(f"{name}: Spotlight's privacy list (its sudo password):", flush=True)

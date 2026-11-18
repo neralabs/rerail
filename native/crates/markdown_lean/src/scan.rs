@@ -146,7 +146,7 @@ pub struct Saved {
 pub struct Scanner<'s> {
     src: &'s [u8],
     /// The text's byte classes (stage 1), for the scans over a line's rest.
-    pub b: Blocks<'s>,
+    pub b: Blocks,
     pub open_blocks: Vec<u8>,
     v: Scalars,
     simulate: bool,

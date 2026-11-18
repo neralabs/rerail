@@ -136,7 +136,8 @@ pub fn blocks_from(f: &mut FunctionBuilder<'_>, p: &[Value], off_width: u8, head
     let s = start(f, rows, i);
     let o = f.ins().isub(s, m);
     put(f, off, i, o, off_width);
-    let w = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, o, 0xffff);
+    // Past its width: at 4 bytes, an offset (a start less its block's base, both `u32`) always fits.
+    let w = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, o, if off_width == 2 { 0xffff } else { 0xffff_ffff });
     let w = f.ins().uextend(types::I64, w);
     let w = f.ins().imul_imm(w, WIDE_OFF);
     let wide = f.ins().bor(wide, w);

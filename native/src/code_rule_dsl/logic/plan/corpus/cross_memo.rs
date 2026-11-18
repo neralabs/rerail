@@ -3,7 +3,7 @@
 //! - A program asks with `.pragma "cross-memo" "a b …"`. That names the cross-file relations whose rows are about
 //!   the document of their first node column and are a function of that document's import closure; `"*"` names
 //!   every relation the contract's static half admits.
-//! - The run adds `components.rr` (`add`). Its file-local rules export each document's imports, module and own
+//! - The run adds `components.rr` (`add_to`). Its file-local rules export each document's imports, module and own
 //!   digest, which the per-file memo keeps. Its cross-file rules make `rr_cx_component(d, c, key)`.
 //! - `split` takes those rules out of the cross-file part into a sub-program run first. It checks the contract's
 //!   static half, and gives each memoised relation an input `<rel>__cross`, a rule `rel(…) :- rel__cross(…)`, and a
@@ -17,6 +17,7 @@
 use super::{Error, Result, front, lower};
 use crate::code_rule_dsl::logic::program_image::{AtomRef, Builder, CmpOp, Lit, LitRef, PartFields, Rewrite, RuleRef, T, TermRef, Version};
 use crate::code_rule_dsl::logic::program_image::Slot;
+use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
 use super::super::fields::Fields;
 use std::sync::Arc;
 use crate::content_store::ContentStore;
@@ -53,12 +54,9 @@ pub(super) fn mode() -> Mode {
 }
 
 /// The relations the program's `cross-memo` pragmas name; `None` without one.
-pub(super) fn declared(prog: &front::Program) -> Option<BTreeSet<String>> {
+pub(super) fn declared(prog: &(impl ProgramFields + ?Sized)) -> Option<BTreeSet<String>> {
     let mut out: Option<BTreeSet<String>> = None;
-    for (key, text) in &prog.settings {
-        if key != "pragma" {
-            continue;
-        }
+    for text in prog.setting_values("pragma") {
         let words: Vec<&str> = text.split('"').map(str::trim).filter(|w| !w.is_empty()).collect();
         if let [PRAGMA, rels] = words.as_slice() {
             out.get_or_insert_default().extend(rels.split_whitespace().map(str::to_owned));
@@ -67,44 +65,61 @@ pub(super) fn declared(prog: &front::Program) -> Option<BTreeSet<String>> {
     out
 }
 
-/// Adds `components.rr` to `prog`: its declarations, natives and rules, and `rr_cx_component` as an output. Core's
-/// relations and rules are the engine's, taken once.
-// The tree's edit, kept as a debug build's check of the version's (`run_typed`'s `Beside`).
-#[cfg_attr(not(debug_assertions), allow(dead_code))]
-pub(super) fn add(prog: &mut front::Program) -> Result<()> {
+/// Adds `components.rr` to the program's version: its natives, declarations, qualifiers, facts and inputs the program
+/// lacks, `rr_cx_component` as an output, and its rules copied from its image, each one the program does not hold
+/// already. Only the engine's own rules count (`rr_` heads: `rr_cx_*` and what lowering made for `components`), not
+/// what `core.rr` brings with it: a program that declares a base relation itself keeps its own declaration, and its
+/// input or rule as its lowering made it (`docof` over nodes is a rule over `node`, not an input), and what it keeps
+/// (`.decl rr_cx_edge(…) no_inline`, decision 0099).
+pub(super) fn add_to(v: &Arc<Version>) -> Result<Arc<Version>> {
+    use crate::code_rule_dsl::logic::program_facts::Field;
     let path = crate::code_rule_dsl::logic::rr::library().join("components.rr");
     let components = crate::code_rule_dsl::logic::rr::parse_file(&path).map_err(|e| Error::Plan(format!("{}: {e:?}", path.display())))?;
-    // Only the engine's own rules (`rr_` heads: `rr_cx_*` and what lowering made for `components`), not what
-    // `core.rr` brings with it: a program that declares a base relation itself keeps its own declaration.
-    let mut fields = components;
-    let rules: Vec<front::Rule> = std::mem::take(&mut fields.rules).into_iter().filter(|r| r.head.rel.starts_with("rr_")).collect();
-    fields.rules = rules.clone();
-    add_fields(prog, fields)?;
-    for rule in rules {
-        if !prog.rules.contains(&rule) {
-            prog.rules.push(rule);
+    let rules: Vec<front::Rule> = components.rules.iter().filter(|r| r.head.rel.starts_with("rr_")).cloned().collect();
+    let own = front::Program { rules: rules.clone(), decls: components.decls.clone(), ..Default::default() };
+    let (image, _) = Builder::of_program(&own).and_then(|b| b.finish()).map_err(Error::Plan)?;
+    let mut needed: BTreeSet<String> = BTreeSet::new();
+    for r in &rules {
+        needed.insert(r.head.rel.to_string());
+        needed.extend(r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string()));
+    }
+    let mut b = Builder::on(v);
+    // The fields first: a copied rule's relations are declared.
+    let mut natives = v.native_map().map_err(Error::Plan)?;
+    let natives_were = natives.len();
+    let taken: Vec<_> = components.natives.iter().filter(|(rel, _)| needed.contains(*rel)).collect();
+    for (rel, native) in taken {
+        needed.extend(native.reads().into_iter().map(str::to_owned));
+        natives.entry(rel.clone()).or_insert_with(|| native.clone());
+    }
+    if natives.len() != natives_were {
+        b.set_field(Field::Natives(&natives));
+    }
+    let missing: BTreeSet<String> = needed.iter().filter(|rel| !v.declares(rel)).cloned().collect();
+    for (rel, cols) in components.decls.iter().filter(|(rel, _)| missing.contains(rel.as_str())) {
+        let pairs: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
+        b.declare(rel, &pairs);
+    }
+    let mut qualifiers = v.qualifier_map().map_err(Error::Plan)?;
+    let mut qualified = false;
+    for (rel, words) in components.qualifiers.iter().filter(|(rel, _)| missing.contains(*rel)) {
+        let had = qualifiers.entry(rel.clone()).or_default();
+        let n = had.len();
+        had.extend(words.iter().cloned());
+        qualified |= had.len() != n;
+    }
+    if qualified {
+        b.set_field(Field::Qualifiers(&qualifiers));
+    }
+    for (rel, rows) in components.facts.iter().filter(|(rel, _)| missing.contains(*rel)) {
+        if !ProgramFields::has_fact_rows(&**v, rel) {
+            b.add_facts(rel, rows);
         }
     }
-    Ok(())
-}
-
-/// `add` on the program's version, `head` its header (`Version::header`), edited as `add` edits the tree's fields:
-/// the declarations, natives, qualifiers, facts, inputs and output by the header, and `components.rr`'s rules
-/// copied from its image, each one the program does not hold already.
-pub(super) fn add_to(v: &Arc<Version>, head: &mut front::Program) -> Result<Arc<Version>> {
-    let path = crate::code_rule_dsl::logic::rr::library().join("components.rr");
-    let components = crate::code_rule_dsl::logic::rr::parse_file(&path).map_err(|e| Error::Plan(format!("{}: {e:?}", path.display())))?;
-    let mut fields = components;
-    let rules: Vec<front::Rule> = std::mem::take(&mut fields.rules).into_iter().filter(|r| r.head.rel.starts_with("rr_")).collect();
-    fields.rules = rules.clone();
-    let own = front::Program { rules, decls: fields.decls.clone(), ..Default::default() };
-    let was = head.clone();
-    let mut edited = head.clone();
-    add_fields(&mut edited, fields)?;
-    let (image, _) = Builder::of_program(&own).and_then(|b| b.finish()).map_err(Error::Plan)?;
-    let mut b = Builder::on(v);
-    // The header first: a copied rule's relations are declared.
-    b.set_header(&was, &edited);
+    for input in components.inputs.iter().filter(|rel| missing.contains(*rel)) {
+        b.add_input(input);
+    }
+    b.add_output(COMPONENT);
     // A rule the program holds already is taken once (by its hash and its text).
     let held: std::collections::HashMap<u64, Vec<String>> = v.rules().fold(std::collections::HashMap::new(), |mut m, r| {
         m.entry(r.hash()).or_insert_with(Vec::new).push(v.show_rule(r));
@@ -118,46 +133,7 @@ pub(super) fn add_to(v: &Arc<Version>, head: &mut front::Program) -> Result<Arc<
         }
         b.copy(&image, r);
     }
-    *head = edited;
     b.finish().map(|(v, _)| v).map_err(Error::Plan)
-}
-
-/// `add`'s edit of everything but the rules: `components`' natives, declarations, qualifiers, facts and inputs the
-/// program lacks, and `rr_cx_component` as an output. Only the engine's own rules count (`rr_` heads: `rr_cx_*` and
-/// what lowering made for `components`), not what `core.rr` brings with it: a program that declares a base relation
-/// itself keeps its own declaration, and its input or rule as its lowering made it (`docof` over nodes is a rule over
-/// `node`, not an input), and what it keeps (`.decl rr_cx_edge(…) no_inline`, decision 0099).
-fn add_fields(prog: &mut front::Program, components: front::Program) -> Result<()> {
-    let rules = components.rules;
-    let mut needed: BTreeSet<String> = BTreeSet::new();
-    for r in &rules {
-        needed.insert(r.head.rel.to_string());
-        needed.extend(r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string()));
-    }
-    let natives: Vec<_> = components.natives.into_iter().filter(|(rel, _)| needed.contains(rel)).collect();
-    for (rel, native) in natives {
-        needed.extend(native.reads().into_iter().map(str::to_owned));
-        prog.natives.entry(rel).or_insert(native);
-    }
-    let missing: BTreeSet<String> = needed.iter().filter(|rel| !prog.decls.contains_key(rel.as_str())).cloned().collect();
-    for (rel, cols) in components.decls.into_iter().filter(|(rel, _)| missing.contains(rel.as_str())) {
-        prog.decls.insert(rel, cols);
-    }
-    for (rel, words) in components.qualifiers.into_iter().filter(|(rel, _)| missing.contains(rel)) {
-        prog.qualifiers.entry(rel).or_default().extend(words);
-    }
-    for (rel, rows) in components.facts.into_iter().filter(|(rel, _)| missing.contains(rel)) {
-        prog.facts.entry(rel).or_insert(rows);
-    }
-    for input in components.inputs.into_iter().filter(|rel| missing.contains(rel)) {
-        if !prog.inputs.contains(&input) {
-            prog.inputs.push(input);
-        }
-    }
-    if !prog.outputs.iter().any(|o| o == COMPONENT) {
-        prog.outputs.push(COMPONENT.to_owned());
-    }
-    Ok(())
 }
 
 /// What `split` makes of the cross-file part.

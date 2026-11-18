@@ -50,7 +50,7 @@ pub(in crate::code_rule_dsl) fn functor_domains(f: &str, arity: usize) -> (Vec<O
         "substr" => (vec![Some(Name), Some(Int), Some(Int)], Some(Name)),
         // W's semantics, ahead of `strings::functions`' (`plan::sql_term`'s arms for them).
         "replace_all" | "rx_replace" => (vec![Some(Name); 3], Some(Name)),
-        "json_str" | "nfkc" | "py_repr" => (vec![Some(Name)], Some(Name)),
+        "json_str" | "nfkc" | "py_repr" | "shell_unquote" => (vec![Some(Name)], Some(Name)),
         "ed25519_ok" => (vec![Some(Name); 3], Some(Int)),
         "rx_group" => (vec![Some(Name); 3], Some(Name)),
         // `@place(path, line)` (`rr::lower`'s `PLACE`): a place where a node goes, taken apart again by
@@ -495,7 +495,7 @@ impl Given {
     pub fn image(&self) -> super::Result<Lowered> {
         let placed = super::body::Placed::of_program(&self.program)?;
         if !placed.whole {
-            let why = crate::code_rule_dsl::logic::program_image::Builder::of_program_less_maintenance(&self.program).and_then(|b| b.finish()).err().unwrap_or_default();
+            let why = crate::code_rule_dsl::logic::program_image::Builder::of_program(&self.program).and_then(|b| b.finish()).err().unwrap_or_default();
             return Err(Error::Plan(format!("the program has no image: {why}")));
         }
         Ok(Lowered::of_placed(placed, self.domains.clone(), self.ops, self.dialect))
@@ -518,8 +518,6 @@ impl Given {
 #[derive(Clone)]
 pub struct Lowered {
     pub version: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
-    /// A maintained program's parts beside `version` (decision 0215): `None` for every other program.
-    pub(in crate::code_rule_dsl) maint: Option<std::sync::Arc<super::body::Maint>>,
     pub domains: Domains,
     /// The name atoms of `flat_bin`'s operators `+`, `-` and `*`.
     pub(in crate::code_rule_dsl) ops: [i64; 3],
@@ -529,23 +527,20 @@ pub struct Lowered {
 impl Lowered {
     /// The program `p` places, read beside `domains`, `ops` and `dialect`.
     pub fn of_placed(p: super::body::Placed, domains: Domains, ops: [i64; 3], dialect: GrammarDialect) -> Lowered {
-        Lowered { version: p.v, maint: p.maint, domains, ops, dialect }
+        Lowered { version: p.v, domains, ops, dialect }
     }
     /// A program of version `v` read beside this one's domains, operators and dialect (a part of it, or an edit of
-    /// it): with no maintained parts.
+    /// it).
     pub fn with_version(&self, v: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Lowered {
-        Lowered { version: v, maint: None, domains: self.domains.clone(), ops: self.ops, dialect: self.dialect }
+        Lowered { version: v, domains: self.domains.clone(), ops: self.ops, dialect: self.dialect }
     }
     /// What the program's run reads beside its version (`plan::run`).
     pub fn lowering(&self) -> Lowering<'_> {
         Lowering { domains: &self.domains, dialect: self.dialect }
     }
-    /// The version `plan::run` reads, with its maintained parts.
+    /// The version `plan::run` reads.
     pub fn placed(&self) -> super::Result<super::body::Placed> {
-        Ok(match &self.maint {
-            Some(_) => super::body::Placed::derived(self.version.clone(), self.maint.clone()),
-            None => super::body::Placed::whole(self.version.clone()),
-        })
+        Ok(super::body::Placed::whole(self.version.clone()))
     }
     /// The program's digest (`Placed::digest`): its version's, kept as it was made, with its maintained parts'.
     pub fn digest(&self) -> super::Result<u64> {
@@ -642,8 +637,7 @@ pub fn relocate(prog: &mut Program, to: &HashMap<u32, u32>) -> bool {
                 Literal::Nearest { .. } | Literal::Ast { .. } => true,
             })
     };
-    let again = prog.again.iter_mut().flat_map(|a| a.rules.iter_mut().chain(a.deltas.iter_mut()));
-    if !prog.rules.iter_mut().chain(again).all(rule) {
+    if !prog.rules.iter_mut().all(rule) {
         return false;
     }
     prog.facts.values_mut().flatten().all(|row| {
@@ -830,7 +824,7 @@ fn transduce_nearest(prog: &mut Program, domains: &mut Domains) -> Vec<(String, 
 }
 
 mod on_version;
-pub use on_version::lower_version;
+pub use on_version::{lower_version, lowered};
 
 #[cfg(test)]
 pub mod tests;

@@ -163,6 +163,7 @@ impl<'a> Run<'a, '_> {
         scc: &BTreeSet<String>,
         native_rels: &BTreeSet<String>,
     ) -> Option<Arc<JoinSpec>> {
+        let _span = super::super::profile::span(|| "a line's join spec".into());
         let mut bound = VarSet::new();
         for s in steps {
             let mut add = |t: TermRef<'_>| {
@@ -431,7 +432,7 @@ impl<'a> Run<'a, '_> {
                         return None;
                     }
                     let (src, args) = match self.mode_reads.get(&s.at) {
-                        Some(t) => (JoinSource::Native(t.clone()), arg_toks(b.args(s.at), &mut slots)?),
+                        Some(t) => (t.clone(), arg_toks(b.args(s.at), &mut slots)?),
                         None => atom(b.rel(l), b.args(s.at), Some(idx), &mut slots)?,
                     };
                     lines.push(JoinItem::Atom { neg: l.neg(), src, args });
@@ -582,7 +583,7 @@ impl<'a> Run<'a, '_> {
                     let rc = |c: usize| if mode.is_some() { c } else { read_col(rel, &args, c) };
                     let value_col = col.map(rc);
                     let (src, mut toks) = match mode {
-                        Some(t) => (JoinSource::Native(t.clone()), arg_toks(&args, &mut slots)?),
+                        Some(t) => (t.clone(), arg_toks(&args, &mut slots)?),
                         None => atom(rel, &args, None, &mut slots)?,
                     };
                     if local.len() > 1 {
@@ -636,7 +637,7 @@ impl<'a> Run<'a, '_> {
                         args[c] = TermRef::Wild;
                     }
                     let (src, toks) = match mode {
-                        Some(t) => (JoinSource::Native(t.clone()), arg_toks(&args, &mut slots)?),
+                        Some(t) => (t.clone(), arg_toks(&args, &mut slots)?),
                         None => atom(rel, &args, None, &mut slots)?,
                     };
                     let sep = Tok::Sym(b.v.text(sep).to_owned());

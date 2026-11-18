@@ -138,7 +138,7 @@ fn grammar(name: &str) -> Option<(&'static str, bool)> {
 /// positive: a function of what it is (a guest's host path, place and grammar), so a memoised row's guest nodes keep
 /// their ids. A code guest in the run's language takes `GUEST_KEYS..ANNOTATION_KEYS`, which a policy shows; an
 /// annotation `ANNOTATION_KEYS..HIDDEN_KEYS`; every other document `HIDDEN_KEYS..2^31` (decision 0058 §1).
-/// A key's range (its base and span), the place in it its parts hash to, and the guest's identity (decision 0323):
+/// A key's range (its base and span), the place in it its parts hash to, and the guest's identity (decision 0391):
 /// a SHA-256 of the range and the parts.
 fn first_key(parts: &[&[u8]], range: Range) -> (u32, u32, u32, [u8; 32]) {
     use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, GUEST_KEYS, HIDDEN_KEYS};
@@ -257,7 +257,7 @@ pub fn markdown_inline_text(f: &core::Facts, id: u32) -> (String, Placement) {
 }
 
 /// The guests' makers' state for one chunk: the run's language and shape, the hosts' numberings, the guests made, and
-/// the run's guest keys (the store's, decision 0323).
+/// the run's guest keys (the store's, decision 0391).
 #[derive(Default)]
 pub(super) struct Guests {
     run: &'static str,
@@ -287,7 +287,7 @@ pub(super) struct Guests {
 pub(super) enum Seen {
     /// Files and code in the run's language: a rule that names no guest.
     Code,
-    /// And annotations: a relation whose copies for them were folded into it (`hiding::fold_own` widens its bound).
+    /// And annotations: a relation whose copies for them were folded into it (`combining::FoldOwn` widens its bound).
     Annotations,
     /// Every guest: a rule enters one through a guest relation (`hiding::ENTRIES`, `READS`), or reads an AST
     /// matcher's literal.
@@ -666,7 +666,7 @@ mod tests {
     use super::*;
 
     /// Two hosts' annotations whose identities hash to one key, made in two chunks of a run: two keys, and the first
-    /// identity's key again in a third chunk (decision 0323). Before, each chunk probed only its own keys.
+    /// identity's key again in a third chunk (decision 0391). Before, each chunk probed only its own keys.
     #[test]
     fn two_chunks_guests_that_hash_alike_take_two_keys() {
         let parts = |p: &str| [p.as_bytes().to_vec(), 0i64.to_le_bytes().to_vec(), b"annotation".to_vec()];

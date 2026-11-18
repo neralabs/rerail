@@ -879,7 +879,7 @@ fn kept(prog: &Program, rel: &str) -> bool {
 /// An attribute's request (decision 0174): read by name, so neither inlined nor merged into another relation. The
 /// fact layer answers `value` only where `rr_value_req` is derived (`syntax::VALUE_REQ`); inlined into its one
 /// reader, a request over one node (`rr_value_req($n) :- node(_, $n, "number", _, _)`) left `value` empty.
-fn request(rel: &str) -> bool {
+pub(in crate::code_rule_dsl) fn request(rel: &str) -> bool {
     super::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| a.req == rel)
 }
 
@@ -1408,6 +1408,8 @@ fn drop_unread(prog: &mut Program) -> Vec<String> {
     }
     let unread: Vec<String> = reads.keys().filter(|r| !live.contains(**r)).map(|r| (*r).to_owned()).collect::<BTreeSet<_>>().into_iter().collect();
     prog.rules.retain(|r| !unread.iter().any(|x| x == &r.head.rel));
+    // A request relation dropped has no rules, so no entry in the request record (decision 0331: an entry a rule).
+    prog.asked_by.retain(|req, _| !unread.contains(req));
     unread
 }
 
@@ -1920,12 +1922,20 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
     groups
         .into_values()
         .flat_map(|g| {
-            // A request's class is the request and its copies alone; the rest of the class stays a class without it.
-            let (with_request, g): (Vec<String>, Vec<String>) = match g.iter().find(|r| request(r)).cloned() {
-                Some(req) => g.into_iter().partition(|r| *r == req || copy_of(r, &req)),
-                None => (Vec::new(), g),
-            };
-            [(with_request.len() > 1).then_some(with_request), (!g.is_empty()).then_some(g)].into_iter().flatten()
+            // A request's class is the request and its copies alone, each request's apart; the rest of the class stays
+            // a class without them.
+            let (mut out, mut rest) = (Vec::new(), g);
+            while let Some(req) = rest.iter().find(|r| request(r)).cloned() {
+                let (with_request, others): (Vec<String>, Vec<String>) = rest.into_iter().partition(|r| *r == req || copy_of(r, &req));
+                if with_request.len() > 1 {
+                    out.push(with_request);
+                }
+                rest = others;
+            }
+            if !rest.is_empty() {
+                out.push(rest);
+            }
+            out
         })
         .filter_map(|g| {
             if g.iter().any(|r| request(r)) {

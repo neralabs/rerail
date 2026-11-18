@@ -8,8 +8,9 @@
 //! - **Shared lookups.** A table's two nibble lookups are made once per chunk, for every class
 //!   taken from it.
 //! - **A `prev` on bytes.** `prev(v, k)` is `v`'s chunk and the chunk before it, shifted by `k`
-//!   bytes (one `ext` on aarch64). The chunk before the block's first is `v` over the 16 bytes
-//!   before the block, which are the previous block's, or zeros before a file. No carried word.
+//!   bytes (one `ext` on aarch64). The chunk before the block's first is chunk 0: `v` over the 16
+//!   bytes before the block, which are the previous block's, or zeros before a file. No carried
+//!   word (simdjson carries that chunk's input as a vector instead).
 //! - **One mask at the edge.** A value becomes a 64-bit mask only where a value outside the
 //!   vectors, an output or a carried field reads it.
 //!
@@ -27,9 +28,10 @@ use cranelift_codegen::ir::{ConstantData, InstBuilder, MemFlags, Value, condcode
 use cranelift_frontend::FunctionBuilder;
 
 /// The backend tests a vector's bits against a mask in one instruction (NEON's `vtst`, which
-/// `clif_rust`'s Rust has; Cranelift's aarch64 lowering does not): a class's lane is then the
-/// test itself, not its complement. Set by a build for such a backend (`rr_aot_gen`).
-pub static BIT_TEST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// `clif_rust`'s Rust has, and the vendored Cranelift's aarch64 lowering since 0381: `cmtst`): a
+/// class's lane is then the test itself, not its complement. On by default where the vendored
+/// Cranelift is built for aarch64 (`cranelift_clmul`, its mark); upstream's has no `cmtst`.
+pub static BIT_TEST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(cfg!(all(cranelift_clmul, target_arch = "aarch64")));
 
 /// How far back a byte-local value may look: the bytes before a file (`FRONT`).
 const MAX_LAG: u8 = 16;
@@ -47,7 +49,7 @@ pub struct Plan {
     pub ascii: Vec<Option<bool>>,
     /// Some value reads the 16 bytes before the block.
     pub before: bool,
-    /// The full-block body has an ASCII twin: some value is known on ASCII windows.
+    /// Some value is known on ASCII windows: the full body tests for one (`native_cpu_block::ascii_split`).
     pub ascii_branch: bool,
     /// Each value's word in a full block, when it is the same in every one: made of constants
     /// and `within` only (all ones there), `prev`s of such values included.
@@ -56,6 +58,9 @@ pub struct Plan {
     pub regions: Vec<Region>,
     /// Each value's region, if it is in one.
     pub region_of: Vec<Option<usize>>,
+    /// The values the full body gets wrong on an edge block (`native_cpu_edge::edge_values`,
+    /// 0383), where that is bounded: found when a body first asks (`Plan::edge`).
+    edge: std::cell::OnceCell<Option<crate::native_cpu_edge::Edge>>,
 }
 
 /// A gated region: values that are zero in a block where the gate is zero and their own carried
@@ -94,7 +99,7 @@ fn weight(inst: &BlockInst, lane: bool, mask: bool) -> usize {
             };
             own + if mask { 9 } else { 0 }
         }
-        BlockInst::Const(_) | BlockInst::Within(_) => 0,
+        BlockInst::Const(_) | BlockInst::Within(_) | BlockInst::Prefix(..) => 0,
         BlockInst::Prev(..) => 6,
         BlockInst::Fill(..) => 9,
         BlockInst::Toggle(_) => 14,
@@ -141,6 +146,8 @@ pub struct BodyPack {
     pub packing: crate::class_pack::Packing,
     pub of: HashMap<(u16, u8), usize>,
     pub extra: usize,
+    /// Each place's tables (`placed_pack`): `(place, tables)`, the body's own part first.
+    pub places: Vec<(usize, usize)>,
 }
 
 /// The pack of the classes the values `roots` read, with `extras` (sets the body tests besides
@@ -181,10 +188,151 @@ pub fn body_pack(native: &BlockNative, roots: &[usize], extras: &[crate::class_p
     own.dedup();
     let extra_alone = pack(extras);
     if packing.tables.len() > own.len() + extra_alone.tables.len() {
-        return BodyPack { packing: extra_alone, of: HashMap::new(), extra: 0 };
+        return BodyPack { packing: extra_alone, of: HashMap::new(), extra: 0, places: Vec::new() };
     }
     let of = classes.iter().enumerate().map(|(k, &c)| (c, k)).collect();
-    BodyPack { packing, of, extra: classes.len() }
+    BodyPack { packing, of, extra: classes.len(), places: Vec::new() }
+}
+
+/// The full body's classes packed by where they are made (0375): `places[x]` is the place of
+/// class value `x` (the body's own part, a gated region, the ASCII split's inside), and each
+/// place's classes are packed together, as simdjson's one lookup answers the classes of its
+/// one body. A place's lookups then serve its own classes only: a region needing one class
+/// does not look up a table of others it never reads. A class the body's own part has is not
+/// packed again in a place inside it (its lookup dominates there). A class whose table a
+/// `pair` reads keeps that table (its lookup is the pair's); a place whose packing would take
+/// more lookups than its classes' own tables keeps those.
+pub fn placed_pack(native: &BlockNative, places: &[Option<usize>], own_place: usize) -> BodyPack {
+    use crate::class_pack::{Need, Packing, Test, pack};
+    let paired: Vec<u16> = native.insts.iter().filter_map(|i| match *i {
+        BlockInst::Pair { before, table, .. } => Some([before, table]),
+        _ => None,
+    }).flatten().collect();
+    let set_of = |(t, bits): (u16, u8)| -> crate::class_pack::ByteSet {
+        let mut s = [0u64; 4];
+        for b in 0..=255u8 {
+            if native.tables[usize::from(t)].member(b, bits) {
+                s[usize::from(b >> 6)] |= 1 << (b & 63);
+            }
+        }
+        s
+    };
+    let n_places = places.iter().flatten().max().map_or(0, |m| m + 1).max(own_place + 1);
+    let mut by_place: Vec<Vec<(u16, u8)>> = vec![Vec::new(); n_places];
+    for (x, p) in places.iter().enumerate() {
+        if let (Some(p), BlockInst::Class { table, bits }) = (*p, &native.insts[x]) {
+            if !paired.contains(table) && !by_place[p].contains(&(*table, *bits)) {
+                by_place[p].push((*table, *bits));
+            }
+        }
+    }
+    // A class is its bytes: two classes of one set (of two of the program's tables) are one
+    // test, and a place inside the body's part tests none its part has.
+    let own: Vec<crate::class_pack::ByteSet> = by_place[own_place].iter().map(|&c| set_of(c)).collect();
+    let mut later: Vec<((u16, u8), crate::class_pack::ByteSet)> = Vec::new();
+    for (p, cs) in by_place.iter_mut().enumerate() {
+        if p != own_place {
+            cs.retain(|&c| {
+                let keep = !own.contains(&set_of(c));
+                if !keep {
+                    later.push((c, set_of(c)));
+                }
+                keep
+            });
+        }
+        let mut sets: Vec<crate::class_pack::ByteSet> = Vec::new();
+        cs.retain(|&c| {
+            let set = set_of(c);
+            let first = !sets.contains(&set);
+            if first {
+                sets.push(set);
+            } else {
+                later.push((c, set));
+            }
+            first
+        });
+    }
+    let mut out = BodyPack::default();
+    // The body's own part first: its tables are looked up before any place inside it.
+    let order: Vec<usize> = std::iter::once(own_place).chain((0..n_places).filter(|&p| p != own_place)).collect();
+    // The body's own part's tables, looked up before any place inside it (`own_tables`).
+    let mut own_tables = 0;
+    for p in order {
+        // A class the own part's products make, its set theirs or its complement's: tested by
+        // those bits, its place looks up nothing for it (a region's union of the structural
+        // characters, whose products the own part's whitespace and structurals are).
+        let mut classes = by_place[p].clone();
+        if p != own_place {
+            classes.retain(|&c| match by_products(&out.packing.tables[..own_tables], set_of(c)) {
+                Some(t) => {
+                    out.of.insert(c, out.packing.tests.len());
+                    out.packing.tests.push(t);
+                    false
+                }
+                None => true,
+            });
+        }
+        if classes.is_empty() {
+            continue;
+        }
+        let needs: Vec<Need> = classes.iter().map(|&c| Need::exact(set_of(c))).collect();
+        let packing: Packing = pack(&needs);
+        let mut tables: Vec<u16> = classes.iter().filter(|&&(t, bits)| byte_range(&native.tables[usize::from(t)], bits).is_none()).map(|c| c.0).collect();
+        tables.sort_unstable();
+        tables.dedup();
+        if packing.tables.len() > tables.len() {
+            continue;
+        }
+        let base = out.packing.tables.len() as u16;
+        for (&c, t) in classes.iter().zip(packing.tests) {
+            out.of.insert(c, out.packing.tests.len());
+            out.packing.tests.push(Test { tables: t.tables.iter().map(|&(tb, bits)| (tb + base, bits)).collect(), ..t });
+        }
+        out.places.push((p, packing.tables.len()));
+        out.packing.tables.extend(packing.tables);
+        if p == own_place {
+            own_tables = out.packing.tables.len();
+        }
+    }
+    // Each class of a set already tested: that set's test.
+    for (c, set) in later {
+        let found = out.of.iter().find(|&(&d, _)| set_of(d) == set).map(|(_, &k)| k);
+        if let Some(k) = found {
+            out.of.insert(c, k);
+        }
+    }
+    out.extra = out.packing.tests.len();
+    out
+}
+
+/// The test of `set` by the products of `tables` (each bit's bytes), where the bits inside it
+/// make all of it, or the bits outside it all of its complement.
+fn by_products(tables: &[crate::block::ClassTable], set: crate::class_pack::ByteSet) -> Option<crate::class_pack::Test> {
+    let has = |s: &crate::class_pack::ByteSet, b: u8| s[usize::from(b >> 6)] >> (b & 63) & 1 == 1;
+    for negated in [false, true] {
+        let want = |b: u8| has(&set, b) != negated;
+        let mut got = [0u64; 4];
+        let mut parts: Vec<(u16, u8)> = Vec::new();
+        for (t, table) in tables.iter().enumerate() {
+            let mut bits = 0u8;
+            for j in 0..8 {
+                let of: Vec<u8> = (0..=255u8).filter(|&b| table.member(b, 1 << j)).collect();
+                if !of.is_empty() && of.iter().all(|&b| want(b)) {
+                    bits |= 1 << j;
+                    for b in of {
+                        got[usize::from(b >> 6)] |= 1 << (b & 63);
+                    }
+                }
+            }
+            if bits != 0 {
+                parts.push((t as u16, bits));
+            }
+        }
+        if (0..=255u8).all(|b| has(&got, b) == want(b)) && !parts.is_empty() {
+            return Some(crate::class_pack::Test { range: None, tables: parts, negated });
+        }
+    }
+    None
 }
 
 /// The bytes at which value `x` holds, where it is a function of its own byte alone (classes,
@@ -271,6 +419,17 @@ fn lane_plan(native: &BlockNative, deep: bool) -> (Vec<bool>, Vec<u8>, Vec<bool>
         (lanes[at], lag[at], at_zero[at], can[at]) = (l, s, z, c);
     }
     (lanes, lag, at_zero, can)
+}
+
+/// Whether byte-local value `x` reads its own bytes only, none before them (no `prev`, `pair`
+/// or `plane_before` in it): made on chunk 0, the 16 bytes before the block, it stays in the
+/// window (`MAX_LAG`).
+fn reads_here(native: &BlockNative, x: usize, depth: u32) -> bool {
+    depth < 32
+        && match native.insts[x] {
+            BlockInst::Prev(..) | BlockInst::Pair { .. } | BlockInst::PlaneBefore(_) => false,
+            ref i => i.operands().into_iter().all(|o| reads_here(native, o, depth + 1)),
+        }
 }
 
 /// Whether value `x` is false wherever the byte `back` before its position is zero: its bytes
@@ -418,7 +577,7 @@ impl Plan {
         // Worth a branch: a byte test or class known on ASCII bytes (not a constant).
         let ascii_branch = native.insts.iter().enumerate().any(|(at, i)| lanes[at] && ascii[at].is_some() && matches!(i, BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Pair { .. } | BlockInst::Plane(_) | BlockInst::PlaneBefore(_)));
         let full = full_words(native, &lanes);
-        Plan { lanes, mask, at_zero, ascii, before, ascii_branch, full, regions, region_of }
+        Plan { lanes, mask, at_zero, ascii, before, ascii_branch, full, regions, region_of, edge: Default::default() }
     }
 
     /// The values made masks and the gated regions, for a choice of values on the vectors.
@@ -439,7 +598,13 @@ impl Plan {
     pub fn window(native: &BlockNative) -> Plan {
         let n = native.insts.len();
         let (lanes, _, at_zero, _) = lane_plan(native, true);
-        Plan { mask: lanes.clone(), lanes, at_zero, ascii: vec![None; n], before: false, ascii_branch: false, full: vec![None; n], regions: Vec::new(), region_of: vec![None; n] }
+        Plan { mask: lanes.clone(), lanes, at_zero, ascii: vec![None; n], before: false, ascii_branch: false, full: vec![None; n], regions: Vec::new(), region_of: vec![None; n], edge: Default::default() }
+    }
+
+    /// The values the full body gets wrong on an edge block (0383), where that is bounded: every
+    /// other value it makes right there. Found once, when first asked.
+    pub fn edge(&self, native: &BlockNative) -> Option<&crate::native_cpu_edge::Edge> {
+        self.edge.get_or_init(|| crate::native_cpu_edge::edge_values(native, &self.lanes, &self.full)).as_ref()
     }
 
     /// Whether `prev` instruction `at` reads a carried word (it is not on the vectors).
@@ -482,7 +647,11 @@ fn full_words(native: &BlockNative, lanes: &[bool]) -> Vec<Option<u64>> {
         w[at] = match *inst {
             BlockInst::Const(c) => (all(c), all(c)),
             BlockInst::Within(d) => (all(u64::MAX), all(if d == 0 { u64::MAX } else { !((1u64 << d) - 1) })),
-            _ if lanes[at] => (NONE, NONE),
+            // None in a full block; in the first, what the file's first bytes say.
+            BlockInst::Prefix(..) => (all(0), NONE),
+            // Bit logic is the same at each byte of a lane as at each bit of a word: a lane of
+            // known operands is known (a class the host's stripping cut, `within & ~0`).
+            _ if lanes[at] && !matches!(inst, BlockInst::Not(_) | BlockInst::And(..) | BlockInst::Or(..) | BlockInst::Xor(..) | BlockInst::AndNot(..)) => (NONE, NONE),
             BlockInst::Not(a) => {
                 let (x, y) = get(a);
                 (not(x), not(y))
@@ -500,6 +669,12 @@ fn full_words(native: &BlockNative, lanes: &[bool]) -> Vec<Option<u64>> {
                 let full = Known { known: (x.known << k) | same, value: (x.value << k) | (top(x.value) & same) };
                 let first = Known { known: (y.known << k) | low, value: y.value << k };
                 (full, first)
+            }
+            // In the word: the top `k` bits known zero.
+            BlockInst::Early(a, k) => {
+                let (x, y) = get(a);
+                let down = |x: Known| Known { known: (x.known >> k) | !(u64::MAX >> k), value: x.value >> k };
+                (down(x), down(y))
             }
             _ => (NONE, NONE),
         };
@@ -532,22 +707,25 @@ fn regions(native: &BlockNative, lanes: &[bool], mask: &[bool], users: &[Vec<usi
     // state (an escape, a fill, a value of a pass before). A byte class, or a run of them, is in
     // most blocks of text; a class with an escape before it, or inside a string, is rare.
     // Without measured densities a gate needs two conditions, one of them carried: simdjson's
-    // escapes, a `u` after an escaping backslash.
+    // escapes, a `u` after an escaping backslash. A run's first byte counts as carried.
     let mut conditions = vec![0usize; n];
     let mut carried = vec![false; n];
     for (x, inst) in native.insts.iter().enumerate() {
         let c = |o: u16| conditions[usize::from(o)];
         conditions[x] = match *inst {
-            BlockInst::Const(_) | BlockInst::Within(_) => 0,
+            BlockInst::Const(_) | BlockInst::Within(_) | BlockInst::Prefix(..) => 0,
             BlockInst::And(a, b) => c(a) + c(b),
             BlockInst::AndNot(a, _) => c(a) + 1,
-            BlockInst::Prev(a, _) => c(a),
+            BlockInst::Prev(a, _) | BlockInst::Early(a, _) => c(a),
             _ => 1,
         };
         carried[x] = match *inst {
+            // A run's first byte, `a & ~prev(a)`: as rare as the runs are, a token's start (a
+            // number's, which its check is gated on, as simdjson checks a number at its token).
+            BlockInst::AndNot(a, p) if matches!(native.insts[usize::from(p)], BlockInst::Prev(q, 1) if q == a) => true,
             BlockInst::And(a, b) => carried[usize::from(a)] || carried[usize::from(b)],
-            BlockInst::AndNot(a, _) | BlockInst::Prev(a, _) => carried[usize::from(a)],
-            _ => !lanes[x] && inst.operands().is_empty() && !matches!(inst, BlockInst::Const(_) | BlockInst::Within(_)) || matches!(inst, BlockInst::Escaped(_) | BlockInst::Toggle(_) | BlockInst::Fill(..) | BlockInst::Carry(_) | BlockInst::Walk { .. }) || grouped[x],
+            BlockInst::AndNot(a, _) | BlockInst::Prev(a, _) | BlockInst::Early(a, _) => carried[usize::from(a)],
+            _ => !lanes[x] && inst.operands().is_empty() && !matches!(inst, BlockInst::Const(_) | BlockInst::Within(_) | BlockInst::Prefix(..)) || matches!(inst, BlockInst::Escaped(_) | BlockInst::Toggle(_) | BlockInst::Fill(..) | BlockInst::Carry(_) | BlockInst::Walk { .. }) || grouped[x],
         };
     }
     let mut region_of: Vec<Option<usize>> = vec![None; n];
@@ -563,7 +741,7 @@ fn regions(native: &BlockNative, lanes: &[bool], mask: &[bool], users: &[Vec<usi
             let is = |x: u16| z[usize::from(x)] || matches!(native.insts[usize::from(x)], BlockInst::Const(0));
             z[at] = match *inst {
                 BlockInst::And(a, b) => is(a) || is(b),
-                BlockInst::AndNot(a, _) | BlockInst::Prev(a, _) | BlockInst::Fill(a, _) | BlockInst::Toggle(a) | BlockInst::Escaped(a) => is(a),
+                BlockInst::AndNot(a, _) | BlockInst::Prev(a, _) | BlockInst::Early(a, _) | BlockInst::Fill(a, _) | BlockInst::Toggle(a) | BlockInst::Escaped(a) => is(a),
                 BlockInst::Or(a, b) | BlockInst::Xor(a, b) => is(a) && is(b),
                 _ => false,
             };
@@ -687,7 +865,7 @@ fn regions(native: &BlockNative, lanes: &[bool], mask: &[bool], users: &[Vec<usi
 pub fn remade(native: &BlockNative) -> Vec<bool> {
     let pure = native.pure();
     let n = native.insts.len();
-    let mut remade: Vec<bool> = (0..n).map(|x| pure[x] && matches!(native.insts[x], BlockInst::Const(_) | BlockInst::Within(_))).collect();
+    let mut remade: Vec<bool> = (0..n).map(|x| pure[x] && matches!(native.insts[x], BlockInst::Const(_) | BlockInst::Within(_) | BlockInst::Prefix(..))).collect();
     let trial = native.passes_with(&pure);
     for (k, pass) in trial.passes.iter().enumerate().skip(1) {
         let crate::block_native::Pass::Forward { body, .. } = pass else { continue };
@@ -729,6 +907,16 @@ fn exclusive_vectors(lanes: &[bool], users: &[Vec<usize>], output: &[bool], memb
 
 /// A value's 16 bytes: known (all zero or all ones), or a vector, complemented or not (a
 /// compare gives the complement free; `and` with one is a `bic`).
+/// A value as bytes (`Lanes::as_bytes`): set where `v & bits` is nonzero; `v` is `base` outside
+/// `bits`; `combined`, made of more than one rule.
+#[derive(Clone, Copy)]
+struct Bytes {
+    v: Value,
+    bits: u8,
+    combined: bool,
+    base: Value,
+}
+
 #[derive(Clone, Copy)]
 pub enum Lane {
     Known(bool),
@@ -772,8 +960,6 @@ impl Lane {
 pub struct Lanes<'a> {
     native: &'a BlockNative,
     plan: &'a Plan,
-    /// The ASCII body: values known on ASCII windows are folded.
-    ascii: bool,
     /// The first stream position of chunk 1 and the stream's length outside a full block's
     /// body (`None` there): for `within`, and for a `prev`'s cut before the stream.
     position: Option<(Value, Value)>,
@@ -783,6 +969,12 @@ pub struct Lanes<'a> {
     nibble: Value,
     zero16: Value,
     nibbles: HashMap<(usize, u8), (Value, Value)>,
+    /// Chunks' high nibbles alone, for a table whose low half is all ones (`lookup`).
+    highs: HashMap<(usize, u8), Value>,
+    /// Each pair of tables' AND at (chunk, lag), shared by the pairs of their bits.
+    pairs: HashMap<(u16, u16, usize, u8), Value>,
+    /// Values as bytes (`as_bytes`), at (value, chunk, lag).
+    bytes_of: HashMap<(usize, usize, u8), Option<Bytes>>,
     /// Each table's lookup at (chunk, lag), shared by its classes.
     lookups: HashMap<(usize, usize, u8), Value>,
     /// Each table's two halves, and each splatted byte, made once in the body.
@@ -804,7 +996,7 @@ pub struct Lanes<'a> {
 impl<'a> Lanes<'a> {
     /// `bytes`: the block's chunks at lag 0 (index 0: the 16 bytes before it), when already
     /// loaded. `general`: the body may run on a file's first or last block.
-    pub fn new(f: &mut FunctionBuilder<'_>, native: &'a BlockNative, plan: &'a Plan, base: Value, i: Value, len: Value, general: bool, ascii: bool, bytes: Option<[Option<Value>; 5]>, nibble: Value) -> Self {
+    pub fn new(f: &mut FunctionBuilder<'_>, native: &'a BlockNative, plan: &'a Plan, base: Value, i: Value, len: Value, general: bool, bytes: Option<[Option<Value>; 5]>, nibble: Value) -> Self {
         let c = f.ins().iconst(types::I8, 0);
         let zero16 = f.ins().splat(types::I8X16, c);
         let mut loaded = HashMap::new();
@@ -816,13 +1008,15 @@ impl<'a> Lanes<'a> {
         Lanes {
             native,
             plan,
-            ascii,
             position: general.then(|| (f.ins().ishl_imm(i, 6), len)),
             bytes: loaded,
             base,
             nibble,
             zero16,
             nibbles: HashMap::new(),
+            highs: HashMap::new(),
+            pairs: HashMap::new(),
+            bytes_of: HashMap::new(),
             lookups: HashMap::new(),
             tables: vec![None; native.tables.len()],
             splats: [None; 256],
@@ -837,6 +1031,30 @@ impl<'a> Lanes<'a> {
         }
     }
 
+    /// The lanes of an edge block's part (`native_cpu_block`'s `Emit::edge_part`, 0383): `within`
+    /// and a `prev`'s cut from block `i`'s position, and nothing the body made read again (its
+    /// bytes, lookups, chunks, constants), so that none of it is live to the body's end.
+    pub fn on_edge(&mut self, f: &mut FunctionBuilder<'_>, i: Value, len: Value, nibble: Value) {
+        self.position = Some((f.ins().ishl_imm(i, 6), len));
+        self.nibble = nibble;
+        let c = f.ins().iconst(types::I8, 0);
+        self.zero16 = f.ins().splat(types::I8X16, c);
+        self.bytes.clear();
+        self.nibbles.clear();
+        self.highs.clear();
+        self.lookups.clear();
+        self.pairs.clear();
+        self.bytes_of.clear();
+        self.tables = vec![None; self.native.tables.len()];
+        self.splats = [None; 256];
+        self.index = None;
+        self.memo.clear();
+        self.packed = vec![None; self.packed.len()];
+        self.packed_lookups.clear();
+        self.tests.clear();
+        self.ranges.clear();
+    }
+
     /// A window's values (`native_cpu_bytes`): its 64 bytes from `base`, the stream's position
     /// `start`, anywhere in the file; `within` and a `prev`'s cut from `start`.
     pub fn window(f: &mut FunctionBuilder<'_>, native: &'a BlockNative, plan: &'a Plan, base: Value, start: Value, len: Value, nibble: Value) -> Self {
@@ -845,13 +1063,15 @@ impl<'a> Lanes<'a> {
         Lanes {
             native,
             plan,
-            ascii: false,
             position: Some((start, len)),
             bytes: HashMap::new(),
             base,
             nibble,
             zero16,
             nibbles: HashMap::new(),
+            highs: HashMap::new(),
+            pairs: HashMap::new(),
+            bytes_of: HashMap::new(),
             lookups: HashMap::new(),
             tables: vec![None; native.tables.len()],
             splats: [None; 256],
@@ -874,7 +1094,24 @@ impl<'a> Lanes<'a> {
     /// The bytes `lag` before chunk `c`'s, loaded once (an unaligned load: the window holds
     /// `MAX_LAG` bytes before a block, `FRONT` zeros before a file).
     fn bytes(&mut self, f: &mut FunctionBuilder<'_>, c: usize, lag: u8) -> Value {
+        // Chunk 0 is chunk 1's 16 bytes back: one key, so a carried chunk 0 is read as itself.
+        if c == 0 {
+            return self.bytes(f, 1, lag + 16);
+        }
         if let Some(&v) = self.bytes.get(&(c, lag)) {
+            return v;
+        }
+        // Inside the chunk before and this one, both in registers: an `ext` of the two, as
+        // simdjson's `prev<N>` of its input (chunk 0, the bytes before the block, perhaps the
+        // block before's last chunk, carried: `Lanes::new`).
+        let chunk = |c: usize| if c == 1 { (1, 16) } else { (c - 1, 0) };
+        if (1..16).contains(&lag)
+            && let (Some(&back), Some(&here)) = (self.bytes.get(&chunk(c)), self.bytes.get(&(c, 0)))
+        {
+            let lanes: Vec<u8> = (0..16u8).map(|l| 16 - lag + l).collect();
+            let mask = f.func.dfg.immediates.push(ConstantData::from(&lanes[..]));
+            let v = f.ins().shuffle(back, here, mask);
+            self.bytes.insert((c, lag), v);
             return v;
         }
         let v = f.ins().load(types::I8X16, MemFlags::new().with_notrap(), self.base, 16 * c as i32 - 16 - i32::from(lag));
@@ -885,6 +1122,23 @@ impl<'a> Lanes<'a> {
     /// Table `t`'s class bytes at chunk `c`, lag `lag`, shared by its classes.
     fn lookup(&mut self, f: &mut FunctionBuilder<'_>, t: usize, c: usize, lag: u8) -> Value {
         if let Some(&v) = self.lookups.get(&(t, c, lag)) {
+            return v;
+        }
+        // A table of high nibbles only (its low half all ones): one lookup, as simdjson's
+        // `byte_2_high`.
+        if self.native.tables[t].lo == [0xff; 16] {
+            let hi = self.high_at(f, c, lag);
+            let thi = match self.tables[t] {
+                Some((_, thi)) => thi,
+                None => {
+                    let thi = f.func.dfg.constants.insert(ConstantData::from(&self.native.tables[t].hi[..]));
+                    let thi = f.ins().vconst(types::I8X16, thi);
+                    self.tables[t] = Some((thi, thi));
+                    thi
+                }
+            };
+            let v = f.ins().swizzle(thi, hi);
+            self.lookups.insert((t, c, lag), v);
             return v;
         }
         let (lo, hi) = self.nibbles_at(f, c, lag);
@@ -970,7 +1224,7 @@ impl<'a> Lanes<'a> {
     }
 
     /// The bytes `lo ..= lo + span` (wrapping) at chunk `c`, lag `lag`: one compare where `lo`
-    /// is zero or `span` is, else a subtract and a compare; made once.
+    /// is zero, `span` is, or the range runs to 0xff, else a subtract and a compare; made once.
     fn range(&mut self, f: &mut FunctionBuilder<'_>, lo: u8, span: u8, c: usize, lag: u8) -> Lane {
         if span == 255 {
             return Lane::Known(true);
@@ -982,6 +1236,10 @@ impl<'a> Lanes<'a> {
         let v = if span == 0 {
             let s = self.splat(f, lo);
             f.ins().icmp(IntCC::Equal, b, s)
+        } else if u16::from(lo) + u16::from(span) == 0xff {
+            // Up to 0xff: one compare, as simdjson's `prev2 >= 0xe0` (its saturating subtract).
+            let s = self.splat(f, lo);
+            f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, b, s)
         } else {
             let d = if lo == 0 {
                 b
@@ -1008,11 +1266,25 @@ impl<'a> Lanes<'a> {
             Some(&x) => x,
             None => {
                 let b = self.bytes(f, c, lag);
-                let x = (f.ins().band(b, self.nibble), f.ins().ushr_imm(b, 4));
+                let x = (f.ins().band(b, self.nibble), self.high_at(f, c, lag));
                 self.nibbles.insert((c, lag), x);
                 x
             }
         }
+    }
+
+    /// Chunk `c`'s high nibbles at lag `lag`, made once.
+    fn high_at(&mut self, f: &mut FunctionBuilder<'_>, c: usize, lag: u8) -> Value {
+        if let Some(&(_, h)) = self.nibbles.get(&(c, lag)) {
+            return h;
+        }
+        if let Some(&h) = self.highs.get(&(c, lag)) {
+            return h;
+        }
+        let b = self.bytes(f, c, lag);
+        let h = f.ins().ushr_imm(b, 4);
+        self.highs.insert((c, lag), h);
+        h
     }
 
     fn splat(&mut self, f: &mut FunctionBuilder<'_>, byte: u8) -> Value {
@@ -1031,6 +1303,81 @@ impl<'a> Lanes<'a> {
     /// The bytes with any of `bits` set in `v`. Where the backend tests bits in one instruction
     /// (`BIT_TEST`: NEON's `vtst`, as the lean lexer's window reads its classes), the test
     /// itself; else its complement, a compare with zero, the polarity free.
+    /// A pair of tables' AND at chunk `c`, lag `lag`: the byte before's classes and this
+    /// byte's, made once for every pair of their bits.
+    fn pair_and(&mut self, f: &mut FunctionBuilder<'_>, before: u16, table: u16, c: usize, lag: u8) -> Value {
+        if let Some(&v) = self.pairs.get(&(before, table, c, lag)) {
+            return v;
+        }
+        let p = self.lookup(f, usize::from(before), c, lag + 1);
+        let t = self.lookup(f, usize::from(table), c, lag);
+        let v = f.ins().band(p, t);
+        self.pairs.insert((before, table, c, lag), v);
+        v
+    }
+
+    /// Value `at` as bytes (decision 0405, simdjson's `special_cases ^ must_be_2_3_continuation`):
+    /// `(v, bits, combined, base)`, set where `v & bits` is nonzero, and `v` equal to `base`
+    /// outside `bits`.
+    /// - A pair: its tables' AND and its bits.
+    /// - An `xor` of a pair of one bit and any lane: that bit of the AND flipped where the lane
+    ///   is set (an `and`, an `eor`), the rest of the AND as it was.
+    /// - An `or` of two with no bit in common, from one AND: their bytes in one (none made where
+    ///   one is the AND itself, as simdjson's `special_cases`).
+    ///
+    /// `combined`: some `or` or `xor` was made so, its tests saved.
+    fn as_bytes(&mut self, f: &mut FunctionBuilder<'_>, at: usize, c: usize, lag: u8) -> Option<Bytes> {
+        if let Some(&v) = self.bytes_of.get(&(at, c, lag)) {
+            return v;
+        }
+        let o = |x: u16| usize::from(x);
+        let v = match self.native.insts[at] {
+            BlockInst::Pair { before, table, bits } => {
+                let v = self.pair_and(f, before, table, c, lag);
+                Some(Bytes { v, bits, combined: false, base: v })
+            }
+            BlockInst::Const(0) => Some(Bytes { v: self.zero16, bits: 0, combined: false, base: self.zero16 }),
+            BlockInst::Or(a, b) => match (self.as_bytes(f, o(a), c, lag), self.as_bytes(f, o(b), c, lag)) {
+                (Some(x), Some(y)) if x.bits == 0 => Some(y),
+                (Some(x), Some(y)) if y.bits == 0 => Some(x),
+                (Some(x), Some(y)) if x.bits & y.bits == 0 && x.base == y.base => {
+                    // Outside its bits each is the base: the two's XOR with the base is each
+                    // in its bits.
+                    let v = if x.v == x.base {
+                        y.v
+                    } else if y.v == y.base {
+                        x.v
+                    } else {
+                        let both = f.ins().bxor(x.v, y.v);
+                        f.ins().bxor(both, x.base)
+                    };
+                    Some(Bytes { v, bits: x.bits | y.bits, combined: true, base: x.base })
+                }
+                _ => None,
+            },
+            BlockInst::Xor(a, b) => {
+                let one = |r: Option<Bytes>| r.filter(|r| r.bits.count_ones() == 1);
+                let (x, other) = match one(self.as_bytes(f, o(a), c, lag)) {
+                    Some(x) => (Some(x), o(b)),
+                    None => (one(self.as_bytes(f, o(b), c, lag)), o(a)),
+                };
+                match x {
+                    Some(x) => {
+                        let y = self.get_at(f, other, c, lag);
+                        let y = self.polar(f, y, false);
+                        let sel = self.splat(f, x.bits);
+                        let flip = f.ins().band(y, sel);
+                        Some(Bytes { v: f.ins().bxor(x.v, flip), bits: x.bits, combined: true, base: x.base })
+                    }
+                    None => None,
+                }
+            }
+            _ => None,
+        };
+        self.bytes_of.insert((at, c, lag), v);
+        v
+    }
+
     fn none_of(&mut self, f: &mut FunctionBuilder<'_>, v: Value, bits: u8) -> Lane {
         let sel = self.splat(f, bits);
         let picked = f.ins().band(v, sel);
@@ -1071,6 +1418,7 @@ impl<'a> Lanes<'a> {
     /// Its loads and lookups made already are kept, the values made from them made again.
     pub fn assuming(mut self, known: Rc<HashMap<usize, bool>>) -> Self {
         self.memo.clear();
+        self.bytes_of.clear();
         self.assume = Some(known);
         self
     }
@@ -1080,6 +1428,7 @@ impl<'a> Lanes<'a> {
     pub fn unassuming(mut self, changed: &[bool]) -> Self {
         self.assume = None;
         self.memo.retain(|&(at, _, lag), _| lag != 0 || !changed[at]);
+        self.bytes_of.clear();
         self
     }
 
@@ -1093,10 +1442,7 @@ impl<'a> Lanes<'a> {
         if let Some(&l) = self.memo.get(&(at, c, lag)) {
             return l;
         }
-        let lane = match self.plan.ascii[at] {
-            Some(b) if self.ascii => Lane::Known(b),
-            _ => self.make(f, at, c, lag),
-        };
+        let lane = self.make(f, at, c, lag);
         self.memo.insert((at, c, lag), lane);
         lane
     }
@@ -1135,9 +1481,7 @@ impl<'a> Lanes<'a> {
                 self.none_of(f, b, 1 << k)
             }
             BlockInst::Pair { before, table, bits } => {
-                let p = self.lookup(f, usize::from(before), c, lag + 1);
-                let t = self.lookup(f, usize::from(table), c, lag);
-                let both = f.ins().band(p, t);
+                let both = self.pair_and(f, before, table, c, lag);
                 self.none_of(f, both, bits)
             }
             BlockInst::Not(a) => self.get_at(f, o(a), c, lag).not(),
@@ -1160,6 +1504,8 @@ impl<'a> Lanes<'a> {
                 let (x, y) = (self.get_at(f, o(a), c, lag), self.get_at(f, o(b), c, lag));
                 Lane::and(f, x, y.not())
             }
+            // Pair rules ORed and XORed as bytes, tested once (`as_bytes`).
+            BlockInst::Or(..) | BlockInst::Xor(..) if let Some(Bytes { v, bits, combined: true, .. }) = self.as_bytes(f, at, c, lag) => self.none_of(f, v, bits),
             BlockInst::Or(a, b) => {
                 let (x, y) = (self.get_at(f, o(a), c, lag), self.get_at(f, o(b), c, lag));
                 Lane::and(f, x.not(), y.not()).not()
@@ -1169,14 +1515,24 @@ impl<'a> Lanes<'a> {
                 Lane::xor(f, x, y)
             }
             BlockInst::Prev(a, k) => {
-                if c >= 2 {
-                    // simdjson's `prev<N>`: the chunk before's last `k` bytes, then this chunk's
-                    // first `16 - k`, one `ext`. Its positions are all at least `k`.
+                // simdjson's `prev<N>`: the chunk before's last `k` bytes, then this chunk's first
+                // `16 - k`, one `ext`. The first chunk's chunk before is chunk 0, the 16 bytes
+                // before the block (the previous block's last chunk, simdjson's `prev_input`),
+                // made as any chunk is; before a file they are zeros, read as no bits.
+                if c >= 2 || (c == 1 && lag == 0 && reads_here(self.native, o(a), 0)) {
                     let (back, here) = (self.get_at(f, o(a), c - 1, lag), self.get_at(f, o(a), c, lag));
-                    return self.ext(f, back, here, k);
+                    let v = self.ext(f, back, here, k);
+                    if c == 1
+                        && self.plan.at_zero[o(a)]
+                        && let Some(cut) = self.from(f, c, lag, k)
+                    {
+                        return Lane::and(f, v, cut);
+                    }
+                    return v;
                 }
-                // The first chunk: the chunk before it at this lag would need bytes before the
-                // window, so `a` is made `k` bytes further back instead.
+                // The first chunk of a value read `lag` back, or of one that reads bytes back
+                // itself: its chunk before would need bytes before the window, so `a` is made `k`
+                // bytes further back instead.
                 let v = self.get_at(f, o(a), c, lag + k);
                 // Before the stream a `prev` reads no bits: where `a` may hold on the zeros
                 // before a file, cut this value's positions less than `k` (a first block).
@@ -1275,6 +1631,47 @@ impl<'a> Lanes<'a> {
         }
     }
 
+    /// Whether any lane of values `xs` in the block's four chunks is set, as a word nonzero
+    /// where one is: the chunks ORed, then the vector's two halves, no reduction to bits. A value made as bytes (`as_bytes`) is ORed as its bytes, untested,
+    /// as simdjson ORs its error bytes into its error register: a nonzero byte is a set lane.
+    pub fn any_of(&mut self, f: &mut FunctionBuilder<'_>, xs: &[usize]) -> Sym {
+        match self.any_bytes(f, xs) {
+            None => Sym::Known(0),
+            Some(v) => {
+                let halves = f.ins().bitcast(types::I64X2, MemFlags::new().with_endianness(cranelift_codegen::ir::Endianness::Little), v);
+                let (lo, hi) = (f.ins().extractlane(halves, 0), f.ins().extractlane(halves, 1));
+                Sym::Value(f.ins().bor(lo, hi), false)
+            }
+        }
+    }
+
+    /// Values `xs` in the block's four chunks ORed on the vectors (`any_of`): a byte nonzero
+    /// where a lane is set, unreduced, for simdjson's error register (decision 0406). `None`:
+    /// no lane can be.
+    pub fn any_bytes(&mut self, f: &mut FunctionBuilder<'_>, xs: &[usize]) -> Option<Value> {
+        let mut parts = Vec::new();
+        for &x in xs {
+            for c in 1..5 {
+                let lane = match self.as_bytes(f, x, c, 0) {
+                    Some(b) if b.bits == 0xff => Lane::V(b.v, false),
+                    Some(b) if b.bits != 0 => {
+                        let sel = self.splat(f, b.bits);
+                        Lane::V(f.ins().band(b.v, sel), false)
+                    }
+                    Some(_) => Lane::Known(false),
+                    None => self.get(f, x, c),
+                };
+                parts.push(lane);
+            }
+        }
+        if parts.iter().any(|p| matches!(p, Lane::Known(true))) {
+            return Some(self.splat(f, 0xff));
+        }
+        let vs: Vec<Value> = parts.iter().filter(|p| matches!(p, Lane::V(..))).map(|&p| self.polar(f, p, false)).collect();
+        let (&first, rest) = vs.split_first()?;
+        Some(rest.iter().fold(first, |acc, &v| f.ins().bor(acc, v)))
+    }
+
     /// The block's four chunks of a value as a 64-bit mask, complemented as they are.
     pub fn mask(&mut self, f: &mut FunctionBuilder<'_>, parts: &[Lane], weights: Value) -> Sym {
         if let Some(Lane::Known(b)) = parts.first().copied()
@@ -1291,12 +1688,15 @@ impl<'a> Lanes<'a> {
 
 /// Whether the block's bytes, and the 16 before it when a value reads them, are all ASCII: the
 /// full body's one branch. Gives the test and the chunks it loaded, for the bodies after it.
-pub fn all_ascii(f: &mut FunctionBuilder<'_>, native: &BlockNative, plan: &Plan, base: Value) -> (Value, [Option<Value>; 5]) {
-    let back = plan.before || native.insts.iter().any(|i| matches!(i, BlockInst::Pair { .. } | BlockInst::PlaneBefore(_)));
+pub fn all_ascii(f: &mut FunctionBuilder<'_>, native: &BlockNative, plan: &Plan, base: Value, chunk0: Option<Value>) -> (Value, [Option<Value>; 5]) {
+    let back = reads_before(native, plan);
     let mut bytes = [None; 5];
     let mut any: Option<Value> = None;
     for c in (if back { 0 } else { 1 })..5 {
-        let b = f.ins().load(types::I8X16, MemFlags::new().with_notrap(), base, 16 * c as i32 - 16);
+        let b = match chunk0 {
+            Some(v) if c == 0 => v,
+            _ => f.ins().load(types::I8X16, MemFlags::new().with_notrap(), base, 16 * c as i32 - 16),
+        };
         bytes[c] = Some(b);
         any = Some(match any {
             None => b,
@@ -1309,4 +1709,10 @@ pub fn all_ascii(f: &mut FunctionBuilder<'_>, native: &BlockNative, plan: &Plan,
     let both = f.ins().bor(a, b);
     let high = f.ins().band_imm(both, 0x8080_8080_8080_8080_u64 as i64);
     (f.ins().icmp_imm(IntCC::Equal, high, 0), bytes)
+}
+
+/// Whether the body reads the bytes before its block: then they are chunk 0, which the hot
+/// loop carries from the block before (simdjson's `prev_input_block`, decision 0405).
+pub fn reads_before(native: &BlockNative, plan: &Plan) -> bool {
+    plan.before || native.insts.iter().any(|i| matches!(i, BlockInst::Pair { .. } | BlockInst::PlaneBefore(_)))
 }

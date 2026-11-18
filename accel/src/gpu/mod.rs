@@ -26,12 +26,13 @@
 use crate::exec::Backend;
 use crate::kernel::{Bits, JoinBy, Kernel, Output};
 use crate::lanes::Lane;
-use metal::{Buffer, CommandQueue, CompileOptions, ComputePipelineState, Device, MTLDispatchType, MTLResourceOptions, MTLSize};
+use metal::{Buffer, CommandQueue, ComputePipelineState, Device, MTLDispatchType, MTLResourceOptions, MTLSize};
 use objc::{msg_send, sel, sel_impl};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
 pub mod join;
+pub mod kernels;
 pub mod shared;
 pub mod space;
 pub mod tile;
@@ -79,11 +80,10 @@ impl Gpu {
             // The device and queue every relational submission shares (decision 0100 §2).
             let shared = shared::get().ok_or("no Metal device")?;
             let device = shared.device.clone();
-            let library = device.new_library_with_source(SOURCE, &CompileOptions::new()).map_err(|e| format!("gpu lane: compiling the kernels: {e}"))?;
             let mut pipes = Vec::with_capacity(PIPES.len());
             for name in PIPES {
-                let f = library.get_function(name, None).map_err(|e| format!("gpu lane: {name}: {e}"))?;
-                let p = device.new_compute_pipeline_state_with_function(&f).map_err(|e| format!("gpu lane: {name}: {e}"))?;
+                // Through the store of compiled kernels (decision 0395); one that does not compile is fatal.
+                let p = kernels::pipeline_fixed(SOURCE, name, None);
                 if p.max_total_threads_per_threadgroup() < TG {
                     return Err(format!("gpu lane: {name} runs {} threads a threadgroup, not {TG}", p.max_total_threads_per_threadgroup()));
                 }
@@ -229,7 +229,7 @@ impl Backend for GpuBackend {
         // A batch of programs: each submits its own command buffers and waits for them, so it runs on the lanes'
         // pool while the worker begins the next submission. One program's host part then runs beside another's on
         // the device; each holds its own device memory (decision 0344: leases, no process-wide lock).
-        if !ks.is_empty() && ks.iter().all(|k| matches!(k, Kernel::Program(_))) {
+        if overlap() && !ks.is_empty() && ks.iter().all(|k| matches!(k, Kernel::Program(_))) {
             let programs: Vec<_> = ks.iter().map(|k| match k {
                 Kernel::Program(p) => Arc::clone(&p.0),
                 _ => unreachable!("a program"),
@@ -277,6 +277,13 @@ impl crate::exec::Pending for space::Started {
     fn finish(self: Box<Self>) -> Result<Vec<Output>, String> {
         objc::rc::autoreleasepool(|| space::Started::finish(*self))
     }
+}
+
+/// Whether a batch of programs runs beside the one before (0344): on unless `RERAIL_GPU_OVERLAP=off`, which runs
+/// each as it begins on the lane's worker, to time what the overlap gives.
+fn overlap() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("RERAIL_GPU_OVERLAP").as_deref() != Ok("off"))
 }
 
 /// A submission that ran as it began.

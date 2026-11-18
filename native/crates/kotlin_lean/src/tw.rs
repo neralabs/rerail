@@ -13,7 +13,7 @@
 //!   reductions leave it (a comment before a node's first child is its parent's).
 
 use crate::kinds::{self, K};
-use rerail_tape_format::{Widths, Writer};
+use rerail_tape_format::{Leaf, Widths, Writer};
 
 /// In an extras entry's key: its depth under the extra before it (0: an extra of its own; 1: its
 /// child, 2: a grandchild), as Scala's comment holds its `//` and a `using` directive.
@@ -139,16 +139,18 @@ struct Frame {
     kind: Option<K>,
     /// Whether it has a child (a node or a token; a comment is not one).
     any: bool,
+    /// A mark's: whether a node was put over it (`wrap`).
+    wrapped: bool,
 }
 
-/// A token whose fate waits for its parent (a mark's, a dynamic automaton's): its key, span, and its
-/// place in the writer (before the node there now).
-#[derive(Clone, Copy, Debug)]
-struct Held {
-    key: u32,
-    s: u32,
-    e: u32,
-    at: u32,
+/// The nodes after a mark's place from which its wraps are held in a chain (`Frame::chain`): over
+/// fewer, an insert each moves less than the chain costs (the corpora's wraps move 2 to 17 nodes).
+const CHAIN_FROM: usize = 32;
+
+// Tests: whether chains are used, and how many were opened (`chains_are_inserts_each`).
+#[cfg(test)]
+thread_local! {
+    pub static CHAINS: std::cell::Cell<(bool, usize)> = const { std::cell::Cell::new((true, 0)) };
 }
 
 /// An open node: its frame.
@@ -164,18 +166,22 @@ pub struct Mark(u32);
 #[derive(Clone, Copy, Debug)]
 pub struct Saved {
     nodes: usize,
+    writer: rerail_tape_format::Checkpoint,
     frames: usize,
     top: Frame,
     held: usize,
     flushed: usize,
     last_end: u32,
+    chains: usize,
 }
 
 /// The tape being written: the nodes, the frames open, the held tokens and the comments.
 pub struct Tw {
     pub w: Writer<Widths>,
     frames: Vec<Frame>,
-    held: Vec<Held>,
+    /// The tokens whose fate waits for their parent (a mark's, a dynamic automaton's): each
+    /// key, span and place in the writer (before the node there now).
+    held: Vec<Leaf>,
     /// Comments, in order: (key, start, end); those before `flushed` are written.
     pub extras: Vec<(u32, u32, u32)>,
     pub flushed: usize,
@@ -185,6 +191,13 @@ pub struct Tw {
     keep: Vec<bool>,
     /// The last token's end: an open node's end when it closes.
     pub last_end: u32,
+    /// The marks whose wraps the writer holds in a chain (`Writer::open_chain`), innermost last:
+    /// each frame's index and the chain's depth. From a second wrap over a long tail
+    /// (`CHAIN_FROM` nodes) on, the wraps at a mark are held and put on the tape in one move when
+    /// the mark ends (`a { … }.b { … }.c { … }`: k wraps over n nodes cost n + k, not k times n).
+    chains: Vec<(u32, u32)>,
+    /// The innermost chain's mark frame (`chains`' last); 0 (the root's, never a mark): none.
+    chained: u32,
 }
 
 #[allow(dead_code)]
@@ -201,24 +214,30 @@ impl Tw {
             out: Vec::with_capacity(64),
             keep: Vec::with_capacity(64),
             last_end: 0,
+            chains: Vec::new(),
+            chained: 0,
         }
     }
 
     pub fn save(&self) -> Saved {
         Saved {
             nodes: self.w.len(),
+            writer: self.w.checkpoint(),
             frames: self.frames.len(),
             top: *self.frames.last().expect("the root's frame"),
             held: self.held.len(),
             flushed: self.flushed,
             last_end: self.last_end,
+            chains: self.chains.len(),
         }
     }
 
     /// Back to `s`: the nodes written after it, the frames above it, the comments written since
     /// (they are written again), the innermost frame's state.
     pub fn rewind(&mut self, s: Saved) {
-        self.w.truncate(s.nodes);
+        self.w.rewind(s.writer);
+        self.chains.truncate(s.chains);
+        self.chained = self.chains.last().map_or(0, |c| c.0);
         self.frames.truncate(s.frames);
         *self.frames.last_mut().expect("the root's frame") = s.top;
         self.held.truncate(s.held);
@@ -275,7 +294,7 @@ impl Tw {
     /// The root, open before anything is read.
     pub fn open_root(&mut self, kind: K) -> Node {
         let at = self.w.push(key(kind, 0, false), 0);
-        self.frames.push(Frame { at: at as u32, held: 0, kind: Some(kind), any: false });
+        self.frames.push(Frame { at: at as u32, held: 0, kind: Some(kind), any: false, wrapped: false });
         Node(0)
     }
 
@@ -294,7 +313,7 @@ impl Tw {
     #[inline]
     pub fn mark(&mut self, s: u32) -> Mark {
         self.flush(s);
-        self.frames.push(Frame { at: self.w.len() as u32, held: self.held.len() as u32, kind: None, any: false });
+        self.frames.push(Frame { at: self.w.len() as u32, held: self.held.len() as u32, kind: None, any: false, wrapped: false });
         Mark(self.frames.len() as u32 - 1)
     }
 
@@ -305,13 +324,16 @@ impl Tw {
         self.flush(s);
         self.top().any = true;
         let at = self.w.push(key(kind, field, false), s);
-        self.frames.push(Frame { at: at as u32, held: self.held.len() as u32, kind: Some(kind), any: false });
+        self.frames.push(Frame { at: at as u32, held: self.held.len() as u32, kind: Some(kind), any: false, wrapped: false });
         Node(self.frames.len() as u32 - 1)
     }
 
     /// The marks above frame `i` ended: their children are frame `i`'s.
     #[inline(always)]
     fn end_marks(&mut self, i: u32) {
+        if self.chained > i {
+            self.end_chains_above(i);
+        }
         let mut any = false;
         while self.frames.len() > i as usize + 1 {
             let f = self.frames.pop().expect("a frame");
@@ -320,6 +342,30 @@ impl Tw {
             any |= f.any;
         }
         self.frames[i as usize].any |= any;
+    }
+
+    /// The chains of the marks above frame `i` ended, innermost first (`end_chain`).
+    #[cold]
+    #[inline(never)]
+    fn end_chains_above(&mut self, i: u32) {
+        while let Some(&(j, _)) = self.chains.last().filter(|c| c.0 > i) {
+            let f = self.frames[j as usize];
+            self.end_chain(&f);
+        }
+    }
+
+    /// The innermost chain ended, mark frame `f`'s: its wraps put on the tape at its place, and
+    /// the tokens held since it (after that place) moved up by them.
+    #[cold]
+    fn end_chain(&mut self, f: &Frame) {
+        let (_, depth) = self.chains.pop().expect("a chain");
+        self.chained = self.chains.last().map_or(0, |c| c.0);
+        let n = self.w.len();
+        self.w.end_chain(depth as usize);
+        let k = (self.w.len() - n) as u32;
+        for h in &mut self.held[f.held as usize..] {
+            h.at += k;
+        }
     }
 
     /// Mark `m` dropped (nothing put over it): what it holds is its parent's.
@@ -343,16 +389,41 @@ impl Tw {
         let (at, held) = (f.at as usize, f.held as usize);
         // Its start: its first child's, a held token's where one comes first.
         let start = match self.held.get(held) {
-            Some(h) if h.at as usize == at => h.s,
+            Some(h) if h.at as usize == at => h.start,
             _ if at < self.w.len() => self.w.start(at),
             _ => s,
         };
-        self.w.insert(at, key(kind, field, false), start);
-        for h in &mut self.held[held..] {
-            h.at += 1;
+        // A second wrap over a long tail and on: held in the mark's chain, unless the kind's
+        // automaton walks its children (they must be on the tape: the chain ends first).
+        let walks = |kind: K| {
+            let a = kinds::AUTOMATON[kind as usize] as usize;
+            a != 0 && kinds::DYNAMIC[a - 1]
+        };
+        let chained = self.chained == m.0;
+        #[cfg(test)]
+        let on = CHAINS.get().0;
+        #[cfg(not(test))]
+        let on = true;
+        if f.wrapped && on && (chained || self.w.len() - at >= CHAIN_FROM) && !walks(kind) {
+            if !chained {
+                #[cfg(test)]
+                CHAINS.set((true, CHAINS.get().1 + 1));
+                let depth = self.w.open_chain(at) as u32;
+                self.chains.push((m.0, depth));
+                self.chained = m.0;
+            }
+            self.w.insert(at, key(kind, field, false), start);
+        } else {
+            if chained {
+                self.end_chain(&f);
+            }
+            self.w.insert(at, key(kind, field, false), start);
+            for h in &mut self.held[held..] {
+                h.at += 1;
+            }
         }
-        self.frames[m.0 as usize] = Frame { any: true, ..f };
-        self.frames.push(Frame { at: at as u32, held: held as u32, kind: Some(kind), any: f.any });
+        self.frames[m.0 as usize] = Frame { any: true, wrapped: true, ..f };
+        self.frames.push(Frame { at: at as u32, held: held as u32, kind: Some(kind), any: f.any, wrapped: false });
         Node(self.frames.len() as u32 - 1)
     }
 
@@ -449,13 +520,19 @@ impl Tw {
                 self.keep.push(fate(a - 1, kind_of(t)) != Some(true));
             }
         }
-        let mut off = 0;
-        for (h, &keep) in self.held[from..].iter().zip(&self.keep) {
-            if keep {
-                self.w.insert_leaf(h.at as usize + off, h.key, h.s, h.e);
-                off += 1;
+        // The kept ones in one move, each at its place in the tape before any is put in (the
+        // ones left out taken out of the list first).
+        let mut k = self.held.len();
+        if self.keep.iter().any(|&x| !x) {
+            k = from;
+            for j in 0..n {
+                if self.keep[j] {
+                    self.held[k] = self.held[from + j];
+                    k += 1;
+                }
             }
         }
+        self.w.insert_leaves(&self.held[from..k]);
         self.held.truncate(from);
     }
 
@@ -499,7 +576,7 @@ impl Tw {
                 None => {}
             }
         }
-        self.held.push(Held { key: k, s, e, at: self.w.len() as u32 });
+        self.held.push(Leaf { key: k, start: s, end: e, at: self.w.len() as u32 });
     }
 
     /// Node `id` given `field`, where it has none: a field given inside a hidden rule wins over one
@@ -518,6 +595,11 @@ impl Tw {
     pub fn field_since(&mut self, m: Mark, field: u8) {
         let f = &self.frames[m.0 as usize];
         let (mut i, held) = (f.at as usize, f.held as usize);
+        // The wraps held in the mark's chain: the last (outermost) one, over the rest.
+        if let Some(end) = self.w.held_end(i) {
+            self.set_field(i as u32, field);
+            i = end;
+        }
         while i < self.w.len() {
             if self.w.key(i) >> 16 & 1 == 0 {
                 self.set_field(i as u32, field);

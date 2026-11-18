@@ -1,0 +1,93 @@
+# Kotlin, step 1: a file's package header and imports, and its comments.
+#
+#   package a.b.c
+#   // a comment
+#   import a.b.C
+#   import a.b.*
+#   import a.b.C as D
+#
+# The reference is the lean parser (`rerail_kotlin_lean`), whose tapes are tree-sitter-kotlin's
+# (decision 0305). Kinds and fields are its names. Tokens the engine's automata imply are not
+# stored: `package`, `import`, `as`, and an import's dots (`_import_identifier` hides them).
+# Each header ends at a line break or the file's end (tree-sitter-kotlin's scanner makes that
+# its semicolon). Everything else is refused, and goes to the lean parser: a string, a
+# character or a backtick name, a `;`, a shebang, a byte above 0x7f, a nested block comment.
+
+lexer kotlin
+
+class ws        = ' ' '\t' '\n' '\r' 0x0c
+class lf        = '\n'
+class slash     = '/'
+class star      = '*'
+class word      = 'a'..'z' 'A'..'Z' '0'..'9' '_'
+class alpha     = 'a'..'z' 'A'..'Z' '_'
+class dot       = '.'
+class quote     = '"' '\'' '`'
+class high      = 0x80..0xff
+class punct     = '.' '*' ';' ',' ':' '(' ')' '{' '}' '[' ']' '<' '>' '=' '+' '-' '!' '?' '&' '|' '%' '^' '~' '@' '#' '$' '\\'
+
+mask last_byte  = ~next(~empty)
+
+# --- Regions -----------------------------------------------------------------------------------
+
+mask line_open  = slash & next(slash)
+mask block_open = slash & next(star)
+mask block_end  = slash & prev(star)
+regions hidden {
+  line  = line_open .. lf outside
+  block = block_open .. block_end
+}
+mask region     = hidden | o_line | o_block
+mask code       = ~region
+
+error "a block comment open at the end of the file" by tokens when f_block & last_byte
+# Strings and names in backticks: not read yet. A file's first string opener is in code (no
+# comment before it can hide it), so a file with none in code has none at all.
+escape "a string, a character or a backtick name" when code & quote
+escape "a byte above 0x7f outside a comment" when code & high
+# tree-sitter-kotlin nests block comments: one inside another is not read yet.
+escape "a nested block comment" when f_block & ~o_block & block_open
+
+# --- Tokens ------------------------------------------------------------------------------------
+
+mask w          = code & word
+mask name       = fill(w & alpha, ~w)
+error "a byte no token takes" by tokens when code & ~ws & ~name & ~punct
+
+# Both read at `/`: one reader, each region with its kind (`ReadArm::retag`).
+token line_comment = start slash & o_line read line
+token multiline_comment = start slash & o_block read block
+token simple_identifier = start alpha & name & ~prev(name) run word
+# Kotlin's two-byte operators: a token from its first byte, as the lean lexer reads them. A
+# run of them is read left to right (`pair`). Three-byte ones (`===`, `!==`, `..<`) come later.
+pairs two_start = "->" "==" "!=" "<=" ">=" "&&" "||" "++" "--" "+=" "-=" "*=" "/=" "%=" "::" "?." "?:" ".." "!!"
+mask second     = prev(two_start) & code
+mask p_start    = code & punct & ~second
+token punct     = start p_start pair two_start
+keywords simple_identifier { } soft { "package" "import" "as" }
+keywords punct { "." "*" } required
+
+skip ws
+
+# A line break in code, or the file's end: the scanner's semicolon. The comments before it are
+# the statement's (`settles`), as the scanner's semicolon comes after them.
+mark line       = lf & code, end, settles
+# The `.` of `.*`.
+mark wild       = tokens "." "*"
+
+tree kotlin {
+  # A level that names a mark refuses it where it does not take it: a header after a line
+  # break (or a comment's) takes the break first.
+  node source_file whole = [line] [package_header] [import_list]
+  node package_header   = 'package' identifier line
+  node identifier       = simple_identifier ('.' simple_identifier)*
+  node import_list      = import_header+
+  node import_header    = 'import' import_identifier [wild '.' '*' as wildcard_import | import_alias] line
+  node import_identifier = retag identifier simple_identifier ('.' simple_identifier)*
+  node import_alias     = 'as' simple_identifier as type_identifier
+  implied package_header 'package'
+  implied import_header 'import' '.'
+  implied import_identifier '.'
+  implied import_alias 'as'
+  extra line_comment multiline_comment
+}
