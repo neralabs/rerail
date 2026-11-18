@@ -2045,3 +2045,56 @@ blocks, so only held rows go first now.
 
 Test: `held_rows_look_up_what_a_scan_finds` (every column, keys of 2 and 3, an unheld column, and the host fallback
 past the directory).
+
+### Q91. Metal runs of many strata hung, or resumed a stratum with another's rows (0325, 0113 §3)
+
+Found 2026-11-17, sizing the merged copy (`Rows::one`) on a Metal run. A cold 300-file run with `--metal` never ended.
+Runs of 100 files hung (in four of five runs) or panicked in `device::resume` ("index out of bounds: the len is 1 but
+the index is 1"). With the device waves off (`RERAIL_DEVICE_WAVES=off`) they finished. Two faults, both from before
+this session:
+
+- **Command buffers left to no pool.** In the hung process every worker waited in `[MTLCommandQueue commandBuffer]`
+  with the GPU idle. The open batches and the committed buffers still held came to under 48 of the queue's 64.
+  `Batch::pass` took `new_command_buffer().to_owned()` on worker threads with no autorelease pool, so each
+  autoreleased reference was never released and held a slot of the one queue. The buffer is now made in a pool of
+  its own. After that, five runs out of five finished.
+- **A suspended stratum resumed on another thread.** A stratum waiting on its wave keeps its runs, its ticket and
+  its wave's results on its thread (`SUSPENDED`, `FLUSHED`), and each thread counted its own tickets. A trace caught
+  ticket 42 submitted on thread 5 with 3 rules and resumed on thread 6, which found thread 6's ticket 42 (1 rule).
+  Rows were read from the wrong stratum when the counts fit, and the run panicked when they did not. A job hands its
+  waiting strata back to the run's thread unless `deferred_since(mark)`. That said no in two cases:
+  - a job run while this one waited (`Stream::wait` helps the pool) flushed the thread's wave, taking this job's
+    deferred commit with it;
+  - a submission joined a wave opened before the mark, which defers nothing.
+
+  `lanes::wave::kept_here` now also counts flushes and joined submissions since the mark, in counts that only grow.
+  Device tickets are numbered across the process, so a ticket read on the wrong thread is an error ("a stratum's
+  device joins were not submitted"), not another stratum's rows.
+
+Measured:
+- 100 files, Metal: six traced runs had 0 resumes on another thread and 0 panics. The findings equal the CPU's
+  (13,620 lines).
+- 300 files, Metal: 53 s at load 67, and the findings are the reference's. Before this the run hung, and an
+  intermediate build (tickets only) differed in 4 files.
+- The "not submitted" refusals (69) and the `BackendFailure` refusals (527) of the intermediate run are gone.
+- CPU, 300 files: the findings are the reference's (19.5 s, peak 1.85 GB). Strict 10-file outputs are
+  byte-identical.
+
+Test: `a_jobs_waiting_strata_stay_where_their_wave_is` covers a deferred submission, a nested flush, and a
+submission that joined an open wave. The device wave tests (4) and the level-wave tests (2) pass.
+
+Also measured here, for the open items of the user's list:
+- **The merged copy (`Rows::one`).** The CPU binding makes none at 300 files. Metal makes 221, 57 MB copied in all,
+  the largest 7 MB, of relations of 10–16 parts. The profile lists them under "rows of many parts merged into one".
+- **The fixpoint's host indexes.** From the peak heap's stacks (`RERAIL_HEAP_FRAMES`): the sorted runs hold about
+  37 MB, `push_fresh` 8 MB, and the dedup tables and lattice maps are under the sampler's floor.
+- **The profiler** holds about 600 MB of a profiled peak (`profile::planned`, `native`, `work`, `T`, span names). A
+  profiled 300-file run peaks at 2.2–2.5 GB against 1.81–1.85 GB unprofiled, so peaks are compared unprofiled.
+- **Metal's peak** is 3.3–3.5 GB at 100 files against the CPU's 1.2 GB, and 3.5–4.0 GB at 300 files: past the 1 GB
+  budget and Metal's 0.5 GB. That is Q92.
+
+### Q92. A Metal run's peak is two to three times the CPU's (open)
+
+Found 2026-11-17 (Q91). At 100 files a cold run with `--metal` peaks at 3.3–3.5 GB against the CPU's 1.22 GB, and at
+300 files at 3.5–4.0 GB against 1.85 GB. The budget is 1 GB, with Metal allowed 0.5 GB on top. Next: a heap profile
+of a Metal run (`RERAIL_HEAP_FRAMES`) and the device leases at its peak.

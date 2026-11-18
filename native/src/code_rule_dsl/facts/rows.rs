@@ -196,6 +196,15 @@ struct Owned {
 unsafe impl Send for Owned {}
 unsafe impl Sync for Owned {}
 
+/// The relations of many parts merged into one for a reader that binds one (`Rows::one`), and their bytes: copies the
+/// device's reads of a relation of many parts would not make.
+static MERGED: [std::sync::atomic::AtomicUsize; 2] = [const { std::sync::atomic::AtomicUsize::new(0) }; 2];
+
+/// The relations merged into one so far (`Rows::one`), and their bytes, for a profile.
+pub fn merged() -> (usize, usize) {
+    (MERGED[0].load(std::sync::atomic::Ordering::Relaxed), MERGED[1].load(std::sync::atomic::Ordering::Relaxed))
+}
+
 /// The bytes given back so far (`Owned`'s drop), for a profile.
 static GIVEN_BACK: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
@@ -647,7 +656,11 @@ impl Rows {
             ([(0, p)], None) if !p.capped() => p,
             (segs, tail) => self.merged.get_or_init(|| {
                 let parts: Vec<&Part> = segs.iter().map(|(_, p)| p).chain(tail.iter()).collect();
-                let mut one = Part::new(self.life, self.k, parts.iter().map(|p| p.len() as usize).sum());
+                let rows: usize = parts.iter().map(|p| p.len() as usize).sum();
+                MERGED[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                MERGED[1].fetch_add(rows * self.k * 8, std::sync::atomic::Ordering::Relaxed);
+                crate::code_rule_dsl::logic::profile::decision("rows of many parts merged into one", || format!("{} parts, {rows} rows of {} columns ({} KB copied)", parts.len(), self.k, rows * self.k * 8 >> 10));
+                let mut one = Part::new(self.life, self.k, rows);
                 for p in parts {
                     one.copy_from(p, 0, p.len());
                 }

@@ -2452,7 +2452,11 @@ impl Batch {
             self.submit_open()?;
         }
         if self.pass.is_none() {
-            let command = queue()?.new_command_buffer().to_owned();
+            // Made in a pool of its own: `new_command_buffer` gives an autoreleased buffer, and a worker thread has no
+            // pool to release it. Each one so left held a slot of the queue's (64) after its batch let it go, and a
+            // run of many device strata stopped in `commandBuffer` with every slot taken (Q91).
+            let queue = queue()?;
+            let command = metal::objc::rc::autoreleasepool(|| queue.new_command_buffer().to_owned());
             // SAFETY: the command buffer is owned by `self.open` and outlives the pass, which `commit` ends and drops
             // before the command buffer (the field order of the take there).
             let r: &'static metal::CommandBufferRef = unsafe { &*(command.as_ref() as *const metal::CommandBufferRef) };
