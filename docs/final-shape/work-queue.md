@@ -2697,7 +2697,7 @@ always a refusal.
   from Swift-Kotlin-Scala. `headers_are_the_lean_parsers` then passed in 36 s on the M1 Max (it had timed out at
   240 s), and the crate's tests are unignored.
 
-### Q135. On an M1 Max, the resident interpreter finds other roots than the CPU for PYI056's `add-to-all`
+### Q135. (Done) On an M1 Max, the resident interpreter finds other roots than the CPU for PYI056's `add-to-all`
 
 Found 2026-11-17, at the hub's merge of oscar (da5892e9c). `lowered_clauses_find_the_same_roots_on_the_resident_interpreter`
 on the M1 Max: 104 of 122 clauses equal, 17 refused, and `ruff-pyi056-unsupported-method-call-on-all/add-to-all`
@@ -2705,6 +2705,10 @@ differs (both sides `Ok`). The merged tree and oscar's own tip give the same cou
 Oscar's record (0334) has it passing, on the M3. Like Q123, an M1 Max difference. The test is ignored (`Q135`) until fixed.
 
 - **Done when**: the test passes on the M1 Max and the M3, and the ignore is gone.
+- **Done** (2026-11-18): the test passes unignored on the M1 Max (47 s) and the M3 (102 s): 105 of 122 clauses equal,
+  17 refused, none differ (`add-to-all` is equal now). It passes on the M1 Max with Q123's poll change taken out
+  too, so that is not the fix: one of the merges after oscar's (Typing-support f9353c5fe, wolfeel f5817506b,
+  django-bugs 9925798db) is. Not bisected further.
 
 
 ### Q136. (Q68 on cost-classifier) A join's morsel making a lazy order on the pool waited for itself (a hang)
