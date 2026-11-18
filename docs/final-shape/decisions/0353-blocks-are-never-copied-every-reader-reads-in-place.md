@@ -129,8 +129,8 @@ them eagerly for every visited node of every chunk. They become rules the planne
 
 Relations hold a node as its id by definition (0083 §3, 0094 §2): `document << 32 | slot << 18 | index`. A granule's
 slot is a hash of its key, with clashes settled in key order. Its index counts the granule's own nodes in preorder,
-then its tokens. Both are functions of the tape (`granules.rs`). An id is not a number on the tape, so today a
-per-node array holds it (`DefIds::low`, 4 bytes a node).
+then its tokens. Both are functions of the tape (`granules.rs`). An id is not a number on the tape, so until step 2 a
+per-node array held it (`DefIds::low`, 4 bytes a node).
 
 **In place:** a document keeps a granule table (`granules::Table`), written once where its granules are numbered.
 It holds, per granule:
@@ -194,11 +194,70 @@ Findings stay 1,629 on hogql. Interleaved first runs on fresh stores, at load 22
 instructions, and with the table built beside the arrays 71.8 B, inside the earlier spread of 65.7–80 B. The table's
 build is 0.05 s of CPU (the `granule slots` span).
 
-Still to do in step 2:
-- place the table and its rank index in the batch's block beside the tape;
-- write the reads once in CLIF, for Rust and MSL;
-- answer a narrowed projection (anchors) too;
-- then remove `Projected`'s arrays and `DefIds`.
+`Projected`'s `core`, `local`, `up` and `size` are gone (2026-11-17). Which tape nodes are the projection's nodes
+and tokens is the rank index (`syntax/ranks.rs`, in the batch's block): per 64 tape nodes, the nodes' bits, the
+tokens' bits and the counts before, and a select sample per 64 items. The granule table reads it too, so the table
+holds no groups of its own. The reads, by kind of reader:
+- a pass visits the set bits in order (`Projected::nodes`), and with the open subtrees it carries each node's parent
+  (`walk`, `walk_up`), not a parent read a node;
+- a node's byte spans in local order come from one pass (`spans`);
+- a point read selects once a row (`Viewed::row_at`, however many columns read it);
+- the vtab's bulk reads (`filter_eq`, `rows_of`, and the new `Source::for_rows`, which the device's upload uses) visit
+  each document's nodes once, and walk only when a column reads the parent.
+
+Checks: the walk's parent equals `parent` for every node of the test's documents, in every format and both shapes, and
+a view's row passes equal its per-row reads (`for_rows`, `rows_of` and `filter_eq` on `node`, `child`, `field`,
+`tape`). Findings stay 1,629 on hogql. Three interleaved pairs on fresh stores, at load 45–58: 232.4 B instructions
+for the base, 227.4 B without the arrays, inside the spread of each binary's own runs (±5 B). The span profile's self
+time is 6.34 s against 6.35 s.
+
+The first build without the arrays was 7% more instructions. Sampled call stacks showed where: each loop that went
+`0..len` and selected a node a step (`Ranks::select`), a scan that read the tape parent a row (`Facts::parent`), and
+the vtab's reads selecting once per column. Those are now the passes above. What still costs, by the span profile: `open: input load` (+0.09 s), where `setfix::view`'s filter reads each
+candidate row's values by point reads.
+
+`fielded` is gone too: the `field` view's rows are a third bit set in the rank index (`Item::Field`: the nodes
+below the root under a field), five words a group. A scan tests the bit; a row's point read is a select among
+them, which brings the tape node with it. Four interleaved pairs at load 26–62: 315.6 B instructions with the
+array, 312.8 B without.
+
+`idx` (a node's index among its siblings) and `depth` are not the tape's data: no tape stores them, and a read
+in place would climb the parents (a search back on format 15) every time. They are derived values, and go as
+step 3 makes the other derived values go: rules computed on demand, written once into relations. Until then they
+are computed once a projection, on first read, into its block (row 1 below, now marked step 3).
+
+`DefIds`' `low`, `order` and `back` are gone. Every projection, narrowed ones too, keeps its granule table, and it
+answers ids, order keys and their inverses:
+- `order`, an order key (its run's rank, then its index in its granule): the table keeps each granule stretch's run
+  rank (`runs`, `run_at`), and falls back to preorder indexes when the runs or a granule's nodes outgrow the key's bits
+  (`preorder_keys`);
+- the table keeps each granule's start and end as ranks too, by item (`rank_starts`, `rank_ends`), so a point read goes
+  from a node's or token's number to its id with no select (`low_of`), and back (`number_of`, `number_of_order`);
+- a pass reads the ids with the walk (`granules::ids`; `Projected::node_ids`, `token_ids`, `loc_ids`), carrying the
+  open granules and their counts;
+- a view's bulk read walks the ids only when a column reads a row's or its parent's id (`Viewed::reads_id`);
+- a row's document is its batch document's key (`Source::documents_of`), not its id's high bits read row by row.
+
+`granules::Reference`, the old numbering's `low` and `order`, is made only for the check
+(`node_ids_in_place_equal_the_numbered_ones`), which now covers narrowed projections and the passes' ids.
+
+The first build without the arrays was 6–19 B instructions over the base on hogql. Sampled call stacks put it in
+point reads where a pass held the node (a select each, then the table), the id walk run for views whose read
+columns hold no id, and `owners_delta` reading every column of every row. With those fixed: 12 interleaved pairs at
+load 40–90, findings 1,629 in all, median 75.7 B against 81.2 B for the base (79 B without one run of the base
+caught by a load spike). What costs, by the samples: the id walk in passes that write a per-node derived row
+(`Extra::nodes`, under 1%), and a pair's id read by a point read (`Within::value`).
+
+The measurement found a race the timing change exposed (work queue Q90): a parked stratum resumed on another thread
+than its submission's found that thread's stratum of the same per-thread ticket, and ran it with its rules (a panic
+in 1 run of 20, 1,422 findings in another). Tickets and waves are now numbered for the process.
+
+The table's columns are in the projection's block beside its rank index (`cells::Cells`), written once where they
+are computed. Six interleaved pairs on hogql: findings 1,629; the samples show no cost in the placing, and the
+table's build unchanged.
+
+Still to do in step 2: write the reads once in CLIF, for Rust and MSL; the chunk's `low` column (row 3) goes with
+them.
 
 ## The copies today
 
@@ -206,9 +265,9 @@ Each row is marked in the code with `copy (0353 step N)`.
 
 | # | Copy | Where | Size or cost (hogql) | Removed by |
 |---|---|---|---|---|
-| 1 | The projection's per-node arrays: `core`, `local`, `up`, `idx`, `fielded`, `size`, `depth` | `syntax.rs`, `Projected` | 4 bytes a node each | Step 2 |
-| 2 | Definition ids by node: `DefIds::low`, `order`, `back` | `syntax.rs`, `DefIds` | 4 + 4 + 8 bytes a node | Step 2 |
-| 3 | The chunk block's node columns: `start`, `end`, `kind`, `field`, and the canonical code copy | `device_chunk.rs`, `build` (`made`, `put`) | 14 bytes a node; 0.07 s a run | Step 4 |
+| 1 | The projection's derived per-node arrays: `idx`, `depth` (`core`, `local`, `up`, `size` and `fielded` are gone: the rank index) | `syntax.rs`, `Projected` | 4 bytes a node each | Step 3 |
+| 2 | Gone (step 2): definition ids by node, `DefIds::low`, `order`, `back`. The granule table answers them. | — | — | Done |
+| 3 | The chunk block's node columns: `core`, `up`, `fielded`, `low`, `start`, `end`, `kind`, `field`, and the canonical code copy. `low` is made by one scan of the granule table. `core`, `up` and `fielded` are made here from the rank index and the walk, now that the host holds no arrays of them. | `device_chunk.rs`, `build` (`made`, `made_in_order`, `put`) | 22 bytes a node; 0.07 s a run | Step 4 |
 | 4 | Views expanded into device relations | `metal_join.rs`, `expand_view`; `device.rs`, `resident` | 660.8 MB, 111.5 ms a run | Step 4 |
 | 5 | Views, flat relations and names uploaded from the host | `metal_join.rs`, `DevRel::upload`; `device.rs`, `resident`, `texts` | 7.4 MB, 22.1 ms a run | Steps 4, 6 |
 | 6 | An axis's pairs copied into the chunk, then expanded to ids | `within.rs`; `device_chunk.rs`, `put_pairs`; `VIEW_AXIS` | 8 bytes a pair, then the expansion | Step 5 |

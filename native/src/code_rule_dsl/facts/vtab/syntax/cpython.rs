@@ -89,14 +89,14 @@ impl CPython {
                 // The document's nodes by span.
                 let f = &*p.facts;
                 let mut by_span: HashMap<(u32, u32), Vec<u32>> = HashMap::new();
-                for (local, &id) in p.core.iter().enumerate() {
+                for (local, id) in p.nodes().map(|(l, x)| (l as usize, x)) {
                     by_span.entry((f.start(id), f.end(id))).or_default().push(local as u32);
                 }
                 for l in &literals {
                     let Some(nodes) = by_span.get(&(l.start, l.end)) else { continue };
                     let mut v = None;
                     for &local in nodes {
-                        if l.class.of_kind(dialect.name(f, p.core[local as usize])) {
+                        if l.class.of_kind(dialect.name(f, p.node(local as u32))) {
                             let v = *v.get_or_insert_with(|| string(&l.json) as i64);
                             self.literals.push([p.global(local), v]);
                         }
@@ -116,7 +116,7 @@ impl CPython {
             starting.entry(n.start).or_default().push(n);
         }
         let f = &*p.facts;
-        for (local, &id) in p.core.iter().enumerate() {
+        for (local, id) in p.nodes().map(|(l, x)| (l as usize, x)) {
             let (start, end) = (f.start(id), f.end(id));
             let exact = by_span.get(&(start, end));
             if exact.is_none() && !starting.contains_key(&start) {

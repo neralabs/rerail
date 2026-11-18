@@ -1691,8 +1691,11 @@ inventory of today's copies (12 sites, marked `copy (0353 step N)`) and the plan
 1. Step 1 is done: the record, `AGENTS.md`, the guard (`scripts/check/check-no-block-copies.py`, in pre-commit) and
    the marks. Left of it: the profile's `copies (decision 0353)` counter.
 2. Step 2 in progress. The granule table and its rank index answer every id equal to `DefIds::low`'s, in all three
-   formats, and are measured: a point read is 171 instructions, a scan 59 an id (0353, "Node identity"). Left: the
-   table in the batch's block, the reads in CLIF (Rust, MSL), narrowed projections, then the arrays removed.
+   formats, and are measured: a point read is 171 instructions, a scan 59 an id (0353, "Node identity").
+   `Projected`'s `core`, `local`, `up`, `size` and `fielded` are gone: the rank index, read by passes in order, at
+   parity on hogql (0353). `idx` and `depth` are derived values: step 3. `DefIds` is gone: every projection,
+   narrowed ones too, answers ids and order keys from its table, at parity on hogql, and the table is in the
+   projection's block. Left: the reads in CLIF (Rust, MSL), with which the chunk's `low` column goes.
 3. Then steps 3 (CPU views on the tape), 4 (GPU views on the tape: the 660.8 MB a run), 5 (axes written once),
    6 (in-place writes and indexes), 7 (the transducer's packed batch, its owners'), 8 (0325 step 7), 9 (prices).
 
@@ -1789,3 +1792,20 @@ Q86 (step 6's prices) waits for step 4: most of what it prices goes.
 - **Found, not mine:** `corpus::tests::a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test` (4 files
   held open after it) and `the_run_after_a_cold_one_writes_nothing` (a warm run records a manifest and commits a
   write) fail at 2fd15f524 too, on the M3 farm host.
+
+### Q90. (Q90 at Native-and-GPU-strata d0224e02d) Parked strata resumed on another thread are refused to the CPU
+
+A stratum whose device joins wait for the wave (`setfix::device::submit`) keeps its encoded runs in its thread's
+`SUSPENDED`. A job run while its thread waited (`Stream::wait` helps the pool) can join a wave that thread had open
+before the job's mark, so `deferred_since(mark)` is false and the job's members park without their wave being
+flushed. `plan::issue` then resumes them in a job on any thread, whose `SUSPENDED` misses them: "a stratum's device
+joins were not submitted", and the stratum is redone on the CPU. Almost every hogql run has such refusals.
+
+Until 2026-11-17 the tickets and waves were numbered per thread, so the other thread could hold a stratum of the
+same number and resume it with these rules: a panic (`rules[k]`, index out of bounds; 1 run in 20) or another
+stratum's rows (1422 findings instead of 1629, 1 run in 20). The numbers are now of the process, so a miss is
+always a refusal.
+
+- Route a parked member back to the thread that holds its submission, or flush that wave before the job hands its
+  members back (the job's mark taken before the thread's open wave, not after).
+- **Done when**: no hogql run has the refusal, findings unchanged over 20 runs.
