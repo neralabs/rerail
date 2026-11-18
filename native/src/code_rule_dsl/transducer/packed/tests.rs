@@ -22,14 +22,18 @@
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
-    /// G's grid executor's result, or None where it refuses the evaluation's launch bound (99,
-    /// list step 13): its dynamic frontier's waves exceed it on these parity programs (open item
-    /// O33). The CPU backends' parity is still asserted.
+    /// The Metal JIT's result, or None where it refuses the batch: the launch bound (99, list step 13), or a
+    /// shared arena sized short for it (`BackendCapacity`, work queue Q64, the grid's retirement having moved these
+    /// programs to the JIT). The CPU backends' parity is still asserted.
     #[cfg(target_os = "macos")]
-    fn grid<T>(result: Result<T, Error>) -> Option<T> {
+    fn metal<T>(result: Result<T, Error>) -> Option<T> {
         match result {
             Err(Error::BackendLaunchLimit) => {
                 eprintln!("Metal refused the launch bound; its parity is not checked here");
+                None
+            }
+            Err(Error::BackendCapacity) => {
+                eprintln!("Metal's JIT refused the batch's arenas (Q64); its parity is not checked here");
                 None
             }
             result => Some(result.unwrap()),
@@ -206,7 +210,7 @@
         #[cfg(target_os = "macos")]
         {
             let backend = ExecutionBackend::MetalJit;
-            if let Some(actual) = grid(execute_with_backend(backend, programs, tapes, &anchors))
+            if let Some(actual) = metal(execute_with_backend(backend, programs, tapes, &anchors))
                 && actual != expected
             {
                 let mismatch = actual
@@ -245,7 +249,7 @@
             })
             .collect::<Vec<_>>();
         let expected = execute_batch(programs, tapes, Some(&anchors)).unwrap();
-        if let Some(actual) = grid(execute_with_backend(ExecutionBackend::MetalJit, programs, tapes, &anchors)) {
+        if let Some(actual) = metal(execute_with_backend(ExecutionBackend::MetalJit, programs, tapes, &anchors)) {
             assert_eq!(actual, expected);
         }
     }
@@ -611,7 +615,7 @@
         let jit_elapsed = jit_started.elapsed();
         assert_eq!(jit_output[0][0], plain_output);
         #[cfg(target_os = "macos")]
-        if let Some(actual) = grid(execute_with_backend(ExecutionBackend::MetalJit, &jit_programs, &jit_tapes, &jit_anchors)) {
+        if let Some(actual) = metal(execute_with_backend(ExecutionBackend::MetalJit, &jit_programs, &jit_tapes, &jit_anchors)) {
             assert_eq!(actual[0][0], plain_output);
         }
         if let Some(iterations) = std::env::var("TEMPO_QUANTIFIER_PROFILE_ITERATIONS")

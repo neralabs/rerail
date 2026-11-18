@@ -19,6 +19,16 @@ pub enum Engine {
     Jit,
 }
 
+/// Where a wave's clause root programs start on the device.
+#[derive(Clone, Copy)]
+pub enum ClauseRoots<'r> {
+    /// Per clause, per tape, the listed nodes (document-local, ascending).
+    Listed(&'r [Vec<Vec<u32>>]),
+    /// Per clause, per tape, whether the clause runs there: its roots are then its domain's nodes, a rule the device
+    /// reads at each node's code (decision 0293 §10: the host lists none).
+    Rule(&'r [Vec<bool>]),
+}
+
 /// What the transducer runs on a device.
 pub trait MatcherDevice: Send + Sync {
     /// The batch's programs on `engine`, from `anchors` (per file, per program), at most `result_limits` results each.
@@ -36,9 +46,8 @@ pub trait MatcherDevice: Send + Sync {
     fn compile_background(&self, programs: &[Program]) -> Result<(), Error>;
     /// A matcher's roots over the batch, every pass in one command buffer, pattern leaves included.
     fn matcher_roots(&self, matcher: &LoweredMatcher, tapes: &[TapeDoc]) -> Result<(Vec<BTreeSet<u32>>, Outcome), Error>;
-    /// Each clause's matches of the batch from `roots` (per clause, per tape), every pass and root in one command
-    /// buffer.
-    fn wave_roots(&self, wave: &LoweredWave, tapes: &[TapeDoc], roots: &[Vec<Vec<u32>>]) -> Result<(Vec<Vec<BTreeSet<u32>>>, Outcome), Error>;
+    /// Each clause's matches of the batch from `roots`, every pass and root in one command buffer.
+    fn wave_roots(&self, wave: &LoweredWave, tapes: &[TapeDoc], roots: ClauseRoots<'_>) -> Result<(Vec<Vec<BTreeSet<u32>>>, Outcome), Error>;
     /// Every clause's labels over the batch, as views of its tapes the root programs read, with `roots`' records.
     fn wave_labelled(&self, wave: &LoweredWave, tapes: &[TapeDoc], active: &[Vec<bool>], roots: Option<&RootJobs<'_>>) -> Result<(Vec<TapeDoc>, Outcome), Error>;
     /// Starts compiling the label passes' pipelines.

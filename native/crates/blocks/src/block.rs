@@ -524,9 +524,37 @@ impl Block {
     }
 }
 
+impl Block {
+    /// Gives the whole pages of the rows' chunks back to the OS, for a relation of this block that nothing will read
+    /// or write again (its last holder gone). Only an anonymous block's (`anon`): a pooled slab's pages are the
+    /// device buffer's, and a file's are written back. The block's room is not reused: what was given back stays
+    /// out of the footprint until the block goes.
+    ///
+    /// # Safety
+    /// `rows` is a relation's of this block, and nothing reads or writes its chunks after.
+    pub unsafe fn give_back_rows(&self, rows: &crate::rows::Rows) -> usize {
+        if self.backing.is_some() || self.file.is_some() || !self.writable {
+            return 0;
+        }
+        let mut bytes = 0;
+        for (p, len) in rows.chunk_spans() {
+            if len >= PAGE {
+                // SAFETY: the chunk lies in this block's reservation, and nothing reads it after (the caller's).
+                unsafe { crate::mem::give_back(p, len) };
+                bytes += len;
+            }
+        }
+        bytes
+    }
+}
+
 impl Drop for Block {
     fn drop(&mut self) {
         if self.backing.is_none() {
+            // A file's mapping was never `reserve`'s: it is unmapped without counting.
+            if self.file.is_some() {
+                crate::mem::uncounted(self.reserved);
+            }
             unsafe { crate::mem::release(self.base, self.reserved) };
         }
     }

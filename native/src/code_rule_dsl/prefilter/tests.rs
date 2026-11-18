@@ -1,8 +1,5 @@
 use super::*;
-use crate::code_rule_dsl::{
-    language::GrammarDialect,
-    tape::TAPE_FORMAT_VERSION,
-};
+use crate::code_rule_dsl::language::GrammarDialect;
 use crate::content_store::prefilter::TOO_BIG;
 use std::path::Path;
 
@@ -31,7 +28,7 @@ pub(in crate::code_rule_dsl) fn put(store: &ContentStore, source: &str, lang: Gr
     let (doc, bytes) = document(source, lang);
     let grammar = i64::from(language::tape_tag(lang).unwrap());
     let source_id = store.put_source(source.as_bytes(), &[]).unwrap();
-    let tape = store.put_tape(source_id, grammar, 1, i64::from(TAPE_FORMAT_VERSION), &bytes).unwrap();
+    let tape = store.put_tape(source_id, grammar, 1, i64::from(crate::code_rule_dsl::tape::formats::stored_version()), &bytes).unwrap();
     publish(store, &[tape], std::slice::from_ref(&doc)).unwrap();
     (tape, doc)
 }

@@ -260,6 +260,9 @@ impl crate::exec::Pending for Done {
     fn finish(self: Box<Self>) -> Result<Vec<Output>, String> {
         self.0
     }
+    fn done(&self) -> bool {
+        true
+    }
 }
 
 impl GpuBackend {

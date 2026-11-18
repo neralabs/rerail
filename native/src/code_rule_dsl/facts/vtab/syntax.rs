@@ -189,24 +189,40 @@ impl Projection {
     /// T's for one that declares its base relations itself (T's programs, the converter's, O74).
     pub fn of(program: &crate::code_rule_dsl::logic::front::ast::Program, reads: BTreeSet<String>) -> Self {
         let (spans, token_text) = span_text_demand(program);
-        crate::code_rule_dsl::logic::profile::decision("text of tokens", || if token_text { "made (a rule reads a token's text)".into() } else { "none (no rule reads a token's text)".into() });
         crate::code_rule_dsl::logic::profile::projection_plan(program, &reads);
         let core = crate::code_rule_dsl::facts::core::core_names();
-        let shape = if !core.is_empty() && core.iter().all(|r| program.decls.contains_key(r.as_str())) { Shape::Core } else { Shape::T };
-        let partial = program.facts.get(GUEST_POLICY).into_iter().flatten().filter_map(|row| match row.as_slice() {
+        let core_shape = !core.is_empty() && core.iter().all(|r| program.decls.contains_key(r.as_str()));
+        let partial: BTreeSet<String> = program.facts.get(GUEST_POLICY).into_iter().flatten().filter_map(|row| match row.as_slice() {
             [Value::Str(k), Value::Str(v)] if v == "partial" => k.strip_prefix("errors").map(|g| g.strip_prefix(':').unwrap_or("*").to_owned()),
             _ => None,
-        });
-        let verdict = shape == Shape::T && program.decls.get("syntax_error").is_some_and(|cols| cols.len() == 3);
+        }).collect();
+        let error_triple = program.decls.get("syntax_error").is_some_and(|cols| cols.len() == 3);
         let derived: BTreeSet<String> = program.rules.iter().map(|r| r.head.rel.to_string()).collect();
+        Self::of_parts(ProjectionParts { spans, token_text, core_shape, partial, error_triple, derived, rx_spans: program.rx_spans.iter().cloned().collect(), ast_patterns: program.ast_patterns.iter().cloned().collect() }, reads)
+    }
+
+    /// `of` from what it reads of the program, found by its caller (`logic::plan::text_demand` over a version).
+    pub fn of_parts(parts: ProjectionParts, reads: BTreeSet<String>) -> Self {
+        let ProjectionParts { spans, token_text, core_shape, partial, error_triple, derived, rx_spans, ast_patterns } = parts;
+        crate::code_rule_dsl::logic::profile::decision("text of tokens", || if token_text { "made (a rule reads a token's text)".into() } else { "none (no rule reads a token's text)".into() });
+        let shape = if core_shape { Shape::Core } else { Shape::T };
+        let verdict = shape == Shape::T && error_triple;
         let reads = reads.into_iter().filter(|r| !derived.contains(r)).collect();
-        Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect(), ast_patterns: program.ast_patterns.iter().cloned().collect(), text_spans: Some(spans), token_text, node_anchors: None, long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial: partial.collect(), verdict, derived, compiled_rx: CompiledSpans::default() }
+        Projection { shape, reads: Some(reads), rx_spans, ast_patterns, text_spans: Some(spans), token_text, node_anchors: None, long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial, verdict, derived, compiled_rx: CompiledSpans::default() }
     }
 
     /// This projection, with `text` made at any length for the node kinds whose text the program's rules read
     /// ([`text_kind_demand`]; `matchers` are the program's `ast` relations, by relation, as `matchers::lower` gives them).
-    pub fn with_long_text(mut self, program: &crate::code_rule_dsl::logic::front::ast::Program, matchers: &[(String, String, Vec<String>)]) -> Self {
-        let TextDemand { long, any, read, wide } = text_kind_demand(program, matchers);
+    pub fn with_long_text(self, program: &crate::code_rule_dsl::logic::front::ast::Program, matchers: &[(String, String, Vec<String>)]) -> Self {
+        let demand = text_kind_demand(program, matchers);
+        let anchors = if std::env::var("RERAIL_NODE_ANCHORS").is_ok_and(|v| v == "off") { Err("RERAIL_NODE_ANCHORS=off".into()) } else { node_anchors(program, matchers) };
+        self.with_long_text_parts(demand, anchors)
+    }
+
+    /// `with_long_text` from the text the rules read and the anchors, found by its caller (`logic::plan::text_demand`
+    /// over a version).
+    pub fn with_long_text_parts(mut self, demand: TextDemand, anchors: Result<BTreeSet<String>, String>) -> Self {
+        let TextDemand { long, any, read, wide } = demand;
         self.long_text = long;
         self.long_text_any = !any.is_empty();
         crate::code_rule_dsl::logic::profile::decision("text past the inline bound", || {
@@ -222,7 +238,6 @@ impl Projection {
         if !std::env::var("RERAIL_TEXT_NODES").is_ok_and(|v| v == "all") {
             self.text_nodes = read;
         }
-        let anchors = if std::env::var("RERAIL_NODE_ANCHORS").is_ok_and(|v| v == "off") { Err("RERAIL_NODE_ANCHORS=off".into()) } else { node_anchors(program, matchers) };
         crate::code_rule_dsl::logic::profile::decision("nodes projected", || match &anchors {
             Ok(kinds) => format!("the root and the subtrees of {} kinds: {}", kinds.len(), kinds.iter().cloned().collect::<Vec<_>>().join(", ")),
             Err(why) => format!("every node ({why})"),
@@ -284,13 +299,27 @@ impl TextNodes {
 /// What the rules read of `text` (`text_kind_demand`).
 pub struct TextDemand {
     /// The kinds whose text is read at any length.
-    long: BTreeSet<String>,
+    pub long: BTreeSet<String>,
     /// The text atoms (rule, body position) of a node of any kind, no twin reading its long text.
     pub any: Vec<(usize, usize)>,
     /// The nodes whose text (within the bound) is read; `None` every node.
     pub read: Option<TextNodes>,
     /// Where `read` is every node: the first rule that reads the text of a node it does not narrow.
-    wide: Option<String>,
+    pub wide: Option<String>,
+}
+
+/// What `Projection::of` reads of a program: the spans whose text a rule reads and whether a token's, whether the
+/// program declares every relation `core.rr` does (core.rr's shape), the grammars whose errors keep a partial tree,
+/// whether `syntax_error` has three columns, the derived relations, and the regex spans and AST patterns.
+pub struct ProjectionParts {
+    pub spans: BTreeSet<crate::code_rule_dsl::logic::front::ast::SpanIn>,
+    pub token_text: bool,
+    pub core_shape: bool,
+    pub partial: BTreeSet<String>,
+    pub error_triple: bool,
+    pub derived: BTreeSet<String>,
+    pub rx_spans: Vec<(crate::code_rule_dsl::logic::front::ast::SpanIn, String)>,
+    pub ast_patterns: Vec<String>,
 }
 
 /// Whether `v` is a node in a field whose every kind is a leaf (`field(x, "attribute", v)`): a token's text, which
@@ -332,8 +361,9 @@ pub fn long_text_twins(program: &mut crate::code_rule_dsl::logic::front::ast::Pr
     }
     // Each rule's twins follow it, so a rule's place does not depend on what other rules the program holds.
     let mut twins: std::collections::BTreeMap<usize, Vec<crate::code_rule_dsl::logic::front::ast::Rule>> = Default::default();
-    let mut fresh = 0usize;
     for (r, atoms) in by_rule.into_iter().filter(|(_, a)| a.len() <= MAX) {
+        // Fresh names counted per rule: a rule's twins do not depend on the others'.
+        let mut fresh = 0usize;
         for set in 1..(1u32 << atoms.len()) {
             let mut twin = program.rules[r].clone();
             for (bit, &i) in atoms.iter().enumerate().filter(|(b, _)| set >> b & 1 == 1) {
@@ -2156,6 +2186,20 @@ pub struct Batch {
     /// The batch's chunk (decision 0289): its views' arrays, made on the device's first read of a view.
     #[cfg(target_os = "macos")]
     chunk: OnceLock<device_chunk::Chunk>,
+    /// `node`'s rows by `kind` (`Batch::kinds`), made on the first probe or count of the column.
+    kinds: OnceLock<Kinds>,
+}
+
+/// `node`'s rows grouped by their `kind` value (decision 0329's held `kind`): each node's kind read once, as the
+/// column reads it (`Dialect::kind`), and its row placed by a counting pass. A probe of a kind reads its run; its
+/// count is the run's length. Before, each probe asked each document's tape for the nodes of each of the kind's codes
+/// (`Facts::of_kind`, a scan of the tape), once per value probed: 20 s of a 10-file cold run's 53 s.
+struct Kinds {
+    /// Each kind present, ascending, and where its rows start in `rows` (one more entry: the end).
+    keys: Vec<i64>,
+    starts: Vec<u32>,
+    /// The batch's node rows, by kind, each kind's ascending.
+    rows: Vec<u32>,
 }
 
 /// A span's id (core.rr's `span`: a piece of a document's text): `d << 32 | granules::extra_low(kind, i)`, in slots of
@@ -3503,10 +3547,54 @@ impl Batch {
             block,
             #[cfg(target_os = "macos")]
             chunk: OnceLock::new(),
+            kinds: OnceLock::new(),
         });
         #[cfg(any(test, feature = "test-hooks"))]
         BATCHES.lock().push((batch.docs.iter().map(|p| p.key).collect(), Arc::downgrade(&batch)));
         Ok((batch, relations, matched, (strings, atoms)))
+    }
+
+    /// `node`'s rows grouped by kind (`Kinds`), made on first use.
+    fn kinds(&self) -> &Kinds {
+        self.kinds.get_or_init(|| {
+            let total = self.nodes.last().copied().unwrap_or(0);
+            let mut of: Vec<i64> = Vec::with_capacity(total);
+            for (doc, p) in self.docs.iter().enumerate() {
+                debug_assert_eq!(of.len(), self.nodes[doc]);
+                // A text-only document has no dialect and no nodes.
+                let Some(dialect) = self.dialects.get(p.tag) else { continue };
+                // Each node at its local id (its row is the document's first plus it), whatever order the ranks give.
+                let at = of.len();
+                of.resize(at + p.len() as usize, 0);
+                for (l, id) in p.nodes() {
+                    of[at + l as usize] = dialect.kind(&p.facts, id);
+                }
+            }
+            let mut keys: Vec<i64> = of.clone();
+            keys.sort_unstable();
+            keys.dedup();
+            let mut starts = vec![0u32; keys.len() + 1];
+            let at = |k: i64| keys.binary_search(&k).expect("a kind of the batch");
+            for &k in &of {
+                starts[at(k) + 1] += 1;
+            }
+            for i in 1..starts.len() {
+                starts[i] += starts[i - 1];
+            }
+            let mut next = starts.clone();
+            let mut rows = vec![0u32; of.len()];
+            for (row, &k) in of.iter().enumerate() {
+                let i = at(k);
+                rows[next[i] as usize] = row as u32;
+                next[i] += 1;
+            }
+            Kinds { keys, starts, rows }
+        })
+    }
+    /// The node rows of kind `kind`, ascending.
+    fn of_kind_rows(&self, kind: i64) -> &[u32] {
+        let k = self.kinds();
+        k.keys.binary_search(&kind).map_or(&[][..], |i| &k.rows[k.starts[i] as usize..k.starts[i + 1] as usize])
     }
 
     /// The batch's chunk block (decision 0289), made on first use.
@@ -3667,32 +3755,9 @@ pub fn node_column_counts(batch: &Batch, column: usize) -> Option<(i64, i64, Opt
             Some((n, n, None))
         }
         2 => {
-            // The batch's nodes (a document's tape holds tokens and nodes it leaves out), each node's code read once into
-            // its dialect's counts by code (`of_kind`, a scan of the tape a kind, took 12 s of a cold PostHog run's
-            // guests), each code read as the column reads it (`Dialect::kind`: its canonical code).
-            let mut by_code: std::collections::BTreeMap<u8, Vec<i64>> = Default::default();
-            for p in &batch.docs {
-                // A text-only document (`TEXT`, a C run's headers read as text) has no dialect and no node.
-                let Some(dialect) = batch.dialects.get(p.tag) else { continue };
-                let counts = by_code.entry(p.tag).or_default();
-                for (_, id) in p.nodes() {
-                    let code = usize::from(dialect.code(&p.facts, id));
-                    if counts.len() <= code {
-                        counts.resize(code + 1, 0);
-                    }
-                    counts[code] += 1;
-                }
-            }
-            let mut by: HashMap<i64, i64> = HashMap::new();
-            for (tag, counts) in by_code {
-                let dialect = &batch.dialects[tag];
-                for (code, &n) in counts.iter().enumerate().filter(|(_, n)| **n > 0) {
-                    let code = code as u16;
-                    *by.entry(i64::from(kind_atom(tag, dialect.canonical.get(usize::from(code)).copied().unwrap_or(code)))).or_default() += n;
-                }
-            }
-            let mut counts: Vec<(i64, i64)> = by.into_iter().collect();
-            counts.sort_unstable();
+            // Each kind's run in the batch's kind index (`Batch::kinds`): the column's values, as it reads them.
+            let k = batch.kinds();
+            let counts: Vec<(i64, i64)> = k.keys.iter().zip(k.starts.windows(2)).map(|(&key, w)| (key, i64::from(w[1] - w[0]))).collect();
             Some((counts.len() as i64, squares(&counts), Some(counts)))
         }
         _ => None,
@@ -3966,16 +4031,14 @@ impl Viewed {
                     }
                 }
             } else if matches!(self.view, View::Node) && column == 2 {
-                let (Ok(tag), Ok(code)) = (u8::try_from(v / i64::from(KIND_STRIDE)), u16::try_from(v % i64::from(KIND_STRIDE))) else {
-                    continue;
-                };
-                let Some(dialect) = b.dialects.get(tag).filter(|_| v >= 0) else { continue };
-                let atoms: Vec<u32> = dialect.codes.get(&code).map_or(&[][..], Vec::as_slice).iter().map(|&c| kind_atom(tag, c)).collect();
-                for doc in b.of_tag[usize::from(tag)].iter().map(|&d| d as usize).filter(kept) {
-                    let p = &b.docs[doc];
-                    for &kind in &atoms {
-                        rows.extend(p.facts.of_kind(kind).iter().map(|&id| p.local_of_node(id as u32)).filter(|&l| l != NONE).map(|l| b.nodes[doc] + l as usize));
+                let found = b.of_kind_rows(v);
+                match only {
+                    Some(doc) => {
+                        let (lo, hi) = (b.nodes[doc] as u32, b.nodes[doc + 1] as u32);
+                        let from = found.partition_point(|&r| r < lo);
+                        rows.extend(found[from..].iter().take_while(|&&r| r < hi).map(|&r| r as usize));
                     }
+                    None => rows.extend(found.iter().map(|&r| r as usize)),
                 }
             } else {
                 return None;

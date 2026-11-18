@@ -140,6 +140,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/plan/placement.rs", "DEVICE", Carried, ""),
     ("src/code_rule_dsl/logic/profile.rs", "DECIDING", Call, "the decisions of the step open on this thread (decision 0269): a pool job's are the profile's alone"),
     ("src/code_rule_dsl/logic/profile.rs", "BEHIND", Thread, "marks the store's writer thread"),
+    ("src/code_rule_dsl/logic/profile.rs", "QUIET", Call, "a debug build's tree check beside a pass, its decisions unrecorded for the call (`quiet`): a pool job it starts records its own"),
     ("src/code_rule_dsl/logic/profile.rs", "HELD", Thread, "whether this thread holds the profile's state"),
     ("src/code_rule_dsl/logic/profile.rs", "SHARD", Thread, "this thread's profile records, merged into the run's as they are read"),
     ("src/code_rule_dsl/logic/profile.rs", "STACK", Thread, "this thread's open spans; a job opens its span under its caller's (`profile::here`, carried)"),

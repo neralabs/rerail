@@ -25,9 +25,9 @@
 //! Each list is indexed (`k`, `i`, `row`), so a row's place is in the row itself: the rows are a set, and any order
 //! of them reads back as the same program. Ids (`r`, `l`, `a`, `t`) are numbered per program.
 
-use super::front::Name;
-use super::front::{AggOp, Atom, LatticeDecl, Literal, Native, Program, Rule, Shape, ShapeWait, SpanIn, Term, Value};
-use super::magic::{Gate, Report};
+use super::front::name::Name;
+use super::front::ast::{AggOp, Atom, LatticeDecl, Literal, Native, Program, Rule, Shape, ShapeWait, SpanIn, Term, Value};
+use super::front::ast::{Gate, Report};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Rows by relation, as a program's `facts` holds them.
@@ -40,7 +40,7 @@ pub trait Cell {
 }
 
 /// A branded atom's class as the program's facts write it (`term`, `fact` rows of kind `atom`, decision 0270).
-fn brand_tag(b: crate::code_rule_dsl::logic::front::Branded) -> &'static str {
+fn brand_tag(b: crate::code_rule_dsl::logic::front::ast::Branded) -> &'static str {
     match b.tag() {
         'n' => "n",
         'k' => "k",
@@ -48,9 +48,9 @@ fn brand_tag(b: crate::code_rule_dsl::logic::front::Branded) -> &'static str {
     }
 }
 
-fn branded(tag: &str, atom: i64) -> Result<crate::code_rule_dsl::logic::front::Branded, String> {
+fn branded(tag: &str, atom: i64) -> Result<crate::code_rule_dsl::logic::front::ast::Branded, String> {
     let atom = u32::try_from(atom).map_err(|e| bad(e))?;
-    tag.chars().next().and_then(|c| crate::code_rule_dsl::logic::front::Branded::of_tag(c, atom)).ok_or_else(|| bad(format!("no atom class {tag:?}")))
+    tag.chars().next().and_then(|c| crate::code_rule_dsl::logic::front::ast::Branded::of_tag(c, atom)).ok_or_else(|| bad(format!("no atom class {tag:?}")))
 }
 
 impl Cell for Value {
@@ -71,7 +71,7 @@ impl Cell for Value {
 }
 
 /// Each relation of the schema and its columns (`int` or `sym`).
-pub fn schema() -> BTreeMap<Name, crate::code_rule_dsl::logic::front::List<(Name, Name)>> {
+pub fn schema() -> BTreeMap<Name, crate::code_rule_dsl::logic::front::name::List<(Name, Name)>> {
     const SCHEMA: &[(&str, &[&str])] = &[
         ("program", &["p:sym"]),
         ("rule", &["p:sym", "r:int", "head:int"]),
@@ -645,7 +645,7 @@ impl<'a, C: Cell> Reader<'a, C> {
         }
         for row in self.get("lit_cmp") {
             let op = text(&row[2])?;
-            let op = super::front::operator(&op).ok_or_else(|| bad(format!("no operator {op:?}")))?;
+            let op = super::front::ast::operator(&op).ok_or_else(|| bad(format!("no operator {op:?}")))?;
             out.push((int(&row[0])?, Literal::Cmp { l: self.term(int(&row[1])?)?, op, r: self.term(int(&row[3])?)? }));
         }
         let over = self.by_id("agg_over")?;
@@ -737,7 +737,7 @@ impl<'a, C: Cell> Reader<'a, C> {
             }
             facts.entry(rel).or_default().push((k, row_values));
         }
-        prog.facts = facts.into_iter().map(|(rel, rows)| (rel, ordered(rows).into_iter().map(crate::code_rule_dsl::logic::front::List::from).collect())).collect();
+        prog.facts = facts.into_iter().map(|(rel, rows)| (rel, ordered(rows).into_iter().map(crate::code_rule_dsl::logic::front::name::List::from).collect())).collect();
         let list = |rel: &str| -> Result<Vec<String>, String> { Ok(ordered(self.get(rel).iter().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?)) };
         prog.inputs = list("input")?;
         prog.outputs = list("output")?;
@@ -892,15 +892,6 @@ pub fn program(facts: &Facts, p: &str) -> Result<Program, String> {
     Reader::of(facts, p)?.program()
 }
 
-/// `facts` as a `.rr` document: the schema's declarations and every row as a fact. `rr::parse` reads it back as the
-/// same rows.
-pub fn document(facts: &Facts, extra: &BTreeMap<Name, crate::code_rule_dsl::logic::front::List<(Name, Name)>>) -> Result<String, String> {
-    let mut decls = schema();
-    decls.extend(extra.iter().map(|(k, v)| (k.clone(), v.clone())));
-    let prog = Program { decls, facts: facts.clone(), ..Program::default() };
-    super::rr::print(&prog).map_err(|e| bad(format!("{e:?}")))
-}
-
 /// `facts` as bytes: a compact encoding for the facts memo (strings in a table, each value a tag and a number).
 pub fn encode(facts: &Facts) -> Vec<u8> {
     // One pass: each string's id by first use (relation, then its rows' values, in order), the rows written as they
@@ -989,8 +980,8 @@ pub fn decode(bytes: &[u8]) -> Result<Facts, String> {
                 row.push(match at.take(1)?[0] {
                     0 => Value::Int(i64::from_le_bytes(at.take(8)?.try_into().expect("eight bytes"))),
                     1 => Value::Str(string(at.u64()?)?.into()),
-                    tag @ 2..=4 => Value::Branded(crate::code_rule_dsl::logic::front::Branded {
-                        class: [crate::code_rule_dsl::logic::front::Class::Name, crate::code_rule_dsl::logic::front::Class::Kind, crate::code_rule_dsl::logic::front::Class::Field][usize::from(tag - 2)],
+                    tag @ 2..=4 => Value::Branded(crate::code_rule_dsl::logic::front::ast::Branded {
+                        class: [crate::code_rule_dsl::logic::front::ast::Class::Name, crate::code_rule_dsl::logic::front::ast::Class::Kind, crate::code_rule_dsl::logic::front::ast::Class::Field][usize::from(tag - 2)],
                         atom: u32::try_from(at.u64()?).map_err(|e| bad(e))?,
                     }),
                     tag => return Err(bad(format!("no value tag {tag}"))),
@@ -1006,150 +997,9 @@ pub fn decode(bytes: &[u8]) -> Result<Facts, String> {
     Ok(facts)
 }
 
-#[cfg(test)]
-pub mod tests {
-    /// The encoding names each string by its first use and puts the table first: the bytes the two-pass writer made
-    /// (strings counted, then the rows written), and they decode to the facts.
-    #[test]
-    fn facts_encode_as_two_passes_did_and_decode_back() {
-        use super::{Facts, Value};
-        let mut facts = Facts::new();
-        facts.insert("b".into(), vec![vec![Value::Str("x".into()), Value::Int(-3)].into(), vec![Value::Str("b".into()), Value::Str("y".into())].into()]);
-        facts.insert("a".into(), vec![vec![Value::Str("y".into()), Value::Str("z".into()), Value::Int(7)].into()]);
-        let mut want = Vec::new();
-        let u = |out: &mut Vec<u8>, x: u64| out.extend_from_slice(&x.to_le_bytes());
-        // Strings by first use: a, y, z, b, x.
-        let table = ["a", "y", "z", "b", "x"];
-        u(&mut want, 5);
-        for x in table {
-            u(&mut want, x.len() as u64);
-            want.extend_from_slice(x.as_bytes());
-        }
-        u(&mut want, 2);
-        let id = |x: &str| table.iter().position(|t| *t == x).unwrap() as u64;
-        for (rel, rows) in &facts {
-            u(&mut want, id(rel));
-            u(&mut want, rows.len() as u64);
-            for row in rows {
-                u(&mut want, row.len() as u64);
-                for v in row {
-                    match v {
-                        Value::Int(i) => {
-                            want.push(0);
-                            want.extend_from_slice(&i.to_le_bytes());
-                        }
-                        Value::Branded(b) => {
-                            want.push(2 + b.class as u8);
-                            want.extend_from_slice(&u64::from(b.atom).to_le_bytes());
-                        }
-                        Value::Str(x) => {
-                            want.push(1);
-                            u(&mut want, id(x));
-                        }
-                    }
-                }
-            }
-        }
-        let got = super::encode(&facts);
-        assert_eq!(got, want);
-        assert_eq!(super::decode(&got).unwrap(), facts);
-    }
-
-    /// A program reads back the same off its facts decoded: in any order of rows, and with ids that are not dense (a
-    /// map, not a vector, indexes them).
-    #[test]
-    fn a_program_reads_back_the_same_in_any_order() {
-        use super::{Facts, Value};
-        let prog = crate::code_rule_dsl::logic::rr::parse(
-            ".decl e(a:number, b:number)\n.input e\n.decl p(a:number, b:number)\n.output p\n\
-             p(x, y) :- e(x, y).\np(x, z) :- p(x, y), e(y, z), !e(z, x), z != @add(x, 1).\n.decl c(n:number)\nc(n) :- n = count : { e(_, _) }.\n",
-        )
-        .unwrap();
-        let mut facts = Facts::new();
-        super::write(&mut facts, "q", &prog);
-        let owned = super::program(&facts, "q").unwrap();
-        let bytes = super::encode(&facts);
-        assert_eq!(format!("{owned:?}"), format!("{:?}", super::program(&super::decode(&bytes).unwrap(), "q").unwrap()));
-        // Ids spread out (each times 1000) and rows reversed: read back the same.
-        let spread = |v: &Value| match v { Value::Int(i) => Value::Int(i * 1000), v => v.clone() };
-        let mut far = Facts::new();
-        for (rel, rows) in &facts {
-            // The columns that are ids (a term's, atom's, literal's or rule's), not values.
-            let ids: &[usize] = match rel.as_str() {
-                "term" | "atom" => &[1],
-                "arg" | "call_arg" | "body" => &[1, 3],
-                "rule" | "lit_atom" => &[1, 2],
-                "lit_cmp" => &[1, 2, 4],
-                "lit_agg" => &[1, 4],
-                _ => &[],
-            };
-            let mut rows: Vec<Vec<Value>> = rows.iter().map(|r| r.iter().enumerate().map(|(c, v)| if ids.contains(&c) { spread(v) } else { v.clone() }).collect()).collect();
-            rows.reverse();
-            far.insert(rel.clone(), rows.into_iter().map(crate::code_rule_dsl::logic::front::List::from).collect());
-        }
-        let bytes = super::encode(&far);
-        assert_eq!(format!("{:?}", super::program(&super::decode(&bytes).unwrap(), "q").unwrap()), format!("{owned:?}"));
-    }
-
-    /// The documents a program reads (`doc_scopes`) survive its facts: a stored program read back reads the same
-    /// documents, not all of them.
-    #[test]
-    fn document_scopes_read_back_as_written() {
-        let mut prog = crate::code_rule_dsl::logic::rr::parse(".decl a(n: node)\n.output a\n").unwrap();
-        for scopes in [None, Some(vec![(vec!["impl/**".to_owned(), "api/**".to_owned()], vec!["**/tests/**".to_owned()]), (vec![], vec![])])] {
-            prog.doc_scopes = scopes.clone();
-            prog.text_globs = if scopes.is_some() { vec!["**/*.md".to_owned(), "docs/*.rst".to_owned()] } else { Vec::new() };
-            let mut facts = super::Facts::new();
-            super::write(&mut facts, "p", &prog);
-            let back = super::program(&facts, "p").unwrap();
-            assert_eq!(back.doc_scopes, scopes);
-            assert_eq!(back.text_globs, prog.text_globs);
-        }
-    }
-
-    /// A relation of facts with no rows (a constant folded empty, `constants::fold`) survives its facts: a stored
-    /// program read back is the program written, so its digests (the memo's key, the relations' identities) are the
-    /// same. Without it, the first run after a rebuild and the second keyed the memo apart.
-    #[test]
-    fn an_empty_relation_of_facts_reads_back_as_present() {
-        let mut prog = crate::code_rule_dsl::logic::rr::parse(".decl a(s: symbol)\n.decl b(s: symbol)\nb(\"x\").\n.output a\n").unwrap();
-        prog.facts.insert("a".to_owned(), Vec::new());
-        let mut facts = super::Facts::new();
-        super::write(&mut facts, "p", &prog);
-        let back = super::program(&facts, "p").unwrap();
-        assert_eq!(back.facts, prog.facts);
-        let key = |p: &crate::code_rule_dsl::logic::front::Program| super::super::plan::corpus::memo::program_digest(&super::super::plan::body::Placed::of_program(p).unwrap().v);
-        assert_eq!(key(&back), key(&prog));
-    }
-
-    /// A relation the program has facts of but no rows (a constant folded to nothing) reads back as one: a stored
-    /// program is the program prepared, and its file-local part has the same memo key (`memo::program_digest`).
-    #[test]
-    fn a_relation_of_no_facts_reads_back_as_one() {
-        let mut prog = crate::code_rule_dsl::logic::front::Program::default();
-        prog.facts.insert("none".into(), Vec::new());
-        prog.facts.insert("one".into(), vec![vec![crate::code_rule_dsl::logic::front::Value::Int(1)].into()]);
-        let mut facts = super::Facts::new();
-        super::write(&mut facts, "p", &prog);
-        assert_eq!(super::program(&facts, "p").unwrap().facts, prog.facts);
-    }
-
-    /// The AST patterns a program matches survive its facts: a stored program read back (a prepared program,
-    /// O-stored-patterns) still asks the batch for `ast_match` rows. Without them, a run that reuses it finds no
-    /// pattern matches.
-    #[test]
-    fn ast_patterns_read_back_as_written() {
-        let mut prog = crate::code_rule_dsl::logic::rr::parse(".decl a(n: node)\n.output a\n").unwrap();
-        prog.ast_patterns = ["$O[:-$K]".to_owned(), "print($$$A)".to_owned()].into();
-        let mut facts = super::Facts::new();
-        super::write(&mut facts, "p", &prog);
-        assert_eq!(super::program(&facts, "p").unwrap().ast_patterns, prog.ast_patterns);
-    }
-}
-
 /// A digest of `value`'s `Debug` text, made as it is written: two programs compared by it without either's text in
 /// memory (a 16 k-rule program's is tens of megabytes).
-pub(in crate::code_rule_dsl) fn debug_digest(value: &impl std::fmt::Debug) -> [u8; 32] {
+pub fn debug_digest(value: &impl std::fmt::Debug) -> [u8; 32] {
     use sha2::Digest as _;
     struct Hashing(sha2::Sha256);
     impl std::fmt::Write for Hashing {

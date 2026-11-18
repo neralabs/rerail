@@ -2,6 +2,7 @@
 //! once placed, keeps its address while the region grows. An index is found in its extent with one count of leading
 //! zeros. A built image is laid out as one extent a region (`Writer`); this form is for regions growing in memory.
 
+#[derive(Clone)]
 pub struct Extents<T> {
     /// The first extent holds `1 << shift` items.
     shift: u32,

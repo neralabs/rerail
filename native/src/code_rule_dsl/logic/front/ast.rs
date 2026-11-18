@@ -718,3 +718,11 @@ impl crate::code_rule_dsl::logic::front::name::Shallow for Value {
         self == other
     }
 }
+
+/// The parser's punctuation, longest first where one begins another.
+pub const PUNCT: [&str; 22] = [":-", "!=", "<=", ">=", "(", ")", ",", ".", ";", ":", "=", "<", ">", "!", "{", "}", "|", "@", "*", "[", "]", "-"];
+
+/// The parser's own spelling of the operator `op`, if it is one (a comparison read back from facts or the store).
+pub fn operator(op: &str) -> Option<&'static str> {
+    PUNCT.iter().copied().find(|p| *p == op)
+}

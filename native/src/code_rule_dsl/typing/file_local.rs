@@ -188,10 +188,11 @@ mod shape;
 mod on_version;
 pub use on_version::FileLocal;
 mod passes;
-pub use passes::{FactorizeExports, Locate, MoveCrossFile, PushLocalJoins};
+pub use passes::{FactorizeExports, Locate, MoveCrossFile, PushLocalJoins, RequestsFileLocal};
 pub mod export_demand;
 pub use export_demand::{DemandExports, demand_exports};
 pub use split_memo::forget as forget_splits;
+use crate::code_rule_dsl::logic::program_image::passes::Parts as _;
 // cratify: `tests` is rerail-device-metal's (it mounts it)
 
 /// The relations a program derives within one document (list step 29's split, R0): a relation is file-local when

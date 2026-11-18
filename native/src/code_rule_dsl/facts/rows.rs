@@ -39,6 +39,7 @@ impl Life {
         match self {
             Life::Run => FACTS_BYTES,
             Life::Source => FACTS_BYTES / 4,
+            Life::Kept => FACTS_BYTES / 4,
             // Each alone in a block of its size (`try_new`).
             Life::Device => 0,
         }
@@ -72,6 +73,9 @@ pub enum Life {
     /// runs' relations, they kept those blocks alive past them: on posthog/hogql every block leased stayed, and the
     /// peak resident size rose 125 MB.
     Source,
+    /// The relations a run keeps past it (a chunk's exports, read by the cross-file part where they lie): apart from
+    /// the run's other relations, so holding them does not keep those relations' blocks.
+    Kept,
     /// A device run's own relations (decision 0325 step 5): the views it makes from a chunk, a fixpoint's totals and
     /// deltas, an upload. Leased as the device's join buffers are, within its budget (a refusal runs the stratum on
     /// the CPU), and apart from the runs' relations, which they would keep alive.
@@ -79,7 +83,19 @@ pub enum Life {
 }
 
 /// The blocks new relations go in outside a chunk, while they have room: one a `Life`.
-static OPEN: [Mutex<Option<Arc<Facts>>>; 3] = [Mutex::new(None), Mutex::new(None), Mutex::new(None)];
+static OPEN: [Mutex<Option<Arc<Facts>>>; 4] = [Mutex::new(None), Mutex::new(None), Mutex::new(None), Mutex::new(None)];
+
+/// Every block leased, by `Life`, while it lives: what a profile reads (`held`).
+static LIVE: Mutex<[Vec<std::sync::Weak<Facts>>; 3]> = Mutex::new([Vec::new(), Vec::new(), Vec::new()]);
+
+/// Per `Life`, the blocks held now, their bytes written and their bytes reserved: a profile's account of the rows
+/// outside the heap.
+pub fn held() -> [(usize, usize, usize); 3] {
+    let live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+    std::array::from_fn(|l| {
+        live[l].iter().filter_map(std::sync::Weak::upgrade).fold((0, 0, 0), |(n, u, r), f| (n + 1, u + f.block.used(), r + f.block.reserved()))
+    })
+}
 
 /// A chunk's blocks (Q58): the ones its new relations go in while they have room (one a `Life`), and every one it
 /// made, to count those that outlive it. A block lives while any relation in it does, so one shared by every chunk
@@ -87,7 +103,7 @@ static OPEN: [Mutex<Option<Arc<Facts>>>; 3] = [Mutex::new(None), Mutex::new(None
 /// counted it whole.
 #[derive(Default)]
 pub struct Chunk {
-    open: [Mutex<Option<Arc<Facts>>>; 3],
+    open: [Mutex<Option<Arc<Facts>>>; 4],
     made: Mutex<Vec<std::sync::Weak<Facts>>>,
 }
 
@@ -184,7 +200,8 @@ pub fn anon_in_block(k: usize, vals: &[i64]) -> InBlock {
         }
     }
     let at = facts.block.offset_of(rel);
-    InBlock { facts, at, rows: rows as u32, dead: 0, part: None }
+    let own = Arc::new(Owned { facts: facts.clone(), rel });
+    InBlock { facts, own, at, rows: rows as u32, dead: 0, part: None }
 }
 
 /// A relation of `k` values a row, 8 bytes each, read in their order.
@@ -205,6 +222,9 @@ pub struct Held {
     /// Each column resolved once (its directory, which never moves while the relation is in its block): a read pays
     /// the chunk arithmetic and two loads, not the descriptor's walk too.
     cols: Arc<[ColRead]>,
+    /// The relation's claim on its block, shared by every copy of the part: the last copy's drop gives its chunks'
+    /// pages back (`Owned`).
+    own: Arc<Owned>,
 }
 
 impl Drop for Held {
@@ -225,6 +245,37 @@ impl std::ops::Deref for Part {
 // SAFETY: the relation lies in `facts`' block, which the part keeps; its writer is the one `Rows` holding it.
 unsafe impl Send for Held {}
 unsafe impl Sync for Held {}
+
+/// A relation's hold on its block's pages. A block is given back with its last relation, so before this a chunk's
+/// dead relations (a stratum's deltas, rows moved to a bigger block, a finished stratum's rows) kept their pages
+/// resident until every relation sharing the block went: on a 300-file cold run that was about 500 MB of the
+/// footprint (Q76, 0325 step 2's open item). The last holder gives the relation's chunks back to the OS; the block's
+/// room is not reused.
+struct Owned {
+    facts: Arc<Facts>,
+    rel: *const Relation,
+}
+
+// SAFETY: as `Part`'s: the relation lies in `facts`' block, which this keeps.
+unsafe impl Send for Owned {}
+unsafe impl Sync for Owned {}
+
+/// The bytes given back so far (`Owned`'s drop), for a profile.
+static GIVEN_BACK: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// The bytes of dead relations' chunks given back to the OS so far.
+pub fn given_back() -> usize {
+    GIVEN_BACK.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+impl Drop for Owned {
+    fn drop(&mut self) {
+        // SAFETY: the relation lies in the block this keeps, and every part (and `InBlock`) that reads it held this.
+        let rel = unsafe { &*self.rel };
+        let bytes = unsafe { self.facts.block.give_back_rows(&rel.rows) + self.facts.block.give_back_rows(&rel.killed) };
+        GIVEN_BACK.fetch_add(bytes, std::sync::atomic::Ordering::Relaxed);
+    }
+}
 
 impl Part {
     /// An empty relation of `k` columns with room for `rows` rows, in the open block or a new one.
@@ -256,6 +307,9 @@ impl Part {
                     if let Some(c) = &chunk {
                         c.made.lock().unwrap_or_else(|e| e.into_inner()).push(Arc::downgrade(&f));
                     }
+                    let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+                    live[life as usize].retain(|w| w.strong_count() > 0);
+                    live[life as usize].push(Arc::downgrade(&f));
                     *open = Some(f.clone());
                     f
                 }
@@ -265,7 +319,8 @@ impl Part {
             {
                 let cols = (0..k).map(|c| rel.rows.reader(c)).collect();
                 let rel = std::ptr::from_ref(rel);
-                return Ok(Part(Arc::new(Held { facts, life, rel, cols })));
+                let own = Arc::new(Owned { facts: facts.clone(), rel });
+                return Ok(Part(Arc::new(Held { facts, life, rel, cols, own })));
             }
         }
         unreachable!("a new block of {} bytes holds a relation of {need}", 2 * need + MARGIN)
@@ -285,6 +340,11 @@ impl Part {
         // SAFETY: rows `0..rows` are reserved; the caller's device work writes every one before a read.
         unsafe { part.rel().rows.claim_reserved(rows as u32) };
         Ok(part)
+    }
+
+    /// How long its rows live: the blocks it is in.
+    pub fn life(&self) -> Life {
+        self.life
     }
 
     /// Its relation's descriptor's offset in its block: what a reader's `rel_*` reads take.
@@ -308,11 +368,23 @@ impl Part {
         self.rel().rows.len()
     }
 
+    /// Its row `i`'s value in column `c`, where it lies.
+    #[inline(always)]
+    pub fn get(&self, i: u32, c: usize) -> i64 {
+        self.cols[c].get(i)
+    }
+
     /// An empty relation of `k` columns in a run's block, with room for `rows` rows that a writer other than the
     /// host fills (decision 0325 step 4: the device writes a head's rows in place, through the reads written once,
     /// `rows_at`), then says how many it wrote (`written`).
     pub fn for_writes(k: usize, rows: usize) -> Part {
         Part::new(Life::Run, k, rows)
+    }
+
+    /// This relation where it lies, `rows` of it, for a reader or writer that binds its block (the device): it keeps
+    /// the relation's pages as the part does (`Owned`).
+    pub fn in_block(&self, rows: u32) -> InBlock {
+        InBlock { facts: self.facts.clone(), own: self.own.clone(), at: self.rel_at(), rows, dead: 0, part: Some(self.clone()) }
     }
 
     /// Its rows' descriptor's offset in its block: what a writer's `rows_at` takes.
@@ -408,8 +480,11 @@ pub struct Rows {
 
 /// Where a relation's rows lie for a reader that binds its block (the device, decision 0325): the block, kept while
 /// this lives, and the relation's descriptor's offset in it.
+#[derive(Clone)]
 pub struct InBlock {
     pub facts: Arc<Facts>,
+    /// The relation's pages, kept while a reader (the device's entry) holds this.
+    own: Arc<Owned>,
     pub at: usize,
     pub rows: u32,
     /// The offset of a delta of it whose dead bits mark its dead rows (`Relation::try_kills`); 0 when none is.
@@ -550,7 +625,7 @@ impl Rows {
     /// and kept while these rows are). `None` for no rows.
     pub fn in_block(&self) -> Option<InBlock> {
         let one = self.one()?;
-        Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows: one.len(), dead: 0, part: Some(one.clone()) })
+        Some(InBlock { facts: one.facts.clone(), own: one.own.clone(), at: one.facts.block.offset_of(one.rel), rows: one.len(), dead: 0, part: Some(one.clone()) })
     }
 
     /// `in_block`, with the rows `dead` marks (bit `id`, as setfix keeps them) dead in it: a delta of the one
@@ -562,7 +637,7 @@ impl Rows {
             let block = &one.facts.block;
             Relation::try_kills(block, &spec(self.k), one.rel(), dead).map(|r| block.offset_of(r))
         }))?;
-        Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows: one.len(), dead: at, part: Some(one.clone()) })
+        Some(InBlock { facts: one.facts.clone(), own: one.own.clone(), at: one.facts.block.offset_of(one.rel), rows: one.len(), dead: at, part: Some(one.clone()) })
     }
 
     /// The rows as one relation: the one part, or every part merged into one (made once and kept).
@@ -604,6 +679,41 @@ impl Rows {
         };
         self.segs.push((at, part));
         self.from = at + n;
+    }
+
+    /// Its relations, oldest first: the frozen segments, then the tail if it has rows. A reader that keeps them
+    /// (`append_part`) holds the rows where they lie.
+    pub fn parts(&self) -> impl Iterator<Item = &Part> {
+        self.segs.iter().map(|(_, p)| p).chain(self.tail.iter().filter(|t| t.len() > 0))
+    }
+
+    /// Rows `lo..hi`, part by part in id order: each part, the rows of it (its own row numbers `from..to`), and the
+    /// id of row `from`. A sequential reader finds each part once, not each row's (rows gathered from many relations,
+    /// `append_part`, lie in many parts).
+    pub fn each_run(&self, lo: u32, hi: u32, mut f: impl FnMut(&Part, u32, u32, u32)) {
+        let mut id = lo;
+        while id < hi {
+            let (p, i) = self.part_of(id);
+            let n = (p.len() - i).min(hi - id);
+            f(p, i, i + n, id);
+            id += n;
+        }
+    }
+
+    /// Values a row.
+    pub fn width(&self) -> usize {
+        self.k
+    }
+
+    /// These rows with the tail made a segment (moved), and no segments merged, as `freeze` merges them past
+    /// `MAX_SEGMENTS`: rows gathered from many relations (`append_part`), read where they lie.
+    pub fn sealed(mut self) -> Rows {
+        if let Some(tail) = self.tail.take().filter(|t| t.len() > 0) {
+            let n = tail.len();
+            self.segs.push((self.from, tail));
+            self.from += n;
+        }
+        self
     }
 
     /// Whether these rows share a frozen segment with `other` (a relation started from it).

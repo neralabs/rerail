@@ -660,6 +660,14 @@ impl ContentStore {
         Ok(self.read_frame_parts(space, &keys, false)?.into_iter().map(|((r, _), f)| (r, f.stored.clone())).collect())
     }
 
+    /// `frames`, from the store's file past the snapshot (queued writes first): asked before the first wave of a
+    /// process whose snapshot an earlier run installed, which leaves every root's cross space out until
+    /// `preload_frames_live` reads the run's own (the kept route's check, Q151).
+    pub fn frames_stored(&self, space: &[u8; 32], rels: &[Rel], part: i64) -> StoreResult<HashMap<Rel, Stored>> {
+        let keys: Vec<_> = rels.iter().cloned().map(|r| (r, part)).collect();
+        Ok(self.read_frame_parts_from(space, &keys, false, false)?.into_iter().map(|((r, _), f)| (r, f.stored.clone())).collect())
+    }
+
     /// Admit requested relations before their consumers run. No consumer needs another store read.
     pub fn admit_frames(&self, space: &[u8; 32], rels: &[Rel], part: i64) -> StoreResult<HashMap<Rel, Arc<Admitted>>> {
         let keys: Vec<_> = rels.iter().cloned().map(|r| (r, part)).collect();
@@ -1551,6 +1559,11 @@ impl Put {
     pub fn placed_as(rel: Rel, part: i64, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, n: usize, placed: Placed) -> Encoded {
         let data = Data::Encoded { types, n, bytes: Bytes::Heap(Arc::new(Vec::new())), store: None };
         Encoded { rel, part, frame: Arc::new(Admitted { stored: Stored { digest, reads }, data }), place: Some(placed.at) }
+    }
+    /// `encode_rows` of rows read a column at a time where they lie (`column(c, f)`: column `c` in row order, `f` per
+    /// batch), with no row-major copy of them.
+    pub fn encode_columns(width: usize, column: &(dyn Fn(usize, &mut dyn FnMut(&[i64])) + Sync)) -> Vec<u8> {
+        super::cross_rows::encode_columns(width, column)
     }
     /// A frame of rows already encoded (`encode_rows`).
     pub fn encoded_as(rel: Rel, part: i64, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, n: usize, bytes: Vec<u8>) -> Encoded {

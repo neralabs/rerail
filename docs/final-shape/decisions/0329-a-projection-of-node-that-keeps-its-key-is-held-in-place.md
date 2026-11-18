@@ -88,3 +88,21 @@ languages. That batch made about 100k probes of a few kinds (kind 1204 alone 25,
 
 A probe that binds the document as well as the kind reads that document alone (`View::find_keyed` through
 `Source::lookup_in`). B-now does not bind it. The 50-file run is 316 G now.
+
+At the hub's merge of Typing-support (2026-11-18), the two met: a probe by kind reads the batch's kind index
+(below; `Batch::of_kind_rows`, a document's part by its row range), not its language's documents' tapes; the join's
+reuse of its last probe (`Ctx::last`) stays.
+
+
+## A probe of a kind reads the batch's kind index (2026-11-17)
+
+The held `kind` answered a probe by its code (`kind($r, #k)`, `$r` unbound) by asking each document's tape for the
+nodes of each of the code's raw codes (`Facts::of_kind`, a scan of the tape), once per value probed. With exact
+counts, a kind no file holds counts 0, so the planner probes it first: `assign_name`'s delta (27 rows) then probed it
+27 times per chunk. On a 10-file cold run that took 20 s of the strata's CPU per stratum (`assign_name`,
+`p290_name_at`), and the run 53 s against about 5 s before.
+
+Now the batch keeps `node`'s rows grouped by kind (`Batch::kinds`): each node's kind read once, as the column reads it
+(`Dialect::kind`), placed by a counting pass into one array of rows with a sorted key array and offsets. A probe reads
+its kind's run (a document's part of it by its row range), and the column's exact counts (2. above) are the runs'
+lengths, from the same pass. The same strata now take under 0.8 s, and the findings are the same.

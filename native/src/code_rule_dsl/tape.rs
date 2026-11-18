@@ -213,7 +213,8 @@ impl Grammar {
         Ok(Arc::new(Self { lang, kinds, named }))
     }
 
-    /// The grammar of an embedded program's dialect, built once per process.
+    /// The grammar of a dialect, built once per process and shared by every document of it: built per document, a
+    /// run over 300 files held 61 MB of grammars at its peak (Q74), and built each one's kind table again.
     pub fn embedded(lang: GrammarDialect) -> Result<Arc<Self>, String> {
         static GRAMMARS: std::sync::LazyLock<
             std::sync::Mutex<std::collections::HashMap<GrammarDialect, Arc<Grammar>>>,

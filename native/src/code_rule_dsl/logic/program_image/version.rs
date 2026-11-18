@@ -9,9 +9,8 @@
 //! less what the edit removes or replaces, plus what it adds.
 use super::handles::{AtomRef, RuleRef};
 use super::{AtomId, Cell, Image, RelId, RuleId, bad};
-use crate::code_rule_dsl::logic::front::{Lists, Program};
+use crate::code_rule_dsl::logic::front::{ast::Program, name::Lists};
 use std::collections::{BTreeMap, HashSet};
-use super::manager::Store;
 use std::sync::Arc;
 
 /// Fewest ranges a view may have; it may have up to a quarter of its parent's rules (`max_ranges`, decision 0244).
@@ -23,12 +22,31 @@ pub fn max_ranges(rules: usize) -> usize {
     (rules / 4).max(MAX_RANGES)
 }
 
-/// Each form holds its analyses (`analyses`, decision 0281 §2), made as they are asked for and dropped with it.
+/// A version's slot for what a layer above keeps of it, dropped with it: the pass manager's analyses
+/// (`manager::Store`), of a type this crate does not know.
+#[derive(Default)]
+pub struct Held(pub std::sync::OnceLock<Box<dyn std::any::Any + Send + Sync>>);
+
+/// Each form holds its analyses (in its `held` slot, decision 0281 §2), made as they are asked for and dropped with it.
 pub enum Version {
-    Base { image: Arc<Image>, digest: u64, analyses: Store },
+    Base { image: Arc<Image>, digest: u64, analyses: Held },
     /// Ranges of `parent`'s rule ids, ascending; `parent` is never a view (a view of a view is of its parent).
-    View { parent: Arc<Version>, ranges: Vec<(u32, u32)>, size: usize, digest: u64, analyses: Store },
-    Overlay { parent: Arc<Version>, delta: Arc<Image>, size: usize, depth: usize, digest: u64, analyses: Store },
+    View { parent: Arc<Version>, ranges: Vec<(u32, u32)>, size: usize, digest: u64, analyses: Held },
+    Overlay { parent: Arc<Version>, delta: Arc<Image>, size: usize, depth: usize, digest: u64, analyses: Held },
+}
+
+/// A version as its size and digest: what tells two apart (`differences` shows them).
+impl std::fmt::Debug for Version {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Version {{ rules: {}, digest: {:#x} }}", self.size(), self.digest())
+    }
+}
+
+/// What a version is made of over its parent (`Version::layer`).
+pub enum Layer<'v> {
+    Base(&'v [u8]),
+    Overlay(&'v Arc<Version>, &'v [u8]),
+    View(&'v Arc<Version>, &'v [(u32, u32)]),
 }
 
 /// What made a version: which form an edit took.
@@ -114,7 +132,7 @@ impl Version {
             return Err(bad("a delta is opened over its parent (`Version::over`)"));
         }
         let digest = image.own_sum();
-        Ok(Arc::new(Version::Base { image: Arc::new(image), digest, analyses: Store::default() }))
+        Ok(Arc::new(Version::Base { image: Arc::new(image), digest, analyses: Held::default() }))
     }
 
     /// The overlay of `parent` and the delta `bytes` hold: the delta's bases must be `parent`'s id spaces, and what
@@ -166,13 +184,13 @@ impl Version {
         }
         d = d.wrapping_add(delta.own_sum());
         let size = parent.size() - removed.len() + delta.rules();
-        Ok(Arc::new(Version::Overlay { parent: parent.clone(), size, depth: parent.depth() + 1, digest: d, delta: Arc::new(delta), analyses: Store::default() }))
+        Ok(Arc::new(Version::Overlay { parent: parent.clone(), size, depth: parent.depth() + 1, digest: d, delta: Arc::new(delta), analyses: Held::default() }))
     }
 
     /// A view of `parent`'s rules in `ranges` (of its rule ids), of `size` rules and digest `digest` (the builder's).
-    pub(crate) fn view(parent: &Arc<Version>, ranges: Vec<(u32, u32)>, size: usize, digest: u64) -> Arc<Version> {
+    pub fn view(parent: &Arc<Version>, ranges: Vec<(u32, u32)>, size: usize, digest: u64) -> Arc<Version> {
         debug_assert!(!matches!(**parent, Version::View { .. }), "a view of a view is of its parent");
-        Arc::new(Version::View { parent: parent.clone(), ranges, size, digest, analyses: Store::default() })
+        Arc::new(Version::View { parent: parent.clone(), ranges, size, digest, analyses: Held::default() })
     }
     /// Whether rule id `k` is in `ranges`.
     fn in_ranges(ranges: &[(u32, u32)], k: u32) -> bool {
@@ -188,19 +206,20 @@ impl Version {
         self.down().next().expect("a version has an image")
     }
     /// The base image this version is over, at the bottom of its stack.
-    pub(crate) fn root(&self) -> &Arc<Image> {
+    pub fn root(&self) -> &Arc<Image> {
         match self {
             Version::Base { image, .. } => image,
             Version::View { parent, .. } | Version::Overlay { parent, .. } => parent.root(),
         }
     }
     /// Whether `im` is one of this version's images: its ids are this version's.
-    pub(crate) fn holds_image(&self, im: &Image) -> bool {
+    pub fn holds_image(&self, im: &Image) -> bool {
         self.down().any(|x| std::ptr::eq(x, im))
     }
 
-    /// Its analyses (decision 0281 §2): asked for through a pipeline's `Cx`, or `manager::analysis`.
-    pub fn analyses(&self) -> &Store {
+    /// The slot its analyses are kept in (decision 0281 §2): the pass manager's store, which it puts there on first use
+    /// (`manager::VersionAnalyses`).
+    pub fn held(&self) -> &Held {
         match self {
             Version::Base { analyses, .. } | Version::View { analyses, .. } | Version::Overlay { analyses, .. } => analyses,
         }
@@ -226,6 +245,19 @@ impl Version {
             Version::Base { image, .. } => Some(image.bytes()),
             _ => None,
         }
+    }
+    /// What it is made of over its parent (decision 0333 §2): a base's image bytes, an overlay's parent and delta
+    /// bytes, or a view's parent and ranges.
+    pub fn layer(&self) -> Layer<'_> {
+        match self {
+            Version::Base { image, .. } => Layer::Base(image.bytes()),
+            Version::Overlay { parent, delta, .. } => Layer::Overlay(parent, delta.bytes()),
+            Version::View { parent, ranges, .. } => Layer::View(parent, ranges),
+        }
+    }
+    /// The view of `parent` less its rules `removed` (ascending): a view stored by what it leaves out, reopened.
+    pub fn view_without(parent: &Arc<Version>, removed: &[u32]) -> Result<Arc<Version>, String> {
+        super::build::view(parent, removed).ok_or_else(|| bad("a stored view is more ranges than a view holds"))
     }
     /// One past the last id of each id space: atoms, relations, rules.
     pub fn atom_end(&self) -> u32 {
@@ -429,10 +461,10 @@ impl Version {
     pub fn outputs(&self) -> impl ExactSizeIterator<Item = AtomId> + '_ {
         self.owner(2).outputs().iter().map(|&a| AtomId(a))
     }
-    pub(crate) fn inputs_hash(&self) -> u64 {
+    pub fn inputs_hash(&self) -> u64 {
         self.owner(1).inputs_hash()
     }
-    pub(crate) fn outputs_hash(&self) -> u64 {
+    pub fn outputs_hash(&self) -> u64 {
         self.owner(2).outputs_hash()
     }
 
@@ -444,6 +476,13 @@ impl Version {
         DECODED.with(|d| d.set((d.get().0 + 1, Some(at))));
         crate::code_rule_dsl::logic::profile::decision("a tree decoded from its version", || format!("{}:{}", at.file(), at.line()));
         super::Tree::new(self, lists).program()
+    }
+
+    /// The program's fields besides its rules (its declarations, facts, inputs, outputs, settings, policies and the
+    /// rest of its `.about` rows), as a tree without rules: what a run reads of a program other than its rules, with no
+    /// rule decoded (decision 0281's path, step R).
+    pub fn header(&self, lists: &Lists) -> Result<Program, String> {
+        super::Tree::new(self, lists).program_of(std::iter::empty())
     }
 
     /// A new base of this version's program, keeping its atom and relation ids (rule ids are renumbered from 0).
@@ -467,4 +506,32 @@ pub fn trees_decoded() -> (usize, Option<String>) {
 /// Forgets this thread's decodes (`trees_decoded`): a check counts a run's alone.
 pub fn forget_trees_decoded() {
     DECODED.with(|d| d.set((0, None)));
+}
+
+/// What two versions differ in, by text: the rules, declarations, facts and about rows only one has (a debug check's
+/// message).
+pub fn differences(a: &Version, b: &Version) -> String {
+    use std::collections::BTreeSet;
+    let texts = |v: &Version| -> BTreeSet<String> {
+        let mut out: BTreeSet<String> = v.rules().map(|r| format!("rule {}", v.show_rule(r))).collect();
+        for d in v.decls() {
+            out.insert(format!("decl {}({})", v.text(d.name()), d.cols().map(|(n, t)| format!("{}: {}", v.text(n), v.text(t))).collect::<Vec<_>>().join(", ")));
+        }
+        let cell = |c: Cell| match c {
+            Cell::Int(i) => i.to_string(),
+            Cell::Str(x) => format!("{:?}", v.text(x)),
+            Cell::Branded(b) => b.to_string(),
+        };
+        for f in v.all_facts().into_iter().chain(v.about_facts()) {
+            for (k, row) in f.rows().enumerate() {
+                out.insert(format!("{} {} #{k} ({})", if f.about() { "about" } else { "fact" }, v.text(f.name()), row.map(cell).collect::<Vec<_>>().join(", ")));
+            }
+        }
+        out.insert(format!("inputs {:?}", v.inputs().map(|a| v.text(a)).collect::<Vec<_>>()));
+        out.insert(format!("outputs {:?}", v.outputs().map(|a| v.text(a)).collect::<Vec<_>>()));
+        out
+    };
+    let (ta, tb) = (texts(a), texts(b));
+    let only = |x: &BTreeSet<String>, y: &BTreeSet<String>| x.difference(y).take(12).cloned().collect::<Vec<_>>().join("\n    ");
+    format!("\n  only the first:\n    {}\n  only the second:\n    {}", only(&ta, &tb), only(&tb, &ta))
 }

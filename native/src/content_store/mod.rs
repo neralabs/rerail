@@ -23,6 +23,7 @@ pub use connection::sqlite_on_jemalloc;
 mod cross_rows;
 mod derivation;
 mod frames;
+pub mod guest_keys;
 mod object_segments;
 mod segments;
 mod facts_memo;
@@ -710,6 +711,7 @@ impl ContentStore {
     pub fn forget(path: &Path) {
         // Its upkeep jobs first: one holds a read connection on the file.
         rerail_accel::upkeep::forget_file(path);
+        upkeep::forget(path);
         frames::forget_snapshot(&path.to_string_lossy());
         atoms::forget_identity(&path.to_string_lossy());
     }
