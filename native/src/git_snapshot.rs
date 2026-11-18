@@ -35,6 +35,7 @@ pub struct Inventory {
     pub files: Vec<super::BaseFile>,
     pub trees: Vec<crate::content_store::GitTree>,
     pub languages: std::collections::BTreeMap<String, String>,
+    pub invalid_paths: Vec<String>,
 }
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
@@ -245,6 +246,10 @@ impl Snapshot {
         self.view.tree.to_string()
     }
 
+    pub fn invalid_paths(&self) -> &[String] {
+        self.view.inventory.get().map_or(&[], |inventory| inventory.invalid_paths.as_slice())
+    }
+
     pub fn commit(&self) -> Option<String> {
         self.view.commit.map(|id| id.to_string())
     }
@@ -288,7 +293,7 @@ impl Snapshot {
     }
 
     /// List raw entry modes without opening any of their objects.
-    pub fn directory_entries(&self, path: &str) -> io::Result<Option<Vec<(String, u16)>>> {
+    pub fn directory_entries(&self, path: &str) -> io::Result<Option<Vec<(Vec<u8>, u16)>>> {
         super::check_source_path(path)?;
         let directory = match self.view.entry(&self.view.root.join(path)) {
             Ok(Entry::Dir(id)) => id,
@@ -300,11 +305,11 @@ impl Snapshot {
             let tree = repo.find_tree(directory).map_err(error)?;
             tree.iter().map(|entry| {
                 let entry = entry.map_err(error)?;
-                let name = entry.filename().to_str().map_err(error)?;
-                if name.is_empty() || name == "." || name == ".." || name.contains('/') {
+                let name = entry.filename().as_bytes();
+                if name.is_empty() || name == b"." || name == b".." || name.contains(&b'/') {
                     return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid Git entry name"));
                 }
-                Ok((name.to_owned(), entry.mode().value()))
+                Ok((name.to_vec(), entry.mode().value()))
             }).collect::<io::Result<Vec<_>>>().map(Some)
         })
     }
@@ -512,15 +517,34 @@ impl InventoryFilter {
                 return None;
             }
         }
-        if super::search_ignored_path(&self.rules.mandatory, &path, self.rules.case, directory)
-            || (super::search_ignored_path(&self.rules.workspace, &path, self.rules.case, directory)
-                && (!directory || !self.coverage.may_reinclude(&path)))
-        {
-            return None;
-        }
-        Some(path)
+        (!self.ignored(path.as_bytes(), directory)).then_some(path)
     }
 
+    /// An invalid name can only be in scope when its valid parent is in scope.
+    pub fn invalid_child(&self, parent: &str, name: &str, directory: bool) -> Option<String> {
+        let relative = Path::new(parent).strip_prefix(&self.prefix).ok()?;
+        if self.paths.as_ref().is_some_and(|paths| !paths.iter().any(|path| relative.starts_with(path))) {
+            return None;
+        }
+        let mut bytes = parent.as_bytes().to_vec();
+        if !parent.is_empty() {
+            bytes.push(b'/');
+        }
+        for pair in name.as_bytes().chunks_exact(2) {
+            bytes.push(u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?);
+        }
+        if self.ignored(&bytes, directory) {
+            return None;
+        }
+        let marker = format!("[hex:{name}]");
+        Some(if parent.is_empty() { marker } else { format!("{parent}/{marker}") })
+    }
+
+    fn ignored(&self, path: &[u8], directory: bool) -> bool {
+        super::search_ignored_path(&self.rules.mandatory, path, self.rules.case, directory)
+            || (super::search_ignored_path(&self.rules.workspace, path, self.rules.case, directory)
+                && (!directory || !self.coverage.may_reinclude(path)))
+    }
 }
 
 pub fn inventory_filter(root: &Path) -> Result<InventoryFilter, String> {
@@ -547,7 +571,7 @@ pub fn inventory_selection(root: &Path) -> Option<String> {
         Ok(None) => String::new(),
         Err(_) => format!("unreadable:{}", v.tree),
     };
-    serde_json::to_string(&("ignore-v4", ignores, &v.prefix, &*paths)).ok()
+    serde_json::to_string(&("ignore-v5", ignores, &v.prefix, &*paths)).ok()
 }
 
 pub fn source_languages(root: &Path) -> Option<SourceLanguages> {

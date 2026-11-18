@@ -376,16 +376,15 @@ fn search_ignored(
     path: &str,
     case: gix::ignore::glob::pattern::Case,
 ) -> bool {
-    search_ignored_path(search, path, case, false)
+    search_ignored_path(search, path.as_bytes(), case, false)
 }
 
 fn search_ignored_path(
     search: &gix::ignore::Search,
-    path: &str,
+    bytes: &[u8],
     case: gix::ignore::glob::pattern::Case,
     directory: bool,
 ) -> bool {
-    let bytes = path.as_bytes();
     let mut ignored = false;
     for (index, byte) in bytes.iter().enumerate() {
         if *byte != b'/' {

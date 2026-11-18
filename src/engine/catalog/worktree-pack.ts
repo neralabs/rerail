@@ -225,8 +225,7 @@ export function worktreeScanCatalog(installed: RuleCatalog, root: string, fromRe
   json: readonly RuleFileEntry[];
   rr: readonly RuleFileEntry[];
   readJson(path: string): unknown;
-  inspect(path: string): string;
-}): RuleCatalog {
+}, inspect = (path: string) => loadNativeBinding().inspectRrPolicy(path)): RuleCatalog {
   const base = (() => {
     if (fromRef === undefined) return worktreeRuleCatalog(installed, root);
     const { loaded, skipped } = readWorktreePack(installed, WORKTREE_RULES_FOLDER, fromRef.json, fromRef.readJson);
@@ -239,7 +238,7 @@ export function worktreeScanCatalog(installed: RuleCatalog, root: string, fromRe
   for (const file of files) {
     try {
       if (!file.regular || file.size > MAX_RULE_DOCUMENT_BYTES) throw new Error("expected a regular policy file of at most 1 MiB");
-      const { metadata, programInputs } = JSON.parse(fromRef?.inspect(file.path) ?? loadNativeBinding().inspectRrPolicy(file.path)) as {
+      const { metadata, programInputs } = JSON.parse(inspect(file.path)) as {
         metadata: { policies: { id: string }[]; settings: [string, string][] };
         programInputs: RrPolicySource["inputs"];
       };

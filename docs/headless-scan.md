@@ -102,8 +102,12 @@ rerail scope delete review
 
 Rerail discovers Git from the current folder or `--repo` and reads the selected tree directly.
 The scan uses today's rules, packs, and approvals. Use `--rules-ref` to select rules independently.
+The scan loads each selected `.rr` policy and its includes before it evaluates any policy.
+A retry uses these programs and their original digests.
 The ref supplies its JSON and `.rr` policies. It also supplies local `.rr` includes.
 Rerail reads policy files from Git objects. Names use Git case rules.
+The scan selects file names before it checks their UTF-8 encoding.
+It reports selected names with invalid UTF-8 in hexadecimal and continues with readable entries.
 The report gives the requested ref and the resolved commit for those policies.
 The resolved commit stays the same if the ref moves during the scan.
 If the ref has no rules directory, the ref supplies zero policies.

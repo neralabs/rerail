@@ -198,9 +198,10 @@ export interface NativeGitRevisionSource {
   readonly tree: string;
   readonly commit: string | null;
   containsPath(path: string): boolean;
+  invalidPaths(): string[];
   readSource(path: string): Buffer | null;
   /** A missing directory gives no entries. An unreadable object throws. */
-  readDirectory(path: string): { name: string; mode: number }[] | null;
+  readDirectory(path: string): { name?: string; nameBytes?: Buffer; mode: number }[] | null;
   /** A file above the byte limit gives no result. A read failure throws. */
   readFile(path: string, limit: number): Buffer | null;
 }
@@ -416,13 +417,18 @@ export interface NativeAnalysisScopeRun {
   warn(message: string): void;
 }
 
+export interface NativeLoadedRrPolicies {
+  load(path: string, source?: NativeGitRevisionSource): string;
+}
+
 export interface NativeBinding {
   AnalysisScopeRun: new (store: string, scope: string, directory: boolean, id: string, generation: number, home?: string) => NativeAnalysisScopeRun;
   prepareAnalysisStoreAsync(store: string): Promise<void>;
   collectAnalysisCacheAsync(store: string): Promise<void>;
   inspectRrPolicy(path: string, source?: NativeGitRevisionSource): string;
+  LoadedRrPolicies: new () => NativeLoadedRrPolicies;
   GitRevisionSource: new (root: string, revision: string, analysisScope: string) => NativeGitRevisionSource;
-  scanRrPoliciesAsync(paths: string[], root: string, store: string, output: string, analysis: NativeAnalysisScopeRun | undefined, sourcePaths: string[] | undefined, source: NativeGitRevisionSource | undefined, policySource?: NativeGitRevisionSource): Promise<string>;
+  scanRrPoliciesAsync(paths: string[], root: string, store: string, output: string, analysis: NativeAnalysisScopeRun | undefined, sourcePaths: string[] | undefined, source: NativeGitRevisionSource | undefined, policySource?: NativeGitRevisionSource, loaded?: NativeLoadedRrPolicies): Promise<string>;
   CodeRuleDslExecution: new () => NativeCodeRuleDslExecution;
   CodeRuleSqlExecutor: NativeCodeRuleSqlExecutorConstructor;
   executeSqlRequest(storePath: string, requestJson: string): string;
@@ -464,6 +470,7 @@ export interface NativeBinding {
   /** The content-store file name this binary's store schema owns (`content-v5.sqlite` at store floor 5). */
   contentStoreFileName(): string;
   deleteAnalysisScope(storePath: string, value: string, directory: boolean, release?: string): void;
+  existingDirectoryAnalysisOwnership(storePath: string, directory: string, home: string): boolean;
   /** Locks `path` exclusively, creating the file; null while any other handle, in any process, holds it. */
   tryLockExclusive(path: string): NativeExclusiveFileLock | null;
   /** Git's exclude stack for the worktree around `root`, re-reading the index as it changes; null outside any Git worktree. */

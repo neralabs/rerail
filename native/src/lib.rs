@@ -274,11 +274,51 @@ pub fn content_store_file_name() -> &'static str {
 #[cfg(not(feature = "headless"))]
 #[napi]
 pub fn inspect_rr_policy(path: String, source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
-    let snapshot = source.map(|source| source.pinned_snapshot());
-    let path = rr_policy_path(&path, snapshot.as_deref())?;
-    let (program, files) = tools::read_policy(&path).map_err(Error::from_reason)?;
-    let metadata = code_rule_dsl::logic::rr::metadata(&program).map_err(|e| Error::from_reason(e.to_string()))?;
-    Ok(serde_json::json!({ "metadata": metadata, "programInputs": tools::policy_inputs(&files) }).to_string())
+    LoadedRrPolicy::read(&path, source.map(|source| source.pinned_snapshot()).as_deref())?.inspection()
+}
+
+#[cfg(not(feature = "headless"))]
+#[derive(Clone)]
+struct LoadedRrPolicy {
+    program: rerail_rr_syntax::code_rule_dsl::logic::front::ast::Program,
+    files: Vec<code_rule_dsl::logic::rr::LibraryFile>,
+}
+
+#[cfg(not(feature = "headless"))]
+impl LoadedRrPolicy {
+    fn read(path: &str, snapshot: Option<&git_workspace::snapshot::Snapshot>) -> Result<Self> {
+        let path = rr_policy_path(path, snapshot)?;
+        let (program, files) = tools::read_policy(&path).map_err(Error::from_reason)?;
+        Ok(Self { program, files })
+    }
+
+    fn inspection(&self) -> Result<String> {
+        let metadata = code_rule_dsl::logic::rr::metadata(&self.program).map_err(|e| Error::from_reason(e.to_string()))?;
+        Ok(serde_json::json!({ "metadata": metadata, "programInputs": tools::policy_inputs(&self.files) }).to_string())
+    }
+}
+
+/// The programs and includes inspected during one scan's policy selection.
+#[cfg(not(feature = "headless"))]
+#[napi]
+#[derive(Default)]
+pub struct LoadedRrPolicies(std::sync::Mutex<std::collections::HashMap<String, LoadedRrPolicy>>);
+
+#[cfg(not(feature = "headless"))]
+#[napi]
+impl LoadedRrPolicies {
+    #[napi(constructor)]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    #[napi]
+    pub fn load(&self, path: String, source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
+        let policy = LoadedRrPolicy::read(&path, source.map(|source| source.pinned_snapshot()).as_deref())?;
+        let inspection = policy.inspection()?;
+        self.0.lock().unwrap_or_else(|error| error.into_inner()).insert(path, policy);
+        Ok(inspection)
+    }
 }
 
 #[cfg(not(feature = "headless"))]
@@ -302,12 +342,18 @@ pub fn scan_rr_policies_async(
     source_paths: Option<Vec<String>>,
     source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>,
     policy_source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>,
-) -> napi::bindgen_prelude::AsyncTask<ScanRrPolicies> {
-    napi::bindgen_prelude::AsyncTask::new(ScanRrPolicies {
+    loaded: Option<&LoadedRrPolicies>,
+) -> Result<napi::bindgen_prelude::AsyncTask<ScanRrPolicies>> {
+    let policies = loaded.map(|loaded| {
+        let programs = loaded.0.lock().unwrap_or_else(|error| error.into_inner());
+        paths.iter().map(|path| programs.get(path).cloned().ok_or_else(|| Error::from_reason(format!("{path}: policy was not loaded")))).collect::<Result<Vec<_>>>()
+    }).transpose()?;
+    Ok(napi::bindgen_prelude::AsyncTask::new(ScanRrPolicies {
         paths, root, store, output, owner: analysis.map(|run| run.owner()), source_paths,
         snapshot: source.map(|source| source.pinned_snapshot()),
         policy_snapshot: policy_source.map(|source| source.pinned_snapshot()),
-    })
+        policies,
+    }))
 }
 
 #[cfg(not(feature = "headless"))]
@@ -320,6 +366,7 @@ pub struct ScanRrPolicies {
     source_paths: Option<Vec<String>>,
     snapshot: Option<std::sync::Arc<git_workspace::snapshot::Snapshot>>,
     policy_snapshot: Option<std::sync::Arc<git_workspace::snapshot::Snapshot>>,
+    policies: Option<Vec<LoadedRrPolicy>>,
 }
 
 #[cfg(not(feature = "headless"))]
@@ -340,12 +387,13 @@ impl napi::Task for ScanRrPolicies {
         code_rule_dsl::logic::plan::corpus::with_tape_cache_path(path, ownership, || {
             let root = self.snapshot.as_ref().map_or_else(|| Path::new(&self.root), |snapshot| snapshot.root());
             let options = serde_json::json!({ "sourcePaths": self.source_paths, "scanSpans": true, "reuse": path != Path::new(":memory:") });
+            let policies = match self.policies.take() {
+                Some(policies) => policies,
+                None => self.paths.iter().map(|path| LoadedRrPolicy::read(path, self.policy_snapshot.as_deref())).collect::<Result<Vec<_>>>()?,
+            };
             let mut ids = std::collections::HashSet::new();
-            let mut policies = Vec::new();
-            for path in &self.paths {
-                let policy_path = rr_policy_path(path, self.policy_snapshot.as_deref())?;
-                let (program, files) = tools::read_policy(&policy_path).map_err(Error::from_reason)?;
-                let metadata = code_rule_dsl::logic::rr::metadata(&program).map_err(|err| Error::from_reason(err.to_string()))?;
+            for (path, policy) in self.paths.iter().zip(&policies) {
+                let metadata = code_rule_dsl::logic::rr::metadata(&policy.program).map_err(|err| Error::from_reason(err.to_string()))?;
                 let declared = metadata["policies"].as_array().filter(|policies| !policies.is_empty())
                     .ok_or_else(|| Error::from_reason(format!("{path}: .policy declaration required")))?;
                 for policy in declared {
@@ -355,11 +403,10 @@ impl napi::Task for ScanRrPolicies {
                         return Err(Error::from_reason(format!("duplicate .rr policy ID {id:?} in {path}")));
                     }
                 }
-                policies.push((program, files));
             }
             let mut reports = Vec::new();
             let mut ephemeral = path == Path::new(":memory:");
-            for (i, (program, files)) in policies.into_iter().enumerate() {
+            for (i, LoadedRrPolicy { program, files }) in policies.into_iter().enumerate() {
                 let out = Path::new(&self.output).join(i.to_string());
                 let report = if ephemeral {
                     None
@@ -445,6 +492,12 @@ impl napi::Task for CollectAnalysisCache {
     }
 
     fn resolve(&mut self, _env: napi::Env, _: ()) -> Result<()> { Ok(()) }
+}
+
+#[napi]
+pub fn existing_directory_analysis_ownership(store_path: String, directory: String, home: String) -> Result<bool> {
+    content_store::analysis_scope::existing_directory_ownership(Path::new(&store_path), Path::new(&directory), &home)
+        .map_err(|error| Error::from_reason(error.to_string()))
 }
 
 #[napi]

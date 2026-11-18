@@ -112,7 +112,10 @@ impl Git {
                 let mut records = Vec::with_capacity(tree.entries.len() + 1);
                 records.push(Record::text("kind", "tree"));
                 for entry in &tree.entries {
-                    let mut record = Record::text("entry", &entry.name);
+                    let mut record = match entry.name.strip_prefix('\0') {
+                        Some(name) => Record::text("entry-bytes", name),
+                        None => Record::text("entry", &entry.name),
+                    };
                     record.second = hex(&entry.target.key_bytes()[8..8 + id.as_slice().len()]);
                     record.number = i64::from(entry.mode);
                     records.push(record);
@@ -384,11 +387,16 @@ pub(in crate::code_rule_dsl) fn inventory(root: &Path, store: Option<&Path>) -> 
         }
     };
     let mut entries = BTreeMap::<_, Vec<GitTreeEntry>>::new();
-    for row in outputs.rows("git_tree_entry") {
-        let (Cell::Text(tree), Cell::Text(name), Some(mode), Cell::Text(target)) =
-            (row.get(1), row.get(2), row.get(3).int(), row.get(4))
-        else { return Err("invalid Git entry fact".into()) };
-        entries.entry(tree.to_owned()).or_default().push(GitTreeEntry { name: name.to_owned(), mode: mode as u16, target: key(target)? });
+    for relation in ["git_tree_entry", "git_tree_entry_bytes"] {
+        for row in outputs.rows(relation) {
+            let (Cell::Text(tree), Cell::Text(name), Some(mode), Cell::Text(target)) =
+                (row.get(1), row.get(2), row.get(3).int(), row.get(4))
+            else { return Err("invalid Git entry fact".into()) };
+            // Git names cannot contain a NUL. Use it to distinguish byte names in
+            // the store's textual tree entries. They never become document paths.
+            let name = if relation == "git_tree_entry_bytes" { format!("\0{name}") } else { name.to_owned() };
+            entries.entry(tree.to_owned()).or_default().push(GitTreeEntry { name, mode: mode as u16, target: key(target)? });
+        }
     }
     let mut trees = Vec::new();
     for row in outputs.rows("inventory_directory") {
@@ -415,5 +423,7 @@ pub(in crate::code_rule_dsl) fn inventory(root: &Path, store: Option<&Path>) -> 
         .collect::<Result<_, _>>()?;
     files.sort_by(|a, b| a.path.cmp(&b.path));
     trees.sort_by_key(|tree| tree.id);
-    Ok(snapshot::Inventory { files, trees, languages })
+    let invalid_paths = outputs.rows("inventory_path_error").into_iter()
+        .filter_map(|row| row.get(0).text().map(str::to_owned)).collect();
+    Ok(snapshot::Inventory { files, trees, languages, invalid_paths })
 }

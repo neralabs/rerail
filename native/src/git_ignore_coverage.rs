@@ -61,7 +61,7 @@ impl IgnoreCoverage {
         Self::Compiled(Box::new(Coverage { dfa, start, outcomes, name_bytes }))
     }
 
-    pub(super) fn may_reinclude(&self, directory: &str) -> bool {
+    pub(super) fn may_reinclude(&self, directory: &[u8]) -> bool {
         match self {
             Self::NoNegations => false,
             Self::Unknown => true,
@@ -71,9 +71,9 @@ impl IgnoreCoverage {
 }
 
 impl Coverage {
-    fn may_reinclude(&self, directory: &str) -> bool {
+    fn may_reinclude(&self, directory: &[u8]) -> bool {
         let mut state = self.start;
-        for byte in directory.bytes().chain([b'/']) {
+        for byte in directory.iter().copied().chain([b'/']) {
             state = self.dfa.next_state(state, byte);
         }
         let mut visited = HashSet::new();

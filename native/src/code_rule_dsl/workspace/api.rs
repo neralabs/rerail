@@ -82,7 +82,8 @@ pub struct GitRevisionSource {
 #[cfg(not(feature = "headless"))]
 #[napi(object)]
 pub struct GitDirectoryEntry {
-    pub name: String,
+    pub name: Option<String>,
+    pub name_bytes: Option<Buffer>,
     pub mode: u32,
 }
 
@@ -114,6 +115,11 @@ impl GitRevisionSource {
     }
 
     #[napi]
+    pub fn invalid_paths(&self) -> Vec<String> {
+        self.snapshot.invalid_paths().to_vec()
+    }
+
+    #[napi]
     pub fn contains_path(&self, path: String) -> Result<bool> {
         self.snapshot.contains_path(Path::new(&path)).map_err(|err| invalid(err.to_string()))
     }
@@ -122,7 +128,13 @@ impl GitRevisionSource {
     pub fn read_directory(&self, path: String) -> Result<Option<Vec<GitDirectoryEntry>>> {
         let entries = self.snapshot.directory_entries(&path).map_err(|err| invalid(err.to_string()))?;
         Ok(entries.map(|entries| entries.into_iter()
-            .map(|(name, mode)| GitDirectoryEntry { name, mode: u32::from(mode) })
+            .map(|(name, mode)| {
+                let (name, name_bytes) = match String::from_utf8(name) {
+                    Ok(name) => (Some(name), None),
+                    Err(error) => (None, Some(error.into_bytes().into())),
+                };
+                GitDirectoryEntry { name, name_bytes, mode: u32::from(mode) }
+            })
             .collect()))
     }
 

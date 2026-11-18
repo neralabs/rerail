@@ -29,7 +29,7 @@ import type { RuleDocument } from "../engine/catalog/rule-store.js";
 import { isWorktreePack, MAX_RULE_DOCUMENT_BYTES, rrPayloadHash, WORKTREE_PACK_ID, WORKTREE_RULES_FOLDER, worktreeRuleCatalog, worktreeScanCatalog } from "../engine/catalog/worktree-pack.js";
 import { CheckoutCodeRuleRouter } from "../engine/code-rule/checkout-code-rule-router.js";
 import { CheckoutCatalogs, startingCheckout } from "../engine/code-rule/code-rule-dsl-catalog.js";
-import { loadNativeBinding, type NativeAnalysisScopeRun, type NativeGitRevisionSource } from "../engine/native/native.js";
+import { loadNativeBinding, type NativeAnalysisScopeRun, type NativeGitRevisionSource, type NativeLoadedRrPolicies } from "../engine/native/native.js";
 import { acquireDirectoryAnalysisGeneration, analysisScopeHome, scanContentStore } from "../engine/native/analysis-scope.js";
 import { assertContentStoreOwner } from "../engine/native/main-instance.js";
 import { SOURCE_LANGUAGES, SOURCE_NAMES } from "../engine/code-rule/code-rule-languages.js";
@@ -167,7 +167,7 @@ interface RefRules {
 }
 
 /** Load the ref's policies through the same catalog rules used for a checkout. */
-function rulesAtRef(root: string, ref: string): RefRules {
+function rulesAtRef(root: string, ref: string, loadedRr: NativeLoadedRrPolicies): RefRules {
   const binding = loadNativeBinding();
   let source: NativeGitRevisionSource;
   try {
@@ -192,10 +192,16 @@ function rulesAtRef(root: string, ref: string): RefRules {
     unreadable(WORKTREE_RULES_FOLDER, error);
     return { provenance, documents: [], skipped: failures };
   }
-  const files = entries.sort((left, right) => compareDeterministicStrings(left.name, right.name))
-    .map(({ name, mode }) => ({
-      name, path: `${WORKTREE_RULES_FOLDER}/${name}`, regular: mode === 0o100644 || mode === 0o100755, size: 0,
-    }));
+  const files = entries.flatMap(({ name, nameBytes, mode }) => {
+    if (name == null) {
+      const bytes = nameBytes?.toString("latin1");
+      if (nameBytes !== undefined && (bytes?.endsWith(".json") || bytes?.endsWith(".rr"))) {
+        unreadable(`${WORKTREE_RULES_FOLDER}/[hex:${nameBytes.toString("hex")}]`, new Error("Git policy name has invalid UTF-8"));
+      }
+      return [];
+    }
+    return [{ name, path: `${WORKTREE_RULES_FOLDER}/${name}`, regular: mode === 0o100644 || mode === 0o100755, size: 0 }];
+  }).sort((left, right) => compareDeterministicStrings(left.name, right.name));
   const bytes = new Map<string, Buffer>();
   const json = files.filter(file => file.name.endsWith(".json")).filter(file => {
     if (!file.regular) return true;
@@ -214,8 +220,7 @@ function rulesAtRef(root: string, ref: string): RefRules {
   const catalog = worktreeScanCatalog(installed, root, {
     json, rr,
     readJson: path => parseJsonWithoutDuplicateKeys(bytes.get(path)!.toString("utf8"), path),
-    inspect: path => binding.inspectRrPolicy(path, source),
-  });
+  }, path => loadedRr.load(path, source));
   const pack = catalog.packs.get(WORKTREE_PACK_ID);
   const documents = pack === undefined || !isWorktreePack(pack)
     ? []
@@ -531,9 +536,10 @@ async function scanRrRules(
   paths: string[] | null, source: NativeGitRevisionSource | undefined,
   configured?: { policies: ReadonlyMap<string, RrPolicySource>; mode: ReturnType<typeof resolveRrModes> },
   refPolicy?: RefRules,
+  loadedRr?: NativeLoadedRrPolicies,
 ): Promise<{ rules: ScanRule[]; violations: ScanViolation[] }> {
   const inputs = refPolicy === undefined ? policies.map(path => resolve(path)) : [...policies];
-  const reports = JSON.parse(await loadNativeBinding().scanRrPoliciesAsync(inputs, root, store, output, analysisRun, paths ?? undefined, source, refPolicy?.rr?.source)) as RrReport[];
+  const reports = JSON.parse(await loadNativeBinding().scanRrPoliciesAsync(inputs, root, store, output, analysisRun, paths ?? undefined, source, refPolicy?.rr?.source, loadedRr)) as RrReport[];
   const rules: ScanRule[] = [];
   const violations: ScanViolation[] = [];
   for (const [index, report] of reports.entries()) {
@@ -583,10 +589,11 @@ async function scanReport(
 ): Promise<ScanReport> {
   const databasePath = join(scratch, "rerail.sqlite");
   const explicitRr = (options.rr?.length ?? 0) > 0;
-  const refRules = options.rulesRef === undefined ? undefined : rulesAtRef(root, options.rulesRef);
+  const loadedRr = new (loadNativeBinding().LoadedRrPolicies)();
+  const refRules = options.rulesRef === undefined ? undefined : rulesAtRef(root, options.rulesRef, loadedRr);
   const installed = loadRuleCatalog();
   const catalog = options.rulesRef !== undefined ? refRules?.rr?.catalog
-    : explicitRr ? undefined : worktreeScanCatalog(installed, root);
+    : explicitRr ? undefined : worktreeScanCatalog(installed, root, undefined, path => loadedRr.load(path));
   const pinned = new Map<string, RuleCatalog>([[root, refRules === undefined ? catalog ?? installed : installed]]);
   const checkoutRules = (checkout: string): RuleCatalog => {
     const found = pinned.get(checkout);
@@ -635,6 +642,7 @@ async function scanReport(
   }
   if (rr.length > 0) {
     try {
+      if (explicitRr) for (const path of rr) loadedRr.load(resolve(path));
       let configured: Parameters<typeof scanRrRules>[7];
       if (catalog !== undefined && configuredPolicies.length > 0) {
         const database = openRerailDatabase(databasePath, { readonly: true });
@@ -649,7 +657,7 @@ async function scanReport(
         }
       }
       const selected = configured === undefined ? rr : configuredPolicies.filter(configured.mode.enabled).map(policy => policy.path);
-      const evaluated = await scanRrRules(selected, root, analysisStore, join(scratch, "rr"), analysisRun, paths, source, configured, refRules);
+      const evaluated = await scanRrRules(selected, root, analysisStore, join(scratch, "rr"), analysisRun, paths, source, configured, refRules, loadedRr);
       for (const rule of evaluated.rules) {
         if (rules.has(rule.ruleId)) throw new Error(`duplicate policy ID ${rule.ruleId} across configured rules`);
         rules.set(rule.ruleId, rule);
@@ -660,6 +668,10 @@ async function scanReport(
       failures.push({ code: "adapter-error", message: error instanceof Error ? error.message : String(error), path: null, ruleId: null });
       completed = false;
     }
+  }
+  for (const path of source?.invalidPaths() ?? []) {
+    failures.push({ code: "adapter-error", message: "Git path has invalid UTF-8", path, ruleId: null });
+    completed = false;
   }
   return {
     schema: SCAN_SCHEMA,

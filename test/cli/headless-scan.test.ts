@@ -283,6 +283,42 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
     expect(report.failures).toEqual([expect.objectContaining({ code: "adapter-error", path: "gaps/a.py" })]);
   });
 
+  it("uses Git byte names for selection before reporting names with invalid UTF-8", async () => {
+    const root = checkout();
+    const withByteName = (tree: string, suffix: string, blob: string): string => {
+      const listed = execFileSync("git", ["ls-tree", "-z", tree], { cwd: root });
+      const input = Buffer.concat([listed, Buffer.from(`100644 blob ${blob}\t`), Buffer.from([0xff]), Buffer.from(`${suffix}\0`)]);
+      return execFileSync("git", ["mktree", "-z"], { cwd: root, input, encoding: "utf8" }).trim();
+    };
+    const blob = git(root, "rev-parse", "HEAD:a.py");
+    const revision = withByteName("HEAD", ".py", blob);
+    const options = { revision, analysisScope: "bytes" };
+    const selected = await scan(root, { ...options, paths: ["a.py"] });
+    expect(selected).toMatchObject({ status: "completed", paths: ["a.py"], failures: [] });
+    expect(selected.violations.map(finding => finding.path)).toEqual(["a.py"]);
+
+    const all = await scan(root, options);
+    expect(all.status).toBe("failed");
+    expect(all.violations.map(finding => finding.path)).toEqual(["a.py"]);
+    expect(all.failures).toEqual([expect.objectContaining({ path: "[hex:ff2e7079]", message: "Git path has invalid UTF-8" })]);
+
+    const mktree = (input: string) => execFileSync("git", ["mktree"], { cwd: root, input, encoding: "utf8" }).trim();
+    const refWith = (suffix: string) => {
+      const rules = withByteName("HEAD:.rerail/rules", suffix, blob);
+      const rerail = mktree(`040000 tree ${rules}\trules\n`);
+      const tree = mktree(`040000 tree ${rerail}\t.rerail\n100644 blob ${blob}\ta.py\n`);
+      return git(root, "commit-tree", tree, "-m", "byte name near the policies");
+    };
+    const source = { revision: "HEAD", analysisScope: "bytes" };
+    const unrelated = await scan(root, { ...source, rulesRef: refWith(".txt") });
+    expect(unrelated).toMatchObject({ status: "completed", failures: [] });
+    expect(unrelated.violations.map(finding => finding.path)).toEqual(["a.py"]);
+    const selectedPolicy = await scan(root, { ...source, rulesRef: refWith(".rr") });
+    expect(selectedPolicy.status).toBe("failed");
+    expect(selectedPolicy.violations.map(finding => finding.path)).toEqual(["a.py"]);
+    expect(selectedPolicy.failures).toEqual([expect.objectContaining({ path: expect.stringMatching(/\.rerail\/rules\/\[hex:ff2e7272\]$/u) })]);
+  });
+
   it("keeps a Git snapshot owned by two scopes after one is deleted", async () => {
     const root = checkout();
     const databasePath = join(`${root}-home`, "rerail.sqlite");
@@ -476,10 +512,22 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
   it("retries unreadable stored results against the same source and policy", async () => {
     const root = checkout();
     const source = git(root, "rev-parse", "HEAD");
+    const policy = join(root, ".rerail/rules/metadata.rr");
+    const include = join(root, ".rerail/rules/lib/labels.rr");
+    mkdirSync(join(root, ".rerail/rules/lib"));
+    writeFileSync(include, '.decl marker(text: symbol)\nmarker("original include").\n');
+    writeFileSync(policy, `#include "git.rr"
+#include "lib/labels.rr"
+.policy "metadata" revision 1
+.violation Seen(at: span, text: symbol) "original policy {text}"
+Seen(@place("commit", 1), text) :- git_source_commit(_, _), marker(text).
+`);
     const prototype = loadNativeBinding().CodeRuleDslWorkspace.prototype;
     const read = vi.spyOn(prototype, "resultPageAsync").mockImplementationOnce(async () => {
       writeFileSync(join(root, "a.py"), "# no finding in the new commit\n");
       writeRule(root, "needle.json", needle("new-rule", "OTHER"));
+      writeFileSync(policy, readFileSync(policy, "utf8").replace("original policy", "new policy"));
+      writeFileSync(include, '.decl marker(text: symbol)\nmarker("new include").\n');
       git(root, "add", "a.py");
       git(root, "commit", "-qm", "move HEAD");
       throw new Error("WORKSPACE_STORE_UNAVAILABLE\ncache read failed");
@@ -488,7 +536,11 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
       const report = await scan(root, { revision: "HEAD", analysisScope: "reused-results" });
       expect(report.status, JSON.stringify(report.failures)).toBe("completed");
       expect(report.source?.commit).toBe(source);
-      expect(report.violations.map(finding => finding.ruleId)).toEqual(["needle"]);
+      expect(report.violations).toEqual(expect.arrayContaining([
+        expect.objectContaining({ ruleId: "needle" }),
+        expect.objectContaining({ ruleId: "metadata", message: "original policy original include" }),
+      ]));
+      expect(report.violations).toHaveLength(2);
       expect(report.cacheWarnings).toEqual(["cache read failed"]);
       expect(read.mock.calls.length).toBeGreaterThanOrEqual(2);
     } finally { read.mockRestore(); }
@@ -568,14 +620,14 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
     } finally { vi.unstubAllEnvs(); }
   });
 
-  it("does not register a store that could never open", async () => {
+  it.each(["missing", "corrupt"])("leaves a stop clear of a %s store that never opened", async kind => {
     const root = checkout();
     const home = `${root}-home`;
     mkdirSync(home);
     const file = join(home, "file");
-    writeFileSync(file, "");
+    writeFileSync(file, "this is not a database");
     const databasePath = join(home, "rerail.sqlite");
-    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", join(file, "unusable.sqlite"));
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", kind === "missing" ? join(file, "unusable.sqlite") : file);
     try {
       const report = await scan(root, { databasePath });
       expect(report.status).toBe("completed");
@@ -587,6 +639,33 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
         settleAnalysisScopeReleases(databasePath);
         expect(database.$client.prepare("SELECT count(*) FROM analysis_scope_releases").pluck().get()).toBe(0);
       } finally { database.$client.close(); }
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it("releases matching ownership from a store that predates directory registration", async () => {
+    const root = checkout();
+    const home = `${root}-home`;
+    const databasePath = join(home, "rerail.sqlite");
+    const storePath = join(home, "legacy.sqlite");
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", storePath);
+    try {
+      expect((await scan(root, { databasePath })).status).toBe("completed");
+      const registry = new Database(`${databasePath}.analysis-stores.sqlite`);
+      try { registry.exec("DELETE FROM analysis_directory_store"); }
+      finally { registry.close(); }
+      const db = openRerailDatabase(databasePath);
+      const store = new Database(storePath, { readonly: true });
+      try {
+        const owners = () => store.prepare("SELECT count(*) FROM analysis_scope_workspace_snapshot").pluck().get();
+        expect(owners()).toBe(1);
+        setCheckoutStarted(db, recordCheckout(db, root), false);
+        settleAnalysisScopeReleases(databasePath);
+        expect(owners()).toBe(0);
+        expect(db.$client.prepare("SELECT count(*) FROM analysis_scope_releases").pluck().get()).toBe(0);
+      } finally {
+        store.close();
+        db.$client.close();
+      }
     } finally { vi.unstubAllEnvs(); }
   });
 

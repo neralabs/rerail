@@ -117,6 +117,46 @@ pub fn directory_in(path: &Path, home: Option<&str>) -> String {
     }
 }
 
+fn scope_prefix(scope: &str) -> String {
+    let separator = std::path::MAIN_SEPARATOR;
+    if scope.ends_with(separator) { scope.to_owned() } else { format!("{scope}{separator}") }
+}
+
+/// A route from before the directory registry must have actual ownership rows.
+/// A file that never held a usable store has no such rows.
+pub fn existing_directory_ownership(store: &Path, directory: &Path, home: &str) -> rusqlite::Result<bool> {
+    fn check(store: &Path, directory: &Path, home: &str) -> rusqlite::Result<bool> {
+        let db = rusqlite::Connection::open_with_flags(store, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        let legacy = directory_in(directory, None);
+        let scoped = directory_in(directory, Some(home));
+        let scoped_prefix = scope_prefix(&scoped);
+        let legacy_prefix = scope_prefix(&legacy);
+        for table in ["analysis_scope_manifest", "analysis_scope_snapshot", "analysis_scope_workspace_snapshot"] {
+            let exists: bool = db.query_row(
+                "SELECT EXISTS (SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?1)", [table], |row| row.get(0),
+            )?;
+            if !exists {
+                continue;
+            }
+            let has_owner: bool = db.query_row(&format!(
+                "SELECT EXISTS (SELECT 1 FROM {table}
+                 WHERE scope = ?1 OR scope = ?2
+                    OR substr(scope,1,length(?3)) = ?3
+                    OR substr(scope,1,length(?4)) = ?4)"
+            ), (&scoped, &legacy, &scoped_prefix, &legacy_prefix), |row| row.get(0))?;
+            if has_owner {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+    match check(store, directory, home) {
+        Err(error) if matches!(error.sqlite_error_code(),
+            Some(rusqlite::ErrorCode::NotADatabase | rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::CannotOpen)) => Ok(false),
+        result => result,
+    }
+}
+
 pub fn acquisition_time() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |t| t.as_micros() as i64)
 }
@@ -185,8 +225,7 @@ impl ContentStore {
                 (before.parse::<i64>().ok(), receipt.split_once(':').map(|(_, home)| home))
             });
         let scope = directory_in(path, home);
-        let separator = std::path::MAIN_SEPARATOR;
-        let subtree = if scope.ends_with(separator) { scope.clone() } else { format!("{scope}{separator}") };
+        let subtree = scope_prefix(&scope);
         let legacy = home.map(|_| directory(path));
         self.release_analysis_scopes(&scope, Some(&subtree), release, before, legacy.as_deref())
     }
@@ -205,8 +244,7 @@ impl ContentStore {
                 let mut released = release_memberships(tx, &predicate, (scope, subtree, before))?;
                 // Entries made before scopes recorded their home still use the bare directory.
                 if let Some(legacy) = legacy {
-                    let separator = std::path::MAIN_SEPARATOR;
-                    let subtree = if legacy.ends_with(separator) { legacy.to_owned() } else { format!("{legacy}{separator}") };
+                    let subtree = scope_prefix(legacy);
                     released += release_memberships(tx, &predicate, (legacy, Some(subtree.as_str()), before))?;
                 }
                 Ok(released)

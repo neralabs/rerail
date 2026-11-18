@@ -338,7 +338,7 @@ impl RevisionRun {
 
     fn finish(&mut self) -> Option<String> {
         if let Some(mut run) = self.analysis.take() {
-            if let Err(error) = run.finish(self.warning.is_none()) {
+            if let Err(error) = run.finish(self.warning.is_none() && self.snapshot.invalid_paths().is_empty()) {
                 self.warning.get_or_insert_with(|| error.to_string());
             }
             if let Some(warning) = run.owner.cache_warning() {
@@ -350,6 +350,11 @@ impl RevisionRun {
 
     fn report(&mut self, revision: &str, report: &mut serde_json::Value) {
         report["source"] = serde_json::json!({"revision": revision, "tree": self.snapshot.tree(), "commit": self.snapshot.commit()});
+        if !self.snapshot.invalid_paths().is_empty() {
+            report["sourceFailures"] = serde_json::json!(self.snapshot.invalid_paths().iter().map(|path| {
+                serde_json::json!({ "path": path, "message": "Git path has invalid UTF-8" })
+            }).collect::<Vec<_>>());
+        }
         if let Some(warning) = self.finish() {
             report["cacheWarnings"] = serde_json::json!([warning]);
         }
@@ -1404,6 +1409,9 @@ fn logic_command(args: &[String]) -> Result<String, String> {
     let scope = analysis_scope.as_deref().ok_or("--revision requires --analysis-scope <name>")?;
     let mut invocation = RevisionRun::begin(Path::new(root), revision, scope)?;
     let report = invocation.evaluate(eval)?;
+    for path in invocation.snapshot.invalid_paths() {
+        eprintln!("rerail: {path}: Git path has invalid UTF-8");
+    }
     if let Some(warning) = invocation.finish() {
         eprintln!("rerail: cache was not retained. {warning}");
     }

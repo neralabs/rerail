@@ -43,6 +43,11 @@ function storeRegistryPath(databasePath: string): string {
 /** Open the store before registering it. Register it before reading the generation. */
 export async function acquireDirectoryAnalysisGeneration(databasePath: string, directory: string, store: string): Promise<number> {
   await loadNativeBinding().prepareAnalysisStoreAsync(store);
+  registerDirectoryAnalysisStore(databasePath, directory, store);
+  return readAnalysisScopeGeneration(databasePath);
+}
+
+function registerDirectoryAnalysisStore(databasePath: string, directory: string, store: string): void {
   const index = openSqliteDatabase(storeRegistryPath(databasePath));
   try {
     index.$client.exec("CREATE TABLE IF NOT EXISTS analysis_directory_store (directory TEXT NOT NULL, path TEXT NOT NULL, PRIMARY KEY(directory,path)) STRICT");
@@ -50,7 +55,6 @@ export async function acquireDirectoryAnalysisGeneration(databasePath: string, d
   } finally {
     index.$client.close();
   }
-  return readAnalysisScopeGeneration(databasePath);
 }
 
 function analysisStores(databasePath: string): { fallback: Set<string>; registered: { directory: string; path: string }[] } {
@@ -126,20 +130,26 @@ export function settleAnalysisScopeReleases(databasePath: string, limit = 32): v
       .orderBy(analysisScopeReleases.nextAttemptAt, analysisScopeReleases.id).limit(limit).all();
     if (pending.length === 0) return;
     const { fallback, registered } = analysisStores(databasePath);
+    const binding = loadNativeBinding();
+    const home = analysisScopeHome(databasePath);
     const failed = new Map<string, unknown>();
     for (const { id, directory } of pending) {
       const root = storedPath(directory);
-      const stores = new Set([...fallback, ...registered.filter(row => withinCheckout(root, row.directory)).map(row => row.path)]);
+      const routes = new Set(registered.filter(row => withinCheckout(root, row.directory)).map(row => row.path));
       let acknowledged = true;
-      for (const store of stores) {
-        if (failed.has(store)) {
-          acknowledged = false;
-          continue;
-        }
+      for (const store of new Set([...routes, ...fallback])) {
         try {
           assertContentStoreOwner(store);
+          if (!routes.has(store)) {
+            if (!binding.existingDirectoryAnalysisOwnership(store, root, home)) continue;
+            registerDirectoryAnalysisStore(databasePath, root, store);
+          }
+          if (failed.has(store)) {
+            acknowledged = false;
+            continue;
+          }
           if (!existsSync(store)) throw new Error("The registered store is unavailable");
-          loadNativeBinding().deleteAnalysisScope(store, directory, true, id);
+          binding.deleteAnalysisScope(store, directory, true, id);
         } catch (error) {
           failed.set(store, error);
           acknowledged = false;

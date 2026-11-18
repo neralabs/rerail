@@ -7106,11 +7106,11 @@ fn run_observed(
             if rel == git::INVENTORY_CHILD {
                 let mut out = Vec::new();
                 for row in rows {
-                    let [_, _, directory, name, mode] = row.as_slice() else {
+                    let [_, _, directory, name, mode, encoding] = row.as_slice() else {
                         return Err(Error::Plan(format!("{rel}: invalid child request")));
                     };
                     if let Some(path) = world.inventory_child(
-                        &text(*directory)?, &text(*name)?, *mode,
+                        &text(*directory)?, &text(*name)?, *mode, text(*encoding)? == "bytes",
                     ).map_err(Error::Plan)? {
                         let mut found = row.clone();
                         found.extend(atoms(&[&path])?);

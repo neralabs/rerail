@@ -4,24 +4,26 @@
 .input git_inventory_selection
 
 .decl inventory_directory(repo: symbol, path: symbol, tree: symbol, ancestors: symbol)
-.decl git_inventory_child_request(repo: symbol, selection: symbol, directory: symbol, name: symbol, mode: number)
-.decl git_inventory_child_of(repo: symbol, selection: symbol, directory: symbol, name: symbol, mode: number, path: symbol)
+.decl git_inventory_child_request(repo: symbol, selection: symbol, directory: symbol, name: symbol, mode: number, encoding: symbol)
+.decl git_inventory_child_of(repo: symbol, selection: symbol, directory: symbol, name: symbol, mode: number, encoding: symbol, path: symbol)
 
 inventory_directory(r, "", t, @concat(":", @concat(t, ":"))) :- git_source_tree(r, t).
 git_object_request(r, tree) :- inventory_directory(r, _, tree, _).
-git_inventory_child_request(r, s, p, n, m) :-
+git_inventory_child_request(r, s, p, n, m, "utf8") :-
     inventory_directory(r, p, t, _), git_tree_entry(r, t, n, m, _), git_inventory_selection(s).
+git_inventory_child_request(r, s, p, n, m, "bytes") :-
+    inventory_directory(r, p, t, _), git_tree_entry_bytes(r, t, n, m, _), git_inventory_selection(s).
 .decl git_inventory_trail_request(repo: symbol, path: symbol, target: symbol, ancestors: symbol)
 .decl git_inventory_trail_of(repo: symbol, path: symbol, target: symbol, ancestors: symbol, trail: symbol)
 git_inventory_trail_request(r, path, child, a) :-
     inventory_directory(r, p, t, a), git_tree_entry(r, t, name, 16384, child),
-    git_inventory_child_of(r, _, p, name, 16384, path).
+    git_inventory_child_of(r, _, p, name, 16384, "utf8", path).
 inventory_directory(r, p, t, a) :- git_inventory_trail_of(r, p, t, _, a).
 
 .decl inventory_file(path: symbol, mode: number, blob: symbol)
 inventory_file(p, m, b) :-
     inventory_directory(r, base, t, _), git_tree_entry(r, t, name, m, b),
-    git_inventory_child_of(r, _, base, name, m, p), m >= 32768, m < 36864.
+    git_inventory_child_of(r, _, base, name, m, "utf8", p), m >= 32768, m < 36864.
 source_language_request(path) :- inventory_file(path, _, _).
 
 .decl inventory_language(path: symbol, language: symbol)
@@ -31,11 +33,13 @@ inventory_language(p, g) :- source_language(p, g).
 inventory_error(t, reason) :- inventory_directory(r, _, t, _), git_object_error(r, t, reason).
 inventory_error(t, "not-a-tree") :-
     inventory_directory(r, _, t, _), git_object_kind(r, t, kind), kind != "tree".
-inventory_error(t, "non-UTF-8-path") :-
-    inventory_directory(r, _, t, _), git_tree_entry_bytes(r, t, _, _, _).
+.decl inventory_path_error(path: symbol)
+inventory_path_error(p) :- git_inventory_child_of(_, _, _, _, _, "bytes", p).
 
 .output inventory_directory
 .output inventory_file
 .output git_tree_entry
+.output git_tree_entry_bytes
 .output inventory_error
+.output inventory_path_error
 .output inventory_language

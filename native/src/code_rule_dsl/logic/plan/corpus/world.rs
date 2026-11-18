@@ -136,7 +136,7 @@ impl World {
         records
     }
 
-    pub(super) fn inventory_child(&mut self, directory: &str, name: &str, mode: i64) -> Result<Option<String>, String> {
+    pub(super) fn inventory_child(&mut self, directory: &str, name: &str, mode: i64, raw: bool) -> Result<Option<String>, String> {
         let is_dir = mode == 16384;
         if !is_dir && !(32768..36864).contains(&mode) {
             return Ok(None);
@@ -145,7 +145,8 @@ impl World {
             self.inventory_filter = Some(crate::git_workspace::snapshot::inventory_filter(&self.root)?);
         }
         crate::code_rule_dsl::prof::count("git.path_filters", 1);
-        Ok(self.inventory_filter.as_ref().unwrap().child(directory, name, is_dir))
+        let filter = self.inventory_filter.as_ref().unwrap();
+        Ok(if raw { filter.invalid_child(directory, name, is_dir) } else { filter.child(directory, name, is_dir) })
     }
 
     /// The file `asked` names, when it lies under a root: relative to the corpus root, or absolute.

@@ -91,6 +91,8 @@ It must register the store before it can publish ownership.
 This order lets a stop find every store that can hold an ended generation.
 If the store fails to open, the run uses memory and adds no registration.
 The stop remains pending until each store for the directory accepts its release.
+For a store from before directory registration, the stop first checks for matching ownership rows.
+A store with a directory registration remains a release target while it is unavailable.
 The daemon handles due releases in order of their next attempt time.
 If a store is unavailable, the daemon saves a later attempt time for that release.
 Other releases can make progress while the store is unavailable.
