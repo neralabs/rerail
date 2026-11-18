@@ -131,6 +131,7 @@ pub mod cross_memo;
 pub mod switches;
 pub mod matchers;
 pub mod preparation;
+pub(super) mod product_demand;
 /// The prefix of an `ast` matcher's relation (decision 0106).
 pub(in crate::code_rule_dsl) const AST_MATCHES: &str = matchers::PREFIX;
 pub use matchers::columns as ast_columns;
@@ -3482,6 +3483,12 @@ fn run_observed(
             // Bodies simplified first (decision 0038): implied atoms and set-member kind tests drop, identical relations merge.
             crate::code_rule_dsl::logic::simplify::simplify(&mut prog);
             prog = front::prune(prog);
+            let products = product_demand::rewrite(&mut prog).map_err(Error::Plan)?;
+            if !products.is_empty() {
+                crate::code_rule_dsl::logic::profile::decision("node Cartesian products", || {
+                    format!("restricted to connected reader demands: {}", products.into_iter().collect::<Vec<_>>().join(", "))
+                });
+            }
             // Transitive closures held as each start's bitmap, not as rows (decision 0119).
             let (reaches, throughs) = crate::code_rule_dsl::logic::reach_form::find(&mut prog).map_err(|e| Error::Plan(format!("{e:?}")))?;
             if reaches + throughs > 0 {
