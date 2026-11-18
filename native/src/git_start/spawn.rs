@@ -197,13 +197,12 @@ fn watch_thread() -> std::thread::Builder {
 /// the exit pipe. Started before the child, so a thread that cannot start leaves no child behind.
 fn exit_watch(write: OwnedFd) -> io::Result<mpsc::Sender<libc::pid_t>> {
     let (send, receive) = mpsc::channel::<libc::pid_t>();
-    watch_thread()
-        .spawn(move || {
-            if let Ok(pid) = receive.recv() {
-                wait_unreaped(pid);
-            }
-            drop(write);
-        })?;
+    watch_thread().spawn(move || {
+        if let Ok(pid) = receive.recv() {
+            wait_unreaped(pid);
+        }
+        drop(write);
+    })?;
     Ok(send)
 }
 
