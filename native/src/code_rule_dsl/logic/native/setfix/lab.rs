@@ -161,7 +161,6 @@ fn capture_(conn: &Connection, name: &str, spec: &ComponentSpec, path: &Path) ->
             Line::Produced(_) => return Err("a `produced` line".to_owned()),
             Line::Probe { .. } => return Err("a `probe` line".to_owned()),
             Line::Gate { .. } => return Err("a `gate` line".to_owned()),
-            Line::Levels { .. } => return Err("a `levels` line".to_owned()),
             Line::Edge(_) => return Err("a `rule` line".to_owned()),
             Line::Remove { .. } | Line::AddChecked { .. } | Line::Recheck { .. } => return Err("a maintain mode's line".to_owned()),
         }

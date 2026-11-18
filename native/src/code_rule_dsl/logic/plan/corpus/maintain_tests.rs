@@ -169,7 +169,6 @@ fn r1_r2_an_edit_holds_no_maintenance_relation_and_copies_no_rows() {
 /// R1 in the source: no engine code outside tests names a maintenance relation. The names live in one list
 /// (`maintain::shape::MAINTENANCE_SUFFIXES`), which this reads.
 #[test]
-#[ignore = "R1: the run path still names r__minus/r__plus and the forms' suffixes (t43 steps 3 and 6, leftovers)"]
 fn r1_the_engine_source_names_no_maintenance_relation() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic");
     let root = if root.exists() { root } else { std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../src/code_rule_dsl/logic") };
@@ -195,10 +194,12 @@ fn r1_the_engine_source_names_no_maintenance_relation() {
 }
 
 /// R3: a stratum an edit reaches is skipped, maintained by the mode, or derived again for one of two reasons only:
-/// its part's first run (nothing kept) or 0090 §4's threshold (R4). Every kind 0328 §6 names is maintained.
+/// its part's first run (nothing kept) or 0090 §4's threshold (R4). Every kind 0328 §6 names is maintained. Each
+/// edit here follows its part's first run, so none is a first run: a view of an input (`doc_tape`, `document`), which
+/// keeps nothing, is held again in place, its version its input's, and is not derived again as one.
 #[test]
 fn r3_a_reached_stratum_is_derived_again_only_on_its_first_run_or_past_the_threshold() {
-    let allowed: BTreeSet<&str> = [maintain::FIRST_RUN, maintain::THRESHOLD].into();
+    let allowed: BTreeSet<&str> = [maintain::THRESHOLD].into();
     let mut s = kinds("r3");
     s.run();
     for (file, body, what) in SMALL_EDITS {

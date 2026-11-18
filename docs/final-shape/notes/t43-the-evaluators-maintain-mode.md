@@ -343,3 +343,41 @@ Now the run's `Outcome` counts every outcome once: `walked` (reached, skipped, o
 recursive), and `again`, each stratum with its reason (`NOT_KEPT`, `NATIVE_OPERATOR` added to `FIRST_RUN`,
 `THRESHOLD`, …). The `Driver` keeps no counts, and the `walked` hook is gone. The report adds `cross_skipped`, which
 R9 reads beside `cross_maintained` and `cross_again`.
+
+## Step 6: the forms' leftovers go (R1)
+
+What the forms left in the run path, with nothing left to make it:
+- **Levels, survivors, `based`.** The native program spec's levels lines (`Line::Levels`, the `Levels` driver of
+  setfix), the quiet survivors stage of the composed run, and the `Start::Base` seeds. The compose test that built a
+  DRed program by hand to drive them (`quiet_composed_maintenance_keeps_the_same_resident_fact`) went with them.
+- **The planner's maintenance names.** `changes_with_the_delta` (`__ins`, `__redo`, `__del`), `smaller_change` and the
+  distinct-demand pricing (`__plus`, `__minus`), `reads_change` (ten suffixes), the `__old`/`__live` statistics
+  fallbacks of `prior_stats`, and the unsized-delta counter (no relation is named `r__plus` any more). Each tested a
+  name no relation has, so each was constantly false.
+- **Statistics kept by delta** (decision 0096 step 4). They were made for a relation bound as `r__old` that a form
+  maintained, and no relation is bound so: `bind_kept`'s `maintains` was false at every call. Gone: `Patched`, the
+  cell's `patched` map, `bound_old`, the input statistics a new process gave `r__old` (`input_stats`,
+  `projection_of`, `Stats::of_columns`), and the frames' statistics kind 0. The frames' statistics part is now
+  format 2, measured statistics only. A format 1 part reads as none: the relation is measured again once.
+- **`r__minus`/`r__plus` held for a stratum derived again.** Where a relation derived again cannot be made a version
+  of its kept rows (a reach index held over its source, decision 0119, in a chunk's guest rounds, 0331),
+  `kept_delta` held its diff under those names. Now it returns the rows gone and added, and its readers are given
+  them as its versions (`diffs`), beside it, under no name. The diff still copies both sides' rows to compare them:
+  0364 R2's one open case, counted by `rows_copied`.
+- **The given deltas' column names** (`r__plus_c0`) are the relation's own: the planner prices a version by its
+  relation (`delta_rows`), never by these names.
+- **The spike's form counts** (`Outcome::spike_forms`, `spike_reached`), never filled once the forms went.
+
+With these gone, `r1_the_engine_source_names_no_maintenance_relation` passes and is no longer ignored.
+
+**A view of an input, reached.** A view of an input's columns (Q37) keeps nothing, so a reached one was taken for
+its part's first run (`FIRST_RUN`, R3's allowed reason): r3's own trace showed `doc_tape`, `document` and
+`library` "derived again" at every step. In the corpus, `cparam` (`cparam(c, i, y) :- fl…_cparam(c, i, y)`, a whole
+copy of a file-local export) went past θ instead (its delta against 0 kept rows), and its readers then found no
+version of it: `tparg`, `tvar_of`, `rtvar`, `ownvar` and the 44-relation stratum were derived again ("cparam changed
+without a version"). Now a reached stratum shaped as a view (`view_shaped`, whether or not its input is bound yet;
+a file-local export is bound when its first reader runs) is held again in place and counted maintained, the mode's
+trivial case: its version is its input's, read through its columns. Its readers' `ins` gives them that: the input's
+given versions, or, for an input the engine holds with its change marked in place (the export), the input's own
+versions read through the view's columns. R3's test now allows only θ: each of its edits follows its part's first
+run.

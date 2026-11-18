@@ -173,9 +173,6 @@ pub enum Line {
     /// delta first has rows (`done 4`), and the caller gives it its join (`reprobe`).
     Unplanned { head: usize, delta: usize },
     Gate { done: usize, src: Option<usize>, quiet: Vec<usize>, after: Vec<usize> },
-    /// A recursive relation maintained by levels (decision 0090): its candidates, the level checked, those held,
-    /// those gone and the kept rows shown (`levels <cand> <chk> <held> <gone> <live>`).
-    Levels { cand: usize, chk: usize, held: usize, gone: usize, live: usize },
     Edge(EdgeSpec),
     /// The maintain mode (decision 0364 stage 3): a removal join, its head rows the candidates of relation `head`,
     /// read from its versions (`Source::Version`): run once, before the seeds (`remove <head> <hex join>`).
@@ -493,7 +490,6 @@ impl std::fmt::Display for Line {
             Line::Gate { done, src, quiet, after } => {
                 write!(f, "gate {done} {} {} {}", src.map_or("-".to_owned(), |s| s.to_string()), comma(quiet), comma(after))
             }
-            Line::Levels { cand, chk, held, gone, live } => write!(f, "levels {cand} {chk} {held} {gone} {live}"),
             Line::Edge(e) => {
                 let slots = |xs: &[usize]| xs.iter().map(|s| format!("v{s}")).collect::<Vec<_>>().join(" ");
                 let src = match &e.edge {
@@ -592,7 +588,6 @@ impl ComponentSpec {
                     quiet: list(at(3)?)?,
                     after: list(at(4)?)?,
                 },
-                "levels" => Line::Levels { cand: num(at(1)?)?, chk: num(at(2)?)?, held: num(at(3)?)?, gone: num(at(4)?)?, live: num(at(5)?)? },
                 "rule" => {
                     let sections: Vec<&[&str]> = t.get(5..).unwrap_or(&[]).split(|x| *x == ";").collect();
                     let section = |name: &str| -> Result<&[&str], String> {
@@ -655,8 +650,8 @@ pub mod tests {
              join 0 1 {} {}\nprobe 1 0 {}\ngate 2 - 0,1 -\ngate 2 0 - 0\nrule 0 1 sfx_a_0 ii key v0 ; ecols v1 ; pat v0 _ ; head v1 cat:v0:v1\n\
              rule 1 0 - - key  ; ecols  ; pat i:1 x:61 ; head v0",
             hex("SELECT 1"),
-            hex("a__old"),
-            hex("a__del"),
+            hex("a_kept"),
+            hex("a_gone"),
             hex(join),
             hex(join),
             hex("pos c0 v0\nhead v0"),

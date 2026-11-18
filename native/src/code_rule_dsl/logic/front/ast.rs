@@ -343,9 +343,8 @@ pub struct Program {
 }
 
 /// A join shape directive written after a rule (`.shape posarg after pv`, `.shape retparam bound f`): in the rules of
-/// `head`, and in every form made from them (their deltas' and maintenance's, `shape_base`), the literal of `lit` is
-/// joined only once `wait` holds. A rule's driving delta is never held back. The planner searches within it, so a
-/// directive narrows the search; it does not fix an order.
+/// `head`, the literal of `lit` is joined only once `wait` holds. A rule's driving delta is never held back. The
+/// planner searches within it, so a directive narrows the search; it does not fix an order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Shape {
     pub head: String,
@@ -361,17 +360,6 @@ pub enum ShapeWait {
     After(String),
     /// Once these variables are bound.
     Bound(Vec<String>),
-}
-
-/// The relation a form's relation was made from, for matching directives (`Shape`): `pv__ins` and `pv__old` are
-/// `pv`'s.
-pub fn shape_base(rel: &str) -> &str {
-    const SUFFIXES: [&str; 12] = ["__ins", "__del", "__plus", "__minus", "__old", "__redo", "__held", "__gone", "__cand", "__chk", "__live", "__prev"];
-    let mut r = rel;
-    while let Some(s) = SUFFIXES.iter().find_map(|s| r.strip_suffix(s)) {
-        r = s;
-    }
-    r
 }
 
 impl Shape {

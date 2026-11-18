@@ -1196,7 +1196,7 @@ pub struct Store { pub rels: Vec<Rel>, syms: Arc<RwLock<Interner>> }
 /// (`device::compile`); `seed_specs`, their specs, to parse them again with the CPU's indexes when the device refuses
 /// one at run time.
 struct Component { store: Arc<RwLock<Store>>, edges: Vec<EdgeRule>, probes: Vec<ProbeRule>, gates: Vec<Gate>, seeded: bool, write: bool, done: bool,
-                   requests: Vec<(usize, usize)>, produced: Vec<usize>, closure: Option<closure::Closure>, levels: Levels,
+                   requests: Vec<(usize, usize)>, produced: Vec<usize>, closure: Option<closure::Closure>,
                    /// Request rows the caller held back (`defer`): asked again once the run is otherwise quiet. Until
                    /// then they are as rows not yet asked (they keep no gate shut).
                    deferred: Vec<(usize, Vec<Vec<i64>>)>,
@@ -1585,134 +1585,6 @@ struct Spent { work: u64, left: Option<Option<Rows0>>, done: u64, led: bool }
 /// did under it, handed back.
 struct Limited { limit: Option<Limit>, spent: Option<Spent> }
 
-/// Decision 0090's levels for a recursive stratum: which of its kept rows are gone, decided in level order. Per
-/// relation `h` of the stratum, a line names five relations of the component:
-/// - `cand`: rows of `h` that lost a derivation (the rules: an old derivation with a premise gone);
-/// - `chk`: the candidates of the level being checked, which this driver writes;
-/// - `held`: those of them with a derivation from rows below them (the rules, reading `live`);
-/// - `gone`: those without, which this driver writes;
-/// - `live`: `h`'s kept rows, each with its level, of which a rule reads only those below the level checked and not
-///   gone: every other row is dead while it is checked.
-///
-/// Each time the component is quiet, the checked level's candidates not held go to `gone` (whose rules make more
-/// candidates, above them), then the lowest level with candidates is checked. A candidate at or below a level
-/// already checked lost no derivation from below (its premises from below were decided already): it stays.
-#[derive(Default)]
-struct Levels { lines: Vec<LevelLine>, cur: Option<u32>, last: Option<u32>, started: bool,
-                heap: std::collections::BinaryHeap<std::cmp::Reverse<(u32, usize, u32)>> }
-struct LevelLine { cand: usize, chk: usize, held: usize, gone: usize, live: usize,
-                   /// Candidate rows seen (a prefix of `cand`), those checked or passed, and those of the level checked.
-                   seen: usize, decided: Vec<bool>, batch: Vec<u32>,
-                   /// `live`'s rows by level, and how many of them are shown; its rows gone.
-                   order: Vec<u32>, shown: usize, gone_rows: Vec<u64>,
-                   /// `live`'s rows dead before it was checked (deleted in an earlier run, a later copy live): never
-                   /// shown, and never a candidate's row.
-                   was_dead: Vec<u64> }
-
-fn revive(dead: &mut [u64], id: u32) -> bool {
-    let w = id as usize >> 6;
-    let Some(word) = dead.get_mut(w) else { return false };
-    let was = *word >> (id & 63) & 1 == 1;
-    *word &= !(1 << (id & 63));
-    was
-}
-
-impl Rel {
-    /// A row's id, hidden or not, but not one of `was_dead` (a copy deleted before: the row's live copy, if any,
-    /// is a later one, with its own level).
-    fn id_of(&self, row: &[i64], was_dead: &[u64]) -> Option<u32> {
-        self.find(row, |id| is_dead(was_dead, id))
-    }
-}
-
-/// `RERAIL_LEVELS_TRACE=<value>`: the candidates holding the value, and how each is decided.
-fn levels_traced(row: &[i64]) -> bool {
-    static V: std::sync::LazyLock<Option<i64>> = std::sync::LazyLock::new(|| std::env::var("RERAIL_LEVELS_TRACE").ok().and_then(|v| v.parse().ok()));
-    V.is_some_and(|v| row.contains(&v))
-}
-
-impl Levels {
-    /// Every `live` row dead until its level is below the one checked.
-    fn start(&mut self, store: &mut Store) {
-        self.started = true;
-        for ln in &mut self.lines {
-            let live = &mut store.rels[ln.live];
-            ln.was_dead = live.dead.clone();
-            let mut order: Vec<u32> = (0..live.n as u32).filter(|&id| !is_dead(&ln.was_dead, id)).collect();
-            if live.level.len() == live.n {
-                order.sort_by_key(|&i| live.level[i as usize]);
-            }
-            for id in 0..live.n as u32 {
-                if kill(&mut live.dead, id) { live.ndead += 1; }
-            }
-            ln.order = order;
-        }
-    }
-    /// One step at a quiet point: whether it gave the component more to derive.
-    fn step(&mut self, store: &mut Store) -> bool {
-        if self.lines.is_empty() { return false; }
-        if !self.started { self.start(store); }
-        if let Some(l) = self.cur.take() {
-            let mut any = false;
-            for ln in &mut self.lines {
-                let lo = store.rels[ln.gone].n;
-                for &id in &ln.batch {
-                    let row = store.rels[ln.cand].row(id as usize).to_vec();
-                    if levels_traced(&row) { eprintln!("RERAIL_LEVELS_TRACE {} {row:?} at level {l}: {}", store.rels[ln.cand].table, if store.rels[ln.held].contains(&row) { "held" } else { "gone" }); }
-                    if store.rels[ln.held].contains(&row) { continue; }
-                    any |= store.rels[ln.gone].push(&row);
-                    if let Some(lid) = store.rels[ln.live].id_of(&row, &ln.was_dead) { kill(&mut ln.gone_rows, lid); }
-                }
-                ln.batch.clear();
-                let hi = store.rels[ln.gone].n;
-                if hi > lo { store.rels[ln.gone].set_delta(lo, hi); }
-            }
-            self.last = Some(l);
-            if any { return true; }
-        }
-        // New candidates, by their kept level.
-        for (li, ln) in self.lines.iter_mut().enumerate() {
-            let (cand, live) = (&store.rels[ln.cand], &store.rels[ln.live]);
-            ln.decided.resize(cand.n, false);
-            for id in ln.seen..cand.n {
-                let level = live.id_of(&cand.row(id), &ln.was_dead).filter(|_| live.level.len() == live.n).map(|lid| live.level[lid as usize]);
-                if levels_traced(&cand.row(id)) { eprintln!("RERAIL_LEVELS_TRACE {} {:?}: candidate, level {level:?}, last {:?}", cand.table, cand.row(id), self.last); }
-                match level {
-                    Some(l) if self.last.is_none_or(|last| l > last) => self.heap.push(std::cmp::Reverse((l, li, id as u32))),
-                    _ => ln.decided[id] = true,
-                }
-            }
-            ln.seen = cand.n;
-        }
-        let Some(&std::cmp::Reverse((l, _, _))) = self.heap.peek() else { return false };
-        // The rows below `l` not gone are shown; the level's candidates are checked.
-        for ln in &mut self.lines {
-            let live = &mut store.rels[ln.live];
-            while ln.shown < ln.order.len() && live.level[ln.order[ln.shown] as usize] < l {
-                let id = ln.order[ln.shown];
-                if !is_dead(&ln.gone_rows, id) && revive(&mut live.dead, id) { live.ndead -= 1; }
-                ln.shown += 1;
-            }
-        }
-        let mut los: Vec<usize> = self.lines.iter().map(|ln| store.rels[ln.chk].n).collect();
-        while let Some(&std::cmp::Reverse((l2, li, id))) = self.heap.peek() {
-            if l2 != l { break; }
-            self.heap.pop();
-            let ln = &mut self.lines[li];
-            if ln.decided[id as usize] { continue; }
-            ln.decided[id as usize] = true;
-            let row = store.rels[ln.cand].row(id as usize).to_vec();
-            store.rels[ln.chk].push(&row);
-            ln.batch.push(id);
-        }
-        for (ln, lo) in self.lines.iter().zip(los.drain(..)) {
-            let hi = store.rels[ln.chk].n;
-            if hi > lo { store.rels[ln.chk].set_delta(lo, hi); }
-        }
-        self.cur = Some(l);
-        true
-    }
-}
 /// A gated negation's `done` relation, fed from `src` (its demand) once `quiet` is: `passed` src rows so far.
 struct Gate { done: usize, src: Option<usize>, quiet: Vec<usize>, after: Vec<usize>, passed: usize }
 
@@ -1829,7 +1701,6 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
     let name = spec.name.clone();
     let mut write = true;
     let (mut requests, mut produced) = (Vec::new(), Vec::new());
-    let mut levels = Levels::default();
     let mut maint = MaintMode::default();
     let joins = |j: &JoinSpec, syms: &mut Interner| -> Result<JoinRule> {
         let _j = crate::code_rule_dsl::logic::profile::span(|| "open: joins".into());
@@ -1936,8 +1807,6 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
                 if device_wanted { delta_specs.push((probes.len(), join.to_text())); }
                 probes.push(ProbeRule { head: *head, delta: *delta, body: Body::Join(joins(join, &mut syms)?), whole: w, wkey: whole.clone(), budget: Default::default() });
             }
-            Line::Levels { cand, chk, held, gone, live } => levels.lines.push(LevelLine { cand: *cand, chk: *chk, held: *held, gone: *gone, live: *live,
-                                                       seen: 0, decided: Vec::new(), batch: Vec::new(), order: Vec::new(), shown: 0, gone_rows: Vec::new(), was_dead: Vec::new() }),
             Line::Edge(e) => {
                 let mut pat = Vec::new();
                 for t in &e.pat {
@@ -1995,9 +1864,6 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
             // A recursive one folds each round on the device (`device::fixpoint`); a lattice it has no fold for
             // stays on the CPU. Seeds alone fold as the store takes the rows.
             Some(format!("a recursive component over {why}"))
-        } else if recursive && !levels.lines.is_empty() {
-            // Levels the device makes (decision 0311: each row's round); a levels line's checks are the CPU's.
-            Some("a recursive component with levels lines (its maintenance runs on the CPU)".to_owned())
         } else if recursive && probes.iter().any(|p| p.delta != SEED && matches!(p.body, Body::Sql(_))) {
             Some("a recursive component with a SQL probe".to_owned())
         } else {
@@ -2030,7 +1896,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
     };
     let _multi = crate::code_rule_dsl::logic::profile::span(|| "open: indexes".into());
     // Levels only where they are read: in a component that keeps them (`leveled`, a session's), a relation on a
-    // cycle of the component's rules (a recursive stratum's); one of a levels line, or one started from a kept
+    // cycle of the component's rules (a recursive stratum's), or one started from a kept
     // relation with levels. The others hold none.
     {
         let n = rels.len();
@@ -2039,7 +1905,6 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
         for p in probes.iter().filter(|p| p.delta < n) { next[p.delta].push(p.head); }
         for e in edges.iter().filter(|e| e.src < n) { next[e.src].push(e.head); }
         let mut keep = vec![false; n];
-        for ln in &levels.lines { for r in [ln.cand, ln.chk, ln.held, ln.gone, ln.live] { keep[r] = true; } }
         // A relation that reaches itself through the stratum's rules as written keeps levels though this run left out
         // the rules that close its cycle (they joined an empty relation): the next run may run them, and a session
         // maintains a stratum by levels only when every relation of it has them.
@@ -2087,17 +1952,6 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
         }
         r.set_delta(kept, n);
     }
-    // Levels (decision 0090): `live`'s rows are shown a level at a time, never a delta, so no probe reads it as
-    // one; the other levels relations get small batches from row 0, which a whole plan (one for a delta that is
-    // its whole relation) would join by scanning `live` or `old`.
-    for ln in &levels.lines {
-        let n = rels[ln.live].n;
-        rels[ln.live].set_delta(n, n);
-        for p in probes.iter_mut().filter(|p| [ln.cand, ln.chk, ln.held, ln.gone].contains(&p.delta)) {
-            p.whole = None;
-            p.wkey = None;
-        }
-    }
     for p in &probes {
         if let Body::Join(j) = &p.body { for (r, cols) in &j.multi { rels[*r].want(cols); } }
         if let Some(j) = &p.whole { for (r, cols) in &j.multi { rels[*r].want(cols); } }
@@ -2115,16 +1969,15 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
     let mut reg = COMPONENTS.lock(conn.at());
     let key = (conn.at(), name.clone());
     let mut comp = Component { store, edges, probes, gates, seeded: false, write, done: false, requests, produced, closure: None, waiting: None, device_wait: None,
-                               device: device_plans, seed_specs, levels, deferred: Vec::new(), presenting: false, cut: None, last_cut: None, trial_rows: None, maint };
+                               device: device_plans, seed_specs, deferred: Vec::new(), presenting: false, cut: None, last_cut: None, trial_rows: None, maint };
     // A stratum placed on the device runs there whole: a recursive one as the device's rounds (`fixpoint`), not as
     // a closure (decision 0098 §1's form, for a stratum on the CPU).
     let on_device_rounds = match (solver(), comp.device.as_ref()) {
         (Some(dev), Some(d)) => d.iter().any(|(_, p)| dev.reads_own(p)),
         _ => false,
     };
-    // A levels stratum is run by its driver, step by step (`Levels`), not as a closure.
     // The maintain mode's component neither: its first wave's delta is the rows its removals put back.
-    if comp.levels.lines.is_empty() && !on_device_rounds && comp.maint.drivers.is_empty() {
+    if !on_device_rounds && comp.maint.drivers.is_empty() {
         comp.closure = {
             let _h = crate::code_rule_dsl::logic::lanes::prof::host("closure", "plan: recognize the form");
             closure::recognize(&comp)
@@ -2208,7 +2061,6 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         }).collect()
     };
     let mut gates = std::mem::take(&mut comp.gates);
-    let mut levels = std::mem::take(&mut comp.levels);
     let (held_back, mut present) = (!comp.deferred.is_empty(), false);
     let gates_done: Vec<usize> = gates.iter().map(|g| g.done).collect();
     // The closure form (decision 0098 §1): seeds once, then the walk's reach over distinct nodes, in two halves around
@@ -2623,8 +2475,6 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             done = true;
             break;
         }
-        // Quiet: a recursive stratum's levels decide the next rows gone, or check the next level (`Levels`).
-        if !any { any = levels.step(store); }
         // Quiet, with request rows held back: the caller is asked them again (`defer`).
         if !any && held_back { present = true; paused = true; break; }
         if !any { done = true; break; }
@@ -2641,7 +2491,6 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
     comp.seeded = seeded;
     comp.presenting = present;
     comp.gates = gates;
-    comp.levels = levels;
     // A symbol a wave could not intern fails the run.
     cursor.check()?;
     symbols.write().unwrap().check()?;
@@ -3314,10 +3163,7 @@ pub fn reprobe_spec(conn: impl Scoped, name: &str, i: usize, new: &Reprobe) -> R
         // The probe's whole plan (`ProbeRule::whole`), planned again from live statistics.
         Reprobe::Whole(spec) => {
             let j = joined(&comp, spec)?;
-            let levels: Vec<usize> = comp.levels.lines.iter().flat_map(|l| [l.cand, l.chk, l.held, l.gone, l.live]).collect();
             let p = comp.probes.get_mut(i).ok_or_else(|| err(format!("no probe {i} of {n}")))?;
-            // A levels relation's probes take no whole plan (`open`).
-            if levels.contains(&p.delta) { return Ok(()); }
             p.whole = Some(j);
             p.wkey = Some(Arc::clone(spec));
             if let Some(c) = &mut comp.cut && c.next == i { c.step = None; }

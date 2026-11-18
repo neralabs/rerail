@@ -496,9 +496,9 @@ pub fn lower_module_seeded(statements: Vec<Statement>, seeds: &Seeds) -> Result<
     }
     // Each directive names what its rules read: a relation of their body, and the variables it waits for.
     for (shape, line) in shapes {
-        use crate::code_rule_dsl::logic::front::{ShapeWait, shape_base};
+        use crate::code_rule_dsl::logic::front::ShapeWait;
         let rules: Vec<&crate::code_rule_dsl::logic::front::Rule> = l.prog.rules.iter().filter(|r| r.head.rel == shape.head).collect();
-        let reads = |rel: &str| rules.iter().any(|r| r.body.iter().filter_map(|x| x.atom()).any(|a| shape_base(&a.rel) == rel));
+        let reads = |rel: &str| rules.iter().any(|r| r.body.iter().filter_map(|x| x.atom()).any(|a| a.rel == rel));
         let missing = match &shape.wait {
             _ if !reads(&shape.lit) => Some(format!("no rule of `{}` reads `{}`", shape.head, shape.lit)),
             ShapeWait::After(a) if !reads(a) => Some(format!("no rule of `{}` reads `{a}`", shape.head)),

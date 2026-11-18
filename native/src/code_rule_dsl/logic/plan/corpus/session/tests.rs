@@ -252,7 +252,6 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
         ("b.py", "from c import y\n"),
     ];
     let mut ran = Ran::default();
-    let unsized_before = crate::code_rule_dsl::logic::plan::unsized_deltas();
     for (path, text) in edits {
         std::fs::write(src.join(path), text).unwrap();
         let report = run();
@@ -261,9 +260,6 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
         eprintln!("{path}: {:?} strata run, {:?} maintained (recursive); {} findings", report.cross_strata, report.cross_maintained, got.len());
         ran.add(&report);
     }
-    // Every input delta the maintained forms read was priced by its size, not the default's 1,000 rows.
-    let unsized_reads = crate::code_rule_dsl::logic::plan::unsized_deltas() - unsized_before;
-    assert_eq!(unsized_reads, 0, "reads of an input delta priced with no size");
     drop(session);
     let _ = std::fs::remove_dir_all(&base);
     ran
