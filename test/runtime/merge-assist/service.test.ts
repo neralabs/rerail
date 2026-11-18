@@ -187,9 +187,12 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     const past = await Promise.all([service.status(ws.repo), service.status(ws.repo)]);
     expect(github.starts).toBe(starts + 1);
     github.release();
+    // settled() waits for the read in flight: what gh said is kept before any status asks.
     await service.settled();
+    const kept = ws.database.select().from(mergeAssistState).where(eq(mergeAssistState.key, `github:${ws.repositoryKey}`)).get();
     const next = await service.status(ws.repo);
     expect(github.starts).toBe(starts + 1);
+    expect(JSON.parse(kept?.valueJson ?? "{}")).toMatchObject({ readiness: { state: "signed-in" } });
     expect(status.readiness.github).toEqual({ state: "unavailable", login: null, repository: "acme/app", readAt: "2026-11-03T14:00:00Z" });
     expect(past.map(shown => shown.readiness.github)).toEqual([within.readiness.github, within.readiness.github]);
     expect(within.readiness.github).toEqual(status.readiness.github);
