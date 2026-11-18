@@ -403,6 +403,78 @@ async function enforceSandboxIsolation(
 // The smoke's conversation rule is experimental: this process runs the daemon, and the hosts get the variable too.
 process.env.RERAIL_EXPERIMENTAL_CONVERSATION_RULES = "1";
 
+/** What every attempt's evidence names: the host, the attempt and the versions it ran. */
+type AttemptOf = Pick<Evidence, "harness" | "attempt" | "versions">;
+
+/**
+ * Runs the host's session under the sandbox profile while watching api/route.py: the session's result, and whether
+ * the file held the forbidden call while it ran.
+ */
+async function runWatched(
+  invocation: { command: string; args: string[] },
+  profile: string,
+  project: string,
+  env: NodeJS.ProcessEnv,
+): Promise<{ result: CommandResult; violationSeen: boolean }> {
+  const stopWatching = watchForViolation(join(project, "api", "route.py"));
+  let result: CommandResult;
+  try {
+    result = await run("sandbox-exec", ["-f", profile, invocation.command, ...invocation.args], {
+      cwd: project,
+      env,
+      timeout: TIMEOUT_MS,
+      jsonEvents: true,
+    });
+  } catch (error) {
+    // The harness failure is the one to report; the watcher only needs stopping.
+    await stopWatching().catch(() => undefined);
+    throw error;
+  }
+  return { result, violationSeen: await stopWatching() };
+}
+
+/** The evidence of an attempt whose session ran: PASSED, or FAILED or INCONCLUSIVE with the assertions it failed. */
+function sessionEvidence(
+  attempt: AttemptOf,
+  assertions: Assertion[],
+  result: CommandResult,
+  runtimeTrace: string,
+): Evidence {
+  const failed = assertions.filter((assertion) => !assertion.passed).map((assertion) => assertion.name);
+  let status: Evidence["status"] = "PASSED";
+  if (failed.length > 0) status = isInconclusive(assertions, result.exitCode) ? "INCONCLUSIVE" : "FAILED";
+  return {
+    harness: attempt.harness,
+    attempt: attempt.attempt,
+    status,
+    versions: attempt.versions,
+    commandExitCode: result.exitCode,
+    assertions,
+    runtimeTrace,
+    transcript: { stdout: bounded(result.stdout), stderr: bounded(result.stderr) },
+    ...(failed.length === 0 ? {} : { failure: `Failed live acceptance assertions: ${failed.join(", ")}` }),
+  };
+}
+
+/** The evidence of an attempt that `error` ended, with the session's result when it had run. */
+function failedEvidence(
+  attempt: AttemptOf,
+  assertions: Assertion[],
+  result: CommandResult | undefined,
+  error: unknown,
+): Evidence {
+  return {
+    harness: attempt.harness,
+    attempt: attempt.attempt,
+    status: "FAILED",
+    versions: attempt.versions,
+    ...(result === undefined ? {} : { commandExitCode: result.exitCode }),
+    assertions,
+    transcript: { stdout: bounded(result?.stdout ?? ""), stderr: bounded(result?.stderr ?? "") },
+    failure: bounded(error instanceof Error ? error.message : String(error)),
+  };
+}
+
 async function runHost(host: RerailHost, attempt: number): Promise<Evidence> {
   const assertions: Assertion[] = [];
   const versions: Record<string, string> = { node: process.version };
@@ -437,48 +509,12 @@ async function runHost(host: RerailHost, attempt: number): Promise<Evidence> {
       kernelSocketPath: join(sandbox, "engine.sock"),
     });
     env.RERAIL_ENGINE_SOCKET = daemon.kernelSocketPath;
-    const invocation = hostCommand(host, project, prompt);
-    const stopWatching = watchForViolation(join(project, "api", "route.py"));
-    try {
-      result = await run("sandbox-exec", ["-f", profile, invocation.command, ...invocation.args], {
-        cwd: project,
-        env,
-        timeout: TIMEOUT_MS,
-        jsonEvents: true,
-      });
-    } catch (error) {
-      // The harness failure is the one to report; the watcher only needs stopping.
-      await stopWatching().catch(() => undefined);
-      throw error;
-    }
-    const violationSeen = await stopWatching();
-    const runtimeTrace = await inspectOutcome(project, nonce, assertions, result, violationSeen, ACCEPTANCE_MODE);
-    const passed = assertions.every((assertion) => assertion.passed);
-    const failed = assertions.filter((assertion) => !assertion.passed).map((assertion) => assertion.name).join(", ");
-    let status: Evidence["status"] = "PASSED";
-    if (!passed) status = isInconclusive(assertions, result.exitCode) ? "INCONCLUSIVE" : "FAILED";
-    return {
-      harness: host,
-      attempt,
-      status,
-      versions,
-      commandExitCode: result.exitCode,
-      assertions,
-      runtimeTrace,
-      transcript: { stdout: bounded(result.stdout), stderr: bounded(result.stderr) },
-      ...(passed ? {} : { failure: `Failed live acceptance assertions: ${failed}` }),
-    };
+    const ran = await runWatched(hostCommand(host, project, prompt), profile, project, env);
+    result = ran.result;
+    const runtimeTrace = await inspectOutcome(project, nonce, assertions, result, ran.violationSeen, ACCEPTANCE_MODE);
+    return sessionEvidence({ harness: host, attempt, versions }, assertions, result, runtimeTrace);
   } catch (error) {
-    return {
-      harness: host,
-      attempt,
-      status: "FAILED",
-      versions,
-      ...(result === undefined ? {} : { commandExitCode: result.exitCode }),
-      assertions,
-      transcript: { stdout: bounded(result?.stdout ?? ""), stderr: bounded(result?.stderr ?? "") },
-      failure: bounded(error instanceof Error ? error.message : String(error)),
-    };
+    return failedEvidence({ harness: host, attempt, versions }, assertions, result, error);
   } finally {
     try {
       await daemon?.close();
