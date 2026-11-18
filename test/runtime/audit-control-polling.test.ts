@@ -150,9 +150,10 @@ describe.runIf(process.platform === "win32")("A session in a Windows folder outs
    * Log mode saved by Rerail 0.1.4 for a folder `App` reached as VS Code or a typed `cd` can spell it (`c:\…\app`):
    * under the JS realpath, which keeps that spelling, beside the checkout row 0.1.4 recorded under the same key when its
    * session opened there, naming the folder's own clone and repository, else `repositoryKey`'s. Then a session there writes a
-   * file that breaks a rule, through a runtime of this build, and the mode each audit of that rule was checked in.
+   * file that breaks a rule, through a runtime of this build, and the mode each audit of that rule was checked in;
+   * `afterOpen` changes the database once the session is open, before the write.
    */
-  async function breakRuleWhere014SavedLog(repositoryKey?: string): Promise<{ deliveries: readonly unknown[]; modes: string[] }> {
+  async function breakRuleWhere014SavedLog(repositoryKey?: string, afterOpen?: (databasePath: string) => void): Promise<{ deliveries: readonly unknown[]; modes: string[] }> {
     const root = await realpath(await temporaryDirectory());
     const stored = join(root, "App");
     await mkdir(stored);
@@ -175,6 +176,7 @@ describe.runIf(process.platform === "win32")("A session in a Windows folder outs
     try {
       await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "omp", sessionId: "spelled", cwd: spelled } });
       await runtime.codeRulesOpened("spelled");
+      afterOpen?.(databasePath);
       await runtime.ingest({ kind: "call", eventId: "call", sessionId: "spelled", toolCallId: "w1", toolName: "write", input: { path: "created.py", content: "" } });
       await writeFile(join(stored, "created.py"), "NEEDLE = 1\n");
       const deliveries = await runtime.ingest({ kind: "result", eventId: "result", sessionId: "spelled", toolCallId: "w1", toolName: "write", output: "written" });
@@ -195,5 +197,10 @@ describe.runIf(process.platform === "win32")("A session in a Windows folder outs
 
   it("checks in Steer where 0.1.4 saved Log mode under that spelling for another repository's folder, as a drive letter now leading elsewhere leaves it", async () => {
     expect((await breakRuleWhere014SavedLog("clone:another")).modes).toEqual(["steer"]);
+  }, 20_000);
+
+  // The settings are read by the folder as the session spelt it and the session's repository, the facts its row held.
+  it("checks in that Log mode once another program removed the session's row", async () => {
+    expect(await breakRuleWhere014SavedLog(undefined, databasePath => removeSessionRow(databasePath, "spelled"))).toEqual({ deliveries: [], modes: ["log"] });
   }, 20_000);
 });

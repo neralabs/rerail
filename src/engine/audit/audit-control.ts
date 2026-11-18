@@ -199,8 +199,13 @@ export class SqliteAuditControlStore {
     return { ...owner, active: false };
   }
 
-  getWorkspaceSettings(workspaceRoot: string): AuditSettings | undefined {
-    return this.#settings(canonicalWorkspace(workspaceRoot), { cwd: workspaceRoot });
+  /**
+   * The settings saved for the folder `workspaceRoot` as spelt here. A session reading its own passes the repository
+   * Rerail recorded it in, which ties a row Rerail 0.1.4 saved under that spelling to the folder as its row would
+   * ({@link #savedHere}), so the read needs no session row.
+   */
+  getWorkspaceSettings(workspaceRoot: string, repositoryId: string | null = null): AuditSettings | undefined {
+    return this.#settings(canonicalWorkspace(workspaceRoot), { cwd: workspaceRoot, repositoryId });
   }
 
   #settings(workspaceRoot: string, spelt: SpeltFolder): AuditSettings | undefined {
