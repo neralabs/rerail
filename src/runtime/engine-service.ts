@@ -1312,7 +1312,9 @@ async function handEngineReceipt(
 /**
  * A hook's link to the engine service: its events, and then the receipt of a steer its answer carried, go over one
  * connection kept open between them, so the receipt makes no connect of its own (on Windows a connect to a pipe whose
- * instances are all taken waits up to 30 s in Node). A connection kept open never keeps the hook's process alive.
+ * instances are all taken waits up to 30 s in Node). The daemon closes a connection left idle for 5 s (Node's
+ * keep-alive), so only a receipt handed later than that connects again. A connection kept open never keeps the hook's
+ * process alive.
  */
 export interface EngineLink {
   ingest(event: AdapterEvent, configuration?: EngineRuntimeConfiguration): Promise<readonly AdapterDelivery[]>;
