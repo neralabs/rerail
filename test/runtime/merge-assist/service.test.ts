@@ -36,7 +36,10 @@ class HeldGithub extends FakeGithub {
   }
 }
 
-/** `gh` whose sign-in reads, once held, wait until released. */
+/**
+ * `gh` whose sign-in reads, once held, wait until released, and then answer on a later turn of the event loop, as a
+ * process's exit arrives: a caller sees the answer only by waiting for the read.
+ */
 class HeldReadiness extends FakeGithub {
   #release: PromiseWithResolvers<void> | undefined;
   readonly asked = Promise.withResolvers<void>();
@@ -53,6 +56,7 @@ class HeldReadiness extends FakeGithub {
     if (held !== undefined) {
       this.asked.resolve();
       await held.promise;
+      await new Promise<void>(resolve => setImmediate(resolve));
     }
     return await super.readiness(repository);
   }
