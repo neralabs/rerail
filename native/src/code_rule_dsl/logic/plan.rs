@@ -5070,6 +5070,9 @@ pub struct Run<'a, 'b> {
     why_not: Option<String>,
     /// What kind of literal the native engine declined (`decline_class`), for the profile's SQLite fallbacks.
     why_class: Option<String>,
+    /// While the maintain mode writes its joins (decision 0364): a body literal read as a held relation of this name,
+    /// all its columns (an input's version: `r__old`, `r__minus`, `r__plus`), not as its input's query.
+    mode_reads: HashMap<usize, String>,
     /// Derived relations whose table is made only when SQL first needs it (`ensure`): its `CREATE` statement. A
     /// relation the native engine derives and keeps never has one.
     pending: HashMap<String, String>,
@@ -6387,6 +6390,81 @@ fn observed_fans(stats: &Stats, rule: u64, order: Order<'_, '_>) -> Vec<Option<f
 
 /// A column's type in the native store's spec: `s`, a symbol it reads as text, only where symbols are text. Over
 /// atoms every column is an integer (a name, kind or field atom), as the planner's SQL holds it (O13).
+/// The changed inputs a stratum in the maintain mode reads (decision 0364): each one's old rows, rows gone and rows
+/// added, as sources.
+type ModeInputs = BTreeMap<String, [Arc<dyn crate::code_rule_dsl::facts::vtab::Source>; 3]>;
+
+/// Strata the evaluator's maintain mode maintained (decision 0364 stage 3), over the process.
+static MODE_STRATA: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+pub fn mode_strata() -> u64 {
+    MODE_STRATA.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// A rule body's order with its head's variables bound first (a recheck, decision 0364 stage 3): each step the
+/// first literal whose variables are all bound (a test), else a comparison that binds one side from the other, else
+/// the positive atom with most of its variables bound. `None` when a literal never can run.
+fn bound_head_order(b: &Body<'_>) -> Option<Vec<Step>> {
+    fn vars<'v>(t: TermRef<'v>, out: &mut Vec<VarSlot>) {
+        match t {
+            TermRef::Var(v) => out.push(v),
+            TermRef::Call(_, args) => args.for_each(|a| vars(a, out)),
+            _ => {}
+        }
+    }
+    let mut bound: BTreeSet<VarSlot> = BTreeSet::new();
+    let mut hv = Vec::new();
+    b.head().args().for_each(|t| vars(t, &mut hv));
+    bound.extend(hv);
+    let mut left: Vec<usize> = (0..b.len()).collect();
+    let mut order = Vec::new();
+    while !left.is_empty() {
+        let mut pick: Option<(usize, i64)> = None;
+        for (i, &at) in left.iter().enumerate() {
+            let score = match b.view(at) {
+                Lit::Atom(a) => {
+                    let mut vs = Vec::new();
+                    a.args().for_each(|t| vars(t, &mut vs));
+                    let free = vs.iter().filter(|v| !bound.contains(v)).count();
+                    if free == 0 { 1_000_000 } else if a.neg() { continue } else { (vs.len() - free) as i64 * 1000 - free as i64 }
+                }
+                Lit::Cmp { l, op, r } => {
+                    let (mut lv, mut rv) = (Vec::new(), Vec::new());
+                    vars(l, &mut lv);
+                    vars(r, &mut rv);
+                    let lf = lv.iter().all(|v| bound.contains(v));
+                    let rf = rv.iter().all(|v| bound.contains(v));
+                    if lf && rf {
+                        1_000_000
+                    } else if op == CmpOp::Eq && ((lf && matches!(r, TermRef::Var(_))) || (rf && matches!(l, TermRef::Var(_)))) {
+                        999_999
+                    } else {
+                        continue;
+                    }
+                }
+                _ => return None,
+            };
+            if pick.is_none_or(|(_, s)| score > s) {
+                pick = Some((i, score));
+            }
+        }
+        let (i, _) = pick?;
+        let at = left.remove(i);
+        let mut vs = Vec::new();
+        match b.view(at) {
+            Lit::Atom(a) if !a.neg() => a.args().for_each(|t| vars(t, &mut vs)),
+            Lit::Cmp { l, r, .. } => {
+                vars(l, &mut vs);
+                vars(r, &mut vs);
+            }
+            _ => {}
+        }
+        bound.extend(vs);
+        order.push(Step { at, mode: None });
+    }
+    Some(order)
+}
+
 fn sym_char(inputs: &Inputs, t: &str) -> char {
     if t == "sym" && inputs.atoms.is_none() { 's' } else { 'i' }
 }
@@ -6953,7 +7031,7 @@ impl<'a> Run<'a, '_> {
             answer: None,
             texts: self.texts.clone(),
             asking: None,
-            why_class: None,
+            why_class: None, mode_reads: Default::default(),
             answered: BTreeMap::new(),
             logging: None,
             answer_logs: HashMap::new(),
@@ -6990,7 +7068,7 @@ impl<'a> Run<'a, '_> {
             answer: None,
             texts: self.texts.clone(),
             asking: None,
-            why_class: None,
+            why_class: None, mode_reads: Default::default(),
             answered: BTreeMap::new(),
             logging: None,
             answer_logs: HashMap::new(),
@@ -7571,6 +7649,211 @@ impl<'a> Run<'a, '_> {
     /// unless SQL reads it.
     fn in_place(&self, r: &str) -> bool {
         self.projections.contains_key(r) && self.model.view_src.get(r).is_some_and(|(_, vc)| vc.iter().all(Option::is_some))
+    }
+
+    /// Why a stratum cannot take the maintain mode (decision 0364 stage 3), or `None` when it can: one relation, no
+    /// rule of it reading it (not recursive), each rule's body joins, negations and comparisons with a head of
+    /// variables and constants, its kept rows in memory, and each read that changed (`moved`) a native relation
+    /// that started from its kept one this run (it has a version).
+    fn maintain_mode_blocks(&self, scc: &BTreeSet<String>, rules: &[RuleKey], moved: &BTreeSet<String>, kept: bool, ins: &ModeInputs) -> Option<String> {
+        if std::env::var("RERAIL_MAINTAIN_MODE").is_ok_and(|v| v == "off") {
+            return Some("RERAIL_MAINTAIN_MODE=off".into());
+        }
+        let [h] = scc.iter().collect::<Vec<_>>()[..] else { return Some("a component of several relations".into()) };
+        if !kept {
+            return Some("its kept rows are not in memory".into());
+        }
+        let f = self.versions.whole(self.version);
+        if f.native(h).is_some() || f.lattice_decl(h).is_some() || f.gate(h) || f.request(h) || f.produced(h) || f.has_facts(h) || f.is_input(h) {
+            return Some("a native, lattice, gate, request, produced, input or fact relation".into());
+        }
+        if rules.is_empty() {
+            return Some("no rules".into());
+        }
+        for &r in rules {
+            let b = self.versions.at(r);
+            if b.head().args().any(|t| !matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Str(_) | TermRef::Branded(_))) {
+                return Some("a head with a computed term".into());
+            }
+            for i in 0..b.len() {
+                match b.view(i) {
+                    Lit::Atom(a) if b.rel(a) == h.as_str() => return Some("recursive".into()),
+                    Lit::Atom(a) if moved.contains(b.rel(a)) && ins.contains_key(b.rel(a)) => {}
+                    Lit::Atom(a) if moved.contains(b.rel(a)) => {
+                        let held = super::native::component::held(self.db, b.rel(a));
+                        if !held.is_some_and(|x| x.start().is_some()) {
+                            return Some(format!("{} changed without a version", b.rel(a)));
+                        }
+                    }
+                    Lit::Atom(_) | Lit::Cmp { .. } => {}
+                    _ => return Some("a literal other than an atom or a comparison".into()),
+                }
+            }
+        }
+        None
+    }
+
+    /// A non-recursive stratum maintained by the evaluator's mode (decision 0364 stage 3): its relation starts as its
+    /// kept one (`old`) in place; per rule and changed atom, a removal join (the atom's rows gone, the other changed
+    /// atoms as they were) whose rows are candidates, and an add join (the atom's rows added, the others now); per
+    /// rule a recheck with the head bound. A negated atom drives the other way (its rows added remove, its rows gone
+    /// add) and its adds are checked. Nothing but the relation is made: its versions are the change. `None`: declined;
+    /// `Some(false)`: no join to run (every changed read's version that drives one is empty), the kept relation held
+    /// as it is (quiet); `Some(true)`: run, its change its versions.
+    fn maintain_mode(&mut self, scc: &BTreeSet<String>, rules: &[RuleKey], moved: &BTreeSet<String>, old: Arc<super::native::component::InRel>, ins: &ModeInputs) -> Result<Option<bool>> {
+        let vs = Arc::clone(&self.versions);
+        let pf = vs.whole(self.version);
+        let h = scc.iter().next().expect("one relation").clone();
+        let ri: BTreeMap<String, usize> = BTreeMap::from([(h.clone(), 0)]);
+        let native_rels = self.native_rels.clone();
+        let types: String = pf.types(&h).iter().map(|t| sym_char(&self.model.inputs, t)).collect();
+        let bodies: Vec<Body<'_>> = rules.iter().map(|&r| vs.at(r)).collect();
+        let mut wanted = BTreeSet::new();
+        self.model.wants(bodies.iter().map(|b| (b, None)), &mut wanted);
+        self.model.make_statistics(pf, &wanted)?;
+        let held = |rel: &str| super::native::component::held(self.db, rel);
+        let old_name = format!("{h}__old");
+        super::native::component::hold_as(self.db, &old_name, Arc::clone(&old));
+        let mut lines = vec![SpecLine::Rel { name: h.clone(), types, start: Start::Base { old: old_name, gone: "-".into(), seeded: false } }, SpecLine::NoWrite];
+        // The changed inputs' versions, held in place over their sources while the stratum runs: `r__mm_old`,
+        // `r__mm_minus`, `r__mm_plus`.
+        let mut input_held: Vec<String> = Vec::new();
+        for (r, [o, mi, pl]) in ins {
+            let t: Vec<u8> = pf.types(r).iter().map(|t| sym_char(&self.model.inputs, t) as u8).collect();
+            for (suffix, src) in [("old", o), ("minus", mi), ("plus", pl)] {
+                let name = format!("{r}__mm_{suffix}");
+                super::native::component::hold_as(self.db, &name, super::native::component::InRel::over_source(Arc::clone(src), t.clone()));
+                input_held.push(name);
+            }
+        }
+                for b in &bodies {
+            self.model.late(pf, b, None, false)?;
+            // The items of `spec` made for literal `at` of the plan `order` (`JoinSpec::from`: its step).
+            let lit_of = |spec: &JoinSpec, order: &[Step], item: usize| -> Option<usize> {
+                let step = if spec.from.is_empty() { item } else { *spec.from.get(item)? as usize };
+                order.get(step).map(|s| s.at)
+            };
+            // `spec` with each changed atom read in its version: `drive` at `k` (as `dver`, positive), the others `rest`.
+            let versioned = |spec: &JoinSpec, order: &[Step], k: usize, dver: super::native::component::spec::Ver, rest: super::native::component::spec::Ver| -> JoinSpec {
+                let mut out = spec.clone();
+                for (i, item) in out.items.iter_mut().enumerate() {
+                    let Some(at) = lit_of(spec, order, i) else { continue };
+                    let JoinItem::Atom { neg, src, .. } = item else { continue };
+                    if at == k {
+                        *neg = false;
+                    }
+                    let JoinSource::Native(t) = src.clone() else { continue };
+                    // An input's version is its own relation (`r__mm_*`), read as it is.
+                    if t.contains("__mm_") {
+                        continue;
+                    }
+                    if at == k {
+                        *src = JoinSource::Version(t, dver);
+                    } else if moved.contains(&t) && rest != super::native::component::spec::Ver::New {
+                        *src = JoinSource::Version(t, rest);
+                    }
+                }
+                out
+            };
+            use super::native::component::spec::Ver as V;
+            for k in 0..b.len() {
+                let Lit::Atom(a) = b.view(k) else { continue };
+                let rel = b.rel(a);
+                if !moved.contains(rel) {
+                    continue;
+                }
+                let (gone, added) = match ins.get(rel) {
+                    Some([_, mi, pl]) => (mi.len(), pl.len()),
+                    None => {
+                        let x = held(rel).expect("a changed read with a version");
+                        (x.version_ids(super::native::component::Ver::Minus).map_or(0, |v| v.len()), x.version_ids(super::native::component::Ver::Plus).map_or(0, |v| v.len()))
+                    }
+                };
+                // A negated atom: its rows added remove derivations, its rows gone add them (checked: a row may be back).
+                let (remove_by, add_by) = if a.neg() { (V::Plus, V::Minus) } else { (V::Minus, V::Plus) };
+                let (remove_n, add_n) = if a.neg() { (added, gone) } else { (gone, added) };
+                // A positive driver is planned first, as a delta is; a negated one stays where its order tests it.
+                let first = (!a.neg()).then_some(k);
+                for (by, n, removing) in [(remove_by, remove_n, true), (add_by, add_n, false)] {
+                    if n == 0 {
+                        continue;
+                    }
+                    self.model.stats.delta_rows.insert(rel.to_owned(), n as f64);
+                    let (order, _, _) = self.model.plan_rule(pf, b, first)?;
+                    // The changed inputs' literals read their versions: the driver's, and as they were in a removal.
+                    self.mode_reads.clear();
+                    for i in 0..b.len() {
+                        let Lit::Atom(x) = b.view(i) else { continue };
+                        let xr = b.rel(x);
+                        if !ins.contains_key(xr) {
+                            continue;
+                        }
+                        let suffix = if i == k { if by == V::Minus { "minus" } else { "plus" } } else if removing { "old" } else { continue };
+                        self.mode_reads.insert(i, format!("{xr}__mm_{suffix}"));
+                    }
+                    let made = self.whole_join_spec(b, &order, None, &ri, scc, &native_rels);
+                    self.mode_reads.clear();
+                    let Some(spec) = made else {
+                        self.why_not = Some(format!("the maintain mode: no native join for a rule of {h}"));
+                        return Ok(None);
+                    };
+                    let spec = Arc::new(versioned(&spec, &order, k, by, if removing { V::Old } else { V::New }));
+                    lines.push(match (removing, a.neg()) {
+                        (true, _) => SpecLine::Remove { head: 0, join: spec },
+                        (false, false) => SpecLine::Seed { head: 0, join: spec },
+                        (false, true) => SpecLine::AddChecked { head: 0, join: spec },
+                    });
+                }
+            }
+            // Its recheck: the head's variables bound, each literal taken as soon as its variables are, the atom that
+            // shares most of them first (stage 4 plans it with the program).
+            // Where that order has no native join (a step that runs one way only, `docof` from its node), the
+            // planner's order: correct with the head bound too, its binds then tests.
+            let greedy = bound_head_order(b).and_then(|order| self.whole_join_spec(b, &order, None, &ri, scc, &native_rels));
+            let spec = match greedy {
+                Some(spec) => spec,
+                None => {
+                    let (order, _, _) = self.model.plan_rule(pf, b, None)?;
+                    let Some(spec) = self.whole_join_spec(b, &order, None, &ri, scc, &native_rels) else {
+                        self.why_not = Some(format!("the maintain mode: no native recheck for a rule of {h}"));
+                        return Ok(None);
+                    };
+                    spec
+                }
+            };
+            lines.push(SpecLine::Recheck { head: 0, join: spec });
+        }
+        // Quiet: no join to run. The relation is its kept one, its statistics as kept (`quiet_card`).
+        if !lines.iter().any(|l| matches!(l, SpecLine::Remove { .. } | SpecLine::Seed { .. } | SpecLine::AddChecked { .. })) {
+            input_held.push(format!("{h}__old"));
+            super::native::component::release(&self.db, &input_held);
+            let card = quiet_card(&mut self.model, &self.quiet, pf, &h, &old);
+            self.model.stats.card.insert(h.clone(), card);
+            super::native::component::hold_as(self.db, &h, old);
+            self.quiet.strata.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.native_rels.insert(h.clone());
+            super::profile::stratum(&stratum_key(scc), "native set engine", || "quiet: the maintain mode has no join to run; the relation is its kept one".to_owned());
+            return Ok(Some(false));
+        }
+        let name = format!("mm_{h}");
+        let spec = ComponentSpec { name: name.clone(), lines };
+        let fx = Fx { db: self.db, direct: true };
+        fx.open(&spec)?;
+        fx.run(&name, 0)?;
+        if let Some(live) = fx.stats(&name, &|_, _| false)?.into_iter().next() {
+            live_stats(&mut self.model, &h, live);
+        }
+        fx.close(&name)?;
+        input_held.push(format!("{h}__old"));
+        super::native::component::release(&self.db, &input_held);
+        self.native_rels.insert(h.clone());
+        // Nothing deleted, nothing derived: quiet, as a stratum whose joins all read empty deltas is.
+        if super::native::component::held(self.db, &h).and_then(|x| x.version_delta()).is_some_and(|(a, g)| a.is_empty() && g.is_empty()) {
+            self.quiet.strata.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        MODE_STRATA.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        super::profile::stratum(&stratum_key(scc), "native set engine", || "the maintain mode (decision 0364)".to_owned());
+        Ok(Some(true))
     }
 
     fn native_stratum(&mut self, scc: &BTreeSet<String>, rules: &[RuleKey]) -> Result<Native> {
@@ -9782,6 +10065,11 @@ pub trait Maintain {
     fn walked(&mut self, reached: usize, quiet: usize, of: usize);
     /// The inputs that changed with a delta not empty, or with none: the walk's first moved reads.
     fn seeds(&mut self) -> Vec<String>;
+    /// `rel` was maintained by the evaluator's mode (decision 0364 stage 3), not by a form: its delta is its versions
+    /// (held as `rel__minus`, `rel__plus`), and it counts as maintained.
+    fn mode_ran(&mut self, rel: &str);
+    /// Input `rel`'s rows as the last run had them, read in place (the maintain mode's `old` of an input).
+    fn old_input(&self, rel: &str) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>;
 }
 
 
@@ -9831,6 +10119,8 @@ enum Slot<'f> {
     /// Maintained or derived again (`again`) by its form's pieces, in order; issued as a job when a strand can run
     /// them, with the relations its pieces make and their rules' digests.
     Reached { form: usize, pieces: Vec<(BTreeSet<String>, Vec<RuleKey>)>, again: bool, job: Option<FormJob<'f>> },
+    /// Maintained by the evaluator's mode (decision 0364 stage 3): its rules, the reads that changed, its kept rows.
+    Mode { rules: Vec<RuleKey>, moved: BTreeSet<String>, old: Arc<super::native::component::InRel>, ins: ModeInputs },
 }
 
 /// A reached stratum's part in a component of forms issued as one job (decision 0117, as decision 0113 §2 packs
@@ -10852,7 +11142,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
     // What each issued form's job did, from its component's retire to its own slot.
     let mut form_ran: HashMap<usize, (usize, Option<Result<(Option<String>, Option<String>)>>)> = HashMap::new();
     let projections0: HashMap<String, Vec<(usize, i64)>> = super::program_image::analyses::projections(&p0.v).into_iter().map(|(r, eqs)| (p0.v.rel_name(r).to_owned(), eqs)).collect();
-    let mut run = Run { db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections0), inputs: Arc::new(RunInputs { program: f0.inputs().collect(), added: Default::default() }), versions: Arc::new(body::Versions::of_placed(placed)), version: 0, answer: hooks.answer.take(), texts: hooks.texts.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new(), quiet: Default::default() };
+    let mut run = Run { db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections0), inputs: Arc::new(RunInputs { program: f0.inputs().collect(), added: Default::default() }), versions: Arc::new(body::Versions::of_placed(placed)), version: 0, answer: hooks.answer.take(), texts: hooks.texts.take(), asking: None, why_class: None, mode_reads: Default::default(), answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new(), quiet: Default::default() };
     // A native run makes no views: a projection of an input is a stratum like any, run from the input where it is
     // held (decision 0104: no SQL in the run's waves). A SQL run reads its inputs through views in place.
     let planned_views = if atoms && !native.is_empty() { Vec::new() } else { plan_views(f0, &Arc::clone(&run.versions), &mut run.model, &rules_by)? };
@@ -11441,6 +11731,25 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                     let scc = &sccs[j];
                     let key = stratum_key(scc);
                     reached += 1;
+                    // The evaluator's maintain mode (decision 0364 stage 3), where the stratum can take it: no form.
+                    let kept0 = if scc.len() == 1 { scc.iter().next().and_then(|r| m.kept(r)) } else { None };
+                    // Its changed inputs' versions: the old rows the last run kept, and the deltas bound from the
+                    // changed documents (`input_delta`).
+                    let ins: ModeInputs = moved.iter().filter(|r| f0.is_input(r)).filter_map(|r| {
+                        let b = |s: &str| crate::code_rule_dsl::facts::vtab::bound_source(db, &format!("{r}__{s}"));
+                        Some((r.clone(), [m.old_input(r)?, b("minus")?, b("plus")?]))
+                    }).collect();
+                    let blocks = run.maintain_mode_blocks(scc, &rules, &moved, kept0.is_some(), &ins);
+                    if std::env::var_os("RERAIL_MODE_TRACE").is_some() {
+                        eprintln!("RERAIL_MODE_TRACE {key}: {}", blocks.as_deref().unwrap_or("the maintain mode"));
+                    }
+                    match blocks {
+                        None => {
+                            slots[j] = Slot::Mode { rules, moved, old: kept0.expect("kept"), ins };
+                            continue;
+                        }
+                        Some(why) => super::profile::decision("not the maintain mode (decision 0364)", || format!("{key}: {why}")),
+                    }
                     let _span = super::profile::span(|| format!("stratum {} placed", if key.len() > 80 { format!("{}…({} relations)", &key[..80], scc.len()) } else { key.clone() }));
                     // The driver writes the form over the run's version (decision 0241): a derivation of it.
                     let v0 = run.versions.placed(0).clone();
@@ -11625,6 +11934,38 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
             match std::mem::replace(&mut slots[at], Slot::Base) {
                 Slot::Quiet => continue,
                 Slot::Base => {}
+                Slot::Mode { rules, moved, old, ins } => {
+                    let key = stratum_key(scc);
+                    let Some(ran) = run.maintain_mode(scc, &rules, &moved, old, &ins)? else {
+                        return Err(Error::Plan(format!("{key}: the maintain mode declined: {}", run.why_not.take().unwrap_or_default())));
+                    };
+                    if !ran {
+                        outcome.unchanged.extend(scc.iter().cloned());
+                        outcome.native.insert(key);
+                        continue;
+                    }
+                    for r in scc {
+                        let rel = super::native::component::held(db, r).ok_or_else(|| Error::Plan(format!("{r}: not held after its maintain mode")))?;
+                        let (added, gone) = rel.version_delta().ok_or_else(|| Error::Plan(format!("{r}: no version after its maintain mode")))?;
+                        for (suffix, ver) in [("minus", super::native::component::Ver::Minus), ("plus", super::native::component::Ver::Plus)] {
+                            if let Some(v) = rel.version_view(ver) {
+                                // Sized, as a form's delta relation was by its run: its readers plan by it.
+                                run.model.stats.card.insert(format!("{r}__{suffix}"), (v.rows() as f64).max(1.0));
+                                super::native::component::hold_as(db, &format!("{r}__{suffix}"), v);
+                                run.native_rels.insert(format!("{r}__{suffix}"));
+                            }
+                        }
+                        m.mode_ran(r);
+                        if added.is_empty() && gone.is_empty() {
+                            outcome.unchanged.insert(r.clone());
+                        } else {
+                            moved_rels.insert(r.clone());
+                            outcome.deltas.insert(r.clone(), (gone, added));
+                        }
+                    }
+                    outcome.native.insert(key);
+                    continue;
+                }
                 Slot::Reached { form, pieces, again, job } => {
                     let key = stratum_key(scc);
                     let _span = super::profile::span(|| format!("stratum {} {}", if key.len() > 80 { format!("{}…({} relations)", &key[..80], scc.len()) } else { key.clone() }, if again { "derived again" } else { "maintained" }));

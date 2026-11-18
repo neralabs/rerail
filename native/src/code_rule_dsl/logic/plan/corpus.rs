@@ -10118,6 +10118,16 @@ impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
     fn seeds(&mut self) -> Vec<String> {
         std::mem::take(&mut self.seeds)
     }
+
+    fn old_input(&self, rel: &str) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
+        self.kept.old_source(rel, rel).filter(|(_, held)| held.is_none()).map(|(s, _)| s)
+    }
+
+    fn mode_ran(&mut self, rel: &str) {
+        self.has_delta.insert(rel.to_owned());
+        self.maintains.insert(rel.to_owned());
+        self.counts.0 += 1;
+    }
 }
 
 /// The statistics a maintained run kept of the relations it bound, as the next run binds them (`retain::after`'s

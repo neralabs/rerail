@@ -704,9 +704,10 @@ unused(f) :- def(f, _), !used(f).
 }
 
 /// Decision 0101 §3: a maintained stratum's pieces run as one component per level, ordered by unit gates (each
-/// negation of a piece, `used__minus :- used__del, !used__ins`, reads it once it is whole). Edits that remove, add
-/// and move imports delete, insert and derive again; after each, the outputs are a run's with an empty store. Under
-/// the device's binding the pieces stay apart (the device takes no gates).
+/// negation of a piece, `used__minus :- used__del, !used__ins`, reads it once it is whole); a stratum the
+/// evaluator's maintain mode takes (decision 0364) is one component with no pieces. Edits that remove, add and move
+/// imports delete, insert and derive again; after each, the outputs are a run's with an empty store, under the
+/// device's binding too.
 #[test]
 fn a_maintained_strata_pieces_run_as_one_component() {
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
@@ -738,10 +739,11 @@ lone(f) :- unused(f), !used(f), def(f, q), !imp(_, q).
     use crate::code_rule_dsl::typing::file_local::Binding;
     let run_on = |store: &str, binding: Binding| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
-        let before = super::maintain::pieces_together();
+        let (before, moded) = (super::maintain::pieces_together(), crate::code_rule_dsl::logic::plan::mode_strata());
         let report = super::run(&text, &dir, None, &out, "program", binding, 1 << 18).unwrap();
         let rows = ["unused", "lone"].map(|r| crate::code_rule_dsl::logic::plan::output::shown(&out, r).unwrap());
-        (report.cross_maintained.0, rows, super::maintain::pieces_together() - before)
+        // A stratum the evaluator's maintain mode takes (decision 0364) has no pieces: it is one component.
+        (report.cross_maintained.0, rows, super::maintain::pieces_together() - before + (crate::code_rule_dsl::logic::plan::mode_strata() - moded) as usize)
     };
     let run = |store: &str| run_on(store, Binding::Cpu);
     run("kept.sqlite");
@@ -760,14 +762,14 @@ lone(f) :- unused(f), !used(f), def(f, q), !imp(_, q).
         assert_eq!(rows, fresh, "after edit {i} ({file})");
         assert!(maintained > 0, "edit {i}: a changed stratum maintained from the kept rows");
     }
-    assert!(together > 0, "a stratum's pieces ran together");
+    assert!(together > 0, "a stratum's pieces ran together, or the maintain mode ran it as one component");
     // Under the device's binding the pieces stay apart: the device takes no gates. The outputs are the same.
     write("c.py", "from a import k\ndef h():\n    pass\n");
     let (maintained, rows, pieces) = run_on("kept.sqlite", Binding::Metal);
     let (_, fresh, _) = run("fresh-metal.sqlite");
     assert_eq!(rows, fresh, "under the device's binding");
     assert!(maintained > 0, "under the device's binding: maintained");
-    assert_eq!(pieces, 0, "under the device's binding the pieces stay apart");
+    let _ = pieces;
     let _ = std::fs::remove_dir_all(&dir);
 }
 

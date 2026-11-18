@@ -4773,6 +4773,12 @@ impl InRel {
         }
         self.delta_from(old as *const InRel as usize, old.n)
     }
+    /// Its change from its version at the run's start (decision 0364), `(added, removed)` row-major: `None` without
+    /// a version.
+    pub fn version_delta(&self) -> Option<(Vec<i64>, Vec<i64>)> {
+        let rows_of = |ids: Vec<u32>| ids.into_iter().fold(Vec::new(), |mut v, id| { v.extend_from_slice(&self.row(id as usize)); v });
+        Some((rows_of(self.version_ids(Ver::Plus)?), rows_of(self.version_ids(Ver::Minus)?)))
+    }
     /// `delta_since`'s change from the relation at `at` of `n` rows it started as: read from its version (decision
     /// 0364 stage 2), the rows live at the start and dead now and those added since; from its survivors' record
     /// when it was compacted.
@@ -4900,10 +4906,14 @@ impl InRel {
     /// A flat relation's rows in one block, for a reader that binds its block (the device, decision 0325): none for
     /// a view, a relation with dead rows (a reader skips no rows yet) or no columns.
     /// Its version at the run's start (decision 0364 stage 2): its row count then and its dead rows then, when it
-    /// started from a kept relation in place (`Rel::based`). `None` for one made from rows.
+    /// started from a kept relation (`Rel::based`, or `Rel::compacted` with no rows gone). `None` for one made from
+    /// rows, or compacted with rows gone (those are in no row of it).
     pub fn start(&self) -> Option<(usize, &[u64])> {
         match &self.from {
             Some(Origin::Based { n, dead, .. }) if self.view.is_none() => Some((*n, dead.as_slice())),
+            // Compacted with no rows gone (the maintain mode's start, decision 0364): its first `kept` rows are the
+            // kept relation's live ones, every one live at the start.
+            Some(Origin::Compacted { kept, removed, .. }) if self.view.is_none() && removed.is_empty() => Some((*kept, &[])),
             _ => None,
         }
     }

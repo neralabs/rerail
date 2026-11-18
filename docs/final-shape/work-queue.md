@@ -2573,3 +2573,17 @@ message), so it is not the merge's. The test asserts `cold.cross_handed > 0`; th
   ranges; `twice` before `flag_col` here) and the test passes, or the test's program has a relation read before the
   last stratum, with the reason recorded.
 - **Record**: —
+
+### Q115. Three corpus tests stop on the version's `asked` record differing from the tree's after `simplify`
+
+Found 2026-11-17, during 0364 stage 3. Red with the maintain mode off too (`RERAIL_MAINTAIN_MODE=off`), so not
+stage 3's: `base_tests::value_types_are_ws_value_types` ("the version after `simplify` is the tree's": `asked`
+row `("a", "rr_value_req", 0, "vals")` against `… 1 …`), `tests::a_pair_of_programs_asking_for_an_attribute_through_the_library_stratifies`
+(the combine's tail: `asked` rows' reader indices off by one), and `tests::libraries_are_held_once_and_equal_requests_share_one_cone`
+(a panic in `rr.rs:308` on a CPU thread).
+
+- **Seen**: each `asked` row's rule index (the request's `k`-th rule) differs by one between the version's passes and
+  the tree's, after a request rule is dropped or kept on one side only (`subsume_requests`, `prune`'s gate).
+- **Keep**: the debug checks that the version's passes are the tree's (0281).
+- **Done when**: the version's `simplify` keeps the `asked` record as the tree's does, and the three tests pass.
+- **Record**: —

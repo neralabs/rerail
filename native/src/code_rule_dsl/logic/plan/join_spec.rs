@@ -280,6 +280,10 @@ impl<'a> Run<'a, '_> {
                 }
             }
         };
+        // The maintain mode's joins read an input's version by name (`mode_reads`): made each time, never kept.
+        if !self.mode_reads.is_empty() {
+            return self.join_spec_made(b, steps, bare, at, ri, scc, native_rels).map(Arc::new);
+        }
         super::super::derived::value("join spec", inputs, || self.join_spec_made(b, steps, bare, at, ri, scc, native_rels).map(Arc::new))
     }
 
@@ -426,7 +430,10 @@ impl<'a> Run<'a, '_> {
                     if s.mode == Some(Mode::Range) {
                         return None;
                     }
-                    let (src, args) = atom(b.rel(l), b.args(s.at), Some(idx), &mut slots)?;
+                    let (src, args) = match self.mode_reads.get(&s.at) {
+                        Some(t) => (JoinSource::Native(t.clone()), arg_toks(b.args(s.at), &mut slots)?),
+                        None => atom(b.rel(l), b.args(s.at), Some(idx), &mut slots)?,
+                    };
                     lines.push(JoinItem::Atom { neg: l.neg(), src, args });
                 }
                 Lit::Cmp { l: TermRef::Call(fl, xl), op: op @ (CmpOp::Eq | CmpOp::Ne), r: TermRef::Call(fr, xr) }
