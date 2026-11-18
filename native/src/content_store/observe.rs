@@ -239,8 +239,17 @@ pub struct Observer {
     /// How long after its recording an answer is checked by `stat` though the journal names nothing there
     /// ([`JOURNAL_SETTLE_NS`]); a test that asks for trust at once sets it to 0.
     settle_ns: i64,
+    /// The least the journal is waited for ([`JOURNAL_WAIT_LEAST_NS`]); a test that asks for the journal's answer
+    /// whatever it costs sets it high.
+    wait_least_ns: u64,
 }
 
+/// What checking one kept answer by its `stat` costs, about (a warm `lstat` on APFS, with the compare): the journal is
+/// waited for no longer than the answers under a root would take so (Q184).
+pub const STAT_NS: u64 = 4_000;
+/// The least the journal is waited for: a cookie on an idle machine came in 10 ms (t48), under which a tree's `stat`s
+/// are cheaper anyway.
+pub const JOURNAL_WAIT_LEAST_NS: u64 = 2_000_000;
 /// How long after an answer's recording the journal's silence is not enough to trust it (Q179). FSEvents' history
 /// merges a path's events within a window: a change made just after a run read the path (the run's cursor taken
 /// between the two) was replayed under the earlier event's id, before the cursor, and the next run, told nothing,
@@ -360,7 +369,7 @@ impl Observer {
         if let Some(k) = db.as_ref() {
             own.extend(k.meta.keys().filter_map(|k| k.strip_prefix(OWN_OUTPUT)).flat_map(|d| spellings(Path::new(d))));
         }
-        Observer { db, entries, dirty: Vec::new(), racy: Vec::new(), aliases, new_aliases: Vec::new(), canon, new_canon: Vec::new(), epoch, validate_every, counts: Counts::default(), cwd: std::env::current_dir().unwrap_or_default(), git: Vec::new(), roots: Vec::new(), flushes: 0, open: 0, stored_roots, volumes, cookies, own, unreported: Vec::new(), settle_ns: JOURNAL_SETTLE_NS }
+        Observer { db, entries, dirty: Vec::new(), racy: Vec::new(), aliases, new_aliases: Vec::new(), canon, new_canon: Vec::new(), epoch, validate_every, counts: Counts::default(), cwd: std::env::current_dir().unwrap_or_default(), git: Vec::new(), roots: Vec::new(), flushes: 0, open: 0, stored_roots, volumes, cookies, own, unreported: Vec::new(), settle_ns: JOURNAL_SETTLE_NS, wait_least_ns: JOURNAL_WAIT_LEAST.load(std::sync::atomic::Ordering::Relaxed) }
     }
 
     /// Records `dir` as a directory a run writes its outputs into: rerail's own (decision 0284), for this observer
@@ -842,7 +851,11 @@ impl Observer {
                 rusqlite::types::Value::Integer(i) => Some(i.to_string()),
                 _ => None,
             });
-            match super::journal::since(std::slice::from_ref(&root), cursor.as_deref(), &cookies) {
+            // The journal is waited for no longer than checking every answer kept under the root by its `stat`
+            // would take (Q184: planning costs no more than running, 0122); slower, it is checked so.
+            let kept = self.entries.range::<Path, _>((std::ops::Bound::Included(root.as_path()), std::ops::Bound::Unbounded)).take_while(|(k, _)| k.starts_with(&root)).count();
+            let wait = std::time::Duration::from_nanos((kept as u64).saturating_mul(STAT_NS).max(self.wait_least_ns));
+            match super::journal::since_within(std::slice::from_ref(&root), cursor.as_deref(), &cookies, Some(wait)) {
                 super::journal::Since::Changed { paths, cursor: next } => {
                     // News of rerail's own files is no news (decision 0284): each run writes them.
                     let paths: Vec<PathBuf> = paths.into_iter().filter(|p| !self.is_own(p)).collect();
@@ -1991,6 +2004,7 @@ mod tests {
             let mut o = Observer::open(Some(&store));
             // Trust at once: these runs follow each other within the settle window, as no test can wait it out.
             o.settle_ns = 0;
+            o.wait_least_ns = 2_000_000_000;
             o.begin();
             o.watch(std::slice::from_ref(&root));
             let listing = o.listing(&root.join("pkg")).unwrap();
@@ -2033,6 +2047,7 @@ mod tests {
         let run = |settle: i64| {
             let mut o = Observer::open(Some(&store));
             o.settle_ns = settle;
+            o.wait_least_ns = 2_000_000_000;
             o.begin();
             o.watch(std::slice::from_ref(&root));
             let digest = o.digest(&file).unwrap();
@@ -2099,6 +2114,7 @@ mod tests {
             let mut o = Observer::open(Some(&store));
             // Trust at once: these runs follow each other within the settle window, as no test can wait it out.
             o.settle_ns = 0;
+            o.wait_least_ns = 2_000_000_000;
             o.begin();
             if first {
                 o.own_output(&out);
@@ -2190,6 +2206,7 @@ mod tests {
             let mut o = Observer::open(Some(&store));
             // Trust at once: these runs follow each other within the settle window, as no test can wait it out.
             o.settle_ns = 0;
+            o.wait_least_ns = 2_000_000_000;
             o.begin();
             o.watch(&[watch.to_path_buf()]);
             let asked: Vec<(PathBuf, bool)> = o.roots.iter().map(|r| (r.path.clone(), r.trusted)).collect();
@@ -2328,6 +2345,7 @@ mod tests {
             let mut o = Observer::open(Some(&store));
             // Trust at once: these runs follow each other within the settle window, as no test can wait it out.
             o.settle_ns = 0;
+            o.wait_least_ns = 2_000_000_000;
             o.begin();
             o.watch(std::slice::from_ref(&root));
             let got: Vec<Option<PathBuf>> = asked.iter().map(|p| o.canonical(p)).collect();
@@ -2834,4 +2852,12 @@ fn journal_on() -> bool {
 /// Turns the observer's use of the journal on or off for the process, whatever `RERAIL_JOURNAL` says.
 pub fn set_journal(on: bool) {
     JOURNAL.store(if on { 1 } else { 2 }, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The least the observers made after this wait for the journal ([`JOURNAL_WAIT_LEAST_NS`] until set): a test that
+/// asks for the journal's answer whatever it costs raises it (Q184).
+static JOURNAL_WAIT_LEAST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(JOURNAL_WAIT_LEAST_NS);
+
+pub fn set_journal_wait_least(wait: std::time::Duration) {
+    JOURNAL_WAIT_LEAST.store(wait.as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
 }

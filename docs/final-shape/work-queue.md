@@ -2372,7 +2372,9 @@ with the default line takes the slow pass.
   CPU, 20.1 s wall (load 56) against 65–69 s, 17–18 s (load 30); Metal 62.6 s, 17.8 s. Each chunk's fixed work, paid
   three times as often, cost more than running them at once saved. Open: t48's chunks that grew under 16 MB keep
   the run one chunk at a time (17–18 s of wall against t41's 12.8 at the same CPU); the count, not the size, is
-  what to lift before a credible measurement.
+  what to lift before a credible measurement. Then built: the probe-sized chunks counted at once
+  by the prior (as many as the headroom holds at 22 KB a node; 1 at the default line, up to 8 lifted), sized as
+  before; not yet measured.
 
 ### Q184. A warm run waits on the journal's cookies far longer than a `stat` of what it trusts would take
 
@@ -2389,7 +2391,12 @@ gigabytes into its tree. Waiting for the journal is planning, and it cost 100 to
   on any, so roots wait once, not in turn.
 - **Done when**: a warm run's wall is within a few ms of `RERAIL_JOURNAL=off`'s on a busy host, and the journal
   still saves the `stat`s where they cost more than its wait (a 9,010-file tree).
-- **Record**: —
+- **Record**: built, not yet measured on the bench. `journal::since_within` waits at most the caller's bound; a
+  slower journal answers `Lost` with the latest id the stream was told (every change before it has come, in id
+  order) and keeps the stream. The observer bounds each root by its kept answers at `STAT_NS` (4 µs), at least
+  `JOURNAL_WAIT_LEAST_NS` (2 ms). Tests: rerail-store's journal and observer tests 27/27 (the bound folded into the
+  journal's test: a test of its own, a third stream at once, pushed the host's `fseventsd` past 2 s for the others);
+  the engine's warm, journal and edit tests 105/106, the 106th Q186.
 
 ### Q185. Relax stops on the vendored Cranelift: every test of rerail-logic and the engine goes to cargo
 
@@ -2406,6 +2413,19 @@ tests run through farm nextest with `-E`.
   "a path a script gave under its folder on disk") and why a `[patch]` path under the shared workspace reads as
   missing there; fix it in `scripts/dev/relax/rerail.patch`.
 - **Done when**: `live-test-remote --once rerail-logic --lib -- chunks_are_sized_by_the_prior` passes.
+- **Record**: —
+
+### Q186. `a_header_edit_asks_again_only_for_the_units_that_read_it` depends on the journal's timing
+
+Seen 2026-11-18 on the M3 (load 30–100): at HEAD (5dd41140c) it failed 2 of 2, asking again for all three units
+after the header edit (`["one.c", "three.c", "two.c"]` against `["one.c"]`); with Q184's bound and the test
+raising it to 2 s, it failed once asking for none (`[]`), and passed traced. The test turns the journal on for the
+engine's tests alone; a cookie later than 2 s makes a run's root `Lost` (every answer by `stat`, a fresh header
+racy), and a sync kept within an epoch answers a later run that did not advance it. Decision 0327's area (C units
+kept). Find which run's epoch the second run's questions carried when it asked for none: a missed edit, if a run
+reuses another's sync.
+
+- **Done when**: the test passes 20 of 20 on a host at load, or names why a run cannot answer.
 - **Record**: —
 
 ## Questions for the user

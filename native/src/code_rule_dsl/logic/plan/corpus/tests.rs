@@ -616,6 +616,8 @@ fn a_header_edit_asks_again_only_for_the_units_that_read_it() {
     // (after the first observer, which turns it off once a process).
     super::observe(|_| ());
     crate::content_store::observe::set_journal(true);
+    // Its answer whatever it costs: slower than the `stat`s, a fresh header's would ask again for its unit (Q184).
+    crate::content_store::observe::set_journal_wait_least(std::time::Duration::from_secs(2));
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("c-units-kept");
     let _ = std::fs::remove_dir_all(&dir);
     let ws = dir.join("ws");
