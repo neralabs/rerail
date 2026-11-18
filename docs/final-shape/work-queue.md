@@ -1715,7 +1715,7 @@ pass.
 ### Q45. A warm run on the m3 records observer answers, where the same check on the m1max records none
 
 - **Again** (2026-11-18): `the_run_after_a_cold_one_writes_nothing` fails 2 of 4 on the m3 under load, a cause
-  other than the racy window: the journal's timing (Q189).
+  other than the racy window: the journal's timing (Q189). Fixed by decision 0399 step 1: 10 of 10 on the M3.
 
 - **Found** (2026-11-16, at 28d25b6a8 plus a change since reverted): the 317 rules over fixtures/python, a strict cold
   run and then a strict warm run with `RERAIL_WARM=list`, on the m3: the warm run exits 3 with "the observer recorded
@@ -2450,7 +2450,14 @@ regenerated since keep the wider condition. The profiling build has none (Q13).
 - **Done when**: a test edits a file and starts the next run within milliseconds, many times over on the m3, and
   every run is told; `the_run_after_a_cold_one_writes_nothing` passes every time there. The design is the user's
   (Questions for the user, 3). Until then the 0364 measurement runs with `RERAIL_JOURNAL=off`, as bend does.
-- **Record**: —
+- **Record**: decided by the user, option (a) with (b) for large roots: decision 0399. Step 1 (6b66151a1): a root
+  of at most 20,000 answers is checked by its directories' bulk listings (`getattrlistbulk`), and the observer keeps
+  its own journal for run records. R7 passes 10 of 10 on the M3 (2 of 4 before). Step 2 (f523157f2): a larger
+  root's new stream is trusted only with its pre-marker in the history, else it is checked by listings. R8 has
+  none missed in 40 trials; the observer's and journal's 33 tests are green in 5 of 5 runs. ep2's edit: 1.92–1.98 s
+  wall against e134's 5.47 s, CPU unchanged (2.24–2.27 s), 1,334 rows, 0 differing. Open: the data-layer
+  repository's warm listing cost; `id > cursor` and a large root's records across a `Behind` replay (0399,
+  "What stays open"). The 0364 measurement no longer needs `RERAIL_JOURNAL=off` for roots this small.
 
 ## Questions for the user
 
@@ -2481,7 +2488,8 @@ regenerated since keep the wider condition. The profiling build has none (Q13).
   positions a prefix of the interpreter's, its codes none or 0s past it); the hub's `tier1_agrees` is folded into it.
   The state-table guard takes `self.arms` in `Reader`'s methods (0332) as a reader's.
 
-3. **Q189: what the observer trusts between processes.** FSEvents does not guarantee that a new process is told of
+3. **Answered (2026-11-18): (a) with listings, (b) for large roots; decision 0399.** **Q189: what the observer
+   trusts between processes.** FSEvents does not guarantee that a new process is told of
    a change made just before it (t46: 12 of 40 trials missed one on the m3, with the cookie and `HistoryDone` in
    hand). Options: (a) `stat` every path the run would trust from the journal, for a root of a few hundred files
    (ep2's 300: about 1 ms CPU, and no 0.16–0.77 s replay wait), the journal kept for large roots with (b) or (c);

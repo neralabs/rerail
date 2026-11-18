@@ -81,8 +81,8 @@ changes its directory's. ctime cannot be set from user space, so a copy that kee
   a change it holds. The marker shows the log was caught up; it does not show each record's id. Recorded, not
   fixed: a large root only.
 - **A large root's records** are not answered across a `Behind` replay, and on a loaded host most replays are
-  `Behind`: the cone rounds and `git_files` run again there. No root in ep2 or the data-layer repository is that
-  large (`LIST_MAX`).
+  `Behind`: the cone rounds and `git_files` run again there. Every root of ep2 is below `LIST_MAX` (e142 started
+  no stream); the data-layer repository's is not yet measured.
 
 ## Steps
 
@@ -91,5 +91,22 @@ changes its directory's. ctime cannot be set from user space, so a copy that kee
 
 ## Measured
 
-To fill: ep2's edit (the watch's wall, the stats made), the data-layer repository's 9,010 files (a warm run's
-listing cost).
+ep2 on the M3, profiling build, at f523157f2 (load 52–68), against e134 at 3b5f7f457, before 0399 (same state, same
+edit query, `RERAIL_JOURNAL_TRACE=1`):
+
+| run | wall | CPU | instructions | `before`, off core | `combine`, off core | rows (differing) |
+|---|---|---|---|---|---|---|
+| e134 (journal) | 5.47 s | 2.28 s | 29.4 G | 2.14 s | 1.46 s | 1,334 (0) |
+| e142 (listings) | 1.98 s | 2.27 s | 29.3 G | 0.001 s | 0.058 s | 1,334 (0) |
+| e143 (listings) | 1.92 s | 2.24 s | 29.3 G | 0.001 s | 0.059 s | 1,334 (0) |
+
+- The wall falls by 3.5 s: e134 waited 1.0–1.4 s on each of three replays (the corpus, the rule docs, the typing
+  programs). e142 and e143 start no stream (no journal trace line): each root is small enough to be checked by
+  its listings.
+- CPU and instructions are unchanged: listing the directories costs no more than the replays' bookkeeping did.
+- e141, the first run after the binary changed (it moves each root from a journal cursor to an `L` cursor): 3.34 s
+  wall, 2.76 s CPU.
+- The engine's targeted tests (program_image, program_text, request_record, combined, memo::, atoms::,
+  `the_run_after_a_cold_one_writes_nothing`): 53 passed, 1 ignored.
+
+Not measured: the data-layer repository's 9,010 files (a warm run's listing cost at that size).
