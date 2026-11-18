@@ -75,7 +75,7 @@ A session's relations stay in their blocks between runs; nothing moves to frames
   - f116df144, non-recursive strata: the driver gives a reached stratum the mode, with no form, where it fits
     (`Run::maintain_mode_blocks`). A changed input's versions are its sources, held while the stratum runs
     (`r__mm_*`, `Run::mode_reads`).
-  - This commit, recursive strata by levels (0364 §2):
+  - 211a599bb, recursive strata by levels (0364 §2):
     - candidates in level order; a recheck sees only rows below the candidate's level (`Rel::cap`);
     - a row gone makes its readers candidates, through each delta probe run from that one row (`drivers`);
     - rows gone that a rule derives now come back as new rows, and they and the checked adds are the first wave's
@@ -89,5 +89,11 @@ A session's relations stay in their blocks between runs; nothing moves to frames
     - aggregates, `nearest` and `ast` literals;
     - lattices, gates and requests;
     - strata whose kept rows are not in memory.
-    0090 §4's "derive again" choice is not made for a mode stratum yet. Both are for stage 4.
+    0090 §4's "derive again" choice is not made for a mode stratum yet.
+- Stage 4: the mode's plans are the program's.
+  - Its removal, add and probe lines take the kept plans (`plan_rule_reused`), as the semi-naive probes do: searched
+    at first sight, then taken or priced again as their sizes move.
+  - A quiet recursive stratum plans no probes.
+  - The recheck keeps the greedy bound-head order: no planner prices a bound head yet (Q116), and the lines report no
+    work to the 0122 budget (Q116).
 

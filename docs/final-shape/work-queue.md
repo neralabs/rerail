@@ -2587,3 +2587,16 @@ row `("a", "rr_value_req", 0, "vals")` against `… 1 …`), `tests::a_pair_of_p
 - **Keep**: the debug checks that the version's passes are the tree's (0281).
 - **Done when**: the version's `simplify` keeps the `asked` record as the tree's does, and the three tests pass.
 - **Record**: —
+
+### Q116. The maintain mode's recheck order is not priced
+
+Found 2026-11-17, during 0364 stage 4. A mode stratum's removal, add and probe lines take the program's kept plans
+(`plan_rule_reused`), as a semi-naive probe does. Its recheck (a rule with its head bound, run once per candidate)
+takes `bound_head_order`: one pass over the body, each literal as soon as its variables are bound, the atom that
+shares the most of them first. No search prices it, because the planner takes no bound head. Where that order has no
+native join it falls back to the planner's whole-rule order.
+
+- **Wanted**: the planner prices a body with a set of variables bound before its first step, for the recheck. The
+  order is then kept as the other lines' are.
+- **Also open**: the mode's lines report no work to `Model::ran`, because `MaintMode` counts per kind, not per line.
+  The 0122 budget therefore prices their kept plans again rather than taking them as they are.

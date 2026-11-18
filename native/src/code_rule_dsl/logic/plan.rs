@@ -7801,7 +7801,10 @@ impl<'a> Run<'a, '_> {
                         continue;
                     }
                     self.model.stats.delta_rows.insert(rel.to_owned(), n as f64);
-                    let (order, _, _) = self.model.plan_rule(pf, b, first)?;
+                    // The program's kept plan of this line, as a semi-naive probe's (decision 0364 stage 4): searched
+                    // on its first sight, then taken or priced again as its sizes move (decisions 0038, 0122).
+                    plan_site("the maintain mode's join");
+                    let ((order, _, _), _) = self.model.plan_rule_reused(pf, b, first)?;
                     // The changed inputs' literals read their versions: the driver's, and as they were in a removal.
                     self.mode_reads.clear();
                     for i in 0..b.len() {
@@ -7828,14 +7831,16 @@ impl<'a> Run<'a, '_> {
                 }
             }
             // Its recheck: the head's variables bound, each literal taken as soon as its variables are, the atom that
-            // shares most of them first (stage 4 plans it with the program).
+            // shares most of them first. One pass over the body, no search: the planner prices no order with its
+            // head bound (Q116), and a recheck reads one head row at a time.
             // Where that order has no native join (a step that runs one way only, `docof` from its node), the
             // planner's order: correct with the head bound too, its binds then tests.
             let greedy = bound_head_order(b).and_then(|order| self.whole_join_spec(b, &order, None, &ri, scc, &native_rels));
             let spec = match greedy {
                 Some(spec) => spec,
                 None => {
-                    let (order, _, _) = self.model.plan_rule(pf, b, None)?;
+                    plan_site("the maintain mode's recheck");
+                    let ((order, _, _), _) = self.model.plan_rule_reused(pf, b, None)?;
                     let Some(spec) = self.whole_join_spec(b, &order, None, &ri, scc, &native_rels) else {
                         self.why_not = Some(format!("the maintain mode: no native recheck for a rule of {h}"));
                         return Ok(None);
@@ -7844,15 +7849,20 @@ impl<'a> Run<'a, '_> {
                 }
             };
             lines.push(SpecLine::Recheck { head: head_i, join: spec });
-            // A recursive rule's delta probes: the waves that carry the rows put back and added, and the drivers that
-            // find the rows reading a row gone.
+        }
+        let quiet = !lines.iter().any(|l| matches!(l, SpecLine::Remove { .. } | SpecLine::Seed { .. } | SpecLine::AddChecked { .. }));
+        // A recursive rule's delta probes: the waves that carry the rows put back and added, and the drivers that find
+        // the rows reading a row gone. Planned only when something changed, from the program's kept plans.
+        for (bi, b) in bodies.iter().enumerate().filter(|_| !quiet) {
+            let head_i = ri[vs.head_at(rules[bi])];
             for i in 0..b.len() {
                 let Lit::Atom(a) = b.view(i) else { continue };
                 if a.neg() || !scc.contains(b.rel(a)) {
                     continue;
                 }
                 self.model.late(pf, b, Some(i), false)?;
-                let (order, _, _) = self.model.plan_rule(pf, b, Some(i))?;
+                plan_site("the maintain mode's probe");
+                let ((order, _, _), _) = self.model.plan_rule_reused(pf, b, Some(i))?;
                 let at = order.iter().position(|st| st.at == i).expect("the delta atom");
                 let Some(spec) = self.whole_join_spec(b, &order, Some(at), &ri, scc, &native_rels) else {
                     self.why_not = Some(format!("the maintain mode: no native probe for a rule of {h}"));
@@ -7862,7 +7872,7 @@ impl<'a> Run<'a, '_> {
             }
         }
         // Quiet: no join to run. The relation is its kept one, its statistics as kept (`quiet_card`).
-        if !lines.iter().any(|l| matches!(l, SpecLine::Remove { .. } | SpecLine::Seed { .. } | SpecLine::AddChecked { .. })) {
+        if quiet {
             super::native::component::release(&self.db, &input_held);
             for (r, o) in olds {
                 let card = quiet_card(&mut self.model, &self.quiet, pf, &r, &o);
