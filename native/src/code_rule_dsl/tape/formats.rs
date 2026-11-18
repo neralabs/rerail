@@ -77,6 +77,19 @@ thread_local! {
     static AS_RUN: std::cell::Cell<Option<Format>> = const { std::cell::Cell::new(None) };
 }
 
+#[cfg(any(test, feature = "test-hooks"))]
+thread_local! {
+    /// The format 15 images this thread converted to format 16 or 16z (`TapeImage::in_format`): a parser's tape
+    /// made in format 15 first, which no format 16 run's parser does (decision 0399, R12).
+    static CONVERTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The format 15 images this thread has converted (`CONVERTED`).
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn converted() -> usize {
+    CONVERTED.get()
+}
+
 /// `f` as a run that stores `format`, on this thread: a test's, so that one process writes every format.
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn as_run<R>(format: Format, f: impl FnOnce() -> R) -> R {
@@ -174,6 +187,13 @@ impl Code {
 /// The run's format 16 target for `language`, each of the parser's keys numbered in the language's table through
 /// its code (`number`): `None` where the run stores format 15, or the language has no format 16 table (said once).
 fn sixteen(language: GrammarDialect, number: impl Fn(&'static Lang, u32) -> Option<u32> + Send + Sync + 'static) -> Option<rerail_tape_format::Sixteen> {
+    let (lang, tag, z) = run_16(language)?;
+    Some(rerail_tape_format::Sixteen { lang, tag, z, blocks: false, number: Arc::new(move |key| number(lang, key)) })
+}
+
+/// The language's format 16 table, its tag and whether the run stores 16z: `None` where the run stores format 15, or
+/// the language has no format 16 table (said once).
+fn run_16(language: GrammarDialect) -> Option<(&'static Lang, u8, bool)> {
     let format = Format::of_run();
     if format == Format::F15 {
         return None;
@@ -183,7 +203,107 @@ fn sixteen(language: GrammarDialect, number: impl Fn(&'static Lang, u32) -> Opti
         keeps_15(language, tag, "its language has no format 16 table");
         return None;
     };
-    Some(rerail_tape_format::Sixteen { lang, tag, z: format == Format::F16Z, blocks: false, number: Arc::new(move |key| number(lang, key)) })
+    Some((lang, tag, format == Format::F16Z))
+}
+
+/// The cursor walk's format 16 output (`tape::TreeOut`; decision 0399 §2): each node given to format 16's ops as the
+/// walk opens and closes it, its number the language's for its code, looked up once a code a document. A code the
+/// table lacks, or a node past format 16's bounds, makes `finish` `None` (said once a language): the walk is run
+/// again for format 15.
+pub(super) struct TreeOps {
+    language: GrammarDialect,
+    lang: &'static Lang,
+    tag: u8,
+    w: f16::Writer<'static>,
+    /// The open nodes' ends.
+    ends: Vec<u32>,
+    numbers: rustc_hash::FxHashMap<Code, u32>,
+    /// The document's contextual aliases, numbered by first use (a code's `alias`).
+    aliases: Vec<(String, bool)>,
+    bad: Option<String>,
+}
+
+impl TreeOps {
+    /// The run's format 16 output for a tree of `language` over `source`, of about `nodes` nodes: `None` where the
+    /// run stores format 15 (`run_16`).
+    pub(super) fn of_run(language: GrammarDialect, source: &[u8], nodes: usize) -> Option<Self> {
+        let (lang, tag, z) = run_16(language)?;
+        let w = f16::Writer::new(lang, source, tag, z, false, nodes);
+        Some(TreeOps { language, lang, tag, w, ends: Vec::with_capacity(64), numbers: Default::default(), aliases: Vec::new(), bad: None })
+    }
+
+    /// `v`'s number in the language's table, a member of `classes`: `Err` names a code the table lacks.
+    fn number(&mut self, v: &super::Visit, classes: &[u16]) -> Result<u32, String> {
+        let alias = match &v.kind_alias {
+            None => super::SENTINEL,
+            Some(a) => match self.aliases.iter().position(|x| x == a) {
+                Some(k) => k as u16,
+                None => {
+                    self.aliases.push(a.clone());
+                    (self.aliases.len() - 1) as u16
+                }
+            },
+        };
+        // A code's classes ascending, each once, as format 15's codes hold them.
+        let mut sorted = [0u16; super::MAX_NODE_SUPERTYPES];
+        let mut count = 0;
+        for &c in classes {
+            if !sorted[..count].contains(&c) {
+                *sorted.get_mut(count).ok_or("too many supertype memberships")? = c;
+                count += 1;
+            }
+        }
+        sorted[..count].sort_unstable();
+        let flags = u8::from(v.extra) * super::CODE_EXTRA | u8::from(v.error) * super::CODE_ERROR | u8::from(v.missing) * super::CODE_MISSING;
+        let code = Code { kf: v.kf, flags, alias, class_count: count as u8, classes: sorted };
+        if let Some(&n) = self.numbers.get(&code) {
+            return Ok(n);
+        }
+        let mut entry = code.entry();
+        entry.alias = v.kind_alias.clone();
+        let n = self.lang.number(&entry).ok_or_else(|| format!("code {entry:?} is not in the language's table"))?;
+        self.numbers.insert(code, n);
+        Ok(n)
+    }
+
+    /// The tape, or `None` where the nodes are not a format 16 tape (said once a language).
+    pub(super) fn finish(self) -> Option<f16::Written> {
+        let why = match self.bad {
+            Some(why) => why,
+            None => match self.w.finish() {
+                Ok(f) => return Some(f.tape),
+                Err(e) => e,
+            },
+        };
+        keeps_15(self.language, self.tag, &why);
+        None
+    }
+}
+
+impl super::TreeOut for TreeOps {
+    fn open(&mut self, v: super::Visit, _parent: Option<u32>, classes: &[u16]) -> Result<u32, String> {
+        let index = self.w.len() as u32;
+        let number = if self.bad.is_some() {
+            0
+        } else {
+            self.number(&v, classes).unwrap_or_else(|why| {
+                self.bad = Some(why);
+                0
+            })
+        };
+        self.w.open(number, u64::from(v.start));
+        // A walk never edits a node it wrote: each block is final once its nodes close, and 16z's pieces are
+        // compressed then, not at the end.
+        self.w.commit();
+        self.ends.push(v.end);
+        Ok(index)
+    }
+
+    fn close(&mut self) {
+        if let Some(end) = self.ends.pop() {
+            self.w.close(u64::from(end));
+        }
+    }
 }
 
 /// The sink a lean parser's writer is given (`rerail_*_lean::tape_into`; decisions 0293, 0399): the tape in the run's
@@ -251,6 +371,8 @@ impl TapeImage {
             }
         };
         // One pass over format 15's columns, to format 16 or straight to 16z's blocks.
+        #[cfg(any(test, feature = "test-hooks"))]
+        CONVERTED.set(CONVERTED.get() + 1);
         let held = match f16::write_from(lang, &F15::over(c.laid_out().0, c.view(), table), &number, source, tag, format == Format::F16Z) {
             Ok(f16::Written::F16(t)) => Held::F16(Arc::new(t)),
             Ok(f16::Written::F16Z(t)) => Held::F16Z(Arc::new(t)),

@@ -5267,6 +5267,88 @@ fn the_lean_parsers_write_each_format_directly() {
     eprintln!("written directly: {direct:?}");
 }
 
+/// Decision 0399 §2 (step 3): tree-sitter's cursor walk, in a run of format 16 or 16z, writes that format by format
+/// 16's ops as it walks (`formats::TreeOps`), never format 15's nodes. The tape is the bytes format 15's image
+/// converts to: supertypes, contextual aliases, extras and error nodes among its codes.
+#[test]
+fn the_cursor_walk_writes_each_format_directly() {
+    use super::formats::{Format, as_run};
+    use ast_grep_language::LanguageExt;
+    let python: String = (0..300).map(|i| format!("@d\nclass C{i}(B):\n    def f(self, x={i}):  # c\n        return [y for y in x if y]\n")).collect();
+    let cases: Vec<(GrammarDialect, String)> = vec![
+        (GrammarDialect::Python, python),
+        (GrammarDialect::Python, "def f(:\n    pass\n".into()),
+        (GrammarDialect::JavaScript, "const x = (a) => a?.b ?? 1; // c\nfunction f(y) { return <div>{y}</div>; }\n".into()),
+        (GrammarDialect::TypeScript, "interface A { x?: number }\nconst x: A = {};\n".into()),
+        (GrammarDialect::Rust, "fn main() { let x = Some(1); if let Some(y) = x { println!(\"{y}\"); } }\n".into()),
+        (GrammarDialect::Go, "package main\nfunc main() { x := 1; _ = x }\n".into()),
+        (GrammarDialect::Java, "class A { void f() { int x = 1; } }\n".into()),
+        (GrammarDialect::Php, "<?php function f($x) { return $x + 1; }\n".into()),
+        (GrammarDialect::Css, "a { color: red; }\n".into()),
+        (GrammarDialect::CSharp, "class A { void F() { var x = 1; } }\n".into()),
+        (GrammarDialect::Ruby, "def f(x)\n  x + 1\nend\n".into()),
+    ];
+    let mut direct = Vec::new();
+    for (lang, source) in cases {
+        let grammar = Grammar::new(lang).unwrap();
+        let mut parser = tree_sitter::Parser::new();
+        parser.set_language(&lang.get_ts_language()).unwrap();
+        let tree = parser.parse(&source, None).unwrap();
+        let encode = || TapeImage::encode_tree_image(tree.root_node(), &grammar, &source, None, &|| false);
+        let reference = as_run(Format::F15, encode).unwrap_or_else(|e| panic!("{lang:?}: {e}"));
+        let has_table = crate::code_rule_dsl::language::tape_tag(lang).and_then(rerail_tape_format::f16::lang).is_some();
+        if !has_table {
+            continue;
+        }
+        for format in [Format::F16, Format::F16Z] {
+            let image = as_run(format, encode).unwrap();
+            let at = format!("{lang:?} in {}", format.name());
+            assert_eq!(image.format(), format, "{at}: written in the run's format");
+            assert_eq!(image.source_digest, reference.source_digest, "{at}");
+            assert_eq!(image.to_bytes().unwrap(), reference.clone().in_format(format, source.as_bytes()).to_bytes().unwrap(), "{at}: bytes");
+            direct.push(at);
+        }
+    }
+    assert!(direct.iter().any(|d| d.starts_with("Python")), "the tables cover Python: {direct:?}");
+    eprintln!("written directly: {direct:?}");
+}
+
+/// Decision 0399, R12: in a run of format 16 or 16z, every parser writes the run's format itself (the lean parsers
+/// through their `Sink`, tree-sitter's cursor walk, Blade's Forte tree, the format strings' trees and the embedded
+/// programs' documents through `TapeImage::walked`): a file's documents are never format 15's first, converted
+/// (`formats::converted`). JSON's parsers (simdjson's kernels, and tier 2) write format 15 until they call the ops (0399
+/// step 3).
+#[test]
+fn no_intermediate_tape() {
+    use super::formats::{Format, as_run, converted};
+    let cases: Vec<(GrammarDialect, &str)> = vec![
+        (GrammarDialect::Python, "def f(x):\n    return '%s' % x  # c\n"),
+        (GrammarDialect::JavaScript, "const x = (a) => a?.b ?? 1; // eslint-disable-line no-x\n"),
+        (GrammarDialect::TypeScript, "interface A { x?: number }\nconst x: A = {};\n"),
+        (GrammarDialect::Tsx, "const A = () => <div title=\"x\">text</div>;\n"),
+        (GrammarDialect::Rust, "fn main() { println!(\"{}\", 1); }\n"),
+        (GrammarDialect::Php, "<?php function f($x) { return sprintf('%d', $x); }\n"),
+        (GrammarDialect::Blade, "<div>{{ $x }}</div>\n@if($y)\n<p>{!! $z !!}</p>\n@endif\n"),
+        (GrammarDialect::Sql, "SELECT a FROM t;\n"),
+        (GrammarDialect::Vue, "<template><div>{{ value }}</div></template>\n<script>\nlet value = 1;\n</script>\n"),
+        (GrammarDialect::Rr, ".decl item(n:number)\nitem(1).\n"),
+    ];
+    for format in [Format::F16, Format::F16Z] {
+        for &(lang, source) in &cases {
+            let grammar = Grammar::new(lang).unwrap();
+            let before = converted();
+            let image = as_run(format, || TapeImage::parse(&grammar, source, &|| false)).unwrap().unwrap();
+            let at = format!("{lang:?} in {}", format.name());
+            assert_eq!(converted(), before, "{at}: a document made in format 15 and converted");
+            let docs = std::iter::once((&image.primary, lang)).chain(image.derived.iter().map(|d| (&d.tape, d.dialect())));
+            for (tape, dialect) in docs {
+                let has_table = crate::code_rule_dsl::language::tape_tag(dialect).and_then(rerail_tape_format::f16::lang).is_some();
+                assert_eq!(tape.format(), if has_table { format } else { Format::F15 }, "{at}: its {dialect:?} document");
+            }
+        }
+    }
+}
+
 /// The reads written once in CLIF (decision 0310), JIT-compiled whole, read a document's tape where it is held as
 /// the document reads it, in every format a run may hold: format 15's columns in their one buffer, format 16's
 /// arrays, and a 16z tape's blocks laid out as format 16 once. Every node's code (through the device's codes: kind,

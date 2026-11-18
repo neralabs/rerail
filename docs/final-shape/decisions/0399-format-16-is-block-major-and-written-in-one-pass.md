@@ -111,7 +111,11 @@ tail        the four side lists (each block's part, as today), their part starts
     `Writer::new(…).to(sink.target(), src)`. A closure is a sink for format 15. Each key's number is the language's
     number of its code (`Sixteen::number`), resolved once a code id;
   - tier 2's tape words (LEAF, OPEN, CLOSE, MERGE, WRAP, RETAG, drop, ACCEPT) become calls of them;
-  - tree-sitter's cursor walk calls `open`, `leaf` and `close` directly.
+  - tree-sitter's cursor walk calls `open`, `leaf` and `close` directly, through an output trait (`TreeOut`) whose
+    other implementation is format 15's pending nodes. Every walk that writes a tree uses it, through
+    `TapeImage::walked`: the cursor walk, an embedded program's tape with its placeholders left out
+    (`omitting`), Blade's Forte tree and the format strings' trees. A walk never edits a node, so it commits after
+    each one, and 16z's blocks are compressed as soon as their nodes close.
 - **Format 15 keeps its writer until it is dropped.**
 
 ### 3. 16 and 16z: a block sink
@@ -181,6 +185,13 @@ tail        the four side lists (each block's part, as today), their part starts
   (R1, R11). The GPU's time on the label kernels, M3 Max, under load (28–60): 265k–282k µs, against 388k µs for the
   same run with the reads off and 480k–830k µs recorded earlier that day. That spread is the machine's sharing, so
   the new addressing costs nothing measurable.
+- **Step 3, first part.** The cursor walk, `omitting`, Blade and the format strings write through `walked`.
+  `no_intermediate_tape` parses one file in each language with a format 16 table, through the engine's entry
+  point, and finds no document made in format 15 first. The exceptions:
+  - JSON's parsers: simdjson's kernels (`rerail_simdjson`, which write format 15's columns), and tier 2, until they
+    call the ops;
+  - the lean parsers whose languages have no table yet (C and C++, Go, Kotlin, Scala, Swift). They take a `Sink`
+    when their tables come.
 - **Step 2.** The edits are made in the caller's window, not in the tape (amended §2). The decision first had the
   ops move a block's cells for a wrap, re-encoding the siblings' slots and the checkpoints after it. But the lean
   parsers already make every edit in their own columns, and their commits mark where edits stop, so only a retag

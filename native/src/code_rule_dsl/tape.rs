@@ -971,14 +971,62 @@ pub fn with_all_tokens<T>(f: impl FnOnce() -> T) -> T {
     out
 }
 
-/// Appends `root`'s tree to `nodes` in preorder, `language` its grammar. An embedded program's
-/// placeholders its segments mark (`omitted`) are left out, with their subtrees.
-/// Tree-sitter's tree under `root` into `nodes`, in preorder. Where `filter` (the grammar's token
-/// automata) is given, a token it implies is skipped as the walk meets it: it is never a record
-/// (`tokens::TokenGrammar::stored_children`, RER-131).
+/// A tree-sitter node as the cursor walk reads it (`visit`): its code's kind and field, its span and flags, and its
+/// contextual alias.
+pub struct Visit {
+    pub kf: u16,
+    pub start: u32,
+    pub end: u32,
+    pub extra: bool,
+    pub error: bool,
+    pub missing: bool,
+    pub kind_alias: Option<(String, bool)>,
+}
+
+/// Where the cursor walk writes a tree's nodes, in preorder (decision 0399 §2): format 15's pending nodes
+/// (`Pendings`), or format 16's ops (`formats::TreeOps`). The walk is the same for both.
+pub trait TreeOut {
+    /// Node `v` under `parent` (an index this gave), open, a member of the supertypes `classes`: its index.
+    fn open(&mut self, v: Visit, parent: Option<u32>, classes: &[u16]) -> Result<u32, String>;
+    /// The innermost open node's subtree is written.
+    fn close(&mut self);
+}
+
+/// Format 15's output of the walk: the nodes, their sizes added up at `TapeImage::finish`, and each supertype
+/// membership.
+#[derive(Default)]
+struct Pendings {
+    nodes: Vec<Pending>,
+    supertypes: Vec<(u32, u16)>,
+}
+
+impl TreeOut for Pendings {
+    fn open(&mut self, v: Visit, parent: Option<u32>, classes: &[u16]) -> Result<u32, String> {
+        let index = u32::try_from(self.nodes.len()).map_err(|_| "rec6 node count overflow")?;
+        self.nodes.push(Pending {
+            kf: v.kf,
+            parent,
+            start: v.start,
+            length: v.end - v.start,
+            size: 1,
+            extra: v.extra,
+            error: v.error,
+            missing: v.missing,
+            kind_alias: v.kind_alias,
+        });
+        self.supertypes.extend(classes.iter().map(|&class| (index, class)));
+        Ok(index)
+    }
+
+    fn close(&mut self) {}
+}
+
+/// Tree-sitter's tree under `root` written to `out` in preorder, `language` its grammar. An embedded
+/// program's placeholders its segments mark (`omitted`) are left out, with their subtrees. Where
+/// `filter` (the grammar's token automata) is given, a token it implies is skipped as the walk meets
+/// it: it is never a record (`tokens::TokenGrammar::stored_children`, RER-131).
 fn encode_tree(
-    nodes: &mut Vec<Pending>,
-    supertypes: &mut Vec<(u32, u16)>,
+    out: &mut (impl TreeOut + ?Sized),
     root: TsNode<'_>,
     language: &Language,
     filter: Option<&tokens::TokenGrammar>,
@@ -1017,13 +1065,11 @@ fn encode_tree(
             let (classes, count, field) = cursor_status(&cursor);
             let extra = node.is_extra();
             let field = if extra { 0 } else { field };
-            let index = encode_node(nodes, node, parent, field, extra, language, &mut catalog)?;
-            for class in classes.into_iter().take(count) {
-                if usize::from(class) >= KIND_LIMIT {
-                    return Err("supertype symbol exceeds tape limit".into());
-                }
-                supertypes.push((index, class));
+            let classes = &classes[..count];
+            if classes.iter().any(|&class| usize::from(class) >= KIND_LIMIT) {
+                return Err("supertype symbol exceeds tape limit".into());
             }
+            let index = out.open(visit(node, field, extra, language, &mut catalog)?, parent, classes)?;
             if cursor.goto_first_child() {
                 above.push(parent);
                 parent = Some(index);
@@ -1032,6 +1078,7 @@ fn encode_tree(
                 place = 0;
                 continue;
             }
+            out.close();
         }
         // The next sibling, of this node or of its nearest ancestor that has one.
         loop {
@@ -1043,6 +1090,7 @@ fn encode_tree(
                 break;
             }
             cursor.goto_parent();
+            out.close();
             above.pop();
             parent = grandparent;
             if let Some(mask) = stored.take() { scratch.recycle(mask); }
@@ -1051,17 +1099,14 @@ fn encode_tree(
     }
 }
 
-/// Appends `node` under `parent` as the child in `field`; its tape index.
-fn encode_node<'l>(
-    nodes: &mut Vec<Pending>,
+/// `node` as the child in `field`, checked against the tape's limits.
+fn visit<'l>(
     node: TsNode<'_>,
-    parent: Option<u32>,
     field: u16,
     extra: bool,
     language: &'l Language,
     catalog: &mut [Option<(Option<&'l str>, bool)>],
-) -> Result<u32, String> {
-    let index = u32::try_from(nodes.len()).map_err(|_| "rec6 node count overflow")?;
+) -> Result<Visit, String> {
     let code = node.kind_id();
     let kind = usize::from(code);
     // ts_node_is_error repeats ts_node_symbol. The pinned runtime defines it
@@ -1093,7 +1138,7 @@ fn encode_node<'l>(
     }
     let start = u32::try_from(span.start).map_err(|_| "node span overflow")?;
     let end = u32::try_from(span.end).map_err(|_| "node span overflow")?;
-    let length = end.checked_sub(start).ok_or("inverted node span")?;
+    end.checked_sub(start).ok_or("inverted node span")?;
     let kind_alias = if error {
         None
     } else {
@@ -1113,18 +1158,7 @@ fn encode_node<'l>(
         });
         (!same_name || named != node.is_named()).then(|| (node.kind().to_owned(), node.is_named()))
     };
-    nodes.push(Pending {
-        kf: if error { ERROR_CODE } else { code } | (field << 10),
-        parent,
-        start,
-        length,
-        size: 1,
-        extra,
-        error,
-        missing,
-        kind_alias,
-    });
-    Ok(index)
+    Ok(Visit { kf: if error { ERROR_CODE } else { code } | (field << 10), start, end, extra, error, missing, kind_alias })
 }
 
 impl TapeImage {
@@ -1448,11 +1482,8 @@ impl TapeImage {
         {
             return Err("source exceeds tape range or does not match parsed root".into());
         }
-        let mut nodes = Vec::<Pending>::new();
-        let mut supertypes = Vec::new();
         let filter = if ALL_TOKENS.get() { None } else { tokens::TokenGrammar::of(grammar.lang, language) };
-        encode_tree(&mut nodes, &mut supertypes, root, language, filter.as_deref(), omitted, budget)?;
-        Self::finish(nodes, supertypes, grammar, source, budget)
+        Self::walked(grammar, source, root.descendant_count(), budget, |out| encode_tree(out, root, language, filter.as_deref(), omitted, budget))
     }
 
     /// The tape of a `.rr` file: the tree `logic::rr::syntax` builds as it reads the statements, its comments as
@@ -1519,16 +1550,36 @@ impl TapeImage {
         if !omitted {
             return Ok(self.clone());
         }
-        let (nodes, supertypes) = rerail_tape_format::with_tape!(self.tape(), |t| Self::kept(&t, segments, budget))?;
-        Self::finish(nodes, supertypes, grammar, source, budget)
+        let count = rerail_tape_format::with_tape!(self.tape(), |t| t.len());
+        Self::walked(grammar, source, count, budget, |out| rerail_tape_format::with_tape!(self.tape(), |t| Self::kept(&t, segments, out, budget)))
     }
 
-    /// The nodes of `t` that `segments` does not omit, nor any of their ancestors, as `finish` takes them.
-    fn kept<T: Tape>(t: &T, segments: &SegmentMap, budget: &impl Fn() -> bool) -> Result<(Vec<Pending>, Vec<(u32, u16)>), String> {
+    /// The tape `walk` writes in preorder, in the run's format (decision 0399 §2): by format 16's ops where the run
+    /// stores 16 or 16z and the language has a table, no format 15 node made; else format 15's nodes, packed at
+    /// `finish`. `nodes` is about the nodes `walk` writes. Where format 16 cannot hold the nodes (a code the table
+    /// lacks, said once a language), `walk` runs again for format 15.
+    pub fn walked(
+        grammar: &Grammar,
+        source: &str,
+        nodes: usize,
+        budget: &impl Fn() -> bool,
+        mut walk: impl FnMut(&mut dyn TreeOut) -> Result<(), String>,
+    ) -> Result<Self, String> {
+        if let Some(mut ops) = formats::TreeOps::of_run(grammar.lang, source.as_bytes(), nodes) {
+            walk(&mut ops)?;
+            if let Some(written) = ops.finish() {
+                return Self::written_16(written, grammar.lang, source, budget);
+            }
+        }
+        let mut out = Pendings::default();
+        walk(&mut out)?;
+        Self::finish(out.nodes, out.supertypes, grammar, source, budget)
+    }
+
+    /// The nodes of `t` that `segments` does not omit, nor any of their ancestors, written to `out` in preorder.
+    fn kept<T: Tape>(t: &T, segments: &SegmentMap, out: &mut (impl TreeOut + ?Sized), budget: &impl Fn() -> bool) -> Result<(), String> {
         let count = t.len();
-        let mut nodes = Vec::<Pending>::with_capacity(count);
-        let mut supertypes = Vec::new();
-        // Per open ancestor: its index in `nodes`, and where its subtree ends in `t`.
+        // Per open ancestor: its index in `out`, and where its subtree ends in `t`.
         let mut open: Vec<(u32, usize)> = Vec::new();
         let mut i = 0;
         while i < count {
@@ -1537,6 +1588,7 @@ impl TapeImage {
             }
             while open.last().is_some_and(|&(_, last)| last <= i) {
                 open.pop();
+                out.close();
             }
             let (start, end, until) = (t.start(i), t.end(i), t.subtree_end(i));
             if segments.omitted(start as usize..end as usize) {
@@ -1544,27 +1596,26 @@ impl TapeImage {
                 continue;
             }
             let code = t.table().entry(t.code(i));
-            let index = u32::try_from(nodes.len()).map_err(|_| "rec6 node count overflow")?;
-            let start = u32::try_from(start).map_err(|_| "span outside source")?;
-            nodes.push(Pending {
+            if code.alias.is_some() {
+                return Err("a written tape's contextual alias".into());
+            }
+            let visit = Visit {
                 kf: code.kind | code.field << rerail_tape_format::KIND_BITS,
-                parent: open.last().map(|&(at, _)| at),
-                start,
-                length: u32::try_from(end).map_err(|_| "span outside source")? - start,
-                size: 1,
+                start: u32::try_from(start).map_err(|_| "span outside source")?,
+                end: u32::try_from(end).map_err(|_| "span outside source")?,
                 extra: code.flags & CODE_EXTRA != 0,
                 error: code.flags & CODE_ERROR != 0,
                 missing: code.flags & CODE_MISSING != 0,
                 kind_alias: None,
-            });
-            if code.alias.is_some() {
-                return Err("a written tape's contextual alias".into());
-            }
-            supertypes.extend(code.classes.iter().map(|&class| (index, class)));
+            };
+            let index = out.open(visit, open.last().map(|&(at, _)| at), &code.classes)?;
             open.push((index, until));
             i += 1;
         }
-        Ok((nodes, supertypes))
+        for _ in open {
+            out.close();
+        }
+        Ok(())
     }
 
     /// An image from columns a parser wrote itself, in this format (codes numbered by first use, `base`

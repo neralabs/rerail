@@ -2249,8 +2249,12 @@ holds the design, its requirements (R1–R12) and its steps.
 - **Done** (2026-11-18, step 2, first part): `retag` and `set_start` in the ops; every lean parser takes a `Sink`, and
   its writer passes committed nodes to the ops in a format 16 run. Python, ECMAScript and `.rr` commit at their
   statements; the others pass everything at the end.
-- **Next**: the lean writer's columns shrink to the window (no column for nodes passed on), and the other lean
-  parsers commit at their statements; then step 3 (tree-sitter's cursor walk on the ops).
+- **Done** (2026-11-18, step 3, first part): the cursor walk, `omitting`, Blade and the format strings write by the
+  ops through `TapeImage::walked` (`TreeOut`); `no_intermediate_tape` (R12) holds for every language with a table
+  but JSON.
+- **Next**: JSON's parsers on the ops (simdjson's kernels' tape writer, and tier 2's words); the lean writer's columns shrink to the window, and the lean parsers
+  that do not commit yet commit at their statements; C, C++, Go, Kotlin, Scala and Swift take a `Sink` when their
+  tables come.
 
 ### Q181. (Q136 on oscar until 2026-11-18; Q25 on sync-integration-hub-tape) The label pipelines compile cold for 110 s
 
