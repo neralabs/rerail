@@ -258,76 +258,140 @@ impl Drop for Event {
     }
 }
 
-/// `LockFileEx` on the overlapped handle returns at once with the request pending; its completion
-/// signals the event. At the bound `CancelIoEx` ends the request, and its result then says whether
-/// the OS granted it first, so no request outlives the wait.
+/// What `LockFileEx` did with a request for the lock on an overlapped handle.
 #[cfg(windows)]
-fn wait_for_lock(file: File, wait: Duration) -> std::io::Result<Option<File>> {
+enum Requested {
+    /// The lock was free: the request completed at once.
+    Granted(File),
+    /// Another handle holds the lock: the OS queued the request.
+    Pending(PendingLock),
+}
+
+/// A lock request the OS queued (`LockFileEx` answered `ERROR_IO_PENDING`); it completes when the OS hands the lock
+/// over. It owns the handle, the event and the OVERLAPPED the request uses, and one dropped before its request ended
+/// cancels it and waits for it to end, so no request outlives them.
+#[cfg(windows)]
+struct PendingLock {
+    handle: std::os::windows::io::RawHandle,
+    file: Option<File>,
+    event: Event,
+    // Boxed: the OS may write to it until the request ends, so it must not move.
+    overlapped: Box<windows_sys::Win32::System::IO::OVERLAPPED>,
+    ended: bool,
+}
+
+/// Asks the OS for the lock on `file`'s overlapped handle without the fail-at-once flag. A held lock leaves the request
+/// queued: `LockFileEx` returns at once, and the request completes at the hand-over.
+#[cfg(windows)]
+fn request_lock(file: File) -> std::io::Result<Requested> {
     use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::ERROR_IO_PENDING;
     use windows_sys::Win32::Storage::FileSystem::{LOCKFILE_EXCLUSIVE_LOCK, LockFileEx};
-    use windows_sys::Win32::System::IO::OVERLAPPED;
 
     let handle = file.as_raw_handle();
     let event = Event::new()?;
     // SAFETY: an all-zero OVERLAPPED is valid; offset 0 and the whole length are the range
     // `File::try_lock` locks, so the two conflict.
-    let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+    let mut overlapped: Box<windows_sys::Win32::System::IO::OVERLAPPED> =
+        Box::new(unsafe { std::mem::zeroed() });
     overlapped.hEvent = event.0;
-    // SAFETY: the handle, the event and the OVERLAPPED outlive the request: it completes, or is
-    // cancelled and waited for, before any of them goes.
-    let requested = unsafe {
+    // SAFETY: the handle, the event and the OVERLAPPED outlive the request: a queued one is
+    // `PendingLock`'s, which ends it before any of them goes.
+    let granted = unsafe {
         LockFileEx(
             handle,
             LOCKFILE_EXCLUSIVE_LOCK,
             0,
             u32::MAX,
             u32::MAX,
-            &mut overlapped,
+            &mut *overlapped,
         )
     } != 0;
+    if granted {
+        return Ok(Requested::Granted(file));
+    }
     // Read right after the call: a request that did not complete at once says why in the last error.
-    let granted = requested || granted_within(handle, &overlapped, &event, wait)?;
-    Ok(granted.then_some(file))
-}
-
-/// Whether the lock request that `LockFileEx` just left pending is granted within `wait`: waits for
-/// its event, cancels it at the bound, then waits for it to end either way.
-#[cfg(windows)]
-fn granted_within(
-    handle: std::os::windows::io::RawHandle,
-    overlapped: &windows_sys::Win32::System::IO::OVERLAPPED,
-    event: &Event,
-    wait: Duration,
-) -> std::io::Result<bool> {
-    use windows_sys::Win32::Foundation::{
-        ERROR_IO_PENDING, ERROR_OPERATION_ABORTED, WAIT_OBJECT_0,
-    };
-    use windows_sys::Win32::System::IO::{CancelIoEx, GetOverlappedResult};
-    use windows_sys::Win32::System::Threading::{INFINITE, WaitForSingleObject};
-
     let error = std::io::Error::last_os_error();
     if error.raw_os_error() != Some(ERROR_IO_PENDING as i32) {
         return Err(error);
     }
-    // INFINITE is u32::MAX: a longer bound is one millisecond short of it, never no bound.
-    let millis = u32::try_from(wait.as_millis())
-        .unwrap_or(INFINITE)
-        .min(INFINITE - 1);
-    // SAFETY: the event is valid. A wait that ends any other way than signalled cancels the
-    // request, so the result below waits only for that request to end.
-    if unsafe { WaitForSingleObject(event.0, millis) } != WAIT_OBJECT_0 {
-        unsafe { CancelIoEx(handle, overlapped) };
+    Ok(Requested::Pending(PendingLock {
+        handle,
+        file: Some(file),
+        event,
+        overlapped,
+        ended: false,
+    }))
+}
+
+#[cfg(windows)]
+impl PendingLock {
+    /// Whether the OS grants the request within `wait`: waits for its event, cancels it at the bound, then waits for it
+    /// to end either way, so its result says whether the OS granted it before the cancel.
+    fn granted_within(mut self, wait: Duration) -> std::io::Result<Option<File>> {
+        use windows_sys::Win32::Foundation::{ERROR_OPERATION_ABORTED, WAIT_OBJECT_0};
+        use windows_sys::Win32::System::Threading::{INFINITE, WaitForSingleObject};
+
+        // INFINITE is u32::MAX: a longer bound is one millisecond short of it, never no bound.
+        let millis = u32::try_from(wait.as_millis())
+            .unwrap_or(INFINITE)
+            .min(INFINITE - 1);
+        // SAFETY: the event is this request's own and valid.
+        if unsafe { WaitForSingleObject(self.event.0, millis) } != WAIT_OBJECT_0 {
+            self.cancel();
+        }
+        match self.end() {
+            Ok(()) => Ok(self.file.take()),
+            Err(error) if error.raw_os_error() == Some(ERROR_OPERATION_ABORTED as i32) => Ok(None),
+            Err(error) => Err(error),
+        }
     }
-    let mut transferred = 0u32;
-    // SAFETY: waits for this handle's one request to complete or end cancelled.
-    if unsafe { GetOverlappedResult(handle, overlapped, &mut transferred, 1) } != 0 {
-        return Ok(true);
+
+    fn cancel(&self) {
+        // SAFETY: cancels this handle's one request if it has not ended; `end` reads its result.
+        unsafe { windows_sys::Win32::System::IO::CancelIoEx(self.handle, &*self.overlapped) };
     }
-    let error = std::io::Error::last_os_error();
-    if error.raw_os_error() == Some(ERROR_OPERATION_ABORTED as i32) {
-        return Ok(false);
+
+    /// Waits for the request to complete or end cancelled: `Ok` when the OS granted it.
+    fn end(&mut self) -> std::io::Result<()> {
+        let mut transferred = 0u32;
+        // SAFETY: waits for this handle's one request; the OVERLAPPED is valid until then.
+        let completed = unsafe {
+            windows_sys::Win32::System::IO::GetOverlappedResult(
+                self.handle,
+                &*self.overlapped,
+                &mut transferred,
+                1,
+            )
+        } != 0;
+        let ended = if completed {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        };
+        self.ended = true;
+        ended
     }
-    Err(error)
+}
+
+#[cfg(windows)]
+impl Drop for PendingLock {
+    fn drop(&mut self) {
+        if !self.ended {
+            self.cancel();
+            let _ = self.end();
+        }
+    }
+}
+
+/// The OS queues the request for a held lock, and the wait for it has a bound: at the bound `CancelIoEx` ends the
+/// request, and its result then says whether the OS granted it first, so no request outlives the wait.
+#[cfg(windows)]
+fn wait_for_lock(file: File, wait: Duration) -> std::io::Result<Option<File>> {
+    match request_lock(file)? {
+        Requested::Granted(file) => Ok(Some(file)),
+        Requested::Pending(pending) => pending.granted_within(wait),
+    }
 }
 
 #[cfg(test)]
@@ -352,7 +416,81 @@ mod tests {
     }
 
     /// Bounds a wait the test expects to end at a release, so a regression fails instead of hanging.
+    #[cfg(any(target_os = "linux", windows))]
     const NEVER: Duration = Duration::from_secs(60);
+    /// Bounds a step the test expects at once (a request queued in the kernel, a handler run, a thread
+    /// ended, a wait given up), so one that never comes fails in seconds.
+    #[cfg(any(target_os = "linux", windows))]
+    const SOON: Duration = Duration::from_secs(10);
+
+    /// Spins until `done`, failing when it is not so within [`SOON`].
+    #[cfg(any(target_os = "linux", windows))]
+    fn until(what: &str, mut done: impl FnMut() -> bool) {
+        let deadline = std::time::Instant::now() + SOON;
+        while !done() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{what}: not within {SOON:?}"
+            );
+            std::thread::yield_now();
+        }
+    }
+
+    /// The thread blocked asking the OS for the lock on `fd` without the fail-at-once flag,
+    /// `flock(fd, LOCK_EX)`, once one is: Linux names the system call each thread is blocked in, then
+    /// its arguments (`/proc/self/task/<tid>/syscall`). Fails when `ended` says the wait ended first.
+    #[cfg(target_os = "linux")]
+    fn thread_blocked_in_flock(fd: std::os::fd::RawFd, ended: impl Fn() -> bool) -> String {
+        let blocked = format!("{} {:#x} {:#x} ", libc::SYS_flock, fd, libc::LOCK_EX);
+        let mut found = None;
+        until("a thread asks the OS for the lock and waits", || {
+            assert!(
+                !ended(),
+                "the wait ended before it asked the OS for the lock"
+            );
+            found = task_in_syscall(&blocked);
+            found.is_some()
+        });
+        found.unwrap_or_default()
+    }
+
+    /// The first of this process's threads whose system call line starts with `blocked`.
+    #[cfg(target_os = "linux")]
+    fn task_in_syscall(blocked: &str) -> Option<String> {
+        std::fs::read_dir("/proc/self/task")
+            .ok()?
+            .flatten()
+            .find_map(|task| {
+                let syscall = std::fs::read_to_string(task.path().join("syscall")).ok()?;
+                syscall
+                    .starts_with(blocked)
+                    .then(|| task.file_name().to_string_lossy().into_owned())
+            })
+    }
+
+    /// The request a held lock leaves queued in the kernel (`ERROR_IO_PENDING`).
+    #[cfg(windows)]
+    fn queued(file: File) -> PendingLock {
+        match request_lock(file).unwrap() {
+            Requested::Pending(pending) => pending,
+            Requested::Granted(_) => {
+                panic!("a request for a held lock must be queued in the kernel")
+            }
+        }
+    }
+
+    #[cfg(any(target_os = "linux", windows))]
+    fn assert_handed(taken: std::io::Result<Option<File>>, path: &str) {
+        let taken = taken.unwrap();
+        assert!(
+            taken.is_some(),
+            "the waiter holds the lock once its holder let go"
+        );
+        assert!(
+            try_lock_exclusive(path.to_owned()).unwrap().is_none(),
+            "the lock the waiter was handed is held"
+        );
+    }
 
     #[test]
     fn a_held_lock_refuses_every_other_handle_until_released() {
@@ -374,55 +512,69 @@ mod tests {
         std::fs::remove_dir_all(directory).unwrap();
     }
 
+    // The wait's tests run where a test can see the request queued in the kernel before the holder lets
+    // go, so the OS, not a later try, hands the lock over: Linux and Windows, where CI runs them.
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_waiter_is_handed_the_lock_at_its_holders_release() {
+        use std::os::fd::AsRawFd;
+        let (directory, path) = lock_path("handover");
+        let held = try_lock_exclusive(path.clone()).unwrap().unwrap();
+        let file = open_waiting_lock_file(&path).unwrap();
+        let fd = file.as_raw_fd();
+        let waiter = std::thread::spawn(move || wait_for_lock(file, NEVER));
+        thread_blocked_in_flock(fd, || waiter.is_finished());
+        held.release();
+
+        assert_handed(waiter.join().unwrap(), &path);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[cfg(windows)]
     #[test]
     fn a_waiter_is_handed_the_lock_at_its_holders_release() {
         let (directory, path) = lock_path("handover");
         let held = try_lock_exclusive(path.clone()).unwrap().unwrap();
-        let (started, waiting) = mpsc::channel();
-        let file = open_waiting_lock_file(&path).unwrap();
-        let waiter = std::thread::spawn(move || {
-            started.send(()).unwrap();
-            wait_for_lock(file, NEVER)
-        });
-        waiting.recv().unwrap();
+        let pending = queued(open_waiting_lock_file(&path).unwrap());
         held.release();
 
-        let taken = waiter.join().unwrap().unwrap();
-        assert!(
-            taken.is_some(),
-            "the waiter holds the lock once its holder let go"
-        );
-        assert!(
-            try_lock_exclusive(path.clone()).unwrap().is_none(),
-            "the lock the waiter was handed is held"
-        );
-        drop(taken);
+        assert_handed(pending.granted_within(NEVER), &path);
         std::fs::remove_dir_all(directory).unwrap();
     }
 
+    #[cfg(any(target_os = "linux", windows))]
     #[test]
     fn a_wait_given_up_at_its_bound_never_ends_up_holding_the_lock() {
         let (directory, path) = lock_path("given-up");
         let held = try_lock_exclusive(path.clone()).unwrap().unwrap();
-
-        let given_up = wait_for_lock(
-            open_waiting_lock_file(&path).unwrap(),
-            Duration::from_millis(20),
-        );
+        let file = open_waiting_lock_file(&path).unwrap();
+        #[cfg(target_os = "linux")]
+        let fd = std::os::fd::AsRawFd::as_raw_fd(&file);
+        // On a thread of its own, so a wait whose cancel is lost fails here in seconds instead of hanging.
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || sender.send(wait_for_lock(file, Duration::from_millis(20))));
+        let given_up = receiver
+            .recv_timeout(SOON)
+            .expect("a wait ends at its bound");
         assert!(
             given_up.unwrap().is_none(),
             "a wait whose holder stays ends empty at its bound"
         );
+        // Unix: the given-up wait's helper is still blocked in flock, and is handed the lock at the
+        // release. Windows ended the request before the wait returned.
+        #[cfg(target_os = "linux")]
+        let helper = thread_blocked_in_flock(fd, || false);
         held.release();
+        #[cfg(target_os = "linux")]
+        until("the given-up wait's helper ends", || {
+            !std::path::Path::new(&format!("/proc/self/task/{helper}")).exists()
+        });
 
-        // Whatever the given-up wait's request does at the release, it lets go: the next waiter is
-        // handed the lock, long before its own bound.
-        let next = wait_for_lock(open_waiting_lock_file(&path).unwrap(), NEVER).unwrap();
         assert!(
-            next.is_some(),
+            try_lock_exclusive(path.clone()).unwrap().is_some(),
             "a wait given up must leave the lock free once its holder lets go"
         );
-        drop(next);
         std::fs::remove_dir_all(directory).unwrap();
     }
 
@@ -430,8 +582,13 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn a_signal_during_the_wait_does_not_end_it() {
-        extern "C" fn on_signal(_: libc::c_int) {}
-        // SAFETY: a handler that does nothing, installed without SA_RESTART.
+        use std::os::fd::AsRawFd;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static HANDLED: AtomicBool = AtomicBool::new(false);
+        extern "C" fn on_signal(_: libc::c_int) {
+            HANDLED.store(true, Ordering::SeqCst);
+        }
+        // SAFETY: a handler that only stores to an atomic, installed without SA_RESTART.
         unsafe {
             let mut action: libc::sigaction = std::mem::zeroed();
             let handler: extern "C" fn(libc::c_int) = on_signal;
@@ -441,24 +598,21 @@ mod tests {
         let (directory, path) = lock_path("signal");
         let held = try_lock_exclusive(path.clone()).unwrap().unwrap();
         let file = open_waiting_lock_file(&path).unwrap();
+        let fd = file.as_raw_fd();
         let (ids, waiter_ids) = mpsc::channel();
         let waiter = std::thread::spawn(move || {
-            // SAFETY: plain thread ids of the calling thread.
-            ids.send(unsafe { (libc::pthread_self(), libc::syscall(libc::SYS_gettid)) })
-                .unwrap();
+            // SAFETY: the calling thread's own id.
+            ids.send(unsafe { libc::pthread_self() }).unwrap();
             lock_blocking(&file)
         });
-        let (thread, tid) = waiter_ids.recv().unwrap();
-        // The kernel names the system call a thread is blocked in: the signal goes once it is flock.
-        let blocked = format!("{} ", libc::SYS_flock);
-        let syscall = format!("/proc/self/task/{tid}/syscall");
-        while !waiter.is_finished()
-            && !std::fs::read_to_string(&syscall).is_ok_and(|text| text.starts_with(&blocked))
-        {
-            std::thread::yield_now();
-        }
+        let thread = waiter_ids.recv().unwrap();
+        thread_blocked_in_flock(fd, || waiter.is_finished());
         // SAFETY: the thread is alive until it is joined below.
         unsafe { libc::pthread_kill(thread, libc::SIGUSR1) };
+        // The handler runs as the interrupted flock returns, so the holder lets go only after that.
+        until("the signal's handler runs", || {
+            HANDLED.load(Ordering::SeqCst)
+        });
         held.release();
 
         let locked = waiter.join().unwrap();
