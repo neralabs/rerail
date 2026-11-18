@@ -133,6 +133,7 @@ pub mod shape {
     static FRAMES_READ: AtomicUsize = AtomicUsize::new(0);
     static RECHECKS_UNPRICED: AtomicUsize = AtomicUsize::new(0);
     static NEGATED_LED: AtomicUsize = AtomicUsize::new(0);
+    static MEASURES_UNKEYED: AtomicUsize = AtomicUsize::new(0);
     static DRIVERS_UNLED: AtomicUsize = AtomicUsize::new(0);
 
     /// The counts so far.
@@ -152,6 +153,9 @@ pub mod shape {
         /// R4 at scale: mode lines whose changed read's delta does not lead the line (a negated read's line planned
         /// with its variables bound had no order): it walks its other reads whole.
         pub drivers_unled: usize,
+        /// R6: proved components whose measure is by a node's depth or document order, run where that key is not
+        /// read: their candidates go unordered, a stay checked again as each of its supports goes.
+        pub measures_unkeyed: usize,
     }
 
     pub fn now() -> Shape {
@@ -162,6 +166,7 @@ pub mod shape {
             rechecks_unpriced: RECHECKS_UNPRICED.load(Relaxed),
             negated_led: NEGATED_LED.load(Relaxed),
             drivers_unled: DRIVERS_UNLED.load(Relaxed),
+            measures_unkeyed: MEASURES_UNKEYED.load(Relaxed),
         }
     }
 
@@ -175,6 +180,7 @@ pub mod shape {
             rechecks_unpriced: n.rechecks_unpriced - before.rechecks_unpriced,
             negated_led: n.negated_led - before.negated_led,
             drivers_unled: n.drivers_unled - before.drivers_unled,
+            measures_unkeyed: n.measures_unkeyed - before.measures_unkeyed,
         }
     }
 
@@ -189,6 +195,9 @@ pub mod shape {
     }
     pub fn negated_led() {
         NEGATED_LED.fetch_add(1, Relaxed);
+    }
+    pub fn measure_unkeyed() {
+        MEASURES_UNKEYED.fetch_add(1, Relaxed);
     }
     pub fn driver_unled() {
         DRIVERS_UNLED.fetch_add(1, Relaxed);

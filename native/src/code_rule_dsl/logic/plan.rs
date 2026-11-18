@@ -8085,6 +8085,9 @@ impl<'a> Run<'a, '_> {
                         Order::Falls => (true, None),
                     };
                     let keyed = key.is_some() || matches!(m.order, Order::Climbs | Order::Falls | Order::Same);
+                    if !keyed {
+                        crate::code_rule_dsl::logic::plan::corpus::maintain::shape::measure_unkeyed();
+                    }
                     let cols = scc.iter().map(|r| m.col.get(r).copied().unwrap_or(0)).collect();
                     let ranks = scc.iter().map(|r| m.rank.get(r).copied().unwrap_or(0) as usize).collect();
                     lines.push(SpecLine::Measured { desc, key, keyed, cols, ranks });

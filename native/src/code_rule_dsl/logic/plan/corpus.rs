@@ -4683,6 +4683,40 @@ fn run_observed(
         }
         stored.push((rel.clone(), named.iter().map(|c| (*c).to_owned()).collect()));
     }
+    // The measures' keys (decision 0364 §5, R6): a proved recursive component of the cross part ordered by a node's
+    // depth or document order reads `ast_depth` or `node_order` of its candidates' nodes, and the cross part holds no
+    // tree (its tree steps were pushed into the chunks, decision 0051). The chunks hand that relation on as an input,
+    // as they hand on a base relation a cross-file rule looks a node up in (`semijoin`, below): the rows of the nodes
+    // the cross part holds, its exports' and its held base relations' (`held_nodes`). A candidate's node is one of
+    // those (no rule makes a node), so its key is there, and each candidate is rechecked once, in order.
+    let measure_keys: BTreeSet<String> = {
+        use crate::code_rule_dsl::logic::plan::wellfounded::Order;
+        let proofs = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::plan::wellfounded::Proofs>(&split.program).ok();
+        let derived_here = |r: &str| cross_run.rel(r).is_some_and(|id| cross_run.heads(id).next().is_some());
+        let mut keys = BTreeSet::new();
+        if let Some(proofs) = proofs {
+            for (comp, verdict) in proofs.comps() {
+                let Ok(m) = verdict else { continue };
+                let key = match m.order {
+                    Order::Down | Order::Up => "ast_depth",
+                    Order::Back => "node_order",
+                    Order::Climbs | Order::Falls | Order::Same => continue,
+                };
+                if comp.iter().all(|r| derived_here(r)) {
+                    keys.insert(key.to_owned());
+                }
+            }
+        }
+        // A cross-file rule that reads the relation itself has it stored already, with the columns it names.
+        keys.retain(|k| !split.base.contains(k));
+        keys
+    };
+    for key in &measure_keys {
+        stored.push((key.clone(), vec!["n".into(), "k".into()]));
+    }
+    if !measure_keys.is_empty() {
+        crate::code_rule_dsl::logic::profile::decision("the measures' keys (decision 0364 R6)", || format!("{measure_keys:?}: an input of the cross part, the rows of the nodes the exports hold"));
+    }
     // Decide after projection planning: the split's base list can still contain unused inputs.
     // This changes the local frame's identity, not the cross-file program's semantic identity.
     let memo_tree_stats = !stored.is_empty() || cross_run.rules().flat_map(|r| r.body())
@@ -4719,6 +4753,7 @@ fn run_observed(
         .unwrap_or_default()
         .into_iter()
         .filter(|r| stored.iter().any(|(s, _)| s == r))
+        .chain(measure_keys.iter().cloned())
         .collect();
     if !stored.is_empty() {
         crate::code_rule_dsl::logic::profile::decision("semi-join of the held base relations", || {
@@ -6396,16 +6431,17 @@ fn run_observed(
             if memoised && crate::code_rule_dsl::logic::strings::TEXT_COLUMNS.iter().any(|(r, _)| *r == rel) {
                 text_sources.push((rel.clone(), Arc::clone(&source)));
             }
+            // Its base rows, for the cross part and the memo: filed by the main thread (`Finish`). (A measure's key is
+            // stored and read by no rule of the chunk: `measure_keys`.)
+            if stored.iter().any(|(r, _)| *r == rel) {
+                stored_bound.push((rel.clone(), Arc::clone(&source)));
+            }
             // A relation no rule reads is bound unmeasured: measuring reads every row, and a `py.*`
             // family's first read makes them (decision 0029).
             if !read.contains(&rel) {
                 modules.bind(db, &rel, source)?;
                 bound.insert(rel);
                 continue;
-            }
-            // Its base rows, for the cross part and the memo: filed by the main thread (`Finish`).
-            if stored.iter().any(|(r, _)| *r == rel) {
-                stored_bound.push((rel.clone(), Arc::clone(&source)));
             }
             let key = (mix.clone(), rel.clone());
             let once = measured_once.lock().get(&key).filter(|o| once_seen(o.0)).map(|o| (o.1, o.2.clone()));
@@ -6771,6 +6807,9 @@ fn run_observed(
         let mut base_marks: Option<Vec<(String, Vec<usize>)>> = None;
         // The semi-join's relations, taken after the run (`semijoin`), and the values the chunk's exports hold.
         let mut deferred: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Vec<(usize, usize)>)> = Vec::new();
+        // The values the held base relations' columns hold, of the relations kept whole: a measure's key is kept for
+        // these nodes too (`measure_keys`), as a candidate's node may be one (`child`'s child, a walk down).
+        let mut held_nodes: std::collections::HashSet<i64> = std::collections::HashSet::new();
         for (rel, source) in stored_bound {
             let Some((_, names)) = stored.iter().find(|(r, _)| *r == rel) else { continue };
             let have = source.columns();
@@ -6785,6 +6824,11 @@ fn run_observed(
                     col.extend((0..source.len()).map(|r| source.value(r, c)));
                 }
                 pairs.push((c, to));
+            }
+            if !measure_keys.is_empty() && !semijoin.contains(&rel) {
+                for r in 0..source.len() {
+                    held_nodes.extend(pairs.iter().map(|&(c, _)| source.value(r, c)));
+                }
             }
             if semijoin.contains(&rel) {
                 deferred.push((rel.clone(), Arc::clone(&source), pairs));
@@ -7054,7 +7098,8 @@ fn run_observed(
         for (rel, source, pairs) in std::mem::take(&mut deferred) {
             let have = source.columns();
             let key = have.iter().position(|h| h == "n").ok_or_else(|| Error::Plan(format!("{rel} has no node column")))?;
-            let keep: Vec<usize> = (0..source.len()).filter(|&r| mentioned.contains(&source.value(r, key))).collect();
+            let measure = measure_keys.contains(&rel);
+            let keep: Vec<usize> = (0..source.len()).filter(|&r| mentioned.contains(&source.value(r, key)) || measure && held_nodes.contains(&source.value(r, key))).collect();
             if memoised {
                 raw_base.push((rel, pairs, source, Some(keep)));
                 continue;
@@ -7151,7 +7196,8 @@ fn run_observed(
                     }
                     _ => Vec::new(),
                 };
-                for r in (0..source.len()).filter(|&r| node.is_none_or(|n| mentioned.contains(&source.value(r, n)))) {
+                let measure = measure_keys.contains(rel);
+                for r in (0..source.len()).filter(|&r| node.is_none_or(|n| mentioned.contains(&source.value(r, n)) || measure && held_nodes.contains(&source.value(r, n)))) {
                     // A row is each of its owners' (a guest's is its host's; a value document's, each asking file's):
                     // rows are sets, so a row kept by several files restores as one.
                     let v = source.value(r, first);

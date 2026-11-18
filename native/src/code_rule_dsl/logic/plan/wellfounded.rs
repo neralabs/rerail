@@ -337,6 +337,10 @@ impl Proofs {
             None => Err("not a recursive component of the program".into()),
         }
     }
+    /// Each recursive component and its verdict.
+    pub fn comps(&self) -> impl Iterator<Item = (&BTreeSet<String>, &Result<Measure, String>)> {
+        self.comps.iter().map(|(c, v)| (c, v))
+    }
     /// Proved and not, counted.
     pub fn counts(&self) -> (usize, usize) {
         let proved = self.comps.iter().filter(|(_, v)| v.is_ok()).count();

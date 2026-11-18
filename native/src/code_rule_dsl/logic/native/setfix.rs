@@ -1348,17 +1348,22 @@ struct Measured {
 
 impl Measured {
     /// Row `row` of relation `r`'s place in the order, as the heap pops it (least first): its key, then its rank.
-    fn key(&self, conn: Option<&Connection>, r: usize, row: &[i64]) -> Result<(i64, u32)> {
+    /// `None`: its node has no key now (a removal's candidate at a node the edit took out of the tree).
+    fn key(&self, conn: Option<&Connection>, r: usize, row: &[i64]) -> Result<Option<(i64, u32)>> {
         let v = *row.get(self.cols[r]).ok_or_else(|| err(format!("measured: relation {r} has no column {}", self.cols[r])))?;
         let k = match &self.key {
             None => v,
             Some(sql) => {
                 let conn = conn.ok_or_else(|| err("measured: a key read with no connection".to_owned()))?;
                 let mut st = conn.prepare_cached(sql).map_err(|e| err(format!("measured key {sql}: {e}")))?;
-                st.query_row([v], |r| r.get::<_, i64>(0)).map_err(|e| err(format!("measured key {sql} of {v}: {e}")))?
+                match st.query_row([v], |r| r.get::<_, i64>(0)) {
+                    Ok(k) => k,
+                    Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
+                    Err(e) => return Err(err(format!("measured key {sql} of {v}: {e}"))),
+                }
             }
         };
-        Ok((if self.desc { !k } else { k }, self.ranks[r] as u32))
+        Ok(Some((if self.desc { !k } else { k }, self.ranks[r] as u32)))
     }
 }
 
@@ -1439,7 +1444,9 @@ impl MaintMode {
     /// once, over the relations as they are (no `cap`), and a row gone is never derived again. Where the run cannot
     /// read the measure's key (`!keyed`), a candidate that stays is checked again when a row it may read goes: a
     /// kill is sound whatever the order (rows only go, so a row no rule derives now none derives at the end), and
-    /// with no cycle every stay is checked against rows that stay.
+    /// with no cycle every stay is checked against rows that stay. A candidate whose node has no key now (`loose`: the
+    /// edit took the node out of the tree) is treated so alone: it goes first, and when it stays it is checked again
+    /// as a row it may read goes; a loose row that goes queues its readers again, decided or not.
     fn run_leveled(&mut self, store: &mut Store, syms: &mut Interner, conn: Option<&Connection>) -> Result<()> {
         use std::cmp::Reverse;
         type Heap = std::collections::BinaryHeap<Reverse<(i64, u32, usize, u32)>>;
@@ -1450,13 +1457,20 @@ impl MaintMode {
         let what = if measured.is_some() { "measure" } else { "levels" };
         // `seen`: the rows queued once, ever; unkeyed, the rows queued now (a decided row may be queued again).
         let again = measured.as_ref().is_some_and(|m| !m.keyed);
-        let push = |heap: &mut Heap, store: &Store, r: usize, rows: &[i64], seen: &mut rustc_hash::FxHashSet<(usize, u32)>, counts: &mut [u64; 3]| -> Result<()> {
+        let mut loose: rustc_hash::FxHashSet<(usize, u32)> = Default::default();
+        let push = |heap: &mut Heap, store: &Store, r: usize, rows: &[i64], seen: &mut rustc_hash::FxHashSet<(usize, u32)>, counts: &mut [u64; 3], loose: &mut rustc_hash::FxHashSet<(usize, u32)>, force: bool| -> Result<()> {
             let rel = &store.rels[r];
             for row in rows.chunks_exact(rel.k.max(1)) {
-                if let Some(id) = rel.find(row, |id| is_dead(&rel.dead, id)) && seen.insert((r, id)) {
+                if let Some(id) = rel.find(row, |id| is_dead(&rel.dead, id)) && (seen.insert((r, id)) || force) {
                     counts[0] += 1;
                     let (k, rank) = match &measured {
-                        Some(m) => m.key(conn, r, row)?,
+                        Some(m) => match m.key(conn, r, row)? {
+                            Some(key) => key,
+                            None => {
+                                loose.insert((r, id));
+                                (i64::MIN, 0)
+                            }
+                        },
                         None => (i64::from(rel.level.get(id as usize).copied().unwrap_or(0)), 0),
                     };
                     heap.push(Reverse((k, rank, r, id)));
@@ -1468,12 +1482,13 @@ impl MaintMode {
             let _s = crate::code_rule_dsl::logic::profile::span(|| format!("mode: a removal join ({what})"));
             let mut rows = Vec::new();
             run_join_collect(j, store, syms, &[], &mut rows)?;
-            push(&mut heap, store, *head, &rows, &mut seen, &mut self.counts)?;
+            push(&mut heap, store, *head, &rows, &mut seen, &mut self.counts, &mut loose, false)?;
         }
         let mut gone: Vec<(usize, Vec<i64>)> = Vec::new();
         let _s = crate::code_rule_dsl::logic::profile::span(|| format!("mode: candidates by {what} ({} first)", heap.len()));
         while let Some(Reverse((l, _, r, id))) = heap.pop() {
-            if again {
+            let is_loose = loose.contains(&(r, id));
+            if again || is_loose {
                 seen.remove(&(r, id));
             }
             let row: Vec<i64> = store.rels[r].row(id as usize).to_vec();
@@ -1500,7 +1515,7 @@ impl MaintMode {
             for d in self.drivers.iter().filter(|d| d.0 == r) {
                 Self::readers(d, &row, store, syms, &mut out)?;
                 let rows = std::mem::take(&mut out);
-                push(&mut heap, store, d.1, &rows, &mut seen, &mut self.counts)?;
+                push(&mut heap, store, d.1, &rows, &mut seen, &mut self.counts, &mut loose, is_loose)?;
                 out = rows;
             }
             if measured.is_none() {

@@ -468,7 +468,43 @@ against a derive's. These are kept plans that either path then takes as they are
 (`first` was the positive drivers' alone), and `versioned` turned the atom positive at the place the plan had put
 it as a test. The line walked its other atoms over the whole corpus to meet a delta of a few rows: 113 removal
 joins took 10 s of the 31 s edit. Now the body is planned with the negated atom's variables bound
-(`plan_rule_bound_by`, R7's start state), and the atom's item, now reading the delta positively, goes first.
+(`Body::with_bound`, the planner's state with variables bound before the first step), and the atom's item, now
+reading the delta positively, goes first.
 
 After both, at 334 files, the edits take 6.4, 9.9 and 8.4 s, and the session still equals cold. O125's steps 00–02
 remain correct: 188 strata maintained, and 22 derived again where the mode was priced above a derive.
+
+After the hub's merge (Q208's head-bound recheck, 0401's kept facts), on the same M3 host, sessions:
+
+| Files | First run | Edits (01, 02, 03) | Shape |
+|---|---|---|---|
+| 334 | 65 s | 9.0, 13.2, 11.5 s | no row copied, no unled driver, no unkeyed measure |
+| 2,410 | 436 s | 55, 65, 55 s | the same |
+
+At 2,410 files the edits took 477–579 s at first. With the session memo fixed, they took 79–83 s. The memo now
+keeps each file's current entry and the one before it (`HeldEntries`); its 4,096-entry cap had wiped it partway
+through the session. After the merge they take 55–65 s. At 334 files the edits are slower than before the merge
+(6.4, 9.9, 8.4 s); the cause is not yet known. A 2,410-file edit is still about 5× a 334-file edit, at 7× the
+files.
+
+## Step 10: the measure's key in the cross part (R6)
+
+Step 7 left a gap. A proved component ordered by depth or document order reads `ast_depth` or `node_order` of
+each candidate's node, and a cross part has no tree. There its candidates went unkeyed: sound, but a stay was
+checked again each time one of its supports went, not once.
+
+Now the split names, for each proved component of the cross part, the key relation its measure reads
+(`measure_keys`). The chunks hand that relation on as an input of the part, the way they hand on a base relation
+a cross-file rule looks a node up in: a semi-join, with each file's rows kept in its memo entry. The node set is
+the cross part's own: the nodes its exports hold, and those of the base relations it holds whole. In `r6`,
+`below(a, c) :- below(a, b), child(b, c, _)` takes `c` from `child`, so the exports alone would not cover it, and no
+rule makes a node. This adds no copy: the key's rows are base rows handed on, like the part's other base inputs.
+
+A removal's candidate can stand at a node the edit took out of the tree. That node has no key now, so the
+candidate is *loose*: it goes first, and if it stays, it is checked again as a row it may read goes. If a loose row
+goes, its readers are queued again, decided or not. This is the unkeyed rule from step 7, applied only to rows
+with no key, and it is sound in any order. Every other candidate is checked once, in its measure's order.
+
+`maintain::shape` counts a proved component run without its key (`measures_unkeyed`). The R6 test asserts none
+in its cross part, through four edits, with each run's outputs equal to a fresh run's.
+

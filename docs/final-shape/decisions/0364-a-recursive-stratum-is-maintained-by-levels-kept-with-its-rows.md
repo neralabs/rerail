@@ -410,6 +410,13 @@ Levels as decided: a levelled relation keeps a level per row (4 bytes a row, abo
 lines. 0090 §4's threshold still derives a stratum again when an edit reaches too much of it, and that derive
 resets the levels.
 
+A proved component's measure by depth or document order reads `ast_depth` or `node_order` of its candidates'
+nodes. A cross part holds no tree (its tree steps are pushed into the chunks, 0051), so the chunks hand the key
+relation on as an input of the part, as they hand on a base relation a cross-file rule looks a node up in: the rows
+of the nodes the part holds, its exports' and its held base relations' (no rule makes a node). Each candidate is
+then rechecked once, in order (R6). A removal's candidate at a node the edit took out of the tree has no key now:
+it alone goes first, and is checked again as a row it may read goes, which is sound in any order (t43 step 10).
+
 ## Required shape (locked, the user, 2026-11-18)
 
 What the implementation must be, from this decision and 0328 §3–6 as agreed. Stages 2–6 departed from it in places
@@ -442,11 +449,6 @@ against the forms' figures (t43, "Measurements").
   of the whole program's version that a part's run asks by component. It reads `nearest` as the engine lowers it
   (`rr_nearest_<set>`). Still worth teaching it string length (`@pkg_up`-style chains) and the tree helpers it
   cannot read yet.
-- **R6's "once each" where the key is not bound.** A measure by depth or document order reads `ast_depth` or
-  `node_order`, and a cross part whose tree steps were pushed into the chunks binds neither. There a proved
-  component still keeps no levels, but its candidates go unkeyed: a stay is checked again when a support goes
-  (sound in any order, t43 step 7), not once each. Closing it means giving such a part its documents' keys as an
-  input.
 - **A dump artifact.** In the data-layer history's first state, the run split into 2 chunks and dumped 210
   `dotted_expr` rows that no `drv` rule derives. It is a file-local relation, and the rows measured are the heads,
   but the cause is not known (`REC_LAX`).
