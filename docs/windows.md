@@ -256,16 +256,18 @@ through a mapped or `subst` drive letter, or by an 8.3 name, saved the stop unde
 with the folder's own spelling (a hook's, with a daemon or without, the daemon's check on each event, `rerail status`,
 `rerail start` and `stop`, and the status line's) reads the checkout's row under the stored spelling and under that key
 in one statement (`earlierCheckoutPath`), the stored one first, and the earlier one only where it names the folder's
-repository. The key is resolved once per spelling in each process. A hook and the status line ask a daemon about the
-folder's real path, as before, and hand it the folder as spelt apart (`spelling`) where the two differ, so the daemon's
-check forms that key once per spelling and makes no more file calls per event than before. They hand it only to a
-daemon whose state file says it reads it: an older daemon refuses a query value it does not know. A start or stop saved
-here through a mapped or `subst` letter decides from then on. In
-a folder reached in another letter case, 0.1.4's next start or stop there decides, as it did before: 0.1.4 compares
-Windows paths without letter case, so it counts the row under the stored spelling as a checkout inside its own and
-clears that row's on/off. For a session the daemon has recorded, the status line reads the start state under the
-session's stored spelling, so where 0.1.4 stops such a folder while a session is open there, that session's status line
-still shows Rerail on.
+repository. A hook and the status line ask a daemon about the folder's real path, as before, and hand it the folder as
+spelt apart (`spelling`) where the two differ, only to a daemon whose state file says it reads it: an older daemon
+refuses a query value it does not know. Each process resolves the key once per spelling it can resolve, so the daemon's
+check makes no more file calls per event than before. A spelling the daemon cannot resolve, such as a mapped or `subst`
+letter of another logon session (a daemon started from an elevated terminal does not see the letters mapped in a
+terminal that is not elevated), is looked up again on each event, 4 to 7 file calls more in folders two to five levels
+deep, and its check reads only the row under the stored spelling. A start or stop saved here through a mapped or
+`subst` letter decides from then on. In a folder reached in another letter case, 0.1.4's next start or stop there
+decides, as it did before: 0.1.4 compares Windows paths without letter case, so it counts the row under the stored
+spelling as a checkout inside its own and clears that row's on/off. For a session the daemon has recorded, the status
+line reads the start state under the session's stored spelling, so where 0.1.4 stops such a folder while a session is
+open there, that session's status line still shows Rerail on.
 
 Two settings an earlier version saved under the folder's spelling stay unread after the update, and a person who set
 one sets it again:
@@ -279,17 +281,15 @@ one sets it again:
   folder; it is saved under no folder and is kept.
 - **A rule turned off for one folder outside Git reached through a mapped or `subst` drive letter, or by an 8.3 name.**
   That rule setting belongs to the checkout row 0.1.4 recorded under the spelling, and the rule loader reads the
-  settings of the checkout and of the recorded checkouts containing it. It is turned off again for that folder as it was
-  turned off: by the coding agent working there, or in the dashboard for a rule of the folder's own `.rerail/rules`.
-  A rule turned off for the repository, and every rule setting and stop of a Git checkout, keep applying: 0.1.4 keyed
-  them by the repository or by Git's top level, which Git for Windows gives as the disk spells it, and as the share for
-  a mapped letter.
+  settings of the checkout and of the recorded checkouts containing it. In a Git checkout, the rule loader finds the
+  setting 0.1.4 saved (read through this build's checkout lookup, not through a daemon), and a stop is read: 0.1.4
+  saved both under Git's top level, which Git for Windows gives as the disk spells it, and as the share for a mapped
+  letter.
 
 Measured on Windows 11 with 0.1.4 from npm saving Log mode, stops and a hidden status line in folders reached in
 another letter case, through a mapped and a `subst` drive letter and by an 8.3 name, inside and outside Git, and Log
 mode through a `subst` letter later pointed at another folder, then read by this build's daemon, hooks and status line.
-The rule settings were read through this build's checkout lookup and the checkout rows the rule loader reads, not
-through a daemon; this fix leaves how rule settings are read as it was.
+This fix leaves how rule settings are read as it was.
 
 <details>
 <summary>Other places that compare Windows paths</summary>
