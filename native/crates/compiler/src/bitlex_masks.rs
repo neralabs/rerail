@@ -300,8 +300,10 @@ pub struct Lowering {
     pub pending_counts: Vec<(String, Val, Val, u32)>,
     /// The escapes and errors `A & L` whose `L` is local, a few byte tests at fixed offsets
     /// (`local_ops`): a tree's whose `A` lies in one row's tokens are tier 2's (`CHECK`,
-    /// `tree_section`), the rest joined to the fallback after it.
-    pub pending_checks: Vec<(Val, Val)>,
+    /// `tree_section`), the rest joined to the fallback after it. With `true`, the error is
+    /// `A & ~L` (decision 0399): the check's last op is `L`'s `not`, which a check of `A`'s
+    /// bytes takes as it is, with no cut to the stream.
+    pub pending_checks: Vec<(Val, Val, bool)>,
     /// Each number's planes, bit 0 first (`NUMBER_BITS`).
     pub numbers: HashMap<String, Vec<Val>>,
     pub tokens: Vec<(String, Val, Option<TokenEnd>)>,
@@ -491,8 +493,8 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         tier2 = Some(tree_section(symbols, &mut low, &token_rows)?);
     }
     // The checks left: the fallback's.
-    for (a, l) in std::mem::take(&mut low.pending_checks) {
-        let x = low.and(a, l)?;
+    for (a, l, not) in std::mem::take(&mut low.pending_checks) {
+        let x = if not { low.andnot(a, l)? } else { low.and(a, l)? };
         low.fallbacks.push(x);
     }
     // The counts left: tier 1's, as bit-planes.
@@ -716,14 +718,28 @@ impl Lowering {
                 }
                 // Both send the file to tree-sitter.
                 Stmt::Error(_, expr) | Stmt::Escape(_, expr) => {
-                    if let Expr::And(a, b) = expr {
+                    // Worth a check of its own only where `L` is more than a test or two.
+                    let local = |low: &Self, x: Val| low.local_ops(x).is_some_and(|ops| ops.len() >= 8);
+                    // `A & ~L`: `L`'s own ops, then its `not` (decision 0399). The `~` as a mask
+                    // is cut to the stream (`within`), which a check at `A`'s bytes needs not.
+                    let negated = match expr {
+                        Expr::And(a, b) => match &**b {
+                            Expr::Not(l) => Some((a, l)),
+                            _ => None,
+                        },
+                        _ => None,
+                    };
+                    if let Some((a, l)) = negated
+                        && let (av, lv) = (self.expr(a)?, self.expr(l)?)
+                        && self.local_ops_in_stream(lv).is_some_and(|ops| ops.len() + 1 >= 8)
+                    {
+                        self.pending_checks.push((av, lv, true));
+                    } else if let Expr::And(a, b) = expr {
                         let (a, b) = (self.expr(a)?, self.expr(b)?);
-                        // Worth a check of its own only where `L` is more than a test or two.
-                        let local = |low: &Self, x: Val| low.local_ops(x).is_some_and(|ops| ops.len() >= 8);
                         if local(self, b) {
-                            self.pending_checks.push((a, b));
+                            self.pending_checks.push((a, b, false));
                         } else if local(self, a) {
-                            self.pending_checks.push((b, a));
+                            self.pending_checks.push((b, a, false));
                         } else {
                             let value = self.and(a, b)?;
                             self.fallbacks.push(value);
@@ -1344,10 +1360,119 @@ impl Lowering {
     }
 
     pub fn local_ops(&self, x: Val) -> Option<Vec<crate::program::LocalOp>> {
+        self.local_ops_with(x, false, None)
+    }
+
+    /// `local_ops` of a check that reads no byte before its place (decision 0399): its `prev`s
+    /// and `within`s reach back no further than its delay, so from a place in a token every
+    /// byte it reads is in the stream, past a prefix, where the prefix's value is 0. A `next`'s
+    /// cut to the stream (`within` less the prefix) is then the bytes' `within`.
+    pub fn local_ops_in_stream(&self, x: Val) -> Option<Vec<crate::program::LocalOp>> {
         use crate::program::LocalOp as L;
-        fn walk(low: &Lowering, v: u16, at: &mut HashMap<u16, u16>, out: &mut Vec<L>) -> Option<u16> {
+        let ops = self.local_ops_with(x, true, None)?;
+        let mut reach = vec![0u32; ops.len()];
+        for (k, op) in ops.iter().enumerate() {
+            let at = |o: u16| reach[usize::from(o)];
+            reach[k] = match *op {
+                L::Prev(a, sh) => at(a) + u32::from(sh),
+                L::Within(d) => u32::from(d),
+                _ => op.operands().into_iter().map(at).max().unwrap_or(0),
+            };
+        }
+        (reach.iter().all(|&r| r <= u32::from(x.d))).then_some(ops)
+    }
+
+    /// An error `A & ~L` at a row's tokens, with `A` at their last bytes (`last`), as a token's
+    /// check (decision 0399): tier 2 tests it on the token's bytes and `L`'s after them, and
+    /// needs no mask. Within the token `A` is `last` at its last byte and the rest of `A`'s ops
+    /// there: `A` with `last` all ones, at the place `last` is `A`'s. Its ops: that, `L`, and
+    /// `Last`, each at the check's delay (the most of `A`'s and `L`'s), then `A & Last & ~L`. `None`
+    /// where `A` or `L` reads before the token's last byte, or reaches past 63 bytes.
+    pub fn token_ops_past(&self, a: Val, last: Val, l: Val) -> Option<(Vec<crate::program::LocalOp>, u8)> {
+        use crate::program::LocalOp as L;
+        let reach = |ops: &[L]| {
+            let mut r = vec![0u32; ops.len()];
+            for (k, op) in ops.iter().enumerate() {
+                r[k] = match *op {
+                    L::Prev(x, sh) => r[usize::from(x)] + u32::from(sh),
+                    L::Within(d) => u32::from(d),
+                    _ => op.operands().into_iter().map(|o| r[usize::from(o)]).max().unwrap_or(0),
+                };
+            }
+            r.into_iter().max().unwrap_or(0)
+        };
+        let mut ops = self.local_ops_with(a, true, Some(last.v))?;
+        // `last`, if read, at `A`'s own place only: the depth from `A`'s top is `a.d - last.d`.
+        let sub = ops.iter().position(|op| *op == L::Const(u64::MAX));
+        if let Some(sub) = sub {
+            let mut depths: Vec<Vec<u32>> = vec![Vec::new(); ops.len()];
+            depths[ops.len() - 1].push(0);
+            for k in (0..ops.len()).rev() {
+                let ds = std::mem::take(&mut depths[k]);
+                for &dd in &ds {
+                    match ops[k] {
+                        L::Prev(x, sh) => depths[usize::from(x)].push(dd + u32::from(sh)),
+                        ref op => op.operands().into_iter().for_each(|o| depths[usize::from(o)].push(dd)),
+                    }
+                }
+                depths[k] = ds;
+            }
+            let want = u32::from(a.d).checked_sub(u32::from(last.d))?;
+            if depths[sub].iter().any(|&dd| dd != want) {
+                return None;
+            }
+        }
+        if reach(&ops) > u32::from(a.d) {
+            return None;
+        }
+        let lops = self.local_ops_in_stream(l)?;
+        let d = a.d.max(l.d);
+        if d > 63 {
+            return None;
+        }
+        let ta = ops.len() as u16 - 1;
+        let base = ops.len() as u16;
+        ops.extend(lops.iter().map(|op| offset_op(op, base)));
+        let tl = ops.len() as u16 - 1;
+        let mut at = |ops: &mut Vec<L>, x: u16, k: u8| {
+            if k == 0 {
+                x
+            } else {
+                ops.push(L::Prev(x, k));
+                ops.len() as u16 - 1
+            }
+        };
+        let sa = at(&mut ops, ta, d - a.d);
+        let sl = at(&mut ops, tl, d - l.d);
+        ops.push(L::Last);
+        let last_op = ops.len() as u16 - 1;
+        // `Last` is the token's last byte at its own place: at the check's delay, `d` on.
+        let sz = at(&mut ops, last_op, d);
+        ops.push(L::And(sa, sz));
+        let both = ops.len() as u16 - 1;
+        ops.push(L::AndNot(both, sl));
+        Some((ops, d))
+    }
+
+    /// Whether `v` is the prefix's value, at some delay (`prev`s of `BlockOp::Prefix`).
+    fn prefix_chain(&self, v: u16) -> bool {
+        match self.program.ops[usize::from(v)] {
+            BlockOp::Prefix(..) => true,
+            BlockOp::Prev(x, _) => self.prefix_chain(x),
+            _ => false,
+        }
+    }
+
+    fn local_ops_with(&self, x: Val, prefix_zero: bool, ones: Option<u16>) -> Option<Vec<crate::program::LocalOp>> {
+        use crate::program::LocalOp as L;
+        fn walk(low: &Lowering, v: u16, at: &mut HashMap<u16, u16>, out: &mut Vec<L>, pz: bool, ones: Option<u16>) -> Option<u16> {
             if let Some(&k) = at.get(&v) {
                 return Some(k);
+            }
+            if ones == Some(v) {
+                out.push(L::Const(u64::MAX));
+                at.insert(v, out.len() as u16 - 1);
+                return Some(out.len() as u16 - 1);
             }
             if out.len() > 512 {
                 return None;
@@ -1384,12 +1509,15 @@ impl Lowering {
                 }
                 BlockOp::Const(c) => L::Const(c),
                 BlockOp::Within(d) => L::Within(d),
-                BlockOp::Not(a) => L::Not(walk(low, a, at, out)?),
-                BlockOp::Prev(a, k) => L::Prev(walk(low, a, at, out)?, k),
-                BlockOp::And(a, b) => L::And(walk(low, a, at, out)?, walk(low, b, at, out)?),
-                BlockOp::Or(a, b) => L::Or(walk(low, a, at, out)?, walk(low, b, at, out)?),
-                BlockOp::Xor(a, b) => L::Xor(walk(low, a, at, out)?, walk(low, b, at, out)?),
-                BlockOp::AndNot(a, b) => L::AndNot(walk(low, a, at, out)?, walk(low, b, at, out)?),
+                BlockOp::Prefix(..) if pz => L::Const(0),
+                BlockOp::Not(a) => L::Not(walk(low, a, at, out, pz, ones)?),
+                BlockOp::Prev(a, k) => L::Prev(walk(low, a, at, out, pz, ones)?, k),
+                BlockOp::And(a, b) => L::And(walk(low, a, at, out, pz, ones)?, walk(low, b, at, out, pz, ones)?),
+                BlockOp::Or(a, b) => L::Or(walk(low, a, at, out, pz, ones)?, walk(low, b, at, out, pz, ones)?),
+                BlockOp::Xor(a, b) => L::Xor(walk(low, a, at, out, pz, ones)?, walk(low, b, at, out, pz, ones)?),
+                // `x` less the prefix, where the prefix is 0: `x`.
+                BlockOp::AndNot(a, b) if pz && low.prefix_chain(b) => return walk(low, a, at, out, pz, ones),
+                BlockOp::AndNot(a, b) => L::AndNot(walk(low, a, at, out, pz, ones)?, walk(low, b, at, out, pz, ones)?),
                 _ => return None,
             };
             out.push(op);
@@ -1398,7 +1526,7 @@ impl Lowering {
             Some(k)
         }
         let mut out = Vec::new();
-        walk(self, x.v, &mut HashMap::new(), &mut out)?;
+        walk(self, x.v, &mut HashMap::new(), &mut out, prefix_zero, ones)?;
         Some(out)
     }
 
@@ -2262,10 +2390,14 @@ fn is_keyword_kind(keywords: &[(String, Vec<(Vec<u8>, Option<String>)>, bool)], 
 fn token_row(low: &mut Lowering, a: Val, rows: &[bitlex_tier2::Row], token_rows: &[(String, Val, Val)]) -> Result<Option<usize>, String> {
     let proved = |low: &Lowering, x: Val| bitlex_prove::never(&low.proof_ops(), &low.program.tables, x.v, x.d) || bitlex_prove::never_unrolled(&low.proof_ops(), &low.program.tables, &[], x.v, x.d, 4, 1000);
     let grammar_rows: Vec<usize> = (0..rows.len()).filter(|&r| !low.extra.contains(&token_rows[r].0) && !row_kinds(&rows[r]).is_empty()).collect();
+    // At the row's first bytes, or at its last (a check reads `A` from a token's start to its
+    // end: an escape's `u`, its last byte, decision 0399).
     for &r in &grammar_rows {
-        let off = low.andnot(a, token_rows[r].1)?;
-        if proved(low, off) {
-            return Ok(Some(r));
+        for edge in [token_rows[r].1, token_rows[r].2] {
+            let off = low.andnot(a, edge)?;
+            if proved(low, off) {
+                return Ok(Some(r));
+            }
         }
     }
     let mut fills: Vec<Val> = low.names.values().copied().filter(|x| matches!(low.program.ops[usize::from(x.v)], BlockOp::Fill(..))).collect();
@@ -2285,6 +2417,76 @@ fn token_row(low: &mut Lowering, a: Val, rows: &[bitlex_tier2::Row], token_rows:
             if proved(low, xs) && proved(low, xl) {
                 return Ok(Some(r));
             }
+        }
+    }
+    Ok(None)
+}
+
+/// `op` with its operands `base` later: an op of a list appended to another.
+fn offset_op(op: &crate::program::LocalOp, base: u16) -> crate::program::LocalOp {
+    use crate::program::LocalOp as L;
+    match *op {
+        L::Not(x) => L::Not(x + base),
+        L::Prev(x, k) => L::Prev(x + base, k),
+        L::And(x, y) => L::And(x + base, y + base),
+        L::Or(x, y) => L::Or(x + base, y + base),
+        L::Xor(x, y) => L::Xor(x + base, y + base),
+        L::AndNot(x, y) => L::AndNot(x + base, y + base),
+        L::Fill(x, y) => L::Fill(x + base, y + base),
+        ref other => other.clone(),
+    }
+}
+
+/// Two token's checks of a row as one: `b`'s ops after `a`'s, each test at the most delay (a
+/// `prev` by the difference; the places it shifts in lie below the delay, which are not
+/// tested), ORed. Ops both make (byte sets, `start`, `last`) are made once.
+fn merge_token_checks(a: &crate::program::LocalCheck, b: &crate::program::LocalCheck) -> crate::program::LocalCheck {
+    use crate::program::LocalOp as L;
+    let mut ops = a.ops.clone();
+    let mut map: Vec<u16> = Vec::with_capacity(b.ops.len());
+    for op in &b.ops {
+        let op = match *op {
+            L::Not(x) => L::Not(map[usize::from(x)]),
+            L::Prev(x, k) => L::Prev(map[usize::from(x)], k),
+            L::And(x, y) => L::And(map[usize::from(x)], map[usize::from(y)]),
+            L::Or(x, y) => L::Or(map[usize::from(x)], map[usize::from(y)]),
+            L::Xor(x, y) => L::Xor(map[usize::from(x)], map[usize::from(y)]),
+            L::AndNot(x, y) => L::AndNot(map[usize::from(x)], map[usize::from(y)]),
+            L::Fill(x, y) => L::Fill(map[usize::from(x)], map[usize::from(y)]),
+            ref other => other.clone(),
+        };
+        let k = match ops.iter().position(|o| *o == op) {
+            Some(k) => k as u16,
+            None => {
+                ops.push(op);
+                ops.len() as u16 - 1
+            }
+        };
+        map.push(k);
+    }
+    let d = a.delay.max(b.delay);
+    let (ta, tb) = (a.ops.len() as u16 - 1, map[b.ops.len() - 1]);
+    let mut at = |ops: &mut Vec<L>, x: u16, k: u8| {
+        if k == 0 {
+            x
+        } else {
+            ops.push(L::Prev(x, k));
+            ops.len() as u16 - 1
+        }
+    };
+    let sa = at(&mut ops, ta, d - a.delay);
+    let sb = at(&mut ops, tb, d - b.delay);
+    ops.push(L::Or(sa, sb));
+    crate::program::LocalCheck { mask: 0, delay: d, ops, token: true }
+}
+
+/// The grammar row whose tokens' last bytes hold every bit of `a`, as the prover shows it.
+fn last_row(low: &mut Lowering, a: Val, rows: &[bitlex_tier2::Row], token_rows: &[(String, Val, Val)]) -> Result<Option<usize>, String> {
+    let grammar_rows: Vec<usize> = (0..rows.len()).filter(|&r| !low.extra.contains(&token_rows[r].0) && !row_kinds(&rows[r]).is_empty()).collect();
+    for r in grammar_rows {
+        let off = low.andnot(a, token_rows[r].2)?;
+        if bitlex_prove::never(&low.proof_ops(), &low.program.tables, off.v, off.d) || bitlex_prove::never_unrolled(&low.proof_ops(), &low.program.tables, &[], off.v, off.d, 4, 1000) {
+            return Ok(Some(r));
         }
     }
     Ok(None)
@@ -2982,15 +3184,39 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     for (r, ops) in token_checks {
         checks.push((row_kinds(&rows[r]), None, token_rows[r].1, crate::program::LocalCheck { mask: 0, delay: 0, ops, token: true }));
     }
-    for (a, l) in std::mem::take(&mut low.pending_checks) {
-        match (token_row(low, a, &rows, token_rows)?, low.local_ops(l)) {
-            (Some(r), Some(ops)) => checks.push((row_kinds(&rows[r]), None, a, crate::program::LocalCheck { mask: 0, delay: l.d, ops, token: false })),
+    for (a, l, not) in std::mem::take(&mut low.pending_checks) {
+        // `A & ~L` with `A` at a row's tokens' last bytes: a token's check (decision 0399).
+        if not
+            && let Some(r) = last_row(low, a, &rows, token_rows)?
+            && let Some((ops, delay)) = low.token_ops_past(a, token_rows[r].2, l)
+        {
+            checks.push((row_kinds(&rows[r]), None, token_rows[r].1, crate::program::LocalCheck { mask: 0, delay, ops, token: true }));
+            continue;
+        }
+        let ops = if not { low.local_ops_in_stream(l) } else { low.local_ops(l) };
+        match (token_row(low, a, &rows, token_rows)?, ops) {
+            (Some(r), Some(mut ops)) => {
+                if not {
+                    ops.push(crate::program::LocalOp::Not(ops.len() as u16 - 1));
+                }
+                checks.push((row_kinds(&rows[r]), None, a, crate::program::LocalCheck { mask: 0, delay: l.d, ops, token: false }));
+            }
             _ => {
-                let x = low.and(a, l)?;
+                let x = if not { low.andnot(a, l)? } else { low.and(a, l)? };
                 low.fallbacks.push(x);
             }
         }
     }
+    // A row's token's checks are one (decision 0399): one load of the token's bytes, its
+    // classes and their masks made once, the tests ORed at the most delay.
+    let mut merged: Vec<(Vec<u16>, Option<u16>, Val, crate::program::LocalCheck)> = Vec::new();
+    for c in checks {
+        match merged.iter_mut().find(|m| m.3.token && c.3.token && m.0 == c.0 && m.1 == c.1 && m.2.v == c.2.v) {
+            Some(m) => m.3 = merge_token_checks(&m.3, &c.3),
+            None => merged.push(c),
+        }
+    }
+    let checks = merged;
     let check_kinds: Vec<(Vec<u16>, Option<u16>)> = checks.iter().map(|c| (c.0.clone(), c.1)).collect();
     let tested = bitlex_tier2::lower(&states, &arms, &rows, &marks, any_mark, &meets, empties, whole, true, by_rules, token_extras, &counts, &check_kinds)?.tested;
     for (j, &r) in tested.iter().enumerate() {

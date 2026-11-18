@@ -168,10 +168,13 @@ pub struct Words {
 /// stream place `j + delay` (`LocalOp`, each op's operands earlier ones); 1 refuses.
 ///
 /// A token's check (`token`, decision 0398): `ops` over the token's own bytes, place 0 its first
-/// byte, as simdjson's stage 2 reads a number (`token_value`); `mask` and `delay` unused. 1 at
-/// any of its places refuses. A check `check KIND = G` compiles to one: its byte machine as a
-/// `fill` per self-loop and logic, run word-parallel, 64 places a word, its carries passed from
-/// word to word on a longer token. No loop over bytes.
+/// byte, as simdjson's stage 2 reads a number (`token_value`); `mask` unused. With a `delay`
+/// (decision 0399), the frame runs that many bytes past the token, and the test at place `i`
+/// is the last op at `i + delay`: 1 at any of places `delay` to `n + delay` refuses. A
+/// `within k` there is a byte of the file: place `i - k` is in the frame and the file. A check
+/// `check KIND = G` compiles to one: its byte machine as a `fill` per self-loop and logic, run
+/// word-parallel, 64 places a word, its carries passed from word to word on a longer token. No
+/// loop over bytes.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct LocalCheck {
     pub mask: u16,
@@ -222,36 +225,38 @@ impl LocalOp {
     }
 }
 
-/// A token's check over its bytes `token` (`LocalCheck::token`): whether its last op is 1 at
-/// any place. Each op's value at every place, in order.
-pub fn token_value(ops: &[LocalOp], token: &[u8]) -> bool {
-    let n = token.len();
+/// A token's check (`LocalCheck::token`) at the token of `bytes[start..end]`: whether it
+/// refuses. The frame is the token's bytes and `delay` more, a byte past the file 0.
+pub fn token_value(ops: &[LocalOp], bytes: &[u8], start: usize, end: usize, delay: u8) -> bool {
+    let (n, d) = (end - start, usize::from(delay));
+    let m = n + d;
+    let byte = |i: usize| bytes.get(start + i).copied().unwrap_or(0);
     let mut v: Vec<Vec<bool>> = Vec::with_capacity(ops.len());
     for op in ops {
         let at = |a: u16, i: usize| v[usize::from(a)][i];
         let row: Vec<bool> = match *op {
-            LocalOp::Bytes(s) => token.iter().map(|&b| s[usize::from(b) / 64] >> (b % 64) & 1 == 1).collect(),
-            LocalOp::Const(p) => (0..n).map(|i| p >> (i % 64) & 1 == 1).collect(),
-            LocalOp::Within(_) => vec![true; n],
-            LocalOp::Not(a) => (0..n).map(|i| !at(a, i)).collect(),
-            LocalOp::And(a, b) => (0..n).map(|i| at(a, i) && at(b, i)).collect(),
-            LocalOp::Or(a, b) => (0..n).map(|i| at(a, i) || at(b, i)).collect(),
-            LocalOp::Xor(a, b) => (0..n).map(|i| at(a, i) != at(b, i)).collect(),
-            LocalOp::AndNot(a, b) => (0..n).map(|i| at(a, i) && !at(b, i)).collect(),
-            LocalOp::Prev(a, k) => (0..n).map(|i| i >= usize::from(k) && at(a, i - usize::from(k))).collect(),
+            LocalOp::Bytes(s) => (0..m).map(|i| { let b = byte(i); s[usize::from(b) / 64] >> (b % 64) & 1 == 1 }).collect(),
+            LocalOp::Const(p) => (0..m).map(|i| p >> (i % 64) & 1 == 1).collect(),
+            LocalOp::Within(k) => (0..m).map(|i| i >= usize::from(k) && start + i - usize::from(k) < bytes.len()).collect(),
+            LocalOp::Not(a) => (0..m).map(|i| !at(a, i)).collect(),
+            LocalOp::And(a, b) => (0..m).map(|i| at(a, i) && at(b, i)).collect(),
+            LocalOp::Or(a, b) => (0..m).map(|i| at(a, i) || at(b, i)).collect(),
+            LocalOp::Xor(a, b) => (0..m).map(|i| at(a, i) != at(b, i)).collect(),
+            LocalOp::AndNot(a, b) => (0..m).map(|i| at(a, i) && !at(b, i)).collect(),
+            LocalOp::Prev(a, k) => (0..m).map(|i| i >= usize::from(k) && at(a, i - usize::from(k))).collect(),
             LocalOp::Fill(a, b) => {
-                let mut f = vec![false; n];
-                for i in 0..n {
+                let mut f = vec![false; m];
+                for i in 0..m {
                     f[i] = at(a, i) || (i > 0 && f[i - 1] && !at(b, i));
                 }
                 f
             }
-            LocalOp::Start => (0..n).map(|i| i == 0).collect(),
-            LocalOp::Last => (0..n).map(|i| i + 1 == n).collect(),
+            LocalOp::Start => (0..m).map(|i| i == 0).collect(),
+            LocalOp::Last => (0..m).map(|i| i + 1 == n).collect(),
         };
         v.push(row);
     }
-    v.last().is_some_and(|r| r.iter().any(|&b| b))
+    v.last().is_some_and(|r| r[d..].iter().any(|&b| b))
 }
 
 /// A local check's value at stream place `i` over `bytes` (`LocalCheck`), each op's once.

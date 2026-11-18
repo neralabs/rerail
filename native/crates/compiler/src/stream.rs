@@ -747,8 +747,8 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
             CHECK if program.local_checks[usize::from(operand)].token => {
                 // The token's own bytes, as simdjson's stage 2 reads a number (decision 0398).
                 let c = &program.local_checks[usize::from(operand)];
-                let token = bytes.get(start as usize..(rec_end as usize).min(bytes.len())).unwrap_or(&[]);
-                if crate::program::token_value(&c.ops, token) {
+                let end = (rec_end as usize).min(bytes.len()).max(start as usize);
+                if crate::program::token_value(&c.ops, bytes, start as usize, end, c.delay) {
                     return refuse(pc - 1, "a token's check holds");
                 }
             }
@@ -872,7 +872,7 @@ pub fn validate_tier2(program: &Words) -> Result<(), Error> {
 
 /// The local checks (`Words::local_checks`): each a mask tier 2 reads, its ops' operands
 /// earlier ones, a `Prev` of 1 to 63, at least one op. A token's check (`LocalCheck::token`)
-/// reads no mask and has no `within`; only it has `fill`, `start` and `last`.
+/// reads no mask, and a delay under 64; only it has `fill`, `start` and `last`.
 pub fn validate_local_checks(program: &Words) -> Result<(), Error> {
     let masks = program.block_programs.first().map_or(0, |b| b.masks.len());
     for (i, c) in program.local_checks.iter().enumerate() {
@@ -880,12 +880,11 @@ pub fn validate_local_checks(program: &Words) -> Result<(), Error> {
             let k = k as u16;
             let ok = match *op {
                 LocalOp::Prev(a, s) => a < k && (1..=63).contains(&s),
-                LocalOp::Within(_) => !c.token,
                 _ => op.operands().iter().all(|&a| a < k),
             };
             ok && (c.token || !op.token_only())
         });
-        if c.ops.is_empty() || !earlier || (!c.token && usize::from(c.mask) >= masks) {
+        if c.ops.is_empty() || !earlier || (!c.token && usize::from(c.mask) >= masks) || (c.token && c.delay >= 64) {
             return Err(Error::InvalidOperand(i));
         }
     }

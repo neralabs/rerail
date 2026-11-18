@@ -86,12 +86,16 @@ mask content    = body & ~esc & ~esc_last
 mask unicode    = esc_last & u
 
 error "a control byte in a string" when body & control
-error "\\u without four hex digits" when (prev(unicode, 1) | prev(unicode, 2) | prev(unicode, 3) | prev(unicode, 4)) & ~hex
+# Each `\u`'s own test, at its `u`, of the bytes after it: tier 2 runs it at the escape's
+# token, and tier 1 makes the `u`s only (decision 0399).
+error "\\u without four hex digits" when unicode & ~(next(hex, 1) & next(hex, 2) & next(hex, 3) & next(hex, 4))
 # A surrogate escape, at its `u`: `\uD800` to `\uDBFF` must be followed by one of `\uDC00` to
-# `\uDFFF`, six bytes on, and that one must follow one (simdjson refuses either alone).
+# `\uDFFF`, six bytes on, and that one must follow one (simdjson refuses either alone). After a
+# high one's four hex digits, a backslash can only start an escape: its test is the bytes'.
 mask high       = unicode & next(dee, 1) & next(high_2, 2)
 mask low        = unicode & next(dee, 1) & next(low_2, 2)
-error "a lone surrogate" when (high & ~next(low, 6)) | (low & ~prev(high, 6))
+error "a lone high surrogate" when high & ~(next(backslash, 5) & next(u, 6) & next(dee, 7) & next(low_2, 8))
+error "a lone low surrogate" when low & ~prev(high, 6)
 
 # --- Outside strings -----------------------------------------------------------------------------
 

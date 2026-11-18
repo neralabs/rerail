@@ -224,3 +224,71 @@ fn a_numbers_check_runs_over_its_tokens_bytes() {
     }
     assert!(accepted > 50 && refused > 50, "{accepted} accepted, {refused} refused");
 }
+
+/// JSON's `\u` checks are token's checks at each escape (decision 0399): tier 2 tests the
+/// escape's `u` and the bytes after it, tier 1 makes none of it. The interpreter and the
+/// CPU refuse exactly the strings a `\u` without four hex digits or a lone surrogate is in,
+/// with the escape at every place of a block's last bytes, so its bytes cross into the next
+/// word, and after escaped backslashes, where a `u` is no escape's.
+#[test]
+fn a_unicode_escapes_checks_run_at_its_u() {
+    // Whether a string's text (between its quotes, no control bytes) is valid JSON.
+    fn valid(s: &[u8]) -> bool {
+        let hex4 = |i: usize| s.len() >= i + 4 && s[i..i + 4].iter().all(u8::is_ascii_hexdigit);
+        let unit = |i: usize| u16::from_str_radix(std::str::from_utf8(&s[i..i + 4]).expect("hex"), 16).expect("hex");
+        let mut i = 0;
+        let mut want_low = false;
+        while i < s.len() {
+            if s[i] != b'\\' {
+                if want_low {
+                    return false;
+                }
+                i += 1;
+                continue;
+            }
+            match s.get(i + 1) {
+                Some(b'u') => {
+                    if !hex4(i + 2) {
+                        return false;
+                    }
+                    let u = unit(i + 2);
+                    let (high, low) = ((0xd800..0xdc00).contains(&u), (0xdc00..0xe000).contains(&u));
+                    if want_low != low || (want_low && high) {
+                        return false;
+                    }
+                    want_low = high;
+                    i += 6;
+                }
+                Some(b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't') if !want_low => i += 2,
+                _ => return false,
+            }
+        }
+        !want_low
+    }
+    let source = std::fs::read_to_string(format!("{DIR}/14-json.bitlex")).expect("the ladder's JSON");
+    let c = crate::ladder::compile_step("14-json", &source);
+    // One token's check past its token (the hex digits and the lone high, merged), and no mask's.
+    assert_eq!(c.program.local_checks.iter().filter(|k| k.token && k.delay == 8).count(), 1, "{:?}", c.program.local_checks);
+    assert!(c.program.local_checks.iter().all(|k| k.token), "{:?}", c.program.local_checks);
+    let block = &c.program.block_programs[0];
+    let texts = [
+        r"A", r"éx", r"😀", r"😀", r"\u12", r"\u12G4", r"\uZZZZ", r"\u", r"\uD800", r"\uD800x", r"\uD800A", r"\uDC00",
+        r"a\uDE00", r"\uD800\uD800", r"\\u12", r"\\A", r"\\\u12", r"\\\\uD800", r"\uD83D\n\uDE00", r"􏿿", r"\uD800\\uDC00",
+    ];
+    let (mut accepted, mut refused) = (0, 0);
+    for text in texts {
+        for pad in 50..70 {
+            // The last: the file ends in the escape's bytes, an unclosed string (a `within`'s
+            // test of the file's end).
+            for (doc, closed) in [(format!("[\"{}{text}\"]", "a".repeat(pad)), true), (format!("{{\"{text}\": {}}}", "1".repeat(pad % 7 + 1)), true), (format!("\"{}{text}\"", " ".repeat(pad)), true), (format!("\"{}{text}", "b".repeat(pad)), false)] {
+                let bytes = doc.as_bytes();
+                let pc = |r: Result<Vec<stream::Node>, stream::Refused>| r.map_err(|e| e.pc);
+                let want = pc(stream::run(&c.program, bytes, &block.run(bytes)));
+                assert_eq!(want.is_ok(), closed && valid(text.as_bytes()), "the interpreter: {doc:?}");
+                assert_eq!(pc(c.parser.parse(bytes)), want, "the CPU: {doc:?}");
+                if want.is_ok() { accepted += 1 } else { refused += 1 }
+            }
+        }
+    }
+    assert!(accepted > 100 && refused > 100, "{accepted} accepted, {refused} refused");
+}

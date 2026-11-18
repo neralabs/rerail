@@ -607,9 +607,19 @@ fn json_edge_values_are_its_ends_checks() {
         let at: Vec<usize> = (0..edge.len()).filter(|&x| edge[x]).collect();
         println!("{name}: {} of {} values differ on an edge block, found in {took:?}: {at:?}", at.len(), edge.len());
         assert!(at.iter().all(|&x| !matches!(native.insts[x], block_native::BlockInst::EqByte(_) | block_native::BlockInst::Class { .. } | block_native::BlockInst::Pair { .. })), "{name}: a byte test differs");
-        assert!(at.len() * 3 <= edge.len(), "{name}: {} of {} differ", at.len(), edge.len());
+        // A ratchet on the values the edge part makes again, apart from the body's size: lower
+        // it as the compiler improves. (It was a third of the body's; the body shrank as the
+        // number and `\u` checks went to tier 2, 0398 and 0399, and the edge's count less.)
+        let most = if name == "14-json" { EDGE_VALUES_14 } else { EDGE_VALUES_15 };
+        assert!(at.len() <= most, "{name}: {} of {} differ (budget {most})", at.len(), edge.len());
     }
 }
+
+/// The values an edge block differs in (a ratchet): 14-json's 90 before 0389, 47 after, 41 with
+/// its number and `\u` checks tier 2's.
+const EDGE_VALUES_14: usize = 41;
+/// 15-jsonc's: 63 before 0389, 64 after, 56 with its checks tier 2's.
+const EDGE_VALUES_15: usize = 56;
 
 /// JSON's tier 1 has no general body (0383): its full body runs on the edge blocks too, with
 /// its edge part, as simdjson's stage 1 runs one body and a `finish()`.
