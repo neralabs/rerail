@@ -67,6 +67,12 @@ pub fn volume(path: &Path) -> Option<[u8; 16]> {
     }
 }
 
+/// FSEvents' latest event id: a test's cursor taken now (`observe`'s Q179 test).
+#[cfg(all(test, target_os = "macos"))]
+pub fn current_id() -> u64 {
+    fsevents::current_id()
+}
+
 /// A new outermost run begins: a question asked after this is answered with every change made before it (each kept
 /// stream waits for a cookie once, `fsevents::sync`). Runs inside it share its answer.
 pub fn next_epoch() {
@@ -452,6 +458,13 @@ mod fsevents {
         Ok(id)
     }
 
+    /// The system's latest event id (a test's stand-in for a cursor taken now).
+    #[cfg(test)]
+    pub(super) fn current_id() -> u64 {
+        // SAFETY: no arguments; returns the latest id.
+        unsafe { FSEventsGetCurrentEventId() }
+    }
+
     pub(super) fn volume(path: &Path) -> Option<[u8; 16]> {
         use std::os::unix::fs::MetadataExt as _;
         let dev = std::fs::metadata(path).ok()?.dev() as i32;
@@ -475,6 +488,9 @@ mod fsevents {
     pub(super) fn prepare(roots: &[(PathBuf, u64)], cookie_dir: &Path) {
         // SAFETY: no arguments; returns the latest id.
         let now = unsafe { FSEventsGetCurrentEventId() };
+        if std::env::var_os("RERAIL_JOURNAL_TRACE").is_some() {
+            eprintln!("journal prepared at id {now}: {} roots", roots.len());
+        }
         let Ok(cookie_dir) = std::fs::canonicalize(cookie_dir) else { return };
         let mut real: Vec<(PathBuf, u64)> = roots.iter().filter(|(_, c)| *c <= now).filter_map(|(r, c)| Some((std::fs::canonicalize(r).ok()?, *c))).collect();
         real.sort();
@@ -565,6 +581,13 @@ mod fsevents {
         let mut out: Vec<PathBuf> = Vec::new();
         {
             let seen = all[at].shared.seen.lock().unwrap_or_else(|e| e.into_inner());
+            if std::env::var_os("RERAIL_JOURNAL_TRACE").is_some() {
+                // Each event the stream holds, against the cursor asked and the cookie's id (Q179's evidence).
+                for (id, path) in &seen.events {
+                    eprintln!("journal event {id} {} {path}", if *id > cursor { "after" } else { "before" });
+                }
+                eprintln!("journal asked from {cursor}, synced at {synced}");
+            }
             for (_, path) in seen.events.iter().filter(|(id, _)| *id > cursor) {
                 let path = Path::new(path.trim_end_matches('/'));
                 let Some((real_root, root)) = real.iter().find(|(r, _)| path.starts_with(r)) else { continue };
