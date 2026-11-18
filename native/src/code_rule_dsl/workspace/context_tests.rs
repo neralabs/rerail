@@ -3911,12 +3911,11 @@ fn undecodable_tapes_leave_the_search_index_backlog_without_pinning_its_cursor()
 /// A modification time long before any index write, so no index entry recorded for the file is
 /// racy and a warm restore verifies it by its stat alone.
 fn backdate(path: &std::path::Path) {
-    std::fs::File::options()
-        .write(true)
-        .open(path)
-        .unwrap()
-        .set_modified(UNIX_EPOCH + std::time::Duration::from_secs(1_577_836_800))
-        .unwrap();
+    git_workspace::backdate(path, written_long_ago());
+}
+
+fn written_long_ago() -> SystemTime {
+    UNIX_EPOCH + std::time::Duration::from_secs(1_577_836_800)
 }
 
 /// A committed repository holding `files`, each backdated before `git add` so its index entry is
@@ -3969,6 +3968,50 @@ fn a_warm_index_reads_a_same_size_edit_that_keeps_its_mtime_after_discovery() {
             .set_modified(modified)
             .unwrap();
     });
+    let indexed = index_workspace(&second);
+    assert_eq!(
+        located(&all_pages(&second, MAXIMUM_PAGE_BYTES)),
+        vec![("api/a.py".to_owned(), "print".to_owned(), 0)],
+        "the restore must not reuse the committed blob's results for edited bytes: {indexed}"
+    );
+    assert_eq!(
+        indexed["restoredFiles"],
+        json!(1),
+        "the unchanged sibling is still restored: {indexed}"
+    );
+    second.close();
+}
+
+/// A clean tracked file that changes while no workspace runs, keeping its size and getting its
+/// modification time back (`touch -r`), is read by the next warm index: its stored results are of
+/// the committed bytes. Git for Windows' own stat calls the file clean, so on Windows discovery
+/// does too, and only the restore's stat proof can tell.
+#[test]
+fn a_warm_index_reads_a_same_size_edit_that_keeps_its_mtime_before_discovery() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let directory = backdated_repository(
+        "restore-stat-before",
+        &[("api/a.py", b"pront(1)\n"), ("lib/b.py", b"x = 2\n")],
+    );
+    let root = directory.0.join("repo");
+    let code_rule = print_code_rule();
+    let mut first = storage_workspace(&root, directory.store());
+    first.add_code_rule(&code_rule, None).unwrap();
+    index_workspace(&first);
+    assert_eq!(all_pages(&first, MAXIMUM_PAGE_BYTES), json!([]));
+    first.completion_task().compute().unwrap();
+    first.close();
+
+    let edited = root.join("api/a.py");
+    std::fs::write(&edited, b"print(1)\n").unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(&edited)
+        .unwrap()
+        .set_modified(written_long_ago())
+        .unwrap();
+    let mut second = storage_workspace(&root, directory.store());
+    second.add_code_rule(&code_rule, None).unwrap();
     let indexed = index_workspace(&second);
     assert_eq!(
         located(&all_pages(&second, MAXIMUM_PAGE_BYTES)),

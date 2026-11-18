@@ -62,6 +62,45 @@ pub(crate) fn source_alias_hashes() -> usize {
     SOURCE_ALIAS_HASHES.load(Ordering::Relaxed)
 }
 
+/// Sets `path`'s modification time to `when`, as for a file last written then and left alone
+/// since. On Windows its change time goes there too: setting a time moves NTFS's change time to
+/// now, which such a file does not have.
+#[cfg(test)]
+pub(crate) fn backdate(path: &Path, when: std::time::SystemTime) {
+    let file = std::fs::File::options().write(true).open(path).unwrap();
+    #[cfg(not(windows))]
+    file.set_modified(when).unwrap();
+    #[cfg(windows)]
+    set_written(&file, when);
+}
+
+#[cfg(all(test, windows))]
+fn set_written(file: &std::fs::File, when: std::time::SystemTime) {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_BASIC_INFO, FileBasicInfo, SetFileInformationByHandle,
+    };
+    // A file time counts 100 ns intervals from 1601; a time left at 0 stays as it is.
+    let since_1601 = when.duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos() / 100
+        + 116_444_736_000_000_000;
+    let time = i64::try_from(since_1601).unwrap();
+    let info = FILE_BASIC_INFO {
+        LastWriteTime: time,
+        ChangeTime: time,
+        ..FILE_BASIC_INFO::default()
+    };
+    // SAFETY: an open handle with write access, and a buffer of the size given.
+    let set = unsafe {
+        SetFileInformationByHandle(
+            file.as_raw_handle(),
+            FileBasicInfo,
+            (&raw const info).cast(),
+            std::mem::size_of::<FILE_BASIC_INFO>() as u32,
+        )
+    };
+    assert_ne!(set, 0, "{}", std::io::Error::last_os_error());
+}
+
 #[cfg(test)]
 thread_local! {
     /// Runs once, inside the next discovery on this thread, after it walked the HEAD tree and
@@ -996,6 +1035,39 @@ mod tests {
         assert_eq!(
             workspace.read_source("source.php", u64::MAX).unwrap(),
             b"<?php echo 'rerail';\n"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// A clean file's stat proves it holds its blob's bytes until something writes it. A write
+    /// that keeps the size and puts the modification time back (`touch -r`) ends that proof on
+    /// every system, so the file is hashed and its new bytes are not taken for the blob's.
+    #[test]
+    fn a_clean_files_stat_proves_its_bytes_until_a_same_size_write_puts_its_time_back() {
+        let root = fixture_directory("stat-proof");
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("a.py");
+        std::fs::write(&path, b"pront(1)\n").unwrap();
+        let written = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_577_836_800);
+        backdate(&path, written);
+        initialize_repository(&root, &[]);
+        let workspace = discover(&root).unwrap();
+        assert!(
+            workspace.base_files[0].checkout.is_some(),
+            "the entry of a file written before the index is not racy"
+        );
+        assert!(workspace.holds_blob_bytes("a.py", 9));
+
+        std::fs::write(&path, b"print(1)\n").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(written)
+            .unwrap();
+        assert!(
+            !workspace.holds_blob_bytes("a.py", 9),
+            "bytes written after Git compared the file are not its blob's"
         );
         std::fs::remove_dir_all(root).unwrap();
     }
