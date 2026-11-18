@@ -2874,6 +2874,24 @@ const MIN_CHUNK_NODES: usize = 8_192;
 const CHUNK_FLOOR_MB: f64 = 64.0;
 /// A chunk's growth that sizes the next (Q74): a smaller one is within the pages freed before it, which it reused.
 const CHUNK_CREDIBLE_MB: usize = 16;
+/// What a node is taken to add before a chunk's growth is credible: the most measured on the bench's 300 files
+/// (7–22 KB a node, 47785e475). Chunks are sized and counted by it from the first, as by a measurement, so the run
+/// does not go one probe-sized chunk at a time until one is credible: with freed pages reused, five of seven chunks
+/// of the 300-file cold run added under 16 MB, and their 330,000 nodes ran one chunk at a time (t48, 2026-11-18).
+const PRIOR_BYTES_A_NODE: f64 = 22_528.0;
+
+/// The chunks' sizing (Q55, Q74): with `per_node` bytes a node, a footprint of `start_mb` and up to `at_most` chunks
+/// at once, how many chunks may evaluate at once, how many nodes each, its budget in MB, the run's headroom in MB
+/// (three quarters of what `RERAIL_RUN_MB` leaves) and the chunk's own size in MB (`RERAIL_CHUNK_MB`).
+fn chunk_sizing(per_node: f64, start_mb: usize, at_most: usize, chunk_nodes: usize) -> (usize, usize, f64, f64, f64) {
+    let env = |k: &str, d: f64| std::env::var(k).ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(d);
+    let headroom = (env("RERAIL_RUN_MB", RUN_MB) - start_mb as f64).max(0.0) * 0.75;
+    let chunk = env("RERAIL_CHUNK_MB", CHUNK_MB);
+    let allowed = ((headroom / env("RERAIL_CHUNK_FLOOR_MB", CHUNK_FLOOR_MB)).floor() as usize).clamp(1, at_most);
+    let budget = chunk.min(headroom / allowed as f64).round();
+    let next = ((budget * 1048576.0 / per_node) as usize).clamp(MIN_CHUNK_NODES.min(chunk_nodes), chunk_nodes);
+    (allowed, next, budget, headroom, chunk)
+}
 
 #[allow(clippy::too_many_arguments)]
 pub fn run_with_options(
@@ -6301,7 +6319,10 @@ fn run_observed(
     // How many may be in flight now (Q74): one until a chunk's measured growth sizes the rest, then as many as share
     // the run's headroom at `CHUNK_FLOOR_MB` or more each (the chunk-size decision sets it). The chunks in flight
     // together stay within it: 8 chunks each sized to the whole headroom took a cold run at 300 files to 2.3 GB.
-    let at_once_allowed = std::sync::atomic::AtomicUsize::new(1);
+    // Until one is, by the prior (`PRIOR_BYTES_A_NODE`): the first chunks are sized and counted as a measured one's.
+    let (allowed_first, first_nodes, ..) = chunk_sizing(PRIOR_BYTES_A_NODE, crate::code_rule_dsl::prof::footprint_mb(), chunks_at_once, chunk_nodes);
+    let at_once_allowed = std::sync::atomic::AtomicUsize::new(allowed_first);
+    chunk_target.store(first_nodes.min(PROBE_NODES), std::sync::atomic::Ordering::Relaxed);
     // The most a node was measured to add this run: a chunk whose growth the pages freed before it hid (22 bytes a
     // node, beside 9 KB measured next) sizes no chunk.
     let per_node_most = std::cell::Cell::new(0.0f64);
@@ -6985,14 +7006,11 @@ fn run_observed(
             if credible {
                 per_node_most.set(per_node_most.get().max(measured));
             }
-            let per_node = per_node_most.get();
+            // The most measured, else the prior: three quarters of what is left of the run's budget, shared by the
+            // chunks in flight together (`chunk_sizing`).
+            let per_node = if per_node_most.get() > 0.0 { per_node_most.get() } else { PRIOR_BYTES_A_NODE };
             let env = |k: &str, d: f64| std::env::var(k).ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(d);
-            // Three quarters of what is left of the run's budget, shared by the chunks in flight together.
-            let headroom = (env("RERAIL_RUN_MB", RUN_MB) - start_mb as f64).max(0.0) * 0.75;
-            let chunk = env("RERAIL_CHUNK_MB", CHUNK_MB);
-            let allowed = if per_node > 0.0 { ((headroom / env("RERAIL_CHUNK_FLOOR_MB", CHUNK_FLOOR_MB)).floor() as usize).clamp(1, chunks_at_once) } else { 1 };
-            let budget = chunk.min(headroom / allowed as f64).round();
-            let next = if per_node > 0.0 { ((budget * 1048576.0 / per_node) as usize).clamp(MIN_CHUNK_NODES.min(chunk_nodes), chunk_nodes) } else { chunk_nodes.min(PROBE_NODES) };
+            let (allowed, next, budget, headroom, chunk) = chunk_sizing(per_node, start_mb, chunks_at_once, chunk_nodes);
             chunk_target.store(next, std::sync::atomic::Ordering::Relaxed);
             at_once_allowed.store(allowed, std::sync::atomic::Ordering::Relaxed);
             // The device pool's share of the footprint the chunk was sized under: its blocks leased and idle.
@@ -7013,7 +7031,7 @@ fn run_observed(
             crate::code_rule_dsl::logic::profile::decision("chunk size", || if credible {
                 format!("a chunk of {chunk_nodes_built} nodes added {added} MB ({measured:.0} bytes a node, {per_node:.0} the most this run); the next are about {next} nodes, {allowed} at once ({budget} MB a chunk: the least of {chunk} MB and three quarters of the run's headroom above {start_mb} MB shared by the chunks at once; at most {chunk_nodes})")
             } else {
-                format!("a chunk of {chunk_nodes_built} nodes added {added} MB, under {CHUNK_CREDIBLE_MB} MB (pages freed before it reused): it sizes nothing; the next are about {next} nodes, {allowed} at once")
+                format!("a chunk of {chunk_nodes_built} nodes added {added} MB, under {CHUNK_CREDIBLE_MB} MB (pages freed before it reused): it sizes nothing; the next are about {next} nodes, {allowed} at once (by {per_node:.0} bytes a node, {})", if per_node_most.get() > 0.0 { "the most measured" } else { "the prior" })
             });
             // The memory line, not the chunk's own size, set it: every stratum and matcher launch runs per chunk, so
             // a cut chunk is a smaller grain for the device and more runs for the same work (the profile's warnings).
@@ -11894,6 +11912,24 @@ impl Own {
 
 #[cfg(test)]
 pub mod tests {
+    /// Before any chunk's growth is credible, the chunks are sized and counted by the prior as by a measurement
+    /// (Q183): several at once where the headroom holds them, together within it, each of at least the fewest nodes.
+    #[test]
+    fn chunks_are_sized_by_the_prior_before_a_credible_measurement() {
+        if ["RERAIL_RUN_MB", "RERAIL_CHUNK_MB", "RERAIL_CHUNK_FLOOR_MB"].iter().any(|k| std::env::var_os(k).is_some()) {
+            return;
+        }
+        let (allowed, next, budget, headroom, chunk) = super::chunk_sizing(super::PRIOR_BYTES_A_NODE, 200, 8, 1_000_000);
+        assert_eq!(chunk, super::CHUNK_MB);
+        assert!(allowed > 1, "more than one chunk at once before a measurement: {allowed}");
+        assert!(allowed as f64 * budget <= headroom + allowed as f64, "{allowed} x {budget} MB within {headroom} MB");
+        assert!(next >= super::MIN_CHUNK_NODES, "{next}");
+        // One at once: the chunk's own size by the prior.
+        let (one, nodes, budget, ..) = super::chunk_sizing(super::PRIOR_BYTES_A_NODE, 200, 1, 1_000_000);
+        assert_eq!((one, budget), (1, super::CHUNK_MB));
+        assert_eq!(nodes, (super::CHUNK_MB * 1048576.0 / super::PRIOR_BYTES_A_NODE) as usize);
+    }
+
     /// The chunks' totals give the planner every column's moments, but per value only what it reads (Q89): the
     /// values the program tests (`binding_domains`' lookups by constant), and every value of a column of few
     /// (`small_values`). Held whole, every distinct value of every export column was 118 MB of the cross part's

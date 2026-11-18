@@ -2367,7 +2367,11 @@ with the default line takes the slow pass.
 
 - **Done when**: the full shape at the default line makes chunks of the fast path's size, or the line's default
   is set from the machine; its peak footprint measured against the lifted run's.
-- **Record**: —
+- **Record**: in part. Chunks are sized and counted by a prior of 22 KB a node (the most measured on this corpus)
+  until a chunk's growth is credible: t48's profile, line lifted, had 5 of 7 chunks under 16 MB (freed pages
+  reused), so its 330,000 nodes ran one chunk at a time and the cold wall was 17–18 s against t41's 12.8 at the same
+  CPU (65–69 s against 64.8). This relaxes Q55's "one chunk until a credible measurement"; the chunks together stay
+  within the headroom by the prior. Its wall on the full shape is not yet measured (the host at load 50–105).
 
 ### Q184. A warm run waits on the journal's cookies far longer than a `stat` of what it trusts would take
 
