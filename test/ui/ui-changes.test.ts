@@ -28,6 +28,8 @@ let githubState: GithubState = "signed-in";
 let githubReading: { at: number } | undefined;
 let githubNext: GithubState = "signed-in";
 let daemonAheadMs = 0;
+/** A daemon that says gh is due now at every status, as one whose gh read has not answered yet. */
+let githubDueNow = false;
 let renders: boolean[] = [];
 let visibility: (() => void)[] = [];
 const encoder = new TextEncoder();
@@ -38,6 +40,7 @@ const json = (body: unknown, status = 200): Response => new Response(JSON.string
 function githubShown(): MergeAssistStatus["readiness"]["github"] {
   const shown = { state: githubState, login: null, repository: "acme/app" };
   if (githubReading === undefined) return shown;
+  if (githubDueNow) return { ...shown, readAgainInMs: 0 };
   const daemonNow = Date.now() + daemonAheadMs;
   if (daemonNow - githubReading.at >= 5 * 60_000) {
     githubReading = { at: daemonNow };
@@ -106,6 +109,7 @@ beforeEach(async () => {
   githubReading = undefined;
   githubNext = "signed-in";
   daemonAheadMs = 0;
+  githubDueNow = false;
   renders = [];
   vi.stubGlobal("location", { origin: "http://127.0.0.1:4000" });
   vi.stubGlobal("fetch", async (input: URL, init: { signal?: AbortSignal } = {}) => {
@@ -617,6 +621,23 @@ describe("the dashboard following the daemon's change stream", () => {
 
     expect(readsOf("/api/merge-assist")).toBe(2);
     expect(data.mergeAssist?.readiness.github.state).toBe("signed-out");
+  });
+
+  it("asks for the Merge Assist status at most every 5 s while the daemon says gh is due now, as the poll asked", async () => {
+    ui.view = "merge";
+    githubReading = { at: Date.now() };
+    githubDueNow = true;
+    stream().send("t1");
+    await settle();
+    expect(readsOf("/api/merge-assist")).toBe(1);
+
+    for (let beat = 0; beat < 2; beat += 1) {
+      await after(5_000);
+      stream().send("t1");
+      await settle();
+    }
+
+    expect(readsOf("/api/merge-assist")).toBe(3);
   });
 
   it("wakes for gh's sign-in on no page but Merge Assist's, though the sidebar's count holds a reading", async () => {
