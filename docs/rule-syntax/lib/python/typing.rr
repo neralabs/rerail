@@ -12,8 +12,7 @@
 //                                           "slice1" `[:1]`, "slice2" `[:2]`, "other"
 //                   pyi_int(e)              e is an int literal (`3`, `0x8`; not `True`, not `-1`)
 //                   int_tuple(e, k)         e is a tuple of k int literals;  tuple_len(e, k): of k elements
-//   3. Names:       pyi_sym(e, q)           e names q in its own file (Ruff's resolve_qualified_name)
-//                   typing_sym(e, x)        e resolves to `typing.x` or `typing_extensions.x`
+//   3. Names:       typing_sym(e, x)        e resolves to `typing.x` or `typing_extensions.x`
 //                   typevar_call(c, k)      c calls TypeVar, ParamSpec or TypeVarTuple (k)
 //                   simple_assign(a, t, v)  a is `t = v` with one target: no chain, no annotation
 //                   plain_target(t, x)       target t is the plain name x (`x`, or `(x)`)
@@ -118,12 +117,6 @@ int_tuple(e, k) :- tuple_len(e, k), count : { child(e, x, _), !kind(x, "comment"
 tuple_len(e, k) :- kind(e, "tuple"), k = count : { child(e, x, _), !kind(x, "comment") }.
 
 // ---- 3. names ----------------------------------------------------------------------------------------------------
-// pyi_sym(e, q) gives the name q that e resolves to through this file's imports, aliases, attribute chains,
-// definitions or builtins. Imported names keep their module's qualified name, as in Ruff's resolve_qualified_name.
-.decl pyi_sym(e: node, q: symbol)
-pyi_sym(n, q) :- qn(n, q).
-pyi_sym(n, q) :- look(n, x, s), defn(s, x, f), qualname(f, q).
-pyi_sym(n, q) :- builtin_ref(n, x), q = @dot("builtins", x).
 // typing_sym(e, x): e names typing.x or typing_extensions.x (Ruff's match_typing_expr).
 //   from typing import Literal; Literal       typing_sym(<Literal>, "Literal")
 //   import typing_extensions as te; te.Self   typing_sym(<te.Self>, "Self")

@@ -325,7 +325,7 @@ Libraries:
   issue links in the comment block.
 - `lib/python/misc2-noqa.rr` (51 lines): Ruff's noqa lexer (inline and file-wide blankets, file exemptions),
   own-line comments, and blanket `type: ignore`.
-- `lib/python/misc2-self.rr` (103 lines): the receiver tests of SLF001.
+- `lib/python/misc2-self.rr` (80 lines): the receiver tests of SLF001.
 - `lib/python/misc2-slots.rr` (41 lines): classes without `__slots__` (a parenthesized `(__slots__) = …`
   counts), positional bases (not `metaclass=` or `**kw`), enums.
 - `lib/python/misc2-todo-span.rr`: **to delete**, unused. It held the span-anchored TD version (D-D4), which

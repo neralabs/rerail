@@ -185,7 +185,7 @@ Libraries: 3,905 clauses, 3,831 lowered.
 | 2 | the built-in function `max/2` | `lib/php/format.rr:60`, `lib/tsx/modules.rr:198` |
 | 1 | `precedes_stop` | `lib/php/phpdoc.rr:22` |
 | 1 | the aggregate `sum` | `lib/python/misc2-messages.rr:58` |
-| 1 | `!nearest(n, s, set)` with s named | `lib/python/misc2-self.rr:43` |
+| 1 | `!nearest(n, s, set)` with s named | `lib/python/misc2-self.rr:35` |
 | 1 | arithmetic `%` | `lib/rust/syntax-literals.rr:153` |
 | 0 (was 1) | a negated conjunction | `lib/python/docstrings.rr:89`, rewritten |
 
