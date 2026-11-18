@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BOUNDARY_DISCOVERY_WAIT_MS, CodeRuleBridge } from "../../../../src/engine/code-rule/code-rule-bridge.js";
 import type { CodeRuleAuditor, CodeRuleEditBatch } from "../../../../src/engine/code-rule/code-rule.js";
-import { LinkedFiles, SessionNotices, SharedTreeWatch, WorktreeNotices } from "../../../../src/engine/code-rule/worktree-notices.js";
+import { LinkedFiles, SessionNotices, type SessionReads, SharedTreeWatch, WorktreeNotices } from "../../../../src/engine/code-rule/worktree-notices.js";
 import { RepositoryWorktreeWalks, WORKTREE_FULL_WALK_MS, WorktreeWalks } from "../../../../src/engine/code-rule/worktree-walks.js";
 import { removeFolder } from "../../../support/platform/remove-folder.js";
 import { StampTreeWatch } from "./support/stamp-tree-watch.js";
@@ -518,6 +518,74 @@ describe("a shell command's result reads the session folder by its change notice
     notices.ended(seen, { linked: third.linked, files: 3 });
     expect(notices.begin(false)).toEqual({ whole: false, paths: new Map([["a", "stamp"]]), linked: expect.any(LinkedFiles) });
     notices.close();
+  });
+
+  it("walks the whole folder at the first pass ten minutes after the last whole walk began, and reads by notices again after it", async () => {
+    const root = await workspace();
+    let now = 0;
+    const notices = new SessionNotices(root, { platform: "win32", fullWalkMs: WORKTREE_FULL_WALK_MS, now: () => now });
+    notices.use(new StampTreeWatch());
+    const seen = { folders: new Set(["", "src"]), leftOut: new Set<string>() };
+    const pass = (at: number, whole = false): SessionReads => {
+      now = at;
+      return notices.begin(whole);
+    };
+    const end = (reads: SessionReads): void => notices.ended(reads.whole ? seen : undefined, { linked: reads.linked, files: 3 });
+    end(pass(0));
+    const at599 = pass(599_000);
+    expect(at599.whole).toBe(false);
+    end(at599);
+    const at601 = pass(601_000);
+    expect(at601.whole).toBe(true);
+    // Timed from when the walk began, not from when it ended.
+    now = 640_000;
+    end(at601);
+    const later = pass(641_000);
+    expect(later.whole).toBe(false);
+    end(later);
+    const again = pass(1_201_500);
+    expect(again.whole).toBe(true);
+    end(again);
+    // A turn's end walks whole, and the ten minutes run from it.
+    end(pass(1_500_000, true));
+    expect(pass(1_802_000).whole).toBe(false);
+    notices.close();
+  });
+
+  it("checks a write no notice told of at the first result ten minutes after the last whole walk began, and reads by notices after it", async () => {
+    const root = await workspace();
+    const watch = platformWatch();
+    const { bridge, audits } = await opened(root, watch);
+    // The clock the period is read by; closed with the bridge, so no walk sleeps on a clock put back.
+    bridges.splice(bridges.indexOf(bridge), 1);
+    const start = Date.now();
+    let at = start;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => at);
+    try {
+      await bridge.checkpoint("turn");
+      at = start + 1_000;
+      // As a write through a hard link made to a name outside the folder after that walk: no notice tells of it.
+      await command(bridge, "shell-1", async () => {
+        writeFileSync(join(root, "src", "pkg_0", "m.py"), "eval(w)\n");
+        watch.silence(root);
+      });
+      listed.folders.length = 0;
+      at = start + 599_000;
+      await command(bridge, "shell-2", async () => undefined);
+      expect(listed.folders).toEqual([]);
+      expect(audits).toEqual([]);
+      at = start + 601_000;
+      await command(bridge, "shell-3", async () => undefined);
+      expect(listed.folders.length).toBeGreaterThan(0);
+      expect(checked(audits)).toEqual([["src/pkg_0/m.py"]]);
+      listed.folders.length = 0;
+      at = start + 602_000;
+      await command(bridge, "shell-4", async () => undefined);
+      expect(listed.folders).toEqual([]);
+    } finally {
+      await bridge.close();
+      clock.mockRestore();
+    }
   });
 
   it("walks the whole folder at a result after a command changed Git's ignore rules", async () => {
