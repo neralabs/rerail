@@ -3510,6 +3510,29 @@ Test: `an_export_is_one_relation_of_the_chunks_new_rows`, which replaces the tes
 
 Still merged: 157 relations, nearly all of two parts. Steps 2 and 3 of 0384 cover them.
 
+### Q176. A relation's indexes lie in its block: step 4 of decision 0384 (done)
+
+Done 2026-11-18. The fixpoint's host indexes held about 45 MB at a 300-file peak, the sorted runs 37 MB of it (Q170).
+The sorted runs now keep their ids, tags, fences and key prints in blocks of relations (`BlockVec`, facts/rows.rs).
+Each array goes in its relation's block (`Rows::home`) while that keeps its relations' margin and room for the
+relation's tail to double. Otherwise it goes in the open block of the relation's life.
+
+A chunk keeps the asked bytes rounded up to an eighth of its class (`Block::try_alloc_chunk_fit`), and hands the
+class's rest back to the free list as smaller chunks.
+
+Cold 300-file runs against the step-3 binary:
+- CPU instructions are level (974–1,002 G against 975–1,000 G), and so is sys time.
+- The CPU peak is 1.61–1.64 GB against 1.50–1.64 GB.
+- Metal is level.
+- The findings are the reference's, and the strict 10-file outputs are byte-identical.
+
+Tests: `an_index_array_lies_in_its_relations_block`, `a_relations_runs_lie_in_its_block`. The bytes-a-row bound of
+`a_printed_order_finds_what_the_rows_find` allows the eighth-of-a-class rounding.
+
+Left: the dedup tables and lattice maps (under the heap sampler's floor). The CPU peak's average is about 40 MB
+higher than before: it is within one run's spread, and the next heap profile of a 300-file run should say whether
+the blocks' free lists hold it.
+
 ### Q175. A relation is one relation: steps 2 and 3 of decision 0384 (done)
 
 Done 2026-11-18. At 100 files the Metal merges (`Rows::one`) were 88, 29 MB. Nearly all were relations of parts the

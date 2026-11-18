@@ -156,6 +156,277 @@ pub fn install_block_device(device: fn() -> rerail_blocks::alloc::Device) {
     let _ = BLOCK_DEVICE.set(device);
 }
 
+/// A new block for relations of `life` with room for `need` bytes and its others' margin: the chunk's, if a chunk's
+/// evaluation runs, counted while it lives.
+fn new_open(chunk: &Option<Arc<Chunk>>, life: Life, need: usize) -> Result<Arc<Facts>, String> {
+    let f = Arc::new(Facts::new(lease(2 * need + MARGIN, life)?));
+    if let Some(c) = chunk {
+        c.made.lock().unwrap_or_else(|e| e.into_inner()).push(Arc::downgrade(&f));
+    }
+    let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+    live[life as usize].retain(|w| w.strong_count() > 0);
+    live[life as usize].push(Arc::downgrade(&f));
+    Ok(f)
+}
+
+/// The open block of `life`'s relations (the chunk's, if a chunk's evaluation runs) with room for `need` bytes past
+/// its others' margin, a new one made when it has none.
+fn open_with_room(life: Life, need: usize) -> Result<Arc<Facts>, String> {
+    let chunk = CHUNK.with(|c| c.borrow().clone());
+    let mut open = chunk.as_ref().map_or(&OPEN[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
+    match &*open {
+        Some(f) if f.block.reserved().saturating_sub(f.block.used()) >= need + MARGIN => Ok(f.clone()),
+        _ => {
+            let f = new_open(&chunk, life, need)?;
+            *open = Some(f.clone());
+            Ok(f)
+        }
+    }
+}
+
+/// Where the structures derived from a relation's rows go (its indexes' arrays, `BlockVec`, decision 0384 step 4):
+/// the block its rows are written in, and how long they live.
+#[derive(Clone)]
+pub struct Home {
+    facts: Arc<Facts>,
+    life: Life,
+    /// The room its relation's tail would take to double (its chunks' bytes; none for frozen rows): kept for it, so
+    /// an index never makes the relation it indexes move.
+    grow: usize,
+}
+
+impl Home {
+    /// The block.
+    pub fn facts(&self) -> &Arc<Facts> {
+        &self.facts
+    }
+}
+
+/// An array of `T`s in a block of relations (decision 0384 step 4): a relation's derived structure (a sorted run's
+/// ids, tags, fences, prints), written once where it is computed, in its relation's block when that has room past
+/// its relations' margin (`Home`), else in the open block of the relation's life. Its chunk goes back to the block's
+/// free list when dropped; it keeps the block while it lives. Grows as a vector does, in the same block.
+pub struct BlockVec<T: rerail_blocks::Pod> {
+    facts: Option<Arc<Facts>>,
+    /// Its first `T` in the block (which never moves): read as a vector's buffer is, with no walk to the block.
+    ptr: std::ptr::NonNull<T>,
+    life: Life,
+    at: usize,
+    len: usize,
+    cap: usize,
+    /// The bytes its chunk keeps (what `Block::free_chunk_fit` takes back).
+    kept: usize,
+    _t: std::marker::PhantomData<T>,
+}
+
+// SAFETY: its `T`s lie in the block it keeps, written only through `&mut self`.
+unsafe impl<T: rerail_blocks::Pod + Send> Send for BlockVec<T> {}
+unsafe impl<T: rerail_blocks::Pod + Sync> Sync for BlockVec<T> {}
+
+impl<T: rerail_blocks::Pod> Default for BlockVec<T> {
+    fn default() -> Self {
+        BlockVec::new()
+    }
+}
+
+/// `BlockVec`'s chunks taken, by where: its relation's block, or the open block of its life.
+pub static BLOCK_VEC_CHUNKS: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
+
+impl<T: rerail_blocks::Pod> BlockVec<T> {
+    /// Empty, with no chunk.
+    pub const fn new() -> Self {
+        BlockVec { facts: None, ptr: std::ptr::NonNull::dangling(), life: Life::Run, at: 0, len: 0, cap: 0, kept: 0, _t: std::marker::PhantomData }
+    }
+
+    /// Empty, with room for `n` `T`s, near `home` (`None`: a run's open block).
+    pub fn with_capacity_in(home: Option<&Home>, n: usize) -> Self {
+        let mut v = BlockVec::new();
+        v.life = home.map_or(Life::Run, |h| h.life);
+        if n > 0 {
+            v.realloc(home.map(|h| (&h.facts, h.grow)), n);
+        }
+        v
+    }
+
+    /// The `T`s of `items`, near `home`.
+    pub fn from_iter_in(home: Option<&Home>, items: impl IntoIterator<Item = T>) -> Self {
+        let items = items.into_iter();
+        let mut v = BlockVec::with_capacity_in(home, items.size_hint().0);
+        v.extend(items);
+        v
+    }
+
+    /// Moves its `T`s to a chunk of room for `n` (`n` at least its length): in `near`'s block when it has room past its
+    /// relations' margin and the `grow` bytes its relation's tail would take to double, else the open block of its
+    /// life.
+    fn realloc(&mut self, near: Option<(&Arc<Facts>, usize)>, n: usize) {
+        debug_assert!(n >= self.len);
+        let bytes = (n * size_of::<T>()).max(1);
+        let align = align_of::<T>().max(8);
+        let room = |&(f, grow): &(&Arc<Facts>, usize)| f.block.reserved().saturating_sub(f.block.used()) >= bytes + MARGIN + grow;
+        let (facts, (at, size), which) = match near.filter(room).and_then(|(f, _)| f.block.try_alloc_chunk_fit(bytes, align).map(|c| (f.clone(), c))) {
+            Some((f, c)) => (f, c, 0),
+            None => {
+                let life = if self.life == Life::Device { Life::Run } else { self.life };
+                let f = open_with_room(life, bytes).unwrap_or_else(|e| panic!("a block for {bytes} bytes of an index: {e}"));
+                let c = f.block.try_alloc_chunk_fit(bytes, align).unwrap_or_else(|| panic!("an open block with room holds {bytes} bytes"));
+                (f, c, 1)
+            }
+        };
+        BLOCK_VEC_CHUNKS[which].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if self.len > 0 {
+            // SAFETY: the old chunk holds `len` written `T`s; the new one is this vector's alone, apart from it.
+            unsafe { std::ptr::copy_nonoverlapping(self.as_ptr(), facts.block.ptr::<T>(at), self.len) };
+        }
+        self.free();
+        self.ptr = std::ptr::NonNull::new(facts.block.ptr::<T>(at)).expect("a block's chunk");
+        self.facts = Some(facts);
+        self.at = at;
+        self.kept = size;
+        self.cap = size / size_of::<T>();
+    }
+
+    /// Its chunk given back.
+    fn free(&mut self) {
+        if let Some(f) = self.facts.take() {
+            f.block.free_chunk_fit(self.at, self.kept);
+        }
+        self.ptr = std::ptr::NonNull::dangling();
+        self.cap = 0;
+    }
+
+    /// Room for `extra` more `T`s.
+    pub fn reserve(&mut self, extra: usize) {
+        let need = self.len + extra;
+        if need > self.cap {
+            // Grown where it lies: its relation's room was kept when it was placed.
+            let near = self.facts.clone();
+            self.realloc(near.as_ref().map(|f| (f, 0)), need.max(2 * self.cap));
+        }
+    }
+
+    #[inline]
+    pub fn push(&mut self, v: T) {
+        if self.len == self.cap {
+            self.reserve(1);
+        }
+        // SAFETY: `len` is within the chunk's room, this vector's alone.
+        unsafe { self.ptr_mut().add(self.len).write(v) };
+        self.len += 1;
+    }
+
+    pub fn extend_from_slice(&mut self, src: &[T]) {
+        self.reserve(src.len());
+        // SAFETY: room for `src` past `len` is this vector's alone, apart from `src`.
+        unsafe { std::ptr::copy_nonoverlapping(src.as_ptr(), self.ptr_mut().add(self.len), src.len()) };
+        self.len += src.len();
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// `T`s it has room for.
+    pub fn capacity(&self) -> usize {
+        self.cap
+    }
+
+    #[inline]
+    pub fn as_ptr(&self) -> *const T {
+        self.ptr.as_ptr()
+    }
+
+    #[inline]
+    fn ptr_mut(&mut self) -> *mut T {
+        self.as_ptr().cast_mut()
+    }
+
+    /// The block it lies in, if it has a chunk.
+    pub fn facts(&self) -> Option<&Arc<Facts>> {
+        self.facts.as_ref()
+    }
+}
+
+impl<T: rerail_blocks::Pod> std::ops::Deref for BlockVec<T> {
+    type Target = [T];
+    #[inline]
+    fn deref(&self) -> &[T] {
+        // SAFETY: `len` `T`s are written at `as_ptr`, in the block it keeps.
+        unsafe { std::slice::from_raw_parts(self.as_ptr(), self.len) }
+    }
+}
+
+impl<T: rerail_blocks::Pod> std::ops::DerefMut for BlockVec<T> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut [T] {
+        // SAFETY: as `deref`, and `&mut self` is the one writer.
+        unsafe { std::slice::from_raw_parts_mut(self.ptr_mut(), self.len) }
+    }
+}
+
+impl<T: rerail_blocks::Pod> Extend<T> for BlockVec<T> {
+    fn extend<I: IntoIterator<Item = T>>(&mut self, items: I) {
+        let items = items.into_iter();
+        self.reserve(items.size_hint().0);
+        for v in items {
+            self.push(v);
+        }
+    }
+}
+
+impl<'a, T: rerail_blocks::Pod + Copy> Extend<&'a T> for BlockVec<T> {
+    fn extend<I: IntoIterator<Item = &'a T>>(&mut self, items: I) {
+        self.extend(items.into_iter().copied());
+    }
+}
+
+impl<T: rerail_blocks::Pod> Clone for BlockVec<T> {
+    /// A copy in the same block (or its life's open block): a derived structure written again, as a merge writes one.
+    fn clone(&self) -> Self {
+        let mut v = BlockVec::new();
+        v.life = self.life;
+        if self.len > 0 {
+            v.realloc(self.facts.as_ref().map(|f| (f, 0)), self.len);
+            // SAFETY: room for `len` `T`s, this vector's alone.
+            unsafe { std::ptr::copy_nonoverlapping(self.as_ptr(), v.ptr_mut(), self.len) };
+            v.len = self.len;
+        }
+        v
+    }
+}
+
+impl<T: rerail_blocks::Pod> Drop for BlockVec<T> {
+    fn drop(&mut self) {
+        self.free();
+    }
+}
+
+impl<T: rerail_blocks::Pod + PartialEq> PartialEq for BlockVec<T> {
+    fn eq(&self, other: &Self) -> bool {
+        **self == **other
+    }
+}
+
+impl<'a, T: rerail_blocks::Pod> IntoIterator for &'a BlockVec<T> {
+    type Item = &'a T;
+    type IntoIter = std::slice::Iter<'a, T>;
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<T: rerail_blocks::Pod + std::fmt::Debug> std::fmt::Debug for BlockVec<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
+    }
+}
+
 /// The bytes a relation of `k` 8-byte columns and `rows` rows takes in its block: its descriptor and directories,
 /// and its chunks as `Rows::try_reserve` makes them (quarter steps of doubling groups, each chunk aligned).
 fn room_for(k: usize, rows: usize) -> usize {
@@ -347,13 +618,7 @@ impl Part {
                 }
                 Some(f) if !fresh && f.block.reserved().saturating_sub(f.block.used()) >= need + MARGIN => f.clone(),
                 _ => {
-                    let f = Arc::new(Facts::new(lease(2 * need + MARGIN, life)?));
-                    if let Some(c) = &chunk {
-                        c.made.lock().unwrap_or_else(|e| e.into_inner()).push(Arc::downgrade(&f));
-                    }
-                    let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
-                    live[life as usize].retain(|w| w.strong_count() > 0);
-                    live[life as usize].push(Arc::downgrade(&f));
+                    let f = new_open(&chunk, life, need)?;
                     *open = Some(f.clone());
                     f
                 }
@@ -899,6 +1164,15 @@ impl Rows {
         Row::from_fn(k, |c| tail.cols[c].get(at + i))
     }
 
+    /// Where structures derived from its rows go (`BlockVec`): its tail's block, else its newest segment's.
+    pub fn home(&self) -> Option<Home> {
+        if let Some(t) = &self.tail {
+            return Some(Home { facts: t.facts.clone(), life: t.life, grow: t.capacity_bytes() });
+        }
+        let (_, p) = self.segs.last()?;
+        Some(Home { facts: p.facts.clone(), life: p.life, grow: 0 })
+    }
+
     /// Its relations, oldest first: the frozen segments, then the tail if it has rows. A reader that keeps them
     /// (`append_part`) holds the rows where they lie.
     pub fn parts(&self) -> impl Iterator<Item = &Part> {
@@ -1148,6 +1422,30 @@ mod tests {
         assert_eq!(bits(&all), [0b1111], "every row killed");
         let back = rows.in_block_dead(&[0b0010]).expect("a delta");
         assert_eq!(bits(&back), [0b0010], "rows brought back");
+    }
+
+    /// Decision 0384 step 4: a relation's derived array lies in its relation's block, grows and is cloned there, and
+    /// gives its chunk back to the block's free list when dropped.
+    #[test]
+    fn an_index_array_lies_in_its_relations_block() {
+        let mut rows = Rows::new(1);
+        rows.extend_from_slice(&[1, 2, 3]);
+        let home = rows.home().expect("a relation with rows has a home");
+        let mut v = BlockVec::from_iter_in(Some(&home), 0..100u32);
+        assert!(Arc::ptr_eq(v.facts().expect("a chunk"), &home.facts), "in the relation's block");
+        let cap = v.capacity();
+        v.extend(100..cap as u32 + 50);
+        assert!(Arc::ptr_eq(v.facts().expect("a chunk"), &home.facts), "grown in the same block");
+        assert!(v.iter().copied().eq(0..cap as u32 + 50));
+        let c = v.clone();
+        assert!(Arc::ptr_eq(c.facts().expect("a chunk"), &home.facts) && *c == *v);
+        let free = home.facts.block.free_bytes();
+        drop((v, c));
+        assert!(home.facts.block.free_bytes() > free, "its chunks back on the free list");
+        // Without a home: a run's open block.
+        let lone = BlockVec::from_iter_in(None, [7i64, 8]);
+        assert_eq!(*lone, [7, 8]);
+        assert!(BlockVec::<u8>::new().facts().is_none(), "empty holds no chunk");
     }
 
     /// A part another writer filled, after rows pushed and before rows pushed again: every row read by its id, the

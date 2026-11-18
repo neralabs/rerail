@@ -234,13 +234,62 @@ impl Block {
         if self.free == 0 || !self.writable {
             return 0;
         }
-        let (class, size) = crate::free::class_of(bytes);
+        let (_, size) = crate::free::class_of(bytes);
         // SAFETY: the chunk is the caller's and nothing reads it after; its first page, which holds the link, stays.
         let given = self.spare_pages(at, size).map_or(0, |(p, len)| unsafe { crate::mem::give_back(p, len) });
+        self.push_free(at, bytes);
+        given
+    }
+
+    /// A chunk of `bytes`' class at `at` onto the free list, its pages as they are.
+    fn push_free(&self, at: usize, bytes: usize) {
+        if self.free == 0 || !self.writable {
+            return;
+        }
+        let (class, size) = crate::free::class_of(bytes);
         // SAFETY: the block's own heads; the chunk is the caller's, of this class.
         unsafe { crate::free::push(self.base, self.heads(), class, at) };
         self.ext.free.fetch_add(size, Relaxed);
-        given
+    }
+
+    /// A chunk of at least `bytes` at `align` that keeps little more (`try_alloc_chunk_any`'s, not zeroed): in a block
+    /// with a free list, `bytes` rounded up to an eighth of its class, the class's rest handed back to the list as
+    /// smaller chunks at once (a class is up to twice what was asked). Its offset and the bytes kept, which
+    /// `free_chunk_fit` takes back.
+    pub fn try_alloc_chunk_fit(&self, bytes: usize, align: usize) -> Option<(usize, usize)> {
+        let at = self.chunk(bytes, align, false)?;
+        if self.free == 0 {
+            return Some((at, bytes));
+        }
+        let (_, size) = crate::free::class_of(bytes);
+        let step = (size / 8).max(1 << crate::free::MIN_LOG);
+        let keep = bytes.next_multiple_of(step).min(size);
+        // Never written: their pages are not resident (fresh from the front, or given back when last freed), so none
+        // is given back again (a call to the OS each).
+        self.free_pieces(at + keep, size - keep, false);
+        Some((at, keep))
+    }
+
+    /// Gives back a chunk `try_alloc_chunk_fit` gave (`kept` bytes at `at`): its pieces, each a class's chunk.
+    pub fn free_chunk_fit(&self, at: usize, kept: usize) {
+        if self.free != 0 {
+            self.free_pieces(at, kept, true);
+        }
+    }
+
+    /// `bytes` at `at` (a multiple of the least class) to the free list, as chunks of classes, the largest first; their
+    /// pages given back to the OS when `written` (`free_chunk`).
+    fn free_pieces(&self, mut at: usize, mut bytes: usize, written: bool) {
+        while bytes > 0 {
+            let piece = 1usize << (usize::BITS - 1 - bytes.leading_zeros());
+            if written {
+                self.free_chunk(at, piece);
+            } else {
+                self.push_free(at, piece);
+            }
+            at += piece;
+            bytes -= piece;
+        }
     }
 
     /// The whole pages of a free chunk past its link (its first 32 bits): what goes back to the OS while it is on the

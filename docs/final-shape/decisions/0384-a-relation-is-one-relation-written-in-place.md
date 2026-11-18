@@ -1,6 +1,6 @@
 # 0384. A relation is one relation, written in place
 
-Status: decided (2026-11-17), steps 1–3 built (2026-11-18). The user picked it over two other forms: relations of many parts with
+Status: decided (2026-11-17), steps 1–4 built (2026-11-18). The user picked it over two other forms: relations of many parts with
 an index per part, and nesting only the fixpoint's runs in blocks.
 
 ## Intro
@@ -58,6 +58,42 @@ whole. A relation is never a list of parts that a reader must merge.
      no rows yet gets a relation of its own (`Part::for_writes`), which becomes its tail (`Rows::append_part`), and
      the next lot goes on in it.
    - A loan is given back when dropped (a refusal), and claims are checked to come in order.
+
+4. **A relation's indexes lie in its block** (built, Q176). The fixpoint keeps its sorted runs (decision 0112), and
+   each run's arrays lie in blocks of relations, not on the heap: its ids, tags, fences and key prints
+   (`BlockVec`).
+   - An array goes in its relation's block (`Rows::home`, the tail's, else the newest segment's) when that has room
+     past its relations' margin. Otherwise it goes in the open block of the relation's life, so an index does not
+     take the room the block's tails grow into.
+   - It is written once where it is computed (a run's sort, a merge), and grows as a vector does, in the same block.
+     When dropped (a merged run, a dropped relation) its chunk goes back to the block's free list.
+   - A chunk keeps what it asked, rounded up to an eighth of its class (`Block::try_alloc_chunk_fit`). The rest of
+     the class goes back to the free list at once as smaller chunks. A class alone would keep up to twice the
+     array, and in a pool slab no page of it goes back to the OS.
+   - The sort's scratch keys (`sort_keyed`) and a printed run's prints in row order are working memory of one call,
+     freed before it returns. The sort writes the tags into the run's array (`Extend`) and hands none back.
+
+   - An array goes in its relation's block only while that keeps room for the relation's tail to double past it
+     (`Home::grow`): an index never makes the relation it indexes move.
+   - A `BlockVec` holds its first element's address (a block never moves), so a probe reads it as a vector's.
+
+   Measured on cold 300-file runs, alternating with the step-3 binary at load 15–20:
+   - 97% of the arrays (about 73,000) lie in their relation's own block, and the rest in the open block of its
+     life.
+   - CPU: instructions retired 974–1,002 G against 975–1,000 G, and sys time the same (7–9 s).
+   - CPU peak: 1.61–1.64 GB against 1.50–1.64 GB, about 40 MB more on average, inside one run's spread.
+   - Metal: 773–792 G against 775–777 G, and peaks of 2.20–2.25 GB against 2.23–2.32 GB.
+   - The findings are the reference's: 5 of 5 CPU runs and 2 of 2 Metal runs at 300 files (the Metal ones before the address and room changes), and 5 of 5 Metal runs at
+     100 files. The strict 10-file outputs are byte-identical.
+
+   Two first forms cost more, and were changed before this was built:
+   - A chunk's whole class kept the array: up to twice its bytes.
+   - A walk from the `Arc<Facts>` to the block on every read cost 1.5% more instructions. Handing a class's rest
+     back gave its untouched pages to the OS, about 2 s more sys time.
+
+   Still on the heap: the fixpoint's dedup tables and lattice maps (under the heap sampler's floor at 300 files). The
+   shapes of `ordered` (`Runs`, `TaggedRuns`, `Growing`) are the index-cost spike's (`RERAIL_INDEX_SPIKE`), not the
+   fixpoint's.
 
 Measured on cold 300-file Metal runs over e2's corpus:
 
