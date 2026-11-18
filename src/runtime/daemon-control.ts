@@ -1214,6 +1214,15 @@ function readClaim(path: string): { made: number; named: string } | undefined {
 }
 
 /**
+ * The claim at `path` read again once the process it named, `named`, was found gone: the claim as handed over since
+ * (`handOverClaim`), or undefined when it still names that process or is gone.
+ */
+function claimHandedOver(path: string, named: string): { made: number; named: string } | undefined {
+  const again = readClaim(path);
+  return again?.named === named ? undefined : again;
+}
+
+/**
  * Whether the claim at `path` still holds: it was made or renewed under `AUTOSTART_CLAIM_LEASE_MS` from now, either way,
  * so a claim made before the clock moved back expires too, and the process it names runs (`kill`'s signal 0). A claim
  * with no pid in it yet is being written by the process that created it, and holds. The autostart that made a claim
@@ -1226,9 +1235,7 @@ function claimHolds(path: string, kill: ProcessSignal): boolean {
     if (claim.named === "") return true;
     if (!/^[1-9]\d*$/u.test(claim.named)) return false;
     if (processAlive(Number(claim.named), kill)) return true;
-    const again = readClaim(path);
-    if (again?.named === claim.named) return false;
-    claim = again;
+    claim = claimHandedOver(path, claim.named);
   }
   return false;
 }
