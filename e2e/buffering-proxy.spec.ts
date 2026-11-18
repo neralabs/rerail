@@ -7,6 +7,8 @@ import { expect, test } from "./dashboard-test.js";
  * once the whole of it has arrived. The dashboard must still load and keep reading, as it did when it polled.
  */
 test("the dashboard loads and keeps reading behind a proxy that holds the change stream until it ends", async ({ page, rerail }) => {
+  // Two missed beats, then two reads at the pace: past the default 30 s once the scenario's daemon starts.
+  test.setTimeout(60_000);
   const url = await rerail.dashboard("mature");
   await page.route("**/api/changes**", async route => {
     try {
