@@ -36,7 +36,12 @@ async function checkout() {
   await mkdir(join(home, "config", "git"), { recursive: true });
   vi.stubEnv("HOME", home);
   vi.stubEnv("XDG_CONFIG_HOME", join(home, "config"));
-  return { root, main, linked: await realpath(join(root, "linked")), excludes: join(home, "config", "git", "ignore") };
+  return { root, main, home, linked: await realpath(join(root, "linked")), excludes: join(home, "config", "git", "ignore") };
+}
+
+/** A path as a configuration value: forward slashes, which Git reads on every platform. */
+function slashed(path: string): string {
+  return path.split("\\").join("/");
 }
 
 /** A router as a user of the matchers: one object for each name. */
@@ -116,5 +121,47 @@ describe("GitIgnoreMatchers", () => {
     // Git folds the case of patterns once core.ignoreCase holds (on Windows from `git init` already).
     git(main, "config", "core.ignoreCase", "true");
     expect(ask("folded", "GEN/x.py")).toBe(true);
+  });
+
+  it("follows an excludes file the global configuration names in a file it includes, and that file's changes", async () => {
+    const { root, home, linked } = await checkout();
+    const matchers = new GitIgnoreMatchers();
+    const ask = (name: string, path: string) => matchers.matcher(linked, user(name))?.ignored(path, false);
+    expect(ask("first", "inc/a.py")).toBe(false);
+
+    const named = join(root, "included-ignore");
+    await writeFile(named, "inc/\n");
+    await writeFile(join(home, "inc.gitconfig"), `[core]\n\texcludesFile = ${slashed(named)}\n`);
+    git(linked, "config", "--global", "include.path", slashed(join(home, "inc.gitconfig")));
+    expect(ask("included", "inc/a.py")).toBe(true);
+    await writeFile(named, "inc2/\n");
+    expect([ask("changed", "inc/a.py"), ask("changed", "inc2/a.py")]).toEqual([false, true]);
+  });
+
+  it("follows an excludes file a conditional include of the global configuration names", async () => {
+    const { root, home, linked } = await checkout();
+    const matchers = new GitIgnoreMatchers();
+    const ask = (name: string, path: string) => matchers.matcher(linked, user(name))?.ignored(path, false);
+    expect(ask("first", "cond/a.py")).toBe(false);
+
+    const named = join(root, "conditional-ignore");
+    await writeFile(named, "cond/\n");
+    await writeFile(join(home, "cond.gitconfig"), `[core]\n\texcludesFile = ${slashed(named)}\n`);
+    // Every Git folder below the test's folder meets the condition, the linked worktree's among them.
+    git(linked, "config", "--global", `includeIf.gitdir:${slashed(root)}/.path`, slashed(join(home, "cond.gitconfig")));
+    expect(ask("conditional", "cond/a.py")).toBe(true);
+  });
+
+  it("follows the file a configuration value names with a comment after it, and that file's changes", async () => {
+    const { root, home, linked } = await checkout();
+    const matchers = new GitIgnoreMatchers();
+    const ask = (name: string, path: string) => matchers.matcher(linked, user(name))?.ignored(path, false);
+    const named = join(root, "commented-ignore");
+    await writeFile(named, "c1/\n");
+    // A hand-edited line: Git reads the value up to the comment.
+    await writeFile(join(home, ".gitconfig"), `[core]\n\texcludesFile = ${slashed(named)} ; mine\n`);
+    expect([ask("first", "c1/a.py"), ask("first", "c2/a.py")]).toEqual([true, false]);
+    await writeFile(named, "c2/\n");
+    expect([ask("changed", "c1/a.py"), ask("changed", "c2/a.py")]).toEqual([false, true]);
   });
 });
