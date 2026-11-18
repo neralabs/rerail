@@ -377,6 +377,21 @@ fn strings_in_templates_are_the_lean_parsers() {
 }
 
 #[test]
+fn delegates_and_names_are_the_lean_parsers() {
+    same(&[
+        "fun f() {\n    val state by viewModel.uiState.collectAsState()\n}\n",
+        "fun g(\n    set: AttributeSet,\n    get: Int,\n) {}\n",
+    ]);
+}
+
+#[test]
+fn what_step_27_does_not_read_is_refused() {
+    refused(&[
+        "class A {\n    private val m by lazy { m ?: getSystemService<M>()!! }\n}\n",
+    ]);
+}
+
+#[test]
 fn variance_and_accessors_are_the_lean_parsers() {
     same(&[
         "fun f(a: Array<out Any>) {}\n",
@@ -678,10 +693,19 @@ fn tier1_records() {
         let same = run.positions == cpu.positions && run.codes == cpu.codes && run.totals == cpu.totals;
         eprintln!("== {p}: {}", if same { "the same" } else { "DIFFERS" });
         if !same {
-            for (i, (x, y)) in run.positions.iter().zip(&cpu.positions).enumerate() {
-                eprintln!("positions {i}: interp {x:?}\n             cpu {y:?}");
+            // The first record where they part, with the ones around it: start, last, code.
+            let rec = |r: &rerail_compiler::block::BlockRun, i: usize| (r.positions[0].get(i).copied(), r.positions.get(1).and_then(|l| l.get(i)).copied(), r.codes.get(i).map(|c| format!("{c:#x}")));
+            let n = run.positions[0].len().max(cpu.positions[0].len());
+            if let Some(i) = (0..n).find(|&i| rec(&run, i) != rec(&cpu, i)) {
+                for j in i.saturating_sub(3)..(i + 4).min(n) {
+                    eprintln!("record {j}: interp {:?}\n          cpu {:?}", rec(&run, j), rec(&cpu, j));
+                }
+                if let Some(Some(at)) = rec(&run, i).0.or(rec(&cpu, i).0).map(|a| Some(a as usize)) {
+                    let from = at.saturating_sub(60);
+                    eprintln!("bytes {from}..: {:?}", String::from_utf8_lossy(&src[from..(at + 40).min(src.len())]));
+                }
             }
-            eprintln!("totals: interp {:?} cpu {:?}", run.totals, cpu.totals);
+            eprintln!("records: interp {} cpu {}; totals: interp {:?} cpu {:?}", run.positions[0].len(), cpu.positions[0].len(), run.totals, cpu.totals);
         }
     }
 }

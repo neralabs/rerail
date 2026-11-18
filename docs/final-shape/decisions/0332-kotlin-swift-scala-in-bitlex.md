@@ -659,6 +659,29 @@ Still refused: a `when` entry's trailing comma. Its `trail` mark didn't hold on 
 
 Corpus: 397 the same (step 25: 391), 94 refused, 0 differ.
 
+## Kotlin, step 27 (`27-delegates-and-names.bitlex`)
+
+```kotlin
+fun f() {
+    val state by viewModel.uiState.collectAsState()
+}
+fun g(
+    set: AttributeSet,
+) {}
+```
+
+- A declaration's receiver run (`decl_run`) ends after a `by`. The delegate's dots were taken
+  for a receiver's: `state by viewModel.uiState` read as a receiver type.
+- The accessor mark holds at no `get` or `set` before a `:` (a parameter's name).
+
+The stop is the byte after `by` (`prev(by_w, 2)`), not its `b`. With `by_w` itself the stop
+looks two bytes ahead, and the CPU's tier 1 then lost the receiver's mark wherever the run
+crossed a word: 16 files were refused that the interpreter read. That is open below (Q33).
+
+Still refused: a generic call on `?:`'s right side (`m ?: f<M>()!!`).
+
+Corpus: 400 the same (step 26: 397), 91 refused, 0 differ.
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment
@@ -833,6 +856,12 @@ Single-extra grammars compile as before: rr's tests and the compiler's targeted 
     `raw_strings_are_the_lean_parsers` puts strings at those bytes.
 
 ## Found on the way
+
+- Q33 (open): the CPU's tier 1 gets a `fill` wrong where its stop is a delayed output (one that
+  looks ahead) and the fill crosses a word. `decl_stop = … | by_w` in step 27 lost the
+  `dotted` mark at `fun ValueMapperBuilder.forKotlin()` (bytes 2165 to 2192, across 2176) in
+  pkl's `ConfigExtensions.kt`; the interpreter's mark is right. `tests::tier1_records` over
+  step 27's lexer with `by_w` as the stop reproduces it. The ladder uses an undelayed stop.
 
 - Open: the lean parser's lost block comments (26 corpus files, three escapes). After a line
   break, before a token that goes on the line, it keeps the comment as a zero-width
