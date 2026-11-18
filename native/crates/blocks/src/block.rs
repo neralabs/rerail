@@ -94,6 +94,9 @@ pub struct Block {
     reserved: usize,
     ext: Arc<Extent>,
     file: Option<File>,
+    /// Its memory is a file's mapping, not a reservation (`mem::reserve`): counted neither way. A mapping read-only
+    /// holds no descriptor (`map_file`), so this is not `file.is_some()`.
+    mapped: bool,
     writable: bool,
     /// A slab's owner, when the block lives in one: dropped with the block, which never unmaps it.
     backing: Option<Box<dyn Backing>>,
@@ -156,6 +159,7 @@ impl Block {
             base,
             reserved,
             ext: Arc::new(Extent { top: AtomicUsize::new(top), free: AtomicUsize::new(0) }),
+            mapped: file.is_some(),
             file,
             writable,
             backing,
@@ -249,7 +253,7 @@ impl Block {
     /// free list. Only an anonymous block's: a pooled slab's pages are the device buffer's, and a file's are written
     /// back.
     fn spare_pages(&self, at: usize, size: usize) -> Option<(*mut u8, usize)> {
-        if self.backing.is_some() || self.file.is_some() {
+        if self.backing.is_some() || self.mapped {
             return None;
         }
         let p = self.base as usize + at;
@@ -518,8 +522,9 @@ impl Block {
 
     /// Maps the block in the file at `path` as it is, open or frozen (a store's block that one process appends to and
     /// others read up to an end they are told, decision 0401): its magic and kind checked, its whole file mapped,
-    /// writable or not. Without shared mappings (WASI) the file is read into memory, and a writer writes it back
-    /// itself (`bytes`).
+    /// writable or not. Read-only, it keeps no descriptor: the mapping outlives it, and a store's reader holds none of
+    /// its files open. Without shared mappings (WASI) the file is read into memory, and a writer writes it back itself
+    /// (`bytes`).
     pub fn map_file(path: &Path, kind: u32, writable: bool) -> io::Result<Block> {
         let invalid = |what: String| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {what}", path.display()));
         let f = std::fs::OpenOptions::new().read(true).write(writable).open(path)?;
@@ -534,7 +539,11 @@ impl Block {
             if p == libc::MAP_FAILED {
                 return Err(io::Error::last_os_error());
             }
-            Block::make(p.cast(), len, len, Some(f), writable, None)
+            let mut b = Block::make(p.cast(), len, len, Some(f), writable, None);
+            if !writable {
+                b.file = None;
+            }
+            b
         };
         #[cfg(not(unix))]
         let b = {
@@ -595,7 +604,7 @@ impl Drop for Block {
     fn drop(&mut self) {
         if self.backing.is_none() {
             // A file's mapping was never `reserve`'s: it is unmapped without counting.
-            if self.file.is_some() {
+            if self.mapped {
                 crate::mem::uncounted(self.reserved);
             }
             unsafe { crate::mem::release(self.base, self.reserved) };

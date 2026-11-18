@@ -75,13 +75,26 @@ fn private_dir(dir: &Path) -> std::io::Result<()> {
 /// beside its file, as the store's disk budget counts them.
 pub(super) fn segment_bytes(database: &Path) -> u64 {
     let mut bytes = 0;
-    for suffix in [".memo", ".frames", ".objects"] {
+    for suffix in [".memo", ".frames", ".objects", ".atoms"] {
         let mut dir = database.as_os_str().to_owned();
         dir.push(suffix);
         let Ok(entries) = std::fs::read_dir(PathBuf::from(dir)) else { continue };
-        bytes += entries.flatten().filter_map(|e| e.metadata().ok()).filter(|m| m.is_file()).map(|m| m.len()).sum::<u64>();
+        // What each file takes on the disk: an open atoms block is sparse, its room not written yet taking none.
+        bytes += entries.flatten().filter_map(|e| e.metadata().ok()).filter(|m| m.is_file()).map(|m| on_disk(&m)).sum::<u64>();
     }
     bytes
+}
+
+/// The bytes a file takes on the disk (its allocated blocks; its length where those are not known).
+fn on_disk(m: &std::fs::Metadata) -> u64 {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::MetadataExt::blocks(m).saturating_mul(512)
+    }
+    #[cfg(not(unix))]
+    {
+        m.len()
+    }
 }
 
 /// The file of segment `seg` in `dir`.

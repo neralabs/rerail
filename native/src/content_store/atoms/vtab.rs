@@ -1,7 +1,7 @@
 //! `atoms(atom, value)`: the atoms as an eponymous virtual table (decision 0049 §3), so the SQL
-//! that joins atoms keeps its text. `atom = ?` and `value = ?` are the atoms' lookups, which read
-//! only the segment they need (decision 0111 §3); a range on `value` (the vocabulary's prefix
-//! ranges) or a scan reads every segment, then binary-searches the ids sorted by string.
+//! that joins atoms keeps its text. `atom = ?` and `value = ?` are the atoms' lookups, read where
+//! the atoms lie in the store's mapped blocks (decision 0401); a range on `value` (the vocabulary's
+//! prefix ranges) or a scan reads to the store's end, then binary-searches the ids sorted by string.
 //! Pending atoms are visible: SQL never needs a flush first.
 use super::{Atoms, Sym};
 use rusqlite::{
@@ -237,7 +237,7 @@ unsafe impl VTabCursor for Cursor {
 
 impl Cursor {
     /// Mapped (decision 0170): the rows as the store numbers them. A lookup by id or by value holds just its atom; a
-    /// scan or a range holds every stored atom (one read), as `read_all` does unmapped.
+    /// scan or a range holds every stored atom past the fork, as `read_all` reads them unforked.
     fn stored(&self, idx_num: c_int, args: &Filters<'_>) -> Result<Rows> {
         let pairs = match idx_num {
             BY_ATOM => match args.get::<Value>(0)? {

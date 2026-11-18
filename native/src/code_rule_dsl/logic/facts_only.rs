@@ -22,9 +22,7 @@ use std::path::{Path, PathBuf};
 /// objects, and a run's relations held in SQLite.
 const FACT_STORE: &[&str] = &[
     "atoms",
-    "atom_segment",
-    "atom_key",
-    "atom_key_end",
+    "atom_blocks",
     "strings",
     "hashes",
     "paths",

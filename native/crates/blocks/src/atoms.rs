@@ -24,6 +24,9 @@ structure! {
     pub struct AtomsRoot {
         /// The first id it holds.
         pub first: u64,
+        /// Its maker's tag for it, which the store's row of it records too: a block not the row's (a store copied
+        /// without its blocks, or a stale file at its path) is refused, not read.
+        pub tag: u64,
         /// How many atoms, and string bytes, it has room for.
         pub cap: u64,
         pub bytes_cap: u64,
@@ -33,6 +36,9 @@ structure! {
         pub bytes_len: AtomicU64,
         /// The table's slots less one (a power of two less one).
         pub mask: u64,
+        /// Slots taken: each append's, and those a crashed writer's appends left (passed over by every reader, and
+        /// never cleared, since a reader may be probing past them). An append refuses at three quarters.
+        pub placed: AtomicU64,
         /// Each atom's end in `strings`.
         pub ends: Span<u64>,
         /// Each atom's string's hash, as the store computes it.
@@ -151,7 +157,7 @@ unsafe impl Sync for AtomsW {}
 
 impl AtomsW {
     /// A new block at `path` for ids from `first`, with room for `cap` atoms and `bytes_cap` bytes of strings.
-    pub fn create(path: &Path, first: u32, cap: u32, bytes_cap: u64) -> io::Result<AtomsW> {
+    pub fn create(path: &Path, first: u32, tag: u64, cap: u32, bytes_cap: u64) -> io::Result<AtomsW> {
         let cap64 = u64::from(cap.max(1));
         let n = slots(cap64);
         let need = 4 * PAGE + (cap64 * 16 + n * 8 + bytes_cap) as usize;
@@ -169,6 +175,7 @@ impl AtomsW {
         unsafe {
             let r = &mut *root;
             r.first = u64::from(first);
+            r.tag = tag;
             r.cap = cap64;
             r.bytes_cap = bytes_cap;
             r.mask = n - 1;
@@ -190,62 +197,61 @@ impl AtomsW {
     }
 
     /// The open block at `path`, for its next writer, which continues from `end` (the end the store's last commit
-    /// reached): what a writer appended past it (one that crashed before its commit) is taken back, slots and all.
+    /// reached, `resume`).
     pub fn reopen(path: &Path, end: u32) -> io::Result<AtomsW> {
         let block = Block::map_file(path, kind::ATOMS, true)?;
         if block.header().state == FROZEN {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("{}: frozen, not appended to", path.display())));
         }
         let raw = Raw::of(&block);
-        let r: &AtomsRoot = block.root();
-        let held = r.count.load(Acquire);
-        if u64::from(end) < u64::from(raw.first) || u64::from(end) > u64::from(raw.first) + held {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, format!("{}: the store's end {end} is not within its atoms {}..{}", path.display(), raw.first, u64::from(raw.first) + held)));
-        }
-        let keep = u64::from(end - raw.first);
-        if keep < held {
-            for i in 0..=raw.mask {
-                // SAFETY: `i` is within the slots; this writer is the block's only one.
-                let s = unsafe { &*raw.table.add(i as usize) };
-                let v = s.load(Relaxed);
-                if v != 0 && (v as u32).wrapping_sub(1) >= end {
-                    s.store(0, Relaxed);
-                }
-            }
-            // A slot cleared from a probe run would end it early for an atom placed past it: those after are placed
-            // again.
-            Self::replace_runs(&raw);
-            // SAFETY: below the count held.
-            let bytes = if keep == 0 { 0 } else { unsafe { *raw.ends.add(keep as usize - 1) } };
-            r.bytes_len.store(bytes, Release);
-            r.count.store(keep, Release);
-        }
-        Ok(AtomsW {
+        let mut w = AtomsW {
             block,
             raw,
             #[cfg(not(unix))]
             file: std::fs::OpenOptions::new().read(true).write(true).open(path)?,
-        })
+        };
+        w.resume(end)?;
+        Ok(w)
     }
 
-    /// Places again every slot of the table after an empty one that its probe run passed (`reopen`'s clearing): each
-    /// slot taken out and inserted from its home.
-    fn replace_runs(raw: &Raw) {
-        let n = raw.mask + 1;
-        let taken: Vec<u64> = (0..n)
-            .filter_map(|i| {
-                // SAFETY: within the slots; one writer.
-                let s = unsafe { &*raw.table.add(i as usize) };
-                let v = s.swap(0, Relaxed);
-                (v != 0).then_some(v)
-            })
-            .collect();
-        for v in taken {
-            let id = (v as u32).wrapping_sub(1);
-            // SAFETY: a slot's id is of an atom the block holds.
-            let h = unsafe { *raw.hashes.add((id - raw.first) as usize) };
-            Self::place(raw, h, v);
+    /// Continues from `end`, the end the store's last commit reached in this block: what was appended past it (by a
+    /// writer that crashed or rolled back before its commit) is taken back. Its slots stay, passed over by every
+    /// reader until an atom of its id is appended again (a slot's string is compared, so a stale one never answers):
+    /// clearing them would end a probe early for a reader that is probing past them now.
+    pub fn resume(&mut self, end: u32) -> io::Result<()> {
+        let r: &AtomsRoot = self.block.root();
+        let held = r.count.load(Acquire);
+        let first = u64::from(self.raw.first);
+        if u64::from(end) < first || u64::from(end) > first + held {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, format!("the store's end {end} is not within a block's atoms {}..{}", first, first + held)));
         }
+        let keep = u64::from(end) - first;
+        if keep < held {
+            // SAFETY: below the count held.
+            let bytes = if keep == 0 { 0 } else { unsafe { *self.raw.ends.add(keep as usize - 1) } };
+            r.bytes_len.store(bytes, Release);
+            r.count.store(keep, Release);
+        }
+        Ok(())
+    }
+
+    /// Its first id, and the room it was made with (atoms, string bytes).
+    pub fn first(&self) -> u32 {
+        self.raw.first
+    }
+    pub fn tag(&self) -> u64 {
+        self.block.root::<AtomsRoot>().tag
+    }
+    /// Whether it was frozen since this writer opened it (by another holder of its file): no more appends.
+    pub fn frozen(&self) -> bool {
+        // SAFETY: a read of the header's state, which a freeze writes once.
+        unsafe { std::ptr::read_volatile(&self.block.header().state) == FROZEN }
+    }
+    pub fn cap(&self) -> u32 {
+        self.raw.cap
+    }
+    pub fn bytes_cap(&self) -> u64 {
+        self.raw.bytes_cap
     }
 
     fn place(raw: &Raw, h: u64, v: u64) {
@@ -266,7 +272,7 @@ impl AtomsW {
         let r: &AtomsRoot = self.block.root();
         let n = r.count.load(Relaxed);
         let at = r.bytes_len.load(Relaxed);
-        if n >= u64::from(self.raw.cap) || at + s.len() as u64 > self.raw.bytes_cap {
+        if n >= u64::from(self.raw.cap) || at + s.len() as u64 > self.raw.bytes_cap || r.placed.load(Relaxed) >= (self.raw.mask + 1) / 4 * 3 {
             return None;
         }
         let id = self.raw.first + n as u32;
@@ -279,6 +285,7 @@ impl AtomsW {
             *(self.raw.hashes.add(n as usize) as *mut u64) = h;
         }
         fence(Release);
+        r.placed.fetch_add(1, Relaxed);
         Self::place(&self.raw, h, slot(h, id));
         r.bytes_len.store(end, Release);
         r.count.store(n + 1, Release);
@@ -392,9 +399,19 @@ impl AtomsV {
         Ok(())
     }
 
-    /// Its first id.
+    /// Reads up to `end` now, nearer than before too: the end a transaction that appended and rolled back went back
+    /// to (a fork's own appends, read inside the transaction that made them, decision 0170).
+    pub fn set_end(&mut self, end: u32) -> io::Result<()> {
+        self.end = self.raw.first;
+        self.extend(end)
+    }
+
+    /// Its first id, and its maker's tag (`AtomsRoot::tag`).
     pub fn first(&self) -> u32 {
         self.raw.first
+    }
+    pub fn tag(&self) -> u64 {
+        self._block.root::<AtomsRoot>().tag
     }
 
     /// Mapped bytes, for the profile (none of them heap).
@@ -438,7 +455,7 @@ mod tests {
     #[test]
     fn an_atoms_block_finds_what_it_holds() {
         let d = dir("finds");
-        let mut w = AtomsW::create(&d.join("d0.blk"), 10, 1000, 1 << 16).unwrap();
+        let mut w = AtomsW::create(&d.join("d0.blk"), 10, 7, 1000, 1 << 16).unwrap();
         let words: Vec<String> = (0..1000).map(|i| format!("word-{i}")).chain(["".to_owned()]).collect();
         for (i, s) in words[..1000].iter().enumerate() {
             assert_eq!(w.append(s, h(s)), Some(10 + i as u32));
@@ -454,8 +471,12 @@ mod tests {
         assert_eq!(w.find("absent", h("absent")), None);
         assert_eq!(w.str(9), None);
         assert_eq!(w.str(1010), None);
+        // Two strings of one hash (a collision): each found by comparing the string at the slot.
+        let mut c = AtomsW::create(&d.join("d2.blk"), 0, 7, 16, 1024).unwrap();
+        assert_eq!((c.append("x", 42), c.append("y", 42)), (Some(0), Some(1)));
+        assert_eq!((c.find("y", 42), c.find("x", 42), c.find("z", 42)), (Some(1), Some(0), None));
         // Room for bytes runs out too.
-        let mut small = AtomsW::create(&d.join("d1.blk"), 0, 100, 8).unwrap();
+        let mut small = AtomsW::create(&d.join("d1.blk"), 0, 7, 100, 8).unwrap();
         assert_eq!(small.append("12345678", h("12345678")), Some(0));
         assert_eq!(small.append("9", h("9")), None, "full at its bytes");
         let _ = std::fs::remove_dir_all(&d);
@@ -467,7 +488,7 @@ mod tests {
     fn a_reader_reads_only_the_committed_end() {
         let d = dir("end");
         let path = d.join("d0.blk");
-        let mut w = AtomsW::create(&path, 0, 64, 4096).unwrap();
+        let mut w = AtomsW::create(&path, 0, 7, 64, 4096).unwrap();
         for s in ["a", "b", "c"] {
             w.append(s, h(s));
         }
@@ -487,6 +508,10 @@ mod tests {
         assert_eq!(again.find("d", h("d")), None, "an append past the committed end is taken back");
         assert_eq!(again.append("e", h("e")), Some(3), "its id is the next writer's");
         assert_eq!(again.find("e", h("e")), Some(3));
+        // A view at the old end still finds what it read before (the stale slot of "d" is passed over).
+        let old = AtomsV::open(&path, 3).unwrap();
+        assert_eq!(old.find("c", h("c")), Some(2));
+        assert_eq!(old.find("e", h("e")), None);
         for (s, id) in [("a", 0), ("b", 1), ("c", 2)] {
             assert_eq!(again.find(s, h(s)), Some(id));
         }

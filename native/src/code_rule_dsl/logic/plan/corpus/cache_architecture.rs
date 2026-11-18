@@ -35,7 +35,7 @@ fn relative(path: &Path) -> String {
 /// The stores' tables that are not caches: sources, names and the store's bookkeeping, collection, and a run's
 /// scratch (in memory or temporary, dropped when the run ends).
 const NOT_CACHES: &[&str] = &[
-    "source_objects", "source_aliases", "strings", "atom_segment", "atom_key", "atom_key_end", "hashes", "paths", "store_state", "store_identity", "object_pins",
+    "source_objects", "source_aliases", "strings", "atom_blocks", "hashes", "paths", "store_state", "store_identity", "object_pins",
     // The segments sources (and tapes) are in (decision 0295 step 5).
     "object_segments",
     "push_pending", "snapshots", "snapshot_files", "workspaces", "workspace_overlay", "git_trees", "git_tree_entries", "git_alias",

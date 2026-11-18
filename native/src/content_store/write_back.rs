@@ -1302,10 +1302,8 @@ mod tests {
             if r.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
                 go_rx.recv().unwrap();
                 s.intern_atoms(&["b"])?;
-                s.connection.lock().map_err(StoreError::Invalid)?.execute(
-                    "INSERT INTO atom_segment(first, ends, bytes) VALUES (2, x'01000000', CAST('z' AS BLOB))",
-                    [],
-                )?;
+                let connection = s.connection.lock().map_err(StoreError::Invalid)?;
+                crate::content_store::atoms::stored::append_as_another(&connection, &["z".to_owned()])?;
             }
             s.flush_atoms()
         }));

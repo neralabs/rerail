@@ -3,7 +3,7 @@
 Status: decided by the user (2026-11-18: "everything should be in blocks all the time"; "these should be blocks …
 I would prefer memory-mappable files than blobs"). Builds 0266's `Atoms` and `Facts` as what the store keeps.
 Replaces the atoms' segment rows and key (0049, 0111) and the cross part's frames (0104, 0295 §4) as storage.
-Steps 1–4 (atoms) building; 5–10 (facts) after.
+Steps 1–2 (atoms) built; 3–4 next; 5–10 (facts) after.
 
 ## Intro
 
@@ -43,12 +43,14 @@ One structure, `AtomsRoot`, kind `ATOMS`:
 | field | what |
 |---|---|
 | `first` | the first id the block holds |
+| `tag` | its maker's random tag, which its row records too: a block not its row's is refused, not read |
 | `cap`, `bytes_cap` | how many atoms and string bytes it has room for (its file is sparse) |
 | `count`, `bytes_len` | how many it holds, written as it appends (only the committed end is trusted) |
 | `ends` | `u64` a atom: where its string ends in `strings` |
 | `hashes` | `u64` a atom: `hash_str` of its string (content keys, 0212; rehashing the table) |
 | `strings` | the strings, back to back, UTF-8 |
 | `table` | open addressing, `u64` a slot: the hash's high half and the id plus one (0 is empty); twice `cap` |
+| `placed` | slots taken; an append refuses at three quarters (stale slots count, A3) |
 
 A lookup hashes the string once, probes the table by the tag, and compares the string at the slot's id, in
 place. A slot whose id is at or past the reader's end is passed over (another process's, uncommitted).
@@ -59,8 +61,10 @@ place. A slot whose id is at or past the reader's end is passed over (another pr
 the ids after the one before. The newest delta is **open**: the lease holder appends to it. A delta that fills (its
 `cap` or `bytes_cap`) is frozen and a new one, twice as large, is started.
 
-SQLite keeps `atom_blocks(seq, name, first, end)`: each file, and the end its last commit reached. The ids end at
-the largest `end`.
+SQLite keeps `atom_blocks(seq, name, first, upto, tag)`: each file, the end its last commit reached, and its tag. The
+ids end at the largest `upto`. Atom 0, the empty string, is every store's and no block's. A new block is made under a
+name of its own and renamed into place, so a file left at its name (a rolled-back transaction's, a deleted store's) is
+never truncated under a process still mapping it.
 
 ### A3. Writing is appending, then committing
 
@@ -70,8 +74,9 @@ pending atoms to the open delta (strings, ends, hashes, table slots), flushes th
 heap copies, since its mapping holds them. The commit hook of 0049 is unchanged: a transaction that writes rows
 and did not flush is refused.
 
-A crash after the append and before the commit leaves bytes and slots past the committed end. They are never
-read (A1), and the next writer appends over them.
+A crash or a rollback after the append leaves bytes and slots past the committed end. They are never read (A1), and
+the next writer appends over them (`AtomsW::resume`). The slots stay: clearing one would end a probe early for a
+reader probing past it now. A stale slot is passed over, since its string is compared; it only takes room (`placed`).
 
 ### A4. Reading is mapping
 
@@ -93,13 +98,22 @@ commit (a process mapping them keeps its mapping; unlinked files stay readable).
 ### A6. Forks (0160, 0170) are unchanged
 
 A process that gave out provisional ids while another wrote keeps its map between its ids and the store's. It finds
-the store's ids of its strings by probing the mapped blocks (in place of `atom_key`).
+the store's ids of its strings by probing the mapped blocks (in place of `atom_key`). Its view past the fork follows the
+rows exactly, its own appends included inside the transaction that made them, and shrinks with a rollback
+(`Stored::view_rows`): a view widened there and left wide read a rolled-back append as stored, so it was never written
+again. Below the fork every stored atom reads as itself, so the map's relinking below it (`below`, `relinked`) is gone.
 
 ### A7. An older store
 
-A store with `atom_segment` rows and no `atom_blocks` is converted under the lease: a base block is written from its
-segments in id order, then the rows naming it go in and the segment and key rows go, in one transaction. The
-store's format floor rises, so an older binary refuses the store rather than read it without its atoms.
+The store's floor rises to 6 and its file is `content-v6.sqlite` (schema.rs: "a store is never upgraded"; the store is
+a cache). An older store is neither converted nor read: at its own path it is refused (`an_older_floor_store_is_refused`),
+and an older binary keeps its `content-v5.sqlite`. (This replaces the conversion first written here: the floor's rule
+was already the store's, and a converter would be code for stores that no binary of this floor reads.)
+
+A store is copied with its folder: the tests' template freezes its blocks and publishes them beside it, and each copy
+clones them, as it now clones the tapes', frames' and memo's folders too (a copy without `.objects` had failed, a
+source's segment not there); a capture copies them (`copy_blocks`). A reader maps its blocks read-only and keeps no
+descriptor; the writer's is let go with the store's last handle.
 
 ### Interface (rerail-blocks)
 
@@ -116,10 +130,13 @@ pub trait AtomRead {
 
 /// An open atoms block in a file: one writer, the lease holder.
 impl AtomsW {
-    pub fn create(path: &Path, first: u32, cap: u32, bytes_cap: u64) -> io::Result<AtomsW>;
-    pub fn reopen(path: &Path) -> io::Result<AtomsW>;
+    pub fn create(path: &Path, first: u32, tag: u64, cap: u32, bytes_cap: u64) -> io::Result<AtomsW>;
+    /// The open block for its next writer, from the committed `end` (`resume`).
+    pub fn reopen(path: &Path, end: u32) -> io::Result<AtomsW>;
+    /// Continues from the committed `end`: appends past it taken back, their slots left (A3).
+    pub fn resume(&mut self, end: u32) -> io::Result<()>;
     /// Appends `s`, `None` when full (the caller starts the next delta).
-    pub fn append(&self, s: &str, h: u64) -> Option<u32>;
+    pub fn append(&mut self, s: &str, h: u64) -> Option<u32>;
     /// Every append so far on the disk: before the commit that names them.
     pub fn sync(&self) -> io::Result<()>;
     pub fn freeze(self) -> io::Result<()>;
@@ -128,7 +145,9 @@ impl AtomsW {
 /// An atoms block mapped read-only, read up to a committed end.
 impl AtomsV {
     pub fn open(path: &Path, end: u32) -> io::Result<AtomsV>;
-    pub fn extend(&mut self, end: u32);
+    pub fn extend(&mut self, end: u32) -> io::Result<()>;
+    /// Reads to `end`, nearer than before too (a fork's view after a rollback, A6).
+    pub fn set_end(&mut self, end: u32) -> io::Result<()>;
 }
 ```
 
@@ -219,8 +238,7 @@ Atoms:
   a new process, whose next atoms take their ids.
 - A-R5 `another_process_commit_is_seen_by_catching_up`: atoms committed by another connection's process are read
   after `catch_up`.
-- A-R6 `an_older_store_is_converted_once`: a store of segment rows reads the same ids and strings after the
-  conversion, and holds no segment rows.
+- A-R6 `an_older_floor_store_is_refused` (A7): a store of floor 5 is refused at its path, not misread.
 - A-R7 `a_roll_up_keeps_every_id`: deltas rolled into a base read the same; a view of the old files still reads.
 - A-R8 the existing atoms tests (forks, reservations, the commit hook, the virtual table) pass.
 
