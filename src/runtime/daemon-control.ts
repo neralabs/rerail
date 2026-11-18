@@ -746,18 +746,20 @@ function startVerdict(state: DaemonState, machine: DaemonMachine, deadline: numb
  * What the state file in `home` says, checked against the machine. `probeTimeoutMs` bounds the engine's proof and the
  * health probe together; a hook waiting out a busy daemon passes more (`patientLookup`). A live pid whose daemon did not
  * answer as itself is kept unless it is proven not to be the daemon that wrote the record ({@link recordedProcess}),
- * within what is left of that limit: a busy daemon is kept, and a process that took a dead daemon's pid is not. A start
- * time not read by then proves nothing, and the record is kept.
+ * within what is left of `readLimitMs` from the lookup's start (that limit, unless a stop passes its own wait): a busy
+ * daemon is kept, and a process that took a dead daemon's pid is not. A start time not read by then proves nothing, and
+ * the record is kept.
  */
 export async function lookupDaemon(
   home: string,
   machine: DaemonMachine = THIS_MACHINE,
   probeTimeoutMs: number = PROBE_TIMEOUT_MS,
+  readLimitMs: number = probeTimeoutMs,
 ): Promise<DaemonLookup> {
   const stateFile = join(home, DAEMON_STATE_FILE);
   const state = await readDaemonState(stateFile, machine.platform);
   if (state === undefined) return { status: "absent" };
-  const deadline = Date.now() + probeTimeoutMs;
+  const deadline = Date.now() + readLimitMs;
   const found = await checkedLookup(stateFile, state, machine, probeTimeoutMs);
   if (found.status === "running" || found.status === "absent" || recordedProcess(home, state, machine, deadline) !== "not-ours") return found;
   await rm(stateFile, { force: true });
@@ -906,12 +908,14 @@ function homeDaemonRuns(home: string, machine: DaemonMachine): boolean {
  * The daemon a start or a stop acts on in `home`: the one daemon.json records, else the one that holds the home
  * ({@link homeDaemonRuns}) once it has recorded itself again. The daemon of a home writes daemon.json back within a
  * second of finding it gone or naming another process, so it is waited for, never started beside: a second daemon
- * would refuse to run beside it, as would every start after it, and `rerail daemon stop` would find none to stop.
+ * would refuse to run beside it, as would every start after it, and `rerail daemon stop` would find none to stop. Each
+ * lookup reads a start time within `readLimitMs` ({@link lookupDaemon}): a stop passes its own wait, so a record that
+ * names another process is removed before the stop looks for the daemon that holds the home.
  */
-async function lookupHomeDaemon(home: string, machine: DaemonMachine): Promise<DaemonLookup> {
+async function lookupHomeDaemon(home: string, machine: DaemonMachine, readLimitMs: number = PROBE_TIMEOUT_MS): Promise<DaemonLookup> {
   const deadline = Date.now() + START_TIMEOUT_MS;
   for (;;) {
-    const lookup = await lookupDaemon(home, machine);
+    const lookup = await lookupDaemon(home, machine, PROBE_TIMEOUT_MS, readLimitMs);
     if (lookup.status !== "absent" || !homeDaemonRuns(home, machine)) return lookup;
     if (Date.now() >= deadline) throw new Error(unrecordedDaemonProblem(home, machine));
     await sleep(POLL_INTERVAL_MS);
@@ -1520,7 +1524,7 @@ async function goneWithin(alive: () => boolean, ms: number): Promise<boolean> {
  * {@link STOP_TIMEOUT_MS} is killed.
  */
 export async function stopDaemon(home: string, machine: DaemonMachine = THIS_MACHINE): Promise<StopDaemonResult> {
-  const lookup = await lookupHomeDaemon(home, machine);
+  const lookup = await lookupHomeDaemon(home, machine, STOP_TIMEOUT_MS);
   if (lookup.status === "absent") return lookup.notDaemon === undefined ? "not-running" : "not-daemon";
   return await stopFoundDaemon(home, lookup, machine);
 }

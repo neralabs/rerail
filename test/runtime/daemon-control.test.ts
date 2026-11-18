@@ -2,7 +2,7 @@ import * as childProcess from "node:child_process";
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import { connect, createServer, type AddressInfo, type Socket } from "node:net";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -1066,15 +1066,19 @@ describe("a record whose live pid is not the home's daemon", () => {
     expect(await stopDaemon(home, machine())).toBe("stopped");
     expect(sent).toEqual([[LIVE_PID, "SIGTERM"]]);
     expect(existsSync(stateFile)).toBe(false);
-    // The stop's lookup reads within what is left of its 2 s; the verdict and the ask before the SIGTERM, within the
-    // stop's own 10 s wait.
+    // The stop's lookup, its verdict and its ask before the SIGTERM each read within the stop's own 10 s wait, where a
+    // status lookup reads within its 2 s.
     expect(bounds).toHaveLength(3);
-    expect(bounds[0]).toBeGreaterThan(0);
-    expect(bounds[0]).toBeLessThanOrEqual(2_000);
-    for (const bound of bounds.slice(1)) {
+    for (const bound of bounds) {
       expect(bound).toBeGreaterThan(2_000);
       expect(bound).toBeLessThanOrEqual(10_000);
     }
+    bounds.length = 0;
+    await writeFile(stateFile, JSON.stringify(state(platform)));
+    await lookupDaemon(home, machine());
+    expect(bounds).toHaveLength(1);
+    expect(bounds[0]).toBeGreaterThan(0);
+    expect(bounds[0]).toBeLessThanOrEqual(2_000);
   });
 
   /**
@@ -1119,6 +1123,47 @@ describe("a record whose live pid is not the home's daemon", () => {
     expect(await lookupDaemon(home, reused)).toEqual({ status: "absent", notDaemon: LIVE_PID });
     expect(signals).toEqual([]);
   });
+
+  // The home's daemon holds its lock and is busy, while daemon.json names a program a dead daemon's pid went to. A start
+  // read takes time, as Windows PowerShell does, and the engine proof uses all of a lookup's limit, so `rerail status`
+  // on Windows has none left to read it; a stop's lookup reads within the stop's own wait.
+  it.each(["linux", "win32"] as const)("stops the daemon that holds the home when daemon.json names a later program instead (%s)", async platform => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const sent: Array<[number, string | number | undefined]> = [];
+    let homeDaemonRuns = true;
+    await holdHome(home, OTHER_PID);
+    const written = holderRecordWritten();
+    const started = (pid: number): number => (pid === OTHER_PID ? written - 1_000 : anHourLater());
+    // The home's daemon listens on its database's engine pipe.
+    const homePipe = enginePipeName(join(home, "rerail.sqlite"));
+    const homeDaemon = stateFor({ pid: OTHER_PID, kernelSocketPath: platform === "win32" ? homePipe : "/nowhere/home.sock", accessToken: "capability" });
+    const machine: DaemonMachine = {
+      ...machineWith(platform, [], () => homeDaemonRuns),
+      pipes: () => [pipeNameOf(PIPE), pipeNameOf(homePipe)],
+      kill: (pid, signal) => {
+        if (pid === OTHER_PID && !homeDaemonRuns) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+        if (signal !== 0) sent.push([pid, signal]);
+        if (pid === OTHER_PID && (signal === "SIGTERM" || signal === "SIGKILL")) homeDaemonRuns = false;
+        return true;
+      },
+      capabilityProof: async (_socketPath, _accessToken, timeoutMs) => {
+        await delay(timeoutMs);
+        return "silent";
+      },
+      // The home's daemon writes daemon.json back once it finds it gone.
+      homeDaemonLockHeld: () => {
+        if (homeDaemonRuns && !existsSync(stateFile)) writeFileSync(stateFile, JSON.stringify(homeDaemon));
+        return homeDaemonRuns;
+      },
+      processStartedAt: (pid, timeoutMs) => (platform === "win32" && timeoutMs < 200 ? undefined : started(pid)),
+    };
+    await writeFile(stateFile, JSON.stringify(state(platform)));
+    const status = await lookupDaemon(home, machine);
+    expect(status).toEqual(platform === "win32" ? { status: "unresponsive", state: state(platform) } : { status: "absent", notDaemon: LIVE_PID });
+    await writeFile(stateFile, JSON.stringify(state(platform)));
+    expect(await stopDaemon(home, machine)).toBe("stopped");
+    expect(sent).toEqual([[OTHER_PID, "SIGTERM"]]);
+  }, 30_000);
 
   // The home's lock is held and its holder never writes daemon.json: a start or a stop waits its 15 s, then says which
   // process to end.
