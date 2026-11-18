@@ -14,6 +14,7 @@ Set-up copies Rerail out of npm's ephemeral `npx` cache into a durable install i
 ├── bin/rerail                                         launcher shim → current/dist/cli/cli.js
 ├── update-state.json                                  active + previous version, channel
 ├── daemon.json / daemon.log                           the running daemon
+├── status/<session id>                                each Claude Code session's status line, kept by the daemon
 ├── daemon-port.json                                   the port the daemon comes back on after a restart
 ├── coding-agents.json                                 the coding agents set-up and rerail install have seen
 ├── packs/node_modules/@neralabs/rerail-pack-<id>/     Rerail's rule packs you installed (rerail packs)
@@ -184,7 +185,7 @@ Agents run commands as you, so only their own sandbox can keep them out.
   `current` and `versions` in the Rerail home, so commands can read the installed package but no data.
 - `permissions.deny` covers the file tools, which the sandbox does not: `Edit(...)` for both folders; `Read(...)` for
   the whole cache and the Rerail home's data files (`*.json*`, `*.sqlite*`, `*.log*`, `*.lock`, `access-token*`,
-  `active-profile*`, `device-secrets/`, `profiles/`). The installed package, `bin/` and `packs/` stay readable:
+  `active-profile*`, `device-secrets/`, `profiles/`, `status/`). The installed package, `bin/` and `packs/` stay readable:
   `/rerail-create` reads its skill there, and a deny cannot be reopened for one folder.
 - `sandbox.excludedCommands` holds Rerail's CLI as Rerail commands run it (`<node> <root>/dist/cli/cli.js *`), the
   launcher (`~/.rerail/bin/rerail *`) and `rerail *`. These run unsandboxed under your normal permission rules: what a
@@ -387,8 +388,10 @@ Xcode installed.
 
 Set-up records the Node that ran it for the launcher, the hooks and the Claude Code status line. Homebrew's is
 recorded by the link `brew upgrade` keeps (`/opt/homebrew/bin/node`), not its versioned `Cellar` folder. Once the
-recorded Node is gone (after `nvm uninstall`, say), each falls back to `node` on `PATH`. The status line does so on
-Windows too: Claude Code runs it through Git Bash there, so its `sh -c` fallback works as on macOS and Linux. Where
+recorded Node is gone (after `nvm uninstall`, say), each falls back to `node` on `PATH`. The status line starts Node
+only on Windows and where you had a status line of your own, which Node runs first
+([how Claude Code draws it](in-session-surfaces.md#how-claude-code-draws-it)). On Windows Claude Code runs it through
+Git Bash, so its `sh -c` fallback works there. Where
 set-up found another `node` first on `PATH`, or none, Claude Code's hooks on Windows start through `cmd.exe`, which
 runs the recorded Node itself while it exists and `node.exe` from `PATH` once it is gone, so each hook event runs one
 Node rather than two. Set-up writes the `node` entry instead where it finds no `cmd.exe` by its full System32 path, or
@@ -407,8 +410,8 @@ its set-up adds its own entry beside each `cmd.exe` one, so every hook runs twic
 on). If that has happened, delete from `~/.claude/settings.json` each hook entry whose `command` ends in `cmd.exe`
 and whose `args` name `hook-launcher.js`.
 
-On a Node older than 24, the CLI and the daemon stop with set-up's message, the hooks do nothing, and the status line
-says `needs Node 24 or newer`.
+On a Node older than 24, the CLI and the daemon stop with set-up's message, the hooks do nothing, and a status line
+that starts Node says `needs Node 24 or newer`.
 
 </details>
 

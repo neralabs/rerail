@@ -169,7 +169,7 @@ Rerail runs Git for Windows' own `git.exe`, not its launcher, and reads Git's gl
   then runs must pass the checks every `PATH` entry gets (`trustedFolder`): outside every `node_modules`, and outside
   the repository Rerail runs in by its path and by its real path, which a junction into the repository would reach.
 - `findGit` tries the candidates one at a time and stops at the first Git that runs, so the `PATH` entries after it
-  are never resolved; the status line, a process of its own every few seconds, pays for the entries up to its Git
+  are never resolved; the status line, a process of its own at every refresh, pays for the entries up to its Git
   only. On Windows a candidate spelled twice in different case is probed once.
 - A Git laid out otherwise, such as a scoop shim, runs as found. When a batch reader (`readGitBlobs`, `readGitBlobIds`,
   `gitCrlfPaths`) times out, it ends the shim and the Git it started (`endProcessTree`), and answers 500 ms later
@@ -473,7 +473,14 @@ capability, refused every start as "alive but not answering", and `rerail daemon
 
 ## The Claude Code status line
 
-On Windows Rerail's status line runs the person's previous status line through Git Bash, as Claude Code ran it, and
+On Windows every refresh of Rerail's status line starts Node (`sh -c '…' <node> <claude-status.js>`, through Git Bash),
+which asks the daemon for the session's line. On macOS and Linux a session with no status line of the person's own
+prints the line the daemon keeps in a file, with shell built-ins and no Node (`src/hosts/claude/claude-status.sh`);
+Windows does not use that yet, since the script has not been run under Git Bash, where `.` takes a Windows path and
+the home is not always `$HOME`. Registration sets no refresh interval on any platform, so Claude Code runs the status
+line on its own events only ([how Claude Code draws it](in-session-surfaces.md#how-claude-code-draws-it)).
+
+Rerail's status line runs the person's previous status line through Git Bash, as Claude Code ran it, and
 ends its whole process tree when it overruns its 2 s budget.
 
 Node's `shell: true` is cmd.exe on Windows, which reads `~`, single quotes and `$(...)` as plain text, so a bash

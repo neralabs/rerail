@@ -132,6 +132,7 @@ Hooks, the daemon and `rerail events` never contact a registry. A new version ar
 |- current -> versions/<active>/node_modules/@neralabs/rerail
 |- bin/rerail
 |- daemon.json
+|- status/<session id>
 |- packs/node_modules/@neralabs/rerail-pack-<id>/
 |- packs/node_modules/[@<scope>/]rerail-pack-<id>/
 `- versions/

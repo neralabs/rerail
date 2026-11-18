@@ -303,14 +303,16 @@ the launcher, every connected agent's hooks and the status line.
 <details>
 <summary>How Node is found, and no `node` at all</summary>
 
-The launcher, hooks and Claude Code's status line run the Node that ran set-up, by full path. For Homebrew that is
-`/opt/homebrew/bin/node`, a link `brew upgrade` keeps, so upgrading changes nothing.
+The launcher, hooks and, where it starts Node, Claude Code's status line run the Node that ran set-up, by full path.
+For Homebrew that is `/opt/homebrew/bin/node`, a link `brew upgrade` keeps, so upgrading changes nothing. The status
+line starts Node on Windows, and where you had a status line of your own
+([how Claude Code draws it](in-session-surfaces.md#how-claude-code-draws-it)).
 
 If that Node is gone (`nvm uninstall`, say), they fall back to the first `node` on `PATH`, Claude Code's status line on
 Windows included.
 
-With that `node` older than 24, the daemon does not start and hooks do nothing. Claude Code's status line reads
-`R E R A I L ✕ needs Node 24 or newer (this is 22.12.0)`.
+With that `node` older than 24, the daemon does not start and hooks do nothing. A Claude Code status line that starts
+Node reads `R E R A I L ✕ needs Node 24 or newer (this is 22.12.0)`.
 
 With no `node` on `PATH`, the launcher and hooks fail with exit code 127
 (`…/.rerail/bin/rerail: line 5: exec: node: not found`). Install Node 24, then run
