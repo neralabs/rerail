@@ -509,23 +509,25 @@ capability, refused every start as "alive but not answering", and `rerail daemon
   uses: Windows soon reuses a pid, often for another of this user's processes, and anyone can create the pipe's name.
   Nothing goes to the recorded URL before that. An engine of Rerail 0.1.4 or earlier has no proof and answers the
   challenge 404, as any listener without the proof's path does; then the process's creation time decides, read as
-  below within the lookup's limit: a pid that started no later than the `startedAt` that `daemon.json` records is the
-  daemon that wrote it, and gets the capability; one that started more than 10 s later is another process, and the
-  record is removed; one whose start is not read is sent nothing and kept as not answering. An engine that does not
-  answer the proof in time is taken for a busy daemon: its state file is kept and the lookup reports it unresponsive,
-  unless a fact proves the pid is another
+  below: a pid this user may signal that started no later than the `startedAt` that `daemon.json` records is the
+  daemon that wrote it, and gets the capability, and a hook replaces it whatever package it ran from, since it
+  predates the fields hooks send. Any other pid behind such an engine (one that started later, one whose
+  start is not read, one this user may not signal) is not shown to be that daemon, and the record is removed, as for an
+  engine that does not prove itself. An engine that does not answer the proof in time is taken for a busy daemon: its
+  state file is kept and the lookup reports it unresponsive, unless a fact proves the pid is another
   process (`recordedProcess`): it started more than 10 s after the `startedAt` that `daemon.json` records, or another
   process holds `locks/daemon.lock` as its recorded holder and started no later than that record was written. A start
   no later than `startedAt` makes the pid this home's daemon whatever the holder record says. Where the lock does not
-  decide, as for a daemon of Rerail 0.1.4 or earlier, which holds none, the process's creation time is read through
-  Windows PowerShell, which loads no Rerail engine, and is ended at what is left of the lookup's limit (the stop's
-  10 s wait for a stop); one ended there, or one that cannot run, reads nothing, and the record is kept. So on a
-  machine whose policy blocks `powershell.exe` itself, no start is read, and a busy daemon of 0.1.4 or earlier is not
-  shown to be this home's: `rerail daemon stop` ends nothing and says how to check the process, and `rerail install
-  --remove` stops with that error, having already taken Rerail out of the coding agents. The command that message
-  gives runs PowerShell too, so there open Task Manager's Details tab, show its Command line column, end the process
-  with the pid the message names if its command line runs Rerail's `daemon-entry.js` for this home, and run the
-  command again. The proof's limit counts
+  decide, as for a daemon of Rerail 0.1.4 or earlier, which holds none, the process's creation time is read through the
+  engine (`GetProcessTimes`), which starts no process; a process this user may not query reads nothing, and the record
+  is kept. `rerail install --remove` reads it through Windows PowerShell instead, since it deletes the folder the engine
+  loads from next and Windows keeps a loaded DLL from being deleted; PowerShell is ended at what is left of the
+  lookup's limit (the stop's 10 s wait for a stop), and one ended there, or one that cannot run, reads nothing. So on a
+  machine whose policy blocks `powershell.exe` itself, a busy daemon of 0.1.4 or earlier is not shown to be this
+  home's in `rerail install --remove`, which stops with that error, having already taken Rerail out of the coding
+  agents. The command that message gives runs PowerShell too, so there open Task Manager's Details tab, show its
+  Command line column, end the process with the pid the message names if its command line runs Rerail's
+  `daemon-entry.js` for this home, and run the command again. The proof's limit counts
   from the ask and covers the connect (`engineCapabilityProof`, `src/runtime/engine-proof.ts`). It connects to the pipe
   spelled
   `\\?\pipe\<name>`: Node's wait for a free instance (`WaitNamedPipe`, up to 30 s, in a thread that keeps the asking

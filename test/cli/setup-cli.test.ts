@@ -2,14 +2,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const daemonStop = vi.hoisted(() => ({
   beforeStopped: undefined as undefined | ((home: string) => Promise<void>),
   result: "stopped" as "stopped" | "not-running" | "not-daemon" | "record-changed",
+  /** The machine each stop was asked on. */
+  machines: [] as unknown[],
 }));
 vi.mock("../../src/runtime/daemon-control.js", async () => {
   const actual = await vi.importActual<typeof import("../../src/runtime/daemon-control.js")>("../../src/runtime/daemon-control.js");
   return {
     ...actual,
     // A running daemon's exit closes its last connection; the test stands in for that close, and for what the stop says.
-    stopDaemon: async (home: string) => {
-      if (daemonStop.beforeStopped === undefined) return await actual.stopDaemon(home);
+    stopDaemon: async (home: string, machine?: import("../../src/runtime/index.js").DaemonMachine) => {
+      daemonStop.machines.push(machine);
+      if (daemonStop.beforeStopped === undefined) return await actual.stopDaemon(home, machine);
       await daemonStop.beforeStopped(home);
       return daemonStop.result;
     },
@@ -50,6 +53,7 @@ const contentCache = (home: string): string =>
 afterEach(async () => {
   daemonStop.beforeStopped = undefined;
   daemonStop.result = "stopped";
+  daemonStop.machines.length = 0;
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   await Promise.all(temporaryDirectories.splice(0).map((path) => removeFolder(path)));
@@ -218,6 +222,23 @@ describe("rerail install --root", () => {
       expect(await runInstallCommand(["--root", packageRoot, ...remove], context)).toBe(0);
       const text = output.mock.calls.join("");
       for (const each of lines) expect(text.includes(each), `${remove.join(" ")}: ${each}`).toBe(each === (line ?? STOP_ANSWERS["record-changed"]));
+    }
+  });
+
+  // The uninstall deletes the folder the engine loads from once the daemon is stopped, and Windows keeps a loaded DLL
+  // from being deleted, so its stop reads what it needs as a process that loads no engine.
+  it("stops the daemon as a process that loads no engine before it removes the installation", async () => {
+    const { context, packageRoot } = await fixture();
+    const { MACHINE_WITHOUT_ENGINE } = await vi.importActual<typeof import("../../src/runtime/daemon-control.js")>("../../src/runtime/daemon-control.js");
+    daemonStop.beforeStopped = async () => undefined;
+    vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    for (const remove of [["--remove"], ["--remove", "--delete-data"]]) {
+      await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+      daemonStop.machines.length = 0;
+      expect(await runInstallCommand(["--root", packageRoot, ...remove], context)).toBe(0);
+      expect(daemonStop.machines, remove.join(" ")).toHaveLength(1);
+      expect(daemonStop.machines[0], remove.join(" ")).toBeDefined();
+      expect(daemonStop.machines[0], remove.join(" ")).toBe(MACHINE_WITHOUT_ENGINE);
     }
   });
 

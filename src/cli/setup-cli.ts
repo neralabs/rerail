@@ -36,6 +36,7 @@ import {
   DAEMON_STATE_FILE,
   daemonUsesPackageRoot,
   lookupDaemon,
+  MACHINE_WITHOUT_ENGINE,
   mainInstanceHolderRuns,
   openDashboard,
   START_LOCK_DIR,
@@ -216,7 +217,8 @@ async function backUpRulesAndHistory(home: string, dryRun: boolean): Promise<voi
     process.stdout.write(`Would stop the Rerail daemon${plannedMoves(present(), target)}.\n`);
     return;
   }
-  process.stdout.write(stopLine(await stopDaemon(home)));
+  // The stop loads no engine: the uninstall deletes the engine's folder after it.
+  process.stdout.write(stopLine(await stopDaemon(home, MACHINE_WITHOUT_ENGINE)));
   const listed = present();
   if (listed.length === 0) {
     process.stdout.write("No rules or history to back up.\n");
@@ -371,7 +373,7 @@ function heldCacheCleanup(path: string): string {
  */
 async function deleteRulesAndHistory(home: string, dryRun: boolean, machine: DaemonMachine | undefined): Promise<ReadonlySet<string>> {
   if (dryRun) process.stdout.write("Would stop the Rerail daemon.\n");
-  else process.stdout.write(stopLine(await stopDaemon(home)));
+  else process.stdout.write(stopLine(await stopDaemon(home, MACHINE_WITHOUT_ENGINE)));
   const deletion = planDataDeletion(home, machine);
   if (dryRun) {
     for (const { path, what } of deletion.remove) process.stdout.write(`Would delete ${path} (${what}).\n`);
