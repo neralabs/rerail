@@ -9029,6 +9029,34 @@ pub fn lanes_set(f: &mut FunctionBuilder<'_>, m: Value, stride: u32) -> Value {
     if stride > 1 { f.ins().ushr_imm(z, i64::from(stride.trailing_zeros())) } else { z }
 }
 
+/// Many 16-place masks at once, each of one vector's lanes (all ones or zero): on arm64 the
+/// pairwise adds of `bitmask` as one tree, eight masks a tree (`addp` of two vectors puts their
+/// sums side by side), then a move out per mask. 7 adds for 8 masks, where a mask apiece takes
+/// 3. Elsewhere, `bitmask` each.
+pub fn bitmasks16(f: &mut FunctionBuilder<'_>, parts: &[Value], weights: Value) -> Vec<Value> {
+    if !cfg!(target_arch = "aarch64") {
+        return parts.iter().map(|&p| bitmask(f, &[p], weights)).collect();
+    }
+    let mut out = Vec::with_capacity(parts.len());
+    for chunk in parts.chunks(8) {
+        let mut level: Vec<Value> = chunk.iter().map(|&p| f.ins().band(p, weights)).collect();
+        // Three levels: each takes a vector's 16 lanes to half as many sums, two vectors in one.
+        for _ in 0..3 {
+            if level.len() % 2 == 1 {
+                level.push(level[level.len() - 1]);
+            }
+            level = level.chunks(2).map(|ab| f.ins().iadd_pairwise(ab[0], ab[1])).collect();
+        }
+        // Lane `k` of the eight 16-bit lanes is the chunk's `k`th mask.
+        let lanes = f.ins().bitcast(types::I16X8, MemFlags::new().with_endianness(Endianness::Little), level[0]);
+        for k in 0..chunk.len() {
+            let x = f.ins().extractlane(lanes, k as u8);
+            out.push(f.ins().uextend(types::I64, x));
+        }
+    }
+    out
+}
+
 /// Four 16-byte compare results (each byte 0 or 0xff) as one 64-bit mask.
 pub fn bitmask(f: &mut FunctionBuilder<'_>, parts: &[Value], weights: Value) -> Value {
     if cfg!(target_arch = "aarch64") && parts.len() == 1 {

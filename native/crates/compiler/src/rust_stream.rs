@@ -235,6 +235,11 @@ pub unsafe extern \"C\" fn tier2_entry(ctx: u64) -> u64 {
     let bytewise = n.block_programs.first().map(crate::native_cpu_bytes::Bytewise::of);
     let mut windows = String::new();
     for (i, c) in n.local_checks.iter().enumerate() {
+        // A token's check (decision 0398) is the CPU's and the interpreter's: no grammar that
+        // goes through Rust has one yet (the `.rr` grammar checks none).
+        if c.token {
+            return Err(format!("check {i}: a token's check is not generated as Rust yet"));
+        }
         let o = mask_output(n, c.mask)?;
         let word = match bytewise.as_ref().filter(|b| b.can(o as u16)) {
             Some(b) => {
@@ -1331,6 +1336,7 @@ fn check(out: &mut String, on_p: &mut String, i: usize, c: &LocalCheck, word: &s
             LocalOp::Xor(a, b) => format!("{} ^ {}", v(a, t), v(b, t)),
             LocalOp::AndNot(a, b) => format!("{} & !{}", v(a, t), v(b, t)),
             LocalOp::Prev(a, s) => format!("({} << {s}) | (if q - {t} >= 1 {{ {} >> {} }} else {{ 0 }})", v(a, t), v(a, t + 1), 64 - u32::from(s)),
+            LocalOp::Fill(..) | LocalOp::Start | LocalOp::Last => return Err(format!("check {i}: a token's check's op in a local check")),
         };
         writeln!(body, "        let v{k}_{t}: u64 = {e};").unwrap();
     }
@@ -1695,6 +1701,7 @@ mod tests {
                     LocalOp::Xor(a, b) => v(ops, usize::from(a), bytes, q) ^ v(ops, usize::from(b), bytes, q),
                     LocalOp::AndNot(a, b) => v(ops, usize::from(a), bytes, q) & !v(ops, usize::from(b), bytes, q),
                     LocalOp::Prev(a, s) => (v(ops, usize::from(a), bytes, q) << s) | if q >= 1 { v(ops, usize::from(a), bytes, q - 1) >> (64 - u32::from(s)) } else { 0 },
+                    LocalOp::Fill(..) | LocalOp::Start | LocalOp::Last => unreachable!(),
                 }
             }
             v(ops, ops.len() - 1, bytes, q)

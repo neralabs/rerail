@@ -2298,6 +2298,109 @@ fn row_kinds(row: &bitlex_tier2::Row) -> Vec<u16> {
     out
 }
 
+/// A check's byte machine (`grammar::byte_check`) as a token's check (`LocalCheck::token`,
+/// decision 0398): `Lowering::check`'s masks, in the token's frame. Place 0 is the token's first
+/// byte, so a state's mask is entered at `start` from the start state and at `prev(sources, 1)`
+/// after it; a self-loop on bytes `L` is `fill(entered, ~L | start)`. Refused: the last byte in
+/// no accepting state, of a token beginning with a byte the machine takes (another is tier 2's
+/// switch's).
+fn token_check_ops(accept: &[bool], arms: &[(u16, ByteSet, u16)]) -> Result<Vec<crate::program::LocalOp>, String> {
+    use crate::program::LocalOp as L;
+    let n = accept.len();
+    let mut ins: Vec<usize> = (0..n).map(|q| arms.iter().filter(|a| usize::from(a.2) == q && a.0 != a.2).count()).collect();
+    if ins[0] != 0 {
+        return Err("an arm back to the start: not compiled yet".into());
+    }
+    let (mut order, mut ready) = (Vec::new(), vec![0usize]);
+    while let Some(p) = ready.pop() {
+        order.push(p);
+        for a in arms.iter().filter(|a| usize::from(a.0) == p && a.0 != a.2) {
+            let q = usize::from(a.2);
+            ins[q] -= 1;
+            if ins[q] == 0 {
+                ready.push(q);
+            }
+        }
+    }
+    if order.len() != n {
+        return Err("a cycle through two or more states: not compiled yet".into());
+    }
+    let mut ops: Vec<L> = Vec::new();
+    let mut push = |ops: &mut Vec<L>, op: L| -> u16 {
+        if let Some(k) = ops.iter().position(|o| *o == op) {
+            return k as u16;
+        }
+        ops.push(op);
+        ops.len() as u16 - 1
+    };
+    let or = |ops: &mut Vec<L>, push: &mut dyn FnMut(&mut Vec<L>, L) -> u16, a: Option<u16>, b: u16| match a {
+        None => b,
+        Some(a) => push(ops, L::Or(a, b)),
+    };
+    let start = push(&mut ops, L::Start);
+    let takes = arms.iter().filter(|a| a.0 == 0).fold([0u64; 4], |s, a| std::array::from_fn(|i| s[i] | a.1[i]));
+    let taken = push(&mut ops, L::Bytes(takes));
+    let checked = push(&mut ops, L::And(start, taken));
+    let mut masks: Vec<Option<Option<u16>>> = vec![None; n];
+    for &q in &order {
+        let mut groups: Vec<(ByteSet, Vec<usize>)> = Vec::new();
+        for a in arms.iter().filter(|a| usize::from(a.2) == q && (a.0 != a.2 || q == 0)) {
+            match groups.iter_mut().find(|g| g.0 == a.1) {
+                Some(g) => g.1.push(usize::from(a.0)),
+                None => groups.push((a.1, vec![usize::from(a.0)])),
+            }
+        }
+        let (mut first, mut later): (Option<u16>, Option<u16>) = (None, None);
+        for (bytes, from) in groups {
+            let b = push(&mut ops, L::Bytes(bytes));
+            if from.contains(&0) {
+                let here = push(&mut ops, L::And(checked, b));
+                first = Some(or(&mut ops, &mut push, first, here));
+            }
+            let mut sources: Option<u16> = None;
+            for &p in from.iter().filter(|&&p| p != q) {
+                if let Some(m) = masks[p].expect("a source before its target") {
+                    sources = Some(or(&mut ops, &mut push, sources, m));
+                }
+            }
+            if let Some(src) = sources {
+                let back = push(&mut ops, L::Prev(src, 1));
+                let here = push(&mut ops, L::And(back, b));
+                later = Some(or(&mut ops, &mut push, later, here));
+            }
+        }
+        let mut mask = match (first, later) {
+            (f, None) => f,
+            (f, Some(l)) => {
+                let inside = push(&mut ops, L::AndNot(l, start));
+                Some(or(&mut ops, &mut push, f, inside))
+            }
+        };
+        if let (Some(m), Some(a)) = (mask, arms.iter().find(|a| usize::from(a.0) == q && a.2 == a.0)) {
+            let stays = push(&mut ops, L::Bytes(a.1));
+            let leaves = push(&mut ops, L::Not(stays));
+            let stop = push(&mut ops, L::Or(leaves, start));
+            mask = Some(push(&mut ops, L::Fill(m, stop)));
+        }
+        masks[q] = Some(mask);
+    }
+    let mut good: Option<u16> = None;
+    for q in (0..n).filter(|&q| accept[q]) {
+        if let Some(m) = masks[q].expect("every state") {
+            good = Some(or(&mut ops, &mut push, good, m));
+        }
+    }
+    let span = push(&mut ops, L::Fill(checked, start));
+    let last = push(&mut ops, L::Last);
+    let ends = match good {
+        Some(g) => push(&mut ops, L::AndNot(last, g)),
+        None => last,
+    };
+    // The last op is the check's value: pushed even where an equal op is made.
+    ops.push(L::And(span, ends));
+    Ok(ops)
+}
+
 /// The tree section lowered: the grammar's state machine (`grammar`), its checks added to the
 /// fallback, and tier 2's words (`bitlex_tier2`), with the grammar's ids from `symbols`.
 fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String, Val, Val)]) -> Result<Tier2, String> {
@@ -2416,18 +2519,27 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             }
         }
     }
-    // Each check, a byte machine over its tokens' bytes (doc 18 §4), compiled into masks
-    // over the whole file with the rest of the block program: a token it refuses joins the
-    // fallback. Tier 2 keeps only the bytes a token passing it begins with.
+    // Each check, a byte machine over its tokens' bytes (doc 18 §4). Tier 2 runs it at each of
+    // its tokens, over the token's own bytes, as simdjson's stage 2 parses a number (decision
+    // 0398): a token's check. Where a keyword of the row begins with a byte the machine takes,
+    // its tokens are told apart in tier 1: the machine is masks over the whole file there, with
+    // the rest of the block program, and a token it refuses joins the fallback. Tier 2 keeps
+    // only the bytes a token passing it begins with.
     let mut check_of: HashMap<usize, ByteSet> = HashMap::new();
+    let mut token_checks: Vec<(usize, Vec<crate::program::LocalOp>)> = Vec::new();
     for (kind, g) in low.checks.clone() {
         let token = token_rows.iter().position(|t| t.0 == kind).ok_or_else(|| format!("check {kind}: no token row of that kind"))?;
         let (accept, arms) = grammar::byte_check(&g, &low.classes).map_err(|e| format!("check {kind}: {e}"))?;
         let first = arms.iter().filter(|a| a.0 == 0).fold([0u64; 4], |s, a| [s[0] | a.1[0], s[1] | a.1[1], s[2] | a.1[2], s[3] | a.1[3]]);
         let words: Vec<Vec<u8>> = low.keywords.iter().filter(|k| k.0 == kind).flat_map(|k| k.1.iter().map(|w| w.0.clone())).collect();
-        let (_, start, last) = token_rows[token].clone();
-        let refused = low.check(start, last, &accept, &arms, &words).map_err(|e| format!("check {kind}: {e}"))?;
-        low.fallbacks.push(refused);
+        let taken_word = words.iter().any(|w| first[usize::from(w[0] / 64)] >> (w[0] % 64) & 1 == 1);
+        if taken_word {
+            let (_, start, last) = token_rows[token].clone();
+            let refused = low.check(start, last, &accept, &arms, &words).map_err(|e| format!("check {kind}: {e}"))?;
+            low.fallbacks.push(refused);
+        } else {
+            token_checks.push((token, token_check_ops(&accept, &arms).map_err(|e| format!("check {kind}: {e}"))?));
+        }
         check_of.insert(token, first);
     }
     let mut rows = Vec::new();
@@ -2619,7 +2731,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 let moved = match (a, l) {
                     (Some(a), Some(l)) => match (token_row(low, a, &rows, token_rows)?, low.local_ops(l)) {
                         (Some(r), Some(ops)) => {
-                            checks.push((row_kinds(&rows[r]), Some(mark_kinds[k]), a, crate::program::LocalCheck { mask: 0, delay: l.d, ops }));
+                            checks.push((row_kinds(&rows[r]), Some(mark_kinds[k]), a, crate::program::LocalCheck { mask: 0, delay: l.d, ops, token: false }));
                             true
                         }
                         _ => false,
@@ -2864,11 +2976,15 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         if kinds.is_empty() {
             return Err(format!("a token test of `{kind}`: no token of the kind"));
         }
-        checks.push((kinds, mark.map(|k| mark_kinds[k]), a, crate::program::LocalCheck { mask: 0, delay: l.d, ops }));
+        checks.push((kinds, mark.map(|k| mark_kinds[k]), a, crate::program::LocalCheck { mask: 0, delay: l.d, ops, token: false }));
+    }
+    // The tokens' checks: at their rows' tokens, over each token's bytes; no mask of tier 1's.
+    for (r, ops) in token_checks {
+        checks.push((row_kinds(&rows[r]), None, token_rows[r].1, crate::program::LocalCheck { mask: 0, delay: 0, ops, token: true }));
     }
     for (a, l) in std::mem::take(&mut low.pending_checks) {
         match (token_row(low, a, &rows, token_rows)?, low.local_ops(l)) {
-            (Some(r), Some(ops)) => checks.push((row_kinds(&rows[r]), None, a, crate::program::LocalCheck { mask: 0, delay: l.d, ops })),
+            (Some(r), Some(ops)) => checks.push((row_kinds(&rows[r]), None, a, crate::program::LocalCheck { mask: 0, delay: l.d, ops, token: false })),
             _ => {
                 let x = low.and(a, l)?;
                 low.fallbacks.push(x);
@@ -3007,8 +3123,10 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // The checks' masks, after every other: each its `A`.
     let mut local_checks = Vec::new();
     for (_, _, a, mut c) in checks {
-        mark_masks.push(a);
-        c.mask = mark_masks.len() as u16 - 1;
+        if !c.token {
+            mark_masks.push(a);
+            c.mask = mark_masks.len() as u16 - 1;
+        }
         local_checks.push(c);
     }
     crate::rir_text::local_check_rows(&mut lowered.text, &local_checks);
@@ -3224,7 +3342,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         let marks = if low.extra.contains(&token_rows[r].0) { extra_mark.map_or(0, |e| 1u32 << e) } else { 0 };
         retags.push(crate::records::Retag { o, kind: kinds[usize::from(f)], marks });
     }
-    let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark, untaken: Vec::new(), unless, unplaced: low.unplaced.iter().fold(0, |a, &k| a | 1 << k), checks, readers, retags, nexts, tested_only: low.tested_only.iter().fold(0, |a, &k| a | 1 << k), check_masks: local_checks.iter().map(|c| c.mask).collect(), prefix: low.prefix.as_ref().map(|p| p.0.clone()).unwrap_or_default() };
+    let records = crate::records::Records { starts: 0, lasts: 1, kinds, words: lowered.strings.clone(), marks: in_code, ends, rules, skip, gaps, extra: extra_mark, untaken: Vec::new(), unless, unplaced: low.unplaced.iter().fold(0, |a, &k| a | 1 << k), checks, readers, retags, nexts, tested_only: low.tested_only.iter().fold(0, |a, &k| a | 1 << k), check_masks: local_checks.iter().filter(|c| !c.token).map(|c| c.mask).collect(), prefix: low.prefix.as_ref().map(|p| p.0.clone()).unwrap_or_default() };
     crate::records::WordTable::new(&records.words)?;
     // A mark's tests pass over an extra's token by its mark (`records::gap_marks`): the token
     // loop knows it only where the reader gives it (`Reader::retag`).

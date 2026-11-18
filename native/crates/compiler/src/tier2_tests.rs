@@ -153,3 +153,74 @@ fn shared_arms_are_one_copy_and_refuse_at_their_own_word() {
     // its state's switch.
     assert!(inside > 0 || refusing == 0, "{refusing} words that can refuse in shared places, and no document refuses inside one");
 }
+
+/// JSON's number check is a token's check (decision 0398): tier 2 runs it over each number's
+/// own bytes, as simdjson's stage 2 parses a number, and tier 1 makes none of it. On the CPU and
+/// in the interpreter it refuses exactly what RFC 8259's grammar refuses, at every length: a
+/// number of one window, one ending at a window's edge, and ones of two and three windows, whose
+/// `fill`s and `prev`s carry from window to window.
+#[test]
+fn a_numbers_check_runs_over_its_tokens_bytes() {
+    // RFC 8259: `-? (0 | [1-9][0-9]*) (. [0-9]+)? ([eE] [+-]? [0-9]+)?`.
+    fn rfc(s: &[u8]) -> bool {
+        let digits = |s: &[u8], i: usize| s[i..].iter().take_while(|b| b.is_ascii_digit()).count();
+        let mut i = usize::from(s.first() == Some(&b'-'));
+        match s.get(i) {
+            Some(b'0') => i += 1,
+            Some(b'1'..=b'9') => i += digits(s, i),
+            _ => return false,
+        }
+        if s.get(i) == Some(&b'.') {
+            let d = digits(s, i + 1);
+            if d == 0 {
+                return false;
+            }
+            i += 1 + d;
+        }
+        if matches!(s.get(i), Some(b'e' | b'E')) {
+            i += 1;
+            if matches!(s.get(i), Some(b'+' | b'-')) {
+                i += 1;
+            }
+            let d = digits(s, i);
+            if d == 0 {
+                return false;
+            }
+            i += d;
+        }
+        i == s.len()
+    }
+    let source = std::fs::read_to_string(format!("{DIR}/14-json.bitlex")).expect("the ladder's JSON");
+    let c = crate::ladder::compile_step("14-json", &source);
+    assert!(c.program.local_checks.iter().any(|k| k.token), "no token's check:\n{:?}", c.program.local_checks);
+    let block = &c.program.block_programs[0];
+    let ones = |n: usize| "1".repeat(n);
+    let mut numbers: Vec<String> = ["0", "-0", "7", "-12", "1.5", "0.0001", "1e5", "1E+5", "1e-05", "-1.25e+300", "01", "1.", "-", "1e", "1e+", "--1", "1.2.3", "1.e5", "-01", "0x1", "1x", "2-", "1e5.0", "1ee5"]
+        .iter()
+        .map(|s| (*s).to_owned())
+        .collect();
+    for n in [62, 63, 64, 65, 66, 127, 128, 129, 130, 200] {
+        numbers.push(ones(n));
+        numbers.push(format!("-{}", ones(n - 1)));
+        numbers.push(format!("{}x", ones(n - 1)));
+        numbers.push(format!("{}.", ones(n - 1)));
+        numbers.push(format!("{}-", ones(n - 1)));
+        numbers.push(format!("0{}", ones(n - 1)));
+        numbers.push(format!("1.{}", "2".repeat(n - 2)));
+        numbers.push(format!("1.{}e", "2".repeat(n - 3)));
+        numbers.push(format!("{}e+{}", ones(n / 2), "9".repeat(n - n / 2 - 2)));
+        numbers.push(format!("{}e+{}.", ones(n / 2), "9".repeat(n - n / 2 - 3)));
+    }
+    let (mut accepted, mut refused) = (0, 0);
+    for number in &numbers {
+        for doc in [format!("[{number}]"), format!("{{\"k\": [1, {number}, 2]}}"), format!("{}{number}", " ".repeat(60))] {
+            let bytes = doc.as_bytes();
+            let pc = |r: Result<Vec<stream::Node>, stream::Refused>| r.map_err(|e| e.pc);
+            let want = pc(stream::run(&c.program, bytes, &block.run(bytes)));
+            assert_eq!(want.is_ok(), rfc(number.as_bytes()), "the interpreter: {doc:?}");
+            assert_eq!(pc(c.parser.parse(bytes)), want, "the CPU: {doc:?}");
+            if want.is_ok() { accepted += 1 } else { refused += 1 }
+        }
+    }
+    assert!(accepted > 50 && refused > 50, "{accepted} accepted, {refused} refused");
+}
