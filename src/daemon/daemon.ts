@@ -472,16 +472,21 @@ function daemonMergeAssist(database: () => RerailDatabase): { mergeAssist?: Merg
 }
 
 /**
- * The home whose untaken events the engine service checks (`EngineService.untaken`): the one `stateFile` is in, since
- * hooks find the daemon there; none for a daemon no state file names. Each pass goes to daemon.log and to `lateChecked`.
+ * The engine service's option naming the home whose untaken events it checks (`EngineService.untaken`): the one
+ * `stateFile` is in, since hooks find the daemon there; none for a daemon no state file names. Each pass goes to
+ * daemon.log and to `lateChecked`.
  */
-function untakenEvents(stateFile: string | undefined, lateChecked: RerailDaemonOptions["lateChecked"]): { home: string; lateChecked: (pass: UntakenPass) => void } | undefined {
-  if (stateFile === undefined) return undefined;
+function untakenEventsOption(
+  stateFile: string | undefined, lateChecked: RerailDaemonOptions["lateChecked"],
+): { untakenEvents?: { home: string; lateChecked: (pass: UntakenPass) => void } } {
+  if (stateFile === undefined) return {};
   return {
-    home: dirname(stateFile),
-    lateChecked: pass => {
-      process.stdout.write(`rerail daemon: ${lateCheckLine(pass)}\n`);
-      lateChecked?.(pass);
+    untakenEvents: {
+      home: dirname(stateFile),
+      lateChecked: pass => {
+        process.stdout.write(`rerail daemon: ${lateCheckLine(pass)}\n`);
+        lateChecked?.(pass);
+      },
     },
   };
 }
@@ -602,7 +607,6 @@ export class RerailDaemon {
       resumeSession: sessionId => void started.engineService?.resumeSession(sessionId),
       ...sharedMergeAssist,
     });
-    const untaken = untakenEvents(options.stateFile, options.lateChecked);
     try {
       // One walk of each repository's other worktrees for the sessions of both servers: hook sessions and native OMP and
       // Pi sessions in worktrees of one repository read them once, through the engine's one watch.
@@ -615,7 +619,7 @@ export class RerailDaemon {
         databasePath,
         workspaceRoot,
         accessToken,
-        ...(untaken === undefined ? {} : { untakenEvents: untaken }),
+        ...untakenEventsOption(options.stateFile, options.lateChecked),
         worktreeWalks,
         ...sharedMergeAssist,
         // On Windows any local user can create the default pipe first; the engine then listens on a random name.

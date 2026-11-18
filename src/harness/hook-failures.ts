@@ -273,10 +273,14 @@ export function readHookFailures(home: string, since: number): HookFailureLog {
   const start = movedAside === undefined ? live?.startedAt : movedAside.startedAt ?? oldestOf(movedAside) ?? live?.startedAt;
   const keptSince = start !== undefined && start > since ? start : null;
   const from = keptSince ?? since;
+  const parts = [movedAside, live];
+  return { failures: linesSince(parts, part => part.failures, from), keptSince, lateChecks: linesSince(parts, part => part.lateChecks, from) };
+}
+
+/** The lines `of` picks from each part that can be read, from `from` (epoch ms) on, oldest first. */
+function linesSince<T extends { at: number }>(parts: readonly (LogPart | undefined)[], of: (part: LogPart) => T[], from: number): T[] {
   // Hooks read the clock before they append, so lines from hooks running at once can be a little out of order.
-  const failures = [movedAside, live].flatMap(part => part?.failures.filter(failure => failure.at >= from) ?? []).sort((left, right) => left.at - right.at);
-  const lateChecks = [movedAside, live].flatMap(part => part?.lateChecks.filter(check => check.at >= from) ?? []).sort((left, right) => left.at - right.at);
-  return { failures, keptSince, lateChecks };
+  return parts.flatMap(part => (part === undefined ? [] : of(part).filter(line => line.at >= from))).sort((left, right) => left.at - right.at);
 }
 
 /** What a part of the log holds: its failures, and when it began where a hook that moved the log aside wrote that. */

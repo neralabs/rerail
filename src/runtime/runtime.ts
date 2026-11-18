@@ -164,6 +164,11 @@ async function settledWithin(work: Promise<void>, ms: number): Promise<boolean> 
   }
 }
 
+/** When the event `state` is ingesting happened, for its record: only for one that reaches the runtime later (`IngestOptions.observedAt`). */
+function happenedAt(state: Pick<RuntimeSessionState, "observedAt">): { observedAt?: number } {
+  return state.observedAt === undefined ? {} : { observedAt: state.observedAt };
+}
+
 /** What a call that may have run before it began captures of its files: nothing (`#beginCall`). */
 const NO_PREIMAGES: Readonly<Record<string, Preimage>> = Object.freeze({});
 
@@ -2593,8 +2598,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       kind: event.kind,
       // Stored scrubbed of secrets (`scrubValue`); the live event, which rules match, keeps them.
       payload: event.kind === "result" && withheld ? { ...event, output: withheldOutput(event.output) } : scrubValue(event),
-      // At the time it happened, for an event that reaches the runtime later (`IngestOptions.observedAt`).
-      ...(state.observedAt === undefined ? {} : { observedAt: state.observedAt }),
+      ...happenedAt(state),
     }, state.descriptor);
     if (withheld) {
       await this.#append(state, { type: "secret-result", toolCallId: event.toolCallId, eventId: event.eventId });
