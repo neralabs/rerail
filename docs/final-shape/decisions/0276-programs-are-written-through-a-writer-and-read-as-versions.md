@@ -375,6 +375,13 @@ Progress (2026-11-18):
   waves (their demand programs and the `json_rules` they join), the SQL extension's front (`sql/program.rs`), the
   planner's tree entries (`body::alone`, `Stats::empty`, `Placed::of_program`), the lowering's tree form
   (`lower_tree`, `Given`), and the tree twins of stage 2.
+- **Step 6, stage 2 so far** (2026-11-18): typing's split, hiding (`hide`, `fold_own`), the merges
+  (`merge_and_drop_repeats`, `drop_repeated_rules`) and the whole of `simplify.rs` are the version's only. Each tree
+  function's explanations moved onto its version pass, and its tests run on the version passes (the corpus-wide
+  check of dropped unreached clauses too, its Q3 property read off `congruence`). The memo's dump prints
+  `Version::show`. Still to go in stage 2: `magic.rs` (the version has only `demand_bound_columns`, as
+  `ProgramDemand`: the waves' `magic_sets` and the gated `magic_adorn` are to be ported), `reach_form.rs`, `strings`'
+  and `matchers`' tree passes, `front`'s passes, `lower::sources_on_request`.
 
 ## 9. Retired, not ported (the user's questions, answered 2026-11-15)
 
