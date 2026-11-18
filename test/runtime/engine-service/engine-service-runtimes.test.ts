@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, realpath, rm, writeFile, type FileHandle } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rename, rm, writeFile, type FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -218,6 +218,37 @@ describe("the engine service's runtimes", () => {
     expect(service.openRuntimes()).toBe(0);
   });
 
+  // Each runtime no session used closed on its own 15-minute timer, whatever else the daemon was doing. Closed at the end
+  // of the minute's sweep instead, after every quiet session's idle close had settled, one idle close that hung (a read
+  // of a share that stops answering) or ran long (a large checkout's audit) held every other checkout's kept runtime past
+  // its time while the daemon was short of room.
+  it("frees a kept runtime 15 minutes after its last session left while another session's idle close hangs", async () => {
+    const { service, first, second, start, end, clock } = await twoCheckouts(() => true);
+    await start("a", first);
+    await start("b", second);
+    await end("b", second);
+    const entered = Promise.withResolvers<void>();
+    const released = Promise.withResolvers<void>();
+    const closeIdle = RerailRuntime.prototype.closeIdleSession;
+    const hang = vi.spyOn(RerailRuntime.prototype, "closeIdleSession").mockImplementation(async function (this: RerailRuntime, ...args) {
+      entered.resolve();
+      await released.promise;
+      return await closeIdle.apply(this, args);
+    });
+    try {
+      clock.now += 31 * MINUTE;
+      const sweeping = service.closeIdleSessions();
+      await entered.promise;
+      const openWhileHung = service.openRuntimes();
+      released.resolve();
+      await sweeping;
+      expect({ openWhileHung, openAfter: service.openRuntimes() }).toEqual({ openWhileHung: 1, openAfter: 1 });
+    } finally {
+      released.resolve();
+      hang.mockRestore();
+    }
+  });
+
   // A runtime's 15 minutes were a timer's, on the monotonic clock: a wall clock set forward by an hour meanwhile closed
   // nothing sooner. Read from the wall clock, the age jumped with it, and the runtime of a person back within 15 minutes
   // was gone.
@@ -270,7 +301,7 @@ describe("the engine service's runtimes", () => {
 
   // A look for a removed folder still under way as the service closed closed the runtime the close had closed already.
   it("closes no runtime a second time when a look for its removed checkout answers after the service closed", async () => {
-    const { service, first, start, end } = await twoCheckouts(() => false);
+    const { service, first, start, end, clock } = await twoCheckouts(() => false);
     await start("a", first);
     await end("a", first);
     const looking = Promise.withResolvers<void>();
@@ -282,14 +313,15 @@ describe("the engine service's runtimes", () => {
     }, after: () => answered.resolve() });
     const disposed = vi.spyOn(RerailRuntime.prototype, "dispose");
     try {
-      await service.closeIdleSessions();
+      clock.now += 15 * MINUTE;
+      const sweeping = service.closeIdleSessions();
       await looking.promise;
       services.splice(services.indexOf(service), 1);
       await service.close();
       await removeFolder(first);
       answer.resolve();
       await answered.promise;
-      await new Promise(resolve => setImmediate(resolve));
+      await sweeping;
       expect(disposed).toHaveBeenCalledTimes(1);
     } finally {
       heldLooks.clear();
@@ -316,17 +348,39 @@ describe("the engine service's runtimes", () => {
     }
   });
 
-  // Worktrees come and go: a runtime kept for a removed checkout would hold its walk until the daemon needed the room.
-  it("closes the runtime no session uses of a checkout whose folder was removed at the minute's sweep, though the daemon has room", async () => {
-    const { service, first, second, start, end } = await twoCheckouts(() => false);
+  // Worktrees come and go: a runtime kept for a removed checkout would hold its walk until the daemon needed the room. It
+  // goes at the time every runtime no session used went, and not sooner: a folder gone for a moment may come back.
+  it("closes the runtime no session uses of a checkout whose folder was removed once it has been kept 15 minutes, though the daemon has room", async () => {
+    const { service, first, second, start, end, clock } = await twoCheckouts(() => false);
     await start("a", first);
     await start("b", second);
     await end("b", second);
     await removeFolder(second);
+    clock.now += 15 * MINUTE - 1;
     await service.closeIdleSessions();
-    // The sweep looks at the folder off the event loop, and closes the runtime once the look has answered.
-    await vi.waitFor(() => expect(service.openRuntimes()).toBe(1));
+    expect(service.openRuntimes()).toBe(2);
+    clock.now += 1;
+    await service.closeIdleSessions();
+    expect(service.openRuntimes()).toBe(1);
     await end("a", first);
+    expect(service.openRuntimes()).toBe(1);
+  });
+
+  // A checkout moved and moved back, or on a share that dropped for a moment, read as removed at one sweep: its runtime
+  // closed though every runtime no session used had stayed 15 minutes, and a session back there compiled its rules again.
+  it("keeps the runtime of a checkout whose folder was gone for a moment and came back, past 15 minutes while the daemon has room", async () => {
+    const { service, second, start, end, clock } = await twoCheckouts(() => false);
+    await start("b", second);
+    await end("b", second);
+    const start0 = clock.now;
+    await rename(second, `${second}-moved`);
+    for (const minute of [5, 6]) {
+      clock.now = start0 + minute * MINUTE;
+      await service.closeIdleSessions();
+    }
+    await rename(`${second}-moved`, second);
+    clock.now = start0 + 15 * MINUTE;
+    await service.closeIdleSessions();
     expect(service.openRuntimes()).toBe(1);
   });
 

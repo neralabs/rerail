@@ -1,11 +1,14 @@
 import { stat } from "node:fs/promises";
 
 /**
- * How long a runtime no session uses stays open while the daemon is short of room: the 15 minutes every such runtime
- * stayed open whatever the memory, so that under pressure a /clear, or a session back after a short break, finds its
- * checkout's rules compiled as it did, and no runtime is held longer than it was. With room a runtime stays open.
+ * How long a runtime no session uses stays open before anything but the heap watch's relief or the daemon's stop may
+ * close it: the 15 minutes every such runtime stayed open whatever the memory or its folder, so that a /clear, or a
+ * session back after a short break, finds its checkout's rules compiled as it did. Past it, the runtime closes while the
+ * daemon is short of room, so none is held longer than it was then, and with room once its checkout folder was removed:
+ * a folder gone for a moment, moved and moved back or on a share that dropped, costs nobody the rules kept for it within
+ * the time they always were.
  */
-export const SHORT_OF_ROOM_KEEP_MS = 15 * 60_000;
+export const UNUSED_KEEP_MS = 15 * 60_000;
 
 /** What the kept runtimes ask of the engine service that holds the runtimes. */
 export interface KeptRuntimesOptions {
@@ -28,23 +31,28 @@ export interface KeptRuntimesOptions {
 /**
  * The runtimes no session uses, which the engine service keeps open so that their checkout's next session finds its
  * rules compiled and its checkout walked, each with the time its last session left it; and when each closes. A runtime
- * is kept only while no session uses it and no event's work runs in it: every event claims its runtime as it arrives
- * (`claim`) and releases it once its work has ended, and the release keeps it again, as left then, only once no session
- * uses it. So nothing here closes a runtime a session uses or an event runs in, and closing checks that once more.
+ * is kept only while no session uses it and no event's work runs in it (`#closable`): every event claims its runtime as
+ * it arrives (`claim`) and releases it once its work has ended, and the release keeps it again, as left then, only once
+ * no session uses it. So nothing here closes a runtime a session uses or an event runs in, and closing checks that once
+ * more.
  *
  * A session's leaving and a runtime's opening close nothing, so no close lands on a session's path. Room is made at the
- * minute's sweep (`sweep`): while the daemon is short of room, each runtime kept for {@link SHORT_OF_ROOM_KEEP_MS} or
- * longer closes; and before the heap watch restarts the daemon, every kept runtime closes (`closeAll`). Each batch of
- * closes ends with one full collection.
+ * minute's sweep (`sweep`), which closes no runtime sooner than {@link UNUSED_KEEP_MS} after its last session left, as
+ * none closed sooner: each runtime kept that long closes while the daemon is short of room, and with room once its
+ * checkout folder was removed. Before the heap watch restarts the daemon, every kept runtime closes (`closeAll`). Each
+ * batch of closes ends with one full collection.
  */
 export class KeptRuntimes {
   readonly #options: KeptRuntimesOptions;
-  /** When each kept runtime's last session left it, by key. */
+  /**
+   * When each runtime was last left, by key: it is kept while it is closable, and a session that takes it back leaves its
+   * time here until it leaves again (`left`).
+   */
   readonly #kept = new Map<string, number>();
   /** How many events or opens are on their way to each runtime or running in it. */
   readonly #claims = new Map<string, number>();
-  /** The look for removed checkout folders under way (`#lookForRemoved`), one at a time. */
-  #looking: Promise<void> | undefined;
+  /** Set while a look for removed checkout folders runs (`#lookForRemoved`), one at a time. */
+  #looking = false;
   #stopped = false;
 
   constructor(options: KeptRuntimesOptions) {
@@ -56,7 +64,6 @@ export class KeptRuntimes {
    * release, which comes once that work has ended. The release keeps it, as left then, when no session uses it (`left`).
    */
   claim(key: string): () => void {
-    this.#kept.delete(key);
     this.#claims.set(key, (this.#claims.get(key) ?? 0) + 1);
     let released = false;
     return () => {
@@ -77,20 +84,17 @@ export class KeptRuntimes {
     if (this.#closable(key)) this.#kept.set(key, this.#options.now());
   }
 
-  /** The runtime at `key` has closed. */
-  forget(key: string): void {
-    this.#kept.delete(key);
-  }
-
   /**
-   * The minute's sweep: while the daemon needs the room, each runtime kept for {@link SHORT_OF_ROOM_KEEP_MS} or longer
-   * closes, the one left last too; and each kept runtime whose checkout folder was removed closes (`#lookForRemoved`).
-   * The daemon's memory is read only while some runtime has been kept that long.
+   * The minute's sweep: each runtime kept for {@link UNUSED_KEEP_MS} or longer closes, the one left last too,
+   * while the daemon needs the room, and with room once its checkout folder was removed (`#lookForRemoved`). The
+   * daemon's memory is read, and folders are looked at, only while some runtime has been kept that long. Settles once
+   * what it closed has been collected.
    */
-  sweep(): void {
-    const due = this.#keptSince(this.#options.now() - SHORT_OF_ROOM_KEEP_MS);
-    if (due.length > 0 && this.#options.needsRoom()) void this.#close(due);
-    this.#lookForRemoved();
+  async sweep(): Promise<void> {
+    const due = this.#keptSince(this.#options.now() - UNUSED_KEEP_MS);
+    if (due.length === 0) return;
+    if (this.#options.needsRoom()) await this.#close(due);
+    else await this.#lookForRemoved(due);
   }
 
   /** Closes every kept runtime, however recently left, and settles once each has closed and been collected. */
@@ -104,9 +108,9 @@ export class KeptRuntimes {
     this.#kept.clear();
   }
 
-  /** The keys of the runtimes kept since `at` or earlier. */
+  /** The keys of the runtimes kept since `at` or earlier: left then, and closable now. */
   #keptSince(at: number): string[] {
-    return [...this.#kept].filter(([, leftAt]) => leftAt <= at).map(([key]) => key);
+    return [...this.#kept].filter(([key, leftAt]) => leftAt <= at && this.#closable(key)).map(([key]) => key);
   }
 
   #closable(key: string): boolean {
@@ -123,19 +127,23 @@ export class KeptRuntimes {
   }
 
   /**
-   * Looks whether each kept runtime's checkout folder was removed, off the event loop and one folder at a time, so a
-   * share that does not answer holds one of libuv's threads and no hook; while a look runs, the next sweep starts none.
+   * Looks whether the checkout folder of each of `keys` was removed, and closes the runtimes of those that were: off the
+   * event loop and one folder at a time, so a share that does not answer holds one of libuv's threads and no hook; while
+   * a look runs, the next sweep starts none.
    */
-  #lookForRemoved(): void {
-    if (this.#looking !== undefined || this.#kept.size === 0) return;
-    this.#looking = this.#closeRemoved().finally(() => {
-      this.#looking = undefined;
-    });
+  async #lookForRemoved(keys: readonly string[]): Promise<void> {
+    if (this.#looking) return;
+    this.#looking = true;
+    try {
+      await this.#closeRemoved(keys);
+    } finally {
+      this.#looking = false;
+    }
   }
 
-  async #closeRemoved(): Promise<void> {
+  async #closeRemoved(keys: readonly string[]): Promise<void> {
     const removed = this.#options.removed ?? folderRemoved;
-    for (const key of [...this.#kept.keys()]) {
+    for (const key of keys) {
       const folder = this.#options.folderOf(key);
       if (folder !== undefined && await removed(folder)) await this.#close([key]);
     }

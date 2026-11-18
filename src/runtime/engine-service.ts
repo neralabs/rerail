@@ -54,7 +54,9 @@ export interface EngineService {
    * Suspends every session that has sent no event for the idle limit and owes its agent nothing, and every one quiet for
    * a day whatever it owes (`RerailRuntime.closeIdleSession`), ends each suspended one that can no longer open again
    * (its folder removed, or Rerail stopped in its checkout), then, once a daemon on the same records that held its
-   * owner lock has ended, what it left open (`endAbandonedSessions`); the service also does this every minute.
+   * owner lock has ended, what it left open (`endAbandonedSessions`); and beside that, not behind it, closes each runtime
+   * no session has used for 15 minutes while the daemon is short of room, or once its checkout was removed
+   * (`KeptRuntimes.sweep`). The service also does this every minute.
    */
   closeIdleSessions(): Promise<void>;
   /**
@@ -494,21 +496,28 @@ async function closeIdleSessions(state: EngineRoutingState, idleMs: number, now:
 }
 
 /**
- * One idle sweep: suspends this service's quiet sessions (`closeIdleSessions`), ends those that can no longer open again
- * (`endUnopenableSessions`), closes the runtimes kept 15 minutes while the daemon is short of room and those whose
- * checkout was removed (`KeptRuntimes.sweep`), then ends what a daemon that died left open (`endAbandonedSessions`), as a start does, for
- * when the start's own pass failed, which it reports: with one daemon per Rerail home (`holdHomeDaemonLock`), no other
- * start comes while this one runs. Only once an owner lock beside the database is free (`someOwnerLockFreed`), which a
- * service that ended leaves: opening a writer waits for another process's write lock, up to `busy_timeout`, on the
- * daemon's main thread, so a minute with no such lock opens no writer. Rows that name no lock are judged at the next
- * start then, or by a sweep a free lock brings.
+ * One idle sweep: the kept runtimes' part (`KeptRuntimes.sweep`: each kept 15 minutes closes while the daemon is short of
+ * room, or once its checkout was removed) beside the sessions' (`sweepSessions`), not behind it: a quiet session's
+ * idle close waits for its session's work and a read of its walks, and so held every kept runtime past its time. The
+ * kept runtimes' part starts first and closes what it closes before the sessions' part begins. Settles once both have.
  */
 async function sweepIdle(state: EngineRoutingState, options: EngineServiceOptions, databasePath: string): Promise<void> {
   const idleMs = options.idleSessionMs ?? IDLE_SESSION_MS;
-  const now = options.now ?? Date.now;
+  await Promise.all([state.kept.sweep(), sweepSessions(state, idleMs, options.now ?? Date.now, databasePath)]);
+}
+
+/**
+ * The idle sweep's sessions: suspends this service's quiet sessions (`closeIdleSessions`), ends those that can no longer
+ * open again (`endUnopenableSessions`), then ends what a daemon that died left open (`endAbandonedSessions`), as a start
+ * does, for when the start's own pass failed, which it reports: with one daemon per Rerail home (`holdHomeDaemonLock`),
+ * no other start comes while this one runs. Only once an owner lock beside the database is free (`someOwnerLockFreed`),
+ * which a service that ended leaves: opening a writer waits for another process's write lock, up to `busy_timeout`, on
+ * the daemon's main thread, so a minute with no such lock opens no writer. Rows that name no lock are judged at the next
+ * start then, or by a sweep a free lock brings.
+ */
+async function sweepSessions(state: EngineRoutingState, idleMs: number, now: () => number, databasePath: string): Promise<void> {
   await closeIdleSessions(state, idleMs, now);
   await endUnopenableSessions(state);
-  state.kept.sweep();
   if (someOwnerLockFreed(databasePath)) endAbandonedSessions(databasePath, idleMs, now);
 }
 
@@ -764,7 +773,6 @@ function disposeRuntime(state: EngineRoutingState, runtimeKey: string): Promise<
   const runtime = state.runtimes.get(runtimeKey);
   if (runtime === undefined) return Promise.resolve();
   state.runtimes.delete(runtimeKey);
-  state.kept.forget(runtimeKey);
   state.runtimeOptions.delete(runtimeKey);
   for (const [configuration, key] of state.runtimeKeysByConfiguration) if (key === runtimeKey) state.runtimeKeysByConfiguration.delete(configuration);
   const disposal = runtime.dispose().then(() => [] as const, (error: unknown) => {
