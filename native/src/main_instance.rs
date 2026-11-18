@@ -423,8 +423,9 @@ mod tests {
     #[cfg(any(target_os = "linux", windows))]
     const SOON: Duration = Duration::from_secs(10);
 
-    /// Spins until `done`, failing when it is not so within [`SOON`].
-    #[cfg(any(target_os = "linux", windows))]
+    /// Spins until `done`, failing when it is not so within [`SOON`]. Only Linux's tests wait on a
+    /// thread's state this way; Windows sees its request queued in the kernel directly.
+    #[cfg(target_os = "linux")]
     fn until(what: &str, mut done: impl FnMut() -> bool) {
         let deadline = std::time::Instant::now() + SOON;
         while !done() {
