@@ -216,9 +216,10 @@ mod tests {
                 &ran.stderr[..],
                 ran.status,
                 ran.signal,
-                ran.timed_out
+                ran.timed_out,
+                ran.past_max_buffer
             ),
-            (200_000, &b"warned\n"[..], Some(4), None, false)
+            (200_000, &b"warned\n"[..], Some(4), None, false, false)
         );
     }
 
@@ -311,7 +312,9 @@ mod tests {
 
     #[test]
     fn a_run_ends_on_time_while_its_child_prints_and_closes_its_outputs_at_sigterm() {
-        let printing = sh("while :; do printf x; done", Some(100), 8 << 20);
+        // `cat` prints for as long as it runs, and in 10 ms far less than the 64 MiB output limit: the time limit
+        // ends the run.
+        let printing = sh("exec cat /dev/zero", Some(10), 64 << 20);
         assert_eq!(
             (
                 printing.timed_out,

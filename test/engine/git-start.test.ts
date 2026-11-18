@@ -199,13 +199,15 @@ describe.runIf(LINUX)("Git started through the engine, on Linux", () => {
       const late = runGitSync("/bin/sh", ["-c", "echo started; exec sleep 5"], process.env, { timeout: 200 });
       const long = runGitSync("/bin/sh", ["-c", "head -c 3000000 /dev/zero; exec sleep 5"], process.env, { maxBuffer: 1024 * 1024 });
       const plain = runGitSync("/bin/sh", ["-c", "read nothing || echo no-input; echo warned >&2; exit 5"], process.env);
-      return { late: answered(late), long: ending(long), plain };
+      // Exactly the output limit: a run may reach it and not pass it.
+      const exact = runGitSync("/bin/sh", ["-c", "head -c 1000 /dev/zero"], process.env, { maxBuffer: 1000 });
+      return { late: answered(late), long: ending(long), plain, exact: ending(exact) };
     };
     const throughNode = runs();
     expect(startGitWithoutCopying(loadNativeBinding)).toBe(true);
     const throughEngine = runs();
     expect(throughEngine).toEqual(throughNode);
-    expect(throughEngine).toMatchObject({ late: { signal: "SIGTERM", error: { code: "ETIMEDOUT" } }, long: { signal: "SIGTERM", error: { code: "ENOBUFS" } }, plain: { status: 5, stdout: "no-input\n" } });
+    expect(throughEngine).toMatchObject({ late: { signal: "SIGTERM", error: { code: "ETIMEDOUT" } }, long: { signal: "SIGTERM", error: { code: "ENOBUFS" } }, plain: { status: 5, stdout: "no-input\n" }, exact: { status: 0, signal: null } });
   }, 30_000);
 
   it("ends a blocking Git at its time limit as spawnSync does while a process Git started still holds its output", async () => {
