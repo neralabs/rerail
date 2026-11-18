@@ -747,18 +747,20 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
             } else if first == "reccheck" {
                 let r = program.records.as_mut().ok_or(format!("block {at} reccheck before its records"))?;
                 let rule: u8 = line.number("")?;
-                let count = match line.word()?.as_str() {
-                    "count" => true,
-                    "run" => false,
-                    w => return Err(format!("block {at} reccheck: `count` or `run`, not {w}")),
+                let (count, all) = match line.word()?.as_str() {
+                    "count" => (true, false),
+                    "run" => (false, false),
+                    "all" => (false, true),
+                    w => return Err(format!("block {at} reccheck: `count`, `run` or `all`, not {w}")),
                 };
                 let (o, least): (u16, u32) = (line.number("")?, line.number("")?);
                 let then = match line.word() {
                     Ok(w) if w == "at" => crate::records::CheckThen::At(line.number("")?),
                     Ok(w) if w == "after" => crate::records::CheckThen::After(line.number("")?),
+                    Ok(w) if w == "cut" => crate::records::CheckThen::Cut,
                     _ => crate::records::CheckThen::Escape,
                 };
-                r.checks.push(crate::records::TokenCheck { rule, count, o, least, then });
+                r.checks.push(crate::records::TokenCheck { rule, count, o, least, then, all });
             } else if first == "recchecked" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recchecked before its records"))?;
                 r.check_masks.push(line.number("")?);

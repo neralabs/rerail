@@ -2478,6 +2478,13 @@ code. 0366's change is tier 1's alone and leaves both sides' trees as they were.
   takes the `u8` prefix.
 - **Record** (2026-11-17): the values test lists the five cases as refused by the grammar, in C
   and C++, and compares the other 95.
+- **Done** (2026-11-18): both grammars (`bitlex_tokens/tokens.bitlex`, the directives'
+  `06-raw`) find a separator before the regions, from a run of numbers made without them, so
+  its `'` opens no character constant. They check it against the code's numbers after (an
+  escape where the two differ: `'.5'a`). The `o_chr & prev(digit)` escape, which also refused
+  `u8'a'`, is gone. Corpus: tokens 3,073 the same (3,058), 62 refused, 0 differ; directives 3,089
+  (46 refused); expansion 3,073 of 3,135 equal the lean pass (3,060), the JIT equal to the
+  interpreter on all of them. The values test compares all 100 cases.
 
 ### Q119. (Q50 on benchmarks-on-integration at 9a9b270ce) `dropping_unreached_clauses_prunes_to_the_same_program` red on this branch: `value` an input of one side only
 
@@ -2864,6 +2871,43 @@ fine) or in 8 runs after; the CPU path never hung (11 runs).
   12 more cold Metal runs are owed for the 20.
 - **Record**: —
 
+### Q232. (Q40 on Go-C-and-C-support) Step 22 reads float chains and long floats in tier 1 (0413)
+
+- **Keep**: tier 1 on the CPU bodiless (0177): the token loop reads what a lexer reads where
+  it reads it.
+- **Done** (2026-11-18): the user asked for the two numbers Q187 left to the engine to be read.
+  Masks for a chain's parity (`toggle`) read them, but brought the block loop back: tier 1
+  781 M instructions and 203 M cycles, against 394–396 M and 113–127 M (M1 Max). The user chose
+  the lexer's shape, which is now built:
+  - `run num_run once dot` cuts a number's run at its second `.` (`CheckThen::Cut`). The
+    interpreter (`records::cut`) and the CPU (`native_cpu_block::cut_last`) make the cut before
+    the rule's other tests. `TokenRule::last`'s mask form cuts it for Metal and the reference.
+  - `all(digit) at least 19` checks only an integer's digits.
+  - Tier 1: 398.1 M instructions, 105.5 M cycles (1.59× the lean lexer's, in the old
+    1.53–1.73). The CPU's body makes nothing (`the_cpu_reads_local_tests_at_the_token`).
+  - Found on the way: a tokened pass with a body overwrote the token loop's refusals at the
+    row's end (the totals' flag is now ORed). The shape check also learned such a body's exits
+    (`PassShape::exits`) and the calls Cranelift keeps (`clif_text::reached_calls`).
+  - **Then** (the user's shape review of the generated Rust): the word-loop cut called `D`'s
+    bytes function from the short form, so the number lost its arm, and every number was a
+    cold call of the whole function (225.4 instructions a token, against 115.0 before and the
+    lean lexer's 102.8). The cut is now in the run's window (`cut_in_window`), and the arm is
+    back: 118.0. `a_readers_short_form_is_the_loops_arm` names the number's rule
+    (`PassShape::arm_rules`). Corpus: 396.0 M instructions.
+
+### Q233. (Q41 on Go-C-and-C-support) The pp words on Metal (0348, stage 5): the spike says one TU a thread does not pay
+
+- **Done** (2026-11-18), 5a: the words' IR as MSL (`clif_msl`), `run_native` split into
+  `prepare` and `complete`, and `metal::pp_on`'s batch over one arena. Metal equals the
+  interpreter on `EXAMPLES` and `TUS`, 62 of 62. Found on the way: the device compiler reordered
+  accesses through integer-cast pointers (`#if !(1/0)` true), so every access is now the
+  arena's pointer at an offset.
+- **Measured** (M5 Max, not quiet): a run takes 3,798 µs on one GPU thread against 6.4 µs on
+  one core with Cranelift. A batch takes about 3.7 ms whatever its thread count, so 128 copies
+  come to 25 µs a run. 1.4–3.2 MB of arena a run caps a 512 MB batch at about 128–170 runs.
+- **Waits on the user:** 5b–5e (a complete `clif_msl`, rounds as batches) build out a shape the
+  numbers say loses to one core. Question 3 below.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
@@ -2908,6 +2952,13 @@ fine) or in 8 runs after; the CPU path never hung (11 runs).
    (Watchman's): nothing changed under the root for N ms before the run; (d) a stream that outlives the process
    (a daemon, which 0105 ruled out). Each keeps decision 0105's within-process journal, where a stream that was
    running when the change was made is told of it.
+
+3. **Q233: the pp words on Metal.** One TU per GPU thread (0348 stage 5a) runs 600× slower than a
+   CPU core a thread, and a quarter of one core's throughput at the 128 threads the budget allows.
+   Options: (a) stop stage 5 here: expansion stays on the CPU (rustc's build), and the device keeps
+   stage 1's masks; (b) build 5b–5e as planned anyway, for a Metal-only path; (c) a different
+   device design: many TUs' steps in lockstep, or only the data-parallel parts (directive lines,
+   `#if` values) on the device. Recommended: (a).
 
 ### Q55. (Q66 at Native-and-GPU-strata e0a0362b9) Relations are blocks the CPU and GPU read in place (0325): steps 4–7
 

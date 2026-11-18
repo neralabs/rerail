@@ -1148,6 +1148,7 @@ impl<'a> Ev<'a> {
             match test {
                 TokenTest::Count => (t.start..t.end).filter(|&i| m.get(i)).count() >= n,
                 TokenTest::Run => t.end - t.start >= n && (t.start..t.start + n).all(|i| m.get(i)),
+                TokenTest::All => t.end - t.start >= n && (t.start..t.end).all(|i| m.get(i)),
             }
         };
         let mut failed = Vec::new();

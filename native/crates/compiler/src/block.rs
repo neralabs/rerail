@@ -1902,15 +1902,17 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
         for (k, w) in &r.unless {
             let _ = writeln!(out, "  block {at} recunless {k} {w}");
         }
-        // `block N reccheck R count|run O N [at K|after K]`: a token test of rule `R`'s tokens,
-        // refusing the file, or a bit of mark `K` (`CheckThen`).
+        // `block N reccheck R count|run|all O N [at K|after K|cut]`: a token test of rule `R`'s
+        // tokens, refusing the file, a bit of mark `K`, or the token's cut (`CheckThen`).
         for c in &r.checks {
             let then = match c.then {
                 crate::records::CheckThen::Escape => String::new(),
                 crate::records::CheckThen::At(k) => format!(" at {k}"),
                 crate::records::CheckThen::After(k) => format!(" after {k}"),
+                crate::records::CheckThen::Cut => " cut".to_string(),
             };
-            let _ = writeln!(out, "  block {at} reccheck {} {} {} {}{then}", c.rule, if c.count { "count" } else { "run" }, c.o, c.least);
+            let test = if c.count { "count" } else if c.all { "all" } else { "run" };
+            let _ = writeln!(out, "  block {at} reccheck {} {test} {} {}{then}", c.rule, c.o, c.least);
         }
         // `block N recchecked M`: a mask tier 2's local checks alone read.
         for m in &r.check_masks {
