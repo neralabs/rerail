@@ -178,3 +178,50 @@ Each step lands with its requirement's test un-ignored.
 4. R3: count the strata derived again by reason, then bring the most common kinds into the mode.
 5. R9: the driver down to skip, mode, or derive again.
 6. R6 (the static check in the engine), R7 (Q116), R1's leftovers; the data-layer scale run last.
+
+## Measurements (step 1, 2026-11-18)
+
+`scripts/profiling/o125/maintain-measure.sh` over the O125 replay (77 files, `calls.rr`, steps 00–08), debug
+build, `RERAIL_DEVICE=cpu`, on a farm host (M3 and M1 Max, otherwise idle):
+- `cold`: a process per step over an empty store;
+- `kept`: a process per step, its store kept (the CLI's path, the kept part from frames);
+- `session`: one process (`repeat`, `RERAIL_SESSION`).
+
+`maintain-report.py` makes the table. Its baseline is the forms' runs of 2026-11-17 (`tmp/o125/logs`, the same
+harness, `dump.sh`): `qd` (DRed forms) and `kd` (counting).
+
+Instructions retired, as a fraction of the same series' cold run:
+
+| Step | qd (forms, DRed) | kd (counting) | kept, now |
+|---|---|---|---|
+| 01 | 0.64 | 0.64 | 0.73 |
+| 02 | 0.58 | 0.58 | 0.75 |
+| 03 | 0.74 | 0.74 | 1.33 |
+| 04 | 0.55 | 0.54 | 0.63 |
+| 05 | 0.59 | 0.82 | 2.02 |
+| 06 | 0.63 | 0.64 | 0.70 |
+| 07 | 0.61 | 0.61 | 0.61 |
+| 08 | 0.71 | 0.71 | 1.44 |
+
+Cold is 322–339 G instructions now, against 289–310 G then. Each kept edit's findings are the cold run's (R10, 9
+of 9). The session's edits took 13.5–32 s CPU each, against about 12 s CPU for a cold run, and the run stopped at
+its 110 s cap after step 04.
+
+**The goal is not met.** The kept part holds 1.0 M rows: 19.4–20.7 MB of values, 4.7–5.4 MB of levels and
+6.4–7.3 MB of sets and indexes. A kept edit reads back 2,500–5,000 frame parts. An edit holds 800–1,400
+maintenance relations and copies 15,000–110,000 rows to state its changes. 430–500 recheck lines go unpriced.
+
+**What costs the most** (`RERAIL_PROFILE` of kept step 01, 16.5 s CPU in the cross part):
+- 10.1 s (8.2 s of its own) goes to the mode's removals and rechecks, over 92 strata. All the run's native join work
+  is 0.72 s.
+- The recheck (`MaintMode::derives`) runs a rule's whole join with the head's slots preset. The join's spec is made
+  without them bound (`bound_head_order`, then `whole_join_spec`), so its first atom is a scan filtered by the
+  preset: one scan of a relation per candidate. It also collects every row the rule derives rather than stopping at
+  the first.
+- Every row an add join gives is rechecked too (`derives` in the add loops), though the add join over the new state
+  is itself a derivation. Only an add driven by a negated atom needs a check (0328's checked add).
+- After that: the changed inputs' deltas from the documents' entries (1.2 s, `input delta by document`), and the kept
+  rows from the frames (0.9 s).
+
+So R7 (the recheck planned with its head bound, and priced) and the adds is where the cost is, ahead of R1–R3. The
+plan's order changes to: step 2 (R4), then the recheck and the adds (R7), then step 3.

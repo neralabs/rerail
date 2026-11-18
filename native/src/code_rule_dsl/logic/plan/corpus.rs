@@ -9361,6 +9361,8 @@ fn run_observed(
                         }
                     }
                     if std::env::var_os("RERAIL_KEPT_BYTES").is_some() {
+                        // Decision 0364's required shape, so far in this process (`maintain::shape`).
+                        eprintln!("SHAPE {:?}", maintain::shape::now());
                         for (kind, rows, values, levels, index) in next.held() {
                             eprintln!("KEPT {kind}: {rows} rows, values {:.2} MB, levels {:.2} MB, sets and indexes {:.2} MB", values as f64 / 1e6, levels as f64 / 1e6, index as f64 / 1e6);
                         }
