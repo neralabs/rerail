@@ -3462,6 +3462,7 @@ dependencies = [
  "regex-syntax",
  "rerail-accel",
  "rerail-blocks",
+ "rerail-clif",
  "rerail-compiler",
  "rerail-facts",
  "rerail-lang",

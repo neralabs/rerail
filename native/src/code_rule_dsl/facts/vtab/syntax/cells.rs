@@ -67,3 +67,58 @@ mod heap {
         }
     }
 }
+
+/// One `T` that readers find by its address, in `block` beside the arrays it describes (a descriptor whose runs point
+/// at them, `rerail_clif::ids::Numbering`). Written while it is built, read only after.
+pub struct Desc<T> {
+    #[cfg(target_os = "macos")]
+    p: *mut T,
+    #[cfg(target_os = "macos")]
+    _block: std::sync::Arc<Block>,
+    #[cfg(not(target_os = "macos"))]
+    b: Box<T>,
+}
+
+// SAFETY: written by its builder alone, before it is shared; read only after.
+unsafe impl<T: Sync> Send for Desc<T> {}
+unsafe impl<T: Sync> Sync for Desc<T> {}
+
+impl<T: Default> Desc<T> {
+    /// A default `T` in `block`.
+    pub fn new(block: &std::sync::Arc<Block>) -> Self {
+        #[cfg(target_os = "macos")]
+        {
+            let p: *mut T = block.try_alloc_t(1).expect("a batch's block holds its projection");
+            // SAFETY: just allocated for this alone.
+            unsafe { p.write(T::default()) };
+            Desc { p, _block: std::sync::Arc::clone(block) }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = block;
+            Desc { b: Box::default() }
+        }
+    }
+}
+
+impl<T> Desc<T> {
+    /// Its address: for the builder to write through (before it is shared) and the reads to read.
+    pub fn as_ptr(&self) -> *mut T {
+        #[cfg(target_os = "macos")]
+        {
+            self.p
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            std::ptr::from_ref::<T>(&self.b).cast_mut()
+        }
+    }
+}
+
+impl<T> std::ops::Deref for Desc<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        // SAFETY: built by `new`, and written only before it is shared.
+        unsafe { &*self.as_ptr() }
+    }
+}

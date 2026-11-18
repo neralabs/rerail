@@ -1520,7 +1520,8 @@ inventory of today's copies (12 sites, marked `copy (0353 step N)`) and the plan
    `Projected`'s `core`, `local`, `up`, `size` and `fielded` are gone: the rank index, read by passes in order, at
    parity on hogql (0353). `idx` and `depth` are derived values: step 3. `DefIds` is gone: every projection,
    narrowed ones too, answers ids and order keys from its table, at parity on hogql, and the table is in the
-   projection's block. Left: the reads in CLIF (Rust, MSL), with which the chunk's `low` column goes.
+   projection's block. The reads are written once in CLIF (`rerail_clif::id_reads`; Rust and MSL generated, the MSL
+   checked on the device). Done but for the chunk's `low` column, which goes with step 4.
 3. Then steps 3 (CPU views on the tape), 4 (GPU views on the tape: the 660.8 MB a run), 5 (axes written once),
    6 (in-place writes and indexes), 7 (the transducer's packed batch, its owners'), 8 (0325 step 7), 9 (prices).
 

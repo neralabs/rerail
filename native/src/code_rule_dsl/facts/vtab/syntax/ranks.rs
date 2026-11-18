@@ -15,7 +15,9 @@
 //! and high 32 bits), and the fielded nodes before it. 40 bytes for 64 tape nodes, in the batch's block beside the
 //! projection's other cells. `local`, `core`, `up` and `fielded` were up to 16 bytes a node.
 
-use super::cells::{Block, Cells};
+use super::cells::{Block, Cells, Desc};
+use super::id_reads;
+use rerail_clif::ids::{Numbering, Run};
 use std::sync::Arc;
 
 /// What a numbered tape node is.
@@ -28,9 +30,9 @@ pub enum Item {
 }
 
 /// The items, as `Item`'s numbers.
-const ITEMS: usize = 3;
+const ITEMS: usize = rerail_clif::ids::ITEMS as usize;
 /// A group's words: one of bits a kind of item, then the counts before it.
-const WORDS: usize = ITEMS + 2;
+const WORDS: usize = rerail_clif::ids::WORDS as usize;
 
 /// Item `item`'s count before group `g` (the words after the bits).
 #[inline]
@@ -43,7 +45,7 @@ fn before_of(g: &[u64; WORDS], item: Item) -> u32 {
 }
 
 /// Items a select sample stands for.
-const SAMPLE: u32 = 64;
+const SAMPLE: u32 = rerail_clif::ids::SAMPLE;
 
 pub struct Ranks {
     /// The first group's number (its first tape node over 64).
@@ -54,6 +56,9 @@ pub struct Ranks {
     /// The group of item `SAMPLE * k`, by item.
     samples: [Cells<u32>; ITEMS],
     count: [u32; ITEMS],
+    /// The descriptor the reads written once take (`rerail_clif::ids::Numbering`), in the same block: its runs point
+    /// at `groups` and `samples`, and the granule table's at the table's columns (`granules::Table::new`).
+    desc: Desc<Numbering>,
 }
 
 /// The bits being set by a projection's walk: `mark`, and `has` for a tape node marked before.
@@ -107,7 +112,30 @@ impl Ranks {
             .expect("a batch's block holds its projection")
         };
         let samples = [sample(Item::Node), sample(Item::Token), sample(Item::Field)];
-        Ranks { first, groups, samples, count }
+        let desc = Desc::<Numbering>::new(block);
+        let d = desc.as_ptr();
+        // SAFETY: the descriptor is this build's alone, and the runs point at cells of the same block, which live
+        // as long as it.
+        unsafe {
+            (*d).first = first;
+            (*d).count = count;
+            Run::set(&raw mut (*d).groups, groups.as_ptr(), groups.len());
+            for (i, s) in samples.iter().enumerate() {
+                Run::set(&raw mut (*d).samples[i], s.as_ptr(), s.len());
+            }
+        }
+        Ranks { first, groups, samples, count, desc }
+    }
+
+    /// The descriptor's address, for the reads written once (`super::id_reads`).
+    #[inline]
+    pub fn desc(&self) -> *const u8 {
+        self.desc.as_ptr().cast()
+    }
+
+    /// The descriptor, for the granule table to fill its runs (before the projection is shared).
+    pub(super) fn desc_mut(&self) -> *mut Numbering {
+        self.desc.as_ptr()
     }
 
     /// The numbered items of `item`.
@@ -116,25 +144,18 @@ impl Ranks {
         self.count[item as usize]
     }
 
-    #[inline]
-    fn before(&self, g: usize, item: Item) -> u32 {
-        before_of(&self.groups[g], item)
-    }
-
-    /// Whether tape node `x` is a numbered `item`.
+    /// Whether tape node `x` is a numbered `item` (`num_is`, written once in CLIF).
     #[inline]
     pub fn is(&self, item: Item, x: u32) -> bool {
-        (x / 64).checked_sub(self.first).and_then(|g| self.groups.get(g as usize)).is_some_and(|g| g[item as usize] >> (x % 64) & 1 != 0)
+        // SAFETY: this index's descriptor, whose runs point at its cells.
+        unsafe { id_reads::num_is(self.desc(), item as u32, x) != 0 }
     }
 
-    /// Numbered `item`s before tape node `x`.
+    /// Numbered `item`s before tape node `x` (`num_rank`).
     #[inline]
     pub fn rank(&self, item: Item, x: u32) -> u32 {
-        let Some(g) = (x / 64).checked_sub(self.first) else { return 0 };
-        match self.groups.get(g as usize) {
-            Some(group) => self.before(g as usize, item) + (group[item as usize] & ((1u64 << (x % 64)) - 1)).count_ones(),
-            None => self.count(item),
-        }
+        // SAFETY: as `is`.
+        unsafe { id_reads::num_rank(self.desc(), item as u32, x) }
     }
 
     /// Tape node `x`'s number among the `item`s, if it is one.
@@ -143,21 +164,12 @@ impl Ranks {
         self.is(item, x).then(|| self.rank(item, x))
     }
 
-    /// The tape node of `item` number `r`: from the sample's group, forward.
+    /// The tape node of `item` number `r`: from the sample's group, forward (`num_select`).
     #[inline]
     pub fn select(&self, item: Item, r: u32) -> Option<u32> {
-        if r >= self.count(item) {
-            return None;
-        }
-        let mut g = self.samples[item as usize][(r / SAMPLE) as usize] as usize;
-        loop {
-            let m = self.groups[g][item as usize];
-            let k = r - self.before(g, item);
-            if k < m.count_ones() {
-                return Some((self.first + g as u32) * 64 + select64(m, k));
-            }
-            g += 1;
-        }
+        // SAFETY: as `is`.
+        let x = unsafe { id_reads::num_select(self.desc(), item as u32, r) };
+        (x != u32::MAX).then_some(x)
     }
 
     /// Every `item`, in order: `(number, tape node)`.
@@ -223,26 +235,4 @@ impl Iterator for Iter<'_> {
         self.k += 1;
         Some((self.k - 1, x))
     }
-}
-
-/// The position of `m`'s set bit `k` (from 0; `k` below its popcount): the byte by the bytes' running popcounts, then
-/// the bit within it.
-#[inline]
-pub fn select64(m: u64, k: u32) -> u32 {
-    const ONES: u64 = 0x0101_0101_0101_0101;
-    let mut x = m - ((m >> 1) & 0x5555_5555_5555_5555);
-    x = (x & 0x3333_3333_3333_3333) + ((x >> 2) & 0x3333_3333_3333_3333);
-    x = (x + (x >> 4)) & 0x0f0f_0f0f_0f0f_0f0f;
-    // Byte b of `sums`: the set bits of bytes 0..=b.
-    let sums = x.wrapping_mul(ONES);
-    // The bytes whose running count is at most `k` come before the bit's byte: one high bit for each.
-    let k8 = u64::from(k) * ONES;
-    let le = ((k8 | 0x8080_8080_8080_8080) - sums) & 0x8080_8080_8080_8080;
-    let byte = le.count_ones();
-    let before = if byte == 0 { 0 } else { (sums >> (8 * (byte - 1))) & 0xff } as u32;
-    let mut b = (m >> (8 * byte)) & 0xff;
-    for _ in 0..k - before {
-        b &= b - 1;
-    }
-    8 * byte + b.trailing_zeros()
 }

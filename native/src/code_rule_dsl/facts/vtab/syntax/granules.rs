@@ -46,14 +46,15 @@
 //! grammar. A guest's document key is a hash of its host node's id (`corpus::guests`), so it is as stable as that.
 
 use super::cells::{Block, Cell, Cells};
+use super::id_reads;
 use super::ranks::{Item, Ranks};
 use super::{Dialect, Projected};
 use crate::code_rule_dsl::facts::core::Facts;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-pub(super) const SLOT_BITS: u32 = 14;
-pub const INDEX_BITS: u32 = 32 - SLOT_BITS;
+pub(super) const SLOT_BITS: u32 = rerail_clif::ids::SLOT_BITS;
+pub const INDEX_BITS: u32 = rerail_clif::ids::INDEX_BITS;
 /// Indexes in one slot.
 pub const INDEX: u32 = 1 << INDEX_BITS;
 const SLOTS: u32 = 1 << SLOT_BITS;
@@ -252,7 +253,7 @@ pub fn number(p: &Projected, dialect: &Dialect, tokens: &[u32], reference: Optio
 }
 
 /// Bits of an order key's index inside its granule; the rest are its run's rank (`order`).
-const ORDER_INDEX_BITS: u32 = 18;
+const ORDER_INDEX_BITS: u32 = rerail_clif::ids::ORDER_INDEX_BITS;
 
 /// Each node's order key (`node_order`'s low 32 bits, decision 0121): the rank of its *run*, a stretch of nodes
 /// consecutive in preorder that are all one granule's, then its index among its granule's nodes. Runs follow one another
@@ -674,7 +675,7 @@ impl Table {
         let b = r.block();
         let [rs0, rs1] = rank_starts;
         let [re0, re1] = rank_ends;
-        Table {
+        let table = Table {
             starts: placed(b, &starts),
             ends: placed(b, &ends),
             parents: placed(b, &parents),
@@ -690,114 +691,82 @@ impl Table {
             preorder_keys,
             rank_starts: [placed(b, &rs0), placed(b, &rs1)],
             rank_ends: [placed(b, &re0), placed(b, &re1)],
-        }
+        };
+        table.describe(r);
+        table
     }
 
-    /// The innermost granule holding `item` number `k`, and the last granule starting at or before it: by ranks.
-    #[inline]
-    fn granule_of_number(&self, item: Item, k: u32) -> Option<(usize, usize)> {
-        let (starts, ends) = (&self.rank_starts[item as usize], &self.rank_ends[item as usize]);
-        // A granule starts at a node: an item numbered `k` is at or after a start when `k` items come before it.
-        let j = starts.partition_point(|&s| s <= k).checked_sub(1)?;
-        let mut g = j;
-        while k >= ends[g] {
-            g = self.parents[g] as usize;
-            if g == u32::MAX as usize {
-                return None;
+    /// Points the projection's descriptor's table runs at these columns (`rerail_clif::ids::Numbering`), so the reads
+    /// written once find them.
+    fn describe(&self, r: &Ranks) {
+        use rerail_clif::ids::Run;
+        let d = r.desc_mut();
+        let set = |run: *mut Run, c: &[u32]| unsafe { Run::set(run, c.as_ptr(), c.len()) };
+        // SAFETY: the projection is being built, so the descriptor is its builder's alone; the columns are cells of
+        // its block, which live as long as the projection.
+        unsafe {
+            (*d).granules = self.starts.len() as u32;
+            (*d).preorder_keys = u32::from(self.preorder_keys);
+            set(&raw mut (*d).starts, &self.starts);
+            set(&raw mut (*d).ends, &self.ends);
+            set(&raw mut (*d).parents, &self.parents);
+            set(&raw mut (*d).nodes, &self.nodes);
+            set(&raw mut (*d).tokens, &self.tokens);
+            set(&raw mut (*d).at, &self.at);
+            set(&raw mut (*d).slots, &self.slots);
+            Run::set(&raw mut (*d).by_slot, self.by_slot.as_ptr(), self.by_slot.len());
+            set(&raw mut (*d).first_kid, &self.first_kid);
+            Run::set(&raw mut (*d).kids, self.kids.as_ptr(), self.kids.len());
+            set(&raw mut (*d).runs, &self.runs);
+            Run::set(&raw mut (*d).run_at, self.run_at.as_ptr(), self.run_at.len());
+            for i in 0..2 {
+                set(&raw mut (*d).rank_starts[i], &self.rank_starts[i]);
+                set(&raw mut (*d).rank_ends[i], &self.rank_ends[i]);
             }
         }
-        Some((g, j))
     }
 
-    /// `item` number `k`'s index in granule `g` (`j` the last granule starting at or before it).
+    /// The low bits of `item` number `k`'s id (a node's local id; a token's number among the tokens): no select
+    /// (`num_low_of`, written once in CLIF).
     #[inline]
-    fn index_of_number(&self, item: Item, k: u32, g: usize, j: usize) -> u32 {
-        let own = k - self.rank_starts[item as usize][g];
-        match item {
-            Item::Node => own - (self.nodes[j + 1] - self.nodes[g + 1]),
-            Item::Token => self.nodes[g + 1] - self.nodes[g] + own - (self.tokens[j + 1] - self.tokens[g + 1]),
-            Item::Field => unreachable!("ids number nodes and tokens"),
-        }
+    pub fn low_of(&self, r: &Ranks, item: Item, k: u32) -> Option<u32> {
+        // SAFETY: the projection's descriptor, whose runs point at this table and `r`.
+        let low = unsafe { id_reads::num_low_of(r.desc(), item as u32, k) };
+        (low != u32::MAX).then_some(low)
     }
 
-    /// The low bits of `item` number `k`'s id (a node's local id; a token's number among the tokens): no select.
+    /// The item whose id's low 32 bits are `low` (`low_of`'s inverse): what it is and its number (`num_number_of`).
     #[inline]
-    pub fn low_of(&self, item: Item, k: u32) -> Option<u32> {
-        let (g, j) = self.granule_of_number(item, k)?;
-        Some(self.low(g, self.index_of_number(item, k, g, j)))
+    pub fn number_of(&self, r: &Ranks, low: u32) -> Option<(Item, u32)> {
+        // SAFETY: as `low_of`.
+        let v = unsafe { id_reads::num_number_of(r.desc(), low) };
+        (v != u64::MAX).then(|| (if v >> 32 == 0 { Item::Node } else { Item::Token }, v as u32))
     }
 
-    /// The item whose id's low 32 bits are `low` (`low_of`'s inverse): what it is and its number.
-    pub fn number_of(&self, low: u32) -> Option<(Item, u32)> {
-        let slot = low >> INDEX_BITS;
-        let at = self.by_slot.partition_point(|e| e[0] < slot);
-        let &[s, g, c] = self.by_slot.get(at)?;
-        if s != slot {
-            return None;
-        }
-        let g = g as usize;
-        let index = c * INDEX + low % INDEX;
-        let own = self.nodes[g + 1] - self.nodes[g];
-        let (item, k) = if index < own { (Item::Node, index) } else { (Item::Token, index - own) };
-        let all = match item {
-            Item::Node => own,
-            _ => self.tokens[g + 1] - self.tokens[g],
-        };
-        if k >= all {
-            return None;
-        }
-        self.number_in(g, item, k, None).map(|n| (item, n))
-    }
-
-    /// The number of granule `g`'s own `item` `k` (its `k`-th, in order); with `stretch`, `None` unless it lies there.
+    /// Node number `l`'s order key (`order`), from its number alone (`num_order_of`).
     #[inline]
-    fn number_in(&self, g: usize, item: Item, k: u32, stretch: Option<usize>) -> Option<u32> {
-        // The stretch of `g` the item lies in: after the last child granule with at most `k` of `g`'s before it.
-        let kids = &self.kids[self.first_kid[g] as usize..self.first_kid[g + 1] as usize];
-        let i = kids.partition_point(|kid| kid.before[item as usize] <= k);
-        if stretch.is_some_and(|s| s != i) {
-            return None;
-        }
-        let (from, before) = match i.checked_sub(1) {
-            None => (self.rank_starts[item as usize][g], 0),
-            Some(i) => (self.rank_ends[item as usize][kids[i].granule as usize], kids[i].before[item as usize]),
-        };
-        Some(from + k - before)
+    pub fn order_of(&self, r: &Ranks, l: u32) -> Option<u32> {
+        // SAFETY: as `low_of`.
+        let key = unsafe { id_reads::num_order_of(r.desc(), l) };
+        (key != u32::MAX).then_some(key)
     }
 
-    /// Node number `l`'s order key (`order`), from its number alone.
-    pub fn order_of(&self, l: u32) -> Option<u32> {
-        if self.preorder_keys {
-            return Some(l);
-        }
-        let (g, j) = self.granule_of_number(Item::Node, l)?;
-        let index = self.index_of_number(Item::Node, l, g, j);
-        let kids = &self.kids[self.first_kid[g] as usize..self.first_kid[g + 1] as usize];
-        let s = kids.partition_point(|kid| self.rank_starts[0][kid.granule as usize] < l);
-        Some(self.runs[self.first_kid[g] as usize + g + s] << ORDER_INDEX_BITS | index)
-    }
-
-    /// The node number whose order key is `key` (`order_of`'s inverse).
-    pub fn number_of_order(&self, key: u32, nodes: u32) -> Option<u32> {
-        if self.preorder_keys {
-            return (key < nodes).then_some(key);
-        }
-        let [g, s] = *self.run_at.get((key >> ORDER_INDEX_BITS) as usize)?;
-        let (g, k) = (g as usize, key & ((1 << ORDER_INDEX_BITS) - 1));
-        if k >= self.nodes[g + 1] - self.nodes[g] {
-            return None;
-        }
-        self.number_in(g, Item::Node, k, Some(s as usize))
+    /// The node number whose order key is `key` (`order_of`'s inverse, `num_number_of_order`).
+    #[inline]
+    pub fn number_of_order(&self, r: &Ranks, key: u32) -> Option<u32> {
+        // SAFETY: as `low_of`.
+        let l = unsafe { id_reads::num_number_of_order(r.desc(), key) };
+        (l != u32::MAX).then_some(l)
     }
 
     /// Node `x`'s order key (`node_order`'s low 32 bits, `order`): its run's rank, then its index in its granule.
     pub fn order(&self, r: &Ranks, x: u32) -> Option<u32> {
-        self.order_of(r.local(Item::Node, x)?)
+        self.order_of(r, r.local(Item::Node, x)?)
     }
 
     /// The tape node whose order key is `key` (`order`'s inverse).
     pub fn node_of_order(&self, r: &Ranks, key: u32) -> Option<u32> {
-        r.select(Item::Node, self.number_of_order(key, r.count(Item::Node))?)
+        r.select(Item::Node, self.number_of_order(r, key)?)
     }
 
     /// Bytes the table holds.
@@ -828,7 +797,7 @@ impl Table {
         } else {
             return None;
         };
-        Some((self.low_of(item, r.rank(item, x))?, item))
+        Some((self.low_of(r, item, r.rank(item, x))?, item))
     }
 
     /// Granule `g`'s item `index`'s low bits.
@@ -839,7 +808,7 @@ impl Table {
 
     /// The tape node whose id's low 32 bits are `low` (`id`'s inverse), and what it is.
     pub fn node(&self, r: &Ranks, low: u32) -> Option<(u32, Item)> {
-        let (item, k) = self.number_of(low)?;
+        let (item, k) = self.number_of(r, low)?;
         Some((r.select(item, k)?, item))
     }
 

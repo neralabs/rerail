@@ -256,8 +256,22 @@ The table's columns are in the projection's block beside its rank index (`cells:
 are computed. Six interleaved pairs on hogql: findings 1,629; the samples show no cost in the placing, and the
 table's build unchanged.
 
-Still to do in step 2: write the reads once in CLIF, for Rust and MSL; the chunk's `low` column (row 3) goes with
-them.
+The reads are written once in CLIF (0310), in the relation's family: a read takes the address of the projection's
+descriptor (`rerail_clif::ids::Numbering`, in its block), whose runs point at the rank index's groups and samples and
+at the table's columns. `num_is`, `num_rank`, `num_select`, `num_low_of`, `num_number_of`, `num_order_of` and
+`num_number_of_order` (`rerail_clif::id_reads`). Their Rust is the facts crate's `id_reads.rs` and their MSL its
+`id_reads.metal`, each kept current by a test in `rerail-clif`. `Ranks` and `granules::Table` read through the Rust;
+their hand-written point reads are gone.
+
+Checks: the reads equal the hand-written ones on every projection of the id test (done before those went); now the
+rank index's point reads equal its walk over the set bits, the ids and order keys equal the old numbering's, and on
+the device the MSL reads answer what the Rust answers for every tape node, in its block, in all three formats, whole
+and narrowed (`the_kernels_id_reads_are_the_hosts`). hogql, 8 interleaved pairs at load 55-91: findings 1,629; median
+75.1 B instructions against 78.2 B before.
+
+Step 2 is done but for one copy: the chunk's `low` column (row 3), which goes when step 4's kernels read the ids
+through `id_reads.metal`. Each generated MSL file defines the same load helpers (`clif_word`, ...): a kernel that
+includes two of them needs those emitted once, which step 4 does as it includes them.
 
 ## The copies today
 

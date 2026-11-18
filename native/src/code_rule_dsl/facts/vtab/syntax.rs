@@ -55,6 +55,9 @@ pub mod guests;
 pub mod granules;
 pub mod ranks;
 mod cells;
+/// A projection's numbering's reads, written once in CLIF (`rerail_clif::id_reads`, decision 0353 step 2).
+#[rustfmt::skip]
+pub mod id_reads;
 #[cfg(target_os = "macos")]
 pub mod device_chunk;
 use guests::GuestRows;
@@ -2053,9 +2056,9 @@ impl Projected {
             Some(d) => {
                 let (nodes, tokens) = (self.len(), self.ranks.count(Item::Token));
                 if local < nodes {
-                    d.table.low_of(Item::Node, local).expect("a numbered node")
+                    d.table.low_of(&self.ranks, Item::Node, local).expect("a numbered node")
                 } else if local < nodes + tokens {
-                    d.table.low_of(Item::Token, local - nodes).expect("a numbered token")
+                    d.table.low_of(&self.ranks, Item::Token, local - nodes).expect("a numbered token")
                 } else {
                     granules::span_low(local - nodes - tokens)
                 }
@@ -2082,12 +2085,12 @@ impl Projected {
     /// Node `local`'s order key: `node_order`'s low 32 bits (`granules::Table::order_of`, from its number; its
     /// preorder index without `DefIds`).
     pub fn order(&self, local: u32) -> u32 {
-        self.defs.as_ref().map_or(local, |d| d.table.order_of(local).expect("a node's order key"))
+        self.defs.as_ref().map_or(local, |d| d.table.order_of(&self.ranks, local).expect("a node's order key"))
     }
     /// The node whose order key (`node_order`'s low 32 bits) is `key`.
     pub fn local_of_order(&self, key: u32) -> Option<u32> {
         match &self.defs {
-            Some(d) => d.table.number_of_order(key, self.len()),
+            Some(d) => d.table.number_of_order(&self.ranks, key),
             None => (key < self.len()).then_some(key),
         }
     }
@@ -2095,7 +2098,7 @@ impl Projected {
     pub fn local_of(&self, low: u32) -> Option<u32> {
         match &self.defs {
             Some(_) if granules::span_of(low).is_some() => granules::span_of(low).map(|i| self.len() + self.ranks.count(Item::Token) + i),
-            Some(d) => d.table.number_of(low).map(|(item, k)| if item == Item::Node { k } else { self.len() + k }),
+            Some(d) => d.table.number_of(&self.ranks, low).map(|(item, k)| if item == Item::Node { k } else { self.len() + k }),
             None => Some(low),
         }
     }

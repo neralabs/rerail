@@ -1637,8 +1637,135 @@ fn node_ids_in_place_equal_the_numbered_ones() {
                     assert_eq!(p.order(l), reference.order[l as usize], "{at}: the order key of local {l}");
                     assert_eq!(p.local_of_order(reference.order[l as usize]), Some(l), "{at}: the node of order key {:#x}", reference.order[l as usize]);
                 }
+                // The rank index's point reads (written once, `id_reads`) agree with its walk over the set bits.
+                let r = p.ranks();
+                for item in [Item::Node, Item::Token, Item::Field] {
+                    let walked: Vec<(u32, u32)> = r.iter(item).collect();
+                    assert_eq!(walked.len() as u32, r.count(item), "{at}: {item:?}'s count");
+                    let set: HashMap<u32, u32> = walked.iter().map(|&(k, x)| (x, k)).collect();
+                    for &(k, x) in &walked {
+                        assert_eq!(r.select(item, k), Some(x), "{at}: select {item:?} {k}");
+                    }
+                    assert_eq!(r.select(item, r.count(item)), None, "{at}: select past {item:?}'s last");
+                    let mut before = 0;
+                    for x in 0..f.len() as u32 + 64 {
+                        assert_eq!(r.rank(item, x), before, "{at}: rank {item:?} {x}");
+                        assert_eq!(r.is(item, x), set.contains_key(&x), "{at}: is {item:?} {x}");
+                        before += u32::from(set.contains_key(&x));
+                    }
+                }
+                // Lows that are no item's have no number; order keys past the last have no node.
+                for bad in [u32::MAX, 0x7fff_ffff] {
+                    assert_eq!(table.number_of(r, bad), None, "{at}: the number of {bad:#x}");
+                    assert_eq!(table.number_of_order(r, bad), None, "{at}: the node of order key {bad:#x}");
+                }
             }
         }
     }
     assert!(narrower >= 6, "anchored projections narrower than the whole: {narrower}");
+}
+
+/// Decision 0353 step 2: the numbering's reads as MSL (`id_reads.metal`, written once in CLIF), run on the device
+/// over a projection's descriptor where it lies in its block, answer what the host's reads (their Rust) answer: for
+/// every tape node, its bit and ranks, the selects, the ids' low bits of nodes and tokens and back, and the order keys
+/// and back. In all three formats, whole and narrowed, a document of more nodes than a granule's slot holds.
+#[cfg(target_os = "macos")]
+#[test]
+fn the_kernels_id_reads_are_the_hosts() {
+    use crate::code_rule_dsl::lines::{LineTable, Terminators};
+    use crate::code_rule_dsl::tape::{Grammar, TapeImage, formats::Format};
+    use metal::{CompileOptions, Device, MTLResourceOptions, MTLSize};
+    if !definition_ids() {
+        return;
+    }
+    let Some(device) = Device::system_default() else { return };
+    const WIDE: usize = 12;
+    const KERNEL: &str = r#"
+kernel void ids_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[buffer(1)]], constant uint& n [[buffer(2)]],
+                      device uint* out [[buffer(3)]], uint x [[thread_position_in_grid]]) {
+    if (x >= n) return;
+    device uint* o = out + x * 12u;
+    o[0] = clif_num_is(b, d, 0u, x);
+    o[1] = clif_num_rank(b, d, 0u, x);
+    o[2] = clif_num_rank(b, d, 1u, x);
+    o[3] = clif_num_select(b, d, 0u, x);
+    o[4] = clif_num_select(b, d, 1u, x);
+    o[5] = clif_num_low_of(b, d, 0u, x);
+    o[6] = clif_num_low_of(b, d, 1u, x);
+    o[7] = clif_num_order_of(b, d, x);
+    ulong k = clif_num_number_of(b, d, o[5]);
+    o[8] = uint(k); o[9] = uint(k >> 32);
+    o[10] = clif_num_number_of_order(b, d, o[7]);
+    o[11] = clif_num_is(b, d, 2u, x);
+}
+"#;
+    let lib = device.new_library_with_source(&format!("#include <metal_stdlib>\nusing namespace metal;\n{}{KERNEL}", include_str!("id_reads.metal")), &CompileOptions::new()).expect("the id reads compile");
+    let pipe = device.new_compute_pipeline_state_with_function(&lib.get_function("ids_probe", None).unwrap()).unwrap();
+    let queue = device.new_command_queue();
+    let many: String = (0..17_000).map(|i| format!("def f{i}():\n    return {i}\n")).collect();
+    let cases: &[(&str, &str)] = &[
+        ("python", "import os\nX = 1\n@dec\ndef f(a, b=2):\n    '''doc'''\n    return [x for x in a if x]\n\nclass C(B):\n    def m(self):\n        def inner():\n            pass\n        return inner\n"),
+        ("python", &many),
+        ("typescript", "import { a } from 'b';\nexport const App = () => 1;\nclass K { x = 1; m(): number { return this.x; } }\nfunction g(n: number) { if (n) { return n; } }\n"),
+    ];
+    let anchors: BTreeSet<String> = ["call", "call_expression", "function_definition", "method_definition", "class_declaration"].iter().map(|s| (*s).to_owned()).collect();
+    let mut tried = 0;
+    for &(label, source) in cases {
+        let lang = dialect_by_label(label).unwrap();
+        let grammar = Grammar::new(lang).unwrap();
+        let source = Arc::new(source.to_owned());
+        let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
+        for format in Format::ALL {
+            let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
+            let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image.clone().in_format(format), lines).unwrap());
+            let dialect = Dialect::new(core::facts_tag(&facts)).unwrap();
+            for (shape, narrowed) in [(Shape::Core, false), (Shape::T, false), (Shape::Core, true)] {
+                let p = if narrowed { Projected::anchored(1, Arc::clone(&facts), Some(&dialect), shape, &anchors) } else { Projected::new(1, Arc::clone(&facts), Some(&dialect), shape, false, None) };
+                let at = format!("{label} {} {shape:?}{}", format.name(), if narrowed { " narrowed" } else { "" });
+                let r = p.ranks();
+                let block = r.block();
+                let d = block.offset_of(r.desc()) as u64;
+                let n = facts.len() as u32 + 64;
+                let out = device.new_buffer(u64::from(n) * WIDE as u64 * 4, MTLResourceOptions::StorageModeShared);
+                let cmd = queue.new_command_buffer();
+                let enc = cmd.new_compute_command_encoder();
+                enc.set_compute_pipeline_state(&pipe);
+                enc.set_buffer(0, Some(&block.gpu_buffer(&device)), 0);
+                enc.set_bytes(1, 8, (&raw const d).cast());
+                enc.set_bytes(2, 4, (&raw const n).cast());
+                enc.set_buffer(3, Some(&out), 0);
+                enc.dispatch_threads(MTLSize::new(u64::from(n), 1, 1), MTLSize::new(64, 1, 1));
+                enc.end_encoding();
+                cmd.commit();
+                cmd.wait_until_completed();
+                // SAFETY: the kernel wrote WIDE u32s a node, and its command completed.
+                let got = unsafe { std::slice::from_raw_parts(out.contents().cast::<u32>(), n as usize * WIDE) };
+                let h = r.desc();
+                for x in 0..n {
+                    // SAFETY: the projection's live descriptor.
+                    let want: [u32; WIDE] = unsafe {
+                        let (low0, order) = (id_reads::num_low_of(h, 0, x), id_reads::num_order_of(h, x));
+                        let k = id_reads::num_number_of(h, low0);
+                        [
+                            id_reads::num_is(h, 0, x),
+                            id_reads::num_rank(h, 0, x),
+                            id_reads::num_rank(h, 1, x),
+                            id_reads::num_select(h, 0, x),
+                            id_reads::num_select(h, 1, x),
+                            low0,
+                            id_reads::num_low_of(h, 1, x),
+                            order,
+                            k as u32,
+                            (k >> 32) as u32,
+                            id_reads::num_number_of_order(h, order),
+                            id_reads::num_is(h, 2, x),
+                        ]
+                    };
+                    assert_eq!(&got[x as usize * WIDE..][..WIDE], &want, "{at}: tape node {x}");
+                }
+                tried += 1;
+            }
+        }
+    }
+    assert_eq!(tried, 3 * 3 * 3, "every case, format and shape");
 }

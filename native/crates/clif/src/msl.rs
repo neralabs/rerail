@@ -381,6 +381,8 @@ fn instruction(
         Opcode::UshrImm => set(shift(&args[0], &(imm()? as u64 & 63).to_string(), ">>", false)),
         Opcode::SshrImm => set(shift(&args[0], &(imm()? as u64 & 63).to_string(), ">>", true)),
         Opcode::Clz => set(format!("{u}(clz({}))", args[0])),
+        Opcode::Ctz => set(format!("{u}(ctz({}))", args[0])),
+        Opcode::Popcnt => set(format!("{u}(popcount({}))", args[0])),
         Opcode::Umin => set(format!("min({},{})", args[0], args[1])),
         Opcode::Umax => set(format!("max({},{})", args[0], args[1])),
         Opcode::Icmp | Opcode::IcmpImm => {
