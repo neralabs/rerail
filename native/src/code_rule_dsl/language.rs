@@ -1355,12 +1355,14 @@ pub fn is_stub_file(path: &str) -> bool {
         .is_some_and(|extension| extension == "pyi")
 }
 
-/// Native symbol ids of every named kind called one of `names`.
+/// Native symbol ids of every named kind called one of `names`: the dialect's catalog looked up once, not once a
+/// kind (`GrammarDialect::kinds` finds the grammar in a map).
 pub fn kind_ids(language: GrammarDialect, names: &[&str]) -> std::collections::BTreeSet<u16> {
-    (0..language.kind_count() as u16)
+    let kinds = language.kinds();
+    (0..kinds.kind_count() as u16)
         .filter(|&id| {
-            language.kind_is_named(id)
-                && language
+            kinds.kind_is_named(id)
+                && kinds
                     .kind_name(id)
                     .is_some_and(|name| names.contains(&name))
         })
