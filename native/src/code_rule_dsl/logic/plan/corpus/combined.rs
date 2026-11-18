@@ -16,7 +16,7 @@
 //! text (`program_text`, decision 0155). The run's manifest names the source and the plan (`named`), so collection
 //! keeps the entry while it keeps the run.
 
-use crate::code_rule_dsl::logic::front::{Program, Value};
+use crate::code_rule_dsl::logic::front::Value;
 use crate::code_rule_dsl::logic::program_facts::{self, Facts};
 use crate::code_rule_dsl::logic::program_text;
 use crate::code_rule_dsl::logic::rr::{self, LibraryFile};
@@ -92,9 +92,9 @@ pub(in crate::code_rule_dsl) fn text_header_key(src: &str) -> [u8; 32] {
 /// The entry `key`'s program with the read record: every library file the program read or probed, in reading order. Each is checked
 /// as `LibraryFile::unchanged` checks it, by its `stat` while that holds and by its bytes' sha256 when it moved: the
 /// first key that settles it.
-pub(in crate::code_rule_dsl) fn lookup_read(store: &ContentStore, key: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<(Program, Vec<LibraryFile>)>> {
+pub(in crate::code_rule_dsl) fn lookup_read(store: &ContentStore, key: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<(std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Vec<LibraryFile>)>> {
     let Some((digest, read)) = entry_read(store, key)? else { return Ok(None) };
-    Ok(program_text::load(store, &digest, lists)?.map(|(program, _)| (program, read)))
+    Ok(program_text::load_image(store, &digest, lists)?.map(|(v, _)| (v, read)))
 }
 
 /// The combined program of texts `key`, when the store keeps one whose library files all still read as recorded; or,
@@ -172,18 +172,12 @@ fn unhex(text: &str) -> Option<[u8; 32]> {
     Some(out)
 }
 
-/// Keeps `program`, combined from texts `key` after reading library files `read`, in the store: made into facts and
-/// encoded here, written by the store's writer in the run's record as `what` (decisions 0102, 0306). A program that
-/// does not read back as written is not kept: the next run combines it again.
-pub(in crate::code_rule_dsl) fn record(store: &ContentStore, what: &'static str, key: &[u8; 32], read: &[LibraryFile], program: &Program, images: &[HashKey]) {
-    let Some(encoded) = program_text::encode(program) else { return };
-    record_encoded(store, what, key, read, encoded, images);
-}
-
-/// `record` of the program's version (Typing-support's `remember_version`, taken at the merge of e829e72a7 as an item
-/// of the run's record): its image kept as it is (`program_text::encode_version`); with images off, its tree, decoded
-/// at this edge alone.
-pub(super) fn record_version(store: &ContentStore, what: &'static str, key: &[u8; 32], read: &[LibraryFile], v: &crate::code_rule_dsl::logic::program_image::Version, images: &[HashKey]) {
+/// Keeps program `v`, combined from texts `key` after reading library files `read`, in the store: encoded here,
+/// written by the store's writer in the run's record as `what` (decisions 0102, 0306). A program that does not read
+/// back as written is not kept: the next run combines it again. Its image is kept as it is
+/// (`program_text::encode_version`, Typing-support's `remember_version`, taken at the merge of e829e72a7 as an item
+/// of the run's record); with images off, its tree, decoded at this edge alone.
+pub(in crate::code_rule_dsl) fn record_version(store: &ContentStore, what: &'static str, key: &[u8; 32], read: &[LibraryFile], v: &crate::code_rule_dsl::logic::program_image::Version, images: &[HashKey]) {
     let encoded = match program_text::encode_version(v) {
         Some(encoded) => encoded,
         None => {

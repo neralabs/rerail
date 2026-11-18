@@ -607,6 +607,14 @@ impl Builder<'_> {
         self.set_about_rows("gate_quiet", quiet);
         self.set_about_rows("gate_dep", deps);
     }
+    /// Adds setting `key` with `text` after the program's settings (`.global library …`, written by the file reader).
+    pub fn add_setting(&mut self, key: &str, text: &str) {
+        let p = program_cell(self);
+        let mut rows = self.about_rows("setting");
+        let k = rows.len() as i64;
+        rows.push(vec![p, Cell::Int(k), Cell::Str(self.atom(key)), Cell::Str(self.atom(text))]);
+        self.set_about_rows("setting", rows);
+    }
     /// Adds relations `rels` to the relations of no columns (kept in name order, each once, as the tree's set).
     pub fn add_nullary<S: AsRef<str>>(&mut self, rels: &[S]) {
         if rels.is_empty() {

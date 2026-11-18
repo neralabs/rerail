@@ -267,16 +267,16 @@ impl Text {
     /// directives, its findings' declarations), for what a batch reads of a policy before its run (decision 0168):
     /// its settings, `.policy`, `.language` and outputs, as its whole program has them, less `.global library` (which
     /// `read_file` writes) and the settings a clause makes. Lowering only that is a fraction of lowering its rules.
-    pub fn header(self) -> Result<Program, Error> {
+    pub fn header(self) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
         let header = |statements: Vec<syntax::Statement>| -> Vec<syntax::Statement> {
             statements.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Clause { .. } | syntax::Item::Include(_))).collect()
         };
         match self.0 {
-            Read::Plain(statements) => lower_statements(header(statements)),
+            Read::Plain(statements) => lower_statements_version(header(statements)),
             Read::Modular { files, own } => {
                 let mut statements: Vec<syntax::Statement> = files.iter().flat_map(|(_, _, s)| s.iter().filter(|(item, _)| !matches!(item, syntax::Item::Clause { .. } | syntax::Item::Include(_))).cloned()).collect();
                 statements.extend(header(own));
-                lower_statements(statements)
+                lower_statements_version(statements)
             }
         }
     }
@@ -1422,10 +1422,11 @@ pub(in crate::code_rule_dsl) fn code_body(text: &str) -> &str {
 }
 
 /// The compiler's named policy headers and settings, without reparsing rule source in a host adapter.
-pub fn metadata(program: &Program) -> Result<serde_json::Value, Error> {
+pub fn metadata(program: &(impl super::program_image::fields::ProgramFields + ?Sized)) -> Result<serde_json::Value, Error> {
     use syntax::Tok;
-    let mut policies = program.policies.clone();
-    for (_, text) in program.settings.iter().filter(|(key, _)| key == "policy") {
+    let mut policies = program.policies();
+    let settings = program.settings();
+    for (_, text) in settings.iter().filter(|(key, _)| key == "policy") {
         let tokens = syntax::tokens(text)?;
         let Some((Tok::Str(id), _, _)) = tokens.first() else {
             return Err(Error::Syntax("policy metadata requires a quoted identifier".to_owned()));
@@ -1436,7 +1437,7 @@ pub fn metadata(program: &Program) -> Result<serde_json::Value, Error> {
         });
         policies.push(serde_json::json!({"id": id, "revision": revision}));
     }
-    Ok(serde_json::json!({"policies": policies, "settings": program.settings}))
+    Ok(serde_json::json!({"policies": policies, "settings": settings}))
 }
 
 /// A lowered program run over files a caller gives (a test's), not found by walking a repository: its
@@ -1455,8 +1456,13 @@ pub fn files_given(program: &mut Program) {
 }
 
 /// A program's `.rr` file, with what it includes.
-pub fn parse_file(path: &Path) -> Result<Program, Error> {
+pub fn parse_file_version(path: &Path) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     read_file(path).map(|(program, _)| program)
+}
+
+/// `parse_file_version`'s program decoded, for the tests that read a tree until they read the version (0276 step 6).
+pub fn parse_file(path: &Path) -> Result<Program, Error> {
+    parse_file_version(path)?.program(&Default::default()).map_err(Error::Syntax)
 }
 
 /// A library file a program read: decision 0044's seeded fact `library_file(path, hash)`. `sha256`
@@ -1496,10 +1502,10 @@ pub const LIBRARY_DERIVED: [&str; 3] = ["embed", "embed_value", "load"];
 /// The library's programs the engine adds to a run itself (decision 0076's import components).
 const ENGINE_FILES: [&str; 1] = ["components.rr"];
 
-pub fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
+pub fn read_file(path: &Path) -> Result<(std::sync::Arc<super::program_image::Version>, Vec<LibraryFile>), Error> {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
-    static PROGRAMS: OnceLock<Mutex<HashMap<PathBuf, (Vec<LibraryFile>, Program)>>> = OnceLock::new();
+    static PROGRAMS: OnceLock<Mutex<HashMap<PathBuf, (Vec<LibraryFile>, std::sync::Arc<super::program_image::Version>)>>> = OnceLock::new();
     let key = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     let cache = PROGRAMS.get_or_init(Default::default);
     if let Some((files, program)) = cache.lock().expect("the program cache").get(&key)
@@ -1525,7 +1531,7 @@ pub fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
     let program = lower_files_dropping(path, statements, false)?;
     // Kept behind the run (the store's writer), with what it read: the next run's check above.
     if let Some((entry, Some(store), None)) = kept {
-        super::plan::corpus::combined::record(&store, "a rule file's program", &entry, &files, &program, &[]);
+        super::plan::corpus::combined::record_version(&store, "a rule file's program", &entry, &files, &program, &[]);
         super::plan::corpus::combined::read_before_the_run(entry);
     }
     cache.lock().expect("the program cache").insert(key, (files.clone(), program.clone()));
@@ -1536,7 +1542,7 @@ pub fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
 /// taken while every library file its includes read still reads as recorded (by `stat`, then sha). A batch reads
 /// each policy's header before its run (`tools::policy_groups`): 44 policies parsed, checked and lowered again each
 /// run, over the same libraries.
-pub fn text_header(src: &str) -> Result<Program, Error> {
+pub fn text_header(src: &str) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     use super::plan::corpus::combined;
     let (key, store, found) = kept_header(src);
     if let Some((program, files)) = found {
@@ -1552,7 +1558,7 @@ pub fn text_header(src: &str) -> Result<Program, Error> {
     };
     let program = text.header()?;
     if let Some(store) = store {
-        combined::record(&store, "a text's header", &key, &read, &program, &[]);
+        combined::record_version(&store, "a text's header", &key, &read, &program, &[]);
         combined::read_before_the_run(key);
     }
     Ok(program)
@@ -1561,7 +1567,7 @@ pub fn text_header(src: &str) -> Result<Program, Error> {
 /// The entry of text `src`'s header: its key, the store it is kept in, and the header with its read record when the
 /// store keeps one that still holds.
 #[allow(clippy::type_complexity)]
-fn kept_header(src: &str) -> ([u8; 32], Option<std::sync::Arc<crate::content_store::ContentStore>>, Option<(Program, Vec<LibraryFile>)>) {
+fn kept_header(src: &str) -> ([u8; 32], Option<std::sync::Arc<crate::content_store::ContentStore>>, Option<(std::sync::Arc<super::program_image::Version>, Vec<LibraryFile>)>) {
     use super::plan::corpus::{combined, phases};
     let key = combined::text_header_key(src);
     let store = (cfg!(feature = "tape-cache") && !super::plan::corpus::phase0::active()).then(phases::reading_store).flatten();
@@ -1575,14 +1581,14 @@ fn kept_header(src: &str) -> ([u8; 32], Option<std::sync::Arc<crate::content_sto
 
 /// The header the store keeps for text `src`, when it still holds (`kept_header`): for the tests of decision 0275.
 #[cfg(any(test, feature = "test-hooks"))]
-pub fn kept_header_found(src: &str) -> Option<Program> {
+pub fn kept_header_found(src: &str) -> Option<std::sync::Arc<super::program_image::Version>> {
     kept_header(src).2.map(|(program, _)| program)
 }
 
 /// The program and read record the store keeps for the rule file at `path` (canonical), when they still hold
 /// (`kept_program`): for the tests of decision 0275.
 #[cfg(any(test, feature = "test-hooks"))]
-pub fn kept_program_found(path: &Path) -> Option<(Program, Vec<LibraryFile>)> {
+pub fn kept_program_found(path: &Path) -> Option<(std::sync::Arc<super::program_image::Version>, Vec<LibraryFile>)> {
     kept_program(path).and_then(|(_, _, found)| found)
 }
 
@@ -1590,7 +1596,7 @@ pub fn kept_program_found(path: &Path) -> Option<(Program, Vec<LibraryFile>)> {
 /// record when the store keeps one that still holds (`combined::lookup_read`). `None` where there is no file to key
 /// by, or the program is phase 0's own (its builtin reader).
 #[allow(clippy::type_complexity)]
-fn kept_program(path: &Path) -> Option<([u8; 32], Option<std::sync::Arc<crate::content_store::ContentStore>>, Option<(Program, Vec<LibraryFile>)>)> {
+fn kept_program(path: &Path) -> Option<([u8; 32], Option<std::sync::Arc<crate::content_store::ContentStore>>, Option<(std::sync::Arc<super::program_image::Version>, Vec<LibraryFile>)>)> {
     use super::plan::corpus::{combined, phases};
     if !cfg!(feature = "tape-cache") || super::plan::corpus::phase0::active() {
         return None;
@@ -1613,12 +1619,12 @@ fn kept_program(path: &Path) -> Option<([u8; 32], Option<std::sync::Arc<crate::c
 /// A file's program from its modules' statements (`program`): its names checked, its own rules grounded, and lowered,
 /// as `read_file` reads it. Testing mode (`rr::testing`, decision 0130) gives the file's statements with a test's
 /// spliced in.
-pub fn lower_files(path: &Path, statements: Files) -> Result<Program, Error> {
+pub fn lower_files(path: &Path, statements: Files) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     lower_files_dropping(path, statements, true)
 }
 
 /// `lower_files`, with the unreached clauses of included files dropped first (`drop`) or lowered too.
-pub fn lower_files_dropping(path: &Path, statements: Files, drop: bool) -> Result<Program, Error> {
+pub fn lower_files_dropping(path: &Path, statements: Files, drop: bool) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     let key = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     check_names(&statements, false)?;
     // The file's own rules grounded (`refuse_ungrounded`), its includes' `fix` relations given.
@@ -1639,11 +1645,13 @@ pub fn lower_files_dropping(path: &Path, statements: Files, drop: bool) -> Resul
         .flat_map(|(_, statements)| statements)
         .filter_map(|(item, _)| if let syntax::Item::Decl { name, .. } = item { Some(name.clone()) } else { None })
         .collect();
-    let mut program = lower_statements(statements.into_iter().flat_map(|(_, statements)| statements).collect())?;
-    if !library.is_empty() {
-        program.settings.push((super::front::GLOBAL.to_owned(), format!("{} {}", super::front::LIBRARY, library.join(", "))));
+    let program = lower_statements_version(statements.into_iter().flat_map(|(_, statements)| statements).collect())?;
+    if library.is_empty() {
+        return Ok(program);
     }
-    Ok(program)
+    let mut b = super::program_image::Builder::on(&program);
+    b.add_setting(super::front::GLOBAL, &format!("{} {}", super::front::LIBRARY, library.join(", ")));
+    b.finish().map(|(v, _)| v).map_err(Error::Syntax)
 }
 
 /// `statements` less the included files' clauses that nothing in the program reaches. Of the 44 data-layer

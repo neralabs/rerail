@@ -7,6 +7,7 @@ pub use super::logic::settings::{program_text, program_texts, settings};
 pub use super::logic::settings::process_counters;
 use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::transducer::packed::rir;
+use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
 
 /// The package CLI's SQL tool, sharing the standalone command's request and execution path.
 #[napi_derive::napi(catch_unwind)]
@@ -234,7 +235,7 @@ pub fn check_rr(paths: &[std::path::PathBuf]) -> serde_json::Value {
         match super::logic::rr::read_file(path) {
             // A program the reader passes still has to type: each variable one domain (a kind, a name, …), as a run
             // checks when it plans (`plan::lower::domains`). A run would stop there, so the check does too.
-            Ok((program, _)) if let Err(error) = super::logic::plan::corpus::handed_version(&program).and_then(|v| super::logic::plan::corpus::combine_read_program(&v))
+            Ok((program, _)) if let Err(error) = super::logic::plan::corpus::combine_read_program(&program)
                 .map_err(|e| e.to_string())
                 // Pruned first, as a run is: a library's relation the outputs do not read is not planned.
                 .and_then(|combined| super::logic::plan::corpus::preparation::pruned(combined))
@@ -243,8 +244,8 @@ pub fn check_rr(paths: &[std::path::PathBuf]) -> serde_json::Value {
                 serde_json::json!({"path": path, "status": "types-failed", "error": error})
             }
             Ok((program, files)) => serde_json::json!({
-                "path": path, "status": "reader-passed", "rules": program.rules.len(),
-                "outputs": program.outputs,
+                "path": path, "status": "reader-passed", "rules": program.rules().count(),
+                "outputs": program.output_names(),
                 "files": files.iter().map(|file| serde_json::json!({
                     "path": file.path,
                     "sha256": file.sha256.map(|hash| hash.iter().map(|b| format!("{b:02x}")).collect::<String>())
@@ -265,7 +266,7 @@ pub fn run_rr(
 ) -> Result<serde_json::Value, String> {
     use super::logic::rr;
     let (program, files) = rr::read_file(path).map_err(|e| e.to_string())?;
-    if !program.outputs.iter().any(|name| super::logic::rr::is_diagnostic(name)) {
+    if !program.output_names().iter().any(|name| super::logic::rr::is_diagnostic(name)) {
         return Err(format!("{}: no .violation declarations", path.display()));
     }
     run_program(program, &files, root, out, options)
@@ -320,7 +321,7 @@ fn diagnostic(row: &crate::code_rule_dsl::logic::plan::output::Row<'_>) -> Resul
 
 /// `run_rr` of a program already read: a file's, or a test's (decision 0130, `rr::testing`).
 pub fn run_program(
-    program: super::logic::front::Program,
+    program: std::sync::Arc<super::logic::program_image::Version>,
     files: &[super::logic::rr::LibraryFile],
     root: &std::path::Path,
     out: &std::path::Path,
@@ -330,12 +331,12 @@ pub fn run_program(
         logic::{plan::corpus, rr},
         typing::file_local::Binding,
     };
-    let metadata = rr::metadata(&program).map_err(|e| e.to_string())?;
+    let metadata = rr::metadata(&*program).map_err(|e| e.to_string())?;
     // A language of several dialects (`.language typescript` over `.ts`, `.tsx` and `.js` files) is a run per dialect
     // with files in scope: the first into `out`, each other into `out/<dialect>`, their findings together. A language
     // of one dialect, or none with files, runs as written. Each run holds the program read, its language the
     // dialect's (the `dialect` option, `corpus::added`): never printed and read again (decision 0249).
-    let dialects = corpus::run_dialects(root, &program, &with_reuse(options)).map_err(|e| e.to_string())?;
+    let dialects = corpus::run_dialects(root, &*program, &with_reuse(options)).map_err(|e| e.to_string())?;
     // One dialect with files may be another than the one named: a `.js`-scoped TypeScript pack reads JavaScript.
     let runs: Vec<(Option<&str>, std::path::PathBuf)> = if dialects.is_empty() {
         vec![(None, out.to_path_buf())]
@@ -345,7 +346,7 @@ pub fn run_program(
     let (mut rows, mut files_read, mut nodes, mut phases) = (Vec::new(), 0, 0, Vec::new());
     // The device as `logic --metal` places it: `RERAIL_DEVICE=metal` (by price) or `always` (wherever it can).
     let binding = if std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "metal" || v == "always") { Binding::Metal } else { Binding::Cpu };
-    let handed = corpus::handed_version(&program).map_err(|e| e.to_string())?;
+    let handed = program;
     for (dialect, dir) in &runs {
         let mut options = with_reuse(options);
         if let Some(dialect) = dialect {
@@ -442,14 +443,15 @@ fn policy_groups(texts: &[String], root: &std::path::Path, options: &serde_json:
     for (k, text) in texts.iter().enumerate() {
         let own = rr::text_header(text).ok();
         let joined = own.and_then(|own| {
-            let named = own.settings.iter().find(|(k, _)| k == "language").map(|(_, v)| v.trim().trim_matches('"').to_owned());
+            let settings = ProgramFields::settings(&*own);
+            let named = settings.iter().find(|(k, _)| k == "language").map(|(_, v)| v.trim().trim_matches('"').to_owned());
             let one_dialect = named.as_deref().is_none_or(|name| {
                 crate::code_rule_dsl::language::CodeRuleLanguage::ALL.into_iter().find(|l| l.name() == name).is_some_and(|l| l.dialects().len() < 2)
             });
-            let language = corpus::run_language(root, &own, &with_reuse(options)).ok()?;
-            let id = own.settings.iter().find(|(k, _)| k == "policy").and_then(|(_, t)| t.split('"').nth(1)).unwrap_or_default().to_owned();
-            let findings = own.outputs.iter().any(|o| rr::is_diagnostic(o));
-            let metadata = rr::metadata(&own).ok()?;
+            let language = corpus::run_language(root, &*own, &with_reuse(options)).ok()?;
+            let id = settings.iter().find(|(k, _)| k == "policy").and_then(|(_, t)| t.split('"').nth(1)).unwrap_or_default().to_owned();
+            let findings = own.output_names().iter().any(|o| rr::is_diagnostic(o));
+            let metadata = rr::metadata(&*own).ok()?;
             (one_dialect && findings).then_some((language, id, metadata))
         });
         match joined {

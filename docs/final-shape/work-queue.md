@@ -2590,3 +2590,12 @@ and the input relations' hash indexes and sorted orders. Then `rr_agg56` (Q82, 0
   every test that signs a library through `sha2`'s SHA-512 on aarch64 stops the same way under Relax.
 - **To do:** teach Relax's assembler `sha512h`, `sha512h2`, `sha512su0`, `sha512su1` (FEAT_SHA512), or build `sha2`
   for Relax with its `force-soft` path. A draft for upstream goes to the user (never filed by me).
+
+### Q142. `programs_are_kept_by_the_hashes_of_what_they_read` failed once, cold
+
+- **Found** (2026-11-18, 0276 step 6, `rr::read_file` moved onto versions): the test failed in the first Relax run
+  after the edit (72 s, cold, beside the two 0275 tests on the same store), then passed in four warm runs, alone and
+  beside them. Its asserts compare the programs read (now by size and digest) and the files read before and after an
+  edit to an included file; which one failed was not printed.
+- **To do:** run it cold beside the 0275 tests until it fails with its message; suspects are the observer's view of
+  the edited include (decision 0105's flush) and the store's queued entry being found before its write settles.
