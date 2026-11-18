@@ -8,8 +8,9 @@
 //! - **Shared lookups.** A table's two nibble lookups are made once per chunk, for every class
 //!   taken from it.
 //! - **A `prev` on bytes.** `prev(v, k)` is `v`'s chunk and the chunk before it, shifted by `k`
-//!   bytes (one `ext` on aarch64). The chunk before the block's first is `v` over the 16 bytes
-//!   before the block, which are the previous block's, or zeros before a file. No carried word.
+//!   bytes (one `ext` on aarch64). The chunk before the block's first is chunk 0: `v` over the 16
+//!   bytes before the block, which are the previous block's, or zeros before a file. No carried
+//!   word (simdjson carries that chunk's input as a vector instead).
 //! - **One mask at the edge.** A value becomes a 64-bit mask only where a value outside the
 //!   vectors, an output or a carried field reads it.
 //!
@@ -418,6 +419,17 @@ fn lane_plan(native: &BlockNative, deep: bool) -> (Vec<bool>, Vec<u8>, Vec<bool>
         (lanes[at], lag[at], at_zero[at], can[at]) = (l, s, z, c);
     }
     (lanes, lag, at_zero, can)
+}
+
+/// Whether byte-local value `x` reads its own bytes only, none before them (no `prev`, `pair`
+/// or `plane_before` in it): made on chunk 0, the 16 bytes before the block, it stays in the
+/// window (`MAX_LAG`).
+fn reads_here(native: &BlockNative, x: usize, depth: u32) -> bool {
+    depth < 32
+        && match native.insts[x] {
+            BlockInst::Prev(..) | BlockInst::Pair { .. } | BlockInst::PlaneBefore(_) => false,
+            ref i => i.operands().into_iter().all(|o| reads_here(native, o, depth + 1)),
+        }
 }
 
 /// Whether value `x` is false wherever the byte `back` before its position is zero: its bytes
@@ -945,6 +957,8 @@ pub struct Lanes<'a> {
     nibble: Value,
     zero16: Value,
     nibbles: HashMap<(usize, u8), (Value, Value)>,
+    /// Chunks' high nibbles alone, for a table whose low half is all ones (`lookup`).
+    highs: HashMap<(usize, u8), Value>,
     /// Each table's lookup at (chunk, lag), shared by its classes.
     lookups: HashMap<(usize, usize, u8), Value>,
     /// Each table's two halves, and each splatted byte, made once in the body.
@@ -984,6 +998,7 @@ impl<'a> Lanes<'a> {
             nibble,
             zero16,
             nibbles: HashMap::new(),
+            highs: HashMap::new(),
             lookups: HashMap::new(),
             tables: vec![None; native.tables.len()],
             splats: [None; 256],
@@ -1033,6 +1048,7 @@ impl<'a> Lanes<'a> {
             nibble,
             zero16,
             nibbles: HashMap::new(),
+            highs: HashMap::new(),
             lookups: HashMap::new(),
             tables: vec![None; native.tables.len()],
             splats: [None; 256],
@@ -1066,6 +1082,23 @@ impl<'a> Lanes<'a> {
     /// Table `t`'s class bytes at chunk `c`, lag `lag`, shared by its classes.
     fn lookup(&mut self, f: &mut FunctionBuilder<'_>, t: usize, c: usize, lag: u8) -> Value {
         if let Some(&v) = self.lookups.get(&(t, c, lag)) {
+            return v;
+        }
+        // A table of high nibbles only (its low half all ones): one lookup, as simdjson's
+        // `byte_2_high`.
+        if self.native.tables[t].lo == [0xff; 16] {
+            let hi = self.high_at(f, c, lag);
+            let thi = match self.tables[t] {
+                Some((_, thi)) => thi,
+                None => {
+                    let thi = f.func.dfg.constants.insert(ConstantData::from(&self.native.tables[t].hi[..]));
+                    let thi = f.ins().vconst(types::I8X16, thi);
+                    self.tables[t] = Some((thi, thi));
+                    thi
+                }
+            };
+            let v = f.ins().swizzle(thi, hi);
+            self.lookups.insert((t, c, lag), v);
             return v;
         }
         let (lo, hi) = self.nibbles_at(f, c, lag);
@@ -1189,11 +1222,25 @@ impl<'a> Lanes<'a> {
             Some(&x) => x,
             None => {
                 let b = self.bytes(f, c, lag);
-                let x = (f.ins().band(b, self.nibble), f.ins().ushr_imm(b, 4));
+                let x = (f.ins().band(b, self.nibble), self.high_at(f, c, lag));
                 self.nibbles.insert((c, lag), x);
                 x
             }
         }
+    }
+
+    /// Chunk `c`'s high nibbles at lag `lag`, made once.
+    fn high_at(&mut self, f: &mut FunctionBuilder<'_>, c: usize, lag: u8) -> Value {
+        if let Some(&(_, h)) = self.nibbles.get(&(c, lag)) {
+            return h;
+        }
+        if let Some(&h) = self.highs.get(&(c, lag)) {
+            return h;
+        }
+        let b = self.bytes(f, c, lag);
+        let h = f.ins().ushr_imm(b, 4);
+        self.highs.insert((c, lag), h);
+        h
     }
 
     fn splat(&mut self, f: &mut FunctionBuilder<'_>, byte: u8) -> Value {
@@ -1347,14 +1394,24 @@ impl<'a> Lanes<'a> {
                 Lane::xor(f, x, y)
             }
             BlockInst::Prev(a, k) => {
-                if c >= 2 {
-                    // simdjson's `prev<N>`: the chunk before's last `k` bytes, then this chunk's
-                    // first `16 - k`, one `ext`. Its positions are all at least `k`.
+                // simdjson's `prev<N>`: the chunk before's last `k` bytes, then this chunk's first
+                // `16 - k`, one `ext`. The first chunk's chunk before is chunk 0, the 16 bytes
+                // before the block (the previous block's last chunk, simdjson's `prev_input`),
+                // made as any chunk is; before a file they are zeros, read as no bits.
+                if c >= 2 || (c == 1 && lag == 0 && reads_here(self.native, o(a), 0)) {
                     let (back, here) = (self.get_at(f, o(a), c - 1, lag), self.get_at(f, o(a), c, lag));
-                    return self.ext(f, back, here, k);
+                    let v = self.ext(f, back, here, k);
+                    if c == 1
+                        && self.plan.at_zero[o(a)]
+                        && let Some(cut) = self.from(f, c, lag, k)
+                    {
+                        return Lane::and(f, v, cut);
+                    }
+                    return v;
                 }
-                // The first chunk: the chunk before it at this lag would need bytes before the
-                // window, so `a` is made `k` bytes further back instead.
+                // The first chunk of a value read `lag` back, or of one that reads bytes back
+                // itself: its chunk before would need bytes before the window, so `a` is made `k`
+                // bytes further back instead.
                 let v = self.get_at(f, o(a), c, lag + k);
                 // Before the stream a `prev` reads no bits: where `a` may hold on the zeros
                 // before a file, cut this value's positions less than `k` (a first block).

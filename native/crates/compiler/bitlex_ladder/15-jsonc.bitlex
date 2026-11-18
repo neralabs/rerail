@@ -55,11 +55,23 @@ mask last_byte  = ~next(~empty)
 # stream starts after it (decisions 0335, 0389), so no class, token or error has its bytes.
 prefix 0xef 0xbb 0xbf
 
-# A byte a lead byte before it needs to be a continuation; a continuation is one exactly there.
-mask needed     = prev(lead2 | lead3 | lead4, 1) | prev(lead3 | lead4, 2) | prev(lead4, 3)
-error "invalid UTF-8" when never | (needed ^ cont)
+# simdjson's form (`lookup4`): every rule of two bytes is the byte before's class with this
+# byte's, so the compiler makes them one lookup of each (decision 0404):
+#   - a lead byte before a byte that is not a continuation (too short);
+#   - a continuation after none of the lead bytes or continuations, or first (too long);
+#   - the overlong and surrogate pairs, and the code points past 0x10ffff;
+#   - two continuations in a row, exactly where a lead byte 2 or 3 bytes back needs a third or a
+#     fourth (simdjson's `TWO_CONTS` against `must_be_2_3_continuation`).
+class not_cont  = 0x00..0x7f 0xc0..0xff
+class high      = 0x80..0xff
+class lead      = 0xc0..0xff
+class third     = 0xe0..0xff
+class fourth    = 0xf0..0xff
+error "invalid UTF-8" when never
+                         | (prev(lead, 1) & not_cont) | (cont & ~prev(high, 1))
                          | (prev(e0, 1) & below_a0) | (prev(ed, 1) & from_a0)
                          | (prev(f0, 1) & below_90) | (prev(f4, 1) & from_90)
+                         | ((prev(cont, 1) & cont) ^ (prev(third, 2) | prev(fourth, 3)))
 error "UTF-8 cut short at the end" when ((lead2 | lead3 | lead4) & last_byte)
                                       | ((lead3 | lead4) & next(last_byte)) | (lead4 & next(last_byte, 2))
 

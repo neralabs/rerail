@@ -354,10 +354,11 @@ fn a_tokens_end_is_its_gaps_as_the_lasts_extract() {
     }
 }
 
-/// Page 39's item 2: JSON's UTF-8 rules of two bytes (after `0xe0`, `0xed`, `0xf0`, `0xf4`) are
-/// one byte-pair lookup on the CPU, as simdjson's (`native_cpu_pairs`), and the CPU's tier 1
-/// still agrees with the interpreter's: every lead byte near them before every continuation
-/// byte, complete or cut short, across the chunks' and the blocks' edges.
+/// Decisions 0402 and 0404: JSON's UTF-8 rules of two bytes are byte-pair lookups on the CPU, as
+/// simdjson's (`native_cpu_pairs`): the six ORed in the check one pair, `TWO_CONTS` another, on
+/// the same two tables, this byte's a table of high nibbles (one lookup). The CPU's tier 1 still
+/// agrees with the interpreter's: every lead byte before continuation bytes and others, complete
+/// or cut short, continuations first or in runs, across the chunks' and the blocks' edges.
 #[test]
 fn utf8s_two_byte_rules_are_one_pair_lookup() {
     let (name, source) = crate::ladder::steps().into_iter().find(|(n, _)| n.starts_with("14-json")).expect("14-json");
@@ -365,8 +366,11 @@ fn utf8s_two_byte_rules_are_one_pair_lookup() {
     let native = crate::block_native::BlockNative::lower(&c.program.block_programs[0]);
     let (_, stripped) = crate::native_cpu_block::host_stripped(&native).expect("the host strips the mark");
     let fused = crate::native_cpu_pairs::fused(&stripped).expect("the rules are pairs");
-    let pairs: Vec<u8> = fused.insts.iter().filter_map(|i| if let crate::block_native::BlockInst::Pair { bits, .. } = *i { Some(bits) } else { None }).collect();
-    assert_eq!(pairs.iter().map(|b| b.count_ones()).collect::<Vec<_>>(), [4], "{name}: one pair of the four rules: {pairs:?}");
+    let pairs: Vec<(u16, u16, u8)> = fused.insts.iter().filter_map(|i| if let crate::block_native::BlockInst::Pair { before, table, bits } = *i { Some((before, table, bits)) } else { None }).collect();
+    let bits: Vec<u32> = pairs.iter().map(|p| p.2.count_ones()).collect();
+    assert_eq!(bits, [6, 1], "{name}: the six rules, then two continuations: {pairs:?}");
+    assert!(pairs.iter().all(|p| (p.0, p.1) == (pairs[0].0, pairs[0].1)), "{name}: one pair of tables: {pairs:?}");
+    assert_eq!(fused.tables[usize::from(pairs[0].1)].lo, [0xff; 16], "{name}: this byte's table is of high nibbles");
     let made = native.records_made();
     let (mut docs, mut refused) = (0, 0);
     for lead in [0xc2u8, 0xdf, 0xe0, 0xe1, 0xec, 0xed, 0xee, 0xef, 0xf0, 0xf1, 0xf3, 0xf4, 0xf5] {
@@ -377,6 +381,17 @@ fn utf8s_two_byte_rules_are_one_pair_lookup() {
                 doc.extend([lead, next]);
                 doc.extend(std::iter::repeat_n(0x80u8, len - 2));
                 doc.extend(b"\", 1]");
+                // A continuation more, a lead byte for the continuation, and the bytes first in
+                // the file (where the byte before is none).
+                let mut more = doc.clone();
+                more.insert(pad + 4, 0x80);
+                let mut lead_lead = doc.clone();
+                lead_lead[pad + 3] = 0xc3;
+                let first = [&[next, lead][..], b" 1"].concat();
+                for d in [more, lead_lead, first] {
+                    let (compiled, interpreted) = (c.parser.tier1.extract(&d), c.program.block_programs[0].run_files(&[&d]).remove(0));
+                    assert!(crate::ladder::tier1_agrees(&compiled, &interpreted, &made), "{name}: {d:02x?}");
+                }
                 let (compiled, interpreted) = (c.parser.tier1.extract(&doc), c.program.block_programs[0].run_files(&[&doc]).remove(0));
                 assert!(crate::ladder::tier1_agrees(&compiled, &interpreted, &made), "{name}: {doc:02x?}");
                 refused += usize::from(interpreted.totals.iter().any(|&t| t != 0));
@@ -385,4 +400,48 @@ fn utf8s_two_byte_rules_are_one_pair_lookup() {
         }
     }
     assert!(refused > 0 && refused < docs, "{refused} of {docs} refused");
+}
+
+/// Decision 0404: JSON's UTF-8 check in simdjson's form (`lookup4`, every rule of two bytes a
+/// pair, `TWO_CONTS` against the lead bytes 2 and 3 back) refuses exactly the files its plain
+/// form does: a lead byte needs its continuations, and a continuation needs its lead. Every
+/// string of up to 3 bytes from the classes' edges, and of 4 from fewer, at the file's start
+/// and inside a string.
+#[test]
+fn utf8_in_simdjsons_form_refuses_as_the_plain_form() {
+    let source = std::fs::read_to_string(format!("{DIR}/14-json.bitlex")).expect("14-json");
+    let at = source.find("error \"invalid UTF-8\"").expect("the check");
+    let end = at + source[at..].find("\nerror ").expect("the next error");
+    // The plain form: the lead bytes 1, 2 and 3 back say where a continuation is needed.
+    let plain_check = r#"class lead234   = 0xc2..0xf4
+class lead34    = 0xe0..0xf4
+class lead4only = 0xf0..0xf4
+mask needed     = prev(lead234, 1) | prev(lead34, 2) | prev(lead4only, 3)
+error "invalid UTF-8" when never | (needed ^ cont)
+                         | (prev(e0, 1) & below_a0) | (prev(ed, 1) & from_a0)
+                         | (prev(f0, 1) & below_90) | (prev(f4, 1) & from_90)"#;
+    let plain = format!("{}{plain_check}{}", &source[..at], &source[end..]);
+    let (a, b) = (crate::ladder::compile_step("14-json", &plain), crate::ladder::compile_step("14-json", &source));
+    let (pa, pb) = (&a.program.block_programs[0], &b.program.block_programs[0]);
+    let alphabet = [0x41u8, 0x7f, 0x80, 0x8f, 0x90, 0x9f, 0xa0, 0xbf, 0xc0, 0xc1, 0xc2, 0xdf, 0xe0, 0xe1, 0xec, 0xed, 0xee, 0xef, 0xf0, 0xf1, 0xf3, 0xf4, 0xf5, 0xff];
+    let (mut n, mut refused, mut differ) = (0usize, 0usize, Vec::new());
+    let mut seqs: Vec<Vec<u8>> = vec![Vec::new()];
+    let small = [0x41u8, 0x80, 0xa0, 0xbf, 0xc2, 0xe0, 0xed, 0xf0, 0xf4];
+    for round in 0..4 {
+        let from: &[u8] = if round < 3 { &alphabet } else { &small };
+        let base: Vec<Vec<u8>> = if round < 3 { seqs.clone() } else { seqs.iter().filter(|s| s.iter().all(|c| small.contains(c))).cloned().collect() };
+        seqs = base.iter().flat_map(|s| from.iter().map(move |&c| [s.clone(), vec![c]].concat())).collect();
+        for s in &seqs {
+            for doc in [s.clone(), [b"\"".to_vec(), s.clone(), b"\"".to_vec()].concat()] {
+                let (x, y) = (pa.run_files(&[&doc]).remove(0), pb.run_files(&[&doc]).remove(0));
+                let (rx, ry) = (x.totals.iter().any(|&t| t != 0), y.totals.iter().any(|&t| t != 0));
+                n += 1;
+                refused += usize::from(rx);
+                if rx != ry && differ.len() < 10 {
+                    differ.push(format!("{doc:02x?}: old {rx} new {ry}"));
+                }
+            }
+        }
+    }
+    assert!(differ.is_empty() && refused > 0 && refused < n, "{n} documents, {refused} refused; differ: {differ:#?}");
 }

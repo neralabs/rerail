@@ -226,8 +226,9 @@ it's profitable". The spike ran in two steps:
    carried between blocks, kept right on the ASCII path, the edge part, the general body and
    the regions, and 1 to 3 registers held across the loop.
 
-Neither is profitable here, so neither is kept. Step 1 is a patch outside the tree
-(`tmp/spike-chunk0-prevs.patch`).
+Neither is profitable here on its own count. The user rejected that criterion: a step that
+puts simdjson's structure in place is kept even at a flat count. Step 1 is now 0403, and the
+carry is the step it prepares.
 
 **Where the profit is.** A steady chunk of the check is 29 instructions against simdjson's
 17, about 48 a block:
@@ -240,6 +241,24 @@ Neither is profitable here, so neither is kept. Step 1 is a patch outside the tr
   raw bytes.
 
 Folding the lag-1 rules into the pair's table is the next simdjson step that pays.
+
+### simdjson's lookup form (0404)
+
+All three are done: the grammars state the check as simdjson's `lookup4` rules, every rule of
+two bytes is a bit of one pair of tables, this byte's table is one `tbl` of high nibbles, and
+lags 2 and 3 are `prev2 ≥ 0xe0 | prev3 ≥ 0xf0` against `TWO_CONTS`.
+
+| `14-json` | Hot loop | Stack accesses | UTF-8 stretch | Steady chunk |
+|---|---:|---:|---:|---:|
+| After 0402 | 574 | 1 | 153 | 29 |
+| Chunk 0 (0403) and the lookup form (0404) | **549** | **1** | **128** | **25** |
+
+JSONC: 784 / 11 → 735 / 8. simdjson's stretch is 72 and its chunk about 17. Left:
+
+- the bytes that never start a sequence, two products no pair bit holds, on a lookup of their
+  own;
+- each rule tested to a 0 or 1 lane, where simdjson keeps the ANDed bytes;
+- the carried previous block.
 
 ## Reproducing
 
