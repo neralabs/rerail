@@ -362,26 +362,90 @@ fn another_process_commit_is_seen_by_catching_up() {
     assert_eq!(store.intern_atoms(&["r", "p"]).unwrap(), [4, 2]);
 }
 
-/// A commit past a block's room starts the next, twice as large; every atom reads back in a new process, and none is
-/// left on this one's heap.
+/// The store's rows: each block's file name, first id and end.
+fn blocks(path: &std::path::Path) -> Vec<(String, u32, u32)> {
+    super::stored::rows(&rusqlite::Connection::open(path).unwrap()).unwrap().into_iter().map(|r| (r.name, r.first, r.upto)).collect()
+}
+
+/// A commit past a block's room starts the next, twice as large; past four deltas they are rolled into one base (A5).
+/// Every atom reads back in a new process, and none is left on this one's heap.
 #[test]
 fn a_commit_past_a_blocks_room_starts_the_next() {
     let path = path("next-block");
     let store = ContentStore::open(&path).unwrap();
+    let cap = super::stored::FIRST_CAP;
+    let first: Vec<String> = (0..=cap).map(|i| format!("v{i}")).collect();
+    store.intern_atoms(&first.iter().map(String::as_str).collect::<Vec<_>>()).unwrap();
+    store.immediate_transaction(|_| Ok(())).unwrap();
+    assert_eq!(blocks(&path), [("d1.blk".to_owned(), 1, 1 + cap), ("d2.blk".to_owned(), 1 + cap, 2 + cap)]);
     let words: Vec<String> = (0..70_000).map(|i| format!("w{i}")).collect();
     let ids = store.intern_atoms(&words.iter().map(String::as_str).collect::<Vec<_>>()).unwrap();
     store.immediate_transaction(|_| Ok(())).unwrap();
     assert!(!store.atoms.pending());
     assert_eq!(store.atoms.state.read().atoms.buf.capacity(), 0, "the heap gave its stored bytes up");
-    let connection = rusqlite::Connection::open(&path).unwrap();
-    let rows = super::stored::rows(&connection).unwrap();
-    assert_eq!(rows.iter().map(|r| (r.first, r.upto)).collect::<Vec<_>>(), [(1, 1 + (1 << 16)), (1 + (1 << 16), 70_001)]);
+    let rows = blocks(&path);
+    assert!(rows.len() == 1 && rows[0].0.starts_with('b') && (rows[0].1, rows[0].2) == (1, 70_002 + cap), "one base: {rows:?}");
+    for i in [0, 69_999] {
+        assert_eq!(store.atom(&words[i]).unwrap(), Some(ids[i]), "read through the base here");
+    }
     drop(store);
     let copy = elsewhere(&path, "next-block-again");
     let store = ContentStore::open(&copy).unwrap();
-    for i in [0, 65_535, 65_536, 69_999] {
+    for i in [0, 15, 16, 65_536, 69_999] {
         assert_eq!(store.atom(&words[i]).unwrap(), Some(ids[i]));
         assert_eq!(store.atom_value(ids[i]).unwrap().as_deref(), Some(words[i].as_str()));
+    }
+    assert_eq!(store.atom_value(cap + 1).unwrap().as_deref(), Some(first[cap as usize].as_str()));
+}
+
+/// A-R7: deltas rolled into a base read the same ids, here and in a new process; a view of the old files mapped before
+/// still reads them after they are removed; the next write removes them.
+#[test]
+fn a_roll_up_keeps_every_id() {
+    let path = path("roll-up");
+    let store = ContentStore::open(&path).unwrap();
+    let mut words: Vec<String> = Vec::new();
+    let mut ids: Vec<u32> = Vec::new();
+    let mut batch = |n: usize, store: &ContentStore| {
+        let more: Vec<String> = (words.len()..words.len() + n).map(|i| format!("r{i}")).collect();
+        ids.extend(store.intern_atoms(&more.iter().map(String::as_str).collect::<Vec<_>>()).unwrap());
+        store.flush_atoms().unwrap();
+        words.extend(more);
+    };
+    batch(40, &store);
+    assert!(blocks(&path).iter().all(|(name, _, _)| name.starts_with('d')), "deltas yet");
+    // A reader of the deltas as they are now.
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    let rows = super::stored::rows(&connection).unwrap();
+    let mut old = super::stored::Stored::new(Some(&path));
+    old.learn(&rows);
+    old.view_to(super::stored::end_of(&rows)).unwrap();
+    for _ in 0..8 {
+        batch(60, &store);
+    }
+    let rows = blocks(&path);
+    assert!(rows[0].0.starts_with('b') && rows.len() <= 5, "rolled up: {rows:?}");
+    // The next write after a roll-up's commit removes what it replaced (a write that is a roll-up itself leaves them).
+    for _ in 0..3 {
+        batch(1, &store);
+        if blocks(&path).last().is_some_and(|(name, _, _)| name.starts_with('d')) {
+            break;
+        }
+    }
+    let named: std::collections::BTreeSet<String> = blocks(&path).into_iter().map(|(name, _, _)| name).collect();
+    let files: std::collections::BTreeSet<String> = std::fs::read_dir(super::stored::atoms_dir(&path)).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    assert_eq!(files, named, "only the blocks the rows name are left");
+    for (w, &id) in words.iter().zip(&ids).take(40) {
+        assert_eq!(old.str(id), Some(w.as_str()), "the old files still read");
+    }
+    for (w, &id) in words.iter().zip(&ids) {
+        assert_eq!(store.atom(w).unwrap(), Some(id));
+    }
+    drop(store);
+    let copy = elsewhere(&path, "roll-up-again");
+    let store = ContentStore::open(&copy).unwrap();
+    for (w, &id) in words.iter().zip(&ids) {
+        assert_eq!(store.atom(w).unwrap(), Some(id), "{w} in a new process");
     }
 }
 

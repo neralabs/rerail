@@ -1018,15 +1018,33 @@ impl Atoms {
         f(reader.as_ref().expect("opened above")).map(Some)
     }
 
+    /// The store's blocks as its rows name them now, read on this process's own connection; `None` when the database
+    /// is not on disk (yet).
+    fn read_rows(&self) -> StoreResult<Option<Vec<stored::Row>>> {
+        let path = self.path.clone();
+        self.with_reader(|connection| {
+            stored::rows(connection).map_err(|error| StoreError::Corrupt(format!("{}: reading atom blocks: {error}", path.as_deref().unwrap_or(Path::new("")).display())))
+        })
+    }
+
+    /// This process's end moved to the store's (`rows`), its blocks read to it. A block the rows named may be gone
+    /// by the time it is mapped (a roll-up committed since, and the next write removed what it replaced): the rows are
+    /// read again, and the blocks they name now mapped.
+    fn advance_reading(&self, mut rows: Vec<stored::Row>) -> StoreResult<()> {
+        for again in (0..3).rev() {
+            match self.state.write().atoms.advance(stored::end_of(&rows) as usize, &rows) {
+                Err(_) if again > 0 => {}
+                done => return done,
+            }
+            let Some(now) = self.read_rows()? else { return Ok(()) };
+            rows = now;
+        }
+        Ok(())
+    }
+
     /// Where the database's ids end: new ids continue from there, its blocks read to it where they lie.
     fn read_end(&self) -> StoreResult<()> {
-        let path = self.path.clone();
-        let Some(rows) = self.with_reader(|connection| {
-            stored::rows(connection).map_err(|error| StoreError::Corrupt(format!("{}: reading atom blocks: {error}", path.as_deref().unwrap_or(Path::new("")).display())))
-        })?
-        else {
-            return Ok(());
-        };
+        let Some(rows) = self.read_rows()? else { return Ok(()) };
         let end = stored::end_of(&rows) as usize;
         if self.forked() {
             return Ok(());
@@ -1036,7 +1054,7 @@ impl Atoms {
         if end > base && pending > 0 && end != self.wrote.load(Ordering::Acquire) {
             return self.fork_reading();
         }
-        self.state.write().atoms.advance(end, &rows)
+        self.advance_reading(rows)
     }
 
     /// Maps every stored atom: for a scan or a range of the `atoms` table. The store's end is read (without the
@@ -1169,17 +1187,13 @@ impl Atoms {
             self.runs.fetch_add(1, Ordering::AcqRel);
         } else if self.runs.fetch_add(1, Ordering::AcqRel) == 0 && !self.leased.load(Ordering::Acquire) && !super::hazards::inside_waves() {
             let _lease = self.lease.lock();
-            let path = self.path.clone();
-            let rows = self.with_reader(|connection| {
-                stored::rows(connection).map_err(|error| StoreError::Corrupt(format!("{}: reading atom blocks: {error}", path.as_deref().unwrap_or(Path::new("")).display())))
-            })?;
-            if let Some(rows) = rows {
+            if let Some(rows) = self.read_rows()? {
                 let end = stored::end_of(&rows) as usize;
                 let (base, pending) = { let s = self.state.read(); (s.atoms.base(), s.atoms.pending().0) };
                 if end > base && end != self.wrote.load(Ordering::Acquire) && pending > 0 && !self.forked() {
                     self.fork_reading()?;
                 } else if pending == 0 && !self.forked() {
-                    self.state.write().atoms.advance(end, &rows)?;
+                    self.advance_reading(rows)?;
                 }
             }
         }

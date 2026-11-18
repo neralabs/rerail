@@ -3,7 +3,7 @@
 Status: decided by the user (2026-11-18: "everything should be in blocks all the time"; "these should be blocks …
 I would prefer memory-mappable files than blobs"). Builds 0266's `Atoms` and `Facts` as what the store keeps.
 Replaces the atoms' segment rows and key (0049, 0111) and the cross part's frames (0104, 0295 §4) as storage.
-Steps 1–2 (atoms) built; 3–4 next; 5–10 (facts) after.
+Steps 1–3 (atoms) built; 4 next; 5–10 (facts) after.
 
 ## Intro
 
@@ -94,6 +94,16 @@ So the lease's read whole (0316's 64 MB share), holding by segment (0111 §2), `
 Under the lease, when the deltas are more than four or hold more atoms than the base, the writer writes a new base
 holding every atom (table sized for all), replaces the rows in one transaction, and removes the old files after the
 commit (a process mapping them keeps its mapping; unlinked files stay readable). Ids never change.
+
+As built (`Stored::roll_up`): the writer is the store's write transaction, the same one that held the appends. It
+reads every id through views of the rows as that transaction has them, and writes `b<seq>.blk` under a making name.
+It freezes the file, renames it into place, then deletes the rows and inserts the base row, all in that transaction.
+The old files are not removed in the roll-up itself: the transaction may still roll back. The next write that is not
+a roll-up removes every file the rows do not name (`sweep`), inside its own write transaction. That covers a committed
+roll-up's deltas, a rolled-back roll-up's base, and a crashed maker's file. The writing process reads through the base
+at once. Another process re-reads the rows when it catches up, and maps what they name. A file named in rows it read
+just before a sweep may already be gone, so a reader retries up to three times with the rows read again
+(`Interner::advance_reading`).
 
 ### A6. Forks (0160, 0170) are unchanged
 
@@ -255,7 +265,8 @@ Facts:
 1. `rerail_blocks::atoms`: `AtomsRoot`, `AtomsW`, `AtomsV`, `AtomRead`; A-R1, A-R2.
 2. The store's atoms on blocks: `atom_blocks`, appending in `write_pending`, mapping in `catch_up`, the `Interner`
    over `Stored`; A-R3–A-R5, A-R8.
-3. The conversion and the roll-up; retiring `atom_segment`, `atom_key`, the holding paths; A-R6, A-R7.
+3. (built) The roll-up and its sweep; A-R7. The conversion became the floor's rise (A7); `atom_segment`, `atom_key`
+   and the holding paths went in step 2.
 4. Measured on ep2: a new process's atoms (0.046 s, 215 MB today), its cold and warm runs.
 5. `rerail_blocks` kept facts: the directory, `KeptW`, `KeptRead` over a base and its delta; F-R1 at the block.
 6. The keep (`retain::write_frames`, `write_input_frames`) writes a space's delta.

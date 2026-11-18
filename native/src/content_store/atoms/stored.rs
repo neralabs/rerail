@@ -13,9 +13,24 @@ use rerail_blocks::atoms::{AtomRead, AtomsV, AtomsW};
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 
-/// The first block's room: atoms, string bytes. Each next block has twice the last's.
+/// The first block's room: atoms, string bytes. Each next block has twice the last's. (The store's own tests start
+/// small, so that their stores grow chains and roll them up.)
+#[cfg(not(test))]
 const FIRST_CAP: u32 = 1 << 16;
+#[cfg(not(test))]
 const FIRST_BYTES: u64 = 4 << 20;
+#[cfg(test)]
+pub(super) const FIRST_CAP: u32 = 16;
+#[cfg(test)]
+const FIRST_BYTES: u64 = 256;
+
+/// More deltas than this make a roll-up due (A5), as do deltas holding more atoms than the base.
+const MOST_DELTAS: usize = 4;
+
+/// Whether a block's file is a base (a roll-up's, frozen) rather than a delta.
+fn is_base(r: &Row) -> bool {
+    r.name.starts_with('b')
+}
 
 /// A block as `atom_blocks` names it: its number, its file's name in the directory, its first id, the end the
 /// store's last commit reached in it, and its maker's tag (the block's own, checked when it is mapped).
@@ -101,19 +116,24 @@ impl Stored {
         Stored { dir: database.map(atoms_dir), known: Vec::new(), views: Vec::new(), end: 1, writer: None }
     }
 
-    /// The blocks are those of `rows` (read on a connection): a block no longer named (rolled up) is unmapped once
-    /// nothing reads it. Its ids are read below `upto` (`view_to`).
+    /// The blocks are those of `rows` (read on a connection). Their ids are mapped by `view_to` or `view_rows`, and a
+    /// block no longer named (rolled up) is unmapped then, once those that hold its ids are mapped: if mapping fails,
+    /// what was read before still reads.
     pub(crate) fn learn(&mut self, rows: &[Row]) {
         self.known = rows.iter().map(|r| Known { seq: r.seq, name: r.name.clone(), first: r.first, tag: r.tag }).collect();
-        self.views.retain(|(seq, v)| rows.iter().any(|r| r.seq == *seq && r.first == v.first()));
     }
 
-    /// Reads every id below `upto`: the blocks that hold them mapped, each up to where the next begins. `upto` is an
-    /// end a commit reached.
+    /// The views of blocks no longer known go.
+    fn forget_unnamed(&mut self) {
+        let known = &self.known;
+        self.views.retain(|(seq, v)| known.iter().any(|k| k.seq == *seq && k.first == v.first()));
+    }
+
+    /// Reads every id below `upto` (at least what it read before): the blocks that hold them mapped, each up to where
+    /// the next begins. `upto` is an end a commit reached. A block known and not mapped yet (a roll-up's base, once its
+    /// deltas' views went with `learn`) is mapped now.
     pub(crate) fn view_to(&mut self, upto: Sym) -> StoreResult<()> {
-        if upto <= self.end {
-            return Ok(());
-        }
+        let upto = upto.max(self.end);
         let Some(dir) = self.dir.clone() else { return Ok(()) };
         for (i, k) in self.known.iter().enumerate() {
             if k.first >= upto {
@@ -130,7 +150,8 @@ impl Stored {
                 }
             }
         }
-        if self.views.last().is_none_or(|(_, v)| v.ids().end < upto) {
+        self.forget_unnamed();
+        if upto > 1 && self.views.last().is_none_or(|(_, v)| v.ids().end < upto) {
             return Err(StoreError::Corrupt(format!("the store's atoms end at {upto}, past its blocks")));
         }
         self.end = upto;
@@ -155,6 +176,7 @@ impl Stored {
                 }
             }
         }
+        self.forget_unnamed();
         self.end = end_of(rows);
         Ok(())
     }
@@ -260,7 +282,54 @@ impl Stored {
         if let Some((seq, w)) = &self.writer {
             Self::seal(connection, *seq, w)?;
         }
+        let rows = self::rows(connection)?;
+        if roll_up_due(&rows) {
+            self.roll_up(connection, &rows)?;
+        } else {
+            sweep(&dir, &rows);
+        }
         Ok(id)
+    }
+
+    /// A5: every atom of `rows` written into one base, frozen (its table sized for them all), in place of them, in
+    /// `connection`'s write transaction. Ids never change. This process reads through the base at once (it holds what
+    /// the blocks did, for every id they held); the old files go at the next write after the commit (`sweep`), and a
+    /// process still mapping one keeps reading it.
+    fn roll_up(&mut self, connection: &Connection, rows: &[Row]) -> StoreResult<()> {
+        let Some(dir) = self.dir.clone() else { return Ok(()) };
+        let end = end_of(rows);
+        // The blocks as this transaction has them, its own appends included.
+        let mut all = Stored { dir: Some(dir.clone()), known: Vec::new(), views: Vec::new(), end: 1, writer: None };
+        all.view_rows(rows)?;
+        let mut bytes = 0u64;
+        for id in 1..end {
+            bytes += all.str(id).ok_or_else(|| StoreError::Corrupt(format!("stored atom {id} is in no block")))?.len() as u64;
+        }
+        let seq = rows.iter().map(|r| r.seq).max().unwrap_or(0) + 1;
+        let (name, tag) = (format!("b{seq}.blk"), new_tag());
+        let made = dir.join(format!("{name}.{tag:016x}.new"));
+        let mut w = AtomsW::create(&made, 1, tag, (end - 1).max(1), bytes.max(1)).map_err(io)?;
+        for id in 1..end {
+            let (s, h) = (all.str(id).expect("read above"), all.hash(id).expect("read above"));
+            if w.append(s, h) != Some(id) {
+                return Err(StoreError::Corrupt(format!("a roll-up's base refused atom {id}")));
+            }
+        }
+        w.freeze().map_err(io)?;
+        std::fs::rename(&made, dir.join(&name)).map_err(io)?;
+        sync_dir(&dir).map_err(io)?;
+        connection.prepare_cached("DELETE FROM main.atom_blocks")?.execute([])?;
+        connection
+            .prepare_cached("INSERT INTO main.atom_blocks(seq, name, first, upto, tag) VALUES (?1, ?2, 1, ?3, ?4)")?
+            .execute(rusqlite::params![seq, name, i64::from(end), tag as i64])?;
+        // Read through the base from now on: the deltas' views go, and the base's covers what they did.
+        let base = Row { seq, name, first: 1, upto: end, tag };
+        let was = self.end;
+        self.learn(std::slice::from_ref(&base));
+        self.end = 1;
+        self.view_to(was)?;
+        self.writer = None;
+        Ok(())
     }
 
     /// A block's appends on the disk, then its row's end moved to them, in the transaction.
@@ -268,6 +337,27 @@ impl Stored {
         w.sync().map_err(io)?;
         connection.prepare_cached("UPDATE main.atom_blocks SET upto = ?1 WHERE seq = ?2")?.execute(rusqlite::params![i64::from(w.end()), seq])?;
         Ok(())
+    }
+}
+
+/// Whether a roll-up is due (A5): more than `MOST_DELTAS` deltas, or deltas holding more atoms than the base.
+fn roll_up_due(rows: &[Row]) -> bool {
+    let base: u64 = rows.iter().filter(|r| is_base(r)).map(|r| u64::from(r.upto - r.first)).sum();
+    let deltas: Vec<&Row> = rows.iter().filter(|r| !is_base(r)).collect();
+    let held: u64 = deltas.iter().map(|r| u64::from(r.upto - r.first)).sum();
+    deltas.len() > MOST_DELTAS || (base > 0 && held > base)
+}
+
+/// Removes the files of `dir` that `rows` (the store's, read in a write transaction) do not name: blocks a committed
+/// roll-up replaced, a rolled-back one's base, a crashed maker's file under its making name. A process still mapping
+/// one keeps reading it (unlinked, never truncated).
+fn sweep(dir: &Path, rows: &[Row]) {
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if !rows.iter().any(|r| r.name == name) {
+            let _ = std::fs::remove_file(e.path());
+        }
     }
 }
 

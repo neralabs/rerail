@@ -4472,3 +4472,13 @@ native join it falls back to the planner's whole-rule order.
   rows. No check compares that pipeline with a tree, so nothing fails; the rows are stale, as Q211's were.
 - **Next**: drop the record of the relations the step drops, as `drop_unread` now does; a debug assert at a
   pipeline's steps that no request relation without rules keeps rows would find every such step.
+
+### Q213. The FSEvents journal answers `Changed` with no paths while the store's whole lib suite runs
+
+- **Found** (2026-11-18, step 3 of 0401, on m3): in one run of `content_store::`, two tests failed together.
+  `a_replay_is_trusted_only_with_its_marker_in_the_history` got `Changed { paths: [] }` for a write made 500 ms
+  before the replay. `the_journal_names_what_changed_since_its_cursor` got the same for `sub/edited.py`. Run alone, both
+  pass three times out of three. Decision 0400 R8 says a `Changed` answer is trusted only with its marker in the
+  history, so an empty `Changed` means the marker check passed on a history that did not yet hold the edit's event.
+- **Next**: find what the marker check reads under load: the cookie's event id compared with the edit's, or the
+  history's flush. Record it in 0400, and add a test that loads the machine while it replays.
