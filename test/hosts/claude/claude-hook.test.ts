@@ -4,7 +4,7 @@ import { createServer as createHttpServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import Database from "better-sqlite3";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { type AdapterDelivery, conflictNote, defaultRerailDatabasePath, type RerailEventLoop, sessionStartNote } from "../../../src/engine/index.js";
 import { claudeHookOutput, handleClaudeEvent } from "../../../src/hosts/claude/claude-hook-adapter.js";
@@ -16,6 +16,21 @@ import { startTestRepository, stopTestRepository } from "../../support/started-r
 import { editSteer, steeredRules } from "../../support/steers.js";
 import { closeNativeTestDaemons, startNativeTestDaemon } from "../../support/native-daemon.js";
 import { testEngineEndpoint } from "../../support/platform/engine-endpoint.js";
+
+/**
+ * The daemon's waits (`daemon-waits.ts`) as the hook reads them, each as it waits: the product's, unless a test sets
+ * its own, as the tests that wait out a busy or silent daemon do.
+ */
+const waits = vi.hoisted(() => ({ probeMs: undefined as number | undefined, busyMs: undefined as number | undefined }));
+vi.mock("../../../src/runtime/daemon/daemon-waits.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../src/runtime/daemon/daemon-waits.js")>("../../../src/runtime/daemon/daemon-waits.js");
+  return {
+    ...actual,
+    get PROBE_TIMEOUT_MS() { return waits.probeMs ?? actual.PROBE_TIMEOUT_MS; },
+    get BUSY_DAEMON_WAIT_MS() { return waits.busyMs ?? actual.BUSY_DAEMON_WAIT_MS; },
+    get HOOK_DAEMON_WAIT_MS() { return (waits.probeMs ?? actual.PROBE_TIMEOUT_MS) + (waits.busyMs ?? actual.BUSY_DAEMON_WAIT_MS); },
+  };
+});
 
 const temporaryDirectory = temporaryDirectories("rerail-claude-hook-");
 
@@ -63,8 +78,20 @@ describe("Claude Code hook without a daemon", () => {
 });
 
 describe("Claude Code hook with a daemon that misses its health probe", () => {
+  // The hook's waits for the daemon, shorter than the product's 2 s probe and 10 s busy wait, in the same order and
+  // with the same 2 s start check (`READ_TIMEOUT_MS`) before them: a hook waits `HOOK_WAIT_MS` from the event's arrival.
+  // The probe stays long enough that hooks waiting in turn would finish a second or more apart.
+  const PROBE_MS = 1_000;
+  const BUSY_MS = 6_000;
+  const HOOK_WAIT_MS = PROBE_MS + BUSY_MS;
   const servers: Server[] = [];
+  beforeEach(() => {
+    waits.probeMs = PROBE_MS;
+    waits.busyMs = BUSY_MS;
+  });
   afterEach(async () => {
+    waits.probeMs = undefined;
+    waits.busyMs = undefined;
     vi.unstubAllEnvs();
     await Promise.all(servers.splice(0).map(server => {
       server.closeAllConnections();
@@ -113,8 +140,9 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
     vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
     vi.stubEnv("RERAIL_AUTOSTART", autostart);
     const daemon = await startNativeTestDaemon(root);
-    // The daemon answers 3 s late, past the first probe's 2 s, as one does while an audit holds its event loop.
-    const front = await slowFront(daemon.url, 3_000);
+    // The daemon answers 2.5 s late, past the start check's 2 s and the first probe's, as one does while an audit holds
+    // its event loop.
+    const front = await slowFront(daemon.url, 2_500);
     await rewriteState(state => ({ ...state, url: front, port: Number(new URL(front).port) }));
     const daemonPath = daemonHookOptions(root, { keepDatabase: false });
     const common = { session_id: "busy-session", cwd: root };
@@ -178,12 +206,12 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
       return performance.now() - started;
     };
     const finished = await Promise.all([toolCall("t1"), toolCall("t2"), toolCall("t3")]);
-    // Each hook gives up on the silent daemon about 12 s after its event arrives. Under the session's lock each would
-    // begin its wait when the one before it gave up, and the three would finish 2 s or more apart.
-    expect(Math.max(...finished) - Math.min(...finished)).toBeLessThan(1_000);
+    // Each hook gives up on the silent daemon `HOOK_WAIT_MS` after its event arrives. Under the session's lock each
+    // would begin its wait when the one before it gave up, and the three would finish a probe or more apart.
+    expect(Math.max(...finished) - Math.min(...finished)).toBeLessThan(PROBE_MS);
   });
 
-  it("gives up on a silent daemon 12 s after the event arrives, the start check's read of it included", { timeout: 60_000 }, async () => {
+  it("gives up on a silent daemon at the hook's wait after the event arrives, the start check's read of it included", { timeout: 60_000 }, async () => {
     const root = await temporaryDirectory();
     startTestRepository(root);
     vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
@@ -195,12 +223,13 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
     await rewriteState(state => ({ ...state, url: front, port: Number(new URL(front).port) }));
     const started = performance.now();
     expect(await runClaudeHook({ ...common, hook_event_name: "PreToolUse", tool_name: "Read", tool_use_id: "t1", tool_input: { file_path: "a.ts" } }, daemonPath)).toEqual({});
-    // The start check waited 2 s for the daemon, then the endpoint lookup waited its own 2 s and 10 s: about 14.3 s.
-    expect(performance.now() - started).toBeLessThan(13_000);
+    // Had the wait begun after the start check, the check would have waited 2 s, then the endpoint lookup its own
+    // `HOOK_WAIT_MS`.
+    expect(performance.now() - started).toBeLessThan(HOOK_WAIT_MS + 1_000);
   });
 
   // RERAIL_AUTOSTART=1 is a person's session, where the start finds the daemon alive and waits for it; 0 starts none.
-  it.each(["1", "0"])("gives up on a silent daemon at a session's start 12 s after the event arrives (RERAIL_AUTOSTART=%s)", { timeout: 60_000 }, async autostart => {
+  it.each(["1", "0"])("gives up on a silent daemon at a session's start at the hook's wait after the event arrives (RERAIL_AUTOSTART=%s)", { timeout: 60_000 }, async autostart => {
     const root = await temporaryDirectory();
     startTestRepository(root);
     vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
@@ -212,9 +241,9 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
     const started = performance.now();
     await expect(runClaudeHook({ session_id: "silent-start", cwd: root, hook_event_name: "SessionStart", source: "startup" }, daemonPath))
       .rejects.toThrow(/is alive but not answering/u);
-    // The start check waited 2 s for the daemon, then the start's lookup waited its own 2 s and 10 s: about 14 s, and
-    // 24 s with RERAIL_AUTOSTART=0, whose lookup waited the 10 s twice.
-    expect(performance.now() - started).toBeLessThan(13_000);
+    // Had the wait begun after the start check, the check would have waited 2 s, then the start's lookup its own
+    // `HOOK_WAIT_MS`, and with RERAIL_AUTOSTART=0 the busy wait twice.
+    expect(performance.now() - started).toBeLessThan(HOOK_WAIT_MS + 1_000);
   });
 });
 
