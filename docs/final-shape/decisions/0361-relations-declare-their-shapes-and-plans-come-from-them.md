@@ -412,3 +412,12 @@ earlier run planned, which are written with the kept plans when the run ends.
 - `a_later_run_reads_the_prepared_plans_an_earlier_one_made`: a run keeps the plans it made by the version's
   identity; a later run of the same program, built again, reads them through the store's rows (loaded 1, computed 0).
 
+**At scale** (2026-11-18, corpus0 x B-now, profiling build, a new store, one M3 at load 50-70): 463 findings,
+d067ec2ebf6f, as before. 2,313 lines took a prepared plan, against 13,279 searched and 4,042 greedy: about one line
+in eight. The run's parts made 7 versions' prepared plans and read 39 back from the store (later runs of the
+process reading what earlier ones kept, Q183). A second run over the same store answered from its stored results in
+2.5 s and planned nothing. So step 5 holds and pays, but run-time planning is still in a cold run's profile: the
+lines it plans are those of rules over AST matches, aggregates and relations with no size. Moving them is sizes
+inferred for more derived relations (unions and recursion keep only `local`) and prepared aggregate rules. (A debug
+build stops before planning at the check after `simplify`: Q180, apart from this step.)
+
