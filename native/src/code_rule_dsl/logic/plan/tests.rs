@@ -2505,6 +2505,32 @@ fn a_kind_bound_by_counted_values_reads_their_nodes() {
     assert!((work - (2.0 + 2.0 * 20.0)).abs() < 1e-6, "work {work}");
 }
 
+/// Q183: a variable an equality binds to a constant joins nothing. `kind($m, $k)` after `$k = 5` shares only `$k`
+/// with what is joined, so the greedy order takes it only once `$m` is joined, not while `text($n, $s)` joins:
+/// `p299_attempt`'s kept greedy order (planned where its text test matched little) read every node of the kind for
+/// each of 15 k texts (1.16 M rows, none kept), the kind priced at 11 a binding against the text's 45. Sized so the
+/// greedy order prices under a search's work and is taken (`search_rows`: 432 rows for 4 joins).
+#[test]
+fn a_variable_bound_to_a_constant_does_not_connect_a_step() {
+    let p = parse(".decl t(s: number)\n.decl kind(n: number, k: number)\n.decl child(p: number, c: number)\n.decl text(n: number, s: number)\n.decl r(m: number)\nr(m) :- t(s), k = 5, kind(m, k), child(m, n), text(n, s).\n.output r\n").unwrap();
+    let mut model = bare_model(&p);
+    model.stats.kfreq = std::sync::Arc::new([("5".to_owned(), 3), ("6".to_owned(), 9_997)].into_iter().collect());
+    model.stats.nodes = 10_000.0;
+    for (rel, rows, cols) in [("t", 2.0, vec![(2.0, 1.0)]), ("kind", 10_000.0, vec![(10_000.0, 1.0), (2.0, 5_000.0)]),
+                              ("child", 10_000.0, vec![(5_000.0, 2.0), (10_000.0, 1.0)]), ("text", 4_500.0, vec![(4_500.0, 1.0), (1_125.0, 4.0)])] {
+        model.stats.card.insert(rel, rows);
+        for (c, (ndv, fan)) in cols.into_iter().enumerate() {
+            model.ndv.insert((rel, c), ndv);
+            model.stats.fan.insert((rel, c), fan);
+        }
+    }
+    let (order, work) = priced_first_rule(&model, &p);
+    let at = |s: &str| order.iter().position(|o| o == s).unwrap_or_else(|| panic!("{s} in {order:?}"));
+    assert_eq!(order[0], "t($s)", "{order:?}");
+    assert!(at("text($n, $s)") < at("kind($m, $k)") && at("child($m, $n)") < at("kind($m, $k)"),
+            "`kind($m, $k)` waits for `$m`, joined through `$s`: {order:?} (work {work})");
+}
+
 /// Decision 0320: a node bound by a field is of a kind as often as the field's children are, and a field read by a
 /// node of a kind yields that kind's children by it. Every child by field 7 is of kind 5 here, a hundredth of the
 /// nodes: the kind's share of the nodes passed one row in a hundred, where every row passes.

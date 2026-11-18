@@ -2387,6 +2387,23 @@ with the default line takes the slow pass.
   `sources.rr` includes `c/includes.rr`). The pair needs t41 built from a worktree at its own commit, its own
   target (no shared target across worktrees), or a t48 built with the hub's chunk changes taken out one at a time
   (47785e475 first).
+- **Hot spots, found without t41 beside** (t41's, t48's and t50's profiles side by side, and a `sample` of t48's
+  chunks): join probes 32.9 s CPU at t41, 41.1 s at t50, over the same planned work (417 M and 404 M units).
+  (1) `p299_attempt`'s kept greedy order was a cross product. After `$k = #k1249` it read `kind($m, $k)` by its
+  kind alone (11 rows a binding priced, 75 read) for each of 15 k texts: 1.16 M rows, none kept. That made `kind`
+  lookups by kind +2.3 s, `text` membership +2.2 s and `child` lookups +0.7 s. The cause: a variable an equality binds
+  to a constant counted as joining its atom to the rest, so the greedy order's "no cross product while a connected
+  step remains" (decision 0038) let it through. t41 priced that step at 4,657 a binding (postings) and so never
+  took it; 6d34fde07's kind frequency priced it at 11. Fixed (this commit): such a variable joins nothing, in the
+  greedy order's connectivity, the search's crossing mask and the cross product's floor. Test:
+  `a_variable_bound_to_a_constant_does_not_connect_a_step` (fails without the fix, as the run did). The 140 planner
+  tests pass.
+  (2) The derived `kind` is now read as a view of the held projection (0353, no copy). A first step `kind($c, K)`
+  reads the same 165 k rows at 142 ns a row against 9 at t41: each lookup walks every document's nodes of the kind
+  (`Facts::of_kind`), then ranks each match (`local_of_node`) and selects its id (`Projected::global`), per row. Its
+  scans and memberships too: 61 against 13 ns a row, 216 against 130. Together about 4 s of CPU. In the sample,
+  view reads (`find_read`, `find_keyed`, `row_at`) are a third of the joins, and the block index's compares
+  (`Run::find`'s `Rows::get` a value) half of `find_at`.
 
 ### Q184. A warm run waits on the journal's cookies far longer than a `stat` of what it trusts would take
 

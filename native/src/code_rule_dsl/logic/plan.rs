@@ -3356,6 +3356,12 @@ impl Model {
             }
         }
         let constant_of = |t: TermRef<'_>| b.constant(t).or_else(|| t.var().and_then(|v| consts.get(&v).cloned()));
+        // Those variables: bound, each is a constant, so it joins nothing. An atom that shares only such a variable
+        // with what is joined is a cross product (Q183: `p299_attempt`'s `kind($m, $k)` after `$k = #k1249` read
+        // every node of the kind for each of 15 k texts, 1.16 M rows for none kept, where `text($n, $t)` joined).
+        let pinned = VarSet::of(consts.keys().copied());
+        let joins_with = |t: TermRef<'_>, bound: &VarSet| matches!(t, TermRef::Var(v) if bound.contains(v) && !pinned.contains(v));
+        let binds_some = |bound: &VarSet| !bound.minus(&pinned).is_empty();
         // var → constant kind, from kind($v, "k") atoms (the kind a constant, or a variable an equality binds to one).
         let mut kinds: HashMap<VarSlot, String> = HashMap::new();
         for l in 0..b.len() {
@@ -3476,7 +3482,7 @@ impl Model {
             // not a property of the join, so it is priced from the relation's own estimate (below). What was
             // observed comes before any rule that estimates: an absence proof from a snapshot was kept over 733,692
             // rows seen (`pfn`'s `pcall__ins`).
-            let crossed = !bound.is_empty() && !args.iter().any(|t| matches!(t, TermRef::Var(v) if bound.contains(*v)));
+            let crossed = binds_some(bound) && !args.iter().any(|t| joins_with(*t, bound));
             // Exact pair statistics measured for a slow line (decision 0203 §3) come first: they were measured on
             // every row, where an observation is of the bindings one order saw.
             if !crossed
@@ -3769,7 +3775,7 @@ impl Model {
             // where the plan was priced is not empty where it is reused. At least one row per binding, so a connected
             // atom of fanout one is never ordered after it.
             let delta_atom = first == Some(i) && b.plain_atom(i).is_some();
-            if !delta_atom && !a.neg() && !bound.is_empty() && !args.iter().any(|t| matches!(t, TermRef::Var(v) if bound.contains(*v))) && rows < 1.0 {
+            if !delta_atom && !a.neg() && binds_some(bound) && !args.iter().any(|t| joins_with(*t, bound)) && rows < 1.0 {
                 rows = 1.0;
                 basis.set("cross product");
             }
@@ -4001,7 +4007,7 @@ impl Model {
         // The greedy order's next step shares a variable with what is joined, while one can (no cross product while a
         // connected step remains, decision 0038). The search prices cross products itself: a cheap one with a tiny
         // relation is T's choice on its programs (`dec1` before `pv`: work 67, not 7,001).
-        let connected = |l: usize, bound: &VarSet| bound.is_empty() || !b.vars(l).is_disjoint(bound);
+        let connected = |l: usize, bound: &VarSet| { let live = bound.minus(&pinned); live.is_empty() || !b.vars(l).is_disjoint(&live) };
         let full_mask: u64 = (0..joins.len()).map(|i| 1u64 << i).sum();
         // A gate (`answers::gate`'s `done_N_ad(t)` before `!N(t)`) holds only keys its rule's own literals give
         // (its `ask` is the body before the negation), so it never yields a row they would not: it is a test of a
@@ -4031,7 +4037,7 @@ impl Model {
         // No cross product priced from a default size (O-join-shape-directives, item 4): while a connected step remains,
         // a step sharing no variable with what is joined is not taken where it or a connected step has no size of its
         // own (`card`'s 1,000 rows): `pv__ins` crossed `pv` with `retparam` before an unsized 15-row `posarg__plus`.
-        let jmask: Vec<u128> = joins.iter().map(|&j| b.vars(j).iter().filter_map(|v| var_ids[v.index()]).fold(0u128, |m, k| if k < 128 { m | 1u128 << k } else { m })).collect();
+        let jmask: Vec<u128> = joins.iter().map(|&j| b.vars(j).iter().filter(|&v| !pinned.contains(v)).filter_map(|v| var_ids[v.index()]).fold(0u128, |m, k| if k < 128 { m | 1u128 << k } else { m })).collect();
         // The joins with no size of their own, read from the statistics once per search.
         let no_size: u64 = (0..joins.len()).filter(|&i| matches!(b.view(joins[i]), Lit::Atom(a) if !a.neg() && { let r = b.rel(a); r != "node" && !self.stats.card.contains_key(r) && !self.stats.lazy.0.contains_key(r) && !self.stats.solving.contains(r) })).fold(0, |m, i| m | 1 << i);
         // The joins of a relation with no rows of its own when priced: unsized, or empty (its rows come later, as a
