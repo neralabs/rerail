@@ -215,8 +215,8 @@ pub(crate) fn option_input(rel: &str) -> bool {
 
 /// An input with one value for the whole run, as a fact has: the run's options (`option_input`), or an earlier
 /// phase's export (`corpus::phases`), bound once its rows are known. A rule reading one joins no document by it.
-pub(crate) fn run_constant(prog: &crate::code_rule_dsl::logic::front::Program, rel: &str) -> bool {
-    option_input(rel) || (crate::code_rule_dsl::logic::plan::corpus::phases::is_phased(rel) && prog.inputs.iter().any(|i| i == rel))
+pub(crate) fn run_constant(prog: &(impl crate::code_rule_dsl::logic::program_image::fields::ProgramFields + ?Sized), rel: &str) -> bool {
+    option_input(rel) || (crate::code_rule_dsl::logic::plan::corpus::phases::is_phased(rel) && prog.input_names().iter().any(|i| i == rel))
 }
 
 /// Whether no rule of `prog` reads a document: every relation a rule reads is derived, a fact, or an input with one
@@ -1030,29 +1030,6 @@ pub fn programs_of(version: std::sync::Arc<crate::code_rule_dsl::logic::program_
     let mut programs = assemble(version, local, constants, split.locations.clone(), split.same_doc.clone())?;
     programs.causes = split.causes.clone();
     Ok(programs)
-}
-
-/// `programs_of` the version of the tree `prog` (the prepared program's, made once: decision 0281's path, step 4).
-/// While the preparation passes split the tree too, a debug build checks the version's split is the tree's.
-pub fn programs_over(prog: &crate::code_rule_dsl::logic::front::Program, version: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<Programs, String> {
-    #[cfg(debug_assertions)]
-    {
-        let split = crate::code_rule_dsl::logic::program_image::manager::analysis::<FileLocal>(&version)?;
-        let (local, constants, locations, same_doc, causes) = found(prog);
-        let (v_local, v_constants) = split.found();
-        assert_eq!(v_local, local, "the version's file-local relations are the tree's");
-        assert_eq!(v_constants, constants, "the version's constant relations are the tree's");
-        assert_eq!(split.locations, locations, "the version's location columns are the tree's");
-        assert_eq!(split.same_doc, same_doc, "the version's same-document columns are the tree's");
-        // Which relations have a cause, not its words: a cause is the first failure a split found, and the tree's
-        // split, made from the last split kept (`split_memo`), finds a relation read already cross-file where a whole
-        // split finds the same rule failing first on its location ("reads cross-file r" against "reads r with no
-        // location"). Both are causes; the run reads them only in its diagnostics.
-        assert_eq!(split.causes.keys().collect::<Vec<_>>(), causes.keys().collect::<Vec<_>>(), "the version's split gives causes for the relations the tree's does");
-    }
-    #[cfg(not(debug_assertions))]
-    let _ = prog;
-    programs_of(version)
 }
 
 /// What `programs` splits `prog` by: its file-local relations, its relations of constants (derived in both parts),

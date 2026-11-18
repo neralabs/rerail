@@ -3795,6 +3795,9 @@ where the tree names `num_text`, `num_source`, `rr_agg75` and the annotation cop
     made over or kept (`rr_combined_tail_run`), and a run that names the entry names the run's sources too
     (`combined::image_sources`), so collection also keeps that run while it keeps the entry.
   The test passes on the m3.
+- **Update** (Typing-support, 2026-11-18, porting 0276 §3): the warm run now fails on new manifests (9 and 8 sources), a SQLite
+  commit and 3 recomputations, not on the observer's store. It fails the same at `874e176cb` (the merge before
+  0276's steps), `7d1444a93` and `d09fd417f`, each tested alone on a farm host, so 0276's ports did not cause it.
 
 ### Q102. (done) `a_new_builds_first_edit_counts_every_file_in_so_its_next_edit_is_steady` fails at final-rerail-shape-rr-align's f7c563513
 
@@ -4435,3 +4438,21 @@ native join it falls back to the planner's whole-rule order.
   rows. No check compares that pipeline with a tree, so nothing fails; the rows are stale, as Q211's were.
 - **Next**: drop the record of the relations the step drops, as `drop_unread` now does; a debug assert at a
   pipeline's steps that no request relation without rules keeps rows would find every such step.
+
+### Q213. (Q103 on Typing-support-final-shape at fcf23b51d) Two rerail-logic corpus tests fail apart from 0276 §3
+
+- **Found** (2026-11-18, running the link's port at 60b53342b):
+  `cache_architecture::every_stored_table_is_a_relations_the_stores_own_or_a_cache_not_yet_moved` names
+  `content_store/schema.rs: guest_keys` as a stored table outside decision 0103; `corpus::tests::
+  git_seeing_no_file_under_the_root_is_kept` panics where its own `git commit` fails on the farm host.
+  Neither reads the code 0276 §3 changed.
+- **Done when**: `guest_keys` is a relation the stores own or a listed cache not yet moved (its check passes), and
+  the git test makes its commit on any host (or says why it cannot), and both pass.
+
+### Q214. (Q104 on Typing-support-final-shape at fcf23b51d) `base_tests::an_unbound_relation_is_named` fails under `RERAIL_PREPARE=parts`
+
+- **Found** (2026-11-18, checking 0276 §3's port of the parts path): under `RERAIL_PREPARE=parts` the test panics
+  `no columns for signed_list`; it passes without the switch, and fails the same before the port (`545109713`).
+  Nothing runs the parts path in the test suite otherwise.
+- **Done when**: a part's link keeps the declaration the test reads, the test passes under the switch, and a test
+  runs the parts path without the switch set by hand.

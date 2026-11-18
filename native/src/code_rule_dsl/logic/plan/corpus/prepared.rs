@@ -267,7 +267,6 @@ pub fn prepared_of(
     source: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
     version: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
     dialect: GrammarDialect,
-    lists: &crate::code_rule_dsl::logic::front::Lists,
 ) -> Result<Prepared, String> {
     let mut by_rel: BTreeMap<String, Vec<(i64, lower::Domain)>> = BTreeMap::new();
     for r in facts.get("prepared_domain").into_iter().flatten() {
@@ -359,7 +358,6 @@ pub fn prepared_of(
             crate::code_rule_dsl::typing::file_local::programs_of(version.clone())?
         }
     };
-    let head = source.header(lists)?;
     // The memo's strata, when the program was kept with them; else the first run makes them.
     let memo_strata = std::sync::OnceLock::new();
     if let Some(part) = facts.get("prepared_memo_part").and_then(|rows| rows.first()) {
@@ -380,7 +378,6 @@ pub fn prepared_of(
     }
     Ok(Prepared {
         source,
-        head,
         vocabulary: Arc::new(vocabulary),
         // Its stored image alone: the tree read is the split's, made above, and dropped.
         lowered: lower::Lowered { version, maint: None, domains, ops, dialect },
@@ -498,7 +495,7 @@ pub(super) fn lookup(store: &ContentStore, source: Option<SourceId>, dialect: Gr
         }
         None => return Ok(None),
     };
-    let got = prepared_of(&facts, source, version, dialect, lists);
+    let got = prepared_of(&facts, source, version, dialect);
     if std::env::var_os("RERAIL_PREPARED_TRACE").is_some() {
         eprintln!("RERAIL_PREPARED_TRACE lookup ({}): {:.1} kB of facts; read {:.3} s, to a prepared program {:.3} s{}",
             super::phases::current().unwrap_or_else(|| "main".into()), entry.len() as f64 / 1e3, read.as_secs_f64(), at.elapsed().as_secs_f64(),

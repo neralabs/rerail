@@ -7,9 +7,6 @@
 //! relation is its `RelId`, a variable its `Slot`, and the last split is the analysis of the edit's input, carried to
 //! its output by the manager, which hands `maintain` the edit. The fixpoints, and the questions they ask of a rule,
 //! are the tree's, one for one.
-//!
-//! While the tree's split runs too (its passes are not yet on versions), a debug build checks the two agree
-//! (`file_local::programs_over`).
 
 use super::{CHUNK_VALUES, document_column, option_input};
 use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};

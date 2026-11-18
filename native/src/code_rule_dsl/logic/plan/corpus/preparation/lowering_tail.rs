@@ -6,6 +6,7 @@ use crate::code_rule_dsl::logic::plan::body::{Body, VarSet, lit_vars};
 use crate::code_rule_dsl::logic::program_image::build::T;
 use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
 use crate::code_rule_dsl::logic::program_image::{Lit as L, RuleId, Slot, TermRef, Version};
+use crate::code_rule_dsl::logic::program_image::fields::{FieldsMut, ProgramFields};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// One round of `widen_cyclic_contexts` (see there): each context relation's rule in a component a negation or an
@@ -34,8 +35,7 @@ impl ProgramPass for WidenCyclicContexts {
         if sccs.is_empty() {
             return Ok(());
         }
-        let header = v.header(&Default::default())?;
-        let node_declared = header.decls.contains_key("node");
+        let node_declared = v.declares("node");
         let mut widened: BTreeMap<RuleId, Widened> = BTreeMap::new();
         for scc in &sccs {
             for rule in v.rules() {
@@ -83,13 +83,13 @@ impl ProgramPass for WidenCyclicContexts {
                     }
                 }
                 // The head's variables by name (the tree's `BTreeSet<String>`), each with its column's type.
-                let cols = header.decls.get(head);
+                let cols = v.columns_of(head);
                 let mut types: BTreeMap<Slot, &str> = BTreeMap::new();
                 let mut head_vars: BTreeMap<String, Slot> = BTreeMap::new();
                 for (k, t) in rule.head().args().enumerate() {
                     if let Some(s) = t.var() {
-                        if let Some((_, ty)) = cols.and_then(|c| c.get(k)) {
-                            types.insert(s, ty.as_ref());
+                        if let Some((_, ty)) = cols.as_ref().and_then(|c| c.get(k)) {
+                            types.insert(s, ty.as_str());
                         }
                     }
                     let mut vs = VarSet::new();
@@ -208,20 +208,25 @@ pub struct FactsOnce;
 impl ProgramPass for FactsOnce {
     const NAME: &'static str = "each fact once";
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
-        let v = cx.v();
-        let was = v.header(&Default::default())?;
-        let mut head = was.clone();
-        for rows in head.facts.values_mut() {
+        let v: &Version = cx.v();
+        let mut once = Vec::new();
+        for rel in ProgramFields::fact_names(v) {
+            let rows = ProgramFields::fact_rows(v, &rel);
             let mut kept: Vec<crate::code_rule_dsl::logic::front::List<crate::code_rule_dsl::logic::front::Value>> = Vec::with_capacity(rows.len());
-            for row in rows.drain(..) {
-                if !kept.contains(&row) {
-                    kept.push(row);
+            for row in &rows {
+                if !kept.contains(row) {
+                    kept.push(row.clone());
                 }
             }
-            *rows = kept;
+            if kept.len() != rows.len() {
+                once.push((rel, kept));
+            }
         }
-        if head.facts != was.facts {
-            w.on()?.set_header(&was, &head);
+        if !once.is_empty() {
+            let b = w.on()?;
+            for (rel, rows) in &once {
+                b.set_facts(rel, rows);
+            }
         }
         Ok(())
     }
@@ -242,13 +247,10 @@ impl ProgramPass for Unit {
         if lone.is_empty() {
             return Ok(());
         }
-        let was = v.header(&Default::default())?;
-        let mut head = was.clone();
-        head.decls.insert(UNIT.to_owned().into(), [("x".into(), "int".into())].into());
-        head.facts.insert(UNIT.to_owned(), vec![[crate::code_rule_dsl::logic::front::Value::Int(0)].into()]);
         let input = std::sync::Arc::clone(w.input());
         let b = w.derive()?;
-        b.set_header(&was, &head);
+        b.declare(UNIT, &[("x", "int")]);
+        b.set_facts(UNIT, &[[crate::code_rule_dsl::logic::front::Value::Int(0)].into()]);
         for rule in input.rules() {
             if !lone.contains(&rule.id()) {
                 b.keep(&input, rule);
@@ -468,7 +470,7 @@ impl ProgramPass for AggregateDemand {
         use crate::code_rule_dsl::logic::rr::aggregate_demand::{Reach, depends, full_checks};
         let input = std::sync::Arc::clone(w.input());
         let v: &Version = &input;
-        let was = v.header(&Default::default())?;
+        let natives = v.native_map()?;
         let about = cx.get::<crate::code_rule_dsl::logic::program_image::About>()?;
         let mut known: Option<crate::code_rule_dsl::logic::front::Edges> = analyses::strata(v, &about).ok().map(|_| analyses::edges_by_name(v, &about));
         let mut names: BTreeSet<String> = BTreeSet::new();
@@ -491,7 +493,7 @@ impl ProgramPass for AggregateDemand {
             });
             deps.entry(v.rel_name(r.head().rel()).to_owned()).or_default().extend(reads);
         }
-        for (name, native) in &was.natives {
+        for (name, native) in &natives {
             deps.entry(name.clone()).or_default().extend(native.reads().into_iter().map(str::to_owned));
         }
         let reach = Reach::default();
@@ -518,10 +520,9 @@ impl ProgramPass for AggregateDemand {
             let rule = v.rule(r).expect("a rule of the input");
             p.prefix.get(&r).map(|_| Item::Placed(r)).into_iter().chain(rule.body().map(|l| Item::Own(r, l.node()))).collect()
         };
-        let mut decls = was.decls.clone();
         for name in names.iter() {
             let demand = format!("rr_demand_agg_{name}");
-            if was.outputs.contains(name) || was.inputs.contains(name) || was.natives.contains_key(name.as_str()) || was.facts.contains_key(name.as_str()) || decls.contains_key(demand.as_str()) {
+            if v.has_output(name) || v.has_input(name) || natives.contains_key(name.as_str()) || ProgramFields::states_facts(v, name) || v.declares(&demand) || p.decls.iter().any(|(d, _)| *d == demand) {
                 continue;
             }
             let mut mask: Option<Vec<usize>> = None;
@@ -584,17 +585,17 @@ impl ProgramPass for AggregateDemand {
             let guard_rels: BTreeSet<String> = made.iter().flat_map(|d| d.body.iter()).filter_map(|&i| AggregateDemand::rel(v, &p, i)).filter(|(_, _, agg)| !agg).map(|(rel, _, _)| rel.to_owned()).collect();
             let closes = known.as_ref().is_none_or(|edges| guard_rels.iter().any(|g| depends(edges, g, name))) || full_checks();
             // Placed: the demand declared, read first by the helper's rules, made by its demand rules.
-            let decl: Vec<(String, String)> = positions.iter().map(|&k| { let (c, t) = &decls[name.as_str()][k]; (c.to_string(), t.to_string()) }).collect();
+            let cols = v.columns_of(name).ok_or_else(|| format!("{name}: an aggregate's helper the program does not declare"))?;
+            let decl: Vec<(String, String)> = positions.iter().map(|&k| cols[k].clone()).collect();
             let makers: Vec<RuleId> = v.rel(name).map(|rel| v.heads(rel).map(|r| r.id()).collect()).unwrap_or_default();
             let first = p.demands.len();
-            decls.insert(demand.clone().into(), decl.iter().map(|(c, t)| (c.as_str().into(), t.as_str().into())).collect());
             p.decls.push((demand.clone(), decl));
             for &m in &makers {
                 p.prefix.insert(m, (demand.clone(), positions.clone()));
             }
             p.demands.extend(made);
             if closes {
-                let candidate = placed_version(&input, &was, &p)?;
+                let candidate = placed_version(&input, &p)?;
                 let about = crate::code_rule_dsl::logic::program_image::About::of(&candidate);
                 match analyses::strata(&candidate, &about) {
                     Ok(_) => known = Some(analyses::edges_by_name(&candidate, &about)),
@@ -605,7 +606,6 @@ impl ProgramPass for AggregateDemand {
                             p.prefix.remove(m);
                         }
                         p.decls.pop();
-                        decls.remove(demand.as_str());
                         continue;
                     }
                 }
@@ -655,13 +655,9 @@ impl ProgramPass for AggregateDemand {
         if p.prefix.is_empty() && p.demands.is_empty() && anti.is_empty() {
             return Ok(());
         }
-        let mut head = was.clone();
-        for (d, cols) in &p.decls {
-            head.decls.insert(d.clone().into(), cols.iter().map(|(c, t)| (c.as_str().into(), t.as_str().into())).collect());
-        }
         let none = (BTreeSet::new(), BTreeSet::new());
         let b = w.derive()?;
-        b.set_header(&was, &head);
+        declare_placed(b, &p);
         for r in input.rules() {
             let (a, g) = anti.get(&r.id()).unwrap_or(&none);
             if !p.prefix.contains_key(&r.id()) && a.is_empty() {
@@ -679,13 +675,9 @@ impl ProgramPass for AggregateDemand {
 
 /// The program with what `p` places so far, for stratifying a candidate: an overlay of `input`, its helpers' rules
 /// replaced by their placed forms and the demand rules added (the order is not the strata's concern).
-fn placed_version(input: &std::sync::Arc<Version>, was: &crate::code_rule_dsl::logic::front::Program, p: &Placement) -> Result<std::sync::Arc<Version>, String> {
-    let mut head = was.clone();
-    for (d, cols) in &p.decls {
-        head.decls.insert(d.clone().into(), cols.iter().map(|(c, t)| (c.as_str().into(), t.as_str().into())).collect());
-    }
+fn placed_version(input: &std::sync::Arc<Version>, p: &Placement) -> Result<std::sync::Arc<Version>, String> {
     let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(input);
-    b.set_header(was, &head);
+    declare_placed(&mut b, p);
     let none = BTreeSet::new();
     for &r in p.prefix.keys() {
         b.remove(r);
@@ -695,6 +687,14 @@ fn placed_version(input: &std::sync::Arc<Version>, was: &crate::code_rule_dsl::l
         write_demand(&mut b, input, p, d)?;
     }
     b.finish_overlay()
+}
+
+/// The demand relations `p` places, declared.
+fn declare_placed(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>, p: &Placement) {
+    for (d, cols) in &p.decls {
+        let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
+        b.declare(d, &pairs);
+    }
 }
 
 /// `front::order_nodes` on the version (see there): under node ids per definition, two nodes compared by their
@@ -721,10 +721,9 @@ impl ProgramPass for OrderNodes {
             return Ok(());
         }
         let v = cx.v();
-        let was = v.header(&Default::default())?;
         let typed = |a: AtomRef<'_>, nodes: &mut BTreeSet<Slot>| {
-            let cols = was.decls.get(v.rel_name(a.rel())).map_or(&[][..], |c| c.as_slice());
-            for (t, (_, ty)) in a.args().zip(cols) {
+            let cols = v.columns_of(v.rel_name(a.rel())).unwrap_or_default();
+            for (t, (_, ty)) in a.args().zip(&cols) {
                 if let TermRef::Var(s) = t
                     && ty == "node"
                 {
@@ -811,8 +810,8 @@ impl ProgramPass for OrderNodes {
         }
         let node_order = crate::code_rule_dsl::logic::front::NODE_ORDER_REL;
         let ord = |k: usize| format!("rr_ord{k}");
-        let mut head = was.clone();
         let input = std::sync::Arc::clone(w.input());
+        let mut declared: Vec<(String, Vec<(String, String)>)> = Vec::new();
         // The helpers' declarations, in the order they are made.
         let mut made: Vec<(RuleId, u32, usize, Vec<Slot>, usize)> = Vec::new();
         for (id, plan) in &plans {
@@ -825,7 +824,7 @@ impl ProgramPass for OrderNodes {
         made.sort_by_key(|m| m.2);
         for (id, lit, helper, _, _) in &made {
             let L::Agg { atom, over: Some(o), .. } = lit_at(&input, *id, *lit).view() else { return Err("an ordered aggregate".into()) };
-            let cols = was.decls.get(input.rel_name(atom.rel())).cloned().unwrap_or_default();
+            let cols = input.columns_of(input.rel_name(atom.rel())).unwrap_or_default();
             let mut seen: Vec<Slot> = Vec::new();
             let mut decl: Vec<(String, String)> = Vec::new();
             for (i, t) in atom.args().enumerate() {
@@ -838,15 +837,16 @@ impl ProgramPass for OrderNodes {
                 }
             }
             decl.push(("k".to_owned(), "int".to_owned()));
-            head.decls.insert(format!("rr_ordered{helper}").into(), decl.iter().map(|(c, t)| (c.as_str().into(), t.as_str().into())).collect());
-        }
-        head.decls.entry(node_order.to_owned().into()).or_insert_with(|| [("n".into(), "node".into()), ("k".into(), "int".into())].into());
-        if !head.inputs.iter().any(|i| i == node_order) {
-            head.inputs.push(node_order.to_owned());
+            declared.push((format!("rr_ordered{helper}"), decl));
         }
         let names: Vec<String> = (0..helpers).map(|h| format!("rr_ordered{h}")).collect();
         let b = w.derive()?;
-        b.set_header(&was, &head);
+        for (rel, decl) in &declared {
+            let pairs: Vec<(&str, &str)> = decl.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
+            b.declare(rel, &pairs);
+        }
+        b.declare_absent(node_order, &[("n", "node"), ("k", "int")]);
+        b.add_input(node_order);
         use crate::code_rule_dsl::logic::program_image::build::t_of;
         for r in input.rules() {
             let Some(plan) = plans.get(&r.id()) else {
@@ -898,20 +898,22 @@ impl ProgramPass for DeclareAxes {
     const NAME: &'static str = "declare the tree axes read";
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let v = cx.v();
-        let was = v.header(&Default::default())?;
-        let mut head = was.clone();
+        let mut axes: Vec<&str> = Vec::new();
         for r in v.rules() {
             for l in r.body() {
                 let (L::Atom(a) | L::Agg { atom: a, .. }) = l.view() else { continue };
                 let rel = v.rel_name(a.rel());
-                if crate::code_rule_dsl::logic::front::is_axis(rel) && !head.decls.contains_key(rel) {
-                    head.decls.insert(rel.to_owned().into(), [("n".into(), "node".into()), ("a".into(), "node".into())].into());
-                    head.inputs.push(rel.to_owned());
+                if crate::code_rule_dsl::logic::front::is_axis(rel) && !v.declares(rel) && !axes.contains(&rel) {
+                    axes.push(rel);
                 }
             }
         }
-        if head.decls.len() != was.decls.len() {
-            w.on()?.set_header(&was, &head);
+        if !axes.is_empty() {
+            let b = w.on()?;
+            for rel in axes {
+                b.declare(rel, &[("n", "node"), ("a", "node")]);
+                b.add_input(rel);
+            }
         }
         Ok(())
     }
@@ -938,21 +940,10 @@ impl crate::code_rule_dsl::logic::program_image::build::Rewrite for Unit1<'_> {
 impl ProgramPass for BooleanRelations {
     const NAME: &'static str = "nullary relations as sets of the unit";
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
-        let v = cx.v();
-        let was = v.header(&Default::default())?;
-        let names: BTreeSet<String> = was.decls.iter().filter(|(_, cols)| cols.is_empty()).map(|(name, _)| name.to_string()).collect();
+        let v: &Version = cx.v();
+        let names: BTreeSet<String> = v.decls().into_iter().filter(|d| d.cols().next().is_none()).map(|d| v.text(d.name()).to_owned()).collect();
         if names.is_empty() {
             return Ok(());
-        }
-        let mut head = was.clone();
-        head.nullary.extend(names.iter().cloned());
-        for name in &names {
-            head.decls.get_mut(name.as_str()).expect("a declared relation").push(("rr_unit".into(), "int".into()));
-            if let Some(rows) = head.facts.get_mut(name.as_str()) {
-                for row in rows {
-                    row.push(crate::code_rule_dsl::logic::front::Value::Int(1));
-                }
-            }
         }
         let of = |a: crate::code_rule_dsl::logic::program_image::AtomRef<'_>| names.contains(v.rel_name(a.rel())) && a.args().next().is_none();
         let touched: BTreeSet<RuleId> = v
@@ -961,8 +952,19 @@ impl ProgramPass for BooleanRelations {
             .map(|r| r.id())
             .collect();
         let input = std::sync::Arc::clone(w.input());
+        let mut nullary = v.nullary_names()?;
+        nullary.extend(names.iter().cloned());
+        let had: Vec<(String, Vec<crate::code_rule_dsl::logic::front::List<crate::code_rule_dsl::logic::front::Value>>)> =
+            names.iter().filter(|n| ProgramFields::states_facts(v, n)).map(|n| (n.clone(), ProgramFields::fact_rows(v, n))).collect();
         let b = w.derive()?;
-        b.set_header(&was, &head);
+        b.set_field(crate::code_rule_dsl::logic::program_facts::Field::Nullary(&nullary));
+        for name in &names {
+            b.declare(name, &[("rr_unit", "int")]);
+        }
+        for (name, rows) in &had {
+            let rows: Vec<_> = rows.iter().map(|row| row.iter().cloned().chain([crate::code_rule_dsl::logic::front::Value::Int(1)]).collect::<Vec<_>>().into()).collect();
+            b.set_facts(name, &rows);
+        }
         for r in input.rules() {
             if touched.contains(&r.id()) {
                 b.rewrite(&input, r, &mut Unit1 { v: &input, names: &names }).finish()?;
@@ -982,14 +984,16 @@ impl ProgramPass for ScopeGlobs {
     const NAME: &'static str = "the scope's globs";
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         use crate::code_rule_dsl::logic::rr::lower::{scope_globs, scope_text_globs};
-        let was = cx.v().header(&Default::default())?;
-        let mut head = was.clone();
-        head.text_globs = scope_text_globs(&head.settings);
-        if head.doc_scopes.is_none() {
-            head.doc_scopes = scope_globs(&head.settings).map(|g| vec![g]);
+        let v = cx.v();
+        let settings = v.settings()?;
+        let (was_globs, was_scopes) = (v.text_globs()?, v.doc_scopes()?);
+        let globs = scope_text_globs(&settings);
+        let scopes = was_scopes.clone().or_else(|| scope_globs(&settings).map(|g| vec![g]));
+        if globs != was_globs {
+            w.on()?.set_field(crate::code_rule_dsl::logic::program_facts::Field::TextGlobs(&globs));
         }
-        if head.text_globs != was.text_globs || head.doc_scopes != was.doc_scopes {
-            w.on()?.set_header(&was, &head);
+        if scopes != was_scopes {
+            w.on()?.set_field(crate::code_rule_dsl::logic::program_facts::Field::DocScopes(scopes.as_deref()));
         }
         Ok(())
     }
@@ -1003,13 +1007,13 @@ pub struct KindSets {
 }
 
 /// `lower::kinds_of` on the version, rules gone by head left out.
-fn kinds_of(v: &Version, head: &crate::code_rule_dsl::logic::front::Program, gone: &BTreeSet<String>, set: &str, seen: &mut BTreeSet<String>) -> Option<Vec<String>> {
+fn kinds_of(v: &Version, head: &(impl ProgramFields + ?Sized), gone: &BTreeSet<String>, set: &str, seen: &mut BTreeSet<String>) -> Option<Vec<String>> {
     use crate::code_rule_dsl::logic::front::Value;
-    if !seen.insert(set.to_owned()) || head.inputs.iter().any(|i| i == set) || head.decls.get(set).is_some_and(|c| c.len() != 1) {
+    if !seen.insert(set.to_owned()) || head.input_names().iter().any(|i| i == set) || head.columns_of(set).is_some_and(|c| c.len() != 1) {
         return None;
     }
     let mut kinds: Vec<String> = Vec::new();
-    for row in head.facts.get(set).into_iter().flatten() {
+    for row in head.fact_rows(set) {
         let [Value::Str(k)] = row.as_slice() else { return None };
         kinds.push(k.to_string());
     }
@@ -1045,31 +1049,33 @@ impl ProgramPass for KindSets {
     fn settings(&self) -> Vec<u8> {
         self.sets.iter().cloned().collect::<Vec<_>>().join("\n").into_bytes()
     }
-    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+    fn run(&mut self, _cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         use crate::code_rule_dsl::logic::front::{Error, axis};
-        let v = cx.v();
-        let was = v.header(&Default::default())?;
-        let mut head = was.clone();
+        let input = std::sync::Arc::clone(w.input());
+        let v: &Version = &input;
+        // The fields' edit, staged (read through as it goes) and stated on the derivation at the end.
+        let mut head = crate::code_rule_dsl::logic::program_image::fields::Edit::on(&input);
+        let mut kindsets = v.kindset_map()?;
+        let was_kindsets = kindsets.clone();
         let mut gone: BTreeSet<String> = BTreeSet::new();
         let mut derived: BTreeSet<String> = BTreeSet::new();
         for set in std::mem::take(&mut self.sets) {
-            if head.kindsets.contains_key(&set) {
+            if kindsets.contains_key(&set) {
                 continue;
             }
             // `members`.
             match kinds_of(v, &head, &gone, &set, &mut BTreeSet::new()) {
-                Some(kinds) => drop(head.kindsets.insert(set, kinds)),
-                None if matches!(head.decls.get(set.as_str()).map(|c| c.as_slice()), Some([(_, t)]) if t == "sym") => drop(derived.insert(set)),
+                Some(kinds) => drop(kindsets.insert(set, kinds)),
+                None if matches!(head.columns_of(&set).as_deref(), Some([(_, t)]) if t == "sym") => drop(derived.insert(set)),
                 None => return Err(Error::Syntax(format!("the kind set {set} is not a relation of kinds (one column of facts, or rules `{set}(k) :- s(k)` over such sets)")).to_string()),
             }
         }
         // A set no rule reads is no relation of the program, to a fixed point.
         let heads_of = |gone: &BTreeSet<String>, set: &str| v.rel(set).is_some_and(|rel| v.heads(rel).next().is_some()) && !gone.contains(set);
         loop {
-            let unread: Vec<String> = head
-                .kindsets
+            let unread: Vec<String> = kindsets
                 .keys()
-                .filter(|set| head.decls.contains_key(set.as_str()) || head.facts.contains_key(*set) || heads_of(&gone, set))
+                .filter(|set| head.declares(set) || head.states_facts(set) || heads_of(&gone, set))
                 .filter(|set| {
                     !v.rules().filter(|r| !gone.contains(v.rel_name(r.head().rel())) && v.rel_name(r.head().rel()) != set.as_str()).any(|r| {
                         r.body().any(|l| matches!(l.view(), L::Atom(a) | L::Agg { atom: a, .. } if v.rel_name(a.rel()) == set.as_str()))
@@ -1081,8 +1087,12 @@ impl ProgramPass for KindSets {
                 break;
             }
             for set in unread {
-                head.facts.remove(&set);
-                head.decls.remove(set.as_str());
+                if head.states_facts(&set) {
+                    head.b.drop_facts(&set);
+                }
+                if head.declares(&set) {
+                    head.b.undeclare(&set);
+                }
                 gone.insert(set);
             }
         }
@@ -1121,7 +1131,7 @@ impl ProgramPass for KindSets {
         // `base_relation` for `child` and `node`, the rules gone left out.
         if !need.is_empty() {
             for rel in ["child", "node"] {
-                crate::code_rule_dsl::logic::rr::lower::base_relation_derived(&mut head, rel, heads_of(&gone, rel));
+                crate::code_rule_dsl::logic::rr::lower::base_relation_derived(&mut head.b, rel, heads_of(&gone, rel));
             }
         }
         // The helpers' rules, as `derived_axes` pushes them: a set's members once, then each helper's rules.
@@ -1129,8 +1139,8 @@ impl ProgramPass for KindSets {
         let mut made: Vec<(String, Vec<&'static str>, Body)> = Vec::new();
         for (set, helper) in &need {
             let member = format!("rr_in_{set}");
-            if !head.decls.contains_key(member.as_str()) {
-                head.decls.insert(member.clone().into(), [("x".into(), "node".into())].into());
+            if !head.declares(&member) {
+                head.b.declare(&member, &[("x", "node")]);
                 made.push((member.clone(), vec!["x"], vec![("node".to_owned(), vec!["_", "x", "k", "_", "_"], false), (set.clone(), vec!["k"], false)]));
             }
             let rel = format!("rr_{helper}_{set}");
@@ -1144,17 +1154,20 @@ impl ProgramPass for KindSets {
                 "desc" => (vec!["n", "a"], vec![vec![is("n", false), child("a", "n")], vec![me(vec!["n", "p"]), child("a", "p")]]),
                 _ => (vec!["a"], vec![vec![is("n", false), child("a", "n")], vec![me(vec!["p"]), child("a", "p")]]),
             };
-            head.decls.insert(rel.clone().into(), cols.iter().map(|c| ((*c).into(), "node".into())).collect());
+            let pairs: Vec<(&str, &str)> = cols.iter().map(|c| (*c, "node")).collect();
+            head.b.declare(&rel, &pairs);
             for body in bodies {
                 made.push((rel.clone(), cols.clone(), body));
             }
         }
-        if gone.is_empty() && axes.is_empty() && made.is_empty() && head.kindsets == was.kindsets && head.decls == was.decls && head.inputs == was.inputs {
+        if kindsets != was_kindsets {
+            head.b.set_field(crate::code_rule_dsl::logic::program_facts::Field::Kindsets(&kindsets));
+        }
+        if gone.is_empty() && axes.is_empty() && made.is_empty() && head.b.is_empty() {
             return Ok(());
         }
-        let input = std::sync::Arc::clone(w.input());
         let b = w.derive()?;
-        b.set_header(&was, &head);
+        b.state_fields_of(&head.b);
         use crate::code_rule_dsl::logic::program_image::build::t_of;
         for r in input.rules() {
             if gone.contains(input.rel_name(r.head().rel())) {
@@ -1237,23 +1250,21 @@ impl ProgramPass for BuiltinsOut {
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         use crate::code_rule_dsl::facts::vtab::syntax::WITHIN;
         let v = cx.v();
-        let was = v.header(&Default::default())?;
-        let mut head = was.clone();
         let reads_within = v.rules().any(|r| r.body().any(|l| matches!(l.view(), L::Atom(a) if v.rel_name(a.rel()) == WITHIN)));
-        for b in crate::code_rule_dsl::logic::rr::lower::builtins(&self.rewritten).filter(|b| !(reads_within && *b == "within")) {
-            head.decls.remove(b);
-            head.inputs.retain(|i| i != b);
-        }
-        if reads_within {
-            head.decls.entry(WITHIN.to_owned().into()).or_insert_with(|| [("n".into(), "node".into()), ("a".into(), "node".into())].into());
-            if !head.inputs.iter().any(|i| i == WITHIN) {
-                head.inputs.push(WITHIN.to_owned());
+        let out: Vec<&str> = crate::code_rule_dsl::logic::rr::lower::builtins(&self.rewritten).filter(|b| !(reads_within && *b == "within")).collect();
+        let head = w.on()?;
+        for &b in &out {
+            if head.declares(b) {
+                head.undeclare(b);
             }
         }
-        if head.decls == was.decls && head.inputs == was.inputs {
-            return Ok(());
+        if out.iter().any(|b| head.input_names().iter().any(|i| i == b)) {
+            head.retain_inputs(|i| !out.contains(&i));
         }
-        w.on()?.set_header(&was, &head);
+        if reads_within {
+            head.declare_absent(WITHIN, &[("n", "node"), ("a", "node")]);
+            head.add_input(WITHIN);
+        }
         Ok(())
     }
 }
@@ -1267,7 +1278,7 @@ impl ProgramPass for SpanPatterns {
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         use crate::code_rule_dsl::logic::rr::lower::{SpanAtom, SpanProgram, SpanRule, SpanTerm, span_patterns};
         let v = cx.v();
-        let was = v.header(&Default::default())?;
+        let (inputs, outputs, natives) = (v.input_names(), v.output_names(), v.native_map()?);
         let term = |r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>, t: TermRef<'_>| match t {
             TermRef::Var(x) => SpanTerm::Var(v.text(r.var(x))),
             TermRef::Str(x) => SpanTerm::Str(v.text(x)),
@@ -1287,19 +1298,26 @@ impl ProgramPass for SpanPatterns {
                         .collect(),
                 })
                 .collect(),
-            decls: was.decls.iter().map(|(r, c)| (r.as_str(), c.len())).collect(),
-            inputs: was.inputs.iter().map(String::as_str).collect(),
-            natives: was.natives.keys().map(String::as_str).collect(),
-            outputs: was.outputs.iter().map(String::as_str).collect(),
+            decls: {
+                let mut d: Vec<(&str, usize)> = v.decls().into_iter().map(|d| (v.text(d.name()), d.cols().count())).collect();
+                d.sort();
+                d
+            },
+            inputs: inputs.iter().map(String::as_str).collect(),
+            natives: natives.keys().map(String::as_str).collect(),
+            outputs: outputs.iter().map(String::as_str).collect(),
         };
         let found = span_patterns(&program).map_err(|e| e.to_string())?;
-        let mut head = was.clone();
-        head.rx_spans.extend(found.0);
-        head.ast_patterns.extend(found.1);
-        if head.rx_spans == was.rx_spans && head.ast_patterns == was.ast_patterns {
-            return Ok(());
+        let (was_spans, was_patterns) = (v.rx_spans()?, v.ast_patterns()?);
+        let (mut spans, mut patterns) = (was_spans.clone(), was_patterns.clone());
+        spans.extend(found.0);
+        patterns.extend(found.1);
+        if spans != was_spans {
+            w.on()?.set_field(crate::code_rule_dsl::logic::program_facts::Field::RxSpans(&spans));
         }
-        w.on()?.set_header(&was, &head);
+        if patterns != was_patterns {
+            w.on()?.set_field(crate::code_rule_dsl::logic::program_facts::Field::AstPatterns(&patterns));
+        }
         Ok(())
     }
 }
@@ -1316,11 +1334,12 @@ impl ProgramPass for CoreDecls {
     fn settings(&self) -> Vec<u8> {
         vec![u8::from(self.docof_of_locs)]
     }
-    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+    fn run(&mut self, _cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         use crate::code_rule_dsl::logic::rr::lower::{core::declare_core, projection_at, projections};
-        let v = cx.v();
-        let was = v.header(&Default::default())?;
-        let mut head = was.clone();
+        let input = std::sync::Arc::clone(w.input());
+        let v: &Version = &input;
+        // The fields' edit, staged and stated on the edit or the derivation at the end.
+        let mut head = crate::code_rule_dsl::logic::program_image::fields::Edit::on(&input);
         let read: BTreeSet<(String, usize)> = v
             .rules()
             .flat_map(|r| r.body())
@@ -1330,16 +1349,15 @@ impl ProgramPass for CoreDecls {
             })
             .collect();
         let mut docof = self.docof_of_locs;
-        declare_core(&mut head, &read, &mut docof).map_err(|e| e.to_string())?;
+        declare_core(&mut head.b, &read, &mut docof).map_err(|e| e.to_string())?;
         let derives_node = v.rel("node").is_some_and(|rel| v.heads(rel).next().is_some());
-        let made = projections(&mut head, &read, docof, derives_node);
+        let made = projections(&mut head.b, &read, docof, derives_node);
         if made.is_empty() {
-            if head.decls != was.decls || head.inputs != was.inputs || head.tapes != was.tapes {
-                w.on()?.set_header(&was, &head);
+            if !head.b.is_empty() {
+                w.on()?.state_fields_of(&head.b);
             }
             return Ok(());
         }
-        let input = std::sync::Arc::clone(w.input());
         // The program's order, the projections inserted where the tree inserts them.
         enum Item<'r> {
             Old(crate::code_rule_dsl::logic::program_image::RuleRef<'r>),
@@ -1354,7 +1372,7 @@ impl ProgramPass for CoreDecls {
             order.insert(projection_at(&rule.head.rel, first), Item::New(rule));
         }
         let b = w.derive()?;
-        b.set_header(&was, &head);
+        b.state_fields_of(&head.b);
         for x in order {
             match x {
                 Item::Old(r) => drop(b.keep(&input, r)),
@@ -1365,8 +1383,8 @@ impl ProgramPass for CoreDecls {
     }
 }
 
-/// The findings of the `.violation`s (`lower::findings`) on the version: `lower::findings_on_header` writes them on
-/// the header, given what it reads of the rules (`RulesSeen`, read off the image); the rules it makes go last, and
+/// The findings of the `.violation`s (`lower::findings`) on the version: `lower::findings::findings_on` writes them
+/// over the version's fields, given what it reads of the rules (`RulesSeen`, read off the image); the rules it makes go last, and
 /// the program's own `violation` heads of five columns are widened, as the tree's are. Its settings: the pending
 /// findings, which the lowerer hands on.
 pub struct Findings {
@@ -1379,7 +1397,7 @@ impl ProgramPass for Findings {
         self.pending.key()
     }
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
-        use crate::code_rule_dsl::logic::rr::lower::{RulesSeen, findings_on_header, is_place_call};
+        use crate::code_rule_dsl::logic::rr::lower::{RulesSeen, findings::findings_on, is_place_call};
         let v = cx.v();
         fn place(v: &Version, t: TermRef<'_>) -> bool {
             match t {
@@ -1398,16 +1416,19 @@ impl ProgramPass for Findings {
             }),
             reads_guest_policy: v.rules().flat_map(|r| r.body()).any(|l| matches!(l.view(), L::Atom(a) | L::Agg { atom: a, .. } if v.rel_name(a.rel()) == crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY)),
         };
-        let was = v.header(&Default::default())?;
-        let (head, made, wrote) = findings_on_header(was.clone(), &self.pending, seen).map_err(|e| e.to_string())?;
+        let input = std::sync::Arc::clone(w.input());
+        // The fields' edit, staged and stated on the edit or the derivation at the end.
+        let mut head = crate::code_rule_dsl::logic::program_image::fields::Edit::on(&input);
+        let (made, wrote) = findings_on(&mut head.b, &self.pending, seen).map_err(|e| e.to_string())?;
         let five = |r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>| wrote && v.rel_name(r.head().rel()) == "violation" && r.head().args().count() == 5;
         if made.is_empty() && !v.rules().any(five) {
-            w.on()?.set_header(&was, &head);
+            if !head.b.is_empty() {
+                w.on()?.state_fields_of(&head.b);
+            }
             return Ok(());
         }
-        let input = std::sync::Arc::clone(w.input());
         let b = w.derive()?;
-        b.set_header(&was, &head);
+        b.state_fields_of(&head.b);
         use crate::code_rule_dsl::logic::program_image::build::t_of;
         for r in input.rules() {
             if !five(r) {
@@ -1481,12 +1502,9 @@ impl ProgramPass for ThreeValued {
             .collect();
         let three = three_closure(&self.three, &shape);
         drop(shape);
-        let was = v.header(&Default::default())?;
-        let mut head = was.clone();
-        three_valued_header(&mut head, &three);
         let input = std::sync::Arc::clone(w.input());
         let b = w.derive()?;
-        b.set_header(&was, &head);
+        three_valued_header(b, &three);
         for (i, r) in input.rules().enumerate() {
             if !three.contains(input.rel_name(r.head().rel())) {
                 b.keep(&input, r);
@@ -1515,15 +1533,11 @@ impl ProgramPass for AppendModule {
     fn settings(&self) -> Vec<u8> {
         format!("{} {} {} {}", self.own.digest(), self.own.size(), self.stated, self.own_stated).into_bytes()
     }
-    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
-        let v = cx.v();
-        let was = v.header(&Default::default())?;
-        let mut head = was.clone();
+    fn run(&mut self, _cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let mut stated = self.stated;
-        crate::code_rule_dsl::logic::rr::lower::append_parts(&mut head, self.own.header(&Default::default())?, &mut stated, self.own_stated);
         let input = std::sync::Arc::clone(w.input());
         let b = w.derive()?;
-        b.set_header(&was, &head);
+        crate::code_rule_dsl::logic::rr::lower::append_fields(b, &*self.own, &mut stated, self.own_stated);
         for r in input.rules() {
             b.keep(&input, r);
         }
@@ -1543,7 +1557,7 @@ impl ProgramPass for Declared {
     fn run(&mut self, cx: &Cx<'_>, _w: &mut ProgramW<'_>) -> Result<(), String> {
         use crate::code_rule_dsl::logic::front::{columns_declared, read_declared};
         let v = cx.v();
-        let head = v.header(&Default::default())?;
+        let head: &Version = v;
         for r in v.rules() {
             let name = v.rel_name(r.head().rel());
             let atoms = || {
@@ -1553,10 +1567,10 @@ impl ProgramPass for Declared {
                 })
             };
             for a in atoms() {
-                read_declared(&head, v.rel_name(a.rel()), name).map_err(|e| e.to_string())?;
+                read_declared(head, v.rel_name(a.rel()), name).map_err(|e| e.to_string())?;
             }
             for a in std::iter::once(r.head()).chain(atoms()) {
-                columns_declared(&head, v.rel_name(a.rel()), a.args().count(), name).map_err(|e| e.to_string())?;
+                columns_declared(head, v.rel_name(a.rel()), a.args().count(), name).map_err(|e| e.to_string())?;
             }
         }
         Ok(())

@@ -212,7 +212,8 @@ impl ProgramPass for MergeIdentical {
         {
             let mut rows = b.about_rows("asked");
             // A request's copy merged into it: each of the request's rules serves the readers of the copy's equal
-            // rule too (the tree's `merge_identical`), before the copy's rows go.
+            // rule too (the tree's `merge_identical`, equal as `canonical_rule` compares, constants and all), before the
+            // copy's rows go.
             let asked = input.asked();
             let class = |r: RelId| { let n = input.rel_name(r); rename.get(n).map_or(n, String::as_str) };
             for (from, to) in &rename {

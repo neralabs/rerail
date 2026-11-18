@@ -751,8 +751,8 @@ pub fn rule_declared(prog: &Program, rule: &Rule) -> Result<(), Error> {
 
 /// A read of `rel` in a rule for `head` names a declared relation. The import components' relations (`rr_cx_reach`,
 /// decision 0076) are added by the run to a program that reads them: declared there.
-pub fn read_declared(prog: &Program, rel: &str, head: &str) -> Result<(), Error> {
-    if !prog.decls.contains_key(rel) && !is_transduced(rel) && !rel.starts_with("rr_cx_") && !matches!(rel, "match_all" | "match_group") {
+pub fn read_declared(prog: &(impl crate::code_rule_dsl::logic::program_image::fields::ProgramFields + ?Sized), rel: &str, head: &str) -> Result<(), Error> {
+    if !prog.declares(rel) && !is_transduced(rel) && !rel.starts_with("rr_cx_") && !matches!(rel, "match_all" | "match_group") {
         return Err(Error::Syntax(format!("relation {rel} is read by the rule for {head} and not declared: declare it with `.decl`")));
     }
     Ok(())
@@ -760,8 +760,8 @@ pub fn read_declared(prog: &Program, rel: &str, head: &str) -> Result<(), Error>
 
 /// An atom of `rel` with `arity` columns, in a rule for `head`, has the columns `rel` declares: a read of another
 /// arity names some other relation (a rule's own `field(n)` beside the core `field(p, f, c)`), which no plan can join.
-pub fn columns_declared(prog: &Program, rel: &str, arity: usize, head: &str) -> Result<(), Error> {
-    if let Some(cols) = prog.decls.get(rel)
+pub fn columns_declared(prog: &(impl crate::code_rule_dsl::logic::program_image::fields::ProgramFields + ?Sized), rel: &str, arity: usize, head: &str) -> Result<(), Error> {
+    if let Some(cols) = prog.columns_of(rel)
         && cols.len() != arity
     {
         return Err(Error::Syntax(format!("relation {rel} is declared with {} columns and read with {arity} in the rule for {head}", cols.len())));

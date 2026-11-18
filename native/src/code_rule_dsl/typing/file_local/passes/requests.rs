@@ -286,8 +286,7 @@ impl ProgramPass for RequestsFileLocal {
             return Ok(());
         }
         let split = cx.get::<FileLocal>()?;
-        let header = v.header(&Default::default())?;
-        let node_arity = header.decls.get("node").map(|cols| cols.len());
+        let node_arity = v.columns_of("node").map(|cols| cols.len());
         let narrower = Narrower { v, same: &split.same_doc, local: &split.local, fresh: std::cell::Cell::new(0) };
         let own = |r: RuleRef<'_>| -> Vec<Piece> { r.body().map(|l| Piece { src: r.id(), node: l.node(), names: None }).collect() };
         let shown = |pieces: &[Piece]| pieces.iter().map(|p| p.show(v)).collect::<Vec<_>>().join(", ");
@@ -340,6 +339,9 @@ impl ProgramPass for RequestsFileLocal {
         }
         let input = Arc::clone(w.input());
         let b = w.derive()?;
+        if every_node {
+            b.add_input("node");
+        }
         // Two rules narrowed to one body are one rule (a request's, the tree's `seen`), serving both rules' readers:
         // each rule written with its head and the input rules it came from, so the request record follows
         // (`front::carried_record`, as the tree's `set_rules_from`).
@@ -401,16 +403,12 @@ impl ProgramPass for RequestsFileLocal {
                 }
             }
         }
-        let mut with = header.clone();
-        if every_node && !header.inputs.iter().any(|i| i == "node") {
-            with.inputs.push("node".to_owned());
-        }
-        if !header.asked_by.is_empty() {
+        let asked = v.asked();
+        if !asked.is_empty() {
             let heads: Vec<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).collect();
-            let old = crate::code_rule_dsl::logic::front::readers_of_heads(&header.asked_by, &heads);
-            with.asked_by = crate::code_rule_dsl::logic::front::carried_record(&header.asked_by, &old, written.iter().map(|(h, from)| (h.as_str(), from.as_slice())));
+            let old = crate::code_rule_dsl::logic::front::readers_of_heads(&asked, &heads);
+            b.set_asked(&crate::code_rule_dsl::logic::front::carried_record(&asked, &old, written.iter().map(|(h, from)| (h.as_str(), from.as_slice()))));
         }
-        b.set_header(&header, &with);
         Ok(())
     }
 }

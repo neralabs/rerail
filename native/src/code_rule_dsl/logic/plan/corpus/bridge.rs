@@ -17,6 +17,7 @@
 //! (`node(d, n, kind, start, end)`), so the program's facts (T's shape) and the rule's (`core.rr`'s) need not
 //! number nodes alike.
 
+use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -43,9 +44,9 @@ struct Bridged {
 }
 
 /// The bridged relations a rule reaching one of `prog`'s outputs reads.
-fn wanted(prog: &Program, pruned: &dyn Fn() -> Result<super::shape::Shape>) -> Result<Vec<Bridged>> {
+fn wanted(prog: &(impl ProgramFields + ?Sized), pruned: &dyn Fn() -> Result<super::shape::Shape>) -> Result<Vec<Bridged>> {
     // Only a declared relation named as bridged can be one: a program that declares none is not pruned or read.
-    if !prog.decls.keys().any(|rel| rel.starts_with(PREFIX)) {
+    if !prog.declared_names().iter().any(|rel| rel.starts_with(PREFIX)) {
         return Ok(Vec::new());
     }
     let pruned = pruned()?;
@@ -53,7 +54,7 @@ fn wanted(prog: &Program, pruned: &dyn Fn() -> Result<super::shape::Shape>) -> R
         .read
         .iter()
         .map(String::as_str)
-        .filter(|rel| rel.starts_with(PREFIX) && prog.decls.contains_key(*rel) && !pruned.made.contains(*rel))
+        .filter(|rel| rel.starts_with(PREFIX) && prog.declares(rel) && !pruned.made.contains(*rel))
         .filter_map(|rel| {
             let (program, output) = rel.strip_prefix(PREFIX)?.split_once(SEP)?;
             Some(Bridged { rel: rel.to_owned(), program: program.to_owned(), output: output.to_owned() })
@@ -101,9 +102,9 @@ fn add_spans(prog: &mut Program, columns: &BTreeMap<&str, Vec<bool>>) {
 /// The facts of the bridged relations `prog` reads, by relation, and each program's run. `scratch` holds the
 /// programs' runs (`<scratch>/typing-<program>`).
 #[allow(clippy::too_many_arguments)]
-/// `prog` is the program's header (`Version::header`); `pruned`, the shape of its rules once pruned (`front::prune`),
+/// `prog` is the program's fields (a version's); `pruned`, the shape of its rules once pruned (`front::prune`),
 /// asked only of a program that declares a bridged relation.
-pub(crate) fn facts(prog: &Program, pruned: &dyn Fn() -> Result<super::shape::Shape>, root: &Path, scratch: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing) -> Result<(Facts, Runs)> {
+pub(crate) fn facts(prog: &(impl ProgramFields + ?Sized), pruned: &dyn Fn() -> Result<super::shape::Shape>, root: &Path, scratch: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing) -> Result<(Facts, Runs)> {
     let wanted = wanted(prog, pruned)?;
     let mut by_program: BTreeMap<&str, Vec<&Bridged>> = BTreeMap::new();
     for b in &wanted {
@@ -125,7 +126,7 @@ pub(crate) fn facts(prog: &Program, pruned: &dyn Fn() -> Result<super::shape::Sh
                 .iter()
                 .flat_map(|(_, ty)| if ty == "node" { vec!["sym", "sym", "int", "int"] } else { vec![ty.as_str()] })
                 .collect();
-            let have = &prog.decls[b.rel.as_str()];
+            let have = prog.columns_of(&b.rel).unwrap_or_default();
             let fits = have.len() == want.len() && have.iter().zip(&want).all(|((_, ty), w)| ty == w);
             if !fits {
                 return Err(Error::Plan(format!(

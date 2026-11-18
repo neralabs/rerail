@@ -254,7 +254,7 @@ pub mod wave {
     /// A mark at `queued` launches and no deferred submission (for tests).
     #[cfg(test)]
     pub fn mark_at(queued: usize) -> Mark {
-        Mark(queued, 0)
+        Mark(queued, 0, 0, 0)
     }
 
     /// The launches queued on this thread since `mark`, taken off it.

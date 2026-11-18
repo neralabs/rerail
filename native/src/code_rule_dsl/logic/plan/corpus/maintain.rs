@@ -127,6 +127,33 @@ pub(in crate::code_rule_dsl) fn input_views(p: &Placed) -> Result<BTreeMap<Strin
         .collect())
 }
 
+/// The derived relations a run holds as views of an input's columns (Q37, `plan::input_view_shape`), each with its
+/// input and the input's column of each of its columns. A row of one is one row of its input (it keeps the input's
+/// key, or every column), so a session takes it as decision 0090 takes a view: its old rows are the view over the
+/// input's old rows, its delta the view over the input's delta, and none of its rows are kept.
+pub(in crate::code_rule_dsl) fn held_views(p: &Placed) -> Result<BTreeMap<String, (String, Vec<usize>)>> {
+    let f = p.fields()?;
+    let mut by_head: BTreeMap<&str, Vec<RuleRef<'_>>> = BTreeMap::new();
+    for r in p.v.rules() {
+        by_head.entry(p.v.rel_name(r.head().rel())).or_default().push(r);
+    }
+    Ok(by_head
+        .into_iter()
+        .filter_map(|(rel, rules)| {
+            let [rule] = rules.as_slice() else { return None };
+            held_view(&f, &p.v, *rule, rel).map(|view| (rel.to_owned(), view))
+        })
+        .collect())
+}
+
+/// Rule `rule` of `rel`, its only rule, as a view the run holds of an input's columns (`held_views`).
+fn held_view(f: &Fields<'_>, v: &Version, rule: RuleRef<'_>, rel: &str) -> Option<(String, Vec<usize>)> {
+    if f.has_facts(rel) || f.native(rel).is_some() || f.lattice(rel) || f.request(rel) || f.produced(rel) || f.gate(rel) {
+        return None;
+    }
+    crate::code_rule_dsl::logic::plan::input_view_shape(v, rule, |r| f.is_input(r))
+}
+
 fn named(rel: &str, suffix: &str) -> String {
     format!("{rel}__{suffix}")
 }
@@ -556,11 +583,10 @@ fn atom_tm(rel: String, args: Vec<Tm>, neg: bool) -> L {
     L::Atom { rel, args, neg, gated: false }
 }
 
-/// `input_views` over a version: each such relation and its rule's place among the part's rules.
+/// `input_views` over a version: each such relation and its rule's place among the part's rules. A view the run holds
+/// of an input's columns (`held_views`) is one whatever `RERAIL_SESSION_VIEWS` says: it has no rows of its own to keep.
 fn input_views_over(src: &Part<'_>) -> BTreeMap<String, usize> {
-    if !views_on() {
-        return BTreeMap::new();
-    }
+    let session = views_on();
     let mut by: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
     for k in 0..src.rules.len() {
         let v: &Version = &src.p.v;
@@ -571,6 +597,10 @@ fn input_views_over(src: &Part<'_>) -> BTreeMap<String, usize> {
         .filter_map(|(rel, ks)| {
             let [k] = ks.as_slice() else { return None };
             let n = src.named(*k);
+            let held = held_view(&f, &src.p.v, n.r, rel).is_some();
+            if !session && !held {
+                return None;
+            }
             let [l] = n.lits.as_slice() else { return None };
             let PLit::Atom(a) = l.view() else { return None };
             if a.neg() || a.gated() || !src.inputs.iter().any(|x| x == n.rel(a)) || f.lattice(rel) || f.native(rel).is_some() || f.facts(rel).is_some() || src.outputs.iter().any(|o| o == rel) {
@@ -583,7 +613,7 @@ fn input_views_over(src: &Part<'_>) -> BTreeMap<String, usize> {
                 TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_) => true,
                 _ => false,
             });
-            (terms_ok && one_to_one).then(|| (rel.to_owned(), *k))
+            (terms_ok && (one_to_one || held)).then(|| (rel.to_owned(), *k))
         })
         .collect()
 }
@@ -683,6 +713,11 @@ pub(in crate::code_rule_dsl) fn rewrite_over<'b>(src: &Part<'_>, mut b: Builder<
             rules.push(Ir::Copy(view));
             if view_input(rel).is_some_and(|a| changed.contains(&a)) {
                 changed.insert((*rel).clone());
+                // A stratum's own form (`form`): the strata after it are formed apart, and read its delta, the view
+                // over its input's.
+                if one.is_some() {
+                    deltas.insert((*rel).clone());
+                }
             }
             continue;
         }
@@ -1780,8 +1815,6 @@ pub(in crate::code_rule_dsl) struct StoredForms<'s> {
     atoms: std::cell::OnceCell<Arc<Version>>,
     /// The part's forms' identity (`forms_identity`), read at the first stratum reached.
     identity: std::cell::OnceCell<[u8; 32]>,
-    /// The sources the run read, pinned for it (O95) in one write behind it, when it is dropped.
-    held: std::cell::RefCell<Vec<crate::content_store::SourceId>>,
     /// The form `find` read, opened, and its record, until its pipeline opens it and `general_of` takes the record.
     found: std::cell::RefCell<Option<(Arc<Version>, Vec<u8>)>>,
     /// The record of the form being written, from its writer to `keep`.
@@ -1838,6 +1871,7 @@ impl<'s> StoredForms<'s> {
         let atoms = self.atoms.get().ok_or("a general form stored before its atoms")?;
         let mut layers = Vec::new();
         let mut at = v;
+        // An overlay's own layer (its delta's bytes) over its parent (`Version::layer`, decision 0333 §2).
         while let crate::code_rule_dsl::logic::program_image::Layer::Overlay(parent, bytes) = at.layer() {
             layers.push(bytes);
             at = parent;
@@ -1891,9 +1925,8 @@ impl Steps for StoredForms<'_> {
             Ok(Some((store.get_source(id)?, id)))
         })
         .map_err(|e| e.to_string())?;
-        let Some((bytes, id)) = found else { return Ok(None) };
+        let Some((bytes, _)) = found else { return Ok(None) };
         let (v, record) = self.opened_source(&bytes)?;
-        self.held.borrow_mut().push(id);
         let output = (v.size(), v.digest());
         *self.found.borrow_mut() = Some((v, record));
         Ok(Some(StepRecord { pass: GENERAL_PASS.into(), version: GENERAL_VERSION, image: *key, output, decided: Vec::new() }))
@@ -1901,8 +1934,19 @@ impl Steps for StoredForms<'_> {
     fn open(&self, _: &[u8; 32]) -> std::result::Result<Option<Arc<Version>>, String> {
         Ok(self.found.borrow().as_ref().map(|f| Arc::clone(&f.0)))
     }
-    /// Its record and layers (`source`), queued for the store's writer (decision 0102): no wave waits for it.
+    /// Its record and layers (`source`), queued for the store's writer (decision 0102): no wave waits for it. A
+    /// record of its own (decision 0306), its bytes in the record's byte area, dropped where the queue is full (the
+    /// next run writes the form again), as a rule image is.
     fn keep(&self, key: &StepKey, _: &StepRecord, output: &Version) -> std::result::Result<(), String> {
+        use crate::content_store::write_back::{Key, Syms};
+        const WHAT: &str = "a general form (decision 0298)";
+        fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
+            let alias: crate::content_store::HashKey = crate::content_store::record::codec::from_body("a general form", body)?;
+            if cx.store.source_by_alias(alias)?.is_none() {
+                cx.store.put_source(cx.bytes, &[alias])?;
+            }
+            Ok(())
+        }
         let record = self.writing.borrow_mut().take().ok_or("a general form kept without its record")?;
         let Some(store) = self.store else { return Ok(()) };
         let bytes = self.source(&record, output)?;
