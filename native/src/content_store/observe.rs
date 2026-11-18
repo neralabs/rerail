@@ -236,7 +236,27 @@ pub struct Observer {
     own: Vec<PathBuf>,
     /// Output directories named this run under no root the store has a cursor for yet (`own_output`).
     unreported: Vec<PathBuf>,
+    /// How long after its recording an answer is checked by `stat` though the journal names nothing there
+    /// ([`JOURNAL_SETTLE_NS`]); a test that asks for trust at once sets it to 0.
+    settle_ns: i64,
+    /// The least the journal is waited for ([`JOURNAL_WAIT_LEAST_NS`]); a test that asks for the journal's answer
+    /// whatever it costs sets it high.
+    wait_least_ns: u64,
 }
+
+/// What checking one kept answer by its `stat` costs, about (a warm `lstat` on APFS, with the compare): the journal is
+/// waited for no longer than the answers under a root would take so (Q221).
+pub const STAT_NS: u64 = 4_000;
+/// The least the journal is waited for: a cookie on an idle machine came in 10 ms (t48), under which a tree's `stat`s
+/// are cheaper anyway.
+pub const JOURNAL_WAIT_LEAST_NS: u64 = 2_000_000;
+/// How long after an answer's recording the journal's silence is not enough to trust it (Q189). FSEvents' history
+/// merges a path's events within a window: a change made just after a run read the path (the run's cursor taken
+/// between the two) was replayed under the earlier event's id, before the cursor, and the next run, told nothing,
+/// trusted the old answer: a missed edit (the bench's full shape, 2026-11-18, on the M3, 1 to 2 steps a run). An
+/// answer recorded within the window is checked by its `stat` instead: the same stat keeps it (no read, no write),
+/// another is read again. 3.5 s apart were merged; the window's length is not documented, so it is wide.
+pub const JOURNAL_SETTLE_NS: i64 = 120_000_000_000;
 
 /// A root a run watches.
 struct Root {
@@ -349,7 +369,7 @@ impl Observer {
         if let Some(k) = db.as_ref() {
             own.extend(k.meta.keys().filter_map(|k| k.strip_prefix(OWN_OUTPUT)).flat_map(|d| spellings(Path::new(d))));
         }
-        Observer { db, entries, dirty: Vec::new(), racy: Vec::new(), aliases, new_aliases: Vec::new(), canon, new_canon: Vec::new(), epoch, validate_every, counts: Counts::default(), cwd: std::env::current_dir().unwrap_or_default(), git: Vec::new(), roots: Vec::new(), flushes: 0, open: 0, stored_roots, volumes, cookies, own, unreported: Vec::new() }
+        Observer { db, entries, dirty: Vec::new(), racy: Vec::new(), aliases, new_aliases: Vec::new(), canon, new_canon: Vec::new(), epoch, validate_every, counts: Counts::default(), cwd: std::env::current_dir().unwrap_or_default(), git: Vec::new(), roots: Vec::new(), flushes: 0, open: 0, stored_roots, volumes, cookies, own, unreported: Vec::new(), settle_ns: JOURNAL_SETTLE_NS, wait_least_ns: JOURNAL_WAIT_LEAST.load(std::sync::atomic::Ordering::Relaxed) }
     }
 
     /// Records `dir` as a directory a run writes its outputs into: rerail's own (decision 0284), for this observer
@@ -510,8 +530,17 @@ impl Observer {
             return None;
         }
         let e = self.known(path)?;
+        // Recorded within the journal's settle window: its silence may hide a merged event (Q189).
+        if self.settling(&e) {
+            return None;
+        }
         self.counts.trusted += 1;
         Some(e)
+    }
+
+    /// Whether `e` was recorded within the journal's settle window ([`JOURNAL_SETTLE_NS`]).
+    fn settling(&self, e: &Entry) -> bool {
+        now_ns().saturating_sub(e.recorded_ns) < self.settle_ns
     }
 
     fn stat(&mut self, path: &Path) -> Option<(Kind, Stat)> {
@@ -589,6 +618,10 @@ impl Observer {
         }
         let (Some(dir), Some(name)) = (path.parent(), path.file_name()) else { return false };
         if !self.roots.iter().any(|r| r.trusted && r.asked == self.flushes && under(&dir, &r.path)) || self.known(path).is_some() {
+            return false;
+        }
+        // A listing recorded within the journal's settle window is not trusted for an absence (Q189): `stat` says.
+        if self.known(dir).is_some_and(|e| self.settling(&e)) {
             return false;
         }
         let listing = match self.known(dir).filter(|e| e.kind == Kind::Dir).and_then(|e| e.listing) {
@@ -818,7 +851,11 @@ impl Observer {
                 rusqlite::types::Value::Integer(i) => Some(i.to_string()),
                 _ => None,
             });
-            match super::journal::since(std::slice::from_ref(&root), cursor.as_deref(), &cookies) {
+            // The journal is waited for no longer than checking every answer kept under the root by its `stat`
+            // would take (Q221: planning costs no more than running, 0122); slower, it is checked so.
+            let kept = self.entries.range::<Path, _>((std::ops::Bound::Included(root.as_path()), std::ops::Bound::Unbounded)).take_while(|(k, _)| k.starts_with(&root)).count();
+            let wait = std::time::Duration::from_nanos((kept as u64).saturating_mul(STAT_NS).max(self.wait_least_ns));
+            match super::journal::since_within(std::slice::from_ref(&root), cursor.as_deref(), &cookies, Some(wait)) {
                 super::journal::Since::Changed { paths, cursor: next } => {
                     // News of rerail's own files is no news (decision 0284): each run writes them.
                     let paths: Vec<PathBuf> = paths.into_iter().filter(|p| !self.is_own(p)).collect();
@@ -1965,6 +2002,9 @@ mod tests {
         let store = base.join("store.files");
         let run = |files: &[PathBuf]| {
             let mut o = Observer::open(Some(&store));
+            // Trust at once: these runs follow each other within the settle window, as no test can wait it out.
+            o.settle_ns = 0;
+            o.wait_least_ns = 2_000_000_000;
             o.begin();
             o.watch(std::slice::from_ref(&root));
             let listing = o.listing(&root.join("pkg")).unwrap();
@@ -1986,6 +2026,56 @@ mod tests {
         assert!(third.forgotten >= 1 && third.hashed == 1, "the edited file is read again: {third}");
         assert_ne!(after[2], digests[2]);
         assert_eq!([after[0], after[1], after[3], after[4]], [digests[0], digests[1], digests[3], digests[4]]);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Q189: FSEvents' history can merge a change made just after a run read a path into the path's earlier event,
+    /// replayed under an id before the run's cursor: the next run is told nothing. An answer recorded within the
+    /// settle window is then checked by `stat`, and the edit read; with no window (as before) it was missed. The merge
+    /// is made here by moving the root's stored cursor past the edit's event, which is what the replay amounts to.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn an_answer_recorded_within_the_settle_window_is_checked_though_the_journal_names_nothing() {
+        let base = std::env::temp_dir().join(format!("rerail-settle-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        let file = root.join("m.py");
+        std::fs::write(&file, "x = 1\n").unwrap();
+        aged(&file);
+        let store = base.join("store.files");
+        let run = |settle: i64| {
+            let mut o = Observer::open(Some(&store));
+            o.settle_ns = settle;
+            o.wait_least_ns = 2_000_000_000;
+            o.begin();
+            o.watch(std::slice::from_ref(&root));
+            let digest = o.digest(&file).unwrap();
+            o.flush();
+            o.written();
+            (o.counts, digest)
+        };
+        // Recorded, then asked again so the root holds a cursor and the answer is kept.
+        let (_, first) = run(0);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        run(0);
+        // The edit, then the cursor moved past its event: the journal names nothing since.
+        let edit_and_hide = |text: &str| {
+            std::fs::write(&file, text).unwrap();
+            aged(&file);
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            let volume = super::super::journal::volume(&root).expect("a volume");
+            let id = super::super::journal::current_id().to_string();
+            let db = Connection::open(&store).unwrap();
+            db.execute("INSERT OR REPLACE INTO observer_meta VALUES (?1, ?2)", params![cursor_key(&root, volume), id]).unwrap();
+        };
+        edit_and_hide("x = 22\n");
+        let (missed, stale) = run(0);
+        assert_eq!((stale, missed.hashed), (first, 0), "with no window the journal's silence is trusted: the edit is missed ({missed})");
+        edit_and_hide("x = 333\n");
+        let (checked, fresh) = run(JOURNAL_SETTLE_NS);
+        assert!(checked.stats >= 1 && checked.hashed == 1, "within the window the answer is checked and the edit read: {checked}");
+        assert_ne!(fresh, first);
         let _ = std::fs::remove_dir_all(&base);
     }
 
@@ -2022,6 +2112,9 @@ mod tests {
         };
         let run = |first: bool, n: u32| {
             let mut o = Observer::open(Some(&store));
+            // Trust at once: these runs follow each other within the settle window, as no test can wait it out.
+            o.settle_ns = 0;
+            o.wait_least_ns = 2_000_000_000;
             o.begin();
             if first {
                 o.own_output(&out);
@@ -2111,6 +2204,9 @@ mod tests {
         let store = base.join("store.files");
         let run = |watch: &Path| {
             let mut o = Observer::open(Some(&store));
+            // Trust at once: these runs follow each other within the settle window, as no test can wait it out.
+            o.settle_ns = 0;
+            o.wait_least_ns = 2_000_000_000;
             o.begin();
             o.watch(&[watch.to_path_buf()]);
             let asked: Vec<(PathBuf, bool)> = o.roots.iter().map(|r| (r.path.clone(), r.trusted)).collect();
@@ -2247,6 +2343,9 @@ mod tests {
         let asked = [root.join("pkg/m1.py"), link.clone(), root.join("pkg/../pkg/m2.py")];
         let run = || {
             let mut o = Observer::open(Some(&store));
+            // Trust at once: these runs follow each other within the settle window, as no test can wait it out.
+            o.settle_ns = 0;
+            o.wait_least_ns = 2_000_000_000;
             o.begin();
             o.watch(std::slice::from_ref(&root));
             let got: Vec<Option<PathBuf>> = asked.iter().map(|p| o.canonical(p)).collect();
@@ -2753,4 +2852,12 @@ fn journal_on() -> bool {
 /// Turns the observer's use of the journal on or off for the process, whatever `RERAIL_JOURNAL` says.
 pub fn set_journal(on: bool) {
     JOURNAL.store(if on { 1 } else { 2 }, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The least the observers made after this wait for the journal ([`JOURNAL_WAIT_LEAST_NS`] until set): a test that
+/// asks for the journal's answer whatever it costs raises it (Q221).
+static JOURNAL_WAIT_LEAST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(JOURNAL_WAIT_LEAST_NS);
+
+pub fn set_journal_wait_least(wait: std::time::Duration) {
+    JOURNAL_WAIT_LEAST.store(wait.as_nanos() as u64, std::sync::atomic::Ordering::Relaxed);
 }

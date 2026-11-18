@@ -2666,7 +2666,13 @@ missed edit is a wrong answer for the step that missed it.
 
 - **Done when**: a test edits a file at once after a run (no sleep) and the next run reads it, many times over;
   the bench's full shape shows every edit step's components.
-- **Record**: —
+- **Record**: fixed (6c7467af5). Traced on the M3 (t47, `RERAIL_JOURNAL_TRACE` lists each event against the cursor):
+  the missed edit's event was absent after the cursor in both runs asked from it, and the edit before it on the
+  same file had an id just before that cursor (…392974 against …393028). FSEvents' history merges a path's events
+  within a window, under the first one's id. An answer recorded within `JOURNAL_SETTLE_NS` (120 s) is now checked
+  by its `stat` though the journal names nothing; the same stat keeps it with no read and no write. A test moves
+  the cursor past an edit's event: missed with no window, read with it. Not covered: `changed_since`'s records
+  (the cone rounds', Git's file list), which read no answer.
 
 **From bend's Q117** (investigate-bend-vs-datalog at fe948c394, the same item, found over the O125 replay):
 
@@ -2706,6 +2712,141 @@ submitted" now hold device memory at once.
 
 - **Done when**: a budget refusal says so, with its numbers, in the profile's refusals (an error kind of its own);
   the 512 MB budget's refusals measured against the strata a wave holds at once.
+- **Record**: —
+
+### Q218. (Q181 on benchmarks-on-integration) The requests narrowed on the version differ from the tree's on the bench's 317 rules (debug builds)
+
+Seen 2026-11-18 (the hub at 723617075, merged here): a debug build of the engine stops at `corpus.rs`'s
+`requests_where_documents_are` check, "the requests narrowed on the version are the tree's", on
+`bench-shapes.sh one-file` (the B-now rules). The two images have one size (5930) and differ only in the "about
+asked" record's numbering (`#1 rr_node_text_req` against `#1 rr_str_req`, and so on): the order the request
+sites are recorded in. Release builds skip the check, and their findings are right (463 cold, 464 after each
+edit). Typing-support's area (0281 step 7b; the hub's Q169 made the record follow the tree's through hide, fold
+and prune): a further pass orders it otherwise.
+
+- **Done when**: a debug build runs the bench's full shape through.
+- **Record**: —
+
+### Q219. (Q182 on benchmarks-on-integration) A root spelled with `/./` is told nothing by the journal
+
+Seen 2026-11-18 (a local repro run as `bash repro.sh`, the corpus root `…/q179/./work/r3/corpus-dl`): the journal's
+answer for the root named 0 paths after an edit, where the same run with the root spelled plainly named 1. The
+events come by real path, and `since` matches them against `canonicalize(root)`; the root was recorded and asked as
+given. The run read the edit by another path. Watch a root by its plain absolute form (`Path::components`), or
+refuse trust for one that is not plain.
+
+- **Done when**: a test watches a root through `/./` and is told an edit under it.
+- **Record**: —
+
+### Q220. (Q183 on benchmarks-on-integration) The default memory line cuts most chunks of the bench's full shape since the hub's Q55
+
+Seen 2026-11-18 (t46, 300 files, 317 rules, `RERAIL_RUN_MB` unset, so 1024 MB): 16 of 21 chunks were cut by the
+memory line ("under a quarter of 384 MB left"), most to about 8,192 nodes one at a time; cold 75.9 s CPU, 24.7 s
+wall against 64.8 / 12.8 at t41, which made 7 chunks and was cut by nothing. The hub's 47785e475 ("the chunks in
+flight share the run's headroom") divides the headroom by the chunks at once. The bench now lifts the line (the
+user, 2026-11-17: the line is a last resort; the fast path's memory is the number to bring down). A product run
+with the default line takes the slow pass.
+
+- **Done when**: the full shape at the default line makes chunks of the fast path's size, or the line's default
+  is set from the machine; its peak footprint measured against the lifted run's.
+- **Record**: a prior tried and taken out again. Sizing and counting the chunks by 22 KB a node until a
+  measurement is credible (af312d735) made 26 chunks of about 18,000 nodes (29 on Metal) where t48 made 6–9: 85.5 s
+  CPU, 20.1 s wall (load 56) against 65–69 s, 17–18 s (load 30); Metal 62.6 s, 17.8 s. Each chunk's fixed work, paid
+  three times as often, cost more than running them at once saved. Open: t48's chunks that grew under 16 MB keep
+  the run one chunk at a time (17–18 s of wall against t41's 12.8 at the same CPU); the count, not the size, is
+  what to lift before a credible measurement. Then the count alone (89f4abfec: probe-sized chunks, as many
+  at once as the headroom holds at 22 KB a node), taken out again: t50 made 7 chunks, 86.4 s CPU, 17.1 s wall at
+  load 9, against t48's 65–69 s, 17–18 s at load 30. Neither the chunks' size nor their count before a credible
+  measurement is what costs t41's wall: what else the hub changed in the cold run's wall (t48's profile: the wait
+  phase 10.2 s wall, others 49.9 s CPU at load 50–69) is the next to read, with a profile at a load under 10.
+  Read so far: t41's 12.8 s was at load 33–45 and t50's 17.1 s at load 9, so the gap is not the load. CPU is t41's
+  (profiled: 82.3 s against 74.6, of which 7.4 s is the 317 programs lowered against a fresh image store, "a
+  program's version in scope: its image, or lowered", in `combine`; cold48's second run reused the images at the
+  same wall). The wall is the `wait` phase (the main thread waiting for chunks evaluated). A low-load profile of t41
+  beside t48 needs t41's library (the hub's `core.rr` no longer lets `load` be extended): rebuild it from t41's
+  commit's `docs/rule-syntax` and profile both at one load. Tried (`pair41.sh`): with baec290d3's library t41 still
+  stops, as it reads the typing programs from the checkout by its build's `CARGO_MANIFEST_DIR` (the hub's
+  `sources.rr` includes `c/includes.rr`). The pair needs t41 built from a worktree at its own commit, its own
+  target (no shared target across worktrees), or a t48 built with the hub's chunk changes taken out one at a time
+  (47785e475 first).
+
+### Q221. (Q184 on benchmarks-on-integration) A warm run waits on the journal's cookies far longer than a `stat` of what it trusts would take
+
+Measured 2026-11-18 on the M3 (t48, the one-rule shape's 300 files, load 58; `warm48.sh`): with the journal, warm
+runs took 3.2, 6.2, 4.3 and 2.3 s of wall (0.01–0.03 s CPU), each root's sync 0.2–2.0 s (2.0 s is `WAIT`, after which
+the root is lost anyway), the roots one after another; with `RERAIL_JOURNAL=off`, 0.03 s, every answer checked by
+its `stat`. On this machine the cookies took 10 ms. The hub changed neither the journal nor the observer since t41
+(whose warm runs took 0.17–0.21 s): it is how long `fseventsd` takes to tell a cookie on a host whose farm writes
+gigabytes into its tree. Waiting for the journal is planning, and it cost 100 to 1,000 times the naive check
+(0122: planning costs no more than running).
+
+- Bound the wait by what the `stat`s would cost (the answers kept under the root, a few µs each), then check by
+  `stat` without settling the root as lost (no write, no warm fault); write every stream's cookie before waiting
+  on any, so roots wait once, not in turn.
+- **Done when**: a warm run's wall is within a few ms of `RERAIL_JOURNAL=off`'s on a busy host, and the journal
+  still saves the `stat`s where they cost more than its wait (a 9,010-file tree).
+- **Record**: fixed (89f4abfec): t50's full shape warm 0.13 and 0.12 s wall (0.11 s CPU), against t48's 0.54 and t41's 0.17.
+  Built: `journal::since_within` waits at most the caller's bound; a
+  slower journal answers `Lost` with the latest id the stream was told (every change before it has come, in id
+  order) and keeps the stream. The observer bounds each root by its kept answers at `STAT_NS` (4 µs), at least
+  `JOURNAL_WAIT_LEAST_NS` (2 ms). Tests: rerail-store's journal and observer tests 27/27 (the bound folded into the
+  journal's test: a test of its own, a third stream at once, pushed the host's `fseventsd` past 2 s for the others);
+  the engine's warm, journal and edit tests 105/106, the 106th Q223.
+
+### Q222. (Q185 on benchmarks-on-integration) Relax stops on the vendored Cranelift: every test of rerail-logic and the engine goes to cargo
+
+Seen 2026-11-18 (`scripts/dev/live-test-remote --once rerail-logic --lib -- FILTER`, and the same for
+rerail-engine): the session ends before `main` with "build script failed (exit 1): relax: load error
+cranelift_assembler_x64_meta: <the host's copy>/native/vendor/cranelift-assembler-x64-meta-0.125.4/src/lib.rs: No such
+file or directory". The file is there on the host (the checkout's copy holds it, tracked); the registry crate
+`cranelift-assembler-x64`'s build script, run by Relax as a child, loads its dependency, which `[patch]` puts in
+`native/vendor` since 0341, by the disk path, and the child's file view does not serve it. Every crate over the JIT
+(rerail-logic, rerail-engine, rerail-parser-tests) is cut off from the live loop since the vendoring, so their
+tests run through farm nextest with `-E`.
+
+- Find how a build script's child gets the mounts (`RELAX_VFS`, `share_from_env`; vfs.rs `virtual_of`, which maps
+  "a path a script gave under its folder on disk") and why a `[patch]` path under the shared workspace reads as
+  missing there; fix it in `scripts/dev/relax/rerail.patch`.
+- **Done when**: `live-test-remote --once rerail-logic --lib -- chunks_are_sized_by_the_prior` passes.
+- **Record**: —
+
+### Q223. (Q186 on benchmarks-on-integration) `a_header_edit_asks_again_only_for_the_units_that_read_it` depends on the journal's timing
+
+Seen 2026-11-18 on the M3 (load 30–100): at HEAD (5dd41140c) it failed 2 of 2, asking again for all three units
+after the header edit (`["one.c", "three.c", "two.c"]` against `["one.c"]`); with Q221's bound and the test
+raising it to 2 s, it failed once asking for none (`[]`), and passed traced. The test turns the journal on for the
+engine's tests alone; a cookie later than 2 s makes a run's root `Lost` (every answer by `stat`, a fresh header
+racy), and a sync kept within an epoch answers a later run that did not advance it. Decision 0327's area (C units
+kept). Find which run's epoch the second run's questions carried when it asked for none: a missed edit, if a run
+reuses another's sync.
+
+- **Done when**: the test passes 20 of 20 on a host at load, or names why a run cannot answer.
+- **Record**: —
+
+### Q224. (Q187 on benchmarks-on-integration) The full shape's cold run on Metal hangs, now and then: the main thread waits on the builder's bell, the pool idle
+
+Seen 2026-11-18 on the M3 (t48 once, t50 twice, of 13 cold Metal runs of the full shape; `RERAIL_RUN_MB` lifted):
+the run is killed by the 600 s cap, or past 150 s by `hang50.sh`. Its stacks (`sample`, 5 s): every `rerail-cpu`
+thread idle in `wait_until_cold`, the GPU and ANE workers idle in their queues' `recv`, and the main thread in a
+timed condvar wait inside `run_observed`'s chunk loop: `Builder::main_wait` (`Bell::wait_as`), for either
+`builder.next` or `file_front`. Nothing will ring it: a chunk the builder holds back, or a slot no job fills.
+The run's log before it: only device-budget refusals (Q203). Not reproduced with an empty kernel store (2 of 2
+fine) or in 8 runs after; the CPU path never hung (11 runs).
+
+- `hang50.sh` now signals the run (`SIGUSR1`, `RERAIL_DUMP`) before killing it: the dump's open spans and
+  `main_doing` say which wait, and the builder's `Cut` which chunk it holds.
+- **Done when**: the wait is named, its missing ring or slot found, and 20 cold Metal runs end.
+- **Found** (from the code, against the stacks): a load's chunk failed. `drain` stopped the builder and returned the
+  error, which the main thread sent to the cone as that request's answer. The cone had already posted its next
+  request (it posts ahead of their answers). The main thread answered it: the documents went to the builder, and
+  `drain` waited in `Builder::next`. A stopped builder steps no more (`step` returns at once), so `ended` was never
+  set and nothing was ever handed on. The main thread polled the bell for ever, the pool idle: the stacks above.
+- **Fixed**: `next` answers `Err(())` (the builder ended) once the builder is stopped. That load then fails with "the
+  chunk builder ended before a load's documents", and the run ends with its error, not a hang. t51 (the fix): 8 of 8
+  cold Metal runs of the full shape ended, rc 0, 22-33 s (the M3 at load 50-90). Before it, 3 of 13 hung. No run
+  failed, so the first chunk's own error is not seen yet: a run that meets it now ends with it in its log.
+- **Open**: no test fails a load's chunk (the builder is local to `run_observed`, and no hook fails a load), and
+  12 more cold Metal runs are owed for the 20.
 - **Record**: —
 
 ## Questions for the user

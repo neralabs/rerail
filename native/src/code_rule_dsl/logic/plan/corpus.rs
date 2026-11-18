@@ -5982,6 +5982,12 @@ fn run_observed(
             'a: 's,
         {
             self.main_wait("the main thread: its next chunk", || {
+                // A stopped builder (a chunk's error) steps no more, so nothing it holds will ever be handed on: it
+                // has ended. A load asked after a load's chunk failed waited here for ever, the pool idle (Q224: the
+                // cone posts its requests ahead of their answers, and the next was answered before the error was read).
+                if self.stopped.load(std::sync::atomic::Ordering::Relaxed) {
+                    return Some(Err(()));
+                }
                 self.advance(jobs);
                 let mut c = self.cut.lock();
                 if let Some(r) = c.handed.pop_front() {
