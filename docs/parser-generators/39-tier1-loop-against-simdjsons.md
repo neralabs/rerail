@@ -260,6 +260,22 @@ JSONC: 784 / 11 → 735 / 8. simdjson's stretch is 72 and its chunk about 17. Le
 - each rule tested to a 0 or 1 lane, where simdjson keeps the ANDed bytes;
 - the carried previous block.
 
+### simdjson's structure (0405)
+
+All three are done: the bytes that never start a sequence are pair rules, merged into
+simdjson's bits; the rules are made as bytes and tested once a chunk; and the hot loop carries
+its last chunk to the next block.
+
+| `14-json` | Hot loop | Stack accesses | UTF-8 stretch | Steady chunk |
+|---|---:|---:|---:|---:|
+| After 0404 | 549 | 1 | 128 | 25 |
+| 0405 | **507** | **1** | **85** | **17** |
+| simdjson | | | 72 | 17 |
+
+JSONC: 735 / 8 → 693 / 9. The steady chunk is simdjson's. What is left of the stretch is the
+error's mask, about 9 instructions a block, where simdjson ORs error bytes into one vector for
+the file: that is item 2's flag (0402).
+
 ## Reproducing
 
 ```

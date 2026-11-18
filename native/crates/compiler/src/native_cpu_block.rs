@@ -7959,7 +7959,9 @@ impl Loop<'_> {
 /// With, in a full block, the words the token loop's refill reads (`Loop::hand`): the block's
 /// own, handed on as values.
 #[allow(clippy::type_complexity)]
-fn step(f: &mut FunctionBuilder<'_>, lp: &Loop<'_>, consts: &Consts, p: &[Value], len: Value, full: bool, scratch: Value, calls: Option<&RegionCalls>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>) -> (Vec<Value>, usize, usize, Vec<Value>) {
+/// `chunk0`: the 16 bytes before the block, carried in a register from the block before
+/// (decision 0405); the block's last 16 are then the fifth value given back, for the next.
+fn step(f: &mut FunctionBuilder<'_>, lp: &Loop<'_>, consts: &Consts, p: &[Value], len: Value, full: bool, scratch: Value, calls: Option<&RegionCalls>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>, chunk0: Option<Value>) -> (Vec<Value>, usize, usize, Vec<Value>, Option<Value>) {
     let (native, state) = (lp.native, lp.state);
     let (carried, counted, early) = (lp.carried(), lp.counted, lp.early);
     let stores = MemFlags::new().with_notrap();
@@ -7977,16 +7979,26 @@ fn step(f: &mut FunctionBuilder<'_>, lp: &Loop<'_>, consts: &Consts, p: &[Value]
     // The full body's one branch: an all-ASCII block runs a body with the values known on
     // ASCII bytes folded (`native_cpu_lanes`), the others the whole body. Both meet before
     // the sinks.
+    // The block's last chunk, for the next block's chunk 0: one of the body's loads.
+    let mut last_chunk = None;
     let (values, packed_out, extras) = if full && state.plan.ascii_branch {
         // One body; what an all-ASCII block knows behind one branch in it (`ascii_split`).
-        let (ascii, bytes) = all_ascii(&mut *f, native, &state.plan, base);
+        let (ascii, bytes) = all_ascii(&mut *f, native, &state.plan, base, chunk0);
+        last_chunk = chunk0.and(bytes[4]);
         let (v, packed, gates, rounds, extras) = body(&mut *f, native, state, consts, At { i, len, base, packed_in, full, bytes: Some(bytes), ascii_split: Some((ascii, &lp.split)), rare: Some(&lp.rare), scratch, slots, slot_of, sinks, calls, walks: lp.walks, edge, hand: &lp.hand });
         gate_branches += gates;
         round_branches += rounds.len();
         heads.extend(rounds.into_iter().map(|b| (b, Step::Round)));
         (v, packed, extras)
     } else {
-        let (v, packed, gates, rounds, extras) = body(&mut *f, native, state, consts, At { i, len, base, packed_in, full, bytes: None, ascii_split: None, rare: full.then_some(&lp.rare), scratch, slots, slot_of, sinks, calls, walks: lp.walks, edge, hand: &lp.hand });
+        let bytes = chunk0.map(|v| {
+            let last = f.ins().load(types::I8X16, MemFlags::new().with_notrap(), base, 48);
+            last_chunk = Some(last);
+            let mut b = [None; 5];
+            (b[0], b[4]) = (Some(v), Some(last));
+            b
+        });
+        let (v, packed, gates, rounds, extras) = body(&mut *f, native, state, consts, At { i, len, base, packed_in, full, bytes, ascii_split: None, rare: full.then_some(&lp.rare), scratch, slots, slot_of, sinks, calls, walks: lp.walks, edge, hand: &lp.hand });
         gate_branches += gates;
         round_branches += rounds.len();
         heads.extend(rounds.into_iter().map(|b| (b, Step::Round)));
@@ -8057,7 +8069,7 @@ fn step(f: &mut FunctionBuilder<'_>, lp: &Loop<'_>, consts: &Consts, p: &[Value]
     } else {
         Vec::new()
     };
-    (again, gate_branches, round_branches, handed)
+    (again, gate_branches, round_branches, handed, last_chunk)
 }
 
 /// The general body as a function of its own, called by the pass for the blocks that are not
@@ -8076,7 +8088,7 @@ fn general(context: &mut Context, lp: &Loop<'_>) -> Result<(), Error> {
     let p: Vec<Value> = (0..lp.params).map(|k| f.ins().load(types::I64, flags, at, 8 * k as i32)).collect();
     let zero = f.ins().iconst(types::I64, 0);
     let mut heads = Vec::new();
-    let (again, _, _, hand) = step(&mut f, lp, &consts, &p, len, false, zero, None, &mut heads);
+    let (again, _, _, hand, _) = step(&mut f, lp, &consts, &p, len, false, zero, None, &mut heads, None);
     for (k, &v) in again.iter().enumerate() {
         f.ins().store(flags, v, at, 8 * k as i32);
     }
@@ -8447,6 +8459,13 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             }
         }
         f.append_block_param(tokens, types::I64);
+        // The bytes before the block, carried round the hot loop (decision 0405, simdjson's
+        // `prev_input_block`): the block before's last chunk on the back edge, a load from the
+        // head. Not round the token loop, whose calls would spill it.
+        let carry = !tokened && crate::native_cpu_lanes::reads_before(native, &lp.state.plan);
+        if carry {
+            f.append_block_param(body_block, types::I8X16);
+        }
         // The block a full body handed its refill words for, and the words (`Hand`).
         let handed = if tokened && !lp.hand.is_empty() { lp.hand.len() + lp.extra.len() } else { 0 };
         if handed > 0 {
@@ -8599,24 +8618,31 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         let next_block = f.create_block();
         f.ins().brif(ended, finish, &args, next_block, &[]);
         f.switch_to_block(next_block);
+        // Into the hot body: with the bytes before the block, loaded (the window holds them).
+        let into_body: Vec<BlockArg> = if carry {
+            let before = f.ins().load(types::I8X16, MemFlags::new().with_notrap(), hp[1], -16);
+            args.iter().copied().chain([before.into()]).collect()
+        } else {
+            args.clone()
+        };
         if let (Some(slot), Some(ea)) = (edge_slot, lp.edge_at.get()) {
             // Every block the full body's (0383). On an edge block, first the loop's parameters
             // to the edge part's slot, cold: its block's index, which tells the body's end it is
             // one (`Emit::edge_part`), and the carried words in.
             let call = f.create_block();
             let is_edge = edge_block(&mut f, hp[0], ea.bound);
-            f.ins().brif(is_edge, call, &[], body_block, &args);
+            f.ins().brif(is_edge, call, &[], body_block, &into_body);
             f.switch_to_block(call);
             f.set_cold_block(call);
             for (k, &v) in hp[..params].iter().enumerate() {
                 f.ins().stack_store(v, slot, 8 * k as i32);
             }
-            f.ins().jump(body_block, &args);
+            f.ins().jump(body_block, &into_body);
         } else {
             let past_first = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, hp[0], 1);
             let inside = f.ins().icmp(IntCC::UnsignedLessThan, hp[0], full_end);
             let is_full = f.ins().band(past_first, inside);
-            f.ins().brif(is_full, body_block, &args, general, &args);
+            f.ins().brif(is_full, body_block, &into_body, general, &args);
         }
 
         // The loops' progress points: the files, the blocks, and each flattening's set bits.
@@ -8626,15 +8652,16 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         let made_from = f.func.dfg.num_blocks();
         f.switch_to_block(body_block);
         let p = f.block_params(body_block).to_vec();
-        let st = p[params..].to_vec();
+        let st = p[params..params + states].to_vec();
+        let chunk0 = carry.then(|| p[params + states]);
         // The body's constants, made at its head each block (decision 0350): made once at the
         // function's entry they live across the token loop's calls, and were spilled there and
         // reloaded at each use (about 20 loads a block, against a `movi` and a `dup` here).
         // In every loop: where none crosses a call, the entry's were still spilled around the
         // gated regions and reloaded at the loop's head (0353).
         let body_consts = Consts::make(&mut f);
-        let (again, hand);
-        (again, gate_branches, round_branches, hand) = step(&mut f, &lp, &body_consts, &p[..params], len, true, scratch, Some(&calls), &mut heads);
+        let (again, hand, last_chunk);
+        (again, gate_branches, round_branches, hand, last_chunk) = step(&mut f, &lp, &body_consts, &p[..params], len, true, scratch, Some(&calls), &mut heads, chunk0);
         let again: Vec<BlockArg> = again.into_iter().map(BlockArg::from).collect();
         // The hot loop's back edge: to itself while the next block is full.
         hot.push(body_block);
@@ -8653,7 +8680,9 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             f.ins().jump(tokens, &args);
         } else {
             let more = f.ins().icmp(IntCC::UnsignedLessThan, next, full_end);
-            f.ins().brif(more, body_block, &again, head, &again);
+            // The back edge: this block's last chunk is the next one's chunk 0.
+            let again_carried: Vec<BlockArg> = again.iter().copied().chain(last_chunk.map(BlockArg::from)).collect();
+            f.ins().brif(more, body_block, &again_carried, head, &again);
         }
 
         // The other blocks: the general body's call, the parameters through a stack slot.

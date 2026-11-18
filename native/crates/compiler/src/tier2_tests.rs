@@ -354,9 +354,45 @@ fn a_tokens_end_is_its_gaps_as_the_lasts_extract() {
     }
 }
 
-/// Decisions 0402 and 0404: JSON's UTF-8 rules of two bytes are byte-pair lookups on the CPU, as
-/// simdjson's (`native_cpu_pairs`): the six ORed in the check one pair, `TWO_CONTS` another, on
-/// the same two tables, this byte's a table of high nibbles (one lookup). The CPU's tier 1 still
+/// Decision 0405: the hot loop carries the bytes before its block in a register (simdjson's
+/// `prev_input_block`), and keeps the UTF-8 rules as bytes, tested once a chunk.
+/// - Its loop loads no byte before its block.
+/// - The CPU's tier 1 agrees with the interpreter on UTF-8 across the edges of full blocks,
+///   where the carried chunk is the byte before: files of five blocks, each sequence placed
+///   across the second and third blocks' edges.
+#[test]
+#[cfg(target_arch = "aarch64")]
+fn the_hot_loop_carries_the_bytes_before_its_block() {
+    for (name, source) in crate::ladder::steps().into_iter().filter(|(n, _)| n.starts_with("14-json") || n.starts_with("15-jsonc")) {
+        let c = crate::ladder::compile_step(&name, &source);
+        let hot = crate::clif_text::machine_loop(&c.parser.tier1.loops_disassembly());
+        let before: Vec<&String> = hot.iter().filter(|l| l.starts_with("ldr q") && l.contains(", #-")).collect();
+        assert!(before.is_empty(), "{name}: the hot loop loads bytes before its block: {before:?}");
+        let made = crate::block_native::BlockNative::lower(&c.program.block_programs[0]).records_made();
+        let (mut docs, mut refused) = (0, 0);
+        for seq in [&[0xc3u8, 0xa9][..], &[0xe2, 0x82, 0xac], &[0xf0, 0x9f, 0x98, 0x80], &[0xed, 0xa0, 0x80], &[0xe0, 0x80, 0x80], &[0xf4, 0x90, 0x80, 0x80], &[0xc0, 0x80], &[0xf5, 0x80], &[0x80], &[0xc3], &[0xe2, 0x82], &[0xc3, 0x80, 0x80]] {
+            for edge in [128usize, 192] {
+                for back in 0..5 {
+                    let pad = edge - 2 - back;
+                    let mut doc = format!("[\"{}", "a".repeat(pad)).into_bytes();
+                    doc.extend(seq);
+                    doc.extend(b"\", 1]");
+                    doc.resize(320, b' ');
+                    let interpreted = c.program.block_programs[0].run_files(&[&doc]).remove(0);
+                    assert!(crate::ladder::tier1_agrees(&c.parser.tier1.extract(&doc), &interpreted, &made), "{name}: {seq:02x?} at {pad}");
+                    docs += 1;
+                    refused += usize::from(interpreted.totals.iter().any(|&t| t != 0));
+                }
+            }
+        }
+        assert!(0 < refused && refused < docs, "{name}: {refused} of {docs} refused");
+    }
+}
+
+/// Decisions 0402, 0404 and 0405: JSON's UTF-8 rules of two bytes are byte-pair lookups on the
+/// CPU, as simdjson's (`native_cpu_pairs`): the eight ORed in the check seven boxes of one pair
+/// (simdjson's bits: `f4..ff` before `9x..bx` one, `f0` and `f5..ff` before `8x` one),
+/// `TWO_CONTS` another, on the same two tables, this byte's a table of high nibbles (one lookup). The CPU's tier 1 still
 /// agrees with the interpreter's: every lead byte before continuation bytes and others, complete
 /// or cut short, continuations first or in runs, across the chunks' and the blocks' edges.
 #[test]
@@ -368,7 +404,7 @@ fn utf8s_two_byte_rules_are_one_pair_lookup() {
     let fused = crate::native_cpu_pairs::fused(&stripped).expect("the rules are pairs");
     let pairs: Vec<(u16, u16, u8)> = fused.insts.iter().filter_map(|i| if let crate::block_native::BlockInst::Pair { before, table, bits } = *i { Some((before, table, bits)) } else { None }).collect();
     let bits: Vec<u32> = pairs.iter().map(|p| p.2.count_ones()).collect();
-    assert_eq!(bits, [6, 1], "{name}: the six rules, then two continuations: {pairs:?}");
+    assert_eq!(bits, [7, 1], "{name}: the eight rules in seven boxes, then two continuations: {pairs:?}");
     assert!(pairs.iter().all(|p| (p.0, p.1) == (pairs[0].0, pairs[0].1)), "{name}: one pair of tables: {pairs:?}");
     assert_eq!(fused.tables[usize::from(pairs[0].1)].lo, [0xff; 16], "{name}: this byte's table is of high nibbles");
     let made = native.records_made();
@@ -413,7 +449,8 @@ fn utf8_in_simdjsons_form_refuses_as_the_plain_form() {
     let at = source.find("error \"invalid UTF-8\"").expect("the check");
     let end = at + source[at..].find("\nerror ").expect("the next error");
     // The plain form: the lead bytes 1, 2 and 3 back say where a continuation is needed.
-    let plain_check = r#"class lead234   = 0xc2..0xf4
+    let plain_check = r#"class never     = 0xc0 0xc1 0xf5..0xff
+class lead234   = 0xc2..0xf4
 class lead34    = 0xe0..0xf4
 class lead4only = 0xf0..0xf4
 mask needed     = prev(lead234, 1) | prev(lead34, 2) | prev(lead4only, 3)

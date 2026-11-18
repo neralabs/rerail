@@ -33,7 +33,7 @@ use crate::block::ClassTable;
 use crate::block_native::{BlockInst, BlockNative};
 
 /// A rule: the byte before's set and this byte's, each a product (high nibbles, low nibbles).
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 struct Rule {
     before: (u16, u16),
     here: (u16, u16),
@@ -62,44 +62,9 @@ pub fn fused(native: &BlockNative) -> Option<BlockNative> {
             grouped[x] = true;
         }
     }
-    // The rules and their bits: one bit a distinct rule, eight at most.
-    let mut kinds: Vec<Rule> = Vec::new();
-    let mut bit_of: Vec<Option<u8>> = vec![None; n];
-    for x in (0..n).filter(|&x| !grouped[x]) {
-        let Some(r) = rule(native, x) else { continue };
-        let k = match kinds.iter().position(|&q| q == r) {
-            Some(k) => k,
-            None if kinds.len() < 8 => {
-                kinds.push(r);
-                kinds.len() - 1
-            }
-            None => continue,
-        };
-        bit_of[x] = Some(1 << k);
-    }
-    if bit_of.iter().flatten().count() < 2 {
-        return None;
-    }
-    let (mut before, mut here) = (ClassTable::default(), ClassTable::default());
-    for (k, r) in kinds.iter().enumerate() {
-        for (t, (hi, lo)) in [(&mut before, r.before), (&mut here, r.here)] {
-            for h in (0..16).filter(|h| hi >> h & 1 == 1) {
-                t.hi[h] |= 1 << k;
-            }
-            for l in (0..16).filter(|l| lo >> l & 1 == 1) {
-                t.lo[l] |= 1 << k;
-            }
-        }
-    }
-    // Every rule's set of this byte all its low nibbles: the low half all ones, looked up never.
-    if kinds.iter().all(|r| r.here.1 == 0xffff) {
-        here.lo = [0xff; 16];
-    }
-    let mut out = native.clone();
-    let p = out.tables.len() as u16;
-    out.tables.extend([before, here]);
-    let pair = |bits: u8| BlockInst::Pair { before: p, table: p + 1, bits };
-    // The rules ORed in one tree: one pair of their bits.
+    let is_rule: Vec<Option<Rule>> = (0..n).map(|x| if grouped[x] { None } else { rule(native, x) }).collect();
+    // The rules ORed in one tree (every inner `or` read by the tree only, every rule by its `or`
+    // only): one group, its boxes merged. Every other rule: a group of its own.
     let one_reader = |x: usize| readers[x] == 1 && !output[x] && !grouped[x];
     let inner = |x: usize| matches!(native.insts[x], BlockInst::Or(..)) && one_reader(x);
     let mut inner_of = vec![false; n];
@@ -110,37 +75,145 @@ pub fn fused(native: &BlockNative) -> Option<BlockNative> {
             }
         }
     }
-    let mut done = vec![false; n];
+    let mut groups: Vec<Vec<usize>> = Vec::new();
+    let mut in_tree = vec![false; n];
     for root in (0..n).filter(|&x| matches!(native.insts[x], BlockInst::Or(..)) && !inner_of[x] && !grouped[x]) {
         let mut rules = Vec::new();
         let mut stack = vec![root];
         while let Some(x) = stack.pop() {
             match native.insts[x] {
                 BlockInst::Or(a, b) if x == root || inner(x) => stack.extend([usize::from(a), usize::from(b)]),
-                _ if bit_of[x].is_some() && one_reader(x) => rules.push(x),
+                _ if is_rule[x].is_some() && one_reader(x) => rules.push(x),
                 _ => {}
             }
         }
         rules.sort_unstable();
-        if rules.len() < 2 {
-            continue;
-        }
-        let bits = rules.iter().fold(0u8, |b, &x| b | bit_of[x].expect("a rule"));
-        out.insts[rules[0]] = pair(bits);
-        for &x in &rules[1..] {
-            out.insts[x] = BlockInst::Const(0);
-        }
-        for &x in &rules {
-            done[x] = true;
+        if rules.len() >= 2 {
+            for &x in &rules {
+                in_tree[x] = true;
+            }
+            groups.push(rules);
         }
     }
-    // Every other rule: its own pair, its lookups shared with the rest.
-    for x in (0..n).filter(|&x| !done[x]) {
-        if let Some(bit) = bit_of[x] {
-            out.insts[x] = pair(bit);
+    groups.extend((0..n).filter(|&x| is_rule[x].is_some() && !in_tree[x]).map(|x| vec![x]));
+    // Each group's boxes, and their bits: one a box, eight at most, a box shared where two
+    // groups have it. A group that no longer fits is left as it is.
+    let mut boxes: Vec<Box> = Vec::new();
+    let mut fused: Vec<(Vec<usize>, u8)> = Vec::new();
+    for g in groups {
+        let mine = merged(g.iter().map(|&x| is_rule[x].expect("a rule").as_box()).collect());
+        let mut taken = boxes.clone();
+        let mut bits = 0u8;
+        for b in mine {
+            let k = match taken.iter().position(|&t| t == b) {
+                Some(k) => k,
+                None => {
+                    taken.push(b);
+                    taken.len() - 1
+                }
+            };
+            bits |= 1u8.checked_shl(k as u32).unwrap_or(0);
+        }
+        if taken.len() <= 8 {
+            boxes = taken;
+            fused.push((g, bits));
+        }
+    }
+    if fused.iter().map(|(g, _)| g.len()).sum::<usize>() < 2 {
+        return None;
+    }
+    let (mut before, mut here) = (ClassTable::default(), ClassTable::default());
+    for (k, b) in boxes.iter().enumerate() {
+        for (t, hi, lo) in [(&mut before, b[0], b[1]), (&mut here, b[2], b[3])] {
+            for h in (0..16).filter(|h| hi >> h & 1 == 1) {
+                t.hi[h] |= 1 << k;
+            }
+            for l in (0..16).filter(|l| lo >> l & 1 == 1) {
+                t.lo[l] |= 1 << k;
+            }
+        }
+    }
+    // Every box's set of this byte all its low nibbles: the low half all ones, looked up never.
+    if boxes.iter().all(|b| b[3] == 0xffff) {
+        here.lo = [0xff; 16];
+    }
+    let mut out = native.clone();
+    let p = out.tables.len() as u16;
+    out.tables.extend([before, here]);
+    // A group's first rule its pair, the others zero: its tree's value, or its own.
+    for (g, bits) in fused {
+        out.insts[g[0]] = BlockInst::Pair { before: p, table: p + 1, bits };
+        for &x in &g[1..] {
+            out.insts[x] = BlockInst::Const(0);
         }
     }
     Some(out)
+}
+
+/// A box of byte pairs: the byte before's high nibbles and low ones, this byte's high nibbles
+/// and low ones. A pair table's bit holds one.
+type Box = [u16; 4];
+
+impl Rule {
+    fn as_box(self) -> Box {
+        [self.before.0, self.before.1, self.here.0, self.here.1]
+    }
+}
+
+/// The boxes of one tree's rules, fewer: two that differ in one of the four sets are one, their
+/// union in it; and a box is split where a part of it would be one with another box, and the
+/// rest with a third, as simdjson's tables share `TOO_LARGE` between `f4` and `f5..ff`. The
+/// union of the boxes is the same, and the tree reads only their union.
+fn merged(mut v: Vec<Box>) -> Vec<Box> {
+    let differ = |a: &Box, b: &Box| (0..4).filter(|&d| a[d] != b[d]).collect::<Vec<usize>>();
+    loop {
+        let mut changed = false;
+        'merge: for i in 0..v.len() {
+            for j in i + 1..v.len() {
+                let ds = differ(&v[i], &v[j]);
+                if ds.len() <= 1 {
+                    if let Some(&d) = ds.first() {
+                        v[i][d] |= v[j][d];
+                    }
+                    v.remove(j);
+                    changed = true;
+                    break 'merge;
+                }
+            }
+        }
+        if changed {
+            continue;
+        }
+        // Split box `i` along `f` to `j`'s set there (a strict subset of `i`'s): the part is one
+        // with `j` along `d`, and the rest must be one with a third box.
+        'split: for i in 0..v.len() {
+            for j in (0..v.len()).filter(|&j| j != i) {
+                let ds = differ(&v[i], &v[j]);
+                if ds.len() != 2 {
+                    continue;
+                }
+                for (f, d) in [(ds[0], ds[1]), (ds[1], ds[0])] {
+                    if v[j][f] & !v[i][f] != 0 {
+                        continue;
+                    }
+                    let mut rest = v[i];
+                    rest[f] &= !v[j][f];
+                    if (0..v.len()).any(|k| k != i && k != j && differ(&rest, &v[k]).len() == 1) {
+                        let mut part = v[i];
+                        part[f] = v[j][f];
+                        part[d] |= v[j][d];
+                        v[j] = part;
+                        v[i] = rest;
+                        changed = true;
+                        break 'split;
+                    }
+                }
+            }
+        }
+        if !changed {
+            return v;
+        }
+    }
 }
 
 /// Value `x` as a rule: `and(prev(L, 1), C)`, or `and_not(C, prev(L, 1))` (the byte before not
