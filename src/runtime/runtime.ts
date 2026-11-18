@@ -1921,12 +1921,16 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     return { setUp: true, ruleCount: eligibility === "ok" ? this.#currentRuleCount(state) : null };
   }
 
-  /** The rules `state`'s session runs, while they were loaded from the configuration as it is now; null otherwise. */
+  /**
+   * The rules `state`'s session runs while its coverage is current as the footer reads it: the configuration signature
+   * it records is the configuration's now. A session whose code and conversation rules were loaded from different
+   * configurations records none, so it reads no count either. Null otherwise.
+   */
   #currentRuleCount(state: RuntimeSessionState): number | null {
     const coverage = this.#ruleCoverage(state);
-    // An empty signature says the code and conversation rules were loaded from different configurations.
-    if (coverage === undefined || coverage.ruleSignature === "") return null;
-    return this.#catalogs.catalog(state.checkout.root).current() ? coverage.activeRuleCount : null;
+    if (coverage === undefined) return null;
+    const now = configurationSignatureOf(this.#catalogs.catalog(state.checkout.root).sourceSignature());
+    return coverage.ruleSignature === now ? coverage.activeRuleCount : null;
   }
 
   #repositoryKey(checkout: StartingCheckout): string | null {
