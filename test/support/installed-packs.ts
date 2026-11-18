@@ -44,7 +44,7 @@ export function installPackDirectory(directory: string, name: string, home: stri
 }
 
 /** The version in the `package.json` of the pack in `directory`. */
-const versionOf = (directory: string): string => (JSON.parse(readFileSync(join(directory, "package.json"), "utf8")) as { version: string }).version;
+export const versionOf = (directory: string): string => (JSON.parse(readFileSync(join(directory, "package.json"), "utf8")) as { version: string }).version;
 
 /** Installs `packs/<id>` from this repository into `home` (the test file's Rerail home by default), as the registry would. */
 export function installPack(id: string, home: string = defaultRerailHome()): string {
