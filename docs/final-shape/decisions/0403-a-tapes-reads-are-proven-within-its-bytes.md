@@ -17,8 +17,9 @@ disk, or bytes made to do this) could make a read go outside the tape, or a writ
 out of bounds is a wrong answer at best and a leak of other memory at worst. A write out of bounds corrupts the
 engine's own state. Q125, a relation read with a garbage header, looked like one.
 
-**The rule.** Every read of a tape stays within the tape's bytes, and every write of a 16z cache stays within the
-cache, *for any bytes the tape holds*. The proof has two parts:
+**The rule.** Every read of a tape stays within the tape's bytes, every span it gives stays within its source, every
+write of a 16z cache stays within the cache, and every row a kernel writes into a relation's block stays within the
+rows its chunks hold, *for any bytes the tape holds and any sizes the host gave*. The proof has two parts:
 
 - **Checked once, where a structure is made.** An offset table is checked to be sorted, with its last entry within
   what it indexes. A length is checked against what the bytes can hold. A check reads the table, never the data it
@@ -40,6 +41,7 @@ A walk over the tree must also *end*, whatever the bytes hold: a kernel that loo
 | Format 16 part tables | sorted, each list's last start its length (already, `placement`) | `f16::placement` |
 | Format 16 regions | each node region at least its nodes × the language's width | `Placement::view` |
 | Format 15 columns | each exactly its nodes × its width, read by bounds-checked slices (already) | `f15_columns` |
+| A tape's source length (its header's) | the source the document holds: a resident document whose header states another is refused | `residency::slabs::planned` |
 | The 16z cache | `Spec::init` lays out the generations, the index, the entries, the dead entry, 256 bytes of slack and a 256-byte guard. Its words (generations, entries, shift, slots, stride, first entry, dead entry) are the only inputs of its addresses | `view::cache::Spec` |
 
 ## What each read is bounded by
@@ -78,11 +80,34 @@ The reads are the CLIF ones (`crates/clif/src/reads.rs`). Each line is why one k
   - `parent16`'s step back must be 1 to `j`, else the walk ends with NONE.
   - So every parent is below its node and every next sibling after it, and a kernel that walks ancestors or
     siblings ends.
+- **A span.** `tape_start` is held to the source's length (the view's `source_len`, from the tape's header), and
+  `tape_end` between the start and the source's end. So a kernel's text test (`same_text`, `text_is`: a loop over
+  `end - start` bytes from `start`) reads only the source, and a span is never reversed: `end - start` underflowing
+  was a loop over 4 G bytes. `tape_start_stated` and `tape_end_stated` give the spans as the tape states them, for
+  its check (`validated::visit`, which refuses a span past the source) and the CPU's scans, whose slices of the
+  source are bounds-checked. No kernel reads them.
+- **A row written into a relation's block** goes through `rows_put` (CLIF, `crates/clif/src/relation.rs`), the
+  device's one writer: `view_expand`, `rows_copy` into a relation, and the lattice's held rows. It writes only a row
+  below the rows the relation's chunks hold (`Rows::reserved`) and a column below its columns, at the column's width.
+  Any other is not written and is counted in the rows' `needed`, the overflow protocol the host's writers already
+  keep. A batch whose kernels counted one fails, each relation named, and its strata run on the CPU. Before it, a
+  kernel stored through `rows_at` and 8 bytes whatever the column's width. A row past the chunks made finds its
+  chunk's offset 0, so its address is the column's directory itself. A write there overwrites the directory and
+  the descriptors after it (Q125, below).
 - **A node a kernel reads** comes from a loop over the tape's nodes, from a walk (above), or from a view's row
   (`vread`: the document whose rows hold it). So reads of formats 15 and 16 take nodes below the tape's count, which
   their checked regions and columns hold.
 
 ## How it is checked
+
+- **`f16::tests::a_tapes_spans_stay_within_its_source`:** a tape whose header states half its spans' source, in
+  formats 16 and 16z. Every node's span lies within the source and is not reversed, and each is read byte by byte
+  from a source placed against a page no read may touch. Without the two clamps it fails (a span of 106,561 bytes
+  over a source of 53,280).
+- **`relation::tests::the_devices_row_writer_stays_in_its_rows`:** `rows_put` writes a row of its chunks at the
+  column's width. It writes no row past them and no column past the columns, and counts each. The descriptor and
+  the directories are as they were. It shows the old address too: `rows_at` of a row past the chunks lies inside
+  the column's directory.
 
 - **`f16::tests::a_16z_tapes_reads_stay_within_its_bytes`:**
   - places a 16z tape so its last byte lies against a page no read may touch (64 KiB, unmapped for reading);
@@ -106,23 +131,33 @@ The reads are the CLIF ones (`crates/clif/src/reads.rs`). Each line is why one k
 ## Q125
 
 Q125 is a relation in a device join whose header read `base_rows` 2,436,104,195: 1 run in 95, on 16z, on
-2026-11-18. The cache's writes are within its buffer by the proof above, so a cache write is not the writer unless
-its `rel` was wrong. Each owner makes `rel` from the same tape address its kernels take:
+2026-11-18. A loop of 150 runs since crashed once (SIGSEGV, run r-q125-139). The crash report puts the fault in
+`Relation::index_built`, called from `Batch::finish` in a wave's deferred flush. It is the store of the index's
+column count into `indexes[i]`, through the descriptor's `indexes` span. The span's length passed the bounds check,
+but its offset word was garbage (the address 0x0101463c52c300cd), so the descriptor had been overwritten with data.
+The same descriptor words were written over in both: a row writer that missed its rows writes exactly there.
 
-- the residency table, from its slab's buffer, which the label passes bind;
-- the views' directory, from each row's tape address, which the join kernels read.
-
-The label passes wait for every command buffer they commit. A batch waits for its committed work before its
-buffers go back. `index` now panics with what it read: the relation's origin (the device's own, a relation in its
-block, or a view read in place), its offset, its block's kind, magic and extent, and the header's words. That way
-the next occurrence names the block it came from. The work queue's Q125 carries what the runs since have shown.
+- Every device writer into a block was sized by the host: `view_expand` by the made relation's rows, `rows_copy`
+  by `dst_off + n ≤ DevRel.rows`, the lattice by the held rows (`held < had`). But the host checks against the
+  `DevRel`'s count, not the chunks its relation holds. The kernels stored through `rows_at` with no check at all.
+  A row past the chunks resolves into the column's directory (shown by the test above), and from there a write
+  reaches the descriptors behind it.
+- So the writer is bounded where it writes (`rows_put`), not where it is sized. A run that would have written
+  past a relation's chunks now fails its batch with the relation named (`a device batch refused: … rows past its
+  chunks (Q125)`). It no longer corrupts the block.
+- Ruled out by reading, or by runs:
+  - the residency table's and the views' directory's `rel` (each from the address its kernels take);
+  - the wave's lifetimes (the runs and their buffers kept until its flush);
+  - the lattice's writes (held rows only);
+  - the index build (its `n` the reservation's, its buckets masked);
+  - a torn shared 16z read. Under a 1 MB cache, where tries run out by the million, 11 runs of the engine before
+    the dead-entry change and 12 after were all clean.
+- The work queue's Q125 holds the runs since.
 
 ## Open
 
-- **Spans read against the source.** A node's start and end come from the tape's gaps and lengths, which no table
-  check bounds without decoding. A kernel that reads source bytes at a node's span must hold the span to its
-  document's source length. The frontier kernels check their records so (`r.source_length <= source_bytes`). The
-  other text readers (the join's text tests, the label patterns) are not yet audited: work queue Q126.
+- **Which host sizing gave a relation more rows than its chunks.** `rows_put` keeps it from corrupting anything,
+  and a refusal names the relation (its device side's rows, its chunks', its claimed). None has been seen since.
 
 ## What it replaces
 
@@ -130,3 +165,5 @@ the next occurrence names the block it came from. The work queue's Q125 carries 
 - The 16z entry sized by each block's own node count.
 - Walks that trusted a size or a step from the tape.
 - A shared 16z read whose tries ran out, which read the entry as it was.
+- Spans taken from the tape as stated by every reader, the kernels among them.
+- The device's row stores through `rows_at`, 8 bytes whatever the column's width.

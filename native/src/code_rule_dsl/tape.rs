@@ -1791,7 +1791,7 @@ impl TapeImage {
         use rerail_tape_format::tape::{AnyTape, F15};
         let lang = |tag: u8| rerail_tape_format::f16::lang(tag).expect("a format 16 tape is held with its language's table");
         match &self.held {
-            Held::F15(c) => AnyTape::F15(F15::over(c.laid_out().0, c.view(), self.code_table())),
+            Held::F15(c) => AnyTape::F15(F15::over(c.laid_out().0, c.view(self.source_len), self.code_table())),
             Held::F16(t) => AnyTape::F16(t.reader(lang(t.tag())).expect("checked when held")),
             Held::F16Z(t) => AnyTape::F16Z(t.reader(lang(t.tag())).expect("checked when held")),
         }

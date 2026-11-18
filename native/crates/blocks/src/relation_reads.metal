@@ -46,6 +46,7 @@ inline ulong clif_col_get(device const uchar* t,ulong a0,uint a1,uint a2);
 inline ulong clif_rows_at(device const uchar* t,ulong a0,uint a1,uint a2);
 inline uint clif_rows_width(device const uchar* t,ulong a0,uint a1);
 inline ulong clif_rows_get(device const uchar* t,ulong a0,uint a1,uint a2);
+inline uint clif_rows_put(device const uchar* t,ulong a0,uint a1,uint a2,ulong a3);
 inline ulong clif_rel_get(device const uchar* t,ulong a0,uint a1,uint a2);
 inline uint clif_rel_dead(device const uchar* t,ulong a0,uint a1);
 inline ulong clif_rel_group(device const uchar* t,ulong a0,uint a1,ulong a2);
@@ -191,6 +192,61 @@ inline ulong clif_rows_get(device const uchar* t,ulong a0,uint a1,uint a2){
   ulong v4=clif_rows_col(t,v0,v2);
   ulong v5=clif_col_get(t,v4,v3,v1);
   return v5;
+ }
+ default:return 0;
+ }}
+}
+inline uint clif_rows_put(device const uchar* t,ulong a0,uint a1,uint a2,ulong a3){
+ ulong v0=0;
+ uint v1=0;
+ uint v2=0;
+ ulong v3=0;
+ uint v9=0;
+ ulong v10=0;
+ uint v13=0;
+ v0=a0;
+ v1=a1;
+ v2=a2;
+ v3=a3;
+ uint b=0;
+ while(true){switch(b){
+ case 0u:{
+  uint v4=uint(*(device const uint*)(t+(v0+ulong(long(4)))));
+  uint v5=uint(*(device const uint*)(t+(v0+ulong(long(20)))));
+  uchar v6=uchar((uint)(v1)<(uint)(v4));
+  uchar v7=uchar((uint)(v2)<(uint)(v5));
+  uchar v8=v6&v7;
+  if(v8!=0){b=1u;continue;}else{b=2u;continue;}
+ }
+ case 1u:{
+  v10=clif_rows_at(t,v0,v1,v2);
+  uint v11=clif_rows_width(t,v0,v2);
+  uchar v12=uchar((uint)(v11)==(uint)(uint(4ul)));
+  if(v12!=0){b=4u;continue;}else{b=5u;continue;}
+ }
+ case 4u:{
+  uint v14=uint(v3);
+  clif_st32(t,ulong(v10),ulong(v14));
+  uint v15=uint(1ul);
+  {uint t0=v15;v13=t0;b=6u;continue;}
+ }
+ case 5u:{
+  clif_st64(t,ulong(v10),ulong(v3));
+  uint v16=uint(1ul);
+  {uint t0=v16;v13=t0;b=6u;continue;}
+ }
+ case 6u:{
+  {uint t0=v13;v9=t0;b=3u;continue;}
+ }
+ case 2u:{
+  ulong v17=v0+ulong(16ul);
+  uint v18=uint(1ul);
+  uint v19=clif_aadd(t,ulong(v17),uint(v18));
+  uint v20=uint(0ul);
+  {uint t0=v20;v9=t0;b=3u;continue;}
+ }
+ case 3u:{
+  return v9;
  }
  default:return 0;
  }}

@@ -405,6 +405,7 @@ pub mod at {
     pub const PARTS: i32 = offset_of!(TapeView, parts) as i32;
     pub const CUT: i32 = offset_of!(TapeView, cut) as i32;
     pub const PER: i32 = offset_of!(TapeView, per) as i32;
+    pub const SOURCE_LEN: i32 = offset_of!(TapeView, source_len) as i32;
 }
 
 #[cfg(test)]

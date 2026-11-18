@@ -74,6 +74,13 @@ impl Plan {
 /// `head`, `tape` bytes long as stored, and of its 16z tape where it is one (`z`, read whole).
 fn planned(head: &[u8], tape: usize, source: usize, lines: usize) -> Result<Plan, Error> {
     let stored = resident::stored(head).map_err(invalid)?;
+    // Every format's header states its source's length at the same place: the tape's reads hold every span to it,
+    // so it must be the source the document holds (decision 0403).
+    const AT: usize = crate::code_rule_dsl::tape::header::SOURCE_LEN;
+    let stated = head.get(AT..AT + 8).map(|b| u64::from_le_bytes(b.try_into().expect("8 bytes")));
+    if stated != Some(source as u64) {
+        return Err(invalid(format!("a tape whose header states a source of {stated:?} bytes, held with one of {source}")));
+    }
     let (nodes, codes) = match stored {
         resident::Stored::F15 => resident::header_counts(head).map_err(invalid)?,
         // Format 16's and 16z's headers agree on where the node count is.

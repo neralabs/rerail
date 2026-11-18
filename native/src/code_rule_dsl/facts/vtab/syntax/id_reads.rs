@@ -21,7 +21,7 @@ fn past() -> ! {
 }
 
 #[inline(always)]
-unsafe fn f26(len: u64, a0: u64, a1: u32, a2: u32) -> u32 {
+unsafe fn f29(len: u64, a0: u64, a1: u32, a2: u32) -> u32 {
     let mut v0: u64 = 0;
     let mut v1: u32 = 0;
     let mut v2: u32 = 0;
@@ -87,7 +87,7 @@ return v11;
 }
 
 #[inline(always)]
-unsafe fn f27(len: u64, a0: u64, a1: u32, a2: u32) -> u32 {
+unsafe fn f30(len: u64, a0: u64, a1: u32, a2: u32) -> u32 {
     let mut v0: u64 = 0;
     let mut v1: u32 = 0;
     let mut v2: u32 = 0;
@@ -207,7 +207,7 @@ return v6;
 }
 
 #[inline(always)]
-unsafe fn f28(len: u64, a0: u64, a1: u32, a2: u32) -> u32 {
+unsafe fn f31(len: u64, a0: u64, a1: u32, a2: u32) -> u32 {
     let mut v0: u64 = 0;
     let mut v1: u32 = 0;
     let mut v2: u32 = 0;
@@ -418,7 +418,7 @@ return v8;
 }
 
 #[inline(never)]
-unsafe fn f29(len: u64, a0: u64, a1: u32, a2: u32) -> u64 {
+unsafe fn f32(len: u64, a0: u64, a1: u32, a2: u32) -> u64 {
     let mut v0: u64 = 0;
     let mut v1: u32 = 0;
     let mut v2: u32 = 0;
@@ -546,7 +546,7 @@ return v26;
 }
 
 #[inline(always)]
-unsafe fn f30(len: u64, a0: u64, a1: u32, a2: u32) -> u32 {
+unsafe fn f33(len: u64, a0: u64, a1: u32, a2: u32) -> u32 {
     let mut v0: u64 = 0;
     let mut v1: u32 = 0;
     let mut v2: u32 = 0;
@@ -637,7 +637,7 @@ unsafe fn f30(len: u64, a0: u64, a1: u32, a2: u32) -> u32 {
     v2 = a2;
     let mut d: u32 = 0;
 'm3: {
-v3 = unsafe { f29(len, v0, v1, v2) };
+v3 = unsafe { f32(len, v0, v1, v2) };
 v4 = ((v3 as u64) == ((-1i64 as u64) as u64)) as u8;
 if v4 != 0 { v6 = 4294967295i64 as u32;
 { v5 = v6; break 'm3; }
@@ -726,7 +726,7 @@ return v5;
 }
 
 #[inline(never)]
-unsafe fn f31(len: u64, a0: u64, a1: u32, a2: u32, a3: u32, a4: u32) -> u32 {
+unsafe fn f34(len: u64, a0: u64, a1: u32, a2: u32, a3: u32, a4: u32) -> u32 {
     let mut v0: u64 = 0;
     let mut v1: u32 = 0;
     let mut v2: u32 = 0;
@@ -936,7 +936,7 @@ return v47;
 }
 
 #[inline(always)]
-unsafe fn f32(len: u64, a0: u64, a1: u32) -> u64 {
+unsafe fn f35(len: u64, a0: u64, a1: u32) -> u64 {
     let mut v0: u64 = 0;
     let mut v1: u32 = 0;
     let mut v2: u32 = 0;
@@ -1099,7 +1099,7 @@ v72 = if v67 != 0 { v35 } else { v71 };
 v73 = if v67 != 0 { v51 } else { v66 };
 v74 = ((v72 as u32) < (v73 as u32)) as u8;
 if v74 != 0 { v76 = 4294967295i64 as u32;
-v77 = unsafe { f31(len, v0, v31, v70, v72, v76) };
+v77 = unsafe { f34(len, v0, v31, v70, v72, v76) };
 v78 = v70 as u64;
 v79 = v78.wrapping_shl(32);
 v80 = v77 as u64;
@@ -1126,7 +1126,7 @@ return v24;
 }
 
 #[inline(always)]
-unsafe fn f33(len: u64, a0: u64, a1: u32) -> u32 {
+unsafe fn f36(len: u64, a0: u64, a1: u32) -> u32 {
     let mut v0: u64 = 0;
     let mut v1: u32 = 0;
     let mut v2: u32 = 0;
@@ -1264,7 +1264,7 @@ v2 = unsafe { core::ptr::read_unaligned(((v0 as usize).wrapping_add(24isize as u
 if v2 != 0 { { v3 = v1; break 'm9; }
  } else { 'm8: {
 v4 = 0i64 as u32;
-v5 = unsafe { f29(len, v0, v4, v1) };
+v5 = unsafe { f32(len, v0, v4, v1) };
 v6 = ((v5 as u64) == ((-1i64 as u64) as u64)) as u8;
 if v6 != 0 { v8 = 4294967295i64 as u32;
 { v7 = v8; break 'm8; }
@@ -1400,7 +1400,7 @@ return v3;
 }
 
 #[inline(always)]
-unsafe fn f34(len: u64, a0: u64, a1: u32) -> u32 {
+unsafe fn f37(len: u64, a0: u64, a1: u32) -> u32 {
     let mut v0: u64 = 0;
     let mut v1: u32 = 0;
     let mut v2: u32 = 0;
@@ -1496,7 +1496,7 @@ v40 = unsafe { core::ptr::read_unaligned((v39 as usize) as *const u32) };
 v41 = v40.wrapping_sub(v33);
 v42 = ((v25 as u32) < (v41 as u32)) as u8;
 if v42 != 0 { v44 = 0i64 as u32;
-v45 = unsafe { f31(len, v0, v23, v44, v25, v24) };
+v45 = unsafe { f34(len, v0, v23, v44, v25, v24) };
 { v43 = v45; break 'm6; }
  } else { v46 = 4294967295i64 as u32;
 { v43 = v46; break 'm6; }
@@ -1520,7 +1520,7 @@ return v3;
 #[inline(always)]
 pub unsafe fn num_is(desc: *const u8, a1: u32, a2: u32) -> u32 {
     // SAFETY: the caller's.
-    unsafe { f26(u64::MAX, desc as u64, a1, a2) }
+    unsafe { f29(u64::MAX, desc as u64, a1, a2) }
 }
 
 /// The read `num_rank` of the relation (or rows) whose descriptor is at `desc`.
@@ -1530,7 +1530,7 @@ pub unsafe fn num_is(desc: *const u8, a1: u32, a2: u32) -> u32 {
 #[inline(always)]
 pub unsafe fn num_rank(desc: *const u8, a1: u32, a2: u32) -> u32 {
     // SAFETY: the caller's.
-    unsafe { f27(u64::MAX, desc as u64, a1, a2) }
+    unsafe { f30(u64::MAX, desc as u64, a1, a2) }
 }
 
 /// The read `num_select` of the relation (or rows) whose descriptor is at `desc`.
@@ -1540,7 +1540,7 @@ pub unsafe fn num_rank(desc: *const u8, a1: u32, a2: u32) -> u32 {
 #[inline(always)]
 pub unsafe fn num_select(desc: *const u8, a1: u32, a2: u32) -> u32 {
     // SAFETY: the caller's.
-    unsafe { f28(u64::MAX, desc as u64, a1, a2) }
+    unsafe { f31(u64::MAX, desc as u64, a1, a2) }
 }
 
 /// The read `num_granule` of the relation (or rows) whose descriptor is at `desc`.
@@ -1550,7 +1550,7 @@ pub unsafe fn num_select(desc: *const u8, a1: u32, a2: u32) -> u32 {
 #[inline(always)]
 pub unsafe fn num_granule(desc: *const u8, a1: u32, a2: u32) -> u64 {
     // SAFETY: the caller's.
-    unsafe { f29(u64::MAX, desc as u64, a1, a2) }
+    unsafe { f32(u64::MAX, desc as u64, a1, a2) }
 }
 
 /// The read `num_low_of` of the relation (or rows) whose descriptor is at `desc`.
@@ -1560,7 +1560,7 @@ pub unsafe fn num_granule(desc: *const u8, a1: u32, a2: u32) -> u64 {
 #[inline(always)]
 pub unsafe fn num_low_of(desc: *const u8, a1: u32, a2: u32) -> u32 {
     // SAFETY: the caller's.
-    unsafe { f30(u64::MAX, desc as u64, a1, a2) }
+    unsafe { f33(u64::MAX, desc as u64, a1, a2) }
 }
 
 /// The read `num_number_in` of the relation (or rows) whose descriptor is at `desc`.
@@ -1570,7 +1570,7 @@ pub unsafe fn num_low_of(desc: *const u8, a1: u32, a2: u32) -> u32 {
 #[inline(always)]
 pub unsafe fn num_number_in(desc: *const u8, a1: u32, a2: u32, a3: u32, a4: u32) -> u32 {
     // SAFETY: the caller's.
-    unsafe { f31(u64::MAX, desc as u64, a1, a2, a3, a4) }
+    unsafe { f34(u64::MAX, desc as u64, a1, a2, a3, a4) }
 }
 
 /// The read `num_number_of` of the relation (or rows) whose descriptor is at `desc`.
@@ -1580,7 +1580,7 @@ pub unsafe fn num_number_in(desc: *const u8, a1: u32, a2: u32, a3: u32, a4: u32)
 #[inline(always)]
 pub unsafe fn num_number_of(desc: *const u8, a1: u32) -> u64 {
     // SAFETY: the caller's.
-    unsafe { f32(u64::MAX, desc as u64, a1) }
+    unsafe { f35(u64::MAX, desc as u64, a1) }
 }
 
 /// The read `num_order_of` of the relation (or rows) whose descriptor is at `desc`.
@@ -1590,7 +1590,7 @@ pub unsafe fn num_number_of(desc: *const u8, a1: u32) -> u64 {
 #[inline(always)]
 pub unsafe fn num_order_of(desc: *const u8, a1: u32) -> u32 {
     // SAFETY: the caller's.
-    unsafe { f33(u64::MAX, desc as u64, a1) }
+    unsafe { f36(u64::MAX, desc as u64, a1) }
 }
 
 /// The read `num_number_of_order` of the relation (or rows) whose descriptor is at `desc`.
@@ -1600,9 +1600,9 @@ pub unsafe fn num_order_of(desc: *const u8, a1: u32) -> u32 {
 #[inline(always)]
 pub unsafe fn num_number_of_order(desc: *const u8, a1: u32) -> u32 {
     // SAFETY: the caller's.
-    unsafe { f34(u64::MAX, desc as u64, a1) }
+    unsafe { f37(u64::MAX, desc as u64, a1) }
 }
 
 
 /// This source's fingerprint (`rust::fingerprint` of what comes before).
-pub const SOURCE: u64 = 0x9a3d59720a882180;
+pub const SOURCE: u64 = 0xe076e0a7c34adbec;

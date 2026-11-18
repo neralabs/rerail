@@ -335,9 +335,10 @@ inline uint doc_of_node(device const ChunkDoc* docs, uint ndocs, uint row) {
 }
 
 // Row `r`'s value `v` in column `c` of the relation `out` makes (decision 0325 step 5: a relation in its block, its
-// rows' descriptor at `rows_at`), through the read written once.
+// rows' descriptor at `rows_at`), through the writer written once: a row past its chunks is counted, not written
+// (decision 0403).
 static inline void view_put(device uchar* out, ulong rows_at, uint r, uint c, long v) {
-    *(device long*)(out + clif_rows_at((device const uchar*)out, rows_at, r, c)) = v;
+    clif_rows_put((device const uchar*)out, rows_at, r, c, ulong(v));
 }
 
 // p: the root's offset, the view (`device_chunk::VIEW_*`), the rows, the columns, an axis's pairs' offset (else 0),
@@ -1548,7 +1549,7 @@ kernel void rows_copy(device const uchar* S [[buffer(0)]], device uchar* D [[buf
                : c.src_at == 0ul ? ((device const long*)S)[ulong(from) * c.src_stride + t]
                : long(clif_rel_get(S, c.src_at, t, from));
         if (c.dst_rows_at == 0ul) ((device long*)D)[ulong(k) * c.dst_stride + c.dst_off + t] = v;
-        else *(device long*)(D + clif_rows_at((device const uchar*)D, c.dst_rows_at, c.dst_off + t, k)) = v;
+        else clif_rows_put((device const uchar*)D, c.dst_rows_at, c.dst_off + t, k, ulong(v));
     }
 }
 
@@ -1707,12 +1708,13 @@ kernel void ix_place(device uchar* B [[buffer(0)]], device const uint* perm [[bu
 struct LatP { long top; uint n; uint had; uint nkeys; uint code; uint after; uint pmask; uint hmask; uint level; ulong r_at, r_rows_at; };
 
 // The held relation `R`'s row `row` in column `c`, and the place to write it: `R` is a relation in its block
-// (decision 0325 step 5), its descriptor at `r_at`, its rows' at `r_rows_at`.
+// (decision 0325 step 5), its descriptor at `r_at`, its rows' at `r_rows_at`; written through the writer written
+// once (decision 0403).
 static inline long lat_r(device const uchar* R, constant LatP& p, uint row, uint c) {
     return long(clif_rel_get(R, p.r_at, row, c));
 }
-static inline device long* lat_rp(device uchar* R, constant LatP& p, uint row, uint c) {
-    return (device long*)(R + clif_rows_at((device const uchar*)R, p.r_rows_at, row, c));
+static inline void lat_put(device uchar* R, constant LatP& p, uint row, uint c, long v) {
+    clif_rows_put((device const uchar*)R, p.r_rows_at, row, c, ulong(v));
 }
 
 static inline uint lat_hash(thread const long* key, uint nk, uint mask) {
@@ -1878,9 +1880,9 @@ kernel void lat_merge(device const long* U [[buffer(0)]], device const uint* P [
             m = lat_widen(p, o, m);
             if (m == o) return;
         }
-        *lat_rp(R, p, held, p.nkeys) = m;
-        *lat_rp(R, p, held, k) = changes + 1;
-        if (p.level != 0) *lat_rp(R, p, held, k + 1) = long(p.level);
+        lat_put(R, p, held, p.nkeys, m);
+        lat_put(R, p, held, k, changes + 1);
+        if (p.level != 0) lat_put(R, p, held, k + 1, long(p.level));
         v = m;
     } else {
         uint a = atomic_fetch_add_explicit(&counters[1], 1u, memory_order_relaxed);
@@ -2007,9 +2009,21 @@ pub(in crate::code_rule_dsl) struct DevRel {
     /// A view read in place (decision 0353 step 4d): its rows are read through the views' reads, and its relation
     /// (of no columns) holds its indexes alone.
     pub(in crate::code_rule_dsl) view: Option<crate::code_rule_dsl::facts::vtab::ViewInPlace>,
+    /// Its descriptor's arity and base rows when it was made (Q125): a descriptor found otherwise later was
+    /// overwritten, not misread.
+    made: (u32, u32),
 }
 
 impl DevRel {
+    /// `self`, its descriptor's arity and base rows noted as they are now (`made`).
+    fn noted(mut self) -> DevRel {
+        if self.home.is_some() {
+            let r = self.relation();
+            self.made = (r.arity, r.base_rows);
+        }
+        self
+    }
+
     /// A relation of the device's own, of `cols` columns and `rows` rows, in a block of the device's
     /// (`Part::for_device`, decision 0325 step 5), every row the device's to write.
     pub(in crate::code_rule_dsl) fn empty(cols: usize, rows: usize) -> Result<DevRel, Error> {
@@ -2018,7 +2032,7 @@ impl DevRel {
         let buffer = Held::kept(part.facts().block.gpu_buffer(device), Box::new(part.facts().clone()));
         debug_assert_eq!(part.rows_at(), part.rel_at() + REL_ROWS as usize);
         let home = Some(part.facts().clone());
-        Ok(DevRel { buffer, rows, cols, at: part.rel_at() as u64, dead: 0, part: Some(part), home, view: None })
+        Ok(DevRel { buffer, rows, cols, at: part.rel_at() as u64, dead: 0, part: Some(part), home, view: None, made: (0, 0) }.noted())
     }
 
     /// A view of `cols` columns and `rows` rows read in place (decision 0353 step 4d): a relation of no columns of
@@ -2068,7 +2082,7 @@ impl DevRel {
 
     /// The words of `buffer`, `words` of them (not a relation).
     fn raw(buffer: Held, words: usize) -> DevRel {
-        DevRel { buffer, rows: words, cols: 1, at: 0, dead: 0, part: None, home: None, view: None }
+        DevRel { buffer, rows: words, cols: 1, at: 0, dead: 0, part: None, home: None, view: None, made: (0, 0) }
     }
 
     /// A relation the device reads where it lies (decision 0325): `b`'s, of `cols` columns, bound by its block's own
@@ -2077,7 +2091,7 @@ impl DevRel {
         assert!(b.at > 0, "a descriptor past the block's header");
         let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         let buffer = Held::kept(b.facts.block.gpu_buffer(device), Box::new(b.facts.clone()));
-        Ok(DevRel { buffer, rows: b.rows as usize, cols, at: b.at as u64, dead: b.dead as u64, part: None, home: Some(b.facts.clone()), view: None })
+        Ok(DevRel { buffer, rows: b.rows as usize, cols, at: b.at as u64, dead: b.dead as u64, part: None, home: Some(b.facts.clone()), view: None, made: (0, 0) }.noted())
     }
 
     /// Its relation's descriptor.
@@ -2301,6 +2315,38 @@ struct Building {
     home: std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>,
     rel: *const rerail_blocks::relation::Relation,
     room: rerail_blocks::relation::IndexRoom,
+    /// The relation's descriptor as it was once the index was reserved (Q125): checked before the index is marked
+    /// built, so a descriptor something overwrote meanwhile names what changed instead of being followed.
+    before: Vec<u8>,
+}
+
+impl Building {
+    /// The descriptor's bytes now.
+    fn descriptor(rel: *const rerail_blocks::relation::Relation) -> Vec<u8> {
+        // SAFETY: a relation's descriptor in a block its `home` keeps; plain words.
+        unsafe { std::slice::from_raw_parts(rel.cast::<u8>(), std::mem::size_of::<rerail_blocks::relation::Relation>()) }.to_vec()
+    }
+
+    /// Panics, naming the words that changed, when the descriptor's arity, base rows or index directory are not as
+    /// they were, or its index count went down (nothing else changes them while an index builds).
+    fn check(&self, origin: &str) {
+        use rerail_blocks::relation::Relation;
+        use std::mem::{offset_of, size_of};
+        let now = Building::descriptor(self.rel);
+        let fixed = [(offset_of!(Relation, arity), 4), (offset_of!(Relation, base_rows), 4), (offset_of!(Relation, indexes), size_of::<rerail_blocks::Span<rerail_blocks::relation::Index>>())];
+        // An index count only grows: another index reserved meanwhile adds one.
+        let count = |b: &[u8]| u32::from_le_bytes(b[offset_of!(Relation, nindex)..][..4].try_into().unwrap());
+        if fixed.iter().all(|&(at, n)| now[at..at + n] == self.before[at..at + n]) && count(&now) >= count(&self.before) {
+            return;
+        }
+        let words = |b: &[u8]| b.as_chunks::<8>().0.iter().map(|w| format!("{:016x}", u64::from_le_bytes(*w))).collect::<Vec<_>>().join(" ");
+        let changed: Vec<usize> = (0..now.len() / 8).filter(|&k| now[8 * k..8 * k + 8] != self.before[8 * k..8 * k + 8]).map(|k| 8 * k).collect();
+        let h = self.home.block.header();
+        panic!(
+            "a relation's descriptor overwritten while its index was built (Q125): {origin}, at {} of a block of kind {} ({} used of {}), index {} (buckets at {}, rows at {}, {} rows); bytes changed at {changed:?}\n  before {}\n  now    {}",
+            self.home.block.offset_of(self.rel), h.kind, self.home.block.used(), self.home.block.reserved(), self.room.index, self.room.offs, self.room.rows, self.room.rows_n, words(&self.before), words(&now)
+        );
+    }
 }
 
 /// A relation's rows' descriptor's offset from its own (`rerail_blocks`' layout).
@@ -2492,6 +2538,18 @@ pub(in crate::code_rule_dsl) struct Batch {
     arena_cap: usize,
     /// The indexes its work builds, marked built when it is done.
     building: Vec<Building>,
+    /// The relations its work writes in their blocks, each with its rows' `needed` before (decision 0403): a row
+    /// its kernels could not write, past the chunks its relation holds, fails the batch, named.
+    written: Vec<Written>,
+}
+
+/// A relation a batch's kernels write (`Batch::written`).
+struct Written {
+    home: std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>,
+    at: u64,
+    rows: usize,
+    needed: u32,
+    what: &'static str,
 }
 
 impl Batch {
@@ -2503,7 +2561,31 @@ impl Batch {
     /// A batch whose text arena holds `cap` bytes.
     pub(in crate::code_rule_dsl) fn with_arena(cap: usize) -> Result<Batch, Error> {
         rerail_accel::gpu::join::device()?;
-        Ok(Batch { open: None, pass: None, committed: Vec::new(), done: Done::default(), dummy: Held::new(64)?, keep: Vec::new(), read: Vec::new(), held: Vec::new(), arena: None, arena_cap: cap, building: Vec::new() })
+        Ok(Batch { open: None, pass: None, committed: Vec::new(), done: Done::default(), dummy: Held::new(64)?, keep: Vec::new(), read: Vec::new(), held: Vec::new(), arena: None, arena_cap: cap, building: Vec::new(), written: Vec::new() })
+    }
+
+    /// Notes that its kernels write `rel` (`what`): its rows' `needed` now, checked when the batch is done.
+    fn writes(&mut self, rel: &DevRel, what: &'static str) {
+        let Some(home) = &rel.home else { return };
+        let needed = rel.relation().rows.needed.load(std::sync::atomic::Ordering::Relaxed);
+        self.written.push(Written { home: home.clone(), at: rel.at, rows: rel.rows, needed, what });
+    }
+
+    /// The relations its kernels wrote whose rows counted one they could not write (decision 0403): each named.
+    fn overran(&self) -> Vec<String> {
+        self.written
+            .iter()
+            .filter_map(|w| {
+                // SAFETY: `at` is a relation's descriptor in `home`'s block, which `home` keeps.
+                let r = unsafe { &*w.home.block.ptr::<rerail_blocks::relation::Relation>(w.at as usize) };
+                let now = r.rows.needed.load(std::sync::atomic::Ordering::Relaxed);
+                (now != w.needed).then(|| {
+                    let held = r.rows.reserved.load(std::sync::atomic::Ordering::Relaxed);
+                    format!("{}: {} rows past its chunks (Q125), a relation of {} rows its device side says, {} its chunks hold, {} claimed, {} columns, at {} of a block of kind {}",
+                            w.what, now.wrapping_sub(w.needed), w.rows, held, r.rows.len.load(std::sync::atomic::Ordering::Relaxed), r.rows.ncols, w.at, w.home.block.header().kind)
+                })
+            })
+            .collect()
     }
 
     /// Keeps `what` (encoded work's buffers, given up by its maker) until the batch is done.
@@ -2572,6 +2654,17 @@ impl Batch {
             self.done.gpu_seconds += seconds;
             failed += usize::from(!ok);
         }
+        let overran = self.overran();
+        self.written.clear();
+        if !overran.is_empty() {
+            // Nothing was written past a relation's rows (`rows_put`), but its rows are short: the batch's outputs are
+            // not whole, so its strata run on the CPU, as a failed command buffer's do.
+            for o in &overran {
+                eprintln!("rerail: a device batch refused: {o}");
+            }
+            crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "a batch whose rows ran past a relation's (its strata on the CPU)", overran.len() as u64);
+            failed += 1;
+        }
         if failed > 0 {
             crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "a batch the GPU failed (its strata on the CPU)", failed as u64);
             self.building.clear();
@@ -2582,6 +2675,7 @@ impl Batch {
         }
         for b in self.building.drain(..) {
             let _g = b.home.ix.lock().unwrap_or_else(|e| e.into_inner());
+            b.check("its batch done");
             // SAFETY: the batch's work, which built it, has completed; `home` keeps the relation.
             unsafe { (*b.rel).index_built(&b.room) };
         }
@@ -2603,8 +2697,9 @@ impl Batch {
             let h = home.block.header();
             let origin = if rel.view.is_some() { "a view read in place" } else if rel.part.is_some() { "the device's own" } else { "a relation in its block" };
             panic!(
-                "an index of a full relation (Q125): {origin} of {} rows, {} columns, at {} of a block of kind {} (magic {:#x}, {} used of {}); its header: arity {}, base rows {} ({:#x}), {} indexes, {} order keys",
-                rel.rows, rel.cols, rel.at, h.kind, h.magic, home.block.used(), home.block.reserved(), r.arity, r.base_rows, r.base_rows, r.nindex.load(std::sync::atomic::Ordering::Relaxed), r.nokey
+                "an index of a full relation (Q125): {origin} of {} rows, {} columns, at {} of a block of kind {} (magic {:#x}, {} used of {}); its header: arity {}, base rows {} ({:#x}), {} indexes, {} order keys; when made: arity {}, base rows {}\n  descriptor {}",
+                rel.rows, rel.cols, rel.at, h.kind, h.magic, home.block.used(), home.block.reserved(), r.arity, r.base_rows, r.base_rows, r.nindex.load(std::sync::atomic::Ordering::Relaxed), r.nokey, rel.made.0, rel.made.1,
+                Building::descriptor(std::ptr::from_ref(r)).as_chunks::<8>().0.iter().map(|w| format!("{:016x}", u64::from_le_bytes(*w))).collect::<Vec<_>>().join(" ")
             );
         }
         let key: Vec<u16> = cols.iter().map(|&c| c as u16).collect();
@@ -2670,7 +2765,8 @@ impl Batch {
             self.keep.extend([words, parts.perm, parts.starts, parts.rkeys, parts.nruns]);
         }
         let index = room.index as u32;
-        self.building.push(Building { home, rel: std::ptr::from_ref(r), room });
+        let before = Building::descriptor(std::ptr::from_ref(r));
+        self.building.push(Building { home, rel: std::ptr::from_ref(r), room, before });
         Ok(DevIndex { index, rows: n, moved: None, built: true, buffer })
     }
 
@@ -2681,6 +2777,7 @@ impl Batch {
 // read of the tape, and a stage reads it in place (decision 0353).
     pub(in crate::code_rule_dsl) fn expand_view(&mut self, block: &metal::Buffer, root: usize, view: u32, pairs: usize, cols: &[usize], out: &DevRel) -> Result<(), Error> {
         let expand = pipeline("chunk_views", "view_expand", chunk_views_source)?;
+        self.writes(out, "a view expanded");
         let pass = self.pass(1)?;
         let at = |o: usize| u32::try_from(o).map_err(|_| Error::BackendCapacity);
         let rows_at = out.rows_at();
@@ -2918,6 +3015,9 @@ impl Batch {
         let copy = pipeline("join", "rows_copy", || SOURCE.to_owned())?;
         let (s, src_rows, src_at, _) = src.of();
         let (d, dst_rows, _, dst_rows_at) = dst.of();
+        if let Rows::Rel(r) = dst {
+            self.writes(r, "rows copied");
+        }
         assert!(n <= src_rows.max(1), "a copy of {n} rows of a source of {src_rows}");
         assert!(dst_off + n <= dst_rows, "a copy of {n} rows at {dst_off} into a destination of {dst_rows}");
         let mut p = CopyParams {
@@ -3379,6 +3479,9 @@ impl Batch {
         let want = (2 * (had + n)).next_power_of_two().max(16);
         let mut p = LatParams { top: lat.top, n: n as u32, had: had as u32, nkeys: nkeys as u32, code: lat.code, after: lat.after.unwrap_or(NONE), pmask: (pplaces - 1) as u32, hmask: 0, level: level.unwrap_or(0),
                                  r_at: total.map_or(0, |t| t.at), r_rows_at: total.map_or(0, |t| t.rows_at()) };
+        if let Some(t) = total {
+            self.writes(t, "a lattice's held rows");
+        }
         let r: metal::Buffer = total.map_or_else(|| self.dummy.buffer.to_owned(), |t| t.buffer.buffer.to_owned());
         if keys.places < want {
             // Grown: every held row placed again.

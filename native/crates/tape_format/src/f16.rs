@@ -160,7 +160,8 @@ mod head {
     pub const MARK: usize = 9;
     pub const CW: usize = 10;
     /// The source's length, u64; the node count, u64.
-    pub const SOURCE_LEN: usize = 16;
+    /// Where format 15's header states it too (`header::SOURCE_LEN`): a reader of either finds it there.
+    pub const SOURCE_LEN: usize = crate::header::SOURCE_LEN;
     pub const NODES: usize = 24;
     /// The side lists' value widths, a byte each; then (16z) the slot, gap and length widths.
     pub const VW: usize = 32;
@@ -281,7 +282,7 @@ impl Tape16 {
             at[r + 1] = buf.len();
         }
         let vw = std::array::from_fn(|k| side[k].vw);
-        let p = Placement { n, cw, at, parts: std::array::from_fn(|k| HEAD16 + 4 * k * parts), vw };
+        let p = Placement { n, source_len, cw, at, parts: std::array::from_fn(|k| HEAD16 + 4 * k * parts), vw };
         Tape16 { mark, n, cw, source_len, buf: buf.into(), at, vw, frame: p.frame_of(source_len) }
     }
 
@@ -302,6 +303,8 @@ impl Tape16 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Placement {
     pub n: usize,
+    /// The source's length its header states: a view's spans are held to it (decision 0403).
+    pub source_len: u64,
     pub cw: usize,
     pub at: [usize; REGIONS + 1],
     pub parts: [usize; 4],
@@ -331,6 +334,7 @@ impl Placement {
         }
         Ok(TapeView {
             nodes: u32::try_from(self.n).map_err(|_| "a tape past 4 G nodes".to_owned())?,
+            source_len: u32::try_from(self.source_len).map_err(|_| "a source past 4 GiB".to_owned())?,
             format: 16,
             widths,
             columns: [at(self.at[0])?, at(self.at[1])?, at(self.at[2])?, at(self.at[3])?, at(self.at[4])?],
@@ -389,7 +393,7 @@ pub fn placement(buf: &[u8]) -> Result<Placement, String> {
     if vw.iter().any(|&w| w > 8) || usize::from(buf[head::CW]) > 8 {
         return Err("a format 16 tape's widths are out of range".into());
     }
-    Ok(Placement { n, cw: usize::from(buf[head::CW]), at, parts: std::array::from_fn(part), vw })
+    Ok(Placement { n, source_len: u64_at(buf, head::SOURCE_LEN)?, cw: usize::from(buf[head::CW]), at, parts: std::array::from_fn(part), vw })
 }
 
 /// The width in bytes a value up to `max` takes (at least 1).
@@ -916,7 +920,7 @@ impl Tape16Z {
         // too, lies in its entry (decision 0403).
         let largest = (0..blocks).map(|b| layout(Z, self.widths, self.cw, self.sides[b])[REGIONS]).max().unwrap_or(0);
         let entry = (z::SLOT_BYTES as usize + largest + z::SLACK).next_power_of_two();
-        let frame = Placement { n: self.n, cw: self.cw, at: [0; REGIONS + 1], parts: [0; 4], vw: self.vw }.frame(0)?;
+        let frame = Placement { n: self.n, source_len: self.source_len, cw: self.cw, at: [0; REGIONS + 1], parts: [0; 4], vw: self.vw }.frame(0)?;
         let mut view = bind(frame, lang)?;
         let at = |offset: usize| u32::try_from(offset).map_err(|_| "a tape past 4 GiB".to_owned());
         view.format = F16Z_FORMAT;
@@ -1003,7 +1007,7 @@ impl F16Z<'_> {
             slot.raw[end + 8 * k..end + 8 * k + 4].copy_from_slice(&0u32.to_le_bytes());
             slot.raw[end + 8 * k + 4..end + 8 * k + 8].copy_from_slice(&t.sides[b][k].to_le_bytes());
         }
-        let p = Placement { n: nb, cw: t.cw, at, parts: std::array::from_fn(|k| end + 8 * k), vw: t.vw };
+        let p = Placement { n: nb, source_len: t.source_len, cw: t.cw, at, parts: std::array::from_fn(|k| end + 8 * k), vw: t.vw };
         slot.view = p.frame(0).and_then(|frame| bind(frame, self.lang)).expect("a block's view: its widths are its tape's, checked when read");
         slot.b = Some((t.id, b));
     }
@@ -1338,25 +1342,8 @@ mod tests {
         block.push((extra % 255) as u8);
         assert!(block.len() < to - from, "the claim fits the block's bytes");
         bytes[from..from + block.len()].copy_from_slice(&block);
-        // The tape's last byte against a page no read may touch (64 KiB: a page or several, on every host).
-        unsafe extern "C" {
-            fn mmap(addr: *mut u8, len: usize, prot: i32, flags: i32, fd: i32, offset: i64) -> *mut u8;
-            fn mprotect(addr: *mut u8, len: usize, prot: i32) -> i32;
-            fn munmap(addr: *mut u8, len: usize) -> i32;
-        }
-        const GUARD: usize = 1 << 16;
-        #[cfg(target_os = "macos")]
-        const ANON: i32 = 0x1000;
-        #[cfg(not(target_os = "macos"))]
-        const ANON: i32 = 0x20;
-        let span = bytes.len().next_multiple_of(GUARD) + GUARD;
-        // SAFETY: a fresh private mapping of `span` bytes; its last `GUARD` bytes made unreadable.
-        let map = unsafe { mmap(std::ptr::null_mut(), span, 3, 2 | ANON, -1, 0) };
-        assert!(!map.is_null() && map as isize != -1, "a mapping");
-        assert_eq!(unsafe { mprotect(map.add(span - GUARD), GUARD, 0) }, 0, "a page no read may touch");
-        // SAFETY: the readable part of the mapping holds the tape, ending at the unreadable page.
-        let tape = unsafe { map.add(span - GUARD - bytes.len()) };
-        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), tape, bytes.len()) };
+        let guarded = Guarded::new(&bytes);
+        let tape = guarded.at;
         let reader = rerail_clif::view::Reader::new(&z.view(&lang).unwrap(), tape);
         let f = ["tape_number", "tape_start", "tape_end", "tape_parent", "tape_size", "tape_next", "tape_child_count", "tape_first_child", "tape_length"].map(|name| reads.function(name));
         let read = |i: u32| {
@@ -1377,8 +1364,7 @@ mod tests {
         read(u32::MAX);
         assert!(reader.counts().expect("a 16z cache").failed > 0, "a node past the tape counted");
         drop(reader);
-        // SAFETY: the mapping made above, no read of it left.
-        unsafe { munmap(map, span) };
+        drop(guarded);
         // A cache overwritten past its slack, or in its shape, is found.
         let spec = cache::Spec::new(3, 4, 4096);
         let mut buf = vec![0u8; spec.bytes()];
@@ -1390,6 +1376,94 @@ mod tests {
         buf[end] ^= 1;
         buf[cache::DEAD as usize] ^= 8;
         assert!(cache::Spec::check(&buf).unwrap_err().contains("overwritten"));
+    }
+
+    /// `bytes` placed so their last lies against a page no read may touch (64 KiB: a page or several, on every
+    /// host), at `at`; unmapped when dropped.
+    struct Guarded {
+        map: *mut u8,
+        span: usize,
+        at: *mut u8,
+    }
+
+    unsafe extern "C" {
+        fn mmap(addr: *mut u8, len: usize, prot: i32, flags: i32, fd: i32, offset: i64) -> *mut u8;
+        fn mprotect(addr: *mut u8, len: usize, prot: i32) -> i32;
+        fn munmap(addr: *mut u8, len: usize) -> i32;
+    }
+
+    impl Guarded {
+        fn new(bytes: &[u8]) -> Guarded {
+            const GUARD: usize = 1 << 16;
+            #[cfg(target_os = "macos")]
+            const ANON: i32 = 0x1000;
+            #[cfg(not(target_os = "macos"))]
+            const ANON: i32 = 0x20;
+            let span = bytes.len().next_multiple_of(GUARD) + GUARD;
+            // SAFETY: a fresh private mapping of `span` bytes; its last `GUARD` bytes made unreadable.
+            let map = unsafe { mmap(std::ptr::null_mut(), span, 3, 2 | ANON, -1, 0) };
+            assert!(!map.is_null() && map as isize != -1, "a mapping");
+            assert_eq!(unsafe { mprotect(map.add(span - GUARD), GUARD, 0) }, 0, "a page no read may touch");
+            // SAFETY: the readable part of the mapping holds the bytes, ending at the unreadable page.
+            let at = unsafe { map.add(span - GUARD - bytes.len()) };
+            unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), at, bytes.len()) };
+            Guarded { map, span, at }
+        }
+    }
+
+    impl Drop for Guarded {
+        fn drop(&mut self) {
+            // SAFETY: the mapping `new` made, no read of it left.
+            unsafe { munmap(self.map, self.span) };
+        }
+    }
+
+    /// Decision 0403: a node's span, from the tape's gaps and lengths, is held to the source its header states:
+    /// a tape whose spans claim more than its source reads none past it, in format 16 or 16z, and none reversed.
+    #[test]
+    fn a_tapes_spans_stay_within_its_source() {
+        let reads = rerail_clif::jit::Reads::new();
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let plain = Plain(&nodes, &table);
+        let source = pos / 2;
+        let f = ["tape_start", "tape_end"].map(|name| reads.function(name));
+        // SAFETY: a read's signature: the tape's base, its view, a node.
+        let [start, end] = f.map(|g| unsafe { std::mem::transmute::<_, extern "C" fn(*const u8, *const TapeView, u32) -> u32>(g) });
+        // The source's last byte against a page no read may touch: each node's span read byte by byte, as a
+        // kernel's text test reads it (`same_text`, `text_is`).
+        let text = Guarded::new(&vec![b'x'; source as usize]);
+        let check = |tape: *const u8, view: *const TapeView, n: usize| {
+            let mut held = 0;
+            let mut sum = 0u64;
+            for i in 0..n as u32 {
+                let (s, e) = (start(tape, view, i), end(tape, view, i));
+                assert!(s as u64 <= source && s <= e && e as u64 <= source, "node {i}: {s}..{e} of a source of {source}");
+                for k in s..e {
+                    // SAFETY: what the test asks: the span, read where the source lies.
+                    sum += u64::from(unsafe { text.at.add(k as usize).read_volatile() });
+                }
+                held += usize::from(e as u64 == source);
+            }
+            assert!(held > 1 && sum > 0, "spans past the source, held to its end");
+        };
+        // Written over the whole source, then stated a shorter one: a tape held with the wrong source, or corrupt.
+        let short = |bytes: &[u8]| {
+            let mut bytes = bytes.to_vec();
+            bytes[head::SOURCE_LEN..head::SOURCE_LEN + 8].copy_from_slice(&source.to_le_bytes());
+            bytes
+        };
+        let Ok(Written::F16(t)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), pos + 2, 0, false) else { panic!("16") };
+        let bytes = short(t.as_bytes());
+        let view = placement(&bytes).unwrap().view(&lang, 0).unwrap();
+        assert_eq!(u64::from(view.source_len), source);
+        check(bytes.as_ptr(), &raw const view, t.len());
+        let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), pos + 2, 0, true) else { panic!("16z") };
+        let z = Tape16Z::from_bytes(short(z.as_bytes())).unwrap();
+        let reader = rerail_clif::view::Reader::new(&z.view(&lang).unwrap(), z.as_bytes().as_ptr());
+        check(z.as_bytes().as_ptr(), reader.view(), z.len());
     }
 
     /// Decision 0353 step 4b: a rolling cache shared by threads (`view::cache`, its stamps checked after each read)

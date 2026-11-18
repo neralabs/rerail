@@ -1609,14 +1609,37 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
 ### Q125. A relation read with a garbage header: "an index of a full relation" (16z, 1 run in 95)
 
 hogql cold on Metal with 16z, engine of 0353 step 4b's transducer kernels (2026-11-18): one run of 95 panicked in
-a device join, `metal_join.rs` `index`: `assert_eq!(r.base_rows, 0)` with `base_rows` 2,436,104,195, so the
-relation it read was not one (a header overwritten, or a relation gone). No format 15 run of 32 did; the 94 runs
-since were clean, 40 of them with backtraces on. Two suspects, neither shown:
+a device join, `metal_join.rs` `index`, with `base_rows` 2,436,104,195. A loop of 150 since crashed once (SIGSEGV
+in `Relation::index_built`, from a wave's `Batch::finish`): the store through the descriptor's `indexes` span,
+whose offset word was data. Both runs saw a relation's descriptor overwritten with row values.
 
-- A write through a 16z view's cache address that misses the cache: the cache is `t + rel`, `rel` made from the
-  view's place when its table is made. Hardened: a table whose 16z documents get no cache is refused (their
-  views' `rel` would be 0, the tape's own bytes); the views' directory panics instead.
-- Q90's kind: a stratum resumed on another thread reading another's state, which before 2026-11-17 gave a panic
-  in 1 run of 20 (`rules[k]`).
+- **Cause (0403, "Q125")**: the device's row writers (`view_expand`, `rows_copy` into a relation, the lattice's
+  held rows) stored through `rows_at` with no bound. A row past the chunks its relation holds finds a chunk offset
+  of 0, so its address is the column's directory, and the write goes over it and the descriptors after it
+  (`the_devices_row_writer_stays_in_its_rows` shows the address). The host sizes each write against the `DevRel`'s
+  rows, not the relation's chunks.
+- **Fixed**: one bounded writer, `rows_put` (CLIF). It writes a row only below `Rows::reserved` and a column only
+  below `ncols`, at the column's width, and otherwise counts `needed`. A batch whose kernels counted one fails,
+  naming the relation (`a device batch refused: … (Q125)`), and its strata run on the CPU.
+- Runs: 180 clean with the diagnostic engine (the descriptor compared when an index is marked built); with `rows_put`, 179 of 180 clean (no refusal, no panic, 1,629 findings each), and one killed at the 300 s cap with
+  no output (Q127), three at a time, on 2026-11-18.
+- **Open**: which host sizing gives a relation more rows than its chunks. A refusal will name it; none seen yet.
 
-- **Done when**: a backtrace of it names the writer or the reader, and the fix leaves 100 16z runs clean.
+### Q126. Source reads at a node's span, held to the source (0403's open part) — done 2026-11-18
+
+`tape_start` is held to the source's length (the view's `source_len`, now set by every format's view from the
+tape's header), and `tape_end` between the start and the source's end. So every kernel's text read at a span
+(`same_text`, `text_is`, the batch runtime's spans, the views' reads) stays in the source and is never reversed.
+The header's length is checked against the held source when a document is made resident. The spans as stated
+(`tape_start_stated`, `tape_end_stated`) are for the tape's check and the CPU's bounds-checked scans only.
+`a_tapes_spans_stay_within_its_source` reads every span of an overstated tape against a guarded source.
+
+### Q127. A hogql 16z run that hangs: 1 in 180, no output
+
+Of 180 hogql 16z cold runs on Metal (2026-11-18, three at a time, load about 50), one ran to the 300 s cap with
+nothing in its log, between two warm runs of 4 s. Two cold runs before had waited about 3 minutes on the Metal
+compiler service (`xpc_connection_send_message_with_reply_sync`), then finished. This one was not cold. It was not
+sampled. `tmp/gpu/q36/hang127.sh` samples any run still going at 90 s, beside the loops.
+
+- **Do**: from a sample, name where it waits (a GPU hang, a compile, or a lock), then fix it at its cause.
+- **Done when**: 180 runs, three at a time, have none past 60 s.

@@ -70,6 +70,8 @@ pub const READS: &[Read] = &[
     Read { family: Family::Tape, name: "tape_f16_side", params: &[I32, I32], ret: I64, hot: false, body: f16_side },
     Read { family: Family::Tape, name: "tape_size", params: &[I32], ret: I32, hot: true, body: size },
     Read { family: Family::Tape, name: "tape_number", params: &[I32], ret: I32, hot: true, body: number },
+    Read { family: Family::Tape, name: "tape_start_stated", params: &[I32], ret: I32, hot: true, body: start_stated },
+    Read { family: Family::Tape, name: "tape_end_stated", params: &[I32], ret: I32, hot: true, body: end_stated },
     Read { family: Family::Tape, name: "tape_start", params: &[I32], ret: I32, hot: true, body: start },
     Read { family: Family::Tape, name: "tape_end", params: &[I32], ret: I32, hot: true, body: end },
     Read { family: Family::Tape, name: "tape_parent", params: &[I32], ret: I32, hot: false, body: parent },
@@ -88,6 +90,7 @@ pub const READS: &[Read] = &[
     Read { family: Family::Relation, name: "rows_at", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::rows_at },
     Read { family: Family::Relation, name: "rows_width", params: &[I32], ret: I32, hot: true, body: crate::relation::rows_width },
     Read { family: Family::Relation, name: "rows_get", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::rows_get },
+    Read { family: Family::Relation, name: "rows_put", params: &[I32, I32, I64], ret: I32, hot: true, body: crate::relation::rows_put },
     Read { family: Family::Relation, name: "rel_get", params: &[I32, I32], ret: I64, hot: true, body: crate::relation::rel_get },
     Read { family: Family::Relation, name: "rel_dead", params: &[I32], ret: I32, hot: true, body: crate::relation::rel_dead },
     Read { family: Family::Relation, name: "rel_group", params: &[I32, I64], ret: I64, hot: true, body: crate::relation::rel_group },
@@ -342,7 +345,8 @@ fn family_funcs(keep: impl Fn(&Read) -> bool) -> Vec<(u32, Function, &'static Re
 /// A relation's reads as Rust (decision 0325): `rerail_blocks`' `generated_reads.rs`, which its `Rows` and
 /// `Relation` read through, made again by `the_blocks_reads_are_these`.
 pub fn relation_rust_source() -> Result<String, String> {
-    let funcs = relation_funcs();
+    // `rows_put` is the device's writer (decision 0403): the host writes rows through `Rows::put`, which checks them.
+    let funcs: Vec<_> = relation_funcs().into_iter().filter(|(_, _, read)| read.name != "rows_put").collect();
     let entries: Vec<(u32, &str)> = funcs.iter().map(|(k, _, read)| (*k, read.name)).collect();
     let funcs: Vec<(u32, Function, bool)> = funcs.into_iter().map(|(k, f, read)| (k, f, read.hot)).collect();
     let body = crate::rust::translate_reads(&funcs, &entries, Family::Relation)?;
@@ -1075,6 +1079,28 @@ fn number(b: &mut B<'_, '_>) -> Value {
 
 /// The node's start (a document-local byte).
 fn start(b: &mut B<'_, '_>) -> Value {
+    // Held to the source (the view's `source_len`, the source its reader reads): a span from the tape reads no
+    // byte past it, whatever the tape's gaps hold (decision 0403).
+    let i = b.arg(0);
+    let start = b.call("tape_start_stated", &[i]);
+    let source = b.view(at::SOURCE_LEN);
+    b.f.ins().umin(start, source)
+}
+
+/// The node's end, held between its start and the source's end (decision 0403): a reader's span is never
+/// reversed and never past the source.
+fn end(b: &mut B<'_, '_>) -> Value {
+    let i = b.arg(0);
+    let start = b.call("tape_start", &[i]);
+    let end = b.call("tape_end_stated", &[i]);
+    let end = b.f.ins().umax(end, start);
+    let source = b.view(at::SOURCE_LEN);
+    b.f.ins().umin(end, source)
+}
+
+/// The node's start as the tape states it: what a check of the tape reads (`validated::visit`), and the CPU's
+/// scans, whose slices of the source are checked. No kernel reads it: theirs is `tape_start`.
+fn start_stated(b: &mut B<'_, '_>) -> Value {
     let i = b.arg(0);
     b.by_format(
         I32,
@@ -1162,12 +1188,13 @@ fn start(b: &mut B<'_, '_>) -> Value {
 }
 
 /// The node's end (a document-local byte).
-fn end(b: &mut B<'_, '_>) -> Value {
+/// The node's end as the tape states it (`start_stated`'s readers').
+fn end_stated(b: &mut B<'_, '_>) -> Value {
     let i = b.arg(0);
     b.by_format(
         I32,
         |b, i| {
-            let start = b.call("tape_start", &[i]);
+            let start = b.call("tape_start_stated", &[i]);
             let length = b.get(2, i);
             let length = b.f.ins().ireduce(I32, length);
             b.f.ins().iadd(start, length)
@@ -1181,7 +1208,7 @@ fn end(b: &mut B<'_, '_>) -> Value {
             let last = b.f.ins().iadd(i, size);
             let last = b.f.ins().iadd_imm(last, -1);
             let from = b.f.ins().select(own, i, last);
-            let from = b.call("tape_start", &[from]);
+            let from = b.call("tape_start_stated", &[from]);
             let tail = b.column(4);
             let width = b.width(2);
             let cell = b.cell(tail, width, i);
@@ -1303,8 +1330,8 @@ fn length(b: &mut B<'_, '_>) -> Value {
             b.f.ins().ireduce(I32, length)
         },
         |b| {
-            let end = b.call("tape_end", &[i]);
-            let start = b.call("tape_start", &[i]);
+            let end = b.call("tape_end_stated", &[i]);
+            let start = b.call("tape_start_stated", &[i]);
             b.f.ins().isub(end, start)
         },
     )
@@ -1870,7 +1897,8 @@ fn z_decode(b: &mut B<'_, '_>, block: Value, slot: Value, size: Value) -> Value 
     let sixteen = b.c32(16);
     let widths = b.view(at::WIDTHS);
     let (cut, per) = (b.view(at::CUT), b.view(at::PER));
-    for (value, offset) in [(nb, at::NODES), (sixteen, at::FORMAT), (widths, at::WIDTHS), (cut, at::CUT), (per, at::PER)] {
+    let source = b.view(at::SOURCE_LEN);
+    for (value, offset) in [(nb, at::NODES), (sixteen, at::FORMAT), (widths, at::WIDTHS), (cut, at::CUT), (per, at::PER), (source, at::SOURCE_LEN)] {
         b.f.ins().store(rw, value, view, offset);
     }
     for k in 0..5 {
