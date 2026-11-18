@@ -682,16 +682,16 @@ impl FileImage {
             image.derived.push(DerivedImage::encode(via, program, 0, grammar, source, &budget)?);
         }
         // Each document in the format the run stores (decision 0293 §4), once the embedders have read the host.
-        Ok(image.in_format(formats::Format::of_run()))
+        Ok(image.in_format(formats::Format::of_run(), source))
     }
 
     /// The documents of a file that derives none, in the format the run stores (decision 0293 §4).
-    pub fn single(primary: TapeImage) -> Self {
+    pub fn single(primary: TapeImage, source: &str) -> Self {
         Self {
             primary,
             derived: Vec::new(),
         }
-        .in_format(formats::Format::of_run())
+        .in_format(formats::Format::of_run(), source)
     }
 
     /// The documents the store keeps for a file: its tape `primary` in `grammar`'s dialect and
@@ -840,7 +840,8 @@ impl Documents for FileImage {
 #[cfg(any(test, feature = "test-hooks"))]
 impl Documents for TapeImage {
     fn file_image(&self) -> Cow<'_, FileImage> {
-        Cow::Owned(FileImage::single(self.clone()))
+        // No source: the image is kept in the format it is held in.
+        Cow::Owned(FileImage { primary: self.clone(), derived: Vec::new() })
     }
 }
 
@@ -1366,7 +1367,7 @@ impl TapeImage {
         }
         // A `.rr` file: the rule engine's own parser builds its tree (decision 0061).
         if grammar.lang == GrammarDialect::Rr {
-            return Some(Self::encode_rr(grammar, source, budget).map(FileImage::single));
+            return Some(Self::encode_rr(grammar, source, budget).map(|image| FileImage::single(image, source)));
         }
         let mut parser = tree_sitter::Parser::new();
         if let Err(error) = parser.set_language(&grammar.lang.get_ts_language()) {
@@ -2386,7 +2387,9 @@ impl TapeDoc {
         let (digest, _) = validated::visit(&source, &grammar, image, budget, |_, _| {})?;
         checked(budget)?;
         let image = Arc::new(image.clone());
+        let held = Arc::new(formats::DocTape::new(Arc::clone(&image), Arc::clone(&source)));
         Ok(Self {
+            held,
             source_digest: digest,
             points: Arc::new(Points {
                 source: Arc::clone(&source),
@@ -2399,7 +2402,7 @@ impl TapeDoc {
             texts: Arc::default(),
             guests: Guests::Owned(Arc::new(Vec::new())),
             host: None,
-            held: Arc::new(formats::DocTape::new(Arc::clone(&image))),
+
             image,
             digest: Arc::default(),
             path: None,

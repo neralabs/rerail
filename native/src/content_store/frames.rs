@@ -1558,7 +1558,7 @@ impl Put {
     }
 }
 
-/// A write's frames encoded where they are stored (decision 0295 §1, Q61): its segments' writer, shared by the jobs
+/// A write's frames encoded where they are stored (decision 0295 §1, Q95): its segments' writer, shared by the jobs
 /// that make the frames, each frame's bytes written into its entry as its rows are read. Made whole on the heap
 /// first, every frame of a write was held at once until it was queued: the cross part's frames, the peak of a cold
 /// PostHog run.
@@ -1797,7 +1797,7 @@ mod tests {
             "128 demands must use full-key probes, not scan 8192 stored frames: {} VM instructions", work.load(Ordering::Relaxed));
     }
 
-    /// A frame encoded straight into the write's segments as its rows come (Q61), a window at a time: its bytes are
+    /// A frame encoded straight into the write's segments as its rows come (Q95), a window at a time: its bytes are
     /// `encode`'s, and it reads back as a frame queued whole does, queued and stored, beside one queued as before.
     #[test]
     fn a_frame_placed_as_it_is_encoded_reads_back_as_one_queued_whole() {

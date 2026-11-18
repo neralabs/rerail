@@ -1,6 +1,8 @@
 # 0289: A chunk is a block, and the device reads its views there
 
-Status: draft (2026-11-15), being built. §3's second half was overtaken by 0293 step 4 (2026-11-16): the device's
+Status: draft (2026-11-15), being built. **§1–2 superseded by 0353 (2026-11-17):** the chunk block holds the placed
+tapes and granule tables, never node columns, projection arrays or views made from them; a view is a read of the
+tape. §3's second half was overtaken by 0293 step 4 (2026-11-16): the device's
 reads of the tape wait for 0293 step 5. 0266's path step 2 (`Chunk`), taken here at the user's choice. It is
 done in the order that removes the measured cost first. Builds on 0266 (blocks), 0254 (chunks evaluated at once)
 and 0277 (what the device reads).
@@ -297,6 +299,13 @@ lane gave the label passes fewer documents again, and fewer of them hits:
 | Step B | 10 | 308 (33) | 16.5 ms, 54 µs a document | 11.6 ms for 12.1 MB, 0.94 µs a KB |
 
 Per document it is higher because more of them were misses. What is left of an admission is as in step A.
+
+**With 0293 step 5 (merged 2026-11-16).** 0293 §9 and §10 (the device reads the tape in place; a pass's roots a
+rule) were built against `DocView` and the four slab slots. In the merge they read through this step's entry:
+`ChunkTape` holds 0293's fields (`format`, `widths`, `columns`, `side`, `parts`, `cut`, `per`, `tape`), each an
+offset from `at`, and the readers' base is the document's start (`tape_doc`). What this section nested for the
+interim (the parent column, child lists and nodes by code) is gone, as 0293 §9 says. The entry's layout is
+`rerail_clif::view::TapeView`'s (0310), asserted field for field in `rerail_metal::slabs`.
 
 Then the image is serialized once. A document whose digest is not known yet (parsed in this run, not restored from
 the store) serialized its image to hash it and again to copy it. `TapeDoc::tape_digest_and_image` now returns the

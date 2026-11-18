@@ -1492,8 +1492,48 @@ impl Entry {
     }
 }
 
-/// The run's plans by key, as published (`RunPlans::kept`).
-type Plans = rustc_hash::FxHashMap<PlanKey, Arc<Entry>>;
+/// The run's plans by key, as published (`RunPlans::kept`): in shards by the key's hash, each shared, so a
+/// publication copies the shards its plans fall in, not every plan (a run publishes on every stratum's entry that
+/// planned anew: on 50 files of 317 programs, copying the whole map each time was the run's largest cost).
+#[derive(Clone)]
+struct Plans {
+    shards: [Arc<rustc_hash::FxHashMap<PlanKey, Arc<Entry>>>; PLAN_SHARDS],
+}
+
+const PLAN_SHARDS: usize = 64;
+
+impl Default for Plans {
+    fn default() -> Self {
+        Plans { shards: std::array::from_fn(|_| Arc::default()) }
+    }
+}
+
+impl Plans {
+    fn shard(key: &PlanKey) -> usize {
+        use std::hash::BuildHasher;
+        (rustc_hash::FxBuildHasher.hash_one(key) % PLAN_SHARDS as u64) as usize
+    }
+    fn get(&self, key: &PlanKey) -> Option<&Arc<Entry>> {
+        self.shards[Self::shard(key)].get(key)
+    }
+    fn iter(&self) -> impl Iterator<Item = (&PlanKey, &Arc<Entry>)> {
+        self.shards.iter().flat_map(|m| m.iter())
+    }
+    /// Adds `entries`, copying each shard they fall in once (while an earlier map shares it).
+    fn extend(&mut self, entries: impl IntoIterator<Item = (PlanKey, Arc<Entry>)>) {
+        for (k, e) in entries {
+            Arc::make_mut(&mut self.shards[Self::shard(&k)]).insert(k, e);
+        }
+    }
+}
+
+impl FromIterator<(PlanKey, Arc<Entry>)> for Plans {
+    fn from_iter<I: IntoIterator<Item = (PlanKey, Arc<Entry>)>>(entries: I) -> Self {
+        let mut plans = Plans::default();
+        plans.extend(entries);
+        plans
+    }
+}
 
 /// Publications of new plans and of new orders (decision 0301), and the entries they carried: for the profile.
 static PUBLISHED: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
@@ -5035,6 +5075,10 @@ pub struct Run<'a, 'b> {
     keyless: HashSet<String>,
     /// Relations held only by the native set engine (`program`) until `materialize`.
     native_rels: BTreeSet<String>,
+    /// The inputs this run's strata placed on the device read (decision 0325 step 6): the views the device made of
+    /// them stay resident on this thread for the run's later strata, which placement then prices as found, not made.
+    /// A strand's run is on another thread, with residency of its own: it starts with none.
+    device_views: HashSet<String>,
     /// Immutable unary demand snapshots, shared only within this run.
     demands: native_demand::Demands,
     /// Why the native engine declined the last stratum it was offered (EXPLAIN's `why`).
@@ -6812,6 +6856,7 @@ impl<'a> Run<'a, '_> {
             model,
             views: Arc::clone(&self.views),
             made: HashSet::new(),
+            device_views: HashSet::new(),
             orders: HashMap::new(),
             keyless: HashSet::new(),
             native_rels: reads.iter().filter(|r| self.native_rels.contains(*r)).cloned().collect(),
@@ -6850,6 +6895,7 @@ impl<'a> Run<'a, '_> {
             model,
             views: Arc::clone(&self.views),
             made: HashSet::new(),
+            device_views: HashSet::new(),
             orders: HashMap::new(),
             keyless: HashSet::new(),
             native_rels: reads.iter().filter(|r| self.native_rels.contains(*r)).cloned().collect(),
@@ -7850,7 +7896,7 @@ impl<'a> Run<'a, '_> {
             shape.add(Order::new(b, &order), work, false, false);
             shape.seeded(head, rows);
             if let Some(x) = &x {
-                shape.add_joins(Order::new(b, &order), x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0), |rel, col| self.model.stats.lookup_cost(rel, col));
+                shape.add_joins(Order::new(b, &order), x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0), |rel, col| self.model.stats.lookup_cost(rel, col), |rel| !self.model.derived.contains(rel));
             }
             let Some(spec) = self.whole_join_spec(b, &order, None, &ri, scc, &native_rels) else {
                 if answering {
@@ -7970,7 +8016,7 @@ impl<'a> Run<'a, '_> {
                 shape.add(Order::new(b, &order), 0.0, true, pf.lattice_name(head) == Some("shortlex_min"));
                 shape.probe(a, work, rows, delta);
                 if let Some(x) = &x {
-                    shape.add_joins(Order::new(b, &order), x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0), |rel, col| self.model.stats.lookup_cost(rel, col));
+                    shape.add_joins(Order::new(b, &order), x, |rel| self.model.stats.card.get(rel).copied().unwrap_or(0.0), |rel, col| self.model.stats.lookup_cost(rel, col), |rel| !self.model.derived.contains(rel));
                 }
                 let at = order.iter().position(|s| s.at == ai).expect("the delta atom");
                 let Some(spec) = self.whole_join_spec(b, &order, Some(at), &ri, scc, &native_rels) else {
@@ -8054,7 +8100,14 @@ impl<'a> Run<'a, '_> {
         // (`device::fixpoint`), unless the device refuses one of them, which the profile then names. Gates and
         // requests are forms the device lacks.
         shape.close_rounds();
+        // An input whose view a device stratum of this run made already is found resident: no view made for it.
+        for r in &mut shape.reads {
+            r.3 &= !self.device_views.contains(&r.0);
+        }
         let placed = placement::place(&shape);
+        if placed.gpu {
+            self.device_views.extend(shape.reads.iter().filter(|r| r.3).map(|r| r.0.clone()));
+        }
         // Placed there but a shape the device's run does not take: named, as a refusal.
         let not_taken = if !placed.gpu {
             None
@@ -10632,7 +10685,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
     // What each issued form's job did, from its component's retire to its own slot.
     let mut form_ran: HashMap<usize, (usize, Option<Result<(Option<String>, Option<String>)>>)> = HashMap::new();
     let projections0: HashMap<String, Vec<(usize, i64)>> = super::program_image::analyses::projections(&p0.v).into_iter().map(|(r, eqs)| (p0.v.rel_name(r).to_owned(), eqs)).collect();
-    let mut run = Run { db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections0), inputs: Arc::new(RunInputs { program: f0.inputs().collect(), added: Default::default() }), versions: Arc::new(body::Versions::of_placed(placed)), version: 0, answer: hooks.answer.take(), texts: hooks.texts.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new(), quiet: Default::default() };
+    let mut run = Run { db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, device_views: HashSet::new(), demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections0), inputs: Arc::new(RunInputs { program: f0.inputs().collect(), added: Default::default() }), versions: Arc::new(body::Versions::of_placed(placed)), version: 0, answer: hooks.answer.take(), texts: hooks.texts.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new(), quiet: Default::default() };
     // A native run makes no views: a projection of an input is a stratum like any, run from the input where it is
     // held (decision 0104: no SQL in the run's waves). A SQL run reads its inputs through views in place.
     let planned_views = if atoms && !native.is_empty() { Vec::new() } else { plan_views(f0, &Arc::clone(&run.versions), &mut run.model, &rules_by)? };

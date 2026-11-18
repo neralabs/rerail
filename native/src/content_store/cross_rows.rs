@@ -59,7 +59,7 @@ pub(super) fn encode(width: usize, values: &[i64]) -> Vec<u8> {
 /// `encode`'s bytes of rows given a window at a time (`each` calls its argument with each window, rows of `width`,
 /// flat, and is called twice): each column's length counted first, then each column written into its own range of
 /// one entry (`write`, given the total). No copy of the rows, nor of the bytes (a frame encoded where it is stored,
-/// Q61).
+/// Q95).
 pub(super) fn encode_windows<E>(width: usize, each: &dyn Fn(&mut dyn FnMut(&[i64])), write: impl FnOnce(usize, &mut dyn FnMut(&mut [u8])) -> Result<(), E>) -> Result<(), E> {
     let zigzag = |d: i64| ((d << 1) ^ (d >> 63)) as u64;
     let varint_len = |z: u64| (64 - (z | 1).leading_zeros() as usize).div_ceil(7);

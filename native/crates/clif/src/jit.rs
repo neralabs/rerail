@@ -12,7 +12,8 @@ pub struct Reads {
 }
 
 impl Reads {
-    #[allow(clippy::new_without_default)]
+    // The closure returns Cranelift's `ModuleError`, as `define_function` does.
+    #[allow(clippy::new_without_default, clippy::result_large_err)]
     pub fn new() -> Self {
         use cranelift_codegen::ir::{InstBuilder, UserFuncName};
         use cranelift_module::Linkage;

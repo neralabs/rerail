@@ -1433,6 +1433,16 @@ fn combine_read(programs: &[&str], extra: &added::Added, read: Option<&front::Pr
             format!("{} distinct requests of {asking} asking programs{}; copies per relation: {}", keys.len(), if per_program { " (RERAIL_REQUESTS=copied)" } else { "" }, most.join(", "))
         });
     }
+    // Programs combined have their node attributes answered on request over the combined program (below), each
+    // part's own requests undone first: before hiding, which copies a relation's rules into its grammar-scoped copies
+    // (`rr_in_<g>_token`). Undone after it, the copies kept the answer's rules, reading the request's inputs
+    // (`rr_token_anon`) that the undo no longer declared, and the combined program had nothing to answer them (Q67,
+    // the data-layer pack).
+    if parsed.len() > 1 {
+        for p in parsed.iter_mut() {
+            crate::code_rule_dsl::logic::rr::lower::undo_on_request(p);
+        }
+    }
     // A run that makes guests bounds each program's rules to the documents it shows (decision 0058 §1); a run that
     // makes none is left as written. With the libraries once, the combined program is bounded once (below).
     if makes_guests && !shared {
@@ -1468,9 +1478,7 @@ fn combine_read(programs: &[&str], extra: &added::Added, read: Option<&front::Pr
     if let Some(l) = library.as_mut() {
         crate::code_rule_dsl::logic::rr::lower::undo_on_request(l);
     }
-    for p in parsed.iter_mut() {
-        crate::code_rule_dsl::logic::rr::lower::undo_on_request(p);
-    }
+    // Each part's own requests were undone before hiding (above).
     // The library, when held once, is the first part: its names are the run's (decision 0089 §2).
     let units = library.into_iter().map(|l| (None, l)).chain(parsed.into_iter().enumerate().map(|(i, p)| (Some(i), p)));
     for (unit, mut prog) in units {
@@ -1644,6 +1652,8 @@ fn combine_read(programs: &[&str], extra: &added::Added, read: Option<&front::Pr
 /// The requests `sources_on_request` made, narrowed where the split finds them cross-file to the asked node's own
 /// document (`file_local::requests_file_local`): a node's attribute is its document's, answered in its chunk while
 /// the chunk's batch holds the text (O-cross-file-answers). Run on the program that runs, once its requests are made.
+
+
 fn requests_file_local(prog: &mut crate::code_rule_dsl::logic::front::ast::Program) {
     if std::env::var("RERAIL_NODE_SOURCES").is_ok_and(|v| v == "eager") {
         return;
@@ -5880,7 +5890,7 @@ fn run_observed(
     // A chunk's relations go in blocks of its own, given back with it (Q58): not in blocks every chunk at once
     // shares, which a few rows of each kept whole and the memory line counted whole.
     let evaluate = |task: Task, db: &Connection, modules: &Modules, hand: Option<Hand<'_>>| -> Result<Evaluated> {
-        crate::code_rule_dsl::logic::native::setfix::in_chunk(|| evaluate_in(task, db, modules, hand))
+        crate::code_rule_dsl::logic::native::setfix::in_chunk(crate::code_rule_dsl::logic::plan::placement::block_device(), || evaluate_in(task, db, modules, hand))
     };
     // The connections chunks evaluate on beside the main thread's, each opened as the run's is (its atoms, the
     // engine's functions, `x` attached when SQL first runs) and given the run's inputs bound before the chunks.
@@ -9986,7 +9996,7 @@ impl Drop for Statements {
 /// as each chunk's rows are written (from the rows in memory; no scan at the end). A document is in one chunk, so
 /// per-document sums (`sqd`) add exactly, and node columns' values never cross documents, so their `ndv` and `sq`
 /// add exactly too. A value column's values cross chunks: its `ndv` and `sq` are of each value's total, kept as
-/// `ValTotals`: exact while it has `SMALL_NDV` values or fewer, else sketched (HyperLogLog and AMS, Q61). Its
+/// `ValTotals`: exact while it has `SMALL_NDV` values or fewer, else sketched (HyperLogLog and AMS, Q95). Its
 /// tested values are always counted exactly: the planner reads a constant missing from `stat_val` as matching no
 /// row (`const_freq`).
 #[derive(Default)]
@@ -10095,7 +10105,7 @@ impl Totals {
         }
     }
     /// The totals as the planner's statistics (T's `stats.py` definitions), over `stats`. Per value, only what the
-    /// planner reads (Q61): the values the program tests (`tested`), and every value of a column of `SMALL_NDV` or
+    /// planner reads (Q95): the values the program tests (`tested`), and every value of a column of `SMALL_NDV` or
     /// fewer (`small_values`). Every distinct value of every export column, kept, was 118 MB of a cold PostHog run's
     /// cross part that nothing read.
     fn apply(&self, stats: &mut super::Stats) {
@@ -10853,7 +10863,7 @@ impl Own {
 
 #[cfg(test)]
 pub mod tests {
-    /// The chunks' totals give the planner every column's moments, but per value only what it reads (Q61): the
+    /// The chunks' totals give the planner every column's moments, but per value only what it reads (Q95): the
     /// values the program tests (`binding_domains`' lookups by constant), and every value of a column of few
     /// (`small_values`). Held whole, every distinct value of every export column was 118 MB of the cross part's
     /// statistics, which nothing read.

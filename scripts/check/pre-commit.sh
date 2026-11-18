@@ -22,3 +22,5 @@ npm run --silent check:reference
 # The engine's `test-hooks` feature carries what its dev-dependencies turn on, so the CLI and the tests build
 # their dependencies once (native/Cargo.toml).
 python3 scripts/check/check-dev-features.py
+# Blocks are never copied into another data structure (decision 0353): a commit that adds a copy is refused.
+python3 scripts/check/check-no-block-copies.py

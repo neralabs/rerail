@@ -152,30 +152,28 @@ const TILE_HOST_PER_VALUE: f64 = 5e-9;
 const TILE_PER_COMPARE: f64 = 0.4e-9;
 const TILE_COMPARES_PER_PAIR: f64 = 70.0;
 
-/// The device's stratum, as `setfix::device` runs it (every seed join in one submission, its relations kept on the
-/// device across the chunk's strata), in seconds of the host's CPU: a submission (the batch, its commit, the wait
-/// and the completion's wake), a rule's tables and words, a stage's encoding (count, scan, scatter, about four
-/// dispatches at 1.5 µs and their buffers), a sort's encoding (a hash and the radix passes, about 25 dispatches), and
-/// a head row read back into the store. Measured on the Python pack's placed strata (`== Placement`'s "Strata run on
-/// the GPU": host CPU against rules, stages and rows).
-const DEVICE_SUBMISSION: f64 = 100e-6;
-const DEVICE_RULE: f64 = 6e-6;
-const DEVICE_STAGE: f64 = 8e-6;
-const DEVICE_SORT: f64 = 45e-6;
-/// A head row back costs its read into the store and the store's insert after the wave, which the CPU's walk pays
-/// in its work too: 75 ns, measured on PostHog's `posthog/hogql` (437 files, 2026-11-14: 24 ns read back, about 50 ns
-/// inserted, over the strata whose every run was on the GPU). At the 40 ns measured before (the read alone), a pure
-/// copy (`kind(n, k) :- node(_, n, k, _, _)`) priced as cheaper on the GPU and cost the same there. Refitted to 105 ns
-/// from that copy's 63 runs on the GPU (decision 0321, 2026-11-16): 443 ms of the host's CPU, 76 ms of it its
-/// submissions and uploads, for 3.52 M rows. The CPU's run of it took 437 ms.
-const DEVICE_ROW_BACK: f64 = 105e-9;
-/// A value of a relation the device reads, per column an atom reads (decision 0277), in the host's CPU: 2.2 ns,
-/// measured on PostHog's `posthog/hogql` (2026-11-16, the profile's split of the uploads: 13.9 ms for 6.3 M values).
-/// A flat relation's value is a copy (1.7 ns), a view's made on the host a row read (2.5 ns), and a view's made on
-/// the device (decision 0289) its share of the chunk block's build, of the axes' solve and of the kernel (2.7 ns).
-/// It was 7 ns while every view's rows were made on the host (98.7 ms for 13.7 M values, 2026-11-14). Priced for
-/// every stratum, though a relation an earlier stratum of the chunk uploaded is found resident.
-const DEVICE_UPLOAD_PER_VALUE: f64 = 2.2e-9;
+/// The device's stratum, as `setfix::device` runs it, in seconds of the host's CPU (decision 0325 step 6): its
+/// relations read where they lie and its heads written in place, so no copy is priced. Fitted on PostHog's
+/// `posthog/hogql` (2026-11-17, 1,193 runs on the GPU in three cold runs, each part of a run's host time against its
+/// own terms, `placement.tsv`):
+/// - A run (`DEVICE_RUN`): its share of its level's wave (one command buffer, committed and waited for once, for
+///   every stratum in it: 77% of runs), the batch, and its fixed encoding. 0.18 ms. It was 0.10 ms a submission,
+///   one a stratum.
+/// - A stage (`DEVICE_STAGE`, a rule's step): its count, scan and scatter encoded. 30 µs. A rule adds nothing past its
+///   stages (the rule's own 6 µs was dropped).
+/// - An index (`DEVICE_SORT`, a relation probed by keys): its build encoded (`Batch::index`: a hash and the radix
+///   passes) or found the relation's own. 65 µs.
+/// - A view made (`DEVICE_VIEW`): an input the device makes a view of from the chunk's block (decision 0289), one no
+///   device stratum of the run read before (`Run::device_views`; a view made stays resident), and a stratum's text
+///   and verdict words: 0.4 ms, the measured average (0.43 s over 1,086 views priced as made in 962 runs). Neither
+///   the views nor their values predict a stratum's share (R² under 0.3, Q67): `ann_ctx` pays 2.1 ms a run for one
+///   view of 1.2 M values when it makes it, 0.5 ms when `ann_root` made it first. It was 2.2 ns a value read of
+///   every relation, derived ones too, which the device now reads in place.
+/// - A head row: 2 ns into the store, not priced (it was 105 ns, before the heads were written in place).
+const DEVICE_RUN: f64 = 0.18e-3;
+const DEVICE_STAGE: f64 = 30e-6;
+const DEVICE_SORT: f64 = 65e-6;
+const DEVICE_VIEW: f64 = 0.4e-3;
 
 /// CPU: seconds per unit of planned work that is no scan's row, per row a scan reads, and per stratum run (decision
 /// 0304): a least-squares fit of the CPU-placed strata of a cold run over PostHog's `posthog/hogql` (169 strata,
@@ -197,6 +195,12 @@ const GPU_PER_SUBMISSION: f64 = 0.15e-3;
 /// with the more memory bandwidth, so the work it takes leaves the CPU's cores to the strata only they run. Before,
 /// the GPU had to be twice the cheaper (`MARGIN`, 2), against estimates 8 times off (decision 0320).
 pub(in crate::code_rule_dsl) const GPU_BIAS: f64 = 2.0;
+
+/// `GPU_BIAS`, or `RERAIL_GPU_BIAS` when set: a measurement aid only, to refit the bias over runs at several.
+pub(in crate::code_rule_dsl) fn gpu_bias() -> f64 {
+    static BIAS: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *BIAS.get_or_init(|| std::env::var("RERAIL_GPU_BIAS").ok().and_then(|v| v.parse().ok()).filter(|b: &f64| *b > 0.0).unwrap_or(GPU_BIAS))
+}
 
 /// Where a thread's run may place strata: the CPU only, the device where it is the cheaper (the Metal binding), or
 /// the device wherever it has every form (`Always`: what the device can run, apart from what it should; the
@@ -263,9 +267,10 @@ pub(in crate::code_rule_dsl) struct Shape {
     pub(in crate::code_rule_dsl) rules: usize,
     /// Its join steps' estimates, when the planner recorded them (profiling, or a run that may use the device).
     pub(in crate::code_rule_dsl) joins: Vec<JoinEst>,
-    /// The relations its atoms read, each with its rows and the columns an atom reads of it (the most any one
-    /// does): what the device uploads (decision 0277).
-    pub(in crate::code_rule_dsl) reads: Vec<(String, f64, usize)>,
+    /// The relations its atoms read, each with its rows, the columns an atom reads of it (the most any one does),
+    /// and whether the device would make a view of it (decision 0289): an input no device stratum of the run read
+    /// before (`Run::device_views`). A relation the program derives is read in place (0325), and so is a view made.
+    pub(in crate::code_rule_dsl) reads: Vec<(String, f64, usize, bool)>,
     /// The rows its scans read (a positive atom read whole), of its planned work: on the CPU a scanned row costs a
     /// read, not a probe (`CPU_PER_SCANNED`).
     pub(in crate::code_rule_dsl) scanned: f64,
@@ -508,7 +513,8 @@ impl Shape {
 
     /// Adds a planned rule's join steps: `order` its steps, `plan` the planner's record of them (one per step, its
     /// access and rows out), `card` a relation's rows, `cost` a lookup on a relation's column (`Stats::lookup_cost`).
-    pub(in crate::code_rule_dsl) fn add_joins(&mut self, order: Order<'_, '_>, plan: &crate::code_rule_dsl::logic::profile::RulePlan, card: impl Fn(&str) -> f64, cost: impl Fn(&str, &str) -> f64) {
+    /// `is_input` whether a relation is one of the program's inputs (a view).
+    pub(in crate::code_rule_dsl) fn add_joins(&mut self, order: Order<'_, '_>, plan: &crate::code_rule_dsl::logic::profile::RulePlan, card: impl Fn(&str) -> f64, cost: impl Fn(&str, &str) -> f64, is_input: impl Fn(&str) -> bool) {
         let (mut input, mut walked) = (1.0, 1.0);
         for (step, priced) in order.steps.iter().zip(&plan.steps) {
             if let Some(a) = order.b.plain_atom(step.at) {
@@ -516,7 +522,7 @@ impl Shape {
                 let cols = a.args().filter(|t| !matches!(t, TermRef::Wild)).count();
                 match self.reads.iter_mut().find(|r| r.0 == rel) {
                     Some(r) => r.2 = r.2.max(cols),
-                    None => self.reads.push((rel.to_string(), card(rel), cols)),
+                    None => self.reads.push((rel.to_string(), card(rel), cols, is_input(rel))),
                 }
             }
             if let Some(a) = order.b.plain_atom(step.at)
@@ -557,7 +563,7 @@ pub(in crate::code_rule_dsl) fn price_join(j: &JoinEst, sorted: bool) -> JoinCho
     let device = [(JoinForm::Probe, probe_s), (JoinForm::Tile, tile_s)].into_iter()
         .filter_map(|(f, p)| Some((f, p?))).min_by(|a, b| a.1.total_cmp(&b.1));
     let form = match device {
-        Some((f, p)) if p < index_s * GPU_BIAS => f,
+        Some((f, p)) if p < index_s * gpu_bias() => f,
         _ => JoinForm::Index,
     };
     JoinChoice { rel: j.rel.clone(), form, index_s, probe_s, tile_s }
@@ -658,6 +664,31 @@ pub(in crate::code_rule_dsl) struct Placement {
     pub(in crate::code_rule_dsl) joins: Vec<JoinChoice>,
     /// The operations behind `missing` (`Shape::lacking`).
     pub(in crate::code_rule_dsl) lacking: Vec<String>,
+    /// The device price's terms, as priced: what the profile fits the device's prices on (`placement.tsv`).
+    pub(in crate::code_rule_dsl) terms: DeviceTerms,
+}
+
+/// The terms of a stratum's device price, before their prices: its rules and steps (a stage each), the relations it
+/// sorts or indexes by keys, the values its atoms read (rows by the columns read), the rows its rules make, its joins'
+/// device work (seconds, at the relational lab's prices) and its other planned work.
+#[derive(Clone, Copy, Debug, Default)]
+pub(in crate::code_rule_dsl) struct DeviceTerms {
+    pub(in crate::code_rule_dsl) rules: f64,
+    pub(in crate::code_rule_dsl) steps: f64,
+    pub(in crate::code_rule_dsl) sorts: f64,
+    pub(in crate::code_rule_dsl) values: f64,
+    pub(in crate::code_rule_dsl) rows: f64,
+    pub(in crate::code_rule_dsl) joins_s: f64,
+    pub(in crate::code_rule_dsl) other_work: f64,
+    /// The views of inputs it makes: those no device stratum of the run made before (`Shape::reads`).
+    pub(in crate::code_rule_dsl) views: f64,
+}
+
+impl DeviceTerms {
+    /// In the profile's order (`PlacedTotal::gpu_terms`).
+    pub(in crate::code_rule_dsl) fn array(&self) -> [f64; 8] {
+        [self.rules, self.steps, self.sorts, self.values, self.rows, self.joins_s, self.other_work, self.views]
+    }
 }
 
 impl Placement {
@@ -680,9 +711,10 @@ pub(in crate::code_rule_dsl) fn gpu_price(runs: u64, work: f64) -> f64 {
 
 /// Places a stratum of `shape`. Its join steps are priced on each form (`price_join`), a relation sorted once for
 /// every probe of it by the same keys: the form each would take, for the profile. The stratum's GPU estimate is what
-/// the device's run of it costs (`setfix::device`): one submission, its rules and stages encoded, each relation it
-/// reads by keys sorted once, the joins' device work (left rows searched, pairs made, rows sorted), the rest of its
-/// work at the GPU's unit price, and its rows read back. The stratum's floor (planning, opening, closing) is paid
+/// the device's run of it costs (`setfix::device`): its run (its share of its wave), its stages encoded, each relation
+/// it reads by keys indexed once, each input it reads (a view made), the joins' device work (left rows searched,
+/// pairs made, rows sorted), and the rest of its work at the GPU's unit price; no copies (decision 0325 step 6). The
+/// stratum's floor (planning, opening, closing) is paid
 /// wherever its joins run, so the choice weighs the joins alone: the GPU while its part is under `GPU_BIAS` times the CPU's.
 pub(in crate::code_rule_dsl) fn place(shape: &Shape) -> Placement {
     let scanned = shape.scanned.min(shape.work).max(0.0);
@@ -708,20 +740,29 @@ pub(in crate::code_rule_dsl) fn place(shape: &Shape) -> Placement {
         let (input, output) = j.walked;
         device_joins += input.min(1e12) * (keys * UPLOAD_PER_VALUE + PROBE_PER_ROW) + output.min(1e12) * PROBE_PER_PAIR;
         if sorts.insert((j.rel.as_str(), j.keys)) {
-            device_joins += DEVICE_SORT + j.relation * (keys * UPLOAD_PER_VALUE + SORT_PER_ROW);
+            device_joins += j.relation * (keys * UPLOAD_PER_VALUE + SORT_PER_ROW);
         }
     }
-    let uploads: f64 = shape.reads.iter().map(|(_, rows, cols)| rows * *cols as f64).sum::<f64>().min(1e12) * DEVICE_UPLOAD_PER_VALUE;
-    let device_s = DEVICE_SUBMISSION + DEVICE_RULE * shape.rules as f64 + DEVICE_STAGE * shape.steps as f64 + device_joins + uploads
-        + GPU_PER_WORK * (shape.work - join_work).max(0.0) + DEVICE_ROW_BACK * shape.rows.min(1e12);
+    let terms = DeviceTerms {
+        rules: shape.rules as f64,
+        steps: shape.steps as f64,
+        sorts: sorts.len() as f64,
+        values: shape.reads.iter().filter(|r| r.3).map(|(_, rows, cols, _)| rows * *cols as f64).sum::<f64>().min(1e12),
+        rows: shape.rows.min(1e12),
+        joins_s: device_joins,
+        other_work: (shape.work - join_work).max(0.0),
+        views: shape.reads.iter().filter(|r| r.3).count() as f64,
+    };
+    let device_s = DEVICE_RUN + DEVICE_STAGE * terms.steps + DEVICE_SORT * terms.sorts + DEVICE_VIEW * terms.views + terms.joins_s
+        + GPU_PER_WORK * terms.other_work;
     let gpu_s = CPU_PER_STRATUM + device_s;
     let missing: Vec<Form> = shape.forms.iter().copied().filter(|f| !DEVICE_FORMS.contains(f)).collect();
     let binding = DEVICE.with(Cell::get);
     let device = binding != Binding::Cpu;
     // The GPU while its price is under `GPU_BIAS` times the CPU's (decision 0321).
-    let gpu_cheaper = device_s < cpu_work_s * GPU_BIAS;
+    let gpu_cheaper = device_s < cpu_work_s * gpu_bias();
     let gpu = missing.is_empty() && (binding == Binding::Always || device && gpu_cheaper);
-    Placement { gpu, gpu_cheaper, missing, cpu_s, gpu_s, device, joins, lacking: shape.lacking() }
+    Placement { gpu, gpu_cheaper, missing, cpu_s, gpu_s, device, joins, lacking: shape.lacking(), terms }
 }
 
 #[cfg(test)]
@@ -815,16 +856,19 @@ pub mod tests {
         assert!((p1.cpu_s - p0.cpu_s - 4.5 * plain.index_s()).abs() < 1e-9, "{p0:?} {p1:?}");
         assert_eq!(p0.cpu_s, place(&Shape { work: 1.1e5, rules: 1, steps: 1, ..Shape::default() }).cpu_s, "a cost of one is the units' price");
         assert!(p1.joins[0].index_s > p0.joins[0].index_s);
-        // A copy of an input (one scan, every row out) costs the same on either: the device saves no join, and the host
-        // pays the upload and the rows back (decision 0277), at par with the CPU's scan. A run of `kind` on PostHog's
-        // `posthog/hogql` (decision 0321): 3.52 M rows over 66 runs, 437 ms of CPU, 443 ms of the host's on the device.
-        // A join whose rows the device would make past the bound head, where the CPU's walk keeps one witness
-        // (decision 0229), is priced with every row on the device.
+        // A copy of an input (one scan, every row out) is the GPU's (decision 0325 step 6): the device reads the view it
+        // makes and writes the head in place, so the host pays its run, its stage and its view, and no row. It was
+        // priced level on either side while each row came back (decision 0321's `kind`). A join whose rows the device
+        // would make past the bound head, where the CPU's walk keeps one witness (decision 0229), is priced with every
+        // row on the device.
         let was = set_device(true);
         let mut copy = Shape { work: 50_000.0, rows: 50_000.0, scanned: 50_000.0, rules: 1, steps: 1, ..Shape::default() };
-        copy.reads = vec![("node".into(), 50_000.0, 2)];
+        copy.reads = vec![("node".into(), 50_000.0, 2, true)];
         let p = place(&copy);
-        assert!((p.gpu_s / p.cpu_s - 1.0).abs() < 0.1, "a copy is priced level: {p:?}");
+        assert!(p.gpu && p.gpu_s < p.cpu_s / 3.0, "a copy is the GPU's: {p:?}");
+        let mut derived = copy.clone();
+        derived.reads = vec![("kind".into(), 50_000.0, 2, false)];
+        assert!(place(&derived).gpu_s < p.gpu_s, "a derived relation is read in place: no view made");
         // The bias (decision 0321): a stratum the GPU's price puts at 1.5 times the CPU's is the GPU's; at 2.5 times,
         // the CPU's.
         let joined = |work: f64| Shape { work, rules: 1, steps: 1, joins: vec![JoinEst { rel: "a".into(), input: 1e6, relation: 1e6, output: 1e6, walked: (1e6, 1e6), keys: 1, range: false, cost: 1.0 }], ..Shape::default() };

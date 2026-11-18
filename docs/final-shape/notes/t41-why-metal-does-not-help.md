@@ -128,13 +128,119 @@ In order of what each buys:
 2. **Chunks sized by the work, not starved by a line the run is already past.** The peak did not move with 13×
    bigger chunks. Find what holds the footprint past 1 GB, then let chunk size follow the device's grain. On the
    GPU path the right grain is the whole corpus or a few large slabs, as the matcher's 4× drop in GPU time shows.
-3. **Matcher walks node-parallel, not root-serial.** A `desc kind=K` is a range query on the preorder tape (the
-   nodes of kind K between a root and its end): a per-kind position list and two binary searches, or one thread per
-   node testing its ancestors' range. A `child` loop is a segmented pass over the children. Long walks then cost
-   their output, not their length.
+3. **Matcher walks parallel over roots and over a long walk's range, on the tape as it lies.** Not by posting a
+   kind's nodes (0293 §6: nothing is posted), but by a scan of the codes: a `desc kind=K` is the codes of the
+   root's subtree range (preorder, contiguous) tested 64 at a time, the groups spread over threads; a `child` loop
+   is a segmented pass over the children. Long walks then cost their output, not their length. (Corrected
+   2026-11-16: a first draft here proposed per-kind position lists.)
 4. **Overlap the host's part with the device's.** Encode the next launch while the GPU runs this one, and move the
    host-side text scans and sizing onto the device.
 5. **Strata over many chunks in one submission**, and a recursion's rounds in one submission. A stratum's runs
    across chunks are independent until the cross part.
 6. **The executor's matcher prices from measured samples**, now that the CPU it measures is right.
 7. **Device forms for the computed-term hazards** (`@concat`, `@rr_node_text`, `@pkg_up`, …): 32 strata, 4.1 s.
+
+## After the hub merge, and against oscar's tape on the device (2026-11-16, later)
+
+The sibling branches are rebuilding the engine's structures to be the same bytes on the CPU and the GPU
+(0260, 0266, 0289, 0295, `data-structures.md`) and the tape to be the one form both read, in place
+(0293, 0310: the reads written once in CLIF for Rust, the CPU JIT and MSL). This branch has merged the hub
+(61e9f383c), which holds 0293's CPU half and 0295 step 5. Oscar (`sync-integration-hub-tape`, f51cab698) holds the
+device half (0293 §9, §10) and 0310, not yet in the hub. Its merge here conflicts in 17 files, in one place: the
+document view, `ChunkTape` (0289 §4: a block's offsets from the document's start, from `structure!`) against
+`rerail_clif::view::TapeView` (0310: the one view the generated reads take, with nothing per node derived). The
+merge keeps oscar's contents in 0289's form. That is the hub's roll-up to make, so it was not made here.
+
+**On the hub's shape, nothing above changes** (internal_dead_code, whole corpus, at load 25–31: the reference
+graph 35.2 s, 393 of 443 chunk sizings cut by the memory line, 858 M walk steps, the longest 6,607).
+
+**On oscar's, the device's matcher is 3–4× slower.** Measured on a worktree of f51cab698 with its own target,
+at s1000, alternated with the hub's build at load 24–35 (`RERAIL_GPU_KERNEL_TIMES`, `RERAIL_GPU_WALK_STEPS`):
+
+| s1000, Metal | hub (61e9f383c) | oscar (f51cab698) |
+|---|---|---|
+| `clause_patterns` threads | 18,080,805 | 186,381 |
+| `label_micro_8` threads | 689,796 | 220,037 |
+| `label_micro` threads | 23,255 | 17,212 |
+| micro kernels' GPU time | 139 ms | 474 ms |
+| their walk steps | 68.7 M | 43.9 M |
+| GPU per step | about 2 ns | about 11 ns |
+
+- **The cause is the execution shape, not the shared bytes.** 0293 §10 makes a GPU thread "a pass and a group of
+  64 of a document's nodes", and "a group's roots run one after another in its thread". That is the CPU's shape,
+  a core looping over a word of matches. On the GPU it serializes up to 64 walks a thread: `clause_patterns`, the
+  run's best kernel, went from 18 M threads to 186 k.
+- **A parent is a search on the device now** (0293 §9: format 15 searches back 64 nodes, then descends from the
+  root). The micro walks step `parent` often. On the CPU, 0293 §6 kept each projection's parents on measurement
+  (a pass off the tape costs 45 to 100 times a pass over them); the device dropped its parent column with no such
+  measurement. Format 16 (`RERAIL_TAPE=16`) was no better per step on oscar's device (about 12 ns).
+- **Keep the shape, change the device's form of it.** The host still lists nothing. A group's 64-bit root mask is
+  made by its thread, and then its roots are a SIMD group's: each lane takes a set bit (a ballot over the mask, or
+  a scan of the masks' counts that gives each root a thread). A walk's frame carries its parent where its step knew
+  it (0293 §8 does this for the CPU's `TapeNode`), so a parent search is the exception.
+- **Found too:** oscar's engine stops on the whole corpus, in both runs: `setfix.rs:3043`, index 5 of a view row's
+  2 columns, in `step_histograms` (exact statistics, 0203), not on the device. The hub's tree runs the corpus. Oscar
+  lacks the hub's later `setfix.rs` changes, so it may be gone at oscar's next hub merge.
+
+## Oscar merged here
+
+Oscar's f51cab698 is merged into this branch. Each side's invariants are kept:
+
+- 0289 §4: one block per batch, and the view's parts as offsets from `at`.
+- 0293 §9–10: nothing per node derived, and roots as a rule.
+- 0310: one view definition, and the reads through CLIF.
+
+At s100 with `--metal`, warm, the findings are the hub's (none). The label passes' GPU time is 53.6 ms on the hub's
+tree and 239.7 ms on the merged tree, the Q60 shape. The CPU is 1.6 s against 1.9 s, and the instructions 22.8 G
+against 27.6 G.
+
+The first run of a new engine compiles its shaders (22.8 s of CPU here), so the first run after a kernel change is
+never a measurement. Q60 is now this branch's to fix.
+
+## Fixing the merged device (2026-11-16, later)
+
+internal_dead_code at s1000, every matcher launch pinned to the GPU (`RERAIL_LANE_PIN=gpu:ast matcher wave`; without
+it a run's placement differs from the next's), `RERAIL_GPU_KERNEL_TIMES=1`, `RERAIL_GPU_WALK_STEPS=1`, each engine
+warmed by an s10 run first (its first run compiles its shaders), alternated, at load 45–75. The label passes' GPU
+time, then three of its kernels:
+
+| Engine | Format | Label passes | `label_micro` | `label_micro_8` | `clause_patterns` |
+|---|---|---|---|---|---|
+| hub (61e9f383c) | 15 | 292 ms | 169 | 91 | 3.6 |
+| merged (88f4b24b6) | 15 | 1,235 ms | | | |
+| + a group's roots spread over its SIMD group | 15 | 1,110 ms | | 497 | |
+| + reads in 32 bits where only the low word is used | 15 | about 1,080 ms | about 490 | | |
+| + block-local values declared in their block | 15 | 887–902 ms | 388 | 471 | 10.5 |
+| + the batch's format a function constant | 15 | 781–801 ms | 322–336 | 429–434 | 6.0–7.0 |
+| the same engines | 16 | 895 → 763–781 → 671 ms | 506 → 392–410 → 364 | 338 → 323 → 272 | 15.9 → 18.5 → 6.5 |
+| hand-written format 15 reads (a diagnostic build) | 15 | 667 ms | 211 | 434 | 6.0 |
+
+What each step is:
+
+- **Roots over a SIMD group** (`simd_roots`, `metal_tape.metal`). A thread still makes its group's 64-bit root mask
+  (0293 §10: the host lists nothing). Then the SIMD group's 32 lanes take its roots in rounds of 32, a lane per set
+  bit, found by a prefix sum over the lanes' counts. `label_micro*` and `clause_patterns` run whole SIMD groups.
+- **A walk carries its parent** (`path.end`): a step into a child knows the parent, so `next_in` needs no parent search.
+- **32-bit reads** (`rerail_clif::msl`, `low_words`). A demanded-bits pass emits an I64 value as `uint` where every use
+  reads its low word, as the documents' offsets do.
+- **Block-local declarations.** A value that only its own block sets and reads is declared there, not at the
+  function's head.
+- **The format as a constant.** The label and pattern kernels are made per batch format, as function constant 0,
+  `tape_format`; a mixed batch gets 0, which reads the view's field. The reads' format test then folds away.
+  `DocTable::format` gives the format. The profile has `gpu.tape_format=N` and each label kernel's
+  `pipeline.K.max_threads` (every one is 1,024, so registers don't limit occupancy).
+
+What is left, by kernel:
+
+- **`label_micro`: the generated reads are still 1.5× the hand-written ones** (322 against 211 ms). They still
+  load the widths from the view and branch on them, and decode a column of any width. The widths are a document's,
+  so a constant per batch does not reach them. Q62.
+- **`label_micro_8` is parent climbs**, and the hand-written reads did not change it (434). Format 15's parent is a
+  search; format 16's is cheaper, at 272. The hub's tree had a parent column (91). Making the device's parent cheap
+  is format 16 as the default (0156, the user's), or a parent the walk carries further, or a column, against 0293 §9.
+- **The step count is bimodal**: 97,241,194, or 118,095,951 with `label_micro_deep` at 70 ms instead of 27. Either
+  engine shows both; the second is walks retried on the deep tier. Compare runs with equal counts only.
+- The device's label tests passed with MSL that did not compile, and with a walk that lost its parent at a cursor
+  restore. The conformance tests and these runs caught both. `the_label_kernels_compile_for_every_format` (slow
+  tier, 84 s on an M1 Max) now compiles every label kernel and the pattern kernel for formats 0, 15 and 16. A test
+  for a walk whose steps change is still Q62's.

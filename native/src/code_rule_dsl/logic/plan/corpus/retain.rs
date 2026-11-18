@@ -2383,7 +2383,7 @@ impl Retained {
         let phase = super::phases::current();
         let input_docs = &self.input_docs;
         let atoms_ref = &atoms;
-        // Each frame is encoded straight into the write's segments as its rows are read (Q61): neither a copy of the
+        // Each frame is encoded straight into the write's segments as its rows are read (Q95): neither a copy of the
         // rows nor the frame's bytes are made on the heap. Copied and encoded on the heap, the frames were held whole
         // until queued, and the cross part's were a cold PostHog run's peak (1.8 → 2.3 GB in its last second).
         let derived_n: usize = sccs.iter().flatten().filter_map(|rel| self.framed(rel)).map(|k| k.rel.rows() * k.width * 2).sum();

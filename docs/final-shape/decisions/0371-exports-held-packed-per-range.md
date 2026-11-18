@@ -5,7 +5,7 @@ Numbered 0365 where it was written (0365 is also two other records). Date: 2026-
 ## Intro
 
 The chunks hand the cross-file part their exports: about 10 M rows over 17 relations on PostHog. They were held
-as `Vec<i64>` columns, 8 bytes a value: 198 MB live for the whole cross part, its largest holder (Q61). The
+as `Vec<i64>` columns, 8 bytes a value: 198 MB live for the whole cross part, its largest holder (Q95). The
 values are node ids, symbols and small integers, which need far fewer bits. This record packs them, in place,
 with the encodings the blocks crate ported from MLDB.
 
@@ -32,7 +32,7 @@ with the encodings the blocks crate ported from MLDB.
 | | before (fr2) | packed (px3) |
 |---|---|---|
 | exports held | 198 MB | 54.4 MB (2.4 B a value) |
-| the cross part's live heap at its most footprint | 1,329 MB | 824 MB (with Q61's statistics steps) |
+| the cross part's live heap at its most footprint | 1,329 MB | 824 MB (with Q95's statistics steps) |
 | the cross part's most footprint | 1,830 MB | 1,517 MB |
 | the run's peak | 2,268 MB | 2,025 MB |
 | packing (sort and encode, 22 exports) | – | 0.15 s CPU |

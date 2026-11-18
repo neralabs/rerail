@@ -16,8 +16,11 @@
 //! - **A resident document** is keyed by its tape's SHA-256 (the store's canonical hash, which
 //!   covers the format version). It holds, in one slab: the v9np image byte-identical to its
 //!   frame's content (columns at 16-byte offsets, format 11), the source's UTF-8 bytes, and what a
-//!   reader derives from them once per admission (decision 0026): each node's parent, the image's
-//!   codes at a fixed width (`tape::resident::DeviceCode`) and the source's line starts.
+//!   reader derives from them once per admission (decision 0026): the codes at a fixed width
+//!   (`tape::resident::DeviceCode`) and the source's line starts (format 15's). Nothing per node is
+//!   derived beside the tape (decision 0293 §9). A format 16 document's codes are its language's:
+//!   one table a slab per language (`Slab::table`, decision 0336 §7), which the document's view
+//!   points at; its lines are its tape's newline index.
 //! - **Admission** reads the misses' frames in one store read (`ContentStore::resident_frames`),
 //!   decompresses each straight into its slab and checks the bytes against the tape's and the
 //!   source's SHA-256 and the image's header against the source, once. A failed check is an
@@ -56,48 +59,18 @@ pub fn aligned(length: usize) -> usize {
     length.div_ceil(ALIGN) * ALIGN
 }
 
-use rerail_blocks::structure;
-/// The view an entry holds past its `at` (the reads' one definition, decision 0310).
-pub use rerail_clif::view::TapeView;
-rerail_clif::tape_view_fields!(structure, [
-    /// A document as the device reads it (decisions 0289 §4, 0293, 0310): its first byte in the batch's chunk block
-    /// (`at`), then its view (`rerail_clif::view::TapeView`'s fields, from the one list): every offset of the view
-    /// counts from `at`, so a copy into another block changes `at` alone. The tape is read where it lies, format
-    /// 15's columns or format 16's arrays, by the reads written once (`metal_tape_reads.metal`, which take
-    /// `chunk + at` and the view): nothing per node is derived beside it. `node_base`, `source_base` and
-    /// `line_base` are the document's place in a batch's numbering, set by the batch's document table
-    /// (`DocTable`). Its MSL is generated (`msl`), with layout assertions. It is `Copy`, unlike a block's own
-    /// structures: it holds no span, so a copy reads the same.
-    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-    pub struct ChunkTape
-], [
-    /// The document's first byte in its block: every offset of its view counts from it.
-    pub at: u32,
-]);
-const _: () = assert!(std::mem::size_of::<ChunkTape>() == 4 + std::mem::size_of::<rerail_clif::view::TapeView>());
+/// A document as the device reads it: its first byte in the batch's chunk block (`at`, decision 0289 §4), and its
+/// parts as byte offsets from there, so a copy into another block changes `at` alone. It is the view the reads
+/// written once take (`rerail_clif::view::TapeView`, decision 0310), one definition for the device, the JIT and the
+/// tape crate, and its MSL is written from it (`msl`), with every field's offset asserted. `node_base` is the
+/// document's first node in a batch's numbering, set by the batch's document table (`DocTable`). The tape is read
+/// where it lies, format 15's columns or format 16's arrays (decision 0293): nothing per node is derived beside it.
+pub use rerail_clif::view::TapeView as DocView;
+const _: () = assert!(std::mem::size_of::<DocView>() == 116);
 
-impl ChunkTape {
-    /// The entry of a document at `at` whose view is `view`.
-    pub fn new(at: u32, view: &rerail_clif::view::TapeView) -> ChunkTape {
-        let mut entry = ChunkTape { at, ..ChunkTape::default() };
-        *entry.view_mut() = *view;
-        entry
-    }
-    /// Its view: the fields after `at`, laid out as `TapeView` (both are made of the one list, in order).
-    pub fn view(&self) -> &rerail_clif::view::TapeView {
-        // SAFETY: `ChunkTape` is `repr(C)`, `at` (a u32) then `TapeView`'s fields of the same types in the same
-        // order (`tape_view_fields!`), so they lie at `TapeView`'s offsets past 4 bytes, at u32 alignment.
-        unsafe { &*(&raw const self.nodes).cast::<rerail_clif::view::TapeView>() }
-    }
-    pub fn view_mut(&mut self) -> &mut rerail_clif::view::TapeView {
-        // SAFETY: as `view`.
-        unsafe { &mut *(&raw mut self.nodes).cast::<rerail_clif::view::TapeView>() }
-    }
-}
-
-/// The MSL of `ChunkTape`, for the kernels that read documents in place (`metal_tape.metal`).
+/// The MSL of `DocView`, for the kernels that read documents in place (`metal_tape.metal`).
 pub fn msl() -> String {
-    rerail_blocks::msl_of::<ChunkTape>()
+    rerail_clif::view::msl()
 }
 
 /// A slab: a chunk block over a lease of the pool, and its identity. Its rooms are the block's
@@ -107,6 +80,17 @@ pub struct Slab {
     block: rerail_blocks::Block,
     /// The lease's buffer, as kernels bind it (the block's backing's own).
     buffer: metal::Buffer,
+    /// The languages' code tables placed in it, once each (decision 0336 §7): by key (`Table`), the table's offset
+    /// and length.
+    tables: Mutex<HashMap<u32, (usize, usize)>>,
+}
+
+/// A language's code table a format 16 document reads (decision 0336 §7): its key (the tape's tag and the table's
+/// revision, `tag | revision << 8`) and its length in bytes. A slab holds it once, whatever documents read it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Table {
+    pub key: u32,
+    pub len: usize,
 }
 
 impl Slab {
@@ -117,7 +101,31 @@ impl Slab {
         let block = rerail_blocks::alloc::block(&need).map_err(|_| Error::BackendCapacity)?;
         let device = crate::METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
         let buffer = block.gpu_buffer(device);
-        Ok(Slab { id, block, buffer })
+        Ok(Slab { id, block, buffer, tables: Mutex::default() })
+    }
+
+    /// Where the table `key` lies in it, if it holds it.
+    pub fn table(&self, key: u32) -> Option<usize> {
+        self.tables.lock().expect("a slab's tables").get(&key).map(|&(at, _)| at)
+    }
+
+    /// The bytes its tables take.
+    fn table_bytes(&self) -> usize {
+        self.tables.lock().expect("a slab's tables").values().map(|&(_, len)| aligned(len)).sum()
+    }
+
+    /// The table `key`, written at `at` (a room of `aligned(bytes.len())`, its own), held from now on.
+    fn put_table(&self, key: u32, at: usize, bytes: &[u8]) {
+        // SAFETY: `at..at + len` is a room of this slab given to the table alone.
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), self.host().add(at), bytes.len()) };
+        self.tables.lock().expect("a slab's tables").insert(key, (at, bytes.len()));
+    }
+
+    /// The bytes at `at..at + len` of the slab.
+    fn bytes(&self, at: usize, len: usize) -> &[u8] {
+        assert!(at + len <= self.byte_length(), "a part inside its slab");
+        // SAFETY: inside the mapping; a table is written once before it is held, and never again.
+        unsafe { std::slice::from_raw_parts(self.host().add(at), len) }
     }
 
     /// Its buffer, as kernels bind it.
@@ -145,7 +153,7 @@ pub struct Resident {
     pub digest: [u8; 32],
     pub slab: Arc<Slab>,
     /// Its view, `at` its range's start in `slab`, `node_base` 0.
-    pub view: ChunkTape,
+    pub view: DocView,
     /// Its range in the slab, every part inside it: what `gather` copies.
     pub at: usize,
     pub len: usize,
@@ -153,17 +161,33 @@ pub struct Resident {
     pub bytes: [usize; 3],
     /// The tape's length where it is placed (a 16z tape's laid out as format 16).
     pub tape_length: usize,
+    /// The language's code table its view's codes point at, held by its slab (format 16), or `None` (format 15:
+    /// its own, inside its range).
+    pub table: Option<Table>,
 }
 
 impl Resident {
     /// This document copied into `slab` at `to` (its `len` bytes of room there, 16-byte aligned):
-    /// its view's `at` moved with it, its parts being offsets from there.
-    fn copied(&self, slab: &Arc<Slab>, to: usize) -> Resident {
+    /// its view's `at` moved with it, its parts being offsets from there. Its language's table is the slab's
+    /// (`table_at`, placed before the copy).
+    fn copied(&self, slab: &Arc<Slab>, to: usize, table_at: Option<usize>) -> Resident {
         // SAFETY: `to..to + len` is a room of `slab` given to this copy alone; the source range is
         // this document's, written at admission and never again.
         unsafe { std::ptr::copy_nonoverlapping(self.slab.host().add(self.at), slab.host().add(to), self.len) };
-        let view = ChunkTape { at: to as u32, ..self.view };
-        Resident { digest: self.digest, slab: Arc::clone(slab), view, at: to, len: self.len, bytes: self.bytes, tape_length: self.tape_length }
+        let mut view = DocView { at: to as u32, ..self.view };
+        if let Some(at) = table_at {
+            view.codes = codes_offset(to, at);
+        }
+        Resident { digest: self.digest, slab: Arc::clone(slab), view, at: to, len: self.len, bytes: self.bytes, tape_length: self.tape_length, table: self.table }
+    }
+
+    /// Its code table's bytes: its own, or its slab's table of its language.
+    pub fn code_bytes(&self) -> &[u8] {
+        let len = 24 * self.view.code_count as usize;
+        match self.table {
+            None => self.bytes_at(self.view.codes, len),
+            Some(_) => self.slab.bytes((self.at as u32).wrapping_add(self.view.codes) as usize, len),
+        }
     }
 
     /// The bytes at `offset..offset + length` of the document (an offset of its view).
@@ -178,6 +202,12 @@ impl Resident {
 
 
 
+}
+
+/// The view's offset of a table at `table` in the slab, for a document at `at`: modulo 2^32, as the device adds it
+/// to `at` (`tape_code`), so a table before the document is reached too.
+pub fn codes_offset(at: usize, table: usize) -> u32 {
+    (table as u32).wrapping_sub(at as u32)
 }
 
 /// A resident source: a file's bytes at a 16-byte offset of its slab (at least 16 bytes of room,
@@ -221,7 +251,7 @@ pub fn source_slabs(sources: &[Arc<ResidentSource>]) -> Option<(Vec<Arc<Slab>>, 
 /// A batch's document table (`batch.doctable`): each document's view with its first node in the
 /// batch's numbering, and the one block they are in (decision 0289 §4), `None` for no documents.
 pub struct DocTable {
-    pub views: Vec<ChunkTape>,
+    pub views: Vec<DocView>,
     pub block: Option<Arc<Slab>>,
     pub nodes: usize,
     /// The documents, held for the batch's life.
@@ -233,6 +263,13 @@ pub struct DocTable {
 pub const MAX_SLABS: usize = 4;
 
 impl DocTable {
+    /// The format every view is in, or `None` for an empty or mixed batch: the label kernels are specialized to it
+    /// (the reads' format test made a constant, t41).
+    pub fn format(&self) -> Option<u32> {
+        let first = self.views.first()?.format;
+        self.views.iter().all(|view| view.format == first).then_some(first)
+    }
+
     /// The table of `documents`, in order, in one slab (`gather`): `None` when they cannot be.
     pub fn one_block(documents: Vec<Arc<Resident>>) -> Option<Self> {
         Self::new(gather(documents).ok()?)
@@ -248,7 +285,7 @@ impl DocTable {
         let mut nodes = 0usize;
         let (mut source, mut lines) = (0usize, 0usize);
         for document in &documents {
-            views.push(ChunkTape {
+            views.push(DocView {
                 node_base: u32::try_from(nodes).ok()?,
                 source_base: u32::try_from(source).ok()?,
                 line_base: u32::try_from(lines).ok()?,
@@ -353,6 +390,7 @@ impl State {
         };
         let entry = self.slabs.remove(at);
         let mut pools = self.pools;
+        pools[2] -= entry.slab.table_bytes();
         self.documents.retain(|_, document| {
             let gone = document.slab.id == entry.slab.id;
             if gone {
@@ -461,22 +499,66 @@ pub fn resident(digests: &[[u8; 32]]) -> Result<Vec<Arc<Resident>>, Error> {
     digests.iter().map(|digest| state.documents.get(digest).cloned().ok_or(Error::BackendCapacity)).collect()
 }
 
-/// A document to place: its digest, the bytes it takes, and how to write it into a slab at an
-/// offset (`bytes` of room there, its own).
-pub type Placement<'a> = ([u8; 32], usize, Box<dyn FnOnce(&Arc<Slab>, usize) -> Result<Resident, Error> + 'a>);
+/// A document to place: its digest, the bytes it takes, the language's table it reads (format 16), and how to
+/// write it into a slab at an offset (`bytes` of room there, its own). The writer is given where the table lies in
+/// that slab, and whether it is new: the room after the document's, for the writer to fill (`Placed::table`).
+pub type Placement<'a> = ([u8; 32], usize, Option<Table>, Box<dyn FnOnce(&Arc<Slab>, usize, Option<TableAt>) -> Result<Placed, Error> + 'a>);
 
-/// Places the misses, keeping the slabs of every document `digests` reads.
-pub fn insert(digests: &[[u8; 32]], parts: Vec<Placement<'_>>) -> Result<(), Error> {
+/// Where a document's language table lies in its slab: `at`, and whether the slab holds it already (else the writer
+/// writes it there).
+#[derive(Clone, Copy, Debug)]
+pub struct TableAt {
+    pub at: usize,
+    pub held: bool,
+}
+
+/// A placed document, and its language's table's bytes where the writer wrote it new.
+pub struct Placed {
+    pub document: Resident,
+    pub table: Option<Vec<u8>>,
+}
+
+/// Places the misses, keeping the slabs of every document `digests` reads. A document of format 16 reads its
+/// language's table from its slab: placed with the first document of the language there, after its room. `ready`
+/// runs once every miss is placed and before any is published (the device's decode of 16z's pieces, decision 0336
+/// §8): a document is found only once it reads whole.
+pub fn insert(digests: &[[u8; 32]], parts: Vec<Placement<'_>>, ready: &mut dyn FnMut() -> Result<(), Error>) -> Result<(), Error> {
     let _admit = rerail_prof::Stage::start("residency.admit");
     let mut state = STATE.0.lock().map_err(|_| Error::BackendFailure)?;
     let mut keep = digests.iter().filter_map(|digest| state.documents.get(digest).map(|document| document.slab.id)).collect::<Vec<_>>();
-    for (digest, bytes, place) in parts {
-        let (at, offset) = state.room(bytes, &keep)?;
-        let document = place(&state.slabs[at].slab, offset)?;
+    let mut placed_all = Vec::with_capacity(parts.len());
+    for (digest, bytes, table, place) in parts {
+        // The newest slab or a new one takes the document (`State::room`): the table's room too, where it lacks it.
+        let held = |state: &State, table: Table| state.slabs.last().and_then(|last| last.slab.table(table.key)).is_some();
+        let extra = table.filter(|&table| !held(&state, table)).map_or(0, |table| aligned(table.len));
+        let (at, offset) = state.room(aligned(bytes) + extra, &keep)?;
+        let slab = Arc::clone(&state.slabs[at].slab);
+        let table_at = match table {
+            None => None,
+            Some(table) => Some(match slab.table(table.key) {
+                Some(at) => TableAt { at, held: true },
+                None if extra > 0 => TableAt { at: offset + aligned(bytes), held: false },
+                // A new slab, though the newest held the table: a room of its own there.
+                None => TableAt { at: slab.room(aligned(table.len)).ok_or(Error::BackendCapacity)?, held: false },
+            }),
+        };
+        let placed = place(&slab, offset, table_at)?;
+        if let (Some(table), Some(TableAt { at, held: false }), Some(bytes)) = (table, table_at, &placed.table) {
+            if bytes.len() != table.len {
+                return Err(Error::BackendFailure);
+            }
+            slab.put_table(table.key, at, bytes);
+            state.pools[2] += aligned(bytes.len());
+        }
+        let document = placed.document;
         let clock = state.clock;
         let entry = &mut state.slabs[at];
         entry.last_use = clock;
         keep.push(entry.slab.id);
+        placed_all.push((digest, document));
+    }
+    ready()?;
+    for (digest, document) in placed_all {
         for (pool, bytes) in state.pools.iter_mut().zip(document.bytes) {
             *pool += bytes;
         }
@@ -496,7 +578,19 @@ pub fn gather(documents: Vec<Arc<Resident>>) -> Result<Vec<Arc<Resident>>, Error
     let _gather = rerail_prof::Stage::start("residency.gather");
     let mut state = STATE.0.lock().map_err(|_| Error::BackendFailure)?;
     let keep: Vec<u64> = documents.iter().map(|document| document.slab.id).collect();
-    let room = |documents: &mut dyn Iterator<Item = &Arc<Resident>>| documents.map(|document| aligned(document.len)).sum::<usize>();
+    // Each document's range, and each language's table once (whether or not the slab holds it: a little room spare).
+    let room = |documents: &mut dyn Iterator<Item = &Arc<Resident>>| {
+        let mut tables: Vec<Table> = Vec::new();
+        let mut bytes = 0;
+        for document in documents {
+            bytes += aligned(document.len);
+            if let Some(table) = document.table.filter(|table| !tables.contains(table)) {
+                tables.push(table);
+                bytes += aligned(table.len);
+            }
+        }
+        bytes
+    };
     let newest = state.slabs.last().map(|entry| entry.slab.id);
     let outside = room(&mut documents.iter().filter(|document| Some(document.slab.id) != newest));
     let target = match state.slabs.last().and_then(|last| last.slab.room(outside).map(|offset| (Arc::clone(&last.slab), offset))) {
@@ -515,7 +609,18 @@ pub fn gather(documents: Vec<Arc<Resident>>) -> Result<Vec<Arc<Resident>>, Error
             gathered.push(document);
             continue;
         }
-        let moved = Arc::new(document.copied(&slab, to));
+        // Its language's table in the slab: held, or copied there from the document's.
+        let table_at = document.table.map(|table| match slab.table(table.key) {
+            Some(at) => at,
+            None => {
+                let at = to;
+                slab.put_table(table.key, at, document.code_bytes());
+                state.pools[2] += aligned(table.len);
+                to += aligned(table.len);
+                at
+            }
+        });
+        let moved = Arc::new(document.copied(&slab, to, table_at));
         to += aligned(document.len);
         copied += document.len;
         // The residency finds it here now; the slab it was in may be retired once no batch reads it.

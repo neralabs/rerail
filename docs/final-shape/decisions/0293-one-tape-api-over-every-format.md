@@ -2,7 +2,8 @@
 
 Status: decided (2026-11-16), by the user: "The tape needs to have a common, abstract API that abstracts away the
 format behind it. We will remove some formats when we make a decision, but in the mean time it needs to be connected
-up." Building. Follows 0156 (format 16, draft) and the lab's `inplace::Reader` (t39).
+up." Building. **0353 (2026-11-17):** every reader reads in place, so §6's `Projected::up` and the projection's
+per-node arrays are copies, removed by 0353 step 2, `up` with them. Follows 0156 (format 16, draft) and the lab's `inplace::Reader` (t39).
 
 ## Intro
 
@@ -184,8 +185,8 @@ This record is steps 2, 3 and 4, and the API they need.
 9. **The device reads the tape** (step 5, its resident half; built). A resident document is its tape where it is
    placed, its source, its code table at a fixed width and its line starts: nothing per node beside the tape.
    - **Placed as stored:** format 15's image, format 16's tape, or a 16z tape laid out as the format 16 tape it is
-     the blocks of (`Tape16Z::unblock_into`: each block decoded and its regions laid end to end, as format 16's
-     regions are its blocks'; no node is read). `f16::placement` says where a format 16 tape's arrays, side lists
+     the blocks of (`Tape16Z::decode_into`, since 0336 §5 each block's pieces decoded where they lie in the format
+     16 tape; no node is read; 0336 §2 moves it to the GPU, Q65). `f16::placement` says where a format 16 tape's arrays, side lists
      and part starts lie, checked as `Tape16::from_bytes` checks them; the device's view (`DocView`) names them.
    - **The device's reads** (`metal_tape.metal`) are format 16's `View`'s (a value too wide for its array read from
      its side list; a start from its checkpoint and gaps), or format 15's columns. A parent is a search: format
@@ -207,7 +208,7 @@ This record is steps 2, 3 and 4, and the API they need.
    on all 491 clauses (41 waves over 24 of the pack's files, from 236fc98d2~1), in the three formats (the spill
    test's floor of 1,000 roots needs the packs' full test data: those files give 621); with `metal-tests`, the device's roots equal the
    CPU's on every clause the resident interpreter takes alone, in the three formats, but for one clause past its
-   work limit, as at 6afcddb0a before this (work queue Q19); the CLI's device run (`logic --metal`, the Vue rules
+   work limit, as at 6afcddb0a before this (work queue Q49, Q19 on oscar); the CLI's device run (`logic --metal`, the Vue rules
    over the mixed files) gives the same findings in the three formats, cold and warm.
 
 10. **A pass's roots are a rule, not a list** (built, 2026-11-16, the user: "yes, please do that. It's a better
@@ -229,7 +230,7 @@ This record is steps 2, 3 and 4, and the API they need.
 
     Checked (2026-11-16, on the build farm's M3 and M1 Max, 15, 16 and 16z): on the matcher's fixtures the
     device's roots equal the CPU's on all 491 clauses, the resident interpreter's on 114 of 122 with the D416
-    clause past its work limit as before (Q19); in 15 and 16, with the pack's files restored (618, from
+    clause past its work limit as before (Q49, Q19 on oscar); in 15 and 16, with the pack's files restored (618, from
     236fc98d2~1), the micro walks, the combined graph, the widened-walk catch, the device conformance test and the
     `waves::matches` tests pass, and with every walk spilling the device's roots equal the CPU's on all 491 clauses (the spill
     test's floor of 1,000 roots still wants the full test data). The two per-clause tests over all 618 files run

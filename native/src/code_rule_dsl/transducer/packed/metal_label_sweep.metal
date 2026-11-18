@@ -50,7 +50,7 @@ kernel void label_sweep(/*PARAMETERS*/uint tid [[thread_position_in_grid]],uint 
  device const uchar* chunk=nodes;
  bool changed=false,failed=false;
  for(uint file=tid;file<header.fileCount;file+=lanesCount){
-  ChunkTape doc=files[file];
+  DocView doc=files[file];
   if(!reverse){for(uint local=0u;local<doc.nodes;local++)SWEEP_NODE(local)}
   else{for(uint local=doc.nodes;local>0u;local--)SWEEP_NODE(local-1u)}
  }

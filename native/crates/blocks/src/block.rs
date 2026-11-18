@@ -335,6 +335,14 @@ impl Block {
         self.alloc_filled(size, align, true)
     }
 
+    /// `try_alloc`, its bytes as the backing left them (a dirty block's earlier bytes): for what every reader finds
+    /// written first, as a relation's chunks (a value is read only below `len`, and written before it is claimed).
+    /// A device relation's chunks of a pooled block then cost no memset (decision 0325 step 5). A chunk that may come
+    /// from the free list is `try_alloc_chunk_any` (decision 0342).
+    pub fn try_alloc_raw(&self, size: usize, align: usize) -> Option<usize> {
+        self.alloc_filled(size, align, false)
+    }
+
     /// `try_alloc`; a dirty block's memory is zeroed only when `zeroed` asks it.
     fn alloc_filled(&self, size: usize, align: usize, zeroed: bool) -> Option<usize> {
         assert!(self.writable, "alloc in a frozen block");

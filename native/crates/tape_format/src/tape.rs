@@ -29,15 +29,98 @@ pub struct Entry {
     pub classes: Vec<u16>,
 }
 
-/// The codes a tape's numbers name, by number.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// The codes a tape's numbers name, by number, and the table's index of them by kind and by class (made once,
+/// with the table, on first use): a kind's codes without a scan of the table, which on format 16 is the language's
+/// every code (`f16::Lang`), not the document's few.
+#[derive(Clone, Debug, Default)]
 pub struct CodeTable {
     entries: Vec<Entry>,
+    index: std::sync::OnceLock<CodeIndex>,
+}
+
+impl PartialEq for CodeTable {
+    fn eq(&self, other: &Self) -> bool {
+        self.entries == other.entries
+    }
+}
+impl Eq for CodeTable {}
+
+/// A table's codes by kind (those with no `CODE_ERROR`), by class, and those with `CODE_ERROR` and with
+/// `CODE_MISSING`, each as the set a kind test reads: made once per table, so a test of a document borrows it
+/// (on format 16 every document of a language shares the table).
+#[derive(Clone, Debug, Default)]
+struct CodeIndex {
+    /// By kind (a u16 symbol, so a vector).
+    kinds: Vec<CodeSet>,
+    classes: Vec<CodeSet>,
+    errors: CodeSet,
+    missing: CodeSet,
+    /// `errors` and `missing`.
+    faults: CodeSet,
+    empty: CodeSet,
 }
 
 impl CodeTable {
     pub fn new(entries: Vec<Entry>) -> Self {
-        CodeTable { entries }
+        CodeTable { entries, index: std::sync::OnceLock::new() }
+    }
+    fn index(&self) -> &CodeIndex {
+        self.index.get_or_init(|| {
+            let mut kinds: Vec<Vec<u32>> = Vec::new();
+            let mut classes: Vec<Vec<u32>> = Vec::new();
+            let slot = |v: &mut Vec<Vec<u32>>, k: u16, n: u32| {
+                if v.len() <= k as usize {
+                    v.resize_with(k as usize + 1, Vec::new);
+                }
+                v[k as usize].push(n);
+            };
+            let (mut errors, mut missing) = (Vec::new(), Vec::new());
+            for (n, e) in self.entries.iter().enumerate() {
+                let n = n as u32;
+                if e.flags & crate::CODE_MISSING != 0 {
+                    missing.push(n);
+                }
+                if e.flags & crate::CODE_ERROR != 0 {
+                    errors.push(n);
+                } else {
+                    slot(&mut kinds, e.kind, n);
+                }
+                for &c in &e.classes {
+                    slot(&mut classes, c, n);
+                }
+            }
+            let faults = CodeSet::of_numbers(errors.iter().chain(&missing).copied());
+            CodeIndex {
+                kinds: kinds.into_iter().map(CodeSet::of_numbers).collect(),
+                classes: classes.into_iter().map(CodeSet::of_numbers).collect(),
+                errors: CodeSet::of_numbers(errors),
+                missing: CodeSet::of_numbers(missing),
+                faults,
+                empty: CodeSet::default(),
+            }
+        })
+    }
+    /// The codes of kind `kind` with no `CODE_ERROR`.
+    pub fn of_kind(&self, kind: u16) -> &CodeSet {
+        let x = self.index();
+        x.kinds.get(kind as usize).unwrap_or(&x.empty)
+    }
+    /// The codes whose classes hold `class`.
+    pub fn of_class(&self, class: u16) -> &CodeSet {
+        let x = self.index();
+        x.classes.get(class as usize).unwrap_or(&x.empty)
+    }
+    /// The codes with `CODE_ERROR`.
+    pub fn errors(&self) -> &CodeSet {
+        &self.index().errors
+    }
+    /// The codes with `CODE_MISSING`.
+    pub fn missing(&self) -> &CodeSet {
+        &self.index().missing
+    }
+    /// The codes with `CODE_ERROR` or `CODE_MISSING`.
+    pub fn faults(&self) -> &CodeSet {
+        &self.index().faults
     }
     #[inline]
     pub fn len(&self) -> usize {
@@ -57,26 +140,74 @@ impl CodeTable {
     }
     /// The codes for which `member` holds, as a set by number.
     pub fn set(&self, member: impl Fn(&Entry) -> bool) -> CodeSet {
-        CodeSet { member: self.entries.iter().map(member).collect() }
+        CodeSet { repr: Members::Dense(self.entries.iter().map(member).collect()) }
     }
 }
 
-/// A set of codes of one table, by number: what a kind test reads.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+/// A set of codes of one table, by number: what a kind test reads. Either a flag per code of the table (a set
+/// made by a test of every entry), or the few numbers it holds (a kind's or a class's, from the table's index).
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CodeSet {
-    member: Vec<bool>,
+    repr: Members,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Members {
+    Dense(Vec<bool>),
+    Few(Box<[u32]>),
+}
+
+impl Default for CodeSet {
+    fn default() -> Self {
+        CodeSet { repr: Members::Few(Box::default()) }
+    }
 }
 
 impl CodeSet {
+    /// The set of `numbers` (any order, repeats allowed).
+    pub fn of_numbers(numbers: impl IntoIterator<Item = u32>) -> CodeSet {
+        let mut v: Vec<u32> = numbers.into_iter().collect();
+        v.sort_unstable();
+        v.dedup();
+        CodeSet { repr: Members::Few(v.into_boxed_slice()) }
+    }
     #[inline(always)]
     pub fn contains(&self, number: u32) -> bool {
-        self.member.get(number as usize).copied().unwrap_or(false)
+        match &self.repr {
+            Members::Dense(member) => member.get(number as usize).copied().unwrap_or(false),
+            Members::Few(few) if few.len() <= 8 => few.contains(&number),
+            Members::Few(few) => few.binary_search(&number).is_ok(),
+        }
     }
-    pub fn by_number(&self) -> &[bool] {
-        &self.member
+    /// The numbers of a set made from numbers, ascending; a set of a flag per code has none to give.
+    pub fn numbers(&self) -> Option<&[u32]> {
+        match &self.repr {
+            Members::Dense(_) => None,
+            Members::Few(few) => Some(few),
+        }
+    }
+    /// Marks in `out` each number of the set below `cut` (at most 256), clearing the rest: a set of a few numbers
+    /// costs its members, not a test of every number below the cut.
+    pub fn mark_below(&self, cut: usize, out: &mut [bool; 256]) {
+        let cut = cut.min(256);
+        *out = [false; 256];
+        match &self.repr {
+            Members::Dense(member) => out[..cut.min(member.len())].copy_from_slice(&member[..cut.min(member.len())]),
+            Members::Few(few) => few.iter().take_while(|&&n| (n as usize) < cut).for_each(|&n| out[n as usize] = true),
+        }
+    }
+    /// Whether the set holds a number `from` or past it.
+    pub fn any_from(&self, from: usize) -> bool {
+        match &self.repr {
+            Members::Dense(member) => member.iter().skip(from).any(|&m| m),
+            Members::Few(few) => few.last().is_some_and(|&n| n as usize >= from),
+        }
     }
     pub fn is_empty(&self) -> bool {
-        !self.member.iter().any(|&m| m)
+        match &self.repr {
+            Members::Dense(member) => !member.iter().any(|&m| m),
+            Members::Few(few) => few.is_empty(),
+        }
     }
 }
 

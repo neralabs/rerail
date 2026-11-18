@@ -3,25 +3,23 @@
 use super::*;
 use crate::code_rule_dsl::language::{self, GrammarDialect};
 use crate::code_rule_dsl::fixtures::{document, temp};
-use crate::code_rule_dsl::residency::slabs::{self, DocTable, ChunkTape};
-use crate::code_rule_dsl::tape::{Grammar, TAPE_FORMAT_VERSION};
+use crate::code_rule_dsl::residency::slabs::{self, DocTable, DocView};
+use crate::code_rule_dsl::tape::{Grammar, TAPE_FORMAT_VERSION, TapeDoc};
 use crate::content_store::ContentStore;
 use sha2::{Digest as _, Sha256};
 // What the backend reads through its own imports, which its facade in the engine does not re-export.
 use crate::code_rule_dsl::transducer::packed::metal_backend::{MappedBuffer, pipeline_named};
-use crate::code_rule_dsl::transducer::packed::packed_batch::PackedBatch;
-use crate::code_rule_dsl::transducer::packed::Program;
 use metal::MTLSize;
 
 const TAPE: &str = concat!(include_str!("metal_tape_reads.metal"), include_str!("metal_tape.metal"));
 const FIELDS: usize = 12;
 
 const KERNEL: &str = r#"
-inline uint tape_global(ChunkTape d,uint i){return i==TAPE_NONE?TAPE_NONE:d.node_base+i;}
-kernel void tape_conformance(device const ChunkTape* docs [[buffer(0)]],device const uint* nodeDoc [[buffer(1)]],device uint* out [[buffer(2)]],device const uchar* chunk [[buffer(3)]],constant uint& count [[buffer(7)]],uint g [[thread_position_in_grid]]){
+inline uint tape_global(DocView d,uint i){return i==TAPE_NONE?TAPE_NONE:d.node_base+i;}
+kernel void tape_conformance(device const DocView* docs [[buffer(0)]],device const uint* nodeDoc [[buffer(1)]],device uint* out [[buffer(2)]],device const uchar* chunk [[buffer(3)]],constant uint& count [[buffer(7)]],uint g [[thread_position_in_grid]]){
  if(g>=count)return;
  device const uchar* s=chunk;
- ChunkTape d=docs[nodeDoc[g]];
+ DocView d=docs[nodeDoc[g]];
  uint i=g-d.node_base;
  device uint* o=out+g*12u;
  o[0]=tape_kind(s,d,i);o[1]=tape_field(s,d,i);o[2]=tape_flags(s,d,i);
@@ -57,13 +55,9 @@ fn the_device_reads_resident_tapes_as_the_packed_batch_records_them() {
     }
     let grammar = |id: i64| Grammar::new(u8::try_from(id).ok().and_then(language::from_tape_tag).ok_or("unknown grammar")?);
     let table = DocTable::new(slabs::admit(&store, &digests, &grammar).unwrap()).unwrap();
-    // The records the device read until now, for the same files.
-    let program = Program::new(vec![super::super::word(super::super::EMIT, 0, 0)], vec![b"tape".to_vec()], Vec::new(), vec![0], Vec::new()).unwrap();
-    let anchors = vec![vec![Vec::<u32>::new()]; tapes.len()];
-    let batch = PackedBatch::new(std::slice::from_ref(&program), &tapes, &anchors).unwrap();
-    assert_eq!(batch.nodes.len(), table.nodes);
+    assert_eq!(tapes.iter().map(TapeDoc::transducer_len).sum::<usize>(), table.nodes);
     let node_doc = table.views.iter().enumerate().flat_map(|(doc, view)| std::iter::repeat_n(doc as u32, view.nodes as usize)).collect::<Vec<_>>();
-    let docs = MappedBuffer::from_slice::<ChunkTape>(device, &table.views).unwrap();
+    let docs = MappedBuffer::from_slice::<DocView>(device, &table.views).unwrap();
     let node_doc = MappedBuffer::from_slice(device, &node_doc).unwrap();
     let out = MappedBuffer::zeroed::<u32>(device, table.nodes * FIELDS).unwrap();
     let source = format!("#include <metal_stdlib>\nusing namespace metal;\n{}{TAPE}{KERNEL}", slabs::msl());
@@ -84,28 +78,41 @@ fn the_device_reads_resident_tapes_as_the_packed_batch_records_them() {
     command.commit();
     command.wait_until_completed();
     let read = unsafe { std::slice::from_raw_parts(out.buffer.contents().cast::<u32>(), table.nodes * FIELDS) };
-    let classes = |node: u32| batch.supertypes.iter().filter(|pair| pair.node == node).count() as u32;
-    for (file, record) in batch.files.iter().enumerate() {
-        for local in 0..record.node_count {
-            let g = record.node_start + local;
-            let node = &batch.nodes[g as usize];
-            let first = if node.child_count > 0 { batch.children[node.child_start as usize] } else { u32::MAX };
+    // The tape's own answers, by its accessors, in the batch's numbering (each file's nodes past the files before).
+    let mut base = 0u32;
+    for (file, tape) in tapes.iter().enumerate() {
+        let count = tape.transducer_len();
+        let (mut parent, mut next_any, mut next_named) = (vec![u32::MAX; count], vec![u32::MAX; count], vec![u32::MAX; count]);
+        for node in 0..count as u32 {
+            let children = tape.transducer_children(node).collect::<Vec<_>>();
+            for (k, &child) in children.iter().enumerate() {
+                parent[child as usize] = base + node;
+                next_any[child as usize] = children.get(k + 1).map_or(u32::MAX, |&next| base + next);
+                next_named[child as usize] =
+                    children[k + 1..].iter().find(|&&next| tape.transducer_is_named(next)).map_or(u32::MAX, |&next| base + next);
+            }
+        }
+        for local in 0..count as u32 {
+            let g = base + local;
+            let children = tape.transducer_children(local).collect::<Vec<_>>();
+            let span = tape.transducer_span(local);
             let expected = [
-                node.kind,
-                node.field,
-                node.flags,
-                node.parent,
-                node.next_any,
-                node.next_named,
-                node.child_count,
-                node.descendant_end,
-                node.source_start - record.source_start,
-                node.source_end - record.source_start,
-                first,
-                classes(g),
+                u32::from(tape.transducer_kind(local)),
+                u32::from(tape.transducer_field(local)),
+                u32::from(tape.transducer_flags(local)),
+                parent[local as usize],
+                next_any[local as usize],
+                next_named[local as usize],
+                children.len() as u32,
+                base + tape.transducer_descendants(local).end,
+                span.start as u32,
+                span.end as u32,
+                children.first().map_or(u32::MAX, |&child| base + child),
+                tape.transducer_supertypes().filter(|&(node, _)| node == local).count() as u32,
             ];
             assert_eq!(&read[g as usize * FIELDS..][..FIELDS], &expected, "file {file} node {local}");
         }
+        base += count as u32;
     }
     drop(table);
     drop(store);
@@ -222,4 +229,18 @@ fn a_label_kernel_costs_footprint() {
     let before = mb();
     submit(&pipeline);
     eprintln!("KERNEL {name}: +{} MB", mb() as i64 - before as i64);
+}
+
+/// Every label kernel and the fact-only pattern kernel compile, for a mixed batch (0) and for each format's own
+/// (`tape_format`). A run whose kernels fail to compile falls back to the CPU and still gives the right rows, so the
+/// label tests alone would pass with MSL that does not compile (t41, Q57).
+#[test]
+fn the_label_kernels_compile_for_every_format() {
+    if METAL_DEVICE.is_none() {
+        return;
+    }
+    for format in [0, 15, 16] {
+        let compiled = super::label_passes::compile_label_kernels(format).unwrap_or_else(|_| panic!("the label kernels for format {format}"));
+        assert_eq!(compiled, (14, 1), "format {format}: the label kernels, then the pattern kernel");
+    }
 }

@@ -2,7 +2,7 @@
 //!
 //! Each chunk appends its rows of each export. A row another chunk gave too, such as a file-local relation without
 //! a location column, is kept once: the rows are made distinct when the export is frozen for the cross-file part
-//! (`source`), where they are sorted anyway (Q61: a hash set kept them distinct as they came, 66 MB on PostHog).
+//! (`source`), where they are sorted anyway (Q95: a hash set kept them distinct as they came, 66 MB on PostHog).
 //! The cross-file part binds each export as columns, the same as the base relations held for it.
 //!
 //! This replaces the copy into the run's scratch database `x`: one `INSERT OR IGNORE INTO x.<rel> SELECT …` per
@@ -146,7 +146,7 @@ impl Exports {
     }
 }
 
-/// Export `rel`'s rows (`columns`, a row perhaps more than once) packed for the cross-file part (Q61): each row
+/// Export `rel`'s rows (`columns`, a row perhaps more than once) packed for the cross-file part (Q95): each row
 /// once, in canonical order (by every column, first to last), each column packed per range of 4,096 rows
 /// (`rerail_blocks::ranged`), a column of node ids split at its granule (`document << 32 | slot << 18 | index`,
 /// `syntax::DefIds`), so it is runs of its granule and a small index. Each column held as given is dropped as its
@@ -164,7 +164,7 @@ fn packed(rel: &str, columns: Vec<Vec<i64>>) -> Arc<dyn Source> {
     let split: Vec<u32> = sorted.iter().map(|col| if col.iter().filter(|&&x| x >= 1 << 32).count() * 2 > col.len() { 18 } else { 0 }).collect();
     let names = (0..width).map(|c| format!("c{c}")).collect();
     let (source, bytes) = crate::code_rule_dsl::logic::native::component::packed_source(names, &sorted.iter().map(Vec::as_slice).collect::<Vec<_>>(), &split);
-    crate::code_rule_dsl::logic::profile::decision("exports packed (Q61)", || format!("{rel}: {n} rows of {width} columns ({given} given), {:.1} MB packed, {:.2} B a value (held as columns: 8)", bytes as f64 / 1e6, bytes as f64 / (n * width).max(1) as f64));
+    crate::code_rule_dsl::logic::profile::decision("exports packed (Q95)", || format!("{rel}: {n} rows of {width} columns ({given} given), {:.1} MB packed, {:.2} B a value (held as columns: 8)", bytes as f64 / 1e6, bytes as f64 / (n * width).max(1) as f64));
     source
 }
 

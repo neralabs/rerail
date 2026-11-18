@@ -2,7 +2,9 @@
 
 Status: decided, building (2026-11-16). 0266's path step 4 ("Facts"; 0295 step 6), built in Native-and-GPU-strata.
 Follows 0266 (blocks), 0289 (a chunk is a block), 0295 (the pool's tiers), 0310 (reads written once in CLIF),
-0321 (placement leans to the GPU).
+0321 (placement leans to the GPU). **0353 (2026-11-17)** withdraws step 5's "the views it makes from a chunk become
+relations": a view is never made, it is a read of the tape; and counts the copies left (moved indexes, fixpoint
+totals, the CPU's staged heads) as 0353's to remove.
 
 ## Intro
 
@@ -72,6 +74,24 @@ GPU read and write those blocks in place, through reads written once in CLIF.
 5. **Indexes are the relation's.** The device's probe reads the relation's index in its block (`rel_group`), made
    once by the first reader that needs it, the CPU's or the GPU's, and kept with the relation. `rel_hash` per
    upload goes. The key hash is one (`blocks::mix`), in the CPU's probe and the device's.
+   - **Every device relation is a blocks relation first** (the user, 2026-11-17: "Blocks first, one form"). The
+     device's own relations (the views it makes from a chunk, the fixpoint's totals and deltas, a lattice's total,
+     an upload) were column-major buffers with no descriptor, so a probe of them could not read `rel_group`. They
+     become relations in blocks of their own life (`Life::Device`), written through `clif_rows_at` (a group's room
+     is at most a quarter of it). The column-major form (`at == 0`) goes, so every read and write of a relation on
+     the device is one form; what is left at `at == 0` is words a raw mode reads (a text's names, verdict bits),
+     not relations.
+   - A device relation is alone in a block of its size, leased as the device's join buffers are (within its
+     budget) and given back with it, as those buffers were. Shared 16 MB blocks, kept by any relation in them, had
+     the budget refuse small views their room.
+   - A fixpoint's total stays the device's: its rows are copied once into a run's block at the end (step 4), so
+     a kept head never holds a block of the device's budget.
+   - An index is added to a relation after it is made (`Relation::try_add_index`): its directory, buckets and
+     rows in the relation's block, built by the host or the device, rows in id order within a bucket, so a
+     probe's answer has one order. A key has up to 8 columns (`Index::key`), as the device's probes. A block with
+     no room for the index has the relation copied once into one that has (as `in_block`'s merged copy is).
+   - The key hash is a read written once (`rel_key_mix`), so the host's builder, the device's builder and every
+     probe hash a key alike.
 6. **Placement prices no copies.** The device's price loses the upload and row-back terms (`DEVICE_ROW_BACK`).
    A submission is priced per wave, not per stratum. `GPU_BIAS` is refitted on the new runs.
 7. **The other row stores follow** (0266 step 4's rest): the output's rows, the frames' rows and the memo's
@@ -158,6 +178,155 @@ Step by step, each leaving the engine working (see the commits that name this de
     still upload: they are not blocks.
   - Still copied: a relation with dead rows (its bits are setfix's, not the block's), the views, and the rows
     back (step 4).
+- **Step 3, sources** (2026-11-17): the vtab's `Relation` (line, col, docof, node text and the producers' compact
+  relations) keeps its rows in blocks too, and the device reads a whole view of it in place.
+  - Of the 84 MB of views still read on the host for an upload on hogql, 51 MB were these relations and 36 MB
+    chunk views with no device form (`View::Line`).
+  - The rows' storage moved from setfix to `facts::rows` (`Facts`, `Part`, `Rows`, `Row`, `InBlock`); setfix
+    re-exports it and keeps `RowData`. `Relation`'s cells are a `Rows`.
+  - A `Relation` stages its pushed rows and writes them into their block whole, exactly sized, at the first
+    read. Built a row at a time in a block, its tail's growth and moves held about 70 MB more at the peak.
+  - The rows have a `Life` that picks their blocks: a batch's sources (`Life::Source`, 16 MB blocks) do not
+    share blocks with a run's relations (`Life::Run`, 64 MB). Shared, they kept every block leased alive.
+  - `Source::in_block` gives a source's rows as one relation in a block. `resident` binds a whole view of such a
+    source in place, every source column at its own place (the owner's numbering, `owner_col`).
+  - The hot reads keep their cost across the crate boundary: `Rows::get`, `row` and `part_of` are
+    `#[inline(always)]`, as the generated reads are, and a part resolves its columns once (`ColRead`). Not
+    inlined, `Rows::get` was a call taking 5% of the CPU binding's samples.
+  - `Relation`'s column index is built from (value, row) pairs, each value read once. Its sort read two values
+    through the rows at every comparison.
+  - FACTS blocks lease pool room only while half the Metal budget stays free for the device's own buffers
+    (`lease_block_spare`'s `keep`). Taking the last room left the device's joins 6–48 MB, and `resident` dropped
+    every relation it held 28 times a run (once now). An entry in place trims the dropped relations' entries,
+    since it holds its block.
+  - On posthog/hogql (load 40–50, three runs each, against step 3 in the same window): the CPU binding retires a
+    median 91.9 B instructions against 90.3 B, and Metal 83.1 B against 80.2 B (step 3's runs spread 79–87 B).
+    Findings 1,629. Read in place 610–737 relations a run (519 before). Views read on the host for an upload
+    33–41 MB (84 MB before).
+  - The peak resident size is higher: 590 MB against 565 MB on the CPU binding, and 718 MB against 668 MB on
+    Metal. That is the sources' blocks' room, whose granularity the 16 MB blocks bound.
+  - Left in step 3: the line views (`View::Line`, no device form), relations with dead rows, and the views the
+    device makes from the chunk (111–170 MB a run), which are copies made on the device.
+- **Step 3, the chunk's views** (2026-11-17): every view of a syntax batch is made on the device from its chunk.
+  None is read on the host for an upload.
+  - A batch with a guest (decision 0055) had its `Loc` views (`line`, `end_line`, `col`) read on the host: 28 MB
+    on hogql. `fill_locs` refused the whole batch, because a guest's places are its host's lines through its
+    placement. Now `fill_locs` puts a guest's places in the chunk (`ChunkDoc::placed`: first line, last line and
+    start column per local, by `Locs::place`, as the chunk holds start, end and kind). The kernel reads them for a
+    guest, and finds the others' places in their lines as before.
+  - T's `line` view (`View::Line`) gets a device form (`VIEW_LINE`): `fill_lines` puts the facts' line starts in
+    the chunk (`ChunkDoc::flines`), and the kernel counts those at or before a node's start (`start_line`).
+  - On hogql, views read on the host for an upload are 5.4 MB in 6.5 ms (84 MB in 115 ms at step 3). What is left
+    is the native reach closure (`Closed`), its own index structure, for step 7. Instructions and peak resident
+    size are level with the sources' commit (Metal a median 87.4 B against 85.9 B in a 81–87 B spread; CPU
+    binding 92.4 B against 93.2 B).
+  - Tests: `views_made_on_the_device_are_the_hosts_rows` covers `line` and a guest placed in its host's second
+    line, whose places are that line.
+- **Step 3, dead rows** (2026-11-17): a relation with dead rows (a maintained relation's kills of the kept rows it
+  shares) is read in place too, its dead rows skipped by their bits.
+  - The bits are a blocks delta's: `Relation::try_kills` makes a delta of the relation's one relation in its
+    block, with no rows of its own, whose dead span holds setfix's bits (`Rows::in_block_dead`). It is made once
+    and kept as `merged` is. That is 0266's "a maintained run is a delta of the kept block", for its kills.
+  - `InBlock::dead`, `DevRel::dead` and `Stage::r_dead` (the old `r_pad`, so the size is unchanged) carry the
+    delta's offset. `row_live` reads it through the generated `clif_rel_dead`. `matches` skips a dead row, and
+    so does mode 3 (every row, untested). Every loop over the probed relation's rows goes through one of them,
+    and a probe's index holds the dead rows, which a probe skips.
+  - The column statistics read only relations whose rows are all live in place; one with dead rows is gathered.
+  - Test: `stages_skip_the_dead_rows_of_relations_in_their_blocks` covers a scan, a keyed join through the
+    device's index of the relation, and an anti-join whose dead rows hold no binding back, against the nested
+    loops over the live rows.
+  - On hogql nothing has dead rows (one run from scratch): its numbers are unchanged, findings 1,629.
+  - What step 3 leaves copied: the native reach closure's relation (`Closed`, 5.6 MB), and the chunk's views,
+    which the device makes itself from the chunk block (164 MB on the device, no upload). `DevRel::upload` stays
+    for those, for a view filtered by constants (`ids`), and for a block that cannot hold a dead rows' delta.
+- **Step 4, a stratum's seed heads** (2026-11-17): the device writes a head's rows in place, into a relation of a
+  block, and the store takes that relation as it lies. No row is read back.
+  - Between the passes (`device::place`, after the stratum's joins finish, so each rule's distinct count is known):
+    one submission for the stratum's heads. Each head gets the union of its rules' distinct rows, in its columns
+    with its constants (`copy_rows`). The union is made distinct when more than one rule makes it. Then come the
+    rows the head holds: read where they lie (`Rel::in_block`, dead rows marked), and an anti stage removes them.
+    The `rows_place` kernel writes what is left into a relation whose chunks the host reserved for the union
+    (`Part::for_writes`), through the generated `clif_rows_at`. Its count is read from the last stage's slot.
+  - The host then sets the part's length (`Part::written`) and hands it to the wave (`Fresh::place`). `push_fresh`
+    appends it to the head's rows as a segment (`Rows::append_part`): no copy, no sort, no held check. The rows
+    are distinct and none is held, as the CPU's `settle` would make them. The head's index runs sort the new ids
+    reading values where they lie (`set_delta`); step 5 makes those indexes the relation's own.
+  - The device's rows sit beside rows derived on the CPU in the same wave, which may repeat them, or go to a
+    lattice, which folds each row. Either way they are read into the wave's batch and settled as before.
+  - Left to the rows read back: heads a rule makes texts into (arena values are symbols only once the host names
+    them), lattices, heads whose held rows have more columns than a probe's keys (8), and the recursive fixpoint's
+    rows (`fixpoint`'s last read).
+  - On hogql: 4.50 M of 4.95 M distinct head rows written in place. "Rows into the store" fell from 116 ms to
+    6 ms of host CPU, and `Fresh::settle` from 71 ms to 3 ms. Metal 68.2-72.2 B instructions against
+    71.0-75.5 B (interleaved runs, one load). Peak 747-820 MB against 783-848 MB. Findings 1,629.
+  - Tests: `a_strata_seeds_on_the_device_are_the_cpus_rows_and_counts` runs again with the head holding rows
+    before the run, some of them derived again; both runs' rows written in place (`placed == distinct`) and equal
+    the CPU's. `a_part_written_elsewhere_is_appended_as_a_segment` (facts::rows).
+- **Step 4, the recursive fixpoint's set heads** (2026-11-17): at the fixpoint, each set head's total (every row
+  new, since its relation is empty before the run) is written in place by `rows_place` from the device relation
+  itself (`place_rows` takes a table or a relation), one submission for the component. Each row carries its
+  round where the head keeps levels (`Fresh::place(part, rounds)`), and `push_fresh` gives it level
+  `lbase + round + 1`, as `push_leveled` did. Lattice heads, the `shortlex_min` text heads among them, are still
+  read back (their fold and their texts' symbols are the host's).
+  - Tests: `a_recursive_stratum_on_the_device_is_the_cpus_fixpoint` asserts `placed == distinct`;
+    `a_leveled_recursion_on_the_device_has_the_cpus_levels` asserts the set head placed and the lattice read, with
+    rows and levels equal to the CPU's.
+  - On hogql, few rows are recursive: 4.507 M rows written in place against 4.498 M. Findings 1,629.
+- **Step 5, every device relation in a block** (2026-11-17): `DevRel` is a relation in a block. The device's own
+  relations (`DevRel::empty`, `upload`) are `Part::for_device` relations, written through `clif_rows_at` by one
+  copy kernel (`rows_copy`: a binding table or a relation on either side, an optional count slot; step 4's
+  `rows_place` is that kernel), by `view_expand` and by the lattice fold, which updates its total in place
+  through `rel_get` and `rows_at`. `rget` and `rel_hash` read only through `clif_rel_get`. A text's names and a
+  test's verdict bits are words (`DevRel::words`), not relations.
+  - A relation's chunks are not zeroed (`Block::try_alloc_raw`): a value is read only below `len`, and a dirty
+    pooled block would otherwise pay a memset for every view.
+  - On hogql (load 38–41, interleaved): Metal 67.5–72.0 B instructions against 68.2–68.7 B, peak 724–785 MB
+    against 739–783 MB, findings 1,629. Budget refusals 0–4 a run against 2–5.
+- **Step 5, the device's probes read the relation's own index** (2026-11-17): `Batch::index` finds the relation's
+  index on the key (`Relation::find_index`, over the same rows), else reserves one in the relation's block
+  (`try_reserve_index`, under the block's `Facts::ix` lock) and builds it there. `ix_bucket` hashes each row's key,
+  the radix sort orders the rows by bucket stably, and `ix_place` writes the buckets' starts and the rows. The batch
+  marks the index built when its work is done (`index_built`), so the CPU's builder and the device's make the same
+  index, read by `rel_group`. The stage and witness kernels find a key's rows through `clif_rel_group` and
+  `clif_rel_group_row`. The per-binding sort buffers (`perm`, `starts`, `rkeys`, `nruns`) and `rel_hash` are gone.
+  - One key hash on the device: `key_mix` is the generated `clif_rel_key_mix`, for an index, its probes, dedup's
+    set and a lattice's key table. The old mix and `hash_bits` are gone.
+  - Every device relation's block has room for one index of its rows: about 8–12 bytes a row, next to 8 a column.
+    An index on a second key copies the relation once into a block that has room (`DevIndex::moved`).
+  - An index binds its block's buffer as it is after the index was added (`DevIndex::buffer`). A block with no slab
+    of its own (a run's block when the device's spare budget refuses one) is bound by a wrap of its used extent,
+    taken when it was first bound. An index added after that lay past the wrap: the device's writes went outside
+    the buffer, and probes read empty buckets. On hogql that lost 13 files' findings in one run of four, and
+    another panicked on a corrupt tape. `the_devices_index_of_a_relation_is_the_hosts` covers that case (a relation
+    in anonymous memory, `facts::rows::anon_in_block`), and fails with the old binding.
+  - On hogql (load 68–80): indexes found the relation's own 913–1,048 a run against 741, built 916–925 against
+    937. Instructions 67.7–76.8 B against 68.3–74.1 B, peak 730–797 MB against 699–787 MB. Findings 1,629 in 5
+    runs, cold included.
+- **Step 6, placement prices no copies** (2026-11-17): the device's price (`place`) is a run, its stages, its
+  indexes, the views it makes, and its joins' device work. `DEVICE_ROW_BACK`, `DEVICE_UPLOAD_PER_VALUE`,
+  `DEVICE_SUBMISSION` and `DEVICE_RULE` are gone.
+  - Fitted on hogql's `placement.tsv`, which now carries each stratum's GPU host time by part and its priced terms:
+    a run 0.18 ms (its share of its level's wave, one command buffer for 77% of runs), a stage 30 µs, an index 65
+    µs, a view made 0.4 ms. A relation the program derives is read in place and costs nothing to read.
+  - A view the device made stays resident for the run's later strata (`Run::device_views`), which are then priced
+    as finding it. Neither views nor their values predict a stratum's share of view making (R² under 0.3): `ann_ctx`
+    pays 2.1 ms a run when it makes its view of 1.2 M values, 0.5 ms when `ann_root` made it first.
+  - `GPU_BIAS` refitted: 2 is still the best of 1.25, 1.5, 2 and 3 for the new prices (strata CPU 2.18–2.23 s
+    against 2.33–2.58 s at 1.25 and 1.5, and 2.95–3.05 s at 3). `RERAIL_GPU_BIAS` sets it for such a refit.
+  - **A measured loss against the old prices** (three interleaved pairs, load 33–38): strata CPU 1.81–1.97 s
+    against 1.52–1.88 s, instructions 70.1–76.5 B against 65.7–71.0 B, peak 849–913 MB against 761–847 MB. Findings
+    1,629 in all six runs. Instructions vary by 5.3 B between runs of the same binary, so these are three pairs, not
+    a settled figure. By the profiles (own CPU by span): the device path's own host CPU is the same (0.37 s against
+    0.38 s in the pair with the same 19 chunks). The difference is the CPU's join walk of strata refused at run time
+    and redone on the CPU: `pre_118` +0.11 s, `pre_126` +0.16 s. It follows the refusals: 5 and 6 refusals gave
+    +0.51 s and +0.36 s, 1 refusal gave +0.02 s; the old runs had 0–2. Strata run apart from the wave because its
+    budget was spent: 103–181 a run against 36–55. Refused at run time: indexes of 0.5–1.2 M rows, views of 0.5–1.2 M
+    rows (`ann_ctx`'s among them), so the new placement spends the device's budget sooner. Not separated yet: how
+    much each refusal's dropped residency cache (ef6c6c386) adds (Q86).
+  - Testing this at a 384 MB Metal budget found refusals at run time losing findings: a refused batch left the
+    views it encoded cached as made, so later strata read relations nothing wrote. Fixed in ef6c6c386 (`unrun`,
+    `a_view_made_in_a_refused_batch_is_made_again`), with two buffers that went back to the pool while an open
+    command buffer still wrote them.
 
 ## A chunk's blocks, and a CPU run's (2026-11-17, Q58)
 
@@ -166,15 +335,15 @@ Step by step, each leaving the engine working (see the commits that name this de
   block whole; and the blocks were the device pool's pinned buffers even with no device bound. The memory line
   (`RUN_MB`) then cut 3,409 chunks against 2,563, and user CPU rose 14–20 s at the same instructions.
 - **Decided**:
-  - A chunk's relations go in blocks of its own (`setfix::in_chunk`, around the chunk's `evaluate`; decision
-    0289, a chunk is a block). The scope is the run's context (`rows::CHUNK`, carried), so the jobs a chunk starts
+  - A chunk's relations go in blocks of its own (`facts::rows::in_chunk`, re-exported by setfix, around the chunk's `evaluate`; decision
+    0289, a chunk is a block). The scope is the run's context (`facts::rows::CHUNK`, carried), so the jobs a chunk starts
     write in its blocks too. Its blocks go back with the last of its rows. Outside a chunk the run's open block is
     used as before. The profile counts the blocks still held when a chunk's evaluation ends (`a chunk's blocks
     outlived it`): on PostHog those are the rows each hands on until it is filed, almost all under 1 MB.
   - A block is the pool's only in a run bound to the device (`placement::device()`); a CPU run's is anonymous,
     resident only where written. The device can still read an anonymous block in place (a no-copy buffer).
 - **Pinned by**: `a_chunks_relations_go_in_its_own_blocks_and_go_with_it`,
-  `a_job_of_the_chunk_puts_its_relations_in_the_chunks_block`, `a_cpu_run_takes_anonymous_blocks` (setfix::rows).
+  `a_job_of_the_chunk_puts_its_relations_in_the_chunks_block`, `a_cpu_run_takes_anonymous_blocks`, `a_dropped_relations_chunks_are_taken_by_the_next`, `a_reader_in_place_keeps_the_relation` (`facts::rows`, moved there by step 3 with the rows).
 - **Measured** (M3, PostHog cold, profiled, two runs, load 26–35): user CPU 205.5 and 217.8 s (before 0325:
   204.1–210.8; with it: 224.6 twice); chunks 2,797 and 2,982 (2,563; 3,409); median footprint 1,189 and 1,194 MB
   (1,155–1,161; 1,306–1,382); Metal driver and leased MB 0 (256–320 and 192–256). Findings 29,747, the same hash.

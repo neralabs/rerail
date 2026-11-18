@@ -3,7 +3,8 @@
 //!
 //! - `Device::Must`: a slab of the GPU pool within the Metal budget (`gpu::shared::lease_block_within`: the pool's
 //!   eviction order makes room).
-//! - `Device::May`: a slab only when the budget holds it with nothing evicted (`lease_block_spare`); else host
+//! - `Device::May`: a slab only when the budget holds it with nothing evicted and half of it left to the device's
+//!   own buffers (`lease_block_spare`); else host
 //!   memory, which the device reads in place through a no-copy buffer.
 //! - `Device::No`: host memory: anonymous, resident only where written.
 //!
@@ -27,7 +28,9 @@ pub fn policy(need: &Need) -> Result<Block, String> {
         #[cfg(not(target_os = "macos"))]
         Device::Must => Err(format!("a device block of {} bytes with no device", need.bytes)),
         #[cfg(target_os = "macos")]
-        Device::May => match crate::gpu::shared::lease_block_spare(need.kind, need.bytes) {
+        // Half the Metal budget stays the device's own buffers': taking the last room had the residency drop
+        // everything it held 28 times a run (decision 0325 step 3, `lease_block_spare`'s `keep`).
+        Device::May => match crate::gpu::shared::lease_block_spare(need.kind, need.bytes, crate::budget::metal() / 2) {
             Ok(b) => Ok(shaped(b)),
             Err(_) => Ok(host(need)),
         },
