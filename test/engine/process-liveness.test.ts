@@ -162,10 +162,14 @@ describe("processStartedAtThroughEngine", () => {
   it("reads Linux's start from /proc without the engine, and none on a system it does not read", () => {
     expect(processStartedAtThroughEngine(process.pid, 2_000, "darwin", noEngine)).toBeUndefined();
     if (process.platform !== "linux") return;
-    // Linux reads /proc whatever time is left, as processStartedAt does.
+    // Linux reads /proc whatever time is left, as processStartedAt does. Each read counts the start back from the clock
+    // at its own moment, so two reads can differ by the time they took and by /proc's 10 ms resolution, and no more.
+    const before = Date.now();
     const started = processStartedAtThroughEngine(process.pid, 0, "linux", noEngine);
+    const again = processStartedAt(process.pid, 0, "linux");
+    const took = Date.now() - before;
     expect(started).toBeDefined();
-    expect(Math.abs(started! - processStartedAt(process.pid, 0, "linux")!)).toBeLessThan(50);
+    expect(Math.abs(started! - again!)).toBeLessThanOrEqual(took + 20);
   });
 
   it.runIf(process.platform === "win32")("reads when this process and a later one started through the engine built here", async () => {
