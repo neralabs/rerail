@@ -491,7 +491,31 @@ describe("a kept answer follows the folders' owners, and the user's trust in ano
     await writeFile(global, "");
     expect(repositoryIdentityLocation(main).git).toBe(false);
     expect(worktreeRegistry(main)).toBeUndefined();
-    expect(locateCalls(main) - placements).toBe(4);
+    // The registry asks Git again for a folder Git refused, as it did before answers were kept.
+    expect(locateCalls(main) - placements).toBe(5);
+  });
+
+  it("lists another account's checkout again once its safe.directory entry is given back, before it is placed again", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    git(main, "worktree", "add", "--quiet", "-b", "linked", join(root, "linked"));
+    const global = join(root, "global.gitconfig");
+    const trust = "[safe]\n\tdirectory = *\n";
+    await writeFile(global, trust);
+    vi.stubEnv("GIT_CONFIG_GLOBAL", global);
+    vi.stubEnv("GIT_CONFIG_NOSYSTEM", "1");
+    takeOwnersAway();
+    gitSeesAnotherOwner();
+    expect(worktreeRegistry(main)?.worktrees).toHaveLength(2);
+
+    await writeFile(global, "");
+    expect(repositoryIdentityLocation(main).git).toBe(false);
+    await writeFile(global, trust);
+    // The person gave their trust back: Git lists the worktrees again, and a session in a new worktree asks the
+    // registry of the recorded checkout before anything places that checkout again.
+    git(main, "worktree", "add", "--quiet", "-b", "new", join(root, "new"));
+    expect(worktreeRegistry(main)?.worktrees).toEqual(gitsRegistry(main));
+    expect(gitsRegistry(main)).toHaveLength(3);
   });
 
   it("places another account's checkout Git trusts through safe.directory, and no longer once the entry is removed", async () => {

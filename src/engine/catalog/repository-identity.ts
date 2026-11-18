@@ -87,7 +87,8 @@ export function repositoryIdentityLocation(workspace: string): RepositoryIdentit
 /**
  * {@link repositoryIdentityLocation} of `requested`. A kept answer serves while its stamp is unchanged, and for folders Git
  * does not take for the user's only when `lastAnswer` is set: Git takes those through `safe.directory`, so each placement
- * of one asks Git, and the answer Git gave last there, a refusal too, serves the worktree registry until the next.
+ * of one asks Git, and Git's last acceptance there serves the worktree registry until the next. A refusal is never
+ * kept: the person may give their trust back at any time, and Git then lists the folder.
  */
 function placed(requested: string, lastAnswer: boolean): RepositoryIdentityLocation {
   const inputs = placementInputs(requested);
@@ -126,13 +127,12 @@ function linkedLocation(inputs: PlacementInputs): RepositoryIdentityLocation | u
  * own top level ({@link answersInputs}): what makes that so is read at the folder and the Git folders it names, all in
  * the stamp. Any other answer depends on the folders above too, and is not kept. For folders Git does not take for the
  * user's, whose answer depends on the `safe.directory` entries of the user's and the system's Git config too, Git's
- * answer is kept, a refusal too, for the worktree registry alone ({@link placed}).
+ * acceptance is kept for the worktree registry alone ({@link placed}).
  */
 function holdTopLevel(folder: string, inputs: PlacementInputs, located: Located): void {
   heldTopLevels.delete(folder);
   try {
-    if (refusedAnother(inputs, located)) heldTopLevels.set(folder, { stamp: inputs.stamp, location: located.location });
-    else if (answersInputs(folder, inputs, located)) keepTopLevel(folder, inputs, located);
+    if (answersInputs(folder, inputs, located)) keepTopLevel(folder, inputs, located);
   } catch {
     // A folder whose real path cannot be read now is asked of Git again next time.
   }
@@ -154,11 +154,6 @@ function answersInputs(folder: string, inputs: PlacementInputs, located: Located
   const { location } = located;
   if (!location.git || physicalPath(location.workspaceRoot) !== physicalPath(folder)) return false;
   return !located.byGit || namesInputsCommon(location, inputs);
-}
-
-/** Whether `located` is Git's refusal of folders Git does not take for the user's. */
-function refusedAnother(inputs: PlacementInputs, located: Located): boolean {
-  return !inputs.owned && !located.location.git;
 }
 
 function namesInputsCommon(location: RepositoryIdentityLocation, inputs: PlacementInputs): boolean {
@@ -299,7 +294,7 @@ export function worktreeRegistry(checkout: string): WorktreeRegistry | undefined
  * every call, and a placement is kept only while what Git reads at the folder is unchanged: a recorded checkout's folder
  * can be removed and become another repository's checkout, the folder above it renamed, or its `.git` file rewritten to
  * name another repository, and the registry to read is then that repository's. A kept placement costs a few lstats,
- * reads of small files and two real paths. For folders another account owns, the answer Git gave the last placement.
+ * reads of small files and two real paths. For folders another account owns, Git's last acceptance.
  */
 function registryCommonDirectory(checkout: string): string | undefined {
   if (!existsSync(checkout)) return undefined;
