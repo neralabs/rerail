@@ -235,6 +235,74 @@ fn a_label_kernel_costs_footprint() {
 /// (`tape_format`). A kernel that does not compile is fatal (decision 0382; before it, a run fell back to the CPU and
 /// gave the right rows, so the label tests alone passed with MSL that did not compile: t41, Q62); this compiles every
 /// format's kernels whether or not a run reaches them.
+/// Q181 probe: what the label kernels' cold compile spends. The source is made new to Metal's shader cache by a
+/// nonce, in a comment (`RERAIL_PROBE_NONCE=comment`: the front end's cache misses) or in code each kernel reads (the
+/// default: both miss); then the library (the front end), and per kernel and format its function (the constant's
+/// specialization) and pipeline (the back end), each timed.
+#[test]
+#[ignore = "a probe of the label kernels' compile"]
+fn label_kernels_compile_cost() {
+    use std::time::Instant;
+    let Ok(device) = rerail_metal::device() else { return };
+    let (source, kernels) = super::label_passes::label_source();
+    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos() as u32 | 1 << 20;
+    let source = match std::env::var("RERAIL_PROBE_NONCE").as_deref() {
+        Ok("comment") => format!("{source}\n// nonce {nonce}\n"),
+        _ => source.replace("#define clif_view(v,a) ((tape_format!=0u&&", &format!("#define clif_view(v,a) ((tape_format!=0u&&tape_format!={nonce}u&&")),
+    };
+    assert!(source.contains(&nonce.to_string()), "the nonce is in the source");
+    eprintln!("source: {} bytes, {} lines", source.len(), source.lines().count());
+    let clock = Instant::now();
+    let library = device.new_library_with_source(&source, &metal::CompileOptions::new()).expect("the library");
+    eprintln!("library (front end): {:.2} s", clock.elapsed().as_secs_f64());
+    if std::env::var_os("RERAIL_PROBE_PARALLEL").is_some() {
+        // Every kernel of format 16 at once, a thread each: whether the compiler service runs them side by side.
+        let format = 16_u32;
+        let clock = Instant::now();
+        let times = std::thread::scope(|scope| {
+            let handles = kernels
+                .iter()
+                .map(|name| {
+                    let (library, device) = (&library, &device);
+                    scope.spawn(move || {
+                        let constants = metal::FunctionConstantValues::new();
+                        constants.set_constant_value_at_index((&format as *const u32).cast(), metal::MTLDataType::UInt, 0);
+                        let clock = Instant::now();
+                        let function = library.get_function(name, Some(constants)).expect("the function");
+                        let descriptor = metal::ComputePipelineDescriptor::new();
+                        descriptor.set_compute_function(Some(&function));
+                        let _pipeline = device.new_compute_pipeline_state(&descriptor).expect("the pipeline");
+                        clock.elapsed().as_secs_f64()
+                    })
+                })
+                .collect::<Vec<_>>();
+            handles.into_iter().map(|handle| handle.join().unwrap()).collect::<Vec<_>>()
+        });
+        eprintln!("format 16 in parallel: {:.2} s wall, {:.2} s summed over the kernels' threads", clock.elapsed().as_secs_f64(), times.iter().sum::<f64>());
+        return;
+    }
+    let formats: Vec<u32> = std::env::var("RERAIL_PROBE_FORMATS").ok().map_or(vec![16, 15, 0], |f| f.split(',').map(|f| f.parse().unwrap()).collect());
+    for format in formats {
+        let (mut functions, mut pipelines) = (0.0, 0.0);
+        for name in kernels {
+            let constants = metal::FunctionConstantValues::new();
+            constants.set_constant_value_at_index((&format as *const u32).cast(), metal::MTLDataType::UInt, 0);
+            let clock = Instant::now();
+            let function = library.get_function(name, Some(constants)).expect("the function");
+            let function_s = clock.elapsed().as_secs_f64();
+            let descriptor = metal::ComputePipelineDescriptor::new();
+            descriptor.set_compute_function(Some(&function));
+            let clock = Instant::now();
+            let _pipeline = device.new_compute_pipeline_state(&descriptor).expect("the pipeline");
+            let pipeline_s = clock.elapsed().as_secs_f64();
+            eprintln!("  format {format:>2} {name:<18} function {function_s:>6.2} s  pipeline {pipeline_s:>6.2} s");
+            functions += function_s;
+            pipelines += pipeline_s;
+        }
+        eprintln!("format {format}: functions {functions:.2} s, pipelines {pipelines:.2} s");
+    }
+}
+
 #[test]
 fn the_label_kernels_compile_for_every_format() {
     if METAL_DEVICE.is_none() {
@@ -242,7 +310,8 @@ fn the_label_kernels_compile_for_every_format() {
     }
     for format in [0, 15, 16] {
         let compiled = super::label_passes::compile_label_kernels(format).unwrap_or_else(|_| panic!("the label kernels for format {format}"));
-        // 16: decision 0365 added `label_formula` and `label_leaves`.
-        assert_eq!(compiled, (16, 1), "format {format}: the label kernels, then the pattern kernel");
+        // 8: each walk's stack tiers are one kernel (work queue Q181), with decision 0365's `label_formula` and
+        // `label_leaves`.
+        assert_eq!(compiled, (8, 1), "format {format}: the label kernels, then the pattern kernel");
     }
 }

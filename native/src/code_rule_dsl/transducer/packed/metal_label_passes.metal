@@ -9,7 +9,7 @@ struct Result { uint taskOrdinal,localOrdinal,start,label,captureStart,captureCo
 struct FinalCapture { uint label,node,start,end,textStart,textLength,propertyStart,propertyCount,retained; };
 struct Arena { uint start,capacity,cursor; };
 struct Status { uint error,resultCount,captureCount,programCounter,finalCaptureCount,propertyCount,outputByteCount,reserved; };
-struct Shape { uint nodeCount,words,resultArena,taskCount,itemCount,targetCount,round,finish,recursive,lastLevel,fileCount,steps,profile,queue,budget,lanes; };
+struct Shape { uint nodeCount,words,resultArena,taskCount,itemCount,targetCount,round,finish,recursive,lastLevel,fileCount,steps,profile,queue,budget,lanes,frames; };
 // flags: [0] a task failed (bit 0 an interpreter task, bit 1 a micro walk), [2] the group settled (skip), [3] a group did not settle within its
 // encoded rounds, [4 + round % 2] the round changed a label.
 // How a program's results land: mode 0 roots, 1 captured nodes (into scratch row `slot`), 2 and
@@ -104,9 +104,9 @@ struct MicroPass { uint wordStart,wordCount,target,targets,itemStart,itemCount,t
 // sibling or the parent then reads no parent search (decision 0293 §9's device parent is a search; work queue Q53).
 // Eight cursors, as micro.rs's CURSORS.
 struct MicroFrame { uint pc,node,resume,named,next,end,cursors[8],capture0,capture1,captured; };
-// The loop tier's pool: 4096 threads of 64 frames, or (a run that outgrew them) 2048 of 128 in
-// the same stacks (metal_label_passes.rs's MICRO_POOL, MICRO_DEEP_POOL).
-constant uint MICRO_NONE=0xffffffffu,MICRO_FRAMES=64u,MICRO_POOL=4096u,MICRO_DEEP_FRAMES=128u,MICRO_DEEP_POOL=2048u;
+// A walk's tier sets its pool and frames on the host (metal_label_passes.rs's MICRO_POOL, MICRO_DEEP_POOL, the
+// shape's `frames`): its threads stride by the grid.
+constant uint MICRO_NONE=0xffffffffu;
 
 // A walk's spill (decision 0125): past `shape.budget` steps a walk gives its lowest move frame
 // with candidates left to the dispatch's work queue (`metal_work_queue.metal`), a descendant
@@ -182,11 +182,11 @@ static uint walk_next(thread const Tree& t,thread Frame& frame,WalkRead r){
 // A walk's frames live in thread memory, which the driver reserves per thread in flight: a
 // walk takes the smallest stack its static depth fits (`Micro::depth`; 06 S7: 128 frames for
 // every walk held ~850 MB a run).
-template<uint FRAMES,typename Stack>
-static void micro_from(thread const Tree& t,device const uint* head,MicroPass pass,device const uint* words,uint start,device atomic_uint* scratch,device atomic_uint* flags,device const uint* texts,device atomic_uint* counts,constant Shape& shape,Stack stack,thread uint& steps,MicroQ q,uint depth0);
+template<typename Stack>
+static void micro_from(uint FRAMES,thread const Tree& t,device const uint* head,MicroPass pass,device const uint* words,uint start,device atomic_uint* scratch,device atomic_uint* flags,device const uint* texts,device atomic_uint* counts,constant Shape& shape,Stack stack,thread uint& steps,MicroQ q,uint depth0);
 
-template<uint FRAMES,typename Stack>
-static void micro_walk(device const DocView* docs,device const uchar* chunk,device const uint* head,device const MicroPass* passes,device const uint* words,device const uint* items,device atomic_uint* scratch,device atomic_uint* flags,device const uint* texts,device atomic_uint* counts,constant Shape& shape,Stack stack,uint tid,uint lane,device atomic_uint* wstats,MicroQ q){
+template<typename Stack>
+static void micro_walk(uint FRAMES,device const DocView* docs,device const uchar* chunk,device const uint* head,device const MicroPass* passes,device const uint* words,device const uint* items,device atomic_uint* scratch,device atomic_uint* flags,device const uint* texts,device atomic_uint* counts,constant Shape& shape,Stack stack,uint tid,uint lane,device atomic_uint* wstats,MicroQ q){
   // A pass's items are contiguous from its threadStart, one a group of 64 nodes of the batch, each `shape.lanes`
   // lanes' (`TIER_LANES`): a lane finds the roots among its share of the group's nodes (`root_mask_in`, read from
   // the code bytes), and the SIMD group walks all its lanes' roots, one a lane a round (`simd_roots`). Every lane
@@ -208,7 +208,7 @@ static void micro_walk(device const DocView* docs,device const uchar* chunk,devi
     Tree t={chunk,docs[f]};
     q.pass=p;q.doc=f;
     uint steps=0u;
-    micro_from<FRAMES>(t,head,passes[p],words,t.d.node_base+g*ROOT_GROUP+mask_nth(lo,hi,i-from),scratch,flags,texts,counts,shape,stack,steps,q,0u);
+    micro_from(FRAMES,t,head,passes[p],words,t.d.node_base+g*ROOT_GROUP+mask_nth(lo,hi,i-from),scratch,flags,texts,counts,shape,stack,steps,q,0u);
     // Profiling (`RERAIL_GPU_WALK_STEPS`): the pass's walks, their steps, its longest walk's.
     if(shape.profile!=0u){device atomic_uint* w=wstats+3u*(shape.profile-1u+p);atomic_fetch_add_explicit(&w[0],1u,memory_order_relaxed);atomic_fetch_add_explicit(&w[1],steps,memory_order_relaxed);atomic_fetch_max_explicit(&w[2],steps,memory_order_relaxed);}
   }
@@ -216,8 +216,8 @@ static void micro_walk(device const DocView* docs,device const uchar* chunk,devi
 
 // The queue's spilled frames (`MicroQ`), each walked from its frame, until none is left or the
 // worker has polled its limit for nothing (`wq_idle`: `MICRO_POLLS` a standby thread's, else 1).
-template<uint FRAMES,typename Stack>
-static void micro_drain(device const DocView* docs,device const uchar* chunk,device const uint* head,device const MicroPass* passes,device const uint* words,device atomic_uint* scratch,device atomic_uint* flags,device const uint* texts,device atomic_uint* counts,constant Shape& shape,Stack stack,device atomic_uint* wstats,MicroQ q,uint tid){
+template<typename Stack>
+static void micro_drain(uint FRAMES,device const DocView* docs,device const uchar* chunk,device const uint* head,device const MicroPass* passes,device const uint* words,device atomic_uint* scratch,device atomic_uint* flags,device const uint* texts,device atomic_uint* counts,constant Shape& shape,Stack stack,device atomic_uint* wstats,MicroQ q,uint tid){
   if(q.capacity==0u)return;
   WorkQueue wq={q.slots,q.control,q.capacity};
   uint polls=0u,limit=tid<MICRO_STANDBY?MICRO_POLLS:1u;
@@ -234,7 +234,7 @@ static void micro_drain(device const DocView* docs,device const uchar* chunk,dev
     Tree t={chunk,docs[w[19]]};
     q.pass=w[18];q.doc=w[19];
     uint steps=0u;
-    micro_from<FRAMES>(t,head,passes[w[18]],words,w[17],scratch,flags,texts,counts,shape,stack,steps,q,1u);
+    micro_from(FRAMES,t,head,passes[w[18]],words,w[17],scratch,flags,texts,counts,shape,stack,steps,q,1u);
     if(shape.profile!=0u){device atomic_uint* s=wstats+3u*(shape.profile-1u+w[18]);atomic_fetch_add_explicit(&s[0],1u,memory_order_relaxed);atomic_fetch_add_explicit(&s[1],steps,memory_order_relaxed);atomic_fetch_max_explicit(&s[2],steps,memory_order_relaxed);}
     wq_done(wq);
     polls=0u;
@@ -493,8 +493,8 @@ static uint scan_marks(thread const Tree& t,thread MicroFrame& f,WalkRead r,Micr
   return 0u;
 }
 
-template<uint FRAMES,typename Stack>
-static void micro_from(thread const Tree& t,device const uint* head,MicroPass pass,device const uint* words,uint start,device atomic_uint* scratch,device atomic_uint* flags,device const uint* texts,device atomic_uint* counts,constant Shape& shape,Stack stack,thread uint& steps,MicroQ q,uint depth0){
+template<typename Stack>
+static void micro_from(uint FRAMES,thread const Tree& t,device const uint* head,MicroPass pass,device const uint* words,uint start,device atomic_uint* scratch,device atomic_uint* flags,device const uint* texts,device atomic_uint* counts,constant Shape& shape,Stack stack,thread uint& steps,MicroQ q,uint depth0){
   device atomic_uint* bits=scratch+pass.target*shape.words;
   WalkRead r={words+pass.wordStart,head,texts,pass.textStart,shape.words};
   uint depth=depth0,fired=0u,spillAt=shape.budget;
@@ -585,13 +585,10 @@ static void micro_from(thread const Tree& t,device const uint* head,MicroPass pa
   }
   #undef MICRO_FAIL
 }
-kernel void label_micro_8(device const DocView* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const MicroPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint* items [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],device atomic_uint* flags [[buffer(6)]],device const uint* texts [[buffer(7)]],device atomic_uint* counts [[buffer(8)]],device MicroFrame* stacks [[buffer(9)]],constant Shape& shape [[buffer(10)]],device const uchar* chunk [[buffer(27)]],device atomic_uint* qslots [[buffer(23)]],device atomic_uint* qcontrol [[buffer(24)]],device atomic_uint* qitems [[buffer(25)]],device atomic_uint* wstats [[buffer(26)]],uint tid [[thread_position_in_grid]],uint grid [[threads_per_grid]],uint lane [[thread_index_in_simdgroup]]){MicroQ q={qslots,qcontrol,qitems,shape.queue,0u,0u,items};for(uint item=tid;item-lane<shape.itemCount*max(shape.lanes,1u);item+=grid)micro_walk<8u>(docs,chunk,head,passes,words,items,scratch,flags,texts,counts,shape,stacks+tid*8u,item,lane,wstats,q);micro_drain<8u>(docs,chunk,head,passes,words,scratch,flags,texts,counts,shape,stacks+tid*8u,wstats,q,tid);}
-kernel void label_micro_32(device const DocView* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const MicroPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint* items [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],device atomic_uint* flags [[buffer(6)]],device const uint* texts [[buffer(7)]],device atomic_uint* counts [[buffer(8)]],device MicroFrame* stacks [[buffer(9)]],constant Shape& shape [[buffer(10)]],device const uchar* chunk [[buffer(27)]],device atomic_uint* qslots [[buffer(23)]],device atomic_uint* qcontrol [[buffer(24)]],device atomic_uint* qitems [[buffer(25)]],device atomic_uint* wstats [[buffer(26)]],uint tid [[thread_position_in_grid]],uint grid [[threads_per_grid]],uint lane [[thread_index_in_simdgroup]]){MicroQ q={qslots,qcontrol,qitems,shape.queue,0u,0u,items};for(uint item=tid;item-lane<shape.itemCount*max(shape.lanes,1u);item+=grid)micro_walk<32u>(docs,chunk,head,passes,words,items,scratch,flags,texts,counts,shape,stacks+tid*32u,item,lane,wstats,q);micro_drain<32u>(docs,chunk,head,passes,words,scratch,flags,texts,counts,shape,stacks+tid*32u,wstats,q,tid);}
-// Loops whose depth follows the tree: MICRO_POOL threads stride over the items, each with
-// its stack in device memory (`stacks`), so no thread memory is reserved for 128 frames per
-// thread in flight.
-kernel void label_micro(device const DocView* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const MicroPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint* items [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],device atomic_uint* flags [[buffer(6)]],device const uint* texts [[buffer(7)]],device atomic_uint* counts [[buffer(8)]],device MicroFrame* stacks [[buffer(9)]],constant Shape& shape [[buffer(10)]],device const uchar* chunk [[buffer(27)]],device atomic_uint* qslots [[buffer(23)]],device atomic_uint* qcontrol [[buffer(24)]],device atomic_uint* qitems [[buffer(25)]],device atomic_uint* wstats [[buffer(26)]],uint tid [[thread_position_in_grid]],uint lane [[thread_index_in_simdgroup]]){MicroQ q={qslots,qcontrol,qitems,shape.queue,0u,0u,items};for(uint item=tid;item-lane<shape.itemCount*max(shape.lanes,1u);item+=MICRO_POOL)micro_walk<MICRO_FRAMES>(docs,chunk,head,passes,words,items,scratch,flags,texts,counts,shape,stacks+tid*MICRO_FRAMES,item,lane,wstats,q);micro_drain<MICRO_FRAMES>(docs,chunk,head,passes,words,scratch,flags,texts,counts,shape,stacks+tid*MICRO_FRAMES,wstats,q,tid);}
-kernel void label_micro_deep(device const DocView* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const MicroPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint* items [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],device atomic_uint* flags [[buffer(6)]],device const uint* texts [[buffer(7)]],device atomic_uint* counts [[buffer(8)]],device MicroFrame* stacks [[buffer(9)]],constant Shape& shape [[buffer(10)]],device const uchar* chunk [[buffer(27)]],device atomic_uint* qslots [[buffer(23)]],device atomic_uint* qcontrol [[buffer(24)]],device atomic_uint* qitems [[buffer(25)]],device atomic_uint* wstats [[buffer(26)]],uint tid [[thread_position_in_grid]],uint lane [[thread_index_in_simdgroup]]){MicroQ q={qslots,qcontrol,qitems,shape.queue,0u,0u,items};for(uint item=tid;item-lane<shape.itemCount*max(shape.lanes,1u);item+=MICRO_DEEP_POOL)micro_walk<MICRO_DEEP_FRAMES>(docs,chunk,head,passes,words,items,scratch,flags,texts,counts,shape,stacks+tid*MICRO_DEEP_FRAMES,item,lane,wstats,q);micro_drain<MICRO_DEEP_FRAMES>(docs,chunk,head,passes,words,scratch,flags,texts,counts,shape,stacks+tid*MICRO_DEEP_FRAMES,wstats,q,tid);}
+// A micro walk tier: its frames are the shape's (`frames`: 8, 32, the loop tier's 64, the deep run's 128), its stacks in
+// device memory (`stacks`, `frames` a thread), its threads striding over the items (work queue Q181: one kernel for
+// every tier, compiled once, not once a tier).
+kernel void label_micro(device const DocView* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const MicroPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint* items [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],device atomic_uint* flags [[buffer(6)]],device const uint* texts [[buffer(7)]],device atomic_uint* counts [[buffer(8)]],device MicroFrame* stacks [[buffer(9)]],constant Shape& shape [[buffer(10)]],device const uchar* chunk [[buffer(27)]],device atomic_uint* qslots [[buffer(23)]],device atomic_uint* qcontrol [[buffer(24)]],device atomic_uint* qitems [[buffer(25)]],device atomic_uint* wstats [[buffer(26)]],uint tid [[thread_position_in_grid]],uint grid [[threads_per_grid]],uint lane [[thread_index_in_simdgroup]]){MicroQ q={qslots,qcontrol,qitems,shape.queue,0u,0u,items};for(uint item=tid;item-lane<shape.itemCount*max(shape.lanes,1u);item+=grid)micro_walk(shape.frames,docs,chunk,head,passes,words,items,scratch,flags,texts,counts,shape,stacks+tid*shape.frames,item,lane,wstats,q);micro_drain(shape.frames,docs,chunk,head,passes,words,scratch,flags,texts,counts,shape,stacks+tid*shape.frames,wstats,q,tid);}
 
 // A recursive group's rounds to its fixpoint in one dispatch (decision 0024 §3): a threadgroup
 // per file, whose labels are its own (a walk never leaves its tree). A round runs each level in
@@ -608,8 +605,8 @@ static uint group_mask(uint index,uint first,uint end){
   return (to-from==32u)?0xffffffffu:(((1u<<(to-from))-1u)<<from);
 }
 
-template<uint FRAMES,typename Stack>
-static void label_group_run(Stack stack,device const DocView* docs,device const uchar* chunk,device const uint* head,device const MicroPass* passes,device const uint* words,device const uint* items,device atomic_uint* scratch,device atomic_uint* flags,device const uint* texts,device atomic_uint* counts,device const GroupLevel* levels,device const Op* ops,constant Shape& shape,uint file,uint lane,uint width,uint simdLane,threadgroup atomic_uint* changed){
+template<typename Stack>
+static void label_group_run(uint FRAMES,Stack stack,device const DocView* docs,device const uchar* chunk,device const uint* head,device const MicroPass* passes,device const uint* words,device const uint* items,device atomic_uint* scratch,device atomic_uint* flags,device const uint* texts,device atomic_uint* counts,device const GroupLevel* levels,device const Op* ops,constant Shape& shape,uint file,uint lane,uint width,uint simdLane,threadgroup atomic_uint* changed){
   device atomic_uint* labels=(device atomic_uint*)(head+2);
   DocView own=docs[file];
   Tree t={chunk,own};
@@ -636,7 +633,7 @@ static void label_group_run(Stack stack,device const DocView* docs,device const 
             uint lo=simd_shuffle(uint(mask),owner),hi=simd_shuffle(uint(mask>>32u),owner),from=simd_shuffle(r.prefix,owner),g=simd_shuffle(group,owner);
             if(i>=r.total)continue;
             uint steps=0u;
-            micro_from<FRAMES>(t,head,pass,words,own.node_base+g*ROOT_GROUP+mask_nth(lo,hi,i-from),scratch,flags,texts,counts,shape,stack,steps,MicroQ{flags,flags,(device atomic_uint*)flags,0u,0u,file,items},0u);
+            micro_from(FRAMES,t,head,pass,words,own.node_base+g*ROOT_GROUP+mask_nth(lo,hi,i-from),scratch,flags,texts,counts,shape,stack,steps,MicroQ{flags,flags,(device atomic_uint*)flags,0u,0u,file,items},0u);
           }
         }
       }
@@ -673,11 +670,8 @@ static void label_group_run(Stack stack,device const DocView* docs,device const 
   if(!settled&&lane==0u)atomic_fetch_or_explicit(&flags[3],1u,memory_order_relaxed);
 }
 
-kernel void label_group_8(device const DocView* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const MicroPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint* items [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],device atomic_uint* flags [[buffer(6)]],device const uint* texts [[buffer(7)]],device atomic_uint* counts [[buffer(8)]],device const GroupLevel* levels [[buffer(9)]],device const Op* ops [[buffer(10)]],constant Shape& shape [[buffer(11)]],device const uchar* chunk [[buffer(27)]],device MicroFrame* stacks [[buffer(12)]],uint file [[threadgroup_position_in_grid]],uint lane [[thread_index_in_threadgroup]],uint width [[threads_per_threadgroup]],uint simdLane [[thread_index_in_simdgroup]]){threadgroup atomic_uint changed;label_group_run<8u>(stacks+(file*width+lane)*8u,docs,chunk,head,passes,words,items,scratch,flags,texts,counts,levels,ops,shape,file,lane,width,simdLane,&changed);}
-kernel void label_group_32(device const DocView* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const MicroPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint* items [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],device atomic_uint* flags [[buffer(6)]],device const uint* texts [[buffer(7)]],device atomic_uint* counts [[buffer(8)]],device const GroupLevel* levels [[buffer(9)]],device const Op* ops [[buffer(10)]],constant Shape& shape [[buffer(11)]],device const uchar* chunk [[buffer(27)]],device MicroFrame* stacks [[buffer(12)]],uint file [[threadgroup_position_in_grid]],uint lane [[thread_index_in_threadgroup]],uint width [[threads_per_threadgroup]],uint simdLane [[thread_index_in_simdgroup]]){threadgroup atomic_uint changed;label_group_run<32u>(stacks+(file*width+lane)*32u,docs,chunk,head,passes,words,items,scratch,flags,texts,counts,levels,ops,shape,file,lane,width,simdLane,&changed);}
-kernel void label_group_64(device const DocView* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const MicroPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint* items [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],device atomic_uint* flags [[buffer(6)]],device const uint* texts [[buffer(7)]],device atomic_uint* counts [[buffer(8)]],device const GroupLevel* levels [[buffer(9)]],device const Op* ops [[buffer(10)]],constant Shape& shape [[buffer(11)]],device const uchar* chunk [[buffer(27)]],device MicroFrame* stacks [[buffer(12)]],uint file [[threadgroup_position_in_grid]],uint lane [[thread_index_in_threadgroup]],uint width [[threads_per_threadgroup]],uint simdLane [[thread_index_in_simdgroup]]){threadgroup atomic_uint changed;label_group_run<64u>(stacks+(file*width+lane)*64u,docs,chunk,head,passes,words,items,scratch,flags,texts,counts,levels,ops,shape,file,lane,width,simdLane,&changed);}
-kernel void label_group_128(device const DocView* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const MicroPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint* items [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],device atomic_uint* flags [[buffer(6)]],device const uint* texts [[buffer(7)]],device atomic_uint* counts [[buffer(8)]],device const GroupLevel* levels [[buffer(9)]],device const Op* ops [[buffer(10)]],constant Shape& shape [[buffer(11)]],device const uchar* chunk [[buffer(27)]],device MicroFrame* stacks [[buffer(12)]],uint file [[threadgroup_position_in_grid]],uint lane [[thread_index_in_threadgroup]],uint width [[threads_per_threadgroup]],uint simdLane [[thread_index_in_simdgroup]]){threadgroup atomic_uint changed;label_group_run<128u>(stacks+(file*width+lane)*128u,docs,chunk,head,passes,words,items,scratch,flags,texts,counts,levels,ops,shape,file,lane,width,simdLane,&changed);}
-kernel void label_group_256(device const DocView* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const MicroPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint* items [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],device atomic_uint* flags [[buffer(6)]],device const uint* texts [[buffer(7)]],device atomic_uint* counts [[buffer(8)]],device const GroupLevel* levels [[buffer(9)]],device const Op* ops [[buffer(10)]],constant Shape& shape [[buffer(11)]],device const uchar* chunk [[buffer(27)]],device MicroFrame* stacks [[buffer(12)]],uint file [[threadgroup_position_in_grid]],uint lane [[thread_index_in_threadgroup]],uint width [[threads_per_threadgroup]],uint simdLane [[thread_index_in_simdgroup]]){threadgroup atomic_uint changed;label_group_run<256u>(stacks+(file*width+lane)*256u,docs,chunk,head,passes,words,items,scratch,flags,texts,counts,levels,ops,shape,file,lane,width,simdLane,&changed);}
+// A group's frames are the shape's (`frames`: 8 to 256), one kernel for every depth (Q181).
+kernel void label_group(device const DocView* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const MicroPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint* items [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],device atomic_uint* flags [[buffer(6)]],device const uint* texts [[buffer(7)]],device atomic_uint* counts [[buffer(8)]],device const GroupLevel* levels [[buffer(9)]],device const Op* ops [[buffer(10)]],constant Shape& shape [[buffer(11)]],device const uchar* chunk [[buffer(27)]],device MicroFrame* stacks [[buffer(12)]],uint file [[threadgroup_position_in_grid]],uint lane [[thread_index_in_threadgroup]],uint width [[threads_per_threadgroup]],uint simdLane [[thread_index_in_simdgroup]]){threadgroup atomic_uint changed;label_group_run(shape.frames,stacks+(file*width+lane)*shape.frames,docs,chunk,head,passes,words,items,scratch,flags,texts,counts,levels,ops,shape,file,lane,width,simdLane,&changed);}
 
 // A root program's walk as records (decision 0024 §3, `Micro::records`, the same walk): a
 // thread per (program, file, task, start) item, after the labels, reading them in place. Each
@@ -691,11 +685,11 @@ kernel void label_group_256(device const DocView* docs [[buffer(0)]],device cons
 // `anchor`: its anchor's row in `texts` (decision 0365), a start outside it not walked; `0xffffffff` none.
 struct RootPass { uint wordStart,wordCount,textStart,pad,anchor; };
 struct RootFrame { uint pc,node,resume,named,next,end,cursors[8],captured,caps[8],labs[8]; };
-// The 32-frame roots run as a pool of ROOT_POOL threads with device stacks (metal_label_passes.rs's ROOT_POOL).
-constant uint ROOT_CAPTURES=8u,ROOT_RECORD=20u,ROOT_POOL=4096u;
+// The 32-frame roots run as a pool of threads with device stacks (metal_label_passes.rs's ROOT_POOL).
+constant uint ROOT_CAPTURES=8u,ROOT_RECORD=20u;
 
-template<uint FRAMES,typename Stack>
-static bool root_walk(thread const Tree& t,device const uint* head,RootPass pass,device const uint* words,uint start,device const uint* texts,constant Shape& shape,Stack stack,device uint* out,uint capacity,uint item,uint at,thread uint& emitted){
+template<typename Stack>
+static bool root_walk(uint FRAMES,thread const Tree& t,device const uint* head,RootPass pass,device const uint* words,uint start,device const uint* texts,constant Shape& shape,Stack stack,device uint* out,uint capacity,uint item,uint at,thread uint& emitted){
   uint depth=0u,steps=0u,fired=0u;
   WalkRead r={words+pass.wordStart,head,texts,pass.textStart,shape.words};
   RootFrame path;
@@ -768,23 +762,23 @@ static bool root_walk(thread const Tree& t,device const uint* head,RootPass pass
   }
 }
 
-template<uint FRAMES,typename Stack>
-static void root_records_run(device const DocView* docs,device const uchar* chunk,device const uint* head,device const RootPass* passes,device const uint* words,device const uint4* items,device const uint* texts,device uint* records,device atomic_uint* cursor,device atomic_uint* failures,constant Shape& shape,uint tid,Stack stack){
+template<typename Stack>
+static void root_records_run(uint FRAMES,device const DocView* docs,device const uchar* chunk,device const uint* head,device const RootPass* passes,device const uint* words,device const uint4* items,device const uint* texts,device uint* records,device atomic_uint* cursor,device atomic_uint* failures,constant Shape& shape,uint tid,Stack stack){
   if(tid>=shape.itemCount)return;
   uint4 item=items[tid];RootPass pass=passes[item.x];
   if(pass.anchor!=0xffffffffu&&((texts[pass.anchor*shape.words+item.w/32u]>>(item.w%32u))&1u)==0u)return;
   Tree t={chunk,doc_of(docs,shape.fileCount,item.w)};
   uint emitted=0u;
-  if(!root_walk<FRAMES>(t,head,pass,words,item.w,texts,shape,stack,nullptr,0u,tid,0u,emitted)){atomic_fetch_or_explicit(&failures[item.x],1u,memory_order_relaxed);return;}
+  if(!root_walk(FRAMES,t,head,pass,words,item.w,texts,shape,stack,nullptr,0u,tid,0u,emitted)){atomic_fetch_or_explicit(&failures[item.x],1u,memory_order_relaxed);return;}
   if(emitted==0u)return;
   uint at=atomic_fetch_add_explicit(&cursor[0],emitted,memory_order_relaxed);
   if(at+emitted>shape.targetCount){atomic_fetch_or_explicit(&cursor[1],1u,memory_order_relaxed);return;}
   uint again=0u;
-  root_walk<FRAMES>(t,head,pass,words,item.w,texts,shape,stack,records,shape.targetCount,shape.round+tid,at,again);
+  root_walk(FRAMES,t,head,pass,words,item.w,texts,shape,stack,records,shape.targetCount,shape.round+tid,at,again);
 }
 
-kernel void root_records_8(device const DocView* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const RootPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint4* items [[buffer(4)]],device const uint* texts [[buffer(5)]],device uint* records [[buffer(6)]],device atomic_uint* cursor [[buffer(7)]],device atomic_uint* failures [[buffer(8)]],constant Shape& shape [[buffer(9)]],device const uchar* chunk [[buffer(27)]],device RootFrame* stacks [[buffer(10)]],uint tid [[thread_position_in_grid]],uint grid [[threads_per_grid]]){for(uint item=tid;item<shape.itemCount;item+=grid)root_records_run<8u>(docs,chunk,head,passes,words,items,texts,records,cursor,failures,shape,item,stacks+tid*8u);}
-kernel void root_records_32(device const DocView* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const RootPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint4* items [[buffer(4)]],device const uint* texts [[buffer(5)]],device uint* records [[buffer(6)]],device atomic_uint* cursor [[buffer(7)]],device atomic_uint* failures [[buffer(8)]],constant Shape& shape [[buffer(9)]],device const uchar* chunk [[buffer(27)]],device RootFrame* stacks [[buffer(10)]],uint tid [[thread_position_in_grid]]){for(uint item=tid;item<shape.itemCount;item+=ROOT_POOL)root_records_run<32u>(docs,chunk,head,passes,words,items,texts,records,cursor,failures,shape,item,stacks+tid*32u);}
+// A root walk's frames are the shape's (`frames`: 8 or 32), one kernel for both (Q181).
+kernel void root_records(device const DocView* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const RootPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint4* items [[buffer(4)]],device const uint* texts [[buffer(5)]],device uint* records [[buffer(6)]],device atomic_uint* cursor [[buffer(7)]],device atomic_uint* failures [[buffer(8)]],constant Shape& shape [[buffer(9)]],device const uchar* chunk [[buffer(27)]],device RootFrame* stacks [[buffer(10)]],uint tid [[thread_position_in_grid]],uint grid [[threads_per_grid]]){for(uint item=tid;item<shape.itemCount;item+=grid)root_records_run(shape.frames,docs,chunk,head,passes,words,items,texts,records,cursor,failures,shape,item,stacks+tid*shape.frames);}
 
 // A level's anchors (decision 0365, `Runner::formulas`). First `label_leaves`: each node's code read once, and every
 // distinct leaf test of the level's formulas (kind, field, flags, a grammar supertype) into its row of `leaves`, a

@@ -2244,6 +2244,14 @@ way. A user's first run after an engine update pays the same cost. Find what the
 generated MSL, the number of pipelines, and whether each format must be its own pipeline. Then cut it, or
 precompile the libraries (a `.metallib` built with the engine).
 
+- **Measured** (2026-11-18, `label_kernels_compile_cost`, M3 Max under load): the front end is about 1 s; the back
+  end the rest (format 16 67.2 s, format 0 52.8 s, format 15 7.3 s). The walk interpreter was compiled 11 times,
+  once per stack tier (a `FRAMES` template whose stacks were in device memory anyway), and the pipelines one after
+  another.
+- **Done** (2026-11-18, decision 0397): one kernel per walk family, its frames the dispatch's (`Shape::frames`), 16
+  kernels to 8; a format's pipelines compile in parallel. Format 16: 10.7 s of back end, 6.9 s wall.
+- **Left**: `label_micro` alone is 6.5 s; format 16's generated reads cost 9× format 15's in the back end.
+
 ### Q69. The `.rr` ladder's field ids lose 64 in the interpreters and the compiled parser
 
 Found 2026-11-17 (0366, running `rr_tests::rr_steps_parse_as_the_reference_and_the_engine`). 33 steps
