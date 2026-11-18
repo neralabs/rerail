@@ -507,15 +507,14 @@ jobs:
   # working directory and environment cargo gives it instead of running it, and runs the doc tests. It then lists every
   # binary's tests whole and under each leg's filters, fails unless each test is in exactly one leg, and hands the
   # binaries on as an artifact (1.5 GB). It reads no pack test data, so it starts with the test-data job. A cold compile
-  # takes 13 to 17 minutes on the 4-vCPU runner. It starts warm from main: a push to main hands on what it compiled of
-  # the dependencies (rust-test-deps, target/debug without the workspace's crates, kept 7 days), and a later run unpacks
-  # the newest before compiling, so only the workspace's crates compile (7 minutes; a fresh checkout's file times make
-  # cargo rebuild them anyway). Without one, or with other dependencies, cargo compiles what it lacks: never a failure.
+  # takes 13 to 17 minutes on the 4-vCPU runner; from main's compile cache (.github/actions/rust-compile-cache, an
+  # artifact a push to main saves) about 5. Without one it compiles cold: never a failure.
   rust-tests-build:
     name: Rust engine (test build)
     needs: changes
     if: >-
       ${{
+        needs.changes.outputs.rust-packages != '[]' &&
         needs.changes.outputs.rust != 'false' && needs.changes.outputs.release-pr != 'true' &&
         (
           github.event_name != 'pull_request' ||
@@ -524,12 +523,12 @@ jobs:
       }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    # actions: main's rust-test-deps artifact, from another run.
+    # actions: main's compile cache, an artifact of another run.
     permissions:
       contents: read
       actions: read
     outputs:
-      legs: ${{ steps.legs.outputs.legs }}
+      legs: ${{ steps.build.outputs.legs }}
     # Line tables keep file:line in panics at a fraction of full debuginfo; nothing here builds twice incrementally.
     env:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
@@ -554,22 +553,17 @@ jobs:
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
 
-      - id: legs
-        name: List the legs
-        run: echo "legs=$(node scripts/check/native-test-legs.mjs legs)" >> "$GITHUB_OUTPUT"
+      # sccache, starting from main's newest store (an artifact): what main compiled the same way is fetched.
+      - id: compile-cache
+        uses: ./.github/actions/rust-compile-cache
+        with:
+          name: test
 
-      - name: Take main's compiled dependencies
-        continue-on-error: true
+      # The crates a pull request's changes reach (the changes job): `--workspace`, or `-p <package>` for each.
+      - id: build
+        name: Build the test binaries, run the doc tests and check the legs
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          run=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=rust-test-deps&per_page=30" \
-            -q '[.artifacts[] | select(.expired == false and .workflow_run.head_branch == "main")][0].workflow_run.id // empty')
-          if [ -z "$run" ]; then echo "No compiled dependencies from main: the build starts cold."; exit 0; fi
-          gh run download "$run" --name rust-test-deps --dir "$RUNNER_TEMP/rust-test-deps"
-          tar -I zstd -xf "$RUNNER_TEMP/rust-test-deps/rust-test-deps.tar.zst"
-
-      - name: Build the test binaries, run the doc tests and check the legs
+          NATIVE_TESTS_CARGO_ARGS: ${{ needs.changes.outputs.rust-cargo-args }}
         run: node scripts/check/native-test-legs.mjs build "$RUNNER_TEMP/native-tests"
 
       - name: Hand the test binaries to the legs
@@ -581,19 +575,12 @@ jobs:
           compression-level: 0
           retention-days: 3
 
-      - name: Pack the compiled dependencies for later runs
+      - name: Save the compile cache for later runs
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: node scripts/check/native-test-legs.mjs deps "$RUNNER_TEMP/rust-test-deps.tar.zst"
-
-      - name: Hand the compiled dependencies to later runs
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        uses: ./.github/actions/rust-compile-cache/save
         with:
-          name: rust-test-deps
-          path: ${{ runner.temp }}/rust-test-deps.tar.zst
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 7
+          artifact: ${{ steps.compile-cache.outputs.artifact }}
+          dir: ${{ steps.compile-cache.outputs.dir }}
 
   # The engine's tests, in the legs scripts/check/native-test-legs.mjs names, each running the binaries the
   # rust-tests-build job compiled with its libtest filters, as `cargo test --workspace -- <filters>` would. Four read pack
@@ -608,6 +595,7 @@ jobs:
     needs: [changes, test-data, rust-tests-build]
     if: >-
       ${{
+        needs.rust-tests-build.outputs.legs != '[]' &&
         needs.changes.outputs.rust != 'false' && needs.changes.outputs.release-pr != 'true' &&
         (
           github.event_name != 'pull_request' ||
@@ -808,6 +796,7 @@ jobs:
     needs: changes
     if: >-
       ${{
+        needs.changes.outputs.rust-engine != 'false' &&
         needs.changes.outputs.rust != 'false' && needs.changes.outputs.release-pr != 'true' &&
         (
           github.event_name != 'pull_request' ||
@@ -816,8 +805,10 @@ jobs:
       }}
     runs-on: macos-15
     timeout-minutes: 30
+    # actions: main's compile cache, an artifact of another run.
     permissions:
       contents: read
+      actions: read
     env:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
       CARGO_INCREMENTAL: "0"
@@ -840,8 +831,20 @@ jobs:
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
 
+      - id: compile-cache
+        uses: ./.github/actions/rust-compile-cache
+        with:
+          name: test
+
       - name: Tree watch tests
         run: "cargo test --manifest-path native/Cargo.toml --lib tree_watch::"
+
+      - name: Save the compile cache for later runs
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: ./.github/actions/rust-compile-cache/save
+        with:
+          artifact: ${{ steps.compile-cache.outputs.artifact }}
+          dir: ${{ steps.compile-cache.outputs.dir }}
 
   # Builds the package once: dist/ and the release native engine, handed to every test job.
   build:

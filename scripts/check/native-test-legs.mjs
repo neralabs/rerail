@@ -4,8 +4,9 @@
 // `build` runs `cargo test --workspace` with this script as cargo's target runner (`capture`): cargo compiles every
 // test binary and runs the doc tests (rustdoc hands them to the runner, which runs them), and hands each test binary to
 // the runner, which records it with the working directory and the environment cargo gave it (the package's directory,
-// CARGO_MANIFEST_DIR, CARGO_PKG_*, .cargo/config.toml's [env], the library path) instead of running it. Then it lists every binary's tests
-// (`--list`) whole and under each leg's filters, and fails unless each test falls in exactly one leg. What it writes
+// CARGO_MANIFEST_DIR, CARGO_PKG_*, .cargo/config.toml's [env], the library path) instead of running it. Then it lists
+// every binary's tests (`--list`) whole and under each leg's filters, and fails unless each test falls in exactly one
+// leg. What it writes
 // (`<dir>/native-tests.tar.zst`: the binaries at their paths under target/, and the manifest) is the artifact each
 // leg unpacks in its checkout, at the same path as the build's, where `run <leg>` runs each binary with the leg's
 // libtest filters as `cargo test --workspace -- <filters>` would: same working directory, same environment (the leg's
@@ -14,15 +15,14 @@
 // The legs are libtest filters over the test paths, so a test's leg follows its module: the last leg skips what the
 // others select, and the build's check keeps "every test in exactly one leg" true as tests move.
 //
-//   node scripts/check/native-test-legs.mjs build <dir>    compile, run the doc tests, check the legs, pack
+//   node scripts/check/native-test-legs.mjs build <dir>    compile, run the doc tests, check the legs, pack; the legs
+//                                                          with tests to run go to $GITHUB_OUTPUT as `legs` (JSON)
 //   node scripts/check/native-test-legs.mjs run <leg> <dir> run one leg's tests from the unpacked artifact
-//   node scripts/check/native-test-legs.mjs deps <file>     pack the compiled dependencies for a later run's build
-//   node scripts/check/native-test-legs.mjs legs            the legs, as the `rust` job's matrix (JSON)
 //
 // NATIVE_TESTS_REPORT_TIME=1 has `run` add libtest's unstable `--report-time` (under RUSTC_BOOTSTRAP=1), each test's
 // time, to rebalance the legs from a run's log.
 import { spawn, spawnSync } from "node:child_process";
-import { appendFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -141,8 +141,11 @@ function build(dir) {
   const env = { ...process.env, [runner]: `node ${SELF} capture`, NATIVE_TESTS_CAPTURE: captured, NATIVE_TESTS_PARENT_ENV: parentEnv };
   writeFileSync(parentEnv, JSON.stringify(env));
   const started = Date.now();
-  // `npm run test:native`'s command.
-  const cargo = spawnSync("cargo", ["test", "--manifest-path", "Cargo.toml", "--workspace"], { cwd: ROOT, stdio: "inherit", env });
+  // `npm run test:native`'s command, or the packages NATIVE_TESTS_CARGO_ARGS selects (`-p <package>` each: a pull
+  // request's changed crates and the crates that depend on them, ci.yml's `changes` job).
+  const selected = (process.env.NATIVE_TESTS_CARGO_ARGS ?? "").split(/\s+/u).filter(Boolean);
+  const selection = selected.length === 0 ? ["--workspace"] : selected;
+  const cargo = spawnSync("cargo", ["test", "--manifest-path", "Cargo.toml", ...selection], { cwd: ROOT, stdio: "inherit", env });
   if (cargo.status !== 0) process.exit(cargo.status ?? 1);
   console.log(`cargo test (compile, doc tests): ${((Date.now() - started) / 60000).toFixed(1)} min`);
 
@@ -178,30 +181,9 @@ function build(dir) {
   const files = ["target/native-tests.json", ...binaries.map((binary) => relative(ROOT, binary.exe))];
   const tar = spawnSync("tar", ["-I", "zstd -T0 -3", "-cf", join(dir, "native-tests.tar.zst"), ...files], { cwd: ROOT, stdio: "inherit" });
   if (tar.status !== 0) process.exit(tar.status ?? 1);
-}
-
-/**
- * Packs what the test build compiled of the dependencies (target/debug without the workspace's own crates, its test
- * binaries and examples) into `file`: a later run unpacks it before its build (ci.yml's warm start from main) and
- * compiles only the workspace's crates, which a fresh checkout's file times make cargo rebuild anyway.
- */
-function packDependencies(file) {
-  const metadata = spawnSync("cargo", ["metadata", "--manifest-path", "Cargo.toml", "--no-deps", "--format-version", "1"], {
-    cwd: ROOT, encoding: "utf8", maxBuffer: 1 << 28,
-  });
-  if (metadata.status !== 0) throw new Error(`cargo metadata failed:\n${metadata.stderr}`);
-  const { packages } = JSON.parse(metadata.stdout);
-  // `.fingerprint/` and `build/` name a unit by its package, `deps/` by its crate (`-` as `_`), with `-<hash>` (but for
-  // the copies of a library cargo keeps under its own name) and an extension.
-  const names = new Set(packages.flatMap((pkg) => [pkg.name, ...pkg.targets.map((target) => target.name)]).flatMap((name) => [name, name.replaceAll("-", "_")]));
-  const own = (entry) => names.has(entry.replace(/^lib/u, "").replace(/(-[0-9a-f]{16})?(\.[^-]*)?$/u, ""));
-  const files = [];
-  for (const directory of ["deps", "build", ".fingerprint"]) {
-    const path = join(ROOT, "target", "debug", directory);
-    for (const entry of readdirSync(path)) if (!own(entry)) files.push(`target/debug/${directory}/${entry}`);
-  }
-  const tar = spawnSync("tar", ["-I", "zstd -T0 -3", "-cf", file, ...files], { cwd: ROOT, stdio: "inherit" });
-  if (tar.status !== 0) process.exit(tar.status ?? 1);
+  // The `rust` job's matrix: the legs with a test to run.
+  const legs = LEGS.filter((leg) => manifest.binaries.some((binary) => binary.tests[leg.id] > 0)).map(({ id, name }) => ({ leg: id, name }));
+  if (process.env.GITHUB_OUTPUT !== undefined) appendFileSync(process.env.GITHUB_OUTPUT, `legs=${JSON.stringify(legs)}\n`);
 }
 
 function runBinary(binary, args) {
@@ -258,10 +240,8 @@ async function main([command, ...rest]) {
   if (command === "capture") capture();
   else if (command === "build" && rest.length === 1) build(resolve(rest[0]));
   else if (command === "run" && rest.length === 2) await run(rest[0], resolve(rest[1]));
-  else if (command === "deps" && rest.length === 1) packDependencies(resolve(rest[0]));
-  else if (command === "legs" && rest.length === 0) console.log(JSON.stringify(LEGS.map(({ id, name }) => ({ leg: id, name }))));
   else {
-    console.error("usage: native-test-legs.mjs build <dir> | run <leg> <dir> | deps <file> | legs");
+    console.error("usage: native-test-legs.mjs build <dir> | run <leg> <dir>");
     process.exit(2);
   }
 }
