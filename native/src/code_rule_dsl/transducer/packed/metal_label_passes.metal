@@ -847,7 +847,7 @@ kernel void label_formula(device const DocView* docs [[buffer(0)]],device const 
   uint parents=0u,childs=0u;
   #define FORMULA_COUNT(I,N) if(profile)atomic_fetch_add_explicit(&stats[I],N,memory_order_relaxed)
   // A group evaluates the formulas `group.y`, `group.y + grid.y`, …: one each when the grid has a row a formula, all of
-  // the dispatch's in turn when it has one (`RERAIL_FORMULA_FUSED`, Q218), in the same scratch slots.
+  // the dispatch's in turn when it has one (`RERAIL_FORMULA_FUSED`, Q250), in the same scratch slots.
   device atomic_uint* base=scratch+group.y*shape.queue+shape.round*region;
   #define SLOT(i) (base+(i)*fw)
   // The bits of local word `w` that are nodes of the file.

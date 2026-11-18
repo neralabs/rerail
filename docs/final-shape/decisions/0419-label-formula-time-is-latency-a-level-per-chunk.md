@@ -1,11 +1,11 @@
 # 0419. `label_formula`'s time is latency, a level per chunk: a chain's reach by blocks, chunks grow until measured
 
-Status: accepted (2026-11-18). Follows 0425 and Q218.
+Status: accepted (2026-11-18). Follows 0425 and Q250.
 
 ## Intro
 
 0425 removed about a quarter of `label_formula`'s (file, formula) pairs and half its formula images, and the kernel's
-time did not fall. The user asked: "1. identify why the GPU time didn't drop 2. do Q218: evaluating each level's
+time did not fall. The user asked: "1. identify why the GPU time didn't drop 2. do Q250: evaluating each level's
 formulas together per file." Asked which way to go (evaluating per file together looked slower than what it replaced),
 they said: "I want both, and I also want you to survey the code for existing lauch-delay and chunking affordances and
 reuse theinfrastecture and patterns already in the tree".
@@ -109,5 +109,5 @@ dispatch. It was built, with the rows the same (17c18ee8), and was not kept. The
 The steps' time by op (one formula a dispatch, so fixed costs are inflated): a chain's reach (`REACH_CHAIN`) 68.7 ms
 over 60 passes, 1.1 ms each; the children of members (`PARENT`) 36.6 ms over 540 passes, 68 µs each; descendants
 (`REACH_DESCENDANT`) 10.7 ms over 340; a child within a conjunction 7.1 ms over 312. A chain's reach is the long
-pole: Q220.
+pole: Q252.
 

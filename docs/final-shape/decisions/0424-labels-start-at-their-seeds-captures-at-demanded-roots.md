@@ -131,9 +131,9 @@ And a pass still visits every 64-node group to read its mask, whether the group 
   run) and 2.0 s on Metal, and items 2+3 took another 2.2 s natively. Both are generic: item 1 reads only the rules' joins, and item 2 only
   the pattern's shape.
 - The device's steps fell 3.3× and 2.6×. Its time is now set by its dispatches and its scans of every group,
-  not by the walks (Q218, numbered Q187 here; decision 0425).
+  not by the walks (Q250, numbered Q187 here; decision 0425).
 
 ## Open
 
-- Q218 (numbered Q187 here; 0425 took its seed levels): the label kernels' time follows dispatches and group scans now. The next lever is launching a pass over
+- Q250 (numbered Q187 here; 0425 took its seed levels): the label kernels' time follows dispatches and group scans now. The next lever is launching a pass over
   only the groups its domain has members in, and merging the levels a seed adds.

@@ -939,7 +939,7 @@ fn formula_width() -> u64 {
 
 /// `label_formula`'s threads a (file, formula).
 const FORMULA_WIDTH: u64 = 128;
-/// `RERAIL_FORMULA_FUSED=N` (a measurement switch, Q218): `label_formula` dispatches a level's formulas at once, as many as
+/// `RERAIL_FORMULA_FUSED=N` (a measurement switch, Q250): `label_formula` dispatches a level's formulas at once, as many as
 /// its scratch allows, with N groups a file (1: one group evaluates every formula of the file in turn), not one a (file,
 /// formula).
 fn formula_fused() -> Option<usize> {
@@ -2617,7 +2617,7 @@ impl Runner<'_> {
         let leaves = leaves.cloned().unwrap_or_else(|| own.as_ref().expect("the group's leaves").buffer.clone());
         let stride = depth as usize * region;
         // A dispatch's formulas, and its groups a file (`rows`): one a formula, or `formula_fused()`, each evaluating
-        // its share in turn in its own slots (Q218).
+        // its share in turn in its own slots (Q250).
         let fused = formula_fused();
         let rows_most = (FORMULA_SCRATCH_BYTES / 4 / stride).clamp(1, count);
         let per = if formula_trace().is_some() && std::env::var_os("RERAIL_FORMULA_ONE").is_some() { 1 } else if fused.is_some() { count } else { rows_most };
@@ -2778,7 +2778,7 @@ impl Runner<'_> {
         let (state, flags) = (self.tapes.supertypes.buffer.clone(), self.flags.buffer.clone());
         let (scratch, counts) = ((&state, self.tapes.scratch_at), (&state, self.tapes.counts_at));
         // The facts' constraints, once for the level's pattern kernels (each group's binds them; only the first's
-        // tasks read them). copy (0353 step 4): the fact's rows, Q219.
+        // tasks read them). copy (0353 step 4): the fact's rows, Q251.
         let constraints = if matches.iter().any(|matches| !matches.is_empty()) { Some(self.upload(&constraints)?) } else { None };
         for (group, (matches, pattern_threads)) in matches.iter().zip(pattern_threads).enumerate() {
             if matches.is_empty() {
