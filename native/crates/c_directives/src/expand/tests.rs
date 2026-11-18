@@ -452,8 +452,9 @@ fn the_corpus_compiled_is_the_interpreters() {
 }
 
 /// The compiled words' shape (decision 0348, stage 4d), at every depth: no call but of their
-/// own functions (none at depth 0, every one of `#if`'s `EXPR` words past it), no indirect or
-/// tail call, and each depth's returns their own stated dispatches (`Step::Return`).
+/// own functions (the large words', `OUTLINE`, and past depth 0 every one of `#if`'s `EXPR`
+/// words), no indirect or tail call, no function over 128 KB, and each depth's returns their own
+/// stated dispatches (`Step::Return`).
 #[test]
 fn the_compiled_words_have_their_shape() {
     use rerail_compiler::native_cpu_pp::{MAX_K, compile_k};
@@ -462,16 +463,35 @@ fn the_compiled_words_have_their_shape() {
         let p = program(cpp).unwrap();
         let returns = |k: usize| compile_k(p, k).unwrap().heads.iter().filter(|&&h| h == Step::Return).count();
         let (r0, r1) = (returns(0), returns(1));
+        let at0 = compile_k(p, 0).unwrap().code_bytes.len();
         for k in [0, 1, 2, 4, 8, MAX_K] {
             let c = compile_k(p, k).unwrap_or_else(|e| panic!("cpp {cpp} k {k}: {e:?}"));
+            eprintln!("cpp {cpp} k {k}: code {:?} bytes, {} CLIF instructions", c.code_bytes, c.clif.lines().filter(|l| l.starts_with("    ") && !l.trim_end().ends_with(':')).count());
+            if k == 0 {
+                let mut by: Vec<(usize, usize)> = c.word_insts.iter().copied().enumerate().map(|(pc, n)| (n, pc)).collect();
+                by.sort_unstable_by(|a, b| b.cmp(a));
+                let named = |pc: usize| {
+                    let (op, mode, _) = rerail_compiler::program::split(p.words[pc]);
+                    format!("{pc} {op:#04x} m={mode}")
+                };
+                let top: Vec<String> = by.iter().take(25).map(|&(n, pc)| format!("{}: {n}", named(pc))).collect();
+                eprintln!("  the words with the most: {}", top.join(", "));
+                let mut per_op = std::collections::BTreeMap::<String, (usize, usize)>::new();
+                for (pc, &n) in c.word_insts.iter().enumerate() {
+                    let (op, mode, _) = rerail_compiler::program::split(p.words[pc]);
+                    let e = per_op.entry(format!("{op:#04x} m={mode}")).or_default();
+                    (e.0, e.1) = (e.0 + n, e.1 + 1);
+                }
+                let mut ops: Vec<_> = per_op.into_iter().collect();
+                ops.sort_by_key(|o| std::cmp::Reverse(o.1.0));
+                eprintln!("  by word: {}", ops.iter().take(25).map(|(k, (n, c))| format!("{k} {n}/{c}")).collect::<Vec<_>>().join(", "));
+            }
             let functions = c.clif.matches("function ").count();
             assert!(!c.clif.contains("call_indirect") && !c.clif.contains("return_call"), "cpp {cpp} k {k}");
             let calls = c.clif.lines().filter(|l| l.contains(" = call ") || l.trim_start().starts_with("call ")).count();
-            if k == 0 {
-                assert_eq!((functions, calls), (1, 0), "cpp {cpp}");
-            } else {
-                assert!(functions > 1 && calls > 0, "cpp {cpp} k {k}");
-            }
+            assert_eq!(functions, c.code_bytes.len(), "cpp {cpp} k {k}");
+            assert!(calls > 0 && (k == 0 || functions > at0), "cpp {cpp} k {k}");
+            assert!(c.code_bytes.iter().all(|&b| b <= 128 << 10), "cpp {cpp} k {k}: {:?}", c.code_bytes);
             // Each depth past 0 adds the evaluator's `RETURN`s' dispatches once more.
             assert_eq!(c.heads.iter().filter(|&&h| h == Step::Return).count(), r0 + k * (r1 - r0), "cpp {cpp} k {k}");
         }

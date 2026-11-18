@@ -196,6 +196,10 @@ pub struct CompiledPp {
     pub clif: String,
     /// Its stated loop heads.
     pub heads: Vec<Step>,
+    /// Its machine code's bytes, each function's: the run's (`pp_run`) first.
+    pub code_bytes: Vec<usize>,
+    /// Each word's CLIF instructions in the run's function (its copies' at every depth).
+    pub word_insts: Vec<usize>,
 }
 
 impl CompiledPp {
@@ -313,7 +317,6 @@ impl Lower<'_, '_> {
     /// return point at depth `d - 1`, at depth 0 to the return stack's. An `EXPR` word calls its
     /// outlined function (one for every depth).
     fn spec_word(&mut self, sp: &Spec, pc: usize, d: usize) {
-        let ctx = self.ctx;
         let (op, mode, operand) = split(self.words[pc]);
         let at = |sp: &Spec, l: &Self, p: usize, d: usize| if d == 0 { l.blocks[p] } else { sp.copies[d - 1][p] };
         match op {
@@ -347,28 +350,34 @@ impl Lower<'_, '_> {
                 let _ = self.word(pc);
             }
             _ => {
-                // `EXPR`: its function's result: 0 the next word, 1 the one after, else refused.
-                let r = self.f.ins().call(sp.calls[pc].expect("an outlined word"), &[ctx]);
-                let r = self.f.inst_results(r)[0];
                 let next = at(sp, self, pc + 1, d);
                 let skip = if pp_words::is_test(op, mode) { at(sp, self, pc + 2, d) } else { next };
-                let step = pp_words::steps_where_held(op, mode).then(|| self.f.create_block());
-                let held = step.unwrap_or(next);
-                let other = self.f.create_block();
-                let zero = self.f.ins().icmp_imm(IntCC::Equal, r, 0);
-                self.f.ins().brif(zero, held, &[], other, &[]);
-                self.f.switch_to_block(other);
-                let one = self.f.ins().icmp_imm(IntCC::Equal, r, 1);
-                let refused = self.f.create_block();
-                self.f.ins().brif(one, skip, &[], refused, &[]);
-                self.f.switch_to_block(refused);
-                self.f.ins().jump(self.exit, &[r.into()]);
-                if let Some(step) = step {
-                    self.heads.push((step, Step::Token));
-                    self.f.switch_to_block(step);
-                    self.f.ins().jump(next, &[]);
-                }
+                self.call_word(sp.calls[pc].expect("an outlined word"), op, mode, next, skip);
             }
+        }
+    }
+
+    /// An outlined word called (`compile_k`): its result 0 to `next`, 1 to `skip`, else the
+    /// refusal; the held branch through a step of its own where the word steps where it holds.
+    fn call_word(&mut self, fref: FuncRef, op: u8, mode: u8, next: Block, skip: Block) {
+        let ctx = self.ctx;
+        let r = self.f.ins().call(fref, &[ctx]);
+        let r = self.f.inst_results(r)[0];
+        let step = pp_words::steps_where_held(op, mode).then(|| self.f.create_block());
+        let held = step.unwrap_or(next);
+        let other = self.f.create_block();
+        let zero = self.f.ins().icmp_imm(IntCC::Equal, r, 0);
+        self.f.ins().brif(zero, held, &[], other, &[]);
+        self.f.switch_to_block(other);
+        let one = self.f.ins().icmp_imm(IntCC::Equal, r, 1);
+        let refused = self.f.create_block();
+        self.f.ins().brif(one, skip, &[], refused, &[]);
+        self.f.switch_to_block(refused);
+        self.f.ins().jump(self.exit, &[r.into()]);
+        if let Some(step) = step {
+            self.heads.push((step, if op == DEFINE && mode == 7 { Step::Item } else { Step::Token }));
+            self.f.switch_to_block(step);
+            self.f.ins().jump(next, &[]);
         }
     }
 
@@ -6640,9 +6649,14 @@ struct Spec {
     copies: Vec<Vec<Block>>,
     /// The return points of the calls at depths 0 to `K - 1`, as ranks.
     vars: Vec<Variable>,
-    /// Each `EXPR` word's outlined function.
+    /// Each outlined word's function.
     calls: Vec<Option<FuncRef>>,
 }
+
+/// A word whose code is over this many CLIF instructions is a function of its own, called
+/// (`compile_k`): the run's function keeps the words a token passes through, not the rare large
+/// ones (each of `BUILTIN`'s modes made the whole of `builtin_value` again).
+pub const OUTLINE: usize = 512;
 
 /// The largest depth `compile_k` takes.
 pub const MAX_K: usize = 16;
@@ -6724,8 +6738,10 @@ pub fn compile_k(program: &Words, k: usize) -> Result<CompiledPp, Error> {
     // The evaluator's `EXPR` words, a function each: 0 its next word, 1 the one after, else the
     // refusal.
     let mut outlined = Vec::new();
-    for pc in (0..program.words.len()).filter(|&pc| region.as_ref().is_some_and(|r| r[pc]) && split(program.words[pc]).0 == EXPR) {
-        let fid = module.declare_function(&format!("pp_word_{pc}"), Linkage::Local, &signature).map_err(|_| Error::BackendFailure)?;
+    let mut sizes = Vec::new();
+    // Each word lowered alone, and kept so where it is large (or one of the evaluator's `EXPR`s
+    // at a depth): the words that go elsewhere than their next two stay in the run's function.
+    for pc in (0..program.words.len()).filter(|&pc| !matches!(split(program.words[pc]).0, GOTO | PUSH | RETURN | ACCEPT | STOP)) {
         let mut context = module.make_context();
         context.func.signature = signature.clone();
         let heads;
@@ -6755,13 +6771,21 @@ pub fn compile_k(program: &Words, k: usize) -> Result<CompiledPp, Error> {
             f.seal_all_blocks();
             f.finalize();
         }
+        let evaluator = region.as_ref().is_some_and(|r| r[pc]) && split(program.words[pc]).0 == EXPR;
+        if !evaluator && context.func.dfg.num_insts() <= OUTLINE {
+            module.clear_context(&mut context);
+            continue;
+        }
+        let fid = module.declare_function(&format!("pp_word_{pc}"), Linkage::Local, &signature).map_err(|_| Error::BackendFailure)?;
         crate::native_cpu_shape::check(&context.func, &heads, &[]).map_err(|r| Error::RefusedShape(format!("word {pc}: {r:?}")))?;
         clif.push_str(&context.func.display().to_string());
         all_heads.extend(heads.iter().map(|h| h.1));
         module.define_function(fid, &mut context).map_err(|e| Error::RefusedShape(format!("word {pc}: {e:?}")))?;
+        sizes.push(context.compiled_code().map_or(0, |c| c.code_info().total_size as usize));
         module.clear_context(&mut context);
         outlined.push((pc, fid));
     }
+    let mut word_insts = vec![0; program.words.len()];
     let own: Vec<UserExternalName> = outlined.iter().map(|&(_, fid)| UserExternalName::new(0, fid.as_u32())).collect();
     let mut context = module.make_context();
     context.func.signature = signature.clone();
@@ -6775,21 +6799,22 @@ pub fn compile_k(program: &Words, k: usize) -> Result<CompiledPp, Error> {
         f.append_block_param(exit, types::I64);
         f.switch_to_block(entry);
         let ctx = f.block_params(entry)[0];
+        let mut calls = vec![None; program.words.len()];
+        let sig = f.import_signature(signature.clone());
+        for (&(pc, _), name) in outlined.iter().zip(&own) {
+            let name = f.func.declare_imported_user_function(name.clone());
+            calls[pc] = Some(f.import_function(ExtFuncData { name: ExternalName::user(name), signature: sig, colocated: true }));
+        }
         let spec = region.map(|region| {
             // Blocks for the evaluator's words only (another's entry is never reached).
             let copies = (0..k).map(|_| (0..program.words.len()).map(|p| if region[p] { f.create_block() } else { blocks[p] }).collect()).collect();
             let vars = (0..k).map(|_| f.declare_var(types::I32)).collect();
-            let mut calls = vec![None; program.words.len()];
-            let sig = f.import_signature(signature.clone());
-            for (&(pc, _), name) in outlined.iter().zip(&own) {
-                let name = f.func.declare_imported_user_function(name.clone());
-                calls[pc] = Some(f.import_function(ExtFuncData { name: ExternalName::user(name), signature: sig, colocated: true }));
-            }
-            Spec { k, region, copies, vars, calls }
+            Spec { k, region, copies, vars, calls: calls.clone() }
         });
         f.ins().jump(blocks[0], &[]);
         let mut l = Lower { f: &mut f, ctx, words: &program.words, strings: &program.strings, blocks, exit, heads: Vec::new(), pp: &program.pp, ranks: &ranks, rets: &rets };
         for pc in 0..program.words.len() {
+            let before = l.f.func.dfg.num_insts();
             let b = l.blocks[pc];
             l.f.switch_to_block(b);
             if let Some(sp) = spec.as_ref().filter(|sp| sp.region[pc]) {
@@ -6800,6 +6825,7 @@ pub fn compile_k(program: &Words, k: usize) -> Result<CompiledPp, Error> {
                     }
                     l.spec_word(sp, pc, d);
                 }
+                word_insts[pc] = l.f.func.dfg.num_insts() - before;
                 continue;
             }
             // A token read is a stated step: a cycle through `READ`'s block.
@@ -6807,7 +6833,11 @@ pub fn compile_k(program: &Words, k: usize) -> Result<CompiledPp, Error> {
             if op == READ {
                 l.heads.push((b, Step::Token));
             }
-            if pp_words::steps_where_held(op, mode) {
+            if let Some(fref) = calls[pc] {
+                let next = l.blocks[pc + 1];
+                let skip = if pp_words::is_test(op, mode) { l.blocks[pc + 2] } else { next };
+                l.call_word(fref, op, mode, next, skip);
+            } else if pp_words::steps_where_held(op, mode) {
                 // The held branch is the step: through a named block of its own.
                 let next = l.blocks[pc + 1];
                 let step = l.f.create_block();
@@ -6821,6 +6851,7 @@ pub fn compile_k(program: &Words, k: usize) -> Result<CompiledPp, Error> {
             } else {
                 l.word(pc)?;
             }
+            word_insts[pc] = l.f.func.dfg.num_insts() - before;
         }
         l.f.switch_to_block(exit);
         let r = l.f.block_params(exit)[0];
@@ -6839,12 +6870,13 @@ pub fn compile_k(program: &Words, k: usize) -> Result<CompiledPp, Error> {
     clif.push_str(&context.func.display().to_string());
     all_heads.extend(heads.iter().map(|h| h.1));
     module.define_function(id, &mut context).map_err(|e| Error::RefusedShape(format!("pp_run: {e:?}")))?;
+    sizes.insert(0, context.compiled_code().map_or(0, |c| c.code_info().total_size as usize));
     module.clear_context(&mut context);
     module.finalize_definitions().map_err(|_| Error::BackendFailure)?;
     let code = module.get_finalized_function(id);
     // SAFETY: `pp_run` was declared and defined with this signature.
     let entry = unsafe { std::mem::transmute::<*const u8, unsafe extern "C" fn(*mut Ctx) -> u64>(code) };
-    Ok(CompiledPp { _module: module, entry, clif, heads: all_heads })
+    Ok(CompiledPp { _module: module, entry, clif, heads: all_heads, code_bytes: sizes, word_insts })
 }
 
 #[cfg(test)]
