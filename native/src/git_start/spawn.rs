@@ -194,7 +194,8 @@ fn watch_thread() -> std::thread::Builder {
 }
 
 /// A thread that waits for the pid it is sent to exit, leaves it unreaped, and then drops `write`, which closes
-/// the exit pipe. Started before the child, so a thread that cannot start leaves no child behind.
+/// the exit pipe. Started before the child, so a thread that cannot start leaves no child behind. A wait that fails
+/// closes the pipe too, while the child may still run: `reap` then says it runs, and the caller reaps it later.
 fn exit_watch(write: OwnedFd) -> io::Result<mpsc::Sender<libc::pid_t>> {
     let (send, receive) = mpsc::channel::<libc::pid_t>();
     watch_thread().spawn(move || {
@@ -303,6 +304,8 @@ pub(super) fn start(
     })
 }
 
+/// Reaps `pid` if it has exited, without waiting: how it ended; or nothing, with `running` when it has not exited yet
+/// (waitpid's 0) and without when it is no child of this process's to reap (ECHILD).
 pub(super) fn reap(pid: i32) -> GitExit {
     let mut status: libc::c_int = 0;
     // SAFETY: reaps one child of this process, without blocking.
@@ -311,17 +314,20 @@ pub(super) fn reap(pid: i32) -> GitExit {
         return GitExit {
             code: None,
             signal: None,
+            running: reaped == 0,
         };
     }
     if libc::WIFEXITED(status) {
         return GitExit {
             code: Some(libc::WEXITSTATUS(status)),
             signal: None,
+            running: false,
         };
     }
     GitExit {
         code: None,
         signal: libc::WIFSIGNALED(status).then(|| libc::WTERMSIG(status)),
+        running: false,
     }
 }
 
@@ -359,6 +365,38 @@ mod tests {
         assert_eq!(
             (out.as_str(), exit.code, exit.signal, started.stderr),
             ("got one\n", Some(3), None, -1)
+        );
+    }
+
+    #[test]
+    fn a_child_that_has_not_exited_is_left_unreaped_and_said_to_run() {
+        let started = start(
+            "/bin/sh",
+            &["-c".into(), "read line; exit 3".into()],
+            &["PATH=/usr/bin:/bin".into()],
+            false,
+        )
+        .expect("start");
+        let running = super::reap(started.pid);
+        // SAFETY: each descriptor start returned is open and ours to own.
+        let (stdin, stdout, mut exited) = unsafe {
+            (
+                UnixStream::from_raw_fd(started.stdin),
+                UnixStream::from_raw_fd(started.stdout),
+                std::fs::File::from_raw_fd(started.exited),
+            )
+        };
+        drop((stdin, stdout));
+        let mut nothing = Vec::new();
+        exited.read_to_end(&mut nothing).expect("exit pipe");
+        let (exit, gone) = (super::reap(started.pid), super::reap(started.pid));
+        assert_eq!(
+            [
+                (running.running, running.code),
+                (exit.running, exit.code),
+                (gone.running, gone.code)
+            ],
+            [(true, None), (false, Some(3)), (false, None)]
         );
     }
 

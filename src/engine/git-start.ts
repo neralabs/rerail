@@ -39,10 +39,14 @@ export interface EngineStartedGit {
   exited: number;
 }
 
-/** How a reaped child ended; neither is set when it was not this process's to reap. */
+/**
+ * How a reaped child ended. Neither is set when it was not reaped: it has not exited yet (`running`), or it was not this
+ * process's child to reap.
+ */
 export interface EngineGitExit {
   code?: number | null | undefined;
   signal?: number | null | undefined;
+  running?: boolean | undefined;
 }
 
 /** How a blocking run through the engine ended (`native/src/git_start/run.rs`). */
@@ -197,6 +201,22 @@ function endOf({ code, signal }: EngineGitExit): [number | null, NodeJS.Signals 
   return [code ?? null, null];
 }
 
+/**
+ * How long a child whose exit pipe closed while it still ran waits to be reaped again. The pipe closes early only when
+ * the engine's wait on the child fails, which no measured run has met; it then still ends as Node's child ends.
+ */
+const REAP_AGAIN_MS = 20;
+
+/**
+ * Reaps `pid` once it has exited and hands `reaped` how it ended: at once when it has, else again every
+ * {@link REAP_AGAIN_MS} until it has, as Node's child stays a running child, open to a kill, until it exits.
+ */
+function reapOnceExited(pid: number, reap: (pid: number) => EngineGitExit, reaped: (exit: EngineGitExit) => void): void {
+  const exit = reap(pid);
+  if (exit.running === true) setTimeout(reapOnceExited, REAP_AGAIN_MS, pid, reap, reaped);
+  else reaped(exit);
+}
+
 /** As Node does once a child exits: output no reader took is let flow, so it ends and `close` comes. */
 function flowUnread(outputs: readonly (Readable | null)[]): void {
   for (const output of outputs) if (output !== null && output.listenerCount("data") === 0) output.resume();
@@ -232,9 +252,10 @@ class EngineGit extends EventEmitter implements GitProcess {
       output.on("close", () => this.#maybeClose());
     }
     const exited = new Socket({ fd: started.exited, readable: true });
-    // The pipe only closes; an error closes it too, and the child is reaped either way.
+    // The pipe only closes; an error closes it too. Either may come while the child still runs (the engine's wait on it
+    // failed): it is then reaped once it has exited, and stays open to a kill until then.
     exited.on("error", () => undefined);
-    exited.on("close", () => this.#exited(reap(this.pid)));
+    exited.on("close", () => reapOnceExited(this.pid, reap, exit => this.#exited(exit)));
     exited.resume();
     process.nextTick(() => this.emit("spawn"));
   }

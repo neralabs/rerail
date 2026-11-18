@@ -1,9 +1,10 @@
 import { execFileSync } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { closeSync, constants as fsConstants, existsSync, openSync, readdirSync, readFileSync } from "node:fs";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { constants, tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
 import { afterAll, afterEach, describe, expect, it, vi } from "vitest";
 
@@ -16,6 +17,8 @@ import {
   startGit,
   startGitThroughNode,
   startGitWithoutCopying,
+  type EngineGitStarts,
+  type EngineStartedGit,
   type GitProcess,
 } from "../../src/engine/git-start.js";
 import { loadNativeBinding } from "../../src/engine/native/native.js";
@@ -200,6 +203,13 @@ describe.runIf(LINUX)("Git started through the engine, on Linux", () => {
   }, 30_000);
 });
 
+/** The engine's three calls, for a case to wrap one of them. */
+function engineStarts(): Required<EngineGitStarts> {
+  const { startGit: start, reapGit, runGit: run } = loadNativeBinding();
+  if (start === undefined || reapGit === undefined || run === undefined) throw new Error("this engine cannot start Git");
+  return { startGit: start, reapGit, runGit: run };
+}
+
 /**
  * Scripts that end themselves: by signal 6, as a Git that aborts does (made undumpable first, so no core is written),
  * and by signal 29.
@@ -216,6 +226,26 @@ async function selfEndings(): Promise<unknown> {
   return ends;
 }
 
+/** What a reader sees of `child`: whether it exited before a kill, whether the kill was sent, and how it ended. */
+async function endedAtKill(child: GitProcess): Promise<unknown> {
+  const exits: unknown[] = [];
+  child.on("exit", (...exit: unknown[]) => exits.push(exit));
+  const closed = once(child, "close") as Promise<[number | null, NodeJS.Signals | null]>;
+  await delay(200);
+  const exitedFirst = exits.length > 0;
+  const killed = child.kill("SIGTERM");
+  const [code, signal] = await closed;
+  return { exitedFirst, killed, code, signal };
+}
+
+/** A FIFO's read end at its end already: its one writer opened it and closed it. */
+function endedPipe(path: string): number {
+  execFileSync("mkfifo", [path]);
+  const read = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NONBLOCK);
+  closeSync(openSync(path, "w"));
+  return read;
+}
+
 describe.runIf(LINUX)("Git started through the engine in the states where it and Node's start could part, on Linux", () => {
   it("names the signal that ended Git as Node names it: SIGABRT for 6 and SIGIO for 29", async () => {
     const throughNode = await selfEndings();
@@ -226,6 +256,25 @@ describe.runIf(LINUX)("Git started through the engine in the states where it and
     expect([vi.mocked(spawn).mock.calls.length, vi.mocked(spawnSync).mock.calls.length]).toEqual([0, 0]);
     expect(throughEngine).toEqual(throughNode);
     expect(throughEngine).toEqual([["SIGABRT", "SIGABRT"], ["SIGIO", "SIGIO"]]);
+  });
+
+  it("waits for the exit of a Git whose exit pipe closed while it runs, and ends it at a kill as Node's child", async () => {
+    const throughNode = await endedAtKill(startGit("/bin/sh", ["-c", "read line"], process.env, "pipe"));
+    const starts = engineStarts();
+    const fifo = join(await folder("exit"), "exit");
+    const watched: number[] = [];
+    // The exit watch's pipe closes while the child runs, as when its wait fails: here a pipe at its end from the start.
+    const closesEarly = (...call: Parameters<typeof starts.startGit>): EngineStartedGit => {
+      const started = starts.startGit(...call);
+      watched.push(started.exited);
+      return { ...started, exited: endedPipe(fifo) };
+    };
+    expect(startGitWithoutCopying(() => ({ ...starts, startGit: closesEarly }))).toBe(true);
+    const throughEngine = await endedAtKill(startGit("/bin/sh", ["-c", "read line"], process.env, "pipe"));
+    for (const fd of watched) closeSync(fd);
+    expect(throughEngine).toEqual(throughNode);
+    expect(throughEngine).toEqual({ exitedFirst: false, killed: true, code: null, signal: "SIGTERM" });
+    expect(zombies()).toBe(0);
   });
 
   it("ends a blocking Git and says why when the engine's wait on its output fails, as spawnSync ends a run whose read fails", () => {

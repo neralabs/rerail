@@ -13,7 +13,9 @@
 //! mask, the caller's working folder and no other descriptor (every descriptor this process opens is close-on-exec).
 //! A thread waits for the child to exit without reaping it (`WNOWAIT`) and then closes the `exited` pipe; the caller
 //! reaps it with `reap_git` once it has read that close, on its own thread. Until then the child stays a zombie, so its
-//! pid names no other process and a kill sent before the reap reaches this child or nothing.
+//! pid names no other process and a kill sent before the reap reaches this child or nothing. A close that comes while
+//! the child still runs (the thread's wait failed, or the pipe did) leaves it unreaped and says so (`running`), and the
+//! caller reaps it again later.
 
 use napi::bindgen_prelude::Buffer;
 use napi::{Error, Result, Status};
@@ -31,12 +33,13 @@ pub struct StartedGit {
     pub exited: i32,
 }
 
-/// How a child `reap_git` reaped ended: its exit code, or the signal that ended it. Both absent when it was not this
-/// process's child to reap.
+/// How a child `reap_git` reaped ended: its exit code, or the signal that ended it. Both absent when it was not reaped:
+/// it still runs (`running`), or it was not this process's child to reap.
 #[napi(object)]
 pub struct GitExit {
     pub code: Option<i32>,
     pub signal: Option<i32>,
+    pub running: bool,
 }
 
 /// How a blocking run (`run_git`) ended: as `GitExit`, with what the child printed, and whether the run sent it
@@ -104,7 +107,8 @@ pub fn start_git(
     }
 }
 
-/// Reaps `pid`, a child `start_git` started whose `exited` pipe has closed, and says how it ended.
+/// Reaps `pid`, a child `start_git` started whose `exited` pipe has closed, and says how it ended, or that it still
+/// runs and was left unreaped.
 #[napi]
 pub fn reap_git(pid: i32) -> GitExit {
     #[cfg(target_os = "linux")]
@@ -117,6 +121,7 @@ pub fn reap_git(pid: i32) -> GitExit {
         GitExit {
             code: None,
             signal: None,
+            running: false,
         }
     }
 }
