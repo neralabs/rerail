@@ -125,6 +125,33 @@ describe("the Git a process keeps, gone under it", () => {
     });
   }
 
+  /**
+   * Has the next two starts of `spawn` go as when the look finds Git: the first starts the program it names, the second
+   * a program that does not end by itself, so only a time limit ends it. Resolves once that second program has started.
+   */
+  async function secondStartRunsOn(): Promise<void> {
+    const second = Promise.withResolvers<void>();
+    vi.mocked(spawn)
+      .mockImplementationOnce((file, args, options) => actual.spawn(program(file), args, options))
+      .mockImplementationOnce((_file, _args, options) => {
+        second.resolve();
+        return actual.spawn(process.execPath, ["-e", "setInterval(() => {}, 1_000)"], options);
+      });
+    await second.promise;
+  }
+
+  /**
+   * Moves the held clock by `ms`, then has each running read look at its time limit once (`setInterval` faked): whether
+   * a read still looks at its limit after that, its ticks still pending, so its Git still runs.
+   */
+  async function readsGoOnAfter(clock: { move(ms: number): void }, ms: number): Promise<boolean> {
+    clock.move(ms);
+    vi.advanceTimersByTime(1_000);
+    // A read looks at its limit one loop turn after its tick.
+    await new Promise(done => setImmediate(done));
+    return vi.getTimerCount() > 0;
+  }
+
   /** The time limit each start of `starter` was given since the last call. */
   function limits(starter: typeof spawnSync): unknown[] {
     return vi.mocked(starter).mock.calls.map(call => (call[2] as { timeout?: number } | undefined)?.timeout);
@@ -203,18 +230,11 @@ describe("the Git a process keeps, gone under it", () => {
       clock.move(6_000);
       return await actualFiles.stat(...args);
     });
-    // The second start runs a program that does not end by itself, so only a time limit ends it.
-    const second = Promise.withResolvers<void>();
-    vi.mocked(spawn)
-      .mockImplementationOnce((file, args, options) => actual.spawn(program(file), args, options))
-      .mockImplementationOnce((_file, _args, options) => {
-        second.resolve();
-        return actual.spawn(process.execPath, ["-e", "setInterval(() => {}, 1_000)"], options);
-      });
+    const second = secondStartRunsOn();
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     try {
       const call = runGitAsync(repository, ["rev-parse", "HEAD"]);
-      await second.promise;
+      await second;
       // Past the call's own limit, and past a new 10 s limit a second start of its own would end at.
       clock.move(10_000);
       vi.advanceTimersByTime(1_000);
@@ -222,6 +242,58 @@ describe("the Git a process keeps, gone under it", () => {
       // The Gits started, not the taskkill.exe that ends the second one on Windows.
       const gits = started(spawn).filter(program => String(program).startsWith(root));
       expect([result.status, result.error?.message, gits]).toEqual([null, "Git was ended: it ran past its time limit of 4000 ms", [kept, now]]);
+    } finally {
+      vi.useRealTimers();
+      clock.release();
+    }
+  });
+
+  it("ends the second start of a read at what is left of the read's time limit", async () => {
+    const [kept, now] = await moveKeptGit();
+    started(spawn);
+    const clock = holdClock();
+    // The look's first question about the disk takes 6 s of the read's 10 s.
+    vi.mocked(stat).mockImplementationOnce(async (...args) => {
+      clock.move(6_000);
+      return await actualFiles.stat(...args);
+    });
+    const second = secondStartRunsOn();
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      const read = gitHead(repository);
+      await second;
+      // Past the 4 s the look left, short of a whole new 10 s; then past both, so the read ends either way.
+      const goesOn = await readsGoOnAfter(clock, 5_000);
+      await readsGoOnAfter(clock, 10_000);
+      const answer = await read;
+      const gits = started(spawn).filter(program => String(program).startsWith(root));
+      expect([goesOn, answer, gits]).toEqual([false, undefined, [kept, now]]);
+    } finally {
+      vi.useRealTimers();
+      clock.release();
+    }
+  });
+
+  it("ends the second start of a streamed read at what is left of the read's time limit", async () => {
+    const [kept, now] = await moveKeptGit();
+    started(spawn);
+    const clock = holdClock();
+    // The look's first question about the disk takes 6 s of the read's 10 s.
+    vi.mocked(stat).mockImplementationOnce(async (...args) => {
+      clock.move(6_000);
+      return await actualFiles.stat(...args);
+    });
+    const second = secondStartRunsOn();
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      const read = readGitBlobs(repository, ["HEAD:./a.py"], { maxBlobBytes: 1_000 });
+      await second;
+      // Past the 4 s the look left, short of a whole new 10 s; then past both, so the read ends either way.
+      const goesOn = await readsGoOnAfter(clock, 5_000);
+      await readsGoOnAfter(clock, 10_000);
+      const blobs = await read;
+      const gits = started(spawn).filter(program => String(program).startsWith(root));
+      expect([goesOn, blobs.size, gits]).toEqual([false, 0, [kept, now]]);
     } finally {
       vi.useRealTimers();
       clock.release();
