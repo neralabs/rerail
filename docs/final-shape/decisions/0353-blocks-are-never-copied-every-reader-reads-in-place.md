@@ -445,6 +445,15 @@ Each step ends with:
        field per code (a derived table, small, beside the dialect's canonical codes): no per-node column.
      - **4b.** 16z read in place by the reads written once (a block decoded where a read falls), on the CPU, then
        the kernels; `in_place`'s laid-out copy and the slab's `unblock_into` go.
+       Decided (user, 2026-11-18): decoded per reader, nothing outliving the read's slot. A 16z read is format 16's
+       read of the block it falls in (its decoded bytes, the block's view, the node's place in it), as `F16Z` reads
+       today, and a parent's walk crosses blocks; the reads written once do the same, the block decoded on a miss
+       by an LZ4 block decode written once in CLIF (so the kernels have the same code), into the reader's slot. On
+       the CPU a thread's slot (two blocks, as `F16Z`'s cache). On the device, a threadgroup decodes its rows'
+       block into threadgroup memory, spilling to device memory past about 16 KB.
+       - Open for the kernels: a stage's probes read a view at any row, so a threadgroup's reads are not within
+         one or two blocks as a scan's are. A probe whose block is not the group's needs a slot of its own; how
+         many, and where, is decided when the kernels' part is built, against a probe-heavy stratum's misses.
      - **4c.** The views' reads written once (CLIF, for Rust, the JIT and MSL), over a document's `TapeView` and
        its projection's `Numbering`: each view's scan over 64-node groups (the open subtrees from one descent) and
        its probes (by id; by parent, first child and next numbered sibling). Check: their rows equal `Viewed`'s,
