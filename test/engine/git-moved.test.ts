@@ -110,6 +110,21 @@ describe("the Git a process keeps, gone under it", () => {
     };
   }
 
+  /**
+   * Has each wait of this thread for the thread a blocking look reads the disk in call through, after `before` (given the
+   * wait's timeout), and move the held clock by a wait that ran to its timeout: a look that never hears its answer then
+   * reaches its deadline on the held clock, and the case fails rather than waits for ever.
+   */
+  function waitsOnClock(clock: { move(ms: number): void }, before: (timeout: number) => void = () => undefined): void {
+    const wait = Atomics.wait.bind(Atomics);
+    vi.spyOn(Atomics, "wait").mockImplementation((...args) => {
+      before(args[3] ?? Infinity);
+      const woke = wait(...args);
+      if (woke === "timed-out") clock.move(args[3] ?? 0);
+      return woke;
+    });
+  }
+
   /** The time limit each start of `starter` was given since the last call. */
   function limits(starter: typeof spawnSync): unknown[] {
     return vi.mocked(starter).mock.calls.map(call => (call[2] as { timeout?: number } | undefined)?.timeout);
@@ -144,10 +159,10 @@ describe("the Git a process keeps, gone under it", () => {
     started(spawnSync);
     const clock = holdClock();
     // The look's first wait for the thread it reads the disk in takes 4 s of the call's 10 s.
-    const wait = Atomics.wait.bind(Atomics);
-    vi.spyOn(Atomics, "wait").mockImplementationOnce((...args) => {
-      clock.move(4_000);
-      return wait(...args);
+    let first = true;
+    waitsOnClock(clock, () => {
+      if (first) clock.move(4_000);
+      first = false;
     });
     try {
       const result = runGit(repository, ["rev-parse", "HEAD"]);
@@ -168,11 +183,7 @@ describe("the Git a process keeps, gone under it", () => {
       return actual.spawnSync(program(file), args, options);
     });
     const waits: number[] = [];
-    const wait = Atomics.wait.bind(Atomics);
-    vi.spyOn(Atomics, "wait").mockImplementation((...args) => {
-      waits.push(args[3] ?? Infinity);
-      return wait(...args);
-    });
+    waitsOnClock(clock, timeout => waits.push(timeout));
     try {
       const result = runGit(repository, ["rev-parse", "HEAD"]);
       // Before the fix the look's first wait could last the call's whole 10 s again.
