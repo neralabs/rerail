@@ -1434,7 +1434,7 @@ impl Lowering {
         let base = ops.len() as u16;
         ops.extend(lops.iter().map(|op| offset_op(op, base)));
         let tl = ops.len() as u16 - 1;
-        let mut at = |ops: &mut Vec<L>, x: u16, k: u8| {
+        let at = |ops: &mut Vec<L>, x: u16, k: u8| {
             if k == 0 {
                 x
             } else {
@@ -2466,7 +2466,7 @@ fn merge_token_checks(a: &crate::program::LocalCheck, b: &crate::program::LocalC
     }
     let d = a.delay.max(b.delay);
     let (ta, tb) = (a.ops.len() as u16 - 1, map[b.ops.len() - 1]);
-    let mut at = |ops: &mut Vec<L>, x: u16, k: u8| {
+    let at = |ops: &mut Vec<L>, x: u16, k: u8| {
         if k == 0 {
             x
         } else {

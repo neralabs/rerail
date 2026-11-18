@@ -122,6 +122,40 @@ simdjson's last-block copy is, the end's block would be a full block for every b
 only the end's own checks (an unclosed string, a number cut off) would remain. That is not
 needed to match the loop, so it is not done here.
 
+## After 0398 and 0399 (2026-11-18)
+
+Items 1 to 3 above were taken up in order.
+
+| | Hot loop | Stack accesses | Tier 1's operations |
+|---|---:|---:|---:|
+| At this page | 1,078 | 31 | 186 |
+| Numbers per token (0398) | 802 | 17 | 138 |
+| `\u` escapes per token (0399) | **772** | 20 | 122 |
+
+Retired instructions, both tiers, against the build before 0398:
+
+| File | Change |
+|---|---:|
+| `twitter.json` | −3.7% |
+| `twitterescaped.json` (31,818 `\u`) | +17% |
+| `numbers.json` + 60,000 synthetic numbers | +21% |
+
+**Item 1 moves cost, by density.** Tier 1's region cost was per block, and skipped where a
+block had no number or escape. Tier 2's is per token. A number's check costs about 116
+instructions, against about 255 saved a block, so a file with more than about 2 numbers a
+block costs more. simdjson's stage 2 pays the same per token, but converts the value there too.
+
+**Item 2 does not apply as stated.** Its premise was that the UTF-8 errors are masks reduced to
+words only to be tested for "any". In `14-json` and `json_parser/json.bitlex`, the totals'
+values are word operations over values the lane plan makes as words: the UTF-8 check's
+`prev(…, 1)` of carried values, and a toggle's. ORing the totals on the vectors needs vector
+leaves, and there are none. The work that differs from simdjson's 72 instructions is those
+values being words: simdjson's `prev1` is a vector `ext` with the block before's bytes. The
+mechanism, the totals made one flag at the first, its edge part making them exactly, is kept
+as a patch outside the tree. It fires on no grammar here.
+
+**Item 3** (token ends without a second extract) is not done.
+
 ## Reproducing
 
 ```
