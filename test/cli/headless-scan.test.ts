@@ -775,16 +775,16 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
     expect(labels(explicit)).toEqual(labels(configured));
   });
 
-  it("shares cold tree facts between source discovery and explicit policy requests", () => {
+  it("shares cold tree facts and one tape for multiple placements of the same blob", () => {
     const root = checkout();
     const home = `${root}-home`;
     mkdirSync(home);
-    for (const path of ["src", "ignored"]) {
+    for (const path of ["src", "copy", "ignored"]) {
       mkdirSync(join(root, path));
-      writeFileSync(join(root, path, "call.py"), "x = f(1)\n");
+      writeFileSync(join(root, path, "call.py"), path === "ignored" ? "x = g(9)\n" : "x = f(1)\n");
     }
     writeFileSync(join(root, ".rerailignore"), "ignored/\n");
-    git(root, "add", ".rerailignore", "src/call.py", "ignored/call.py");
+    git(root, "add", ".rerailignore", "src/call.py", "copy/call.py", "ignored/call.py");
     git(root, "commit", "-qm", "source and ignored tree");
     const policy = join(home, "walk.rr");
     writeFileSync(policy, `
@@ -807,17 +807,27 @@ Seen(@place(p, 1)) :- git_tree_file(_, _, p, _, _), git_tree_walk_complete(_, _)
       });
       console.log(JSON.stringify(report));
     `;
-    const profile = join(home, "profile");
-    const report = JSON.parse(execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-", root, home, policy], {
-      input: script, encoding: "utf8", env: { ...process.env, RERAIL_PROFILE: profile },
-    })) as ScanReport;
-    expect(report.status, JSON.stringify(report.failures)).toBe("completed");
-    expect(report.violations.filter(row => row.code === "Call").map(row => row.path)).toEqual(["src/call.py"]);
-    expect(report.violations).toContainEqual(expect.objectContaining({ code: "Seen", path: "ignored/call.py" }));
-    const uniqueSubtrees = new Set(git(root, "ls-tree", "-d", "-r", "HEAD").split("\n").map(row => row.split(/\s+/u)[2]));
-    const trace = readFileSync(join(profile, "profile.txt"), "utf8");
-    expect(Number(trace.match(/^\s*count\s+(\d+)\s+git\.tree_decodes$/mu)?.[1])).toBe(1 + uniqueSubtrees.size);
-  });
+    const measure = (directory: string) => {
+      const runHome = join(home, directory);
+      const profile = join(runHome, "profile");
+      const report = JSON.parse(execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-", root, runHome, policy], {
+        input: script, encoding: "utf8",
+        env: { ...process.env, RERAIL_PROFILE: profile, RERAIL_CONTENT_STORE_PATH: join(runHome, "content.sqlite") },
+      })) as ScanReport;
+      expect(report.status, JSON.stringify(report.failures)).toBe("completed");
+      expect(report.violations.filter(row => row.code === "Call").map(row => row.path).sort()).toEqual(["copy/call.py", "src/call.py"]);
+      expect(report.violations).toContainEqual(expect.objectContaining({ code: "Seen", path: "ignored/call.py" }));
+      const uniqueSubtrees = new Set(git(root, "ls-tree", "-d", "-r", "HEAD").split("\n").map(row => row.split(/\s+/u)[2]));
+      const trace = readFileSync(join(profile, "profile.txt"), "utf8");
+      expect(Number(trace.match(/^\s*count\s+(\d+)\s+git\.tree_decodes$/mu)?.[1])).toBe(1 + uniqueSubtrees.size);
+      return Number(trace.match(/^\s*count\s+(\d+)\s+source_tape\.parses$/mu)?.[1]);
+    };
+    const shared = measure("shared");
+    writeFileSync(join(root, "copy/call.py"), "x = f(2)\n");
+    git(root, "add", "copy/call.py");
+    git(root, "commit", "-qm", "separate blobs for both placements");
+    expect(measure("distinct")).toBe(shared + 1);
+  }, 30_000);
 
   it("reopens the store after registry and parser version changes", () => {
     const root = checkout();

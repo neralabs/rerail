@@ -5119,6 +5119,11 @@ fn run_observed(
     let partial_hits = std::sync::atomic::AtomicUsize::new(0);
     // The file-local program pruned to each set of relations partial hits miss (`cone_of`), made once a run.
     let cones: parking_lot::Mutex<HashMap<BTreeSet<String>, Arc<lower::Lowered>>> = parking_lot::Mutex::new(HashMap::new());
+    // A corpus's builders use one dialect, parser build and tape format. Within
+    // this run only the bytes vary. The durable store still uses the full tape key.
+    type BuiltSource = (Arc<core::Facts>, Option<crate::code_rule_dsl::tape::TapeDoc>);
+    let built_sources = crate::content_store::working_set::WorkingSet::default();
+    let claims: [parking_lot::Mutex<()>; 64] = std::array::from_fn(|_| parking_lot::Mutex::new(()));
     let build_doc = |d: &i64, path: &String, module: Option<Arc<str>>, unbuilt: Unbuilt| -> Result<(Option<memo::Content>, Option<[u8; 32]>, syntax::Document)> {
         let Unbuilt { text: source, content: source_id, digest, tape, partial } = unbuilt;
         // The content's digest, which names its memo entry: the writer is given it, not left to read it (decision 0104).
@@ -5147,39 +5152,45 @@ fn run_observed(
             return Ok((source_id, content_digest, syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts, guest: None, module, tape: None }));
         }
         let file = core::Source { language: label.to_owned(), source: Arc::new(source) };
-        // Tapes kept across runs where the run has the persistent store (`tape_cache`).
-        let built = match &tapes {
-            // The closure sees `&tapes`, not that it is `None` without `tape-cache`: said here so the store's
-            // tape and source frames are not linked.
-            // In the waves no SQL is read or written (decision 0104): the tape was found before the first wave, or the
-            // file is parsed and its source and tape are the writer's, behind the run; the manifest names the sources
-            // it stores (`late_sources`).
-            Some(cache) if cfg!(feature = "tape-cache") => core::build_in_wave_with_tape(&file, cache, digest, tape.as_ref(), true, keep_tapes),
-            Some(_) => unreachable!("no tape cache without `tape-cache`"),
-            None => core::build_with_tape(&file, keep_tapes),
+        let source_digest = digest.unwrap_or_else(|| {
+            use sha2::{Digest as _, Sha256};
+            Sha256::digest(file.source.as_bytes()).into()
+        });
+        // A claim spans the lookup and construction. Other paths can use the
+        // completed tape even before the wave's writer publishes it.
+        let held = {
+            let _claim = claims[usize::from(source_digest[0]) % claims.len()].lock();
+            if let Some(held) = built_sources.tape(source_digest) {
+                held.downcast::<BuiltSource>().expect("the corpus's built source")
+            } else {
+                // No SQL during the waves. Use the frame read before the first
+                // wave, or send the newly built tape to the writer (0104).
+                let (built, tape) = match &tapes {
+                    Some(cache) if cfg!(feature = "tape-cache") => core::build_in_wave_with_tape(&file, cache, Some(source_digest), tape.as_ref(), true, keep_tapes),
+                    Some(_) => unreachable!("no tape cache without `tape-cache`"),
+                    None => core::build_with_tape(&file, keep_tapes),
+                }.map_err(|e| Error::Plan(format!("{path}: {e:?}")))?;
+                let Built::Facts(facts) = built else { return Err(Error::Plan(format!("{path} did not parse"))) };
+                let bytes = facts.tape_bytes() + facts.source.len() + std::mem::size_of::<BuiltSource>();
+                let result = Arc::new((Arc::new(facts), tape));
+                built_sources.put_tape(source_digest, result.clone(), bytes);
+                result
+            }
         };
-        // The tape is kept beside the facts only where the program runs matchers over it (decision 0106).
-        let (built, tape) = match built {
-            Ok((built, tape)) => (Ok(built), tape),
-            Err(e) => (Err(e), None),
-        };
-        let facts = match built.map_err(|e| Error::Plan(format!("{path}: {e:?}")))? {
-            Built::Facts(f) => Arc::new(f),
-            Built::Unparsed => return Err(Error::Plan(format!("{path} did not parse"))),
-        };
+        let (facts, tape) = held.as_ref();
         if let Some(references) = &references {
             // W's reference graph parses the file again with tree-sitter and summarizes it in Rust: work with no
             // device form, named apart from the tape and facts it sits beside.
             let _refs = crate::code_rule_dsl::logic::profile::span(|| "W's reference graph (tree-sitter again)".into());
-            references.add(*d as u32, path, &file.source, &facts)?;
+            references.add(*d as u32, path, &file.source, facts)?;
         }
         // The tape, in the file's context: kept only for a program that reads W's values, f-string trees or string
         // annotations off it, or runs matchers over it (decision 0106).
-        let tape = tape.map(|doc| (doc, Arc::new(file) as Arc<dyn crate::code_rule_dsl::facts::core::SourceFile>));
+        let tape = tape.clone().map(|doc| (doc, Arc::new(file) as Arc<dyn crate::code_rule_dsl::facts::core::SourceFile>));
         let digest_span = crate::code_rule_dsl::logic::profile::span(|| "digest".into());
-        let digest = core::digest(&facts);
+        let digest = core::digest(facts);
         drop(digest_span);
-        Ok((source_id, content_digest, syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts, guest: None, module, tape }))
+        Ok((source_id, content_digest, syntax::Document { key: *d as u32, path: path.clone(), core: format!("/c#core:{path}"), digest, facts: Arc::clone(facts), guest: None, module, tape }))
     };
     // Files resolved a window at a time (`resolve`), so a window's sources are all the builder holds unparsed: one
     // window at a time, in order, each a job of its own, and each file's tree and facts then built as a job.

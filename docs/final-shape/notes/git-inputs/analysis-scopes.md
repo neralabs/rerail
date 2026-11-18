@@ -107,6 +107,10 @@ The cached result selects the grammar from these entries. Files with the
 same entries can use the same classification. A file without a match uses
 the empty set of entries. An unrelated registry entry leaves the key intact.
 
+Concurrent requests for the same source bytes share a tape build.
+The source phase retains recent builds within the existing memory budget.
+Each path still has its own document and module facts.
+
 The Git view stays pinned during a run. Different revisions can use the same
 cache space, provided the engine compares their input facts before it reuses
 derived rows. Each report uses the inputs and source view of its own run.
