@@ -95,16 +95,6 @@ pub fn open(path: &PathBuf) -> rusqlite::Result<rusqlite::Connection> {
     Ok(db)
 }
 
-/// A program's sums are halved past this many evaluations: its rate follows its recent runs (decision 0334).
-const RATE_EVALUATIONS: i64 = program_steps::RATE_EVALUATIONS as i64;
-
-/// Each program's measured steps per unit of size (decision 0334), for its tasks' predictions.
-fn read_program_rates(db: &rusqlite::Connection) -> rusqlite::Result<Vec<(String, f64, f64, u64)>> {
-    let mut st = db.prepare("SELECT program, steps, size, evaluations FROM program_steps WHERE size > 0 AND evaluations > 0")?;
-    let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, f64>(1)?, r.get::<_, f64>(2)?, r.get::<_, i64>(3)?)))?;
-    Ok(rows.filter_map(Result::ok).map(|(program, steps, size, evaluations)| (program, steps, size, evaluations as u64)).collect())
-}
-
 /// While it lives, this thread's writes to the statistics' file are not faults of the warm check: they are one of
 /// the writes a warm run may make (`profile::WARM_WRITES_ALLOWED`).
 fn writing() -> crate::code_rule_dsl::logic::profile::WarmScope {
@@ -593,7 +583,6 @@ pub fn start() {
         STARTED_ONCE.store(true, std::sync::atomic::Ordering::Release);
         sql_plans::enable();
         rerail_accel::score::keep_samples(true);
-        program_steps::keep(true);
         // The first price asked waits for the read, which it begins if the run did not (`ready`).
         rerail_accel::price::before_first_price(ready);
         program_steps::keep(true);
