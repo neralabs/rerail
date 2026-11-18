@@ -8,7 +8,9 @@
  * shows the kept one and the new one serves the next, or, in a process that answers once (the CLI), that status waits
  * for it, as every status did before. A listing of open pull requests starts from the kept reading under that age
  * while the hosts file has not moved, else reads `gh` first; a scan always reads it afresh. No timer runs: the age is
- * read only when a status or a listing asks. Nothing is kept while Merge Assist is off.
+ * read only when a status or a listing asks. Each reading a status shows says how long until a status reads `gh` again
+ * (`readAgainInMs`), counted on this process's clock, so a page can ask then whatever its own clock says. Nothing is kept
+ * while Merge Assist is off.
  */
 import { z } from "zod";
 import { mergeAssistEnabled } from "../../engine/catalog/repository-registry.js";
@@ -52,8 +54,14 @@ export interface SignInReadsOptions {
   readonly stopped: () => boolean;
 }
 
-function shownOf(kept: Reading): ShownReadiness {
-  return { ...kept.readiness, readAt: isoSeconds(kept.at) };
+/** How long a reading stands before a status reads `gh` again: five minutes, or one while `gh` could not tell. */
+function reuseOf(kept: Reading): number {
+  return kept.readiness.state === "unavailable" ? GITHUB_UNAVAILABLE_MS : GITHUB_READINESS_MS;
+}
+
+/** The reading as a status shows it at `now`: what `gh` said, when, and how long until it is read again (0 once due). */
+function shownOf(kept: Reading, now: number): ShownReadiness {
+  return { ...kept.readiness, readAt: isoSeconds(kept.at), readAgainInMs: Math.max(0, kept.at + reuseOf(kept) - now) };
 }
 
 /** What `file` answers if it answers before `by` settles, else undefined: nothing waits on a stat past `by`. */
@@ -144,8 +152,7 @@ export class SignInReads {
 
   /** Whether the kept reading is as old as `gh`'s reuse: five minutes, or one while `gh` could not tell. */
   #due(kept: Reading): boolean {
-    const reuse = kept.readiness.state === "unavailable" ? GITHUB_UNAVAILABLE_MS : GITHUB_READINESS_MS;
-    return this.#options.now() - kept.at >= reuse;
+    return this.#options.now() - kept.at >= reuseOf(kept);
   }
 
   /**
@@ -153,13 +160,13 @@ export class SignInReads {
    * answers once waits for it.
    */
   async #rereadIfDue(repositoryKey: string, kept: Reading): Promise<ShownReadiness> {
-    if (!this.#due(kept)) return shownOf(kept);
+    if (!this.#due(kept)) return shownOf(kept, this.#options.now());
     const reading = this.read(repositoryKey);
     if (this.#options.answersOnce === true) return await reading;
     void reading.catch((error: unknown) => {
       process.stderr.write(`rerail: Merge Assist could not keep gh's sign-in: ${error instanceof Error ? error.message : String(error)}\n`);
     });
-    return shownOf(kept);
+    return shownOf(kept, this.#options.now());
   }
 
   /**
@@ -176,7 +183,7 @@ export class SignInReads {
     const reading: Reading = { at: this.#options.now(), readiness, environment: stamp.environment, file: file ?? UNANSWERED };
     this.#write(repositoryKey, readings => ({ at: reading.at, readiness, readings: withReading(readings, reading) }));
     if (file === undefined) this.#keepLate(repositoryKey, reading, stamp.file);
-    return shownOf(reading);
+    return shownOf(reading, reading.at);
   }
 
   /** The late stat's answer in place of `unanswered`; one that cannot be kept leaves the next status to read `gh` again. */

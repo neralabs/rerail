@@ -25,6 +25,7 @@ import { ApiError, invokeOperation, type Operation, type RerailApiStores } from 
 import { eventRecordSchema, auditRecordSchema, presentationPreferenceSchema } from "./operations.js";
 import { deciderSchema, effectiveRuleSchema, libraryRuleRecordSchema, repositorySummarySchema } from "./repository-contracts.js";
 import { checkoutAt, checkoutRuleCatalog } from "./repository-operations.js";
+import { mountChangeStream } from "./change-stream.js";
 import { sessionResponseSchema, sessionSummarySchema } from "./session-contracts.js";
 
 // Named components give the generated client stable type names, and break the recursive
@@ -279,6 +280,8 @@ export function createRerailApi(
     }
     await next();
   });
+
+  mountChangeStream(app, stores, instanceSalt);
 
   for (const operation of operations) {
     const route = createRoute({

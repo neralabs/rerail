@@ -423,6 +423,8 @@ The daemon owns the resident kernel and exposes the database over HTTP, OpenAPI 
 - **`GET /openapi.json`**: OpenAPI 3.1 for `/api`.
 - **`POST /mcp`**: MCP Streamable HTTP, each `/api` operation a same-named tool.
 - **`/api/*`**: the operations below.
+- **`GET /api/changes`**: the server-sent event stream the dashboard follows instead of reading everything every few
+  seconds. Not an operation, so neither MCP nor the OpenAPI document lists it.
 - **Anything else**: the bundled UI.
 
 <details>
@@ -432,6 +434,21 @@ The daemon writes rules and work links; the shared runtime records harness event
 
 - `/healthz` reports version, pid, database path and presence, kernel status, `installedAt`, and `model`: bundled model files checked once per process against `model/manifest.json`, `ok` or the problem and file. `healthy` means engine and model are ok; `status` only means the daemon answers.
 - `/mcp` is stateless and JSON-response. Non-POST gets `405 Allow: POST`; there is no SSE listener or transport session.
+- `/api/changes[?checkout=<path>]` stays open while the dashboard tab shows. Each message's data is a change token: it
+  is sent at once, again when any process's commit to the database becomes readable or a pack is installed or
+  removed, and every 5 s, so the page can tell a daemon that stopped answering from one with nothing to say; the
+  checkout's own rules and branches are read at that 5 s message, and a token that moved is sent once read. A message
+  named `conflicts` comes at each Merge Assist conflict event. The page reads again when the token moves: a single
+  commit at once, several in a row at most 5 s after the first. It also reads at a 5 s message once its activity
+  window has moved on, or while its Merge Assist page shows a scan running or gh signed out, missing or unavailable,
+  and, while that page shows gh signed in, when the status says the daemon reads gh again (`readAgainInMs`): that
+  status starts the read, and the page asks at most every 5 s until a status shows what gh said. A
+  failed read is tried again after 10 s, doubling to 30 s, and the read that answers again opens a new stream. A stream
+  that misses two 5 s messages before its first one, as behind a proxy or a scanner that holds streamed responses until
+  they end, makes the page read every 5 s until a stream brings a message, whatever earlier streams did. Behind such a
+  proxy the page shows Connecting… for those 12 s after it loads, and after a daemon restart reads nothing for the 12 s
+  after the read that found the daemon back. A browser without Web Locks, or a page that is not a secure context, holds
+  no stream and reads every 5 s. A daemon that stops closes the stream.
 - UI client-side routes fall back to `index.html`.
 
 Without the native addon the daemon still runs: `status`, `/healthz` and the UI header report the kernel unavailable, and transcripts stay readable. Model files can fail `model/manifest.json`; a clone without Git LFS has a pointer for `model.safetensors`. Then `rerail status` prints `Model: checksum mismatch (model.safetensors)` and exits 5, and `/healthz` reports it. The dashboard header turns red naming the file, and session attaches fail until the files are fetched and the daemon restarted.
@@ -484,7 +501,7 @@ Every operation is both an HTTP route under `/api` and an MCP tool of the same n
 | `presentation_preferences_remove` | `DELETE /api/presentation-preferences?repository=&host=` | Remove an override, so the next default applies; people only. |
 | `repository_audits_list` | `GET /api/repository-audits` | Internal testing; experimental. Each repository's `repositoryAudit` and latest `audit` summary with `violationCount`. |
 | `repository_audit_entries_list` | `GET /api/repository-audits/{auditId}/entries?kind=&mode=&code=&path=&q=` | Internal testing; experimental. Paged entries; `kind` `violation`/`failure`, `mode` the rule's mode. |
-| `merge_assist_get` | `GET /api/merge-assist?repository=&checkout=` | Internal testing; experimental: every `merge_assist_*` operation answers `404 experimental-off` unless the daemon runs with `RERAIL_EXPERIMENTAL_MERGE_ASSIST=1`. [Merge Assist](#merge-assist) for one checkout: on or off, the branch and base branch, `gh`'s readiness (`missing`, `signed-out`, `signed-in`, `not-github`, `unavailable` when its sign-in could not be read, `unchecked` while Merge Assist is off, when no `gh` runs) as `gh` last said it, with when (`readAt`; a status runs `gh` for it in its answer when none was read for the daemon's `gh` configuration folder and whether `GH_TOKEN` or `GITHUB_TOKEN` is set, or `gh`'s sign-in file changed since, and in the background, for the next read, once the reading is five minutes old, one minute while `gh` could not tell), whether a scan is running, the last scan (`lastScan`: when, how many branches and pull requests it compared, and what it could not read), the person's `settings`, and the in-flight `conflicts`, open ones not quiet first and then newest first, then the latest 20 dismissed (each with `quiet`, `summary`, the hook command's last answer, `hook`, and, once dismissed, `dismissal: { name, at }`; a dismissed one keeps no hunks). Reads only. |
+| `merge_assist_get` | `GET /api/merge-assist?repository=&checkout=` | Internal testing; experimental: every `merge_assist_*` operation answers `404 experimental-off` unless the daemon runs with `RERAIL_EXPERIMENTAL_MERGE_ASSIST=1`. [Merge Assist](#merge-assist) for one checkout: on or off, the branch and base branch, `gh`'s readiness (`missing`, `signed-out`, `signed-in`, `not-github`, `unavailable` when its sign-in could not be read, `unchecked` while Merge Assist is off, when no `gh` runs) as `gh` last said it, with when (`readAt`; a status runs `gh` for it in its answer when none was read for the daemon's `gh` configuration folder and whether `GH_TOKEN` or `GITHUB_TOKEN` is set, or `gh`'s sign-in file changed since, and in the background, for the next read, once the reading is five minutes old, one minute while `gh` could not tell) and `readAgainInMs`, how long until a status reads `gh` again, counted on the daemon's clock (0 once due, while that read runs), whether a scan is running, the last scan (`lastScan`: when, how many branches and pull requests it compared, and what it could not read), the person's `settings`, and the in-flight `conflicts`, open ones not quiet first and then newest first, then the latest 20 dismissed (each with `quiet`, `summary`, the hook command's last answer, `hook`, and, once dismissed, `dismissal: { name, at }`; a dismissed one keeps no hunks). Reads only. |
 | `merge_assist_settings_get` | `GET /api/merge-assist/settings?repository=&checkout=` | Internal testing; experimental. The person's Merge Assist settings for the checkout's repository: `{ hook }`, the conflict hook command `{ command, timeoutSeconds }` or null. Reads only; a coding agent may read them. |
 | `merge_assist_scan` | `POST /api/merge-assist/scan` | Internal testing; experimental. Find the checkout's in-flight conflicts now: overlapping changes with open pull requests, listed afresh through `gh`, and with branches checked out in other worktrees of the repository (recent remote-tracking branches when pull requests cannot be read). A coding agent may scan only its own checkout and the checkouts inside it. |
 | `merge_assist_settings_set` | `PUT /api/merge-assist/settings` | Internal testing; experimental. `{ enabled?, hook? }`, at least one: `enabled` turns Merge Assist on or off for the checkout's repository (off fires `closed` for every open conflict, then clears every checkout's conflicts, last scan and `gh` readiness; the settings stay); `hook` sets the conflict hook command, `{ command: string[], timeoutSeconds? }` (an argv array of 1–64 non-empty strings, run without a shell; 1–60 seconds, 10 by default), or `null` removes it. Answers the status. People only. |

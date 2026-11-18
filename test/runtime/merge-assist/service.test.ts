@@ -142,8 +142,9 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     expect(github.starts).toBe(starts + 2);
     github.release();
     await Promise.all([service.settled(), other.settled()]);
-    expect(on.readiness.github).toEqual({ state: "signed-in", login: "tbelanger", repository: "acme/app", readAt: "2026-11-03T14:00:00Z" });
-    expect([...within, ...later].map(status => status.readiness.github)).toEqual(Array.from({ length: 5 }, () => on.readiness.github));
+    expect(on.readiness.github).toEqual({ state: "signed-in", login: "tbelanger", repository: "acme/app", readAt: "2026-11-03T14:00:00Z", readAgainInMs: 5 * 60_000 });
+    // The same reading each time, with how long until a status reads gh again: 0 once due, while that read runs.
+    expect([...within, ...later].map(status => status.readiness.github)).toEqual([1_000, 1_000, 0, 0, 0].map(readAgainInMs => ({ ...on.readiness.github, readAgainInMs })));
   });
 
   it("shows a token GitHub refuses at the status after the one that finds the reading five minutes old, and that one waits on no gh", async () => {
@@ -168,8 +169,8 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     await service.settled();
     const next = await service.status(ws.repo);
     expect(github.starts).toBe(starts + 1);
-    expect([within, ...past].map(status => status.readiness.github)).toEqual([on.readiness.github, on.readiness.github, on.readiness.github]);
-    expect(next.readiness.github).toEqual({ state: "unavailable", login: null, repository: "acme/app", readAt: "2026-11-03T14:05:00Z" });
+    expect([within, ...past].map(status => status.readiness.github)).toEqual([1_000, 0, 0].map(readAgainInMs => ({ ...on.readiness.github, readAgainInMs })));
+    expect(next.readiness.github).toEqual({ state: "unavailable", login: null, repository: "acme/app", readAt: "2026-11-03T14:05:00Z", readAgainInMs: 60_000 });
   });
 
   it("keeps one reading per gh environment, so a CLI and a daemon whose token variables differ each find their own", async () => {
@@ -190,8 +191,8 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
       shown.push((await daemon.status(ws.repo)).readiness.github, (await cli()).readiness.github);
     }
     expect([daemonGh.readinessReads, shellGh.readinessReads]).toEqual([1, 1]);
-    expect(first.readiness.github).toEqual({ state: "signed-in", login: "jbarnes", repository: "acme/app", readAt: "2026-11-03T14:00:00Z" });
-    expect(shown).toEqual([1, 2, 3].flatMap(() => [on.readiness.github, first.readiness.github]));
+    expect(first.readiness.github).toEqual({ state: "signed-in", login: "jbarnes", repository: "acme/app", readAt: "2026-11-03T14:00:00Z", readAgainInMs: 5 * 60_000 });
+    expect(shown).toEqual([1, 2, 3].flatMap(minutes => [on, first].map(status => ({ ...status.readiness.github, readAgainInMs: (5 - minutes) * 60_000 }))));
   });
 
   it("keeps the readings of four gh environments, the one written longest ago dropped first", async () => {
@@ -245,7 +246,7 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     await service.status(ws.repo);
     await service.status(ws.repo);
     expect(github.readinessReads).toBe(reads + 2);
-    expect(stalled.map(status => status.readiness.github)).toEqual([on.readiness.github, on.readiness.github]);
+    expect(stalled.map(status => status.readiness.github)).toEqual([on, on].map(status => ({ ...status.readiness.github, readAgainInMs: 4 * 60_000 })));
   });
 
   it("starts a listing from the kept reading while it is under five minutes old and gh's hosts file holds, else reads gh's sign-in first", async () => {
@@ -268,7 +269,7 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     now += 60_000;
     expect(await listing()).toBe(true);
     expect(github.readinessReads).toBe(reads + 1);
-    expect((await ws.service({ github, now: () => now }).status(ws.repo)).readiness.github).toEqual({ state: "signed-out", login: null, repository: "acme/app", readAt: "2026-11-03T14:02:00Z" });
+    expect((await ws.service({ github, now: () => now }).status(ws.repo)).readiness.github).toEqual({ state: "signed-out", login: null, repository: "acme/app", readAt: "2026-11-03T14:02:00Z", readAgainInMs: 5 * 60_000 });
 
     // Five minutes after that reading, the next listing reads gh first.
     delete github.options.readiness;
@@ -286,7 +287,7 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     const reads = github.readinessReads;
 
     now += 60_000;
-    expect((await service.scan(ws.repo)).readiness.github).toEqual({ state: "signed-in", login: "tbelanger", repository: "acme/app", readAt: "2026-11-03T14:01:00Z" });
+    expect((await service.scan(ws.repo)).readiness.github).toEqual({ state: "signed-in", login: "tbelanger", repository: "acme/app", readAt: "2026-11-03T14:01:00Z", readAgainInMs: 5 * 60_000 });
     expect(github.readinessReads).toBe(reads + 1);
     github.options.signInStatStalls = true;
     expect(await ws.service({ github, now: () => now }).detectAfterEdit(ws.repo)).toBe(true);
@@ -297,6 +298,23 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     expect((await service.setEnabled(ws.repo, false)).readiness.github).toEqual({ state: "unchecked", login: null, repository: "acme/app", readAt: null });
     await service.setEnabled(ws.repo, true);
     expect(github.readinessReads).toBe(reads + 3);
+  });
+
+  it("says how long until it reads gh's sign-in again, on its own clock, so a page can ask then whatever its clock says", async () => {
+    const ws = await workspace({ remote: "https://github.com/acme/app.git" });
+    let now = Date.parse("2026-11-03T14:00:00Z");
+    const service = ws.service({ github: new FakeGithub(), now: () => now });
+    await service.setEnabled(ws.repo, true);
+
+    now += 4 * 60_000;
+    const reused = (await service.status(ws.repo)).readiness.github.readAgainInMs;
+    // Due: the status shows the kept reading and starts the read of gh, which the next status shows.
+    now += 60_000;
+    const due = (await service.status(ws.repo)).readiness.github.readAgainInMs;
+    await service.settled();
+    const readAgain = (await service.status(ws.repo)).readiness.github.readAgainInMs;
+
+    expect([reused, due, readAgain]).toEqual([60_000, 0, 5 * 60_000]);
   });
 
   it("says when gh could not tell, makes it a problem of the scan, and asks gh again past a minute without waiting for it", async () => {
@@ -326,10 +344,10 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     const next = await service.status(ws.repo);
     expect(github.starts).toBe(starts + 1);
     expect(JSON.parse(kept?.valueJson ?? "{}")).toMatchObject({ readiness: { state: "signed-in" } });
-    expect(status.readiness.github).toEqual({ state: "unavailable", login: null, repository: "acme/app", readAt: "2026-11-03T14:00:00Z" });
-    expect(past.map(shown => shown.readiness.github)).toEqual([within.readiness.github, within.readiness.github]);
-    expect(within.readiness.github).toEqual(status.readiness.github);
-    expect(next.readiness.github).toEqual({ state: "signed-in", login: "tbelanger", repository: "acme/app", readAt: "2026-11-03T14:01:00Z" });
+    expect(status.readiness.github).toEqual({ state: "unavailable", login: null, repository: "acme/app", readAt: "2026-11-03T14:00:00Z", readAgainInMs: 60_000 });
+    expect(past.map(shown => shown.readiness.github)).toEqual([0, 0].map(readAgainInMs => ({ ...within.readiness.github, readAgainInMs })));
+    expect(within.readiness.github).toEqual({ ...status.readiness.github, readAgainInMs: 1_000 });
+    expect(next.readiness.github).toEqual({ state: "signed-in", login: "tbelanger", repository: "acme/app", readAt: "2026-11-03T14:01:00Z", readAgainInMs: 5 * 60_000 });
   });
 
   it("shows a gh auth logout, login or switch made outside Rerail at the next status read, and runs gh only then", async () => {
@@ -357,10 +375,10 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     now += 5 * 60_000 - 1_000;
     const later = await Promise.all([service.status(ws.repo), ws.service({ github, now: () => now }).status(ws.repo)]);
     expect(github.readinessReads).toBe(reads + 3);
-    expect(loggedOut.readiness.github).toEqual({ state: "signed-out", login: null, repository: "acme/app", readAt: "2026-11-03T14:00:01Z" });
-    expect(loggedIn.readiness.github).toEqual({ state: "signed-in", login: "jbarnes", repository: "acme/app", readAt: "2026-11-03T14:00:02Z" });
-    expect(switched.readiness.github).toEqual({ state: "signed-in", login: "tbelanger", repository: "acme/app", readAt: "2026-11-03T14:00:03Z" });
-    expect(later.map(shown => shown.readiness.github)).toEqual([switched.readiness.github, switched.readiness.github]);
+    expect(loggedOut.readiness.github).toEqual({ state: "signed-out", login: null, repository: "acme/app", readAt: "2026-11-03T14:00:01Z", readAgainInMs: 5 * 60_000 });
+    expect(loggedIn.readiness.github).toEqual({ state: "signed-in", login: "jbarnes", repository: "acme/app", readAt: "2026-11-03T14:00:02Z", readAgainInMs: 5 * 60_000 });
+    expect(switched.readiness.github).toEqual({ state: "signed-in", login: "tbelanger", repository: "acme/app", readAt: "2026-11-03T14:00:03Z", readAgainInMs: 5 * 60_000 });
+    expect(later.map(shown => shown.readiness.github)).toEqual([switched, switched].map(status => ({ ...status.readiness.github, readAgainInMs: 1_000 })));
   });
 
   it("asks gh again for a missing gh or a sign-out past five minutes, in the answer of a process that answers once", async () => {
@@ -386,10 +404,10 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     await service.settled();
     const next = await service.status(ws.repo);
     expect(github.readinessReads).toBe(reads + 2);
-    expect(within.readiness.github).toEqual({ state: "missing", login: null, repository: "acme/app", readAt: "2026-11-03T14:00:00Z" });
-    expect(once.readiness.github).toEqual({ state: "signed-out", login: null, repository: "acme/app", readAt: "2026-11-03T14:05:00Z" });
-    expect(past.readiness.github).toEqual(once.readiness.github);
-    expect(next.readiness.github).toEqual({ state: "signed-out", login: null, repository: "acme/app", readAt: "2026-11-03T14:10:00Z" });
+    expect(within.readiness.github).toEqual({ state: "missing", login: null, repository: "acme/app", readAt: "2026-11-03T14:00:00Z", readAgainInMs: 1_000 });
+    expect(once.readiness.github).toEqual({ state: "signed-out", login: null, repository: "acme/app", readAt: "2026-11-03T14:05:00Z", readAgainInMs: 5 * 60_000 });
+    expect(past.readiness.github).toEqual({ ...once.readiness.github, readAgainInMs: 0 });
+    expect(next.readiness.github).toEqual({ state: "signed-out", login: null, repository: "acme/app", readAt: "2026-11-03T14:10:00Z", readAgainInMs: 5 * 60_000 });
   });
 
   it("reads gh once more for a reading an older build kept without the stamp of gh's sign-in", async () => {
@@ -422,7 +440,7 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     github.release();
     await service.settled();
     const after = await ws.service({ github: new FakeGithub({ readinessError: true }), now: () => now }).status(ws.repo);
-    expect(after.readiness.github).toEqual(status.readiness.github);
+    expect(after.readiness.github).toEqual({ ...status.readiness.github, readAgainInMs: 0 });
   });
 
   it("reads gh's sign-in for a status only while none is kept, and once for listings at the same time", async () => {

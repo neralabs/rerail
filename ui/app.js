@@ -1,9 +1,9 @@
 /**
  * Entry point. One `render()` reconciles every surface from the store: the top bar and sidebar (`frame/`), the page
  * in `#content` (a view from `views/`, or the page shown in its place) and the sheet in `#panel`. User actions mutate
- * `ui` (or optimistically `data`) and invalidate; the poll loop renders when a fetch changed something. Nothing here
- * rebuilds a list wholesale. A click runs the `data-act` of its region: the page's own actions inside `#content`, the
- * sheet's inside `#panel`, the frame's elsewhere; then the common ones (`actions.js`).
+ * `ui` (or optimistically `data`) and invalidate; the page renders after each read and each message of the daemon's
+ * change stream. Nothing here rebuilds a list wholesale. A click runs the `data-act` of its region: the page's own
+ * actions inside `#content`, the sheet's inside `#panel`, the frame's elsewhere; then the common ones (`actions.js`).
  */
 import { setAttr } from "./dom.js";
 import { ui } from "./state.js";
@@ -12,14 +12,11 @@ import { commonActions } from "./actions.js";
 import { afterPoll, closePanel, connectShell, hideToast, invalidate, loadTheme, startRouting, syncUrl } from "./shell.js";
 import { renderSheet, sheetActions } from "./sheet.js";
 import { VIEWS, currentNeeds, pageKey, pageModule } from "./views/index.js";
-import { closeRepoMenu, renderStatus, renderTopbar, repoMenuOpen, topbarActions, trackTopbarHeight } from "./frame/topbar.js";
+import { closeRepoMenu, renderTopbar, repoMenuOpen, topbarActions, trackTopbarHeight } from "./frame/topbar.js";
 import { renderSidenav } from "./frame/sidenav.js";
 
 const $ = id => document.getElementById(id);
 const content = $("content"), panel = $("panel"), sidenav = $("sidenav");
-
-/** The status ages between polls ("data from 2m ago"). */
-const STATUS_EVERY_MS = 5000;
 
 function render() {
   const key = pageKey();
@@ -94,7 +91,6 @@ window.addEventListener("scroll", () => {
 
 loadTheme();
 trackTopbarHeight();
-setInterval(renderStatus, STATUS_EVERY_MS);
 setNeeds(currentNeeds);
 startRouting();
 startPolling(afterPoll);

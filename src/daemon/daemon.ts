@@ -33,6 +33,7 @@ import { createRerailMcpHandler } from "../api/mcp.js";
 import { operations } from "../api/operations.js";
 import { DatabaseApiStores } from "../api/stores.js";
 import { eventAnswerFacts } from "../api/event-answer.js";
+import type { ChangeFeedOptions } from "../api/change-feed.js";
 import { nativeHealth as loadNativeHealth, type NativeHealth } from "../engine/native/native.js";
 import { modelStatus } from "../engine/native/model-status.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
@@ -66,9 +67,10 @@ const API_BODY_LIMIT_BYTES = 4 * 1024 * 1024;
 const NATIVE_BODY_LIMIT_BYTES = 256 * 1024 * 1024;
 /**
  * How long a client has to send its headers, then its whole request. Both bound receiving the request only, never how
- * long a handler takes to answer, and `/mcp` answers each POST with one JSON body (no SSE stream: `mcp.ts`), so no
- * response is cut short. Dashboard polls are small GETs; between them a kept-alive connection is closed by Node's
- * `keepAliveTimeout`, not these. Loopback carries the largest native body in well under 60 seconds.
+ * long a handler takes to answer, so no response is cut short: `/mcp` answers each POST with one JSON body (no SSE
+ * stream: `mcp.ts`), and the dashboard's change stream (`GET /api/changes`) is a GET received at once and answered for
+ * as long as the page shows. Between requests a kept-alive connection is closed by Node's `keepAliveTimeout`, not
+ * these. Loopback carries the largest native body in well under 60 seconds.
  */
 const HTTP_TIMEOUTS = { headersTimeout: 10_000, requestTimeout: 60_000 } as const;
 const INTERNAL_ERROR_MESSAGE = "The Rerail daemon could not answer this request; daemon.log in the Rerail home has the cause.";
@@ -79,6 +81,8 @@ export interface RerailDaemonOptions {
   remoteSink?: false | { intervalMs: number };
   /** False keeps the hourly forgetting of removed checkouts off ({@link startCheckoutPruning}); tests may shorten its interval. */
   checkoutPruning?: false | { intervalMs: number };
+  /** Internal testing: how the dashboard's change stream watches and beats; tests drive its notices and set its beat. */
+  changeFeed?: ChangeFeedOptions;
   /** Defaults to `$RERAIL_HOME/rerail.sqlite`; embedding and tests pass their own. */
   databasePath?: string;
   /** Checkout native sessions address; defaults to the current directory. The API serves every repository. */
@@ -576,6 +580,7 @@ export class RerailDaemon {
       // reports a failure itself, and its close waits for the open.
       resumeSession: sessionId => void started.engineService?.resumeSession(sessionId),
       ...sharedMergeAssist,
+      changeFeed: options.changeFeed,
     });
     try {
       // One walk of each repository's other worktrees for the sessions of both servers: hook sessions and native OMP and

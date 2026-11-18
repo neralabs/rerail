@@ -45,18 +45,61 @@ async function refusal(response) {
 }
 
 /**
- * A failed read throws an Error carrying the answer's `status`, and the API's error `code` and `apiMessage` (each
- * `null` without one). Its `message` stays "<path> answered <status>", which callers match.
+ * What a read that did not answer OK throws: the 401's `AccessRequired`, else an Error carrying the answer's `status`,
+ * and the API's error `code` and `apiMessage` (each `null` without one), its `message` "<path> answered <status>".
  */
+async function refused(path, response) {
+  if (response.status === 401) return accessRequired();
+  return Object.assign(new Error(`${path} answered ${response.status}`), { status: response.status, ...await refusal(response) });
+}
+
+/** A failed read throws as `refused` says; callers match its `message`. */
 export async function get(path, { etag } = {}) {
   const response = await fetch(apiUrl(path), {
     headers: { ...accessHeaders(), ...(etag === undefined ? {} : { "if-none-match": etag }) },
   });
   const nextEtag = response.headers.get("etag") ?? undefined;
   if (response.status === 304) return { status: 304, etag: nextEtag, body: undefined };
-  if (response.status === 401) throw accessRequired();
-  if (!response.ok) throw Object.assign(new Error(`${path} answered ${response.status}`), { status: response.status, ...await refusal(response) });
+  if (!response.ok) throw await refused(path, response);
   return { status: response.status, etag: nextEtag, body: await response.json() };
+}
+
+/** One server-sent event's lines, up to the blank line that ends it, as `{ event, data }`; `event` "message" by default. */
+export function parseMessage(text) {
+  let event = "message";
+  const data = [];
+  for (const line of text.split("\n")) {
+    if (line.startsWith("event: ")) event = line.slice("event: ".length);
+    else if (line.startsWith("data: ")) data.push(line.slice("data: ".length));
+  }
+  return { event, data: data.join("\n") };
+}
+
+/** Hands on each whole message in `text`, in order; returns the start of a message not whole yet. */
+function deliver(text, onMessage) {
+  let rest = text;
+  for (let end = rest.indexOf("\n\n"); end !== -1; end = rest.indexOf("\n\n")) {
+    onMessage(parseMessage(rest.slice(0, end)));
+    rest = rest.slice(end + 2);
+  }
+  return rest;
+}
+
+/**
+ * Follow a stream of server-sent events the daemon holds open (its change stream, `GET /api/changes`), through
+ * `fetch` because `EventSource` cannot send the access header; `onMessage` gets each message as it arrives. Resolves
+ * when the daemon ends it, rejects when it was refused (as `get` rejects) or broke, or once `signal` ends it here.
+ */
+export async function follow(path, onMessage, signal) {
+  const response = await fetch(apiUrl(path), { headers: accessHeaders(), signal });
+  if (!response.ok) throw await refused(path, response);
+  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  let rest = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) return;
+    rest = deliver(rest + value, onMessage);
+  }
 }
 
 /** `signal`, when given, aborts the request: `send` then rejects with the signal's reason. */
