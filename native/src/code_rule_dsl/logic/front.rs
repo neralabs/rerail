@@ -740,6 +740,27 @@ pub fn declared(prog: &Program) -> Result<(), Error> {
     prog.rules.iter().try_for_each(|rule| rule_declared(prog, rule))
 }
 
+/// `declared`, of a version: each rule's reads declared, and each atom with its relation's columns.
+pub fn declared_on(v: &crate::code_rule_dsl::logic::program_image::Version) -> Result<(), Error> {
+    use crate::code_rule_dsl::logic::program_image::handles::Lit;
+    for rule in v.rules() {
+        let head = v.rel_name(rule.head().rel());
+        let atoms = || {
+            rule.body().filter_map(|l| match l.view() {
+                Lit::Atom(a) | Lit::Agg { atom: a, .. } => Some(a),
+                _ => None,
+            })
+        };
+        for a in atoms() {
+            read_declared(v, v.rel_name(a.rel()), head)?;
+        }
+        for a in std::iter::once(rule.head()).chain(atoms()) {
+            columns_declared(v, v.rel_name(a.rel()), a.arity(), head)?;
+        }
+    }
+    Ok(())
+}
+
 /// `declared` for one rule: every relation it reads is declared in `prog` (`read_declared`), and each atom of it has
 /// the columns its relation declares (`columns_declared`).
 pub fn rule_declared(prog: &Program, rule: &Rule) -> Result<(), Error> {

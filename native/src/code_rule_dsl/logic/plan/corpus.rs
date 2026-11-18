@@ -353,7 +353,7 @@ pub struct Report {
 /// reads what the run read, and derives nothing. A program whose inputs come from elsewhere too (declarations,
 /// earlier phases, an explicit batch) is never judged unchanged.
 /// `graphs`: each program text's include graph's digest, as the run found it (`run_handed`).
-pub(crate) fn unchanged(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&front::Program>, root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)], summary: Option<Summary>) -> Result<bool> {
+pub(crate) fn unchanged(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)], summary: Option<Summary>) -> Result<bool> {
     Ok(changes_of(programs, graphs, read, root, typing, options, consulted, summary)?.is_some_and(|c| c.is_empty()))
 }
 
@@ -366,7 +366,7 @@ pub(crate) struct Summary(front::Program);
 
 impl Summary {
     /// The summary of the program `programs` combine to, as `changes` combines them (the root's settings in each).
-    pub(crate) fn of(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&front::Program>, root: &Path, options: &serde_json::Value) -> Result<Summary> {
+    pub(crate) fn of(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, options: &serde_json::Value) -> Result<Summary> {
         Ok(Self::from_program(&combined_with_settings(programs, graphs, read, root, options)?))
     }
 
@@ -434,7 +434,7 @@ impl Summary {
 /// The program `programs` combine to, as `changes` combines them: the root's settings (`<root>/rerail.env`, the `env`
 /// option) as the rows the run adds (decision 0249), the texts as the run's keys read them, messages masked
 /// (`texts_digest`, decision 0225 §3).
-fn combined_with_settings(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&front::Program>, root: &Path, options: &serde_json::Value) -> Result<front::Program> {
+fn combined_with_settings(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, options: &serde_json::Value) -> Result<front::Program> {
     let flags: Vec<String> = options.get("env").and_then(|v| v.as_array()).into_iter().flatten().filter_map(|v| v.as_str().map(str::to_owned)).collect();
     let settings = crate::code_rule_dsl::logic::settings::settings(root, &flags).map_err(Error::Plan)?;
     let masked = masked(programs);
@@ -445,14 +445,14 @@ fn combined_with_settings(programs: &[&str], graphs: &[Option<[u8; 32]>], read: 
 /// consulted did: the same documents, by path, and every request's answer as it was (`World::still`). `None` when
 /// anything else changed, or the run cannot be compared (its documents named, typing, phases read). `read`: the
 /// program the run was handed (`run_read`), whose `programs` are its key, not a text to read.
-pub(crate) fn changes(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&front::Program>, root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)]) -> Result<Option<Vec<String>>> {
+pub(crate) fn changes(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)]) -> Result<Option<Vec<String>>> {
     changes_of(programs, graphs, read, root, typing, options, consulted, None)
 }
 
 /// `changes`, reading the program's parts off `summary` where one is given (the whole-run cutoff's record), else off
 /// the program combined again.
 #[allow(clippy::too_many_arguments)]
-fn changes_of(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&front::Program>, root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)], summary: Option<Summary>) -> Result<Option<Vec<String>>> {
+fn changes_of(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, root: &Path, typing: &Typing, options: &serde_json::Value, consulted: &[(String, String, String)], summary: Option<Summary>) -> Result<Option<Vec<String>>> {
     let trace = |why: String| if std::env::var_os("RERAIL_REUSE_TRACE").is_some() { eprintln!("rerail: changes: {why}"); };
     // A run given no file of its own (`inputFiles: []`, a phase's: phase 1 loads its documents by request) has no
     // listed documents to compare; what it loaded is among its requests, checked below. Other named files are not
@@ -763,7 +763,7 @@ pub struct Texts<'a> {
     /// Phase 0's graphs for the texts that include something, one run of `bootstrap.rr` for all of them.
     pub derived: Vec<Arc<phase0::Graph>>,
     /// The program the run was handed, already read (`run_read`): the run holds it, and `programs` is its key.
-    pub read: Option<&'a front::Program>,
+    pub read: Option<&'a Arc<crate::code_rule_dsl::logic::program_image::Version>>,
     /// The source texts of the run inside which this one runs (phase 1's: the outer run's, decision 0300), which its
     /// builder borrows.
     pub sources: Option<&'a texts::Sources>,
@@ -774,9 +774,9 @@ pub struct Texts<'a> {
 impl<'a> Texts<'a> {
     /// A program already read, keyed by `key` (`read_key`): it includes nothing to derive a graph of, and its names
     /// are its own (`rr::TextNames::of_program`), as a print of it had them.
-    pub fn of_read(key: &'a [&'a str], read: &'a front::Program) -> Self {
+    pub fn of_read(key: &'a [&'a str], read: &'a Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Self {
         let names = std::cell::OnceCell::new();
-        let _ = names.set(vec![crate::code_rule_dsl::logic::rr::TextNames::of_program(read)]);
+        let _ = names.set(vec![crate::code_rule_dsl::logic::rr::TextNames::of_program(&**read)]);
         Texts { programs: key, graphs: vec![None], derived: Vec::new(), read: Some(read), sources: None, reads: std::cell::RefCell::new(Vec::new()), names }
     }
 
@@ -805,7 +805,7 @@ impl<'a> Texts<'a> {
 /// (`added::Added`), with the digest of its texts, messages masked (`masked`, decision 0225 §3), and those rows
 /// (`texts_digest`) it is kept by: a run keys what it prepares by the same digest. `read` is the program the one text
 /// prints from, already lowered (`Texts::read`): the program itself, not its text lowered again.
-fn combine_keyed(programs: &[&str], masked: &[&str], graphs: &[Option<[u8; 32]>], extra: &added::Added, read: Option<&front::Program>, lists: &front::Lists) -> Result<(front::Program, [u8; 32])> {
+fn combine_keyed(programs: &[&str], masked: &[&str], graphs: &[Option<[u8; 32]>], extra: &added::Added, read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, lists: &front::Lists) -> Result<(front::Program, [u8; 32])> {
     let key = texts_digest(masked, graphs, extra);
     if let Some(program) = combined_kept().lock().expect("the combined programs").get(&key).and_then(|k| k.tree.clone()) {
         crate::code_rule_dsl::prof::count("corpus.combined_reused", 1);
@@ -849,8 +849,8 @@ fn keep_combined(key: [u8; 32], edit: impl FnOnce(&mut Combined)) {
 /// programs: what the store gave or a miss made, what hiding it makes, and what the store then keeps under its texts'
 /// digest. For the tests of decision 0275.
 #[cfg(any(test, feature = "test-hooks"))]
-pub fn combine_handed(read: &front::Program) -> Result<(front::Program, front::Program, Option<front::Program>)> {
-    let text = crate::code_rule_dsl::logic::rr::print(read)?;
+pub fn combine_handed(read: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<(front::Program, front::Program, Option<front::Program>)> {
+    let text = crate::code_rule_dsl::logic::rr::print(&read.program(&front::Lists::default()).map_err(Error::Plan)?)?;
     let none = added::Added::default();
     let key = texts_digest(&[text.as_str()], &[None], &none);
     let made = combine_stored(&[text.as_str()], &none, &key, &front::Lists::default(), Some(read))?;
@@ -864,7 +864,7 @@ pub fn combine_handed(read: &front::Program) -> Result<(front::Program, front::P
 
 /// `combine_keyed`'s program as a version (decision 0281's path, step 7a): the image made once per combined program
 /// and kept for the process beside the tree (`COMBINED`), so a run that finds its program combined reads no tree.
-fn combine_version(programs: &[&str], masked: &[&str], graphs: &[Option<[u8; 32]>], extra: &added::Added, read: Option<&front::Program>, lists: &front::Lists) -> Result<(Arc<crate::code_rule_dsl::logic::program_image::Version>, [u8; 32])> {
+fn combine_version(programs: &[&str], masked: &[&str], graphs: &[Option<[u8; 32]>], extra: &added::Added, read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, lists: &front::Lists) -> Result<(Arc<crate::code_rule_dsl::logic::program_image::Version>, [u8; 32])> {
     let key = texts_digest(masked, graphs, extra);
     if let Some(v) = combined_kept().lock().expect("the combined programs").get(&key).and_then(|k| k.version.clone()) {
         crate::code_rule_dsl::prof::count("corpus.combined_reused", 1);
@@ -878,7 +878,7 @@ fn combine_version(programs: &[&str], masked: &[&str], graphs: &[Option<[u8; 32]
 }
 
 /// `combine_linked`'s program as a version, and `combine_read`'s tail run on it (`tail_version`).
-fn combine_tail(programs: &[&str], extra: &added::Added, read: Option<&front::Program>, images_used: Option<&mut Vec<crate::content_store::HashKey>>) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
+fn combine_tail(programs: &[&str], extra: &added::Added, read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, images_used: Option<&mut Vec<crate::content_store::HashKey>>) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
     let (v, tail) = combine_linked_as::<link::Versioned>(programs, extra, read, images_used)?;
     // `RERAIL_COMBINE_LINK=check`: the splice (decision 0373) against the programs linked whole.
     if combine_link_mode() == "check" {
@@ -892,7 +892,7 @@ fn combine_tail(programs: &[&str], extra: &added::Added, read: Option<&front::Pr
 
 /// `combine_stored` of the version: the store's entry opened as a version (`combined::lookup_version`), or the
 /// combine's tail run on the version (`combine_tail`) and its image kept as the entry (`combined::record_version`).
-fn combine_stored_version(programs: &[&str], extra: &added::Added, key: &[u8; 32], lists: &front::Lists, read: Option<&front::Program>) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
+fn combine_stored_version(programs: &[&str], extra: &added::Added, key: &[u8; 32], lists: &front::Lists, read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
     let store = if cfg!(feature = "tape-cache") && (programs.len() > 1 || read.is_some()) && std::env::var_os("RERAIL_DUMP_PROGRAMS").is_none() {
         phases::reading_store()
     } else {
@@ -936,7 +936,7 @@ fn edit_fields(v: &mut Arc<crate::code_rule_dsl::logic::program_image::Version>,
 
 /// `combine_texts`, kept in the persistent store across processes for a pack of programs (`combined`, decision 0094
 /// §6): keyed by the texts and checked against the library files the combine read.
-fn combine_stored(programs: &[&str], extra: &added::Added, key: &[u8; 32], lists: &front::Lists, read: Option<&front::Program>) -> Result<front::Program> {
+fn combine_stored(programs: &[&str], extra: &added::Added, key: &[u8; 32], lists: &front::Lists, read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>) -> Result<front::Program> {
     let store = if cfg!(feature = "tape-cache") && (programs.len() > 1 || read.is_some()) && std::env::var_os("RERAIL_DUMP_PROGRAMS").is_none() {
         phases::reading_store()
     } else {
@@ -1346,7 +1346,7 @@ fn keep_prepared(key: [u8; 32], p: Arc<Prepared>) {
 
 /// `combine` of one program already read (`rr::read_file`): the program itself, as a run holds it, never printed and
 /// read again (decision 0249).
-pub fn combine_read_program(read: &front::Program) -> Result<front::Program> {
+pub fn combine_read_program(read: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<front::Program> {
     combine_read(&[""], &added::Added::default(), Some(read), None)
 }
 
@@ -1358,7 +1358,7 @@ pub fn combine_texts(programs: &[&str]) -> Result<front::Program> {
 /// again.
 /// `images`: where the aliases of the module and program images the combine read or kept are added (decision 0246
 /// §6), for the combined program's entry to name.
-fn combine_read(programs: &[&str], extra: &added::Added, read: Option<&front::Program>, images_used: Option<&mut Vec<crate::content_store::HashKey>>) -> Result<front::Program> {
+fn combine_read(programs: &[&str], extra: &added::Added, read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, images_used: Option<&mut Vec<crate::content_store::HashKey>>) -> Result<front::Program> {
     let (linked, tail) = combine_linked(programs, extra, read, images_used)?;
     tail_tree(linked, &tail)
 }
@@ -1531,13 +1531,13 @@ fn answers_where_documents_are_version(mut v: Arc<crate::code_rule_dsl::logic::p
 }
 
 /// `combine_read` up to the programs linked into one, and what its tail does to that (`Tail`).
-fn combine_linked(programs: &[&str], extra: &added::Added, read: Option<&front::Program>, images_used: Option<&mut Vec<crate::content_store::HashKey>>) -> Result<(front::Program, Tail)> {
+fn combine_linked(programs: &[&str], extra: &added::Added, read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, images_used: Option<&mut Vec<crate::content_store::HashKey>>) -> Result<(front::Program, Tail)> {
     combine_linked_as::<front::Program>(programs, extra, read, images_used)
 }
 
 /// `combine_linked` over parts of either form (`link::Part`): trees, or versions (`link::Versioned`, the run's,
 /// decision 0281's path, step 7a-2).
-fn combine_linked_as<P: link::Part>(programs: &[&str], extra: &added::Added, read: Option<&front::Program>, images_used: Option<&mut Vec<crate::content_store::HashKey>>) -> Result<(P::Linked, Tail)> {
+fn combine_linked_as<P: link::Part>(programs: &[&str], extra: &added::Added, read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, images_used: Option<&mut Vec<crate::content_store::HashKey>>) -> Result<(P::Linked, Tail)> {
     combine_linked_spliced::<P>(programs, extra, read, images_used, combine_link_mode() != "whole")
 }
 
@@ -1548,16 +1548,18 @@ fn combine_link_mode() -> String {
 }
 
 /// `combine_linked_as`, splicing into the last link where `splice` (decision 0373).
-fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added, read: Option<&front::Program>, images_used: Option<&mut Vec<crate::content_store::HashKey>>, splice: bool) -> Result<(P::Linked, Tail)> {
-    use front::Program;
-    // Each program is given the rows the run adds once it is read (decision 0249): rows, not text after it.
-    let given = |mut prog: Program| -> Result<Program> {
-        extra.add_to(&mut prog);
-        // A program reads only relations it declares: an error here, not the planner's panic later (`front::declared`).
-        front::declared(&prog)?;
-        Ok(prog)
+fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added, read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>, images_used: Option<&mut Vec<crate::content_store::HashKey>>, splice: bool) -> Result<(P::Linked, Tail)> {
+    // Each program is given the rows the run adds once it is read (decision 0249): rows, not text after it, stated on
+    // its version. A program reads only relations it declares: an error here, not the planner's panic later
+    // (`front::declared_on`).
+    let given_version = |v: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>| -> Result<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>> {
+        let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&v);
+        extra.add_to(&mut b);
+        let v = if b.is_empty() { v } else { b.finish().map_err(Error::Plan)?.0 };
+        front::declared_on(&v)?;
+        Ok(v)
     };
-    let parse = |text: &str| -> Result<P> { P::of_tree(given(crate::code_rule_dsl::logic::rr::parse(text)?)?) };
+    let parse = |text: &str| -> Result<P> { P::of_version(given_version(crate::code_rule_dsl::logic::rr::parse_version(text)?)?) };
     let parsing = crate::code_rule_dsl::logic::profile::span(|| format!("parse each program ({})", programs.len()));
     // Each text read once, for its modules and its program.
     let reading = crate::code_rule_dsl::logic::profile::span(|| "read each text (tape, statements, includes)".to_owned());
@@ -1711,7 +1713,7 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
             let _in = carry.enter();
             recorded_on_worker(|| -> Result<P> {
             if let Some(read) = read.filter(|_| programs.len() == 1) {
-                return P::of_tree(given(read.clone())?);
+                return P::of_version(given_version(Arc::clone(read))?);
             }
             if let Some(read) = slot.take() {
                 if let Some(library) = in_scope && let Some(k) = *scope_of {
@@ -1720,12 +1722,12 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
                     // run's rows (0249) but not checked for its own declarations (`front::declared`).
                     return P::lowered_in(read, text, library, &scoped[k], images.as_deref(), found, extra);
                 }
-                return P::of_tree(given(read.lower(!own_only)?)?);
+                return P::of_version(given_version(read.lower_version(!own_only)?)?);
             }
             if !own_only {
                 return parse(text);
             }
-            P::of_tree(given(crate::code_rule_dsl::logic::rr::parse_own(text)?)?)
+            P::of_version(given_version(crate::code_rule_dsl::logic::rr::parse_own_version(text)?)?)
             })
         })
         .collect();
@@ -2873,7 +2875,7 @@ pub fn run_with_options(
 /// program, and is keyed by its digest (`read_key`), never by a print of it (decision 0249).
 #[allow(clippy::too_many_arguments)]
 pub fn run_read(
-    read: &front::Program,
+    read: &Arc<crate::code_rule_dsl::logic::program_image::Version>,
     root: &Path,
     out: &Path,
     modes: &str,
@@ -2888,7 +2890,7 @@ pub fn run_read(
 /// `run_read` inside another run that hands it the source texts it read (`sources`, decision 0300): phase 1's.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run_read_handing(
-    read: &front::Program,
+    read: &Arc<crate::code_rule_dsl::logic::program_image::Version>,
     sources: Option<&texts::Sources>,
     root: &Path,
     out: &Path,
@@ -2902,17 +2904,23 @@ pub(super) fn run_read_handing(
     run_handed(&[key.as_str()], Some(read), sources, root, None, out, modes, binding, chunk_nodes, typing, options)
 }
 
+/// A program edited as a tree, as the run is handed it (`run_read`): encoded, until its readers edit its version
+/// (decision 0276 step 6).
+pub fn handed_version(prog: &front::Program) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
+    crate::code_rule_dsl::logic::program_image::Builder::of_program(prog).and_then(|b| b.finish()).map(|(v, _)| v).map_err(Error::Plan)
+}
+
 /// A handed program's key, in the place of a text: its version's digest (`choices::key`, decision 0173 §7), named so
 /// that it reads as no program. Every key a run makes of its texts is made of this.
-fn read_key(read: &front::Program) -> Result<String> {
-    let version = super::body::Placed::of_program(read)?;
+fn read_key(read: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<String> {
+    let version = super::body::Placed::whole(Arc::clone(read));
     Ok(format!("rerail.read-program {}", crate::content_store::observe::hex(&super::choices::key(&version))))
 }
 
 #[allow(clippy::too_many_arguments)]
 fn run_handed(
     programs: &[&str],
-    read: Option<&front::Program>,
+    read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>,
     sources: Option<&texts::Sources>,
     root: &Path,
     t_facts: Option<&Path>,
@@ -2986,10 +2994,11 @@ fn run_handed(
         let uses_components = |text: &str| text.contains("cross-memo") || text.contains("rr_cx_");
         let modules: BTreeSet<_> = graphs.iter().flat_map(|g| g.digests.keys()).collect();
         // A handed program, by its own settings and relations: its key is no text to search.
-        let read_uses = |p: &front::Program| {
-            p.settings.iter().any(|(k, v)| k == "pragma" && v.contains("cross-memo"))
-                || p.decls.keys().any(|r| r.starts_with("rr_cx_"))
-                || p.rules.iter().any(|r| r.body.iter().filter_map(front::Literal::atom).any(|a| a.rel.starts_with("rr_cx_")))
+        let read_uses = |v: &Arc<crate::code_rule_dsl::logic::program_image::Version>| {
+            use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
+            ProgramFields::settings(&**v).iter().any(|(k, s)| k == "pragma" && s.contains("cross-memo"))
+                || v.declared_names().iter().any(|r| r.starts_with("rr_cx_"))
+                || v.rules().any(|r| r.body().filter_map(|l| l.atom()).any(|a| v.rel_name(a.rel()).starts_with("rr_cx_")))
         };
         component_seeded = read.map_or_else(|| programs.iter().any(|t| uses_components(t)), read_uses) || modules.into_iter().any(|path| {
             observe(|o| o.read(path)).is_none_or(|(bytes, _)| {

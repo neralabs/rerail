@@ -398,11 +398,6 @@ fn scope_report_globs(settings: &[(String, String)]) -> Vec<String> {
     scope_list(settings, &["report", "dirs"]).into_iter().map(|d| format!("{}/**", d.trim_end_matches('/'))).collect()
 }
 
-/// `statements` lowered: one module (`lower_module`), linked alone (`link`).
-pub fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
-    link(vec![lower_module(statements)?])
-}
-
 /// A rule file lowered alone (decision 0246 §1): each clause rewritten to the core rules it lowers to, its
 /// declarations, facts and settings, and what lowering's whole-program half reads of them (its `.violation`s, its
 /// `must, may` relations and heads, its kind sets). What needs the whole program is `link`'s.
@@ -1292,47 +1287,8 @@ fn rename_relations(prog: &mut Program, rename: &std::collections::HashMap<Strin
     }
 }
 
-/// The lowering half that needs the whole program (decision 0246 §1, "whole program, at link time"): the findings'
-/// rules, `declare_core`, projections, kind sets, boolean relations, `front::finish`, aggregate demand, removing
-/// repeated rules and literals, and widening cyclic contexts, over `modules` together.
-pub fn link(modules: Vec<Module>) -> Result<Program, Error> {
-    let modules = modules.into_iter().map(Module::tree).collect::<Result<Vec<_>, _>>()?;
-    let mut modules = modules.into_iter();
-    let Some(Module { mut l, .. }) = modules.next() else { return Ok(Program::default()) };
-    // The first module's helpers by their keys (read from an image, it has none).
-    l.helpers.clear();
-    for (name, stem, k) in l.once.clone() {
-        let key = l.once_key(&l.prog.clone(), &name, &stem, k);
-        l.helpers.entry(key).or_insert(name);
-    }
-    for m in modules {
-        l.append(m);
-    }
-    whole(l)
-}
-
-/// A program's own module, linked in the scope of the library modules it includes (decision 0246 §2): the
-/// whole-program half runs over the module with its scope's names seeded, not over the library again, and the result
-/// holds the module's own part, as `own_part` leaves a program read with its libraries' declarations. `core.rr`'s
-/// names and the kind sets stay, as there: the run's merge names each program's kind sets, and reads core's
-/// declarations from any part. Only for a module whose clauses add to no relation of its scope (it asks nothing of
-/// the library, decision 0089 §3): the scope's `.violation`s are the library's, and their findings are its rules.
-pub fn link_in(m: Module, scope: &[&Module], core: &BTreeSet<String>) -> Result<Program, Error> {
-    link_seeded(m, &seeds(scope), core)
-}
-
-/// `link_in`, in a scope seeded already.
-pub fn link_seeded(m: Module, seeds: &Seeds, core: &BTreeSet<String>) -> Result<Program, Error> {
-    let mut l = seeds.l.clone();
-    l.violations.clear();
-    l.append(m.tree()?);
-    let mut program = whole(l)?;
-    crate::code_rule_dsl::logic::front::declared(&program)?;
-    unseed(&mut program, seeds, core);
-    Ok(program)
-}
-
-/// The scope's own declarations taken out of a module's program linked in it (`link_seeded`), but for `core`'s.
+/// The scope's own declarations taken out of a module's program linked in it (`rr::link_seeded_version`), but for
+/// `core`'s.
 pub fn unseed(program: &mut (impl crate::code_rule_dsl::logic::program_image::fields::FieldsMut + ?Sized), seeds: &Seeds, core: &BTreeSet<String>) {
     use crate::code_rule_dsl::logic::program_facts::Field;
     let seeded = &seeds.seeded;
@@ -1398,29 +1354,6 @@ impl Seeds {
     pub fn program(&self) -> &Program {
         &self.l.prog
     }
-}
-
-/// The lowering's whole-program half (decision 0246 §1), over the modules appended into `l`.
-fn whole(l: Lowerer) -> Result<Program, Error> {
-    let Lowered { mut program, sets: named, rewritten, docof_of_locs, findings: pending, three, modal } = whole_front(l)?;
-    three_valued(&mut program, &three, &modal);
-    findings(&mut program, &pending)?;
-    core_and_projections(&mut program, docof_of_locs)?;
-    span_patterns_into(&mut program)?;
-    grammar_names(&program)?;
-    builtins_out(&mut program, &rewritten);
-    kind_sets(&mut program, named)?;
-    unit(&mut program);
-    whole_back(&mut program);
-    let mut program = crate::code_rule_dsl::logic::front::finish(program)?;
-    let demand = crate::code_rule_dsl::logic::profile::span(|| "aggregate demand and sets".to_owned());
-    super::aggregate_demand::optimize(&mut program);
-    // The demand's rules, and the rules whose aggregate it made an existence test, read no relation either.
-    unit(&mut program);
-    sets(&mut program);
-    drop(demand);
-    widen_cyclic_contexts(&mut program);
-    Ok(program)
 }
 
 /// `whole()`'s sets, after `unit`: each literal of a body once, a rule that is its own body dropped, each rule once,

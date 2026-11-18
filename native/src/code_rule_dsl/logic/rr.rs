@@ -135,7 +135,7 @@ pub use translate::translate;
 pub fn core_names() -> &'static std::collections::BTreeSet<String> {
     static CORE: std::sync::OnceLock<std::collections::BTreeSet<String>> = std::sync::OnceLock::new();
     CORE.get_or_init(|| {
-        std::fs::read_to_string(library().join("core.rr")).ok().and_then(|src| parse(&src).ok()).map(|p| p.decls.into_keys().map(String::from).collect()).unwrap_or_default()
+        std::fs::read_to_string(library().join("core.rr")).ok().and_then(|src| parse_version(&src).ok()).map(|v| v.declared_names().into_iter().collect()).unwrap_or_default()
     })
 }
 
@@ -168,6 +168,16 @@ pub fn parse(src: &str) -> Result<Program, Error> {
 /// rules are lowered against the library's names; the library's rules are the run's, lowered once.
 pub fn parse_own(src: &str) -> Result<Program, Error> {
     parse_with(src, false)
+}
+
+/// `parse`'s program as a version, nothing decoded.
+pub fn parse_version(src: &str) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
+    read_text(src)?.lower_version(true)
+}
+
+/// `parse_own`'s program as a version, nothing decoded.
+pub fn parse_own_version(src: &str) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
+    read_text(src)?.lower_version(false)
 }
 
 // A run handed a program it read is handed the program itself (`corpus::run_read`), not its print to lower again.
@@ -262,11 +272,11 @@ impl Text {
             statements.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Clause { .. } | syntax::Item::Include(_))).collect()
         };
         match self.0 {
-            Read::Plain(statements) => lower::lower(header(statements)),
+            Read::Plain(statements) => lower_statements(header(statements)),
             Read::Modular { files, own } => {
                 let mut statements: Vec<syntax::Statement> = files.iter().flat_map(|(_, _, s)| s.iter().filter(|(item, _)| !matches!(item, syntax::Item::Clause { .. } | syntax::Item::Include(_))).cloned()).collect();
                 statements.extend(header(own));
-                lower::lower(statements)
+                lower_statements(statements)
             }
         }
     }
@@ -368,10 +378,15 @@ impl Text {
         Ok(Some(version))
     }
 
-    /// The text's program, as `parse` (`clauses`) or `parse_own` reads it.
+    /// The text's program, as `parse` (`clauses`) or `parse_own` reads it: its version (`lower_version`), decoded.
     pub fn lower(self, clauses: bool) -> Result<Program, Error> {
+        self.lower_version(clauses)?.program(&Default::default()).map_err(Error::Syntax)
+    }
+
+    /// The text's program as a version, as `parse_version` (`clauses`) or `parse_own_version` reads it.
+    pub fn lower_version(self, clauses: bool) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
         let (files, own) = match self.0 {
-            Read::Plain(statements) => return lower::lower(statements),
+            Read::Plain(statements) => return lower_statements_version(statements),
             Read::Modular { files, own } => (files, own),
         };
         // The text's own rules and declarations; its facts may be the runner's (`env`, decision 0089 §1).
@@ -401,7 +416,7 @@ impl Text {
         };
         let mut statements: Vec<syntax::Statement> = files.iter().flat_map(|(_, _, statements)| statements.iter().filter(|(item, _)| kept(item)).cloned()).collect();
         statements.extend(own);
-        lower::lower(statements)
+        lower_statements_version(statements)
     }
 }
 
@@ -525,7 +540,7 @@ pub fn lower_library(paths: &[PathBuf], store: Option<&crate::content_store::Con
     }
     check_names(&files, false)?;
     let library = if std::env::var("RERAIL_LIBRARY_LOWERING").is_ok_and(|v| v == "whole") {
-        let program = lower::lower(files.into_iter().flat_map(|(_, statements): (PathBuf, Vec<syntax::Statement>)| statements).collect())?;
+        let program = lower_statements(files.into_iter().flat_map(|(_, statements): (PathBuf, Vec<syntax::Statement>)| statements).collect())?;
         let version = version_of(&program)?;
         Library::of(Vec::new(), Vec::new(), Vec::new(), version, Some(program))
     } else {
@@ -569,7 +584,7 @@ pub fn lower_library(paths: &[PathBuf], store: Option<&crate::content_store::Con
 /// other file's scope, as `parse` reads a file with it first. `RERAIL_LIBRARY_LOWERING=whole` lowers them as one, as
 /// before, to compare.
 pub fn lower_modules(paths: &[PathBuf], files: Vec<(PathBuf, Vec<syntax::Statement>)>) -> Result<Program, Error> {
-    lower::link(library_modules(paths, files)?)
+    link_modules(library_modules(paths, files)?)
 }
 
 /// The library files' modules (`lower_modules`), includes first, each lowered against the modules it reaches.
@@ -1029,6 +1044,23 @@ fn link_seeded_version(linked: lower::Linked, own_v: std::sync::Arc<super::progr
 }
 
 
+/// `statements` lowered as one module, its rules written in the walk, and linked alone on versions
+/// (`link_library_versions`): the program the tree's `lower::lower` made. Decoded for the callers that read a tree,
+/// until they read the version (decision 0276 step 6).
+fn lower_statements(statements: Vec<syntax::Statement>) -> Result<Program, Error> {
+    lower_statements_version(statements)?.program(&Default::default()).map_err(Error::Syntax)
+}
+
+/// `lower_statements`' version.
+pub fn lower_statements_version(statements: Vec<syntax::Statement>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
+    link_library_versions(vec![lower::lower_module_in_written(statements, &[])?])
+}
+
+/// `modules` linked on versions (`link_library_versions`), decoded for a caller that reads a tree (0276 step 6).
+fn link_modules(modules: Vec<lower::Module>) -> Result<Program, Error> {
+    link_library_versions(modules)?.program(&Default::default()).map_err(Error::Syntax)
+}
+
 /// A library's modules linked on versions (decision 0377): `lower::link_versions`, then the lowering's tail
 /// (`lowering_tail_on`), folded to a base. The program `lower::link` makes of them as a tree, as a version.
 pub fn link_library_versions(modules: Vec<lower::Module>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
@@ -1206,11 +1238,9 @@ impl TextRead {
 impl TextNames {
     /// A program already read: the relations it declares and the phase it names, and the engine's library programs
     /// (it includes nothing of its own: its libraries are in it), as a print of it reads (decision 0249).
-    pub fn of_program(prog: &Program) -> TextNames {
-        let mut names: Vec<String> = prog.decls.keys().map(|n| n.to_string()).collect();
-        names.sort();
-        names.dedup();
-        let phase = prog.settings.iter().find(|(k, _)| k == "phase").map(|(_, v)| v.trim().to_owned());
+    pub fn of_program(prog: &(impl super::program_image::fields::ProgramFields + ?Sized)) -> TextNames {
+        let names = prog.declared_names();
+        let phase = prog.setting_values("phase").into_iter().next();
         let included = ENGINE_FILES.iter().filter_map(|f| library().join(f).canonicalize().ok()).collect();
         TextNames { included, names, phase }
     }
@@ -1627,7 +1657,7 @@ pub fn lower_files_dropping(path: &Path, statements: Files, drop: bool) -> Resul
         .flat_map(|(_, statements)| statements)
         .filter_map(|(item, _)| if let syntax::Item::Decl { name, .. } = item { Some(name.clone()) } else { None })
         .collect();
-    let mut program = lower::lower(statements.into_iter().flat_map(|(_, statements)| statements).collect())?;
+    let mut program = lower_statements(statements.into_iter().flat_map(|(_, statements)| statements).collect())?;
     if !library.is_empty() {
         program.settings.push((super::front::GLOBAL.to_owned(), format!("{} {}", super::front::LIBRARY, library.join(", "))));
     }
@@ -1903,7 +1933,7 @@ fn read_shared(path: &Path) -> Result<(std::sync::Arc<Vec<syntax::Statement>>, L
 /// `src` (a document named `name`) as a program, read off its tape as a rule file's is (`stored_statements`): a
 /// prepared program's document (decision 0074).
 pub(in crate::code_rule_dsl) fn parse_stored(name: &str, src: String) -> Result<Program, Error> {
-    lower::lower(stored_statements(Path::new(name), src)?)
+    lower_statements(stored_statements(Path::new(name), src)?)
 }
 
 fn stored_statements(_path: &Path, src: String) -> Result<Vec<syntax::Statement>, Error> {

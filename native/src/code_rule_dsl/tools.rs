@@ -234,7 +234,7 @@ pub fn check_rr(paths: &[std::path::PathBuf]) -> serde_json::Value {
         match super::logic::rr::read_file(path) {
             // A program the reader passes still has to type: each variable one domain (a kind, a name, …), as a run
             // checks when it plans (`plan::lower::domains`). A run would stop there, so the check does too.
-            Ok((program, _)) if let Err(error) = super::logic::plan::corpus::combine_read_program(&program)
+            Ok((program, _)) if let Err(error) = super::logic::plan::corpus::handed_version(&program).and_then(|v| super::logic::plan::corpus::combine_read_program(&v))
                 .map_err(|e| e.to_string())
                 // Pruned first, as a run is: a library's relation the outputs do not read is not planned.
                 .and_then(|combined| super::logic::plan::lower::domains(&super::logic::front::prune(combined)).map(|_| ()).map_err(|e| e.to_string())) =>
@@ -344,12 +344,13 @@ pub fn run_program(
     let (mut rows, mut files_read, mut nodes, mut phases) = (Vec::new(), 0, 0, Vec::new());
     // The device as `logic --metal` places it: `RERAIL_DEVICE=metal` (by price) or `always` (wherever it can).
     let binding = if std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "metal" || v == "always") { Binding::Metal } else { Binding::Cpu };
+    let handed = corpus::handed_version(&program).map_err(|e| e.to_string())?;
     for (dialect, dir) in &runs {
         let mut options = with_reuse(options);
         if let Some(dialect) = dialect {
             options["dialect"] = serde_json::json!(dialect);
         }
-        let report = corpus::run_read(&program, root, dir, "program", binding, 1 << 18, &Default::default(), &options).map_err(|e| e.to_string())?;
+        let report = corpus::run_read(&handed, root, dir, "program", binding, 1 << 18, &Default::default(), &options).map_err(|e| e.to_string())?;
         rows.extend(diagnostics(dir)?);
         files_read += report.files;
         nodes += report.nodes;

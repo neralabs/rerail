@@ -3750,17 +3750,17 @@ fn library_modules_link_to_the_lowering_of_them_together() {
             continue;
         }
         let files: Vec<(PathBuf, Vec<syntax::Statement>)> = paths.iter().map(|p| (p.clone(), read(p).unwrap().0.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_))).collect())).collect();
-        let together = lower::lower(files.iter().flat_map(|(_, s)| s.iter().cloned()).collect()).unwrap();
+        let together = super::lower_statements_version(files.iter().flat_map(|(_, s)| s.iter().cloned()).collect()).unwrap();
         let modules = library_modules(&paths, files).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
-        // Each module read back from its image (decision 0246 §6) links to the same program.
+        // Each module read back from its image (decision 0246 §6) links to the same program, on versions (0377).
         let images: Vec<lower::Module> = modules.iter().map(|m| module_image::decode(&module_image::encode(m).unwrap()).unwrap_or_else(|e| panic!("{}: a module image: {e}", dir.display()))).collect();
-        // And linked on versions from the images (decision 0377): the program the tree's link makes.
-        let on_versions = super::link_library_versions(images.clone()).unwrap_or_else(|e| panic!("{}: linked on versions: {e}", dir.display()));
-        let linked = lower::link(modules).unwrap();
-        let tree = crate::code_rule_dsl::logic::program_image::Builder::of_program_less_maintenance(&linked).unwrap().finish().unwrap().0;
-        assert_eq!((tree.size(), tree.digest()), (on_versions.size(), on_versions.digest()), "{}: the library linked on versions from its images: {}", dir.display(), crate::code_rule_dsl::logic::program_image::differences(&tree, &on_versions));
-        let from_images = print(&lower::link(images).unwrap()).unwrap();
-        let (a, b) = (print(&together).unwrap(), print(&linked).unwrap());
+        let on_versions = super::link_library_versions(images).unwrap_or_else(|e| panic!("{}: linked on versions from its images: {e}", dir.display()));
+        let linked = super::link_library_versions(modules).unwrap_or_else(|e| panic!("{}: linked on versions: {e}", dir.display()));
+        assert_eq!((linked.size(), linked.digest()), (on_versions.size(), on_versions.digest()), "{}: the library linked from its modules' images: {}", dir.display(), crate::code_rule_dsl::logic::program_image::differences(&linked, &on_versions));
+        // Printed, to compare with the library lowered as one (whose helpers may be numbered apart).
+        let printed = |v: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>| print(&v.program(&Default::default()).unwrap()).unwrap();
+        let from_images = printed(&on_versions);
+        let (a, b) = (printed(&together), printed(&linked));
         let differ = |what: &str, a: &str, b: &str| {
             let (la, lb): (Vec<&str>, Vec<&str>) = (a.lines().collect(), b.lines().collect());
             let first = la.iter().zip(&lb).position(|(x, y)| x != y).unwrap_or(la.len().min(lb.len()));

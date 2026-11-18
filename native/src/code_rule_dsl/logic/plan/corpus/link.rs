@@ -27,6 +27,8 @@ pub(super) trait Part: Sized + Send {
     type Rules;
     /// A part from its tree.
     fn of_tree(prog: Program) -> Result<Self>;
+    /// A part from its version.
+    fn of_version(v: Arc<Version>) -> Result<Self>;
     /// A part lowered in its library's scope (`Text::lower_in`), given the run's rows (decision 0249); `found`, its
     /// image as the caller read it with the others' (`images::read_all`).
     fn lowered_in(read: crate::code_rule_dsl::logic::rr::Text, text: &str, library: &crate::code_rule_dsl::logic::rr::Library, scoped: &crate::code_rule_dsl::logic::rr::Scoped, store: Option<&crate::content_store::ContentStore>, found: Option<Option<crate::code_rule_dsl::logic::rr::images::Found>>, extra: &super::added::Added) -> Result<Self>;
@@ -314,6 +316,9 @@ impl Part for Program {
     fn of_tree(prog: Program) -> Result<Self> {
         Ok(prog)
     }
+    fn of_version(v: Arc<Version>) -> Result<Self> {
+        v.program(&Default::default()).map_err(plan)
+    }
     fn lowered_in(read: crate::code_rule_dsl::logic::rr::Text, text: &str, library: &crate::code_rule_dsl::logic::rr::Library, scoped: &crate::code_rule_dsl::logic::rr::Scoped, store: Option<&crate::content_store::ContentStore>, found: Option<Option<crate::code_rule_dsl::logic::rr::images::Found>>, extra: &super::added::Added) -> Result<Self> {
         // The tree's path reads its image itself.
         let _ = found;
@@ -504,6 +509,9 @@ impl Part for Versioned {
     }
     fn of_tree(prog: Program) -> Result<Self> {
         let (v, _) = Builder::of_program(&prog).and_then(|b| b.finish()).map_err(plan)?;
+        Ok(Versioned::of(v))
+    }
+    fn of_version(v: Arc<Version>) -> Result<Self> {
         Ok(Versioned::of(v))
     }
     fn lowered_in(read: crate::code_rule_dsl::logic::rr::Text, text: &str, library: &crate::code_rule_dsl::logic::rr::Library, scoped: &crate::code_rule_dsl::logic::rr::Scoped, store: Option<&crate::content_store::ContentStore>, found: Option<Option<crate::code_rule_dsl::logic::rr::images::Found>>, extra: &super::added::Added) -> Result<Self> {

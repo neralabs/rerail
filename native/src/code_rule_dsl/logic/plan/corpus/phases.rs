@@ -435,7 +435,7 @@ pub(crate) fn facts(prog: &(impl ProgramFields + ?Sized), shape: &super::shape::
         let report = {
             // The phase's own run, its jobs' spans under it (`profile::span_at`).
             let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: run"));
-            super::run_read(&handed, root, &out, modes, binding, chunk_nodes, typing, options)?
+            super::run_read(&super::handed_version(&handed)?, root, &out, modes, binding, chunk_nodes, typing, options)?
         };
         let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: its exports read")); read_exports(&name, &program, &declared, &out)? };
         { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {name}: handed on")); hand_on(&name, &program, &reads, &rows, &mut facts)?; }
@@ -509,13 +509,21 @@ pub(super) fn sources(
         let (one, exports) = found;
         return Ok((one, PhaseRun { name: NAME.to_owned(), report: Report::default(), exports }));
     }
-    let program = crate::code_rule_dsl::logic::rr::parse(&src)?;
-    let declared = declared(&program).ok_or_else(|| Error::Plan(format!("{NAME}.rr: no `.phase {NAME}`")))?;
+    let program = crate::code_rule_dsl::logic::rr::parse_version(&src)?;
+    let declared = declared(&*program).ok_or_else(|| Error::Plan(format!("{NAME}.rr: no `.phase {NAME}`")))?;
     // Its documents are those it loads: it is given no file of its own, and its language is the run's. The program
     // read, given that language and its exports as its outputs (decision 0249), not its text with directives after it.
-    let mut handed = program.clone();
-    handed.settings.push(("language".to_owned(), label.to_owned()));
-    handed.outputs.extend(declared.exports.iter().cloned());
+    let handed = {
+        use crate::code_rule_dsl::logic::program_image::fields::FieldsMut;
+        let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&program);
+        let mut settings = ProgramFields::settings(&*program);
+        settings.push(("language".to_owned(), label.to_owned()));
+        b.set_field(crate::code_rule_dsl::logic::program_facts::Field::Settings(&settings));
+        for e in &declared.exports {
+            b.add_output(e);
+        }
+        b.finish().map_err(Error::Plan)?.0
+    };
     let mut options = options.clone();
     if let Some(o) = options.as_object_mut() {
         o.insert("inputFiles".to_owned(), serde_json::Value::Array(Vec::new()));
@@ -530,7 +538,7 @@ pub(super) fn sources(
         let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: run"));
         super::run_read_handing(&handed, Some(texts), root, &out, modes, binding, chunk_nodes, typing, &options)?
     };
-    let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: its exports read")); read_exports(NAME, &program, &declared, &out)? };
+    let rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| format!("phase {NAME}: its exports read")); read_exports(NAME, &*program, &declared, &out)? };
     let text = |v: &Value| match v {
         Value::Str(s) => Some(s.to_string()),
         // A path is text: an atom (decision 0270) is none.
@@ -582,13 +590,14 @@ fn loads_documents(program: &Program, dir: Option<&Path>, seen: &mut BTreeSet<St
 
 /// A phase's exports, as its run wrote them in `out` (which goes): each row's values as the export's columns are
 /// declared, read from the outputs' image (`output::Outputs`), nothing parsed.
-fn read_exports(name: &str, program: &Program, declared: &Declared, out: &Path) -> Result<BTreeMap<String, Vec<Vec<Value>>>> {
+fn read_exports(name: &str, program: &(impl ProgramFields + ?Sized), declared: &Declared, out: &Path) -> Result<BTreeMap<String, Vec<Vec<Value>>>> {
     use crate::code_rule_dsl::logic::plan::output;
     let outputs = output::Outputs::open(out).map_err(|e| Error::Plan(format!("phase {name}: {}: {e}", out.display())))?;
     let mut rows: BTreeMap<String, Vec<Vec<Value>>> = BTreeMap::new();
     for export in &declared.exports {
         let rel = outputs.get(export).ok_or_else(|| Error::Plan(format!("phase {name}: {export}: not in its outputs (in {}, which holds {:?})", out.display(), outputs.names())))?;
-        let types: Vec<&str> = program.decls[export.as_str()].iter().map(|(_, t)| t.as_str()).collect();
+        let declared_types = program.columns_of(export).ok_or_else(|| Error::Plan(format!("phase {name}: {export}: not declared")))?;
+        let types: Vec<&str> = declared_types.iter().map(|(_, t)| t.as_str()).collect();
         if rel.width() != types.len() {
             return Err(Error::Plan(format!("phase {name}: {export}: {} columns, not {}", rel.width(), types.len())));
         }

@@ -122,7 +122,7 @@ fn copy(rel: &str) -> String {
 pub(super) fn fold(
     v: &mut std::sync::Arc<Version>,
     programs: &[&str],
-    read: Option<&Program>,
+    read: Option<&std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>,
     added: &super::added::Added,
     root: &Path,
     scratch: &Path,
@@ -198,7 +198,7 @@ type Derived = (Vec<u8>, Vec<(String, String, String)>);
 #[allow(clippy::too_many_arguments)]
 fn derive(
     programs: &[&str],
-    read: Option<&Program>,
+    read: Option<&std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>,
     root: &Path,
     scratch: &Path,
     modes: &str,

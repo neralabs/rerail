@@ -1294,7 +1294,7 @@ fn a_second_run_in_one_process_records_the_first_runs_manifest() {
 #[test]
 fn a_handed_programs_hidden_form_is_kept_under_its_texts() {
     let src = "#include \"core.rr\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n";
-    let read = crate::code_rule_dsl::logic::rr::parse(src).unwrap();
+    let read = crate::code_rule_dsl::logic::rr::parse_version(src).unwrap();
     let (made, hidden, kept) = super::combine_handed(&read).unwrap();
     assert_eq!(format!("{made:?}"), format!("{hidden:?}"), "a miss hides the program handed");
     assert_eq!(kept.map(|k| format!("{k:?}")), Some(format!("{hidden:?}")), "kept under the texts' digest, read back as hidden");

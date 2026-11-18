@@ -146,7 +146,7 @@ pub(crate) fn facts(prog: &(impl ProgramFields + ?Sized), pruned: &dyn Fn() -> R
         let out = scratch.join(format!("typing-{name}"));
         // The program's language is its name's: `calls_rust` reads the `.rs` files, the others the `.py` files.
         let typing = Typing { rust: Some(name.ends_with("_rust")), ..typing.clone() };
-        let report = super::run_read(&handed, root, &out, modes, binding, chunk_nodes, &typing, &serde_json::Value::Null)?;
+        let report = super::run_read(&super::handed_version(&handed)?, root, &out, modes, binding, chunk_nodes, &typing, &serde_json::Value::Null)?;
         // The outputs' image, read where it is: a node by its document's path and value, nothing parsed.
         use crate::code_rule_dsl::logic::plan::output;
         let outputs = output::Outputs::open(&out).map_err(|e| Error::Plan(format!("{name}: {e}")))?;
