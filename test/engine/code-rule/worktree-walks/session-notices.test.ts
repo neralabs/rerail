@@ -4,7 +4,7 @@ import type * as FileSystem from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CodeRuleBridge } from "../../../../src/engine/code-rule/code-rule-bridge.js";
+import { BOUNDARY_DISCOVERY_WAIT_MS, CodeRuleBridge } from "../../../../src/engine/code-rule/code-rule-bridge.js";
 import type { CodeRuleAuditor, CodeRuleEditBatch } from "../../../../src/engine/code-rule/code-rule.js";
 import { SharedTreeWatch, WorktreeNotices } from "../../../../src/engine/code-rule/worktree-notices.js";
 import { RepositoryWorktreeWalks, WorktreeWalks } from "../../../../src/engine/code-rule/worktree-walks.js";
@@ -325,6 +325,47 @@ describe("a shell command's result reads the session folder by its change notice
       checkpoints: ["edit", "function"],
       edits: [expect.objectContaining({ path: "src/pkg_0/m.py", generatedText: "eval(z)\n" })],
     })]);
+  });
+
+  it("records at the result each file of a folder a command moved out of the session folder as gone", async () => {
+    const root = await workspace();
+    const away = await realpath(await mkdtemp(join(tmpdir(), "rerail-session-notices-away-")));
+    folders.push(away);
+    const watch = platformWatch();
+    const { bridge, audits } = await opened(root, watch);
+    // The system tells of the folder alone: nothing watches its files once they are elsewhere.
+    await command(bridge, "shell-1", async () => {
+      await rename(join(root, "src", "pkg_0"), join(away, "pkg_0"));
+      watch.movedAway(root);
+    });
+    expect(audits).toEqual([expect.objectContaining({ edits: [expect.objectContaining({ path: "src/pkg_0/m.py", deleted: true })] })]);
+  });
+
+  it("reports an unlisted file a command wrote past the size limit at a turn's end that answers before its walk", async () => {
+    const root = await workspace();
+    const { bridge } = await opened(root, platformWatch());
+    await command(bridge, "shell-1", async () => await writeFile(join(root, "src", "pkg_0", "dump.raw"), "x".repeat(1_000_001)));
+    expect(listed.folders).toEqual([]);
+    // The turn's whole walk is held at a folder past the boundary's wait, so the turn answers with what the result found.
+    const held = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    listed.after.set(join(root, "src", "pkg_1"), async () => {
+      held.resolve();
+      await release.promise;
+    });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const answer = bridge.checkpoint("turn");
+      await held.promise;
+      vi.advanceTimersByTime(BOUNDARY_DISCOVERY_WAIT_MS);
+      expect((await answer).failures).toContainEqual(expect.objectContaining({
+        code: "source-incomplete", message: expect.stringContaining("src/pkg_0/dump.raw: Source exceeds 1000000 byte policy limit"),
+      }));
+    } finally {
+      vi.useRealTimers();
+      release.resolve();
+    }
+    await bridge.checkpoint("turn");
   });
 
   it("records at the result a file renamed to another case as gone under its old name", async () => {

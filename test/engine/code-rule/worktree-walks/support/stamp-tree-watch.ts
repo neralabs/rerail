@@ -28,8 +28,9 @@ function entriesOf(root: string): Map<string, string> {
 /**
  * A `TreeWatch` that sees every write, as the engine's watch is meant to: each `take` compares each watched root's
  * entries with those of the last take, through `node:fs` calls a test's counted `node:fs/promises` never sees. A test
- * makes it miss writes (`silence`), hand notices late (`hold`), lose notices (`lose`), end a watch (`end`) or refuse
- * roots (`unwatchable`), and reads which roots it watches and with which folders. `byFolder` makes it watch as Linux's
+ * makes it miss writes (`silence`), hand notices late (`hold`), lose notices (`lose`), end a watch (`end`), refuse
+ * roots (`unwatchable`) or tell of a folder moved away as the system does (`movedAway`), and reads which roots it
+ * watches and with which folders. `byFolder` makes it watch as Linux's
  * watch does: only the entries of the folders a root was watched with, a folder made in one as an entry with nothing
  * under it, a folder it takes up from the moment it is given, not before, and a folder deleted or put back as another
  * let go of, with the folders under it, until a `watch` names it again.
@@ -47,6 +48,7 @@ export class StampTreeWatch implements TreeWatch {
   readonly #lost = new Set<string>();
   readonly #ended = new Set<string>();
   readonly #held = new Set<string>();
+  readonly #movedAway = new Set<string>();
   /** By root, a handle on each folder a Linux watch follows: the watch stands for that folder, not for its path. */
   readonly #handles = new Map<string, Map<string, number>>();
   closed = false;
@@ -102,7 +104,8 @@ export class StampTreeWatch implements TreeWatch {
   #takeRoot(root: string, before: ReadonlyMap<string, string>): TreeNotice | undefined {
     const after = entriesOf(root);
     this.#entries.set(root, after);
-    const notice = this.#watched(root, noticeOf(root, before, after, this.#lost.delete(root), this.#ended.delete(root)));
+    const named = noticeOf(root, before, after, this.#lost.delete(root), this.#ended.delete(root));
+    const notice = this.#watched(root, this.#movedAway.delete(root) ? withoutWhatWentWith(named, before) : named);
     if (notice.ended) this.unwatch(root);
     const gone = this.#byFolder && !notice.ended ? this.#letGo(root) : [];
     const told = gone.length === 0 ? notice : { ...notice, changed: notice.changed.filter(path => !gone.includes(path)), renamed: [...new Set([...notice.renamed, ...gone])] };
@@ -165,6 +168,14 @@ export class StampTreeWatch implements TreeWatch {
     this.#ended.add(root);
   }
 
+  /**
+   * Makes the next take of `root` tell of each folder that went as that folder alone, not of what it held, as the
+   * system tells of a folder moved away: the folder's parent hears that its entry went, and nothing watches its files.
+   */
+  movedAway(root: string): void {
+    this.#movedAway.add(root);
+  }
+
   /** Refuses to watch `root` from now on. */
   unwatchable(root: string): void {
     this.#unwatchable.add(root);
@@ -173,6 +184,13 @@ export class StampTreeWatch implements TreeWatch {
 
 function tells(notice: TreeNotice): boolean {
   return notice.lost || notice.ended || notice.changed.length > 0 || notice.renamed.length > 0;
+}
+
+/** `notice` without the paths under each folder it says went (`before` held entries under it). */
+function withoutWhatWentWith(notice: TreeNotice, before: ReadonlyMap<string, string>): TreeNotice {
+  const went = notice.renamed.filter(path => [...before.keys()].some(entry => entry.startsWith(`${path}/`)));
+  const kept = (path: string): boolean => !went.some(folder => path.startsWith(`${folder}/`));
+  return { ...notice, changed: notice.changed.filter(kept), renamed: notice.renamed.filter(kept) };
 }
 
 function parentOf(path: string): string {
