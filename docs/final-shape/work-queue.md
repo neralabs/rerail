@@ -1360,6 +1360,21 @@ can commit. With `RERAIL_THREADS=4` the run finishes (55.1 s CPU, 463 findings),
   its thread waits, or the buffers a thread may hold open are bounded and counted against the queue's limit, made
   from the pool's width at the queue's creation); a test with more threads than the limit allows open buffers; the
   full shape on Metal with every thread finishes.
+- **Record**: done (af32e3c4c, decision 0386). `submit` commits the wave's buffer before it returns, and the wave's
+  per-thread state is a job scope (`exec::set_job_scope`, `lanes::wave::Scope`); the waits assert no uncommitted
+  buffer in debug. On the M3 with every thread and the default queue (t43, load 42–99), the full shape finishes
+  every step: cold 52.5 s CPU / 20.0 s wall, append 5.2 / 4.9, body 7.2 / 10.7, rule 1.2 / 2.4, findings 463/464
+  as on the CPU. The profiled run has no "not submitted" fallback (20 before) and 2 BackendFailure (9 before). Left:
+  the first launch's pipeline compiles on a shader-cache miss (26 s wall of the profiled cold run), Q53.
+
+### Q53. A device stratum waits on its pipeline's compile on the critical path
+
+Seen 2026-11-17 (t42, t43 profiles): on a miss in the system's shader cache, Metal compiles the joins' and the AST
+matcher's pipelines when a stratum first runs, 26–33 s wall, while the stratum's GPU work is 1.5 ms. The main
+thread waited on it (and spun, fixed in af32e3c4c). There is no binary archive of our own.
+
+- **Done when**: a stratum whose pipeline is not ready runs on the CPU while it compiles (compiled off the run's
+  path), or the pipelines come from an archive the build makes; a cold Metal run's wall is not over the CPU run's.
 - **Record**: —
 
 ## Questions for the user
