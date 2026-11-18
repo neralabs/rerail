@@ -75,17 +75,22 @@ function linuxStartedAt(pid: number): number | undefined {
   }
 }
 
+/** Milliseconds from 1601-01-01 UTC, where a Windows FILETIME counts from, to the Unix epoch. */
+const FILETIME_EPOCH_MS = 11_644_473_600_000;
+
 /**
- * Windows: the process's creation time, as .NET's `Process.StartTime` reads it, through Windows PowerShell, which loads
- * no Rerail engine: the uninstall reads it before it removes `versions/`, and Windows keeps a loaded DLL from being
- * deleted. The read runs synchronously, so PowerShell is ended at `timeoutMs` and not started with no time left (Node
- * reads a timeout of 0 as none). A process this user may not query, a PowerShell that cannot run and one ended at the
- * bound read nothing.
+ * Windows: the process's creation time, as `Get-Process` reads it, through Windows PowerShell, which loads no Rerail
+ * engine: the uninstall reads it before it removes `versions/`, and Windows keeps a loaded DLL from being deleted. The
+ * command is a cmdlet and a method of a core type, which PowerShell's Constrained Language Mode allows: AppLocker and WDAC
+ * script policies impose that mode, and it refuses .NET's static methods. It prints a FILETIME, 100 ns ticks since 1601
+ * in UTC, past a double's exact integers, so it is divided as a BigInt. The read runs synchronously, so PowerShell is
+ * ended at `timeoutMs` and not started with no time left (Node reads a timeout of 0 as none). A process this user may not
+ * query, a PowerShell that cannot run and one ended at the bound read nothing.
  */
 function windowsStartedAt(pid: number, timeoutMs: number): number | undefined {
   if (!(timeoutMs > 0)) return undefined;
   const read = spawnSync(windowsPowerShell(), ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
-    `([DateTimeOffset][Diagnostics.Process]::GetProcessById(${pid}).StartTime).ToUnixTimeMilliseconds()`], { encoding: "utf8", timeout: timeoutMs });
+    `(Get-Process -Id ${pid} -ErrorAction Stop).StartTime.ToFileTimeUtc()`], { encoding: "utf8", timeout: timeoutMs });
   const text = String(read.stdout ?? "").trim();
-  return read.status === 0 && /^\d+$/u.test(text) ? Number(text) : undefined;
+  return read.status === 0 && /^\d+$/u.test(text) ? Number(BigInt(text) / 10_000n) - FILETIME_EPOCH_MS : undefined;
 }
