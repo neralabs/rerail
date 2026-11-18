@@ -211,10 +211,6 @@ export class SqliteAuditControlStore {
       owner,
     );
   }
-  hasUserSettings(sessionId: string): boolean {
-    const session = requireSession(this.#database, sessionId);
-    return this.getWorkspaceSettings(session.cwd) !== undefined;
-  }
   updateSettings(sessionId: string, patch: z.input<typeof auditSettingsPatchSchema>): AuditControls {
     const parsed = auditSettingsPatchSchema.parse(patch);
     this.#database.transaction(() => {

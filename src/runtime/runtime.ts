@@ -2583,7 +2583,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   #scheduleAuditRequests(sessionId: string, version?: number): void {
     const state = this.#sessions.get(sessionId);
     if (state === undefined || state.closed || state.ownerClaim === undefined) return;
-    const settings = this.#controls.hasUserSettings(sessionId) ? this.#controls.getSettings(sessionId).settings : this.#auditSettings;
+    // Read by the folder the session opened in, as its open read them, never through the session's row: another program
+    // can remove a running session's row (a database put back from a copy), and neither the control timer nor the
+    // session's events need it. The session's next recorded event puts the row back.
+    const settings = this.#controls.getWorkspaceSettings(state.checkout.cwd) ?? this.#auditSettings;
     state.steerStrategy = effectiveSteerStrategy(settings);
     state.codeRuleBridge?.updateSettings(settings);
     if (state.auditRequestWork !== undefined) return;

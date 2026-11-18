@@ -1,6 +1,7 @@
 import { realpath } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { codeRuleSchema, NativeCodeRuleEnforcer, SqliteAuditControlStore } from "../../src/engine/index.js";
 import { RerailRuntime } from "../../src/runtime/runtime.js";
@@ -35,6 +36,36 @@ async function idleRuntime(sessions: readonly string[]) {
   return { runtime, databasePath };
 }
 
+/**
+ * Removes `sessionId`'s row, with every row that names it, in one commit of another connection: what a database put
+ * back from a copy taken before the session began, or another program, leaves under a running session.
+ */
+function removeSessionRow(databasePath: string, sessionId: string): void {
+  const database = new Database(databasePath);
+  try {
+    database.pragma("busy_timeout = 5000");
+    database.transaction(() => {
+      for (const table of ["events", "work_links", "steer_feedback", "audits", "audit_requests", "repository_audits", "policy_session_owners", "sessions"])
+        database.prepare(`DELETE FROM ${table} WHERE session_id = ?`).run(sessionId);
+    })();
+  } finally {
+    database.close();
+  }
+}
+
+/** The session's row as the database holds it, and how many of its recorded events have the id `eventId`. */
+function recorded(databasePath: string, sessionId: string, eventId: string): { session: unknown; events: unknown } {
+  const database = new Database(databasePath, { readonly: true });
+  try {
+    return {
+      session: database.prepare("SELECT ended_at AS endedAt FROM sessions WHERE session_id = ?").get(sessionId),
+      events: database.prepare("SELECT count(*) AS count FROM events WHERE session_id = ? AND event_id = ?").get(sessionId, eventId),
+    };
+  } finally {
+    database.close();
+  }
+}
+
 describe("The runtime's audit control polling", () => {
   // The daemon holds every open session of the machine; reading each one's settings and queue four times a second
   // kept an idle daemon at about 1.5% of a core with three sessions open, and more with each session.
@@ -44,7 +75,7 @@ describe("The runtime's audit control polling", () => {
       // Every session is read once after it opens.
       await sleep(600);
       const claims = vi.spyOn(SqliteAuditControlStore.prototype, "claim");
-      const settings = vi.spyOn(SqliteAuditControlStore.prototype, "hasUserSettings");
+      const settings = vi.spyOn(SqliteAuditControlStore.prototype, "getWorkspaceSettings");
       await sleep(1_500);
       expect(claims.mock.calls.length + settings.mock.calls.length).toBe(0);
 
@@ -78,6 +109,35 @@ describe("The runtime's audit control polling", () => {
       }, { timeout: 10_000, interval: 50 });
     } finally {
       other.close();
+      await runtime.dispose();
+    }
+  }, 20_000);
+
+  // Another program can remove a running session's row, as a database put back from a copy taken before the session
+  // began does. The tick read each session's settings through its row, and the throw from its timer ended the daemon
+  // with every session it held.
+  it("reads the other sessions' controls on once a running session's row is removed", async () => {
+    const { runtime, databasePath } = await idleRuntime(["gone", "kept"]);
+    const other = new SqliteAuditControlStore(databasePath);
+    try {
+      removeSessionRow(databasePath, "gone");
+      const queued = other.requestAudit("kept", { scope: "repository" });
+      await vi.waitFor(() => {
+        expect(other.listAuditRequests("kept").find(request => request.id === queued.id)?.status).not.toBe("queued");
+      }, { timeout: 3_000, interval: 50 });
+    } finally {
+      other.close();
+      await runtime.dispose();
+    }
+  }, 20_000);
+
+  it("answers and records a running session's next event once its row is removed, and its row is back", async () => {
+    const { runtime, databasePath } = await idleRuntime(["gone"]);
+    try {
+      removeSessionRow(databasePath, "gone");
+      await runtime.ingest({ kind: "user-prompt", eventId: "after-removal", sessionId: "gone", text: "go on" });
+      expect(recorded(databasePath, "gone", "after-removal")).toEqual({ session: { endedAt: null }, events: { count: 1 } });
+    } finally {
       await runtime.dispose();
     }
   }, 20_000);
