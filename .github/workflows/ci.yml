@@ -228,6 +228,7 @@ jobs:
               - 'scripts/check/check-rustfmt.mjs'
               - 'scripts/check/check-rustfmt/files.txt'
               - 'scripts/check/ci/native-test-legs.mjs'
+              - 'scripts/check/ci/path-free-builds.mjs'
               - 'scripts/profiling/reachability/**'
               - 'scripts/profiling/preparation/**'
               - 'scripts/profiling/composition.py'
@@ -603,6 +604,10 @@ jobs:
         env:
           NATIVE_TESTS_CARGO_ARGS: ${{ needs.changes.outputs.rust-cargo-args }}
         run: node scripts/check/ci/native-test-legs.mjs build "$RUNNER_TEMP/native-tests"
+
+      # No crate writes its checkout's path into its build, so a cache shared by checkouts reuses it (decision 0224).
+      - name: Check the builds name no checkout
+        run: node scripts/check/ci/path-free-builds.mjs
 
       - name: Hand the test binaries to the legs
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
