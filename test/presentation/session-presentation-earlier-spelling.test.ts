@@ -101,29 +101,30 @@ describe.runIf(process.platform === "win32")("On Windows, the status line in a f
     });
   });
 
-  it("reads a session's folder below the one asked about without the spelling, which names the folder asked about", async () => {
+  it("reads the start state of a session's own folder, above the one asked about, without that folder's spelling", async () => {
     const { spelled } = await stoppedBy014("Asked Above");
-    const repository = realpathSync.native(spelled);
-    const below = join(repository, "Below");
+    const above = realpathSync.native(spelled);
+    const below = join(above, "Below");
     mkdirSync(below);
+    const spelledBelow = `${spelled}\\Below`;
     const sessions = new SqliteSessionStore(defaultRerailDatabasePath());
     try {
-      sessions.openSession({ host: "claude-code", sessionId: "a session below", cwd: below });
+      sessions.openSession({ host: "claude-code", sessionId: "a session above", cwd: above });
     } finally {
       sessions.close();
     }
     const database = openRerailDatabase(defaultRerailDatabasePath());
     try {
-      // Recorded as of the same repository as the folder above, so only which key is read tells the two apart.
-      const { checkoutPath } = recordCheckout(database, below);
-      const above = database.$client.prepare("SELECT repository_key FROM checkouts WHERE checkout_path = ?").get(realpathSync(spelled)) as { repository_key: string };
-      database.$client.prepare("UPDATE checkouts SET repository_key = ? WHERE checkout_path = ?").run(above.repository_key, checkoutPath);
+      // A stop 0.1.4 saved for the folder below under its spelling, for the same repository as the session's folder, so
+      // only which folder the spelling is read for tells the two apart.
+      const recorded = database.$client.prepare("SELECT repository_key, clone_id FROM checkouts WHERE checkout_path = ?").get(realpathSync(spelled)) as { repository_key: string; clone_id: string };
+      database.$client.prepare("INSERT INTO checkouts (checkout_path, repository_key, clone_id, started, created_at, last_seen_at) VALUES (?, ?, ?, 0, 1, 1)")
+        .run(realpathSync(spelledBelow), recorded.repository_key, recorded.clone_id);
     } finally {
       database.$client.close();
     }
     await askedApart(async state => {
-      expect(await state({ repository, spelling: spelled, sessionId: "a session below" })).toEqual([200, "started"]);
-      expect(await state({ repository, spelling: spelled })).toEqual([200, "stopped"]);
+      expect(await state({ repository: below, spelling: spelledBelow, sessionId: "a session above" })).toEqual([200, "started"]);
     });
   });
 });
