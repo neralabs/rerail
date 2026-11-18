@@ -269,10 +269,14 @@ pub(super) fn space_digest(ids: &BTreeMap<String, [u8; 32]>, local: &crate::code
 }
 
 /// Where the memo's space `space` names the whole file-local program whose entries it holds last (`set_last_program`).
+/// Under the space's plan (`plan_digest`: the engine build, the grammar, the node ids' scheme), as its entries are
+/// (`local_space`): another build's entries are not this build's hits, so its last program, and the statistics kept
+/// under it, are not this build's either (Q138). Before, a new build read the old build's keeper, whose counts
+/// trusted entries it could not read, and gave it up at the edited file.
 fn last_key(space: &[u8; 32]) -> [u8; 32] {
     let mut hash = Sha256::new();
-    hash.update(b"rerail.corpus-local-last/v1\0");
-    hash.update(space);
+    hash.update(b"rerail.corpus-local-last/v2\0");
+    hash.update(plan_digest(space));
     hash.finalize().into()
 }
 

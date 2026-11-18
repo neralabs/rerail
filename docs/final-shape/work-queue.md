@@ -2958,7 +2958,7 @@ always a refusal.
 - **Done when**: either the cut counts a view of an input's columns clean with the input (the part then has no rules,
   as the test says), or the test asserts the part holds only such views; the planner's owner of Q37 decides which.
 
-### Q138. (Q102 on Typing-support-final-shape at 6ce382887) `a_new_builds_first_edit_counts_every_file_in_so_its_next_edit_is_steady` fails at final-rerail-shape-rr-align's f7c563513
+### Q138. (Q102 on Typing-support-final-shape at 6ce382887) (done) `a_new_builds_first_edit_counts_every_file_in_so_its_next_edit_is_steady` fails at final-rerail-shape-rr-align's f7c563513
 
 - **Found** (2026-11-17, merging f7c563513 into Typing-support): the new build's first edit gives its keeper up
   (`c.py: the memo no longer holds the rows counted`), the message Q71's fix removed. It fails the same on
@@ -2968,6 +2968,17 @@ always a refusal.
   new build still reads the old build's keeper, though `memo_whole` is now under `plan_digest`. ffbb65b15 (a stopped
   run marks itself under way of its program) came after the test's commit 5627413cd and changed those marks.
 - **Done when**: a new build's first edit counts every file in, and the test passes.
+- **Record**: done (2026-11-18). The cause was as read: the space's last program was marked under the space alone
+  (`memo::last_key`), and the space names no build, while its entries lie under `plan_digest` of it
+  (`local_space`). So a new build found the old build's last program, read the statistics kept under it, and
+  `Keeper::begin` trusted them (the relations' identities do not name the build either), though none of the old
+  build's entries is a hit. `last_key` now hashes `plan_digest(space)`, as the entries are kept: a new build finds
+  no last program and counts every file in. The test passes on the farm, with partial_tests (10 of 10) and the
+  kept-run tests in corpus::tests (`cross_file_strata_are_kept_across_runs_in_the_tape_cache`,
+  `a_new_process_maintains_the_cross_file_part_from_the_kept_rows`,
+  `a_relation_two_programs_share_is_kept_once_and_a_rule_edit_reaches_only_its_readers`). Reviewer: the three
+  callers (`last_program`, `set_last_program`, `set_under_way`) all pass the run's `memo_program`, so every mark
+  moves together; a mark of the old key (v1) is read by no build and goes with the store's blobs.
 
 ### Q142. (Q113 on investigate-bend-vs-datalog at 0098f4340) A device relation's block is leased outside the one block policy
 
