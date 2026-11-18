@@ -60,8 +60,9 @@ test("the dashboard reads again and says Live after a daemon restart behind a pr
     daemon = await startScenarioDaemon(manifest, { port });
 
     await expect(status).toHaveText("Live", { timeout: 45_000 });
+    // The read that found the daemon back opened a stream the proxy holds: two missed beats (12 s), then the pace.
     const back = reads;
-    await expect.poll(() => reads, { timeout: 15_000 }).toBeGreaterThanOrEqual(back + 2);
+    await expect.poll(() => reads, { timeout: 30_000 }).toBeGreaterThanOrEqual(back + 2);
   } finally {
     await proxy.close();
     await daemon.stop();
