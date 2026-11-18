@@ -409,7 +409,7 @@ the same capability across restarts.
 recorded daemon with `recordedDaemonAlive`. A pid owned by another OS user (`EPERM`) cannot be this user's daemon: the
 state is stale and no capability is sent. On Windows the state's engine pipe must also exist, since a live daemon always
 holds it, and the engine on that pipe must answer a random challenge with an HMAC keyed by the capability
-(`engineCapabilityProof` in `src/runtime/engine-proof.ts`), which never shows it the capability. That holds for a pid
+(`engineCapabilityProof` in `src/runtime/daemon/engine-proof.ts`), which never shows it the capability. That holds for a pid
 this user may signal as for one it may not (this user's elevated daemon), so on Windows a reused pid of the person's
 own, with the pipe name and the port held by another user, gets nothing: the state is dropped unprobed. An engine that
 says nothing within the wait is taken for a busy daemon: its state is kept, and it is sent no capability, the shutdown
@@ -838,7 +838,7 @@ Minor ways another OS user on the same machine could see Rerail's secrets or sta
 - **Engine socket** lives in `tmpdir()/rerail-<uid>/`, checked before `listen` to be the person's own, 0700 and not a
   symlink (`src/runtime/engine-service.ts`). On Windows it is a named pipe, which any local user could create first
   under its predictable name. The daemon asks the holder to answer a random challenge with an HMAC keyed by the access
-  capability (`src/runtime/engine-proof.ts`), so the holder never sees the capability; one that cannot answer is not
+  capability (`src/runtime/daemon/engine-proof.ts`), so the holder never sees the capability; one that cannot answer is not
   this home's engine, and the engine listens on that name with a random suffix. On Linux another user can create that
   folder first; the daemon then
   listens in a `run` folder beside its database under the 0700 Rerail home (`chooseEngineSocketPath`) and records the
