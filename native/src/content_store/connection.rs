@@ -597,6 +597,14 @@ pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<(
     connection.pragma_update(None, "cache_size", -1_024_i64)?;
     connection.pragma_update(None, "mmap_size", 0_i64)?;
     connection.pragma_update(None, "journal_size_limit", 16_777_216_i64)?;
+    Ok(())
+}
+
+/// The hooks of a connection the store reads and writes through (`ThreadConnection`): the
+/// checkpoint after the write's turn, and in debug builds the check that every commit runs in a
+/// turn. The schema's own connection at open (`initialize`) commits only in the open's turn, and
+/// too little for a checkpoint.
+fn install_store_hooks(connection: &mut Connection) -> StoreResult<()> {
     checkpoint_after_turn(connection)?;
     #[cfg(debug_assertions)]
     commits_only_in_a_turn(connection)?;
@@ -626,6 +634,7 @@ fn open_runtime_connection(path: &Path) -> StoreResult<Connection> {
         | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
     let mut connection = Connection::open_with_flags(path, flags)?;
     configure_connection(&mut connection)?;
+    install_store_hooks(&mut connection)?;
     Ok(connection)
 }
 
