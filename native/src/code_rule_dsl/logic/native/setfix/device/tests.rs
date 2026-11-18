@@ -213,8 +213,10 @@
                     let r = report.as_ref().expect("a device report");
                     assert!(r.refused.is_none(), "{r:?}");
                     assert!(r.rounds > 3, "the recursion takes rounds: {r:?}");
-                    // A set head's rows written in place with their rounds (decision 0325 step 4); a lattice's read.
-                    assert_eq!(r.placed > 0, lattice.is_none(), "{r:?}");
+                    // A set head's rows written in place with their rounds (decision 0325 step 4); a lattice's folded
+                    // in place in its one relation (decision 0384 step 5, R3). Every row placed: none read back (R4).
+                    assert!(r.placed > 0, "{r:?}");
+                    assert_eq!(r.placed, r.distinct, "no head row read back: {r:?}");
                 }
                 super::super::close(&db, "dev_lev").unwrap();
                 let held = super::super::held(&db, "h0").expect("the relation held");
@@ -228,6 +230,83 @@
             assert!(got[0].iter().any(|r| r.2 > 3), "rows of later rounds");
             assert_eq!(got[0], got[1], "the device's rows and levels are the CPU's ({lattice:?})");
         }
+    }
+
+    /// Decision 0384 step 5 (R5): the device folds a `min` lattice's rounds into its one relation through its key map
+    /// in its block; the relation takes the rows as they lie and the map as its own, and a CPU fold goes on in that
+    /// map (the device's slots are the host's: one hash, one layout). Its rows and each key's changes are those of a
+    /// fold made on the CPU alone.
+    #[test]
+    fn a_cpu_fold_goes_on_in_the_devices_key_map() {
+        use crate::code_rule_dsl::facts::rows::{BlockVec, Part};
+        use crate::code_rule_dsl::transducer::packed::metal_join as mj;
+        use super::super::keys::{KeyMap, SLOT};
+        if !mj::available() {
+            return;
+        }
+        let lattice = super::super::TestLattice::min;
+        // Round r: keys 0..400 + 300r (new keys each round), each value lower for some keys each round; a key's rows
+        // more than once in a round (the fold groups them).
+        let round = |r: i64| -> Vec<i64> {
+            (0..400 + 300 * r).flat_map(|key| [[key, 1000 - r * (key % 3)], [key, 1001]]).flatten().collect()
+        };
+        let mut cpu = lattice();
+        for r in 0..4 {
+            cpu.fold(&round(r));
+        }
+        let mut rel = lattice();
+        let (code, top, after) = rel.device_lattice();
+        let lat = mj::LatCode { code, top, after };
+        let part = Part::for_writes_with_room(2, 1, 64 << 20).unwrap();
+        let mut map: Option<KeyMap> = None;
+        let mut had = 0usize;
+        for r in 0..3 {
+            let rows = round(r);
+            let n = rows.len() / 2;
+            assert!(part.reserve((had + n) as u64));
+            let need = (2 * (had + n)).next_power_of_two().max(16);
+            let old = match map.take() {
+                Some(m) if m.places() >= need => {
+                    map = Some(m);
+                    None
+                }
+                old => {
+                    // SAFETY: the fold's first pass writes every slot before any read.
+                    map = Some(KeyMap::of(unsafe { BlockVec::unwritten_in(Some(&part.home()), need * SLOT) }, had));
+                    Some(old)
+                }
+            };
+            let m = map.as_ref().unwrap();
+            let first = match &old {
+                None => mj::MapFirst::Ready,
+                Some(None) => mj::MapFirst::Clear,
+                Some(Some(o)) => mj::MapFirst::Grow(super::map_at(o)),
+            };
+            assert!(r == 0 || matches!(first, mj::MapFirst::Grow(_)), "the map grows on the device");
+            let r_rel = mj::DevRel::in_block(&part.in_block(had as u32), 2).unwrap();
+            let u = mj::Table::of_rows(2, &rows).unwrap();
+            let changed = mj::Table::new(2, n).unwrap();
+            let counters = mj::Words::zeroed(2).unwrap();
+            let mut batch = super::direct_batch(None).unwrap();
+            batch.lattice_fold(&u, n, &r_rel, had, 1, lat, super::map_at(m), first, &counters, &changed, None, None).unwrap();
+            batch.finish().unwrap();
+            drop(old);
+            let added = counters.get(1) as usize;
+            // SAFETY: the batch finished; `lat_merge` wrote every new key's row.
+            unsafe { part.written_more(added as u32) };
+            had += added;
+            map.as_mut().unwrap().held(had);
+        }
+        assert_eq!(had, 400 + 300 * 2, "a row a key");
+        let map = map.unwrap();
+        assert!(map.facts().is_some_and(|f| std::sync::Arc::ptr_eq(f, part.home().facts())), "the map in its relation's block");
+        assert!(rel.take_folded(part, map));
+        assert_eq!(rel.len(), had, "the rows taken as they lie");
+        // The CPU's fold goes on in the device's map: held keys found, new keys put, the map grown.
+        rel.fold(&round(3));
+        let (got, want) = (rel.live(), cpu.live());
+        assert_eq!(got.len(), 400 + 300 * 3);
+        assert_eq!(got, want, "the device's fold, then the CPU's, is the CPU's alone");
     }
 
     /// Text tests on the device: each test's verdicts per distinct symbol made by its automaton, the same rows as

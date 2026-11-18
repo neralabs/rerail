@@ -4198,6 +4198,92 @@ Test: `an_export_is_one_relation_of_the_chunks_new_rows`, which replaces the tes
 
 Still merged: 157 relations, nearly all of two parts. Steps 2 and 3 of 0384 cover them.
 
+### Q178. What a relation's block holds goes back to it: step 6 of decision 0384 (done)
+
+Done 2026-11-18. The user asked for Q177's leftover (a forgotten index's room was not given back) and for 0384 to
+be completed.
+- An index's buckets, rows and directory are chunks of the block's, given back when forgotten or released, pages
+  resident. Freeing them with their pages given back cost 2–13 s more sys time at 300 files: changed.
+- A relation rewritten in place (a lattice head) takes whole chunks of their class, reused by the next index of its
+  size. Fitted chunks' pieces cannot be taken by a chunk of their own size: a first form that used them grew the
+  block 8x over 21 rebuilds.
+- The lone block of a lattice head kept no free list (`lease_exact`'s `Block::anon`): nothing freed in it was ever
+  reused. Its block keeps one now.
+- `Rel::pending` (the dedup table) is a `keys::RowSet` in the relation's block.
+- A head whose tail's block is full is moved into a relation with room for the device's rows, which the claim makes
+  the tail: no appended part.
+
+Measured: cold 300-file CPU runs level with step 5 (instructions, sys, peak); the outputs the reference's, CPU and
+Metal. Tests: `a_forgotten_index_gives_its_room_back`, `a_relations_pending_rows_lie_in_its_block`,
+`a_tail_moved_for_another_writers_rows_stays_one_relation`.
+
+Found on the way:
+- `deferrable.rs` did not compile off macOS (Linux's `mincore` reports no dirty pages): its wait is macOS's, one
+  `msync` elsewhere. Fixed.
+- `rerail-accel` does not compile on the Linux farm hosts (7 errors), so the engine's and the device's tests run
+  on Macs only. Not looked into.
+- A kills delta made again when a relation's dead rows change (`Rows::in_block_dead`, Q173) leaves the old delta's
+  descriptor and dead words in the block. A reader may still bind the old one, so it needs a holder before it can
+  go.
+
+Left in 0384: a fork (two relations started from one kept relation's rows at once) is still two parts that the
+device's binding merges (`Rows::one`).
+
+### Q177. A lattice's key map is an index in its relation's block: step 5 of decision 0384 (done)
+
+Done 2026-11-18. The user asked how the GPU would run with the lattice maps still on the heap. Three structures held
+a lattice's keys:
+- the host's `Lat`: two `HashMap`s;
+- the device's `LatKeys`, rebuilt each fixpoint;
+- the device fixpoint's `own.total`, copied whole into a new device relation every round that added a key, then read
+  back row by row (`total.column`) into the host's fold, which folded it again.
+
+Now one key map (`setfix::keys::KeyMap`), three words a slot, lies in the relation's block. Host and device hash
+keys the same way (`key_hash`) and probe the same slots.
+- The device folds into the head's one relation: held keys' rows where they lie, new keys' rows past them.
+- The store takes the relation as it lies, with the map (`Fresh::place_folded`).
+- A later CPU fold goes on in the device's map.
+- A round that changed rows in place makes the relation forget its built indexes (`Relation::forget_indexes`).
+
+Found on the way: the device's `Fresh` was merged into the stratum's field by field (setfix.rs, the seeds' merge), and
+the map was dropped there. Without carrying it over, the rows were folded again at the current wave, and every row's
+level came out as the stratum's.
+
+Tests:
+- `a_lattices_key_map_lies_in_its_relations_block` (logic);
+- `a_cpu_fold_goes_on_in_the_devices_key_map` (device: three device rounds, one growing the map, then a CPU fold,
+  against a CPU fold alone);
+- `a_leveled_recursion_on_the_device_has_the_cpus_levels`, which now asserts that the lattice head is placed and
+  `placed == distinct`;
+- the native lattice tests, unchanged.
+
+A cold 100-file Metal run gives the CPU reference's outputs. B-now has no lattices.
+
+Left: the room of forgotten indexes is not given back to the block (decision 0384 step 5, "Left").
+
+### Q176. A relation's indexes lie in its block: step 4 of decision 0384 (done)
+
+Done 2026-11-18. The fixpoint's host indexes held about 45 MB at a 300-file peak, the sorted runs 37 MB of it (Q170).
+The sorted runs now keep their ids, tags, fences and key prints in blocks of relations (`BlockVec`, facts/rows.rs).
+Each array goes in its relation's block (`Rows::home`) while that keeps its relations' margin and room for the
+relation's tail to double. Otherwise it goes in the open block of the relation's life.
+
+A chunk keeps the asked bytes rounded up to an eighth of its class (`Block::try_alloc_chunk_fit`), and hands the
+class's rest back to the free list as smaller chunks.
+
+Cold 300-file runs against the step-3 binary:
+- CPU instructions are level (974–1,002 G against 975–1,000 G), and so is sys time.
+- The CPU peak is 1.61–1.64 GB against 1.50–1.64 GB.
+- Metal is level.
+- The findings are the reference's, and the strict 10-file outputs are byte-identical.
+
+Tests: `an_index_array_lies_in_its_relations_block`, `a_relations_runs_lie_in_its_block`. The bytes-a-row bound of
+`a_printed_order_finds_what_the_rows_find` allows the eighth-of-a-class rounding.
+
+Left: the dedup tables and lattice maps (under the heap sampler's floor). The CPU peak's average is about 40 MB
+higher than before: it is within one run's spread, and the next heap profile of a 300-file run should say whether
+the blocks' free lists hold it.
+
 ### Q175. A relation is one relation: steps 2 and 3 of decision 0384 (done)
 
 Done 2026-11-18. At 100 files the Metal merges (`Rows::one`) were 88, 29 MB. Nearly all were relations of parts the

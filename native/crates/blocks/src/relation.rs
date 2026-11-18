@@ -26,6 +26,14 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering::*};
 
 pub const FROZEN: u32 = 1;
 pub const DELTA: u32 = 2;
+/// Its index directory and every index in it were added (`try_reserve_index`), each a chunk of the block's: given back
+/// with the relation (`release`), or when forgotten (`forget_indexes`). A built relation's indexes lie with its rows.
+pub const ADDED: u32 = 4;
+/// Its rows' values change in place (a lattice's fold, decision 0384 step 5), so its indexes are forgotten after each
+/// change and built again: each is a whole chunk of its class (`Block::try_alloc_chunk`), which the next index of its
+/// size takes back from the free list. A fitted chunk (every other relation's, `try_alloc_chunk_fit`) goes back as
+/// smaller pieces that a chunk of its size cannot take.
+pub const REWRITTEN: u32 = 8;
 /// A key's columns at most: the device's probes' (decision 0325 step 5).
 pub const MAX_KEY: usize = 8;
 /// Indexes a relation can be given after it is made (`try_add_index`): its directory's room.
@@ -154,6 +162,12 @@ impl Relation {
     /// It lies in `block`, and no one reads or writes it after (its last holder's).
     pub unsafe fn release(&self, block: &Block) -> usize {
         let given = unsafe { self.rows.release(block) + self.killed.release(block) };
+        // Its added indexes, and their directory: chunks of the block's.
+        if self.flags.load(Acquire) & ADDED != 0 {
+            // SAFETY: the caller's: this is the relation's last use.
+            unsafe { self.forget_indexes(block) };
+            block.free_chunk_fit_resident(block.offset_of(self.indexes.as_ptr()), block.fit_kept(ADDED_INDEXES * size_of::<Index>()));
+        }
         let (at, bytes) = (block.offset_of(std::ptr::from_ref(self)), Relation::descriptor_bytes(self.arity as usize));
         // The last use of `self`: its own memory goes back.
         given + block.free_chunk(at, bytes)
@@ -248,16 +262,34 @@ impl Relation {
         unsafe {
             let me = std::ptr::from_ref(self).cast_mut();
             if self.indexes.len() == 0 {
-                let dir: *mut Index = block.try_alloc_t(ADDED_INDEXES)?;
-                Span::set(&raw mut (*me).indexes, dir, ADDED_INDEXES);
+                let (at, _) = block.try_alloc_chunk_fit_zeroed(ADDED_INDEXES * size_of::<Index>(), 8)?;
+                Span::set(&raw mut (*me).indexes, block.ptr::<Index>(at), ADDED_INDEXES);
+                self.flags.fetch_or(ADDED, Release);
             }
             let i = self.nindex.load(Relaxed) as usize;
             if i >= self.indexes.len() {
                 return None;
             }
             let cap = keys.min(n as usize).next_power_of_two().max(1);
-            let offs: *mut u32 = block.try_alloc_t(cap + 1)?;
-            let rows: *mut u32 = block.try_alloc_t((n as usize).max(1))?;
+            // Chunks the block's free list takes back when the index is forgotten (`forget_indexes`), zeroed as an
+            // allocation is.
+            let (ob, rb) = (4 * (cap + 1), 4 * (n as usize).max(1));
+            let (offs_at, rows_at) = if self.flags.load(Acquire) & REWRITTEN != 0 {
+                let o = block.try_alloc_chunk(ob, 8)?;
+                let Some(r) = block.try_alloc_chunk(rb, 8) else {
+                    block.free_chunk(o, ob);
+                    return None;
+                };
+                (o, r)
+            } else {
+                let (o, _) = block.try_alloc_chunk_fit_zeroed(ob, 8)?;
+                let Some((r, _)) = block.try_alloc_chunk_fit_zeroed(rb, 8) else {
+                    block.free_chunk_fit(o, block.fit_kept(ob));
+                    return None;
+                };
+                (o, r)
+            };
+            let (offs, rows): (*mut u32, *mut u32) = (block.ptr(offs_at), block.ptr(rows_at));
             let ix = std::ptr::from_ref(&self.indexes.as_slice()[i]).cast_mut();
             (*ix).ncols = 0;
             (*ix).ordered = 0;
@@ -311,6 +343,40 @@ impl Relation {
         std::sync::atomic::fence(Release);
         // SAFETY: the caller's; `ncols` is a u32 written once, after the index (the fence above).
         unsafe { std::ptr::write_volatile(&raw mut (*ix).ncols, room.ncols as u32) };
+    }
+
+    /// Marks its rows' values as changed in place (`REWRITTEN`): before any index is added.
+    pub fn rewritten(&self) {
+        debug_assert!(self.indexes.is_empty(), "marked rewritten after an index was added");
+        self.flags.fetch_or(REWRITTEN, Release);
+    }
+
+    /// Every index added forgotten, its buckets and rows given back to `block`'s free list (`try_reserve_index`'s
+    /// chunks): for a relation whose rows' values change in place (a lattice's fold, decision 0384 step 5), whose
+    /// indexes built before no longer hold. The next reader that probes a key builds its index again, in room the
+    /// block takes from its free list.
+    ///
+    /// # Safety
+    /// `block` holds this relation, whose indexes were all added (`try_reserve_index`, none of a built relation's);
+    /// under its owner's index lock, and no reader probes an index of it meanwhile, or after.
+    pub unsafe fn forget_indexes(&self, block: &Block) {
+        assert!(self.flags.load(Acquire) & ADDED != 0 || self.indexes.is_empty(), "a built relation's indexes forgotten");
+        let n = (self.nindex.load(Acquire) as usize).min(self.indexes.len());
+        for ix in &self.indexes.as_slice()[..n] {
+            // SAFETY: the caller's; `find_index` skips an entry whose `ncols` is 0.
+            unsafe { std::ptr::write_volatile(&raw mut (*std::ptr::from_ref(ix).cast_mut()).ncols, 0) };
+            let (offs, rows) = (4 * ix.offs.len(), 4 * ix.rows.len().max(1));
+            let (o, r) = (block.offset_of(ix.offs.as_ptr()), block.offset_of(ix.rows.as_ptr()));
+            // Left resident, as an index's room was before it went back (a few bytes a row; the next index takes it).
+            if self.flags.load(Acquire) & REWRITTEN != 0 {
+                block.free_chunk_resident(o, offs);
+                block.free_chunk_resident(r, rows);
+            } else {
+                block.free_chunk_fit_resident(o, block.fit_kept(offs));
+                block.free_chunk_fit_resident(r, block.fit_kept(rows));
+            }
+        }
+        self.nindex.store(0, Release);
     }
 
     /// `held_bytes` by part: values written, chunk room unwritten, order, index buckets, index rows, dead bits,
@@ -1024,6 +1090,51 @@ mod tests {
     use super::*;
     use crate::block::kind;
     use std::collections::BTreeSet;
+
+    /// Decision 0384 step 5: an added index's buckets and rows are chunks of a free-listed block, which forgetting it
+    /// (`forget_indexes`, a relation whose rows changed in place) gives back, and the next index takes again: a
+    /// relation probed after every change of its rows grows its block by nothing. Released, the relation gives back
+    /// its indexes and their directory too.
+    #[test]
+    fn a_forgotten_index_gives_its_room_back() {
+        let block = Block::anon(kind::FACTS, 16 << 20).with_free_list();
+        let spec = Spec { widths: vec![8, 8], order: Vec::new(), indexes: Vec::new(), min_log: crate::rows::MIN_LOG };
+        let rel = Relation::try_create(&block, &spec, None).unwrap();
+        rel.rewritten();
+        let n = 20_000u32;
+        assert!(rel.rows.try_reserve(&block, u64::from(n)));
+        unsafe {
+            rel.rows.claim_reserved(n);
+            for i in 0..n {
+                rel.rows.put(i, 0, i64::from(i % 97));
+                rel.rows.put(i, 1, i64::from(i));
+            }
+        }
+        let index = |r: &Relation| unsafe {
+            let room = r.try_reserve_index(&block, &[0], n).expect("room");
+            r.build_index(&room);
+            r.index_built(&room);
+        };
+        index(rel);
+        assert!(rel.find_index(&[0], n).is_some());
+        let used = block.used();
+        let free = block.free_bytes();
+        unsafe { rel.forget_indexes(&block) };
+        assert!(rel.find_index(&[0], n).is_none(), "forgotten");
+        assert!(block.free_bytes() >= free + 4 * n as usize, "its buckets and rows back on the free list: {} from {free}", block.free_bytes());
+        for _ in 0..20 {
+            index(rel);
+            unsafe { rel.forget_indexes(&block) };
+        }
+        index(rel);
+        assert_eq!(block.used(), used, "each index again in the room the last gave back");
+        let i = rel.find_index(&[0], n).expect("built again");
+        let group = rel.group(i, [5i64].iter().fold(crate::SEED, |h, &v| crate::mix(h, v)));
+        assert_eq!(group.iter().filter(|&&r| rel.rows.get(r, 0) == 5).count(), (0..n).filter(|i| i % 97 == 5).count(), "a key's rows");
+        let free = block.free_bytes();
+        unsafe { rel.release(&block) };
+        assert!(block.free_bytes() >= free + 4 * n as usize + 16 * n as usize, "rows, index and directory given back");
+    }
 
     fn rows_of(v: &View) -> Vec<Vec<i64>> {
         v.ordered_iter().map(|id| v.row(id)).collect()
