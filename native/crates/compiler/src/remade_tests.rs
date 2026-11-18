@@ -13,6 +13,7 @@ use crate::native_cpu_block;
 /// `aligned(_, 3)` makes `phase 3 r` (3 does not divide 64): read in the first pass by
 /// `aligned(d, 3)` and after the backward pass by `aligned(s, 3)`.
 const ALIGNED_LATE: &str = "lexer t
+deprecated back_fill
 class d  = '0'..'9'
 class q  = '\"'
 class sp = ' '
@@ -26,6 +27,7 @@ escape \"y\" when b
 /// `position`'s planes from 6 on are `position j`: read before the backward pass (into
 /// `back_fill`'s value) and after it (`end - position`), a run of backticks' length to its end.
 const POSITION_LATE: &str = "lexer t
+deprecated back_fill
 class tick = '`'
 mask last = tick & ~next(tick)
 number end = back_fill(last, ~tick, position)
@@ -97,3 +99,39 @@ fn remade_positions_payoff() {
     }
 }
 
+
+/// A value on the vectors made from words where the ASCII split reads it (`Emit::as_words`)
+/// reads its operands' words, so they are made first (`demand_order`'s `needs`). JSON's program
+/// with its byte order mark's check a constant zero, as the host strips it (0389), has one:
+/// `within 1 & ~prev(0, 1)`, read by a `\\u`'s digit test inside the split. Its operand `within 1`
+/// is on the vectors only, and was read as an unmade word, zero: the value was zero on every
+/// full block.
+#[test]
+fn a_word_made_value_reads_made_operands() {
+    use crate::block::BlockOp;
+    let source = std::fs::read_to_string(format!("{}/14-json.bitlex", crate::ladder::DIR)).expect("the ladder's JSON");
+    let c = crate::ladder::compile_step("14-json", &source);
+    let mut p = c.program.block_programs[0].clone();
+    let prefix = p.ops.iter().position(|op| matches!(op, BlockOp::Prefix(..))).expect("a prefix");
+    p.ops[prefix] = BlockOp::Const(0);
+    if let Some(r) = p.records.as_mut() {
+        r.prefix.clear();
+    }
+    let native = crate::block_native::BlockNative::lower(&p);
+    let compiled = native_cpu_block::compile(&native).expect("compiles");
+    // The outputs the record pass makes instead (the lasts, decision 0411) are not tier 1's.
+    let made = native.cpu_unstored();
+    let unit = br#"{"a": [1, -2.5e3, "x\u00e9y", true, null], "b": {"c": "\\\"d"}} "#;
+    for len in [64usize, 65, 128, 181, 200, 300] {
+        let file: Vec<u8> = unit.iter().copied().cycle().take(len).collect();
+        let (got, want) = (compiled.extract(&file), p.run_files(&[&file]).remove(0));
+        let tier1 = |o: &Vec<Vec<u64>>| {
+            o.iter()
+                .enumerate()
+                .filter(|(k, _)| !made.contains(k))
+                .map(|(_, w)| w.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(tier1(&got.outputs), tier1(&want.outputs), "length {len}");
+    }
+}

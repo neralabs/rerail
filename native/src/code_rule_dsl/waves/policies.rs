@@ -105,7 +105,9 @@ impl Logic {
             batch.insert(rel.clone(), (Source::named(&format!("main.{rel}"), columns), 1000.0));
         }
         let intern = &mut |names: &[&str]| store.intern_atoms(names).map_err(|e| crate::code_rule_dsl::logic::plan::Error::Plan(e.to_string()));
-        let emitted = emit::emit_program(prog, "demand", &batch, intern).and_then(|emitted| emit::single(emitted, DEMANDED)).map_err(|e| e.to_string())?;
+        // The demand program is built as a tree (`magic_sets`) until the waves build versions (0276 step 6).
+        let version = crate::code_rule_dsl::logic::program_image::Builder::of_program(prog).and_then(|b| b.finish()).map(|(v, _)| v)?;
+        let emitted = emit::emit_program(version, "demand", &batch, intern).and_then(|emitted| emit::single(emitted, DEMANDED)).map_err(|e| e.to_string())?;
         let sql = &emitted.program.steps[0].sql;
         // The emitter always sets up `rdl_int`; a statement that reads no setup needs none.
         let named = |statement: &str| statement.split(['(', ' ']).nth(3).map(str::to_owned).unwrap_or_default();

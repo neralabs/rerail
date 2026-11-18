@@ -31,3 +31,4 @@ pub mod msl;
 #[cfg(feature = "ir")]
 pub mod rust;
 pub mod view;
+pub mod view_reads;

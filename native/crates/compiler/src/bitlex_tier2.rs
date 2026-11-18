@@ -16,7 +16,7 @@
 use crate::grammar::{Act, ArmRow, StateRow};
 use crate::program::{MARK_KEEP, push_flag};
 use crate::stream_ir::{ByteSwitch, WORD_KIND};
-use std::collections::HashMap;
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 /// A set of bytes, bit `b` for byte `b`.
 pub type ByteSet = [u64; 4];
@@ -1010,7 +1010,7 @@ impl Emit<'_> {
         // The moved refusals: each target of a byte one of them can begin a token with gets
         // them first, once a target and set of marks.
         if !moved.is_empty() {
-            let mut made: HashMap<(Place, Vec<usize>), Place> = HashMap::new();
+            let mut made: HashMap<(Place, Vec<usize>), Place> = HashMap::default();
             let mut wrap = |e: &mut Self, b: u8, old: Place| -> Place {
                 let these: Vec<usize> = moved.iter().copied().filter(|&k| has(&e.marks[k].first, b)).collect();
                 if old == REFUSE || these.is_empty() {
@@ -1109,9 +1109,9 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         marked: vec![0; states.len()],
         tests_of: tests_of(states, arms, marks),
         at_switch: Vec::new(),
-        arm_code: HashMap::new(),
-        call_code: HashMap::new(),
-        row_chains: HashMap::new(),
+        arm_code: HashMap::default(),
+        call_code: HashMap::default(),
+        row_chains: HashMap::default(),
         mark_words: Default::default(),
         word_kinds: Default::default(),
     };
@@ -1152,6 +1152,8 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
                     ::bitlex::syntax::TokenElem::Not(_) => return Err("a `~` inside a `~`".into()),
                 }
             }
+            // The token before, `~`: it holds with no token before too (`end` there).
+            let end = end || (offset == -1 && not);
             elems.push((offset, kinds, words, not, end));
         }
         // A refusing one's word: its bit in the record is the word's alone (no state tests it,
@@ -1198,7 +1200,7 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
     // (`m=1`, to switch on it again). A state that takes no token, which closes at once, gets a
     // return entry of that shape: `TOKEN`, a `SWITCH` whose every way is the end, and the end,
     // its closes at the end of the token before and a return to switch on this one again.
-    let mut returns: HashMap<u16, Place> = HashMap::new();
+    let mut returns: HashMap<u16, Place> = HashMap::default();
     for p in arms.iter().flat_map(|a| a.push.iter().copied()) {
         if e.words[e.entry[usize::from(p)] as usize].0 == "TOKEN" || returns.contains_key(&p) {
             continue;
@@ -1334,7 +1336,7 @@ fn lay_out(words: &[(&'static str, u8, Arg)], switches: &[Switch], rules: &[u16]
     let mut words: Vec<(&'static str, u8, Arg)> = words.to_vec();
     let mut switches: Vec<Switch> = switches.to_vec();
     // Each switch's rule: its word's.
-    let mut table_rule: HashMap<u16, u16> = HashMap::new();
+    let mut table_rule: HashMap<u16, u16> = HashMap::default();
     for (pc, w) in words.iter().enumerate() {
         if let ("SWITCH", _, Arg::Table(t)) = *w {
             table_rule.insert(t, rule(pc));
@@ -1417,7 +1419,7 @@ fn lay_out(words: &[(&'static str, u8, Arg)], switches: &[Switch], rules: &[u16]
             work.push(run_of[pc]);
         }
     }
-    let firsts: std::collections::HashSet<usize> = work.iter().copied().collect();
+    let firsts: HashSet<usize> = work.iter().copied().collect();
     let mut refs = vec![0usize; runs.len()];
     let mut ref_from_goto_end = vec![None::<usize>; runs.len()];
     while let Some(r) = work.pop() {
@@ -1576,7 +1578,7 @@ fn merge_words(words: &[(&'static str, u8, Arg)], switches: &[Switch], rules: Op
     let is_call = |pc: usize| pc > 0 && words[pc].0 == "GOTO" && words[pc - 1].0 == "PUSH";
     let partition = |by_rule: bool| -> (Vec<u32>, usize) {
         let mut class: Vec<u32> = {
-            let mut ids: HashMap<(&str, u8, (u8, u16), u8, Vec<u16>, u16), u32> = HashMap::new();
+            let mut ids: HashMap<(&str, u8, (u8, u16), u8, Vec<u16>, u16), u32> = HashMap::default();
             words
                 .iter()
                 .enumerate()
@@ -1593,7 +1595,7 @@ fn merge_words(words: &[(&'static str, u8, Arg)], switches: &[Switch], rules: Op
         };
         let mut count = class.iter().copied().max().map_or(0, |m| m as usize + 1);
         loop {
-            let mut ids: HashMap<Vec<u32>, u32> = HashMap::new();
+            let mut ids: HashMap<Vec<u32>, u32> = HashMap::default();
             let next: Vec<u32> = (0..n)
                 .map(|pc| {
                     let (targets, by_place) = ways(words, switches, pc);
@@ -1685,7 +1687,7 @@ fn merge_words(words: &[(&'static str, u8, Arg)], switches: &[Switch], rules: Op
         }
     }
     let to = |t: Place| if t == REFUSE || (t as usize) >= n { REFUSE } else { new_at[rep[class[t as usize] as usize]] };
-    let mut tables: HashMap<u16, u16> = HashMap::new();
+    let mut tables: HashMap<u16, u16> = HashMap::default();
     let mut out_switches = Vec::new();
     let mut out = Vec::with_capacity(k as usize);
     let mut out_rules = Vec::with_capacity(k as usize);

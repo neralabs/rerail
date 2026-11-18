@@ -138,7 +138,8 @@ exponential, so a refusal is the answer to it, not a larger budget.
 3. **Conditionals and `#if`** by the directive tree's chains. Includes from the resolution table.
    The built-ins. The corpus's TUs must match the lean pass's `Expanded`.
 4. **Cranelift.**
-5. **Tier 2 on Metal,** then expansion on the work queue.
+5. **Tier 2 on Metal,** then expansion on the work queue. Spiked (5a, below): one TU a thread
+   does not pay.
 
 ## Stage 1, built: the whole file's tokens
 
@@ -168,12 +169,20 @@ directives' ladder, so mode (a) keeps its lean tape.
   `R & ~S` gave every backend Metal's answer, but it cost JSON's tier 2 its shape (30 calls of
   its own, where it has none), so it was not kept. The grammar keeps its starts out of its runs
   (`run lit_bytes & ~lit_start`). Work queue Q129 has the guard this needs.
+- **Digit separators and `u8'…'`, read since (Q132).** A separator's `'` (`1'000'000`, `0x'1`)
+  must open no character constant, but the regions are found before the numbers. Both grammars
+  (this one and the directives' `06-raw`) find it first, from a run of numbers made without the
+  regions (`sep`). They check it after, against the code's numbers: an escape where they differ.
+  That is a separator inside a character constant (`'.5'a`), or a `'` one side takes and the
+  other does not. The old escape (a character constant after a digit) also refused `u8'a'`, and
+  is gone. Corpus: tokens 3,073 the same, 62 refused, 0 differ; expansion 3,073 of 3,135 equal
+  to the lean pass, the JIT equal to the interpreter on each.
 
 ## Stage 2, built: the words, on the interpreter
 
 The words are `rerail-compiler`'s `pp_words` (opcodes `0x67`–`0x76` in `program.rs`), and the
-program is `rerail-c-directives`' `expand/expand.rir` (84 words; C's leaves out its `C++ only`
-lines).
+program is `rerail-c-directives`' `expand/expand.rir` (84 words, one program for C and C++:
+the dialect is the run's, `Env::cpp`; see "Built since").
 - **The words.** Each acts on one store, and a test runs the next word or skips it, as tier 2's
   tests do:
   - `READ` and `LINE` read: the next token unexpanded, the directive line's next token;
@@ -318,6 +327,180 @@ nested `?:`, 20 parentheses, malformed lines) and `#embed`'s (nested and unclose
   `Vec`s. In compiled code they become (file, scratch range) rows.
 - `_Pragma`'s text is scanned a byte at a time (`pragma_words`); the token grammar should lex
   it instead, as it lexes a file.
+
+## Stage 4b–4d, built: the words on Cranelift
+
+`compiler/src/native_cpu_pp.rs` lowers every word of `expand.rir` to Cranelift. `CompiledPp::run`
+returns the same `Expanded` the interpreter does, and the host takes either as its runner
+(`expand::expand_tu_with`).
+
+**The shape of the code.**
+
+- One function for the run, one block per word. A test word goes to the next word where it holds
+  and the one after where it fails, as in the interpreter.
+- The machine's state is a `#[repr(C)]` `Ctx`: the buffers `pp_words::run_native` reserves to the
+  bounds of §3, their lengths and rooms, and the scalars (`T`, `D`, the flags). A store past a
+  buffer's room refuses the TU, which then goes to the lean pass. A refusal is returned as
+  `(pc + 1) | reason << 32`, one of the interpreter's reasons.
+- The return stack holds a *rank*: which of the program's return points (`PUSH`'s operands) to go
+  back to. Each `RETURN` is a jump table over the ranks, its own stated step (`Step::Return`).
+  The plan had calls on the machine's stack, as tier 2's rules do. But a word's `RETURN` goes
+  back to a return point it doesn't know, so a rank and a table are the direct form.
+- Every function passes `native_cpu_shape::check`. It calls only its own functions, makes no
+  indirect or tail call, and every cycle passes a stated step: `Token`, `Word`, `Pop`, `Probe`,
+  `Item`, `Halve`, `Return`. No loop steps a byte: a spelling is read and written eight bytes a
+  step. Its last bytes are one load, masked, where the eight lie within the spelling's page. They
+  are one store where the buffer is a byte buffer with eight bytes of slack (scratch, the asked
+  and wanted bytes).
+- The records handed to the host on a miss are rows now: wanted files and unanswered features
+  (`asked`) are each a row plus a range of bytes.
+
+**`#if` flattened to a depth K (4c): built, measured, and removed.** This followed the user's
+steer that a stack is fine but the first levels are flattened, the file deciding how many.
+
+- The evaluator's words were lowered once per static depth `d` in `0..=K`, the return points
+  below K in SSA variables, past K on the return stack. Each `EXPR` word was a function of its
+  own, called from every depth.
+- K came from the files: `expand::if_depth` counted the evaluator's calls on each `#if` line's
+  tokens, rounded up to a power of two, at most 16, and `Compiled` compiled each K once.
+- **Removed.** A build at depth K serves every TU, since a TU goes only as deep as its `#if`s
+  do, so compiling per depth bought nothing that one build did not. And one build at depth 16
+  was slower than one at 0 on both compilers, every corpus TU on each (M1 Max, quiet run):
+  Cranelift 1,388 M cycles against 1,249 M (1.11×), rustc 861 M against 515 M (1.67×). The
+  copies cost more in code size than the return stack's loads and tables saved. So the words
+  are compiled once, the evaluator's calls on the return stack (`native_cpu_pp::compile`).
+
+**Large words outlined (4d).** The run's function was 198–248 KB of machine code, larger than an
+M1 core's instruction cache. `BUILTIN`'s three modes each held the whole of `builtin_value`: 19k
+of its 47k CLIF instructions. `GLUE`, `PRAGMA`, `LINEDIR`, `DEFINED` and `EXPR`'s primary held
+9k more. Every token passes through the run's function, but these words run rarely.
+
+- Each word is now lowered alone first. One over 512 CLIF instructions (`OUTLINE`) becomes a
+  function of its own, called by `call_word`. Its result is 0 for the next word, 1 for the one
+  after, or a refusal.
+- The run's function is now 56–68 KB. The shape test refuses any function over 128 KB, and
+  reports each function's bytes and each word's instructions.
+
+**Tests.**
+
+- `the_compiled_words_are_the_interpreters`: the standard's examples and the TUs, in C and C++,
+  each token's kind, flags and spelling and the expansions.
+- `the_compiled_ifs_have_the_interpreters_values`: `#if`'s primaries and operators value by
+  value, and deep `#if`s.
+- `the_compiled_words_have_their_shape`.
+- The corpus, ignored and run on the farm: 3,060 TUs the same, 75 refused by both (the token
+  grammar's refusals, Q132), 0 differ.
+
+**Time.** Over the corpus's 3,060 TUs, on an M1 Max in a quiet run, profiling build. The words
+are timed alone: the TUs' files are lexed ahead, as stage 1 does once per file content. The lean
+pass's time includes its lexing.
+
+| Run | Instructions | Cycles |
+|---|---|---|
+| The words' interpreter | 5,124 M | 1,150–1,190 M |
+| The compiled words | 2,290 M | 1,290 M |
+| The lean pass (lexing too) | 8,040 M | 1,900–2,000 M |
+
+- The compiled words retire 45% of the interpreter's instructions, at 1.8 instructions a cycle
+  against its 4.4. Their cycles are 1.09× the interpreter's.
+- By quarters of the TUs, the half that expand most run at 0.92×. The TUs with least expansion
+  run at 1.28×, and the smallest at 1.48×.
+- The steps that moved it: outlining the large words (1,410 M to 1,294 M cycles) and the masked
+  byte words (to 1,290 M).
+- Tried, measured and not kept:
+  - A reservation per TU sized to its own work, not to the bounds: no change.
+  - The run-invariant fields' loads marked `readonly`: no change. A word's block is a merge of
+    many paths, so no load dominates the next word's.
+  - `T` and `D` as SSA variables, spilled around calls (the plan's form), with a guard that no
+    access reaches them in memory: 1.13×, and larger code. The patch is kept out of the tree.
+
+So the cost is not in the instructions, which halved. Something stalls the compiled words that
+does not stall the interpreter. The counters that would name it (branch misses, cache misses)
+need a profiler run, which is open.
+
+**Built since:**
+- **The ahead-of-time Rust of the same IR.** `native_cpu_pp::rust_source` passes the JIT's
+  functions through `clif_rust`, and `rerail-pp-aot` compiles them with rustc behind its
+  `generated` feature. It is built without debug info: LLVM's debug info overflowed rustc's
+  stack on the nested blocks. It equals the interpreter on the examples and TUs (90 runs). On
+  the corpus at depth 0 it takes 533–556 M cycles against Cranelift's 1,240–1,258 M. So the
+  stall above is Cranelift's code, not the words' IR. The plan that follows is note t44.
+- **`_Pragma`'s text lexed by the token grammar,** as the lean pass lexes it: as a file of its
+  own. The text is a named entry of the file on top, of a kind of its own (`Named::pragma`).
+  Where the host has not lexed it yet, it is wanted, and the TU runs again. `#pragma` and
+  `_Pragma` share `pragma_of`, and the byte scan (`pragma_words`) is gone.
+- **One program for C and C++.** C's program had been the text with its five `; C++ only` lines
+  left out, so every build was made twice. Those lines were table data, not words: three
+  punctuators, the literal suffix paste, and `#if`'s alternative tokens and `true`. Now
+  `ppop sN cpp` marks C++'s punctuators (`PpTables::cpp_ops`), `Env::cpp` gives the run's
+  dialect, and the compiled words test it (`Ctx::cpp`) where the tables are C++'s. The example
+  "pastes by dialect" and `the_dialects_examples_differ` check that the lean pass tells the
+  dialects apart there, so words equal to it in both read the flag.
+- **One build.** With the dialect a run's and no depth (4c, above), the words compile once:
+  one JIT compile a process, one ahead-of-time build (`rerail_pp_aot::BUILD`, 3.4 MB of Rust).
+  On the corpus (3,060 TUs, 0 differ): the interpreter 1,098 M cycles, Cranelift 1,235 M,
+  rustc 487 M, the lean pass 1,876 M.
+
+- **The stall found (Q184).** Cranelift's Arm jump tables carry a speculation barrier (`csdb`) on
+  every dispatch, and every `RETURN` dispatched through one. Cranelift's code has its jump
+  tables as trees of compares (`native_cpu_codegen::switch_trees`, every backend's, Q186),
+  and the shape test refuses a `csdb` in the words' code; rustc's keeps the tables. With two smaller
+  changes (extending loads, branches on each test of a combination), Cranelift's code went
+  from 1,235 M cycles to 550 M: 0.50× the interpreter's, 1.14× rustc's (t44).
+- **rustc's build is the CPU path** (the user's choice, t44 step 5). `rerail-c-directives`'
+  `generated` feature is on by default, and `expand_tu` runs `expand::native`: the build
+  where it was made from the words this process has (`Build::words`, `expand.rir`'s
+  fingerprint, checked once), else Cranelift's code, compiled once a thread. Its cost is a
+  rustc compile of 3.4 MB of generated Rust when the words or the compiler change.
+
+## Stage 5a, the spike: the words on Metal, one TU a thread
+
+The words' Cranelift IR is printed as MSL (`clif_msl`), as `clif_rust` prints it as Rust. So
+the device runs the same code as the JIT and rustc's build: one meaning, three printers of one
+IR. On the device, `run_native` is split in two. `pp_words::prepare` lays out the machine,
+given where each buffer goes, and `complete` reads the result back. The CPU places each buffer
+where it is. Metal (`metal::pp_on`) copies each one into one arena a batch, and copies back the
+ones the words write. The kernel `pp_batch` takes contexts by ticket.
+
+- **It runs, and equals the interpreter:** `the_metal_words_are_the_interpreters`, on
+  `EXAMPLES` and `TUS`, in C and C++, 62 of 62, on the M5 Max (Relax) and the M3 (cargo).
+- **MSL has no labels and no `goto`.** `Shape`'s labelled loops become `do`/`for` blocks
+  with a target variable, which each block tests when a `break` leaves it (`Shape::msl`).
+- **Found: no access through an integer cast to a pointer.** The first form cast each GPU
+  address back to a `device` pointer. Then `#if !(1/0)` was true on Metal: `#if`'s `live`
+  stack read its first byte as 0, after a store of 1 to the same byte that a callee had already
+  read back. Marking every access `volatile` fixed it, so the stored bytes were right and the
+  device compiler had reordered the accesses. Every access is now the arena's pointer at the
+  address's offset (`AT`), so the compiler sees one object. A probe of a byte's stores also
+  fixed it, so a failure that disappears under a probe points here.
+- **Unaligned accesses:** the IR's `aligned` flag is the CPU's, which also covers a 64-bit
+  access at a 4-byte boundary. A byte, or a context field at its size's multiple, is one
+  access. Any other access goes through helpers over the aligned words around it.
+
+Measured on the M5 Max, not a quiet run (`the_metal_words_time_against_the_jit`, the 11
+rounds of `TUS`'s 8 TUs, each batch made of copies of one round, so its threads never diverge):
+
+| | |
+|---|---|
+| MSL | 90,607 lines |
+| Compile | library 3.9 s, pipeline 11.9 s cold; 0.13 s from Metal's cache |
+| One run, the Cranelift JIT on one core, `prepare` and `complete` included | 6.4 µs |
+| One run, one GPU thread | 3,798 µs |
+| A batch of 32 / 64 / 128 copies, a run | 118 / 58 / 25 µs |
+| The arena a run | 1.4–3.2 MB, so 512 MB of device budget holds about 128–170 runs |
+
+A batch takes about 3.7 ms whatever its thread count, so a run's time is one thread's
+latency. One GPU thread runs one serial machine about 600× slower than a CPU core. Even 128
+threads that never diverge give a quarter of one core's throughput, and the budget allows no
+more. Real batches are distinct TUs, whose threads diverge on every token.
+
+**Finding: one TU per thread does not pay** (the plan's stop point; the go/no-go is the
+user's). Expansion is a serial machine per TU: its state
+changes at every token, and its branches depend on the token. A GPU pays for that with one
+thread's latency. To pay, the device needs data-parallel work: stage 1's masks (already on
+Metal) or many TUs' independent steps in lockstep. That would be a different design from the
+words. Stages 5b–5e (a complete `clif_msl`, the batch host, rounds as batches) wait on that
+decision. `clif_msl`, the split `run_native` and `pp_on` stay, tested, as the measured basis.
 
 ## Open
 

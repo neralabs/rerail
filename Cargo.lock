@@ -3182,6 +3182,7 @@ dependencies = [
  "rerail-c-pp",
  "rerail-compiler",
  "rerail-metal",
+ "rerail-pp-aot",
  "rerail-simd8",
  "rerail-tape-format",
 ]
@@ -3230,6 +3231,7 @@ dependencies = [
  "rerail-clif",
  "rerail-compiler",
  "rerail-tape-format",
+ "rustc-hash",
 ]
 
 [[package]]
@@ -3562,6 +3564,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-kotlin-aot"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "rerail-compiler",
+ "rerail-kotlin-aot",
+ "rerail-kotlin-lean",
+ "rerail-kotlin-parser",
+]
+
+[[package]]
 name = "rerail-kotlin-lean"
 version = "0.1.0"
 dependencies = [
@@ -3634,6 +3647,7 @@ dependencies = [
  "rerail-lang",
  "rerail-markdown-inline-lean",
  "rerail-markdown-lean",
+ "rerail-metal",
  "rerail-php-lean",
  "rerail-prof",
  "rerail-python-lean",
@@ -4221,6 +4235,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-pp-aot"
+version = "0.1.0"
+dependencies = [
+ "rerail-compiler",
+]
+
+[[package]]
 name = "rerail-prof"
 version = "0.1.0"
 dependencies = [
@@ -4621,6 +4642,7 @@ dependencies = [
  "lz4-sys",
  "memchr",
  "rerail-clif",
+ "rerail-simd8",
  "sha2 0.10.9",
 ]
 

@@ -7,7 +7,7 @@ use metal::{
 use std::mem::size_of_val;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, Mutex};
 
 use crate::launch;
 

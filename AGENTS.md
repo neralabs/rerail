@@ -117,7 +117,10 @@ themselves: a host reached over the wrong link is moved back to its fast one whe
 be, a host that fails a probe is skipped, with a growing back-off, and a lost connection
 reruns the command here at `nice -n 19`. Don't work around a host that is down. Run
 `status` to see why, and go on locally. `--remote-only` exits 69 when no host can take the
-command. Both scripts run the installed farm (`~/.local/share/rerail-farm`), whatever version
+command. A host may be a Linux machine: it takes a command when every Mac slot is busy (never a
+Metal one or a `--tree` run), and the command is then a Linux build and run, as CI's; its line
+says `(Linux: ...)`, and `--os macos` keeps a command on a Mac. It also compiles this Mac's library
+crates, in a container, to the very bytes this Mac would (the farm's README, "Mac compiles on a Linux host"). Both scripts run the installed farm (`~/.local/share/rerail-farm`), whatever version
 this checkout has.
 
 On a machine with the farm, every build already goes through it: `~/.cargo/config.toml` (written
@@ -141,7 +144,7 @@ after the same tests pass under cargo, because Relax's std is its own.
 scripts/dev/relax/build        # once, and after it changes: the pinned, patched Relax, into ~/.local/share/rerail-relax
 cd native && RUSTC_WRAPPER= RELAX_ALLOW_C=1 RELAX_SHARED_OPEN=1 RELAX_SHARE=rerail RELAX_CACHE_MAX=8192 RELAX_STD=~/.local/share/rerail-relax/src/libs/relax/compiler/std \
   nice -n 19 ~/.local/share/rerail-relax/bin/relax test --live rerail-engine --lib -- FILTER
-scripts/dev/live-test-remote rerail-engine --lib -- FILTER    # the same, on a farm host
+scripts/dev/live-test-remote rerail-engine --lib -- FILTER    # the same, on a farm host (a Mac first, else a Linux one)
 ```
 
 The engine needs std items that upstream Relax lacked. They are `scripts/dev/relax/std.patch`,

@@ -103,6 +103,8 @@ pub use rerail_program_image::code_rule_dsl::logic::program_facts;
 pub mod program_image {
     pub use rerail_program_image::code_rule_dsl::logic::program_image::*;
     pub mod analyses;
+    /// Each relation's layout, declared or inferred (decision 0361 step 3).
+    pub mod layouts;
     pub mod manager;
     pub mod passes;
     pub use analyses::{Edges, Strata};

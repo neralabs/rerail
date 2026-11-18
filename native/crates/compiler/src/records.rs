@@ -140,11 +140,47 @@ pub struct Records {
     /// The prefix (`prefix B …`, decision 0335): where the file starts with these bytes, the
     /// stream, and the loop, start after them. Empty: no prefix.
     pub prefix: Vec<u8>,
+    /// The skip's mask (decision 0411), an output: where set, a token's last byte is the byte
+    /// before the next token's start (the file's end) less the run of this mask's bytes before
+    /// it (`gap_last`), as the lasts extract's, proved. The CPU's tier 1 then makes no lasts; its
+    /// record pass makes them.
+    pub gap: Option<u16>,
+}
+
+/// A token's last byte (decision 0411, `Records::gap`): the byte before `next` (the next
+/// token's start, or the file's length), less the run of `gap`'s bits before it, found a word
+/// at a time (the leading zeros of the word's bits not in the run).
+pub fn gap_last(gap: &[u64], start: usize, next: usize) -> usize {
+    let mut end = next;
+    while end > start + 1 {
+        let (q, r) = ((end - 1) / 64, (end - 1) % 64);
+        // The bits at and below `end - 1` not in the gap: the highest is the last byte.
+        let w = !gap.get(q).copied().unwrap_or(0) & (u64::MAX >> (63 - r));
+        if w != 0 {
+            return (q * 64 + 63 - w.leading_zeros() as usize).max(start);
+        }
+        end = q * 64;
+    }
+    start
+}
+
+/// The tokens' last bytes by their gaps (`gap_last`), each before the next token's start.
+pub fn gap_lasts(gap: &[u64], starts: &[u32], len: usize) -> Vec<u32> {
+    (0..starts.len())
+        .map(|k| {
+            gap_last(
+                gap,
+                starts[k] as usize,
+                starts.get(k + 1).map_or(len, |&n| n as usize),
+            ) as u32
+        })
+        .collect()
 }
 
 /// A token test (`Records::checks`): over the tokens whose first byte's end rule is `rule`,
 /// output `o`'s bits in the token at least `least` (`count`), or `o` at each of the token's
-/// first `least` bytes (not `count`: a run, the token that long; `least` at most 64).
+/// first `least` bytes (not `count`: a run, the token that long; `least` at most 64), or at
+/// every byte of a token `least` long at least (`all`, not `count`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TokenCheck {
     pub rule: u8,
@@ -152,9 +188,16 @@ pub struct TokenCheck {
     pub o: u16,
     pub least: u32,
     pub then: CheckThen,
+    pub all: bool,
 }
 
 impl TokenCheck {
+    /// A count whose hit a loop makes with the rule's others (fused into one call or one
+    /// vector): not a cut, which ends the token before they are made.
+    pub fn counted(&self) -> bool {
+        self.count && !self.always() && self.then != CheckThen::Cut
+    }
+
     /// A count of at least none: it holds at every token its rule reads (the lowering proves
     /// a count of one so, `bitlex_masks`), so nothing reads its mask. A reader's rule reads a
     /// token where an arm's opener holds at its first byte; at another, its other rule's
@@ -180,12 +223,32 @@ pub fn test_holds(records: &Records, c: &TokenCheck, s: usize, l: usize, outputs
 
 /// What a token that passes a test (`TokenCheck`) does: refuses the file (`escape … at KIND`),
 /// or is a bit of gap mark `k` at its first byte (`At`) or at the byte after its last (`After`):
-/// the mark of the grammar token at or after that byte (`mark … , at KIND when …`).
+/// the mark of the grammar token at or after that byte (`mark … , at KIND when …`). Or, a
+/// count's (`Cut`, `run R once D`), the token ends before its mask's `least`th bit (`cut`),
+/// before any other test of it is made.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CheckThen {
     Escape,
     At(u8),
     After(u8),
+    Cut,
+}
+
+impl CheckThen {
+    /// A mark's bit (`At`, `After`).
+    pub fn marks(self) -> bool {
+        matches!(self, CheckThen::At(_) | CheckThen::After(_))
+    }
+}
+
+/// Token `s..=l` of rule `rule` cut by its rule's `Cut` test (`run R once D`): it ends before
+/// the test's mask's `least`th bit in it, as a lexer stops at a number's second `.`.
+pub fn cut(records: &Records, rule: u8, s: usize, l: usize, outputs: &[Vec<u64>]) -> usize {
+    records.checks.iter().filter(|c| c.rule == rule && c.then == CheckThen::Cut).fold(l, |l, c| {
+        let w = outputs.get(usize::from(c.o)).map_or(&[][..], |v| v.as_slice());
+        let bit = |i: usize| w.get(i / 64).is_some_and(|x| x >> (i % 64) & 1 == 1);
+        (s..=l).filter(|&i| bit(i)).nth(c.least as usize - 1).map_or(l, |i| i - 1)
+    })
 }
 
 /// A token's hits of the marks' tests (`CheckThen::At`, `After`): the `At` marks' bits, and the
@@ -195,7 +258,7 @@ pub const AFTER_SHIFT: u32 = 16;
 /// The marks' tests' hits at token `s..=l` of rule `rule` (`AFTER_SHIFT`).
 pub fn check_hits(records: &Records, rule: u8, s: usize, l: usize, outputs: &[Vec<u64>]) -> u32 {
     records.checks.iter().filter(|c| c.rule == rule && test_holds(records, c, s, l, outputs)).fold(0, |a, c| match c.then {
-        CheckThen::Escape => a,
+        CheckThen::Escape | CheckThen::Cut => a,
         CheckThen::At(k) => a | 1 << k,
         CheckThen::After(k) => a | 1 << (AFTER_SHIFT + u32::from(k)),
     })
@@ -208,6 +271,8 @@ pub fn check_holds(c: &TokenCheck, s: usize, l: usize, outputs: &[Vec<u64>]) -> 
     let n = c.least as usize;
     if c.count {
         (s..=l).filter(|&i| bit(i)).count() >= n
+    } else if c.all {
+        l + 1 - s >= n && (s..=l).all(bit)
     } else {
         l + 1 - s >= n && (s..s + n).all(bit)
     }
@@ -288,6 +353,13 @@ pub enum Split {
 }
 
 impl Records {
+    /// The marks the code holds, by order: the first `mark_bits` marks (decision 0407). The
+    /// extras' bits come after them; a mark of a later order (a token mark that tier 2 tests
+    /// alone, a mark past `MARKS`) holds no bit of the code.
+    pub fn mark_bits(&self) -> usize {
+        self.extra.map_or(self.marks.len(), usize::from)
+    }
+
     /// Where the stream starts in `bytes`: past the prefix, where the file starts with it.
     pub fn start(&self, bytes: &[u8]) -> usize {
         if !self.prefix.is_empty() && bytes.starts_with(&self.prefix) { self.prefix.len() } else { 0 }
@@ -509,8 +581,9 @@ pub fn lasts(records: &Records, bytes: &[u8], starts: &[u32], outputs: &[Vec<u64
         .iter()
         .map(|&s| {
             let first = bytes.get(s as usize).copied().unwrap_or(0);
-            match records.rules.get(usize::from(records.ends[usize::from(first)])) {
-                Some(&rule) => last_by_rule(records, rule, s as usize, bytes, outputs).map(|l| l as u32),
+            let k = records.ends[usize::from(first)];
+            match records.rules.get(usize::from(k)) {
+                Some(&rule) => last_by_rule(records, rule, s as usize, bytes, outputs).map(|l| cut(records, k, s as usize, l, outputs) as u32),
                 None => Some(s),
             }
         })
@@ -587,7 +660,7 @@ pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vec<u64>]) ->
                 l
             }
             Some(&rule) => {
-                let l = last_by_rule(records, rule, s, bytes, outputs).unwrap_or(s).max(s);
+                let l = cut(records, k, s, last_by_rule(records, rule, s, bytes, outputs).unwrap_or(s).max(s), outputs);
                 checked |= records.checks.iter().any(|c| c.rule == k && c.then == CheckThen::Escape && test_holds(records, c, s, l, outputs));
                 l
             }

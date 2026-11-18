@@ -1,0 +1,38 @@
+#!/bin/zsh
+# simdjson-stage1-loop [--print]: simdjson's stage 1 loop alone (fixtures/simdjson-stage1/stage1_loop.cpp),
+# compiled as `rerail-simdjson-native` compiles simdjson (clang++ -O3, C++17, NDEBUG, no exceptions),
+# and its machine code counted as tier 1's hot loop is (`clif_text::machine_loop`): the
+# instructions from the first block a back edge takes to the last back edge, in layout order.
+# arm64 only. `--print` prints the loop. Set it beside `json_tests::json_shapes`'s "hot loop".
+set -e
+if [[ $(uname -m) != arm64 ]]; then echo "arm64 only" >&2; exit 2; fi
+root=${0:A:h:h:h}
+out=${TMPDIR:-/tmp}/rerail-simdjson-stage1-loop
+mkdir -p $out
+nice -n 19 clang++ -std=c++17 -O3 -DNDEBUG -DSIMDJSON_EXCEPTIONS=0 -I$root/native/vendor/simdjson-5.0.5 \
+  -c $root/fixtures/simdjson-stage1/stage1_loop.cpp -o $out/stage1_loop.o
+objdump -d --no-show-raw-insn --disassemble-symbols=_rerail_stage1_loop $out/stage1_loop.o > $out/function.s
+# Each instruction line: "    fd0c:  <tab>subs<tab>x8, x1, #0x40".
+typeset -a addrs lines
+while IFS= read -r line; do
+  [[ $line =~ '^ +([0-9a-f]+):[[:space:]]+(.*)$' ]] || continue
+  addrs+=($((16#${match[1]}))); lines+=("${match[2]}")
+done < $out/function.s
+lo=-1; hi=-1
+for i in {1..${#lines}}; do
+  l=${lines[$i]}
+  [[ $l =~ '^(b|b\.[a-z]+|cbn?z|tbn?z)[[:space:]].*0x([0-9a-f]+) <' ]] || continue
+  t=$((16#${match[2]}))
+  if (( t <= addrs[i] )); then
+    (( lo < 0 || t < lo )) && lo=$t
+    (( addrs[i] > hi )) && hi=${addrs[i]}
+  fi
+done
+n=0; stack=0
+for i in {1..${#lines}}; do
+  (( addrs[i] >= lo && addrs[i] <= hi )) || continue
+  n=$((n + 1))
+  [[ ${lines[$i]} =~ '^(ldr|str|ldp|stp|ldur|stur)[[:space:]].*\[sp' ]] && stack=$((stack + 1))
+  [[ $1 == --print ]] && printf '%x: %s\n' ${addrs[i]} "${lines[$i]}"
+done
+echo "simdjson stage 1 loop: $n instructions, $stack stack loads or stores ($(printf '%x..%x' $lo $hi); $out/function.s)"

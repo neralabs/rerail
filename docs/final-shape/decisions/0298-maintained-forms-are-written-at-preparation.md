@@ -1,8 +1,8 @@
 # 0298: maintained forms are written once per program, and a run selects from them
 
-Status: decided (2026-11-16); steps 1–3 built behind `RERAIL_GENERAL_FORMS`, step 4 waits on 0281 step 5. Amends the maintained cross part (decision 0117 step 3) and its forms
-(decision 0241). Fits decision 0281: it is one more preparation pass, which 0281 step 5 moves onto the pass manager
-with the others.
+Status: built (2026-11-16), the default; steps 1–4. Amends the maintained cross part (decision 0117 step 3) and its
+forms (decision 0241), and decision 0104 (one read inside the waves, below). Each general form is a keyed step of
+decision 0281 §6.
 
 ## Intro
 
@@ -23,12 +23,13 @@ too.
 
 ## Decision
 
-1. **A general form per stratum, once per program and kept part.** Each cross-file stratum's form is written as if
+1. **A general form per stratum, once per program and kept rows.** Each cross-file stratum's form is written as if
    every read whose old rows are kept had changed: a delta rule for each such read, reading the old rows (`x__old`)
    of the others. "Kept" is what the kept part holds, read or not yet (`Retained::holds_old`: a derived relation
-   held or in the frames, an input whose source the last run kept), so the general forms are keyed by the program
-   and the signature of that set (`olds_signature`). Per stratum: its form, and per rule the read whose delta drives
-   it.
+   held or in the frames, an input whose source the last run kept), so a stratum's general form is keyed by the
+   program, the stratum, and whether each relation it mentions has kept old rows, with levels or not. Per stratum:
+   its form, and per rule the read whose delta drives it. It is written the first time an edit reaches the stratum
+   (amended 2026-11-16, below), not for every stratum at once.
 2. **A run selects, it does not write.** A reached stratum runs the rules of its general form driven by the reads
    that changed, and the rules that every form has (its own deltas, survivors, `redo`, the gates of its pieces): a
    view of the general version (`Placed::new` over a set of rule ids, as the split's parts are), not a written
@@ -37,8 +38,22 @@ too.
    what the narrow form computes: a read changed whose old rows are not kept, or a read changed with no delta (an
    earlier stratum was derived again). A recursive stratum has two general forms, by levels (decision 0090) and
    not, because whether its kept rows have levels is known only once they are read; the run takes the one its kept
-   rows match (`GeneralForms::by_levels`).
-4. **The general forms are stored with the prepared program**, so a new process reads them with it.
+   rows match.
+4. **Each general form is a keyed step of the store (0281 §6)**, so a new process reads it instead of writing it:
+   one step per stratum, keyed by the part (its version's identity and its atoms' names, `forms_identity`), the
+   stratum, and the kept old rows of the relations it mentions. A form is one source of the store, under its key
+   (amended 2026-11-16, "compact", below): its record, then its own layers over the part's atoms (the form's, then
+   its maintenance's), not a folded image, which would hold every atom of the part; it is opened over the atoms the
+   run makes once (`Builder::under`). The record is what a selection reads (each rule's driving read and inputs,
+   the form's inputs and outputs, its maintenance), as varints: names as atoms of the form's image, relations as
+   its ids, rules as its places. Nothing else is stored: the step's pass and version are in its key, and opening a
+   layer checks it. A form holds the kind sets its stratum reads, not the program's every set. A stratum whose form
+   the store lacks writes it, and the form is queued for the store's writer.
+5. **A reached stratum's form is read inside the waves** (the user's call, 2026-11-16), decision 0104's one
+   exception: its key names the kept old rows, which the run knows only as it reaches the stratum, and the strata
+   reached are known only then. `profile::read_in_waves` runs the read as work behind the run, which the strict
+   mode lets through; it reads alone, and the pins of what was read (one write for the run) and the forms written
+   go to the store's writer.
 
 ## Validation (before building)
 
@@ -119,15 +134,64 @@ again, and the policies after it lost their cut-off. Binding a relation's rows a
 tried and dropped: a form reading a relation's rows is a different program from one reading its old rows, so the
 general form now takes as kept exactly what the kept part holds.
 
+## Results (step 4, stored, the default)
+
+dl10, the 39 policies, debug engine, CPU binding, each step a new process, both paths on their own stores warmed on
+the same build (a build's id is in every key), then the same comment appended to the same file on each:
+
+| Edit | Today (G instructions) | Selected, forms stored |
+|---|---|---|
+| 1 | 79.58 | 77.73 |
+| 2 | 79.31 | 77.70 |
+| 3 | 79.55 | 77.40 |
+
+Profiled (a fourth edit, CPU): the reached strata's forms 0.371 s → 0.054 s, plus 0.082 s to find and open the 253
+stored forms; the cross-file part's spans 1.53 s → 1.26 s.
+
+What the store costs: a cold run writes every reached stratum's form (659; 246.5 G against 243.7 G), and the first
+edit after a cold run misses, because the kept part then holds old rows it did not (the relations the cold run
+derived but kept no old rows of: 84.8 G against 79.3 G). From the second edit, 253 of 257 forms are read.
+
+A first version stored a folded image per form. Each held the part's whole atom table: opening 253 cost 0.29 s and
+591 MB of allocation, as much as writing the forms. As layers over the part's atoms: 0.063 s, 38 MB. A form's pins
+were a write each (two per form); they are one, behind the run.
+
+Each step's rows are compared with a cold run on a fresh store over the same files (below).
+
+### Compact (2026-11-16)
+
+The user asked for the stored forms to be as small as they can be. As first stored, a form was two sources (its
+layers, and a facts record of 0281 §6's step), each with an alias and a pin, and the record held the step's key as
+hex three times, its layers' digest as hex, and the selection's row as JSON: 677 B per form beside its layers. And
+each form held every kind set of the program (`kindset_kind`'s rows, 57% of a layer's bytes).
+
+| Per form (cold run, 39 policies) | First stored | Compact |
+|---|---|---|
+| Layers | 5.5 KB | 2.4 KB (the stratum's kind sets alone) |
+| Record | 677 B: facts, hex and JSON | 94 B: varints |
+| Sources, aliases, pins | 2 each | 1 each |
+
+0281 §6's facts format stays as Typing-support's for their steps; a general form keeps its own (`StoredForms`).
+A cold run costs 261 G on the same build. The five steps again hold the oracle's rows. An edit's cost did not move:
+73.7–80.8 G (77.4–77.7 G before). A first reading of 49.9–51.0 G was wrong: those edits appended a comment the
+store had seen in an earlier edit, so the run reused its results for that file (an edit with the same text, run on
+its own: 26.9 G). Decision 0328 asks whether forms should exist at all.
+
+What is left of a layer is the program image's (0173): its header is 976 B whatever the layer holds (16 + 24 × 40
+regions), 18% of the stored bytes, and the string buckets 10%; the rest is the rules' node trees (about 256 nodes a
+form). Decision 0266's `Program` block replaces both.
+
 ## Path
 
 1. `rewrite_over` reads the run's kept part through two questions (old rows kept, levels kept) and returns the old
    rows it reads instead of binding them, so it can write without a run.
-2. The general forms written at preparation and held on the prepared program, with each rule's driving read.
+2. The general forms, each with its rules' driving reads.
 3. The driver selects from them (2), with the fallback (3); outputs compared with today's on the edit, revert and
    warm steps.
-4. Stored with the prepared program: through 0281 step 5's keyed preparation steps, when Typing-support lands it
-   (the user's call, 2026-11-16), keyed by the program and `olds_signature`. Then the switch becomes the default.
+4. Stored through 0281 §6's keyed steps (the user's call, 2026-11-16, to wait for them): one step per stratum,
+   written when first reached (the user's call, 2026-11-16, over one image of every stratum's form per part, which
+   would have cost the first edit after each change of the rules about 2 s), read inside the waves (decision 5).
+   Done; `RERAIL_GENERAL_FORMS` removed.
 
 ## Open
 

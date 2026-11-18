@@ -22,6 +22,8 @@ pub const SAMPLE: u32 = 64;
 /// An id's low 32 bits: its granule's slot, then its index in it (`INDEX_BITS`).
 pub const SLOT_BITS: u32 = 14;
 pub const INDEX_BITS: u32 = 32 - SLOT_BITS;
+/// The top slots, from the last down, that hold a document's spans past its nodes and tokens (`span_low`).
+pub const SPAN_SLOTS: u32 = 16;
 /// An order key's low bits: its index in its granule; above them, its run's rank.
 pub const ORDER_INDEX_BITS: u32 = 18;
 /// The items a granule jump stands for (`Numbering::jumps`).

@@ -1870,3 +1870,185 @@ kernel void ids_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[b
     }
     assert_eq!(tried, 3 * 3 * 3, "every case, format and shape");
 }
+
+/// Decision 0353 step 4c: the `node`, `child`, `field`, `core_node` and `line` views' rows read through the views' reads (written once in CLIF), by the JIT on
+/// the host and as MSL on the device, over the document's entry, its numbering where it lies in its block and its
+/// tape where it is read in place, are the host's rows (`Viewed::value_of`): every numbered node's document, id, kind,
+/// start and end; each child's parent, id and place; each fielded node's parent, field and id; each node's tape node;
+/// each node's line, by its lines where they lie (step 4d). In all three formats, whole and narrowed.
+#[cfg(target_os = "macos")]
+#[test]
+fn the_view_reads_are_the_hosts_rows() {
+    use crate::code_rule_dsl::lines::{LineTable, Terminators};
+    use crate::code_rule_dsl::tape::{Grammar, TapeImage, formats::Format};
+    use metal::{CompileOptions, Device, MTLResourceOptions, MTLSize};
+    use ranks::Item;
+    use rerail_clif::view::TapeView;
+    const WIDE: usize = 16;
+    const KERNEL: &str = r#"
+// The tape is reached by its GPU address (a pointer in the stage's constants, the buffer made resident): no binding.
+struct Tapes { device const uchar* tt; device const uchar* ll; };
+kernel void view_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[buffer(1)]], constant uint& n [[buffer(2)]],
+                       constant Tapes& tapes [[buffer(3)]], constant uint* tv [[buffer(4)]], device long* out [[buffer(5)]],
+                       constant uint& nf [[buffer(6)]], uint2 g [[thread_position_in_grid]]) {
+    // A thread a (local, slot): each read is called once with its column a value, so the compiler makes one copy of
+    // each (a column a constant, unrolled, had it make sixteen, each with 16z's decoder: minutes of compile on an M3).
+    uint l = g.x, k = g.y;
+    if (l >= n || k >= 16u) return;
+    device const uchar* tt = tapes.tt;
+    device const uchar* ll = tapes.ll;
+    uint v[29];
+    for (uint q = 0u; q < 29u; q++) v[q] = tv[q];
+    long r = 0;
+    if (k < 5u) r = long(clif_view_node(b, d, tt, v, ll, l, k));
+    else if (k < 8u) r = l + 1u < n ? long(clif_view_child(b, d, tt, v, ll, l, k - 5u)) : 0;
+    else if (k < 11u) r = l < nf ? long(clif_view_field(b, d, tt, v, ll, l, k - 8u)) : 0;
+    else if (k < 14u) r = long(clif_view_core(b, d, tt, v, ll, l, k - 11u));
+    else r = long(clif_view_line(b, d, tt, v, ll, l, k - 14u));
+    out[l * 16u + k] = r;
+}
+"#;
+    const _: () = assert!(std::mem::size_of::<TapeView>() == 29 * 4);
+    let jit = rerail_clif::jit::Reads::new();
+    // SAFETY: `view_node`'s signature: the entry, the tape's base, its view, the lines' base, a local, a column.
+    let read = |name: &str| -> extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, u32, u32) -> i64 { unsafe { std::mem::transmute(jit.function(name)) } };
+    let (node, child, field, core_node, line) = (read("view_node"), read("view_child"), read("view_field"), read("view_core"), read("view_line"));
+    let device = Device::system_default();
+    let pipe = device.as_ref().map(|device| {
+        let source = format!(
+            "#include <metal_stdlib>\nusing namespace metal;\n{}{}{}{KERNEL}",
+            include_str!("../../../transducer/packed/metal_tape_reads_z.metal"),
+            include_str!("id_reads.metal"),
+            include_str!("view_reads.metal")
+        );
+        let lib = device.new_library_with_source(&source, &CompileOptions::new()).expect("the view reads compile");
+        (device.new_compute_pipeline_state_with_function(&lib.get_function("view_probe", None).unwrap()).unwrap(), device.new_command_queue())
+    });
+    let cases: &[(&str, &str)] = &[
+        ("python", "import os\nX = 1\n@dec\ndef f(a, b=2):\n    '''doc'''\n    return [x for x in a if x]\n\nclass C(B):\n    def m(self):\n        def inner():\n            pass\n        return inner\n"),
+        ("typescript", "import { a } from 'b';\nexport const App = () => 1;\nclass K { x = 1; m(): number { return this.x; } }\nfunction g(n: number) { if (n) { return n; } }\n"),
+    ];
+    let anchors: BTreeSet<String> = ["call", "call_expression", "function_definition", "method_definition", "class_declaration"].iter().map(|s| (*s).to_owned()).collect();
+    let mut tried = 0;
+    for &(label, source) in cases {
+        let lang = dialect_by_label(label).unwrap();
+        let grammar = Grammar::new(lang).unwrap();
+        let source = Arc::new(source.to_owned());
+        let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
+        for format in Format::ALL {
+            let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
+            let words: Vec<u32> = lines.words().to_vec();
+            let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image.clone().in_format(format, source.as_bytes()), lines).unwrap());
+            let dialect = Dialect::new(core::facts_tag(&facts)).unwrap();
+            let (tape, view) = facts.tape.as_ref().unwrap().in_place().unwrap();
+            // A 16z tape's reads decode its blocks into the reader's slots (0353 step 4b).
+            let reader = rerail_clif::view::Reader::new(&view, tape.as_ptr());
+            let v = reader.view();
+            for (shape, narrowed) in [(Shape::Core, false), (Shape::T, false), (Shape::Core, true)] {
+                let p = if narrowed { Projected::anchored(7, Arc::clone(&facts), Some(&dialect), shape, &anchors) } else { Projected::new(7, Arc::clone(&facts), Some(&dialect), shape, false, None) };
+                let at = format!("{label} {} {shape:?}{}", format.name(), if narrowed { " narrowed" } else { "" });
+                let block = p.ranks().block();
+                let entry = view_docs::ViewEntry::new(block, &p, &dialect);
+                let n = p.len();
+                let nf = p.ranks().count(Item::Field);
+                let parent = |l: u32| match p.parent(l as usize) {
+                    NONE => -1,
+                    q => p.global(q),
+                };
+                // Each local's rows: its `node` row, then `child` row `l` (of local `l + 1`), `field` row `l`, `core_node` row.
+                let want: Vec<i64> = (0..n)
+                    .flat_map(|l| {
+                        let x = p.ranks().select(Item::Node, l).unwrap();
+                        let c = l + 1;
+                        let child = if c < n { [parent(c), p.global(c), i64::from(p.idx(c as usize))] } else { [0; 3] };
+                        let field = if l < nf {
+                            let fx = p.ranks().select(Item::Field, l).unwrap();
+                            let fl = p.ranks().rank(Item::Node, fx);
+                            [parent(fl), i64::from(field_atom(p.tag, facts.field(fx))), p.global(fl)]
+                        } else {
+                            [0; 3]
+                        };
+                        let mut row = vec![i64::from(p.key), p.global(l), i64::from(dialect.kind_of_atom(facts.kind(x))), i64::from(facts.start(x)), i64::from(facts.end(x))];
+                        row.extend(child);
+                        row.extend(field);
+                        row.extend([i64::from(p.key), i64::from(x), p.global(l)]);
+                        row.extend([p.global(l), i64::from(facts.start_line(x))]);
+                        row
+                    })
+                    .collect();
+                let e = entry.desc();
+                let t = tape.as_ptr();
+                let ll = words.as_ptr().cast::<u8>();
+                let jitted: Vec<i64> = (0..n)
+                    .flat_map(|l| {
+                        let mut row: Vec<i64> = (0..5).map(|c| node(e, t, v, ll, l, c)).collect();
+                        row.extend((0..3).map(|c| if l + 1 < n { child(e, t, v, ll, l, c) } else { 0 }));
+                        row.extend((0..3).map(|c| if l < nf { field(e, t, v, ll, l, c) } else { 0 }));
+                        row.extend((0..3).map(|c| core_node(e, t, v, ll, l, c)));
+                        row.extend((0..2).map(|c| line(e, t, v, ll, l, c)));
+                        row
+                    })
+                    .collect();
+                assert_eq!(jitted, want, "{at}: the JIT's rows");
+                if let (Some(device), Some((pipe, queue))) = (&device, &pipe) {
+                    let d = block.offset_of(entry.desc()) as u64;
+                    // The tape where the device reads it: a test's buffer of its bytes, a word of room past them.
+                    let mut bytes = tape.to_vec();
+                    bytes.resize(tape.len() + 16, 0);
+                    let tt = device.new_buffer_with_data(bytes.as_ptr().cast(), bytes.len() as u64, MTLResourceOptions::StorageModeShared);
+                    let out = device.new_buffer(u64::from(n.max(1)) * WIDE as u64 * 8, MTLResourceOptions::StorageModeShared);
+                    // A 16z tape's blocks through a cache every thread shares (0353 step 4b): one of a block a
+                    // generation, which turns all the time and may find no room (a failure counted: the device
+                    // refuses the batch), and one with room.
+                    for room in [1u32, 4, 64] {
+                    let cmd = queue.new_command_buffer();
+                    let enc = cmd.new_compute_command_encoder();
+                    enc.set_compute_pipeline_state(pipe);
+                    enc.set_buffer(0, Some(&block.gpu_buffer(device)), 0);
+                    enc.set_bytes(1, 8, (&raw const d).cast());
+                    enc.set_bytes(2, 4, (&raw const n).cast());
+                    // Its lines where the device reads them: a test's buffer of their words.
+                    let lb = device.new_buffer_with_data(words.as_ptr().cast(), 4 * words.len() as u64, MTLResourceOptions::StorageModeShared);
+                    let address = [tt.gpu_address(), lb.gpu_address()];
+                    let mut view = view;
+                    let spec = rerail_clif::view::cache::Spec::new(3, room, view.columns[3] as usize).with_stats();
+                    let cache = device.new_buffer(spec.bytes() as u64, MTLResourceOptions::StorageModeShared);
+                    if view.format == rerail_clif::view::F16Z_FORMAT {
+                        // SAFETY: the buffer's bytes, shared with the host, not yet read by the device.
+                        spec.init(unsafe { std::slice::from_raw_parts_mut(cache.contents().cast::<u8>(), spec.bytes()) }).unwrap();
+                        let rel = cache.gpu_address().wrapping_sub(tt.gpu_address()) as i64;
+                        (view.side[0], view.side[1], view.columns[3], view.columns[4]) = (rel as u32, (rel >> 32) as u32, spec.entry_bytes() as u32, 1);
+                    }
+                    enc.use_resource(&cache, metal::MTLResourceUsage::Read | metal::MTLResourceUsage::Write);
+                    enc.set_bytes(3, 16, address.as_ptr().cast());
+                    enc.use_resource(&tt, metal::MTLResourceUsage::Read);
+                    enc.use_resource(&lb, metal::MTLResourceUsage::Read);
+                    enc.set_bytes(4, std::mem::size_of::<TapeView>() as u64, (&raw const view).cast());
+                    enc.set_buffer(5, Some(&out), 0);
+                    enc.set_bytes(6, 4, (&raw const nf).cast());
+                    enc.dispatch_threads(MTLSize::new(u64::from(n), WIDE as u64, 1), MTLSize::new(16, WIDE as u64, 1));
+                    enc.end_encoding();
+                    cmd.commit();
+                    cmd.wait_until_completed();
+                    // SAFETY: the kernel wrote WIDE longs a row, and its command completed.
+                    let got = unsafe { std::slice::from_raw_parts(out.contents().cast::<i64>(), want.len()) };
+                    // SAFETY: the cache's header, its command completed.
+                    let word = |at: i32| unsafe { *cache.contents().cast::<u8>().add(at as usize).cast::<u32>() };
+                    if view.format == rerail_clif::view::F16Z_FORMAT {
+                        // SAFETY: the cache's header, its command completed.
+                        let counts = unsafe { rerail_clif::view::cache::Counts::read(cache.contents().cast::<u8>()) };
+                        eprintln!("{at}, {room} a generation: the device's cache: {counts:?}, hit ratio {:.3}", counts.hit_ratio());
+                    }
+                    let failed = word(rerail_clif::view::cache::FAILED);
+                    assert!(room == 1 || failed == 0, "{at}: the device's cache with room failed {failed} times");
+                    if failed == 0 {
+                        assert_eq!(got, &want[..], "{at}, {room} a generation: the device's rows");
+                    }
+                    }
+                }
+                tried += 1;
+            }
+        }
+    }
+    assert_eq!(tried, 2 * 3 * 3, "every case, format and shape");
+}

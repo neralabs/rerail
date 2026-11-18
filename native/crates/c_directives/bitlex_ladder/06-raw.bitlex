@@ -23,7 +23,7 @@
 # Every directive is recorded, in every group: no configuration is read here.
 #
 # What the step does not read goes to the lean scan, so no row is wrong: a carriage return, a
-# trigraph, a digraph `%:`, a raw string, a `'` after a digit (a digit separator), a string or a
+# trigraph, a digraph `%:`, a raw string, a digit separator the regions do not read, a string or a
 # character constant open at a line's end, a splice inside a word or a comment's opener, and a
 # block comment open at the file's end.
 
@@ -92,7 +92,19 @@ mask raw_open   = dquote & next(lparen) & prev(r_alone | r_pre | r_u8)
 mask raw_close  = dquote & prev(rparen)
 mask escaped    = escaped(backslash)
 mask q          = dquote & ~escaped
-mask sq         = squote & ~escaped
+# A digit separator (C23, C++14): a `'` in a pp-number before a letter, a digit or `_`
+# (`1'000'000`, `0x'1`). The regions need it first, as no quote: so it is found from a run of
+# numbers made without them, and checked against the code's numbers below (an escape where the
+# two differ). As `bitlex_tokens/tokens.bitlex` finds it.
+class sep_after = 'a'..'z' 'A'..'Z' '0'..'9' '_'
+class c_exp     = 'e' 'E' 'p' 'P'
+class sign      = '+' '-'
+mask sep_cand   = squote & next(sep_after)
+mask num_more   = wordc | dot | (sign & prev(c_exp))
+# A number starts at a digit no word byte, `.`, `'` or `\` is before, or at a `.` before a digit.
+mask sep_start  = (digit & ~prev(wordc | dot | squote | backslash)) | (dot & next(digit))
+mask sep        = sep_cand & prev(fill(sep_start, ~(num_more | sep_cand)))
+mask sq         = squote & ~escaped & ~sep
 mask line_open  = slash & next(slash)
 mask block_open = slash & next(star)
 # `*/`'s `/`, but not the `/` of `/*/`.
@@ -118,7 +130,11 @@ escape "a string open at the end of the file" when (f_str | f_chr) & last_byte
 mask region     = hidden | o_raw | o_str | o_chr | o_line | o_block
 mask code       = ~region
 escape "a raw string with a delimiter" when o_str & prev(c_r)
-escape "a digit separator" when o_chr & prev(digit)
+# The code's numbers, from their first bytes, over the separators: a separator inside a character
+# constant (`'.5'a`, its closer taken for one), a `'` they would take that was none, or one they
+# do not reach.
+mask c_num      = fill(code & ((digit & ~prev(code & (wordc | dot | sep))) | (dot & next(digit))), ~(code & (num_more | sep)))
+escape "a digit separator the regions do not read" when (sep & f_chr) | (code & sep_cand & prev(c_num) & ~sep) | (code & sep & ~prev(c_num))
 
 # A comment's bytes, its `*/` too: a blank, as the lexer reads it.
 mask comment    = f_line | f_block | (block_end & prev(f_block))

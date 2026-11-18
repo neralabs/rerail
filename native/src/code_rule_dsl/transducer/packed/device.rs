@@ -3,7 +3,8 @@
 //! on macOS that is Metal (`rerail-device-metal`, `code_rule_dsl::device_metal`). Nothing here names a device.
 //!
 //! The backends stay data (`ExecutionBackend`, `Backend::MetalInterpreter`, `RanOn`): a backend with no device to
-//! run it is refused (`Error::UnsupportedBackend`), or falls back to the CPU where it did before the split.
+//! run it is refused (`Error::UnsupportedBackend`, decision 0382). The product's own choice of backend, where no device
+//! is registered, is the CPU's (`execute_production_corpus`): no device is not an error.
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
@@ -59,9 +60,10 @@ pub trait MatcherDevice: Send + Sync {
     fn warm_labels(&self);
     /// Drops the label passes' pipelines (their memory) once the documents they ran over are gone.
     fn drop_label_pipelines(&self);
-    /// Span prefilters' ends (`regex_block`): bit `i` of a file's words, a match can end after its byte `i`. None:
-    /// the device could not run them (the cores do).
-    fn span_ends(&self, natives: &[&rerail_compiler::block_native::BlockNative], batch: &[super::block::BatchFile<'_>]) -> Option<Vec<Vec<u64>>>;
+    /// Span prefilters' ends (`regex_block`): bit `i` of a file's words, a match can end after its byte `i`.
+    /// `Ok(None)`: a program form the device lacks, recorded in 0202's `metal-form` list (the cores run them). Any
+    /// other failure is the run's error (decision 0382: no fallback on an error).
+    fn span_ends(&self, natives: &[&rerail_compiler::block_native::BlockNative], batch: &[super::block::BatchFile<'_>]) -> Result<Option<Vec<Vec<u64>>>, Error>;
     /// This thread's program invocations and host events since the last reset (tests count them).
     fn execution_metrics(&self) -> (usize, usize);
     /// Resets this thread's `execution_metrics`.

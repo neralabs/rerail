@@ -1633,7 +1633,7 @@ pub(crate) mod logic {
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::name::Name;
         #[allow(unused_imports)]
-        pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::ast::{AXIS, Again, AggOp, Atom, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, Literal, NEAREST, Native, OPTION_GLOB, Program, QUALIFIERS, RESERVED, Rule, SCOPE_NOT, SpanIn, Term, Value, axis, cmp_binds, globals, is_axis, is_transduced, join};
+        pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::ast::{AXIS, AggOp, Atom, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, Literal, NEAREST, Native, OPTION_GLOB, Program, QUALIFIERS, RESERVED, Rule, SCOPE_NOT, SpanIn, Term, Value, axis, cmp_binds, globals, is_axis, is_transduced, join};
         #[allow(unused_imports)]
         pub(crate) use crate::code_rule_dsl::facts::core::PYTHON_CONTEXTS;
     }
@@ -1758,6 +1758,9 @@ pub(crate) mod logic {
             // Decision 0225 §2: partial memo hits hand on what a full evaluation does.
             #[cfg(test)]
             pub mod partial_tests;
+            // Decision 0364's required shape (R1–R10): what a session's edit does, one test per requirement.
+            #[cfg(test)]
+            pub mod maintain_tests;
             #[cfg(test)]
             pub mod cache_tests;
             // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
@@ -3964,8 +3967,6 @@ mod typing {
         use crate::content_store::{StoreError, StoreResult};
         #[allow(unused_imports)]
         pub(crate) use crate::code_rule_dsl::facts::nearest::{Binding, NONE, Trees};
-        #[allow(unused_imports)]
-        pub(crate) use crate::code_rule_dsl::typing::file_local::split_memo::forget as forget_splits;
         #[allow(unused_imports)]
         pub(crate) use crate::code_rule_dsl::logic::front::document_column;
         #[allow(unused_imports)]

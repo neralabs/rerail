@@ -20,6 +20,7 @@
 pub mod tape;
 pub mod f16;
 pub mod newlines;
+pub mod home;
 /// The tape's reads as Rust, written from their CLIF (decision 0310; `rerail_clif::reads::rust_source`).
 mod generated_reads;
 

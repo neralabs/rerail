@@ -30,9 +30,6 @@ class u         = 'u'
 class dee       = 'd' 'D'
 class high_2    = '8' '9' 'a' 'b' 'A' 'B'
 class low_2     = 'c'..'f' 'C'..'F'
-class ef        = 0xef
-class bb        = 0xbb
-class bf        = 0xbf
 class slash     = '/'
 class star      = '*'
 class lf        = '\n'
@@ -40,10 +37,8 @@ class lf        = '\n'
 # --- UTF-8, as simdjson's stage 1 checks it --------------------------------------------------------
 
 class cont      = 0x80..0xbf
-class lead2     = 0xc2..0xdf
 class lead3     = 0xe0..0xef
 class lead4     = 0xf0..0xf4
-class never     = 0xc0 0xc1 0xf5..0xff
 class e0        = 0xe0
 class ed        = 0xed
 class f0        = 0xf0
@@ -54,15 +49,32 @@ class below_90  = 0x80..0x8f
 class from_90   = 0x90..0xbf
 
 mask last_byte  = ~next(~empty)
-# A UTF-8 byte order mark at the start of the file, which simdjson skips.
-mask bom        = ~prev(~empty) & ef & next(bb) & next(bf, 2)
-mask bom_bytes  = bom | prev(bom, 1) | prev(bom, 2)
-# A byte a lead byte before it needs to be a continuation; a continuation is one exactly there.
-mask needed     = prev(lead2 | lead3 | lead4, 1) | prev(lead3 | lead4, 2) | prev(lead4, 3)
-error "invalid UTF-8" when never | (needed ^ cont)
+# A UTF-8 byte order mark at the start of the file, which simdjson skips before its loop: the
+# stream starts after it (decisions 0335, 0389), so no class, token or error has its bytes.
+prefix 0xef 0xbb 0xbf
+
+# simdjson's form (`lookup4`): every rule of two bytes is the byte before's class with this
+# byte's, so the compiler makes them one lookup of each (decision 0404):
+#   - a byte that never starts a sequence (0xc0, 0xc1, 0xf5 to 0xff) before a continuation
+#     (overlong, too large), and any lead byte before a byte that is not one (too short), or
+#     last in the file;
+#   - a continuation after none of the lead bytes or continuations, or first (too long);
+#   - the overlong and surrogate pairs, and the code points past 0x10ffff;
+#   - two continuations in a row, exactly where a lead byte 2 or 3 bytes back needs a third or a
+#     fourth (simdjson's `TWO_CONTS` against `must_be_2_3_continuation`).
+class not_cont  = 0x00..0x7f 0xc0..0xff
+class high      = 0x80..0xff
+class lead      = 0xc0..0xff
+class c0c1      = 0xc0..0xc1
+class f5ff      = 0xf5..0xff
+class third     = 0xe0..0xff
+class fourth    = 0xf0..0xff
+error "invalid UTF-8" when (prev(c0c1, 1) & cont) | (prev(f5ff, 1) & cont)
+                         | (prev(lead, 1) & not_cont) | (cont & ~prev(high, 1))
                          | (prev(e0, 1) & below_a0) | (prev(ed, 1) & from_a0)
                          | (prev(f0, 1) & below_90) | (prev(f4, 1) & from_90)
-error "UTF-8 cut short at the end" when ((lead2 | lead3 | lead4) & last_byte)
+                         | ((prev(cont, 1) & cont) ^ (prev(third, 2) | prev(fourth, 3)))
+error "UTF-8 cut short at the end" when (lead & last_byte)
                                       | ((lead3 | lead4) & next(last_byte)) | (lead4 & next(last_byte, 2))
 
 # --- Strings: simdjson's stage 1 -----------------------------------------------------------------
@@ -80,12 +92,17 @@ mask content    = body & ~esc & ~esc_last
 mask unicode    = esc_last & u
 
 error "a control byte in a string" when body & control
-error "\\u without four hex digits" when (prev(unicode, 1) | prev(unicode, 2) | prev(unicode, 3) | prev(unicode, 4)) & ~hex
+# Each `\u`'s own test, at its `u`, of the bytes after it: tier 2 runs it at the escape's
+# token, and tier 1 makes the `u`s only (decision 0399).
+error "\\u without four hex digits" when unicode & ~(next(hex, 1) & next(hex, 2) & next(hex, 3) & next(hex, 4))
 # A surrogate escape, at its `u`: `\uD800` to `\uDBFF` must be followed by one of `\uDC00` to
 # `\uDFFF`, six bytes on, and that one must follow one (simdjson refuses either alone).
 mask high       = unicode & next(dee, 1) & next(high_2, 2)
 mask low        = unicode & next(dee, 1) & next(low_2, 2)
-error "a lone surrogate" when (high & ~next(low, 6)) | (low & ~prev(high, 6))
+# After a high one's four hex digits, a backslash can only start an escape: its test is the
+# bytes'.
+error "a lone high surrogate" when high & ~(next(backslash, 5) & next(u, 6) & next(dee, 7) & next(low_2, 8))
+error "a lone low surrogate" when low & ~prev(high, 6)
 
 # --- Outside strings -----------------------------------------------------------------------------
 
@@ -100,7 +117,7 @@ mask shut       = block & prev(closer, 1)                 # the closing `/`
 mask comment    = line | block
 mask code       = outside & ~comment
 # Any other byte outside a string is in a word: a number or a literal, checked per token.
-mask word       = code & ~ws & ~op & ~bom_bytes & ~slash
+mask word       = code & ~ws & ~op & ~slash
 
 # --- Tokens --------------------------------------------------------------------------------------
 
@@ -122,7 +139,7 @@ keywords punctuation { "{"  "}"  "["  "]"  ","  ":" } required
 token number          = start starts(word) last lasts(word)
 keywords number { "true" -> true  "false" -> false  "null" -> null }
 
-skip code & (ws | bom_bytes)
+skip code & ws
 
 error "a slash outside a comment" when code & slash
 error "an unclosed block comment" when block & ~shut & last_byte

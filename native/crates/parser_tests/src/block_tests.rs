@@ -11,7 +11,7 @@ use rerail_compiler::*;
 use rerail_compiler::block::BlockRun;
 use rerail_compiler::program::Words as Program;
 use rerail_compiler::rir_asm as rir;
-pub use crate::executors::{Executors, executors, inputs, runs};
+pub use crate::executors::{Executors, inputs, runs};
 #[cfg(target_os = "macos")]
 use rerail_metal as metal_program_backend;
 
@@ -39,10 +39,11 @@ fn reference(bytes: &[u8], f: impl Fn(u8) -> bool) -> Vec<u64> {
 /// Check a program's outputs against references on every input and every executor.
 fn check_all(rows: &str, want: impl Fn(&[u8]) -> Vec<Vec<u64>>) {
     let p = program(rows);
+    let ex = Executors::new(&p);
     for bytes in inputs() {
         let want = want(&bytes);
         // Every executor that disagrees, so one run shows where a lowering is wrong.
-        let wrong: Vec<String> = executors(&p, &bytes).into_iter().filter(|(_, got)| *got != want).map(|(name, _)| name).collect();
+        let wrong: Vec<String> = ex.every(&bytes).into_iter().filter(|(_, got)| *got != want).map(|(name, _)| name).collect();
         assert!(wrong.is_empty(), "{} bytes: wrong on {wrong:?}, program:\n{rows}", bytes.len());
     }
 }
@@ -81,9 +82,10 @@ fn eq_refusals() {
 fn eq_equals_reference_on_every_executor() {
     for byte in [b'"', b'\\', 0x00, 0xff, b'a'] {
         let p = program(&format!("  block 0 %0 = eq {byte:#04x}\n  block 0 output %0\n"));
+        let ex = Executors::new(&p);
         for bytes in inputs() {
             let want = reference(&bytes, |b| b == byte);
-            for (name, got) in executors(&p, &bytes) {
+            for (name, got) in ex.every(&bytes) {
                 assert_eq!(got, [want.clone()], "{name}, eq {byte:#04x}, {} bytes", bytes.len());
             }
         }
@@ -1116,9 +1118,10 @@ fn utf8_inputs() -> Vec<Vec<u8>> {
 #[test]
 fn stage1_utf8_equals_std_on_every_executor() {
     let p = rir::assemble(STAGE1).unwrap_or_else(|e| panic!("{e}"));
+    let ex = Executors::new(&p);
     for bytes in utf8_inputs() {
         let want = std::str::from_utf8(&bytes).is_err();
-        for (name, got) in executors(&p, &bytes) {
+        for (name, got) in ex.every(&bytes) {
             assert_eq!(utf8_invalid(&bytes, &got), want, "{name}: {:x?}", &bytes[bytes.len().saturating_sub(12)..]);
         }
     }

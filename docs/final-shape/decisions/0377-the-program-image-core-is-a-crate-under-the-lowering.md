@@ -1,6 +1,6 @@
 # 0377: The program image's core is a crate under the lowering
 
-**Numbered 0365 until 2026-11-17** (0365 is three other branches' records; its commits name it so).
+**Numbered 0365 until 2026-11-17** (0365 is three other branches' records; its commits name it so). Its work queue items Q81 and Q101 are Q130 and Q84 since its merge into django-bugs, and Q81 and Q84 since django-bugs' merge into cost-classifier (the hub's numbers).
 
 **Status:** building (the user's choice, 2026-11-17).
 
@@ -85,7 +85,7 @@ moved up), the user chose: "move it down into a new crate under rerail-rr".
     the core; `a_rewrite_renames_an_aggregates_result_too`.
   - Checks: a debug build links each library as a tree too and asserts one program;
     `library_modules_link_to_the_lowering_of_them_together` (every pack's libraries) also links their images on
-    versions and compares. Tests: 682 of 684 lowering, library, image, request and corpus tests (Q81 and Q101, both
+    versions and compares. Tests: 682 of 684 lowering, library, image, request and corpus tests (Q81 and Q84, both
     failing at `caa1bfdb2` too); ep2's 317 policies over 10 files, cold then warm on one store, debug: 0 rows.
 - **What still reads rules as trees** (2026-11-17), so `front::Program`'s rules stay: the planner's front passes
   decode versions (`plan.rs`: normalize, inline, demand, form), policies are parsed by `rr::parse`/`parse_own` into

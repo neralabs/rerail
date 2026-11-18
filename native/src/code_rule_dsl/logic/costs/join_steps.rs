@@ -172,11 +172,13 @@ impl crate::code_rule_dsl::logic::plan::joins::Pricer for ModelPricer {
         if steps.is_empty() {
             return None;
         }
-        let targets = {
-            let on = if self.0.on_device() && steps.len() >= rerail_accel::join_model::DEVICE_ROWS { "on the device" } else { "on the host" };
-            let _span = crate::code_rule_dsl::logic::profile::span(|| format!("join model: {on}"));
-            self.0.fanouts(&steps).ok()?
-        };
+        // Queued with the rounds of strata planned at once (`JoinModel::fanouts`): one dispatch for all of them.
+        let targets = self.0.fanouts(&steps).ok()?;
+        let [asked, dispatched, walked] = self.0.counts();
+        if asked.is_power_of_two() {
+            let [rows, waiting, predicting] = self.0.cpu();
+            crate::code_rule_dsl::logic::plan::joins::log(|| format!("join model: {asked} rounds, {dispatched} dispatches, {walked} walked on the host; CPU {rows:.3} s bucketing, {waiting:.3} s waiting, {predicting:.3} s predicting"));
+        }
         let mut at = 0;
         Some(
             round
@@ -213,7 +215,7 @@ pub fn install_model(db: &Connection, machine: &str) {
     let config = rerail_accel::cost_model::CostConfig::default().forest;
     match rerail_accel::join_model::JoinModel::train(&steps, &config) {
         Ok(m) => {
-            eprintln!("rerail: join model in place: trained on {} steps in {:.2} s: {:.2} s of this thread's CPU, {:.2} s of the GPU (the forest's device: {})", steps.len(), t.elapsed().as_secs_f64(), rerail_accel::exec::thread_cpu() - cpu, rerail_forest_gpu_seconds() - gpu, m.on_device());
+            eprintln!("rerail: join model in place: trained on {} steps in {:.2} s: {:.2} s of this thread's CPU, {:.2} s of the GPU (the forest's device: {}); a dispatch {:.1} µs of CPU, a host walk {:.2} µs a step: the device from {} steps", steps.len(), t.elapsed().as_secs_f64(), rerail_accel::exec::thread_cpu() - cpu, rerail_forest_gpu_seconds() - gpu, m.on_device(), m.costs.0 * 1e6, m.costs.1 * 1e6, m.device_rows);
             crate::code_rule_dsl::logic::plan::joins::set_pricer(Some(std::sync::Arc::new(ModelPricer(m))));
         }
         Err(e) => eprintln!("rerail: join model: not trained: {e}"),
