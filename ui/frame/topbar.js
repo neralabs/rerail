@@ -6,6 +6,7 @@
 import { h, setAttr, setText, setContent, icon } from "../dom.js";
 import { data, ui, repoName, stateHere } from "../state.js";
 import { invalidate } from "../shell.js";
+import { LIVE_MS } from "../poll.js";
 import { repoOption, repoHint } from "../render/repos.js";
 
 const $ = id => document.getElementById(id);
@@ -18,11 +19,6 @@ const $ = id => document.getElementById(id);
  * dot and how fresh the data is. */
 
 const DOWN_AFTER_MS = 30_000;
-/**
- * Two missed beats of the change stream (every 5 s) and the page is no longer live: a daemon whose event loop is stuck
- * keeps its connections open, so only the beat that does not come tells it.
- */
-const LIVE_MS = 12_000;
 const MINUTE = 60_000;
 
 /** "just now", "3 min ago", "2h ago", "4d ago". */
@@ -67,7 +63,7 @@ function status() {
   if (stateHere() === "stopped") {
     return { cls: "warn", text: "Stopped", title: "No rules run here, and nothing is logged. Start it from Overview or Settings, or run /rerail-start." };
   }
-  if (Date.now() - data.updatedAt < LIVE_MS) return { cls: "", text: "Live", title: `Connected to daemon${version} · showing changes as they happen.` };
+  if (Date.now() - data.updatedAt < LIVE_MS) return { cls: "", text: "Live", title: `Connected to daemon${version} · up to date.` };
   return { cls: "", text: `Updated ${rel}`, title: `Last refreshed ${new Date(data.updatedAt).toLocaleString()}. Refreshing pauses while the tab is hidden.` };
 }
 

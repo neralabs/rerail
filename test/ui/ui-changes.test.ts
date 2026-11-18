@@ -12,6 +12,8 @@ let streams: Stream[] = [];
 let reads: string[] = [];
 /** Whether the daemon answers the page's reads; a stopped one refuses the connection. */
 let up = true;
+/** Whether the daemon serves the change stream; one of an older Rerail answers 404. */
+let streams404 = false;
 let renders: boolean[] = [];
 let visibility: (() => void)[] = [];
 const encoder = new TextEncoder();
@@ -70,12 +72,13 @@ beforeEach(async () => {
   streams = [];
   reads = [];
   up = true;
+  streams404 = false;
   renders = [];
   vi.stubGlobal("location", { origin: "http://127.0.0.1:4000" });
   vi.stubGlobal("fetch", async (input: URL, init: { signal?: AbortSignal } = {}) => {
     const url = new URL(input);
     if (!up) throw new TypeError("fetch failed");
-    if (url.pathname === "/api/changes") return openStream(init.signal!);
+    if (url.pathname === "/api/changes") return streams404 ? json({ error: "not-found" }, 404) : openStream(init.signal!);
     reads.push(url.pathname);
     return answer(url);
   });
@@ -97,7 +100,7 @@ afterEach(() => {
 });
 
 describe("the dashboard following the daemon's change stream", () => {
-  it("reads at the stream's first message, then sends nothing and holds no timer while no message comes", async () => {
+  it("reads at the stream's first message, then nothing for a minute of beats with nothing new", async () => {
     expect(readsOf("/api/repositories")).toBe(0);
 
     stream().send("t1");
@@ -106,9 +109,15 @@ describe("the dashboard following the daemon's change stream", () => {
     expect(readsOf("/api/repositories")).toBe(1);
     expect(data.loaded).toBe(true);
     const readsBefore = reads.length;
-    await after(60_000);
+    for (let beat = 0; beat < 12; beat += 1) {
+      await after(5_000);
+      stream().send("t1");
+      await settle();
+    }
     expect(reads.length).toBe(readsBefore);
-    expect(vi.getTimerCount()).toBe(0);
+    // Only the watch for two missed beats waits; nothing that reads.
+    expect(vi.getTimerCount()).toBe(1);
+    expect(streams).toHaveLength(1);
   });
 
   it("reads a new token at once after a quiet spell, and at most every 5 s while changes keep coming", async () => {
@@ -125,7 +134,8 @@ describe("the dashboard following the daemon's change stream", () => {
 
     await after(5_000);
     expect(readsOf("/api/repositories")).toBe(3);
-    expect(vi.getTimerCount()).toBe(0);
+    // The paced read went out; only the watch for two missed beats waits.
+    expect(vi.getTimerCount()).toBe(1);
   });
 
   it("renders at a beat that brings nothing new, and reads nothing", async () => {
@@ -189,6 +199,43 @@ describe("the dashboard following the daemon's change stream", () => {
     setHidden(false);
     await settle();
     expect(streams).toHaveLength(2);
+  });
+
+  it("opens the stream again once two beats are missed, as when the daemon's loop is stuck or a network dropped it", async () => {
+    stream().send("t1");
+    await settle();
+
+    await after(12_000);
+
+    expect(streams).toHaveLength(2);
+    expect(streams[0]!.signal.aborted).toBe(true);
+  });
+
+  it("reads every 5 s as before when the daemon serves no stream, as an older Rerail does", async () => {
+    setHidden(true);
+    streams404 = true;
+    setHidden(false);
+    await settle();
+    const before = readsOf("/api/repositories");
+
+    await after(5_000);
+    await after(5_000);
+
+    expect(readsOf("/api/repositories")).toBe(before + 2);
+  });
+
+  it("reads every 5 s as before in a tab past the browser's stream slots, so other tabs' requests keep a connection", async () => {
+    setHidden(true);
+    vi.stubGlobal("navigator", { locks: { request: async (_name: string, _options: object, held: (lock: null) => Promise<boolean>) => held(null) } });
+    const opened = streams.length;
+    setHidden(false);
+    await settle();
+    const before = readsOf("/api/repositories");
+
+    await after(5_000);
+
+    expect(streams).toHaveLength(opened);
+    expect(readsOf("/api/repositories")).toBe(before + 1);
   });
 
   it("reads the sidebar's Merge Assist count at a conflict event, and not at every change", async () => {

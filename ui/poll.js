@@ -27,6 +27,18 @@ export { toStoredRules };
  */
 const PACE = 5_000;
 const MAX_BACKOFF = 30_000;
+/**
+ * Two missed beats of the change stream (the daemon beats every 5 s): the status stops saying Live, and the stream is
+ * opened again. A daemon whose event loop is stuck, or a connection a network dropped without closing it, keeps the
+ * stream open with nothing in it, so only the beat that does not come can tell.
+ */
+export const LIVE_MS = 12_000;
+/**
+ * The most tabs of this browser that hold a stream to the daemon at once (Web Locks name the slots). A browser gives a
+ * page's origin six HTTP/1.1 connections, shared by all its tabs, and a stream holds one, so the tabs past these read
+ * at the pace as every tab did before. A tab that closes or crashes gives its slot back.
+ */
+const STREAM_SLOTS = 3;
 /** Page sizes: History's selected rule's violations, a rule sheet's, the sessions list, the selected session's violations, its transcript. */
 const FINDINGS_PAGE = 25;
 /** Overview's Recent sessions. */
@@ -50,9 +62,10 @@ let backoff = PACE;
  * the pace; a new stream starts it over, and the person's own reads do not count.
  */
 let lastChangeRead = -Infinity;
-/** The read the pace holds back, if any; the stream opened again after its end, if waiting. */
+/** The read the pace holds back, if any; the stream opened again after its end, if waiting; two missed beats. */
 let paceTimer = null;
 let retryTimer = null;
+let stallTimer = null;
 /** The open change stream's controller, and the token the page last read at. */
 let stream = null;
 let token = null;
@@ -808,20 +821,49 @@ function startOver(next) {
 
 const changesPath = () => (ui.scope?.checkout === undefined ? "/api/changes" : `/api/changes?${new URLSearchParams({ checkout: ui.scope.checkout })}`);
 
-/** Follow the change stream while the tab shows; its end reads once, then opens it again after `backoff`. */
+/** Runs `run` holding one of the browser's free stream slots; `false` at once, nothing run, when none is free. */
+async function inStreamSlot(run) {
+  const locks = globalThis.navigator?.locks;
+  if (locks === undefined) {
+    await run();
+    return true;
+  }
+  for (let slot = 0; slot < STREAM_SLOTS; slot += 1) {
+    const held = await locks.request(`rerail-changes-${slot}`, { ifAvailable: true }, async lock => {
+      if (lock === null) return false;
+      await run();
+      return true;
+    });
+    if (held) return true;
+  }
+  return false;
+}
+
+/** Two beats missed: open the stream again, which reads at its first message. */
+function watchStall() {
+  clearTimeout(stallTimer);
+  stallTimer = setTimeout(() => { endChanges(); followChanges(); }, LIVE_MS);
+}
+
+/**
+ * Follow the change stream while the tab shows, in a free slot; its end, or no free slot, reads once and tries again
+ * after `backoff` (the pace while the daemon answers), so a tab without a stream reads as every tab did before.
+ */
 function followChanges() {
   if (stream !== null || hidden()) return;
   const controller = new AbortController();
   stream = controller;
   let first = true;
-  const each = message => { onMessage(message, first); first = false; };
+  const each = message => { watchStall(); onMessage(message, first); first = false; };
+  watchStall();
   // How it ended needs no reading here: the read after it says whether the daemon answers.
-  follow(changesPath(), each, controller.signal).catch(() => {}).then(() => changesEnded(controller));
+  inStreamSlot(() => follow(changesPath(), each, controller.signal).catch(() => {})).then(() => changesEnded(controller));
 }
 
 async function changesEnded(controller) {
-  if (stream !== controller) return; // ended from here: the tab hid, or the scope changed
+  if (stream !== controller) return; // ended from here: the tab hid, the scope changed, or two beats were missed
   stream = null;
+  clearTimeout(stallTimer);
   await refresh();
   clearTimeout(retryTimer);
   retryTimer = setTimeout(() => { retryTimer = null; followChanges(); }, backoff);
@@ -832,9 +874,8 @@ function endChanges() {
   const open = stream;
   stream = null;
   open?.abort();
-  clearTimeout(retryTimer);
-  clearTimeout(paceTimer);
-  retryTimer = paceTimer = null;
+  for (const timer of [retryTimer, paceTimer, stallTimer]) clearTimeout(timer);
+  retryTimer = paceTimer = stallTimer = null;
 }
 
 export function startPolling(listener) {
