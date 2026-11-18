@@ -187,8 +187,8 @@ fn stdio(spawn: &mut Spawn, pipe_stderr: bool) -> io::Result<(Vec<OwnedFd>, Vec<
 
 /// The exit watch's thread: named, on the stack std gives any thread (2 MiB, or `RUST_MIN_STACK`), of which it touches
 /// only the pages it uses. Its own work is small, but jemalloc's on the same thread is not when jemalloc is built
-/// unoptimised: its malloc slow path takes 35 to 40 KiB of stack in one frame, and flushing the thread's cache as the
-/// thread ended ran past a 64 KiB stack.
+/// unoptimised: its malloc slow path takes 35 to 40 KiB of stack in one frame, and setting up the thread's cache at its
+/// first allocation, which std makes as the thread starts, ran past a 64 KiB stack.
 fn watch_thread() -> std::thread::Builder {
     std::thread::Builder::new().name("rerail-git-exit".into())
 }
