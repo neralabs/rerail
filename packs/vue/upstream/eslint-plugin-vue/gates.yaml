@@ -39,6 +39,7 @@ rules:
   "vue/no-async-in-computed-properties":
     deprecated: null
     recommended: { config: "flat/recommended", options: [] }
+    repetition_exempt: "each object step is a different object, a computed property's { get, set } object, the computed object that holds it and the component's options object; each pair step is likewise a different pair, the get pair, the computed property's pair and the computed pair around them"
   "vue/no-child-content":
     deprecated: null
     recommended: { config: "flat/recommended", options: [] }
@@ -60,6 +61,7 @@ rules:
   "vue/no-mutating-props":
     deprecated: null
     recommended: { config: "flat/recommended", options: [] }
+    repetition_exempt: "each step is a separate lookup on the way from a mutated name, in the template or the script, to the props declaration it names, such as the name, the props variable and the defineProps callee. Two steps return to a node another lookup already reached from a different side, the withDefaults call around defineProps and the file's one program root, and none repeats another lookup's question"
   "vue/no-ref-as-operand":
     deprecated: null
     recommended: { config: "flat/recommended", options: [] }
@@ -69,6 +71,7 @@ rules:
   "vue/no-side-effects-in-computed-properties":
     deprecated: null
     recommended: { config: "flat/recommended", options: [] }
+    repetition_exempt: "each object step is a different object, a computed property's { get, set } object, the computed object that holds it and the component's options object; each pair step is likewise a different pair, the get pair, the computed property's pair and the computed pair around them"
   "vue/no-template-shadow":
     deprecated: null
     recommended: { config: "flat/recommended", options: [] }
@@ -96,9 +99,11 @@ rules:
   "vue/require-valid-default-prop":
     deprecated: null
     recommended: { config: "flat/recommended", options: [] }
+    repetition_exempt: "each step is a different node around a prop's default. The objects are a prop's options object, the props object and the component object, or the withDefaults defaults object, the defineProps argument and a prop's options; the pairs are the default, prop and props pairs, or the defaults entry, the prop and its type pair; the calls are the default's own call, defineProps and withDefaults"
   "vue/return-in-computed-property":
     deprecated: null
     recommended: { config: "flat/recommended", options: [] }
+    repetition_exempt: "each object step is a different object, a computed property's { get, set } object, the computed object that holds it and the component's options object; each pair step is likewise a different pair, the get pair, the computed property's pair and the computed pair around them"
   "vue/v-on-event-hyphenation":
     deprecated: null
     recommended: { config: "flat/recommended", options: ["always",{"autofix":true}] }
