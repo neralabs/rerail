@@ -459,9 +459,14 @@ capability, refused every start as "alive but not answering", and `rerail daemon
   no later than `startedAt` makes the pid this home's daemon whatever the holder record says. Where the lock does not
   decide, as for a daemon of Rerail 0.1.4 or earlier, which holds none, the process's creation time is read through
   Windows PowerShell, which loads no Rerail engine, and is ended at what is left of the lookup's limit (the stop's
-  10 s wait for a stop); one ended there, or one that cannot run, reads nothing, and the record is kept. The proof's
-  limit counts from the ask and
-  covers the connect (`engineCapabilityProof`, `src/runtime/engine-proof.ts`). It connects to the pipe spelled
+  10 s wait for a stop); one ended there, or one that cannot run, reads nothing, and the record is kept. So on a
+  machine whose policy blocks `powershell.exe` itself, no start is read, and a busy daemon of 0.1.4 or earlier is not
+  shown to be this home's: `rerail daemon stop` ends nothing and says how to check the process, and `rerail install
+  --remove` and `rerail update` stop with that error. The command that message gives runs PowerShell too, so there
+  open Task Manager's Details tab, show its Command line column, end the process with the pid the message names if
+  its command line runs Rerail's `daemon-entry.js` for this home, and run the command again. The proof's limit counts
+  from the ask and covers the connect (`engineCapabilityProof`, `src/runtime/engine-proof.ts`). It connects to the pipe
+  spelled
   `\\?\pipe\<name>`: Node's wait for a free instance (`WaitNamedPipe`, up to 30 s, in a thread that keeps the asking
   process alive) takes only `\\.\pipe\` names, so while a busy engine's pipe instances are all taken that connect fails
   at once with `ENOENT`, as it does for a pipe that is gone. A plain open of the pipe, closed at once, tells the two
