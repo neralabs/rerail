@@ -208,9 +208,16 @@ impl<'v> Body<'v> {
     pub fn read_count(&self) -> usize {
         self.lits.iter().filter(|l| l.atom().is_some()).count()
     }
-    /// The demand of a demand-restricted aggregate (`rr_demand_agg_…`, a positive atom), which drives its rule.
+    /// The aggregate's demand or the tuple demand that bounds a Cartesian product drives the rule.
     pub fn demand_first(&self) -> Option<usize> {
-        (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| !a.neg() && self.rel(a).contains("rr_demand_agg_")))
+        let head = self.rel(self.head());
+        (0..self.len()).find(|&i| {
+            self.plain_atom(i).is_some_and(|a| {
+                let rel = self.rel(a);
+                !a.neg() && (rel.contains("rr_demand_agg_")
+                    || rel.strip_prefix(super::corpus::product_demand::PREFIX) == Some(head))
+            })
+        })
     }
     /// The share of rows filter `i` passes on (decision 0297): measured by kind of filter, rows weighted, over the
     /// 300-file bench's 317 rules (`profile`'s `native.tsv`, each step's rows in and out). An equality that binds a
