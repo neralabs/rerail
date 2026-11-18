@@ -3256,6 +3256,26 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 alone[k] = true;
                 let none = low.leaf(BlockOp::Const(0), false);
                 mark_masks.push(none);
+            } else if seq[0].iter().all(|c| matches!(c, TokenElem::Kind(_))) {
+                // A first element of kinds: its bit at those rows' grammar starts, not at every
+                // token's (tier 2 tests the whole run either way). On the CPU a mark of any word
+                // is set after the tokens, a search a bit (`late_marks`): at every token it was
+                // most of tier 1.
+                let mut own: Option<Val> = None;
+                for c in &seq[0] {
+                    let TokenElem::Kind(name) = c else { continue };
+                    for (_, s, _) in token_rows.iter().filter(|t| &t.0 == name) {
+                        own = Some(match own {
+                            Some(o) => low.or(o, *s)?,
+                            None => *s,
+                        });
+                    }
+                }
+                let own = match own {
+                    Some(o) => low.and(o, gs)?,
+                    None => low.leaf(BlockOp::Const(0), false),
+                };
+                mark_masks.push(own);
             } else {
                 mark_masks.push(gs);
             }
