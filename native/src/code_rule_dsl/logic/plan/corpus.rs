@@ -1402,7 +1402,7 @@ fn tail_version(v: Arc<crate::code_rule_dsl::logic::program_image::Version>, tai
 }
 
 /// A text's version with the library's cone it asks for (decision 0089 §3), as `rr::Text::lowered_in` makes it on
-/// the tree (decision 0281's path, step 7b): its answers on request undone (`link::undone_on_request`), the cone
+/// the tree (decision 0281's path, step 7b): its answers on request undone (`rr::lower::undone_on_request`), the cone
 /// copied from the library's version (`rr::with_cone_version`), and the attributes on request made again over both
 /// (`on_request::SourcesOnRequest`, decision 0174), its cone's readers asking too. No tree is decoded.
 pub(crate) fn cone_on_version(
@@ -1411,7 +1411,7 @@ pub(crate) fn cone_on_version(
     asked: &BTreeSet<String>,
     declared: &BTreeSet<String>,
 ) -> std::result::Result<Arc<crate::code_rule_dsl::logic::program_image::Version>, String> {
-    let undone = link::undone_on_request(own).map_err(|e| e.to_string())?;
+    let undone = crate::code_rule_dsl::logic::rr::lower::undone_on_request(own)?;
     let coned = crate::code_rule_dsl::logic::rr::with_cone_version(&undone, library, asked, declared)?;
     let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("a text's cone", coned);
     for round in crate::code_rule_dsl::logic::rr::lower::ON_REQUEST {
@@ -1459,7 +1459,7 @@ fn requests_where_documents_are<'s>(mut p: crate::code_rule_dsl::logic::program_
 /// Python pack: `__all__`'s and `exports`' readers ask across modules, so `value` went cross-file, and `1 if a else
 /// 0`'s branches compared the same in RUF034). Until a cross-file answer reads its documents (0174 §6), an attribute a
 /// cross-file reader asks for is eager. Each round whose function's answer a cross-file reader asks for is undone
-/// (`link::undone_with` over `undo_round`), by the version's file-local split (`FileLocal`), to a fixpoint
+/// (`rr::lower::undone_with` over `undo_round`), by the version's file-local split (`FileLocal`), to a fixpoint
 /// (decision 0281's path, step 7b).
 fn answers_where_documents_are_version(mut v: Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
     use crate::code_rule_dsl::logic::rr::lower::{Answer, ON_REQUEST, undo_round};
@@ -1470,7 +1470,7 @@ fn answers_where_documents_are_version(mut v: Arc<crate::code_rule_dsl::logic::p
             return Ok(v);
         };
         crate::code_rule_dsl::logic::profile::decision(&format!("{rel} on request"), || format!("no: its answer is not file-local (a cross-file reader asks), and the cross-file part holds no documents to read; {} eager (decision 0174 §6)", round.iter().map(|a| a.rel).collect::<Vec<_>>().join(", ")));
-        v = link::undone_with(&v, |head, rules| undo_round(head, rules, round))?;
+        v = crate::code_rule_dsl::logic::rr::lower::undone_with(&v, |head, rules| undo_round(head, rules, round)).map_err(Error::Plan)?;
     }
 }
 

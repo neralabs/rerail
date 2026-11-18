@@ -127,7 +127,7 @@ pub use aggregate_demand::retype_helpers;
 pub use lower::is_core;
 pub use lower::findings::{is_diagnostic, HEAD as DIAGNOSTIC_HEAD};
 pub use lower::WORLD;
-pub use print::print;
+pub use print::{print, print_version};
 pub use syntax::quote;
 pub use translate::translate;
 

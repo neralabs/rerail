@@ -328,47 +328,6 @@ impl Versioned {
     }
 }
 
-/// `rr::lower::undo_on_request` of version `v` (`Versioned::undo_on_request`, at once): each attribute it answered on
-/// request an input again, without its requests, answers, eager rows' rule and widened copies.
-pub(super) fn undone_on_request(v: &Arc<Version>) -> Result<Arc<Version>> {
-    undone_with(v, |head, rules| crate::code_rule_dsl::logic::rr::lower::undo_on_request_in(head, rules))
-}
-
-/// Version `v` with `undo` (`rr::lower::undo_on_request_in`, `undo_round`) made of its fields and rules: the rules
-/// it drops by head gone, its fields as it leaves them.
-pub(super) fn undone_with(v: &Arc<Version>, undo: impl FnOnce(&mut dyn FieldsMut, &mut dyn crate::code_rule_dsl::logic::rr::lower::RuleSet)) -> Result<Arc<Version>> {
-    let mut dropped = BTreeSet::new();
-    let mut b = Builder::on(v);
-    undo(&mut b, &mut Kept { v, dropped: &mut dropped });
-    b.retain(|r| !dropped.contains(v.rel_name(r.head().rel())));
-    Ok(b.finish().map_err(plan)?.0)
-}
-
-/// A version part's rules as `undo_on_request` reads and drops them.
-struct Kept<'a> {
-    v: &'a Version,
-    dropped: &'a mut BTreeSet<String>,
-}
-
-impl crate::code_rule_dsl::logic::rr::lower::RuleSet for Kept<'_> {
-    fn drop_heads(&mut self, gone: &dyn Fn(&str) -> bool) {
-        for r in self.v.rules() {
-            let head = self.v.rel_name(r.head().rel());
-            if gone(head) {
-                self.dropped.insert(head.to_owned());
-            }
-        }
-    }
-    fn reads(&self, rel: &str) -> bool {
-        use crate::code_rule_dsl::logic::program_image::Lit;
-        self.v
-            .rules()
-            .filter(|r| !self.dropped.contains(self.v.rel_name(r.head().rel())))
-            .flat_map(|r| r.body())
-            .any(|l| matches!(l.view(), Lit::Atom(a) if self.v.rel_name(a.rel()) == rel))
-    }
-}
-
 /// The renames of a part's rules as they are copied (`Names`).
 struct Renaming<'a> {
     v: &'a Version,
@@ -459,7 +418,7 @@ impl Part for Versioned {
         let Versioned { v, dropped } = self;
         let edited = {
             let mut b = Builder::on(v);
-            crate::code_rule_dsl::logic::rr::lower::undo_on_request_in(&mut b, &mut Kept { v, dropped });
+            crate::code_rule_dsl::logic::rr::lower::undo_on_request_in(&mut b, &mut crate::code_rule_dsl::logic::rr::lower::KeptRules { v, dropped });
             if b.is_empty() { None } else { Some(b.finish().map_err(plan)?.0) }
         };
         if let Some(e) = edited {

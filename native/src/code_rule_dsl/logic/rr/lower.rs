@@ -4667,6 +4667,50 @@ impl RuleSet for Vec<Rule> {
     }
 }
 
+/// `undo_on_request` of version `v` (`plan::corpus`'s `Versioned::undo_on_request`, at once): each attribute it answered on
+/// request an input again, without its requests, answers, eager rows' rule and widened copies.
+pub fn undone_on_request(v: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, String> {
+    undone_with(v, |head, rules| undo_on_request_in(head, rules))
+}
+
+/// Version `v` with `undo` (`undo_on_request_in`, `undo_round`) made of its fields and rules: the rules it drops by
+/// head gone, its fields as it leaves them.
+pub fn undone_with(
+    v: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
+    undo: impl FnOnce(&mut dyn crate::code_rule_dsl::logic::program_image::fields::FieldsMut, &mut dyn RuleSet),
+) -> Result<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, String> {
+    let mut dropped = BTreeSet::new();
+    let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(v);
+    undo(&mut b, &mut KeptRules { v, dropped: &mut dropped });
+    b.retain(|r| !dropped.contains(v.rel_name(r.head().rel())));
+    Ok(b.finish()?.0)
+}
+
+/// A version's rules as `undo_on_request` reads and drops them: those of a head in `dropped` are gone.
+pub struct KeptRules<'a> {
+    pub v: &'a crate::code_rule_dsl::logic::program_image::Version,
+    pub dropped: &'a mut BTreeSet<String>,
+}
+
+impl RuleSet for KeptRules<'_> {
+    fn drop_heads(&mut self, gone: &dyn Fn(&str) -> bool) {
+        for r in self.v.rules() {
+            let head = self.v.rel_name(r.head().rel());
+            if gone(head) {
+                self.dropped.insert(head.to_owned());
+            }
+        }
+    }
+    fn reads(&self, rel: &str) -> bool {
+        use crate::code_rule_dsl::logic::program_image::Lit;
+        self.v
+            .rules()
+            .filter(|r| !self.dropped.contains(self.v.rel_name(r.head().rel())))
+            .flat_map(|r| r.body())
+            .any(|l| matches!(l.view(), Lit::Atom(a) if self.v.rel_name(a.rel()) == rel))
+    }
+}
+
 /// `undo_on_request` of a program's fields `prog` and its rules `rules`.
 pub fn undo_on_request_in(prog: &mut (impl crate::code_rule_dsl::logic::program_image::fields::FieldsMut + ?Sized), rules: &mut dyn RuleSet) {
     for round in ON_REQUEST.iter().rev() {
