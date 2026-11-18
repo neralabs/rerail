@@ -625,7 +625,7 @@ pub mod session;
 /// Runs `program` (`.rr` text, `logic::rr`) over the files T's `t_facts` names under `root`, in native `modes`, with `nearest`
 /// bound as `binding`, and writes its outputs into `out` as T does. The store and its derived tables live in `out`.
 ///
-/// The program is split at its file-local relations (`typing::file_local::programs`, list step 29). Documents are
+/// The program is split at its file-local relations (`typing::file_local::programs_of`, list step 29). Documents are
 /// taken in chunks of about `chunk_nodes` nodes, each built on a worker thread while the previous one runs (list
 /// step 24): its file-local part is run, the exported relations are appended to `cross.sqlite` in `out` (schema `x`),
 /// the base columns the cross-file part names are appended in memory, and the chunk is dropped. The cross-file part
@@ -1012,7 +1012,7 @@ pub struct Prepared {
     pub matchers: Vec<(String, String, Vec<String>)>,
     pub demanded: Vec<String>,
     pub pushed: Vec<String>,
-    /// The exports handed on as parts (decision 0099, `file_local::factorize_exports`), a line each.
+    /// The exports handed on as parts (decision 0099, `file_local::FactorizeExports`), a line each.
     pub factorized: Vec<String>,
     pub located: std::result::Result<Vec<String>, Vec<String>>,
     pub merged: (usize, usize),
@@ -3182,8 +3182,6 @@ fn run_observed(
     let nested = RUNS_UNDER_WAY.with(std::cell::Cell::get) > 0 || crate::code_rule_dsl::logic::profile::is_behind();
     let _under_way = UnderWay::enter();
     let _stage = crate::code_rule_dsl::logic::profile::run_begins();
-    // The run's own kept splits (`file_local::split_memo`), apart from any run it is nested in.
-    let _splits = crate::code_rule_dsl::typing::file_local::split_memo::own();
     let _profile = if !crate::code_rule_dsl::logic::profile::on() {
         None
     } else if phase0::active() || nested {
@@ -3955,7 +3953,7 @@ fn run_observed(
         let _ = std::fs::write(path, text);
     }
     // A program none of whose rules reads a document runs over none: its file-local rules make only constants (which
-    // both parts derive: `file_local::constant_relations`), and the cross-file part reads no base relation but the
+    // both parts derive: `file_local::FileLocal::constants`), and the cross-file part reads no base relation but the
     // run's constants (an earlier phase's exports, the options). A later phase reading only an earlier one's exports
     // is such a program: an edit costs it what the exports' delta does, not a pass over every file.
     // The parts' versions (decision 0244), each dropped where the run edits its tree (the cross memo's split, the cone
@@ -4143,8 +4141,6 @@ fn run_observed(
         roots.truncate(60);
         format!("{total} relations cross-file of their own ({} by reading them): {}", causes.len() - total, roots.join("; "))
     });
-    // Preparation's splits are done: the kept ones (`file_local::split_memo`) go.
-    crate::code_rule_dsl::typing::file_local::forget_splits();
     crate::code_rule_dsl::logic::profile::decision("nearest ancestors", || {
         let names: Vec<&str> = sets.iter().map(|(n, _)| n.as_str()).collect();
         format!("{} sets, each made per looked-up node, or for the batch by the transducer's file-local FIX (bound {binding:?}) where the planner expects more lookups than that costs (decision 0143): {}", sets.len(), names.join(", "))
@@ -4193,7 +4189,7 @@ fn run_observed(
     // The run's constants made of earlier phases' exports (`v_enum(q, n) :- struct__base(q, _, b), …, n = count :
     // { struct__member(q, x, "") }`): one answer for the run, so derived once, before the chunks, by the same engine
     // over the bound exports, and bound beside them (`run_constants`). The split derives a constant in both parts
-    // (`file_local::constant_relations`), which for one of the program's facts costs little; for one of a phase's
+    // (`file_local::FileLocal::constants`), which for one of the program's facts costs little; for one of a phase's
     // exports, every chunk read them all again: over the workspace, 116.6 M rows of `struct__member` for 36 k
     // answers, 183 s of a 966 s run. The memo's key is made before (`memo_program`): it holds the rules as written.
     // The split's (`Programs::constants`): empty only where no document is read, and then the file-local part has no

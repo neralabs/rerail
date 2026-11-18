@@ -121,7 +121,7 @@ impl ProgramPass for FactSpaces<'_> {
             v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).chain(f.natives().iter().map(|n| v.rel_name(n.rel).to_owned())).filter(|r| !f.is_input(r)).collect();
         let typed = |rel: &str, c: usize, ty: &[&str]| f.column_type(rel, c).is_some_and(|t| ty.contains(&t));
         // Per relation, where a row's document is read: (document columns, node columns, span or node columns). A
-        // node's document is its id's high half (`@doc`); a span's is `docof`'s, as `file_local::locate` reads it.
+        // node's document is its id's high half (`@doc`); a span's is `docof`'s, as `file_local::Locate` reads it.
         let place = |rel: &str| -> (Vec<usize>, Vec<usize>, Vec<usize>) {
             let width = f.columns(rel).map_or(0, |c| c.len());
             if derived.contains(rel) {

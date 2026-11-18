@@ -9,7 +9,7 @@
 //!   programs' digests (`prepared_program`). A run reads the pointer and the two texts; when any is gone it prepares.
 //!
 //! The plan names what preparing reads besides the texts: the engine build, the grammar version, the dialect and what
-//! the run added to the program (`prepared_key`). The split (`file_local::programs`) is a function of the lowered
+//! the run added to the program (`prepared_key`). The split (`file_local::programs_of`) is a function of the lowered
 //! program, and what it found is kept too (`prepared_file_local`, `prepared_constant`, `prepared_location` …): finding
 //! it again cost about 0.6 s of the Python pack's warm run. Its two parts are not kept: each is a part of the lowered
 //! program's rules, made from it again on reading (`file_local::assemble`). The text tests' matchers are made again
@@ -78,7 +78,7 @@ pub fn schema() -> BTreeMap<String, Vec<(String, String)>> {
         // The vocabulary's `match_all` regexes (their sources) and `fstring_template` markers, in order.
         ("prepared_match", &["k:int", "regex:sym"]),
         ("prepared_marker", &["k:int", "marker:sym"]),
-        // The split (`file_local::programs`): what it found, the file-local relations and those of constants. Its two
+        // The split (`file_local::programs_of`): what it found, the file-local relations and those of constants. Its two
         // parts are the lowered program's rules, a part each, made from it again on reading (`file_local::assemble`).
         // The per-file memo's strata of the file-local part (`memo::Strata`, decision 0246 §4): the part's digest,
         // each relation's strata identity and the leaves it reaches.

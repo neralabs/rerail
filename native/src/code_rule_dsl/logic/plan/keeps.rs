@@ -736,7 +736,7 @@ fn bounds(f: &Fields<'_>, base: &Placed, n: usize, model: &Model, rules_of: &BTr
 /// The relations that cross the chunk boundary (the local part's outputs: its exports and findings) stored as the
 /// flat join of parts that meet only at a variable they project away: `fl853_p4_outer(f, x) :- rr_inside_ks5(f, p),
 /// bound_in(p, x)` holds 777 k rows, its two parts about 100 k. Such an export is handed on as its parts before the
-/// first chunk (`file_local::factorize_exports`, decision 0099); this names each relation still stored flat that would
+/// first chunk (`file_local::FactorizeExports`, decision 0099); this names each relation still stored flat that would
 /// shrink so (one the program's test refused: a finding, a part of one row a key, a reader binding none of it), with
 /// its flat rows (observed where an earlier chunk measured them) and its parts' estimated rows, where the flat rows
 /// are over twice the parts'.

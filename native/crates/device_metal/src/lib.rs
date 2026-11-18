@@ -605,8 +605,6 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             pub(crate) use crate::code_rule_dsl::facts::nearest::{Binding, NONE, Trees};
             #[allow(unused_imports)]
-            pub(crate) use crate::code_rule_dsl::typing::file_local::split_memo::forget as forget_splits;
-            #[allow(unused_imports)]
             pub(crate) use crate::code_rule_dsl::logic::front::document_column;
             #[allow(unused_imports)]
             use std::collections::BTreeMap;
