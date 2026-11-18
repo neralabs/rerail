@@ -14,9 +14,11 @@ cd "${0:A:h}/../../.."; mkdir -p /tmp/ai-trash
 MODE=$1; LAST=${2:-08}; IN=${IN:-tmp/mm-in}; OUT=${OUT:-tmp/mm/$MODE}; ENGINE=${ENGINE:?the engine binary}
 CAP_MB=${CAP_MB:-3000}; CAP_S=${CAP_S:-110}
 [ -e $OUT ] && mv $OUT /tmp/ai-trash/mm-$MODE-$$
-mkdir -p $OUT; W=$OUT/work
+mkdir -p $OUT; W=$OUT/work; [ -n "${ABS_WORK:-}" ] && W=$PWD/$OUT/work
 cp -R $IN/o125-replay/00 $W
-export RERAIL_SQL_STRICT=1 RERAIL_DEVICE=cpu RERAIL_RR_LIB=$PWD/docs/rule-syntax/lib RERAIL_KEPT_BYTES=1 RERAIL_MODE_TRACE=1
+# RERAIL_JOURNAL=off: every consulted path is checked by its stat. With the journal, an edit made just before a run
+# was sometimes missing from its replay, and the whole-run cutoff answered the last run's findings (work queue Q117).
+export RERAIL_JOURNAL=off RERAIL_SQL_STRICT=1 RERAIL_DEVICE=cpu RERAIL_RR_LIB=$PWD/docs/rule-syntax/lib RERAIL_KEPT_BYTES=1 RERAIL_MODE_TRACE=1
 export RERAIL_COSTS=$PWD/$OUT/costs.sqlite RERAIL_IMAGE_STORE=$PWD/$OUT/images
 POLICY=$PWD/$IN/calls-policy.rr
 steps=(00 $(seq 1 $((10#$LAST)) | xargs printf "%02d\n"))

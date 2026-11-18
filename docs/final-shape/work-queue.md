@@ -2602,3 +2602,31 @@ native join it falls back to the planner's whole-rule order.
   order is then kept as the other lines' are.
 - **Also open**: the mode's lines report no work to `Model::ran`, because `MaintMode` counts per kind, not per line.
   The 0122 budget therefore prices their kept plans again rather than taking them as they are.
+
+### Q117. The journal's replay can miss an edit made just before a run, and the whole-run cutoff then answers stale findings
+
+Found 2026-11-18, measuring 0364 over the O125 replay (`scripts/profiling/o125/maintain-measure.sh`, kept mode: a
+process per step, each step's files written by `rsync` just before the step's run). On one farm host (M3 Max) some
+steps finished in 0.2 s CPU with the last step's findings. Their findings differed from a cold run's (step 05:
+2,757 extra, 2,907 missing). On the M1 Max host none did, over several runs. On the M3 it is intermittent: a step
+that ran right in one pass was stale in the next.
+
+- **Seen** (probes since removed: the paths `journal::since` named per root, the cutoff's digest per document):
+  - In a stale step, the replay for the corpus's root names the earlier run's own writes (outputs, store, logs), but
+    no path under `work/`, the corpus, though `rsync` had just rewritten files there. One of them is
+    `l2050_transaction/transaction.py`, 141,547 → 142,340 bytes.
+  - The observer then answers that file's digest from its trusted entry, unstatted: the step-00 digest. The whole-run
+    cutoff (`reuse::reused`) finds every document as recorded and writes the last run's outputs.
+  - In a step that ran right, the same replay names `work/l2050_transaction` and the others.
+  - The stale step's stream starts from the cursor of the run before it (the cursor taken when that run started).
+    Later runs start from cursors past the missing events, so the edit is never named.
+  - It is not the corpus root's form: relative and absolute roots both go stale on the M3.
+- **Likely**: FSEvents' history replay (`since` a cursor) does not include events written in the last moment before
+  the stream starts, perhaps those `fseventsd` had not yet logged. The cookie that `sync` waits for proves the
+  stream has caught up with what it was given, not that the replay held every event since the cursor.
+- **Until fixed**: the 0364 measurement runs with `RERAIL_JOURNAL=off` (every consulted path statted).
+- **Done when**: a run started right after an edit always sees it. Either the journal's answer is checked for that
+  window (a path whose stat is newer than the cursor's time is not trusted: Git's racy-index rule turned around), or
+  the replay is confirmed complete some other way. A test edits a file and starts the next run within
+  milliseconds, many times over, on the host where it fails.
+- **Record**: —
