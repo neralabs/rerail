@@ -16,6 +16,7 @@ pub(crate) mod lowering_tail;
 mod demand;
 mod magic;
 mod prune;
+mod rank;
 mod simplify;
 mod nearest;
 pub mod parts;
@@ -118,7 +119,7 @@ pub struct Front {
 }
 
 /// The stages of `front`, in order, at which a debug build checks the version against the tree's passes.
-pub const STAGES: [&str; 9] = ["inputs", "prune", "simplify", "prune again", "reach", "negated demand", "demand", "undo", "text"];
+pub const STAGES: [&str; 10] = ["inputs", "prune", "simplify", "prune again", "reach", "negated demand", "demand", "undo", "rank", "text"];
 
 /// `version` pruned to the rules its outputs read (`front::prune`): what the bridged programs' check reads
 /// (`bridge::wanted`), before the run prepares the program.
@@ -131,7 +132,7 @@ pub fn pruned(version: Arc<Version>) -> Result<Arc<Version>, String> {
 /// The passes before lowering, on the version (decision 0281's path, steps 6c–6e): the functors only CPython gives
 /// and the base relations as inputs, a prune, `simplify` and a prune again, the reach form, the demand for negated
 /// tests, the program's own demand (`RERAIL_DEMAND=off` computes the listed relations in full) and a prune after
-/// it, the reaches in cycles made rows again, then the text passes. Their decisions reach the run's profile, as the
+/// it, the reaches in cycles made rows again, the counts below a bound made by rank, then the text passes. Their decisions reach the run's profile, as the
 /// tree's passes made them. `check` is called after each of `STAGES` with the version so far.
 pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, last: Option<Run>, check: &mut dyn FnMut(&'static str, &Arc<Version>)) -> Result<(Arc<Version>, Front, Run), String> {
     let mut p = kept(FRONT, version, last)?;
@@ -177,6 +178,15 @@ pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::Gra
     let mut undo = demand::UndoInCycles::default();
     p.program(&mut undo);
     at(&mut p, "undo")?;
+    // Counts below a bound made without the pairs (decision 0361 step 7), once demand has placed its readers: a
+    // relation the form replaced is unread, and pruned.
+    let mut ranks = rank::RankForm::default();
+    p.program(&mut ranks);
+    if ranks.found > 0 {
+        p.program(&mut prune::Prune::default());
+        crate::code_rule_dsl::logic::profile::decision("counts below a bound (decision 0361 step 7)", || format!("{} counts made by rank over their asked and counted rows, not their pairs", ranks.found));
+    }
+    at(&mut p, "rank")?;
     let text::Found { matchers, vocabulary } = text::passes(&mut p, dialect)?;
     at(&mut p, "text")?;
     for d in p.decisions() {

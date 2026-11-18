@@ -86,7 +86,7 @@ pub trait Source: Send + Sync {
         Err(rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_READONLY),None))
     }
     fn text_column(&self, _column: usize) -> bool { false }
-    /// The source as itself, for a caller that carries state between two of one kind (`carry_sorted`).
+    /// The source as itself, for a caller that reads a kind's own parts (a derived relation's rows).
     fn as_any(&self) -> Option<&dyn std::any::Any> { None }
     fn columns(&self) -> Vec<String>;
     fn len(&self) -> usize;
@@ -203,6 +203,13 @@ pub trait Source: Send + Sync {
     /// device reads where they lie (decision 0325 step 3). `None`: the device copies them (`device_view`, `row_at`).
     #[cfg(target_os = "macos")]
     fn in_block(&self) -> Option<super::rows::InBlock> {
+        None
+    }
+    /// Its own index on `columns` (decision 0325 step 5), where the source holds its rows to be probed so (`held`):
+    /// found or built in its block, its number with the relation it indexes. A probe reads a bucket's rows, candidates
+    /// whose key it checks. `None` by default: a source answers its lookups, and a whole one in a block is given an
+    /// index there only when nothing else answers (`InRel::index`).
+    fn own_index(&self, _columns: &[usize]) -> Option<(super::rows::InBlock, usize)> {
         None
     }
     /// Rows are made per looked-up value, so reading them all (a scan, a hash index of every row)
@@ -1324,6 +1331,21 @@ impl Relation {
             ordered: columns.iter().map(|_| Some(0)).collect(),
             identity: OnceLock::new(),
         }
+    }
+    /// A relation of `rows`: written straight into its block, at their number, when the iterator knows it exactly
+    /// (no staging, no growth or move); else staged, as `push` stages them.
+    pub fn from_rows(columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>) -> Self {
+        let mut r = Relation::new(columns);
+        if let (n, Some(m)) = rows.size_hint()
+            && n == m
+            && n > 0
+        {
+            let mut cells = super::rows::Rows::living(r.columns.len(), super::rows::Life::Source);
+            cells.reserve(n * r.columns.len());
+            let _ = r.cells.set(cells);
+        }
+        rows.for_each(|row| r.push(&row));
+        r
     }
     pub fn push(&mut self, row: &[i64]) {
         assert_eq!(row.len(), self.columns.len());

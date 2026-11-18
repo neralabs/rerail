@@ -111,3 +111,55 @@ Recursion keeps a fact only when it is declared, or proved by the base case and 
 
 Done when a cold 300-file run plans nothing at run time outside the exceptions, its findings are the reference's,
 and the planning share of its profile (cold13: 3.2 % plus statistics) is gone.
+
+## Step 7: a count below a bound, by form (2026-11-17, Q164)
+
+**No rewrite is keyed on a relation's name** (the user, 2026-11-17). A first form (Q163) took `count : { child(g, y,
+_), F(y), y < x }` by `child`'s name and its dense index, and lowered it to a running count. It is removed. It
+stopped applying when a rule was written another way, and it relied on facts the program never states.
+
+`logic::rank_form` finds the form by the rules' structure alone. A reader `n = count : H(…)` qualifies when:
+- `H`'s one rule holds a comparison `ky OP kx` (`<`, `<=`, `>`, `>=`);
+- without it, `H`'s body falls in two parts by the variables its literals share, the grouped ones aside:
+  - the **counted part** `Y`: the literals tied to the counted columns (the reader's `_`) and to `ky`;
+  - the **asked part** `X`: the rest, which binds every grouped column and `kx`.
+
+The **group** is the grouped variables `Y` reads. The two parts are then relations of their own, and a native
+operator counts:
+
+```
+rr_rankq(G…, A…, kx) :- X.                 the asked rows, each with its bound
+rr_rankg(G…) :- rr_rankq(G…, _…, _).       their groups
+rr_rankb(G…, C…, ky) :- rr_rankg(G…), Y.   the counted rows of those groups
+rr_rank(G…, A…, n)                          Native::Rank; the reader's count becomes `n = sum m : rr_rank(…, m)`
+```
+
+`Native::Rank` (`logic::native::rank`) sorts each group's keys once and answers each asked tuple by binary search.
+That is O((Q + C) log C) work, where `H` held Q × C pairs in each group. The count stays exact:
+- a counted tuple of several keys counts by its least key (for `<` and `<=`) or its greatest (for `>` and `>=`);
+- an asked tuple of several bounds is counted at its greatest bound (for `<` and `<=`) or its least.
+
+The sum is 0 where nothing is asked, as the count was.
+
+The rank's kept rule joins its two relations on the group, as `H` did. So the file-local split judges it as it judges
+any rule: it is local where its groups lie in one document. It is placed after demand (magic sets), and the
+relations it replaced are pruned. `RERAIL_RANK_FORM=off` finds none, a measurement aid, and `.decl H(…) no_rank`
+keeps `H` as rows.
+
+Measured at 300 files (cold58 against cold56, load 70–110):
+
+| | CPU | Work |
+|---|---|---|
+| The aggregate helpers (`rr_agg*`), before | 2.06 s | 20.7 M |
+| The aggregate helpers, after | 0.44 s | 3.6 M |
+| The rank's relations | ≈0.5 s | |
+| Every head together, before | | 437.8 M |
+| Every head together, after | | 413.9 M |
+
+- **Where it applied:** 30 counts across the program, python/ast's `body_stmt` among them.
+- **Findings:** the reference's.
+- **Peak:** 2.29 GB.
+- **Strict 10-file:** outputs byte-identical.
+
+When `.layout` lands (steps 1–2), a declared `order(i dense in p)` may let the engine choose a running walk over
+the sort. The form itself needs no declared fact.

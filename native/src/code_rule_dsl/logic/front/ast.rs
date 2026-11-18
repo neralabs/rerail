@@ -492,6 +492,10 @@ pub enum Native {
     /// `s(x, q) :- r(x, e), map(e, q).` over a `Reach` relation `r`: each start's `map` values over what it reaches,
     /// held the same way.
     ReachThrough { reach: String, map: String },
+    /// `r(g…, q…, n)`: for each distinct tuple of `query(g…, q…, kx)` but its bound, `n` distinct `(g…, c…)` tuples of
+    /// `counted(g…, c…, ky)` have `ky op kx` (`logic::native::rank`), its first `group` columns the group. A count
+    /// below a bound made without the pairs (`rank_form`, decision 0361 step 7).
+    Rank { query: String, counted: String, group: usize, op: String },
     Python { kind: String, input: String, targets: Option<String> },
     /// Conservative call candidates over demanded documents; exact semantic operators remain separate.
     PythonCandidates { input: String, targets: String, context: String, member: String },
@@ -521,6 +525,10 @@ impl Native {
                 *reach = rename(reach);
                 *map = rename(map);
             }
+            Native::Rank { query, counted, .. } => {
+                *query = rename(query);
+                *counted = rename(counted);
+            }
         }
     }
     /// The relations it reads.
@@ -533,6 +541,7 @@ impl Native {
             Native::Components { edge, own } => vec![edge.as_str(), own.as_str()],
             Native::Reach { seed, edge } => vec![seed.as_str(), edge.as_str()],
             Native::ReachThrough { reach, map } => vec![reach.as_str(), map.as_str()],
+            Native::Rank { query, counted, .. } => vec![query.as_str(), counted.as_str()],
         }
     }
 }

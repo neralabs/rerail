@@ -3986,6 +3986,13 @@ fn run_observed(
                             tree_undone = Some(crate::code_rule_dsl::logic::reach_form::undo_in_cycles(&mut p).expect("the tree's undo, as the version's"));
                             p
                         }
+                        "rank" => {
+                            let mut p = p;
+                            if crate::code_rule_dsl::logic::rank_form::find(&mut p) > 0 {
+                                p = front::prune(p);
+                            }
+                            p
+                        }
                         "text" => {
                             let mut p = p;
                             // A Python program's tree-shaped parts become matchers first (decision 0106 §4).
@@ -6825,7 +6832,9 @@ fn run_observed(
         // holds it, as a memo hit's are. Its rows as the batch has them are kept for a chunk the memo cannot
         // attribute (with a semi-join's rows to keep).
         let mut raw_base: Vec<(String, Vec<(usize, usize)>, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Option<Vec<usize>>)> = Vec::new();
-        let mut canonical: Vec<(String, Vec<i64>)> = Vec::new();
+        // The cross part's base columns' lengths before this chunk: its entries' rows are written to them as they are
+        // read (`'base`), and cut back to these when the batch's rows are taken instead (not attributable, a cone).
+        let mut base_marks: Option<Vec<(String, Vec<usize>)>> = None;
         // The semi-join's relations, taken after the run (`semijoin`), and the values the chunk's exports hold.
         let mut deferred: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Vec<(usize, usize)>)> = Vec::new();
         for (rel, source) in stored_bound {
@@ -7161,7 +7170,20 @@ fn run_observed(
                     }
                 }
             }
+            base_marks = Some(base_rows.iter().map(|(r, (_, v))| (r.clone(), v.iter().map(|c| c.as_ref().map_or(0, Vec::len)).collect())).collect());
             'base: for (rel, at, source) in &base_seen {
+                // The columns the cross part reads, as `at` orders a row (`input_columns`), and where it holds them:
+                // each row goes to them as it is read, once for each file that holds it, as its entries hold it.
+                let mut need: Vec<(usize, usize)> = Vec::new();
+                if let Some((_, names)) = stored.iter().find(|(r, _)| r == rel) {
+                    let all = super::super::sql::select::input_columns(rel).ok_or_else(|| Error::Plan(format!("no columns for {rel}")))?;
+                    let held = base_rows.get(rel).expect("a stored relation's rows are held");
+                    for name in names {
+                        let from = all.iter().position(|c| c == name).ok_or_else(|| Error::Plan(format!("{rel} has no column {name}")))?;
+                        let to = held.0.iter().position(|h| h == name).ok_or_else(|| Error::Plan(format!("{rel} has no column {name}")))?;
+                        need.push((from, to));
+                    }
+                }
                 let (strings, owner) = match memo::owner(rel) {
                     memo::Owner::Text(i) => (true, i),
                     memo::Owner::Node(i) => (false, i),
@@ -7181,6 +7203,15 @@ fn run_observed(
                 let mut by_file: HashMap<i64, Vec<i64>> = HashMap::new();
                 let mut run: Option<(i64, Vec<i64>)> = None;
                 let mut row = Vec::with_capacity(at.len());
+                // The cross part's columns for this relation, found once.
+                let mut cols: Vec<(usize, &mut Vec<i64>)> = match base_rows.get_mut(rel) {
+                    Some(held) if !need.is_empty() => {
+                        // Only the columns read are made held: an unread one stays `None` (its readers ask which).
+                        let mut by_to: Vec<Option<&mut Option<Vec<i64>>>> = held.1.iter_mut().map(Some).collect();
+                        need.iter().map(|&(from, to)| (from, by_to[to].take().expect("a column held once").get_or_insert_with(Vec::new))).collect()
+                    }
+                    _ => Vec::new(),
+                };
                 for r in (0..source.len()).filter(|&r| node.is_none_or(|n| mentioned.contains(&source.value(r, n)))) {
                     // A row is each of its owners' (a guest's is its host's; a value document's, each asking file's):
                     // rows are sets, so a row kept by several files restores as one.
@@ -7211,13 +7242,21 @@ fn run_observed(
                     for f in &files {
                         by_file.entry(*f).or_default().extend_from_slice(&row);
                     }
+                    for (from, col) in cols.iter_mut() {
+                        col.extend(std::iter::repeat_n(row[*from], files.len()));
+                    }
                     if !strings {
                         run = Some((memo::document_of(v), files));
                     }
                 }
-                canonical.push((rel.clone(), by_file.values().flatten().copied().collect()));
+                // Moved into the entries, not copied: each entry's base rows start empty.
                 for (f, values) in by_file {
-                    entries.get_mut(&f).expect("checked").rows.get_mut(&key).expect("every entry has every base key").1.extend(values);
+                    let slot = &mut entries.get_mut(&f).expect("checked").rows.get_mut(&key).expect("every entry has every base key").1;
+                    if slot.is_empty() {
+                        *slot = values;
+                    } else {
+                        slot.extend(values);
+                    }
                 }
             }
         }
@@ -7225,8 +7264,21 @@ fn run_observed(
         // whose relation it did not make (a source line's, a regex match's) are missing from what it built. Its
         // documents are as their entries were made, so their base rows are their entries', as a hit's are: into the
         // new entries whole, and the cross part's from them; none of what the chunk built.
+        // The base columns written as rows were read, cut back: the cross part takes the batch's rows, or a cone's
+        // entries', instead.
+        let cut_base = |base_rows: &mut BTreeMap<String, (Vec<String>, Vec<Option<Vec<i64>>>)>, marks: &Option<Vec<(String, Vec<usize>)>>| {
+            for (rel, lens) in marks.iter().flatten() {
+                if let Some((_, cols)) = base_rows.get_mut(rel) {
+                    for (col, &n) in cols.iter_mut().zip(lens) {
+                        if let Some(col) = col {
+                            col.truncate(n);
+                        }
+                    }
+                }
+            }
+        };
         if cone.is_some() {
-            canonical.clear();
+            cut_base(&mut base_rows, &base_marks);
             raw_base.clear();
             for (d, ..) in chunk_docs.iter() {
                 let (Some(was), Some(entry)) = (chunk_partials.get(d), entries.get_mut(d)) else { continue };
@@ -7249,18 +7301,9 @@ fn run_observed(
         if memoised {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "base rows for the cross part".into());
             if attributable {
-                for (rel, flat) in std::mem::take(&mut canonical) {
-                    let Some((_, names)) = stored.iter().find(|(r, _)| *r == rel) else { continue };
-                    let all = super::super::sql::select::input_columns(&rel).ok_or_else(|| Error::Plan(format!("no columns for {rel}")))?;
-                    let width = all.len();
-                    let held = base_rows.get_mut(&rel).expect("a stored relation's rows are held");
-                    for name in names {
-                        let from = all.iter().position(|c| c == name).ok_or_else(|| Error::Plan(format!("{rel} has no column {name}")))?;
-                        let to = held.0.iter().position(|h| h == name).ok_or_else(|| Error::Plan(format!("{rel} has no column {name}")))?;
-                        held.1[to].get_or_insert_with(Vec::new).extend(flat.chunks_exact(width.max(1)).map(|r| r[from]));
-                    }
-                }
+                // Written as the entries' rows were read (`'base`).
             } else {
+                cut_base(&mut base_rows, &base_marks);
                 for (rel, pairs, source, keep) in std::mem::take(&mut raw_base) {
                     let held = base_rows.get_mut(&rel).expect("a stored relation's rows are held");
                     for &(c, to) in &pairs {

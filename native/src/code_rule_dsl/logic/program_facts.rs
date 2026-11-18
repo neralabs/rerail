@@ -123,6 +123,7 @@ pub fn schema() -> BTreeMap<Name, crate::code_rule_dsl::logic::front::name::List
         ("native_components", &["p:sym", "rel:sym", "edge:sym", "own:sym"]),
         ("native_reach", &["p:sym", "rel:sym", "seed:sym", "edge:sym"]),
         ("native_reach_through", &["p:sym", "rel:sym", "reach:sym", "map:sym"]),
+        ("native_rank", &["p:sym", "rel:sym", "query:sym", "counted:sym", "group:int", "op:sym"]),
         ("rx_span", &["p:sym", "span:sym", "s:sym"]),
         // `ast_patterns`: the AST patterns the program matches (`n ~ `…``), each by its text.
         ("ast_pattern", &["p:sym", "s:sym"]),
@@ -419,6 +420,7 @@ impl Writer<'_> {
                 Native::Components { edge, own } => self.row("native_components", vec![s(rel), s(edge), s(own)]),
                 Native::Reach { seed, edge } => self.row("native_reach", vec![s(rel), s(seed), s(edge)]),
                 Native::ReachThrough { reach, map } => self.row("native_reach_through", vec![s(rel), s(reach), s(map)]),
+                Native::Rank { query, counted, group, op } => self.row("native_rank", vec![s(rel), s(query), s(counted), n(*group), s(op)]),
             }
         }
         if let Some(scopes) = &prog.doc_scopes {
@@ -823,6 +825,9 @@ impl<'a, C: Cell> Reader<'a, C> {
         }
         for row in self.get("native_reach_through") {
             prog.natives.insert(text(&row[0])?, Native::ReachThrough { reach: text(&row[1])?, map: text(&row[2])? });
+        }
+        for row in self.get("native_rank") {
+            prog.natives.insert(text(&row[0])?, Native::Rank { query: text(&row[1])?, counted: text(&row[2])?, group: int(&row[3])? as usize, op: text(&row[4])? });
         }
         for row in self.get("rx_span") {
             // `kind:K`, and `capture:G:P` (a group is a name, so the pattern is what follows its colon).

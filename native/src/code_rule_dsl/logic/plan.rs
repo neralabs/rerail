@@ -5903,6 +5903,7 @@ impl<'a> Run<'a, '_> {
                 return self.text_test(rel, f.rel_name(*input), *column, f.text(*op), &patterns);
             }
             NativeSpec::Components { edge, own } => return self.components(rel, f.rel_name(*edge), f.rel_name(*own)),
+            NativeSpec::Rank { query, counted, group, op } => return self.rank_rows(rel, f.rel_name(*query), f.rel_name(*counted), *group, f.text(*op)),
             NativeSpec::Reach { .. } | NativeSpec::ReachThrough { .. } => return self.reach_rows(rel, &native.spec),
             NativeSpec::Python { kind, input, targets } => return self.python_relation(rel, f.text(*kind), f.rel_name(*input), targets.map(|t| f.rel_name(t))),
             NativeSpec::PythonCandidates { input, targets, .. } => return self.python_relation(rel, "candidates", f.rel_name(*input), Some(f.rel_name(*targets))),
@@ -6345,6 +6346,58 @@ impl<'a> Run<'a, '_> {
         let before = self.db.total_changes();
         insert_many(&self.db, &format!("INSERT OR IGNORE INTO {}", ident(rel)), values)?;
         Ok((self.db.total_changes() - before) as usize)
+    }
+
+    /// `Native::Rank` over the tables of its two relations: each asked tuple's count below its bound
+    /// (`native::rank`).
+    fn rank_rows(&mut self, rel: &str, query: &str, counted: &str, group: usize, op: &str) -> Result<usize> {
+        let op = super::native::rank::Op::parse(op).ok_or_else(|| Error::Plan(format!("{rel}: a rank by {op}")))?;
+        let read = |r: &str| -> Result<Vec<Vec<i64>>> {
+            let w = self.fields().width(r);
+            let cols: Vec<String> = (0..w).map(|c| self.model.col(r, c)).collect();
+            let mut st = self.db.prepare(&format!("SELECT DISTINCT {} FROM {}", cols.join(", "), crate::code_rule_dsl::logic::sql::ident(r)))?;
+            let rows = st.query_map([], |row| (0..w).map(|i| row.get::<_, i64>(i)).collect::<rusqlite::Result<Vec<i64>>>())?;
+            Ok(rows.collect::<rusqlite::Result<_>>()?)
+        };
+        let rows = super::native::rank::rank(&read(query)?, &read(counted)?, group, op);
+        let values = rows.into_iter().map(|r| r.into_iter().map(SqlValue::Integer).collect()).collect();
+        let before = self.db.total_changes();
+        insert_many(&self.db, &format!("INSERT OR IGNORE INTO {}", crate::code_rule_dsl::logic::sql::ident(rel)), values)?;
+        Ok((self.db.total_changes() - before) as usize)
+    }
+
+    /// `Native::Rank` on the native engine: its two relations read where the engine holds them, the result retained
+    /// as its own relation, no table read or written. `None` when either is held only as a table.
+    fn native_rank(&mut self, rel: &str, query: &str, counted: &str, group: usize, op: &str) -> Result<Option<usize>> {
+        use super::native::component;
+        let Some(op) = super::native::rank::Op::parse(op) else { return Ok(None) };
+        let held = |this: &Self, r: &str| -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
+            if this.native_rels.contains(r) {
+                component::derived(this.db, r)
+            } else if this.fields().is_input(r) {
+                crate::code_rule_dsl::facts::vtab::bound_source(this.db, r)
+            } else {
+                None
+            }
+        };
+        let (Some(q), Some(c)) = (held(self, query), held(self, counted)) else { return Ok(None) };
+        let rows = |s: &dyn crate::code_rule_dsl::facts::vtab::Source| -> Vec<Vec<i64>> {
+            let w = s.columns().len();
+            (0..s.len()).map(|r| (0..w).map(|k| s.value(r, k)).collect()).collect()
+        };
+        let values = super::native::rank::rank(&rows(q.as_ref()), &rows(c.as_ref()), group, op);
+        component::retain(self.db, rel, values, vec![b'i'; self.fields().width(rel)])?;
+        self.native_rels.insert(rel.to_owned());
+        let source = component::derived(self.db, rel).expect("just retained");
+        let stats = source.statistics().expect("retained relations own their statistics");
+        live_stats(&mut self.model, rel, LiveRel {
+            n: source.len() as i64,
+            delta: source.len() as i64,
+            ndv: stats.iter().map(|s| s.2).collect(),
+            sq: stats.iter().map(|s| s.3).collect(),
+            freq: Vec::new(),
+        });
+        Ok(Some(source.len()))
     }
 
     fn components(&mut self, rel: &str, edge: &str, own: &str) -> Result<usize> {
@@ -12309,6 +12362,16 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
             && let Some(n) = run.native_components(rel, f0.rel_name(*edge), f0.rel_name(*own))?
         {
             super::profile::stratum(&skey, "native fact operator over held relations", String::new);
+            super::profile::note(format!("{rel} rows"), || n.to_string());
+            outcome.native.insert(key);
+            continue;
+        }
+        // A count below a bound (`rank_form`) from the rows the engine holds, likewise.
+        if let [rel] = scc.iter().collect::<Vec<_>>().as_slice()
+            && let Some(NativeSpec::Rank { query, counted, group, op }) = f0.native(rel).map(|n| &n.spec)
+            && let Some(n) = run.native_rank(rel, f0.rel_name(*query), f0.rel_name(*counted), *group, f0.text(*op))?
+        {
+            super::profile::stratum(&skey, "count below a bound over held relations (decision 0361 step 7)", String::new);
             super::profile::note(format!("{rel} rows"), || n.to_string());
             outcome.native.insert(key);
             continue;

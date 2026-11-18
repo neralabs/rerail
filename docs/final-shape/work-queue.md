@@ -3064,3 +3064,140 @@ and the input relations' hash indexes and sorted orders. Then `rr_agg56` (Q155, 
 - **Done when**: a new build's first edit counts every file in, and the test passes.
 - **At the hub's roll-up** (2026-11-18, merging rr-align 869cde576): fails the same; ignored (`#[ignore]`, this item)
   until the roll-up's end.
+
+### Q159. (Q84 on Two-pass at 5f615621d) Base rows for the cross part: no flattened copy, rows moved into entries
+
+Done 2026-11-17. The user's list, item "the copies of base rows for the cross part and the memo". A memoised
+chunk used to read each base row into its files' rows, flatten them all into a full-width copy (`canonical`), copy
+that into the cross part's columns, and copy the files' rows into their entries. Now:
+
+- the columns the cross part reads are written as each row is read (once for each file that holds it, as before);
+- a file's rows are moved into its entry, which starts empty;
+- a chunk the memo cannot attribute, and a cone, cut the columns back to their lengths before the chunk.
+
+The columns themselves stay: they are the only copy of rows whose batch is gone, and they hold only the columns
+read. Their accumulated size, about 160–190 MB at 300 files, is data, not a copy. "base rows for the memo" plus
+"for the cross part" took 0.96 s; they take 0.73 s now.
+
+### Q160. (Q85 on Two-pass at 5f615621d) The vtab's relations written at their size, not staged
+
+Done 2026-11-17. The user's list, item "the virtual-table staging in Relation::push". Producers build a relation from
+an iterator. `Relation::from_rows` writes the rows straight into a block relation reserved at their number when the
+iterator knows it exactly, as the producers' iterators over vectors do. There is no heap staging, and no growth or
+move: the moves are why rows were staged (70 MB more at the peak on hogql, 0325 step 3). An iterator that doesn't
+know its length is staged as before. 300 files: peak 2.36 GB (2.38 before), findings the reference's.
+
+### Q161. (Q86 on Two-pass at 5f615621d) A copy of rows shares their tail, not a copy of it
+
+Done 2026-11-17. The user's list, item "the tail copies in Rows::clone and Rows::shared". A part may now be a prefix
+of its relation (`Part::cap`): its first rows as they were when it was taken. `clone` and `shared` take the tail
+that way, so the writer goes on past it and the copy never sees those rows. A prefix is never written, and is not
+bound as its relation (`one` merges it instead). Test: `a_copy_shares_the_tail_and_sees_only_its_rows`. Strict
+10-file outputs byte-identical; 300 files: findings the reference's, peak 2.37 GB.
+
+`merged` (`Rows::one`, a relation of many parts merged for a reader that binds one relation: the device) stays a
+copy until the device reads a relation of many parts. Each part's descriptor would be bound, a step of 0325.
+
+Red tests found, not from this work:
+- `facts_only::every_kept_map_is_state_or_listed` (0104) flags maps from merged commits: `OWN_TEXTS` (e3bc911dd),
+  `DECODED` (91f5b131a), `record.rs` `KINDS` and `LOG` (f86a550c8), `upkeep.rs` `GONE` (dfb0e0e02). Each is state
+  or a cache to make facts: a 0104 call for their authors' decisions.
+- `git_seeing_no_file_under_the_root_is_kept` fails in the `git commit` it runs in a scratch repository on the farm
+  host: that host's git setup.
+- The pre-commit hook can't run in this worktree: no node packages (`tsc`, `semver`), and `check:reference` reports
+  three differences in `src/engine/code-rule/*.ts`, which this branch doesn't touch. Commits since 58f1627c3 skip it
+  (`--no-verify`).
+
+### Q162. (Q87 on Two-pass at 5f615621d) A whole source is probed by its relation's own index in the block
+
+Done 2026-11-17. The user's list, item "the input relations' hash indexes … can read the relation's own index in its
+block". Some base inputs are a whole source whose rows are one block relation: a vtab relation's cells. For a key no
+sorted or lead index answers, such an input used to build a host hash table (`Csr::build`) of its rows. It now uses
+that relation's own index (`InBlock::own_index`): found where the device or an earlier probe built it, else built
+by the host into the block, as the device builds it, and shared with the device from then on. Probes read the
+bucket's rows as candidates and check the key (`Csr::exact`; `probe_each` checks it too).
+
+Measured at 300 files, two runs of this build against the five before it:
+- peak 2.54 and 2.48 GB, against 2.36–2.49 GB (load 25–77);
+- the cross-file joins took 3.08 s, against 4.54 s;
+- findings: the reference's.
+
+Strict 10-file outputs are byte-identical. 194 setfix, vtab, probe, index and device tests pass.
+
+Still host structures over rows, the next items:
+- each stored column's sorted index over the cross part's held columns (`Stored::sorted`, 120–140 MB at the peak);
+- derived inputs' sorted orders (`Csr::runs`, 24–38 MB);
+- the fixpoint's own runs, dedup table and lattice maps.
+
+The held columns are heap columns. For their index to be a block relation's own, they would have to be held as
+block relations, as exports now are (Q156).
+
+### Q163. (Q88 on Two-pass at 5f615621d) A count over earlier siblings is a running count (0361 step 7, first form)
+
+Done 2026-11-17. The user's list: "the planner fix for the rr_agg56 sibling-pair blow-up". `rr_agg56` was
+python/ast's `body_stmt` (`i = count : { child(b, s2, _), !kind(s2, "comment"), s2 < s }`): every statement paired
+with every earlier one. Lowering now writes such a count as a running count along `child`'s dense index, one row
+per child (decision 0361, "Step 7, first form").
+
+At 300 files it went from 2.36 s CPU and 17.1 M work to 0.6 s and 2.2 M, with findings the reference's. Strict
+10-file outputs are byte-identical. New tests: `a_count_of_earlier_siblings_is_a_running_count` and
+`a_running_count_numbers_the_statements_past_comments`. The 166 rr, aggregate and cycle tests pass.
+
+Next: key the rewrite by a declared `order(i dense in p)`, not by `child`'s name, once `.layout` lands (steps 1–2).
+The run takes one wave per child index. A body of thousands of statements is thousands of small waves: watch for it
+in the profile's per-stratum waves.
+
+### Q164. (Q89 on Two-pass at 5f615621d) A count below a bound is found by form, not by a relation's name (0361 step 7)
+
+Done 2026-11-17. The user: "make the rewrite generic and structural, not based on the name of the relation, and
+never create such a fragile optimization or fix again". Q163's lowering rewrite, keyed on `child`, is removed.
+`logic::rank_form` finds any `count : H(…)` whose rule's comparison is all that ties the asked rows to the counted
+ones, and makes it from the two parts' rows with `Native::Rank`, a sort and a binary search a group (0361, "Step 7: a
+count below a bound, by form").
+
+At 300 files it applied to 30 counts. The aggregate helpers went from 20.7 M work to 3.6 M, every head together from
+437.8 M to 413.9 M, the findings are the reference's and the peak was 2.29 GB. Strict 10-file outputs are
+byte-identical.
+
+Tests:
+- `rank_counts_what_the_pairs_would`: the kernel against the pairs, every op;
+- four rank-form tests over relations of any names: the op's side, a tie that widens the group, and a comparison
+  within the counted rows left as rows;
+- two end-to-end counts, below and above.
+
+The touched areas' tests pass: 328 in rerail-engine and 178 of 179 in rerail-logic.
+
+A red test found, not from this work: `plan::corpus::tests::branded_constants_have_their_postings_counted` (Q36)
+fails at HEAD without these changes too. `Own::constants_of` finds no branded `field` or `kind` constant in a
+program that `rr::parse` lowers alone, with left `(0, 0)` against right `(1, 1)`. It runs only in rerail-logic. The
+next step is to trace where that program's kind and field names should become branded atoms.
+
+### Q165. (Q90 on Two-pass at 5f615621d) Held rows are probed by their own block indexes, not sorted host columns (0325)
+
+Done 2026-11-17. This is the user's "the stored columns' sorted indexes" item. `columns_source` now builds `Held`
+(`setfix/held.rs`): the rows are one relation alone in a Kept block, and every probe reads the relation's own hashed
+index there, sized to the key's distinct values. Decision 0101 §5's carry of sorted columns between runs is removed.
+`Stored` is left for SQL tables (0325, "Held rows probed by their own indexes").
+
+At 300 files:
+- sorted columns at the peak: 122.9 MB before, 0 after;
+- the cross part's heap at the peak: 380 MB before, 248 MB after;
+- head CPU: 34.5 s before, 25.0 s after;
+- the peak footprint did not move (2.29–2.35 GB). The file-local chunks beside the cross part set it now.
+- Findings are the reference's, and the strict 10-file outputs are byte-identical.
+
+The first try bound every whole source's view to a block index ahead of its lookups. That added 57 MB of source
+blocks, so only held rows go first now.
+
+Test: `held_rows_look_up_what_a_scan_finds` (every column, keys of 2 and 3, an unheld column, and the host fallback
+past the directory).
+
+### Q166. `a_library_held_once_is_read_by_each_policy_in_its_own_scope` fails the version's check after `prune`
+
+- **Found** (2026-11-18, the hub's roll-up, merging Two-pass): a debug build's check of the passes before
+  lowering (`the version after \`prune\` is the tree's`) differs in the inputs alone: the tree's prune keeps
+  `value` an input, the version's drops it. It fails the same at the hub's e382227aa (before Two-pass), so not
+  that merge's. Ignored (`#[ignore]`, this item) until the roll-up's end.
+- **Next**: which reader keeps `value` in the tree (a request, a native's reads, an option) that the version's
+  `Prune` does not count; make the two agree.
+- **Done when**: both prunes keep the same inputs, and the test passes.

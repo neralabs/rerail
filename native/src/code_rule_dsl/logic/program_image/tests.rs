@@ -941,6 +941,7 @@ fn native_tree(f: &crate::code_rule_dsl::logic::plan::fields::Fields<'_>, s: &su
         S::Components { edge, own } => Native::Components { edge: r(*edge), own: r(*own) },
         S::Reach { seed, edge } => Native::Reach { seed: r(*seed), edge: r(*edge) },
         S::ReachThrough { reach, map } => Native::ReachThrough { reach: r(*reach), map: r(*map) },
+        S::Rank { query, counted, group, op } => Native::Rank { query: r(*query), counted: r(*counted), group: *group, op: t(*op) },
     }
 }
 

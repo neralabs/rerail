@@ -234,6 +234,17 @@ impl Relation {
     /// # Safety
     /// No other thread adds an index to this relation meanwhile (its owner's lock), and its rows `0..n` are written.
     pub unsafe fn try_reserve_index(&self, block: &Block, cols: &[u16], n: u32) -> Option<IndexRoom> {
+        // SAFETY: the caller's.
+        unsafe { self.try_reserve_index_buckets(block, cols, n, n as usize) }
+    }
+
+    /// `try_reserve_index` with room for `keys` distinct keys: `keys`' power of two buckets (at most `n`'s), about
+    /// one key a bucket. A key of few values (a kind) is a few buckets, not one a row: its index is about 4 bytes a
+    /// row and 4 a key.
+    ///
+    /// # Safety
+    /// As `try_reserve_index`'s.
+    pub unsafe fn try_reserve_index_buckets(&self, block: &Block, cols: &[u16], n: u32, keys: usize) -> Option<IndexRoom> {
         assert!(!cols.is_empty() && cols.len() <= MAX_KEY, "a key of {} columns", cols.len());
         // SAFETY: the caller's: this relation's descriptor is ours to change.
         unsafe {
@@ -246,7 +257,7 @@ impl Relation {
             if i >= self.indexes.len() {
                 return None;
             }
-            let cap = (n as usize).next_power_of_two().max(1);
+            let cap = keys.min(n as usize).next_power_of_two().max(1);
             let offs: *mut u32 = block.try_alloc_t(cap + 1)?;
             let rows: *mut u32 = block.try_alloc_t((n as usize).max(1))?;
             let ix = std::ptr::from_ref(&self.indexes.as_slice()[i]).cast_mut();
