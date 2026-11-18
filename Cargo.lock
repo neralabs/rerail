@@ -3524,6 +3524,7 @@ dependencies = [
  "metal",
  "objc",
  "rayon",
+ "rerail-gpu",
  "rerail-ukl",
  "sha2 0.10.9",
 ]
@@ -3535,6 +3536,17 @@ dependencies = [
  "rerail-simd8",
  "rerail-tape-format",
  "unicode-ident",
+]
+
+[[package]]
+name = "rerail-gpu"
+version = "0.1.0"
+dependencies = [
+ "block",
+ "libc",
+ "metal",
+ "objc",
+ "rerail-ukl",
 ]
 
 [[package]]

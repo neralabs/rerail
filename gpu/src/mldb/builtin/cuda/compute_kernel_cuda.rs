@@ -46,7 +46,6 @@ struct Api {
     cu_memset_d8_async: unsafe extern "C" fn(DevPtr, u8, usize, Ptr) -> CUresult,
     cu_launch_kernel: unsafe extern "C" fn(Ptr, u32, u32, u32, u32, u32, u32, u32, Ptr, *mut Ptr, *mut Ptr) -> CUresult,
     cu_stream_create: unsafe extern "C" fn(*mut Ptr, u32) -> CUresult,
-    cu_stream_destroy: unsafe extern "C" fn(Ptr) -> CUresult,
     cu_stream_synchronize: unsafe extern "C" fn(Ptr) -> CUresult,
     cu_stream_wait_value64: unsafe extern "C" fn(Ptr, DevPtr, u64, u32) -> CUresult,
     cu_event_create: unsafe extern "C" fn(*mut Ptr, u32) -> CUresult,
@@ -95,6 +94,13 @@ fn open(names: &[String]) -> Option<Ptr> {
 fn api() -> Result<&'static Api, String> {
     static API: OnceLock<Result<Api, String>> = OnceLock::new();
     API.get_or_init(|| {
+        // The hardware queues the driver maps streams onto, round-robin in the order they are made: enough that no
+        // two of the process's streams share one (`CudaQueueRoot`). Read by the driver when it loads; a value the
+        // environment sets is kept.
+        if std::env::var_os("CUDA_DEVICE_MAX_CONNECTIONS").is_none() {
+            // SAFETY: once, before the driver loads, as the process's first use of the device.
+            unsafe { std::env::set_var("CUDA_DEVICE_MAX_CONNECTIONS", MAX_CONNECTIONS.to_string()) };
+        }
         let cuda = open(&["libcuda.so.1".into(), "libcuda.so".into()]).ok_or("no CUDA driver (libcuda.so.1)")?;
         let home = std::env::var("CUDA_HOME").unwrap_or_else(|_| "/usr/local/cuda".into());
         let mut names: Vec<String> = ["libnvrtc.so", "libnvrtc.so.13", "libnvrtc.so.12"].iter().map(|s| s.to_string()).collect();
@@ -126,7 +132,6 @@ fn api() -> Result<&'static Api, String> {
             cu_memset_d8_async: sym!(cuda, "cuMemsetD8Async"),
             cu_launch_kernel: sym!(cuda, "cuLaunchKernel"),
             cu_stream_create: sym!(cuda, "cuStreamCreate"),
-            cu_stream_destroy: sym!(cuda, "cuStreamDestroy_v2"),
             cu_stream_synchronize: sym!(cuda, "cuStreamSynchronize"),
             cu_stream_wait_value64: sym!(cuda, "cuStreamWaitValue64_v2" | "cuStreamWaitValue64"),
             cu_event_create: sym!(cuda, "cuEventCreate"),
@@ -350,14 +355,14 @@ pub fn alloc_uninitialized_array_sync<T>(device: &CudaDevice, length: usize) -> 
 }
 
 /// `transferToDeviceImmutable`: memory holding `data`.
-pub fn transfer_to_device_immutable<T: crate::memory_region::Pod>(device: &CudaDevice, data: &[T]) -> CudaBuffer {
+pub fn transfer_to_device_immutable<T: crate::Pod>(device: &CudaDevice, data: &[T]) -> CudaBuffer {
     let b = alloc_uninitialized_array_sync::<T>(device, data.len());
     unsafe { std::ptr::copy_nonoverlapping(data.as_ptr().cast::<u8>(), b.contents().cast::<u8>(), std::mem::size_of_val(data)) };
     b
 }
 
 /// `transferToHostSync`: the first `length` elements (the work writing them must have completed).
-pub fn transfer_to_host_sync<T: crate::memory_region::Pod + Clone>(buffer: &CudaBuffer, length: usize) -> Vec<T> {
+pub fn transfer_to_host_sync<T: crate::Pod + Clone>(buffer: &CudaBuffer, length: usize) -> Vec<T> {
     assert!(length * std::mem::size_of::<T>() <= buffer.length() as usize);
     unsafe { std::slice::from_raw_parts(buffer.contents().cast::<T>(), length).to_vec() }
 }
@@ -582,15 +587,53 @@ impl CudaComputeFunction {
     }
 }
 
-/// The source a queue's streams are made from (`metal::CommandQueue`): the device.
-pub type CudaQueueRoot = CudaDevice;
+/// The hardware queues asked of the driver (its maximum).
+const MAX_CONNECTIONS: usize = 32;
 
-/// A queue of operations (`MetalComputeQueue`): launches, copies and fills in order on a stream of its own. `flush`
+/// What a queue's work goes to (`metal::CommandQueue`): a fixed set of streams, made once, which queues take in turn.
+///
+/// The driver runs streams on a few hardware queues; streams that share one are run in order, as one. A stream held
+/// by a wait for the host (`CudaComputeQueue::wait_for_event`, an armed prediction) then holds back every stream on
+/// its hardware queue, and the work the host awaits before it signals may be among them: a deadlock (seen on a
+/// V100). Metal has the same rule within a command queue, which is why the forest keeps its waiting work on a queue
+/// of its own (`shared.waiting`). Here the process makes its streams once, fewer than the hardware queues
+/// (`MAX_CONNECTIONS`), so each has one of its own and the waiting root's stream holds back nothing else. Queues of
+/// one root share its streams: their work is ordered more than it must be, never less.
+pub struct CudaQueueRoot {
+    device: CudaDevice,
+    streams: Vec<Ptr>,
+    next: std::sync::atomic::AtomicUsize,
+}
+
+unsafe impl Send for CudaQueueRoot {}
+unsafe impl Sync for CudaQueueRoot {}
+
+impl CudaQueueRoot {
+    /// A root of `streams` streams on `device`. Made at the process's start (`shared`), the waiting root first.
+    pub fn new(device: CudaDevice, streams: usize) -> CudaQueueRoot {
+        let a = device.current();
+        let streams = (0..streams.max(1))
+            .map(|_| {
+                let mut stream = std::ptr::null_mut();
+                must(unsafe { (a.cu_stream_create)(&mut stream, CU_STREAM_NON_BLOCKING) }, "cuStreamCreate");
+                stream
+            })
+            .collect();
+        CudaQueueRoot { device, streams, next: Default::default() }
+    }
+
+    fn stream(&self) -> Ptr {
+        self.streams[self.next.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % self.streams.len()]
+    }
+}
+
+/// A queue of operations (`MetalComputeQueue`): launches, copies and fills in order on one of its root's streams. `flush`
 /// records an event to await; `finish` flushes and waits.
 pub struct CudaComputeQueue {
     device: CudaDevice,
     stream: Ptr,
-    /// The event recorded where the work since the last flush starts (the GPU time is measured from it).
+    /// The event recorded where the work since the last flush starts (the GPU time is measured from it; it counts
+    /// the work other queues put on the same stream between, as the root's streams are shared).
     start: RefCell<Ptr>,
     /// The staging memory for `enqueue_copy_from_host`, and how much is used (as on Metal).
     staging: RefCell<Option<(CudaBuffer, u64)>>,
@@ -608,13 +651,13 @@ fn new_event(a: &Api) -> Ptr {
 }
 
 impl CudaComputeQueue {
-    pub fn new(device: &CudaQueueRoot) -> Self {
-        let a = device.current();
-        let mut stream = std::ptr::null_mut();
-        must(unsafe { (a.cu_stream_create)(&mut stream, CU_STREAM_NON_BLOCKING) }, "cuStreamCreate");
+    /// A queue on one of `root`'s streams (in turn).
+    pub fn new(root: &CudaQueueRoot) -> Self {
+        let a = root.device.current();
+        let stream = root.stream();
         let start = new_event(a);
         must(unsafe { (a.cu_event_record)(start, stream) }, "cuEventRecord");
-        CudaComputeQueue { device: *device, stream, start: RefCell::new(start), staging: Default::default(), keep: Default::default() }
+        CudaComputeQueue { device: root.device, stream, start: RefCell::new(start), staging: Default::default(), keep: Default::default() }
     }
 
     /// `newBindContext`: one launch of `function`, on the queue's stream.
@@ -646,7 +689,7 @@ impl CudaComputeQueue {
     }
 
     /// `enqueueFillArray`: `count` copies of `value` into `dst` from element `offset` (all of it when `None`).
-    pub fn enqueue_fill_array<T: crate::memory_region::Pod>(&self, dst: &CudaBuffer, value: &T, offset: usize, count: Option<usize>) {
+    pub fn enqueue_fill_array<T: crate::Pod>(&self, dst: &CudaBuffer, value: &T, offset: usize, count: Option<usize>) {
         let size = std::mem::size_of::<T>();
         let count = count.unwrap_or(dst.length() as usize / size - offset);
         let one = unsafe { std::slice::from_raw_parts((value as *const T).cast::<u8>(), size) };
@@ -696,8 +739,7 @@ impl CudaComputeQueue {
 }
 
 impl Drop for CudaComputeQueue {
-    /// The stream goes when its work completes (the driver's rule); the buffers of its work not flushed are kept
-    /// until then (`PENDING`).
+    /// The stream is its root's; the buffers of the work not flushed are kept until it completes (`PENDING`).
     fn drop(&mut self) {
         let a = self.device.current();
         let keep = std::mem::take(&mut *self.keep.borrow_mut());
@@ -706,10 +748,7 @@ impl Drop for CudaComputeQueue {
             must(unsafe { (a.cu_event_record)(end, self.stream) }, "cuEventRecord");
             PENDING.lock().unwrap().push(Pending { end, keep });
         }
-        unsafe {
-            (a.cu_event_destroy)(*self.start.borrow());
-            (a.cu_stream_destroy)(self.stream);
-        }
+        unsafe { (a.cu_event_destroy)(*self.start.borrow()) };
     }
 }
 

@@ -537,9 +537,20 @@ Progress (2026-11-18):
     - `extract16BitRange32` loaded two words as a `uint2` from a 4-byte-aligned address. Apple's GPUs tolerate
       the misaligned 8-byte load; CUDA faults on it. It now reads two words.
     - An empty grid launches nothing, as on Metal; CUDA calls an empty launch an invalid argument.
+  - **On the V100 too (sm_70, CUDA 12.9, a discrete card):** the 42 tests pass, three runs out of three, including
+    the warp sum for sm < 80 (a shuffle loop). The first run hung, and the hang is a rule for every CUDA queue:
+    - The driver runs streams on a few hardware queues (8 by default), given out in turn as streams are made.
+      Streams that share one run as one stream.
+    - A stream waiting for the host (an armed prediction) then held back another test's stream. A pinned-to-pinned
+      copy on it spun in the driver holding the driver's lock, and the thread that would signal could not take it.
+    - Metal has the same rule within a command queue, which is why the forest keeps waiting work on a queue of its
+      own (`shared.waiting`). On CUDA a queue root is now a set of streams made once at the start: `waiting` (1
+      stream, made first) and `queue` (16, taken in turn). The driver is given 32 hardware queues, so each stream
+      has one of its own. Queues of a root share its streams: their work is ordered more than it must be, never
+      less.
+    - The device layer moved to a crate of its own, `rerail-gpu` (`gpu/`), MLDB's files at their upstream paths
+      under `gpu/src/mldb/`. The forest and the UKL libraries' tests (step 5) build on it.
   - **Not yet run:**
-    - sm_70 (the V100) runs nothing yet: its kernels compile, but the forest has not run there, so the warp sum
-      for sm < 80 (a shuffle loop) is not exercised.
     - A discrete card reads the pool's pinned blocks over PCIe (12.3 GB/s): correct, but slow until step 10.
     - Separately, `rerail-accel` does not build on Linux. This predates this work: it declares `rerail-blocks`
       for macOS only but uses it everywhere.

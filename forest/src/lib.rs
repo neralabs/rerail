@@ -42,19 +42,14 @@ pub mod randomforest_types;
 pub mod randomforest_kernels;
 #[path = "mldb/plugins/jml/randomforest_recursive.rs"]
 pub mod randomforest_recursive;
-#[path = "mldb/block/compute_kernel.rs"]
-pub mod compute_kernel;
-#[cfg(target_os = "macos")]
-#[path = "mldb/builtin/metal/compute_kernel_metal.rs"]
-pub mod compute_kernel_metal;
+// The device layer: `rerail-gpu` (decision 0400), under the names the forest's code uses.
+pub use rerail_gpu::{compute_kernel, compute_kernel_grid, device};
 #[cfg(target_os = "linux")]
-#[path = "mldb/builtin/cuda/compute_kernel_cuda.rs"]
-pub mod compute_kernel_cuda;
-pub mod device;
+pub use rerail_gpu::compute_kernel_cuda;
+#[cfg(target_os = "macos")]
+pub use rerail_gpu::compute_kernel_metal;
 #[path = "mldb/plugins/jml/randomforest_kernels_metal.rs"]
 pub mod randomforest_kernels_metal;
-#[path = "mldb/block/compute_kernel_grid.rs"]
-pub mod compute_kernel_grid;
 #[path = "mldb/plugins/jml/randomforest_kernels_grid.rs"]
 pub mod randomforest_kernels_grid;
 #[path = "mldb/plugins/jml/randomforest.rs"]
@@ -73,45 +68,9 @@ pub use randomforest_kernels_metal::SOURCE;
 
 pub mod cost_model;
 
-/// The process's one device and command queue. They are made here, in the lowest crate that uses the device, so
-/// that the forest's training and prediction and the engine's every submission (`rerail_accel::gpu::shared`, which
-/// takes them from here on Metal) share one queue: one order of command buffers, no queue apart (decision 0100 §2).
-/// On CUDA each `ComputeQueue` is a stream of its own, made from the device (`queue` and `waiting` are the device).
+/// The process's device and queue (`rerail_gpu::shared`), where the engine takes them from (`rerail_accel`).
 pub mod gpu {
-    pub mod shared {
-        use crate::device::{Device, QueueRoot};
-        use std::sync::OnceLock;
-
-        pub struct Shared {
-            pub device: Device,
-            pub queue: QueueRoot,
-            /// The queue of work committed ahead that waits on an event (the forest's armed prediction): a command
-            /// buffer waiting on an event holds back the ones its queue commits after it, so it is not `queue`.
-            pub waiting: QueueRoot,
-        }
-
-        /// The process's device and queue: `None` without a device.
-        pub fn get() -> Option<&'static Shared> {
-            static SHARED: OnceLock<Option<Shared>> = OnceLock::new();
-            SHARED.get_or_init(open).as_ref()
-        }
-
-        #[cfg(target_os = "macos")]
-        fn open() -> Option<Shared> {
-            objc::rc::autoreleasepool(|| {
-                let device = metal::Device::system_default()?;
-                let queue = device.new_command_queue();
-                let waiting = device.new_command_queue();
-                Some(Shared { device, queue, waiting })
-            })
-        }
-
-        #[cfg(target_os = "linux")]
-        fn open() -> Option<Shared> {
-            let device = crate::compute_kernel_cuda::CudaDevice::system_default()?;
-            Some(Shared { device, queue: device, waiting: device })
-        }
-    }
+    pub use rerail_gpu::shared;
 }
 
 /// The process's user + system CPU seconds.
