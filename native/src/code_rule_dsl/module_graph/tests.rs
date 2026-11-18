@@ -804,6 +804,14 @@ fn a_rewrite_restoring_length_and_modification_time_is_read_again() {
             .set_modified(modified)
             .unwrap();
     };
+    // The stamp the walk reads for `app/a.ts`.
+    let stamp = || {
+        listing::list(&root.join("app"))
+            .unwrap()
+            .map(Result::unwrap)
+            .find(|entry| entry.name() == "a.ts")
+            .and_then(|entry| Stamp::of(&entry.facts().unwrap()))
+    };
     let server = ["app/a.ts", "app/b.ts", "app/page.tsx"];
     let tick = SystemTime::now();
     rewrite("use server", tick);
@@ -814,9 +822,15 @@ fn a_rewrite_restoring_length_and_modification_time_is_read_again() {
         let settled = SystemTime::now() - Duration::from_secs(3600);
         rewrite("use server", settled);
         assert_eq!(disk_graph(&root, "").unwrap(), server);
-        // Past the status-change time's granularity, as coarse as a scheduler tick.
-        std::thread::sleep(Duration::from_millis(50));
-        rewrite("use client", settled);
+        // The change time is as coarse as a scheduler tick, so a rewrite within the tick of the
+        // last one leaves it: the rewrite repeats until the stamp the walk reads moved.
+        let cached = stamp();
+        (0..10_000)
+            .find(|_| {
+                rewrite("use client", settled);
+                stamp() != cached
+            })
+            .expect("a rewrite moves the stamp");
         assert_eq!(disk_graph(&root, "").unwrap(), ["app/page.tsx"]);
         // A file renamed over the source (as `rsync -t` writes one) is another file.
         write_file(&root, "app/a.tmp", "'use server';\nimport './b';\n");

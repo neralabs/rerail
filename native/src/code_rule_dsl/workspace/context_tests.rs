@@ -4001,6 +4001,13 @@ fn a_warm_index_reads_a_same_size_edit_that_keeps_its_mtime_before_discovery() {
     assert_eq!(all_pages(&first, MAXIMUM_PAGE_BYTES), json!([]));
     first.completion_task().compute().unwrap();
     first.close();
+    // Unedited, both files restore by their stat alone: the edit below is all that keeps the
+    // second index from restoring `api/a.py` as well.
+    let mut unedited = storage_workspace(&root, directory.store());
+    unedited.add_code_rule(&code_rule, None).unwrap();
+    let indexed = index_workspace(&unedited);
+    assert_eq!(indexed["restoredFiles"], json!(2), "{indexed}");
+    unedited.close();
 
     let edited = root.join("api/a.py");
     std::fs::write(&edited, b"print(1)\n").unwrap();
