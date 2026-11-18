@@ -2206,7 +2206,7 @@ fn an_equality_binds_its_right_side_before_the_next_join() {
     assert_eq!(out.shown()["o2"].len(), 1);
 }
 
-/// A concatenation given its inverse and a function made a join key (`simplify::concat_inverses`, `function_keys`)
+/// A concatenation given its inverse and a function made a join key (`simplify::ConcatInverses`, `FunctionKeys`)
 /// derive the rows the rule did: a module's stub file found from its head (`modules.rr`'s `py_try` "stubs"), and
 /// the rest of a name by `substr`, which runs natively.
 #[test]

@@ -5,6 +5,7 @@ use super::*;
 use crate::code_rule_dsl::logic::front::{self, Literal, Term};
 use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 #[test]
 fn include_seed_ignores_quoted_directives_and_preserves_real_includes() {
@@ -3483,11 +3484,11 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
     let counts: Vec<(usize, usize)> = paths.iter().enumerate().filter(|(i, _)| i % part.1 == part.0).map(|(_, p)| p).filter_map(|path| {
         let path = path.as_path();
         let Ok((statements, _)) = program(&path) else { return None };
-        let Ok(whole) = lower_files_dropping(&path, statements.clone(), false).and_then(|v| v.program(&Default::default()).map_err(Error::Syntax)) else { return None };
+        let Ok(whole) = lower_files_dropping(&path, statements.clone(), false) else { return None };
         let own = path.canonicalize().unwrap();
         let clauses = |s: &Files| s.iter().flat_map(|(_, items)| items).filter(|(i, _)| matches!(i, syntax::Item::Clause { .. })).count();
         let (n, kept) = (clauses(&statements), clauses(&unreached_dropped(&own, statements.clone())));
-        let less = lower_files_dropping(&path, statements, true).and_then(|v| v.program(&Default::default()).map_err(Error::Syntax)).unwrap_or_else(|e| panic!("{}: lowered whole, not with its unreached clauses dropped: {e}", path.display()));
+        let less = lower_files_dropping(&path, statements, true).unwrap_or_else(|e| panic!("{}: lowered whole, not with its unreached clauses dropped: {e}", path.display()));
         // The lowering numbers its helpers (`rr_up9`, `rr_agg7`) in the order it meets them, and `simplify` the
         // variables it renames apart (`rr_earlier27_f18`, `_t<k>` and `_f<k>` after the name, simplify.rs); dropped
         // clauses no longer take numbers before them, and a context or cover made once is read again where an equal
@@ -3499,27 +3500,37 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
         // (`rr_text20_rr_d`): masked as the helper is.
         let helper = regex::Regex::new(r"\brr_([a-z_]*[a-z])([0-9]+)((?:_rr_d)?)\b").unwrap();
         let fresh = regex::Regex::new(r"\brr_([a-z]+)([0-9]+)_([ft][0-9]+)\b").unwrap();
-        let shape = |mut p: Program| {
+        let shape = |read: Arc<crate::code_rule_dsl::logic::program_image::Version>| {
+            use crate::code_rule_dsl::logic::plan::corpus::preparation;
+            use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
             // Pruned as a corpus run prunes it: the requests the engine reads are outputs where a rule makes them
             // (`corpus::run_observed`), those a library derives (embeds, loads) and those lowering makes of a body's
             // file and guest reads (`rr_dir_req`, `rr_embed_req` …), which the engine answers for every reader.
             let requests = super::LIBRARY_DERIVED.iter().copied().chain(super::WORLD.iter().map(|(_, req)| *req)).chain(["rr_embed_req", "rr_parse_req", "rr_splice_req"]);
+            let outputs = read.output_names();
+            let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&read);
             for rel in requests {
-                if p.rules.iter().any(|r| r.head.rel == rel) && !p.outputs.iter().any(|o| o == rel) {
-                    p.outputs.push(rel.to_owned());
+                if read.rules().any(|r| read.rel_name(r.head().rel()) == rel) && !outputs.iter().any(|o| o == rel) {
+                    b.add_output(rel);
                 }
             }
             // Then simplified and pruned again, as `corpus::run_observed` prepares it: identical relations merge
-            // (`simplify::merge_identical`), so a widened copy (decision 0174) whose kept rules are its relation's own
-            // once its unreached readers' requests are pruned is read as that relation.
-            let mut p = front::prune(p);
-            crate::code_rule_dsl::logic::simplify::simplify(&mut p);
-            let p = front::prune(p);
+            // (`MergeIdentical`), so a widened copy (decision 0174) whose kept rules are its relation's own once its
+            // unreached readers' requests are pruned is read as that relation.
+            let mut pipeline = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("q3", b.finish().unwrap().0);
+            let mut prune = preparation::Prune::default();
+            pipeline.program(&mut prune);
+            preparation::simplify::passes(&mut pipeline).unwrap();
+            pipeline.program(&mut prune);
+            let p = pipeline.finish().unwrap().0;
+            let head = |r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>| p.rel_name(r.head().rel()).to_owned();
+            let reads = |r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>| -> Vec<String> { r.body().filter_map(|l| l.atom()).map(|a| p.rel_name(a.rel()).to_owned()).collect() };
+            let rules_of = |rel: &str| -> Vec<String> { p.rules().filter(|r| head(*r) == rel).map(|r| p.show_rule(r)).collect() };
             // Q3's property itself: no widened copy is left with its relation's own rules, each copy read as its
-            // relation (a recursive copy reads itself, a copy of `r` reads the copy of what `r` reads). A copy equals
-            // its relation when their rules are equal with every equal copy read as its relation: the greatest such
-            // set, from all copies assumed equal, each dropped once its rules differ. (A copy whose read copy differs,
-            // as a cross-file `node_text` read makes it, is rightly its own.)
+            // relation (a recursive copy reads itself, a copy of `r` reads the copy of what `r` reads). The classes of
+            // relations equal with every equal one read as its class (`congruence`, the greatest such partition) hold
+            // no copy with its relation: the merge would have made them one. (A copy whose read copy differs, as a
+            // cross-file `node_text` read makes it, is rightly its own.)
             let copies = lower::ON_REQUEST.iter().flat_map(|round| round.iter()).map(|a| format!("rr_wide_{}_", a.rel)).collect::<Vec<_>>();
             let source = |rel: &str| -> String {
                 let mut at = rel;
@@ -3528,84 +3539,83 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
                 }
                 at.to_owned()
             };
-            // Each as `congruence` compares rules (`simplify::canonical_rule`): up to variable names in every position,
-            // as `simplify` renames inlined variables apart with one counter for the whole program (`_f<k>`, `_t<k>`).
-            let rules_as = |rel: &str, same: &BTreeSet<String>| {
-                let label = |n: &str| front::Name::new(&if same.contains(n) { source(n) } else { n.to_owned() });
-                p.rules.iter().filter(|x| x.head.rel == rel).map(|x| crate::code_rule_dsl::logic::simplify::canonical_rule(x, &label)).collect::<BTreeSet<_>>()
-            };
-            let mut same: BTreeSet<String> = p.decls.keys().filter(|w| source(w) != w.as_str()).map(|w| w.to_string()).collect();
-            loop {
-                let next: BTreeSet<String> = same.iter().filter(|w| rules_as(w, &same) == rules_as(&source(w), &same)).cloned().collect();
-                if next == same {
-                    break;
+            let data = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::plan::fields::FieldsData>(&p).unwrap();
+            let classes = preparation::congruence(&p, crate::code_rule_dsl::logic::plan::fields::Fields::over(&p, &data), false);
+            for class in &classes {
+                for w in class.iter().filter(|w| source(w) != **w) {
+                    let r = source(w);
+                    assert!(!class.contains(&r), "{}: {w} is left with {r}'s own rules\n {w}: {:#?}\n {r}: {:#?}", path.display(), rules_of(w), rules_of(&r));
                 }
-                same = next;
-            }
-            for w in &same {
-                let r = source(w);
-                let raw = |rel: &str| p.rules.iter().filter(|x| x.head.rel == rel).map(|x| format!("{x:?}")).collect::<Vec<_>>();
-                assert!(raw(w).is_empty(), "{}: {w} is left with {r}'s own rules\n {w}: {:#?}\n {r}: {:#?}", path.display(), raw(w), raw(&r));
             }
             // Why a copy is needed (`RERAIL_WIDE_WITNESS`, from the tape-lab branch's form of this check): a copy kept
-            // apart from its relation reads, to a fixpoint, a copy whose rules differ from its relation's.
+            // apart from its relation reads a copy that is not its relation's equal.
             if std::env::var_os("RERAIL_WIDE_WITNESS").is_some() {
-                let show = |rel: &str| p.rules.iter().filter(|x| x.head.rel == rel).map(|x| x.to_string()).collect::<Vec<_>>();
-                for w in p.decls.keys().filter(|w| source(w) != w.as_str() && !same.contains(w.as_str())) {
-                    let differs: Vec<String> = p.rules.iter().filter(|x| x.head.rel == w.as_str()).flat_map(|x| x.body.iter()).filter_map(Literal::atom).map(|a| a.rel.to_string()).filter(|c| source(c) != *c && !same.contains(c)).collect();
-                    eprintln!("{}: {w} needed: reads {differs:?}: {:#?} against {:#?}", path.display(), show(w), show(&source(w)));
+                for w in p.declared_names().iter().filter(|w| source(w) != w.as_str()) {
+                    let differs: Vec<String> = p.rules().filter(|r| head(*r) == *w).flat_map(reads).filter(|c| source(c) != *c).collect();
+                    eprintln!("{}: {w} needed: reads {differs:?}: {:#?} against {:#?}", path.display(), rules_of(w), rules_of(&source(w)));
                 }
             }
-            let kept = p.rules.clone();
             let mask = |s: &str| helper.replace_all(&fresh.replace_all(s, "rr_${1}#_$3"), "rr_$1#$3").into_owned();
             // A violation's rule for `@place` values (`rr_v0 < -1`) is made when any rule of the program makes one
             // (`lower`'s `place_values`): an unreached clause made it for the whole program, where no reached
             // rule makes the value it reads.
-            let place_variant = |r: &front::Rule| r.head.rel.as_str() == "violation" && r.head.args.iter().any(|a| matches!(a, Term::Call(n, _) if n == "place_path"));
+            let place_variant = |shown: &str| shown.starts_with("violation(") && shown.split(":-").next().is_some_and(|h| h.contains("place_path("));
             // A helper's rules (`rr_agg7`, its columns its fresh variables in the order of their names, which the
             // numbers change) are compared by their stem; every other rule exactly, its helpers' numbers masked. A
             // widened copy (`rr_wide_node_text_rr_up9`) is compared by its rules.
             let numbered = |rel: &str| helper.is_match(rel) && !rel.starts_with("rr_wide_");
             let mut rules: Vec<String> = p
-                .rules
-                .iter()
-                .filter(|r| !place_variant(r))
-                .map(|r| if numbered(r.head.rel.as_str()) { format!("helper {}", mask(r.head.rel.as_str())) } else { mask(&format!("{r:?}")) })
+                .rules()
+                .map(|r| (head(r), p.show_rule(r)))
+                .filter(|(_, shown)| !place_variant(shown))
+                .map(|(h, shown)| if numbered(&h) { format!("helper {}", mask(&h)) } else { mask(&shown) })
                 .collect();
             rules.sort();
-            let named: BTreeSet<String> = p.rules.iter().flat_map(|r| std::iter::once(r.head.rel.to_string()).chain(r.body.iter().filter_map(Literal::atom).map(|a| a.rel.to_string()))).collect();
-            let mut decls: Vec<String> = p.decls.iter().filter(|(r, _)| named.contains(r.as_str())).map(|(r, c)| if numbered(r) { format!("{}/{}", mask(r), c.len()) } else { mask(&format!("{r}{c:?}")) }).collect();
+            let named: BTreeSet<String> = p.rules().flat_map(|r| std::iter::once(head(r)).chain(reads(r))).collect();
+            let mut decls: Vec<String> = p
+                .declared_names()
+                .into_iter()
+                .filter(|r| named.contains(r))
+                .map(|r| {
+                    let c = p.columns_of(&r).unwrap_or_default();
+                    if numbered(&r) { format!("{}/{}", mask(&r), c.len()) } else { mask(&format!("{r}{c:?}")) }
+                })
+                .collect();
             decls.sort();
-            let natives: BTreeSet<String> = p.natives.keys().map(|n| mask(n)).collect();
+            let natives_map = ProgramFields::natives(&*p);
+            let natives: BTreeSet<String> = natives_map.keys().map(|n| mask(n)).collect();
+            let outputs = p.output_names();
             // The facts of the relations the rules name (`simplify` makes ground rules facts), and the outputs'.
-            let mut facts: Vec<String> = p.facts.iter().filter(|(r, _)| named.contains(r.as_str()) || p.outputs.contains(r)).map(|(r, rows)| mask(&format!("{r}{rows:?}"))).collect();
+            let mut facts: Vec<String> = p.fact_names().into_iter().filter(|r| named.contains(r) || outputs.contains(r)).map(|r| mask(&format!("{r}{:?}", p.fact_rows(&r)))).collect();
             facts.sort();
             // The inputs the rules read: the lowering declares one (`node_order`, `rr_inside_<set>`) for each clause
             // that reads it, and an unreached clause's stays among the inputs after `prune`, read by none. A string
             // constant is no read: `field($x, "value", _)` names a field, not the attribute `value` (an input where no
             // clause reads it, answered on request and pruned where the unreached ones did).
-            let text = format!("{:?}{:?}", p.rules, p.natives);
-            let text = regex::Regex::new(r#"Str\("(?:[^"\\]|\\.)*"\)"#).unwrap().replace_all(&text, "Str");
-            let mut inputs: Vec<String> = p.inputs.iter().filter(|i| text.contains(&format!("\"{i}\""))).cloned().collect();
+            let read_rels: BTreeSet<String> = p.rules().flat_map(reads).collect();
+            let native_text = format!("{natives_map:?}");
+            let mut inputs: Vec<String> = p.input_names().into_iter().filter(|i| read_rels.contains(i) || native_text.contains(&format!("\"{i}\""))).collect();
             inputs.sort();
-            let mut outputs = p.outputs.clone();
+            let mut outputs = outputs;
             outputs.sort();
-            ((rules, decls, natives, outputs, inputs, facts), kept)
+            ((rules, decls, natives, outputs, inputs, facts), Arc::clone(&p))
         };
         let ((a, kept_less), (b, kept_whole)) = (shape(less), shape(whole));
         if a != b {
             // The first relation only the whole keeps, and the kept rules that read it, back to an output.
-            let heads = |rules: &[front::Rule]| rules.iter().map(|r| r.head.rel.to_string()).collect::<BTreeSet<String>>();
+            let heads = |v: &crate::code_rule_dsl::logic::program_image::Version| v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect::<BTreeSet<String>>();
             let less_heads = heads(&kept_less);
+            let w = &kept_whole;
             let mut chain: Vec<String> = Vec::new();
-            if let Some(extra) = kept_whole.iter().map(|r| r.head.rel.to_string()).find(|h| !less_heads.contains(h) && !helper.is_match(h)) {
+            if let Some(extra) = heads(w).into_iter().find(|h| !less_heads.contains(h) && !helper.is_match(h)) {
                 let mut at = extra;
                 while chain.len() < 12 && !chain.contains(&at) {
                     chain.push(at.clone());
-                    match kept_whole.iter().find(|r| r.head.rel != at.as_str() && r.body.iter().filter_map(Literal::atom).any(|l| l.rel == at.as_str())) {
+                    let reader = w.rules().find(|r| w.rel_name(r.head().rel()) != at && r.body().filter_map(|l| l.atom()).any(|a| w.rel_name(a.rel()) == at));
+                    match reader {
                         Some(r) => {
-                            chain.push(format!("{r}"));
-                            at = r.head.rel.to_string()
+                            chain.push(w.show_rule(r));
+                            at = w.rel_name(r.head().rel()).to_owned();
                         }
                         None => break,
                     }
@@ -4232,61 +4242,54 @@ fn a_texts_rules_are_written_as_a_version_in_its_walk() {
     assert_eq!(helpers.len(), 2, "{}", v.show());
 }
 
-/// The request record (`Program::asked_by`) follows the passes that split, merge and copy request rules
-/// (`Program::set_rules_from`, `push_rule_from`, `corpus::drop_repeated_rules`): each rule keeps the readers it served,
-/// so `prune` gates it, and a slice cut from the prepared program too (decision 0331).
-#[test]
-fn the_request_record_follows_split_merged_and_copied_rules() {
-    let text = ".decl q(n: number)\n.decl a(n: number)\n.decl b(n: number)\n.decl k(n: number)\n.input k\n\
-        q($n) :- k($n), $n < 3.\nq($n) :- k($n), $n > 5.\na($n) :- q($n).\nb($n) :- q($n).\n";
-    let mut p = front::parse(text).expect("parses");
-    let by = |r: &[&str]| r.iter().map(|s| (*s).to_owned()).collect::<BTreeSet<String>>();
-    p.asked_by.insert("q".into(), vec![by(&["a"]), by(&["b"])]);
-    let rules = p.rules.clone();
-    // The first request rule split in two, the second kept, a rule of no source added.
-    let split = vec![(rules[0].clone(), vec![0]), (rules[0].clone(), vec![0]), (rules[1].clone(), vec![1]), (rules[1].clone(), vec![]), (rules[2].clone(), vec![2]), (rules[3].clone(), vec![3])];
-    p.set_rules_from(split);
-    assert_eq!(p.asked_by["q"], vec![by(&["a"]), by(&["a"]), by(&["b"]), by(&["q"])]);
-    // Repeats dropped: the rule kept serves both its own readers and its repeat's.
-    assert_eq!(crate::code_rule_dsl::logic::plan::corpus::drop_repeated_rules(&mut p), 2);
-    assert_eq!(p.asked_by["q"], vec![by(&["a"]), by(&["b", "q"])]);
-    // A copy serves its source's readers.
-    let copy = p.rules[0].clone();
-    p.push_rule_from(copy, 0);
-    assert_eq!(p.asked_by["q"], vec![by(&["a"]), by(&["b", "q"]), by(&["a"])]);
-    assert_eq!(p.readers_of_rules().iter().flatten().count(), p.rules.iter().filter(|r| r.head.rel == "q").count());
+/// A version of `text` with request record `asked` (decision 0331).
+fn with_asked(text: &str, asked: &[(&str, &[&[&str]])]) -> Arc<crate::code_rule_dsl::logic::program_image::Version> {
+    let read = parse_version(text).expect("parses");
+    let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&read);
+    let asked = asked.iter().map(|(rel, by)| ((*rel).to_owned(), by.iter().map(|r| r.iter().map(|s| (*s).to_owned()).collect()).collect())).collect();
+    b.set_asked(&asked);
+    b.finish().unwrap().0
 }
 
-/// A request gated by its readers (`front::prune`) is kept while a reader is needed, and while a reader is gone from
-/// the program (merged, renamed or inlined since the requests were made: it cannot be asked); a reader's copy under
-/// another name (hiding's, `Program::push_rule_from`) is a reader too (decision 0331).
+/// The request record follows the pass that drops repeated rules (`DropRepeated`): the rule kept serves both its
+/// own readers and its repeat's, so `Prune` gates it, and a slice cut from the prepared program too (decision 0331).
+/// The reader keeps no repeat; the merge makes one, `q`'s two rules reading two relations it makes one.
 #[test]
-fn a_request_is_kept_for_a_gone_reader_and_for_a_readers_copy() {
-    let text = ".decl q(n: number)\n.decl a(n: number)\n.decl b(n: number)\n.decl k(n: number)\n.input k\n.output b\n\
-        q($n) :- k($n), $n < 3.\nq($n) :- k($n), $n > 5.\na($n) :- q($n).\nb($n) :- q($n).\n";
+fn the_request_record_follows_repeated_rules() {
+    let text = ".decl q(n: number)\n.decl a(n: number)\n.decl b(n: number)\n.decl k(n: number)\n.input k\n.output a, b\n\
+        .decl r1(n: number)\n.decl r2(n: number)\nr1(n) :- k(n), n < 3.\nr2(n) :- k(n), n < 3.\n\
+        q(n) :- r1(n).\nq(n) :- r2(n).\na(n) :- q(n), n > 0.\nb(n) :- q(n).\n";
+    let v = with_asked(text, &[("q", &[&["a"], &["b"]])]);
+    let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("test", v);
+    let (mut repeats, mut merge) = (crate::code_rule_dsl::logic::plan::corpus::preparation::DropRepeated::default(), crate::code_rule_dsl::logic::plan::corpus::preparation::MergeIdentical::default());
+    p.program(&mut repeats).program(&mut merge).program(&mut repeats);
+    let (v, _) = p.finish().unwrap();
+    assert!(merge.merged > 0 && repeats.0 == 1, "{} merged, {} repeats:\n{}", merge.merged, repeats.0, v.show());
     let by = |r: &[&str]| r.iter().map(|s| (*s).to_owned()).collect::<BTreeSet<String>>();
-    let mut p = front::parse(text).expect("parses");
+    assert_eq!(v.asked()["q"], vec![by(&["a", "b"])], "{}", v.show());
+}
+
+/// A request gated by its readers (`Prune`) is kept while a reader is needed, and while a reader is gone from the
+/// program (merged, renamed or inlined since the requests were made: it cannot be asked); a reader `Prune` drops
+/// leaves the record, beside one it keeps, so a later gate cannot take it for a gone one (decision 0331).
+#[test]
+fn a_request_is_kept_for_a_gone_reader() {
+    let text = ".decl q(n: number)\n.decl a(n: number)\n.decl b(n: number)\n.decl k(n: number)\n.input k\n.output b\n\
+        q(n) :- k(n), n < 3.\nq(n) :- k(n), n > 5.\na(n) :- q(n).\nb(n) :- q(n).\n";
+    let by = |r: &[&str]| r.iter().map(|s| (*s).to_owned()).collect::<BTreeSet<String>>();
+    let pruned = |v| {
+        let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("test", v);
+        p.program(&mut crate::code_rule_dsl::logic::plan::corpus::preparation::Prune::default());
+        p.finish().unwrap().0
+    };
     // The first request serves `a`, which `b` does not read; the second a reader no longer in the program.
-    p.asked_by.insert("q".into(), vec![by(&["a"]), by(&["gone"])]);
-    let pruned = front::prune(p.clone());
-    let q: Vec<String> = pruned.rules.iter().filter(|r| r.head.rel == "q").map(|r| r.to_string()).collect();
+    let v = pruned(with_asked(text, &[("q", &[&["a"], &["gone"]])]));
+    let q: Vec<String> = v.rules().filter(|r| v.rel_name(r.head().rel()) == "q").map(|r| v.show_rule(r)).collect();
     assert_eq!(q.len(), 1, "only the gone reader's request is kept: {q:?}");
     assert!(q[0].contains("> 5"), "{q:?}");
-    // `a` copied as `a_g`, which `b` reads in its place: `a`'s request serves the copy too.
-    p.asked_by.insert("q".into(), vec![by(&["a"]), by(&["b"])]);
-    let a = p.rules.iter().position(|r| r.head.rel == "a").expect("a rule of a");
-    let mut copy = p.rules[a].clone();
-    copy.head.rel = "a_g".into();
-    p.push_rule_from(copy, a);
-    assert_eq!(p.asked_by["q"], vec![by(&["a", "a_g"]), by(&["b"])]);
-    // The copy folded back into `a` (hiding's `FoldOwn`), or merged: its requests serve `a`.
-    p.rename_readers(|b| (b == "a_g").then(|| "a".to_owned()));
-    assert_eq!(p.asked_by["q"], vec![by(&["a"]), by(&["b"])]);
-    // A reader `prune` drops leaves the record, beside one it keeps: a later gate cannot take it for a gone one.
-    p.asked_by.insert("q".into(), vec![by(&["a", "b"]), by(&["b"])]);
-    let pruned = front::prune(p.clone());
-    assert!(pruned.rules.iter().all(|r| r.head.rel != "a"), "a is not needed");
-    assert_eq!(pruned.asked_by["q"], vec![by(&["b"]), by(&["b"])]);
+    let v = pruned(with_asked(text, &[("q", &[&["a", "b"], &["b"]])]));
+    assert!(v.rules().all(|r| v.rel_name(r.head().rel()) != "a"), "a is not needed");
+    assert_eq!(v.asked()["q"], vec![by(&["b"]), by(&["b"])]);
 }
 
 

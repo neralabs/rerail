@@ -4,7 +4,7 @@
 //! - **Parts.** Each rule of the combined program belongs to the program (`p<i>_`) or request (`q<k>_`) whose
 //!   relations it reads or makes, rules that join two of them joining their parts; the rest are the library's.
 //! - **Interface.** A part's inputs are the program's and what it reads of other parts; its outputs are what other
-//!   parts read of it and the program's outputs it makes. The passes keep both as they are (`simplify::kept`).
+//!   parts read of it and the program's outputs it makes. The passes keep both as they are (`simplify`'s `kept`).
 //! - **Kept.** A prepared part is stored under a key of its header, its rules' hashes, the engine build and the
 //!   switches the passes read, made without building the part; a part found is read as it is.
 //! - **Link.** The parts' rules and what each part's passes changed of the header. A name a pass made keeps its

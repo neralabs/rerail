@@ -52,7 +52,7 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     // `.rr`'s `cat(a, b, …)`, two at a time: the native engine's concatenation (SQL concatenates with `||`).
     ("str_concat", &[Text, Text], Text),
     // `str_concat` run backwards: the text between a prefix and a suffix, none when the text has not both
-    // (`simplify::concat_inverses`: `$v = cat($a, $x, $b)` with `$v` bound binds `$x`).
+    // (`simplify::ConcatInverses`: `$v = cat($a, $x, $b)` with `$v` bound binds `$x`).
     ("str_between", &[Text, Text, Text], Text),
     // -1, 0 or 1 as `a` sorts before, with or after `b` (by bytes): the order of two symbols (`plan::lower`).
     ("str_cmp", &[Text, Text], Number),

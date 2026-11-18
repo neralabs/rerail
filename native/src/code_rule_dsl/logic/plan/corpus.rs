@@ -1967,49 +1967,6 @@ fn combine_spliced<P: link::Part>(
     Ok(Some((linked, Tail::Many { hide: rec.hide, policies: rec.policies })))
 }
 
-/// `simplify::merge_identical` between two `drop_repeated_rules`: the relations merged, the classes shared across
-/// programs, the rules dropped.
-pub fn merge_and_drop_repeats(prog: &mut front::Program) -> (usize, usize, usize) {
-    // One merge finds every class at once: its congruence is the greatest, and it compares a relation's rules as a
-    // set, so a repeated rule does not keep a relation from its twin. The merge's renaming can make rules repeat;
-    // they are dropped after it, and make nothing more mergeable. (A loop of merges until no rule repeated was 2-3
-    // congruences a call, 1.5 s of the dl1 batch's 13.8 s CPU.)
-    let mut repeated = drop_repeated_rules(prog);
-    let (merged, shared) = crate::code_rule_dsl::logic::simplify::merge_identical(prog);
-    repeated += drop_repeated_rules(prog);
-    (merged, shared, repeated)
-}
-
-/// Drops each rule equal to an earlier one: a relation is a set, so a second copy of a rule derives nothing, yet it
-/// was planned and run as a rule of its own. Hiding's clones made them (at O125 step 07, 407 of the cross part's
-/// 1,483 rules, `rr_in_annotation_0_bv`'s most). Returns how many it dropped.
-pub fn drop_repeated_rules(prog: &mut front::Program) -> usize {
-    use std::hash::{Hash, Hasher};
-    let before = prog.rules.len();
-    let mut seen: HashMap<u64, Vec<usize>> = HashMap::new();
-    // Each rule kept with the rules it stands for: itself and its repeats, whose readers it serves (the request
-    // record, `Program::set_rules_from`).
-    let mut kept: Vec<(usize, Vec<usize>)> = Vec::with_capacity(before);
-    for (i, r) in prog.rules.iter().enumerate() {
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        r.hash(&mut h);
-        let at = seen.entry(h.finish()).or_default();
-        match at.iter().find(|&&k| prog.rules[kept[k].0] == *r) {
-            Some(&k) => kept[k].1.push(i),
-            None => {
-                at.push(kept.len());
-                kept.push((i, vec![i]));
-            }
-        }
-    }
-    if kept.len() == before {
-        return 0;
-    }
-    let rules: Vec<(front::Rule, Vec<usize>)> = kept.into_iter().map(|(i, from)| (prog.rules[i].clone(), from)).collect();
-    prog.set_rules_from(rules);
-    before - prog.rules.len()
-}
-
 /// What the converter gives an authored file to read (`logic::convert`, test-only): the scope, the report gate, the
 /// options, and the tape's syntax verdict (`tape_syntax_error(d)`: core.rr's `syntax_error` is the engine's, decision
 /// 0141). Here so the runner, which is not test-only, can tell them from unbound core relations.

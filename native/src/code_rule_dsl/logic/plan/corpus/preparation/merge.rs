@@ -1,8 +1,8 @@
-//! The merges before the split, on the version (decision 0281's path, step 5): `simplify::merge_identical` between
-//! two `corpus::drop_repeated_rules`, as manager passes. The joins pushed into the chunks are made per rule, so two
+//! The merges before the split, on the version (decision 0281's path, step 5): `MergeIdentical` between two
+//! `DropRepeated`, as manager passes. The joins pushed into the chunks are made per rule, so two
 //! programs' copies of one library rule made two: merged again, and so are the relations over them.
 //!
-//! Each is the tree pass it replaces, one for one: the classes are `congruence`'s (the coarsest partition of the
+//! The classes are `congruence`'s (the coarsest partition of the
 //! mergeable relations in which every two of a class have the same column types and the same rules once each
 //! relation is named by its class), a rule compared as `front::template::canonical` writes it, and each class named
 //! and written as `merge` names and writes it.
@@ -13,8 +13,10 @@ use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, Progr
 use crate::code_rule_dsl::logic::program_image::{AggRef, AtomRef, Cell, Lit as L, RelId, RuleId, RuleRef, Slot, TermRef, Version};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-/// Drops each rule equal to an earlier one (`corpus::drop_repeated_rules`): a relation is a set, so a second copy of
-/// a rule derives nothing. How many it dropped, added up over its runs.
+/// Drops each rule equal to an earlier one: a relation is a set, so a second copy of a rule derives nothing, yet it
+/// was planned and run as a rule of its own. Hiding's clones made them (at O125 step 07, 407 of the cross part's
+/// 1,483 rules, `rr_in_annotation_0_bv`'s most), and the merge's renaming does. The rule kept serves its repeats'
+/// readers too (the request record, decision 0331). How many it dropped, added up over its runs.
 #[derive(Default)]
 pub struct DropRepeated(pub usize);
 
@@ -41,8 +43,22 @@ impl ProgramPass for DropRepeated {
     }
 }
 
-/// Merges each class of `congruence` into one relation (`simplify::merge`): the relations merged, and how many
+/// Merges each class of `congruence` into one relation: the relations merged, and how many
 /// classes went to the shared namespace.
+///
+/// One class's rules are kept, renamed: its namesake's (not renamed), or its first member's. An output merged
+/// keeps its name, as a copy of the class.
+///
+/// A request's copy merged into it (`congruence`): the copy's rules are the request's, so each of the request's
+/// serves the readers of the copy's equal rule too (decision 0331), before the copy's rules and record go.
+///
+/// A request's copy merged into it (`congruence`) leaves its record with its rules.
+///
+/// A request rule's gate (`Program::asked_by`) goes with its rules: kept where the class keeps this member's
+/// (its first, under a new name), else dropped with them.
+///
+/// namespaces (a library relation every program that includes the library has) is named in the shared namespace,
+/// `s_<name>`. Whether anything merged.
 #[derive(Default)]
 pub struct MergeIdentical {
     pub merged: usize,
@@ -72,6 +88,8 @@ impl ProgramPass for MergeIdentical {
             let to = if let Some(u) = unread {
                 u.clone()
             } else {
+                // A relation nothing reads is read by name if at all: it names its class (`congruence` gives it one), as a
+                // request does (the class of its own widened copies).
                 match (suffixes.iter().next(), suffixes.len(), spaces.len()) {
                     (Some(Some(s)), 1, n) if n > 1 => {
                         let mut name = format!("s_{s}");
@@ -95,8 +113,8 @@ impl ProgramPass for MergeIdentical {
                         taken.insert(name.clone());
                         name
                     }
-                    // Named after its member with the shortest name (a lowering's copy of a relation is that
-                    // relation's name with a prefix).
+                    // Named after its member with the shortest name: a lowering's copy of a relation (`rr_wide_<attr>_<r>`)
+                    // is that relation's name with a prefix, so the relation names it.
                     _ => g.iter().filter(|r| !f.is_output(r)).min_by_key(|r| r.len()).unwrap_or(&g[0]).clone(),
                 }
             };
@@ -157,12 +175,12 @@ impl ProgramPass for MergeIdentical {
                 b.set_about_rows(name, rows);
             }
         }
-        // The request record (decision 0331) as the tree's `merge_identical` leaves it: a renamed reader is read by its
+        // The request record (decision 0331) after the merge: a renamed reader is read by its
         // class's name, and a request's copy merged into it leaves the record with its rules.
         {
             let mut rows = b.about_rows("asked");
             // A request's copy merged into it: each of the request's rules serves the readers of the copy's equal
-            // rule too (the tree's `merge_identical`, equal as `canonical_rule` compares, constants and all), before the
+            // rule too (equal as `canonical` compares, constants and all), before the
             // copy's rows go.
             let asked = input.asked();
             let class = |r: RelId| { let n = input.rel_name(r); rename.get(n).map_or(n, String::as_str) };
@@ -264,14 +282,14 @@ impl Rewrite for Renaming<'_> {
     }
 }
 
-/// `simplify::namespace`: the program prefix `combine` gives a program's own relations (`p3_qn`) and the rest.
+/// The program prefix `combine` gives a program's own relations (`p3_qn`) and the rest.
 fn namespace(rel: &str) -> Option<(&str, &str)> {
     let rest = rel.strip_prefix('p')?;
     let digits = rest.find(|c: char| !c.is_ascii_digit())?;
     (digits > 0 && rest[digits..].starts_with('_')).then(|| (&rel[..digits + 1], &rest[digits + 1..]))
 }
 
-/// The relations the program reads: in a rule's body, by a native, or as an output (`simplify::read_rels`).
+/// The relations the program reads: in a rule's body, by a native, or as an output.
 fn read_rels<'v>(v: &'v Version, f: Fields<'v>) -> BTreeSet<&'v str> {
     v.rules()
         .flat_map(|r| r.body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel())).collect::<Vec<_>>())
@@ -295,7 +313,7 @@ enum Tok<'v> {
 /// they read are equal under those labels, as their texts are.
 struct Canon<'v> {
     v: &'v Version,
-    /// Every constant the variable `?` (`simplify::congruence`'s `abstract_constants`).
+    /// Every constant the variable `?` (`congruence`'s `abstract_constants`).
     abstract_constants: bool,
     names: Vec<u32>,
     out: Vec<Tok<'v>>,
@@ -409,9 +427,37 @@ impl<'v> Canon<'v> {
     }
 }
 
-/// `simplify::congruence` (constants kept) on the version: the classes of more than one mergeable relation, each
+/// The classes of more than one mergeable relation (constants kept, unless `abstract_constants`), each
 /// sorted, in the order of their first members by name.
-pub(super) fn congruence(v: &Version, f: Fields<'_>, abstract_constants: bool) -> Vec<Vec<String>> {
+///
+/// Relations with facts merge too, when their facts are equal (a library's `cdef("class_definition").`).
+///
+/// What keeps a relation its own (`fixed`), as sets made once.
+///
+/// The candidates by number, in `cands`' order; every other relation a rule names numbered after them, each a
+/// label of its own in every round.
+///
+/// A relation's rules are a set: a second copy of a rule derives nothing, so it is counted once (and
+/// below, a relation's signature holds each rule once), and a repeated rule does not keep a relation
+/// apart from its twin.
+///
+/// A candidate's rules as `canonical` reads them: the program's own, or with every constant `?`.
+///
+/// Each rule's canonical text is fixed but for the labels of the relations it reads: it is made once, with every
+/// relation a placeholder (its template), and the relations read kept in the order it labels them. A round's
+/// signature of a rule is its template and those relations' labels, equal exactly when the texts `canonical`
+/// gives under the round's labels are (a relation's name has no character of the text around it).
+/// The texts made, numbered in `cands`' order, each relation read kept by its number.
+///
+/// The head's label is replaced by `@`.
+///
+/// The coarsest partition of the mergeable relations in which every two of a class have the same column types and
+/// the same rules once each relation is named by its class (partition refinement: start from one class per type
+/// signature and rule count, split until stable). It is the greatest such congruence, so it holds recursive
+/// relations that only equal each other (`p0_qn(…) :- …, p0_qn(…)` and `p1_qn`): their least models are equal,
+/// since at each step of the fixpoint every member of a class derives from equal classes by equal rules.
+/// `abstract_constants` names every constant `?` too: the classes are then relations equal up to their constants.
+pub fn congruence(v: &Version, f: Fields<'_>, abstract_constants: bool) -> Vec<Vec<String>> {
     let mut rules_of: HashMap<RelId, Vec<RuleRef<'_>>> = HashMap::new();
     for r in v.rules() {
         rules_of.entry(r.head().rel()).or_default().push(r);
@@ -421,14 +467,20 @@ pub(super) fn congruence(v: &Version, f: Fields<'_>, abstract_constants: bool) -
         rows.sort();
         rows
     };
-    // What keeps a relation its own (`simplify::fixed`).
+    // What keeps a relation its own (as `fixed` in `preparation::simplify` keeps it).
     let own = |rel: &str| f.is_input(rel) || f.native(rel).is_some() || f.lattice(rel) || f.demanded(rel) || f.gate(rel) || !f.qualifiers_of(rel).is_empty();
     // A request (decision 0174), read by name by its answer, joins only a class with its own widened copies
-    // (`rr_wide_<attr>_<req>`, the tree's `simplify::congruence`).
+    // (`rr_wide_<attr>_<req>`).
     let request = |rel: &str| crate::code_rule_dsl::logic::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| a.req == rel);
+    // A request (decision 0174), read by name by its answer and never merged into another (0291), joins only a class
+    // with its own widened copy (`rr_wide_<attr>_<req>`), and names it (below): a copy whose rules gated `prune` left
+    // as the request's own is the request.
     let copy_of = |copy: &str, of: &str| crate::code_rule_dsl::logic::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| copy == format!("rr_wide_{}_{of}", a.rel));
     let copied = |rel: &str| request(rel) && !own(rel) && rules_of.keys().any(|&c| copy_of(v.rel_name(c), rel));
     let fixed = |rel: &str| own(rel) || (request(rel) && !copied(rel));
+    // A relation nothing reads (`unread`) is read by name if at all (`env`'s settings, `unconverged`, a guest
+    // policy, a library's `function_kind` passed to `nearest`): it joins only a class with a widened copy of itself
+    // (below), and keeps its name there (`merge`).
     let read = read_rels(v, f);
     let cands: Vec<&str> = rules_of
         .keys()
@@ -446,6 +498,8 @@ pub(super) fn congruence(v: &Version, f: Fields<'_>, abstract_constants: bool) -
         }
     }
     let rules = |rel: &str| v.rel(rel).and_then(|r| rules_of.get(&r)).map_or(&[][..], |rs| rs.as_slice());
+    // Each relation's signatures are its own; the numbering that follows them is in
+    // `cands`' order, as one thread gives it, so the classes are the same whatever the threads.
     let mut class: Vec<usize> = Vec::with_capacity(cands.len());
     {
         let mut ids: HashMap<(Vec<&str>, usize, Vec<String>), usize> = HashMap::new();
@@ -472,6 +526,8 @@ pub(super) fn congruence(v: &Version, f: Fields<'_>, abstract_constants: bool) -
                 .collect()
         })
         .collect();
+    // A round's label of a relation read: its class when a candidate, else its own number (a relation that is not a
+    // candidate is only equal to itself).
     #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
     enum Label {
         Class(usize),
@@ -500,12 +556,14 @@ pub(super) fn congruence(v: &Version, f: Fields<'_>, abstract_constants: bool) -
         groups.entry(class[k]).or_default().push(r.to_owned());
     }
     // An unread relation joins a class only with a lowering's widened copy of it (`rr_wide_<attr>_<r>`, decision
-    // 0174); any other stays apart.
+    // 0174): the copy is that relation, so it is read as it. Any other unread relation stays apart, equal or not: one
+    // an unreached clause keeps (a library's facts) must not rename what the reached rules read, and one read by
+    // name keeps its name.
     groups
         .into_values()
         .flat_map(|g| {
-            // A request's class is the request and its copies alone, each request's apart; the rest stays a class
-            // without them (`simplify::merge_classes`).
+            // A request's class is the request and its copies alone, each request's apart; the rest of the class stays
+            // a class without them.
             let (mut out, mut rest) = (Vec::new(), g);
             while let Some(req) = rest.iter().find(|r| request(r)).cloned() {
                 let (with_request, others): (Vec<String>, Vec<String>) = rest.into_iter().partition(|r| *r == req || copy_of(r, &req));
@@ -638,7 +696,7 @@ mod tests {
     }
 }
 
-/// Relations equal up to their constants (`simplify::similar_relations`): how many, in how many groups, and a few
+/// Relations equal up to their constants: how many, in how many groups, and a few
 /// groups. A congruence of its own over the whole program, so asked for only when the run is profiled.
 pub fn similar_relations(v: &Version, f: Fields<'_>) -> (usize, usize, Vec<String>) {
     let similar = congruence(v, f, true);

@@ -116,7 +116,6 @@ pub mod rr;
 pub mod settings;
 #[allow(dead_code)]
 pub mod sql;
-pub mod simplify;
 /// The reach index's form found in a program (decision 0119).
 pub mod reach_form;
 // Its files are its test modules alone.

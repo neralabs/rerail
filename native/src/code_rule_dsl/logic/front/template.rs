@@ -5,7 +5,7 @@
 use super::{AggOp, Atom, Literal, Name, Rule, Term};
 
 /// `rule` with its variables numbered in order of first appearance and its head relation `@`: two rules of equal
-/// templates are one rule of two relations (`rr::lower`'s helpers, made once by theirs; `simplify::project_existentials`' parts).
+/// templates are one rule of two relations (`rr::lower`'s helpers, made once by theirs; `simplify::ProjectExistentials`' parts).
 pub fn template(rule: &Rule, names: &CanonicalNames) -> String {
     canonical(rule, &|r| Name::new(r), names)
 }

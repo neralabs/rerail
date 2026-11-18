@@ -20,7 +20,8 @@ pub mod simplify;
 mod nearest;
 pub mod parts;
 pub mod text;
-pub use merge::{DropRepeated, MergeIdentical};
+pub use merge::{DropRepeated, MergeIdentical, congruence};
+pub use prune::Prune;
 pub use nearest::Nearest;
 
 /// A check of the program that writes nothing (what every relation read is bound by, `corpus::bound`): its error
@@ -172,8 +173,11 @@ pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::Gra
 /// The passes that follow the program's image, over `version`: the program that runs, a base (what the store keeps),
 /// with what they found; the pipeline's stages traced. The joins pushed are made per rule, so two programs' copies
 /// of one library rule made two: after the rows are located, they are merged again, and so are the relations over
-/// them, before the program splits. The merges (`merge`) run as `corpus::merge_and_drop_repeats`
-/// runs them, or the merge alone with `RERAIL_SAME=off`.
+/// them, before the program splits. The merges (`merge`) run as `MergeIdentical` between two `DropRepeated`, or
+/// the merge alone with `RERAIL_SAME=off`. One merge finds every class at once: its congruence is the greatest, and
+/// it compares a relation's rules as a set, so a repeated rule does not keep a relation from its twin. The merge's
+/// renaming can make rules repeat; they are dropped after it, and make nothing more mergeable. (A loop of merges
+/// until no rule repeated was 2-3 congruences a call, 1.5 s of the dl1 batch's 13.8 s CPU.)
 /// `bound` checks every relation read is bound, after `nearest` is read from the transducer.
 pub fn run(version: Arc<Version>, factorize: bool, last: Option<Run>, bound: impl FnMut(&Version) -> Result<(), String>) -> Result<(Arc<Version>, Found, Run), String> {
     let mut p = kept(PREPARATION, version, last)?;
@@ -289,7 +293,7 @@ mod tests {
         let (out, _, _) = run(v, true, None, |_| Ok(())).unwrap();
         assert_eq!(out.asked_against_rules(), [("q".to_owned(), 2, 2)]);
         assert_eq!(out.asked()["q"], [by(&["a"]), by(&["b"])]);
-        // Two equal readers merged: the record names the class (`simplify::merge_identical`'s rename, the tree's).
+        // Two equal readers merged: the record names the class (`MergeIdentical`'s rename).
         let mut p = crate::code_rule_dsl::logic::rr::parse(
             ".decl k(x: number)\n.input k\n.decl q(x: number)\n.decl a(x: number)\n.decl a2(x: number)\n.decl o(x: number)\n\
              q(x) :- k(x), x < 3.\nq(x) :- k(x), x > 5.\na(x) :- q(x).\na2(x) :- q(x).\no(x) :- a(x), a2(x).\n.output o\n",
