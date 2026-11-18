@@ -1,12 +1,17 @@
 /**
- * Fetch orchestration: one conditional GET per resource every 5 s (`If-None-Match`; 304 means
- * nothing changed), backing off to 30 s while the daemon is unreachable, and paused while the tab is hidden.
- * Data lands in the store; the caller re-renders and reconciles in place. Every poll reads the repository
- * list and the daemon's health, and with a repository in scope its context; beyond that only the needs the
- * page names (`setNeeds`: the open view's, the sidebar's and an open sheet's, from `views/index.js`). Long lists
- * are paged with a cursor: a poll refreshes their first page and keeps the further pages the person loaded.
+ * Fetch orchestration. While the tab shows, the page follows the daemon's change stream (`GET /api/changes`: a token
+ * that moves when the database commits or the scope's rule catalog changes, a `conflicts` message at each Merge Assist
+ * conflict event, and the token again at the daemon's 5 s beat) and reads again when it says something changed: one
+ * conditional GET per resource (`If-None-Match`; 304 means nothing changed), at once after a quiet spell and at most
+ * every 5 s while changes keep coming. Nothing is read while nothing changes or the tab is hidden. When the stream
+ * ends (the daemon stopped) the page reads once, which says whether the daemon answers, and opens it again after a
+ * pause that backs off to 30 s while the daemon is unreachable. Data lands in the store; the caller re-renders and
+ * reconciles in place. Every poll reads the repository list and the daemon's health, and with a repository in scope
+ * its context; beyond that only the needs the page names (`setNeeds`: the open view's, the sidebar's and an open
+ * sheet's, from `views/index.js`). Long lists are paged with a cursor: a poll refreshes their first page and keeps the
+ * further pages the person loaded.
  */
-import { get, send } from "./api.js";
+import { follow, get, send } from "./api.js";
 import { data, ui, sinceFor, setScope, pagedList, panelRuleId } from "./state.js";
 import { toStoredRules } from "./derive.js";
 import { historyRuleId } from "./history-model.js";
@@ -15,7 +20,12 @@ import { failed } from "./format.js";
 
 export { toStoredRules };
 
-const INTERVAL = 5_000;
+/**
+ * The most often the page reads while the daemon keeps changing, the old poll's pace: the daemon never answers more of
+ * the page's reads than it did while it polled, so a busy daemon's hooks wait behind no more of them. Also the pause
+ * before the stream is opened again after it ended with the daemon answering.
+ */
+const PACE = 5_000;
 const MAX_BACKOFF = 30_000;
 /** Page sizes: History's selected rule's violations, a rule sheet's, the sessions list, the selected session's violations, its transcript. */
 const FINDINGS_PAGE = 25;
@@ -34,8 +44,18 @@ const EVENTS_PAGE = 500;
  */
 const etags = new Map();
 let onChange = () => {};
-let timer = null;
-let backoff = INTERVAL;
+let backoff = PACE;
+/**
+ * When the last read a change asked for began (`performance.now()`, which a changed wall clock does not move), for
+ * the pace; a new stream starts it over, and the person's own reads do not count.
+ */
+let lastChangeRead = -Infinity;
+/** The read the pace holds back, if any; the stream opened again after its end, if waiting. */
+let paceTimer = null;
+let retryTimer = null;
+/** The open change stream's controller, and the token the page last read at. */
+let stream = null;
+let token = null;
 let inFlight = null;
 let queued = false;
 /** Bumped when the scope changes, so a response for the previous repository lands nowhere. */
@@ -269,11 +289,16 @@ async function loadRecentSessions(since) {
   return true;
 }
 
-/** How long the sidebar's Merge Assist count may be before it is read again, on a page other than Merge Assist's. */
-const MERGE_ASSIST_COUNT_EVERY = 30_000;
 /**
- * The last Merge Assist read: when it last answered, an error included (so the sidebar's count backs off to every
- * 30 s while the read fails), and the one in flight with the scope generation it was sent for.
+ * On a page other than Merge Assist's, the most often a read of the page also reads the sidebar's Merge Assist count,
+ * and how soon a failed count read is tried again. A conflict event reads it at once (`mergeAssistCountDue`).
+ */
+const MERGE_ASSIST_COUNT_EVERY = 30_000;
+/** The sidebar's count is read with the next read: a conflict event came, the stream opened, or the scope changed. */
+let mergeAssistCountDue = true;
+/**
+ * The last Merge Assist read: when it last answered, an error included (so the sidebar's count is tried again at most
+ * every 30 s while the read fails), and the one in flight with the scope generation it was sent for.
  */
 let mergeAssistRead = { at: 0, loading: null, generation: -1 };
 /**
@@ -337,6 +362,16 @@ function skipMergeAssist(maxAge) {
   const held = data.mergeAssist !== null || data.mergeAssistError !== null;
   return maxAge > 0 && held && Date.now() - mergeAssistRead.at < maxAge;
 }
+
+/** The sidebar's count: read when due, else when the last answer is 30 s old. */
+function loadMergeAssistCount() {
+  if (!mergeAssistCountDue) return loadMergeAssist(MERGE_ASSIST_COUNT_EVERY);
+  mergeAssistCountDue = false;
+  return loadMergeAssist();
+}
+
+/** Whether the sidebar's count failed and is 30 s old: a beat then reads again, though nothing else changed. */
+const mergeAssistCountRetry = () => data.mergeAssistError !== null && !skipMergeAssist(MERGE_ASSIST_COUNT_EVERY);
 
 /** Read Merge Assist and take the answer while `current()` says it still lands. Whether anything shown changed. */
 async function readMergeAssist(current) {
@@ -633,8 +668,9 @@ function pumpTitles() {
  * - `sessions`: the first page of the sessions list (`data.sessions`).
  * - `selectedSession`: the selected session's head, new transcript events and violations; nothing without one.
  * - `mergeAssist`: Merge Assist for the scoped checkout (`data.mergeAssist`), every poll.
- * - `mergeAssistCount`: the same, read at most every 30 s: the sidebar's count of open conflicts. Not in a scope's
- *   first poll, which the page waits on to draw, so the count never holds the page up.
+ * - `mergeAssistCount`: the same, the sidebar's count of open conflicts: read at a conflict event, a new stream or
+ *   scope, else at most every 30 s. Not in a scope's first poll, which the page waits on to draw, so the count never
+ *   holds the page up.
  */
 const NEEDS = {
   rules: () => loadRules(),
@@ -654,7 +690,7 @@ const NEEDS = {
   sessions: () => loadFirstPage("sessions", "sessions", `/api/sessions?limit=${SESSIONS_PAGE}${repositoryFilter()}`),
   selectedSession: () => (ui.selectedSession ? [loadSession(ui.selectedSession), loadSessionFindings(ui.selectedSession)] : []),
   mergeAssist: () => loadMergeAssist(),
-  mergeAssistCount: () => (data.loaded ? loadMergeAssist(MERGE_ASSIST_COUNT_EVERY) : false),
+  mergeAssistCount: () => (data.loaded ? loadMergeAssistCount() : false),
 };
 
 /** The names of what the page needs now, beyond the shared reads; set once by the page (`setNeeds`). */
@@ -694,7 +730,7 @@ async function poll() {
     data.accessRequired = false;
     data.missing = false;
     data.loaded = true;
-    backoff = INTERVAL;
+    backoff = PACE;
     onChange(results.some(Boolean));
   } catch (error) {
     if (started !== generation) return;
@@ -705,7 +741,7 @@ async function poll() {
     data.missing = !data.accessRequired && /^\/api\/repository(\/rules)?\?.* answered 404$/u.test(error.message);
     data.disconnected = !data.missing && !data.accessRequired;
     data.loaded = data.missing;
-    backoff = data.missing ? INTERVAL : Math.min(MAX_BACKOFF, backoff * 2);
+    backoff = data.missing ? PACE : Math.min(MAX_BACKOFF, backoff * 2);
     if (!data.missing) console.warn("poll failed", error);
     onChange(data.missing);
   }
@@ -722,30 +758,96 @@ export async function refresh() {
   if (queued) { queued = false; await refresh(); }
 }
 
-/** The tab is in the background: nothing is polled until it shows again. */
+/** The tab is in the background: nothing is followed or read until it shows again. */
 const hidden = () => typeof document !== "undefined" && document.hidden;
 
-function schedule() {
-  clearTimeout(timer);
-  if (hidden()) return;
-  timer = setTimeout(async () => { await refresh(); schedule(); }, backoff);
+/** A read a change asked for, counted for the pace. */
+function changeRead() {
+  clearTimeout(paceTimer);
+  paceTimer = null;
+  lastChangeRead = performance.now();
+  void refresh();
+}
+
+/** Read again for a change: at once when the last such read began `PACE` ago or more, else once it is that old. */
+function readSoon() {
+  const wait = lastChangeRead + PACE - performance.now();
+  if (wait <= 0) changeRead();
+  else paceTimer ??= setTimeout(changeRead, wait);
+}
+
+/**
+ * A message of the stream: the daemon is alive. Its first, a new token or a conflict event reads again; a beat with
+ * nothing new renders, so relative times and the status move as they did with each poll, or retries a failed count.
+ */
+function onMessage({ event, data: next }, first) {
+  data.updatedAt = Date.now();
+  if (event === "conflicts") mergeAssistCountDue = true;
+  if (first) startOver(next);
+  else if (asksRead(event, next)) {
+    token = next;
+    readSoon();
+  } else onChange(false);
+}
+
+/** Whether a message asks for a read: a new token, a conflict event, a failed count to try again. */
+const asksRead = (event, next) => next !== token || event === "conflicts" || mergeAssistCountRetry();
+
+/** A new stream's first message: what it covers is not known, so read now; the pace starts over. */
+function startOver(next) {
+  clearTimeout(paceTimer);
+  paceTimer = null;
+  lastChangeRead = -Infinity;
+  token = next;
+  void refresh();
+}
+
+const changesPath = () => (ui.scope?.checkout === undefined ? "/api/changes" : `/api/changes?${new URLSearchParams({ checkout: ui.scope.checkout })}`);
+
+/** Follow the change stream while the tab shows; its end reads once, then opens it again after `backoff`. */
+function followChanges() {
+  if (stream !== null || hidden()) return;
+  const controller = new AbortController();
+  stream = controller;
+  let first = true;
+  const each = message => { onMessage(message, first); first = false; };
+  // How it ended needs no reading here: the read after it says whether the daemon answers.
+  follow(changesPath(), each, controller.signal).catch(() => {}).then(() => changesEnded(controller));
+}
+
+async function changesEnded(controller) {
+  if (stream !== controller) return; // ended from here: the tab hid, or the scope changed
+  stream = null;
+  await refresh();
+  clearTimeout(retryTimer);
+  retryTimer = setTimeout(() => { retryTimer = null; followChanges(); }, backoff);
+}
+
+/** Stop following and reading until `followChanges` again. */
+function endChanges() {
+  const open = stream;
+  stream = null;
+  open?.abort();
+  clearTimeout(retryTimer);
+  clearTimeout(paceTimer);
+  retryTimer = paceTimer = null;
 }
 
 export function startPolling(listener) {
   onChange = listener;
-  refresh().then(schedule);
-  document.addEventListener("visibilitychange", () => { if (hidden()) clearTimeout(timer); else refreshNow(); });
+  followChanges();
+  document.addEventListener("visibilitychange", () => { if (hidden()) endChanges(); else followChanges(); });
 }
 
 /** A user action that changes what to fetch (view, range, selected session) wants data now. */
 export async function refreshNow() {
   await refresh();
-  schedule();
 }
 
 /**
  * Show another repository (`scope` from `readScope`, or `null` for the page that asks for one): drop everything fetched for the
- * previous one, and poll now. A response still in flight for the previous scope is discarded.
+ * previous one, and read the new one now, through a stream of its own. A response still in flight for the previous
+ * scope is discarded.
  */
 export function changeScope(scope) {
   generation += 1;
@@ -770,6 +872,10 @@ export function changeScope(scope) {
     mergeAssist: null, mergeAssistError: null,
   });
   mergeAssistRead = { at: 0, loading: null, generation: -1 };
+  mergeAssistCountDue = true;
   data.sessionDetail.clear();
-  refreshNow();
+  // The stream names the checkout, whose own rules it follows: its first message reads the new scope.
+  endChanges();
+  token = null;
+  followChanges();
 }

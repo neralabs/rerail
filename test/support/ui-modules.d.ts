@@ -79,6 +79,8 @@ declare module "*/ui/poll.js" {
   export function mergeAssistMark(): number;
   export function mergeAssistReadAfter(mark: number): boolean;
   export function changeScope(scope: { repository?: string; checkout?: string } | null): void;
+  /** Follow the daemon's change stream while the tab shows; `listener` runs after each read and each beat. */
+  export function startPolling(listener: (changed: boolean) => void): void;
   export function refresh(): Promise<void>;
   export function refreshNow(): Promise<void>;
   export function loadMoreFindings(): Promise<boolean>;
@@ -149,6 +151,7 @@ declare module "*/ui/state.js" {
     recommendations: Array<{ packId: string; folder?: string }> | null;
     followGitignore: boolean | null;
     sessionDetail: Map<string, SessionDetail>;
+    repositories: Array<{ repositoryKey: string; [k: string]: unknown }>;
     missing: boolean;
     disconnected: boolean;
     /** Whether a poll has answered for the scope: the sidebar's Merge Assist count waits for it. */

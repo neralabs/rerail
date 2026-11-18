@@ -11,14 +11,17 @@ import { repoOption, repoHint } from "../render/repos.js";
 const $ = id => document.getElementById(id);
 
 /* ---------- status ----------
- * One indicator for the daemon and this repo: "Live" while the polls come in, "Updated
- * 3 min ago" when the page has fallen behind (a hidden tab, a slow answer), amber when Rerail is not on here or the
+ * One indicator for the daemon and this repo: "Live" while the daemon's change stream comes in, "Updated
+ * 3 min ago" when the page has fallen behind (a hidden tab, a daemon that stopped answering), amber when Rerail is not on here or the
  * page is reconnecting, red once the daemon has not answered for a while or reports its model broken (the file at
  * fault named). The repo is in the pill beside the wordmark and the install date in Settings: the bar keeps only the
  * dot and how fresh the data is. */
 
 const DOWN_AFTER_MS = 30_000;
-/** Two missed polls (every 5 s) and the page is no longer live. */
+/**
+ * Two missed beats of the change stream (every 5 s) and the page is no longer live: a daemon whose event loop is stuck
+ * keeps its connections open, so only the beat that does not come tells it.
+ */
 const LIVE_MS = 12_000;
 const MINUTE = 60_000;
 
@@ -64,17 +67,37 @@ function status() {
   if (stateHere() === "stopped") {
     return { cls: "warn", text: "Stopped", title: "No rules run here, and nothing is logged. Start it from Overview or Settings, or run /rerail-start." };
   }
-  if (Date.now() - data.updatedAt < LIVE_MS) return { cls: "", text: "Live", title: `Connected to daemon${version} · refreshing every 5 s.` };
+  if (Date.now() - data.updatedAt < LIVE_MS) return { cls: "", text: "Live", title: `Connected to daemon${version} · showing changes as they happen.` };
   return { cls: "", text: `Updated ${rel}`, title: `Last refreshed ${new Date(data.updatedAt).toLocaleString()}. Refreshing pauses while the tab is hidden.` };
 }
 
-/** The status pill; also run on a timer, since "Updated 2 min ago" ages without a poll. */
-export function renderStatus() {
+/**
+ * How long until the status reads otherwise with nothing new from the daemon: Live ends two missed beats after the last
+ * message, Reconnecting turns red, an age moves to its next minute; `null` when time alone does not change it.
+ */
+function untilStatusMoves(s) {
+  if (!data.updatedAt) return null;
+  const age = Date.now() - data.updatedAt;
+  if (s.text === "Live") return LIVE_MS - age;
+  if (data.disconnected && s.cls === "warn") return DOWN_AFTER_MS - age;
+  return s.text.startsWith("Updated ") ? (Math.floor(age / MINUTE + 0.5) + 0.5) * MINUTE - age : null;
+}
+
+let statusTimer = null;
+
+/**
+ * The status pill, drawn with each render; between renders it is drawn again once, when time alone would change it
+ * (`untilStatusMoves`), since the page renders only when the daemon says something.
+ */
+function renderStatus() {
   const s = status(), el = $("status");
   setAttr(el, "class", `status${s.cls ? ` ${s.cls}` : ""}`);
   setAttr(el.querySelector(".dot"), "hidden", s.dot === false);
   setText($("statusText"), s.text);
   setAttr(el, "title", s.title || null);
+  clearTimeout(statusTimer);
+  const wait = untilStatusMoves(s);
+  statusTimer = wait === null ? null : setTimeout(renderStatus, Math.max(0, wait) + 1);
 }
 
 /* ---------- the repository and its menu ---------- */
