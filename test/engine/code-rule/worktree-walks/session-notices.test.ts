@@ -16,8 +16,11 @@ import { StampTreeWatch } from "./support/stamp-tree-watch.js";
  * by a folder's absolute path, what runs once the next listing of it was read to its end.
  */
 const listed = vi.hoisted(() => ({ folders: [] as string[], after: new Map<string, () => Promise<void>>() }));
-/** While `on`: each path looked at (lstat), by its absolute path, and the most looks in flight at once. */
-const looked = vi.hoisted(() => ({ on: false, paths: [] as string[], inFlight: 0, most: 0 }));
+/**
+ * While `on`: each path looked at (lstat), by its absolute path, the most looks in flight at once, and each path whose
+ * spelling was looked at (realpath).
+ */
+const looked = vi.hoisted(() => ({ on: false, paths: [] as string[], inFlight: 0, most: 0, spelled: [] as string[] }));
 vi.mock("node:fs/promises", async importOriginal => {
   const actual = await importOriginal<typeof FileSystem>();
   return {
@@ -42,6 +45,10 @@ vi.mock("node:fs/promises", async importOriginal => {
         looked.inFlight -= 1;
       }
     },
+    realpath: async (...args: Parameters<typeof actual.realpath>) => {
+      if (looked.on) looked.spelled.push(String(args[0]));
+      return await actual.realpath(...args);
+    },
   };
 });
 
@@ -54,7 +61,7 @@ afterEach(async () => {
   await Promise.all(folders.splice(0).map(async folder => await removeFolder(folder)));
   listed.folders.length = 0;
   listed.after.clear();
-  Object.assign(looked, { on: false, paths: [], inFlight: 0, most: 0 });
+  Object.assign(looked, { on: false, paths: [], inFlight: 0, most: 0, spelled: [] });
 });
 
 /** A watch that tells what the platform's engine watch tells: on Linux the entries of each folder it is given, else the whole tree. */
@@ -62,15 +69,24 @@ function platformWatch(): StampTreeWatch {
   return new StampTreeWatch({ byFolder: process.platform === "linux" });
 }
 
-/** A session folder of three packages of one Python file each. */
-async function workspace(): Promise<string> {
+/** A session folder of three packages of one Python file each, `m.py`, and `more` files more each (`m0.py` and on). */
+async function workspace(more = 0): Promise<string> {
   const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-session-notices-")));
   folders.push(root);
   for (const name of ["pkg_0", "pkg_1", "pkg_2"]) {
     await mkdir(join(root, "src", name), { recursive: true });
     await writeFile(join(root, "src", name, "m.py"), `def ${name}():\n    return 1\n`);
+    for (let index = 0; index < more; index += 1) await writeFile(join(root, "src", name, `m${index}.py`), `def ${name}_${index}():\n    return 1\n`);
   }
   return root;
+}
+
+/** A folder outside the session folder, with a second name in it for each of `files` (absolute paths in `root`). */
+async function linkedOutside(root: string, files: readonly string[]): Promise<string> {
+  const outside = await realpath(await mkdtemp(join(tmpdir(), "rerail-session-notices-link-")));
+  folders.push(outside);
+  for (const [index, file] of files.entries()) await link(file, join(outside, `${index}.py`));
+  return outside;
 }
 
 /**
@@ -156,7 +172,8 @@ describe("a shell command's result reads the session folder by its change notice
   });
 
   it("reads the paths a notice named many at once, looking at each no more often than the whole walk does", async () => {
-    const root = await workspace();
+    // Large enough that 40 paths stay under half of what the whole walk looks at.
+    const root = await workspace(30);
     const watch = platformWatch();
     const { bridge, audits } = await opened(root, watch);
     const files = (name: string): string[] => Array.from({ length: 40 }, (_, index) => join(root, "src", "pkg_1", `${name}${index}.py`));
@@ -325,6 +342,36 @@ describe("a shell command's result reads the session folder by its change notice
       checkpoints: ["edit", "function"],
       edits: [expect.objectContaining({ path: "src/pkg_0/m.py", generatedText: "eval(z)\n" })],
     })]);
+  });
+
+  it("reads a linked file no notice named by its stamp alone, and only it", async () => {
+    const root = await workspace();
+    const file = join(root, "src", "pkg_0", "m.py");
+    await linkedOutside(root, [file]);
+    const { bridge, audits } = await opened(root, platformWatch());
+    looked.on = true;
+    await command(bridge, "shell-1", async () => undefined);
+    expect(listed.folders).toEqual([]);
+    // Its spelling is the walk's own, which no look at the folder needs to confirm.
+    expect(looked.paths.filter(path => path.startsWith(root))).toEqual([file]);
+    expect(looked.spelled).not.toContain(file);
+    expect(audits).toEqual([]);
+  });
+
+  it("walks the whole folder at a result whose linked files reach half of what the whole walk looked at", async () => {
+    // A checkout whose files a copy made by links shares (cp -al): reading each file again would cost more than the walk.
+    const root = await workspace(10);
+    const files = ["pkg_0", "pkg_1", "pkg_2"].flatMap(name => ["m", ...Array.from({ length: 10 }, (_, index) => `m${index}`)].map(file => join(root, "src", name, `${file}.py`)));
+    const outside = await linkedOutside(root, files);
+    const watch = platformWatch();
+    const { bridge, audits } = await opened(root, watch);
+    await command(bridge, "shell-1", async () => {
+      await writeFile(join(outside, "0.py"), "eval(z)\n");
+      watch.silence(root);
+    });
+    expect(listed.folders.length).toBeGreaterThan(0);
+    // Still checked at its own result: the whole walk finds the write.
+    expect(checked(audits)).toEqual([["src/pkg_0/m.py"]]);
   });
 
   it("records at the result each file of a folder a command moved out of the session folder as gone", async () => {

@@ -432,8 +432,23 @@ function lostNotice(root: string, ended: boolean): TreeNotice {
   return { root, changed: [], renamed: [], lost: true, ended };
 }
 
-/** What a pass of the session folder reads: every file, or only the paths change notices named since the last pass. */
-export type SessionReads = { readonly whole: true } | { readonly whole: false; readonly paths: ReadonlySet<string> };
+/**
+ * What a pass of the session folder reads: every file, or only `paths`: those change notices named since the last pass,
+ * and the files with another name a walk found that no notice named (`linked`), each spelled as the walk found it.
+ */
+export type SessionReads =
+  | { readonly whole: true }
+  | { readonly whole: false; readonly paths: ReadonlySet<string>; readonly linked: ReadonlySet<string> };
+
+/** What a pass of the session folder found, as it ended (`SessionNotices.ended`). */
+export interface SessionFound {
+  /** The files with another name (a hard link) it found. */
+  readonly linked: ReadonlySet<string>;
+  /** How many files it looked at. */
+  readonly files: number;
+}
+
+const WHOLE: SessionReads = { whole: true };
 
 /**
  * The change notices of one session folder (`CodeRuleBridge`), taken at the start of each pass of its walk: which
@@ -448,7 +463,9 @@ export type SessionReads = { readonly whole: true } | { readonly whole: false; r
  * walk reads: a `.gitignore`, a `.git` entry, a folder that came or went, or a path in a folder no walk walked. On
  * Linux a folder that came or went is followed again from the next whole walk on (`FollowedFolders`), which the pass
  * after reads whole too. A file a pass found with another name (a hard link) can be written through a name outside the
- * folder, which no notice of the folder tells of: a pass of noticed paths reads each such file, too. A watch the engine
+ * folder, which no notice of the folder tells of: a pass of noticed paths reads each such file, too. A pass that would
+ * read half as many paths as the last whole walk looked at, or more (a checkout whose files a copy made by links shares,
+ * a command that wrote much of the folder), reads the whole folder instead (`#noticed`). A watch the engine
  * refused is not asked for again until a whole walk walks fewer folders than it refused, or the watch it had ended:
  * each ask costs the engine a look at the folder's file system, and on Linux each watch it took up before the refusal.
  *
@@ -475,6 +492,8 @@ export class SessionNotices {
   #paths = new Set<string>();
   /** The files with another name a pass found since the last whole one (`ended`), read again at every pass. */
   #linked: ReadonlySet<string> = new Set();
+  /** How many files and folders the last whole walk looked at, which bounds what a pass of noticed paths reads. */
+  #looks = 0;
   /** How many folders the engine last refused to watch: none is asked for again until a whole walk walks fewer. */
   #refused: number | undefined;
 
@@ -493,18 +512,17 @@ export class SessionNotices {
   }
 
   /**
-   * What the pass that begins now reads: the whole folder when `whole` asks for it or the notices cannot vouch for the
-   * rest, else the paths notices named since the last pass. A whole pass watches the folder again first when its watch
-   * is down, so a write made while it runs is a notice. Until `ended`, the next pass reads whole: one that stops midway
-   * leaves unread what it took.
+   * What the pass that begins now reads: the whole folder when `whole` asks for it, the notices cannot vouch for the
+   * rest or the paths to read reach the bound (`#noticed`), else the paths notices named since the last pass and the
+   * linked files. A whole pass watches the folder again first when its watch is down, so a write made while it runs is
+   * a notice. Until `ended`, the next pass reads whole: one that stops midway leaves unread what it took.
    */
   begin(whole: boolean): SessionReads {
     this.#collect();
-    const vouched = !whole && !this.#whole && this.#seen !== undefined;
-    const reads: SessionReads = vouched ? { whole: false, paths: new Set([...this.#paths, ...this.#linked]) } : { whole: true };
+    const reads = whole || this.#whole || this.#seen === undefined ? WHOLE : this.#noticed();
     this.#paths = new Set();
     this.#whole = true;
-    if (!vouched) {
+    if (reads.whole) {
       this.#seen = undefined;
       this.#open();
     }
@@ -512,17 +530,30 @@ export class SessionNotices {
   }
 
   /**
-   * The pass that began last finished: a whole one with what it `seen`, which notices are weighed against from now on
-   * (on Linux the watch follows its folders), one that read only noticed paths with nothing. `linked`: the files with
-   * another name it found.
+   * The paths notices named and the linked files no notice named; the whole folder once they reach half of what the
+   * last whole walk looked at. A pass looks at a named path twice (its stamp, then its spelling) and at a linked one
+   * once, each by a call of its own, where the walk looks at each file and folder once and takes a folder's names from
+   * one listing: under the bound a pass looks at no more paths than the walk would, and at half as many for linked files.
    */
-  ended(seen: WorktreeRead | undefined, linked: ReadonlySet<string>): void {
+  #noticed(): SessionReads {
+    const linked = new Set([...this.#linked].filter(path => !this.#paths.has(path)));
+    if (2 * (this.#paths.size + linked.size) >= this.#looks) return WHOLE;
+    return { whole: false, paths: new Set([...this.#paths, ...linked]), linked };
+  }
+
+  /**
+   * The pass that began last finished: a whole one with what it `seen`, which notices are weighed against from now on
+   * (on Linux the watch follows its folders), one that read only noticed paths with nothing. `found`: the files with
+   * another name it found, and how many files it looked at.
+   */
+  ended(seen: WorktreeRead | undefined, found: SessionFound): void {
     if (seen === undefined) {
-      this.#linked = new Set([...this.#linked, ...linked]);
+      this.#linked = new Set([...this.#linked, ...found.linked]);
       this.#whole = false;
       return;
     }
-    this.#linked = linked;
+    this.#linked = found.linked;
+    this.#looks = found.files + seen.folders.size;
     if (this.#refused !== undefined && seen.folders.size < this.#refused) this.#refused = undefined;
     this.#seen = seen;
     this.#whole = this.#follow(seen.folders);
