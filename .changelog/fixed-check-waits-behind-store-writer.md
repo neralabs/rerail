@@ -1,1 +1,1 @@
-A checked edit no longer waits for a whole run of another session's content store writes, such as a large worktree's first snapshot: the daemon's writes take the store in arrival order, and results kept in memory behind a stuck write are saved once that write ends, not 30 seconds later.
+A checked edit no longer waits for a whole run of another session's content store writes, such as a large worktree's first snapshot: it waits only for the writes already ahead of it, and results kept in memory behind a stuck write are saved once that write ends, not 30 seconds later.
