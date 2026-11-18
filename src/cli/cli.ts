@@ -711,7 +711,7 @@ async function runRepositoryCommand(command: "start" | "stop", rawArgs: readonly
   const firstOption = rawArgs.findIndex(argument => argument.startsWith("--"));
   const positionals = command === "stop" ? rawArgs.slice(0, firstOption === -1 ? rawArgs.length : firstOption) : [];
   const args = rawArgs.slice(positionals.length);
-  const io = setupIo(args);
+  const io = setupIo(args, command === "start" && !args.includes(JSON_FLAG));
   try {
     if (command === "stop") return runStopCommand(args, positionals, io);
     if (args.includes(JSON_FLAG)) {

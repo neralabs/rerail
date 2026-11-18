@@ -49,12 +49,16 @@ const TURNS_TO_TYPE = 5;
  * stdin is paused the terminal holds, and hands over those turns after stdin reads again, as a Windows console hands
  * over its keys later than a turn. `unfinished` is a line typed without Enter: the terminal hands it over only to a
  * read started in raw mode, as macOS does, which tells a read already waiting nothing when raw mode makes it readable.
+ * `late` is what a Windows console held while set-up blocked its event loop: its own thread hands it over 10 ms after a
+ * read starts in raw mode. `heldDown` is a key held down: it reaches stdin every turn while a read started in raw mode
+ * runs, until it is let go (set to "").
  */
-function fakeStdin(chunks: readonly string[], { ends = true } = {}): TerminalInputStream & { raw: boolean[]; unfinished: string; press(chunk: string): void } {
+function fakeStdin(chunks: readonly string[], { ends = true } = {}): TerminalInputStream & { raw: boolean[]; unfinished: string; late: string; heldDown: string; press(chunk: string): void } {
   const keys = [...chunks];
   let reading = false;
   let ended = false;
   let typing: NodeJS.Immediate | undefined;
+  let repeating: NodeJS.Immediate | undefined;
   // Turns of the event loop, not a time: the drop here waits turns (`terminalInput`), and what this models is a key
   // that comes after them, as a person's does, however long the machine holds this process meanwhile.
   const type = (turns = 1): void => {
@@ -75,9 +79,17 @@ function fakeStdin(chunks: readonly string[], { ends = true } = {}): TerminalInp
       type();
     });
   };
+  const repeat = (): void => {
+    repeating = undefined;
+    if (!reading || stream.heldDown === "") return;
+    stream.emit("data", stream.heldDown);
+    repeating = setImmediate(repeat);
+  };
   const stream = Object.assign(new EventEmitter(), {
     raw: [] as boolean[],
     unfinished: "",
+    late: "",
+    heldDown: "",
     press(chunk: string) {
       keys.push(chunk);
       type();
@@ -90,13 +102,18 @@ function fakeStdin(chunks: readonly string[], { ends = true } = {}): TerminalInp
       reading = false;
       clearImmediate(typing);
       typing = undefined;
+      clearImmediate(repeating);
+      repeating = undefined;
     },
     resume() {
       reading = true;
-      const line = stream.unfinished;
-      if (stream.raw.at(-1) === true && line !== "") {
+      if (stream.raw.at(-1) === true) {
+        const { unfinished, late } = stream;
         stream.unfinished = "";
-        queueMicrotask(() => stream.emit("data", line));
+        stream.late = "";
+        if (unfinished !== "") queueMicrotask(() => stream.emit("data", unfinished));
+        if (late !== "") setTimeout(() => stream.emit("data", late), 10);
+        if (stream.heldDown !== "" && repeating === undefined) repeating = setImmediate(repeat);
       }
       type();
     },
@@ -222,6 +239,49 @@ describe("the terminal's input", () => {
     ]);
     // The prompt is in raw mode only while it drops them.
     expect(stdin.raw).toEqual([true, false, true, false]);
+  });
+
+  it("drops keys a Windows console hands over 10 ms after raw mode starts, in set-up's own wait for quiet", async () => {
+    // set-up's own 50 ms wait, not `terminalInput`'s turn: what is checked is that its margin takes a key handed over
+    // by the console's thread later than any turn. The person answers once the menu is drawn.
+    const stdin = fakeStdin([], { ends: false });
+    const input = new TerminalInput(stdin, text => {
+      if (text !== menu.frame(0)) return;
+      stdin.press("\u001b[B");
+      stdin.press("\r");
+    }, () => {});
+    // An Enter pressed while set-up held the event loop.
+    stdin.late = "\r";
+    expect(await input.choose(menu)).toBe(1);
+    input.close();
+  });
+
+  it("draws the question after its waits for quiet even while a key held down keeps repeating", async () => {
+    const stdin = fakeStdin([], { ends: false });
+    const input = terminalInput(stdin, text => {
+      if (text !== menu.frame(0)) return;
+      stdin.heldDown = "";
+      stdin.press("\r");
+    });
+    stdin.heldDown = "x";
+    expect(await input.choose(menu)).toBe(0);
+    input.close();
+  });
+
+  it("puts the terminal back and interrupts set-up at a Ctrl-C read before a menu or prompt is drawn", async () => {
+    const stdin = fakeStdin([], { ends: false });
+    const written: string[] = [];
+    const interrupt = vi.fn(() => { expect(stdin.raw.at(-1)).toBe(false); });
+    const input = terminalInput(stdin, text => { written.push(text); }, interrupt);
+    // Ctrl-C pressed as the question was due: the drop's raw mode reads it as a byte, not a signal.
+    stdin.unfinished = "\u0003";
+    expect(await input.choose(menu)).toBeUndefined();
+    stdin.unfinished = "\u0003";
+    expect(await input.line("Which folder? ")).toBeUndefined();
+    input.close();
+    expect(interrupt).toHaveBeenCalledTimes(2);
+    expect(written).toEqual([]);
+    expect(stdin.raw.at(-1)).toBe(false);
   });
 
   it("cancels the next question at an end of input (Ctrl-D) typed while set-up was busy, rather than waiting on it", async () => {

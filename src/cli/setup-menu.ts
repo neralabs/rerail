@@ -114,6 +114,12 @@ function frameRows(frame: string, columns: number | undefined): number {
  */
 const QUIET_MS = 50;
 
+/**
+ * The most quiet waits the drop takes. A key held down repeats faster than one, so without a cap the question would not
+ * be drawn until it is let go; after these it is drawn anyway.
+ */
+const QUIET_WAITS = 10;
+
 export class TerminalInput {
   private buffer = "";
   private ended = false;
@@ -121,6 +127,10 @@ export class TerminalInput {
   private asking = false;
   /** stdin read something during the drop's last quiet wait. */
   private heard = false;
+  /** The drop is running, in raw mode: Ctrl-C reaches stdin as a byte rather than a signal. */
+  private dropping = false;
+  /** Ctrl-C was read during the drop. */
+  private interrupted = false;
   private wake: (() => void) | undefined;
   /** The last line or key ended on a lone CR: an LF that comes next is the rest of that Enter (CRLF split across reads). */
   private afterCr = false;
@@ -129,7 +139,7 @@ export class TerminalInput {
   constructor(
     private readonly input: TerminalInputStream,
     private readonly write: (text: string) => void,
-    /** Ctrl-C in the menu, after the terminal is put back: what the terminal's own Ctrl-C does. */
+    /** Ctrl-C in the menu or before a question is drawn, after the terminal is put back: what the terminal's own Ctrl-C does. */
     private readonly interrupt: () => void = () => process.kill(process.pid, "SIGINT"),
     /** The terminal's width, to count the rows a menu's wrapped lines take; undefined when unknown. */
     private readonly columns: () => number | undefined = () => undefined,
@@ -159,31 +169,40 @@ export class TerminalInput {
    * Drops everything typed before a question is on screen. What came while no question waited is already dropped, and
    * what is left of the last read goes here. A line typed without Enter, or keys typed while set-up held the event
    * loop, stay in the terminal until raw mode makes them readable, so the drop turns raw mode on and lets stdin read
-   * until a quiet wait brings nothing more.
+   * until a quiet wait brings nothing more, or {@link QUIET_WAITS} have passed. True when Ctrl-C was read meanwhile: the
+   * caller interrupts set-up, as the terminal's own Ctrl-C would have outside raw mode.
    */
-  private async dropTypedAhead(raw: boolean): Promise<void> {
+  private async dropTypedAhead(raw: boolean): Promise<boolean> {
     this.buffer = "";
+    this.interrupted = false;
     if (!raw) this.input.setRawMode(true);
+    this.dropping = true;
     try {
       // macOS tells a reader already waiting nothing when raw mode makes such a line readable, so stdin stops reading
       // for a turn (it stops a tick after the pause) and starts again, which finds it.
       this.input.pause();
       await nextTurn();
       this.input.resume();
-      do {
+      for (let wait = 0; wait < QUIET_WAITS && !this.interrupted; wait++) {
         this.heard = false;
         await this.quiet();
-      } while (this.heard);
+        if (!this.heard) break;
+      }
+      return this.interrupted;
     } finally {
+      this.dropping = false;
       if (!raw) this.input.setRawMode(false);
     }
   }
 
   private readonly onData = (chunk: string): void => {
     this.heard = true;
-    if (!this.asking) return;
-    this.buffer += chunk;
-    this.wake?.();
+    if (this.asking) {
+      this.buffer += chunk;
+      this.wake?.();
+    } else if (this.dropping && chunk.includes("\u0003")) {
+      this.interrupted = true;
+    }
   };
 
   private readonly onEnd = (): void => {
@@ -204,7 +223,10 @@ export class TerminalInput {
    * undefined.
    */
   async line(prompt: string): Promise<string | undefined> {
-    await this.dropTypedAhead(false);
+    if (await this.dropTypedAhead(false)) {
+      this.interrupt();
+      return undefined;
+    }
     this.write(prompt);
     this.asking = true;
     try {
@@ -232,7 +254,7 @@ export class TerminalInput {
     }
   }
 
-  /** The menu, in raw mode until an answer is taken: its index, or undefined on Ctrl-D or end of input. */
+  /** The menu, in raw mode until an answer is taken: its index, or undefined on Ctrl-D, end of input or Ctrl-C. */
   async choose(menu: ChoiceMenu): Promise<number | undefined> {
     const restore = (): void => {
       this.input.setRawMode(false);
@@ -240,7 +262,11 @@ export class TerminalInput {
     this.input.setRawMode(true);
     process.once("exit", restore);
     try {
-      await this.dropTypedAhead(true);
+      if (await this.dropTypedAhead(true)) {
+        restore();
+        this.interrupt();
+        return undefined;
+      }
       return await this.answer(menu, restore);
     } finally {
       this.asking = false;
