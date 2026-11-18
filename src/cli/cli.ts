@@ -53,6 +53,7 @@ import {
   openInBrowser,
   openDashboard,
   startDaemon,
+  STOP_ANSWERS,
   stopDaemon,
   keepAutostartClaim,
   DAEMON_ACCESS_TOKEN_FILE,
@@ -62,7 +63,6 @@ import {
   type DaemonState,
   type PageOpening,
   type RunningDaemon,
-  type StopDaemonResult,
 } from "../runtime/daemon-control.js";
 import { deviceSecretStore } from "../activation/device-keystore.js";
 import { runRerailMcpBridge } from "../api/mcp-bridge.js";
@@ -668,13 +668,6 @@ async function runSessionCommand(rawArgs: readonly string[]): Promise<number> {
   reportOpening(await openDashboard(page), page);
   return 0;
 }
-
-/** What `rerail daemon stop` says of each outcome. */
-const STOP_ANSWERS: Readonly<Record<StopDaemonResult, string>> = {
-  stopped: "Rerail daemon stopped.\n",
-  "not-running": "The Rerail daemon is not running.\n",
-  "not-daemon": `${NOT_HOME_DAEMON_NOTE}\nThe Rerail daemon is not running.\n`,
-};
 
 /** `rerail daemon start [options]` or `rerail daemon stop`, in `home`. */
 async function runDaemonVerb(args: readonly string[], home: string): Promise<number> {
