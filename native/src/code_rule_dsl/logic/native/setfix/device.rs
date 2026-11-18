@@ -1351,7 +1351,21 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                     (Owner::Src(_), Some(view)) if ids.is_none() && view.whole() => view.src.device_view().filter(|d| d.rows == n),
                     _ => None,
                 };
-                if let Some(d) = made {
+                // A view the views' reads answer is read in place (decision 0353 step 4d): its relation holds no
+                // value, only the indexes its probes build, and the entry holds every column (the view's own).
+                let in_place = made.as_ref().and_then(|d| d.in_place.clone().map(|v| (d.view, v)));
+                if let Some((view, v)) = in_place {
+                    let ncols = rel.view.as_ref().map_or(0, |view| view.src.columns().len());
+                    let dev = mj::DevRel::view(ncols, n, v).map_err(|e| format!("{e:?}: a view of {n} rows read in place"))?;
+                    rep.in_place += 1;
+                    // By the view's device code (`device_chunk::VIEW_*`), as `view_made` counts them.
+                    crate::code_rule_dsl::prof::count(["device.view_read.node", "device.view_read.child", "device.view_read.field", "device.view_read.core", "device.view_read.axis", "device.view_read.line", "device.view_read.end_line", "device.view_read.col", "device.view_read.docof", "device.view_read.tline"].get(view as usize).copied().unwrap_or("device.view_read.other"), n);
+                    let bytes = old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.verdicts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
+                    let (texts, verdicts, mapped) = old.map_or_else(Default::default, |o| (o.texts, o.verdicts, o.mapped));
+                    res.entries.push(Entry { owner, cols: (0..ncols).collect(), dev: Rc::new(dev), indexes: Vec::new(), texts, verdicts, mapped, bytes, used: clock });
+                    res.bytes = res.bytes();
+                    res.entries.len() - 1
+                } else if let Some(d) = made {
                     let device = rerail_accel::gpu::join::device()?;
                     let block = d.block.gpu_buffer(device);
                     let dev = mj::DevRel::empty(k, n).map_err(|e| format!("{e:?}: a view of {n} rows, {k} columns"))?;
@@ -1359,6 +1373,8 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                     rep.uploads += 1;
                     rep.upload_cpu += thread_cpu() - c0;
                     let by = &mut rep.upload_by[profile::UPLOAD_MADE];
+                    // By view (`device_chunk::VIEW_*`), for the profile: what step 4 removes, view by view.
+                    crate::code_rule_dsl::prof::count(["device.view_made.node", "device.view_made.child", "device.view_made.field", "device.view_made.core", "device.view_made.axis", "device.view_made.line", "device.view_made.end_line", "device.view_made.col", "device.view_made.docof", "device.view_made.tline"].get(d.view as usize).copied().unwrap_or("device.view_made.other"), dev.bytes());
                     by.0 += dev.bytes() as u64;
                     by.1 += thread_cpu() - c0;
                     let bytes = dev.bytes() + old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.verdicts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
@@ -1454,7 +1470,8 @@ pub fn column_stats(cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStat
                 let owner = Owner::of(rel);
                 let e = res.entries.iter().find(|e| e.owner.same(&owner))?;
                 let at = e.cols.iter().position(|&w| w == owner_col(rel, *col))?;
-                (e.dev.rows == rel.len() - rel.ndead && at < e.dev.cols).then(|| (e.dev.clone(), at))
+                // A view read in place holds no column where it lies (its rows are its reads').
+                (e.dev.rows == rel.len() - rel.ndead && at < e.dev.cols && e.dev.view.is_none()).then(|| (e.dev.clone(), at))
             })
             .collect()
     });
@@ -1886,6 +1903,11 @@ impl<'p> Run<'p> {
         }
         if self.arena_full() {
             return Some(format!("its texts past the device's text arena of {} bytes", arena_max()));
+        }
+        // A 16z view's blocks: a read that found no room in its batch's cache read the dead entry (0353 step 4b).
+        #[cfg(target_os = "macos")]
+        if self.rels.iter().flatten().filter_map(|(r, _)| r.view.as_ref()).any(|v| v.cache_failed() > v.failed) {
+            return Some("a 16z block found no room in its batch's cache".to_owned());
         }
         None
     }

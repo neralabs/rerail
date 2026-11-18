@@ -2727,6 +2727,9 @@ fn execute_batch_packed_once(
         tapes.push((bytes.as_ptr(), view, codes));
     }
     let node_count = batch.files.iter().map(|file| file.node_count).sum::<u32>();
+    // A 16z tape's reader for each evaluation that reads it (0353 step 4b): its reads decode a block into the
+    // reader's slots, and an evaluation's tasks run on one worker, in order.
+    let mut readers: std::collections::HashMap<(u32, u32), rerail_clif::view::Reader> = std::collections::HashMap::new();
     let mut contexts = Vec::with_capacity(batch.tasks.len());
 
     for (task_index, task) in batch.tasks.iter().enumerate() {
@@ -2743,7 +2746,11 @@ fn execute_batch_packed_once(
         let mut context: NativeTaskContext = unsafe { mem::zeroed() };
         let (tape, view, codes) = &tapes[task.file as usize];
         context.tape = *tape;
-        context.view = view;
+        context.view = if view.format == rerail_clif::view::F16Z_FORMAT {
+            readers.entry((task.evaluation, task.file)).or_insert_with(|| rerail_clif::view::Reader::new(view, *tape)).view()
+        } else {
+            std::ptr::from_ref(view)
+        };
         context.codes = codes.as_ptr();
         context.node_base = view.node_base;
         context.source_base = view.source_base;

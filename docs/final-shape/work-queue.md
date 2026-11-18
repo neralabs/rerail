@@ -4180,6 +4180,9 @@ span's bytes), with the spans' eager rows as `rr_text_span`. It ran the core cas
   it is cheaper than eager there and on the data-layer pack; else record why `text` stays eager in 0353.
 - **Done when**: `text` is answered on request at or under eager's cost, or 0353 records with the measurement that
   it stays eager.
+- **Deferred** (user, 2026-11-17): `text` stays eager within its narrowing for now, and this stays open; steps 3 and
+  4 go first. The data then: on hogql the narrowed rows visit 0.84 M nodes (`node rows` 0.28–0.30 s a run, after
+  the literal fix), and rules look `text` up for 663 K rows.
 
 ### Q122. An edited include keeps its old hash in `read_file`'s file list
 
@@ -4191,6 +4194,10 @@ sha) or `program_shared`'s order may hand back the files recorded before the edi
 - Find which of `read_file`'s three sources gives the stale list, and make the files the ones the program was read
   from.
 - **Done when**: the test passes, and an edit of a same-length include gives its new hash.
+- Related, also apart from 0353 step 3 (it fails with each of the day's changes switched off: `str` eager, the old
+  `prune` gate, Extra's rows): `corpus::tests::the_run_after_a_cold_one_writes_nothing`, whose warm run exits 3 with
+  "the observer's store not asked inside the waves in a warm run (…/src: its answers unknown, read again)". Both are
+  a run's record of what it read disagreeing with a later read of the same files.
 
 ### Q167. (Q110 at django-bugs f8eaf234b) A kind no file holds, probed once per delta row
 
@@ -4501,3 +4508,28 @@ Found 2026-11-18, measuring 0364 over the O125 replay (`maintain-measure.sh cold
 - **Fixed**: `maintain-measure.sh` takes `MM_ROOT` for its outputs, and the replay's host script keeps its inputs,
   outputs and engine under the host's `$TMPDIR`, outside the checkout.
 - **Record**: this entry.
+
+### Q216. (Q123 on Native-and-GPU-strata at 903627c46) Spans' places read by the `Loc` views (0353 step 3, row 7)
+
+Where `Extra` makes spans (`source`, `src_line`, `src_line_lf`, `tape_line`, a regex's matches, comments, `rx_span`),
+it also makes `line`, `end_line`, `col` and `docof` rows for every node and token, and `Batch::made` binds those in
+place of the views: copies of tape answers. The views already cover the whole source and its lines
+(`Locs::positions`, `ExtraSpan::Line`).
+- **Do**: write the other spans' byte ranges once into the batch's block where `Extra` makes them (a derived fact),
+  and have `View::Loc` read them past its own positions (`local_of` maps a span id there through
+  `granules::span_of`); then `Extra` makes no place rows, and `made` binds no place relation.
+- **Check**: the view's rows equal the rows made today, for a program reading each span relation.
+- **Done when**: no place row is made for a node or token in core.rr's shape.
+
+
+### Q217. (Q124 on Native-and-GPU-strata at 903627c46) The device's `str_cmp` of made texts loses rows under load
+
+`device::parity::parity_random_texts` (seeded, deterministic cases) differed in 2 of 16 full runs (2026-11-17), each
+time a different case, each a `str_cmp` over a made text (`cat`, `sql_replace` into the arena): #216 (device 6
+rows, CPU 38) and #683 (145 against 172). The device's rows are always a subset of the CPU's. It passes alone, and
+fails about 1 in 12 runs with six copies of the test at once (the test binary run directly with `--exact`), so the
+loss depends on the device's timing, not the cases. It reads no view, and no 0353 step 4 change reaches it.
+- Suspects: the arena's text read as empty when its value is -1 (`txt_of`, "the stage runs again") with the rerun
+  not taken; a made text read by the next dispatch before its write is visible.
+- **Do**: find which (count the stage's reruns and the arena's fill in a failing run), then fix it at its cause.
+- **Done when**: 60 runs, six at a time, all pass.
