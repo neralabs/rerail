@@ -469,7 +469,7 @@ pub fn inventory_selection(root: &Path) -> Option<String> {
         Ok(None) => String::new(),
         Err(_) => format!("unreadable:{}", v.tree),
     };
-    serde_json::to_string(&("ignore-v2", ignores, &v.prefix, &*paths)).ok()
+    serde_json::to_string(&("ignore-v3", ignores, &v.prefix, &*paths)).ok()
 }
 
 pub fn source_languages(root: &Path) -> Option<SourceLanguages> {
