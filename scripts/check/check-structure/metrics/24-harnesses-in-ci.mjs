@@ -9,7 +9,8 @@
 //   - `node --test files…` runs those files; `pytest paths…` runs the test files under those paths;
 //   - `playwright test` in package P runs the test files under its config's `testDir` (`--config C`, else
 //     P's `playwright.config.*`; the config's directory when it names none);
-//   - `node [--import X] file`, `tsx file`, `python[3] file`, `bash|sh file` run `file` as an entry point.
+//   - `node [--import X] file`, `tsx file`, `python[3] file`, `bash|sh file` run `file` as an entry point; an
+//     interpreter named by its absolute path (`/usr/bin/python3`) runs as its name does.
 // Predicate:
 //   - every tracked test file (`*.test.*`/`*.spec.*` scripts, pytest `test_*.py`/`*_test.py`, PHPUnit
 //     `*Test.php`) is run by CI;
@@ -17,6 +18,9 @@
 //     `conformance:*` runs, in any package, is also run by CI. Test files those scripts run are covered by
 //     the first part, so watch-mode and single-file variants of a CI-run suite pass.
 // Exemption `data-roots`: test files under `fixtures/` and `packs/<id>/upstream/` are recorded data.
+// Exemption `workbench-samples` (the `.rr` workbench, kept in git as it is: docs/repository-structure.md, "Kept as they
+// are"): a scenario of the workbench's explorer (`docs/rule-syntax/site/explorer/scenarios/`) holds the sample source
+// a rule is shown on, named as the code it stands for (`test_parse.py` for a pytest rule); nothing runs it.
 // Rust tests run through `cargo test`, which is outside this metric.
 
 import { posix } from "node:path";
@@ -27,6 +31,12 @@ export const title = "Every test root and harness runs in CI";
 export const target = "100%";
 
 export const WORKFLOW = ".github/workflows/ci.yml";
+
+/** Exemption `workbench-samples`. */
+const WORKBENCH_SAMPLES = "docs/rule-syntax/site/explorer/scenarios/";
+
+/** The interpreters a command may name by an absolute path. */
+const INTERPRETERS = new Set(["node", "tsx", "python", "python3", "bash", "sh"]);
 
 function join(dir, path) {
   return posix.normalize(dir === "" ? path : `${dir}/${path}`).replace(/^\.\//, "").replace(/\/$/, "");
@@ -64,6 +74,7 @@ export function analyse(repo) {
   function runCommand(cwd, tokens, stack) {
     let [program, ...args] = tokens;
     if (program === "npx" || program === "exec") [program, ...args] = args;
+    if (program?.startsWith("/") && INTERPRETERS.has(basename(program))) program = basename(program);
     return program === undefined ? [] : runProgram(cwd, program, args, stack);
   }
 
@@ -206,7 +217,7 @@ export function filesRun(repo, record, testFiles) {
 }
 
 export function check(repo) {
-  const testFiles = repo.files.filter((path) => isTestFile(path) && !isDataPath(path));
+  const testFiles = repo.files.filter((path) => isTestFile(path) && !isDataPath(path) && !path.startsWith(WORKBENCH_SAMPLES));
   const { reached, harnessScripts } = analyse(repo);
   const ranTests = new Set(reached.flatMap((record) => filesRun(repo, record, testFiles)));
   const ranEntries = new Set(reached.filter((record) => record.kind === "file").map((record) => record.path));

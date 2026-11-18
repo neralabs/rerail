@@ -6,12 +6,17 @@
 // argument is a string literal (relative to the including file) or
 // `concat!(env!("CARGO_MANIFEST_DIR"), "…")` (relative to the crate's Cargo.toml); other arguments, such
 // as the `fixtures_dir!()` oracle macro or `OUT_DIR`, are not repository paths and are skipped.
-// Exemption `test-inputs`: a test-only include (in `tests.rs`, `*_tests.rs`, `test_support.rs`, under
-// native/tests/, or inside the item a `#[cfg(test)]` attribute applies to) may read `fixtures/**`,
+// Exemption `test-inputs`: a test-only include (in `tests.rs`, `*_tests.rs`, `test_support.rs`, in a `tests/`
+// directory under native/, or inside the item a `#[cfg(test)]` attribute applies to) may read `fixtures/**`,
 // `packs/**`, or a `*.generated.*` file: test data and generated contracts the engine is checked against,
 // never compiled into the shipped engine. A `#[cfg(test)]` item extends to its brace-matched body, or to
 // its `;` when it has none, so `#[cfg(test)] mod tests;` exempts nothing that follows it. Comments,
 // string and character literals are skipped when matching braces.
+// Exemption `workbench` (the `.rr` workbench, kept in git as it is: docs/repository-structure.md, "Kept as they are"):
+// an include of a file under `docs/rule-syntax/`, the workbench's `.rr` library and rules: the engine embeds the
+// library's `core.rr` prelude, and its tests parse the library and the workbench's rules.
+// Exemption `engine-layout` (the engine line's layout, settled with its owner in a follow-up): the compiler's tests
+// include `docs/parser-generators/lexers/json.bitlex`, the JSON lexer the parser-generator notes define.
 
 import { posix } from "node:path";
 import { basename, dirname, finding, lineAt, sortFindings } from "../lib.mjs";
@@ -139,7 +144,12 @@ function testSpans(text) {
 
 function isTestFile(path) {
   const base = basename(path);
-  return base === "tests.rs" || base.endsWith("_tests.rs") || base === "test_support.rs" || path.startsWith("native/tests/");
+  return base === "tests.rs" || base.endsWith("_tests.rs") || base === "test_support.rs" || path.split("/").slice(1, -1).includes("tests");
+}
+
+/** Exemptions `workbench` and `engine-layout`. */
+function kept(target) {
+  return target.startsWith("docs/rule-syntax/") || target === "docs/parser-generators/lexers/json.bitlex";
 }
 
 function testInput(target) {
@@ -165,6 +175,7 @@ export function check(repo) {
       const target = posix.normalize(posix.join(base, literal.replace(/^\/+/, "")));
       if (target.startsWith("native/")) continue;
       if (isTestOnly(match.index) && testInput(target)) continue;
+      if (kept(target)) continue;
       roots.add(target.split("/")[0]);
       findings.push(finding(path, `${match[1]}! reaches outside native/: ${target}`, lineAt(text, match.index)));
     }

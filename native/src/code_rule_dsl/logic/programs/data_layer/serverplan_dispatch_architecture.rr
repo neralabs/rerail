@@ -1,7 +1,7 @@
 // data-layer-serverplan-dispatch-architecture in Rerail logic: the 8 forbid clauses (backend-family, backend-identity,
 // step-isinstance, step-type-compare, step-class-match, step-name-compare, dialect-compare, dialect-truth) and the
 // relational clause `executor-provenance`, options at their defaults (entryPoint "all", oracleAnalyzer false).
-// Source: gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-dispatch-architecture.json.
+// Source: packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/rules/data-layer-serverplan-dispatch-architecture.json.
 //
 // Forbid clauses: yaml's form (`violation(...) :- ast(...)`). Each matcher selects a file filter by entryPoint
 // (`$option`); its default case "all", `{"filePath": {"regex": "(?s).*"}}`, is written in place by hand.

@@ -2,7 +2,7 @@
 // post-fetch-filter_query_results_async, graph-fallback-text, inventory-export_cursor.py, inventory-fts_searcher.py,
 // inventory-legacy_wrappers.py, removed-read-leaves) and the relational clause `legacy-execution-graphs`, options at
 // their defaults (entryPoint "all", oracleAnalyzer false). Source:
-// gate/data-layer/packs/data-layer/candidates/rules/data-layer-legacy-execution-surfaces.json.
+// packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/rules/data-layer-legacy-execution-surfaces.json.
 //
 // One relation per SQL stage, under the stage's name. A SQL row keyed by (__path, __start) is a node here, and a node id
 // `kind:start:end` is the tape node; a nullable column is a side relation that holds where the column is not NULL.

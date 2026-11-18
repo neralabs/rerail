@@ -5,6 +5,9 @@
 // specs of the dashboard; kept out of `test/` because vitest runs every spec file under it).
 // Exemption `data-roots`: `fixtures/**` and `packs/<id>/upstream/**` hold upstream projects' copied tests
 // as recorded data; they are never run as Rerail's tests.
+// Exemption `workbench-samples` (the `.rr` workbench, kept in git as it is: docs/repository-structure.md, "Kept as they
+// are"): a scenario of the workbench's explorer (`docs/rule-syntax/site/explorer/scenarios/`) holds the sample source
+// a rule is shown on, named as the code it stands for (`test_parse.py` for a pytest rule); it is never run as a test.
 // Rust tests are not files of their own kind: `#[cfg(test)]` modules (`tests.rs`, `*_tests.rs`) are part of
 // the crate by Cargo's convention and are not counted.
 
@@ -16,11 +19,14 @@ export const target = "test/, integration/, e2e/";
 
 const ROOTS = ["test/", "integration/", "e2e/"];
 
+/** Exemption `workbench-samples`. */
+const WORKBENCH_SAMPLES = "docs/rule-syntax/site/explorer/scenarios/";
+
 export function check(repo) {
   const findings = [];
   const roots = new Set();
   for (const path of repo.files) {
-    if (!isTestFile(path) || isDataPath(path)) continue;
+    if (!isTestFile(path) || isDataPath(path) || path.startsWith(WORKBENCH_SAMPLES)) continue;
     const root = ROOTS.find((prefix) => path.startsWith(prefix));
     if (root) {
       roots.add(root.slice(0, -1));

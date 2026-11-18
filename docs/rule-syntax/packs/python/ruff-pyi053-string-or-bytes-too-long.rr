@@ -2,7 +2,7 @@
 .description "Replace string and bytes literals longer than 50 characters in stub files with an ellipsis; type checkers ignore default values, so a literal that long is an implementation detail."
 .language python
 .mode steer
-.scope include "**/*"
+.scope include "**/*.pyi"
 
 // Ruff PYI053 (flake8-pyi), stubs only: a str or bytes literal whose value is longer than 50 characters
 // (adjacent literals joined; an f-string counts its written contents). Not reported in a type context
@@ -34,6 +34,6 @@ stmt_string(s) :- doc_stmt(_, s).
 // deprecated_message(s): s is an argument, positional or keyword, of `warnings.deprecated(…)` or
 // `typing_extensions.deprecated(…)`.
 .decl deprecated_message(s: node)
-deprecated_message(s) :- kind(c, "call"), field(c, "function", f), sym_of(f, q),
+deprecated_message(s) :- kind(c, "call"), field(c, "function", f), pyi_sym(f, q),
     (q = "warnings.deprecated" ; q = "typing_extensions.deprecated"), field(c, "arguments", al), child(al, a, _),
     (unparen(a, s) ; kind(a, "keyword_argument"), field(a, "value", v), unparen(v, s)).

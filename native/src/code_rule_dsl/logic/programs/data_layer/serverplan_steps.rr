@@ -3,7 +3,7 @@
 // misc-runtime-definition, runtime-builder-string-name, closed-migration-refs, closed-migration-with-refs,
 // closed-migration-postop, terminal-projection-dispatch, empty-result-assertion, source-ref-ingress, parse-error).
 // The relational clauses are part files: serverplan_steps.step_contracts_{1..6}.rdl and
-// serverplan_steps.runtime_reference_summaries.rdl. Source: gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-steps.json.
+// serverplan_steps.runtime_reference_summaries.rdl. Source: packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/rules/data-layer-serverplan-steps.json.
 //
 // Options at their defaults (entryPoint "all", strictModulesOnly true, oracleAnalyzer false). Every forbid matcher
 // selects its file filter by `$option: entryPoint`; each rule below is the yaml form (one `violation` rule per forbid

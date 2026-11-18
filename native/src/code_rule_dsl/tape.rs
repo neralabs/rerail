@@ -3453,6 +3453,8 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
             |alias| alias.0.as_str(),
         ))
     }
+    // Every matcher's kind test and walk filter reads it, from the matcher's crate (rerail-w).
+    #[inline]
     fn kind_id(&self) -> u16 {
         read!("kind");
         kind_of(self.entry())

@@ -23,14 +23,14 @@ PYI036(ps, m, cat("Give `", m, "` three positional parameters after `self` (exce
     field(f, "parameters", ps).
 PYI036(a, m, cat("Annotate the star-args of `", m, "` as `object`; they only receive the exception type, exception and traceback, which the method need not read through their types.")) :-
     exit_method(f, m), !decorated(f, "overload"), count : { arg(f, p, i, b) } < 3, sig_param(f, _, _, _, "vararg", a, _),
-    !unset(a), type_bare(a, t), !object_or_unused(t).
+    !unset(a), type_bare(a, t), within(t, f), !object_or_unused(t).
 PYI036(p, m, cat("Give every positional parameter of `", m, "` beyond the exception type, exception and traceback a default value; the interpreter passes only those three.")) :-
     exit_method(f, m), !decorated(f, "overload"), arg(f, p, i, _), i > 3, sig_param(f, p, _, _, _, _, d), unset(d).
 PYI036(p, m, cat("Give every keyword-only parameter of `", m, "` a default value; the interpreter passes only the three positional arguments.")) :-
     exit_method(f, m), !decorated(f, "overload"), sig_param(f, p, _, _, "kwonly", _, d), unset(d).
 PYI036(a, m, cat("Annotate the ", nth, " argument of `", m, "` as `", want, "`, or as `object`; the interpreter passes `None` when no exception occurred.")) :-
-    exit_method(f, m), !decorated(f, "overload"), arg(f, _, i, a), i <= 3, !unset(a), type_bare(a, t), !object_or_unused(t),
-    !optional_ok(t, i), slot(i, nth, want).
+    exit_method(f, m), !decorated(f, "overload"), arg(f, _, i, a), i <= 3, !unset(a), type_bare(a, t), within(t, f),
+    !object_or_unused(t), !optional_ok(t, i), slot(i, nth, want).
 PYI036(ps, m, cat("Annotate the three arguments after `self` of these `", m, "` overloads as either `None, None, None` or `type[BaseException], BaseException, types.TracebackType`.")) :-
     overload_pair(c, m), class_member(c, f, m), decorated(f, "overload"), !loose(f, "none"), !loose(f, "exc"),
     field(f, "parameters", ps).
@@ -39,7 +39,8 @@ PYI036(ps, m, cat("Annotate the three arguments after `self` of these `", m, "` 
 .decl exit_method(f: node, m: symbol)
 exit_method(f, "__exit__") :- class_member(_, f, "__exit__"), !is_async(f).
 exit_method(f, "__aexit__") :- class_member(_, f, "__aexit__"), is_async(f).
-// arg(f, p, i, a): p is the i-th positional parameter after self (from 1), annotated a.
+// arg(f, p, i, a): p is the i-th positional parameter after self (from 1), annotated a. The rules add
+// `within(t, f)` for a's bare type t, which always holds: it places t in f's file for the engine (a is a loc).
 .decl arg(f: node, p: node, i: number, a: loc)
 arg(f, p, i, a) :- exit_method(f, _), first_param(f, _, _), sig_param(f, p, _, j, k, a, _), pos_kind(k),
     i = count : { sig_param(f, q, n, j2, k2, b, d), pos_kind(k2), j2 <= j } - 1, i > 0.
@@ -48,7 +49,7 @@ arg(f, p, i, a) :- exit_method(f, _), first_param(f, _, _), sig_param(f, p, _, j
 slot(1, "first", "type[BaseException] | None"). slot(2, "second", "BaseException | None").
 slot(3, "third", "types.TracebackType | None").
 .decl object_or_unused(t: node)
-object_or_unused(t) :- (sym_of(t, "builtins.object") ; sym_of(t, "_typeshed.Unused")).
+object_or_unused(t) :- (pyi_sym(t, "builtins.object") ; pyi_sym(t, "_typeshed.Unused")).
 // optional_ok(t, i): Ruff's non_none_annotation_element of t is right for slot i: `Optional[X]`, `Union[X, None]`
 // or `Union[None, X]`, or a `|` (below).
 .decl optional_ok(t: node, i: number)
@@ -69,9 +70,9 @@ pipe_sides(t, l, r) :- kind(t, "union_type"), child(t, l, 0), child(t, r, 1), !r
 regrouped(r) :- kind(r, "type"), child(r, m, 0), (kind(m, "union_type") ; kind(m, "binary_operator"), op(m, "|")).
 regrouped(r) :- kind(r, "union_type").
 .decl slot_type(x: node, i: number)
-slot_type(x, 1) :- (builtin_sub(x, "type") ; typing_subscript(x, "Type")), tsub(x, _, 0, b), sym_of(b, "builtins.BaseException").
-slot_type(x, 2) :- sym_of(x, "builtins.BaseException").
-slot_type(x, 3) :- sym_of(x, "types.TracebackType").
+slot_type(x, 1) :- (builtin_sub(x, "type") ; typing_subscript(x, "Type")), tsub(x, _, 0, b), pyi_sym(b, "builtins.BaseException").
+slot_type(x, 2) :- pyi_sym(x, "builtins.BaseException").
+slot_type(x, 3) :- pyi_sym(x, "types.TracebackType").
 
 // overload_pair(c, m): class c has exactly two overloads of m, of m's colour (async for __aexit__), each with
 // three positional parameters after self and nothing else. Only then are the overloads checked.
@@ -84,10 +85,12 @@ plain_three(g, m) :- exit_method(g, m), count : { sig_param(g, p, n, i, k, a, d)
     count : { sig_param(g, p, n, i, k, a, d), pos_kind(k) } = 4.
 // loose(f, form): each of f's three arguments is unannotated, `object`/`Unused`, or the form's type.
 .decl loose(f: node, form: symbol)
-loose(f, "none") :- exit_method(f, _), count : { arg(f, p, i, a), !loose_arg(a, i, "none") } = 0.
-loose(f, "exc") :- exit_method(f, _), count : { arg(f, p, i, a), !loose_arg(a, i, "exc") } = 0.
-.decl loose_arg(a: loc, i: number, form: symbol)
-loose_arg(a, i, f) :- arg(_, _, i, a), (f = "none" ; f = "exc"), unset(a).
-loose_arg(a, i, f) :- arg(_, _, i, a), (f = "none" ; f = "exc"), type_bare(a, t), object_or_unused(t).
-loose_arg(a, i, "none") :- arg(_, _, i, a), type_bare(a, t), kind(t, "none").
-loose_arg(a, i, "exc") :- arg(_, _, i, a), type_bare(a, t), slot_type(t, i).
+loose(f, "none") :- exit_method(f, _), count : { arg(f, p, i, a), !loose_arg(p, i, "none") } = 0.
+loose(f, "exc") :- exit_method(f, _), count : { arg(f, p, i, a), !loose_arg(p, i, "exc") } = 0.
+// loose_arg(p, i, form): argument p (the i-th) is loose for the form. Keyed by the parameter, a node, rather than
+// its annotation, a loc: the engine then keeps the rule in p's file (`within(t, f)` places the annotation there).
+.decl loose_arg(p: node, i: number, form: symbol)
+loose_arg(p, i, f) :- arg(_, p, i, a), (f = "none" ; f = "exc"), unset(a).
+loose_arg(p, i, f) :- arg(g, p, i, a), (f = "none" ; f = "exc"), type_bare(a, t), within(t, g), object_or_unused(t).
+loose_arg(p, i, "none") :- arg(g, p, i, a), type_bare(a, t), within(t, g), kind(t, "none").
+loose_arg(p, i, "exc") :- arg(g, p, i, a), type_bare(a, t), within(t, g), slot_type(t, i).

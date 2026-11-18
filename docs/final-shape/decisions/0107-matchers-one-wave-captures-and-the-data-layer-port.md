@@ -116,7 +116,7 @@ The SQLite functions are tested against SQLite's own (`sqlite_functions_as_sqlit
 ### 6. Results
 
 `scripts/dsl/data_layer_rr_probes.py` runs a ported program over each recorded probe
-(`fixtures/host/data-layer-port/batch-06-probes.json`). It compares
+(`packs/data-layer/upstream/lint/authored/fixtures/host/data-layer-port/batch-06-probes.json`). It compares
 (path, line, code) keys with the oracle's.
 
 | check | probes equal | repository (9,010 files) |

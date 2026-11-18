@@ -1,7 +1,7 @@
 // data-layer-serverplan-quality in Rerail logic: clause `quality-contracts-1` (part file; the rule's header, `.policy`
 // and its other clauses are in serverplan_quality.rdl). Options at their defaults: oracleAnalyzer false, entryPoint
 // "all" (every `diagnostics_N` stage takes its `all` case; the matchers keep their `$option` objects verbatim).
-// Source: gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-quality.json.
+// Source: packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/rules/data-layer-serverplan-quality.json.
 //
 // One relation per SQL stage, under the stage's name. The clause is per file (partitionBy file): a row keyed by
 // (__path, __start) is a node, and a join on __path is implied by the node. W's `syntax` declaration (`nodes`, `edges`,

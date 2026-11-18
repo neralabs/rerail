@@ -1160,8 +1160,9 @@ fn register() -> std::sync::Arc<parking_lot::Mutex<Thread>> {
     // SAFETY: the calling thread's own port; no right is taken.
     let port = unsafe { libc::pthread_mach_thread_np(libc::pthread_self()) };
     #[cfg(target_os = "linux")]
-    // SAFETY: no arguments; the calling thread's id.
-    let port = unsafe { libc::gettid() } as u32;
+    // SAFETY: no arguments; the calling thread's id. The system call, not glibc's `gettid` (2.30): the Linux engine
+    // links against 2.17.
+    let port = unsafe { libc::syscall(libc::SYS_gettid) } as u32;
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let port = 0;
     let me = std::sync::Arc::new(parking_lot::Mutex::new(Thread {
@@ -1500,7 +1501,7 @@ pub fn warm() -> bool {
 /// `what`), and why each is allowed: locks against another process's collection, the timestamps by which
 /// collection judges recency, and the cost statistics. Nothing else is exempt from the warm check.
 ///
-/// Changing this list needs the user's approval (decision 0211). `scripts/check/check-warm-mode.py` holds a copy
+/// Changing this list needs the user's approval (decision 0211). `scripts/check/check_warm_mode.py` holds a copy
 /// and refuses a commit that changes one without the other.
 pub const WARM_WRITES_ALLOWED: &[(&str, &str)] = &[
     ("the run's hold on its plans", "a lock: a lease on the run's plans against a collection in another process (decision 0053)"),

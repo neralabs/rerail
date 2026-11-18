@@ -6,7 +6,7 @@ Its manifest still has an empty `rules` list.
 No Linear issues were created or amended.
 
 The source pin is `2b1504adc4291daaf080b2e932962b134da1a69a` in the data-layer repository.
-The [evidence file](../fixtures/host/data-layer-port/batch-06-evidence.json) records the final policy identities and validation results.
+The [evidence file](../packs/data-layer/upstream/lint/authored/fixtures/host/data-layer-port/batch-06-evidence.json) records the final policy identities and validation results.
 
 | Check | Ported behavior |
 |---|---|
@@ -165,7 +165,7 @@ Use the pinned source tree and its Python dependencies:
 python scripts/dsl/data_layer_record.py --batch 6 --source SOURCE --repo REPO --output ORIGINAL.json
 python scripts/dsl/data_layer_generate_batch_six.py --source SOURCE --repo REPO
 python scripts/dsl/data_layer_probe_six.py --source SOURCE --repo REPO \
-  --inputs fixtures/host/data-layer-port/batch-06-probe-inputs.json --output PROBES.json
+  --inputs packs/data-layer/upstream/lint/authored/fixtures/host/data-layer-port/batch-06-probe-inputs.json --output PROBES.json
 node --import tsx conformance/data-layer/replay.ts \
   --recording ORIGINAL.json --recording PROBES.json --output SOURCE-RESULT.json
 node --import tsx conformance/data-layer/incremental.ts \

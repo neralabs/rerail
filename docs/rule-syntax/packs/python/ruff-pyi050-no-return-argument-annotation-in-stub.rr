@@ -14,8 +14,17 @@
 
 .violation PYI050(at: node) code "PYI050" "Annotate this parameter as `Never` instead of `NoReturn`, importing it from `typing_extensions` (or `typing` on Python 3.11+); the two are equivalent for type checkers."
     suppress ruff "PYI050"
+// `within(t, f)` always holds: it places the annotation in f's file for the engine (sig_param's column is a loc).
 PYI050(t) :- kind(f, "function_definition"), applies(f), sig_param(f, _, _, _, _, a, _), !unset(a), type_bare(a, t),
-    (typing_sym(t, "NoReturn") ; parsed(t, "annotation", r), type_bare(r, n), typing_sym(n, "NoReturn")).
+    within(t, f), (typing_sym(t, "NoReturn") ; noreturn_str(t)).
+// noreturn_str(t): t is a parameter's string annotation that parses to NoReturn. The parse is asked for the t that
+// str_param binds, the string annotations only: in PYI050's own body, `within(t, f)` would ask for every node of
+// every def.
+.decl noreturn_str(t: node)
+noreturn_str(t) :- str_param(t), parsed(t, "annotation", r), type_bare(r, n), typing_sym(n, "NoReturn").
+.decl str_param(t: node)
+str_param(t) :- kind(f, "function_definition"), sig_param(f, _, _, _, _, a, _), !unset(a), type_bare(a, t), within(t, f),
+    str_node(t).
 .decl applies(f: node)
 applies(f) :- in_stub(f).
 applies(f) :- kind(f, "function_definition"), targets(11).

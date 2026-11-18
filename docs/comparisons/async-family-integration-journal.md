@@ -474,7 +474,7 @@ Median corpus-run CPU is 13.221 seconds; median wall time is 17.894 seconds.
 The median local phase uses 1.052 CPU seconds. Peak process footprint is about 664 MB.
 The earlier timing series used another merged snapshot and was not interleaved; no causal speed ratio is claimed.
 
-The final source and binary hashes, emitted SQL, EXPLAIN output, cursor counters, failure evidence, and results are checked in under `benchmark/async-family-integration/composed`.
+The final source and binary hashes, emitted SQL, EXPLAIN output, cursor counters, failure evidence, and results are checked in under `packs/data-layer/upstream/benchmarks/authored/async-family-integration/composed`.
 The remaining SQL VM regression and the two-query whole-corpus target are explicit open items, not passing gates.
 
 Implementation commit `90398a0d0` and the integration merge were published to the owned comparison branch.
@@ -675,7 +675,7 @@ The cache counters include 5,725 corpus tapes and two rule-program tapes. All ar
 Identity projection still constructs 12,535,139 node identities. These are measured costs, not proven savings from a cache.
 Both runs execute 81 statements. Current VM instructions remain 785,573.
 
-[The checked-in reports](../../benchmark/async-family-integration/analysis/current-analysis.txt) include the current findings.
+The checked-in reports (`packs/data-layer/upstream/benchmarks/authored/async-family-integration/analysis/current-analysis.txt`) include the current findings.
 The sibling files contain the failing-shape report, raw profiles, test logs, command environments, and source hashes.
 Normal `RERAIL_PROFILE=<directory>` runs produce the analysis automatically. No separate analysis script or experimental engine path is required.
 
@@ -787,7 +787,7 @@ Both sets of tests remain present. The native start specification retains `Hash`
 
 Surveyed 22 worktrees through their committed tips, status, notes, and working diffs.
 The detailed findings are in `sibling-workstreams-2026-11-10.md`.
-The snapshot is under `benchmark/async-family-integration/merge-b4f0aa04b/`.
+The snapshot is under `packs/data-layer/upstream/benchmarks/authored/async-family-integration/merge-b4f0aa04b/`.
 No sibling working files were changed.
 
 The SQL/store-wait profiler already exists in `More-ergonomic-rule-syntax` at `d3ef2ab8f`.
@@ -804,7 +804,7 @@ All 178 edge-fixture finding keys remain equal.
 The full workload retains 5,725 files, 19,007,630 core nodes, zero findings, 81 rule executions, and 785,573 VM instructions.
 Projection sizes remain demanded for only 35 documents, depths for 25, and token spans for 34.
 The full run is profiled validation, not a paired performance comparison.
-Merge evidence and the source hashes are under `benchmark/async-family-integration/merge-b4f0aa04b/`.
+Merge evidence and the source hashes are under `packs/data-layer/upstream/benchmarks/authored/async-family-integration/merge-b4f0aa04b/`.
 
 ## 2026-11-10 — Fact admission and reuse
 
@@ -997,7 +997,7 @@ The regression ceilings remain 20 statements and 100,000 VM instructions.
 Both requested defects are resolved. The separate native cold-run budget failure remains documented.
 The final build disables incremental compilation after a stale-object linker failure.
 Only inactive engine incremental caches in this task's target directory were removed.
-Reproduction artifacts and the final report are under `benchmark/async-family-integration/session-publication`
+Reproduction artifacts and the final report are under `packs/data-layer/upstream/benchmarks/authored/async-family-integration/session-publication`
 and `docs/comparisons/composed-session-publication-2026-11-10.md`.
 
 

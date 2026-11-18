@@ -14,7 +14,7 @@ The [third batch](data-layer-batch-three.md) now extends the gate to thirty chec
 The measurements below remain the original first-batch observations.
 
 Source: `2b1504adc4291daaf080b2e932962b134da1a69a` in the data-layer repository.
-The [evidence file](../fixtures/host/data-layer-port/batch-01-evidence.json) records counts, provenance, and the measured native binary hash.
+The [evidence file](../packs/data-layer/upstream/lint/authored/fixtures/host/data-layer-port/batch-01-evidence.json) records counts, provenance, and the measured native binary hash.
 The [batch manifest](../fixtures/host/data-layer-port/batches.json) retains all 142 checks in batches of ten, then two.
 The [engine feature ledger](data-layer-engine-gaps.md) tracks three proven branch features under one umbrella issue.
 Jeremy must approve every new Linear issue before creation.
@@ -43,7 +43,7 @@ The recorder verified 1,493 loaded Python source files against Git blob identiti
 
 The native replay contains 317 calls: 234 positive calls and 83 clean calls.
 Those calls contain 297 expected findings.
-The [recording](../fixtures/host/data-layer-port/batch-01-recording.json) is now a native CI fixture.
+The [recording](../packs/data-layer/upstream/lint/authored/fixtures/host/data-layer-port/batch-01-recording.json) is now a native CI fixture.
 Its original Python test modules are not bundled or published.
 The [native gate](../test/conformance/data-layer/ports.test.ts) replays this corpus without a data-layer checkout.
 The scorer preserves duplicates and compares check, code, path, and line.

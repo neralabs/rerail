@@ -1,6 +1,6 @@
 // data-layer-serverplan-quality in Rerail logic: part file for the relational clause `quality-conditional-1`
 // (repository-wide: no partitionBy), options at their defaults (entryPoint "all", oracleAnalyzer false). The policy is in
-// serverplan_quality.rdl. Source: gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-quality.json.
+// serverplan_quality.rdl. Source: packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/rules/data-layer-serverplan-quality.json.
 //
 // One relation per SQL stage, under the stage's name. The 20 inputs (syntax_0 … syntax_19, matchers verbatim) are
 // shards, by kind and by a text prefix, of one syntax table: the nodes the shared util `quality-conditional-1-selection`

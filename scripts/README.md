@@ -23,7 +23,7 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   points it lists, matches their filter), the licence allowlist, and the pre-commit check (`pre-commit.sh`: CI's lint
   and type-check job, before each commit, on the working tree merged into the local `origin/main` when the branch is
   behind it, as CI checks the pull request merged into main; `merged-checkout.mjs` makes that throwaway checkout).
-  `merge-audit.py` lists what a merge dropped from either side (docs/merging.md): run it before committing a merge.
+  `merge_audit.py` lists what a merge dropped from either side (docs/merging.md): run it before committing a merge.
 - `deps/`: pins that follow a dependency (`sync-pins.mjs`, `npm run deps:sync`): the OMP host and its release digests
   follow the OMP SDK, the ast-grep differential test's reference follows the ast-grep CLI, and `reviewer.yml`'s
   `reviewer_ref` follows the commit its `uses:` pins. `.github/workflows/dependabot-pins.yml` runs it on Dependabot's
@@ -82,7 +82,10 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   the upstream recording, a run main completes that the candidate does not, and a rule main ships that the candidate
   cannot run. A cell failing at the median runs `--confirm` more repetitions (a metric passing them is noisy: reported,
   not counted), and a confirmed slowdown is attributed to rules by timing each rule alone (`--drill`). By default a run
-  is quick: one run per side, a failing cell run once more, the shipped packs only. `prepare` exports the baseline (a
+  is quick: one run per side, a failing cell run once more, the shipped packs only. A pack's caps can be raised for
+  both sides (`--pack-cap python=56G,14400`); a `.rr` pack run that does not complete records how far it got and then
+  runs in fixed chunks (`--rr-chunk`), whose summed figures the report labels chunked; each `.rr` run records whether
+  its policies ran combined or alone. `prepare` exports the baseline (a
   checkout, a git ref, or `release:<version>`: the source at its tag with the published package's prebuilt engines, so
   the baseline is never built) and the corpora anywhere; `run` measures on Linux (taskset, GNU time, a cgroup), macOS
   (`time -l`, no CPU affinity, a polled memory cap: `platform-watch.mjs`) or Windows (a job object: `platform-win.cs`), as

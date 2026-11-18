@@ -2,7 +2,7 @@
 .description "Write type annotations in stub files without quotes; stubs resolve forward references natively, so quotes are never needed."
 .language python
 .mode steer
-.scope include "**/*"
+.scope include "**/*.pyi"
 
 // Ruff PYI020 (flake8-pyi), stubs only: a quoted type. Stubs resolve forward references, so quotes are never
 // needed. Every type context counts (annotations, `X: TypeAlias = …`, cast, TypeVar bounds, a generic's

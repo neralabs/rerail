@@ -102,7 +102,7 @@ Rust capacity tests also cover admission, original result order, peer isolation,
 
 ## Recorded results
 
-The [evidence](../fixtures/host/data-layer-port/profiling/batched-producer-evidence.json) records the source hashes, binary hashes, shape receipts, parity checks, and matched measurements.
+The [evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/batched-producer-evidence.json) records the source hashes, binary hashes, shape receipts, parity checks, and matched measurements.
 The production five-file workload issues 78,911 subtree requests across six relations in one three-pass wave.
 It prepares five syntax documents once.
 

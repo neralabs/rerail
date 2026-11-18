@@ -136,7 +136,7 @@ Measurements and decisions appear in the performance journal and the composition
 ## Results and decisions
 
 The [journal](data-layer-performance-journal.md#sql-composition-opportunities-2026-10-22) contains the complete comparison table.
-The [checked evidence](../fixtures/host/data-layer-port/profiling/sql-composition-20261022.json) contains six rotated trials for every primary alternative.
+The [checked evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/sql-composition-20261022.json) contains six rotated trials for every primary alternative.
 
 | Opportunity | Measured kernel CPU | Decision |
 | --- | --- | --- |

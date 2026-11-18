@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { loadNativeBinding } from "../../../src/engine/native/native.js";
 import { SENSITIVE_FILE_NAMES, SENSITIVE_FOLDER_NAMES } from "../../../src/engine/path-boundary.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
-import { queryContentStore } from "../../support/content-store-query.js";
+import { queryContentStore } from "../../support/engine/content-store-query.js";
 
 const capabilities = JSON.stringify({
   format: "rerail.policy-capabilities/v1",

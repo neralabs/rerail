@@ -2,7 +2,7 @@
 .description "Replace complex default values of untyped parameters in stub files with an ellipsis; only simple literal defaults belong in a stub."
 .language python
 .mode steer
-.scope include "**/*"
+.scope include "**/*.pyi"
 
 // Ruff PYI014 (flake8-pyi), stubs only: an unannotated parameter's default that is not a simple value (see
 // python/typing's simple_value: literals, `-1`, `1 + 2j`, math and sys constants, small flat containers).

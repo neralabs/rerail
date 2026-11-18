@@ -6,7 +6,7 @@ The private pack remains inactive; `packs/data-layer/pack.json` has an empty `ru
 No Linear issues were created or amended.
 
 The source pin remains `2b1504adc4291daaf080b2e932962b134da1a69a` in the data-layer repository.
-The [evidence file](../fixtures/host/data-layer-port/batch-05-evidence.json) records policy hashes, coverage, measurements, and remaining integration contracts.
+The [evidence file](../packs/data-layer/upstream/lint/authored/fixtures/host/data-layer-port/batch-05-evidence.json) records policy hashes, coverage, measurements, and remaining integration contracts.
 
 ## Rules and parity
 
@@ -101,8 +101,8 @@ The [DSL reference](code-rule-dsl-reference.html#relational-clause) documents th
 ## TDD ladders and root causes
 
 The port progressed through reduced source cases, native execution-path comparisons, incremental edits, and the complete repository oracle.
-The [graph corpus](../fixtures/host/data-layer-port/batch-05-remaining-graph-probes.json) contains 51 declaration-resolution cases.
-The [relational corpus](../fixtures/host/data-layer-port/batch-05-relational-probes.json) contains 68 family and reachability cases.
+The [graph corpus](../packs/data-layer/upstream/lint/authored/fixtures/host/data-layer-port/batch-05-remaining-graph-probes.json) contains 51 declaration-resolution cases.
+The [relational corpus](../packs/data-layer/upstream/lint/authored/fixtures/host/data-layer-port/batch-05-relational-probes.json) contains 68 family and reachability cases.
 
 | Failure | Root cause | Correction and regression |
 |---|---|---|

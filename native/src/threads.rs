@@ -30,8 +30,8 @@ pub fn is_main_thread() -> bool {
     }
     #[cfg(target_os = "linux")]
     {
-        // SAFETY: no arguments.
-        unsafe { libc::gettid() == libc::getpid() }
+        // SAFETY: no arguments. The system call, not glibc's `gettid` (2.30): the Linux engine links against 2.17.
+        unsafe { libc::syscall(libc::SYS_gettid) == libc::c_long::from(libc::getpid()) }
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {

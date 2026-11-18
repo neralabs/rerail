@@ -6,7 +6,7 @@ The first batch still passes.
 The twenty policies remain inactive candidates while integration work remains open.
 
 The oracle revision is `2b1504adc4291daaf080b2e932962b134da1a69a` in the data-layer repository.
-The [evidence file](../fixtures/host/data-layer-port/batch-02-evidence.json) records provenance, coverage, policy digests, and the native binary hash.
+The [evidence file](../packs/data-layer/upstream/lint/authored/fixtures/host/data-layer-port/batch-02-evidence.json) records provenance, coverage, policy digests, and the native binary hash.
 No new Linear issues were created.
 Jeremy must approve every proposed issue before creation.
 
@@ -33,12 +33,12 @@ The batch unit remains a source `LinterConfig` check, rather than an individual 
 
 All 700 original pytest cases passed with the original root configuration and fixtures.
 The recorder checked 1,504 loaded Python source files against pinned Git blobs, with no mismatch.
-The [original corpus](../fixtures/host/data-layer-port/batch-02-recording.json) contains 275 replayable analyzer calls.
+The [original corpus](../packs/data-layer/upstream/lint/authored/fixtures/host/data-layer-port/batch-02-recording.json) contains 275 replayable analyzer calls.
 Another 29 calls retain Python-only contracts, such as mocked readers or unreadable files.
 Another 399 tests have no recorded analyzer call.
 Those tests remain visible; they do not count as native parity cases.
 
-The [supplemental corpus](../fixtures/host/data-layer-port/batch-02-probes.json) contains 58 additional source cases.
+The [supplemental corpus](../packs/data-layer/upstream/lint/authored/fixtures/host/data-layer-port/batch-02-probes.json) contains 58 additional source cases.
 Each case runs through both the pinned analyzer and its actual FactEngine plugin reporter.
 This produces 116 calls: 74 positive and 42 clean, with 84 expected findings.
 These are additional oracle probes, separate from the original 700 pytest cases.
