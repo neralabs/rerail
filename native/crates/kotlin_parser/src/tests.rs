@@ -3,6 +3,16 @@
 
 use super::*;
 
+/// The tests' grammar: the crate's, or `RERAIL_KOTLIN_GRAMMAR`'s file (a variant tried without a
+/// rebuild). It shadows the crate's `compiled`.
+fn compiled() -> Result<&'static Compiled, &'static str> {
+    static OTHER: std::sync::OnceLock<Result<Compiled, String>> = std::sync::OnceLock::new();
+    match std::env::var("RERAIL_KOTLIN_GRAMMAR") {
+        Ok(p) => OTHER.get_or_init(|| compile_text(&std::fs::read_to_string(p).expect("the grammar file"))).as_ref().map_err(String::as_str),
+        Err(_) => super::compiled(),
+    }
+}
+
 /// Each of `texts` read by the compiled grammar as the lean parser reads it.
 fn same(texts: &[&str]) {
     let c = compiled().unwrap_or_else(|e| panic!("the grammar compiles: {e}"));
@@ -377,6 +387,17 @@ fn strings_in_templates_are_the_lean_parsers() {
 }
 
 #[test]
+fn annotated_expressions_are_the_lean_parsers() {
+    same(&[
+        "fun f() {\n    @Suppress(\"D\")\n    if (a) b()\n}\n",
+        "fun f() {\n    @Suppress(\"D\") if (a) b() else c()\n    @Suppress(\"D\")\n    val x = 1\n}\n",
+        "fun f() {\n    @Suppress(\"D\", \"E\")\n    when (a) {\n        1 -> b()\n    }\n}\n",
+        "val x = when (a) {\n    B,\n    C,\n    -> d\n    else -> e\n}\n",
+        "val x = when (a) {\n    B, C, -> d\n    in r -> e\n    else -> f\n}\n",
+    ]);
+}
+
+#[test]
 fn function_types_are_the_lean_parsers() {
     same(&[
         "val h: HTML.() -> Unit = {}\n",
@@ -446,9 +467,7 @@ fn what_step_24_does_not_read_is_refused() {
 fn what_step_23_does_not_read_is_refused() {
     refused(&[
         "fun interface P {\n    fun f()\n}\n",
-        "fun f() {\n    @Suppress(\"D\")\n    if (a) b()\n}\n",
         "fun f(g: ((Int) -> Int) -> Int) {}\n",
-        "val x = when (a) {\n    B,\n    C,\n    -> d\n    else -> e\n}\n",
     ]);
 }
 

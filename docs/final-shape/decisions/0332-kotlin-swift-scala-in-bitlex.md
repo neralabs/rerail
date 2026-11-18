@@ -654,8 +654,9 @@ fun f() {
 - `class` after `::` (`this::class`) is no class's keyword. It began a class header, and
   step 25's body mark then fell on a later `by lazy {`.
 
-Still refused: a `when` entry's trailing comma. Its `trail` mark didn't hold on the `,` before
-`->`, and the change broke a `when` entry starting with `in`; it was taken out of the step.
+Still refused: a `when` entry's trailing comma. The change broke a `when` entry starting with
+`in`, so it was taken out of the step. The cause was a slip in the edit, not the mark: the rule
+lost its body. Step 29 reads it.
 
 Corpus: 397 the same (step 25: 391), 94 refused, 0 differ.
 
@@ -701,6 +702,31 @@ fun f(w: A.B.() -> Unit, v: suspend () -> T) {}
   now says when the token it names is a mark.
 
 Corpus: 405 the same (step 27: 400), 86 refused, 0 differ.
+
+## Kotlin, step 29 (`29-annotated-expressions.bitlex`)
+
+```kotlin
+fun f() {
+    @Suppress("DEPRECATION")
+    if (a) b()
+    when (x) {
+        B,
+        C,
+        -> d
+    }
+}
+```
+
+- An `@` whose annotation's `)` comes just before an `if` or a `when` takes `generic`
+  (`ann_expr`). Its annotation then begins a `prefix_expression` over the `if` or `when`, as
+  in the lean parser's tree. An unmarked `@` begins a declaration's modifiers, so
+  `@Suppress("D")` before `val` is unchanged. That annotation's arguments are not optional
+  (`args_annotation`), since a `(` after its name could also begin the operand. An annotation
+  without arguments before an expression is still refused.
+- A `when` entry's trailing `,` before `->` takes `trail` (`"->"` added to its tokens). It is a
+  leaf in its own choice (`when_trail`), because `when_entry`'s other `,`s are implied.
+
+Corpus: 409 the same (step 28: 405), 82 refused, 0 differ.
 
 ## The compiler's additions
 
