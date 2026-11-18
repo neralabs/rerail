@@ -63,7 +63,41 @@ Tests:
 
 ## L2. Contexts across the batch
 
-To come.
+A thread's context is a column of one table a batch: row `j` holds every context's 8 bytes at
+offset `8 j`. A SIMD group's 32 lanes then read one field as 32 adjacent words, one line,
+where each context as its own block took 32 lines.
+
+- **`clif_msl`:** a load or store whose base is the context (the function's first parameter,
+  or it plus a constant) is printed as `context + slot * cs + byte`. Here `cs` is the table's
+  row bytes, a kernel argument passed to each function. A thread's context address is the
+  table's start plus 8 bytes a thread.
+- **The context is only ever a field's base** (`context_uses`): a load or store within one
+  8-byte slot, a callee's context, or plus a constant for the same uses. Any other use is an
+  error, never a fallback: an address made by a value, the context as a value, a field across
+  two slots.
+- **The check found three places** where the words' IR made an address from the context.
+  Each is now its fields, on every backend:
+  - `pragma_toks[n]` is written at each `n`'s own offset;
+  - `__LINE__`'s walk from `like` through the expansions carries a token's `exp`, `buf` and
+    `start`, not its address (`line_of_at`);
+  - the pragma's first token is the marker or `kept[lo]`, chosen word by word, not by address.
+- **`pp_on`** lays the table out transposed and reads each context back from its column.
+  `Ctx` is a multiple of 8 bytes, which a compile-time assert checks.
+
+Measured with the spike's test (`the_metal_words_time_against_the_jit`, M5 Max, not quiet, the
+host loaded):
+
+| | 5a | L1 and L2 |
+|---|---|---|
+| The largest arena a run | 3.2 MB | 95 KB |
+| One run on one thread | 3,798 µs | 1,611 µs |
+| A batch of 128 copies, a run | 25 µs | 15.1 µs |
+
+Tests:
+- `clif_msl`'s `a_context_field_is_its_slots_row` and `the_context_as_a_value_is_refused`;
+- `the_metal_words_are_the_interpreters`;
+- the corpus (`the_corpus_compiled_is_the_interpreters`): 3,073 the same, 0 differ, after the
+  three IR changes.
 
 ## L3. Rounds as batches
 

@@ -1153,6 +1153,8 @@ pub struct Prepared<'a> {
 impl Prepared<'_> {
     /// The context's bytes, to copy where the code runs.
     pub fn ctx_bytes(&self) -> &[u8] {
+        // The device lays contexts out by 8-byte slots (0408, L2).
+        const _: () = assert!(std::mem::size_of::<Ctx>() % 8 == 0);
         // SAFETY: `Ctx` is plain old data (`repr(C)`), read as bytes.
         unsafe { std::slice::from_raw_parts((&raw const self.c).cast::<u8>(), std::mem::size_of::<Ctx>()) }
     }
