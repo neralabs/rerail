@@ -10361,7 +10361,16 @@ pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
     } else {
     // Phase 0's observer lists each directory: again only when its stat changed (t23).
     let mut pending = vec![root.to_path_buf()];
-    observe(|o| o.preload(root));
+    // The run reads its files by their canonical paths too (`Observer::canonical`): a root reached through a symlink
+    // (macOS's `/var` is `/private/var`) has its real part read before the waves as well, where no store is asked.
+    observe(|o| {
+        o.preload(root);
+        if let Ok(real) = dunce::canonicalize(root)
+            && real != root
+        {
+            o.preload(&real);
+        }
+    });
     while let Some(dir) = pending.pop() {
         let listing = observe(|o| o.listing(&dir)).ok_or_else(|| Error::Plan(format!("{}: not a readable directory", dir.display())))?;
         for (name, is_dir) in listing.iter() {
