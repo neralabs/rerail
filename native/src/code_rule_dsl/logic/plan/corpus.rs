@@ -2252,7 +2252,6 @@ fn wanted_cone(local: &lower::Lowered, wanted: &BTreeSet<String>) -> lower::Lowe
     };
     {
         let v = local.version.clone();
-        debug_assert!(local.maint.is_none(), "a split's file-local part is not maintained");
         let cone = closure(&|cone| {
             v.rules()
                 .filter(|r| cone.contains(v.rel_name(r.head().rel())))

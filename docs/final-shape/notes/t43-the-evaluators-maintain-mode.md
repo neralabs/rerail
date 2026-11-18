@@ -132,4 +132,19 @@ A session's relations stay in their blocks between runs; nothing moves to frames
       own stratum;
     - recursive strata whose kept rows have no levels;
     - readers of the reach index (derived again by design).
-
+- Stage 6: the forms are gone.
+  - ebd966e73 (6a): a stratum the mode does not take is derived again, with no form. Its delta is its diff against
+    its kept rows (`kept_delta`); a relation derived again that did not change is not counted as moved.
+  - 0098f4340 (6b): a part the level driver does not walk (no kept part, or gates) derives its cut's strata again.
+  - 6c, in two commits:
+    - The writer: maintain.rs went from 2,002 lines to what a run reports (`Maintained`, `levels_wanted`, the
+      levels counter). Also gone: `Slot::Reached`, the form jobs, `general_selection`, the `Driver`'s form fields,
+      `RERAIL_SESSION_VIEWS`, and the O125 counts of `__del`, `__ins` and `__cand` rows.
+    - The forms' layer in the program: `body::Maint`, `AgainRef`, `Group`, `Placed.maint`, `Versions`' again
+      list, the AST's `Program::again` and `together` and `front::Again`, the `together` rings of the components
+      search (`front::apart`), `Builder::of_program_less_maintenance`, and in the driver 0090 §4's choice between
+      maintaining and deriving again, with its deferred deltas (`RERAIL_AGAIN_DEFER`, `RERAIL_AGAIN_THETA`, …).
+      Also gone: the form strands (`strand_forms`, `run_forms`, `absorb_forms`), `add_form`, `add_again` and
+      `spike_delta`. A maintained run (`maintaining`) still keeps its seed joins out of the level batch, as its
+      groups did.
+  - Red throughout, as before this work: Q80, Q114 and Q115. Q115 also covers two rr tests first run here.

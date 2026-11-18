@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 /// The image of module `m`.
 pub fn encode(m: &Module) -> Result<Vec<u8>, String> {
     let p = m.parts();
-    let mut b = Builder::of_program_less_maintenance(&p.prog)?;
+    let mut b = Builder::of_program(&p.prog)?;
     let mut about = crate::code_rule_dsl::logic::program_image::about_of(&p.prog);
     let s = |t: &str| Value::Str(t.into());
     let n = |k: usize| Value::Int(k as i64);

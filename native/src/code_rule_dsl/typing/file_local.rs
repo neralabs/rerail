@@ -1010,10 +1010,6 @@ pub struct Parts {
 }
 
 pub fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Result<Programs, String> {
-    // A split of a maintained program (its `again`, `together`) has no image: refused.
-    if !prog.again.is_empty() || !prog.together.is_empty() {
-        return Err("a maintained program is not split".into());
-    }
     let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(prog)?.finish()?;
     programs_of(v)
 }

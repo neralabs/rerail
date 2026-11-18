@@ -812,26 +812,16 @@ impl Retained {
         self.inputs.get(rel).copied()
     }
 
-    /// Whether the last run's rows of a relation or an input are kept.
-    /// Whether `rel`'s old rows are kept, read or not yet: a derived relation the part holds or the frames hold, or an
-    /// input whose source the last run kept (decision 0298: what a general form takes as kept).
-    pub(in crate::code_rule_dsl) fn holds_old(&self, rel: &str) -> bool {
-        self.keeps(rel) || self.input_srcs.contains_key(rel)
-    }
-
-    pub(in crate::code_rule_dsl) fn has_old(&self, rel: &str) -> bool {
-        self.rels.contains_key(rel) || self.late.borrow().contains_key(rel) || self.input_srcs.contains_key(rel)
-    }
-    /// A relation's or an input's rows as the last run had them, as a source named `name` (`sql_col`), with the
-    /// engine's relation for a derived one (to adopt, read in place).
-    /// An input's statistics as the last run planned it.
     /// The documents the last run read, if under the file-local program `program`.
     pub(in crate::code_rule_dsl) fn docs(&self, program: &[u8; 32]) -> Option<&super::input_delta::Docs> {
         (self.docs.1 == *program).then_some(&self.docs.0)
     }
+    /// An input's statistics as the last run planned it.
     pub(in crate::code_rule_dsl) fn input_stats(&self, rel: &str) -> Option<&InputStats> {
         self.input_stats.get(rel)
     }
+    /// A relation's or an input's rows as the last run had them, as a source named `name` (`sql_col`), with the
+    /// engine's relation for a derived one (to adopt, read in place).
     pub(in crate::code_rule_dsl) fn old_source(&self, rel: &str, name: &str) -> Option<(Arc<dyn Source>, Option<Arc<InRel>>)> {
         if let Some(k) = self.rels.get(rel) {
             return Some((k.source(name), Some(Arc::clone(&k.rel))));
@@ -843,12 +833,6 @@ impl Retained {
             let names = (0..s.columns().len()).map(|c| crate::code_rule_dsl::logic::plan::sql_col(name, c)).collect();
             (Arc::new(Renamed(Arc::clone(s), names)) as Arc<dyn Source>, None)
         })
-    }
-    /// A relation's or an input's rows as the last run had them, copied (for the spikes' checks).
-    pub(in crate::code_rule_dsl) fn old_rows(&self, rel: &str) -> Option<Vec<Vec<i64>>> {
-        let (s, _) = self.old_source(rel, rel)?;
-        let w = s.columns().len();
-        Some((0..s.len()).map(|i| (0..w).map(|c| s.value(i, c)).collect()).collect())
     }
     pub(in crate::code_rule_dsl) fn relations(&self) -> usize {
         self.rels.len()
@@ -1310,7 +1294,7 @@ pub mod tests {
         let result=cut(Some(&kept),key,&pl(&p),&st(&p),&inputs).unwrap();
         assert_eq!(result.strata,(0,strata.len()));
         let v=crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap().0;
-        let lowered=lower::Lowered {version:v,maint:None,domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};
+        let lowered=lower::Lowered {version:v,domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};
         let reused=result.program(&lowered).unwrap();
         let placed=reused.placed().unwrap();
         // A view of an input's columns (Q37: `kind(n, k) :- node(_, n, k, _, _).`) is never kept: its rule stays, to

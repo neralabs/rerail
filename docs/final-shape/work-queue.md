@@ -2580,7 +2580,9 @@ Found 2026-11-17, during 0364 stage 3. Red with the maintain mode off too (`RERA
 stage 3's: `base_tests::value_types_are_ws_value_types` ("the version after `simplify` is the tree's": `asked`
 row `("a", "rr_value_req", 0, "vals")` against `… 1 …`), `tests::a_pair_of_programs_asking_for_an_attribute_through_the_library_stratifies`
 (the combine's tail: `asked` rows' reader indices off by one), and `tests::libraries_are_held_once_and_equal_requests_share_one_cone`
-(a panic in `rr.rs:308` on a CPU thread).
+(a panic in `rr.rs:308` on a CPU thread). Two rr tests show the same (seen 2026-11-17, at 0364 stage 6c, the
+first time they ran in this work): `rr::tests::an_attribute_a_cross_file_reader_asks_for_is_eager` (`asked` row
+`… 0 …` against `… 1 …` after `simplify`) and `rr::tests::a_cone_copied_onto_the_version_is_the_trees` (`rr.rs:308`).
 
 - **Seen**: each `asked` row's rule index (the request's `k`-th rule) differs by one between the version's passes and
   the tree's, after a request rule is dropped or kept on one side only (`subsume_requests`, `prune`'s gate).
