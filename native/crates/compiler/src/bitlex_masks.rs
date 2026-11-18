@@ -788,7 +788,7 @@ impl Lowering {
                             // after the opener is its own region's: the bytes before it are
                             // its fill's.
                             let (opener, closer) = match rs.as_slice() {
-                                [r] => (self.expr(&r.opener)?, self.expr(&r.closer)?),
+                                [r] => (self.expr(&r.opener)?, self.expr(&r.closers())?),
                                 _ => {
                                     let name = |x: String| Expr::Name(x);
                                     let or = |a: Expr, b: Expr| Expr::Or(Box::new(a), Box::new(b));
@@ -796,7 +796,7 @@ impl Lowering {
                                     let c = rs
                                         .iter()
                                         .map(|r| {
-                                            rs.iter().filter(|q| q.kind != r.kind).fold(r.closer.clone(), |c, q| Expr::And(Box::new(c), Box::new(Expr::Not(Box::new(name(format!("f_{}", q.kind)))))))
+                                            rs.iter().filter(|q| q.kind != r.kind).fold(r.closers(), |c, q| Expr::And(Box::new(c), Box::new(Expr::Not(Box::new(name(format!("f_{}", q.kind)))))))
                                         })
                                         .reduce(or)
                                         .expect("a region");
@@ -825,6 +825,9 @@ impl Lowering {
                         Some(::bitlex::syntax::TokenRule::Read(regions)) => {
                             let mut arms = Vec::new();
                             for r in regions {
+                                if r.or.is_some() {
+                                    return Err(format!("token {kind}: a `read` of region {} with a second closer: read it in parts", r.kind));
+                                }
                                 let (opener, closer) = (self.expr(&r.opener)?, self.expr(&r.closer)?);
                                 let off = if r.outside { -1 } else { r.bytes as i8 - 1 };
                                 let none = match (&r.empty, r.outside) {
@@ -1006,11 +1009,16 @@ impl Lowering {
     /// `back_fill` at `D - 1`: the same bits, a byte on.
     pub fn regions(&mut self, regions: &::bitlex::syntax::Regions) -> Result<(), String> {
         let mut inputs = Vec::new();
+        let mut seconds = Vec::new();
         for r in &regions.kinds {
             inputs.push((self.expr(&r.opener)?, self.expr(&r.closer)?));
+            seconds.push(match &r.or {
+                Some((c2, m)) => Some((self.expr(c2)?, *m)),
+                None => None,
+            });
         }
         let later = regions.kinds.iter().any(|r| r.empty.is_some());
-        let d = inputs.iter().flat_map(|(o, c)| [o.d, c.d]).max().unwrap_or(0) + u8::from(later);
+        let d = inputs.iter().flat_map(|(o, c)| [o.d, c.d]).chain(seconds.iter().flatten().map(|(c, _)| c.d)).max().unwrap_or(0) + u8::from(later);
         let zero = self.op(BlockOp::Const(0));
         let w = self.within(d)?;
         let clean = |me: &mut Self, x: Val, d: u8| -> Result<u16, String> {
@@ -1018,10 +1026,17 @@ impl Lowering {
             let w = me.within(d)?;
             Ok(me.op(BlockOp::And(v, w)))
         };
+        // Each kind's opener and closer at `D`; with `or C2`, the closer `C | C2` and `C2`.
         let mut ins = Vec::new();
-        for &(o, c) in &inputs {
+        for (&(o, c), second) in inputs.iter().zip(&seconds) {
             let later = if later { Some(clean(self, c, d - 1)?) } else { None };
-            ins.push((clean(self, o, d)?, clean(self, c, d)?, later));
+            let (mut closer, mut or) = (clean(self, c, d)?, None);
+            if let Some((c2, m)) = *second {
+                let c2 = clean(self, c2, d)?;
+                closer = self.op(BlockOp::Or(closer, c2));
+                or = Some((c2, m));
+            }
+            ins.push((clean(self, o, d)?, closer, later, or));
         }
         let hidden = self.program.ops.len() as u16;
         self.program.ops.push(BlockOp::Carry(zero));
@@ -1031,8 +1046,37 @@ impl Lowering {
         let named = |me: &mut Self, name: String, v: u16| {
             me.names.insert(name, Val { v, d, dirty: true, set: None });
         };
-        for (r, &(opener, closer, c_before)) in regions.kinds.iter().zip(&ins) {
-            let taken = self.op(BlockOp::And(opener, code));
+        // The kinds with no `after` first: a kind with one reads their openers taken. Each
+        // kind keeps its place in the walk (`WalkKind::after` names kinds by it).
+        let n = regions.kinds.len();
+        let order: Vec<usize> = (0..n).filter(|&k| regions.kinds[k].after.is_empty()).chain((0..n).filter(|&k| !regions.kinds[k].after.is_empty())).collect();
+        let mut opens: Vec<Option<u16>> = vec![None; n];
+        let mut made: Vec<Option<crate::block::WalkKind>> = vec![None; n];
+        for at in order {
+            let (r, &(opener, closer, c_before, or)) = (&regions.kinds[at], &ins[at]);
+            let mut taken = self.op(BlockOp::And(opener, code));
+            let mut after = 0u16;
+            if !r.after.is_empty() {
+                // Taken where the last plain kind's opener taken before is one `after` names.
+                let mut named = None;
+                let mut others = None;
+                for (k, q) in regions.kinds.iter().enumerate().filter(|(_, q)| q.after.is_empty()) {
+                    let o = opens[k].expect("a plain kind, made first");
+                    let side = if r.after.contains(&q.kind) {
+                        after |= 1 << k;
+                        &mut named
+                    } else {
+                        &mut others
+                    };
+                    *side = Some(match *side {
+                        Some(x) => self.op(BlockOp::Or(x, o)),
+                        None => o,
+                    });
+                }
+                let last = self.op(BlockOp::Fill(named.expect("verified: a kind named"), others.unwrap_or(zero)));
+                let before = self.op(BlockOp::Prev(last, 1));
+                taken = self.op(BlockOp::And(taken, before));
+            }
             let (open, empty) = match &r.empty {
                 Some((e, m)) => {
                     let later = self.op(BlockOp::BackFill(c_before.expect("made with an else"), zero));
@@ -1046,10 +1090,23 @@ impl Lowering {
                 }
                 None => (taken, None),
             };
+            opens[at] = Some(open);
             let fill = self.op(BlockOp::Fill(open, closer));
             if r.outside {
                 let p = self.op(BlockOp::Prev(fill, 1));
                 hide.push(self.op(BlockOp::AndNot(p, closer)));
+            } else if let Some((c2, m)) = or {
+                // From the closer's first byte (`c`): `N - 1` bytes more, `M - 1` at a `C2`.
+                let p = self.op(BlockOp::Prev(fill, 1));
+                hide.push(p);
+                let c = self.op(BlockOp::AndNot(p, fill));
+                let (one, two) = (self.op(BlockOp::AndNot(c, c2)), self.op(BlockOp::And(c, c2)));
+                for k in 1..r.bytes {
+                    hide.push(self.op(BlockOp::Prev(one, k)));
+                }
+                for k in 1..m {
+                    hide.push(self.op(BlockOp::Prev(two, k)));
+                }
             } else {
                 for k in 1..=r.bytes {
                     hide.push(self.op(BlockOp::Prev(fill, k)));
@@ -1063,8 +1120,9 @@ impl Lowering {
             let before = self.prev(f, 1)?;
             let flips = self.xor(f, before)?;
             self.toggles.push((f, flips));
-            kinds.push(crate::block::WalkKind { opener, closer, open, fill, bytes: r.bytes, outside: r.outside, empty });
+            made[at] = Some(crate::block::WalkKind { opener, closer, open, fill, bytes: r.bytes, outside: r.outside, empty, or, after });
         }
+        kinds.extend(made.into_iter().map(|k| k.expect("each kind made")));
         let mut next = *hide.first().ok_or("regions that hide nothing")?;
         for &h in &hide[1..] {
             next = self.op(BlockOp::Or(next, h));
@@ -2287,7 +2345,7 @@ pub fn live_of(program: &BlockProgram, keep: &[bool]) -> BlockProgram {
         .iter()
         .filter_map(|w| {
             let group = kept_groups.iter().position(|&g| g == usize::from(w.group))? as u16;
-            let kinds = w.kinds.iter().map(|k| crate::block::WalkKind { opener: n(k.opener), closer: n(k.closer), open: n(k.open), fill: n(k.fill), empty: k.empty.map(|(e, m)| (n(e), m)), ..*k }).collect();
+            let kinds = w.kinds.iter().map(|k| crate::block::WalkKind { opener: n(k.opener), closer: n(k.closer), open: n(k.open), fill: n(k.fill), empty: k.empty.map(|(e, m)| (n(e), m)), or: k.or.map(|(c, m)| (n(c), m)), ..*k }).collect();
             Some(crate::block::Walk { group, hidden: n(w.hidden), kinds })
         })
         .collect();

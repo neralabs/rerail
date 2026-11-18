@@ -386,6 +386,35 @@ fn strings_in_templates_are_the_lean_parsers() {
     ]);
 }
 
+/// Step 35: templates in raw strings.
+#[test]
+fn raw_templates_are_the_lean_parsers() {
+    same(&[
+        "val x = \"\"\"a ${b} \"c\" ${d}\"\"\"\nval y = \"\"\"${e}\"\"\"\n",
+        "val x = \"\"\"\n  a $b ${c.d}\n  \"q\" \"\"\n\"\"\"\n",
+        "val h = \"\"\"${a}\"\"\"\n",
+        "val s = \"a ${f('x')} b ${g(\"y\")} c\" + \"\"\"${h} \"\"\" + \"${i}\"\n",
+        "fun q() = \"\"\"\n    SELECT * FROM ${t.name} WHERE a = ${b + 1}\n    AND c = '$d'\n\"\"\".trimIndent()\n",
+    ]);
+    // A raw string's template at a block's edge (bytes 64, 65, 128): its `$`, its `}` and the
+    // raw tail after it each across a block from the string's opener.
+    let at = |q: usize, line: &str| format!("//{}\n{line}\n", "x".repeat(q - line.find('$').expect("a dollar") - 3));
+    let lines = ["val v = \"\"\"c${a}d\"\"\"", "val v = \"\"\"${a} ${b}\"\"\"", "val v = \"\"\"c${ab}\"\"\""];
+    let texts: Vec<String> = [64, 65, 66, 128].iter().flat_map(|&q| lines.iter().map(move |l| at(q, l))).collect();
+    same(&texts.iter().map(String::as_str).collect::<Vec<_>>());
+}
+
+#[test]
+fn what_step_35_does_not_read_is_refused() {
+    refused(&[
+        // A string, a character or a backtick name in a raw string's template: its `}` would
+        // open a tail; a raw string in a template, a raw tail.
+        "val h = \"\"\"${f(\"a\")}\"\"\"\n",
+        "val h = \"\"\"${f('a')}\"\"\"\n",
+        "val h = \"${f(\"\"\"a\"\"\")}\"\n",
+    ]);
+}
+
 #[test]
 fn soft_names_are_the_lean_parsers() {
     same(&[
@@ -567,7 +596,6 @@ fn what_step_21_does_not_read_is_refused() {
     refused(&[
         "val h = \"\"\"\"a\"\"\"\n",
         "val h = \"\"\"a\"\"\"\"\n",
-        "val h = \"\"\"${a}\"\"\"\n",
         "val h = \"\"\"\\$a\"\"\"\n",
     ]);
 }

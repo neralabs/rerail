@@ -834,6 +834,40 @@ but here a function's `fun` is implied. The `interface` after it comes too late 
 
 Corpus: 423 the same (step 33: 420), 68 refused, 0 differ.
 
+## Kotlin, step 35 (`35-raw-templates.bitlex`)
+
+```kotlin
+val x = """a ${b} "c" $d"""
+```
+
+A template in a raw string needs the regions to go back, after the template's `}`, to the kind
+of string the template interrupted: a raw string reads its quotes as content, and closes at
+`"""`, not at `"`. Two additions to `regions` (compiler item 29) make that:
+
+```text
+rstr  = dq3 .. rclose bytes 3 or t_dollar
+str   = dq & ~dq3 .. dq_close | t_dollar
+tail  = t_close .. dq_close | t_dollar after str chr tick
+rtail = t_close .. rclose bytes 3 or t_dollar after rstr
+```
+
+- `or C2 bytes M`: a second closer with its own length. A raw string's `"""` is three bytes
+  and a template's `$` one.
+- `after K …`: the kind opens only where the last region opened before, of the kinds with no
+  `after`, is one of `K …`. A `}` after a raw string's template opens a raw tail. After a
+  string's template, it opens a tail, also when the template's code holds a string, a
+  character or a backtick name (`"${f('x')}"`).
+
+A raw tail is read as a raw string's bytes are (`rbody`), so a run that reaches a quote is a
+part of its own, as in the lean tree. Its closers are the tail reader's: `'"'` of three bytes
+at a `"""`, one at a tail's `"`. `string_literal` takes templates after a raw string's `'""'`.
+
+Refused: a string, a character or a backtick name in a raw string's template's code (the last
+plain region would be that one, and its `}` would open a tail), and a raw string in a
+template's code.
+
+Corpus: 429 the same (step 34: 423), 62 refused, 0 differ. The 9 files refused for a template in a raw string are read, or stop at a refusal of another kind.
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment
@@ -1012,6 +1046,20 @@ Single-extra grammars compile as before: rr's tests and the compiler's targeted 
     holds it with no record before: Bitlex's evaluator, `stream::token_mark_holds` (as it
     was), the Cranelift stream's pattern, and `rust_stream`'s. The validator allows `not` with
     `end` at -1 only. An `end` stays last among the elements after the mark's token.
+29. **A region's second closer, and a kind that goes back to another** (step 35). In
+    `regions`, `K = O .. C bytes N or C2 bytes M`: the region closes at either, and one of
+    `C2` hides `M` bytes. In the walk (`WalkKind::or`), `closer` is `C | C2` and the bytes
+    past a closer at `c` are `M` where `C2` has a bit at `c`. In the rounds, they come from
+    the closer's first byte, `c = prev(f) & ~f`: `prev(c & ~C2, 1..N-1) | prev(c & C2,
+    1..M-1)`. `K = … after A …` (`WalkKind::after`, a mask of kinds) opens only where the last
+    region opened before, of the kinds with no `after`, is an `A`. In the rounds that is
+    `o_K = O & ~H & prev(fill(o_A | …, o_others))`, with the plain kinds made first so it reads
+    their openers. The walks keep that kind: the interpreter's in a variable, the CPU's in the
+    region loop's second parameter and in four bits of its state past the flags
+    (`WalkState::width`). A kind whose condition fails takes no opener: it can change only at
+    an opening, which ends the search. Bitlex's evaluator runs the rounds (`Regions::body`);
+    Metal runs the rounds too. A reader in parts counts its own closers' bytes by
+    `Region::closer_last`. A plain `read` of a region with `or` is refused.
 
 ## Found on the way
 
