@@ -1089,7 +1089,7 @@ fn version_of(program: &Program) -> Result<std::sync::Arc<super::program_image::
 }
 
 fn encode_program(program: &Program) -> Result<Vec<u8>, String> {
-    let mut b = super::program_image::Builder::of_program_less_maintenance(program)?;
+    let mut b = super::program_image::Builder::of_program(program)?;
     b.set_about(&super::program_image::about_of(program));
     b.finish_bytes()
 }

@@ -3802,7 +3802,7 @@ fn library_modules_link_to_the_lowering_of_them_together() {
         // And linked on versions from the images (decision 0377): the program the tree's link makes.
         let on_versions = super::link_library_versions(images.clone()).unwrap_or_else(|e| panic!("{}: linked on versions: {e}", dir.display()));
         let linked = lower::link(modules).unwrap();
-        let tree = crate::code_rule_dsl::logic::program_image::Builder::of_program_less_maintenance(&linked).unwrap().finish().unwrap().0;
+        let tree = crate::code_rule_dsl::logic::program_image::Builder::of_program(&linked).unwrap().finish().unwrap().0;
         assert_eq!((tree.size(), tree.digest()), (on_versions.size(), on_versions.digest()), "{}: the library linked on versions from its images: {}", dir.display(), crate::code_rule_dsl::logic::program_image::differences(&tree, &on_versions));
         let from_images = print(&lower::link(images).unwrap()).unwrap();
         let (a, b) = (print(&together).unwrap(), print(&linked).unwrap());

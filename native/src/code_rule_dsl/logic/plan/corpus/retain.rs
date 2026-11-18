@@ -111,16 +111,19 @@ impl Patched {
     /// The statistics of `new`, derived from `old` (whose these are) by `delta_since`: these patched by its rows
     /// gone and added. `None` if `new` did not start as `old`.
     pub(in crate::code_rule_dsl) fn after(&self, old: &InRel, new: &Arc<InRel>, width: usize) -> Option<Patched> {
-        let (added, removed) = new.delta_since(old)?;
+        // Its change read where its rows lie, none copied (0364 R2).
+        let d = new.delta_ids_since(old)?;
         let mut p = self.clone();
         p.at = Arc::as_ptr(new) as *const u8 as usize;
-        p.stats.delta(&added, &removed, width);
+        let (gone, added) = d.counts();
+        p.stats.delta_each((added, gone), width, &|sign, f| d.each(sign, f));
         // Each constant's count, by the rows of its column holding it.
         let index: HashMap<&str, usize> = p.stats.columns().iter().enumerate().map(|(c, n)| (n.as_str(), c)).collect();
         for (name, v, n) in &mut p.counts {
             let Some(&c) = index.get(name.as_str()).filter(|c| **c < width) else { continue };
-            let count = |flat: &[i64]| flat.chunks_exact(width).filter(|r| r[c] == *v).count() as i64;
-            *n += count(&added) - count(&removed);
+            for sign in [1i64, -1] {
+                d.each(sign, &mut |r| if r[c] == *v { *n += sign });
+            }
         }
         Some(p)
     }
@@ -432,13 +435,23 @@ pub(in crate::code_rule_dsl) fn cut(kept: Option<&Retained>, key: [u8; 32], prog
     let mut dirty: BTreeSet<String> = changed.iter().cloned().collect();
     let mut clean = BTreeSet::new();
     // Gates decide on the whole program. Reuse it only when every input and derived relation survived unchanged.
-    // A view of one input (`input_views`, only with `RERAIL_SESSION_VIEWS=on`) is never kept: its rule stays.
-    let mut views: BTreeMap<String, ()> = match super::maintain::views_on() {
-        true => super::maintain::input_views(prog)?.into_keys().map(|r| (r, ())).collect(),
-        false => BTreeMap::new(),
-    };
-    // A copy of an input's columns is held as a view of it in every run (Q37, `maintain::held_views`): not kept either.
-    views.extend(super::maintain::held_views(prog)?.into_keys().map(|r| (r, ())));
+    let mut views: BTreeMap<String, ()> = BTreeMap::new();
+    // A copy of an input's columns is held as a view of it in every run (Q37, `input_view_shape`): not kept either.
+    {
+        let f = prog.fields()?;
+        let mut by_head: BTreeMap<&str, Vec<RuleRef<'_>>> = BTreeMap::new();
+        for r in prog.v.rules() {
+            by_head.entry(prog.v.rel_name(r.head().rel())).or_default().push(r);
+        }
+        for (rel, rules) in by_head {
+            if let [rule] = rules.as_slice()
+                && !f.has_facts(rel) && f.native(rel).is_none() && !f.lattice(rel) && !f.request(rel) && !f.produced(rel) && !f.gate(rel)
+                && crate::code_rule_dsl::logic::plan::input_view_shape(&prog.v, *rule, |r| f.is_input(r)).is_some()
+            {
+                views.insert(rel.to_owned(), ());
+            }
+        }
+    }
     let complete = kept.is_some_and(|k| sccs.iter().flatten().all(|r| k.holds(r, prog) || views.contains_key(r)));
     let whole = kept.is_none() || (!prog.fields()?.gates().is_empty() && (!changed.is_empty() || !complete));
     let mut ran = 0;
@@ -734,6 +747,7 @@ impl Retained {
             with_level_keys.extend(wanted.iter().map(|r| (frames.names[*r].clone(), kept_stats::PART)));
         }
         let admitted = store.admit_frame_parts(&frames.space, &with_level_keys).map_err(|e| Error::Plan(e.to_string()))?;
+        super::maintain::shape::frames_read(admitted.len());
         if !super::kept_strata::admission_matches(&keys, &admitted, |(r, _)| frames.derived.get(&r.name)) {
             return Ok(false);
         }
@@ -783,6 +797,7 @@ impl Retained {
         let Some(frames) = self.frames.as_ref() else { return HashMap::new() };
         let keys: Vec<_> = rels.iter().filter(|r| frames.derived.contains_key(*r)).map(|r| (frames.names[r].clone(), DOCS_PART)).collect();
         let Ok(got) = store.admit_frame_parts(&frames.space, &keys) else { return HashMap::new() };
+        super::maintain::shape::frames_read(got.len());
         got.into_iter().filter_map(|((r, _), f)| Some((r.name, f.len()?))).collect()
     }
 
@@ -816,37 +831,16 @@ impl Retained {
         self.inputs.get(rel).copied()
     }
 
-    /// Whether the last run's rows of a relation or an input are kept.
-    /// Whether `rel`'s old rows are kept, read or not yet: a derived relation the part holds or the frames hold, or an
-    /// input whose source the last run kept (decision 0298: what a general form takes as kept).
-    pub(in crate::code_rule_dsl) fn holds_old(&self, rel: &str) -> bool {
-        self.keeps(rel) || self.input_srcs.contains_key(rel) || self.view_of(rel).is_some()
-    }
-
-    pub(in crate::code_rule_dsl) fn has_old(&self, rel: &str) -> bool {
-        self.rels.contains_key(rel) || self.late.borrow().contains_key(rel) || self.input_srcs.contains_key(rel) || self.view_of(rel).is_some()
-    }
-
-    /// The views the run holds of its inputs' columns (`maintain::held_views`), of the program this part is of.
-    pub(in crate::code_rule_dsl) fn set_views(&mut self, views: BTreeMap<String, (String, Vec<usize>)>) {
-        self.views = views;
-    }
-
-    /// View `rel`'s input's old rows and the input's column of each of its columns, where its input's are held.
-    fn view_of(&self, rel: &str) -> Option<(&Arc<dyn Source>, &[usize])> {
-        let (input, at) = self.views.get(rel)?;
-        Some((self.input_srcs.get(input)?, at.as_slice()))
-    }
-    /// A relation's or an input's rows as the last run had them, as a source named `name` (`sql_col`), with the
-    /// engine's relation for a derived one (to adopt, read in place).
-    /// An input's statistics as the last run planned it.
     /// The documents the last run read, if under the file-local program `program`.
     pub(in crate::code_rule_dsl) fn docs(&self, program: &[u8; 32]) -> Option<&super::input_delta::Docs> {
         (self.docs.1 == *program).then_some(&self.docs.0)
     }
+    /// An input's statistics as the last run planned it.
     pub(in crate::code_rule_dsl) fn input_stats(&self, rel: &str) -> Option<&InputStats> {
         self.input_stats.get(rel)
     }
+    /// A relation's or an input's rows as the last run had them, as a source named `name` (`sql_col`), with the
+    /// engine's relation for a derived one (to adopt, read in place).
     pub(in crate::code_rule_dsl) fn old_source(&self, rel: &str, name: &str) -> Option<(Arc<dyn Source>, Option<Arc<InRel>>)> {
         if let Some(k) = self.rels.get(rel) {
             return Some((k.source(name), Some(Arc::clone(&k.rel))));
@@ -863,12 +857,6 @@ impl Retained {
             let names = (0..at.len()).map(|c| crate::code_rule_dsl::logic::plan::sql_col(name, c)).collect();
             (Arc::new(Picked(Arc::clone(s), at.to_vec(), names)) as Arc<dyn Source>, None)
         })
-    }
-    /// A relation's or an input's rows as the last run had them, copied (for the spikes' checks).
-    pub(in crate::code_rule_dsl) fn old_rows(&self, rel: &str) -> Option<Vec<Vec<i64>>> {
-        let (s, _) = self.old_source(rel, rel)?;
-        let w = s.columns().len();
-        Some((0..s.len()).map(|i| (0..w).map(|c| s.value(i, c)).collect()).collect())
     }
     pub(in crate::code_rule_dsl) fn relations(&self) -> usize {
         self.rels.len()
@@ -1292,6 +1280,11 @@ impl Layered {
         Layered { names, kept, ranges, dead, before, added, appended }
     }
 
+    /// The changed owners' new rows, one after another (`OwnerPatch::plus` names its rows by their places here).
+    pub(in crate::code_rule_dsl) fn added(&self) -> &Arc<dyn Source> {
+        &self.added
+    }
+
     fn live_kept(&self) -> usize {
         self.kept.len() - *self.before.last().expect("one at least") as usize
     }
@@ -1446,7 +1439,7 @@ pub mod tests {
         let result=cut(Some(&kept),key,&pl(&p),&st(&p),&inputs).unwrap();
         assert_eq!(result.strata,(0,strata.len()));
         let v=crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap().0;
-        let lowered=lower::Lowered {version:v,maint:None,domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};
+        let lowered=lower::Lowered {version:v,domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};
         let reused=result.program(&lowered).unwrap();
         let placed=reused.placed().unwrap();
         // A view of an input's columns (Q37: `kind(n, k) :- node(_, n, k, _, _).`) is never kept: its rule stays, to
@@ -1970,6 +1963,7 @@ pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32
         .chain(names.iter().filter(|(rel, _)| kept_stats::on() && stats_of.contains(rel)).map(|(_, frame)| (frame.clone(), kept_stats::PART)))
         .collect();
     let parts = store.admit_frame_parts(&space, &keys).map_err(|e| Error::Plan(e.to_string()))?;
+    super::maintain::shape::frames_read(parts.len());
     drop(s_granules);
     let _s_sources = crate::code_rule_dsl::logic::profile::span(|| "the inputs' ranges and sources".into());
     let mut out = HashMap::new();
@@ -2652,6 +2646,7 @@ impl Retained {
         // none.
         keys.extend(wanted.iter().map(|r| (frames.names[r].clone(), LEVELS_PART)));
         let admitted = store.admit_frame_parts(&frames.space, &keys).map_err(|e| Error::Plan(e.to_string()))?;
+        super::maintain::shape::frames_read(admitted.len());
         let levels = &admitted;
         // Prepare all rows before publishing any of them into the retained part. Failed admission is a cache
         // miss, and the caller must recompute its cut before maintenance can run.
@@ -2848,7 +2843,7 @@ impl Retained {
     /// rows changed, with the input's digests by document. The relations kept as they were stay as stored.
     /// `sccs`: `prog`'s strata, computed once by the caller.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::code_rule_dsl) fn write_frames(&self, store: &ContentStore, was: &InFrames, prog: &Placed, domains: &lower::Domains, locations: &Locations, sccs: &[BTreeSet<String>], cut: &Cut, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, unchanged: &BTreeSet<String>, deltas: &HashMap<String, (Vec<i64>, Vec<i64>)>, mut handed: HashMap<String, Handed>, inputs_done: Option<InputsWritten>, input_stats: &HashMap<String, Vec<(String, i64, i64, i64, i64)>>, placer: Option<crate::content_store::FramePlacer>) -> Result<usize> {
+    pub(in crate::code_rule_dsl) fn write_frames(&self, store: &ContentStore, was: &InFrames, prog: &Placed, domains: &lower::Domains, locations: &Locations, sccs: &[BTreeSet<String>], cut: &Cut, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, unchanged: &BTreeSet<String>, deltas: &HashMap<String, crate::code_rule_dsl::logic::plan::Delta>, mut handed: HashMap<String, Handed>, inputs_done: Option<InputsWritten>, input_stats: &HashMap<String, Vec<(String, i64, i64, i64, i64)>>, placer: Option<crate::content_store::FramePlacer>) -> Result<usize> {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "the kept part's changes, to the frames".into());
         let leaves = crate::code_rule_dsl::logic::plan::Leaves::of_placed(prog.clone());
         // Literal-only leaves are part of the derived relation's identity (leaf_identity), not runtime
@@ -2952,20 +2947,21 @@ impl Retained {
                 // patched by it, while its frame's deltas are few against its rows; else it is written whole. A
                 // relation with levels (decision 0090) is written whole: its levels part is one row each in its rows'
                 // order under its rows' digest, which a delta moves, and without it the next process has no levels.
-                if let (Some((gone, added)), Some(stored), Some(rd)) = (deltas.get(rel), was.derived.get(rel), read_digests.as_ref())
+                if let (Some(delta), Some(stored), Some(rd)) = (deltas.get(rel), was.derived.get(rel), read_digests.as_ref())
                     && let Some(k) = self.framed(rel)
                     && self.by_delta(store, was, rel, deltas)
+                    && let Some((gone, added)) = delta.rows(&k.rel)
                 {
                     let (ng, na) = (gone.len() / k.width, added.len() / k.width);
                     let n_now = k.rel.rows();
                     {
                         let n_was = (n_now + ng).saturating_sub(na);
                         let cells = Cells::new(&atoms, &frame_types(prog, domains, rel, k.rel.types()));
-                        let d = crate::code_rule_dsl::logic::plan::rows_digest_patched(&cells, stored.digest, n_was, gone, added);
+                        let d = crate::code_rule_dsl::logic::plan::rows_digest_patched(&cells, stored.digest, n_was, &gone, &added);
                         now.insert(rel.clone(), d);
                         written += ng + na;
                         delta_rows += ng + na;
-                        delta_out.push(crate::content_store::FrameDelta { rel: name.clone(), digest: d, reads: rd.clone(), types: frame_types(prog, domains, rel, k.rel.types()), gone: gone.clone(), added: added.clone() });
+                        delta_out.push(crate::content_store::FrameDelta { rel: name.clone(), digest: d, reads: rd.clone(), types: frame_types(prog, domains, rel, k.rel.types()), gone, added });
                         continue;
                     }
                 }
@@ -3306,12 +3302,12 @@ impl Handed {
 impl Retained {
     /// Whether `rel`'s change is written as a delta after its frame (decision 0117 step 4), given its reads are
     /// known: its frame's deltas few against its rows, and no levels (written whole: decision 0090).
-    fn by_delta(&self, store: &ContentStore, was: &InFrames, rel: &str, deltas: &HashMap<String, (Vec<i64>, Vec<i64>)>) -> bool {
-        let (Some((gone, added)), Some(_), Some(name), Some(k)) = (deltas.get(rel), was.derived.get(rel), was.names.get(rel), self.framed(rel)) else { return false };
+    fn by_delta(&self, store: &ContentStore, was: &InFrames, rel: &str, deltas: &HashMap<String, crate::code_rule_dsl::logic::plan::Delta>) -> bool {
+        let (Some(delta), Some(_), Some(name), Some(k)) = (deltas.get(rel), was.derived.get(rel), was.names.get(rel), self.framed(rel)) else { return false };
         if k.width == 0 || k.rel.has_levels() {
             return false;
         }
-        let (ng, na) = (gone.len() / k.width, added.len() / k.width);
+        let (ng, na) = delta.counts(k.width);
         let (chain, chain_rows) = store.frame_chain(&was.space, name);
         chain < max_deltas() && (chain_rows + ng + na) * 4 <= k.rel.rows().max(4096)
     }

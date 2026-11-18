@@ -93,17 +93,8 @@ impl Builder<'static> {
     pub fn base() -> Builder<'static> {
         Builder { parent: None, ids: None, enc: Encoder::new(None), removed: Vec::new(), parts: Parts::default(), parts_changed: false, rows: 0 }
     }
-    /// A new base of `prog`, every part its own. Refuses what the image has no form for (maintenance's parts, which
-    /// the text refuses too: `of_program_less_maintenance`) and a comparison it does not know.
+    /// A new base of `prog`, every part its own. Refuses a comparison the image does not know.
     pub fn of_program(prog: &Program) -> Result<Builder<'static>, String> {
-        if !prog.again.is_empty() || !prog.together.is_empty() {
-            return Err(super::bad("maintenance's parts (again, together) have no image"));
-        }
-        Builder::of_program_less_maintenance(prog)
-    }
-    /// A new base of all of `prog` but maintenance's parts (`again`, `together`), which a maintained program's version
-    /// holds beside its image (decision 0215, `plan::body::Maint`).
-    pub fn of_program_less_maintenance(prog: &Program) -> Result<Builder<'static>, String> {
         let mut b = Builder::base();
         for r in &prog.rules {
             b.add(r)?;

@@ -668,6 +668,7 @@ impl FieldsMut for Tree {
             Field::Qualifiers(x) => self.qualifiers = x.clone(),
             Field::Tapes(x) => self.tapes = x.clone(),
             Field::Shapes(x) => self.shapes = x.to_vec(),
+            Field::Layouts(x) => self.layouts = x.clone(),
             Field::Lattice(x) => self.lattice = x.clone(),
             Field::Kindsets(x) => self.kindsets = x.clone(),
             Field::Demand(x) => self.demand = x.to_vec(),

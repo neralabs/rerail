@@ -43,3 +43,11 @@ column. So 0090's statement holds for it exactly.
 In the test's edit, `kind`'s stratum is its view and its delta. `{reach, side}` takes its general form (0298), with
 `kind` among its reads, and is maintained by levels. The targeted set on a farm host: 759 of 761. The two failures
 predate this merge (Q101, Q102).
+
+## Since 0364 stage 6c (the hub's merge of investigate-bend-vs-datalog at fe948c394, 2026-11-18)
+
+The maintained forms are gone (0364 stage 6c), and with them `maintain::held_views`, `Retained::set_views` and the
+forms' view of an input's old rows (`view_of`, `holds_old`). The decision holds in the maintain mode, which is the
+one maintenance left: a held view of an input's columns (`plan::input_view_shape`) is read through its input's
+versions, old, gone, added and new, in its columns (`ModeInputs`, decision 0364 R2), and keeps no rows (`retain`'s
+views, never kept). A stratum the mode cannot take derives again, as any other.

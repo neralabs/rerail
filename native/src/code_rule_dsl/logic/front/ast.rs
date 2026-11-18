@@ -333,12 +333,6 @@ pub struct Program {
     /// The columns declared `tape` (decision 0103 §3), by relation: stored as `sym`, checked before lowering
     /// (`rr::tape_type`) and printed back as `tape`.
     pub tapes: BTreeMap<String, BTreeSet<usize>>,
-    /// A session's maintained strata, each with the rules that derive it again instead (decision 0090 §4,
-    /// `maintain::rewrite`): the run chooses per stratum, once its input deltas are known (`plan::run`).
-    pub again: Vec<Again>,
-    /// Relations run as one component though no rule makes them one (decision 0101 §3, `maintain::together`): a
-    /// maintained stratum's pieces at one level, ordered inside it by unit gates (`gates`), each in one set.
-    pub together: Vec<BTreeSet<String>>,
     /// The rules lowering made to ask for a node's attribute (decision 0174's `rr_node_text_req` …), by request
     /// relation: for each of its rules, in order, the relations whose readers it serves. `prune` keeps a request
     /// rule only while one of them is reached, as a reader's request is kept with the reader.
@@ -651,22 +645,6 @@ pub fn add_layout(to: &mut Vec<LayoutFact>, facts: impl IntoIterator<Item = Layo
             to.push(f);
         }
     }
-}
-
-/// A maintained stratum's other form (decision 0090 §4). Both make its relations and their deltas (`r__minus`,
-/// `r__plus`), which are all that other strata read of it, so each stratum chooses alone.
-#[derive(Clone, Debug, Default)]
-pub struct Again {
-    /// The stratum's own relations (one fixpoint when derived again).
-    pub scc: BTreeSet<String>,
-    /// Every relation the maintained form makes for it: its relations, their pieces (`__del`, `__ins`, …) and deltas.
-    pub owned: BTreeSet<String>,
-    /// Its rules over the current inputs, then its deltas against its old rows.
-    pub rules: Vec<Rule>,
-    pub deltas: Vec<Rule>,
-    /// The input deltas its maintained form reads, and its relations' old rows: the sizes that choose.
-    pub reads: Vec<String>,
-    pub olds: Vec<String>,
 }
 
 /// `Program::readers_of_rules` over the rules' heads alone, in order: a pass that holds its rules in another form

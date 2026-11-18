@@ -2668,6 +2668,34 @@ missed edit is a wrong answer for the step that missed it.
   the bench's full shape shows every edit step's components.
 - **Record**: —
 
+**From bend's Q117** (investigate-bend-vs-datalog at fe948c394, the same item, found over the O125 replay):
+
+Found 2026-11-18, measuring 0364 over the O125 replay (`scripts/profiling/o125/maintain-measure.sh`, kept mode: a
+process per step, each step's files written by `rsync` just before the step's run). On one farm host (M3 Max) some
+steps finished in 0.2 s CPU with the last step's findings. Their findings differed from a cold run's (step 05:
+2,757 extra, 2,907 missing). On the M1 Max host none did, over several runs. On the M3 it is intermittent: a step
+that ran right in one pass was stale in the next.
+
+- **Seen** (probes since removed: the paths `journal::since` named per root, the cutoff's digest per document):
+  - In a stale step, the replay for the corpus's root names the earlier run's own writes (outputs, store, logs), but
+    no path under `work/`, the corpus, though `rsync` had just rewritten files there. One of them is
+    `l2050_transaction/transaction.py`, 141,547 → 142,340 bytes.
+  - The observer then answers that file's digest from its trusted entry, unstatted: the step-00 digest. The whole-run
+    cutoff (`reuse::reused`) finds every document as recorded and writes the last run's outputs.
+  - In a step that ran right, the same replay names `work/l2050_transaction` and the others.
+  - The stale step's stream starts from the cursor of the run before it (the cursor taken when that run started).
+    Later runs start from cursors past the missing events, so the edit is never named.
+  - It is not the corpus root's form: relative and absolute roots both go stale on the M3.
+- **Likely**: FSEvents' history replay (`since` a cursor) does not include events written in the last moment before
+  the stream starts, perhaps those `fseventsd` had not yet logged. The cookie that `sync` waits for proves the
+  stream has caught up with what it was given, not that the replay held every event since the cursor.
+- **Until fixed**: the 0364 measurement runs with `RERAIL_JOURNAL=off` (every consulted path statted).
+- **Done when**: a run started right after an edit always sees it. Either the journal's answer is checked for that
+  window (a path whose stat is newer than the cursor's time is not trusted: Git's racy-index rule turned around), or
+  the replay is confirmed complete some other way. A test edits a file and starts the next run within
+  milliseconds, many times over, on the host where it fails.
+- **Record**: —
+
 ### Q203. (Q180 on benchmarks-on-integration, Q55 before) Device-budget refusals are reported as `BackendFailure`
 
 Seen 2026-11-18 (t45, with `From<String> for Error` now saying its message): every bare `BackendFailure` refusal of
@@ -4344,7 +4372,9 @@ Found 2026-11-17, during 0364 stage 3. Red with the maintain mode off too (`RERA
 stage 3's: `base_tests::value_types_are_ws_value_types` ("the version after `simplify` is the tree's": `asked`
 row `("a", "rr_value_req", 0, "vals")` against `… 1 …`), `tests::a_pair_of_programs_asking_for_an_attribute_through_the_library_stratifies`
 (the combine's tail: `asked` rows' reader indices off by one), and `tests::libraries_are_held_once_and_equal_requests_share_one_cone`
-(a panic in `rr.rs:308` on a CPU thread).
+(a panic in `rr.rs:308` on a CPU thread). Two rr tests show the same (seen 2026-11-17, at 0364 stage 6c, the
+first time they ran in this work): `rr::tests::an_attribute_a_cross_file_reader_asks_for_is_eager` (`asked` row
+`… 0 …` against `… 1 …` after `simplify`) and `rr::tests::a_cone_copied_onto_the_version_is_the_trees` (`rr.rs:308`).
 
 - **Seen**: each `asked` row's rule index (the request's `k`-th rule) differs by one between the version's passes and
   the tree's, after a request rule is dropped or kept on one side only (`subsume_requests`, `prune`'s gate).
@@ -4456,3 +4486,18 @@ native join it falls back to the planner's whole-rule order.
   Nothing runs the parts path in the test suite otherwise.
 - **Done when**: a part's link keeps the declaration the test reads, the test passes under the switch, and a test
   runs the parts path without the switch set by hand.
+
+### Q215. (Q118 on investigate-bend-vs-datalog at fe948c394) A cold replay step lost the findings of files its edit changed: the harness's work tree was pruned under it (closed)
+
+Found 2026-11-18, measuring 0364 over the O125 replay (`maintain-measure.sh cold` on a farm host, M3 Max).
+
+- **Seen**: in three passes, cold steps from some step on ran far fewer instructions (156–246 G, once 15 G, against
+  321–339 G) and lost thousands of findings. The step varied: 05, then 04, then 00. A rerun of the same engine's
+  cold steps was right, and the kept steps of each pass equalled the right cold ones.
+- **Cause**: not the engine. The replay's work tree and inputs were under the host's copy of the checkout
+  (`tmp/mm`, `tmp/mm-in`). Each later `test-remote` call (a targeted test run while the replay ran) syncs the
+  checkout to the host and removes its untracked files. The bad steps began right after such a call. In the last
+  pass, step 00's own log says its work tree was not a readable directory.
+- **Fixed**: `maintain-measure.sh` takes `MM_ROOT` for its outputs, and the replay's host script keeps its inputs,
+  outputs and engine under the host's `$TMPDIR`, outside the checkout.
+- **Record**: this entry.

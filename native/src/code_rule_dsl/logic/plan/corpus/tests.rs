@@ -804,11 +804,11 @@ lone(f) :- unused(f), !used(f), def(f, q), !imp(_, q).
     use crate::code_rule_dsl::typing::file_local::Binding;
     let run_on = |store: &str, binding: Binding| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
-        let (before, moded) = (super::maintain::pieces_together(), crate::code_rule_dsl::logic::plan::mode_strata());
+        let moded = crate::code_rule_dsl::logic::plan::mode_strata();
         let report = super::run(&text, &dir, None, &out, "program", binding, 1 << 18).unwrap();
         let rows = ["unused", "lone"].map(|r| crate::code_rule_dsl::logic::plan::output::shown(&out, r).unwrap());
         // A stratum the evaluator's maintain mode takes (decision 0364) has no pieces: it is one component.
-        (report.cross_maintained.0, rows, super::maintain::pieces_together() - before + (crate::code_rule_dsl::logic::plan::mode_strata() - moded) as usize)
+        (report.cross_maintained.0, rows, (crate::code_rule_dsl::logic::plan::mode_strata() - moded) as usize)
     };
     let run = |store: &str| run_on(store, Binding::Cpu);
     run("kept.sqlite");

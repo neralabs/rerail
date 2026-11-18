@@ -410,6 +410,30 @@ Levels as decided: a levelled relation keeps a level per row (4 bytes a row, abo
 lines. 0090 §4's threshold still derives a stratum again when an edit reaches too much of it, and that derive
 resets the levels.
 
+## Required shape (locked, the user, 2026-11-18)
+
+What the implementation must be, from this decision and 0328 §3–6 as agreed. Stages 2–6 departed from it in places
+(t43, "Review against the design"). Each requirement has a test in `plan/corpus/maintain_tests.rs`. A test the code
+does not meet yet is ignored with its requirement and the step that meets it, and that step's commit removes the
+`ignore`. A requirement changes only with the user, and its test changes with it.
+
+| | Requirement | Test |
+|---|---|---|
+| R1 | No relation or rule of a run is a maintenance relation: none of `__old`, `__del`, `__ins`, `__redo`, `__minus`, `__plus`, `__ready`, `__cand`, `__chk`, `__held`, `__gone`, `__live`, `__sup`, `__grp`, `__mm_*` is declared, held or named by the engine. | `r1_r2_an_edit_holds_no_maintenance_relation_and_copies_no_rows`, `r1_the_engine_source_names_no_maintenance_relation` |
+| R2 | A relation's change is its version, read in place: the kept relation and the mark of its rows and kills (0328 §5). No row is copied to state a change: not for an input, a stratum the mode maintains, or a stratum derived again (no diff against kept rows). | `r1_r2_…` |
+| R3 | A stratum an edit reaches is skipped (no read changed), maintained by the mode, or derived again. It is derived again only on its part's first run (nothing kept) or past the threshold (R4). Its kind decides how the mode maintains it: a non-recursive stratum by delta joins and a recheck with the head bound; an aggregate by its changed groups; a recursive one by levels (R5). A native operator keeps its own decision's maintenance (the reach index, 0119). | `r3_a_reached_stratum_is_derived_again_only_on_its_first_run_or_past_the_threshold` |
+| R4 | 0090 §4's threshold: a stratum whose changed reads reach past θ of its kept rows is derived again, and its levels come fresh from that derive. A small edit is maintained. | `r4_an_edit_that_reaches_most_of_a_stratum_derives_it_again` |
+| R5 | Levels: one integer per row of a recursive relation, kept with its rows. Candidates go in level order; a candidate stays only on a derivation from rows of lower level; added rows never lower a level; a rewrite is a kill and an add. An unfounded cycle goes. | `r5_a_ring_that_loses_its_entry_loses_every_row_it_held` |
+| R6 | A recursive component the static check proves cannot cycle keeps no levels, and its candidates are rechecked once each. | `r6_a_component_that_cannot_cycle_keeps_no_levels` |
+| R7 | The mode's lines are the program's plans, made with it and priced as the others are (0328 §4, 0122), the recheck's order with its head bound included (Q208). | `r7_the_recheck_order_is_priced` |
+| R8 | A session's kept rows stay in place between its runs: an edit reads no kept frame back (0328 §5). | `r8_a_session_edit_reads_no_kept_frame` |
+| R9 | The driver decides one of three things for each reached stratum (skip, mode, derive again with an R3 reason), and nothing else: no slots, forms or paths of their own for other cases. | `r9_each_reached_stratum_is_skipped_maintained_or_derived_again` |
+| R10 | Each edit's outputs are a run's from an empty store. | every test above |
+
+The goal they serve (the user, 2026-11-17): far fewer facts, cheaper fact pages and metadata, less work to remove
+outdated rows. It is measured, not tested: on the O125 replay, facts held, kept bytes and instructions per edit
+against the forms' figures (t43, "Measurements").
+
 ## Open
 
 - **Instructions.** Every real-data figure is rows, candidates, probes and rewrites. Instructions come when the

@@ -953,8 +953,9 @@ pub(super) enum Memo<'a> {
     Held(&'a Held),
 }
 
-/// A session's memo: each entry under its content's digest, its path and the file-local program's digest.
-pub(super) type Held = std::sync::Mutex<std::collections::HashMap<([u8; 32], String, [u8; 32]), Entry>>;
+/// A session's memo: each entry under its content's digest, its path and the file-local program's digest. Shared
+/// (an `Arc`): a hit, and an input's change read from the changed documents' entries, read it in place (0364 R2).
+pub(super) type Held = std::sync::Mutex<std::collections::HashMap<([u8; 32], String, [u8; 32]), std::sync::Arc<Entry>>>;
 
 /// A file's content as the memo knows it: its stored source; a content the store does not hold yet, by its digest
 /// (its source is written by the store's writer, behind the run, with its tape: decision 0104); or (held) its digest.
@@ -1066,7 +1067,7 @@ impl Memo<'_> {
                 Ok(docs
                     .iter()
                     .map(|(c, p)| match c {
-                        Content::Held(digest) => held.get(&(*digest, (*p).to_owned(), program.id)).map(|e| Found::Held(std::sync::Arc::new(e.clone()))),
+                        Content::Held(digest) => held.get(&(*digest, (*p).to_owned(), program.id)).map(|e| Found::Held(std::sync::Arc::clone(e))),
                         Content::Stored(_) | Content::Unstored(_) => None,
                     })
                     .collect())
@@ -1093,7 +1094,7 @@ impl Memo<'_> {
                 },
             },
             (Memo::Held(held), Content::Held(digest)) => {
-                Ok(held.lock().expect("the session memo").get(&(digest, path.to_owned(), program.id)).filter(|e| e.key == key).cloned())
+                Ok(held.lock().expect("the session memo").get(&(digest, path.to_owned(), program.id)).filter(|e| e.key == key).map(|e| (**e).clone()))
             }
             _ => Ok(None),
         }
@@ -1129,7 +1130,7 @@ impl Memo<'_> {
                 if held.len() >= HELD_ENTRIES {
                     held.clear();
                 }
-                held.insert((digest, path.to_owned(), program.id), Entry { key, ..entry.clone() });
+                held.insert((digest, path.to_owned(), program.id), std::sync::Arc::new(Entry { key, ..entry.clone() }));
                 Ok(())
             }
             _ => Ok(()),

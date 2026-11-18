@@ -629,7 +629,7 @@ fn analyses_agree(v: &Version, p: &Program) {
     assert_eq!(got, want, "accepts");
     // The components by name are the tree's, in its order, and so is the error where a negation closes a cycle.
     let want = front::components_of(p).map_err(|e| e.to_string());
-    let got = analyses::components_by_name(v, &about, &p.together).map_err(|e| e.to_string());
+    let got = analyses::components_by_name(v, &about).map_err(|e| e.to_string());
     assert_eq!(got, want, "components by name");
 }
 
