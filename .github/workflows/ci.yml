@@ -789,6 +789,13 @@ jobs:
       - name: Build the package
         run: npm run build:js
 
+      # A runner's first Python start reads the interpreter and its standard library cold: about a second here, but
+      # 0.5 to 11 s once the tests run beside it, and up to 87 s, past the 30 s a test may take, in the test of
+      # write_provenance (test/scripts/pack-data/provenance.test.ts). Later starts take about 0.1 s, so the tests that
+      # start Python time their own work.
+      - name: Read Python in
+        run: python3 -B -c "import json, os, pathlib, shutil, subprocess, sys"
+
       # As in the unit job, with TEMP and TMP at runner.temp, a long path. The runner's TEMP is an 8.3 short path
       # (C:\Users\RUNNER~1\...), and Rerail's tests compare long paths: Rerail records a checkout by its long path, and
       # the tests expect the temporary folder's path as given, so 42 of them fail on the spelling alone.
