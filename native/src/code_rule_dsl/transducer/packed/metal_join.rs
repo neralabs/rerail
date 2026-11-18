@@ -2256,6 +2256,7 @@ impl Batch {
         }
         if self.pass.is_none() {
             let command = queue()?.new_command_buffer().to_owned();
+            rerail_accel::exec::command_opened();
             // SAFETY: the command buffer is owned by `self.open` and outlives the pass, which `commit` ends and drops
             // before the command buffer (the field order of the take there).
             let r: &'static metal::CommandBufferRef = unsafe { &*(command.as_ref() as *const metal::CommandBufferRef) };
@@ -2271,6 +2272,7 @@ impl Batch {
         self.done.dispatches += pass.dispatches() as u32;
         pass.end();
         let command = self.open.take().expect("an open command buffer");
+        rerail_accel::exec::command_committed();
         let s = Submitted::commit(&command)?;
         self.committed.push(s);
         self.done.submissions += 1;
@@ -2660,7 +2662,10 @@ impl Drop for Batch {
     /// guard, whose thread-local a batch dropped in a thread's teardown (a wave left open) can no longer read.
     fn drop(&mut self) {
         drop(self.pass.take());
-        drop(self.open.take());
+        if self.open.take().is_some() {
+            // Not this thread's to commit any more (decision 0386's count).
+            rerail_accel::exec::command_committed();
+        }
         for s in self.committed.drain(..) {
             s.wait();
         }

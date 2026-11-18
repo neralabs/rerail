@@ -23,6 +23,8 @@ mkdir -p "$R"
 # the shared inputs (a home's pack link is relative: ../../../../pack-X, so the two stay side by side).
 rm -rf "$R/$(basename $PACK)" "$R/$(basename $HOME_)"; cp -R "$PACK" "$HOME_" "$R/"
 PACK=$R/$(basename $PACK); HOME_=$R/$(basename $HOME_)
+# A run directory used before holds the last run's copies: `cp -R` would copy into them (the corpus twice over).
+rm -rf "$R/corpus-dl" "$R/corpus-main" "$R/rules" "$R/packs" "$R"/dl-* "$R"/main-* "$R/store.sqlite"*
 cp -R $CORPUS $R/corpus-dl; cp -R $CORPUS $R/corpus-main
 (cd $R/corpus-main && git init -q && find . -name "*.py" -print0 | xargs -0 git add -- && git -c user.email=b@example.com -c user.name=bench commit -qm corpus)
 cp -R $RULES $R/rules; cp -R $SP/rs-now/packs $R/packs
