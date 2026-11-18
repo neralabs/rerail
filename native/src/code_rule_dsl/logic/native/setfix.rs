@@ -1339,6 +1339,8 @@ struct MaintMode {
 /// A proved component's measure (`Line::Measured`).
 struct Measured {
     desc: bool,
+    /// The relation of each node's key (`ast_depth`, `node_order`), read through its bound source in place: no SQL
+    /// inside the waves (decision 0104).
     key: Option<String>,
     /// Whether the order is the measure's: else a candidate that stays is checked again when a row it may read goes.
     keyed: bool,
@@ -1353,13 +1355,22 @@ impl Measured {
         let v = *row.get(self.cols[r]).ok_or_else(|| err(format!("measured: relation {r} has no column {}", self.cols[r])))?;
         let k = match &self.key {
             None => v,
-            Some(sql) => {
+            Some(rel) => {
                 let conn = conn.ok_or_else(|| err("measured: a key read with no connection".to_owned()))?;
-                let mut st = conn.prepare_cached(sql).map_err(|e| err(format!("measured key {sql}: {e}")))?;
-                match st.query_row([v], |r| r.get::<_, i64>(0)) {
-                    Ok(k) => k,
-                    Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(None),
-                    Err(e) => return Err(err(format!("measured key {sql} of {v}: {e}"))),
+                let source = crate::code_rule_dsl::facts::vtab::bound_source(conn, rel).ok_or_else(|| err(format!("measured: no source bound to {rel}")))?;
+                let cols = source.columns();
+                let at = |c: &str| cols.iter().position(|x| x == c).ok_or_else(|| err(format!("measured: {rel} has no column {c}")));
+                let (n, kc) = (at("n")?, at("k")?);
+                let rows = match source.lookup(n, &[v]) {
+                    Some(rows) => rows,
+                    None => {
+                        source.prepare_index(&[n]);
+                        source.lookup(n, &[v]).ok_or_else(|| err(format!("measured: {rel} has no lookup by its node")))?
+                    }
+                };
+                match rows.first() {
+                    Some(&row) => source.value(row, kc),
+                    None => return Ok(None),
                 }
             }
         };
