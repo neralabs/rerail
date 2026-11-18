@@ -400,6 +400,10 @@ fn close_under<T: Ord + Clone>(vars: &mut std::collections::BTreeSet<T>, equal: 
     }
 }
 
+pub(super) fn push_equal_columns() -> bool {
+    std::env::var("RERAIL_PUSH_EQUAL_COLUMNS").map_or(true, |value| value != "off")
+}
+
 pub use crate::code_rule_dsl::logic::front::document_column;
 
 /// Base relations whose rows a chunk makes for itself and that name no document (decision 0058 §4).
@@ -1765,6 +1769,7 @@ fn node_read(l: &crate::code_rule_dsl::logic::front::Literal) -> Option<(String,
 fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrestricted: bool) -> (Vec<String>, std::collections::BTreeSet<String>) {
     use crate::code_rule_dsl::logic::front::{Atom, Literal, Rule, Term};
     use std::collections::{BTreeMap, BTreeSet};
+    let equal_columns = push_equal_columns();
     // An atom such as field(parent, name, child) connects its node columns. Document equality
     // and comparisons of node attributes do not: enumerating their independent node groups
     // before the remaining candidate predicates creates quadratic or cubic intermediate relations.
@@ -1948,14 +1953,31 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
                 let typed: Option<Vec<(String, String)>> = iface
                     .iter()
                     .map(|v| {
-                        // A node read's value is text.
-                        if node_reads.contains(v) {
-                            return Some((v.clone(), "sym".to_owned()));
-                        }
-                        atoms.iter().find_map(|a| {
-                            let c = a.args.iter().position(|t| matches!(t, Term::Var(x) if x == v))?;
-                            prog.decls.get(a.rel.as_str())?.get(c).map(|(_, t)| (v.clone(), t.to_string()))
-                        })
+                        let column_type = |name: &str| {
+                            if node_reads.iter().any(|read| read == name) {
+                                return Some("sym".to_owned());
+                            }
+                            atoms.iter().find_map(|a| {
+                                let c = a.args.iter().position(|t| matches!(t, Term::Var(x) if x == name))?;
+                                prog.decls.get(a.rel.as_str())?.get(c).map(|(_, t)| t.to_string())
+                            })
+                        };
+                        let ty = column_type(v).or_else(|| {
+                            if !equal_columns {
+                                return None;
+                            }
+                            // Only an equality inside the helper gives a slot both a value and its type.
+                            let equal: Vec<_> = lits.iter().filter_map(|&j| match &rule.body[j] {
+                                Literal::Cmp { l: Term::Var(a), op: "=", r: Term::Var(b) } => {
+                                    Some((a.as_str(), b.as_str()))
+                                }
+                                _ => None,
+                            }).collect();
+                            let mut available = BTreeSet::from([v.as_str()]);
+                            close_under(&mut available, &equal);
+                            available.into_iter().find_map(column_type)
+                        })?;
+                        Some((v.clone(), ty))
                     })
                     .collect();
                 let Some(typed) = typed else { continue };
