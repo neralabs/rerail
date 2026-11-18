@@ -377,9 +377,13 @@ copies cleaned. Nothing waits on one for long, and anything a host cannot do run
   down) the host is not used, and is tried again every 60 s, not backed off. A route that stops
   answering is dropped, and the host is reached by name, then recovered again.
 - **Cache and back-off.** A healthy record holds 30 s, shared by every worktree (one caller probes,
-  the others read). A host that does not answer is not probed again for 30 s, doubling to 30
-  minutes, so a sleeping host costs nothing; `status` probes every host now, whatever its
-  back-off.
+  the others read). A host that does not answer is not probed again for 30 s, doubling to 5
+  minutes, so a sleeping host costs little. A back-off ends at once when this Mac's network
+  changes (its addresses, `scutil --nwi`), and when `test-remote` finds no usable host it asks
+  every backed-off host again, together, before it runs the command here. `status` probes every
+  host now, whatever its back-off. Until farm 33 the back-off doubled to 30 minutes and outlived
+  a move: hosts that had failed all evening at home showed "unreachable" for half an hour at the
+  office while ssh reached them, and agents ran their tests here (2026-11-18).
 - **Lost mid-job.** A compile whose send or run fails there runs here, and the host is marked down
   when its connection or agent is gone, or a file could not be written there (its disk full:
   agent code 70; the daemon then drops the agent and forgets what it sent). A test run whose ssh
@@ -406,7 +410,16 @@ copies cleaned. Nothing waits on one for long, and anything a host cannot do run
   within the hour (2026-11-17).
 
 `scripts/build/farm/status` probes every host now and prints whether it is usable and why not,
-with its round trip, throughput and free disk (`--json` for scripts; exit 1 when none is usable).
+with its round trip, throughput, free disk, how busy its CPUs are and its load average (`--json`
+for scripts; exit 1 when none is usable).
+
+**Busy is never a reason to wait.** A usable host takes a command whenever it has a free test slot,
+however busy it is; how busy it is only orders the hosts. Its busy figure is measured CPU (`busy`,
+percent of all its CPUs: `/proc/stat` over 0.3 s on Linux, the processes' CPU over the last minute
+on a Mac). The load average is shown but means little on a Mac: it counts threads waiting on I/O
+and macOS's background work, and an M3 about a third idle showed a load 31 over its cores. Until
+farm 33 `status` printed "cores to spare" (cores less the load average), and an agent read a
+negative figure as a full machine and waited 9 minutes before giving up on a run (2026-11-18).
 
 ## No benchmark leases
 

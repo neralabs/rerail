@@ -35,6 +35,7 @@ benchmark run on the host.
 It runs the installed farm (`~/.local/share/rerail-farm`, `scripts/build/farm/setup`), the one every
 worktree's compiles use, whatever version this checkout has.
 """
+import concurrent.futures
 import os
 import resource
 import json
@@ -96,6 +97,13 @@ def choose(named, oses):
         candidates = [host]
     else:
         candidates = [h for h in farm.usable("tests") if farm.host_os(h) in oses]
+        if not candidates:
+            # Every host is backed off: asked again now, together (a few seconds), before the command
+            # runs here. A back-off is a guess about a host, and running here on a wrong one costs more.
+            hosts = [h for h in farm.hosts() if h.get("enabled", True) and h.get("tests", True) and farm.host_os(h) in oses]
+            with concurrent.futures.ThreadPoolExecutor(max(len(hosts), 1)) as pool:
+                list(pool.map(lambda h: farm.health(h, fresh=True), hosts))
+            candidates = [h for h in farm.usable("tests") if farm.host_os(h) in oses]
         if not candidates:
             reasons = [f"{h['name']}: {farm.health(h).get('why') or 'not ' + ' or '.join(oses)}" for h in farm.hosts()
                        if h.get("enabled", True) and h.get("tests", True)]

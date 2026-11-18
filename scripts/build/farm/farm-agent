@@ -924,9 +924,14 @@ def tidy_root(min_free_gb):
     except OSError:
         pass
     open(stamp, "w").close()
+    import warnings
     try:
-        if os.fork():
-            return
+        # (Python 3.12, the Linux hosts' own, warns at every fork of a process with threads, into
+        # the command's output: the child here holds to the rule below.)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", DeprecationWarning)
+            if os.fork():
+                return
     except OSError:
         return
     # The child: only file system calls from here, never this process's streams or threads' locks.

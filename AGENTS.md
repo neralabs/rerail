@@ -97,7 +97,9 @@ on a slow link, or short of disk, or its copy can have been cleaned. The scripts
 themselves: a host reached over the wrong link is moved back to its fast one when it can
 be, a host that fails a probe is skipped, with a growing back-off, and a lost connection
 reruns the command here at `nice -n 19`. Don't work around a host that is down. Run
-`status` to see why, and go on locally. `--remote-only` exits 69 when no host can take the
+`status` to see why, and go on locally. Never wait for a host to be idle or less loaded: a
+usable host takes the command whatever its load, and `test-remote` itself waits only for a
+free test slot. Its busy CPU and load average in `status` are information, not a gate. `--remote-only` exits 69 when no host can take the
 command. A host may be a Linux machine: it takes a command when every Mac slot is busy (never a
 Metal one or a `--tree` run), and the command is then a Linux build and run, as CI's; its line
 says `(Linux: ...)`, and `--os macos` keeps a command on a Mac. It also compiles this Mac's library

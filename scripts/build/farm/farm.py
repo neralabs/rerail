@@ -22,7 +22,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 32
+VERSION = 33
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -836,9 +836,12 @@ DEFAULTS = {
     "min_mbps": 8,
 }
 # How long a host's health is believed: an answer that it is usable, and the first wait after it was
-# not (doubled each time it is still not, up to the last).
+# not (doubled each time it is still not, up to the last). The last was 30 minutes: hosts that
+# had failed all evening at home stayed "unreachable" for half an hour at the office, while ssh
+# reached them, and agents ran everything here (2026-11-18). A change of this Mac's network ends a
+# back-off at once too (`network_now`).
 HEALTHY_SECONDS = 30
-DOWN_SECONDS = (30, 1800)
+DOWN_SECONDS = (30, 300)
 # A host that answers, but over another link than its own (it fell back to WiFi), is tried again
 # this often, not backed off: its own link may be back at any time (`recover`).
 OFF_LINK_SECONDS = 60
@@ -892,6 +895,27 @@ def write_json(path, data):
     os.replace(tmp, path)
 
 
+def network_now():
+    """This Mac's network, as its interfaces' addresses (`scutil --nwi`): another network (home, the
+    office, a phone's hotspot) can reach hosts the last could not, so a host backed off on one is
+    probed again on the next. Read at most every 10 s, shared by every process."""
+    path = state("network")
+    try:
+        if time.time() - os.path.getmtime(path) < 10:
+            return open(path).read()
+    except OSError:
+        pass
+    try:
+        out = subprocess.run(["scutil", "--nwi"], capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    net = " ".join(sorted(line.split(":", 1)[1].strip() for line in out.splitlines() if line.strip().startswith("address")))
+    tmp = f"{path}.{os.getpid()}.tmp"
+    open(tmp, "w").write(net)
+    os.replace(tmp, path)
+    return net
+
+
 def mark_down(name, why):
     """Records that `name` failed in use (its agent stopped, a file could not be written there): it
     is not used until its back-off ends, and the next health check asks again."""
@@ -899,7 +923,7 @@ def mark_down(name, why):
     h = read_json(path, {})
     failures = h.get("failures", 0) + 1
     wait = min(DOWN_SECONDS[0] * 2 ** (failures - 1), DOWN_SECONDS[1])
-    h.update(ok=False, why=why, failures=failures, checked=time.time(), down_until=time.time() + wait)
+    h.update(ok=False, why=why, failures=failures, checked=time.time(), down_until=time.time() + wait, net=network_now())
     write_json(path, h)
     log(f"{name}: down for {wait} s: {why}")
 
@@ -940,10 +964,13 @@ def probe(host, cfg, fell_back=False, recovered=False):
     # interface that holds the address ssh arrived at, /proc's load, and NFS mounts by findmnt.
     linux = ('echo "$SSH_CONNECTION"; df -k "$HOME" | tail -1 | awk \'{print $4}\'; echo 1000000000000000;'
              " s=$(echo $SSH_CONNECTION | cut -d' ' -f3); echo \"$(ip -o addr show | awk -v s=\"$s\" '{split($4, a, \"/\")} a[1]==s {print $2; exit}')\";"
-             " cut -d' ' -f1 /proc/loadavg; findmnt -rn -t nfs,nfs4 -o TARGET; true")
+             " a=$(head -1 /proc/stat); sleep 0.3; b=$(head -1 /proc/stat);"
+             " echo \"$(cut -d' ' -f1 /proc/loadavg) busy=$(printf '%s\\n%s\\n' \"$a\" \"$b\" | awk '{i=$5+$6; t=0; for (k=2; k<=NF; k++) t+=$k;"
+             " if (NR==1) {i0=i; t0=t} else print int(100*(1-(i-i0)/(t-t0)))}')\"; findmnt -rn -t nfs,nfs4 -o TARGET; true")
     script = linux if host_os(host) == "linux" else ('echo "$SSH_CONNECTION"; echo "$(osascript -l JavaScript -e ' + available + ' 2>/dev/null) $(df -k "$HOME" | tail -1 | awk \'{print $4}\')";'
               " ioreg -c IOHIDSystem -d 4 | awk '/HIDIdleTime/ {print $NF; exit}'; echo \"$(" + ARRIVAL + ")\";"
-              " sysctl -n vm.loadavg; mount -t nfs | sed 's/.* on \\(.*\\) (.*/\\1/'")
+              " echo \"$(sysctl -n vm.loadavg) busy=$(ps -A -o %cpu= | awk -v n=$(sysctl -n hw.logicalcpu) '{s+=$1} END {print int(s/n)}')\";"
+              " mount -t nfs | sed 's/.* on \\(.*\\) (.*/\\1/'")
     if host.get("fleet"):
         # A nera-fleet node (`"fleet": true`): the fleet's jobs are containers carrying `fleet.job`.
         # Counted first; docker may be outside a plain ssh command's PATH on a Mac.
@@ -980,6 +1007,11 @@ def probe(host, cfg, fell_back=False, recovered=False):
         h["load"] = float(lines[4].strip("{} ").split()[0])
     except (ValueError, IndexError):
         h["load"] = None
+    # How busy its CPUs are (percent of all of them): /proc/stat over 0.3 s on Linux, the processes'
+    # recent CPU on a Mac. Not the load average: a Mac's counts threads waiting on I/O and
+    # macOS's background work, and one about a third idle showed a load 31 over its cores.
+    busy = re.search(r"busy=(\d+)", lines[4]) if len(lines) > 4 else None
+    h["busy"] = min(int(busy.group(1)), 100) if busy else None
     h["mounts"] = [m for m in lines[5:] if m]
     # The round trip is the least of three: each starts an ssh process here, which a loaded Mac
     # delays by up to a few hundred ms, and that is not the link.
@@ -1129,7 +1161,7 @@ def health(host, fresh=False):
     if h is not None and not fresh:
         if h.get("ok") and now - h.get("checked", 0) < HEALTHY_SECONDS:
             return h
-        if not h.get("ok") and now < h.get("down_until", 0):
+        if not h.get("ok") and now < h.get("down_until", 0) and h.get("net", "") == network_now():
             return h
     lock = Lock(path + ".lock", blocking=fresh)
     if not lock.held:
@@ -1146,6 +1178,7 @@ def health(host, fresh=False):
         elif not h["ok"]:
             h["failures"] = h.get("failures", 0) + 1
             h["down_until"] = now + min(DOWN_SECONDS[0] * 2 ** (h["failures"] - 1), DOWN_SECONDS[1])
+        h["net"] = network_now()
         write_json(path, h)
         log(f"{name}: {'usable' if h['ok'] else 'not usable: ' + h['why']} ({h.get('rtt_ms')} ms, {h.get('mbps')} MB/s, {h.get('free_gb')} GB free)")
         return h
@@ -1154,10 +1187,13 @@ def health(host, fresh=False):
 
 
 def spare(host):
-    """The cores `host` has to spare now: its capacity (`capacity`) less its load average when last
-    probed. Only an order between hosts (a test command goes to the one with most to spare), never
-    a refusal: macOS's background work raises the load of an idle machine too."""
-    return capacity(host) - (health(host).get("load") or 0)
+    """The cores `host` has idle when last probed (`busy`; from the load average when an older
+    probe has no `busy`). Only an order between hosts (a test command goes to the one with most to
+    spare), never a refusal or a reason to wait."""
+    h = health(host)
+    if h.get("busy") is not None:
+        return capacity(host) * (100 - h["busy"]) / 100
+    return capacity(host) - (h.get("load") or 0)
 
 
 def usable(kind=None):

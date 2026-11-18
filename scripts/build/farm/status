@@ -48,9 +48,9 @@ def main(argv):
                     ([f"tests as a {farm.host_os(host)} build"] if host.get("tests", True) else [])
                 uses = f"{farm.host_os(host)}: " + (", ".join(parts) or "unused")
             facts = ", ".join(f"{v} {unit}" for v, unit in ((h.get("rtt_ms"), "ms"), (h.get("mbps"), "MB/s through ssh"),
-                                                            (h.get("free_gb"), "GB free"), (h.get("load"), "load")) if v is not None)
-            if h.get("ok"):
-                facts += f"; {farm.spare(host):.0f} cores to spare"
+                                                            (h.get("free_gb"), "GB free"),
+                                                            (None if h.get("busy") is None else f"{h['busy']}%", "of its CPU busy"),
+                                                            (h.get("load"), "load average")) if v is not None)
             state = "usable" if h.get("ok") else f"not usable: {h.get('why')}"
             print(f"  {host['name']}: {state} ({host.get('cores')} cores; {uses}{'; ' + facts if facts else ''})")
             if h.get("arrival") and not farm.link_of(host):
@@ -59,6 +59,8 @@ def main(argv):
                 print(f"    short of disk: {h['short']}")
             if h.get("route"):
                 print(f"    reached at an address of its {farm.link_of(host)} (its name resolved to another link)")
+        print("A usable host takes commands however busy it is: test-remote sends to a free test slot, and\n"
+              "busy CPUs or a load over the cores only order the hosts. Never wait for a host to be idle.")
     sys.exit(0 if any(h.get("ok") for _, h in rows) else 1)
 
 
