@@ -1342,6 +1342,26 @@ regenerated since keep the wider condition. The profiling build has none (Q13).
   warning.
 - **Record**: —
 
+### Q52. Metal runs with every thread deadlock on the one queue's 64 command buffers
+
+Seen 2026-11-17 (the M3, `logic --metal`, 300 files x 317 rules, cold): the run stopped after 4.6 min of CPU in 29 min
+of wall, every thread waiting. Six were in `metal_join::Batch::pass`, in `-[MTLCommandBuffer initWithQueue:…]`: the
+process has one queue (decision 0100 §2; `forest::gpu::shared::get`, `new_command_queue()`), and Metal allows it 64
+uncompleted command buffers by default. Each thread holds its level's wave open (`setfix::device::WAVE`, one
+uncommitted buffer until the wave flushes), and its direct batches open more; with the pool's threads and the jobs a
+waiting thread runs, the 64 are all held, and a thread asking for one more waits for buffers that only waiting threads
+can commit. With `RERAIL_THREADS=4` the run finishes (55.1 s CPU, 463 findings), and with a build whose queue allows
+4,096 (`new_command_queue_with_max_command_buffer_count`, not committed) every step finishes with every thread
+(77.5 s CPU cold; findings equal the CPU run's). One-file and one-rule shapes pass as they are.
+
+- **Keep**: one queue for the process (0100 §2: the wave's work, committed first, runs first); Q48's order (a direct
+  batch commits the thread's wave first).
+- **Done when**: no thread holds an uncommitted buffer where it can wait for another (a buffer is committed before
+  its thread waits, or the buffers a thread may hold open are bounded and counted against the queue's limit, made
+  from the pool's width at the queue's creation); a test with more threads than the limit allows open buffers; the
+  full shape on Metal with every thread finishes.
+- **Record**: —
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
