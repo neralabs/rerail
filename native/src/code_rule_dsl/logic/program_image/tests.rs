@@ -1760,6 +1760,43 @@ fn a_record_by_place_is_compared_by_rule() {
     assert!(!super::same_program(&first, &wrong), "a reader on the other rule");
 }
 
+/// A step that drops a request relation's record (`prune`'s `revived`: its readers all went, its rules kept) leaves
+/// it dropped: the record the pipeline states at its end holds the relations still requested, not those it began with.
+#[test]
+fn a_request_record_a_step_drops_stays_dropped() {
+    use std::collections::BTreeSet;
+    struct DropRecord;
+    impl super::manager::ProgramPass for DropRecord {
+        const NAME: &'static str = "drop the record";
+        fn run(&mut self, _: &super::manager::Cx<'_>, w: &mut super::manager::ProgramW<'_>) -> Result<(), String> {
+            w.on()?.keep_asked(&|r| r != "q");
+            Ok(())
+        }
+    }
+    // Then a step that changes rules (drops `t`'s), after which the pipeline states the record again.
+    struct DropT;
+    impl super::manager::ProgramPass for DropT {
+        const NAME: &'static str = "drop t";
+        fn run(&mut self, cx: &super::manager::Cx<'_>, w: &mut super::manager::ProgramW<'_>) -> Result<(), String> {
+            let t = cx.v().rel("t").unwrap();
+            w.keep(|r| r.head().rel() != t)
+        }
+    }
+    let text = ".decl a(x: number)\n.input a\n.decl b(x: number)\n.input b\n.decl q(x: number)\n.output q\nq(x) :- a(x).\nq(x) :- b(x).\n\
+                .decl s(x: number)\n.output s\ns(x) :- a(x).\n.decl t(x: number)\n.output t\nt(x) :- b(x).\n";
+    let mut p = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+    p.asked_by.insert("q".into(), vec![BTreeSet::from(["r1".to_owned()]), BTreeSet::from(["r2".to_owned()])]);
+    p.asked_by.insert("s".into(), vec![BTreeSet::from(["r3".to_owned()])]);
+    let v = Builder::of_program(&p).unwrap().finish().unwrap().0;
+    let mut pipe = super::manager::Pipeline::new("test", v);
+    pipe.program(&mut DropRecord).program(&mut DropT);
+    let out = pipe.finish().unwrap().0;
+    let asked = out.asked();
+    assert!(out.rel("q").is_some_and(|q| out.heads(q).count() == 2), "q's rules are kept");
+    assert!(!asked.contains_key("q"), "{asked:?}");
+    assert_eq!(asked.get("s"), Some(&vec![BTreeSet::from(["r3".to_owned()])]));
+}
+
 /// Each relation's layout, declared or inferred (`layouts`, decision 0361 step 3).
 mod layouts {
     use crate::code_rule_dsl::logic::program_image::layouts::{Layouts, Origin};

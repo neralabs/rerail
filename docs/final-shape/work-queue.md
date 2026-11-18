@@ -3689,3 +3689,26 @@ native join it falls back to the planner's whole-rule order.
 - **Next**: Go-C-and-C-support's: whether the search is stratified by its phases (headers in phase 1) in a way
   `check_rr` does not see, or the rules need a level (each include's depth) that breaks the cycle.
 - **Done when**: the test passes, by the rules or by the check reading what makes the cycle well-founded.
+
+### Q177. (done) A request relation dropped as unread kept its record (`programs_hidden_alone_keep_their_attribute_copies_declared`)
+
+- **Found** (2026-11-18, cost-classifier at a37f920dd, with no change of its own; failing in every run): the
+  preparation's per-stage debug check after `text`: the pipeline's version recorded readers for
+  `rr_value_req_by_p0_bootstrap_plain_string_0`, a request relation with no rules, the tree's none.
+- **Cause**: `simplify`'s `drop_unread` (on the tree, and `DropUnread` on the version) dropped the relation's rules
+  and kept its entry in the request record, which states an entry a rule (decision 0331). The two sides agreed on
+  the stale entry until `text`, whose tree passes rebuild the record from the rules (`set_rules_carried`) and so drop
+  it, while the version's stages read rows a step left. The django merge made the check compare the record by rule
+  (`same_program`); the hub's digest check had not seen it.
+- **Done**: both `drop_unread`s drop the dropped relations' entries. The pipeline's carried record
+  (`manager::AskedByRule`) also leaves a request relation whose record a step drops, so the record stated at the
+  pipeline's end does not bring it back (it stated every relation the pipeline began with, by rule).
+  `program_image::tests::a_request_record_a_step_drops_stays_dropped` checks that; the corpus test passes, with 67
+  more of program_image, simplify and preparation (M1 Max).
+
+### Q178. `retain` drops `rr_str_req`'s rules and keeps its record
+
+- **Found** (2026-11-18, while tracing Q177): a step named `retain` leaves `rr_str_req` with no rules and its record
+  rows. No check compares that pipeline with a tree, so nothing fails; the rows are stale, as Q177's were.
+- **Next**: drop the record of the relations the step drops, as `drop_unread` now does; a debug assert at a
+  pipeline's steps that no request relation without rules keeps rows would find every such step.

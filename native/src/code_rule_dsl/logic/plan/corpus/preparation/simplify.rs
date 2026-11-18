@@ -2515,6 +2515,13 @@ impl ProgramPass for DropUnread {
                     b.keep(&input, r);
                 }
             }
+            // A request relation dropped has no rules, so no entry in the request record (decision 0331).
+            let was = b.asked();
+            let mut asked = was.clone();
+            asked.retain(|req, _| !unread.contains(req.as_str()));
+            if asked != was {
+                b.set_asked(&asked);
+            }
         }
         self.0 = unread.into_iter().map(str::to_owned).collect();
         Ok(())

@@ -939,11 +939,15 @@ impl AskedByRule {
         Some(AskedByRule { by, reqs: asked.into_keys().collect() })
     }
     fn step(&mut self, from: &Version, out: &Version, delta: &Delta) {
+        let (was, stated) = (from.asked(), out.asked());
+        // A request relation whose record the step dropped is no longer one (`prune`'s `revived`: its readers all
+        // went, and it is an input again, its rules kept): the record does not state it again. A step may drop it
+        // and change no rule.
+        self.reqs.retain(|req| !was.contains_key(req) || stated.contains_key(req));
         if delta.is_empty() {
             return;
         }
         let mut next = HashMap::new();
-        let (was, stated) = (from.asked(), out.asked());
         // A pass that states the record itself (the merge renames readers) is taken at its word where its record
         // holds an entry a rule.
         for req in &self.reqs {
