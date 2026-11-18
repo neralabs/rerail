@@ -3645,7 +3645,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // A token mark's kinds (decision 0129): a column each, so a kind of the records is one
     // kind's tokens or none of them; a byte that starts that kind's tokens and another's can not
     // tell them apart, and the mark is not compiled.
-    let mut mark_kind_names: Vec<String> = lowered.token_marks.iter().flat_map(|(_, _, _, es)| es.iter().flat_map(|e| e.1.iter().chain(e.6.iter().flat_map(|n| n.2.iter())).cloned())).collect();
+    let mut mark_kind_names: Vec<String> = lowered.token_marks.iter().flat_map(|(_, _, _, es)| es.iter().flat_map(|e| e.1.iter().chain(e.6.iter().flat_map(|n| n.2.iter())).chain(e.7.iter().flat_map(|x| x.0.iter())).cloned())).collect();
     mark_kind_names.sort();
     mark_kind_names.dedup();
     // The moved rows' own first bytes again, for the token marks' kinds, the end rules and the marks below.
@@ -3792,7 +3792,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 }
                 Ok((set, except))
             };
-            for (offset, names, words, not, end, run, nest_rows) in elems {
+            for (offset, names, words, not, end, run, nest_rows, ending_row) in elems {
                 let (set, except) = kind_set(names)?;
                 let mut nests = Vec::new();
                 for (counter, open, ns, ws) in nest_rows {
@@ -3800,7 +3800,14 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                     let test = crate::program::TokenElem { offset: *offset, kinds, words: ws.clone(), except, ..Default::default() };
                     nests.push(crate::program::Nest { counter: *counter, open: *open, test });
                 }
-                out.push(crate::program::TokenElem { offset: *offset, kinds: set, words: words.clone(), except, not: *not, end: *end, run: *run, nests });
+                let ending = match ending_row {
+                    Some((ns, ws)) => {
+                        let (kinds, except) = kind_set(ns)?;
+                        Some(Box::new(crate::program::TokenElem { offset: *offset, kinds, words: ws.clone(), except, ..Default::default() }))
+                    }
+                    None => None,
+                };
+                out.push(crate::program::TokenElem { offset: *offset, kinds: set, words: words.clone(), except, not: *not, end: *end, run: *run, nests, ending });
             }
             tms.push(crate::program::TokenMark { order: *order, elems: out, refuses: *refuses, unless: *unless });
         }

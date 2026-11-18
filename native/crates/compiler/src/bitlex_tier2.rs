@@ -141,9 +141,10 @@ enum Pre {
 /// Tier 2 as words: their `rir` text (strings, switches, words).
 /// One element of a token mark's run, as `Lowered::token_marks` holds it: its offset, its kinds'
 /// names, its words (strings), whether it is a `~`, whether the file's end takes it, and
-/// whether it is a run of its choices (`program::TokenElem`), and a run's depths' sides: each its
-/// counter, whether it opens, its kinds' names and its words (`program::Nest`).
-pub type TokenElemRow = (i8, Vec<String>, Vec<u16>, bool, bool, bool, Vec<NestRow>);
+/// whether it is a run of its choices (`program::TokenElem`), a run's depths' sides: each its
+/// counter, whether it opens, its kinds' names and its words (`program::Nest`), and a run's
+/// `ending`'s kinds and words.
+pub type TokenElemRow = (i8, Vec<String>, Vec<u16>, bool, bool, bool, Vec<NestRow>, Option<(Vec<String>, Vec<u16>)>);
 
 /// One side of a run's depth, as `TokenElemRow` holds it: counter, opens, kinds, words.
 pub type NestRow = (u8, bool, Vec<String>, Vec<u16>);
@@ -1167,14 +1168,29 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
             for (offset, choices) in at {
                 let (mut kinds, mut words, mut end) = (Vec::new(), Vec::new(), false);
                 let none_nest = Vec::new();
-                let (not, run, choices, nests) = match choices.as_slice() {
-                    [::bitlex::syntax::TokenElem::Not(inner)] => (true, false, inner.as_slice(), &none_nest),
+                let none_ending = Vec::new();
+                let (not, run, choices, nests, ending) = match choices.as_slice() {
+                    [::bitlex::syntax::TokenElem::Not(inner)] => (true, false, inner.as_slice(), &none_nest, &none_ending),
                     // A run of tokens none of the choices.
-                    [::bitlex::syntax::TokenElem::Many(inner, nests)] => match inner.as_slice() {
-                        [::bitlex::syntax::TokenElem::Not(none)] => (true, true, none.as_slice(), nests),
-                        _ => (false, true, inner.as_slice(), nests),
+                    [::bitlex::syntax::TokenElem::Many(inner, nests, ending)] => match inner.as_slice() {
+                        [::bitlex::syntax::TokenElem::Not(none)] => (true, true, none.as_slice(), nests, ending),
+                        _ => (false, true, inner.as_slice(), nests, ending),
                     },
-                    c => (false, false, c, &none_nest),
+                    c => (false, false, c, &none_nest, &none_ending),
+                };
+                // The run's `ending` (Q225).
+                let ending_row = if ending.is_empty() {
+                    None
+                } else {
+                    let (mut ks, mut ws) = (Vec::new(), Vec::new());
+                    for c in ending {
+                        match c {
+                            ::bitlex::syntax::TokenElem::Kind(name) => ks.push(name.clone()),
+                            ::bitlex::syntax::TokenElem::Word(w) => ws.push(e.string(w)),
+                            _ => return Err("a run's `ending` of kinds and words".into()),
+                        }
+                    }
+                    Some((ks, ws))
                 };
                 // The run's depths (Q222): each side its counter's.
                 let mut nest_rows = Vec::new();
@@ -1201,7 +1217,7 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
                 }
                 // The token before, `~`: it holds with no token before too (`end` there).
                 let end = end || (offset == -1 && not);
-                elems.push((offset, kinds, words, not, end, run, nest_rows));
+                elems.push((offset, kinds, words, not, end, run, nest_rows, ending_row));
             }
             // A refusing one's word: its bit in the record is the word's alone (no state tests
             // it, so no `MARK` names the word).

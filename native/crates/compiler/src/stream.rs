@@ -963,7 +963,8 @@ pub fn validate_token_marks(program: &Words) -> Result<(), Error> {
         // `NESTS`, each counter with an opener and a closer (Q222).
         let nests = m.elems.iter().all(|e| {
             let counters = |open: bool| e.nests.iter().filter(|n| n.open == open).fold(0u8, |a, n| a | 1 << n.counter);
-            (e.run || e.nests.is_empty())
+            (e.run || (e.nests.is_empty() && e.ending.is_none()))
+                && e.ending.as_ref().is_none_or(|x| !x.not && !x.end && !x.run && x.nests.is_empty() && x.ending.is_none())
                 && e.nests.iter().all(|n| usize::from(n.counter) < crate::program::NESTS && !n.test.not && !n.test.end && !n.test.run && n.test.nests.is_empty())
                 && counters(true) == counters(false)
         });
@@ -1006,25 +1007,28 @@ pub fn token_mark_holds(m: &TokenMark, codes: &[u32], next: usize, extra_bit: Op
         }
     }
     let rest: Vec<&crate::program::TokenElem> = m.elems.iter().filter(|e| e.offset >= 0).collect();
-    token_follows(&rest, Some(here), codes, &after)
+    token_follows(&rest, Some(here), None, codes, &after)
 }
 
 /// Whether `rest` holds from record `at` on (`None`: past the last), each element at the next
-/// record `after` gives (`token_mark_holds`).
-fn token_follows(rest: &[&crate::program::TokenElem], at: Option<usize>, codes: &[u32], after: &dyn Fn(usize) -> Option<usize>) -> bool {
+/// record `after` gives (`token_mark_holds`); `last` the record the element before took.
+fn token_follows(rest: &[&crate::program::TokenElem], at: Option<usize>, last: Option<usize>, codes: &[u32], after: &dyn Fn(usize) -> Option<usize>) -> bool {
     let Some((e, tail)) = rest.split_first() else { return true };
     if e.run {
         // Its depths (Q222): the rest only where each is 0; a closer at 0 ends the run.
+        // Its `ending` (Q225): the rest only where its last record is one the test takes.
         let mut depth = [0u32; crate::program::NESTS];
-        let mut at = at;
+        let (mut at, mut last) = (at, last);
         loop {
-            if depth == [0; crate::program::NESTS] && token_follows(tail, at, codes, after) {
+            let ends = e.ending.as_ref().is_none_or(|x| last.is_some_and(|l| x.takes(codes[l])));
+            if depth == [0; crate::program::NESTS] && ends && token_follows(tail, at, last, codes, after) {
                 return true;
             }
             match at {
                 Some(j) if e.holds(Some(codes[j])) => match crate::program::nest_step(&e.nests, depth, codes[j]) {
                     Some(d) => {
                         depth = d;
+                        last = Some(j);
                         at = after(j);
                     }
                     None => return false,
@@ -1036,7 +1040,7 @@ fn token_follows(rest: &[&crate::program::TokenElem], at: Option<usize>, codes: 
     match at {
         // The file's end: an `end` element, the last.
         None => e.holds(None),
-        Some(j) => e.holds(Some(codes[j])) && token_follows(tail, after(j), codes, after),
+        Some(j) => e.holds(Some(codes[j])) && token_follows(tail, after(j), Some(j), codes, after),
     }
 }
 

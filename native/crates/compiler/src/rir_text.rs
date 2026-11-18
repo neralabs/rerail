@@ -91,6 +91,16 @@ pub fn token_mark_rows(out: &mut String, marks: &[crate::program::TokenMark]) {
             if e.run {
                 out.push_str(" run");
             }
+            // A run's `ending` (Q225): its kinds, words and keywords.
+            if let Some(x) = &e.ending {
+                let _ = write!(out, " ending k{:x}", x.kinds);
+                for s in &x.words {
+                    let _ = write!(out, " s{s}");
+                }
+                for s in &x.except {
+                    let _ = write!(out, " x{s}");
+                }
+            }
             // A run's depths (Q222): each side's counter, then its kinds, words and keywords.
             for n in &e.nests {
                 let _ = write!(out, " {}{} k{:x}", if n.open { "open" } else { "close" }, n.counter, n.test.kinds);

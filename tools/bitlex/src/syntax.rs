@@ -20,14 +20,16 @@ enum Tok {
 /// `(C)*` (`Many`, decision 0406), any number of tokens of `C`'s choices (or of none of them, for
 /// a `C` that is one `~`), then the elements after
 /// it from any of them on (as a forward scan for the first place they hold), the only choice of
-/// its element, one a run and never its last. A run's `nest` counts depths (`Nest`).
+/// its element, one a run and never its last. A run's `nest` counts depths (`Nest`); its `ending
+/// (C)` (the third field) tries the elements after it only where its last token, or the token
+/// before it where it took none, is one of `C` (Q225).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TokenElem {
     Kind(String),
     Word(Vec<u8>),
     Not(Vec<TokenElem>),
     End,
-    Many(Vec<TokenElem>, Vec<Nest>),
+    Many(Vec<TokenElem>, Vec<Nest>, Vec<TokenElem>),
 }
 
 /// A depth a run counts (`(C)* nest (O to C) …`, Q222), as the lean parsers' forward scans count
@@ -1079,7 +1081,17 @@ impl P {
                     return self.err("`nest` and one to four `(O to C)`");
                 }
             }
-            return Ok(vec![TokenElem::Many(inner, nests)]);
+            // `ending (C)`: the run's last token one of `C` where the rest is tried.
+            let mut ending = vec![];
+            if self.eat_kw("ending") {
+                self.want_p("(")?;
+                ending = self.token_choices()?;
+                self.want_p(")")?;
+                if !ending.iter().all(|x| matches!(x, TokenElem::Kind(_) | TokenElem::Word(_))) {
+                    return self.err("a run's `ending` of kinds and words");
+                }
+            }
+            return Ok(vec![TokenElem::Many(inner, nests, ending)]);
         }
         loop {
             if self.eat_p("~") {
@@ -2354,7 +2366,7 @@ mod tier2_tests {
         // A run of tokens, then the ones after it; several `before`s, each its own.
         assert_eq!(
             mark("mark k = lf, unless before \"else\" ~\"->\", before \"{\" (name | \",\")* \"->\""),
-            Ok((vec![(true, vec![vec![word("else")], vec![TokenElem::Not(vec![word("->")])]]), (false, vec![vec![word("{")], vec![TokenElem::Many(vec![name.clone(), word(",")], vec![])], vec![word("->")]])], false))
+            Ok((vec![(true, vec![vec![word("else")], vec![TokenElem::Not(vec![word("->")])]]), (false, vec![vec![word("{")], vec![TokenElem::Many(vec![name.clone(), word(",")], vec![], vec![])], vec![word("->")]])], false))
         );
         assert!(mark("mark k = lf, before ~\"}\"").is_err());
         assert!(mark("mark k = lf, before end").is_err());
@@ -2365,7 +2377,7 @@ mod tier2_tests {
         assert!(mark("mark k = lf, before \"{\" (~name | \",\")* \"->\"").is_err());
         assert_eq!(
             mark("mark k = lf, before \"{\" (~(name | \",\"))* \"->\""),
-            Ok((vec![(false, vec![vec![word("{")], vec![TokenElem::Many(vec![TokenElem::Not(vec![name.clone(), word(",")])], vec![])], vec![word("->")]])], false))
+            Ok((vec![(false, vec![vec![word("{")], vec![TokenElem::Many(vec![TokenElem::Not(vec![name.clone(), word(",")])], vec![], vec![])], vec![word("->")]])], false))
         );
         assert!(parse("lexer t\nmark k = tokens \"{\" (name | \",\")* \"->\"\n").is_ok());
         // A run that counts depths (Q222): each `(O to C)` one; none, a token both, a `~`: refused.
@@ -2373,11 +2385,17 @@ mod tier2_tests {
         let paren = Nest { open: vec![word("(")], close: vec![word(")")] };
         assert_eq!(
             mark("mark k = lf, before \"<\" (name | \"<\" | \">\" | \"(\" | \")\")* nest (\"<\" to \">\") (\"(\" to \")\") \">\" \"(\""),
-            Ok((vec![(false, vec![vec![word("<")], vec![TokenElem::Many(vec![name.clone(), word("<"), word(">"), word("("), word(")")], vec![angle, paren])], vec![word(">")], vec![word("(")]])], false))
+            Ok((vec![(false, vec![vec![word("<")], vec![TokenElem::Many(vec![name.clone(), word("<"), word(">"), word("("), word(")")], vec![angle, paren.clone()], vec![])], vec![word(">")], vec![word("(")]])], false))
         );
         assert!(mark("mark k = lf, before \"<\" (name)* nest \">\"").is_err());
         assert!(mark("mark k = lf, before \"<\" (name)* nest (\"<\" to \"<\") \">\"").is_err());
         assert!(mark("mark k = lf, before \"<\" (name)* nest (~\"<\" to \">\") \">\"").is_err());
+        // `ending (C)`: the run's last token (Q225).
+        assert_eq!(
+            mark("mark k = lf, before \"@\" (~\"{\")* nest (\"(\" to \")\") ending (name | \")\") ~\".\""),
+            Ok((vec![(false, vec![vec![word("@")], vec![TokenElem::Many(vec![TokenElem::Not(vec![word("{")])], vec![paren.clone()], vec![name.clone(), word(")")])], vec![TokenElem::Not(vec![word(".")])]])], false))
+        );
+        assert!(mark("mark k = lf, before \"@\" (name)* ending (~name) \".\"").is_err());
     }
 
     /// A settling mark's `drops W` (decision 0406): parsed with `settles`, refused without.

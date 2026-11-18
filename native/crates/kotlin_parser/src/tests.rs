@@ -499,10 +499,14 @@ fn annotated_expressions_are_the_lean_parsers() {
         "val x = when (a) {\n    B, C, -> d\n    in r -> e\n    else -> f\n}\n",
         // The run to the `)` passes line breaks (Q223): a declaration after is still one.
         "fun f() {\n    @A(x) if (y) z\n    val q = 1\n}\n",
+        // An annotation before any expression, as the lean parser's `declaration_ahead` finds no
+        // declaration (Q225); and before a declaration's modifiers and keyword.
+        "fun f() {\n    @A if (y) z\n}\n",
+        "fun f() {\n    @A(x) foo()\n}\n",
+        "fun f() {\n    @A foo()\n    val q = 1\n}\n",
+        "fun f() {\n    @Suppress(\"D\")\n    get(a, b)\n    val x = @A @B g()\n    @A.B(1) h\n}\n",
+        "fun f() {\n    @A private fun g() {}\n    @field:Inject lateinit var x: Int\n    @A(1, \"b\") val y = 1\n    @A @B(c) class C\n}\n",
     ]);
-    // An annotation before any other expression, or with no arguments: the lean parser's
-    // `declaration_ahead` decides, which no run of tokens says (Q225). Refused, to the lean parser.
-    refused(&["fun f() {\n    @A if (y) z\n}\n", "fun f() {\n    @A(x) foo()\n}\n", "fun f() {\n    @A foo()\n    val q = 1\n}\n"]);
 }
 
 #[test]

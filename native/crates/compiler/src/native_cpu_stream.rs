@@ -1782,6 +1782,12 @@ fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::progra
             f.ins().brif(any, step, &[], try_rest, &[]);
             f.switch_to_block(try_rest);
         }
+        // Its `ending` (Q225): the record it took last (`from`, the one before it where it took
+        // none) one the test takes, else one more record.
+        if let Some(x) = &r.ending {
+            let c = code_at(f, from);
+            test(f, c, x, step);
+        }
         run_of(f, &rest[run + 1..], from, step, heads);
         f.ins().jump(yes, &[]);
         // The rest fails here: one more record of the run, or none.

@@ -104,3 +104,34 @@ tree t {
     assert_eq!(opened, [1, 1, 0, 0, 0, 2, 1]);
     assert_eq!(check_documents("nest", &c, b"ab<>(), ", &[], &fixed, &|_, _, _, _| None), None);
 }
+
+/// A run's `ending (C)` (Q225): the rest is tried only where the run's last token, or the token
+/// before it where it took none, is one of `C`, in Bitlex's reference and every executor.
+#[test]
+fn a_run_ends_on_a_token() {
+    let source = r#"lexer t
+class ws        = ' ' '\n'
+class word      = 'a'..'z' 'A'..'Z'
+class punct     = '<' '>' '(' ')' ','
+mask w          = word
+mask name       = fill(w, ~w)
+error "a byte no token takes" by tokens when ~ws & ~name & ~punct
+token simple_identifier = start name & ~prev(name) run word
+token punct     = start punct
+keywords punct { "<" ">" "(" ")" "," } required
+skip ws
+mark ann        = tokens "<" (~("(" | ","))* ending (simple_identifier) "("
+tree t {
+  node source_file whole = (item)*
+  choice item           = ann_open | simple_identifier | '<' | '>' | '(' | ')' | ','
+  node ann_open         = ann '<'
+}
+"#;
+    let c = compile_step("ending", source);
+    let fixed = ["<a(", "<(", "<a>(", "<a>b(", "<<a(", "a<b,c(", "<a"];
+    let open = c.ids.of("ann_open");
+    let opened: Vec<usize> = fixed.iter().map(|d| reference(&c, d.as_bytes()).expect("parses").iter().filter(|n| n.0 == open).count()).collect();
+    // `<(`: the run took none, and the token before it, the `<`, is no name.
+    assert_eq!(opened, [1, 0, 0, 1, 2, 0, 0]);
+    assert_eq!(check_documents("ending", &c, b"ab<>(), ", &[], &fixed, &|_, _, _, _| None), None);
+}

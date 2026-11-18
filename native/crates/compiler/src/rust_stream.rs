@@ -1275,7 +1275,11 @@ fn pattern(out: &mut String, i: usize, m: &TokenMark, extra_bit: Option<u8>) {
     // The run's depths (Q222): the rest only where each is 0; a closer at 0 ends the run.
     let run_el = &m.elems[r];
     let counters = run_el.nests.iter().map(|n| usize::from(n.counter) + 1).max().unwrap_or(0);
-    let (depths, zero) = if counters == 0 { (String::new(), String::new()) } else { (format!("        let mut d = [0u32; {counters}];\n"), format!("d == [0; {counters}] && ")) };
+    let (depths, mut zero) = if counters == 0 { (String::new(), String::new()) } else { (format!("        let mut d = [0u32; {counters}];\n"), format!("d == [0; {counters}] && ")) };
+    // Its `ending` (Q225): the record it took last, `at`, one the test takes.
+    if let Some(x) = &run_el.ending {
+        write!(zero, "{{ let c = unsafe {{ *self.codes.add(at * self.rs) }}; {} }} && ", test(x)).unwrap();
+    }
     let mut nest = String::new();
     for n in &run_el.nests {
         let k = n.counter;

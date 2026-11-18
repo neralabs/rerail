@@ -1284,12 +1284,14 @@ impl<'a> Ev<'a> {
 /// them on. `at(g, e)`: element `e` at token `g` (`g == n`: past the last).
 fn seq_holds(g: usize, seq: &[Vec<TokenElem>], n: usize, at: &dyn Fn(usize, &[TokenElem]) -> bool) -> bool {
     let Some((e, rest)) = seq.split_first() else { return true };
-    if let [TokenElem::Many(set, nests)] = e.as_slice() {
+    if let [TokenElem::Many(set, nests, ending)] = e.as_slice() {
         // The depths it counts (`Nest`): the rest only where each is 0; a closer at 0 ends it.
         let mut depth = vec![0u32; nests.len()];
         let mut q = g;
         loop {
-            if depth.iter().all(|&d| d == 0) && seq_holds(q, rest, n, at) {
+            // `ending`: its last token (the one before it, where it took none) one of them.
+            let ends = ending.is_empty() || (q > 0 && at(q - 1, ending));
+            if depth.iter().all(|&d| d == 0) && ends && seq_holds(q, rest, n, at) {
                 return true;
             }
             if q >= n || !at(q, set) {
@@ -1404,8 +1406,8 @@ mod run_tests {
         let w = |s: &str| TokenElem::Word(s.as_bytes().to_vec());
         let set = vec![TokenElem::Kind("name".into()), w("<"), w(">"), w("("), w(")"), w(",")];
         let nests = vec![Nest { open: vec![w("<")], close: vec![w(">")] }, Nest { open: vec![w("(")], close: vec![w(")")] }];
-        let seq = vec![vec![w("<")], vec![TokenElem::Many(set.clone(), nests)], vec![w(">")], vec![w("(")]];
-        let flat = vec![vec![w("<")], vec![TokenElem::Many(set, vec![])], vec![w(">")], vec![w("(")]];
+        let seq = vec![vec![w("<")], vec![TokenElem::Many(set.clone(), nests, vec![])], vec![w(">")], vec![w("(")]];
+        let flat = vec![vec![w("<")], vec![TokenElem::Many(set, vec![], vec![])], vec![w(">")], vec![w("(")]];
         let holds = |seq: &[Vec<TokenElem>], text: &str| {
             let toks: Vec<&str> = text.split(' ').collect();
             let at = |i: usize, e: &[TokenElem]| {

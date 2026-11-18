@@ -496,11 +496,9 @@ mask colon_ty   = code & text(":") & ~text("::") & ~prev(text(":")) & ~prev(text
 mask after_ty   = prev(fill(prev(colon_ty), solid))
 # And a function type's receiver's first name: names, dots and type arguments from it to a `.`
 # before a `(`.
-# And an annotation's `@` before an `if` or a `when`: its tokens to a `)` that one follows, past
-# no `@`, `{` or `;` (the lean parser reads an annotation, then any expression). One mark: each `before` starts with its
-# own token (a receiver's name not `suspend`).
+# One mark: each `before` starts with its own token (a receiver's name not `suspend`).
 mask frecv_at   = w & ~prev(w | dot | text("<") | text(">")) & ~text("suspend")
-mark generic    = code & text("<") & ~text("<=") & prev(w) | code & text("(") & after_ty | code & text("suspend") & ~next(w, 7) & after_ty | frecv_at | code & at_sign, before "<" (simple_identifier | backtick_name | "in" | "," | "." | "?" | "*" | "@" | ":" | "->" | "(" | ")" | "[" | "]" | "<" | ">")* nest ("<" to ">") ("(" to ")") ">" "(" | "{" | "." | "?." | "::", before "(" "(", before "suspend" "(", before simple_identifier (simple_identifier | "." | "<" | ">")* "." "(", before "@" (~("@" | "{" | ";"))* ")" "if" | "when"
+mark generic    = code & text("<") & ~text("<=") & prev(w) | code & text("(") & after_ty | code & text("suspend") & ~next(w, 7) & after_ty | frecv_at, before "<" (simple_identifier | backtick_name | "in" | "," | "." | "?" | "*" | "@" | ":" | "->" | "(" | ")" | "[" | "]" | "<" | ">")* nest ("<" to ">") ("(" to ")") ">" "(" | "{" | "." | "?." | "::", before "(" "(", before "suspend" "(", before simple_identifier (simple_identifier | "." | "<" | ">")* "." "("
 # A decimal number with a fraction, an exponent or an `f`: a real one.
 mark real       = empty, at integer_literal when count(frac_dot | e_at | f_at) at least 1
 # A backtick name before `::`: no rule takes it, so the file is refused where it holds. It
@@ -509,6 +507,13 @@ mark bt_cref    = tokens backtick_name "::"
 # The token marks that tier 2 tests alone, after the marks the code holds (decision 0407): no
 # bit of the code, no mask; each its tokens, read at the token as the lean parser peeks.
 # A modifier word where a declaration follows it, not a name.
+# An `@` that starts an annotated expression, as the lean parser's `declaration_ahead` finds no
+# declaration (Q225): from it, past annotations (their arguments counted, never a declaration's
+# hard keyword, a `{`, a `}`, a `;` or a use-site target's `:`), where the run's last token ends an annotation (a name, a
+# `)` or a `>`), a token that goes on no annotation and is no modifier and no declaration's word.
+# Where it does not hold, the `@` starts a declaration's modifiers. (`get` and `set` are an
+# accessor's only after a property, where this mark is not asked.)
+mark ann_expr   = tokens "@" (~("fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "{" | "}" | ";" | ":"))* nest ("(" to ")") ending (simple_identifier | backtick_name | ")" | ">") ~("@" | "." | ":" | "(" | "<" | "?." | "::" | "public" | "private" | "internal" | "protected" | "abstract" | "final" | "open" | "override" | "lateinit" | "const" | "sealed" | "annotation" | "data" | "inner" | "value" | "tailrec" | "operator" | "infix" | "inline" | "external" | "suspend" | "vararg" | "noinline" | "crossinline" | "expect" | "actual" | "fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "companion" | "constructor" | "init" | "enum")
 mark decl_mod   = tokens after ~("." | "?." | "::") "public" | "private" | "internal" | "protected" | "abstract" | "final" | "open" | "override" | "lateinit" | "const" | "sealed" | "annotation" | "data" | "inner" | "value" | "tailrec" | "operator" | "infix" | "inline" | "external" | "suspend" | "vararg" | "noinline" | "crossinline" | "expect" | "actual" "public" | "private" | "internal" | "protected" | "abstract" | "final" | "open" | "override" | "lateinit" | "const" | "sealed" | "annotation" | "data" | "inner" | "value" | "tailrec" | "operator" | "infix" | "inline" | "external" | "suspend" | "vararg" | "noinline" | "crossinline" | "expect" | "actual" | "fun" | "val" | "var" | "class" | "interface" | "object" | "get" | "set" | "companion" | "constructor" | "enum" | "typealias" | "@"
 # An annotation's use-site target (`@get:`), and a file annotation's `@` (`@file:`).
 mark use_site   = tokens after "@" "field" | "property" | "get" | "set" | "receiver" | "param" | "setparam" | "delegate" ":"
@@ -696,7 +701,7 @@ tree kotlin {
   # generic call's type arguments there over the whole operation (`a to f<T>()` is
   # `call(infix(a, f), <T>())`), not read yet. Its `generic` mark is taken by no rule: refused.
   choice unary_tight nested = prefix_expression | primary_tight (postfix_op)*
-  node prefix_expression = ('!' | '-' | '+' | '++' | '--') unary_level | generic args_annotation (if_expression | when_expression)
+  node prefix_expression = ('!' | '-' | '+' | '++' | '--') unary_level | ann_expr annotation expression
   choice postfix_op     = wrap call_expression _ call_suffix
                         | wrap navigation_expression _ navigation_suffix
                         | wrap indexing_expression _ indexing_suffix
@@ -759,7 +764,6 @@ tree kotlin {
   node if_expression    = 'if' '(' condition: expression ')' consequence: control_structure_body ['else' alternative: control_structure_body]
   # An annotated `if` or `when`'s annotation. Its arguments are not optional: a `(` after the
   # name could begin the operand too.
-  node args_annotation  = retag annotation '@' user_type (wrap constructor_invocation _ value_arguments) [semi]
 
   # A trailing comma: the lean parser leaves a list's tokens out only where they are the ones the
   # grammar implies, so after one the `,` and the closer are leaves.
@@ -837,6 +841,6 @@ tree kotlin {
   implied when_subject '(' ')' 'val' '='
   implied when_entry ',' 'else'
   implied callable_reference '::' 'class'
-  hidden semi semi_close named cref trail lam_params lam_bare blk use_site file_at real
+  hidden semi semi_close named cref trail lam_params lam_bare blk use_site file_at real ann_expr
   extra line_comment multiline_comment
 }

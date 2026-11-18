@@ -173,8 +173,8 @@ The forward scans differed from the lean parser's in two places:
   counts `<` and `>`). Now it counts them (`nest`, below, Q222).
 - A run passes line breaks: they are no tokens. The annotation before `if` / `when` ran to
   a line break before. The lean parser reads tokens too, and passes them: on a line break
-  before the `if`, and a declaration after, the tapes are the same (Q223). What the run can not
-  say, an annotation before any other expression, is refused: Q225.
+  before the `if`, and a declaration after, the tapes are the same (Q223). An annotation before
+  any other expression is now told as `declaration_ahead` tells it (`ending`, below, Q225).
 
 ## A run's depths: `nest` (Q222)
 
@@ -206,7 +206,40 @@ run now starts at the token after the `{`, as `lambda_params_end` does, so it ho
 may now have a type (`{ (a, b): Pair<A, B> -> a }`), as the lean parser reads it. The corpus is
 unchanged (429 the same, 62 refused, 0 differ), and the generated Rust's tapes are the JIT's.
 
+## A run's last token: `ending` (Q225)
+
+In a statement, the lean parser's `declaration_ahead` skips annotations and modifiers and looks
+for a declaration's keyword; where there is none, the `@` is an annotation over any expression.
+A run over annotations has to stop where an annotation ends, a name, a `)` or a `>`, not inside
+one (`@A.B(1)` would otherwise stop at `.`). `ending (C)`, after the run's `*` and its `nest`,
+says so: the elements after the run are tried only where its last token, or the token before it
+where it took none, is one of `C`.
+
+```
+mark ann_expr = tokens "@" (~(declaration words | "{" | "}" | ";" | ":"))* nest ("(" to ")")
+                ending (simple_identifier | backtick_name | ")" | ">")
+                ~("@" | "." | ":" | "(" | "<" | "?." | "::" | modifiers | declaration words)
+```
+
+The mark holds where, past the annotations, the next token goes on no annotation and is no
+modifier and no declaration's word: then `prefix_expression` takes `ann_expr annotation
+expression`, as the lean parser's `unary` takes `@`. Where it does not hold, the `@` starts a
+declaration's modifiers. The mark is hidden: an `@` where no expression can start (a parameter's,
+a type's) skips it. The run passes no `:`, so `@file:` and `@field:` are a declaration's.
+This replaces the run to a `)` before `if` / `when` (Q223) and `args_annotation`.
+
+The program gives the run its ending's test (`program::TokenElem::ending`; `ending k… s…` in the
+text). Bitlex's reference (`eval::seq_holds`), the interpreter (`stream::token_follows`, which
+now carries the record the element before took), Cranelift (the run's loop tests the record it
+holds before the rest) and the generated Rust each test it. The corpus: 431 the same, 60
+refused, 0 differ (was 429, 62), and the generated Rust's tapes are the JIT's.
+
 ## Tests
+
+- `compiler::ladder_tests::a_run_ends_on_a_token`: `ending`'s counts in Bitlex's reference, and
+  every executor against it; `syntax`'s parse of `ending`, and a `~` in it refused.
+- `kotlin_parser::tests::annotated_expressions_are_the_lean_parsers`: `@A if`, `@A(x) foo()`,
+  `@A foo()`, `@A.B(1) h`, `val x = @A @B g()`, and annotated declarations, the lean parser's.
 
 - `syntax::tier2_tests::a_settling_mark_drops_an_extra`: `drops` parsed with `settles`,
   refused without.

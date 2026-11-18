@@ -1876,6 +1876,10 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
 - **Done when**: the statement's `@` is decided as `declaration_ahead` decides (a token mark with
   the annotation's structure, or the tree reading the annotations and then choosing, as the lean
   parser does), and the refused cases are the lean parser's.
+- **Done** (2026-11-18): a run's `ending (C)` (0406): `ann_expr` runs over the annotations to one's
+  last token and asks that no declaration follows. The three cases and more give the lean
+  parser's tapes (`annotated_expressions_are_the_lean_parsers`); corpus 431 / 60 / 0 (was 429 /
+  62); `a_run_ends_on_a_token` on every executor; `aot_tapes_are_the_jits`. Reviewer not yet run.
 
 ### Q224. `deprecated back_fill` leaves the language
 

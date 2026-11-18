@@ -484,6 +484,9 @@ pub struct TokenElem {
     /// one deeper (`open`) or one out. The elements after the run are tried only where every
     /// depth is 0; a closer where its depth is 0 ends the run.
     pub nests: Vec<Nest>,
+    /// A run's `ending` (Q225): the elements after it are tried only where its last record (the
+    /// one before it, where it took none) is one this test takes.
+    pub ending: Option<Box<TokenElem>>,
 }
 
 /// One side of a run's depth (`TokenElem::nests`): its counter (0 to 3), whether it opens, and

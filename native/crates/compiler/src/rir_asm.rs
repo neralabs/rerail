@@ -497,8 +497,9 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 return Err(format!("tokenmark {order} out of order"));
             }
             let mut elems: Vec<crate::program::TokenElem> = Vec::new();
-            // Inside a run's depth's side (`program::Nest`): its words and keywords are the side's.
-            let mut in_nest = false;
+            // Whose words and keywords follow: the element's (0), a run's depth's side's
+            // (`program::Nest`, 1), a run's `ending`'s (2).
+            let mut part = 0u8;
             let refuses = line.peek_word().as_deref() == Some("refuses");
             if refuses {
                 line.word()?;
@@ -515,7 +516,13 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     let k = line.word()?;
                     let kinds = k.strip_prefix('k').and_then(|h| u64::from_str_radix(h, 16).ok()).ok_or_else(|| format!("a bad kind set `{k}`"))?;
                     elems.push(crate::program::TokenElem { offset, kinds, ..Default::default() });
-                    in_nest = false;
+                    part = 0;
+                } else if w == "ending" {
+                    let k = line.word()?;
+                    let kinds = k.strip_prefix('k').and_then(|h| u64::from_str_radix(h, 16).ok()).ok_or_else(|| format!("a bad kind set `{k}`"))?;
+                    let el = elems.last_mut().ok_or("an `ending` before its run")?;
+                    el.ending = Some(Box::new(crate::program::TokenElem { offset: el.offset, kinds, ..Default::default() }));
+                    part = 2;
                 } else if let Some((open, c)) = w.strip_prefix("open").map(|c| (true, c)).or_else(|| w.strip_prefix("close").map(|c| (false, c))) {
                     let counter: u8 = c.parse().map_err(|_| format!("a bad depth `{w}`"))?;
                     let k = line.word()?;
@@ -523,7 +530,7 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     let el = elems.last_mut().ok_or("a depth before its run")?;
                     let test = crate::program::TokenElem { offset: el.offset, kinds, ..Default::default() };
                     el.nests.push(crate::program::Nest { counter, open, test });
-                    in_nest = true;
+                    part = 1;
                 } else if w == "not" {
                     elems.last_mut().ok_or("a `not` before its element")?.not = true;
                 } else if w == "end" {
@@ -533,16 +540,18 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 } else if let Some(s) = w.strip_prefix('s') {
                     let s: u16 = s.parse().map_err(|_| format!("a bad word `{w}`"))?;
                     let el = elems.last_mut().ok_or("a word before its element")?;
-                    match el.nests.last_mut().filter(|_| in_nest) {
-                        Some(n) => n.test.words.push(s),
-                        None => el.words.push(s),
+                    match part {
+                        1 => el.nests.last_mut().ok_or("a depth's word")?.test.words.push(s),
+                        2 => el.ending.as_mut().ok_or("an ending's word")?.words.push(s),
+                        _ => el.words.push(s),
                     }
                 } else if let Some(s) = w.strip_prefix('x') {
                     let s: u16 = s.parse().map_err(|_| format!("a bad keyword `{w}`"))?;
                     let el = elems.last_mut().ok_or("a keyword before its element")?;
-                    match el.nests.last_mut().filter(|_| in_nest) {
-                        Some(n) => n.test.except.push(s),
-                        None => el.except.push(s),
+                    match part {
+                        1 => el.nests.last_mut().ok_or("a depth's keyword")?.test.except.push(s),
+                        2 => el.ending.as_mut().ok_or("an ending's keyword")?.except.push(s),
+                        _ => el.except.push(s),
                     }
                 } else {
                     return Err(format!("a bad token mark's part `{w}`"));
