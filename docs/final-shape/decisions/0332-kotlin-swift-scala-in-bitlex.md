@@ -602,6 +602,20 @@ an annotated expression (`@Suppress("x") if …`), `constructor` and `by` as nam
 
 Corpus: 375 the same (step 22: 355), 116 refused, 0 differ.
 
+## Kotlin, step 24 (`24-strings-in-templates.bitlex`)
+
+```kotlin
+val v = "${System.getProperty("user.name")}"
+val p = "${name.replace('.', '/')}/a"
+```
+
+A template's code ends at the first `}` on its line, found from the bytes before the regions.
+A string or a character in the code is a region, as in any code. Where that `}` is inside one
+(`"${f("}")}"`), it opens no tail (`o_tail`), and the file is refused. A brace, a template, a
+comment or a line break in the code is still refused.
+
+Corpus: 390 the same (step 23: 375), 101 refused, 0 differ.
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment

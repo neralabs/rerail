@@ -365,6 +365,27 @@ fn types_and_aliases_are_the_lean_parsers() {
 }
 
 #[test]
+fn strings_in_templates_are_the_lean_parsers() {
+    same(&[
+        "val s = \"${\"x\"}\"\n",
+        "val v = \"${System.getProperty(\"user.name\")}\" + a\n",
+        "val p = \"${name.replace('.', '/')}/a\"\n",
+        "val q = \"a ${f(\"b\", 'c')} d $e\"\n",
+        "val r = \"${f(\"$x\")}\"\n",
+        "// \"${f(\"}\")}\"\nval a = 1\n",
+    ]);
+}
+
+#[test]
+fn what_step_24_does_not_read_is_refused() {
+    refused(&[
+        "val s = \"${f(\"}\")}\"\n",
+        "val s = \"${f(\"${x}\")}\"\n",
+        "val s = \"${if (a) { 1 } else 2}\"\n",
+    ]);
+}
+
+#[test]
 fn what_step_23_does_not_read_is_refused() {
     refused(&[
         "fun interface P {\n    fun f()\n}\n",
@@ -403,7 +424,6 @@ fn what_step_20_does_not_read_is_refused() {
         "import a.b import c\n",
         "val s = 'x\n",
         "val s = \"a\nb\"\n",
-        "val s = \"${\"x\"}\"\n",
         "val s = \"${ {x} }\"\n",
         "val s = \"${}\"\n",
         "val s = \"open\n",
