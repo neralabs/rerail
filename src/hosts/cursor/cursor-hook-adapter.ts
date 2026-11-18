@@ -222,7 +222,14 @@ export async function handleCursorEvent(
     : await eventLoop.ingest(event);
   // Left for a daemon that is not reading: the answer of a hook with nothing to deliver, and the session's held steers
   // wait in their file for the next hook the daemon answers.
-  if (eventLoop.untaken === true) return cursorHookOutput(hook, []);
+  return eventLoop.untaken === true ? cursorHookOutput(hook, []) : await answerCursorHook(input, { hook, descriptor, path }, deliveries);
+}
+
+/** The answer of a hook the daemon answered with `deliveries`: the session's held steers routed through its file. */
+async function answerCursorHook(
+  input: CursorHookInput, at: { hook: string; descriptor: AdapterSession; path: string }, deliveries: readonly AdapterDelivery[],
+): Promise<CursorHookOutput> {
+  const { hook, path } = at;
   switch (hook) {
     case "beforeSubmitPrompt":
       await persistPending(path, deliveries.filter(delivery => steers(delivery.requested)));
@@ -231,7 +238,7 @@ export async function handleCursorEvent(
       await rm(path, { force: true });
       return {};
     default:
-      return cursorAnswer(input, { hook, descriptor, path }, deliveries);
+      return cursorAnswer(input, at, deliveries);
   }
 }
 

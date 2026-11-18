@@ -97,7 +97,14 @@ export async function handleClaudeEvent(
   const deliveries: AdapterDelivery[] = [];
   for (const event of claudeHookEvents(input)) deliveries.push(...await eventLoop.ingest(event));
   // Left for a daemon that is not reading: the session's held steers wait in their file for the next hook it answers.
-  if (eventLoop.untaken === true) return {};
+  return eventLoop.untaken === true ? {} : await answerClaudeHook(input, { hook, sessionId, storageRoot, env }, deliveries);
+}
+
+/** The answer of a hook the daemon answered with `deliveries`: the session's held steers routed through its file. */
+async function answerClaudeHook(
+  input: HookInput, { hook, sessionId, storageRoot, env }: { hook: string; sessionId: string; storageRoot: string; env: NodeJS.ProcessEnv },
+  deliveries: readonly AdapterDelivery[],
+): Promise<HookOutput> {
   const path = pendingPath(storageRoot, "claude-code", sessionId);
   if (hook === "SessionEnd") {
     await rm(path, { force: true });

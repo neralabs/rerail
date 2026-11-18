@@ -107,18 +107,25 @@ function appendLine(lineAt: (at: number) => HookFailure | LateCheck, { home = de
   try {
     makeRerailHome(home);
     const path = join(home, HOOK_FAILURES_FILE);
-    const size = sizeOf(path);
-    const moved = size > MAX_FAILURE_BYTES && movedAside(home, path);
-    // At the cap by the size read before the lock, the log is read again: another hook may have moved it since.
-    if (!moved && size >= CAP_FAILURE_BYTES && sizeOf(path) >= CAP_FAILURE_BYTES) return;
+    const room = roomInLog(home, path);
+    if (room === undefined) return;
     // Read after the move, past it by a clock step when this hook moved the log: the hook's own failure carries the
     // time the new part starts, so it counts in that part.
-    const at = now ?? Date.now() + (moved ? PART_START_PAST_CLOCK_MS : 0);
+    const at = now ?? Date.now() + (room.moved ? PART_START_PAST_CLOCK_MS : 0);
     const line = `${JSON.stringify(lineAt(at))}\n`;
-    appendFileSync(path, moved ? `${JSON.stringify({ startedAt: at } satisfies PartStart)}\n${line}` : line, { mode: 0o600 });
+    appendFileSync(path, room.moved ? `${JSON.stringify({ startedAt: at } satisfies PartStart)}\n${line}` : line, { mode: 0o600 });
   } catch {
     // Nowhere left to say it.
   }
+}
+
+/** Whether the log at `path` takes one more line, and whether this hook moved the full log aside to make room for it. */
+function roomInLog(home: string, path: string): { moved: boolean } | undefined {
+  const size = sizeOf(path);
+  const moved = size > MAX_FAILURE_BYTES && movedAside(home, path);
+  // At the cap by the size read before the lock, the log is read again: another hook may have moved it since.
+  if (!moved && size >= CAP_FAILURE_BYTES && sizeOf(path) >= CAP_FAILURE_BYTES) return undefined;
+  return { moved };
 }
 
 /** The log's size: 0 when there is none, and past every limit when it cannot be told, so nothing is written unchecked. */

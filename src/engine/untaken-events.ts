@@ -236,13 +236,18 @@ class Taker {
     const fresh = untakenNames(this.home).filter(name => !this.#handed.has(name.name));
     if (fresh.length === 0) return;
     await markTaken(this.home, fresh.at(-1)!);
+    void reportPass(fresh, await this.#handOnInSlices(fresh), this.handler);
+  }
+
+  /** Hands `names` on a slice per turn of the event loop, and returns each one's check: true once it passed. */
+  async #handOnInSlices(names: readonly UntakenName[]): Promise<Promise<boolean>[]> {
     const checks: Promise<boolean>[] = [];
-    for (let start = 0; start < fresh.length && !this.closed; start += PASS_SLICE) {
+    for (let start = 0; start < names.length && !this.closed; start += PASS_SLICE) {
       // Each check's end is heard at once, so one that fails while later slices are handed on is no unhandled rejection.
-      for (const name of fresh.slice(start, start + PASS_SLICE)) checks.push(handOn(this.home, name, this.handler, this.#handed).then(() => true, () => false));
+      for (const name of names.slice(start, start + PASS_SLICE)) checks.push(handOn(this.home, name, this.handler, this.#handed).then(() => true, () => false));
       await nextTurn();
     }
-    void reportPass(fresh, checks, this.handler);
+    return checks;
   }
 }
 
