@@ -22,6 +22,7 @@ import {
   gitReadAsync,
   isAncestorAsync,
   mergeBaseAsync,
+  readsStoppedBy,
   resolveCommit,
   upstreamOf,
 } from "../../engine/merge-assist/branch-git.js";
@@ -71,6 +72,11 @@ export interface DetectContext {
   readonly pulls: readonly PullRequestSummary[] | null;
   /** The person's GitHub login, as `gh` is signed in; absent or null when unknown. */
   readonly login?: string | null;
+  /**
+   * Once aborted, the pass's Git read running ends and no other starts (`readsStoppedBy`), and the pass stores
+   * nothing and answers null.
+   */
+  readonly signal?: AbortSignal;
 }
 
 /** This checkout's side: where its work starts, its head and branch, the person, and its changed hunks per file. */
@@ -522,9 +528,15 @@ export interface DetectedConflicts {
 
 /**
  * Find the checkout's conflicts and store them with the dismissed ones. A detection that finishes after Merge Assist
- * was turned off stores nothing and answers null.
+ * was turned off, or once its `signal` is aborted, stores nothing and answers null.
  */
 export async function detectConflicts(context: DetectContext): Promise<DetectedConflicts | null> {
+  const detected = await readsStoppedBy(context.signal, () => detectPass(context));
+  return context.signal?.aborted === true ? null : detected;
+}
+
+/** {@link detectConflicts}, its Git reads stopped by its signal. */
+async function detectPass(context: DetectContext): Promise<DetectedConflicts | null> {
   const root = context.checkout.checkoutPath;
   // What the store held when this pass began: an open conflict another pass stores while this one runs was never
   // examined here, so it stays as it is (below).
@@ -544,6 +556,8 @@ export async function detectConflicts(context: DetectContext): Promise<DetectedC
     ...(refs.branchesListed ? [] : [UNLISTED_BRANCHES_PROBLEM]), ...(refs.remotesCut ? [REMOTE_LIMIT_PROBLEM] : []),
     ...failed.map(({ ref, reason }) => `Could not compare ${ref.label}: ${reason}`),
   ];
+  // Stopped meanwhile: its reads ended early and what they gave is no finding, and the database may be closing.
+  if (context.signal?.aborted === true) return null;
   const now = context.now();
   const examined = new Set([...known.filter(entry => !kept(entry)), ...detected].map(entry => entry.conflict.id));
   return context.database.transaction(tx => {

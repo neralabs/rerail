@@ -19,6 +19,7 @@ import {
   type MergeAssistStatus,
   lastScanSchema,
 } from "../../engine/merge-assist/model.js";
+import { GitReads } from "../../engine/git.js";
 import type { RerailDatabase } from "../../engine/storage/database.js";
 import { checkouts, repositories } from "../../engine/storage/schema.js";
 import { processAlive } from "../daemon-control.js";
@@ -102,9 +103,10 @@ export interface MergeAssistRuntime extends MergeAssistService {
   /** Resolves once the conflict hook's handlers running now have finished. */
   settled(): Promise<void>;
   /**
-   * Stop: no conflict event is handed to the hook any more, and a handler that answers later records nothing. Every
-   * hook command still running gets SIGTERM on its process group, then SIGKILL after a short grace; waits at most
-   * `waitMs` in all, the handlers running now included.
+   * Stop: no conflict event is handed to the hook any more, and a handler that answers later records nothing. A
+   * detection pass running ends at its next Git read and stores nothing. Every hook command still running gets SIGTERM
+   * on its process group, then SIGKILL after a short grace; waits at most `waitMs` in all for those passes and the
+   * handlers running now.
    */
   stop(waitMs?: number): Promise<void>;
 }
@@ -183,6 +185,11 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   readonly #listeners = new Set<(checkoutPath: string) => void>();
   /** Set once stopped: the database may be closing, so the hook's late answers are dropped. */
   #stopped = false;
+  /**
+   * The detection passes running in this process, scans or not, each under the signal {@link stop} aborts: its Git read
+   * running ends, and it starts no other and stores nothing.
+   */
+  readonly #passes = new GitReads();
 
   constructor(options: MergeAssistServiceOptions) {
     this.#options = options;
@@ -386,13 +393,18 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   /**
    * Find the checkout's in-flight conflicts for `session` (null outside a session), then hand the pass's events to the
    * conflict hook, without waiting for its handlers. A scan (`scan`) lists the pull requests afresh and records itself
-   * as the checkout's last scan.
+   * as the checkout's last scan. {@link stop} ends the pass and waits for it.
    */
-  async #detect(checkout: CheckoutContext, session: { id: string; host: RerailHost | null } | null, scan = false): Promise<void> {
+  #detect(checkout: CheckoutContext, session: { id: string; host: RerailHost | null } | null, scan = false): Promise<void> {
+    return this.#passes.run(signal => this.#detectPass(checkout, session, scan, signal));
+  }
+
+  /** The pass `#detect` runs, its Git reads stopped by `signal`. */
+  async #detectPass(checkout: CheckoutContext, session: { id: string; host: RerailHost | null } | null, scan: boolean, signal: AbortSignal): Promise<void> {
     const { pulls, problems, login = null } = await this.#openPulls(checkout, scan);
     // Stopped while `gh` answered: the database may be closed, and nothing found now would be heard.
     if (this.#stopped) return;
-    const detected = await detectConflicts({ database: this.#db, checkout, pulls, login, now: this.#now });
+    const detected = await detectConflicts({ database: this.#db, checkout, pulls, login, now: this.#now, signal });
     if (detected === null) return;
     if (scan) {
       const last: LastScan = { at: isoSeconds(this.#now()), peers: detected.peers, problems: [...problems, ...detected.problems] };
@@ -563,6 +575,8 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
 
   async stop(waitMs = 2_000): Promise<void> {
     this.#stopped = true;
+    // A pass in its Git reads ends at its next one, so the wait below ends with it and no Git runs on in the checkout.
+    const passes = this.#passes.stop();
     this.#listeners.clear();
     // No queued handler starts from now on, so none starts a command after the running ones are ended.
     this.#hook.stop();
@@ -570,9 +584,8 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     await this.#commands.stop(Math.min(STOP_KILL_GRACE_MS, waitMs / 2));
     const timer = Promise.withResolvers<void>();
     const timeout = setTimeout(timer.resolve, Math.max(0, waitMs - (Date.now() - started)));
-    const scans = [...this.#scans.values()].map(scan => scan.work);
     try {
-      await Promise.race([Promise.allSettled([this.#hook.settled(), ...scans]), timer.promise]);
+      await Promise.race([Promise.allSettled([this.#hook.settled(), passes]), timer.promise]);
     } finally {
       clearTimeout(timeout);
     }
