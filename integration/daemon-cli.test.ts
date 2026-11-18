@@ -296,9 +296,11 @@ describe("Rerail daemon CLI", () => {
   }, 15_000);
 
   // A daemon killed without its cleanup leaves daemon.json and the home lock's holder record naming its pid, which the
-  // OS can give to any process started since. A listener on the recorded engine pipe or socket takes the lookup to the
-  // check.
-  test("ends no process a dead daemon's records name, and says the record named no daemon of the home", async () => {
+  // OS can give to any process started since. On Windows a lookup asks about that pid only while the recorded engine
+  // pipe is there, so the test keeps it open; there `rerail status` has used its 2 s on the pipe before it could read
+  // when the process started, so it keeps the record, and the stop, which has its own wait, removes it. macOS reads no
+  // start time, so there the stop ends nothing and says it could not prove whose process it is.
+  test.runIf(process.platform !== "darwin")("ends no process a dead daemon's records name, and says the record named no daemon of the home", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-not-daemon-cli-"));
     const stateFile = join(root, "daemon.json");
     const env = { ...process.env, RERAIL_HOME: root };
@@ -316,11 +318,12 @@ describe("Rerail daemon CLI", () => {
       const closed = once(daemon, "close");
       daemon.kill("SIGKILL");
       await closed;
-      const silent = spawn(process.execPath, ["-e", `const fs = require("node:fs"); const path = process.argv[1];
-        if (process.platform !== "win32") fs.rmSync(path, { force: true });
-        require("node:net").createServer(socket => socket.pause()).listen(path, () => process.stdout.write("listening\\n"));`, state.kernelSocketPath], { stdio: ["ignore", "pipe", "ignore"] });
-      others.push(silent);
-      await once(silent.stdout!, "data");
+      if (process.platform === "win32") {
+        const pipe = spawn(process.execPath, ["-e", `require("node:net").createServer(socket => socket.pause())
+          .listen(process.argv[1], () => process.stdout.write("listening\\n"));`, state.kernelSocketPath], { stdio: ["ignore", "pipe", "ignore"] });
+        others.push(pipe);
+        await once(pipe.stdout!, "data");
+      }
       const unrelated = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e6)"], { stdio: "ignore" });
       others.push(unrelated);
       // The records as the daemon wrote them an hour before the process that has its pid now started.
@@ -334,9 +337,14 @@ describe("Rerail daemon CLI", () => {
 
       await recordsName(unrelated.pid!);
       const status = await cli("status");
-      expect(status.code).toBe(3);
-      expect(status.stdout).toContain(`${note}\nThe Rerail daemon is not running`);
-      expect(existsSync(stateFile)).toBe(false);
+      if (process.platform === "win32") {
+        expect(status.code).toBe(4);
+        expect(existsSync(stateFile)).toBe(true);
+      } else {
+        expect(status.code).toBe(3);
+        expect(status.stdout).toContain(`${note}\nThe Rerail daemon is not running`);
+        expect(existsSync(stateFile)).toBe(false);
+      }
       await recordsName(unrelated.pid!);
       expect(await cli("daemon", "stop")).toEqual({ code: 0, stdout: `${note}\nThe Rerail daemon is not running.\n` });
       expect(existsSync(stateFile)).toBe(false);
