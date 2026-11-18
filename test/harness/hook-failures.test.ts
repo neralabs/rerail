@@ -14,7 +14,9 @@ vi.mock("../../src/runtime/daemon-control.js", async () => {
   return { ...actual, autostartDaemon: () => { autostart.calls += 1; } };
 });
 
-import { HOOK_FAILURES_FILE, hookFailureLines, readHookFailures, recordHookFailure, type HookFailure, type HookFailureLog } from "../../src/harness/hook-failures.js";
+import {
+  HOOK_FAILURES_FILE, hookFailureLines, lateCheckLines, readHookFailures, recordHookFailure, recordLateCheck, untakenWaitingLines, type HookFailure, type HookFailureLog,
+} from "../../src/harness/hook-failures.js";
 import { pendingPath, persistPending, withSessionLock } from "../../src/harness/hook-adapter.js";
 import { runClaudeHook } from "../../src/hosts/claude/index.js";
 import { startTestRepository } from "../support/started-repository.js";
@@ -57,7 +59,7 @@ const failure = (at: number, event = "MessageDisplay"): HookFailure => ({
 });
 
 /** A log that reaches back over the whole period. */
-const whole = (...failures: HookFailure[]): HookFailureLog => ({ failures, keptSince: null });
+const whole = (...failures: HookFailure[]): HookFailureLog => ({ failures, keptSince: null, lateChecks: [] });
 
 describe("what rerail status says of hook failures", () => {
   it("says hooks run but nothing was recorded when every failure is newer than the last recorded event", () => {
@@ -727,6 +729,24 @@ describe("a hook beside a daemon that runs but does not read", () => {
     } finally {
       await Promise.all([closeFront(front.server), closeEngine()]);
     }
+  });
+
+  it("is named by rerail status while it waits, and once the daemon checked it late", async () => {
+    const rerailHome = await home();
+    await leaveUntaken(rerailHome, 41, engineRequestBody(prompt("first")), Date.UTC(2026, 10, 17, 12));
+    await leaveUntaken(rerailHome, 41, engineRequestBody(prompt("second")), Date.UTC(2026, 10, 17, 12, 1));
+    expect(untakenWaitingLines(rerailHome, 41)).toEqual([
+      "Hooks: 2 hook events wait in untaken-events for the Rerail daemon, which has not read since 2026-11-17T12:00:00.000Z; it checks them as soon as it reads again, and its next answers carry what it finds.",
+    ]);
+    expect(untakenWaitingLines(rerailHome, 42)).toEqual([]);
+    recordLateCheck({ events: 2, from: Date.UTC(2026, 10, 17, 12), to: Date.UTC(2026, 10, 17, 12, 1), failed: 0 }, { home: rerailHome, now: Date.UTC(2026, 10, 17, 12, 2) });
+    recordLateCheck({ events: 3, from: Date.UTC(2026, 10, 17, 13), to: Date.UTC(2026, 10, 17, 13, 5), failed: 1 }, { home: rerailHome, now: Date.UTC(2026, 10, 17, 13, 6) });
+    const log = readHookFailures(rerailHome, 0);
+    // A late check is no failure: the line that counts events Rerail could not record says nothing of it.
+    expect(hookFailureLines(log, null)).toEqual([]);
+    expect(lateCheckLines(log)).toEqual([
+      "Hooks: 5 hook events came from 2026-11-17T12:00:00.000Z to 2026-11-17T13:05:00.000Z while the Rerail daemon was not reading, in the last 24 hours; it checked them late, once it read again, and what it found went to the agent with its next answers; 1 event of them could not be checked and was lost.",
+    ]);
   });
 
   it("reads a state file it cannot read as no event left untaken, and goes on to ask as before", async () => {
