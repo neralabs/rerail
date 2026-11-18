@@ -2731,13 +2731,14 @@ impl Runner<'_> {
         let (state, flags) = (self.tapes.supertypes.buffer.clone(), self.flags.buffer.clone());
         let (scratch, counts) = ((&state, self.tapes.scratch_at), (&state, self.tapes.counts_at));
         // The facts' constraints, once for the level's pattern kernels (each group's binds them; only the first's
-        // tasks read them).
+        // tasks read them). copy (0353 step 4): the fact's rows, Q219.
         let constraints = if matches.iter().any(|matches| !matches.is_empty()) { Some(self.upload(&constraints)?) } else { None };
         for (group, (matches, pattern_threads)) in matches.iter().zip(pattern_threads).enumerate() {
             if matches.is_empty() {
                 continue;
             }
             let task_count = (matches.len() / 6) as u32;
+            // copy: not block data (the group's task list).
             let (items, constraints) = (self.upload(matches)?, constraints.clone().ok_or(Error::BackendFailure)?);
             let docs = self.tapes.docs.buffer.clone();
             let root_words = self.root_words.as_ref().ok_or(Error::BackendFailure)?.buffer.clone();
