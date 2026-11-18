@@ -759,6 +759,14 @@ export class RerailDaemon {
     };
   }
 
+  /**
+   * Closes every checkout runtime no session uses (`EngineService.closeUnusedRuntimes`), settling once their memory was
+   * collected: the heap watch asks it before it restarts the daemon at its ceiling.
+   */
+  async closeUnusedRuntimes(): Promise<void> {
+    await this.#engineService.closeUnusedRuntimes();
+  }
+
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
@@ -1440,6 +1448,8 @@ async function runRerailDaemon(argv: readonly string[], services: RerailDaemonSe
   process.once("SIGTERM", way.stop);
   process.once("SIGINT", way.stop);
   watchHeap({
+    // What the daemon keeps for its checkouts' next sessions goes before a restart that would make every hook wait.
+    relieve: () => daemon.closeUnusedRuntimes(),
     onCeiling: ({ used, limit }) => {
       process.stderr.write(`rerail daemon: heap at ${Math.round(used / 1e6)} MB of its ${Math.round(limit / 1e6)} MB limit; restarting before it runs out\n`);
       way.restart();

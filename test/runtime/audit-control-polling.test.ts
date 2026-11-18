@@ -3,7 +3,8 @@ import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { codeRuleSchema, NativeCodeRuleEnforcer, SqliteAuditControlStore } from "../../src/engine/index.js";
-import { RerailRuntime } from "../../src/runtime/runtime.js";
+import { RerailRuntime, type RerailRuntimeOptions } from "../../src/runtime/runtime.js";
+import { SqliteSessionStore } from "../../src/runtime/session-store.js";
 import { temporaryDirectories, testEmbedder } from "../support/hook-events.js";
 import { testCodeRuleCatalog } from "../support/repository-rules.js";
 
@@ -21,18 +22,17 @@ function catalog() {
   })]);
 }
 
-async function idleRuntime(sessions: readonly string[]) {
+async function idleRuntime(sessions: readonly string[], createAuditor: RerailRuntimeOptions["createAuditor"] = options => new NativeCodeRuleEnforcer(catalog(), options)) {
   const root = await realpath(await temporaryDirectory());
   const databasePath = join(root, "rerail.sqlite");
   const runtime = new RerailRuntime({
-    storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder,
-    createAuditor: options => new NativeCodeRuleEnforcer(catalog(), options),
+    storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder, createAuditor,
   });
   for (const sessionId of sessions) {
     await runtime.ingest({ kind: "session-start", eventId: `start-${sessionId}`, session: { host: "claude-code", sessionId, cwd: root } });
     await runtime.codeRulesOpened(sessionId);
   }
-  return { runtime, databasePath };
+  return { runtime, databasePath, root };
 }
 
 describe("The runtime's audit control polling", () => {
@@ -81,4 +81,77 @@ describe("The runtime's audit control polling", () => {
       await runtime.dispose();
     }
   }, 20_000);
+
+  // The engine service keeps a runtime no session uses open for its checkout's next session. Its control timer read
+  // the database's version four times a second all the same, for nothing: it looks only for open sessions' changes.
+  it("reads nothing while no session is open in it, and looks again from the next session's start", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const versions = vi.spyOn(SqliteAuditControlStore.prototype, "dataVersion");
+    const { runtime, root } = await idleRuntime([]);
+    try {
+      vi.advanceTimersByTime(1_000);
+      expect(versions).not.toHaveBeenCalled();
+      const session = { host: "claude-code" as const, sessionId: "a", cwd: root };
+      await runtime.ingest({ kind: "session-start", eventId: "start-a", session });
+      versions.mockClear();
+      vi.advanceTimersByTime(1_000);
+      expect(versions).toHaveBeenCalled();
+      await runtime.ingest({ kind: "session-end", eventId: "end-a", sessionId: "a", session });
+      versions.mockClear();
+      vi.advanceTimersByTime(1_000);
+      expect(versions).not.toHaveBeenCalled();
+    } finally {
+      await runtime.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  it("reads nothing once the only session's open has failed", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const versions = vi.spyOn(SqliteAuditControlStore.prototype, "dataVersion");
+    const { runtime, root } = await idleRuntime([], () => {
+      throw new Error("the evaluator did not open");
+    });
+    try {
+      const session = { host: "claude-code" as const, sessionId: "a", cwd: root };
+      await expect(runtime.ingest({ kind: "session-start", eventId: "start-a", session })).rejects.toThrow("the evaluator did not open");
+      versions.mockClear();
+      vi.advanceTimersByTime(1_000);
+      expect(versions).not.toHaveBeenCalled();
+    } finally {
+      await runtime.dispose();
+      vi.useRealTimers();
+    }
+  });
+
+  // A tick claims a queued scan for an open session: one that came while the runtime closed its sessions one by one
+  // would start a scan in a session being closed.
+  it("starts no control timer again while it closes its sessions", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const held = Promise.withResolvers<void>();
+    let made = 0;
+    const { runtime } = await idleRuntime(["a", "b"], (options) => {
+      made += 1;
+      const enforcer = new NativeCodeRuleEnforcer(catalog(), options);
+      if (made !== 2) return enforcer;
+      const close = enforcer.close.bind(enforcer);
+      return Object.assign(enforcer, { close: async () => {
+        await held.promise;
+        await close();
+      } });
+    });
+    const closed = vi.spyOn(SqliteSessionStore.prototype, "closeSession");
+    const versions = vi.spyOn(SqliteAuditControlStore.prototype, "dataVersion");
+    const disposing = runtime.dispose();
+    try {
+      await vi.waitFor(() => expect(closed.mock.calls.map(([sessionId]) => sessionId)).toContain("a"));
+      versions.mockClear();
+      vi.advanceTimersByTime(1_000);
+      expect(versions).not.toHaveBeenCalled();
+    } finally {
+      held.resolve();
+      await disposing;
+      vi.useRealTimers();
+    }
+  });
 });

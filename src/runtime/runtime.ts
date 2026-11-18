@@ -1160,7 +1160,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #beforeSessionPublish: RerailRuntimeOptions["beforeSessionPublish"];
   readonly #auditSettings: CheckoutAuditSettings;
   readonly #controls: SqliteAuditControlStore;
-  readonly #controlTimer: NodeJS.Timeout;
+  /** The control timer (`#pollControlsWhileSessionsOpen`): set only while some session is open here. */
+  #controlTimer: NodeJS.Timeout | undefined;
+  /** Set as `dispose` begins: the sessions it closes start no control timer again. */
+  #disposing = false;
   readonly #autostart: boolean;
   readonly #ingestLanes = new SessionLanes();
   readonly #sourceObservations: SourceObservationCache = new Map();
@@ -1231,8 +1234,23 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       catalogs?.close();
       throw error;
     }
-    this.#controlTimer = setInterval(() => this.#pollAuditControls(), 250);
-    this.#controlTimer.unref?.();
+  }
+
+  /**
+   * Runs the control timer (`#pollAuditControls`, every 250 ms) while some session is open in this runtime, and stops it
+   * once none is: each tick reads the database's `data_version` to find a session whose settings or scans changed, and a
+   * runtime with no session, which the engine service keeps open for its checkout's next session, has none to find.
+   * Asked each time a session enters or leaves the runtime.
+   */
+  #pollControlsWhileSessionsOpen(): void {
+    if (this.#sessions.size > 0 && !this.#disposing) {
+      if (this.#controlTimer !== undefined) return;
+      this.#controlTimer = setInterval(() => this.#pollAuditControls(), 250);
+      this.#controlTimer.unref?.();
+      return;
+    }
+    clearInterval(this.#controlTimer);
+    this.#controlTimer = undefined;
   }
 
   /**
@@ -2063,7 +2081,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   async dispose(): Promise<void> {
-    clearInterval(this.#controlTimer);
+    this.#disposing = true;
+    this.#pollControlsWhileSessionsOpen();
     // No conflict change is offered to a session that is closing.
     this.#mergeAssistUnlisten?.();
     // The sessions still open did not end: what each owes its agent waits in its ledger for its next event, as across
@@ -2154,6 +2173,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     let auditor: CodeRuleAuditor | undefined;
     let bridge: CodeRuleBridge | undefined;
     this.#sessions.set(session.sessionId, opened);
+    this.#pollControlsWhileSessionsOpen();
     try {
       const followsGitignore = this.#catalogs.followsGitignore(checkout.root);
       auditor = this.#createAuditor({
@@ -2429,6 +2449,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     opened.pendingSteers = [];
     opened.missedFindings = [];
     this.#sessions.delete(sessionId);
+    this.#pollControlsWhileSessionsOpen();
     if (opened.ownerClaim !== undefined) {
       this.#controls.interrupt(sessionId);
       this.#controls.interruptRepositoryAudit(sessionId);
@@ -2591,6 +2612,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         }
       } finally {
         this.#sessions.delete(sessionId);
+        this.#pollControlsWhileSessionsOpen();
         // The runtime outlives its sessions, and their walks of the other worktrees looked up every folder of each.
         if (this.#sessions.size === 0) this.#owners.forgetFolders();
         // A suspended session's record stays open: its agent may still be at work.
