@@ -540,7 +540,9 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     mask_bit(operand, start) && word_ok()
                 };
                 // A token mark (`Words::token_marks`): its tokens follow too.
-                let here = here && (at_end || program.token_marks.iter().find(|m| u32::from(m.order) == k).is_none_or(|m| token_mark_holds(m, &tier1.codes, next, program.extras.first().map(|e| u32::from(e.0)))));
+                // Its entries together (`patterns_hold`): `unless before`s and `before`s.
+                let extra_bit = program.extras.first().map(|e| u32::from(e.0));
+                let here = here && (at_end || program.token_marks.iter().position(|m| u32::from(m.order) == k).is_none_or(|i| crate::program::patterns_hold(&program.token_marks, i, &mut |m| token_mark_holds(m, &tier1.codes, next, extra_bit))));
                 if live >> k & 1 == 1 && here {
                     // Taken: it and the marks before it are done at this token. Kept: its arm
                     // calls the level that takes it.
@@ -935,7 +937,14 @@ pub fn validate_token_marks(program: &Words) -> Result<(), Error> {
         if m.refuses && usize::from(m.order) >= bits {
             return Err(Error::InvalidOperand(i));
         }
-        let rising = i == 0 || program.token_marks[i - 1].order < m.order;
+        // Rising by order; a mark's entries together (decision 0406), one where it refuses (its
+        // `TOKEN` test is the one entry's), and none an `unless` alone of a refusing mark.
+        let rising = i == 0 || program.token_marks[i - 1].order < m.order || (program.token_marks[i - 1].order == m.order && !m.refuses && !program.token_marks[i - 1].refuses);
+        let rising = rising && !(m.refuses && m.unless);
+        // One run at most, after the mark's token, not last, of no `end`.
+        let runs = m.elems.iter().filter(|e| e.run).count();
+        let last = m.elems.last().is_some_and(|e| e.run);
+        let rising = rising && runs <= 1 && !last && m.elems.iter().all(|e| !e.run || (e.offset > 0 && !e.end));
         let offsets = m.elems.windows(2).all(|w| w[0].offset < w[1].offset) && m.elems.iter().any(|e| e.offset == 0) && m.elems.first().is_some_and(|e| e.offset >= -1);
         // A `not` or an `end` only after the mark's token, but for the token before's `not`,
         // which has an `end` (no token before holds), and the mark's own token's `not`, a gap
@@ -964,34 +973,47 @@ pub fn extra_kind(extras: &[(u8, u16)], code: u32) -> Option<u16> {
     Some(extras[1..].iter().rev().find(|&&(b, _)| has(b)).map_or(kind, |&(_, k)| k))
 }
 
-/// Whether token mark `m` holds at the record before `next` (`Words::token_marks`): each element
-/// at its offset among the records that are no extra (`extra_bit`, the code's bit; none for a
-/// grammar without extras).
+/// Whether token mark `m` holds at the record before `next` (`Words::token_marks`): the element
+/// at -1 at the record before, the others in turn from the token on, each at the next record
+/// that is no extra (`extra_bit`, the code's bit; none for a grammar without extras); a run
+/// (decision 0406) any number of records it takes, then the elements after it from any of them
+/// on.
 pub fn token_mark_holds(m: &TokenMark, codes: &[u32], next: usize, extra_bit: Option<u32>) -> bool {
     let is_extra = |c: u32| extra_bit.is_some_and(|b| c >> (crate::records::MARK_SHIFT + b) & 1 == 1);
     let Some(here) = next.checked_sub(1) else { return false };
-    m.elems.iter().all(|e| {
-        let at = match e.offset {
-            0 => Some(here),
-            o if o > 0 => {
-                // The `o`th record after, past the extras.
-                let (mut j, mut left) = (here + 1, o);
-                loop {
-                    match codes.get(j) {
-                        None => break None,
-                        Some(&c) if is_extra(c) => j += 1,
-                        Some(_) if left == 1 => break Some(j),
-                        Some(_) => {
-                            left -= 1;
-                            j += 1;
-                        }
-                    }
-                }
+    // The record after `j` that is no extra; `None` past the last.
+    let after = |j: usize| (j + 1..codes.len()).find(|&k| !is_extra(codes[k]));
+    for e in m.elems.iter().filter(|e| e.offset < 0) {
+        let at = (0..here).rev().find(|&j| !is_extra(codes[j]));
+        if !e.holds(at.map(|j| codes[j])) {
+            return false;
+        }
+    }
+    let rest: Vec<&crate::program::TokenElem> = m.elems.iter().filter(|e| e.offset >= 0).collect();
+    token_follows(&rest, Some(here), codes, &after)
+}
+
+/// Whether `rest` holds from record `at` on (`None`: past the last), each element at the next
+/// record `after` gives (`token_mark_holds`).
+fn token_follows(rest: &[&crate::program::TokenElem], at: Option<usize>, codes: &[u32], after: &dyn Fn(usize) -> Option<usize>) -> bool {
+    let Some((e, tail)) = rest.split_first() else { return true };
+    if e.run {
+        let mut at = at;
+        loop {
+            if token_follows(tail, at, codes, after) {
+                return true;
             }
-            _ => (0..here).rev().find(|&j| !is_extra(codes[j])),
-        };
-        e.holds(at.map(|j| codes[j]))
-    })
+            match at {
+                Some(j) if e.holds(Some(codes[j])) => at = after(j),
+                _ => return false,
+            }
+        }
+    }
+    match at {
+        // The file's end: an `end` element, the last.
+        None => e.holds(None),
+        Some(j) => e.holds(Some(codes[j])) && token_follows(tail, after(j), codes, after),
+    }
 }
 
 /// The extras a `TOKEN` takes (`Words::extras`): rising by bit, each a mark the records' codes

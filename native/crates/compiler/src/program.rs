@@ -432,6 +432,30 @@ pub struct TokenMark {
     /// A mark the grammar takes nowhere: where it holds, the file is refused. `TOKEN` tests it
     /// at each token its record's bit names, once (no state tests it).
     pub refuses: bool,
+    /// An `unless before` (decision 0406): the mark holds where it does not. A mark's entries
+    /// share its order (`patterns_hold`).
+    pub unless: bool,
+}
+
+/// Whether the token marks of one order hold (`Words::token_marks` from `first`, the entries
+/// of `first`'s order): none of its `unless` ones, and one of the others where it has any.
+/// `holds` tests one entry.
+pub fn patterns_hold(marks: &[TokenMark], first: usize, holds: &mut dyn FnMut(&TokenMark) -> bool) -> bool {
+    let order = marks[first].order;
+    let these = marks[first..].iter().take_while(|m| m.order == order);
+    let (mut some, mut any) = (false, false);
+    for m in these {
+        let h = holds(m);
+        if m.unless {
+            if h {
+                return false;
+            }
+        } else {
+            some = true;
+            any |= h;
+        }
+    }
+    !some || any
 }
 
 /// One token of a token mark: its offset from the mark's token (-1 the one before), and what
@@ -450,6 +474,9 @@ pub struct TokenElem {
     pub not: bool,
     /// The file's end takes it too: no token left (the last element only).
     pub end: bool,
+    /// A run (decision 0406): any number of records the element takes, then the elements after
+    /// it from any of them on (one run at most, after offset 0, never last).
+    pub run: bool,
 }
 
 impl TokenElem {

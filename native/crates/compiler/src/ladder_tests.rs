@@ -13,8 +13,8 @@ fn every_step_parses_as_the_reference() {
 }
 
 
-/// A gap mark's `before` and `unless before` (decision 0406), and a token mark tier 2 tests
-/// alone (0407): a line break ends a header unless
+/// A gap mark's `before`s and `unless before`s (decision 0406), a token mark's run of tokens,
+/// and token marks tier 2 tests alone (0407): a line break ends a header unless
 /// the token after it is a `.`, which goes on the name, as a parser asks of the token it peeks
 /// at; at the file's end the mark holds (`, end`). The reference's nodes equal the interpreter's
 /// and Cranelift's, the mark tested in tier 2 at the token, past the comments between.
@@ -39,16 +39,17 @@ error "a byte no token takes" by tokens when code & ~ws & ~name & ~punct
 token comment = start slash & o_line read line
 token simple_identifier = start alpha & name & ~prev(name) run word
 token punct     = start code & punct
-keywords simple_identifier { } soft { "package" "import" }
+keywords simple_identifier { } soft { "package" "import" "as" }
 keywords punct { "." "*" } required
 skip ws
-mark line       = lf & code, unless before ".", end
-mark more       = lf & code, before "."
+mark line       = lf & code, unless before "." simple_identifier, unless before "." "*", end
+mark more       = lf & code, before "." simple_identifier
 mark wild       = tokens "." "*"
+mark alias      = tokens after "import" simple_identifier (simple_identifier | ".")* "as"
 tree kotlin {
   node source_file whole = [line] [package_header] import_header*
   node package_header   = 'package' identifier line
-  node import_header    = 'import' identifier [wild '.' '*' as wildcard_import] line
+  node import_header    = 'import' (alias identifier 'as' simple_identifier as alias_name | identifier [wild '.' '*' as wildcard_import]) line
   node identifier       = simple_identifier ([more] '.' simple_identifier)*
   implied package_header 'package'
   implied import_header 'import'
@@ -56,16 +57,17 @@ tree kotlin {
   extra comment
 }
 "#;
-    let fixed = ["package a\n.b\nimport c\n// x\n.d.*\n", "package a.b\n\nimport c\n", "package a\n// x\n\n.b", "import a\n.\n", "import a\n*", "import a.b.*\n", "import a\n// x\n.*", "// x\npackage a // y\nimport b.* // z\n", "import a // x\n.b // y\n"];
+    let fixed = ["package a\n.b\nimport c\n// x\n.d.*\n", "package a.b\n\nimport c\n", "package a\n// x\n\n.b", "import a\n.\n", "import a\n*", "import a.b.*\n", "import a\n// x\n.*", "// x\npackage a // y\nimport b.* // z\n", "import a // x\n.b // y\n", "import a.b as c\n", "import a\n.b as c\n", "import a as\n", "import a.b // x\n.c as d\n", "package a // x\n", "import a // x\n// y\n.b.*\n"];
     let c = compile_step("before", source);
-    // The line breaks before a `.` go on the name, past a comment; one before a `*` ends the
-    // header; a `.` with no name after is refused.
+    // The line breaks before a `.` and a name, or a `.*`, go on, past a comment; one before a
+    // `*` ends the header; a `.` with no name after is refused. An alias, after a run of names
+    // and dots, over a line break.
     let parses: Vec<bool> = fixed.iter().map(|d| reference(&c, d.as_bytes()).is_some()).collect();
-    assert_eq!(parses, [true, true, true, false, false, true, false, true, true]);
+    assert_eq!(parses, [true, true, true, false, false, true, true, true, true, true, true, false, true, true, true]);
     // `wild`, a token mark after the gap marks, holds no bit of the code (decision 0407).
     let r = c.program.block_programs[0].records.as_ref().expect("records");
-    // The patterns: `line`'s and `more`'s token after, in the code; `wild`'s past it.
-    let orders: Vec<u8> = c.program.token_marks.iter().map(|m| m.order).collect();
-    assert_eq!((r.mark_bits(), orders), (2, vec![0, 1, 2]));
+    // The patterns: `line`'s two and `more`'s, in the code; `wild`'s and `alias`'s past it.
+    let orders: Vec<(u8, bool)> = c.program.token_marks.iter().map(|m| (m.order, m.unless)).collect();
+    assert_eq!((r.mark_bits(), orders), (2, vec![(0, true), (0, true), (1, false), (2, false), (3, false)]));
     assert_eq!(check_documents("before", &c, b"pa.*\n/ ", &[], &fixed, &|_, _, _, _| None), None);
 }

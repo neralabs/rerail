@@ -126,8 +126,9 @@ pub struct Ev<'a> {
     unless: HashMap<usize, Vec<Vec<u8>>>,
     /// A mark's `else escape` reason (`Stmt::Mark`), by its index in `marks`.
     unplaced: HashMap<usize, String>,
-    /// A mark's `before` (`Stmt::Mark`), by its index in `marks`: what the token after must be.
-    next: HashMap<usize, Vec<TokenElem>>,
+    /// A mark's `before`s and `unless before`s (`Stmt::Mark`), by its index in `marks`: the
+    /// tokens from the one after it, each with whether it is an `unless`.
+    next: HashMap<usize, Vec<(bool, Vec<Vec<TokenElem>>)>>,
     tables: &'a HashMap<String, Vec<(u32, u32)>>,
     tree: Option<TreeDecl>,
     /// Each class's byte ranges, for `check`; and each `check`: a token kind and its grammar.
@@ -441,7 +442,7 @@ impl<'a> Ev<'a> {
             Stmt::Implied { .. } => {}
             Stmt::Mark { kind, at, end, unless, unplaced, checks, next, .. } => {
                 let m = self.mask(at)?;
-                if let Some(next) = next {
+                if !next.is_empty() {
                     self.next.insert(self.marks.len(), next.clone());
                 }
                 for c in checks {
@@ -1212,7 +1213,7 @@ impl<'a> Ev<'a> {
         let one = |i: usize, c: &TokenElem| match c {
             TokenElem::Kind(k) => &toks[i].kind == k || &lexed[i] == k,
             TokenElem::Word(w) => toks[i].kind.as_bytes() == w.as_slice() || toks[i].soft.as_deref().is_some_and(|s| s.as_bytes() == w.as_slice()),
-            TokenElem::Not(_) | TokenElem::End => false,
+            TokenElem::Not(_) | TokenElem::End | TokenElem::Many(_) => false,
         };
         let is = |t: Option<usize>, e: &[TokenElem]| match (e, t) {
             ([TokenElem::Not(inner)], Some(t)) => !inner.iter().any(|c| one(t, c)),
@@ -1220,10 +1221,14 @@ impl<'a> Ev<'a> {
             (_, None) => e.contains(&TokenElem::End),
             (_, Some(t)) => e.iter().any(|c| one(t, c)),
         };
+        // A run of elements from the grammar token `g` on: each at the next grammar token, a run
+        // (`Many`) any number of its choices and the elements after it from any of them on.
+        let gn = grammar.len();
+        let at_g = |g: usize, e: &[TokenElem]| is(grammar.get(g).copied(), e);
+        let follows = |g: usize, seq: &[Vec<TokenElem>]| seq_holds(g, seq, gn, &at_g);
         for (&k, (pre, seq)) in &self.token_marks {
             for g in 0..grammar.len() {
-                let at = |i: usize| grammar.get(g + i).copied();
-                let run = seq.iter().enumerate().all(|(i, e)| is(at(i), e));
+                let run = follows(g, seq);
                 // `after ~E`: none of `E`'s before, or no token before (the file's first).
                 let after = pre.is_empty() || (g > 0 && is(Some(grammar[g - 1]), pre)) || (g == 0 && matches!(pre.as_slice(), [TokenElem::Not(_)]));
                 if run && after {
@@ -1242,8 +1247,8 @@ impl<'a> Ev<'a> {
                     continue;
                 }
                 match grammar.get(g) {
-                    // `before`: the token after is one of its choices (`~`: none of them).
-                    Some(&t) if self.next.get(&k).is_some_and(|e| !is(Some(t), e)) => {}
+                    // `before`, `unless before`: the tokens from the one after.
+                    Some(_) if self.next.get(&k).is_some_and(|n| !nexts_hold(n, &|seq| follows(g, seq))) => {}
                     Some(&t) => before[t][k] = true,
                     // `else escape`: no grammar token at or after the bit.
                     None => {
@@ -1272,6 +1277,34 @@ impl<'a> Ev<'a> {
         }
         Ok(out)
     }
+}
+
+/// Whether `seq` holds from grammar token `g` on (of `n`): each element at the next token, a
+/// run (`TokenElem::Many`) any number of its choices, then the elements after it from any of
+/// them on. `at(g, e)`: element `e` at token `g` (`g == n`: past the last).
+fn seq_holds(g: usize, seq: &[Vec<TokenElem>], n: usize, at: &dyn Fn(usize, &[TokenElem]) -> bool) -> bool {
+    let Some((e, rest)) = seq.split_first() else { return true };
+    if let [TokenElem::Many(set)] = e.as_slice() {
+        let mut q = g;
+        loop {
+            if seq_holds(q, rest, n, at) {
+                return true;
+            }
+            if q < n && at(q, set) {
+                q += 1;
+            } else {
+                return false;
+            }
+        }
+    }
+    at(g.min(n), e) && (g >= n || seq_holds(g + 1, rest, n, at))
+}
+
+/// Whether a mark's `before`s and `unless before`s hold (`Stmt::Mark`'s `next`): none of the
+/// `unless` ones, and one of the others where it has any.
+fn nexts_hold(next: &[(bool, Vec<Vec<TokenElem>>)], holds: &dyn Fn(&[Vec<TokenElem>]) -> bool) -> bool {
+    let (unless, before): (Vec<_>, Vec<_>) = next.iter().partition(|(u, _)| *u);
+    !unless.iter().any(|(_, s)| holds(s)) && (before.is_empty() || before.iter().any(|(_, s)| holds(s)))
 }
 
 /// One UTF-8 character: its code point and length. An invalid sequence is one byte, U+FFFD.

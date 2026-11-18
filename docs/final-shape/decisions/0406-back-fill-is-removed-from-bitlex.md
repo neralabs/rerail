@@ -60,14 +60,37 @@ without its pattern, in every executor. Tier 1 makes nothing for it, and no pass
 Kotlin's step 36 (`36-no-back-fills.bitlex`) starts from step 35 with these two back fills gone:
 the corpus is unchanged, 429 files the same as the lean parser's tapes, 62 refused, 0 differ.
 
+## Runs of tokens, and several `before`s
+
+A token mark's run, and a `before`'s, may hold one run of choices, `(A | B)*`, after its first
+token and before its last: any number of tokens of those choices, then the elements after it,
+tried from each of them on, as a forward scan for the first place they hold. That is the lean
+parser's forward scan (`lambda_params_end`, `type_args_end`): it reads tokens from where it
+stands until what it looks for holds, or a token it cannot pass. So `"<" (types)* ">" "("` holds at
+`Map<A, List<B>>(`, whose first `>` has no `(` after it.
+
+A mark may say `before …` and `unless before …` more than once. It holds where none of its
+`unless before`s do and, if it has a `before`, one of them does. The program gives each its own
+token mark entry of the mark's order, with `unless` on the negative ones
+(`program::patterns_hold`). A `MARK` tests them together. A mark that refuses wherever it holds,
+tested once a token by its bit, keeps one pattern.
+
+In tier 2, a run is a stated loop over the records (`Step::Token`), as a skip over the extras is.
+The rest after it is tried at each turn: in Cranelift's `token_pattern`, a block per turn; in the
+generated Rust, `pattern_N_rest(at)`. The interpreter matches in turn (`stream::token_follows`),
+and so does Bitlex's reference (`eval::seq_holds`).
+
 ## Tests
 
 - `syntax::tier2_tests::back_fill_is_refused`: a mask's and a number's `back_fill` are refused
   with the message; with `deprecated back_fill`, parsed.
-- `syntax::tier2_tests::a_mark_is_before_a_token`: `before` and `unless before` parse to the
-  choices and their `~`; `before ~X`, `before end` and two of them on one mark are refused.
+- `syntax::tier2_tests::a_mark_is_before_a_token`: `before` and `unless before` parse to their
+  sequences, several on one mark, a run among them; `before ~X`, `before end`, a run first or
+  last, two runs and a run of a `~` are refused.
 - `ladder_tests::a_gap_mark_is_decided_by_the_token_after`: a line break ends a header unless a
-  `.` comes after it, past a comment; the reference's nodes are the interpreter's and Cranelift's
+  `.` and a name, or `.*`, come after it (two `unless before`s), past a comment; an import's
+  alias is a token mark with a run (`simple_identifier (simple_identifier | ".")* "as"`), over
+  a line break; the reference's nodes are the interpreter's and Cranelift's
   on the grammar's sentences, their mutations and fixed documents. Its grammar has no `settles`,
   which the reference does not implement (Q220).
 - The tests of the backward pass (`remade_tests`, `gating_tests`, `compile_tests`' aligned

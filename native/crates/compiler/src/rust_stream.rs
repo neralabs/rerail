@@ -214,6 +214,9 @@ pub unsafe extern \"C\" fn tier2_entry(ctx: u64) -> u64 {
     }
     for (i, m) in n.token_marks.iter().enumerate() {
         pattern(out, i, m, n.extras.first().map(|e| e.0));
+        if i == 0 || n.token_marks[i - 1].order != m.order {
+            patterns(out, i, &n.token_marks);
+        }
     }
     // The refusing token marks' tests, at a token whose code has a bit of theirs.
     let refusing: Vec<String> = n
@@ -1236,8 +1239,12 @@ fn pattern(out: &mut String, i: usize, m: &TokenMark, extra_bit: Option<u8>) {
         // A `not` element: none of its choices.
         if el.not { format!("!({t})") } else { t }
     };
-    let mut ahead = 0i8;
-    for el in &m.elems {
+    // The next record that is no extra, after `at`: past the last, `past`.
+    let advance = |past: &str| format!("        let c = loop {{\n            at += 1;\n            if at >= self.n {{ return {past}; }}\n            let c = unsafe {{ *self.codes.add(at * self.rs) }};\n            if {free} {{ break c; }}\n        }};\n");
+    // The token's own element, those before the run; the run (decision 0406) tries the rest
+    // (`pattern_{i}_rest`) from each of its records on, as a forward scan.
+    let run = m.elems.iter().position(|e| e.run);
+    for el in m.elems.iter().take(run.unwrap_or(m.elems.len())) {
         match el.offset {
             0 => writeln!(body, "        let c = unsafe {{ *self.codes.add(here * self.rs) }};\n        if !({}) {{ return false; }}", test(el)).unwrap(),
             o if o < 0 => {
@@ -1249,18 +1256,41 @@ fn pattern(out: &mut String, i: usize, m: &TokenMark, extra_bit: Option<u8>) {
                     writeln!(body, "        let mut j = here;\n        let c = loop {{\n            if j == 0 {{ return false; }}\n            j -= 1;\n            let c = unsafe {{ *self.codes.add(j * self.rs) }};\n            if {free} {{ break c; }}\n        }};\n        if !({}) {{ return false; }}", test(el)).unwrap();
                 }
             }
-            o => {
+            _ => {
                 // No record left: an `end` element holds there (it is the last), any other fails.
-                let past = if el.end { "true" } else { "false" };
-                for _ in ahead..o {
-                    writeln!(body, "        let c = loop {{\n            at += 1;\n            if at >= self.n {{ return {past}; }}\n            let c = unsafe {{ *self.codes.add(at * self.rs) }};\n            if {free} {{ break c; }}\n        }};").unwrap();
-                }
-                ahead = o;
+                body.push_str(&advance(if el.end { "true" } else { "false" }));
                 writeln!(body, "        if !({}) {{ return false; }}", test(el)).unwrap();
             }
         }
     }
-    writeln!(out, "    /// Token mark {i}'s tokens follow.\n    #[inline(never)]\n    fn pattern_{i}(&self) -> bool {{\n        let here = self.next as usize - 1;\n        let mut at = here;\n{body}        true\n    }}\n").unwrap();
+    let Some(r) = run else {
+        writeln!(out, "    /// Token mark {i}'s tokens follow.\n    #[inline(never)]\n    fn pattern_{i}(&self) -> bool {{\n        let here = self.next as usize - 1;\n        let mut at = here;\n{body}        true\n    }}\n").unwrap();
+        return;
+    };
+    let mut rest = String::new();
+    for el in &m.elems[r + 1..] {
+        rest.push_str(&advance(if el.end { "true" } else { "false" }));
+        writeln!(rest, "        if !({}) {{ return false; }}", test(el)).unwrap();
+    }
+    writeln!(
+        out,
+        "    /// Token mark {i}'s tokens follow.\n    #[inline(never)]\n    fn pattern_{i}(&self) -> bool {{\n        let here = self.next as usize - 1;\n        let mut at = here;\n{body}        loop {{\n            if self.pattern_{i}_rest(at) {{ return true; }}\n    {}            if !({}) {{ return false; }}\n        }}\n    }}\n\n    /// Token mark {i}'s tokens after its run, from the record after `at`.\n    #[inline(always)]\n    fn pattern_{i}_rest(&self, mut at: usize) -> bool {{\n{rest}        true\n    }}\n",
+        advance("false").replace("\n        ", "\n            "),
+        test(&m.elems[r])
+    )
+    .unwrap();
+}
+
+/// The token marks of one order together, from entry `first` (`program::patterns_hold`): none
+/// of the `unless` ones and, where there are others, one of them.
+fn patterns(out: &mut String, first: usize, marks: &[TokenMark]) {
+    let order = marks[first].order;
+    let these: Vec<usize> = (first..marks.len()).take_while(|&i| marks[i].order == order).collect();
+    let none: Vec<String> = these.iter().filter(|&&i| marks[i].unless).map(|i| format!("!self.pattern_{i}()")).collect();
+    let one: Vec<String> = these.iter().filter(|&&i| !marks[i].unless).map(|i| format!("self.pattern_{i}()")).collect();
+    let one = if one.is_empty() { "true".to_string() } else { format!("({})", one.join(" || ")) };
+    let all: Vec<String> = none.into_iter().chain(std::iter::once(one)).collect();
+    writeln!(out, "    /// Mark {order}'s tokens follow: its entries together.\n    #[inline(always)]\n    fn patterns_{first}(&self) -> bool {{\n        {}\n    }}\n", all.join(" && ")).unwrap();
 }
 
 /// A local check's word form (`program::local_value` over the 64 places of a word, a bit
@@ -1625,8 +1655,8 @@ fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>
                 // A lazy gap mark with a pattern (`before`, decision 0406): its gap, then its token.
                 let lazy = x.lazy.iter().any(|&(m, _)| u32::from(m) == k);
                 match pattern {
-                    Some(i) if lazy => format!("(if s.at_end {{ {end} }} else {{ s.lazy_{k}() && s.pattern_{i}() }})"),
-                    Some(i) => format!("(if s.at_end {{ {end} }} else {{ s.pattern_{i}() }})"),
+                    Some(i) if lazy => format!("(if s.at_end {{ {end} }} else {{ s.lazy_{k}() && s.patterns_{i}() }})"),
+                    Some(i) => format!("(if s.at_end {{ {end} }} else {{ s.patterns_{i}() }})"),
                     None if lazy => format!("(s.at_end || s.lazy_{k}())"),
                     None => "true".into(),
                 }

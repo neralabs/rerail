@@ -356,9 +356,10 @@ pub struct Lowering {
     /// The token marks (`mark K = tokens …`, decision 0129), by their index in `marks`: the token
     /// before, then the run. Tier 1 makes no mask for them.
     pub token_marks: HashMap<usize, (Vec<TokenElem>, Vec<Vec<TokenElem>>)>,
-    /// A mark's `before` (decision 0406), by its index in `marks`: what the token it is before
-    /// must be, tested by tier 2 at that token as a token mark's run is (`Mark::tokens`).
-    pub mark_next: HashMap<usize, Vec<TokenElem>>,
+    /// A mark's `before`s and `unless before`s (decision 0406), by its index in `marks`: the
+    /// tokens from the one it is before, each with whether it is an `unless`, tested by tier 2 at
+    /// that token as a token mark's run is (`Mark::nexts`).
+    pub mark_next: HashMap<usize, Vec<(bool, Vec<Vec<TokenElem>>)>>,
     /// A mark's `unless after` words, by its index in `marks` (`Records::unless`).
     pub unless: HashMap<usize, Vec<Vec<u8>>>,
     /// The marks with an `else escape`, by their index in `marks` (`Records::unplaced`).
@@ -944,7 +945,7 @@ impl Lowering {
                 Stmt::Extra(kinds) => self.extra.extend(kinds.iter().cloned()),
                 Stmt::Hidden(kinds) => self.hidden.extend(kinds.iter().cloned()),
                 Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends, next } => {
-                    if let Some(next) = next {
+                    if !next.is_empty() {
                         self.mark_next.insert(self.marks.len(), next.clone());
                     }
                     if *settles {
@@ -3226,14 +3227,14 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                         }
                     }
                     // Refused by the syntax in a mark's first element.
-                    TokenElem::Not(_) | TokenElem::End => return Err("a `~` or `end` as a token mark's first token".into()),
+                    TokenElem::Not(_) | TokenElem::End | TokenElem::Many(_) => return Err("a `~`, an `end` or a run as a token mark's first token".into()),
                 }
             }
             let word = match seq[0].as_slice() {
                 [TokenElem::Word(w)] => Some(w.clone()),
                 _ => None,
             };
-            marks.push(bitlex_tier2::Mark { settle: None, ends: false, kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, tokens: Some((before, seq)), unless: vec![] });
+            marks.push(bitlex_tier2::Mark { settle: None, ends: false, kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, tokens: Some((before, seq)), nexts: vec![], unless: vec![] });
             continue;
         }
         let mut expr = low.mark_exprs[k].clone();
@@ -3430,9 +3431,10 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             eprintln!("mark {k} {kind}: on starts {on_starts}, word {:?}, {} first bytes", word.as_ref().map(|w| String::from_utf8_lossy(w).into_owned()), first.iter().map(|w| w.count_ones()).sum::<u32>());
         }
         let unless = low.unless.get(&k).cloned().unwrap_or_default();
-        // `before`: a run of one token, the one the mark is before, tested by tier 2 there.
-        let tokens = low.mark_next.get(&k).map(|next| (Vec::new(), vec![next.clone()]));
-        marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, tokens, unless, settle: None, ends: low.ends.contains(&k) });
+        // `before`, `unless before`: the tokens from the one the mark is before, tested by tier 2
+        // there.
+        let nexts = low.mark_next.get(&k).cloned().unwrap_or_default();
+        marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, tokens: None, nexts, unless, settle: None, ends: low.ends.contains(&k) });
         if low.settles.contains(&k) {
             // From each bit up to the next grammar token's start: an extra that starts there is
             // after the mark's bit. Its mask after the marks' (below).
@@ -3630,7 +3632,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // A token mark's kinds (decision 0129): a column each, so a kind of the records is one
     // kind's tokens or none of them; a byte that starts that kind's tokens and another's can not
     // tell them apart, and the mark is not compiled.
-    let mut mark_kind_names: Vec<String> = lowered.token_marks.iter().flat_map(|(_, _, es)| es.iter().flat_map(|e| e.1.iter().cloned())).collect();
+    let mut mark_kind_names: Vec<String> = lowered.token_marks.iter().flat_map(|(_, _, _, es)| es.iter().flat_map(|e| e.1.iter().cloned())).collect();
     mark_kind_names.sort();
     mark_kind_names.dedup();
     // The moved rows' own first bytes again, for the token marks' kinds, the end rules and the marks below.
@@ -3753,9 +3755,9 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             return Err("token marks with extras not taken in the token step".into());
         }
         let mut tms = Vec::new();
-        for (order, refuses, elems) in &lowered.token_marks {
+        for (order, refuses, unless, elems) in &lowered.token_marks {
             let mut out = Vec::new();
-            for (offset, names, words, not, end) in elems {
+            for (offset, names, words, not, end, run) in elems {
                 let mut set = 0u64;
                 // The kinds' hard keywords: a record of the kind with one of these words is the
                 // keyword's token (`TokenElem::except`). Not a row of keywords only (`required`,
@@ -3776,9 +3778,9 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                         set |= 1 << k;
                     }
                 }
-                out.push(crate::program::TokenElem { offset: *offset, kinds: set, words: words.clone(), except, not: *not, end: *end });
+                out.push(crate::program::TokenElem { offset: *offset, kinds: set, words: words.clone(), except, not: *not, end: *end, run: *run });
             }
-            tms.push(crate::program::TokenMark { order: *order, elems: out, refuses: *refuses });
+            tms.push(crate::program::TokenMark { order: *order, elems: out, refuses: *refuses, unless: *unless });
         }
         crate::rir_text::token_mark_rows(&mut lowered.text, &tms);
     }
