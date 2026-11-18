@@ -2994,7 +2994,7 @@ always a refusal.
   where first asked. ep2's edit: `kept_inputs` 0.077 s → 0.021 s, no documents frame decoded, rows as h1.
 
 
-### Q137. (Q100 on Typing-support-final-shape at 6ce382887, Q91 before it) A cut of a gated program keeps `node`'s projections: retain's test expects an empty part
+### Q137. (Q100 on Typing-support-final-shape at 6ce382887, Q91 before it) (done) A cut of a gated program keeps `node`'s projections: retain's test expects an empty part
 
 - **Found** (2026-11-17, while making 0377's cuts): `retain::tests::unchanged_gated_programs_reuse_only_complete_retained_results`
   fails: the cut of an unchanged gated program (`Cut::program`) holds two rules, `kind($n, $k) :- node(_, $n, $k, _, _)`
@@ -3004,6 +3004,11 @@ always a refusal.
   through `passes::Parts`, and the rules kept are those `clean` leaves.
 - **Done when**: either the cut counts a view of an input's columns clean with the input (the part then has no rules,
   as the test says), or the test asserts the part holds only such views; the planner's owner of Q37 decides which.
+- **Record**: done (2026-11-18), decided by Q37's owner before this item was written: 4085f6120 (2026-11-16, merged
+  here with ec3a74a87) made the test expect the views' rules left in a reused program, as 6fe55cb12 made them. It
+  asserts the part's rules are `docof` and `kind`, each a view of an input's columns (`input_view_shape`), and that
+  the part has no gates. Typing-support had not taken that merge when the item was recorded. On the farm (M3):
+  rerail-logic's `retain::` tests, 20 of 20.
 
 ### Q138. (Q102 on Typing-support-final-shape at 6ce382887) (done) `a_new_builds_first_edit_counts_every_file_in_so_its_next_edit_is_steady` fails at final-rerail-shape-rr-align's f7c563513
 
