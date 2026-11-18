@@ -319,7 +319,8 @@ Rerail's files are private to the person's OS user: folders 0700, files 0600, le
   one from being removed: the hooks in that folder then repeat the kept answer without asking the daemon, as they do
   beside a daemon too busy to answer in 75 ms, and only where every check of that answer above holds. A mark where no
   answer is kept, or where the kept one no longer holds (the checkout started since, say), has the hook ask the daemon
-  and take its answer (`test/harness/hook-host.test.ts`). The daemon removes a folder's marks as it serves a start
+  and take its answer (`test/harness/hook-host.test.ts`). A hook's pending mark, made before it sends, is read by no
+  other hook, so a planted one changes nothing a hook does. The daemon removes a folder's marks as it serves a start
   check there, and tries a removal that failed again at each start check it serves; a new daemon reads none of an
   earlier one's.
 - Session directories are created 0700 and explicitly chmod 0700; ledgers append 0600 (`src/runtime/runtime.ts`).
