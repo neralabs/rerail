@@ -92,16 +92,11 @@ class PlayedThread {
 /** The thread the next look starts, played by a {@link PlayedThread} over `files`. */
 function playThread(files: ReadonlySet<string>): { readonly thread: () => PlayedThread } {
   let played: PlayedThread | undefined;
-  vi.mocked(Worker).mockImplementationOnce(class {
-    constructor(_code: string, options: { workerData: { answered: Int32Array; port: MessagePort } }) {
-      played = new PlayedThread(options.workerData, files);
-    }
-
-    unref(): void {}
-
-    async terminate(): Promise<number> {
-      return await Promise.resolve(0);
-    }
+  // A constructor that returns its own object: `new` gives that object, not an instance of the mocked Worker, whose
+  // methods are the real thread's.
+  vi.mocked(Worker).mockImplementationOnce(function startThread(_code: string, options: { workerData: { answered: Int32Array; port: MessagePort } }) {
+    played = new PlayedThread(options.workerData, files);
+    return { unref: () => undefined, terminate: async () => await Promise.resolve(0) };
   } as unknown as typeof Worker);
   const thread = (): PlayedThread => {
     if (played === undefined) throw new Error("no look started a thread");
