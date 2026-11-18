@@ -2519,6 +2519,14 @@ export class CodeRuleBridge {
     };
   }
 
+  /**
+   * Waits for the session folder's walk in flight, if any, and every pass a boundary asked for meanwhile, however long
+   * they outlast the boundary's wait: what the walk met is then on the session.
+   */
+  async settleWalk(): Promise<void> {
+    await this.#discovery?.idle;
+  }
+
   /** Waits for the worktree walk in flight or timed, if any, any walk a boundary asked for meanwhile, and their taking. */
   async settleWorktreeWalk(): Promise<void> {
     await this.#discovery?.worktrees.watch?.settled();

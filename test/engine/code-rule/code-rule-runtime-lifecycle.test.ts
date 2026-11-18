@@ -16,6 +16,7 @@ import { RerailRuntime, SqliteSessionReader, SqliteSessionStore } from "../../..
 type SuspendedSessions = NonNullable<ConstructorParameters<typeof RerailRuntime>[0]["suspendedSessions"]>;
 type SessionSuspension = Parameters<SuspendedSessions["keep"]>[0];
 import { temporaryDirectories, testEmbedder } from "../../support/hook-events.js";
+import { type ReleasedInOrder, releasedInOrder } from "../../support/platform/released-in-order.js";
 import { testCodeRuleCatalog } from "../../support/repository-rules.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 import { gateStorageAttachments } from "../support/storage-attach-gate.js";
@@ -496,19 +497,19 @@ describe("source-scoped steers", () => {
     const denial = (folder: string, code = "EACCES") => `${code}: ${DESCRIPTIONS[code]}, opendir '${folder}'`;
     /**
      * Makes every walk fail to open each folder of `denied` (by its code there) as a folder the user may not read does.
-     * With `stagger`, walk k ends the denial of the folder at index i of `order` ((i + k) % 10) ms late, so no two walks in
-     * a row meet them in one order.
+     * With `released` (`releasedInOrder`), the denial of the folder at index i of `order` at its call k waits for it as
+     * call i of round k, so the walks meet them in the orders it names.
      */
-    async function denyFolders(denied: ReadonlyMap<string, string>, order: readonly string[] = [], stagger = false): Promise<void> {
+    async function denyFolders(denied: ReadonlyMap<string, string>, order: readonly string[] = [], released?: ReleasedInOrder): Promise<void> {
       const actual = await vi.importActual<typeof FsPromises>("node:fs/promises");
       const calls = new Map<string, number>();
       vi.mocked(opendir).mockImplementation(async (...args) => {
         const folder = String(args[0]);
         const code = denied.get(folder);
         if (code === undefined) return actual.opendir(...args);
-        const call = (calls.get(folder) ?? 0) + 1;
-        calls.set(folder, call);
-        if (stagger) await new Promise(resolve => setTimeout(resolve, (order.indexOf(folder) + call) % 10));
+        const call = calls.get(folder) ?? 0;
+        calls.set(folder, call + 1);
+        await released?.(call, order.indexOf(folder));
         throw Object.assign(new Error(denial(folder, code)), { code });
       });
     }
@@ -526,7 +527,9 @@ describe("source-scoped steers", () => {
         await writeFile(join(folder, "a.py"), "a = 1\n");
       }
       const denied = new Map<string, string>();
-      await denyFolders(denied, folders, true);
+      // No two walks in a row meet them in one order: walk k ends folder k % 10's denial first, then the next ones in turn.
+      const released = releasedInOrder(folders.length, walk => folders.map((_, turn) => (turn + walk) % folders.length));
+      await denyFolders(denied, folders, released);
       const runtime = gapRuntime(root, store);
       const reader = new SqliteSessionReader(join(store, "rerail.sqlite"));
       try {
@@ -538,6 +541,7 @@ describe("source-scoped steers", () => {
         expect(gapRows(store).map(row => row.payload)).toEqual(folders.map((folder, index) => ({ boundary: "turn", path: `pkg${index}`, reason: denial(folder) })));
         expect(reader.gaps(session.sessionId)).toMatchObject({ discoveryGaps: 10, uncheckedBoundaries: 0 });
       } finally {
+        released.drain();
         await runtime.dispose();
         reader.close();
       }

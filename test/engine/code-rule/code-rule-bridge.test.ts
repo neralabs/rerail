@@ -31,6 +31,7 @@ import { holdDeletePending } from "../../support/platform/delete-pending.js";
 import { denyAccess, restoreAccess } from "../../support/platform/deny-access.js";
 import { holdRemovals } from "../../support/platform/held-removal.js";
 import { startChurn } from "../../support/processes/churn.js";
+import { releasedInOrder } from "../../support/platform/released-in-order.js";
 import { removeFolder, runningIn } from "../../support/platform/remove-folder.js";
 
 const discovery = vi.hoisted(() => ({
@@ -1290,13 +1291,13 @@ describe("CodeRuleBridge", () => {
       failures: [{ clauseId: "source-discovery", code: "source-incomplete", message, stage: "scan" }],
     });
     /**
-     * Makes each later walk fail to open `folder` as a folder the user may not read does, `delay(call)` ms after it asks
-     * (the walk's first call is 0), until the test ends. Returns the error's text.
+     * Makes each later walk fail to open `folder` as a folder the user may not read does, until the test ends; with
+     * `held`, once `held(call)` resolves (the walk's first call is 0). Returns the error's text.
      */
-    function denyFolder(folder: string, delay: (call: number) => number = () => 0, code = "EACCES"): string {
+    function denyFolder(folder: string, code = "EACCES", held?: (call: number) => Promise<void>): string {
       const message = `${code}: permission denied, opendir '${folder}'`;
       discovery.directories.set(folder, Array.from({ length: 50 }, (_, call) => async (): Promise<void> => {
-        await new Promise(resolve => setTimeout(resolve, delay(call)));
+        await held?.(call);
         throw Object.assign(new Error(message), { code, syscall: "opendir", path: folder });
       }));
       return message;
@@ -1330,17 +1331,22 @@ describe("CodeRuleBridge", () => {
     it("tells nothing new when later walks meet the same places in other orders, and says them the same way", async () => {
       const root = await workspace();
       const folders = ["a", "b", "c"].map(name => join(root, "src", name));
-      // Each walk's denials finish in another order: walk k delays folder i by ((i + k) % 3) * 15 ms.
+      // Each walk meets the three denials in another order: walk k ends folder k % 3's first, then the next ones in turn.
+      const released = releasedInOrder(3, walk => [0, 1, 2].map(turn => (turn + walk) % 3));
       const denials = await Promise.all(folders.map(async (folder, index) => {
         await mkdir(folder);
-        return denyFolder(folder, call => ((index + call) % 3) * 15);
+        return denyFolder(folder, "EACCES", async call => await released(call, index));
       }));
       const onDiscoveryGaps = vi.fn();
       const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
       await bridge.openWorkspace("session-1");
 
       const said = denials.map((denial, index) => `src/${"abc"[index]}: ${denial}`).join("; ");
-      for (let turn = 0; turn < 3; turn += 1) await expect(bridge.checkpoint("turn")).resolves.toEqual(failedWith(said));
+      try {
+        for (let turn = 0; turn < 3; turn += 1) await expect(bridge.checkpoint("turn")).resolves.toEqual(failedWith(said));
+      } finally {
+        released.drain();
+      }
       expect(onDiscoveryGaps.mock.calls.flatMap(([told]) => told)).toEqual(denials.map((denial, index) => toldGap(`src/${"abc"[index]}`, denial, "EACCES")));
     });
 
@@ -1375,7 +1381,7 @@ describe("CodeRuleBridge", () => {
       await expect(bridge.checkpoint("turn")).resolves.toEqual(failedWith(`src/locked: ${denial}`));
       // The same place for the same reason is the gap already on the record; another reason is a new fact.
       expect(onDiscoveryGaps).toHaveBeenCalledTimes(1);
-      const tooMany = denyFolder(locked, () => 0, "EMFILE");
+      const tooMany = denyFolder(locked, "EMFILE");
       await expect(bridge.checkpoint("turn")).resolves.toEqual(failedWith(`src/locked: ${tooMany}`));
       expect(onDiscoveryGaps.mock.calls).toEqual([[[toldGap("src/locked", denial, "EACCES")]], [[toldGap("src/locked", tooMany, "EMFILE")]]]);
     });
@@ -1426,7 +1432,7 @@ describe("CodeRuleBridge", () => {
       // A folder the user is denied refuses every look.
       const denied = join(root, "src", "denied");
       await mkdir(denied);
-      const refusal = denyFolder(denied, () => 0, "EPERM");
+      const refusal = denyFolder(denied, "EPERM");
       await expect(bridge.checkpoint("turn")).resolves.toEqual(failedWith(`src/denied: ${refusal}`));
       expect(onDiscoveryGaps.mock.calls).toEqual([[[toldGap("src/denied", refusal, "EPERM")]]]);
     });
@@ -1450,7 +1456,8 @@ describe("CodeRuleBridge", () => {
       try {
         for (let turn = 0; turn < 30; turn += 1) {
           said.push(...(await bridge.checkpoint("turn")).failures.map(failure => failure.message));
-          await new Promise(resolve => setTimeout(resolve, 20));
+          // The next walk meets folders and files the process made and removed since this one.
+          await loop.after(1);
         }
       } finally {
         rounds = await loop.stop();
@@ -1468,11 +1475,13 @@ describe("CodeRuleBridge", () => {
       discovery.inNameOrder = true;
       for (const folder of folders) {
         await mkdir(folder);
-        denyFolder(folder, () => 0, code);
+        denyFolder(folder, code);
       }
       const onDiscoveryGaps = vi.fn();
       const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
       await bridge.openWorkspace("session-1");
+      // The first walk whole, however long this machine takes: each checkpoint then says what it met.
+      await bridge.settleWalk();
 
       const [failure] = (await bridge.checkpoint("turn")).failures;
       expect(failure?.message.split("; ")).toHaveLength(MAX_TOLD_GAPS + 5);
@@ -1672,11 +1681,15 @@ describe("CodeRuleBridge", () => {
     /** An error as Windows gives it for a path it refuses. */
     const refusal = (syscall: string, path: string): Error =>
       Object.assign(new Error(`EPERM: operation not permitted, ${syscall} '${path}'`), { code: "EPERM", syscall, path });
-    /** What the walks asked of the filesystem and of `looks`, the walk view, at one checkpoint. */
+    /**
+     * What the walks asked of the filesystem and of `looks`, the walk view, at one checkpoint: its walk whole, even one
+     * that outlasts the checkpoint's wait on a slow machine.
+     */
     async function checkpointWork(bridge: CodeRuleBridge, looks: () => number): Promise<number> {
       const total = (): number => discovery.calls.lstat + discovery.calls.opendir + discovery.calls.read + discovery.calls.access + looks();
       const before = total();
       await bridge.checkpoint("turn");
+      await bridge.settleWalk();
       return total() - before;
     }
     async function writeFiles(folder: string, count: number): Promise<void> {
@@ -1939,7 +1952,7 @@ describe("CodeRuleBridge", () => {
       const folders = Array.from({ length: MAX_TOLD_AT_ONCE + 5 }, (_, index) => join(root, "src", `a${String(index).padStart(3, "0")}`));
       for (const folder of folders) {
         await mkdir(folder);
-        denyFolder(folder, () => 0, "EPERM");
+        denyFolder(folder, "EPERM");
       }
       // Being removed: the first ten in path order, whose delete is pending at every look until they are gone, which leaves
       // the record room, and the five past the hundredth, which the walk has no room to look at. The session's first walk
@@ -1966,7 +1979,7 @@ describe("CodeRuleBridge", () => {
       const folders = Array.from({ length: MAX_TOLD_AT_ONCE + 5 }, (_, index) => join(worktree, "src", `a${String(index).padStart(3, "0")}`));
       for (const folder of folders) {
         await mkdir(folder);
-        denyFolder(folder, () => 0, "EPERM");
+        denyFolder(folder, "EPERM");
       }
       // Being removed: the first ten in path order, whose delete is pending at every look. The five past the hundredth
       // are never looked at, so never told.
@@ -1998,7 +2011,7 @@ describe("CodeRuleBridge", () => {
       const observed = (): string[] => [...observations.get(root)?.keys() ?? []].filter(path => path.endsWith(".py")).sort();
       expect(observed()).toEqual(["src/a.py", "src/sub/b.py"]);
 
-      denyFolder(sub, () => 0, "EPERM");
+      denyFolder(sub, "EPERM");
       discovery.accesses.set(sub, [gone("access", sub)]);
       await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({ failures: [] }));
       expect(observed()).toEqual(["src/a.py"]);
@@ -2034,24 +2047,29 @@ describe("CodeRuleBridge", () => {
       await mkdir(denied);
       await writeFile(slow, "s = 1\n");
       const onDiscoveryGaps = vi.fn();
-      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
+      const pending: string[] = [];
+      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), {
+        onDiscoveryGaps, onDiscoveryPending: boundary => { pending.push(boundary); },
+      });
       await bridge.openWorkspace("session-1");
       await bridge.checkpoint("turn");
       const wallClock = Date.now.bind(Date);
       let stepped = false;
       const now = vi.spyOn(Date, "now").mockImplementation(() => wallClock() - (stepped ? 10 * 60_000 : 0));
       try {
-        // The clock steps back a moment after the folder refuses the walk, while the walk goes on with the file beside it.
+        // The clock steps back as the folder refuses the walk, and the walk goes on with the file beside it only then.
         const message = `EPERM: operation not permitted, opendir '${denied}'`;
+        const refused = Promise.withResolvers<void>();
         discovery.directories.set(denied, [async (): Promise<void> => {
-          setTimeout(() => { stepped = true; }, 1);
+          stepped = true;
+          refused.resolve();
           throw Object.assign(new Error(message), { code: "EPERM", syscall: "opendir", path: denied });
         }]);
-        discovery.lstats.set(slow, [async () => { await new Promise(resolve => setTimeout(resolve, 50)); }]);
-        const started = performance.now();
+        discovery.lstats.set(slow, [async () => { await refused.promise; }]);
         await expect(bridge.checkpoint("turn")).resolves.toEqual(failedWith(`src/denied: ${message}`));
         expect(stepped).toBe(true);
-        expect(performance.now() - started).toBeLessThan(3_000);
+        // The walk ended while the checkpoint waited for it: the clock's step held it no longer than its own reads.
+        expect(pending).toEqual([]);
         expect(toldPaths(onDiscoveryGaps)).toEqual(["src/denied"]);
       } finally {
         now.mockRestore();
