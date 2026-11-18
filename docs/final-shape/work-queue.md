@@ -756,6 +756,19 @@ pass.
     0.046 s (every stored atom read and interned, 215 MB allocated), supports 0.014 s.
   - **before**: the rule files read 0.070 s, phase 0's graphs 0.036 s; and 0.70 s of wall off a core in "watch the
     corpus and the library" (0.002 s CPU), cause not yet shown (the journal's wait, or the m3 at load 37–50).
+    **Shown** (2026-11-18, e130/e131, `RERAIL_JOURNAL_TRACE`, which now prints each stream's roots and when its
+    history replay and last cookie came): the wait is FSEvents' history replay, not the cookie. A stream's replay
+    from its stored cursor ends 0.16 s (load 30) to 0.77 s after the stream starts, even when it holds 3 events. The
+    process's one observer opens at the run's first watch, and starts every stream there (`journal::prepare`); the
+    corpus is asked 0.003 s later, and waits out the whole replay. The library's streams, asked after, find theirs
+    done (0.003–0.011 s). 0105's prepare meant the replays to run "while the process starts", but the first watch
+    is the first thing the run does: nothing overlaps it. Open: start the streams at the process's start, and put
+    the start-up that reads nothing watched (settings, the stores' opening, the cost model) between; or, for a root
+    of a few hundred files, `stat` them (about 1 ms of CPU) instead of waiting on the replay, which is 0105's
+    trade-off and the user's call. A quiet host's replay is not measured yet (the m3 has been at load 24–37).
+  - **the run's end**: 0.33 s of wall after `write`, joining the store's collection (decision 0053), which ran in
+    the background (e127, "Waits": `the store's collection`). It is in "from main to report" (2.16 s) but in no
+    phase (1.83 s).
   - stats 0.08 s, cross 0.08 s, the rest 0.09 s.
 
 ### Q19. A new process reads every kept frame of the cross part, its own or not
