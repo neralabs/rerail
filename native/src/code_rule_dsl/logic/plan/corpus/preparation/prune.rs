@@ -85,6 +85,14 @@ impl ProgramPass for Prune {
                 asked_after.insert(req.clone(), readers);
             }
         }
+        // A reader the prune drops is not needed: it leaves the record where its request has readers left, as the
+        // tree's prune takes it out (`front::prune`), so a later gate does not take it for one gone by a rename.
+        let dropped_readers: HashSet<&str> = (0..rules.len()).filter(|&i| !kept[i] && !need.contains(head(i))).map(head).collect();
+        for readers in asked_after.values_mut().flatten() {
+            if readers.iter().any(|b| dropped_readers.contains(b.as_str())) && readers.iter().any(|b| !dropped_readers.contains(b.as_str())) {
+                readers.retain(|b| !dropped_readers.contains(b.as_str()));
+            }
+        }
         let dropped_natives: HashSet<String> = native_reads.keys().filter(|r| !need.contains(**r)).map(|r| (*r).to_owned()).collect();
         let dropped = kept.iter().filter(|k| !**k).count();
         // An attribute answered on request (decision 0174) whose readers were all pruned has no request and no answer

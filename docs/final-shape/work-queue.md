@@ -738,6 +738,25 @@ pass.
   images, rows and facts sit in one segment, uncompressed, and are read mapped in one query (the read 0.019 s →
   under 1 ms). The images open over the mapping, and the open went 0.032 → 0.022 s. Left: an image's checks read
   every page when it opens (0.019 s for 8, the first page faults included).
+- **Where an edit goes now, and who has each part** (2026-11-18, read from e121's profile, nothing run again; ep2
+  parts on the m3, B101's body edited). The run's thread 1.33 s CPU, the other threads 0.33 s, 2.11 s wall:
+  - **prepare** 0.52 s, the largest. The parts' own passes ran for none of 589 parts. What runs whole is after the
+    link: the prepared program's passes 0.21 s (the parts' headers and interfaces 0.048, merging identical relations
+    0.038, each part's key 0.027 and each part read back 0.015, 589 times each, the whole before the parts' passes
+    0.027), prune/simplify/demand 0.077 s, lowering 0.068 s, the guests' fold 0.033 s, the split of all 3,968
+    relations 0.029 s, the memo's strata 0.024 s and program 0.024 s, statistics 0.019 s, the keep 0.012 s.
+    **Typing-support's**: these passes are 0276 step 3's (preparation after lowering on the writer), on top of 0281
+    and 0333, the user's calls of 2026-11-16 and 11-17. Running them over the edit, as 0393 runs the tail's
+    (`Pipeline::program_step`), is built on 0276's writer once its step 3 is in the hub.
+  - **combine** 0.24 s: the 317 texts read and lowered again 0.10 s (0276 step 5, lowering from the tape, rewrites
+    this: left until then), fact spaces 0.041 s, the stored run 0.022 s, merging 0.018 s.
+  - **wait** 0.24 s, **here** (no sibling works on it): the kept frames 0.064 s (every space's rows read once a
+    process 0.029, the cross part's by identity 0.029; 59,141 frames, 180 MB), the memo lookup 0.055 s (the 300
+    unchanged files' entries, their 317,599 strings interned though every stored atom is held), the atoms' lease
+    0.046 s (every stored atom read and interned, 215 MB allocated), supports 0.014 s.
+  - **before**: the rule files read 0.070 s, phase 0's graphs 0.036 s; and 0.70 s of wall off a core in "watch the
+    corpus and the library" (0.002 s CPU), cause not yet shown (the journal's wait, or the m3 at load 37–50).
+  - stats 0.08 s, cross 0.08 s, the rest 0.09 s.
 
 ### Q19. A new process reads every kept frame of the cross part, its own or not
 
@@ -2651,7 +2670,7 @@ always a refusal.
   host again for them before each compile. Not installed: the farm owner merges and installs it.
 - **Done when**: farm 24 (or its merge) is installed and the reproduction above no longer fails.
 
-### Q123. An M1 Max repeats the persistent dispatch's launch (`a_batch_of_files_and_programs_is_one_launch`)
+### Q123. (Done) An M1 Max repeats the persistent dispatch's launch (`a_batch_of_files_and_programs_is_one_launch`)
 
 - **Found** (2026-11-17, roll-up after 7d4a35093): on the farm's M1 Max the test sees 5–9 launches where it expects
   1 (Interpreter, 16-byte lanes, spins > 0); it passes on the M3. `run_batch` repeats a launch when a look-back runs
@@ -2659,6 +2678,14 @@ always a refusal.
   results are equal; only the launch count differs.
 - **To do**: the workers from the device's residency (its cores and threadgroup limits), not a constant, so the M1
   (which must work, platform priorities) runs one launch too.
+- **Done** (2026-11-18): not residency. With `RERAIL_WORKERS` at 768, 512, 384, 256, 128 or 32 the M1 Max took 3–9
+  launches, and as many with 65,536 polls as with none: no poll ever saw a predecessor's word. A relaxed
+  `atomic_load_explicit` in the poll loops read a stale copy there; a `volatile` or `coherent(device)` load did no
+  better. A relaxed `atomic_fetch_or_explicit(x, 0)` reads the coherent word: one launch in all 9 configurations
+  (3 executors x 3 widths). The five poll loops (`look_back`, `halo_exchange`, `exchange_word`'s two, the sinks'
+  look-back) read through `poll`, which `batch_helpers` defines per device: the read-modify-write below Apple GPU
+  family 9, the plain load from family 9 on (the M3 passes with it). `WORKERS` stays a constant.
+- **Found on the way** (Q170): five parser tests red on the M1 Max at the hub's HEAD, with or without this change.
 
 ### Q124. (Q30 on Swift-Kotlin-Scala-support) A Kotlin header's same-line comment: a mark that settles the extras before its line break
 
@@ -3275,7 +3302,7 @@ and the input relations' hash indexes and sorted orders. Then `rr_agg56` (Q155, 
 - **Done** (2026-11-17, decision 0378): the documents frame records its granules; layouts and documents are made
   where first asked. ep2's edit: `kept_inputs` 0.077 s → 0.021 s, no documents frame decoded, rows as h1.
 
-### Q169. `a_parse_request_asks_only_for_the_strings_its_rule_reads`: the parts linked as versions are not the trees linked
+### Q169. (Done) `a_parse_request_asks_only_for_the_strings_its_rule_reads`: the parts linked as versions are not the trees linked
 
 Found 2026-11-18, at the roll-up's end (after the fold fix above, Q101). A debug build's check in `combine_tail`
 ("the parts linked as versions are the trees linked") fails. It fails the same at the hub's 8f11d22f4, before that fix
@@ -3285,8 +3312,29 @@ where the tree names `num_text`, `num_source`, `rr_agg75` and the annotation cop
 (`link::Versioned`, 0373's splice, the request copies) departs from the tree's. Ignored (this item) until then.
 
 - **Done when**: the test passes and the ignore is gone.
+- **Done** (2026-11-18): three places where the version's request record did not follow the tree's, found pass by
+  pass with the carry printed:
+  - **`hide`** wrote its rules with no source and stated no record, so the carry knew only the rules hide left as
+    they were (by content): 8 of `rr_value_req`'s 14 places fell back to the relation itself, and the guests' copies
+    of readers (`rr_in_annotation_0_version_index`) were not readers. It now states the record as the tree's hiding
+    carries it (`Program::push_rule_from`): each rule serves its source rule's readers, and a copy of a rule under
+    another name is a reader wherever its source's relation is one. (A carry rule for copies in every pass was tried
+    and refused: lowering writes helpers from readers' rules, `rr_ctx12`, which are no copies.)
+  - **`fold own guests' copies`** dropped the copies but left them in the record; the tree's `fold_own` renames them
+    to their originals (`rename_readers`). It now does.
+  - **`prune`** kept a reader it dropped in the record; the tree's takes it out where its request has readers left.
+    It now does.
+  Farm (M1 Max): the test passes, with 98 others (sessions, frames, hiding, preparation, program images, the request
+  record's tests, file_local, `str_answered_on_request_holds_the_eager_rows`).
+- **At the merge into final-rerail-shape-rr-align** (2026-11-18): failed there at the narrowing's tree check (the
+  version's record had 14 places for `rr_value_req`'s 13 rules). 0393's hide names each helper by its rank among the
+  helpers' texts, so two equal helpers are one, and two request rules that read them were made one rule by the
+  narrowing, which wrote no record: the tree's narrowing has the rule serve both rules' readers
+  (`Program::set_rules_from`). The version's `RequestsFileLocal` now states the record as the tree's carries it.
+  The test passes on the m3 with the program image, program text, request record, combined, prune, merge, hiding
+  and file_local sets.
 
-### Q101. `corpus::tests::the_run_after_a_cold_one_writes_nothing` fails its warm run's strict check
+### Q101. (Done) `corpus::tests::the_run_after_a_cold_one_writes_nothing` fails its warm run's strict check
 
 - **Found** (2026-11-17, while linking library modules on versions, decision 0377): the test's second run exits 3:
   `RERAIL_WARM: the observer's store not asked inside the waves in a warm run (…/src: its answers unknown, read
@@ -3310,6 +3358,30 @@ where the tree names `num_text`, `num_source`, `rr_agg75` and the annotation cop
   none of their sources. The second lane differs the other way too: 14 plans warm against 10 cold. To do: a run
   that reuses the prepared program keeps the last runs it found (`last_named`), naming their keys and sources (the
   run's facts' images by `image_key`); then find the second lane's 4 extra plans, the COMMIT and the 3 recomputations.
+
+- **Done** (2026-11-18): two asymmetries, each a run that derived something naming other things than the run that
+  found it kept.
+  - **The pipelines' kept runs** (0333): a run that finds its prepared program prepares nothing and kept no runs, so
+    its manifest named none of the 17 sources and the plan the preparing run's named. It now names the last runs of
+    its own lane (`ContentStore::corpus_lane_also`; the root's newest manifest of any lane, which an edit's
+    preparation reads, would give another lane's), their images and facts found by `program_text::run_sources`.
+    Named by the preparing run alone, a manifest recorded without them also lost them to the run after.
+  - **Phase 0's graph images**: Q150 made the image keep the bootstrap run's plans, so the run that reads it names
+    them; f7e047997, from before that, cleared them in the run that kept the image. Together the cold run named none
+    and the warm run the image's (the second lane's 5 extra plans). The clear is gone (Q150's form: both name them,
+    and what the graph came from stays live).
+  The COMMIT and the recomputations were those two faults' writes (`RERAIL_WARM` counts its faults). Farm (M1 Max):
+  the test passes with 75 others (phase 0, graphs, manifests, corpus runs, world, racy, reuse, the second run in one
+  process, Q102's and Q169's tests). The ignore is gone.
+- **At the merge into final-rerail-shape-rr-align** (2026-11-18): failed there again, two manifests new (28 and 30
+  sources). Two more sources a run keeps that a warm run did not name:
+  - a stored run's analyses' rows, a source of their own since 0385, which `record_runs` names and `run_sources` did
+    not: it does now;
+  - the combine's kept tail run (0393), which the run that keeps it names, while a warm run reads the combined
+    program from the store and never reaches the tail. The combined program's entry now names the tail run it was
+    made over or kept (`rr_combined_tail_run`), and a run that names the entry names the run's sources too
+    (`combined::image_sources`), so collection also keeps that run while it keeps the entry.
+  The test passes on the m3.
 
 ### Q102. `a_new_builds_first_edit_counts_every_file_in_so_its_next_edit_is_steady` fails at final-rerail-shape-rr-align's f7c563513
 
@@ -3512,14 +3584,30 @@ sha) or `program_shared`'s order may hand back the files recorded before the edi
   hub's case is now this item's: measure it on the hub's 10-file cold run before choosing the tape's kind postings or
   an index in the block.
 
-### Q168. `executors_are_shared` fails on the hub: the join model's prediction makes its own command queue
+### Q168. (Done) `executors_are_shared` fails on the hub: the join model's prediction makes its own command queue
 
 - **Found** (2026-11-18, at the hub's merge of django-bugs): `randomforest_predict.rs:868` makes a queue
   (`armed_queue`, `device.new_command_queue()`) outside its owner (`forest::gpu::shared`, decision 0100 §2). It came
   with 316bd6004 (0354, the prediction armed ahead). It fails at the hub's HEAD too, so this merge did not cause it.
 - **Why it may be right**: the prediction's command buffer is committed ahead and waits on an event for its rows.
   On the one queue it would hold every later command buffer behind it.
-- **Open, for the user** (end of the roll-up): allow it as a reasoned exception in the guard, or give the shared
-  module a second queue for buffers that wait on events.
+- **Done** (2026-11-18): the shared module's second queue, as django-bugs did at its merge of rr-align (7fc50c797, past
+  this roll-up's pin, so taken alone; the user: "check the feeders again"). `gpu::shared` holds `waiting`, the queue
+  of work committed ahead that waits on an event, and the armed prediction commits on it. The guard's owner is
+  unchanged. Farm (M1 Max): `executors_are_shared` and the three `randomforest_predict` device tests pass.
 - **Also seen**: on m3 the guard reads three files the checkout deleted (`metal_frontier_conformance.rs`,
   `metal_frontier_reduce.rs`, `metal_register_conformance.rs`). That is Q63's stale mirror, not the tree.
+
+
+### Q170. Five parser tests red at the hub's HEAD on the M1 Max
+
+Found 2026-11-18 (Q123's run of `rerail-parser-tests` and `rerail-metal`'s libs; the same five fail with Q123's
+change taken out):
+
+- `compile_tests::unsupported_operations_are_refused` (line 104: `text` is no longer refused);
+- `compile_tests::only_the_compiler_reads_tier2s_states` (line 999: a reader outside the compiler);
+- `metal_tests::every_step_on_metal_equals_the_interpreter` (`run_split` gives `UnsupportedBackend`);
+- `rr_tests::rr_cases_parse_from_their_steps` and `rr_steps_parse_as_the_reference_and_the_engine` (lines 409, 394).
+
+Not yet checked on the M3. **Done when**: each passes, or is fixed at its root.
+

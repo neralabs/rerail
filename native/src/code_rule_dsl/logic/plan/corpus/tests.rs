@@ -1132,7 +1132,6 @@ fn modules_are_named_from_their_package_roots_and_relative_imports_of_any_depth_
 /// file. Its context was the inputs alone (`str_node`), and a module of 111k string pairs (netbox's `un_locode.py`)
 /// asked for every one: 297k parses, past 25 minutes and 33 GB.
 #[test]
-#[ignore = "work queue Q169: the parts linked as versions differ from the trees linked in rr_value_req's rules and readers"]
 fn a_parse_request_asks_only_for_the_strings_its_rule_reads() {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("request-context");
     let _ = std::fs::remove_dir_all(&base);
@@ -1195,7 +1194,6 @@ fn a_runs_output_directory_is_rerails_own() {
 /// cross part whose every stratum was kept, a program of no rules, kept planning choices of its own. Each run is a
 /// process of its own, as the CLI's are: this test binary again, running `one_corpus_run_for_a_parent`.
 #[test]
-#[ignore = "work queue Q101: the warm run records two manifests, commits to the store and recomputes 3"]
 fn the_run_after_a_cold_one_writes_nothing() {
     let temp = tempfile::tempdir().unwrap();
     // `RERAIL_TEST_KEEP=<dir>`: the runs' store and outputs left there, to look at.

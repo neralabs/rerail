@@ -11,7 +11,7 @@ use super::super::{ALTERNATIVES, FileLocal, UNFOLD, close_under};
 use crate::code_rule_dsl::logic::program_image::build::{Rewrite, T};
 use crate::code_rule_dsl::logic::program_image::manager::{Cx, Last, ProgramPass, ProgramW};
 use crate::code_rule_dsl::logic::program_image::{AtomId, CmpOp, Lit as L, LitRef, RuleId, RuleRef, Slot, TermRef, Version};
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 /// `requests_file_local` of the version, for the requests `requests` names (those the program declares).
@@ -345,19 +345,54 @@ impl ProgramPass for RequestsFileLocal {
             with.inputs.push("node".to_owned());
             b.set_header(&header, &with);
         }
-        // Two rules narrowed to one body are one rule (a request's, the tree's `seen`).
-        let mut seen: HashSet<String> = HashSet::new();
+        // Two rules narrowed to one body are one rule (a request's, the tree's `seen`), serving both rules' readers.
+        // The request record (decision 0331) as the tree's narrowing carries it (`Program::set_rules_from`): each
+        // request rule written serves the readers of the rule it came from, and one that two rules became serves
+        // both's. Each written rule's place in its relation's record, by its key.
+        let asked = input.asked();
+        let place: HashMap<RuleId, usize> = asked
+            .keys()
+            .filter_map(|req| input.rel(req))
+            .flat_map(|rel| input.heads(rel).enumerate().map(|(k, r)| (r.id(), k)))
+            .collect();
+        let readers_of = |rule: RuleRef<'_>| -> BTreeSet<String> {
+            let req = input.rel_name(rule.head().rel());
+            asked
+                .get(req)
+                .filter(|by| input.rel(req).is_some_and(|rel| input.heads(rel).count() == by.len()))
+                .and_then(|by| place.get(&rule.id()).map(|&k| by[k].clone()))
+                .unwrap_or_else(|| BTreeSet::from([req.to_owned()]))
+        };
+        let mut stated: BTreeMap<String, Vec<BTreeSet<String>>> = BTreeMap::new();
+        let mut seen: HashMap<String, usize> = HashMap::new();
+        // Whether `key`, a rule of `rule`'s request, is written: the first of its body is, and a later one serves
+        // its readers through it.
+        let mut first = |key: String, rule: RuleRef<'_>| -> bool {
+            let req = input.rel_name(rule.head().rel()).to_owned();
+            let by = stated.entry(req).or_default();
+            match seen.get(&key) {
+                Some(&k) => {
+                    by[k].extend(readers_of(rule));
+                    false
+                }
+                None => {
+                    seen.insert(key, by.len());
+                    by.push(readers_of(rule));
+                    true
+                }
+            }
+        };
         for (rule, made) in plan {
             let request = is_request(&rule);
             match made {
                 Made::Keep => {
-                    if !request || seen.insert(format!("{} :- {}", head_shown(rule), shown(&own(rule)))) {
+                    if !request || first(format!("{} :- {}", head_shown(rule), shown(&own(rule))), rule) {
                         b.keep(&input, rule);
                     }
                 }
                 Made::EveryNode(n, arity) => {
                     let key = format!("{} :- node(_, {}, …)", head_shown(rule), v.text(rule.var(n)));
-                    if seen.insert(key) {
+                    if first(key, rule) {
                         let mut args = vec![T::Wild; arity];
                         args[1] = T::VarAtom(rule.var(n));
                         b.rule().source(rule.id()).head_from(&input, rule, rule.head()).atom("node", &args).finish()?;
@@ -365,7 +400,7 @@ impl ProgramPass for RequestsFileLocal {
                 }
                 Made::Bodies(bodies) => {
                     for body in bodies {
-                        if !seen.insert(format!("{} :- {}", head_shown(rule), shown(&body))) {
+                        if !first(format!("{} :- {}", head_shown(rule), shown(&body)), rule) {
                             continue;
                         }
                         // Each renamed piece's names, interned before the rule is opened.
@@ -384,6 +419,18 @@ impl ProgramPass for RequestsFileLocal {
                         rb.finish()?;
                     }
                 }
+            }
+        }
+        // Stated where the record covers the request and what is written differs from it.
+        if !asked.is_empty() {
+            let mut now = asked.clone();
+            for (req, by) in stated {
+                if now.contains_key(&req) {
+                    now.insert(req, by);
+                }
+            }
+            if now != asked {
+                b.set_asked(&now);
             }
         }
         Ok(())
