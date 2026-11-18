@@ -1553,8 +1553,9 @@ fn every_switch_lowering_reads_is_classified() {
     let mut preparing = sources(&[
         "logic/simplify.rs", "logic/strings.rs", "logic/reach_form.rs", "logic/magic.rs", "logic/magic", "logic/plan/lower.rs",
         "logic/plan/corpus/cross_memo.rs", "logic/plan/corpus/hiding.rs", "logic/plan/corpus/memo.rs", "logic/plan/corpus/prepared.rs",
-        // Its passes on the version: `fold_own`'s and the merges (`combining`), and the combine's fact spaces.
-        "logic/plan/corpus/preparation/combining.rs",
+        // Its passes, on the version (`preparation`): the front's, the lowering's, `fold_own`'s and the merges, and
+        // the combine's fact spaces.
+        "logic/plan/corpus/preparation.rs", "logic/plan/corpus/preparation",
         "logic/plan/corpus/session.rs", "logic/profile.rs", "logic/costs.rs", "typing/file_local.rs", "typing/file_local",
     ]);
     preparing.push(("corpus.rs, run_observed's preparation".to_owned(), region("\nfn run_observed(", "Arc::new(Prepared {")));

@@ -508,53 +508,6 @@ pub fn forget_trees_decoded() {
     DECODED.with(|d| d.set((0, None)));
 }
 
-/// `tree` with its request record (`Version::asked`, decision 0331) stated in `like`'s order of each request's rules,
-/// a rule's readers matched by its content: a debug check's left side. A version's digest does not read its rules'
-/// order, but the record is by place, so two equal programs whose passes placed a rule apart (the tree's merge
-/// renames a rule in place, the version's writes it after the rest) differ in their records alone. A stale entry (not
-/// one a rule) is no record on either side: `tree`'s left out, `like`'s taken as they are. `tree` as it is where its
-/// rules are not `like`'s.
-pub fn record_as(tree: &Arc<Version>, like: &Version) -> Arc<Version> {
-    use std::collections::VecDeque;
-    let was = tree.asked();
-    if was.is_empty() && like.asked().is_empty() {
-        return tree.clone();
-    }
-    let mut asked = super::about::Asked::new();
-    for (req, by) in &was {
-        let Some(t) = tree.rel(req) else { continue };
-        let ids: Vec<RuleRef<'_>> = tree.heads(t).collect();
-        // A record whose length is not its relation's rule count gates nothing, as no record (the version's carries
-        // it so: `manager::AskedByRule`).
-        if ids.len() != by.len() {
-            continue;
-        }
-        let Some(l) = like.rel(req) else { return tree.clone() };
-        let mut of: BTreeMap<u64, VecDeque<&std::collections::BTreeSet<String>>> = BTreeMap::new();
-        for (r, b) in ids.iter().zip(by) {
-            of.entry(r.hash()).or_default().push_back(b);
-        }
-        let mut placed = Vec::new();
-        for r in like.heads(l) {
-            let Some(b) = of.get_mut(&r.hash()).and_then(VecDeque::pop_front) else { return tree.clone() };
-            placed.push(b.clone());
-        }
-        asked.insert(req.clone(), placed);
-    }
-    // `like`'s stale entries are no record either: taken as they are, so the check reads neither side's.
-    for (req, by) in like.asked() {
-        if !asked.contains_key(&req) && like.rel(&req).map_or(true, |rel| like.heads(rel).count() != by.len()) {
-            asked.insert(req, by);
-        }
-    }
-    if asked == was {
-        return tree.clone();
-    }
-    let mut b = tree.builder();
-    b.set_asked(&asked);
-    b.finish_overlay().unwrap_or_else(|_| tree.clone())
-}
-
 /// What two versions differ in, by text: the rules, declarations, facts and about rows only one has (a debug check's
 /// message).
 pub fn differences(a: &Version, b: &Version) -> String {

@@ -278,9 +278,7 @@ impl Text {
     /// image (decision 0246 §6) under its text `src` and its scope's keys: a store that holds it reads it, and the
     /// text is not lowered.
     ///
-    /// The version's program decoded (`lower_in_version`): a key's image has one encoding, the version's. Lowered here
-    /// on the tree as well, a debug build's tree check and the run queued two images of one program under one key,
-    /// the encoded tree's bytes and the folded version's, and the store refused the second.
+    /// The version's program decoded (`lower_in_version`): a key's image has one encoding, the version's.
     pub fn lower_in(self, src: &str, library: &Library, scoped: &Scoped, store: Option<&crate::content_store::ContentStore>) -> Result<Option<Program>, Error> {
         let Some(v) = self.lower_in_version(src, library, scoped, store, None)? else { return Ok(None) };
         v.program(&Default::default()).map(Some).map_err(Error::Syntax)
@@ -288,27 +286,13 @@ impl Text {
 
     /// The text's own program as a version, with the library's cone it asks for. A text that asks nothing of the
     /// library is its own version; one that asks has its cone copied on the version (`plan::corpus::cone_on_version`),
-    /// the library's tree never decoded. A debug build copies the tree's cone beside it (the attributes on request
-    /// undone, `with_cone`, made again over both, decision 0174) and checks the two images agree.
+    /// the library's tree never decoded.
     fn lowered_in_version(self, library: &Library, scoped: &Scoped) -> Result<Option<std::sync::Arc<super::program_image::Version>>, Error> {
         let Some(Own { version: own, asked, declared }) = self.lowered_own(scoped)? else { return Ok(None) };
         if asked.is_empty() {
             return Ok(Some(own));
         }
-        let v = super::plan::corpus::cone_on_version(&own, &library.version, &asked, &declared).map_err(Error::Syntax)?;
-        #[cfg(debug_assertions)]
-        {
-            let mut tree = own.program(&Default::default()).map_err(Error::Syntax)?;
-            lower::undo_on_request(&mut tree);
-            with_cone(&mut tree, library.program(), &asked, &declared);
-            for round in lower::ON_REQUEST {
-                lower::sources_on_request(&mut tree, round);
-            }
-            let t = version_of(&tree)?;
-            let t = crate::code_rule_dsl::logic::program_image::record_as(&t, &v);
-            assert_eq!((t.size(), t.digest()), (v.size(), v.digest()), "the cone copied on the version is the tree's: {}", super::program_image::differences(&t, &v));
-        }
-        Ok(Some(v))
+        super::plan::corpus::cone_on_version(&own, &library.version, &asked, &declared).map(Some).map_err(Error::Syntax)
     }
 
     /// The text's own program, lowered and linked in its libraries' scope, and what it asks of the library: the
@@ -320,18 +304,9 @@ impl Text {
         check_names(&vec![(PathBuf::from("<program>"), checked)], reads_core)?;
         closed_program(&files, &own)?;
         let own: Vec<syntax::Statement> = own.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_))).collect();
-        // Its rules written as a version in the walk (decision 0377 step 3); a debug build lowers the tree too and
-        // checks the two are one program.
-        #[cfg(debug_assertions)]
-        let tree = lower::link_seeded_parts(lower::lower_module_seeded(own.clone(), &scoped.seeds)?, &scoped.seeds)?;
+        // Its rules written as a version in the walk (decision 0377 step 3).
         let mut linked = lower::link_seeded_parts(lower::lower_module_seeded_written(own, &scoped.seeds)?, &scoped.seeds)?;
         let written = own_version(&linked.own, linked.version.take())?;
-        #[cfg(debug_assertions)]
-        {
-            let t = version_of(&tree.own)?;
-            let t = crate::code_rule_dsl::logic::program_image::record_as(&t, &written);
-            assert_eq!((t.size(), t.digest()), (written.size(), written.digest()), "the walk's version is the tree's: {}", super::program_image::differences(&t, &written));
-        }
         let version = link_seeded_version(linked, written, scoped, core_names())?;
         // A text that adds to library relations asks of the library (decision 0089 §3): its request's cone, the library
         // relations that read what it adds, and the helpers they read, are copied from the linked library, made once
@@ -572,12 +547,6 @@ pub fn lower_library(paths: &[PathBuf], store: Option<&crate::content_store::Con
             None => {
                 // Linked on versions (decision 0377): the modules' rules are never a tree.
                 let version = link_library_versions(modules.iter().map(lower::Module::clone).collect())?;
-                #[cfg(debug_assertions)]
-                {
-                    let t = version_of(&lower::link(modules.iter().map(lower::Module::clone).collect())?)?;
-                    let t = crate::code_rule_dsl::logic::program_image::record_as(&t, &version);
-                    assert_eq!((t.size(), t.digest()), (version.size(), version.digest()), "the library linked on versions is the tree's: {}", super::program_image::differences(&t, &version));
-                }
                 if keep_image(store, "a linked library's image", key, version.base_bytes().expect("a folded version is a base").to_vec()) {
                     crate::code_rule_dsl::prof::count("rr.linked_library_written", 1);
                 }
@@ -1022,8 +991,7 @@ pub fn with_cone(program: &mut Program, library: &Program, asked: &BTreeSet<Stri
 /// `unit`, `whole_back`,
 /// `front::finish` and `whole()`'s tail (`lower::link_seeded_front`), the tail run on it as program passes (`preparation::lowering_tail` and
 /// `DropRepeated`: aggregate demand, `unit`, the sets, then the widened contexts), then the
-/// scope's declarations taken out of its header (`lower::unseed`). A debug build runs the tree's tail beside it and
-/// checks the two images agree.
+/// scope's declarations taken out of its header (`lower::unseed`).
 /// A module's own program as a version: the one its walk wrote, as the link left it (`version`), or `own` encoded.
 fn own_version(own: &Program, version: Option<std::sync::Arc<super::program_image::Version>>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     match version {
@@ -1038,51 +1006,14 @@ fn link_seeded_version(linked: lower::Linked, own_v: std::sync::Arc<super::progr
     use super::program_image::Builder;
     let seeds = &scoped.seeds;
     let lower::Linked { lowered, own, stated, own_stated, .. } = linked;
-    // The tree's check below appends the module's rules too: where the walk wrote them, the version's.
-    #[cfg(debug_assertions)]
-    let own = {
-        let mut own = own;
-        if own.rules.is_empty() {
-            own.rules = own_v.program(&Default::default()).map_err(Error::Syntax)?.rules;
-        }
-        own
-    };
-    #[cfg(not(debug_assertions))]
     drop(own);
-    // What the tree's check below reads of the lowerer.
-    #[cfg(debug_assertions)]
-    let (sets, rewritten, docof_of_locs, findings, three, modal) = (lowered.sets.clone(), lowered.rewritten.clone(), lowered.docof_of_locs, lowered.findings.clone(), lowered.three.clone(), lowered.modal.clone());
     let v = lowering_tail_on(scoped.version()?, vec![(own_v, stated, own_stated)], true, lowered)?;
     let was = v.header(&Default::default()).map_err(Error::Syntax)?;
     let mut head = was.clone();
     lower::unseed(&mut head, seeds, core);
     let mut b = Builder::on(&v);
     b.set_header(&was, &head);
-    let (v, _) = b.finish().map_err(Error::Syntax)?;
-    #[cfg(debug_assertions)]
-    {
-        let mut tree = seeds.program().clone();
-        lower::append_parts(&mut tree, own, &mut stated.clone(), own_stated);
-        super::front::declared(&tree)?;
-        lower::three_valued(&mut tree, &three, &modal);
-        lower::findings(&mut tree, &findings)?;
-        lower::core_and_projections(&mut tree, docof_of_locs)?;
-        lower::span_patterns_into(&mut tree)?;
-        lower::builtins_out(&mut tree, &rewritten);
-        lower::kind_sets(&mut tree, sets)?;
-        lower::unit(&mut tree);
-        lower::whole_back(&mut tree);
-        let mut tree = super::front::finish(tree)?;
-        super::rr::aggregate_demand::optimize(&mut tree);
-        lower::unit(&mut tree);
-        lower::sets(&mut tree);
-        lower::widen_cyclic_contexts(&mut tree);
-        lower::unseed(&mut tree, seeds, core);
-        let t = version_of(&tree)?;
-        let t = crate::code_rule_dsl::logic::program_image::record_as(&t, &v);
-        assert_eq!((t.size(), t.digest()), (v.size(), v.digest()), "the lowering's tail on the version is the tree's: {}", super::program_image::differences(&t, &v));
-    }
-    Ok(v)
+    b.finish().map(|(v, _)| v).map_err(Error::Syntax)
 }
 
 

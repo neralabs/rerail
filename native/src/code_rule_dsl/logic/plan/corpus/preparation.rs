@@ -117,9 +117,6 @@ pub struct Front {
     pub vocabulary: crate::code_rule_dsl::logic::strings::Vocabulary,
 }
 
-/// The stages of `front`, in order, at which a debug build checks the version against the tree's passes.
-pub const STAGES: [&str; 9] = ["inputs", "prune", "simplify", "prune again", "reach", "negated demand", "demand", "undo", "text"];
-
 /// `version` pruned to the rules its outputs read (`front::prune`): what the bridged programs' check reads
 /// (`bridge::wanted`), before the run prepares the program.
 pub fn pruned(version: Arc<Version>) -> Result<Arc<Version>, String> {
@@ -131,35 +128,23 @@ pub fn pruned(version: Arc<Version>) -> Result<Arc<Version>, String> {
 /// The passes before lowering, on the version (decision 0281's path, steps 6c–6e): the functors only CPython gives
 /// and the base relations as inputs, a prune, `simplify` and a prune again, the reach form, the demand for negated
 /// tests, the program's own demand (`RERAIL_DEMAND=off` computes the listed relations in full) and a prune after
-/// it, the reaches in cycles made rows again, then the text passes. Their decisions reach the run's profile, as the
-/// tree's passes made them. `check` is called after each of `STAGES` with the version so far.
-pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, last: Option<Run>, check: &mut dyn FnMut(&'static str, &Arc<Version>)) -> Result<(Arc<Version>, Front, Run), String> {
+/// it, the reaches in cycles made rows again, then the text passes. Their decisions reach the run's profile.
+pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, last: Option<Run>) -> Result<(Arc<Version>, Front, Run), String> {
     let mut p = kept(FRONT, version, last)?;
-    let mut at = |p: &mut Pipeline<'_>, stage: &'static str| -> Result<(), String> {
-        let v = p.current()?.clone();
-        check(stage, &v);
-        Ok(())
-    };
     // @py_unparse(n) and @ast_dump(n) read the relations the batches bind them as; the base relations the program
     // reads and does not derive are inputs, as an authored file's are.
     p.program(&mut simplify::CpythonFunctors);
     p.program(&mut simplify::BaseInputs);
-    at(&mut p, "inputs")?;
     // Only the rules an output reads, directly or through other rules (T's front prunes the same way).
     p.program(&mut prune::Prune::default());
-    at(&mut p, "prune")?;
     // Bodies simplified (decision 0038), then pruned again.
     let simplified = simplify::passes(&mut p)?;
     simplify::decide(&simplified);
-    at(&mut p, "simplify")?;
     p.program(&mut prune::Prune::default());
-    at(&mut p, "prune again")?;
     let mut reach = demand::ReachForm::default();
     p.program(&mut reach);
-    at(&mut p, "reach")?;
     let mut negated = demand::NegatedDemand::default();
     p.program(&mut negated);
-    at(&mut p, "negated demand")?;
     let mut own = magic::ProgramDemand::default();
     if std::env::var("RERAIL_DEMAND").map_or(true, |x| x != "off") {
         p.program(&mut own);
@@ -173,12 +158,9 @@ pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::Gra
             }
         }
     }
-    at(&mut p, "demand")?;
     let mut undo = demand::UndoInCycles::default();
     p.program(&mut undo);
-    at(&mut p, "undo")?;
     let text::Found { matchers, vocabulary } = text::passes(&mut p, dialect)?;
-    at(&mut p, "text")?;
     for d in p.decisions() {
         crate::code_rule_dsl::logic::profile::decision(&d.what, || d.detail.clone());
     }
