@@ -2556,3 +2556,11 @@ and the input relations' hash indexes and sorted orders. Then `rr_agg56` (Q82, 0
   Neither reads the code 0276 §3 changed.
 - **Done when**: `guest_keys` is a relation the stores own or a listed cache not yet moved (its check passes), and
   the git test makes its commit on any host (or says why it cannot), and both pass.
+
+### Q104. `base_tests::an_unbound_relation_is_named` fails under `RERAIL_PREPARE=parts`
+
+- **Found** (2026-11-18, checking 0276 §3's port of the parts path): under `RERAIL_PREPARE=parts` the test panics
+  `no columns for signed_list`; it passes without the switch, and fails the same before the port (`545109713`).
+  Nothing runs the parts path in the test suite otherwise.
+- **Done when**: a part's link keeps the declaration the test reads, the test passes under the switch, and a test
+  runs the parts path without the switch set by hand.
