@@ -1,9 +1,10 @@
 //! A folder's entries as the server graph's disk walk lists them (`walk`): each one's name and
 //! kind and, for a file, the `Facts` its cached summary's `Stamp` comes from. On Windows one call
 //! per folder page gives all of it (`FileIdBothDirectoryInfo`), NTFS's change time and file id
-//! included, which a rewrite that puts the modification time back still moves; where a file
-//! system cannot list a folder that way, `read_dir` lists it as it does elsewhere. Elsewhere
-//! `read_dir`, and a file's `lstat` once the walk asks for its facts.
+//! included, which a rewrite that puts the modification time back still moves; where the folder
+//! cannot be listed that way, `read_dir` lists it as it does elsewhere. Elsewhere `read_dir`, and a
+//! file's `lstat` once the walk asks for its facts. Either way a folder is read as its entries are
+//! taken.
 
 #[cfg(not(windows))]
 use std::ffi::OsString;
@@ -63,6 +64,8 @@ pub(super) fn list(directory: &Path) -> io::Result<impl Iterator<Item = io::Resu
     Ok(std::fs::read_dir(directory)?.map(|entry| entry.map(Entry)))
 }
 
+#[cfg(all(test, windows))]
+pub(super) use windows::PAGES_READ;
 #[cfg(windows)]
 pub(super) use windows::{Entry, Facts, list};
 
@@ -77,9 +80,7 @@ mod windows {
     use std::os::windows::io::AsRawHandle;
     use std::path::Path;
     use std::time::{Duration, SystemTime};
-    use windows_sys::Win32::Foundation::{
-        ERROR_INVALID_LEVEL, ERROR_INVALID_PARAMETER, ERROR_NO_MORE_FILES, ERROR_NOT_SUPPORTED,
-    };
+    use windows_sys::Win32::Foundation::ERROR_NO_MORE_FILES;
     use windows_sys::Win32::Storage::FileSystem::{
         FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS,
         FILE_ID_BOTH_DIR_INFO, FILE_INFO_BY_HANDLE_CLASS, FILE_LIST_DIRECTORY,
@@ -93,6 +94,13 @@ mod windows {
     const UNIX_EPOCH_TICKS: i64 = 116_444_736_000_000_000;
     /// One page of a folder's listing, in 8-byte words: its entries start 8-byte aligned.
     const PAGE_WORDS: usize = 8192;
+
+    #[cfg(test)]
+    thread_local! {
+        /// How many pages this thread's listings asked their file system for.
+        pub(in super::super) static PAGES_READ: std::cell::Cell<usize> =
+            const { std::cell::Cell::new(0) };
+    }
 
     /// A file's length and `Stamp`, read with its folder's listing.
     #[derive(Clone, Copy, Debug)]
@@ -132,42 +140,95 @@ mod windows {
         }
     }
 
-    /// The entries of `directory`, in no order: from its handle's `FileIdBothDirectoryInfo`,
-    /// else, where its file system lists no folder that way, from `read_dir`.
-    pub(in super::super) fn list(
-        directory: &Path,
-    ) -> io::Result<impl Iterator<Item = io::Result<Entry>>> {
-        let listed = match listed(directory) {
-            Err(error) if unsupported(&error) => read_dir(directory)?,
-            listed => listed?,
-        };
-        Ok(listed.into_iter().map(Ok))
+    /// The entries of `directory`, in no order, read a page at a time as they are taken: a walk
+    /// that stops at its entry bound reads no page past the one that holds it.
+    pub(in super::super) fn list(directory: &Path) -> io::Result<Listing> {
+        or_read_dir(directory, Pages::open(directory))
     }
 
-    fn listed(directory: &Path) -> io::Result<Vec<Entry>> {
-        let folder = std::fs::OpenOptions::new()
-            .access_mode(FILE_LIST_DIRECTORY)
-            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
-            .open(directory)?;
-        let mut page = vec![0u64; PAGE_WORDS];
-        let mut listed = Vec::new();
-        let mut class = FileIdBothDirectoryRestartInfo;
-        while read_page(&folder, class, &mut page)? {
-            entries_of(&page, &mut listed);
-            class = FileIdBothDirectoryInfo;
+    /// The listing of `directory` from `paged`, its handle's pages; where they failed, `read_dir`
+    /// lists it, as for a file system that cannot list a folder by `FileIdBothDirectoryInfo`, and
+    /// gives the answer it gives on its own. A folder gone is gone either way.
+    fn or_read_dir(directory: &Path, paged: io::Result<Pages>) -> io::Result<Listing> {
+        match paged {
+            Err(error) if error.kind() != io::ErrorKind::NotFound => {
+                std::fs::read_dir(directory).map(Listing::ReadDir)
+            }
+            paged => paged.map(Listing::Paged),
         }
-        Ok(listed)
     }
 
-    /// Whether a folder's file system refused the listing class, not the folder.
-    fn unsupported(error: &io::Error) -> bool {
-        [
-            ERROR_INVALID_PARAMETER,
-            ERROR_INVALID_LEVEL,
-            ERROR_NOT_SUPPORTED,
-        ]
-        .iter()
-        .any(|&code| error.raw_os_error() == Some(code as i32))
+    /// A folder's entries, as `list` reads them.
+    pub(in super::super) enum Listing {
+        Paged(Pages),
+        ReadDir(std::fs::ReadDir),
+    }
+
+    impl Iterator for Listing {
+        type Item = io::Result<Entry>;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            match self {
+                Self::Paged(pages) => pages.next(),
+                Self::ReadDir(entries) => entries
+                    .next()
+                    .map(|entry| entry.and_then(|entry| from_dir_entry(&entry))),
+            }
+        }
+    }
+
+    /// A folder's entries from its handle, one page of `FileIdBothDirectoryInfo` at a time.
+    pub(in super::super) struct Pages {
+        folder: std::fs::File,
+        page: Vec<u64>,
+        /// The entries of the page read last that are not taken yet.
+        entries: Vec<Entry>,
+        /// Whether a page may follow the one read last.
+        more: bool,
+    }
+
+    impl Pages {
+        /// Opens `directory` and reads its first page.
+        fn open(directory: &Path) -> io::Result<Self> {
+            let folder = std::fs::OpenOptions::new()
+                .access_mode(FILE_LIST_DIRECTORY)
+                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+                .open(directory)?;
+            let mut pages = Self {
+                folder,
+                page: vec![0u64; PAGE_WORDS],
+                entries: Vec::new(),
+                more: true,
+            };
+            pages.read(FileIdBothDirectoryRestartInfo)?;
+            Ok(pages)
+        }
+
+        /// Reads the next page (`class` names the first) into `entries`; `more` turns false
+        /// once none is left.
+        fn read(&mut self, class: FILE_INFO_BY_HANDLE_CLASS) -> io::Result<()> {
+            self.more = read_page(&self.folder, class, &mut self.page)?;
+            if self.more {
+                entries_of(&self.page, &mut self.entries);
+            }
+            Ok(())
+        }
+    }
+
+    impl Iterator for Pages {
+        type Item = io::Result<Entry>;
+
+        /// The next entry, from the page read last while it has one left; a page that fails ends
+        /// the listing with its error.
+        fn next(&mut self) -> Option<Self::Item> {
+            while self.entries.is_empty() && self.more {
+                if let Err(error) = self.read(FileIdBothDirectoryInfo) {
+                    self.more = false;
+                    return Some(Err(error));
+                }
+            }
+            self.entries.pop().map(Ok)
+        }
     }
 
     /// The next page of `folder`'s entries into `page`; `false` once none is left.
@@ -176,6 +237,8 @@ mod windows {
         class: FILE_INFO_BY_HANDLE_CLASS,
         page: &mut [u64],
     ) -> io::Result<bool> {
+        #[cfg(test)]
+        PAGES_READ.with(|read| read.set(read.get() + 1));
         // SAFETY: an open folder handle and a buffer of the size given, alive across the call.
         let read = unsafe {
             GetFileInformationByHandleEx(
@@ -254,15 +317,9 @@ mod windows {
         }
     }
 
-    /// `directory`'s entries from `read_dir`, for a file system that lists no folder by
-    /// `FileIdBothDirectoryInfo`: their stamps hold no change time or file id, as `read_dir`
-    /// gives none.
-    fn read_dir(directory: &Path) -> io::Result<Vec<Entry>> {
-        std::fs::read_dir(directory)?
-            .map(|entry| entry.and_then(|entry| from_dir_entry(&entry)))
-            .collect()
-    }
-
+    /// An entry `read_dir` gives, for a file system that cannot list a folder by
+    /// `FileIdBothDirectoryInfo`: its stamp holds no change time or file id, as `read_dir` gives
+    /// none.
     fn from_dir_entry(entry: &std::fs::DirEntry) -> io::Result<Entry> {
         let kind = entry.file_type()?;
         let metadata = entry.metadata()?;
@@ -280,5 +337,40 @@ mod windows {
                 stamp,
             },
         })
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use windows_sys::Win32::Foundation::ERROR_INVALID_FUNCTION;
+
+        /// Where the handle's pages fail but for a folder gone, `read_dir` lists the folder: some
+        /// file systems answer a listing class they do not know with `ERROR_INVALID_FUNCTION`.
+        #[test]
+        fn a_folder_whose_pages_fail_is_listed_by_read_dir_unless_it_is_gone() {
+            let folder = std::env::temp_dir().join(format!(
+                "rerail-listing-fallback-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(folder.join("a")).unwrap();
+            std::fs::write(folder.join("b.ts"), "").unwrap();
+            let refused = io::Error::from_raw_os_error(ERROR_INVALID_FUNCTION as i32);
+            let mut names = or_read_dir(&folder, Err(refused))
+                .unwrap()
+                .map(|entry| entry.unwrap().name())
+                .collect::<Vec<_>>();
+            names.sort();
+            assert_eq!(names, ["a", "b.ts"]);
+            let gone = io::Error::from(io::ErrorKind::NotFound);
+            assert!(
+                or_read_dir(&folder, Err(gone))
+                    .is_err_and(|error| error.kind() == io::ErrorKind::NotFound)
+            );
+            std::fs::remove_dir_all(&folder).unwrap();
+        }
     }
 }

@@ -896,6 +896,29 @@ fn a_source_whose_read_is_denied_keeps_no_summary_on_unix() {
     std::fs::remove_dir_all(&root).unwrap();
 }
 
+/// The walk lists a folder a page at a time as it takes the folder's entries: past its entry
+/// bound it asks for no page after the one that holds the bound.
+#[cfg(windows)]
+#[test]
+fn the_walk_reads_no_folder_page_past_its_entry_bound() {
+    let root = temp_root("pages");
+    // A page holds a few hundred entries of names this long.
+    for number in 0..1_500 {
+        write_file(&root, &format!("lib/{number:04}.ts"), "");
+    }
+    let pages = |bound: usize| {
+        listing::PAGES_READ.set(0);
+        let mut entries = bound;
+        let listed = listed(&root.join("lib"), &mut entries).is_some();
+        (listed, listing::PAGES_READ.get())
+    };
+    let (whole, all) = pages(MAX_GRAPH_ENTRIES);
+    assert!(whole);
+    assert!(all > 2, "the folder takes {all} pages");
+    assert_eq!(pages(10), (false, 1));
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
 /// An `extends` base already read, one past the chain's depth and an entry past the first
 /// `MAX_EXTENDS_ENTRIES` of an array are not read.
 #[test]
