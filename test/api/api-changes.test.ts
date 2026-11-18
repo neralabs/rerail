@@ -16,6 +16,7 @@ import { gitRepository } from "../support/repository-setup.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { startDatabaseWriter } from "../support/processes/database-writer.js";
 import { drivenWatch } from "../support/platform/driven-watch.js";
+import { withExperiments } from "../support/environment/experiments.js";
 
 /** The beat of these streams: none comes within a test unless the test moves the clock to it. */
 const BEAT_MS = 60 * 60_000;
@@ -358,29 +359,34 @@ describe("the daemon's change stream (GET /api/changes)", () => {
     await stream.stop();
   });
 
-  it("sends a new token at the beat after gh's hosts file moved, while Merge Assist is on for the checkout's GitHub repository", async () => {
-    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
-    const checkout = gitRepository(join(realpathSync(root), "web"));
-    execFileSync("git", ["remote", "add", "origin", "https://github.com/acme/web.git"], { cwd: checkout });
-    const github = new FakeGithub();
-    const mergeAssist = createMergeAssistService({ database, github });
-    await mergeAssist.setEnabled(checkout, true);
-    const signedIn = storesFor({ changeFeed: { beatMs: BEAT_MS }, mergeAssist });
-    const stream = messagesOf(await createRerailApi(signedIn, operations, { version: "0.0.0-test" }).request(`/api/changes?${new URLSearchParams({ checkout })}`));
-    try {
-      // The checkout's files and gh's sign-in, each read once at the start.
-      const read = await partsRead(stream, 2);
+  describe("while Merge Assist is on", () => {
+    // Merge Assist is experimental: these cases run with it on, as a daemon started with the variable does.
+    withExperiments("MERGE_ASSIST");
 
-      // `gh auth logout` rewrites the hosts file, so its stamp moves.
-      github.options.signInStamp = "after gh auth logout";
-      await vi.advanceTimersByTimeAsync(BEAT_MS);
+    it("sends a new token at the beat after gh's hosts file moved, while Merge Assist is on for the checkout's GitHub repository", async () => {
+      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+      const checkout = gitRepository(join(realpathSync(root), "web"));
+      execFileSync("git", ["remote", "add", "origin", "https://github.com/acme/web.git"], { cwd: checkout });
+      const github = new FakeGithub();
+      const mergeAssist = createMergeAssistService({ database, github });
+      await mergeAssist.setEnabled(checkout, true);
+      const signedIn = storesFor({ changeFeed: { beatMs: BEAT_MS }, mergeAssist });
+      const stream = messagesOf(await createRerailApi(signedIn, operations, { version: "0.0.0-test" }).request(`/api/changes?${new URLSearchParams({ checkout })}`));
+      try {
+        // The checkout's files and gh's sign-in, each read once at the start.
+        const read = await partsRead(stream, 2);
 
-      expect(await movedFrom(stream, read.data)).toBeDefined();
-    } finally {
-      await stream.stop();
-      signedIn.close();
-      await mergeAssist.stop();
-    }
+        // `gh auth logout` rewrites the hosts file, so its stamp moves.
+        github.options.signInStamp = "after gh auth logout";
+        await vi.advanceTimersByTimeAsync(BEAT_MS);
+
+        expect(await movedFrom(stream, read.data)).toBeDefined();
+      } finally {
+        await stream.stop();
+        signedIn.close();
+        await mergeAssist.stop();
+      }
+    });
   });
 
   it("reads the checkout's files at each beat while a stat of gh's hosts file never answers", async () => {
