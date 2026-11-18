@@ -95,9 +95,9 @@ describe("the wait for a Rerail home's daemon lock", () => {
     await expect(refused).rejects.toMatchObject({ name: "HomeDaemonConflictError", pid: 4321 });
     expect(asked).toEqual([[4321, 1_000]]);
     // The engine's wait was still pending; a lock it is handed after the refusal is let go.
-    let released = false;
-    engine.waiting?.resolve({ release: () => { released = true; } });
-    await vi.waitFor(() => expect(released).toBe(true));
+    const released = Promise.withResolvers<void>();
+    engine.waiting?.resolve({ release: () => released.resolve() });
+    await released.promise;
   });
 
   it("waits for the engine when the holder its record names does not answer as a running daemon, or none is named", async () => {
@@ -105,7 +105,8 @@ describe("the wait for a Rerail home's daemon lock", () => {
     const home = await temporaryHome();
     await recordHolder(home, 4321);
     const taking = holdHomeDaemonLock(home, async () => false);
-    await vi.waitFor(() => expect(engine.waiting).toBeDefined());
+    // The engine is asked before the take's first await.
+    expect(engine.waiting).toBeDefined();
     engine.waiting?.resolve({ release: () => undefined });
     const lease = await taking;
     expect(lease).toBeDefined();
@@ -115,7 +116,7 @@ describe("the wait for a Rerail home's daemon lock", () => {
     const unrecorded = await temporaryHome();
     const asked: number[] = [];
     const waited = holdHomeDaemonLock(unrecorded, async pid => { asked.push(pid); return true; });
-    await vi.waitFor(() => expect(engine.waiting).toBeDefined());
+    expect(engine.waiting).toBeDefined();
     engine.waiting?.resolve(null);
     await expect(waited).rejects.toMatchObject({ name: "HomeDaemonConflictError", pid: undefined });
     expect(asked).toEqual([]);
