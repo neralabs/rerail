@@ -192,15 +192,31 @@ describe.runIf(LINUX)("Git started through the engine, on Linux", () => {
 
   it("starts through Node a start the engine fails and a program named without a folder", async () => {
     const root = await repository();
-    const refuse = (): never => { throw new Error("posix_spawn: Resource temporarily unavailable"); };
-    const refusing = { startGit: refuse, reapGit: () => ({}), runGit: refuse };
+    // The engine's own report of a start it refused names the call first (`failed` in native/src/git_start.rs).
+    const refusing = {
+      startGit: (): never => { throw new Error("startGit: Resource temporarily unavailable (os error 11)"); },
+      reapGit: () => ({}),
+      runGit: (): never => { throw new Error("runGit: Resource temporarily unavailable (os error 11)"); },
+    };
     expect(startGitWithoutCopying(() => refusing)).toBe(true);
     expect(await gitHead(root)).toBe(execFileSync("git", ["-C", root, "rev-parse", "HEAD"], { encoding: "utf8" }).trim());
-    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(runGit(root, ["rev-parse", "HEAD"]).stdout).toBe(`${await gitHead(root)}\n`);
+    expect([vi.mocked(spawn).mock.calls.length, vi.mocked(spawnSync).mock.calls.length]).toEqual([2, 1]);
     expect(startGitWithoutCopying(loadNativeBinding)).toBe(true);
     expect((await ended(startGit("sh", ["-c", "echo bare"], process.env, "ignore"))).stdout).toBe("bare\n");
-    expect(spawn).toHaveBeenCalledTimes(2);
+    expect(spawn).toHaveBeenCalledTimes(3);
   }, 30_000);
+
+  it("leaves to Node a start the engine refuses, as Node answers it: an argument holding a NUL byte", () => {
+    const refusals = (): unknown[] => [
+      thrown(() => startGit("/bin/sh", ["-c", "echo a\0b"], process.env, "ignore")),
+      thrown(() => runGitSync("/bin/sh", ["-c", "echo a\0b"], process.env)),
+    ];
+    const throughNode = refusals();
+    expect(startGitWithoutCopying(loadNativeBinding)).toBe(true);
+    expect(refusals()).toEqual(throughNode);
+    expect(throughNode).toEqual([{ code: "ERR_INVALID_ARG_VALUE" }, { code: "ERR_INVALID_ARG_VALUE" }]);
+  });
 });
 
 /** The engine's three calls, for a case to wrap one of them. */
@@ -208,6 +224,15 @@ function engineStarts(): Required<EngineGitStarts> {
   const { startGit: start, reapGit, runGit: run } = loadNativeBinding();
   if (start === undefined || reapGit === undefined || run === undefined) throw new Error("this engine cannot start Git");
   return { startGit: start, reapGit, runGit: run };
+}
+
+/** The code of what `act` threw, or what it returned when it threw nothing. */
+function thrown(act: () => unknown): unknown {
+  try {
+    return { returned: act() };
+  } catch (error) {
+    return { code: (error as NodeJS.ErrnoException).code };
+  }
 }
 
 /**
@@ -276,6 +301,70 @@ describe.runIf(LINUX)("Git started through the engine in the states where it and
     expect(throughEngine).toEqual({ exitedFirst: false, killed: true, code: null, signal: "SIGTERM" });
     expect(zombies()).toBe(0);
   });
+
+  it("runs a blocking Git once when what follows the engine's run throws, and lets that throw out", async () => {
+    const runs = join(await folder("runs"), "runs");
+    const starts = engineStarts();
+    const tooLong = new RangeError("Cannot create a string longer than 0x1fffffe8 characters");
+    const conversion = new Error("the run's answer could not be handed to JavaScript");
+    // After Git has run: its output cannot become a string (past V8's longest), or its answer cannot reach JavaScript.
+    const unreadable = { toString: (): never => { throw tooLong; } } as unknown as Buffer;
+    const afterRuns: Required<EngineGitStarts>["runGit"][] = [
+      (...call) => ({ ...starts.runGit(...call), stdout: unreadable }),
+      (...call) => { starts.runGit(...call); throw conversion; },
+    ];
+    const errors = afterRuns.map(runGitThen => {
+      startGitWithoutCopying(() => ({ ...starts, runGit: runGitThen }));
+      try {
+        return runGitSync("/bin/sh", ["-c", 'echo ran >> "$1"', "sh", runs], process.env);
+      } catch (error) {
+        return error;
+      }
+    });
+    expect([errors[0] === tooLong, errors[1] === conversion, readFileSync(runs, "utf8"), vi.mocked(spawnSync).mock.calls.length]).toEqual([true, true, "ran\nran\n", 0]);
+  });
+
+  it("starts Git once when what follows the engine's start throws, and leaves no descriptor open and no child unreaped", async () => {
+    const files = await folder("starts");
+    const [runs, plain] = [join(files, "runs"), join(files, "plain")];
+    await writeFile(plain, "");
+    const starts = engineStarts();
+    const conversion = new Error("the start's answer could not be handed to JavaScript");
+    const pids: number[] = [];
+    // After Git has started: its answer cannot reach JavaScript, so its descriptors never do; or one of them cannot
+    // become a socket, as a regular file's cannot.
+    const afterStarts: Required<EngineGitStarts>["startGit"][] = [
+      (...call) => {
+        const started = starts.startGit(...call);
+        pids.push(started.pid);
+        for (const fd of [started.stdin, started.stdout, started.exited]) closeSync(fd);
+        throw conversion;
+      },
+      (...call) => {
+        const started = starts.startGit(...call);
+        pids.push(started.pid);
+        closeSync(started.stdout);
+        return { ...started, stdout: openSync(plain, "r") };
+      },
+    ];
+    const open = readdirSync("/proc/self/fd").length;
+    const errors = afterStarts.map(startGitThen => {
+      startGitWithoutCopying(() => ({ ...starts, startGit: startGitThen }));
+      return thrown(() => startGit("/bin/sh", ["-c", 'echo ran >> "$1"; read line', "sh", runs], process.env, "ignore"));
+    });
+    try {
+      // The first child's answer never reached this process, so nothing here reaps it: the case does.
+      await until(() => typeof starts.reapGit(pids[0] ?? 0).code === "number", 10_000, "the first child's exit");
+      await until(() => zombies() === 0 && readdirSync("/proc/self/fd").length === open, 10_000, "no child unreaped and no descriptor open");
+    } finally {
+      for (const pid of pids) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch { /* It has ended. */ }
+      }
+    }
+    expect([errors, readFileSync(runs, "utf8"), vi.mocked(spawn).mock.calls.length]).toEqual([[{ code: undefined }, { code: "ERR_INVALID_FD_TYPE" }], "ran\nran\n", 0]);
+  }, 30_000);
 
   it("ends a blocking Git and says why when the engine's wait on its output fails, as spawnSync ends a run whose read fails", () => {
     const throughEngine = blockingRunsThroughEngine("poll-fails", tmpdir());

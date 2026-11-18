@@ -12,6 +12,7 @@
  */
 import type { ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { closeSync } from "node:fs";
 import { Socket } from "node:net";
 import { constants } from "node:os";
 import type { Readable, Writable } from "node:stream";
@@ -99,7 +100,7 @@ export function startGit(executable: string, args: readonly string[], env: NodeJ
 export function startGit(executable: string, args: readonly string[], env: NodeJS.ProcessEnv, stderr: "ignore"): GitProcess<null>;
 export function startGit(executable: string, args: readonly string[], env: NodeJS.ProcessEnv, stderr: "pipe" | "ignore"): GitProcess {
   const started = engine === undefined ? undefined : startedByEngine(engine, executable, args, env, stderr === "pipe");
-  if (started !== undefined && engine !== undefined) return new EngineGit(started, engine.reapGit);
+  if (started !== undefined && engine !== undefined) return engineGit(started, engine.reapGit);
   const child: ChildProcess = spawn(executable, [...args], { env, stdio: ["pipe", "pipe", stderr] });
   // spawn with these stdio options always gives stdin and stdout, and stderr exactly when it is "pipe".
   return child as GitProcess;
@@ -114,8 +115,33 @@ function startedByEngine(starts: Starts, executable: string, args: readonly stri
   if (!executable.includes("/")) return undefined;
   try {
     return starts.startGit(executable, [...args], environment(env), pipeStderr);
-  } catch {
-    return undefined;
+  } catch (error) {
+    return refusedByEngine(error, "startGit");
+  }
+}
+
+/**
+ * Undefined when `error` is the engine's own report that `call` started no process, so Node may start Git; any other
+ * error is thrown on. The engine fails a call only before `posix_spawn` has started anything, and names the call first
+ * (`failed` in `native/src/git_start.rs`). An error from anywhere else, such as the engine's answer failing to reach
+ * JavaScript, may come once Git has started, and Git must not run a second time for it.
+ */
+function refusedByEngine(error: unknown, call: "startGit" | "runGit"): undefined {
+  if (error instanceof Error && error.message.startsWith(`${call}: `)) return undefined;
+  throw error;
+}
+
+/**
+ * The engine's child as a {@link GitProcess}. When its descriptors cannot all become sockets, the error is thrown with
+ * none left open and the child is reaped once it has exited: Git has started, so Node does not start it again, as
+ * Node's own `spawn` throws on with its child left to end.
+ */
+function engineGit(started: EngineStartedGit, reap: (pid: number) => EngineGitExit): GitProcess {
+  try {
+    return new EngineGit(started, reap);
+  } catch (error) {
+    reapOnceExited(started.pid, reap, () => undefined);
+    throw error;
   }
 }
 
@@ -149,13 +175,21 @@ export function runGitSync(executable: string, args: readonly string[], env: Nod
   return { status: result.status, signal: result.signal, stdout: result.stdout, stderr: result.stderr, ...(result.error === undefined ? {} : { error: result.error }) };
 }
 
+/**
+ * The engine's run as `spawnSync` answers it, or undefined when `spawnSync` should run Git: a program named without a
+ * folder, and a run the engine refused before it started anything. What follows Git's run (its answer reaching
+ * JavaScript, its output becoming strings) is outside the fallback: a throw there is thrown on, as `spawnSync`'s own
+ * throws when its output cannot become a string, and Git has run once.
+ */
 function ranByEngine(starts: Starts, executable: string, args: readonly string[], env: NodeJS.ProcessEnv, limits: GitRunLimits): GitRunResult | undefined {
   if (!executable.includes("/")) return undefined;
+  let ran: EngineGitRun;
   try {
-    return answerOf(starts.runGit(executable, [...args], environment(env), limits.timeout || undefined, limits.maxBuffer ?? SPAWN_SYNC_MAX_BUFFER), executable, args);
-  } catch {
-    return undefined;
+    ran = starts.runGit(executable, [...args], environment(env), limits.timeout || undefined, limits.maxBuffer ?? SPAWN_SYNC_MAX_BUFFER);
+  } catch (error) {
+    return refusedByEngine(error, "runGit");
   }
+  return answerOf(ran, executable, args);
 }
 
 /** The engine's run as `spawnSync` answers it. */
@@ -217,6 +251,40 @@ function reapOnceExited(pid: number, reap: (pid: number) => EngineGitExit, reape
   else reaped(exit);
 }
 
+/** The sockets on a started child's descriptors; `stderr` is null where its stderr is the null device. */
+interface GitSockets {
+  exited: Socket;
+  stdin: Socket;
+  stdout: Socket;
+  stderr: Socket | null;
+}
+
+/**
+ * A socket on each of `started`'s descriptors, as `new Socket` makes them: the exit pipe's, stdin's, stdout's, then
+ * stderr's. When one cannot be made, those made are destroyed and the other descriptors closed before the error is
+ * thrown on, so the child reads the end of its input, meets closed outputs and ends.
+ */
+function socketsOf(started: EngineStartedGit): GitSockets {
+  const made: Socket[] = [];
+  const on = (fd: number, readable: boolean): Socket => {
+    const socket = new Socket({ fd, readable });
+    made.push(socket);
+    return socket;
+  };
+  try {
+    return { exited: on(started.exited, true), stdin: on(started.stdin, false), stdout: on(started.stdout, true), stderr: started.stderr < 0 ? null : on(started.stderr, true) };
+  } catch (error) {
+    for (const socket of made) socket.destroy();
+    for (const fd of [started.exited, started.stdin, started.stdout, started.stderr].slice(made.length)) closeOpen(fd);
+    throw error;
+  }
+}
+
+/** Closes `fd` when it is one (stderr's is -1 on the null device). */
+function closeOpen(fd: number): void {
+  if (fd >= 0) closeSync(fd);
+}
+
 /** As Node does once a child exits: output no reader took is let flow, so it ends and `close` comes. */
 function flowUnread(outputs: readonly (Readable | null)[]): void {
   for (const output of outputs) if (output !== null && output.listenerCount("data") === 0) output.resume();
@@ -243,15 +311,13 @@ class EngineGit extends EventEmitter implements GitProcess {
   constructor(started: EngineStartedGit, reap: (pid: number) => EngineGitExit) {
     super();
     this.pid = started.pid;
-    this.stdin = new Socket({ fd: started.stdin, readable: false });
-    this.stdout = new Socket({ fd: started.stdout, readable: true });
-    this.stderr = started.stderr < 0 ? null : new Socket({ fd: started.stderr, readable: true });
+    const { exited, stdin, stdout, stderr } = socketsOf(started);
+    [this.stdin, this.stdout, this.stderr] = [stdin, stdout, stderr];
     for (const output of [this.stdout, this.stderr]) {
       if (output === null) continue;
       this.#closesNeeded += 1;
       output.on("close", () => this.#maybeClose());
     }
-    const exited = new Socket({ fd: started.exited, readable: true });
     // The pipe only closes; an error closes it too. Either may come while the child still runs (the engine's wait on it
     // failed): it is then reaped once it has exited, and stays open to a kill until then.
     exited.on("error", () => undefined);
