@@ -23,11 +23,11 @@ export interface PlacementInputs {
   readonly realFolder: string;
   /**
    * One string that changes when any of these inputs changes in a way that can move Git's answer: the entry, the Git
-   * folder it names, whether Git takes their owners for the user's, that folder's `commondir`, whether Git takes it for a Git folder, what the common
-   * `config` (and the Git folder's `config.worktree`, when the common one has Git read it) says of the format and the
-   * work tree, and the real paths of the folder and of the common Git folder, which a link retargeted at a renamed
-   * folder moves while every file stays as it was. A Git folder's own times are left out, since every index write
-   * moves them.
+   * folder it names, whether Git takes their owners for the user's, that folder's `commondir`, whether Git takes it for
+   * a Git folder, what the common `config` (and the Git folder's `config.worktree`, when the common one has Git read it)
+   * says of the format and the work tree, and the real paths of the folder and of the common Git folder, which a link
+   * retargeted at a renamed folder moves while every file stays as it was. A Git folder's own times are left out, since
+   * every index write moves them.
    */
   readonly stamp: string;
   /** Whether the entry is a `.git` file, as a linked worktree's is. */
@@ -43,7 +43,7 @@ export interface PlacementInputs {
   /**
    * Whether Git takes the folder, its `.git` entry and the Git folder that entry is or names for the current user's, read
    * now ({@link ownedAsGitTakes}). Git reads `safe.directory` only for folders it does not, from files outside these
-   * inputs, so an answer for such a folder is not kept.
+   * inputs, so each placement of such a folder asks Git.
    */
   readonly owned: boolean;
   readonly config: ConfigFacts;

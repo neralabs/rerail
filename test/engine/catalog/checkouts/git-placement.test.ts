@@ -457,6 +457,43 @@ describe("a kept answer follows the folders' owners, and the user's trust in ano
     expect(expectGitsAnswers(...folders, ...folders)).toBe(4);
   });
 
+  it("gives no worktree list once the checkout's folders are another account's that no safe.directory entry names", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    expect(worktreeRegistry(main)?.worktrees).toHaveLength(1);
+
+    vi.stubEnv("GIT_CONFIG_GLOBAL", join(root, "no.gitconfig"));
+    vi.stubEnv("GIT_CONFIG_NOSYSTEM", "1");
+    takeOwnersAway();
+    gitSeesAnotherOwner();
+    expect(worktreeRegistry(main)).toBeUndefined();
+  });
+
+  it("lists another account's trusted checkout with no Git process beside its placements, and none once Git refuses it", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    git(main, "worktree", "add", "--quiet", "-b", "linked", join(root, "linked"));
+    const global = join(root, "global.gitconfig");
+    await writeFile(global, "[safe]\n\tdirectory = *\n");
+    vi.stubEnv("GIT_CONFIG_GLOBAL", global);
+    vi.stubEnv("GIT_CONFIG_NOSYSTEM", "1");
+    takeOwnersAway();
+    gitSeesAnotherOwner();
+    const lists = (): number => vi.mocked(runGit).mock.calls.filter(([, args]) => args[0] === "worktree").length;
+    const [placements, listed] = [locateCalls(main), lists()];
+
+    for (let use = 0; use < 3; use += 1) {
+      expect(repositoryIdentityLocation(main).git).toBe(true);
+      expect(worktreeRegistry(main)?.worktrees).toHaveLength(2);
+    }
+    // Each placement asks Git, as before answers were kept; the registry takes the answer Git gave last.
+    expect({ placements: locateCalls(main) - placements, lists: lists() - listed }).toEqual({ placements: 3, lists: 1 });
+    await writeFile(global, "");
+    expect(repositoryIdentityLocation(main).git).toBe(false);
+    expect(worktreeRegistry(main)).toBeUndefined();
+    expect(locateCalls(main) - placements).toBe(4);
+  });
+
   it("places another account's checkout Git trusts through safe.directory, and no longer once the entry is removed", async () => {
     const root = await temporaryRoot();
     const main = repository(join(root, "main"));
