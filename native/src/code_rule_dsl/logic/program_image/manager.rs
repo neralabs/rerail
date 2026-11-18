@@ -191,6 +191,9 @@ pub struct Delta {
     pub decls: RelSet,
     /// Which kinds changed.
     pub touched: Reads,
+    /// The heads of the rules removed (by the input) and added (by the output), by name, where the edit is read off
+    /// the output (`None` where it is rebuilt or made otherwise): what a relation's key reads (decision 0385).
+    pub heads: Option<std::collections::BTreeSet<String>>,
 }
 
 impl Delta {
@@ -234,6 +237,11 @@ impl Delta {
         }
         if d.rebuilt || !d.removed.is_empty() || !d.added.is_empty() {
             d.touched = d.touched | Reads::RULES;
+        }
+        if !d.rebuilt {
+            let removed = d.removed.iter().filter_map(|id| input.rule(id)).map(|r| input.rel_name(r.head().rel()).to_owned());
+            let added = d.added.iter().filter_map(|&id| output.rule(id)).map(|r| output.rel_name(r.head().rel()).to_owned());
+            d.heads = Some(removed.chain(added).collect());
         }
         // An overlay of the input whose own layer states no declaration or fact (one that removes rules or sets the
         // inputs and outputs, a part's or a selection's) has the input's: those are not compared (each comparison
@@ -397,6 +405,12 @@ pub struct Store {
     stored: parking_lot::Mutex<Option<StoredRows>>,
     /// How many analyses were read from `stored`, by name.
     loaded: parking_lot::Mutex<HashMap<&'static str, usize>>,
+    /// The version this one is an edit of, and the edit (decision 0393): an analysis asked for here that the other
+    /// holds or kept as rows is maintained across the edit (`Analysis::maintain`) before it is computed.
+    lineage: parking_lot::Mutex<Option<(Arc<Version>, Delta)>>,
+    /// The sha256 of this version's image (or overlay delta) as a store holds it, where it was opened from one: a
+    /// run kept again names it, and copies no bytes (decision 0393).
+    kept_image: parking_lot::Mutex<Option<[u8; 32]>>,
 }
 
 impl Store {
@@ -407,6 +421,44 @@ impl Store {
     /// How many times analysis `name` was read from a stored run's rows (decision 0333 §4).
     pub fn loaded(&self, name: &str) -> usize {
         self.loaded.lock().get(name).copied().unwrap_or(0)
+    }
+    /// `from`'s analyses held and kept as rows, as this store's: `from` is a version of the same rules under the same
+    /// ids (`Run::shallow`, decision 0385).
+    pub fn adopt(&self, from: &Store) {
+        let held: Vec<(TypeId, Entry)> = from.of.lock().iter().map(|(t, e)| (*t, e.clone())).collect();
+        self.of.lock().extend(held);
+        *self.stored.lock() = from.stored.lock().clone();
+        *self.lineage.lock() = from.lineage.lock().clone();
+    }
+    /// Records that this store's version was opened from a store's image of sha256 `digest` (`kept_image`).
+    pub fn set_kept_image(&self, digest: [u8; 32]) {
+        *self.kept_image.lock() = Some(digest);
+    }
+    /// The sha256 of the image a store holds of this version, where it was opened from one.
+    pub fn kept_image(&self) -> Option<[u8; 32]> {
+        *self.kept_image.lock()
+    }
+    /// Records that this store's version is `delta`, an edit of `from` (`lineage`), where it is no rebuild.
+    fn set_lineage(&self, from: &Arc<Version>, delta: &Delta) {
+        if std::ptr::eq(self, from.analyses()) || delta.rebuilt {
+            return;
+        }
+        let mut l = self.lineage.lock();
+        if l.is_none() {
+            *l = Some((from.clone(), delta.clone()));
+        }
+    }
+    /// Analysis `A` of `v` (this store's version) where it is held or a stored run kept its rows: never computed.
+    fn held_or_kept<A: Analysis>(&self, v: &Version) -> Option<Arc<A>> {
+        if let Some(e) = self.of.lock().get(&TypeId::of::<A>()) {
+            return e.value.clone().downcast::<A>().ok();
+        }
+        let stored = self.stored.lock().clone()?;
+        let a = Arc::new(A::of_rows(v, &stored(A::NAME, A::VERSION)?)?);
+        *self.loaded.lock().entry(A::NAME).or_default() += 1;
+        let e = Entry { value: a.clone(), reads: A::READS, name: A::NAME, maintain: maintain_as::<A>, agrees: agrees_as::<A>, version: A::VERSION, rows: rows_as::<A> };
+        let kept = self.of.lock().entry(TypeId::of::<A>()).or_insert(e).value.clone();
+        kept.downcast::<A>().ok()
     }
     /// The rows a stored run kept of these analyses: read before computing one.
     pub fn read_stored(&self, rows: StoredRows) {
@@ -519,10 +571,23 @@ impl<'a> Cx<'a> {
                 return Err(format!("analysis {} read from a stored run is not what it computes", A::NAME));
             }
         }
+        // Maintained from the version this one is an edit of, where that one holds it (decision 0393).
+        let mut read = read.map(Arc::new);
+        if read.is_none() {
+            let lineage = self.store.lineage.lock().clone();
+            if let Some((from, delta)) = lineage
+                && let Some(was) = from.analyses().held_or_kept::<A>(&from)
+            {
+                read = if A::READS.meets(delta.touched) { was.maintain(self, &delta).map(Arc::new) } else { Some(was) };
+                if read.is_some() {
+                    *self.store.loaded.lock().entry(A::NAME).or_default() += 1;
+                }
+            }
+        }
         // Computed with no lock held: it may ask for other analyses. Two threads asking at once both compute it; the
         // first one stored is kept.
         let a = match read {
-            Some(a) => Arc::new(a),
+            Some(a) => a,
             None => {
                 let a = Arc::new(A::compute(self)?);
                 *self.store.computed.lock().entry(A::NAME).or_default() += 1;
@@ -701,6 +766,84 @@ pub trait ProgramPass {
         Vec::new()
     }
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<()>;
+    /// Over an edit of its last run's input of rules alone (`Pipeline::again`, decisions 0393, 0385): its output
+    /// written onto its last output (`w`'s input) from the edit alone, where the decisions it made over the whole are the edit's input's
+    /// too. `Ok(false)`, the default, runs it whole. A pass that writes here leaves in its last output every rule but
+    /// what came from the edit's removed rules (`Version::derived`), and writes what its added rules make.
+    fn again(&mut self, _cx: &Cx<'_>, _last: &Last<'_>, _w: &mut ProgramW<'_>) -> Result<bool> {
+        Ok(false)
+    }
+    /// What it decided over its whole input that its `again` reads back (`Last::plan`), as rows kept with its step
+    /// (decision 0393): none by default.
+    fn plan(&self) -> Vec<Row> {
+        Vec::new()
+    }
+}
+
+/// A program pass's rule part over an edit (`ProgramPass::again`, decision 0393), written onto its last output (`w`'s
+/// input): what came from each of the edit's removed rules dropped (`Version::derived`), and each added rule visited
+/// by `pass`, kept (copied with itself as its source) or replaced by what it wrote. The rules visited.
+pub fn rules_again<P: RulePass>(pass: &mut P, cx: &Cx<'_>, last: &Last<'_>, w: &mut ProgramW<'_>) -> Result<usize> {
+    let v = cx.v;
+    let b = w.on()?;
+    for id in last.delta.removed.iter() {
+        let came: Vec<RuleId> = last.output.derived(id).map(|r| r.id()).collect();
+        for c in came {
+            b.remove(c);
+        }
+    }
+    let mut visited = 0;
+    for &id in &last.delta.added {
+        let r = v.rule(id).ok_or_else(|| format!("rule {} of the edit is not its output's", id.0))?;
+        visited += 1;
+        if let Step::Keep = visit(pass, cx, v, r, b)? {
+            b.keep_into(v, r);
+        }
+    }
+    w.visited += visited;
+    Ok(visited)
+}
+
+/// Rule `r` of `of` (a pass's last input) as `out` (its last output) holds it, as itself: by its id where `out`
+/// numbers it as `of` does, else the rule of its head with its text (an output written onto an earlier output
+/// numbers its rules its own way).
+pub fn held_as(out: &Version, of: &Version, r: RuleRef<'_>) -> Option<RuleId> {
+    let same = |o: RuleRef<'_>| o.hash() == r.hash() && out.show_rule(o) == of.show_rule(r);
+    out.rule(r.id()).filter(|&o| same(o)).or_else(|| out.rel(of.rel_name(r.head().rel())).and_then(|h| out.heads(h).find(|&o| same(o)))).map(|o| o.id())
+}
+
+/// The edit itself written onto the last output (`ProgramPass::again`, decision 0393), for a pass whose output holds
+/// each rule of its input as itself and adds what its decisions make, where the edit changes none of them: each
+/// removed rule taken out, each added one copied in. `Ok(false)` where the last output does not hold a removed rule.
+pub fn edit_as_is(cx: &Cx<'_>, last: &Last<'_>, w: &mut ProgramW<'_>) -> Result<bool> {
+    let v = cx.v;
+    let mut gone = Vec::new();
+    for id in last.delta.removed.iter() {
+        let Some(r) = last.input.rule(id) else { return Ok(false) };
+        match held_as(last.output, last.input, r) {
+            Some(o) => gone.push(o),
+            None => return Ok(false),
+        }
+    }
+    let b = w.on()?;
+    for id in gone {
+        b.remove(id);
+    }
+    for &id in &last.delta.added {
+        let r = v.rule(id).ok_or_else(|| format!("rule {} of the edit is not its output's", id.0))?;
+        b.copy(v, r);
+    }
+    Ok(true)
+}
+
+/// A program pass's last run, for `ProgramPass::again`: its input and output, and the edit from that input to the
+/// one it runs over now (`cx`'s).
+pub struct Last<'a> {
+    pub input: &'a Arc<Version>,
+    pub output: &'a Arc<Version>,
+    pub delta: &'a Delta,
+    /// What it kept of its decisions (`ProgramPass::plan`).
+    pub plan: &'a [Row],
 }
 
 /// The forms a program pass's writer takes (`ProgramW`).
@@ -839,6 +982,14 @@ struct Kept {
     form: Form,
     /// A rule pass's, when its output can be run again onto (`None` reruns it whole).
     rule: Option<RuleKept>,
+    /// A program pass's plan (`ProgramPass::plan`).
+    plan: Vec<Row>,
+    /// The profile's decisions a program pass made when it ran whole, stated again where it runs over an edit
+    /// (decision 0385).
+    said: Vec<crate::code_rule_dsl::logic::profile::Decided>,
+    /// The request record as the pipeline carried it after the step (`AskedByRule`, by the output's rule ids), where
+    /// it carried one: a step run again over an edit onto this output carries it on (`AskedByRule::onto`).
+    asked: Option<AskedByRule>,
 }
 
 struct RuleKept {
@@ -877,6 +1028,35 @@ impl Run {
     }
     pub fn decisions(&self) -> &[Decided] {
         &self.decided
+    }
+
+    /// The run with each of its versions `REBASE_DEPTH` deltas deep or more made flat (`build::flat`, decision
+    /// 0385): the same rules under the same ids, a view of one base. The next edit is written onto it a layer deep,
+    /// and run again over the edit, where before it ran whole (`rebase` refuses a version that deep). Its analyses are
+    /// the deep one's. A version that cannot be made flat is left as it is.
+    pub fn shallow(self) -> Run {
+        if self.steps.iter().all(|k| k.input.depth() < REBASE_DEPTH && k.output.depth() < REBASE_DEPTH) && self.input.depth() < REBASE_DEPTH && self.output.depth() < REBASE_DEPTH {
+            return self;
+        }
+        let _s = crate::code_rule_dsl::logic::profile::span(|| format!("a run made shallow ({} steps; decision 0385)", self.steps.len()));
+        let mut made: HashMap<*const Version, Arc<Version>> = HashMap::new();
+        let mut flat = |v: &Arc<Version>| -> Arc<Version> {
+            if v.depth() < REBASE_DEPTH {
+                return v.clone();
+            }
+            made.entry(Arc::as_ptr(v))
+                .or_insert_with(|| match super::build::Builder::flat(v) {
+                    Ok(Some(f)) => {
+                        f.analyses().adopt(v.analyses());
+                        f
+                    }
+                    _ => v.clone(),
+                })
+                .clone()
+        };
+        let Run { name, input, output, stages, steps, decided } = self;
+        let steps = steps.into_iter().map(|k| Kept { input: flat(&k.input), output: flat(&k.output), ..k }).collect();
+        Run { name, input: flat(&input), output: flat(&output), stages, steps, decided }
     }
 }
 
@@ -1003,6 +1183,39 @@ impl AskedByRule {
         }
         self.by = next;
     }
+    /// The record after a step run again over an edit onto its last output `from` (decision 0393): a rule the step
+    /// kept of `from` serves the readers the last run's record (`kept`, after the step) gave it; one it added, its
+    /// source's in this record (an id of the step's input); any other its own relation. The edit added and removed
+    /// no rule of a request (`spares_record`), so each request's rules are the last output's, as the last run's
+    /// decisions. Never over a fold (`rule_step` runs it whole).
+    fn onto(&self, kept: &AskedByRule, out: &Version, delta: &Delta) -> AskedByRule {
+        let mut by = HashMap::new();
+        for req in &self.reqs {
+            let Some(rel) = out.rel(req) else { continue };
+            for r in out.heads(rel) {
+                let readers = if delta.added.contains(&r.id()) { r.source().and_then(|s| self.by.get(&s)) } else { kept.by.get(&r.id()) };
+                by.insert(r.id(), readers.cloned().unwrap_or_else(|| BTreeSet::from([req.clone()])));
+            }
+        }
+        AskedByRule { by, reqs: self.reqs.clone() }
+    }
+    /// The record of `of`'s rules for `to`'s, place by place: `to` the same program (a rebase of `of`, decision 0393),
+    /// each request's rules in the same order. `None` where a request's rules differ.
+    fn by_place(&self, of: &Version, to: &Version) -> Option<AskedByRule> {
+        let mut by = HashMap::new();
+        for req in &self.reqs {
+            let (a, b): (Vec<RuleRef<'_>>, Vec<RuleRef<'_>>) = (of.rel(req).map(|r| of.heads(r).collect()).unwrap_or_default(), to.rel(req).map(|r| to.heads(r).collect()).unwrap_or_default());
+            if a.len() != b.len() || a.iter().zip(&b).any(|(x, y)| x.hash() != y.hash()) {
+                return None;
+            }
+            for (x, y) in a.iter().zip(&b) {
+                if let Some(readers) = self.by.get(&x.id()) {
+                    by.insert(y.id(), readers.clone());
+                }
+            }
+        }
+        Some(AskedByRule { by, reqs: self.reqs.clone() })
+    }
     /// The record as `Version::asked` states it, for `v`'s rules.
     fn asked(&self, v: &Version) -> super::about::Asked {
         let mut asked = super::about::Asked::new();
@@ -1017,7 +1230,30 @@ impl AskedByRule {
     }
 }
 
+/// How `Pipeline::record` carries the request record over a step.
+enum Carry {
+    /// From the step's input to its output (`AskedByRule::step`).
+    Step,
+    /// Onto the last run's output of the step, from the last run's record after it (`AskedByRule::onto`).
+    Onto(AskedByRule),
+    /// As stated.
+    Is(AskedByRule),
+}
+
 impl<'s> Pipeline<'s> {
+    /// Whether a step may run again over the edit `d` of its last input onto its last output with the request record
+    /// carried (decision 0393): no record, or the last run's after the step with the same requests, and the edit adds
+    /// and removes no request's rule. Else the step runs whole, and the record is carried from its input.
+    fn spares_record(&self, k: &Kept, d: &Delta) -> Option<Carry> {
+        let Some(now) = &self.asked else { return Some(Carry::Step) };
+        let kept = k.asked.as_ref().filter(|a| a.reqs == now.reqs)?;
+        let req = |of: &Version, r: RuleRef<'_>| now.reqs.contains(of.rel_name(r.head().rel()));
+        if d.rebuilt || d.removed.iter().any(|id| k.input.rule(id).is_none_or(|r| req(&k.input, r))) || d.added.iter().any(|&id| self.v.rule(id).is_none_or(|r| req(&self.v, r))) {
+            return None;
+        }
+        Some(Carry::Onto(kept.clone()))
+    }
+
     pub fn new(name: &'static str, v: Arc<Version>) -> Pipeline<'s> {
         let asked = AskedByRule::of(&v);
         Pipeline { name, input: v.clone(), v, decided: RefCell::new(Vec::new()), stages: Vec::new(), failed: None, keep: false, last: Vec::new(), kept: Vec::new(), keyed: None, asked }
@@ -1103,22 +1339,27 @@ impl<'s> Pipeline<'s> {
         }
         let cx = Cx { v: &self.v, store: self.v.analyses(), pass, decided: &self.decided, asked: None };
         self.v.analyses().carry(k.input.analyses(), &cx, &d)?;
+        self.v.analyses().set_lineage(&k.input, &d);
         Ok(Prior::Edit(k, d))
     }
 
     /// Records a step that made `out` by an edit of `from` (the input, or the last output a rerun wrote onto): its
     /// stage, its analyses carried from `from`'s, and, when kept, its versions.
     #[allow(clippy::too_many_arguments)]
-    fn record(&mut self, pass: &'static str, out: Arc<Version>, ran: Ran, form: Form, visited: usize, from: &Arc<Version>, rule: Option<RuleKept>) -> Result<()> {
+    fn record(&mut self, pass: &'static str, out: Arc<Version>, ran: Ran, form: Form, visited: usize, from: &Arc<Version>, rule: Option<RuleKept>, carry: Carry) -> Result<()> {
         let delta = Delta::of(from, &out);
-        if let Some(asked) = &mut self.asked {
-            asked.step(from, &out, &delta);
+        match (&mut self.asked, carry) {
+            (Some(asked), Carry::Step) => asked.step(from, &out, &delta),
+            (Some(asked), Carry::Onto(kept)) => *asked = asked.onto(&kept, &out, &delta),
+            (Some(asked), Carry::Is(now)) => *asked = now,
+            (None, _) => {}
         }
         let cx = Cx { v: &out, store: out.analyses(), pass, decided: &self.decided, asked: None };
         out.analyses().carry(from.analyses(), &cx, &delta)?;
+        out.analyses().set_lineage(from, &delta);
         self.stages.push(Stage { pass, ran, form, visited, input: (self.v.size(), self.v.digest()), output: (out.size(), out.digest()), delta: delta.size(), touched: delta.touched });
         if self.keep {
-            self.kept.push(Kept { pass: pass.into(), input: self.v.clone(), output: out.clone(), form, rule });
+            self.kept.push(Kept { pass: pass.into(), input: self.v.clone(), output: out.clone(), form, rule, plan: Vec::new(), said: Vec::new(), asked: self.asked.clone() });
         }
         self.v = out;
         Ok(())
@@ -1152,13 +1393,23 @@ impl<'s> Pipeline<'s> {
         let prior = match prior {
             Prior::Same(k) if local && k.rule.is_some() => {
                 let out = k.output.clone();
-                return self.record(P::NAME, out.clone(), Ran::Reused, k.form, 0, &out, k.rule);
+                // The last run's step on this input: its record after the step is the record (decision 0393).
+                let carry = match (&self.asked, k.asked) {
+                    (None, _) => Carry::Step,
+                    (Some(now), Some(kept)) if kept.reqs == now.reqs => Carry::Is(kept),
+                    (Some(_), _) => return self.rule_whole(pass),
+                };
+                return self.record(P::NAME, out.clone(), Ran::Reused, k.form, 0, &out, k.rule, carry);
             }
             p => p,
         };
         let v = self.v.clone();
         let asked = RefCell::new(Vec::new());
-        let made = (|| -> Result<(Arc<Version>, Ran, Form, usize, Arc<Version>, Option<RuleKept>)> {
+        let spared = match &prior {
+            Prior::Edit(k, d) => self.spares_record(k, d),
+            _ => None,
+        };
+        let made = (|| -> Result<Option<(Arc<Version>, Ran, Form, usize, Arc<Version>, Option<RuleKept>, Carry)>> {
             let cx = Cx { v: &v, store: v.analyses(), pass: P::NAME, decided: &self.decided, asked: self.keep.then_some(&asked) };
             let select = pass.begin(&cx)?;
             // What `begin` asked for, apart from the list the comparisons below add to.
@@ -1170,8 +1421,15 @@ impl<'s> Pipeline<'s> {
                 && rk.select == select
                 && same_analyses(&rk.asked, &k.input, &cx)?
                 && same_named(&rk.named, &asked_now, &k.input, &cx)?
+                && let Some(carry) = spared
             {
                 let (out, form, visited, base, own_end) = rerun(pass, &cx, k, d, &select, rk.own_end)?;
+                // Onto the new input itself (the last run changed nothing), the record is carried from it; onto a
+                // fold, whose rules are numbered anew, the step runs whole (decision 0393).
+                let carry = if Arc::ptr_eq(&base, &v) { Carry::Step } else { carry };
+                if form == Form::Folded && self.asked.is_some() && !matches!(carry, Carry::Step) {
+                    return Ok(None);
+                }
                 let mut all = rk.asked.clone();
                 for a in asked.borrow().iter() {
                     if !all.iter().any(|b| b.t == a.t) {
@@ -1179,7 +1437,7 @@ impl<'s> Pipeline<'s> {
                     }
                 }
                 let keep = (form != Form::Folded || own_end == 0).then_some(RuleKept { select, asked: all, named: Vec::new(), own_end });
-                return Ok((out, Ran::Delta, form, visited, base, keep));
+                return Ok(Some((out, Ran::Delta, form, visited, base, keep, carry)));
             }
             let mut w = ProgramW::new(&v);
             if matches!(select, Select::All) {
@@ -1189,10 +1447,29 @@ impl<'s> Pipeline<'s> {
             let (out, form, visited) = w.finish()?;
             let own_end = if form == Form::Derived { 0 } else { v.rule_end() };
             let keep = (form != Form::Folded).then(|| RuleKept { select, asked: asked.take(), named: Vec::new(), own_end });
-            Ok((out, Ran::Whole, form, visited, v.clone(), keep))
+            Ok(Some((out, Ran::Whole, form, visited, v.clone(), keep, Carry::Step)))
         })();
-        let (out, ran, form, visited, from, keep) = made?;
-        self.record(P::NAME, out, ran, form, visited, &from, keep)
+        let Some((out, ran, form, visited, from, keep, carry)) = made? else { return self.rule_whole(pass) };
+        self.record(P::NAME, out, ran, form, visited, &from, keep, carry)
+    }
+
+    /// A rule pass run whole on the current version, its record carried from it.
+    fn rule_whole<P: RulePass>(&mut self, pass: &mut P) -> Result<()> {
+        let v = self.v.clone();
+        let asked = RefCell::new(Vec::new());
+        let (out, form, visited, keep) = {
+            let cx = Cx { v: &v, store: v.analyses(), pass: P::NAME, decided: &self.decided, asked: self.keep.then_some(&asked) };
+            let select = pass.begin(&cx)?;
+            let mut w = ProgramW::new(&v);
+            if matches!(select, Select::All) {
+                w.derive()?;
+            }
+            w.apply(&cx, pass, &select)?;
+            let (out, form, visited) = w.finish()?;
+            let own_end = if form == Form::Derived { 0 } else { v.rule_end() };
+            (out, form, visited, (form != Form::Folded).then(|| RuleKept { select, asked: asked.take(), named: Vec::new(), own_end }))
+        };
+        self.record(P::NAME, out, Ran::Whole, form, visited, &v, keep, Carry::Step)
     }
 
     /// Runs program pass `pass`, over the whole input (its analyses carried from the last input when run again).
@@ -1210,15 +1487,74 @@ impl<'s> Pipeline<'s> {
     }
 
     fn program_step<P: ProgramPass>(&mut self, pass: &mut P) -> Result<()> {
-        self.prior(P::NAME)?;
+        let prior = self.prior(P::NAME)?;
         let v = self.v.clone();
+        // Over an edit of the last run's input: the pass writes the edit onto its last output where it can. Only an
+        // edit of rules alone: the last output holds the last input's declarations, facts, inputs and outputs, which
+        // a pass writing onto it does not state again (decision 0385).
+        if let Prior::Edit(k, d) = &prior
+            && d.touched == Reads::RULES
+            && let Some(carry) = self.spares_record(k, d)
+        {
+            let made = {
+                let cx = Cx { v: &v, store: v.analyses(), pass: P::NAME, decided: &self.decided, asked: None };
+                let mut w = ProgramW::new(&k.output);
+                match pass.again(&cx, &Last { input: &k.input, output: &k.output, delta: d, plan: &k.plan }, &mut w)? {
+                    true => Some(w.finish()?),
+                    false => None,
+                }
+            };
+            // Onto a fold, whose rules are numbered anew, a carried record is not carried on: the step runs whole.
+            if let Some((out, form, visited)) = made
+                && !(form == Form::Folded && matches!(carry, Carry::Onto(_)))
+            {
+                // What it said when it ran whole stands with its decisions (decision 0385).
+                crate::code_rule_dsl::logic::profile::restate(&k.said);
+                self.record(P::NAME, out, Ran::Delta, form, visited, &k.output, None, carry)?;
+                return Ok(self.planned(pass.plan(), k.said.clone()));
+            }
+        }
+        let deciding = crate::code_rule_dsl::logic::profile::Deciding::open();
         let made = {
             let cx = Cx { v: &v, store: v.analyses(), pass: P::NAME, decided: &self.decided, asked: None };
             let mut w = ProgramW::new(&v);
             pass.run(&cx, &mut w).and_then(|()| w.finish())
         };
+        let said = deciding.close();
         let (out, form, visited) = made?;
-        self.record(P::NAME, out, Ran::Whole, form, visited, &v, None)
+        // Over an edit, its output written as an edit of its last output (`rebase`, decision 0393): the steps after
+        // it are run again over an edit too, not whole.
+        if let Prior::Edit(k, _) = &prior
+            && !Delta::read_off(&k.output, &out)
+            && let Some(r) = rebase_output(&k.output, &out)?
+        {
+            // The record carried to the whole output, then place by place to its rebase (decision 0393); where a
+            // request's rules are not in the same places, the whole output is kept.
+            let carry = match &self.asked {
+                None => Some(Carry::Step),
+                Some(a) => {
+                    let mut a = a.clone();
+                    a.step(&v, &out, &Delta::of(&v, &out));
+                    a.by_place(&out, &r).map(Carry::Is)
+                }
+            };
+            if let Some(carry) = carry {
+                self.record(P::NAME, r, Ran::Whole, Form::Overlay, visited, &k.output, None, carry)?;
+                return Ok(self.planned(pass.plan(), said));
+            }
+        }
+        self.record(P::NAME, out, Ran::Whole, form, visited, &v, None, Carry::Step)?;
+        Ok(self.planned(pass.plan(), said))
+    }
+
+    /// The plan of the step just recorded, and the profile's decisions it made, kept with it.
+    fn planned(&mut self, plan: Vec<Row>, said: Vec<crate::code_rule_dsl::logic::profile::Decided>) {
+        if self.keep
+            && let Some(k) = self.kept.last_mut()
+        {
+            k.plan = plan;
+            k.said = said;
+        }
     }
 
     /// A keyed pipeline's next step (0281 §6): its key, chained; `Ok(None)` when the store holds it (the step is
@@ -1344,6 +1680,20 @@ pub struct StoredStep {
     pub output: usize,
     pub form: Form,
     pub rule: Option<StoredRule>,
+    /// A program pass's plan (`ProgramPass::plan`).
+    pub plan: Vec<Row>,
+    /// What it said (`Kept::said`).
+    pub said: Vec<crate::code_rule_dsl::logic::profile::Decided>,
+    /// The request record after it (`Kept::asked`): the requests, and each request rule's readers by its id in the
+    /// step's output. `None` where the run carried none.
+    pub asked: Option<StoredAsked>,
+}
+
+/// A step's request record, as a stored run keeps it (`StoredStep::asked`).
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct StoredAsked {
+    pub reqs: Vec<String>,
+    pub by: Vec<(u32, Vec<String>)>,
 }
 
 /// A rule pass's selection (its kind, 0–3 for `All`, `Heads`, `Readers` and `Rules`, and its ids), the names of the
@@ -1364,6 +1714,8 @@ pub struct RunParts<'r> {
     pub steps: Vec<StoredStep>,
     pub decided: &'r [Decided],
     pub analyses: Vec<(usize, &'static str, u32, Vec<Row>)>,
+    /// By version: the sha256 of its image as a store holds it, where it was opened from one (`Store::kept_image`).
+    pub kept: Vec<Option<[u8; 32]>>,
 }
 
 impl Form {
@@ -1440,13 +1792,19 @@ impl Run {
                 asked: rk.asked.iter().map(|a| a.name.to_owned()).chain(rk.named.iter().cloned()).collect(),
                 own_end: rk.own_end,
             });
-            steps.push(StoredStep { pass: k.pass.to_string(), input: i, output: o, form: k.form, rule });
+            let asked = k.asked.as_ref().map(|a| {
+                let mut by: Vec<(u32, Vec<String>)> = a.by.iter().map(|(id, rs)| (id.0, rs.iter().cloned().collect())).collect();
+                by.sort();
+                StoredAsked { reqs: a.reqs.iter().cloned().collect(), by }
+            });
+            steps.push(StoredStep { pass: k.pass.to_string(), input: i, output: o, form: k.form, rule, plan: k.plan.clone(), said: k.said.clone(), asked });
         }
         let output = add(&self.output, &mut table, &mut versions);
         inputs.sort_unstable();
         inputs.dedup();
         let analyses = inputs.iter().flat_map(|&i| table[i].analyses().rows(table[i]).into_iter().map(move |(name, version, rows)| (i, name, version, rows))).collect();
-        RunParts { versions, input, output, steps, decided: &self.decided, analyses }
+        let kept = table.iter().map(|v| v.analyses().kept_image()).collect();
+        RunParts { versions, input, output, steps, decided: &self.decided, analyses, kept }
     }
 
     /// A run read back from a store (decision 0333 §2): `versions` its table reopened, in order, with the other
@@ -1459,7 +1817,8 @@ impl Run {
                 Some(r) => Some(RuleKept { select: Select::of_stored(&r.select).ok_or("a stored step's selection is not one")?, asked: Vec::new(), named: r.asked, own_end: r.own_end }),
                 None => None,
             };
-            kept.push(Kept { pass: s.pass.into(), input: at(s.input)?, output: at(s.output)?, form: s.form, rule });
+            let asked = s.asked.map(|a| AskedByRule { by: a.by.into_iter().map(|(id, rs)| (RuleId(id), rs.into_iter().collect())).collect(), reqs: a.reqs.into_iter().collect() });
+            kept.push(Kept { pass: s.pass.into(), input: at(s.input)?, output: at(s.output)?, form: s.form, rule, plan: s.plan, said: s.said, asked });
         }
         Ok(Run { name, input: at(input)?, output: at(output)?, stages: Vec::new(), steps: kept, decided })
     }
@@ -1553,6 +1912,51 @@ pub fn rebase(last: &Arc<Version>, new: &Arc<Version>) -> Result<Option<Arc<Vers
     }
     for r in added {
         b.copy(new, r);
+    }
+    b.set_header(&was, &header);
+    b.finish_overlay().map(Some)
+}
+
+/// `rebase` for a pass's output (decision 0393): `new`, the pass's output over its input, written as an edit of
+/// `last`, its last output. A rule is kept as `last`'s only where both hold it with the same source (the rule of the
+/// pass's input it came from, `RuleRef::source`), and copied in with `new`'s source otherwise, so a later run's
+/// `again` finds what came from each removed rule (`Version::derived`).
+pub fn rebase_output(last: &Arc<Version>, new: &Arc<Version>) -> Result<Option<Arc<Version>>> {
+    if last.depth() >= REBASE_DEPTH {
+        return Ok(None);
+    }
+    let key = |r: RuleRef<'_>| (r.hash(), r.source());
+    let mut wanted: HashMap<(u64, Option<RuleId>), usize> = HashMap::new();
+    for r in new.rules() {
+        *wanted.entry(key(r)).or_default() += 1;
+    }
+    let mut removed = Vec::new();
+    for r in last.rules() {
+        match wanted.get_mut(&key(r)) {
+            Some(n) if *n > 0 => *n -= 1,
+            _ => removed.push(r.id()),
+        }
+    }
+    let mut added = Vec::new();
+    for r in new.rules() {
+        if let Some(n) = wanted.get_mut(&key(r))
+            && *n > 0
+        {
+            *n -= 1;
+            added.push(r);
+        }
+    }
+    if 2 * (removed.len() + added.len()) > last.size().max(1) {
+        return Ok(None);
+    }
+    let lists = crate::code_rule_dsl::logic::front::Lists::default();
+    let (was, header) = (last.header(&lists)?, new.header(&lists)?);
+    let mut b = Builder::on(last);
+    for id in removed {
+        b.remove(id);
+    }
+    for r in added {
+        b.copy_as_is(new, r);
     }
     b.set_header(&was, &header);
     b.finish_overlay().map(Some)

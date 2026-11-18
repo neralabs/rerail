@@ -424,7 +424,7 @@ impl Part for Versioned {
     fn hide(&mut self, bound: u32) -> Result<()> {
         self.settle()?;
         let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("hide", Arc::clone(&self.v));
-        p.program(&mut super::preparation::hide::Hide { bound });
+        p.program(&mut super::preparation::hide::Hide::new(bound));
         let (v, _) = p.finish().map_err(plan)?;
         *self = Versioned::of(v)?;
         Ok(())

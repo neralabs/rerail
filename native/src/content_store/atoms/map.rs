@@ -397,6 +397,16 @@ impl Atoms {
         self.forked.load(Ordering::Acquire)
     }
 
+    /// Below which id this process holds every stored atom by the store's numbering: `None` once forked (its ids past
+    /// the fork are its own) or with no store. A row made under the store's ids below it names atoms held here.
+    pub fn held_below(&self) -> Option<usize> {
+        if self.path.is_none() || self.forked() {
+            return None;
+        }
+        let state = self.state.read();
+        (state.map.is_none()).then_some(state.all_held)
+    }
+
     /// Forks at this process's end (`base`): another process stored atoms past it while some here were pending.
     pub(super) fn fork_now(&self, connection: &Connection, state: &mut State) -> StoreResult<()> {
         if state.map.is_some() {

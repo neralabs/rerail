@@ -719,6 +719,57 @@ pass.
   hiding's rounds 0.066 s, the atoms' lease 0.052 s, stage 2's headers and interfaces 0.045 s (every part's,
   for its key), the sources on request 0.042 s, the kept inputs 0.083 s (decoding 0.020, granules 0.018, ranges
   and sources 0.042: each owner's granule now found once, batched).
+- **Built** (2026-11-17, ep2 parts on the m3, rows h1's throughout): the kept inputs laid out on first use (0378,
+  Q91): 0.077 → 0.021 s. The cross part's frame identities a stored fact (0379): 0.044 → 0.010 s. The combine's
+  tail a kept run, each pass run again over the link's edit (0393, was 0380, in place of 0370's summaries): hiding 0.108 →
+  0.003 s, fact spaces 0.094 → 0.045 s, the sources on request, the narrowing and the merges over the edit alone;
+  `combine` 0.52 → 0.31 s. Left in the tail: the last run read from the store (0.04 s, every step's versions down
+  to their bases), and every ninth edit runs whole (an overlay past `REBASE_DEPTH`).
+- **Built** (2026-11-17, ep2 parts on the m3, rows h1's, the check passing on eleven edits in a row): the tail's
+  last whole costs over the edit (0385). The stored run's analyses' rows apart and decoded when asked (its facts
+  4.5 → 0.48 MB, the open 0.049 → 0.032 s); the narrowing and the answers no longer ask for the split, its keys made
+  for the edit's heads alone (fact spaces' split 0.025 → 0.012 s); every pass over the edit; a run eight deep made
+  flat. Found: the tail's run was kept once per key, so every edit ran from the first run and wrote a run nothing
+  read; now a replaceable pointer, kept only when made whole or 64 rules away (the keep, 0.009 s, gone from an
+  edit). Found: 0393's `again` kept the last run's facts over an edit that changed them; a program pass now runs
+  over rule edits alone. `combine` 0.33 → 0.23 s. Left: the stored run's images read whole (0.019 s for 8: the
+  store decompresses and hashes each).
+- **Built** (2026-11-18, ep2 parts on the m3, rows h1's, the check passing): the stored run read in place (0394). Its
+  images, rows and facts sit in one segment, uncompressed, and are read mapped in one query (the read 0.019 s →
+  under 1 ms). The images open over the mapping, and the open went 0.032 → 0.022 s. Left: an image's checks read
+  every page when it opens (0.019 s for 8, the first page faults included).
+- **Where an edit goes now, and who has each part** (2026-11-18, read from e121's profile, nothing run again; ep2
+  parts on the m3, B101's body edited). The run's thread 1.33 s CPU, the other threads 0.33 s, 2.11 s wall:
+  - **prepare** 0.52 s, the largest. The parts' own passes ran for none of 589 parts. What runs whole is after the
+    link: the prepared program's passes 0.21 s (the parts' headers and interfaces 0.048, merging identical relations
+    0.038, each part's key 0.027 and each part read back 0.015, 589 times each, the whole before the parts' passes
+    0.027), prune/simplify/demand 0.077 s, lowering 0.068 s, the guests' fold 0.033 s, the split of all 3,968
+    relations 0.029 s, the memo's strata 0.024 s and program 0.024 s, statistics 0.019 s, the keep 0.012 s.
+    **Typing-support's**: these passes are 0276 step 3's (preparation after lowering on the writer), on top of 0281
+    and 0333, the user's calls of 2026-11-16 and 11-17. Running them over the edit, as 0393 runs the tail's
+    (`Pipeline::program_step`), is built on 0276's writer once its step 3 is in the hub.
+  - **combine** 0.24 s: the 317 texts read and lowered again 0.10 s (0276 step 5, lowering from the tape, rewrites
+    this: left until then), fact spaces 0.041 s, the stored run 0.022 s, merging 0.018 s.
+  - **wait** 0.24 s, **here** (no sibling works on it): the kept frames 0.064 s (every space's rows read once a
+    process 0.029, the cross part's by identity 0.029; 59,141 frames, 180 MB), the memo lookup 0.055 s (the 300
+    unchanged files' entries, their 317,599 strings interned though every stored atom is held), the atoms' lease
+    0.046 s (every stored atom read and interned, 215 MB allocated), supports 0.014 s.
+  - **before**: the rule files read 0.070 s, phase 0's graphs 0.036 s; and 0.70 s of wall off a core in "watch the
+    corpus and the library" (0.002 s CPU), cause not yet shown (the journal's wait, or the m3 at load 37–50).
+    **Shown** (2026-11-18, e130/e131, `RERAIL_JOURNAL_TRACE`, which now prints each stream's roots and when its
+    history replay and last cookie came): the wait is FSEvents' history replay, not the cookie. A stream's replay
+    from its stored cursor ends 0.16 s (load 30) to 0.77 s after the stream starts, even when it holds 3 events. The
+    process's one observer opens at the run's first watch, and starts every stream there (`journal::prepare`); the
+    corpus is asked 0.003 s later, and waits out the whole replay. The library's streams, asked after, find theirs
+    done (0.003–0.011 s). 0105's prepare meant the replays to run "while the process starts", but the first watch
+    is the first thing the run does: nothing overlaps it. Open: start the streams at the process's start, and put
+    the start-up that reads nothing watched (settings, the stores' opening, the cost model) between; or, for a root
+    of a few hundred files, `stat` them (about 1 ms of CPU) instead of waiting on the replay, which is 0105's
+    trade-off and the user's call. A quiet host's replay is not measured yet (the m3 has been at load 24–37).
+  - **the run's end**: 0.33 s of wall after `write`, joining the store's collection (decision 0053), which ran in
+    the background (e127, "Waits": `the store's collection`). It is in "from main to report" (2.16 s) but in no
+    phase (1.83 s).
+  - stats 0.08 s, cross 0.08 s, the rest 0.09 s.
 
 ### Q19. A new process reads every kept frame of the cross part, its own or not
 
@@ -3406,6 +3457,13 @@ where the tree names `num_text`, `num_source`, `rr_agg75` and the annotation cop
     It now does.
   Farm (M1 Max): the test passes, with 98 others (sessions, frames, hiding, preparation, program images, the request
   record's tests, file_local, `str_answered_on_request_holds_the_eager_rows`).
+- **At the merge into final-rerail-shape-rr-align** (2026-11-18): failed there at the narrowing's tree check (the
+  version's record had 14 places for `rr_value_req`'s 13 rules). 0393's hide names each helper by its rank among the
+  helpers' texts, so two equal helpers are one, and two request rules that read them were made one rule by the
+  narrowing, which wrote no record: the tree's narrowing has the rule serve both rules' readers
+  (`Program::set_rules_from`). The version's `RequestsFileLocal` now states the record as the tree's carries it.
+  The test passes on the m3 with the program image, program text, request record, combined, prune, merge, hiding
+  and file_local sets.
 
 ### Q101. (Done) `corpus::tests::the_run_after_a_cold_one_writes_nothing` fails its warm run's strict check
 
@@ -3446,6 +3504,15 @@ where the tree names `num_text`, `num_source`, `rr_agg75` and the annotation cop
   The COMMIT and the recomputations were those two faults' writes (`RERAIL_WARM` counts its faults). Farm (M1 Max):
   the test passes with 75 others (phase 0, graphs, manifests, corpus runs, world, racy, reuse, the second run in one
   process, Q102's and Q169's tests). The ignore is gone.
+- **At the merge into final-rerail-shape-rr-align** (2026-11-18): failed there again, two manifests new (28 and 30
+  sources). Two more sources a run keeps that a warm run did not name:
+  - a stored run's analyses' rows, a source of their own since 0385, which `record_runs` names and `run_sources` did
+    not: it does now;
+  - the combine's kept tail run (0393), which the run that keeps it names, while a warm run reads the combined
+    program from the store and never reaches the tail. The combined program's entry now names the tail run it was
+    made over or kept (`rr_combined_tail_run`), and a run that names the entry names the run's sources too
+    (`combined::image_sources`), so collection also keeps that run while it keeps the entry.
+  The test passes on the m3.
 
 ### Q102. `a_new_builds_first_edit_counts_every_file_in_so_its_next_edit_is_steady` fails at final-rerail-shape-rr-align's f7c563513
 

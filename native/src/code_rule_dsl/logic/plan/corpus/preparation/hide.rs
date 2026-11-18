@@ -11,7 +11,7 @@
 use super::super::hiding::{ENTRIES, Fact, VIEWS, dialect_label, qualified};
 use crate::code_rule_dsl::logic::front::{self, Program, Value};
 use crate::code_rule_dsl::logic::program_image::build::{Rewrite, Site, T};
-use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
+use crate::code_rule_dsl::logic::program_image::manager::{Cx, Last, ProgramPass, ProgramW, Reads, Row};
 use crate::code_rule_dsl::logic::program_image::{AtomId, AtomRef, CmpOp, Lit, RuleId, Slot, TermRef, Version};
 use rustc_hash::FxHashMap as HashMap;
 use std::collections::{BTreeMap, BTreeSet};
@@ -107,7 +107,15 @@ type Facts = BTreeMap<Slot, Fact>;
 
 /// `hiding::hide` on the version, with `bound` (`hiding::bound`).
 pub(in crate::code_rule_dsl::logic::plan::corpus) struct Hide {
-    pub(in crate::code_rule_dsl::logic::plan::corpus) bound: u32,
+    bound: u32,
+    /// What `again` reads back (decision 0393, `ProgramPass::plan`).
+    kept: Vec<Row>,
+}
+
+impl Hide {
+    pub(in crate::code_rule_dsl::logic::plan::corpus) fn new(bound: u32) -> Hide {
+        Hide { bound, kept: Vec::new() }
+    }
 }
 
 /// A round's edit of one literal (by its place in the rule), applied once the round has read every rule.
@@ -124,19 +132,8 @@ impl ProgramPass for Hide {
         let mut prog = v.header(&front::Lists::default())?;
         let was = prog.clone();
         let mut rules: Vec<W> = v.rules().map(|r| W::of(v, r)).collect();
-        let views: BTreeSet<String> = VIEWS.iter().filter(|r| !prog.inputs.iter().any(|i| i == *r)).map(|r| (*r).to_owned()).collect();
+        let (views, base_locations) = bases(&prog);
         let view = |rel: &str| views.contains(rel);
-        let base: BTreeSet<String> = prog.inputs.iter().cloned().chain(VIEWS.iter().filter(|r| view(r)).map(|r| (*r).to_owned())).filter(|r| !ENTRIES.iter().any(|(e, ..)| e == r)).collect();
-        let locations = |rel: &str| -> Vec<usize> {
-            let mut cols: Vec<usize> = prog.decls.get(rel).map_or_else(Vec::new, |c| c.iter().enumerate().filter(|(_, (_, t))| t == "node").map(|(i, _)| i).collect());
-            if let Some(c) = crate::code_rule_dsl::typing::file_local::document_column(rel)
-                && !cols.contains(&c)
-            {
-                cols.push(c);
-            }
-            cols
-        };
-        let base_locations: HashMap<String, Vec<usize>> = base.iter().map(|r| (r.clone(), locations(r))).collect();
         let mut seeds: Vec<Facts> = vec![Facts::new(); rules.len()];
         let mut made: BTreeSet<String> = BTreeSet::new();
         let mut specialized: BTreeMap<String, (String, BTreeMap<usize, String>)> = BTreeMap::new();
@@ -339,6 +336,7 @@ impl ProgramPass for Hide {
         // Each rule bounded on its own (`hiding::hide`'s last stage), then the aggregates' helpers.
         let bounding = crate::code_rule_dsl::logic::profile::span(|| "hiding: each rule bounded".to_owned());
         let carried = std::mem::take(&mut delta.carried);
+        let reached: BTreeSet<String> = delta.made.iter().cloned().collect();
         drop(delta);
         let bound = self.bound;
         let bound_of = |doc_column: bool| if doc_column { i64::from(bound) } else { i64::from(bound) << 32 };
@@ -349,47 +347,8 @@ impl ProgramPass for Hide {
             if VIEWS.contains(&rule.head.as_str()) || asking.contains(&rule.head) {
                 continue;
             }
-            let src = v.rule(rule.src).expect("a rule of the input");
-            let name = |s: Slot| v.text(src.var(s)).to_owned();
             let facts: Facts = if reaches[i] { analyse(rule, &base_locations, &carried, &seeds[i]) } else { Facts::new() };
-            let fin = &mut finals[i];
-            let mut fresh = 0;
-            let mut bounded: BTreeMap<String, bool> = BTreeMap::new();
-            for (_, l) in &rule.body {
-                let L::Atom(a) = l else { continue };
-                let Some(cols) = base_locations.get(a.rel.as_str()) else { continue };
-                if a.neg {
-                    let grammar = cols.iter().find_map(|&c| a.args.get(c).and_then(S::var).and_then(|x| facts.get(&x)).filter(|f| f.scoped && f.definite).and_then(|f| f.grammar.clone()).filter(|g| !g.is_empty()));
-                    if let Some(g) = grammar {
-                        fin.qualify(a, dialect_label(&g));
-                    }
-                    continue;
-                }
-                let doc_col = crate::code_rule_dsl::typing::file_local::document_column(&a.rel);
-                let atom_scoped = cols.iter().any(|&c| a.args.get(c).and_then(S::var).is_some_and(|x| facts.get(&x).is_some_and(|f| f.scoped)));
-                if atom_scoped {
-                    let grammar = cols.iter().find_map(|&c| a.args.get(c).and_then(S::var).and_then(|x| facts.get(&x)).filter(|f| f.definite).and_then(|f| f.grammar.clone()).filter(|g| !g.is_empty()));
-                    if let Some(g) = grammar {
-                        fin.qualify(a, dialect_label(&g));
-                    }
-                    continue;
-                }
-                for &c in cols {
-                    match a.args.get(c) {
-                        Some(S::Var(x)) => {
-                            bounded.entry(name(*x)).or_insert(Some(c) == doc_col);
-                        }
-                        Some(S::Wild) => {
-                            let x = format!("rr_shown{fresh}");
-                            fresh += 1;
-                            fin.args.insert((a.node, c), x.clone());
-                            bounded.insert(x, Some(c) == doc_col);
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            fin.bounds = bounded.into_iter().map(|(x, doc)| (x, bound_of(doc))).collect();
+            finals[i] = bounded(v, rule, &facts, &base_locations, bound);
         }
         drop(bounding);
         // An aggregate's atom is its own scope: one over a base atom reads it through a bounded helper.
@@ -427,12 +386,33 @@ impl ProgramPass for Hide {
                         vars.push((x.clone(), decl.get(c).map_or_else(|| "int".to_owned(), |(_, ty)| ty.to_string())));
                     }
                 }
-                let name = format!("rr_shown_agg{}", helpers.len());
+                // Named by what it holds (`helper_names`), not by its place among the program's helpers.
+                let args: Vec<String> = src
+                    .body()
+                    .find_map(|l| match l.view() {
+                        Lit::Agg { atom: a, .. } if a.node() == atom.node => Some(a.args().zip(&inner).map(|(t, x)| x.as_ref().map_or_else(|| v.show_term(src, t), |x| format!("${x}"))).collect()),
+                        _ => None,
+                    })
+                    .expect("the aggregate's atom");
+                let key = helper_key(&atom.rel, &args, &bounds, &vars);
                 let outer: Vec<Option<String>> = vars.iter().map(|(x, _)| (!x.starts_with("rr_shown_agg_c")).then(|| x.clone())).collect();
-                finals[i].aggs.insert(atom.node, (name.clone(), outer));
-                helpers.push(Helper { name, vars, src: rule.src, atom: atom.node, rel: atom.rel.clone(), inner, bounds });
+                finals[i].aggs.insert(atom.node, (key.clone(), outer));
+                helpers.push(Helper { name: key, vars, src: rule.src, atom: atom.node, rel: atom.rel.clone(), inner, bounds });
             }
         }
+        // Each helper named by its rank among the helpers' texts: two of one text are one helper, and an edit that moves a
+        // rule leaves every other helper's name (decision 0393).
+        let names = helper_names(helpers.iter().map(|h| h.name.clone()));
+        for fin in &mut finals {
+            for (name, _) in fin.aggs.values_mut() {
+                *name = names[name.as_str()].clone();
+            }
+        }
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        helpers.retain_mut(|h| {
+            h.name = names[h.name.as_str()].clone();
+            seen.insert(h.name.clone())
+        });
         for h in &helpers {
             prog.decls.insert(h.name.as_str().into(), h.vars.iter().map(|(c, t)| (c.as_str().into(), t.as_str().into())).collect());
         }
@@ -440,19 +420,7 @@ impl ProgramPass for Hide {
         let b = w.derive()?;
         b.set_header(&was, &prog);
         for (rule, fin) in rules.iter().zip(&finals) {
-            let src = v.rule(rule.src).expect("a rule of the input");
-            let mut rw = Writing::new(b, v, rule, fin);
-            let bounds: Vec<(AtomId, i64)> = fin.bounds.iter().map(|(x, n)| (b.atom(x), *n)).collect();
-            let mut out = b.rule();
-            out = out.head_with(v, src, src.head(), &mut rw);
-            for l in src.body() {
-                rw.cur = l.node();
-                out = out.lit_with(v, src, l, &mut rw);
-            }
-            for (x, n) in bounds {
-                out = out.cmp(T::VarAtom(x), CmpOp::Lt, T::Int(n));
-            }
-            out.finish()?;
+            write_rule(b, v, rule, fin)?;
         }
         for h in &helpers {
             let src = v.rule(h.src).expect("a rule of the input");
@@ -510,8 +478,290 @@ impl ProgramPass for Hide {
                 super::prune::set_asked(b, &stated);
             }
         }
+        self.kept = plan_rows(&reached, &made, &specialized, &asking, &carried);
         Ok(())
     }
+
+    fn plan(&self) -> Vec<Row> {
+        self.kept.clone()
+    }
+
+    /// Over an edit (decision 0393): the edit's added rules hidden alone, onto the last output, where the edit leaves
+    /// the rounds' fixpoint as it was. That holds when no rule of the edit reads or defines what the guests' copies
+    /// and helpers are made of (a view, a context or the guest demand, a relation copied for a grammar, an
+    /// aggregate over a base relation), none is recursive, an added rule reaches only a relation reached already and
+    /// a removed one leaves its head reached as it was, each changed head carries the facts it carried, and no added
+    /// rule's variable has a guest's grammar (so the rounds edit none of its literals). Otherwise it runs whole.
+    fn again(&mut self, cx: &Cx<'_>, last: &Last<'_>, w: &mut ProgramW<'_>) -> Result<bool> {
+        if last.delta.touched != Reads::RULES || last.plan.is_empty() {
+            return Ok(false);
+        }
+        let Some(plan) = Plan::of(last.plan) else { return Ok(false) };
+        let v = cx.v();
+        let prog = v.header(&front::Lists::default())?;
+        let (views, base_locations) = bases(&prog);
+        let mut removed: Vec<(RuleId, W)> = Vec::new();
+        for id in last.delta.removed.iter() {
+            let r = last.input.rule(id).ok_or("a removed rule is not its last input's")?;
+            removed.push((id, W::of(last.input, r)));
+        }
+        let mut added: Vec<W> = Vec::new();
+        for &id in &last.delta.added {
+            added.push(W::of(v, v.rule(id).ok_or("an added rule is not its input's")?));
+        }
+        let enters = |w: &W| w.body.iter().any(|(_, l)| l.positive().is_some_and(|a| ENTRIES.iter().any(|(e, ..)| *e == a.rel) || plan.reached.contains(&a.rel)));
+        let demand = super::super::guests::DEMAND;
+        for w in removed.iter().map(|(_, w)| w).chain(&added) {
+            let h = w.head.as_str();
+            if views.contains(h) || h == demand || is_context(h) || plan.asking.contains(h) || plan.origs.contains(h) || plan.copies.contains(h) {
+                return Ok(false);
+            }
+            for (_, l) in &w.body {
+                let Some(a) = l.atom() else { continue };
+                if a.rel == h || is_context(&a.rel) || plan.asking.contains(&a.rel) || (matches!(l, L::Agg(_)) && base_locations.get(a.rel.as_str()).is_some_and(|c| !c.is_empty())) {
+                    return Ok(false);
+                }
+            }
+        }
+        let heads: BTreeSet<String> = removed.iter().map(|(_, w)| w).chain(&added).map(|w| w.head.clone()).collect();
+        // No head of the edit reads itself through others.
+        let mut up: BTreeSet<String> = BTreeSet::new();
+        let mut todo: Vec<String> = heads.iter().cloned().collect();
+        while let Some(rel) = todo.pop() {
+            for of in [&**v, &**last.input] {
+                let Some(id) = of.rel(&rel) else { continue };
+                for (r, _) in of.readers(id) {
+                    let h = of.rel_name(r.head().rel());
+                    if up.insert(h.to_owned()) {
+                        todo.push(h.to_owned());
+                    }
+                }
+            }
+        }
+        if heads.iter().any(|h| up.contains(h)) {
+            return Ok(false);
+        }
+        let rules_of = |h: &str| -> Vec<W> { v.rel(h).into_iter().flat_map(|id| v.heads(id)).map(|r| W::of(v, r)).collect() };
+        for w in &added {
+            if enters(w) && !plan.reached.contains(&w.head) {
+                return Ok(false);
+            }
+        }
+        for (_, w) in &removed {
+            if enters(w) && !rules_of(&w.head).iter().any(|r| enters(r)) {
+                return Ok(false);
+            }
+        }
+        // Each changed head's facts, as the rounds make them from its rules over the others' (which the edit leaves).
+        for h in &heads {
+            let rules = rules_of(h);
+            let n = prog.decls.get(h.as_str()).map_or(0, |c| c.len());
+            let mut cols = vec![Fact::default(); n];
+            let facts: Vec<Facts> = rules.iter().map(|r| if enters(r) { analyse(r, &base_locations, &plan.carried, &Facts::new()) } else { Facts::new() }).collect();
+            for (r, facts) in rules.iter().zip(&facts) {
+                for (c, t) in r.head_args.iter().enumerate() {
+                    if let (Some(slot), S::Var(x)) = (cols.get_mut(c), t)
+                        && let Some(f) = facts.get(x)
+                    {
+                        slot.join(f);
+                    }
+                }
+            }
+            for f in cols.iter_mut() {
+                f.definite = f.scoped;
+            }
+            for (r, facts) in rules.iter().zip(&facts) {
+                for (c, t) in r.head_args.iter().enumerate() {
+                    let definite = matches!(t, S::Var(x) if facts.get(x).is_some_and(|f| f.definite));
+                    if let Some(slot) = cols.get_mut(c)
+                        && slot.definite
+                        && !definite
+                    {
+                        slot.definite = false;
+                    }
+                }
+            }
+            let was = plan.carried.get(h.as_str());
+            let same = if rules.is_empty() { was.is_none_or(|w| w.iter().all(|f| *f == Fact::default())) } else { was.map_or_else(|| cols.iter().all(|f| *f == Fact::default()), |w| *w == cols) };
+            if !same {
+                return Ok(false);
+            }
+        }
+        // The added rules' last stage, by their facts: none may name a guest's grammar.
+        let mut finals: Vec<Final> = Vec::new();
+        for w in &added {
+            let facts = if enters(w) { analyse(w, &base_locations, &plan.carried, &Facts::new()) } else { Facts::new() };
+            if facts.values().any(|f| f.grammar.as_ref().is_some_and(|g| !g.is_empty())) {
+                return Ok(false);
+            }
+            finals.push(bounded(v, w, &facts, &base_locations, self.bound));
+        }
+        // Each removed rule made one rule of the last output (none was copied: no head of the edit is).
+        let mut gone = Vec::new();
+        for (id, _) in &removed {
+            let made: Vec<RuleId> = last.output.derived(*id).map(|r| r.id()).collect();
+            if made.len() != 1 {
+                return Ok(false);
+            }
+            gone.extend(made);
+        }
+        let b = w.on()?;
+        for id in gone {
+            b.remove(id);
+        }
+        for (rule, fin) in added.iter().zip(&finals) {
+            write_rule(b, v, rule, fin)?;
+        }
+        self.kept = last.plan.to_vec();
+        Ok(true)
+    }
+}
+
+/// What a run of `Hide` keeps for `again` (`Hide::plan`): the relations its rounds reached, the names they made,
+/// the relations copied for a grammar and their copies, the relations the guest demand asks for, and each
+/// relation's carried facts (those not the default).
+struct Plan {
+    reached: BTreeSet<String>,
+    copies: BTreeSet<String>,
+    origs: BTreeSet<String>,
+    asking: BTreeSet<String>,
+    carried: HashMap<String, Vec<Fact>>,
+}
+
+impl Plan {
+    fn of(rows: &[Row]) -> Option<Plan> {
+        let text = |x: &Value| if let Value::Str(s) = x { Some(s.to_string()) } else { None };
+        let int = |x: &Value| if let Value::Int(n) = x { Some(*n) } else { None };
+        let mut p = Plan { reached: BTreeSet::new(), copies: BTreeSet::new(), origs: BTreeSet::new(), asking: BTreeSet::new(), carried: HashMap::default() };
+        let mut ran = false;
+        for r in rows {
+            match (text(r.first()?)?.as_str(), &r[1..]) {
+                ("ran", []) => ran = true,
+                ("reached", [x]) => drop(p.reached.insert(text(x)?)),
+                ("made", [_]) => {}
+                ("copy", [x, o]) => {
+                    p.copies.insert(text(x)?);
+                    p.origs.insert(text(o)?);
+                }
+                ("asking", [x]) => drop(p.asking.insert(text(x)?)),
+                ("carried", [x, n, c, scoped, definite, g @ ..]) => {
+                    let cols = p.carried.entry(text(x)?).or_insert_with(|| vec![Fact::default(); int(n).and_then(|n| usize::try_from(n).ok()).unwrap_or(0)]);
+                    let f = cols.get_mut(usize::try_from(int(c)?).ok()?)?;
+                    *f = Fact { scoped: int(scoped)? != 0, definite: int(definite)? != 0, grammar: match g { [g] => Some(text(g)?), _ => None } };
+                }
+                _ => return None,
+            }
+        }
+        ran.then_some(p)
+    }
+}
+
+/// `Hide::plan`'s rows of a run (`Plan`).
+fn plan_rows(reached: &BTreeSet<String>, made: &BTreeSet<String>, specialized: &BTreeMap<String, (String, BTreeMap<usize, String>)>, asking: &BTreeSet<String>, carried: &HashMap<String, Vec<Fact>>) -> Vec<Row> {
+    let s = |x: &str| Value::Str(x.to_owned().into());
+    let n = |k: i64| Value::Int(k);
+    let mut rows = vec![vec![s("ran")]];
+    rows.extend(reached.iter().map(|r| vec![s("reached"), s(r)]));
+    rows.extend(made.iter().map(|r| vec![s("made"), s(r)]));
+    rows.extend(specialized.iter().map(|(x, (o, _))| vec![s("copy"), s(x), s(o)]));
+    rows.extend(asking.iter().map(|r| vec![s("asking"), s(r)]));
+    let mut held: Vec<(&String, &Vec<Fact>)> = carried.iter().filter(|(_, cols)| cols.iter().any(|f| *f != Fact::default())).collect();
+    held.sort_by_key(|(r, _)| *r);
+    for (rel, cols) in held {
+        for (c, f) in cols.iter().enumerate().filter(|(_, f)| **f != Fact::default()) {
+            let mut row = vec![s("carried"), s(rel), n(cols.len() as i64), n(c as i64), n(i64::from(f.scoped)), n(i64::from(f.definite))];
+            if let Some(g) = &f.grammar {
+                row.push(s(g));
+            }
+            rows.push(row);
+        }
+    }
+    rows
+}
+
+/// The views the lowering writes as rules (those the program does not take as inputs), and each base relation's
+/// location columns (its node columns and its document's).
+fn bases(prog: &Program) -> (BTreeSet<String>, HashMap<String, Vec<usize>>) {
+    let views: BTreeSet<String> = VIEWS.iter().filter(|r| !prog.inputs.iter().any(|i| i == *r)).map(|r| (*r).to_owned()).collect();
+    let base: BTreeSet<String> = prog.inputs.iter().cloned().chain(VIEWS.iter().filter(|r| views.contains(**r)).map(|r| (*r).to_owned())).filter(|r| !ENTRIES.iter().any(|(e, ..)| e == r)).collect();
+    let locations = |rel: &str| -> Vec<usize> {
+        let mut cols: Vec<usize> = prog.decls.get(rel).map_or_else(Vec::new, |c| c.iter().enumerate().filter(|(_, (_, t))| t == "node").map(|(i, _)| i).collect());
+        if let Some(c) = crate::code_rule_dsl::typing::file_local::document_column(rel)
+            && !cols.contains(&c)
+        {
+            cols.push(c);
+        }
+        cols
+    };
+    let base_locations = base.iter().map(|r| (r.clone(), locations(r))).collect();
+    (views, base_locations)
+}
+
+/// One rule of the output: `rule` copied from its source with its edits and its last stage's additions (`fin`), its
+/// source recorded (so an edit's removed rule finds what it made, `Version::derived`, decision 0393).
+fn write_rule(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>, v: &Version, rule: &W, fin: &Final) -> Result<()> {
+    let src = v.rule(rule.src).expect("a rule of the input");
+    let mut rw = Writing::new(b, v, rule, fin);
+    let bounds: Vec<(AtomId, i64)> = fin.bounds.iter().map(|(x, n)| (b.atom(x), *n)).collect();
+    let mut out = b.rule().source(rule.src);
+    out = out.head_with(v, src, src.head(), &mut rw);
+    for l in src.body() {
+        rw.cur = l.node();
+        out = out.lit_with(v, src, l, &mut rw);
+    }
+    for (x, n) in bounds {
+        out = out.cmp(T::VarAtom(x), CmpOp::Lt, T::Int(n));
+    }
+    out.finish()?;
+    Ok(())
+}
+
+/// `hiding::hide`'s last stage for one rule: its kind and field names qualified, its wildcards named, and its bounds
+/// (`bound`), by its facts (`analyse`; none where it is not reached).
+fn bounded(v: &Version, rule: &W, facts: &Facts, base_locations: &HashMap<String, Vec<usize>>, bound: u32) -> Final {
+    let bound_of = |doc_column: bool| if doc_column { i64::from(bound) } else { i64::from(bound) << 32 };
+    let src = v.rule(rule.src).expect("a rule of the input");
+    let name = |s: Slot| v.text(src.var(s)).to_owned();
+    let mut out = Final::default();
+    let fin = &mut out;
+    let mut fresh = 0;
+    let mut bounded: BTreeMap<String, bool> = BTreeMap::new();
+    for (_, l) in &rule.body {
+        let L::Atom(a) = l else { continue };
+        let Some(cols) = base_locations.get(a.rel.as_str()) else { continue };
+        if a.neg {
+            let grammar = cols.iter().find_map(|&c| a.args.get(c).and_then(S::var).and_then(|x| facts.get(&x)).filter(|f| f.scoped && f.definite).and_then(|f| f.grammar.clone()).filter(|g| !g.is_empty()));
+            if let Some(g) = grammar {
+                fin.qualify(a, dialect_label(&g));
+            }
+            continue;
+        }
+        let doc_col = crate::code_rule_dsl::typing::file_local::document_column(&a.rel);
+        let atom_scoped = cols.iter().any(|&c| a.args.get(c).and_then(S::var).is_some_and(|x| facts.get(&x).is_some_and(|f| f.scoped)));
+        if atom_scoped {
+            let grammar = cols.iter().find_map(|&c| a.args.get(c).and_then(S::var).and_then(|x| facts.get(&x)).filter(|f| f.definite).and_then(|f| f.grammar.clone()).filter(|g| !g.is_empty()));
+            if let Some(g) = grammar {
+                fin.qualify(a, dialect_label(&g));
+            }
+            continue;
+        }
+        for &c in cols {
+            match a.args.get(c) {
+                Some(S::Var(x)) => {
+                    bounded.entry(name(*x)).or_insert(Some(c) == doc_col);
+                }
+                Some(S::Wild) => {
+                    let x = format!("rr_shown{fresh}");
+                    fresh += 1;
+                    fin.args.insert((a.node, c), x.clone());
+                    bounded.insert(x, Some(c) == doc_col);
+                }
+                _ => {}
+            }
+        }
+    }
+    fin.bounds = bounded.into_iter().map(|(x, doc)| (x, bound_of(doc))).collect();
+    out
 }
 
 /// What the last stage adds to a rule: kind or field names qualified, wildcards named, the bounds, and the aggregates
@@ -542,6 +792,18 @@ impl Final {
             self.strs.insert((a.node, c), format!("{label}:{s}"));
         }
     }
+}
+
+/// An aggregate helper's text (`hiding::hide`'s helpers): its atom's relation and arguments, its bounds and its
+/// columns. Two helpers of one text hold the same rows.
+pub(in crate::code_rule_dsl::logic::plan::corpus) fn helper_key(rel: &str, args: &[String], bounds: &[(String, i64)], vars: &[(String, String)]) -> String {
+    format!("{rel}({}) {bounds:?} {vars:?}", args.join(", "))
+}
+
+/// Each helper's name by its text (`helper_key`): `rr_shown_agg<k>`, `k` its text's rank among the program's.
+pub(in crate::code_rule_dsl::logic::plan::corpus) fn helper_names(keys: impl Iterator<Item = String>) -> HashMap<String, String> {
+    let keys: BTreeSet<String> = keys.collect();
+    keys.into_iter().enumerate().map(|(k, key)| (key, format!("rr_shown_agg{k}"))).collect()
 }
 
 /// An aggregate's helper: `name(vars) :- rel(inner), bounds`, its atom the aggregate's (`src`'s, at node `atom`).
@@ -674,12 +936,15 @@ fn reaching(rules: &[W], seeds: &[Facts]) -> Vec<bool> {
     out
 }
 
+/// A context relation (`rr_ctx…`, a policy's copy too): what `asking` adds.
+fn is_context(r: &str) -> bool {
+    let own = r.strip_prefix('p').and_then(|t| t.find('_').filter(|&i| i > 0 && t[..i].bytes().all(|b| b.is_ascii_digit())).map(|i| &t[i + 1..]));
+    own.unwrap_or(r).starts_with("rr_ctx")
+}
+
 /// `hiding::asking` over the rules here: the guest demand and the contexts only it reads, transitively.
 fn asking(prog: &Program, rules: &[W]) -> BTreeSet<String> {
-    let context = |r: &str| {
-        let own = r.strip_prefix('p').and_then(|t| t.find('_').filter(|&i| i > 0 && t[..i].bytes().all(|b| b.is_ascii_digit())).map(|i| &t[i + 1..]));
-        own.unwrap_or(r).starts_with("rr_ctx")
-    };
+    let context = is_context;
     let mut asking: BTreeSet<String> = BTreeSet::from([super::super::guests::DEMAND.to_owned()]);
     loop {
         let more: Vec<String> = prog

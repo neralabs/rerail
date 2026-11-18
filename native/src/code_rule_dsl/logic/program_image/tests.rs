@@ -1552,6 +1552,47 @@ fn a_new_process_reruns_only_the_passes_after_a_stored_step() {
     assert_eq!(runs, [0, 0, 0], "found again under the same part");
 }
 
+/// A chain of edits past `REBASE_DEPTH` runs again over each one (decision 0385): at that depth the last run is made
+/// shallow, each deep version flat (a view of one base, its ids, size and digest the deep one's), so the next edit is
+/// still an edit of its input; the output is a run from scratch's every time.
+#[test]
+fn a_chain_of_edits_past_the_rebase_depth_runs_again_over_each() {
+    use super::manager::{Pipeline, REBASE_DEPTH, Ran, rebase};
+    let v0 = managed();
+    let fresh = |v: &Arc<Version>| Version::open(v.fold().unwrap().base_bytes().unwrap()).unwrap();
+    let scratch = |v: &Arc<Version>| {
+        let mut p = Pipeline::new("scratch", v.clone());
+        p.rules(&mut RenameAll { from: "e", to: "e2", needs: false, seen: 0 });
+        p.finish().unwrap().0
+    };
+    let mut p = Pipeline::keeping("test", fresh(&v0));
+    p.rules(&mut RenameAll { from: "e", to: "e2", needs: false, seen: 0 });
+    let mut last = p.done().unwrap();
+    let mut prog = v0.clone();
+    let mut flattened = 0;
+    for i in 0..2 * REBASE_DEPTH + 2 {
+        let gone = prog.rules().nth(6).unwrap().id();
+        prog = fresh(&edited(&prog, &[gone], &[r_of_f(30 + i as i64)]));
+        let deep = last.input().clone();
+        last = last.shallow();
+        if deep.depth() >= REBASE_DEPTH {
+            flattened += 1;
+            let flat = last.input();
+            assert_eq!(flat.depth(), 0, "edit {i}: made flat");
+            assert_eq!((flat.size(), flat.digest()), (deep.size(), deep.digest()), "edit {i}: the same program");
+            assert!(flat.rules().map(|r| (r.id(), r.hash())).eq(deep.rules().map(|r| (r.id(), r.hash()))), "edit {i}: the same rules under the same ids");
+        }
+        let v = rebase(last.input(), &prog).unwrap().expect("an edit of the last input, however many came before");
+        let mut p = Pipeline::again(last, v);
+        p.rules(&mut RenameAll { from: "e", to: "e2", needs: false, seen: 0 });
+        last = p.done().unwrap();
+        assert_eq!(last.stages()[0].ran, Ran::Delta, "edit {i}: run again over the edit");
+        let want = scratch(&prog);
+        assert_eq!((last.output().digest(), last.output().size()), (want.digest(), want.size()), "edit {i}: the program a run from scratch makes");
+    }
+    assert!(flattened >= 2, "made flat {flattened} times");
+}
+
 /// `program_facts`' own tests, which read text through `rr::parse` and the planner: above the image's crate
 /// (decision 0377).
 mod program_facts_tests {
@@ -1704,4 +1745,104 @@ fn a_rewrite_renames_an_aggregates_result_too() {
     let w = b.finish().unwrap().0;
     let shown = w.show();
     assert!(shown.contains("$m = count") && !shown.contains("$n"), "{shown}");
+}
+
+/// `managed()` with a request record (decision 0174's `asked` rows): `q`'s one rule serves `p`'s readers. A base of
+/// its own, as a process reads it.
+fn managed_asked() -> Arc<Version> {
+    let v = managed();
+    let mut b = v.builder();
+    b.set_asked(&std::collections::BTreeMap::from([("q".to_owned(), vec![std::collections::BTreeSet::from(["p".to_owned()])])]));
+    let (o, _) = b.finish().unwrap();
+    Version::open(o.fold().unwrap().base_bytes().unwrap()).unwrap()
+}
+
+/// The request record over a rerun (decision 0393): a step run again over an edit onto its last output carries the
+/// last run's record of that step on, so the run's output states the record a run from scratch states. An edit that
+/// adds a request's rule runs the step whole, its record carried from its input.
+#[test]
+fn a_request_record_over_an_edit_is_a_run_from_scratchs() {
+    use super::manager::{Pipeline, Ran, rebase};
+    let fresh = |v: &Arc<Version>| Version::open(v.fold().unwrap().base_bytes().unwrap()).unwrap();
+    let scratch = |v: &Arc<Version>| {
+        let mut p = Pipeline::new("scratch", v.clone());
+        p.rules(&mut RenameAll { from: "e", to: "e2", needs: false, seen: 0 });
+        p.finish().unwrap().0
+    };
+    let v0 = managed_asked();
+    assert_eq!(v0.asked().get("q").map(Vec::len), Some(1), "the input states a record");
+    let mut p = Pipeline::keeping("test", v0.clone());
+    p.rules(&mut RenameAll { from: "e", to: "e2", needs: false, seen: 0 });
+    let mut last = p.done().unwrap();
+    assert_eq!(last.output().asked(), scratch(&v0).asked());
+    let mut prog = v0.clone();
+    for (i, (add, ran)) in [(r_of_f(30), Ran::Delta), (r_of_f(31), Ran::Delta), (reads_e("q"), Ran::Whole), (r_of_f(32), Ran::Delta)].into_iter().enumerate() {
+        let gone: Vec<RuleId> = if ran == Ran::Delta { vec![prog.rules().filter(|r| prog.rel_name(r.head().rel()) == "r").nth(5).unwrap().id()] } else { Vec::new() };
+        prog = fresh(&edited(&prog, &gone, &[add]));
+        let v = rebase(last.input(), &prog).unwrap().expect("an edit of the last input");
+        let mut p = Pipeline::again(last, v);
+        p.rules(&mut RenameAll { from: "e", to: "e2", needs: false, seen: 0 });
+        last = p.done().unwrap();
+        assert_eq!(last.stages()[0].ran, ran, "edit {i}");
+        let want = scratch(&prog);
+        assert!(!want.asked().is_empty(), "edit {i}: a record to carry");
+        assert_eq!(last.output().asked(), want.asked(), "edit {i}: the record a run from scratch states");
+        assert_eq!((last.output().digest(), last.output().size()), (want.digest(), want.size()), "edit {i}: the program a run from scratch makes");
+    }
+}
+
+/// A stored run is read where the store placed it (decision 0394): its images, its analyses' rows and its facts in
+/// one segment, uncompressed, read there mapped, and each version opened over the mapping, not decompressed, hashed
+/// or copied. An image the store held inline (a prepared program's, `store_encoded`) is moved there by the keep. Its
+/// request record is kept with its steps (decision 0393), so a rerun in a new process over an edit states a run from
+/// scratch's.
+#[test]
+fn a_stored_run_is_read_in_place() {
+    use super::manager::{Pipeline, Ran, Runs, rebase};
+    use crate::code_rule_dsl::logic::program_text::{Opened, StoredRuns, image_key, store_encoded};
+    use crate::content_store::ContentStore;
+    use sha2::{Digest as _, Sha256};
+    let fresh = |v: &Arc<Version>| Version::open(v.fold().unwrap().base_bytes().unwrap()).unwrap();
+    let scratch = |v: &Arc<Version>| {
+        let mut p = Pipeline::new("scratch", v.clone());
+        p.rules(&mut RenameAll { from: "e", to: "e2", needs: false, seen: 0 });
+        p.finish().unwrap().0
+    };
+    let v0 = managed_asked();
+    let path = crate::code_rule_dsl::fixtures::temp();
+    let key = [9u8; 32];
+    {
+        let store = ContentStore::open(&path).unwrap();
+        let bytes = v0.base_bytes().unwrap();
+        let digest: [u8; 32] = Sha256::digest(bytes).into();
+        store_encoded(&store, &digest, true, bytes).unwrap();
+        let held = |store: &ContentStore| store.sources_by_alias_in_place(&[image_key(&digest)]).unwrap().remove(0).expect("the input's image held");
+        assert!(!held(&store).in_place(), "a prepared program's image is held inline");
+        let mut p = Pipeline::keeping("test", v0.clone());
+        p.get::<super::analyses::Needed>().unwrap();
+        p.rules(&mut RenameAll { from: "e", to: "e2", needs: false, seen: 0 });
+        let run = p.done().unwrap();
+        StoredRuns(&store).keep(&key, &run).unwrap();
+        assert!(held(&store).in_place(), "the keep moved the input's image into the segment");
+        // Kept again under the same key: its facts kept once, no error.
+        StoredRuns(&store).keep(&key, &run).unwrap();
+        drop(store);
+        ContentStore::forget(&path);
+    }
+    let store = ContentStore::open(&path).unwrap();
+    let (last, opened) = StoredRuns(&store).open_counted(&key, "test").unwrap().expect("the run kept");
+    assert!(opened.images >= 2, "{opened:?}");
+    assert_eq!(opened, Opened { images: opened.images, in_place: opened.images, facts_in_place: true, rows_in_place: true }, "every image, the rows and the facts read in place");
+    assert!(last.input().is_shared() && last.output().is_shared(), "opened over the mapping, not copied");
+    let prog = fresh(&edited(&v0, &[v0.rules().nth(6).unwrap().id()], &[r_of_f(40)]));
+    let v = rebase(last.input(), &prog).unwrap().expect("an edit of the last input");
+    let mut p = Pipeline::again(last, v);
+    p.rules(&mut RenameAll { from: "e", to: "e2", needs: false, seen: 0 });
+    let run = p.done().unwrap();
+    assert_eq!(run.stages()[0].ran, Ran::Delta);
+    let want = scratch(&prog);
+    assert_eq!(run.output().asked(), want.asked(), "the record a run from scratch states");
+    assert_eq!((run.output().digest(), run.output().size()), (want.digest(), want.size()));
+    drop(store);
+    ContentStore::forget(&path);
 }

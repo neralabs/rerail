@@ -127,7 +127,15 @@ impl<'v> Iterator for Down<'v> {
 impl Version {
     /// The base `bytes` hold.
     pub fn open(bytes: &[u8]) -> Result<Arc<Version>, String> {
-        let image = Image::open(bytes)?;
+        Version::base_of(Image::open(bytes)?)
+    }
+
+    /// The base `bytes` hold, read where they are, not copied (`Image::open_shared`, decision 0394).
+    pub fn open_shared(bytes: super::SharedBytes) -> Result<Arc<Version>, String> {
+        Version::base_of(Image::open_shared(bytes)?)
+    }
+
+    fn base_of(image: Image) -> Result<Arc<Version>, String> {
         if image.is_delta() {
             return Err(bad("a delta is opened over its parent (`Version::over`)"));
         }
@@ -135,10 +143,23 @@ impl Version {
         Ok(Arc::new(Version::Base { image: Arc::new(image), digest, analyses: Held::default() }))
     }
 
+    /// The overlay of `parent` and the delta `bytes` hold, read where they are (`Image::open_shared`, decision 0394).
+    pub fn over_shared(parent: &Arc<Version>, bytes: super::SharedBytes) -> Result<Arc<Version>, String> {
+        Version::overlay_of(parent, Image::open_shared(bytes)?)
+    }
+
+    /// Whether its own image (a base's, or an overlay's delta) is read where a store holds it, not copied.
+    pub fn is_shared(&self) -> bool {
+        self.top().is_shared()
+    }
+
     /// The overlay of `parent` and the delta `bytes` hold: the delta's bases must be `parent`'s id spaces, and what
     /// it removes `parent`'s rules.
     pub fn over(parent: &Arc<Version>, bytes: &[u8]) -> Result<Arc<Version>, String> {
-        let delta = Image::open(bytes)?;
+        Version::overlay_of(parent, Image::open(bytes)?)
+    }
+
+    fn overlay_of(parent: &Arc<Version>, delta: Image) -> Result<Arc<Version>, String> {
         if !delta.is_delta() || delta.atom_base() != parent.atom_end() || delta.rel_base() != parent.rel_end() || delta.rule_base() != parent.rule_end() {
             return Err(bad("a delta over another parent"));
         }
@@ -230,6 +251,16 @@ impl Version {
             Version::Base { image, .. } => image.rules(),
             Version::View { size, .. } | Version::Overlay { size, .. } => *size,
         }
+    }
+    /// Every rule its stack numbers, by id, ascending: its own and those an overlay above removed (decision 0385,
+    /// `build::flat`).
+    pub(crate) fn stack_rules(&self) -> Vec<RuleRef<'_>> {
+        let mut layers: Vec<&Image> = self.down().collect();
+        layers.reverse();
+        layers.into_iter().flat_map(|im| {
+            let base = if im.is_delta() { im.rule_base() } else { 0 };
+            (0..im.rules() as u32).map(move |k| RuleRef::new(im, k, RuleId(base + k)))
+        }).collect()
     }
     /// How many deltas are stacked on the base.
     pub fn depth(&self) -> usize {

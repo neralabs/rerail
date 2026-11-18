@@ -6,7 +6,7 @@
 use super::simplify::Tm;
 use crate::code_rule_dsl::logic::front::{List, Value};
 use crate::code_rule_dsl::logic::program_image::build::{Rewrite, Site, T};
-use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
+use crate::code_rule_dsl::logic::program_image::manager::{Cx, Last, ProgramPass, ProgramW};
 use crate::code_rule_dsl::logic::program_image::{AtomId, Builder, CmpOp, Lit, LitRef, RuleId, RuleRef, Slot, TermRef, Version};
 use crate::code_rule_dsl::logic::rr::lower::{Answer, OnRequest};
 use std::collections::{BTreeMap, BTreeSet};
@@ -174,6 +174,9 @@ impl New {
     }
     /// A variable's name as written.
     fn name(&self, v: &Version, r: RuleRef<'_>, s: Slot) -> String {
+        // Each ask is a rule of its own, so its variables need only stay clear of `rr_dn`: named from the reading rule
+        // alone, as the tree's lowering names them (`rr::lower`). A name from the reader's place in the program changed
+        // the ask's text with any rule added or dropped before it (decision 0393).
         match self.rename {
             Some(u) if s == u => "rr_dn".to_owned(),
             Some(_) => format!("{}_rr_d", v.text(r.var(s))),
@@ -592,6 +595,68 @@ impl<'v> Widen<'v> {
 
 impl ProgramPass for SourcesOnRequest {
     const NAME: &'static str = "sources on request";
+    /// Over an edit (decision 0393): the edit as it is, onto the last output, where no rule of it reads an attribute
+    /// of the round, or a reader's head (whose readers' asks narrow a request), and none defines a relation a reader,
+    /// or a rule reading a reader, reads through its rules (what a request's body widens through). Otherwise it
+    /// runs whole.
+    fn again(&mut self, cx: &Cx<'_>, last: &Last<'_>, w: &mut ProgramW<'_>) -> Result<bool> {
+        use crate::code_rule_dsl::logic::program_image::manager::{Reads, edit_as_is};
+        if last.delta.touched != Reads::RULES {
+            return Ok(false);
+        }
+        let v = cx.v();
+        let attrs: Vec<&str> = self.round.iter().map(|a| a.rel).collect();
+        let mut delta: Vec<(&Version, RuleRef<'_>)> = Vec::new();
+        for id in last.delta.removed.iter() {
+            delta.push((&**last.input, last.input.rule(id).ok_or("a removed rule is not its last input's")?));
+        }
+        for &id in &last.delta.added {
+            delta.push((&**v, v.rule(id).ok_or("an added rule is not its input's")?));
+        }
+        // The readers of the round's attributes, in either version, and their heads.
+        let mut reader_heads: BTreeSet<String> = BTreeSet::new();
+        let mut seeds: Vec<RuleRef<'_>> = Vec::new();
+        for of in [&**v, &**last.input] {
+            for a in &attrs {
+                let Some(id) = of.rel(a) else { continue };
+                for (r, _) in of.readers(id) {
+                    reader_heads.insert(of.rel_name(r.head().rel()).to_owned());
+                    if std::ptr::eq(of, &**v) {
+                        seeds.push(r);
+                    }
+                }
+            }
+        }
+        for (of, r) in &delta {
+            if r.body().filter_map(|l| l.atom()).any(|a| {
+                let rel = of.rel_name(a.rel());
+                attrs.contains(&rel) || reader_heads.contains(rel)
+            }) {
+                return Ok(false);
+            }
+        }
+        for h in &reader_heads {
+            if let Some(id) = v.rel(h) {
+                seeds.extend(v.readers(id).map(|(r, _)| r));
+            }
+        }
+        // What the readers and their readers read, through the rules, down.
+        let mut down: BTreeSet<String> = BTreeSet::new();
+        let mut todo: Vec<String> = seeds.iter().flat_map(|r| r.body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel()).to_owned()).collect::<Vec<_>>()).collect();
+        while let Some(rel) = todo.pop() {
+            if !down.insert(rel.clone()) {
+                continue;
+            }
+            let Some(id) = v.rel(&rel) else { continue };
+            for r in v.heads(id) {
+                todo.extend(r.body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel()).to_owned()).filter(|x| !down.contains(x)));
+            }
+        }
+        if delta.iter().any(|(of, r)| down.contains(of.rel_name(r.head().rel()))) {
+            return Ok(false);
+        }
+        edit_as_is(cx, last, w)
+    }
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<()> {
         use crate::code_rule_dsl::logic::profile::{decision, on};
         let v = cx.v();
