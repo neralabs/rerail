@@ -7601,8 +7601,11 @@ impl<'a> Run<'a, '_> {
                     let ((order, _, _), _) = self.model.plan_rule_reused(pf, b, first)?;
                     // The changed inputs' literals read their versions: the driver's, and as they were in a removal.
                     self.mode_reads.clear();
+                    // An aggregate's atom too: read where the rule's other atoms are, as it was in a removal. Unnamed here, it
+                    // read the relation's own versions, which a relation derived again past θ (R4) does not have:
+                    // its delta is `r__minus`/`r__plus`, against its kept rows (`kept_delta`).
                     for i in 0..b.len() {
-                        let Lit::Atom(x) = b.view(i) else { continue };
+                        let (Lit::Atom(x) | Lit::Agg { atom: x, .. }) = b.view(i) else { continue };
                         let xr = b.rel(x);
                         if !ins.contains_key(xr) {
                             continue;

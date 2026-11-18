@@ -234,6 +234,42 @@ fn r4_an_edit_that_reaches_most_of_a_stratum_derives_it_again() {
     assert!(big.report.cross_again.contains_key(maintain::THRESHOLD), "R4: an edit that reaches most of a stratum derives it again: {:?}", big.report.cross_again);
 }
 
+/// R4 with readers: a stratum derived again past θ hands its readers its delta against its kept rows, and a reader
+/// maintained over that delta has versions of its own for the strata above it. On the O125 replay, `cls_q` derived
+/// again past θ, and so did `type_of`. Its reader `type_first`, a `min` over it, was maintained and stopped:
+/// "type_of has no version".
+const AGAIN_THEN_MAINTAINED: &str = r#"
+.decl def(n: node, q: symbol)
+def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
+.decl edge(a: symbol, b: symbol)
+edge(a, b) :- kind(n, "import_statement"), field(n, "name", t), text(t, b), docof(n, d), doc(d, _, a).
+.decl a(q: symbol)
+a(q) :- def(_, q), q = "m0.f0".
+.decl b(q: symbol, m: symbol)
+b(q, m) :- a(q), edge(m, _).
+.decl c(m: symbol)
+c(m) :- b(_, m).
+.decl first(q: symbol)
+first(q) :- a(_), q = min q2 : { a(q2) }.
+.output c
+.output first
+"#;
+
+#[test]
+fn r4_a_stratum_derived_again_past_theta_feeds_maintained_readers() {
+    unsafe { std::env::set_var("RERAIL_AGAIN_MIN", "50") };
+    let files: Vec<(String, String)> = (0..40).map(|i| (format!("m{i}.py"), format!("import m{}\ndef f{i}():\n    pass\n", (i + 1) % 40))).collect();
+    let refs: Vec<(&str, &str)> = files.iter().map(|(f, b)| (f.as_str(), b.as_str())).collect();
+    let mut s = Session::new("r4-readers", AGAIN_THEN_MAINTAINED, &["c", "first"], &refs);
+    s.run();
+    for i in 0..40 {
+        s.write(&format!("m{i}.py"), &format!("import m{}\ndef g{i}():\n    pass\n", (i + 1) % 40));
+    }
+    let big = s.edit("every definition renamed");
+    assert!(big.report.cross_again.contains_key(maintain::THRESHOLD), "R4: `a` is derived again past θ: {:?}", big.report.cross_again);
+    assert!(big.report.cross_maintained.0 > 0, "R4: its readers are maintained over its delta: {:?}", big.report.cross_maintained);
+}
+
 /// R5: levels. A ring of imports entered by one edge holds itself up through its rows; when the entry goes, every row
 /// it held goes too (0364's ring: a recheck alone keeps all 12). The recursive stratum is maintained by levels.
 #[test]
