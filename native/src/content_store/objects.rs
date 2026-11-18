@@ -316,6 +316,20 @@ impl ContentStore {
             .map_err(StoreError::from)
     }
 
+    /// `source_by_alias` of many aliases, in their order, under one hold of the connection: a run that reads 300
+    /// programs' images asks once, not 300 times from as many threads.
+    pub fn sources_by_aliases(&self, aliases: &[HashKey]) -> StoreResult<Vec<Option<SourceId>>> {
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let mut statement = connection.prepare_cached(
+            "SELECT a.source_id FROM hashes h JOIN source_aliases a ON a.alias_hash_id = h.hash_id \
+             WHERE h.algorithm_id=?1 AND h.lane0=?2 AND h.lane1=?3 AND h.lane2=?4 AND h.lane3=?5",
+        )?;
+        aliases
+            .iter()
+            .map(|alias| statement.query_row(hash_params(*alias), |row| row.get::<_, i64>(0)).optional().map(|v| v.map(SourceId)).map_err(StoreError::from))
+            .collect()
+    }
+
     /// The stored source each path's alias names, with its length in bytes. A source is stored
     /// under a Git blob alias only when its bytes hash to that blob, so the length is the blob's.
     pub fn stored_sources_by_alias(

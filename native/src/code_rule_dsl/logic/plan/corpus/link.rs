@@ -24,8 +24,9 @@ pub(super) trait Part: Sized + Send {
     type Rules;
     /// A part from its tree.
     fn of_tree(prog: Program) -> Result<Self>;
-    /// A part lowered in its library's scope (`Text::lower_in`), given the run's rows (decision 0249).
-    fn lowered_in(read: crate::code_rule_dsl::logic::rr::Text, text: &str, library: &crate::code_rule_dsl::logic::rr::Library, scoped: &crate::code_rule_dsl::logic::rr::Scoped, store: Option<&crate::content_store::ContentStore>, extra: &super::added::Added) -> Result<Self>;
+    /// A part lowered in its library's scope (`Text::lower_in`), given the run's rows (decision 0249); `found`, its
+    /// image as the caller read it with the others' (`images::read_all`).
+    fn lowered_in(read: crate::code_rule_dsl::logic::rr::Text, text: &str, library: &crate::code_rule_dsl::logic::rr::Library, scoped: &crate::code_rule_dsl::logic::rr::Scoped, store: Option<&crate::content_store::ContentStore>, found: Option<Option<crate::code_rule_dsl::logic::rr::images::Found>>, extra: &super::added::Added) -> Result<Self>;
     /// The library linked once (decision 0089).
     fn library(l: &crate::code_rule_dsl::logic::rr::Library) -> Result<Self>;
     /// The program less its rules: what is read of it besides them (a tree's is the program).
@@ -148,7 +149,9 @@ impl Part for Program {
     fn of_tree(prog: Program) -> Result<Self> {
         Ok(prog)
     }
-    fn lowered_in(read: crate::code_rule_dsl::logic::rr::Text, text: &str, library: &crate::code_rule_dsl::logic::rr::Library, scoped: &crate::code_rule_dsl::logic::rr::Scoped, store: Option<&crate::content_store::ContentStore>, extra: &super::added::Added) -> Result<Self> {
+    fn lowered_in(read: crate::code_rule_dsl::logic::rr::Text, text: &str, library: &crate::code_rule_dsl::logic::rr::Library, scoped: &crate::code_rule_dsl::logic::rr::Scoped, store: Option<&crate::content_store::ContentStore>, found: Option<Option<crate::code_rule_dsl::logic::rr::images::Found>>, extra: &super::added::Added) -> Result<Self> {
+        // The tree's path reads its image itself.
+        let _ = found;
         let mut prog = read.lower_in(text, library, scoped, store)?.expect("a modular text");
         extra.add_to(&mut prog);
         Ok(prog)
@@ -337,8 +340,12 @@ impl Part for Versioned {
         let (v, _) = Builder::of_program(&prog).and_then(|b| b.finish()).map_err(plan)?;
         Versioned::of(v)
     }
-    fn lowered_in(read: crate::code_rule_dsl::logic::rr::Text, text: &str, library: &crate::code_rule_dsl::logic::rr::Library, scoped: &crate::code_rule_dsl::logic::rr::Scoped, store: Option<&crate::content_store::ContentStore>, extra: &super::added::Added) -> Result<Self> {
-        let v = read.lower_in_version(text, library, scoped, store)?.expect("a modular text");
+    fn lowered_in(read: crate::code_rule_dsl::logic::rr::Text, text: &str, library: &crate::code_rule_dsl::logic::rr::Library, scoped: &crate::code_rule_dsl::logic::rr::Scoped, store: Option<&crate::content_store::ContentStore>, found: Option<Option<crate::code_rule_dsl::logic::rr::images::Found>>, extra: &super::added::Added) -> Result<Self> {
+        let v = {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "a program's version in scope: its image, or lowered".into());
+            read.lower_in_version(text, library, scoped, store, found)?.expect("a modular text")
+        };
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "a program's part: its header".into());
         let mut part = Versioned::of(v)?;
         extra.add_to(part.head_mut());
         Ok(part)

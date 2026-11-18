@@ -665,6 +665,15 @@ pass.
     inputs lazily, per relation a running stratum reads, and keeping a semi-join's statistics under its exports'
     digests leaves about 0.03 s.
   - **cross** (0.11 s): the kept part from the frames is 0.042 s, the one stratum 0.021 s.
+- **Built** (2026-11-17, ep2 parts on the m3, rows h1's throughout): the semi-join statistics kept with their input
+  frames (0369, cf5f56a7f): `stats` 0.24 → 0.13 s. The kept link, both stages (0368, 49567510a): `prepare`
+  0.84 → 0.52 s, an edit 32.7 → 28.7 G instructions (e26; the host at load 44, so CPU is no measure there). The
+  combine's tail is designed as 0370 (proposed): each pass's decision from kept part summaries, the changed part's
+  rules alone rewritten. Left, by size, from e26: lowering each program in its libraries' scope 0.100 s (each a
+  kept image read back, 308 of them: spans added to split it), the memo lookup 0.094 s, fact spaces 0.077 s,
+  hiding's rounds 0.066 s, the atoms' lease 0.052 s, stage 2's headers and interfaces 0.045 s (every part's,
+  for its key), the sources on request 0.042 s, the kept inputs 0.083 s (decoding 0.020, granules 0.018, ranges
+  and sources 0.042: each owner's granule now found once, batched).
 
 ### Q19. A new process reads every kept frame of the cross part, its own or not
 

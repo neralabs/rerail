@@ -37,7 +37,9 @@ impl ProgramPass for FactSpaces<'_> {
         let f = Fields::over(v, &d);
         let policies = self.policies;
         let report = &mut self.report;
+        let s_classes = crate::code_rule_dsl::logic::profile::span(|| "fact spaces: congruence classes".into());
         let classes = super::merge::congruence(v, f, false);
+        drop(s_classes);
         let class_of: BTreeMap<&str, usize> = classes.iter().enumerate().flat_map(|(k, c)| c.iter().map(move |r| (r.as_str(), k))).collect();
         let mut canonical: BTreeSet<String> = BTreeSet::new();
         let names: BTreeSet<&String> = policies.iter().flat_map(|p| p.named.iter().chain(&p.library)).collect();
@@ -73,6 +75,7 @@ impl ProgramPass for FactSpaces<'_> {
             }
         }
         // Shared: the canonical relations and every relation of a policy they read, to a fixpoint.
+        let s_shared = crate::code_rule_dsl::logic::profile::span(|| "fact spaces: the shared relations".into());
         let owned: BTreeSet<&String> = policies.iter().flat_map(|p| &p.own).collect();
         let mut shared = canonical;
         loop {
@@ -89,6 +92,7 @@ impl ProgramPass for FactSpaces<'_> {
                 break;
             }
         }
+        drop(s_shared);
         let n = policies.len();
         let scope_of = |i: usize| policies[i].scope.as_ref().map(|s| s.iter().cloned().collect::<BTreeSet<_>>());
         let outside_of = |i: usize| format!("{}{}", policies[i].prefix, front::SCOPE_NOT);
@@ -101,7 +105,10 @@ impl ProgramPass for FactSpaces<'_> {
         if groups.is_empty() || std::env::var("RERAIL_SCOPE_GUARDS").is_ok_and(|x| x == "off") {
             return Ok(());
         }
-        let locations = cx.get::<FileLocal>()?.locations.clone();
+        let locations = {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "fact spaces: the file-local split's locations".into());
+            cx.get::<FileLocal>()?.locations.clone()
+        };
         let derived: BTreeSet<String> =
             v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).chain(f.natives().iter().map(|n| v.rel_name(n.rel).to_owned())).filter(|r| !f.is_input(r)).collect();
         let typed = |rel: &str, c: usize, ty: &[&str]| f.column_type(rel, c).is_some_and(|t| ty.contains(&t));
@@ -117,6 +124,7 @@ impl ProgramPass for FactSpaces<'_> {
             }
         };
         // Each relation's places, asked once.
+        let s_places = crate::code_rule_dsl::logic::profile::span(|| "fact spaces: the places".into());
         let mut places: BTreeMap<String, (Vec<usize>, Vec<usize>, Vec<usize>)> = BTreeMap::new();
         // `docof` too: a span's guard reads it, and a later group's guards read the guards an earlier one made.
         places.insert("docof".to_owned(), place("docof"));
@@ -134,6 +142,7 @@ impl ProgramPass for FactSpaces<'_> {
                 groups_of.entry(h.clone()).or_default().push(k);
             }
         }
+        drop(s_places);
         let mut guards = Guards { policies, groups: &groups, groups_of, places, derived, added: vec![0; groups.len()] };
         w.derive()?;
         w.apply(cx, &mut &mut guards, &Select::All)?;

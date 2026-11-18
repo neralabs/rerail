@@ -1604,12 +1604,26 @@ fn combine_linked_as<P: link::Part>(programs: &[&str], extra: &added::Added, rea
         }).collect(),
         None => vec![None; texts.len()],
     };
+    // Each program's kept image, read for all of them at once (a few statements, not three each from the pool's
+    // threads), its lease renewed in one more.
+    let mut prefetched: Vec<Option<Option<crate::code_rule_dsl::logic::rr::images::Found>>> = (0..programs.len()).map(|_| None).collect();
+    if let Some(store) = images.as_deref().filter(|_| in_scope.is_some() && !(read.is_some() && programs.len() == 1)) {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "the programs' images, from the store".to_owned());
+        let asked: Vec<(usize, crate::content_store::HashKey)> = programs.iter().zip(&scope_of).zip(&texts).enumerate().filter_map(|(i, ((text, k), t))| Some((i, scoped[(*k)?].program_image(text))).filter(|_| t.is_some())).collect();
+        let found = crate::code_rule_dsl::logic::rr::images::read_all(Some(store), &asked.iter().map(|(_, k)| *k).collect::<Vec<_>>());
+        let ids: Vec<crate::content_store::SourceId> = found.iter().flatten().filter_map(|(_, id)| *id).collect();
+        crate::code_rule_dsl::logic::rr::renew_images(store, &ids);
+        for ((i, _), f) in asked.into_iter().zip(found) {
+            prefetched[i] = Some(f);
+        }
+    }
     let each: Vec<_> = programs
         .par_iter()
         .zip(&own_only)
         .zip(texts.par_iter_mut())
         .zip(&scope_of)
-        .map(|(((text, &own_only), slot), scope_of)| {
+        .zip(prefetched.into_par_iter())
+        .map(|((((text, &own_only), slot), scope_of), found)| {
             let _in = carry.enter();
             recorded_on_worker(|| -> Result<P> {
             if let Some(read) = read.filter(|_| programs.len() == 1) {
@@ -1620,7 +1634,7 @@ fn combine_linked_as<P: link::Part>(programs: &[&str], extra: &added::Added, rea
                     let _in_scope = crate::code_rule_dsl::logic::profile::span(|| "lower the program in its libraries' scope (decision 0246 §2)".to_owned());
                     // Its library's relations are the library's, declared there, not in the program: it is handed the
                     // run's rows (0249) but not checked for its own declarations (`front::declared`).
-                    return P::lowered_in(read, text, library, &scoped[k], images.as_deref(), extra);
+                    return P::lowered_in(read, text, library, &scoped[k], images.as_deref(), found, extra);
                 }
                 return P::of_tree(given(read.lower(!own_only)?)?);
             }

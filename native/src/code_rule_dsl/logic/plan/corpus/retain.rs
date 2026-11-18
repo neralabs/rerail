@@ -1558,7 +1558,10 @@ pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32
     drop(s_docs);
     let s_decode = crate::code_rule_dsl::logic::profile::span(|| "the documents' frames, decoded and checked".into());
     let atoms = store.atoms_handle();
-    let mut docs_of_rel: HashMap<String, (Arc<DocDigests>, u64, bool)> = HashMap::new();
+    // Each input's documents' digests, its frame's digest, and its owners laid out as its granules hold them:
+    // (granule, owner, rows), by granule then owner, each owner's granule found once (one batch of atoms' keys).
+    type Owners = Vec<(i64, i64, u64)>;
+    let mut docs_of_rel: HashMap<String, (Arc<DocDigests>, u64, Owners)> = HashMap::new();
     for (rel, frame) in &names {
         let Some(got) = admitted.get(frame).and_then(|a| a.rows().ok()) else { return Ok(Err(format!("{rel}: its documents' frame does not decode"))) };
         if got.types.len() != 3 || got.rows.len() != got.n * 3 {
@@ -1569,16 +1572,24 @@ pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32
         if docs.len() != got.n || digest_of_docs(&docs) != at.digest {
             return Ok(Err(format!("{rel}: its documents' frame does not match its digest")));
         }
-        docs_of_rel.insert(rel.clone(), (Arc::new(docs), at.digest, got.types.first() == Some(&b's')));
+        let atom_owned = got.types.first() == Some(&b's');
+        let mut keys: Vec<i64> = got.rows.chunks_exact(3).map(|r| r[0]).collect();
+        if atom_owned {
+            atoms.content_keys(&mut keys);
+        }
+        let mut owners: Owners = got.rows.chunks_exact(3).zip(keys).map(|(r, k)| (1 + k.rem_euclid(GRANULES), r[0], r[2] as u64)).collect();
+        owners.sort_unstable();
+        docs_of_rel.insert(rel.clone(), (Arc::new(docs), at.digest, owners));
     }
     drop(s_decode);
     let s_granules = crate::code_rule_dsl::logic::profile::span(|| "the granules, admitted".into());
     let keys: Vec<(FrameRel, i64)> = names
         .iter()
         .flat_map(|(rel, frame)| {
-            let (docs, _, atom_owned) = &docs_of_rel[rel];
-            let owners = atom_owned.then_some(&*atoms);
-            docs.keys().map(|d| granule(*d, owners)).collect::<BTreeSet<_>>().into_iter().map(move |g| (frame.clone(), g))
+            let (_, _, owners) = &docs_of_rel[rel];
+            let mut granules: Vec<i64> = owners.iter().map(|o| o.0).collect();
+            granules.dedup();
+            granules.into_iter().map(move |g| (frame.clone(), g))
         })
         // An input's statistics, where the run is to read them kept (`stats_of`): a part of its frame, admitted
         // with its granules, so no read of its own.
@@ -1591,13 +1602,12 @@ pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32
     for (rel, frame) in &names {
         let Some(width) = prog.fields()?.arity(rel) else { return Ok(Err(format!("{rel}: not declared by the cross part"))) };
         let g = group_col(prog, locations, rel).min(width.max(1) - 1);
-        let (docs, digest, atom_owned) = &docs_of_rel[rel];
+        let (docs, digest, owners) = &docs_of_rel[rel];
         // A granule's rows are its owners', each owner's together, owners ascending (`write_frames`): each owner's
         // range follows from the owners' row counts, and each granule's count is its frame's, read undecoded. The
         // rows are decoded where the run first reads the input (`Lazy`): an edit reads few of them.
-        let mut owners: Vec<(i64, i64, u64)> = docs.iter().map(|(d, (_, n))| (granule(*d, atom_owned.then_some(&*atoms)), *d, *n)).collect();
-        owners.sort_unstable();
         let mut ranges = Ranges::default();
+        ranges.reserve(owners.len());
         let mut granules: Vec<(Arc<crate::content_store::AdmittedFrame>, Vec<(i64, u32)>)> = Vec::new();
         let mut at = 0usize;
         for run in owners.chunk_by(|a, b| a.0 == b.0) {
