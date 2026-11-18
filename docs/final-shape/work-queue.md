@@ -3712,3 +3712,29 @@ native join it falls back to the planner's whole-rule order.
   rows. No check compares that pipeline with a tree, so nothing fails; the rows are stale, as Q177's were.
 - **Next**: drop the record of the relations the step drops, as `drop_unread` now does; a debug assert at a
   pipeline's steps that no request relation without rules keeps rows would find every such step.
+
+### Q179. (done) The combine's tail lost a merge's renamed reader (`DropRepeated` left the record by place)
+
+- **Found** (2026-11-18, a debug run of corpus0 x B-now, at ece083869): the combine's tail check
+  (`same_program`, corpus.rs) failed. The version's record of `rr_value_req_by_plain_str_0` named
+  `rr_demand_agg_rr_agg389` as a reader, a relation `same_relations`' merge had folded into `rr_ctx390`; the tree's
+  did not.
+- **Cause**: the version's `DropRepeated` dropped three of the request relation's 42 rules and left its 42 entries
+  by place, for the pipeline's carried record (`AskedByRule`) to restate at the end. The merge after it renamed the
+  readers in those rows; the carry takes a step's record at its word only where its entries match the rules (42
+  against 39), so it kept its own readers, the old name, and stated them at `finish`. The tree's
+  `drop_repeated_rules` states the record by rule (`set_rules_from`: a rule kept serves its repeats' readers).
+- **Done**: `DropRepeated` states the record so too. `merge::tests::a_repeated_request_rule_dropped_keeps_both_readers_by_rule`
+  checks it against the tree's; 252 tests of preparation, program_image, the corpus, the merges, simplify and rr
+  pass (M3).
+
+### Q180. The version after `simplify` keeps a request record by place where the tree's states it by rule
+
+- **Found** (2026-11-18, the same run past Q179): the preparation's check after `simplify` fails. `rr_value_req`'s
+  record on the version has more entries than rules, and its readers sit on other rules; the tree's is by rule.
+  It was not reached before Q179's fix (the run stopped at the combine's tail).
+- **Next**: as Q179, the `simplify` pass that drops or reorders `rr_value_req`'s rules without stating the record
+  (a probe on the manager's steps names it: the step after which the record's entries stop matching the rules).
+  A debug assert at every pipeline step that a request relation's entries match its rules, or the step stated none,
+  would find each such pass at once, not one per run.
+- **Done when**: a debug run of corpus0 x B-now passes every stage check.
