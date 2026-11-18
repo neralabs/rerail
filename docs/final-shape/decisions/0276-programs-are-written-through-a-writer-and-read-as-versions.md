@@ -367,6 +367,14 @@ Progress (2026-11-18):
      `about_of`), the decoder (`program_image::Tree`, `Version::program`), `lower::Tree`; §6's guard.
   6. *The intermediate forms* (step 7, the user's): `front::Rule`, `Literal`, `Atom`, `Term`; `rr/from_tape.rs`'s
      statements. The clause lowering writes through the builder from the tape, form by form (§5).
+- **Step 6, stage 1 so far** (2026-11-18): the combine is on versions only (its tree path, the tree `link::Part`,
+  `scoping::guard` and the tree tail passes gone); phases and the bridge read and hand versions; the whole-run
+  cutoff's `Summary` reads the combined version's fields; the SQL emitter reads `Placed` (`emit_inputs`), and
+  `lower::lowered` lowers a version as the run reads it, for the tests and tools that run a program as written.
+  The tree simplify's 22 tests run on its version passes. Still on trees: `rr::read_file` (the tools' path), the
+  waves (their demand programs and the `json_rules` they join), the SQL extension's front (`sql/program.rs`), the
+  planner's tree entries (`body::alone`, `Stats::empty`, `Placed::of_program`), the lowering's tree form
+  (`lower_tree`, `Given`), and the tree twins of stage 2.
 
 ## 9. Retired, not ported (the user's questions, answered 2026-11-15)
 
