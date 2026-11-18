@@ -1115,9 +1115,21 @@ fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, append
             p.program(&mut SourcesOnRequest { round });
         }
         p.program(&mut lowering_tail::OrderNodes).program(&mut lowering_tail::DeclareAxes);
-        // `finish`'s checks, through the tree (work queue Q131): `cycles::check` reads a tree.
-        let finished = p.current().map_err(Error::Syntax)?.program(&Default::default()).map_err(Error::Syntax)?;
-        super::front::finish_checks(&finished)?;
+        // `finish`'s checks on the version (work queue Q131): its rules read where they are, the rest from its header.
+        let v = std::sync::Arc::clone(p.current().map_err(Error::Syntax)?);
+        let header = v.header(&Default::default()).map_err(Error::Syntax)?;
+        use super::program_image::analyses::{Components, Strata};
+        let (sccs, strata) = (p.get::<Components>().ok(), p.get::<Strata>().ok());
+        let self_loop = |rel: &str| strata.as_ref().zip(v.rel(rel)).is_some_and(|(s, id)| s.edges.of_head(id).any(|(w, _)| w == id));
+        let checked = super::front::finish_checks_version(&v, &header, sccs.as_ref().map(|c| &c.0[..]), self_loop);
+        // A debug build checks the version's checks refuse what the tree's do, as they do.
+        #[cfg(debug_assertions)]
+        {
+            let tree = v.program(&Default::default()).map_err(Error::Syntax)?;
+            let was = super::front::finish_checks(&tree);
+            assert_eq!(super::front::refusal(&checked), super::front::refusal(&was), "`finish`'s checks on the version refuse what the tree's do: {checked:?} against {was:?}");
+        }
+        checked?;
     }
     {
         use super::plan::corpus::preparation::{DropRepeated, lowering_tail};

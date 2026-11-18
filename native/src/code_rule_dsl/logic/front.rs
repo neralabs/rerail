@@ -23,6 +23,7 @@ pub mod caches;
 pub use rerail_rr_syntax::code_rule_dsl::logic::front::name;
 pub use name::{List, Lists, Name, Stacks};
 pub mod cycles;
+pub mod view;
 pub mod template;
 pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
 pub use ast::{AXIS, Again, AggOp, Atom, Branded, Class, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, Literal, NEAREST, Native, carried_record, readers_of_heads, record_copy, OPTION_GLOB, Program, QUALIFIERS, RESERVED, Rule, SCOPE_NOT, Shape, ShapeWait, shape_base, SpanIn, Term, Value, axis, cmp_binds, globals, is_axis, is_transduced, join};
@@ -696,17 +697,92 @@ pub fn declare_axes(prog: &mut Program) {
 /// `finish`'s checks, of the program its rewrites made: no computed term in a body atom, bounded lattices, every
 /// input declared, bounded value cycles, the caches' form.
 pub fn finish_checks(prog: &Program) -> Result<(), Error> {
+    let checked = finish_checks_tree(prog);
+    // A test build checks the version's checks on every small program the tree's checks: they refuse alike, and
+    // bound the same components.
+    #[cfg(any(test, feature = "test-hooks"))]
+    if prog.rules.len() < 2000 {
+        version_checks_alike(prog, &checked);
+    }
+    checked
+}
+
+/// What a check refused, as two checks of one program are compared (`finish_checks_version` against
+/// `finish_checks`): the kind of error, and for a value cycle its component. Its message names a rule, which may be
+/// another of the component's where the version holds the rules in another order.
+pub fn refusal(r: &Result<(), Error>) -> Option<String> {
+    match r {
+        Ok(()) => None,
+        Err(Error::UnboundedValueCycle { component, .. }) => Some(format!("unbounded value cycle in {component:?}")),
+        Err(e) => Some(format!("{:?}", std::mem::discriminant(e))),
+    }
+}
+
+/// The version's checks of `prog` against the tree's (`checked`): its components and self-reads from the tree's
+/// strata (the version's own are `rerail-logic`'s analyses, checked against the tree's on the lowering's path).
+#[cfg(any(test, feature = "test-hooks"))]
+fn version_checks_alike(prog: &Program, checked: &Result<(), Error>) {
+    use crate::code_rule_dsl::logic::program_image::Builder;
+    let Ok((v, _)) = Builder::of_program(prog).and_then(|b| b.finish()) else { return };
+    let header = v.header(&Default::default()).expect("a version's header");
+    let strata = strata(prog).ok();
+    let self_loop = |r: &str| strata.as_ref().is_some_and(|(_, e)| e.get(r).is_some_and(|e| e.iter().any(|(w, _)| w == r)));
+    let sccs = strata.as_ref().map(|(s, _)| s.as_slice());
+    let on_version = finish_checks_version(&v, &header, sccs, self_loop);
+    assert_eq!(refusal(&on_version), refusal(checked), "`finish`'s checks on the version refuse what the tree's do: {on_version:?} against {checked:?}");
+    if let (Ok(()), Some(sccs)) = (checked, sccs) {
+        assert_eq!(cycles::check_version(&v, &header, sccs, self_loop).ok(), cycles::check(prog).ok(), "the version's value cycles are bounded as the tree's");
+    }
+}
+
+fn finish_checks_tree(prog: &Program) -> Result<(), Error> {
     for rule in &prog.rules {
         // A computed term is a value, not a pattern: an atom never matches on one (the backends would drop it).
         if let Some(a) = rule.body.iter().filter_map(|l| if let Literal::Atom(a) = l { Some(a) } else { None })
             .find(|a| a.args.iter().any(|t| matches!(t, Term::Call(..))))
         {
-            return Err(Error::Syntax(format!(
-                "computed term in body atom {} of the rule for {}: bind it with `v = @f(...)`",
-                a.rel, rule.head.rel
-            )));
+            return Err(computed_term(&a.rel, &rule.head.rel));
         }
     }
+    header_checks(prog)?;
+    let checking = crate::code_rule_dsl::logic::profile::span(|| "check the program's cycles and caches".to_owned());
+    cycles::check(prog)?;
+    // A cache is two rules (decision 0103): a broken form refuses the program.
+    caches::caches(prog)?;
+    drop(checking);
+    Ok(())
+}
+
+/// `finish_checks` on a version (work queue Q131): its rules read where they are (`view`), the rest from its header
+/// (`Version::header`, no rule decoded). No tree is decoded. Its components (`sccs`, none where it does not stratify,
+/// which fails elsewhere by name) and whether a relation reads itself (`self_loop`) are `cycles::check_version`'s.
+pub fn finish_checks_version(v: &crate::code_rule_dsl::logic::program_image::Version, header: &Program, sccs: Option<&[BTreeSet<String>]>, self_loop: impl Fn(&str) -> bool) -> Result<(), Error> {
+    use crate::code_rule_dsl::logic::program_image::{Lit, TermRef};
+    for r in v.rules() {
+        for l in r.body() {
+            if let Lit::Atom(a) = l.view()
+                && a.args().any(|t| matches!(t, TermRef::Call(..)))
+            {
+                return Err(computed_term(v.rel_name(a.rel()), v.rel_name(r.head().rel())));
+            }
+        }
+    }
+    header_checks(header)?;
+    let checking = crate::code_rule_dsl::logic::profile::span(|| "check the program's cycles and caches".to_owned());
+    if let Some(sccs) = sccs {
+        cycles::check_version(v, header, sccs, self_loop)?;
+    }
+    caches::caches_of(header, &v.rules().map(|r| view::RuleView::Image(v, r)).collect::<Vec<_>>())?;
+    drop(checking);
+    Ok(())
+}
+
+fn computed_term(rel: &str, head: &str) -> Error {
+    Error::Syntax(format!("computed term in body atom {rel} of the rule for {head}: bind it with `v = @f(...)`"))
+}
+
+/// `finish_checks`' checks of the program's fields besides its rules: its lattices bounded, its inputs declared.
+fn header_checks(prog: &Program) -> Result<(), Error> {
     for (relation, decl) in &prog.lattice {
         if !decl.bounded() {
             return Err(Error::UnboundedLattice { relation: relation.clone() });
@@ -716,11 +792,6 @@ pub fn finish_checks(prog: &Program) -> Result<(), Error> {
     if let Some(relation) = prog.inputs.iter().find(|rel| !prog.decls.contains_key(rel.as_str())) {
         return Err(Error::UndeclaredInput { relation: relation.clone() });
     }
-    let checking = crate::code_rule_dsl::logic::profile::span(|| "check the program's cycles and caches".to_owned());
-    cycles::check(prog)?;
-    // A cache is two rules (decision 0103): a broken form refuses the program.
-    caches::caches(prog)?;
-    drop(checking);
     Ok(())
 }
 

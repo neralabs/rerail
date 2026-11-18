@@ -2946,7 +2946,7 @@ always a refusal.
   `RERAIL_JOURNAL` is set, and where the temporary directory is. `RERAIL_OBSERVED_PATHS=1` prints each `stat` and
   its root.
 
-### Q131. (Q83 on final-rerail-shape-rr-align at 4c8152466) `front::finish`'s checks read a tree on a text's version path
+### Q131. (Q83 on final-rerail-shape-rr-align at 4c8152466) (done) `front::finish`'s checks read a tree on a text's version path
 
 - **Found** (2026-11-17, 0281 step 7b): a text's version is now made before `front::finish`. Its rewrites run on the
   version (`lowering_tail::OrderNodes`, `DeclareAxes`), but its checks (`front::finish_checks`: no computed term in
@@ -2955,6 +2955,19 @@ always a refusal.
   tree; the other four are small.
 - **Done when**: each check reads the version (an analysis, or a check over its rules and header), a debug build
   checks it refuses what the tree's refuses, and `link_seeded_version` decodes no tree.
+- **Record** (2026-11-18): each check is written once, over a rule read the same way from a tree or a version
+  (`front/view.rs`: a `RuleView` of either, whose terms and literals are made when asked, from the tree's or the
+  version's strings, and kept by nothing). `cycles::check` and `caches::caches` run over it; on a version,
+  `front::finish_checks_version` reads the rules where they are and the rest from the header (`Version::header`,
+  no rule decoded), with the components and self-reads from the version's `Components` and `Strata`. The
+  lowering's tail (`rr::lowering_tail_on`) runs it and decodes no tree; a debug build checks it refuses what the
+  tree's checks refuse (`front::refusal`: the error's kind, and a value cycle's component). A test build
+  (`test-hooks`) checks the version's checks on every program under 2,000 rules that the tree's check: the same
+  refusals, the same bounded components. With `check_version` made to accept everything, 5 of front's 18 tests
+  fail on that check. One definition, not two: Q132's faults were a tree pass and its version port drifting
+  apart.
+  Tests: front's 18 (`-p rerail-logic`), rr's 146 lowering tests, `a_maintained_run_decodes_and_copies_no_tree`,
+  and ep2's debug run by parts and whole.
 
 ### Q132. (Q90 on final-rerail-shape-rr-align at 4c8152466) (done) A debug build's checks of the lowering on the version fail on ep2's rules
 

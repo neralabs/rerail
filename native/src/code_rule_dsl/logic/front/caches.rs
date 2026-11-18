@@ -17,7 +17,8 @@
 //! The lint: `C` and `K` are declared and differ; every rule of `K` in the program puts a constant in its head (the
 //! version tag); every rule of `C` reads `K`, positively.
 
-use super::{Error, Literal, Program, Term};
+use super::view::{LitView, RuleView, TermView};
+use super::{Error, Program};
 use std::collections::BTreeSet;
 
 /// A cache `out` by its key `key`.
@@ -29,6 +30,12 @@ pub struct Cache {
 
 /// The program's caches, linted (decision 0103); an error names what the lint refuses.
 pub fn caches(prog: &Program) -> Result<Vec<Cache>, Error> {
+    caches_of(prog, &prog.rules.iter().map(RuleView::Tree).collect::<Vec<_>>())
+}
+
+/// `caches` over `rules` (a tree's or a version's, work queue Q131), with the settings and declarations from `prog`
+/// (a version's header).
+pub fn caches_of(prog: &Program, rules: &[RuleView<'_>]) -> Result<Vec<Cache>, Error> {
     let bad = |msg: String| Error::Syntax(format!(".cache: {msg} (decision 0103: a cache is a key rule with a version tag and an output rule that reads it)"));
     let mut out = Vec::new();
     let mut named = BTreeSet::new();
@@ -47,14 +54,14 @@ pub fn caches(prog: &Program) -> Result<Vec<Cache>, Error> {
                 return Err(bad(format!("{rel} is not declared")));
             }
         }
-        for rule in prog.rules.iter().filter(|r| r.head.rel == k) {
-            if !rule.head.args.iter().any(|t| matches!(t, Term::Str(_) | Term::Int(_))) {
-                return Err(bad(format!("the key rule `{rule}` has no version tag: put a constant in its head, as `{k}(x, \"v1\")`")));
+        for rule in rules.iter().filter(|r| r.rel() == k) {
+            if !rule.head().args.iter().any(|t| matches!(t, TermView::Str(_) | TermView::Int(_))) {
+                return Err(bad(format!("the key rule `{}` has no version tag: put a constant in its head, as `{k}(x, \"v1\")`", rule.shown())));
             }
         }
-        for rule in prog.rules.iter().filter(|r| r.head.rel == c) {
-            if !rule.body.iter().any(|l| matches!(l, Literal::Atom(a) if a.rel == k && !a.neg)) {
-                return Err(bad(format!("the output rule `{rule}` does not read {k}")));
+        for rule in rules.iter().filter(|r| r.rel() == c) {
+            if !rule.body().iter().any(|l| matches!(l, LitView::Atom(a) if a.rel == k && !a.neg)) {
+                return Err(bad(format!("the output rule `{}` does not read {k}", rule.shown())));
             }
         }
         out.push(Cache { out: c, key: k });
