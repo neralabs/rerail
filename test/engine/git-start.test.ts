@@ -160,12 +160,18 @@ describe.runIf(LINUX)("Git started through the engine, on Linux", () => {
     expect(engine.stdout).toContain("RERAIL_GIT_START=a b=c");
   });
 
-  it("ends a Git with the signal a read's time limit or stop sends, and kills nothing once it is reaped", async () => {
+  it("ends a Git with the signal a read's time limit or stop sends, and sends no signal once it is reaped", async () => {
     expect(startGitWithoutCopying(loadNativeBinding)).toBe(true);
     const child = startGit("/bin/sh", ["-c", "read line"], process.env, "pipe");
     expect(child.kill("SIGKILL")).toBe(true);
     expect(await ended(child)).toEqual({ stdout: "", code: null, signal: "SIGKILL" });
-    expect([child.exitCode, child.signalCode, child.kill("SIGTERM")]).toEqual([null, "SIGKILL", false]);
+    // Once reaped, its pid can name another process. process.kill stands in for one that took it: it takes the signal.
+    const kills = vi.spyOn(process, "kill").mockImplementation(() => true);
+    try {
+      expect([child.exitCode, child.signalCode, child.kill("SIGTERM"), kills.mock.calls]).toEqual([null, "SIGKILL", false, []]);
+    } finally {
+      kills.mockRestore();
+    }
   });
 
   it("writes Git's input, closes it, and reads its output and its stderr to their ends", async () => {
