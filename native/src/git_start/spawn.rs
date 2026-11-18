@@ -239,7 +239,7 @@ fn c_strings(
 
 /// `program` started with `args` and `env`, its stdin and stdout (and stderr when `pipe_stderr`) on socket pairs:
 /// its pid and this process's ends, in that order. The child's ends are closed here once it has them.
-pub(super) fn spawn_child(
+fn spawn_child(
     program: &str,
     args: &[String],
     env: &[String],
@@ -266,16 +266,28 @@ pub(super) fn spawn_child(
     Ok((pid, ours))
 }
 
+/// `spawn_child`'s pid and ends, and the read end of a pipe whose write end only the exit watch holds: it closes once
+/// the child has exited, whatever a process the child started holds, and the child stays unreaped until then.
+pub(super) fn spawn_watched(
+    program: &str,
+    args: &[String],
+    env: &[String],
+    pipe_stderr: bool,
+) -> io::Result<(libc::pid_t, Vec<OwnedFd>, OwnedFd)> {
+    let (exited, write) = exit_pipe()?;
+    let watch = exit_watch(write)?;
+    let (pid, ours) = spawn_child(program, args, env, pipe_stderr)?;
+    let _ = watch.send(pid);
+    Ok((pid, ours, exited))
+}
+
 pub(super) fn start(
     program: &str,
     args: &[String],
     env: &[String],
     pipe_stderr: bool,
 ) -> io::Result<StartedGit> {
-    let (exited, write) = exit_pipe()?;
-    let watch = exit_watch(write)?;
-    let (pid, ours) = spawn_child(program, args, env, pipe_stderr)?;
-    let _ = watch.send(pid);
+    let (pid, ours, exited) = spawn_watched(program, args, env, pipe_stderr)?;
     let mut fds = ours.into_iter().map(IntoRawFd::into_raw_fd);
     Ok(StartedGit {
         pid,
