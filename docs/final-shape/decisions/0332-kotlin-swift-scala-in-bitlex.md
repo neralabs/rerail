@@ -677,7 +677,7 @@ fun g(
 
 The stop is the byte after `by` (`prev(by_w, 2)`), not its `b`. With `by_w` itself the stop
 looks two bytes ahead, and the CPU's tier 1 then lost the receiver's mark wherever the run
-crossed a word: 16 files were refused that the interpreter read. That is open below (Q33).
+crossed a word: 16 files were refused that the interpreter read. That is open below (Q186).
 
 Still refused: a generic call on `?:`'s right side (`m ?: f<M>()!!`).
 
@@ -1063,7 +1063,7 @@ Single-extra grammars compile as before: rr's tests and the compiler's targeted 
 
 ## Found on the way
 
-- Q33 (open): the CPU's tier 1 gets a `fill` wrong where its stop is a delayed output (one that
+- Q186 (open; Q33 where it was written): the CPU's tier 1 gets a `fill` wrong where its stop is a delayed output (one that
   looks ahead) and the fill crosses a word. `decl_stop = … | by_w` in step 27 lost the
   `dotted` mark at `fun ValueMapperBuilder.forKotlin()` (bytes 2165 to 2192, across 2176) in
   pkl's `ConfigExtensions.kt`; the interpreter's mark is right. `tests::tier1_records` over
@@ -1082,10 +1082,10 @@ Single-extra grammars compile as before: rr's tests and the compiler's targeted 
   position, and a node that ends at a mark. A grammar step that only dropped the comment's
   token was tried and withdrawn.
 
-- Q31: the ladder test `07-textes` was already red at the merged Parser-generators commit. It is
+- Q184 (Q31 where it was written): the ladder test `07-textes` was already red at the merged Parser-generators commit. It is
   theirs to fix.
-- Q30: done in this decision (the settling mark).
-- Q32: a token with no end rule ends at different bytes in the CPU tier 1 and in the interpreter.
+- Q183 (Q30 where it was written): done in this decision (the settling mark).
+- Q185 (Q32 where it was written): a token with no end rule ends at different bytes in the CPU tier 1 and in the interpreter.
   The grammar gives its punctuation a `pair` rule, as rr's does.
 
 ## Next

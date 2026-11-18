@@ -339,7 +339,7 @@ pub(in crate::code_rule_dsl) fn cut(kept: Option<&Retained>, key: [u8; 32], prog
     // Gates decide on the whole program. Reuse it only when every input and derived relation survived unchanged.
     // A view of one input (`input_views`, only with `RERAIL_SESSION_VIEWS=on`) is never kept: its rule stays.
     let views = match super::maintain::views_on() {
-        true => super::maintain::input_views(&prog.v.program(&front::Lists::default()).map_err(Error::Plan)?),
+        true => super::maintain::input_views(prog)?,
         false => BTreeMap::new(),
     };
     let complete = kept.is_some_and(|k| sccs.iter().flatten().all(|r| k.holds(r, prog) || views.contains_key(r)));
@@ -368,13 +368,13 @@ impl Cut {
     /// `cross` without the clean strata's rules: the relations dirty rules read become inputs, and clean outputs are
     /// left to `outputs`.
     ///
-    /// Where `cross` has a version, the cut is a part of it (decision 0244), read and made by its handles: its tree is
-    /// the part's (`lower::Tree::of`), decoded by no reader on the run's path.
-    pub(in crate::code_rule_dsl) fn program(&self, cross: &lower::Lowered) -> lower::Lowered {
+    /// The cut is a part of `cross`'s version (decision 0244), read and made by its handles.
+    pub(in crate::code_rule_dsl) fn program(&self, cross: &lower::Lowered) -> super::Result<lower::Lowered> {
         use crate::code_rule_dsl::logic::program_image::PartFields;
         let (dirty, all, none) = (|rel: &str| !self.clean.contains(rel), |_: &str| true, |_: &str| false);
         let gates: &dyn Fn(&str) -> bool = if self.strata.0 == 0 { &none } else { &all };
-        if let Some(v) = &cross.version {
+        let v = &cross.version;
+        {
             let read: BTreeSet<&str> = v.rules().filter(|r| dirty(v.rel_name(r.head().rel()))).flat_map(|r| r.reads().map(|a| v.rel_name(a.rel()))).collect();
             let mut inputs: Vec<String> = v.inputs().map(|a| v.text(a).to_owned()).collect();
             for rel in self.clean.iter().filter(|r| read.contains(r.as_str())) {
@@ -383,27 +383,10 @@ impl Cut {
                 }
             }
             let outputs: Vec<String> = v.outputs().map(|a| v.text(a)).filter(|o| dirty(o)).map(str::to_owned).collect();
-            let part = super::made_from(true, v.part(&dirty, &inputs, &outputs, PartFields { natives: &dirty, lattice: &all, gates }).ok(), "the session's cut");
-            if let Some(part) = part {
-                return lower::Lowered { program: lower::Tree::of(part.clone()), version: Some(part), maint: None, domains: cross.domains.clone(), ops: cross.ops, dialect: cross.dialect };
-            }
+            let part = v.part(&dirty, &inputs, &outputs, PartFields { natives: &dirty, lattice: &all, gates }).map_err(super::Error::Plan)?;
+            crate::code_rule_dsl::logic::version_trace::note_versions("session.cut", v, &part);
+            Ok(cross.with_version(part))
         }
-        let mut program = (*cross.program).clone();
-        program.rules.retain(|r| !self.clean.contains(r.head.rel.as_str()));
-        program.natives.retain(|rel, _| !self.clean.contains(rel));
-        if self.strata.0 == 0 {
-            program.gates.clear();
-        }
-        let read: BTreeSet<String> = program.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom().map(|a| a.rel.to_string())).collect();
-        for rel in self.clean.iter().filter(|r| read.contains(*r)) {
-            if !program.inputs.contains(rel) {
-                program.inputs.push(rel.clone());
-            }
-        }
-        program.outputs.retain(|o| !self.clean.contains(o));
-        crate::code_rule_dsl::logic::version_trace::note("session.cut", &cross.program, &program);
-        // A program the image has no form for: its tree alone.
-        lower::Lowered { program: lower::Tree::given(program), version: None, maint: None, domains: cross.domains.clone(), ops: cross.ops, dialect: cross.dialect }
     }
 
     /// The clean relations a program reads (its inputs, `is_input`), as kept: each as a source (bound by the caller, as the other inputs) and
@@ -732,6 +715,12 @@ impl Retained {
     }
 
     /// Whether the last run's rows of a relation or an input are kept.
+    /// Whether `rel`'s old rows are kept, read or not yet: a derived relation the part holds or the frames hold, or an
+    /// input whose source the last run kept (decision 0298: what a general form takes as kept).
+    pub(in crate::code_rule_dsl) fn holds_old(&self, rel: &str) -> bool {
+        self.keeps(rel) || self.input_srcs.contains_key(rel)
+    }
+
     pub(in crate::code_rule_dsl) fn has_old(&self, rel: &str) -> bool {
         self.rels.contains_key(rel) || self.late.borrow().contains_key(rel) || self.input_srcs.contains_key(rel)
     }
@@ -939,6 +928,9 @@ impl Source for Renamed {
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
         self.0.estimated_matches(column, batch)
     }
+    fn lookup_cost(&self, column: usize) -> f64 {
+        self.0.lookup_cost(column)
+    }
     fn estimated_matches_all(&self, columns: &[usize]) -> usize {
         self.0.estimated_matches_all(columns)
     }
@@ -1117,6 +1109,9 @@ impl Source for Layered {
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
         self.kept.estimated_matches(column, batch)
     }
+    fn lookup_cost(&self, column: usize) -> f64 {
+        self.kept.lookup_cost(column)
+    }
     fn indexed(&self, column: usize) -> bool {
         self.kept.indexed(column)
     }
@@ -1201,9 +1196,11 @@ pub mod tests {
         let mut kept=Retained {key,inputs:inputs.clone(),rels,input_srcs:Default::default(),measured:Default::default(),input_stats:Default::default(),input_docs:Default::default(),docs:Default::default(),patched:Default::default(),frames:None,admitted:Default::default(),late:Default::default(),late_stats:Default::default(),past:Default::default()};
         let result=cut(Some(&kept),key,&pl(&p),&st(&p),&inputs).unwrap();
         assert_eq!(result.strata,(0,strata.len()));
-        let lowered=lower::Lowered {program:lower::Tree::given(p.clone()),version:None,maint:None,domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};
-        let reused=result.program(&lowered);
-        assert!(reused.program.rules.is_empty() && reused.program.gates.is_empty());
+        let v=crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap().0;
+        let lowered=lower::Lowered {version:v,maint:None,domains:Default::default(),ops:[0;3],dialect:crate::code_rule_dsl::language::GrammarDialect::Python};
+        let reused=result.program(&lowered).unwrap();
+        let placed=reused.placed().unwrap();
+        assert!(placed.v.size()==0 && placed.fields().unwrap().gates().is_empty());
         let mut changed=inputs.clone();
         *changed.values_mut().next().unwrap()=8;
         for (candidate,rows) in [(key,changed),([2;32],inputs.clone())] {
@@ -2513,8 +2510,11 @@ impl Retained {
         }
         // Behind the run (decision 0104): the part's fixpoint is reached, and these are its results for the next run;
         // a wait for the writer's room here holds no wave. Each frame was encoded as it was made (`FramePut::encoded`).
-        // Nothing changed: nothing written (decision 0227; the program's relations are kept by reachability).
+        // Nothing changed: nothing written (decision 0227; the program's relations are kept by reachability). A
+        // program that reuses an earlier one's frames (an edit, decision 0302) holds them, once: the earlier one
+        // superseded, nothing else keeps them.
         if puts.is_empty() && retags.is_empty() && delta_out.is_empty() {
+            store.hold_frames(was.space, was.names.values().cloned().collect(), super::run_token(), self.key);
             return Ok(written);
         }
         // Mapped (decision 0212): every atom a frame holds is in an `s` column (a text-owned input's owners too, in its

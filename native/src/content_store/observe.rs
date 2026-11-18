@@ -115,7 +115,12 @@ impl Entry {
     /// Whether the answer still holds for a path whose stat is `now`: the same stat, and recorded safely after the
     /// path last changed.
     fn holds(&self, now: &Stat) -> bool {
-        self.stat == *now && self.stat.mtime_ns < self.recorded_ns - RACY_NS && self.stat.ctime_ns < self.recorded_ns - RACY_NS
+        self.stat == *now && !self.racy()
+    }
+
+    /// Whether it was recorded inside the racy window: the path changed less than [`RACY_NS`] before.
+    fn racy(&self) -> bool {
+        self.stat.mtime_ns >= self.recorded_ns - RACY_NS || self.stat.ctime_ns >= self.recorded_ns - RACY_NS
     }
 }
 
@@ -192,6 +197,9 @@ pub struct Observer {
     entries: BTreeMap<PathBuf, Entry>,
     /// Paths whose entry changed since the last `flush`.
     dirty: Vec<PathBuf>,
+    /// Paths recorded inside the racy window (`Entry::holds`) since the outermost run's last end: read again then,
+    /// once the window has passed (`settle_racy`).
+    racy: Vec<PathBuf>,
     /// Git blob → sha256 of its bytes, seen this process (and in `git_alias`).
     aliases: HashMap<Vec<u8>, [u8; 32]>,
     /// Each path's canonical form (`canonical`), kept as `canonical:<path>` records (`run_record`), and those new
@@ -310,7 +318,7 @@ impl Observer {
         // The journal's cookies in a directory of their own: a stream watches it with its roots, and is told every
         // event in it. Beside the store, it was told every write of the store, its outputs and logs (2,596 events in
         // one warm batch's first ask, all of them replayed and dropped).
-        let cookies = path.map(cookie_dir).filter(|d| std::fs::create_dir_all(d).is_ok());
+        let cookies = path.map(cookie_dir).filter(|d| private_dir(d).is_ok());
         let stored_roots: Vec<PathBuf> = db
             .as_ref()
             .map(|k| k.meta.keys().filter(|k| k.starts_with("journal:")).filter_map(|k| k.splitn(3, ':').nth(2)).map(PathBuf::from).collect())
@@ -341,7 +349,7 @@ impl Observer {
         if let Some(k) = db.as_ref() {
             own.extend(k.meta.keys().filter_map(|k| k.strip_prefix(OWN_OUTPUT)).flat_map(|d| spellings(Path::new(d))));
         }
-        Observer { db, entries, dirty: Vec::new(), aliases, new_aliases: Vec::new(), canon, new_canon: Vec::new(), epoch, validate_every, counts: Counts::default(), cwd: std::env::current_dir().unwrap_or_default(), git: Vec::new(), roots: Vec::new(), flushes: 0, open: 0, stored_roots, volumes, cookies, own, unreported: Vec::new() }
+        Observer { db, entries, dirty: Vec::new(), racy: Vec::new(), aliases, new_aliases: Vec::new(), canon, new_canon: Vec::new(), epoch, validate_every, counts: Counts::default(), cwd: std::env::current_dir().unwrap_or_default(), git: Vec::new(), roots: Vec::new(), flushes: 0, open: 0, stored_roots, volumes, cookies, own, unreported: Vec::new() }
     }
 
     /// Records `dir` as a directory a run writes its outputs into: rerail's own (decision 0284), for this observer
@@ -552,6 +560,9 @@ impl Observer {
         {
             return;
         }
+        if entry.racy() {
+            self.racy.push(path.to_owned());
+        }
         self.entries.insert(path.to_owned(), entry);
         self.dirty.push(path.to_owned());
     }
@@ -614,7 +625,6 @@ impl Observer {
     /// files (notes/t40). `observe` reaches the observer (the process's, under its lock): the `realpath`s run with it
     /// released, since a thread waiting on the pool may run another job, and that job may observe.
     pub fn canonical_all(observe: impl Fn(&mut dyn FnMut(&mut Observer)), paths: &[PathBuf]) -> Vec<Option<PathBuf>> {
-        use rayon::prelude::*;
         let mut out: Vec<Option<PathBuf>> = vec![None; paths.len()];
         let mut todo: Vec<(usize, PathBuf)> = Vec::new();
         observe(&mut |o| {
@@ -628,7 +638,7 @@ impl Observer {
         if todo.is_empty() {
             return out;
         }
-        let got: Vec<Option<PathBuf>> = todo.par_iter().with_min_len(64).map(|(_, p)| std::fs::canonicalize(p).ok()).collect();
+        let got = realpaths(&todo.iter().map(|(_, p)| p.as_path()).collect::<Vec<_>>());
         observe(&mut |o| {
             for ((i, path), c) in std::mem::take(&mut todo).into_iter().zip(&got) {
                 out[i] = c.clone().map(|c| o.canonical_resolved(path, c));
@@ -1138,7 +1148,16 @@ impl Observer {
             return Some(listing);
         }
         self.counts.listed += 1;
-        // rerail's own files are not in a listing (decision 0284): what they hold changes with every run.
+        let listing = self.read_listing(dir, own)?;
+        if encode_listing(&listing).is_some() && !own {
+            self.remember(dir, Entry { kind: Kind::Dir, stat: now, digest: listing_digest(&listing), listing: Some(Arc::clone(&listing)), recorded_ns: started });
+        }
+        Some(listing)
+    }
+
+    /// `dir`'s entries as read now. rerail's own files are not in a listing (decision 0284): what they hold changes
+    /// with every run.
+    fn read_listing(&self, dir: &Path, own: bool) -> Option<Listing> {
         let mut entries: Vec<(String, bool)> = std::fs::read_dir(dir)
             .ok()?
             .filter_map(|e| e.ok())
@@ -1153,11 +1172,47 @@ impl Observer {
             })
             .collect();
         entries.sort();
-        let listing: Listing = Arc::new(entries);
-        if encode_listing(&listing).is_some() && !own {
-            self.remember(dir, Entry { kind: Kind::Dir, stat: now, digest: listing_digest(&listing), listing: Some(Arc::clone(&listing)), recorded_ns: started });
+        Some(Arc::new(entries))
+    }
+
+    /// The answers recorded inside the racy window, read again where the window has passed since their path last
+    /// changed (by `now`): the same stat and the same bytes (or listing) are then trusted, recorded by the run that
+    /// read them, behind it. Without this the next run, a warm one, reads each again and writes it (Q45: rules
+    /// copied in just before a cold run). An answer whose path changed, or still inside the window, is left as it
+    /// was: one still inside it waits for a later end of the process's runs (the rules a process reads first are
+    /// flushed seconds before its corpus run ends), one that changed is the next run's to read. Sound by the racy
+    /// rule itself: the read starts past the window, so a write after it changes the stat.
+    fn settle_racy(&mut self, now: i64) {
+        let mut waiting = Vec::new();
+        for path in std::mem::take(&mut self.racy) {
+            let Some(e) = self.entries.get(&path).filter(|e| e.racy()).cloned() else { continue };
+            if e.stat.mtime_ns.max(e.stat.ctime_ns) >= now - RACY_NS {
+                waiting.push(path);
+                continue;
+            }
+            let Some((kind, stat)) = Self::own_stat(&path) else { continue };
+            if kind != e.kind || stat != e.stat {
+                continue;
+            }
+            let (digest, listing) = match kind {
+                Kind::File => {
+                    let Ok(bytes) = std::fs::read(&path) else { continue };
+                    self.counts.hashed += 1;
+                    self.counts.bytes += bytes.len() as u64;
+                    (Sha256::digest(&bytes).into(), None)
+                }
+                Kind::Dir => {
+                    let Some(l) = self.read_listing(&path, false) else { continue };
+                    self.counts.listed += 1;
+                    (listing_digest(&l), Some(l))
+                }
+                _ => continue,
+            };
+            if digest == e.digest && Self::own_stat(&path).is_some_and(|(_, s)| s == e.stat) {
+                self.remember(&path, Entry { listing: listing.or(e.listing), recorded_ns: now, ..e });
+            }
         }
-        Some(listing)
+        self.racy.extend(waiting);
     }
 
     /// The digest of `dir`'s listing, as `listing` gives it.
@@ -1213,6 +1268,9 @@ impl Observer {
     /// again. A run inside a run (phase 0's, a batch's policies) leaves the outer run's roots asked: counting its end
     /// asked each of them again after every inner run.
     pub fn flush(&mut self) {
+        if self.open <= 1 {
+            self.settle_racy(now_ns());
+        }
         self.write_dirty();
         self.open = self.open.saturating_sub(1);
         if self.open == 0 {
@@ -1419,6 +1477,9 @@ impl Writer {
         let thread = rerail_accel::exec::service("rerail-observer-writer", None, move || {
                 super::hazards::behind_the_run();
                 let db = (|| {
+                    // The answers name the user's files, their stats and contents' digests: private to the user, as
+                    // the store is (docs/privacy.md). Made so before SQLite creates it, whose side files take its mode.
+                    super::private_files::prepare(&path).ok()?;
                     let db = Connection::open(&path).ok()?;
                     db.busy_timeout(std::time::Duration::from_secs(10)).ok()?;
                     db.execute_batch("PRAGMA journal_mode=WAL;").ok()?;
@@ -1517,6 +1578,53 @@ fn under(path: impl AsRef<Path>, root: impl AsRef<Path>) -> bool {
 }
 
 /// Whether `path` has no `.` or `..` component: its last name is a name in its directory's listing.
+/// Each of `paths`' `realpath`, a directory at a time (decision 0300 §2): a directory resolved once, and a file in it
+/// is its canonical form and the file's name where its listing holds that name as given (the case on disk: macOS's
+/// `realpath` gives that) and the entry is no symlink. Any other path is resolved on its own. One `realpath` a file
+/// was 8 thread-seconds of `getattrlist` over PostHog's 29,885 files on a cold store, all at once in the kernel.
+pub fn realpaths(paths: &[&Path]) -> Vec<Option<PathBuf>> {
+    use rayon::prelude::*;
+    let mut by_dir: HashMap<&Path, Vec<usize>> = HashMap::new();
+    let mut alone: Vec<usize> = Vec::new();
+    for (i, p) in paths.iter().enumerate() {
+        match (p.is_absolute() && plain(p)).then(|| p.parent().zip(p.file_name())).flatten() {
+            Some((dir, _)) => by_dir.entry(dir).or_default().push(i),
+            None => alone.push(i),
+        }
+    }
+    let dirs: Vec<(&Path, Vec<usize>)> = by_dir.into_iter().collect();
+    let resolved: Vec<Vec<(usize, Option<PathBuf>)>> = dirs
+        .par_iter()
+        .map(|(dir, files)| {
+            let canonical = std::fs::canonicalize(dir).ok();
+            // The names as on disk, and which are symlinks (the listing's entry type: no stat).
+            let names: HashMap<std::ffi::OsString, bool> = match (&canonical, std::fs::read_dir(dir)) {
+                (Some(_), Ok(entries)) => entries.flatten().map(|e| (e.file_name(), e.file_type().is_ok_and(|t| t.is_symlink()))).collect(),
+                _ => HashMap::new(),
+            };
+            files
+                .iter()
+                .map(|&i| {
+                    let name = paths[i].file_name().expect("a file name");
+                    let found = match (&canonical, names.get(name)) {
+                        (Some(c), Some(false)) => Some(c.join(name)),
+                        _ => std::fs::canonicalize(paths[i]).ok(),
+                    };
+                    (i, found)
+                })
+                .collect()
+        })
+        .collect();
+    let mut out: Vec<Option<PathBuf>> = vec![None; paths.len()];
+    for (i, c) in resolved.into_iter().flatten() {
+        out[i] = c;
+    }
+    for i in alone {
+        out[i] = std::fs::canonicalize(paths[i]).ok();
+    }
+    out
+}
+
 fn plain(path: &Path) -> bool {
     !path.components().any(|c| matches!(c, std::path::Component::CurDir | std::path::Component::ParentDir))
 }
@@ -1527,6 +1635,15 @@ fn cursor_key(root: &Path, volume: [u8; 16]) -> String {
 }
 
 /// Where the observer of the store at `path` writes the journal's cookies: `<store>.cookies`, holding nothing else.
+/// A folder of the observer's, created private to the user (`0700`) where it is absent.
+fn private_dir(dir: &Path) -> std::io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder.create(dir)
+}
+
 fn cookie_dir(path: &Path) -> PathBuf {
     let mut name = path.as_os_str().to_owned();
     name.push(".cookies");
@@ -1626,6 +1743,17 @@ pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Resul
             .map(|(key, _, _)| key)
             .collect()
     };
+    if std::env::var_os("RERAIL_OBSERVE_TRACE").is_some() {
+        eprintln!(
+            "rerail: observer collect: roots {:?}; kept {:?}; cursors dropped {dropped:?}; {} answers dropped (first {:?}); {} records dropped (first {:?})",
+            roots.iter().map(|r| (&r.2, r.3.is_some(), r.4)).collect::<Vec<_>>(),
+            kept.iter().map(|k| &k.1).collect::<Vec<_>>(),
+            answers.len(),
+            answers.iter().take(3).collect::<Vec<_>>(),
+            records.len(),
+            records.iter().take(3).collect::<Vec<_>>()
+        );
+    }
     // An output directory recorded as rerail's own (`own_output`) that is gone: nothing there to leave out.
     let outputs: Vec<String> = {
         let mut st = db.prepare(&format!("SELECT key FROM observer_meta WHERE key LIKE '{OWN_OUTPUT}%'"))?;
@@ -1751,8 +1879,22 @@ pub struct DigestRead {
 impl DigestRead {
     /// The file's length and bytes' digest; `None` when it cannot be read.
     pub fn hash(&self) -> Option<(u64, [u8; 32])> {
-        let bytes = std::fs::read(&self.path).ok()?;
-        Some((bytes.len() as u64, Sha256::digest(&bytes).into()))
+        self.read().map(|bytes| Self::hashed(&bytes))
+    }
+
+    /// The file's bytes, for a caller that keeps them (a run's one read of its sources, decision 0300).
+    pub fn read(&self) -> Option<Vec<u8>> {
+        std::fs::read(&self.path).ok()
+    }
+
+    /// `bytes`' length and digest, as `hash` gives a file's.
+    pub fn hashed(bytes: &[u8]) -> (u64, [u8; 32]) {
+        (bytes.len() as u64, Sha256::digest(bytes).into())
+    }
+
+    /// The file's stat as it was before the read: the bytes are its content while the file's stat is this.
+    pub fn stat(&self) -> &Stat {
+        &self.stat
     }
 }
 
@@ -2183,6 +2325,36 @@ mod tests {
         assert_eq!(o.counts.hashed, 2, "inside the racy window every observation reads");
     }
 
+    /// An answer recorded inside the racy window is read again at the run's end once the window has passed, and
+    /// trusted then: the next run (a warm one) neither reads nor records it (Q45). One whose bytes changed is not.
+    #[test]
+    fn a_racy_answer_is_settled_at_the_runs_end() {
+        let dir = tempfile::tempdir().unwrap();
+        let (file, other) = (dir.path().join("a.py"), dir.path().join("b.py"));
+        std::fs::write(&file, "x = 1\n").unwrap();
+        std::fs::write(&other, "y = 1\n").unwrap();
+        let mut o = Observer::open(None);
+        o.validate_every = 0;
+        let d = o.digest(&file).unwrap();
+        o.digest(&other).unwrap();
+        o.listing(dir.path()).unwrap();
+        assert!(o.entries.values().all(Entry::racy), "written just now: recorded inside the window");
+        // Still inside the window: left as it was, and kept for a later end.
+        o.settle_racy(now_ns());
+        assert!(o.entries[&file].racy());
+        assert_eq!(o.racy.len(), 3, "each waits for a later end: {:?}", o.racy);
+        // `b.py`'s recorded digest no longer its bytes' (as if written in the recording's tick, its stat kept).
+        o.entries.get_mut(&other).unwrap().digest = [7; 32];
+        let hashed = o.counts.hashed;
+        // Past the window (as a run's end some seconds later is).
+        o.settle_racy(now_ns() + 3 * RACY_NS);
+        assert_eq!(o.counts.hashed, hashed + 2, "each racy file read again once");
+        assert!(!o.entries[&file].racy() && !o.entries[dir.path()].racy(), "the same bytes and listing: trusted");
+        assert!(o.entries[&other].racy(), "bytes that differ from the answer: left for the next run to read");
+        assert!(o.racy.is_empty());
+        assert_eq!(o.entries[&file].digest, d);
+    }
+
     /// A rewrite that keeps size and mtime is seen by ctime; a validation pass sees what a lying stat hides.
     #[test]
     fn validation_catches_bytes_changed_under_a_kept_stat() {
@@ -2354,6 +2526,28 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
+    /// The observer's database names the user's files, their stats and digests: private to the user, as the store
+    /// is (docs/privacy.md). It was made with the umask's mode (`0644`), readable by every user of the machine.
+    #[cfg(unix)]
+    #[test]
+    fn the_observers_database_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = std::env::temp_dir().join(format!("rerail-observer-private-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        let store = base.join("store.files");
+        let o = Observer::open(Some(&store));
+        o.written();
+        let mode = |p: &Path| std::fs::metadata(p).map(|m| m.permissions().mode() & 0o777).ok();
+        assert_eq!(mode(&store), Some(0o600));
+        let mut wal = store.as_os_str().to_owned();
+        wal.push("-wal");
+        assert!(matches!(mode(Path::new(&wal)), None | Some(0o600)), "its WAL takes its mode");
+        assert!(matches!(mode(&cookie_dir(&store)), None | Some(0o700)));
+        drop(o);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     /// News that forgets nothing (another program's file under a watched root) keeps the stored cursor too, until it
     /// ages or its replay names `CURSOR_PATHS` paths: a warm run wrote the moved cursor whenever anything changed
     /// under a root, though nothing it kept had (`RERAIL_WARM`). News that forgets an answer stores it at once.
@@ -2438,6 +2632,25 @@ mod tests {
     }
 
     /// `collect` drops what no run asks any more, and keeps the rest.
+    #[test]
+    fn realpaths_a_directory_at_a_time_are_each_files_own() {
+        let given = std::env::temp_dir().join(format!("rerail-realpaths-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&given);
+        std::fs::create_dir_all(given.join("d/e")).unwrap();
+        std::fs::write(given.join("d/a.py"), "").unwrap();
+        std::fs::write(given.join("d/e/b.py"), "").unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(given.join("d/e/b.py"), given.join("d/link.py")).unwrap();
+            std::os::unix::fs::symlink(given.join("d/e"), given.join("d/dirlink")).unwrap();
+        }
+        let asked: Vec<PathBuf> = ["d/a.py", "d/e/b.py", "d/link.py", "d/dirlink/b.py", "d/missing.py", "d/A.py", "d/e/../a.py"].iter().map(|p| given.join(p)).collect();
+        let refs: Vec<&Path> = asked.iter().map(PathBuf::as_path).collect();
+        let one_by_one: Vec<Option<PathBuf>> = asked.iter().map(|p| std::fs::canonicalize(p).ok()).collect();
+        assert_eq!(realpaths(&refs), one_by_one, "as `realpath` gives each: symlinks, a missing file, another case, `..`");
+        let _ = std::fs::remove_dir_all(&given);
+    }
+
     #[test]
     fn collection_drops_what_no_run_asks_any_more() {
         let given = std::env::temp_dir().join(format!("rerail-observer-collect-{}", std::process::id()));

@@ -299,6 +299,11 @@ struct P<'a> {
 
 /// `src` parsed in `dialect`.
 pub fn parse(src: &[u8], dialect: Dialect) -> R<Tape> {
+    parse_into(src, dialect, &mut Writer::<Widths>::finish_columns)
+}
+
+/// [`parse`], the writer finished by `finish`: format 15's columns, or format 16 (decision 0293).
+pub fn parse_into<Out>(src: &[u8], dialect: Dialect, finish: &mut dyn FnMut(Writer) -> Result<Out, Redo>) -> R<Out> {
     let lx = Lexer::new(src);
     if let Some(at) = lx.first_nul() {
         return Err(Refusal::Lex(at as u32));
@@ -334,8 +339,8 @@ pub fn parse(src: &[u8], dialect: Dialect) -> R<Tape> {
                 r => r,
             });
         }
-        match p.w.finish_columns() {
-            Ok(columns) => return Ok(columns),
+        match finish(p.w) {
+            Ok(done) => return Ok(done),
             Err(Redo(w)) => {
                 if w == widths {
                     return Err(Refusal::TooLarge);

@@ -523,8 +523,12 @@ pub fn check_shape(name: &str, c: &Compiled) {
             continue;
         }
         let body = crate::clif_text::body_of(&pass.clif);
-        let want = 1 + 2 * pass.extracts + usize::from(pass.ascii_branch) + pass.gate_branches + pass.round_branches;
-        assert_eq!(branches(&body), want, "{name}: tier 1's pass {k} branches beyond its loop, its flattening, its ASCII test and its gates");
+        if body.is_empty() {
+            // No block loop (`native_cpu_block::bodiless_body`): the token loop is the pass's.
+            continue;
+        }
+        let want = 1 + 2 * pass.extracts + usize::from(pass.ascii_branch) + pass.gate_branches + pass.round_branches + pass.rare_branches;
+        assert_eq!(branches(&body), want, "{name}: tier 1's pass {k} branches beyond its loop, its flattening, its ASCII test, its gates and its rare paths");
     }
     let heads = &c.parser.tier2.heads;
     assert!(heads.iter().any(|h| h.1 == Step::Token), "{name}: tier 2 has no token loop");
@@ -542,7 +546,8 @@ pub fn check_shape(name: &str, c: &Compiled) {
     // `native_cpu_stream::outline`).
     // An indirect jump only through a jump table of its own: tier 2's shared arms
     // (`native_cpu_stream::shared_runs`) end in one, a `br` each.
-    let tables = c.parser.tier2.clif.lines().filter(|l| l.contains(" br_table ")).count();
+    // Counted as compiled: `switch_trees` (0322) makes a small one compares.
+    let tables = c.parser.tier2.tables;
     for (tier, asm, own, tables) in [("tier 1", &c.parser.tier1.disassembly, c.parser.tier1.own_calls(), 0), ("tier 2", &c.parser.tier2.disassembly, c.parser.tier2.own_calls, tables)] {
         // A jump table's sequence is one line, its `br` inside, its entries the function's labels.
         let (tables_asm, rest): (Vec<&str>, Vec<&str>) = asm.lines().partition(|l| l.contains("jt_entries"));
@@ -551,6 +556,25 @@ pub fn check_shape(name: &str, c: &Compiled) {
         assert_eq!(tables_asm.len(), tables, "{name}: {tier} jumps other than by its own tables");
         assert_eq!(asm.matches("blr").count(), own, "{name}: {tier} calls out: {:?}", asm.lines().filter(|l| l.contains("blr")).collect::<Vec<_>>());
     }
+}
+
+/// Tier 1 compiled agrees with its interpreter on a document: the same run, or, for a file both
+/// refuse, the same but for the codes past the token that refused (decision 0177, "A refusal
+/// leaves the loop"): the compiled loop leaves there and writes no code after it (each is 0), while
+/// the interpreter goes on. The stage's outputs and positions, made before the loop, are the same.
+fn tier1_agrees(compiled: &crate::block::BlockRun, interpreted: &crate::block::BlockRun) -> bool {
+    let refused = |r: &crate::block::BlockRun| r.totals.iter().any(|&t| t != 0);
+    if compiled == interpreted {
+        return true;
+    }
+    let left = compiled.codes.iter().zip(&interpreted.codes).position(|(a, b)| a != b).unwrap_or(compiled.codes.len());
+    refused(compiled)
+        && refused(interpreted)
+        && compiled.totals == interpreted.totals
+        && compiled.outputs == interpreted.outputs
+        && compiled.positions == interpreted.positions
+        && compiled.codes.len() == interpreted.codes.len()
+        && compiled.codes[left..].iter().all(|&c| c == 0)
 }
 
 /// A ladder's checks (`every_step_parses_as_the_reference`) over `steps`, mutations drawn from
@@ -585,7 +609,7 @@ pub fn check_ladder(
             let interp = crate::stream::run(&c.program, &bytes, &run).ok().map(as_ids);
             let compiled = c.parser.parse(&bytes).ok().map(as_ids);
             let tier1 = c.parser.tier1.extract(&bytes);
-            if tier1 != run {
+            if !tier1_agrees(&tier1, &run) {
                 differ.push(format!("{}: tier 1 compiled differs from its interpreter", show()));
                 break;
             }

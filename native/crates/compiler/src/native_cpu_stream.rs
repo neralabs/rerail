@@ -273,6 +273,8 @@ pub struct CompiledStream {
     /// Its calls, each of an outlined function made from the same program (`outline`): the
     /// only calls the machine code may have.
     pub own_calls: usize,
+    /// Its jump tables as compiled: those `switch_trees` (0322) left, each a `br` of its own.
+    pub tables: usize,
     /// Its functions of clusters (`compile_cut`: one, the token loop's alone), and their tail
     /// calls of each other: one where a jump left its cluster.
     pub clusters: usize,
@@ -5122,10 +5124,11 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
     // SAFETY: `tempo_stream` was declared and defined with this signature.
     let entry = unsafe { std::mem::transmute::<*const u8, Entry>(code) };
     let own_calls = calls;
+    let tables = defined.iter().map(|c| c.func.layout.blocks().filter(|&b| c.func.layout.last_inst(b).is_some_and(|i| matches!(c.func.dfg.insts[i], cranelift_codegen::ir::InstructionData::BranchTable { .. }))).count()).sum();
     let marks = words.iter().filter_map(|b| if let Op::Mark { order, .. } = b.operation { Some(u64::from(order) + 1) } else { None }).max().unwrap_or(0);
     let wraps = framed(words);
     let two_slots = has_context(words);
-    Ok(CompiledStream { _module: module, _split: split, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, wraps, widths, tag, classes: supertype_classes(native)?, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges, ir, entry_id: id.as_u32() })
+    Ok(CompiledStream { _module: module, _split: split, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, wraps, widths, tag, classes: supertype_classes(native)?, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, tables, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges, ir, entry_id: id.as_u32() })
 }
 
 /// What an instruction does to `ctx`'s fields (`state_in_registers`).
@@ -6005,7 +6008,9 @@ fn unsigned_builder(flags: &[(&str, &str)]) -> Result<JITBuilder, Error> {
     for (k, v) in flags.iter().copied().chain([("use_colocated_libcalls", "false"), ("is_pic", "false")]) {
         shared.set(k, v).map_err(|_| Error::BackendFailure)?;
     }
-    let isa = cranelift_codegen::isa::lookup_by_name("aarch64-apple-darwin")
+    // The host's ISA with its detected flags, as the JIT's (a toggle's `clmul` needs
+    // `has_pmull`, `native_cpu_block::clmul`).
+    let isa = cranelift_native::builder()
         .map_err(|_| Error::BackendFailure)?
         .finish(cranelift_codegen::settings::Flags::new(shared))
         .map_err(|_| Error::BackendFailure)?;

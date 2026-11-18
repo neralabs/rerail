@@ -128,6 +128,22 @@ thread_local! {
     static BINDER: std::cell::RefCell<Vec<&'static str>> = const { std::cell::RefCell::new(Vec::new()) };
     /// The slots of the rule being compiled whose values are arena texts (`mj::ROWTEXT`'s).
     static ARENA: std::cell::RefCell<Vec<usize>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// The component's own columns whose values are arena texts (decision 0307: a `shortlex_min` relation's value,
+    /// made by its rules' rounds into one arena), as (relation, column): set while its plans compile (`own_texts`).
+    static OWN_TEXTS: std::cell::RefCell<Vec<(usize, usize)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Runs `f` (a component's plans compiled) with `cols` its own columns of arena texts (decision 0307).
+pub(in crate::code_rule_dsl) fn own_texts<T>(cols: Vec<(usize, usize)>, f: impl FnOnce() -> T) -> T {
+    let was = OWN_TEXTS.with_borrow_mut(|o| std::mem::replace(o, cols));
+    let out = f();
+    OWN_TEXTS.with_borrow_mut(|o| *o = was);
+    out
+}
+
+/// Whether column `c` of own relation `rel` holds arena texts (`own_texts`).
+fn own_text(rel: usize, c: usize) -> bool {
+    OWN_TEXTS.with_borrow(|o| o.contains(&(rel, c)))
 }
 
 /// Whether slot `x` of the rule being compiled holds an arena text (a text function's value).
@@ -149,6 +165,7 @@ fn text_function(name: &str) -> Option<(u32, usize, usize)> {
         SqlSubstr => mj::TEXTFN_SQL_SUBSTR,
         Slice => mj::TEXTFN_SLICE,
         ToString => mj::TEXTFN_TO_STRING,
+        ZeroPad => mj::TEXTFN_ZERO_PAD,
         Replace => mj::TEXTFN_REPLACE,
     };
     Some((f, texts, nums))
@@ -446,6 +463,17 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
                 };
                 if keys.len() > mj::MAX_KEYS || tests.len() > mj::MAX_TESTS || atom_binds.len() > mj::MAX_BINDS {
                     return Err("an atom with more keys, tests or binds than a stage holds".into());
+                }
+                // An own column of arena texts (decision 0307) is read as the binding's text, never matched by value:
+                // one text made in two rounds has two values.
+                if let Some((rel, _)) = own && OWN_TEXTS.with_borrow(|o| o.iter().any(|&(r, _)| r == rel)) {
+                    let text = |c: usize| own_text(rel, c);
+                    if keys.iter().any(|&(c, _)| text(c)) || tests.iter().any(|&(a, b)| text(a) || text(b)) || j.fused[i].is_some() || *neg {
+                        return Err("a made text across rounds matched, tested or negated (decision 0307: read only as a text)".into());
+                    }
+                    for &(_, s) in atom_binds.iter().filter(|&&(c, _)| text(c)) {
+                        ARENA.with_borrow_mut(|x| x.push(s));
+                    }
                 }
                 let mut d = mj::Stage { mode: if *neg { mj::ANTI } else if atom_binds.is_empty() { mj::SEMI } else { mj::JOIN }, ..mj::Stage::default() };
                 for (k, &(c, key)) in keys.iter().enumerate() {
@@ -1272,6 +1300,19 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                 let n_all = rel.len();
                 let ids: Option<Vec<usize>> = (rel.ndead > 0).then(|| (0..n_all).filter(|&id| !is_dead(&rel.dead, id as u32)).collect());
                 let n = ids.as_ref().map_or(n_all, Vec::len);
+                // A flat relation in its block is read where it lies (decision 0325 step 3): nothing uploaded, and the
+                // entry holds every column, each at its own place.
+                if let Some(b) = rel.in_block().filter(|_| ids.is_none() && !matches!(owner, Owner::Src(_))) {
+                    let device = rerail_accel::gpu::join::device()?;
+                    let held = rerail_accel::gpu::join::Held::kept(b.facts.block.gpu_buffer(device), Box::new(b.facts.clone()));
+                    let dev = mj::DevRel::in_block(held, b.at, n, rel.k);
+                    rep.in_place += 1;
+                    let bytes = old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.verdicts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
+                    let (texts, verdicts, mapped) = old.map_or_else(Default::default, |o| (o.texts, o.verdicts, o.mapped));
+                    res.entries.push(Entry { owner, cols: (0..rel.k).collect(), dev: Rc::new(dev), indexes: Vec::new(), texts, verdicts, mapped, bytes, used: clock });
+                    res.bytes = res.bytes();
+                    res.entries.len() - 1
+                } else {
                 let k = want.len();
                 res.trim(8 * k * n);
                 // The process's device budget short (the syntax side's tapes hold most of it): every relation kept
@@ -1316,10 +1357,11 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                             }
                         }
                         (_, None) => {
+                            // Each wanted value read where it lies (`RowRef::Rows`), not the row copied whole.
                             for r in 0..n {
-                                let row = rel.row(row_of(r));
+                                let row = rel.at(row_of(r));
                                 for (c, &w) in want.iter().enumerate() {
-                                    v[c * n + r] = row[w];
+                                    v[c * n + r] = row.at(w);
                                 }
                             }
                         }
@@ -1345,6 +1387,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                 res.entries.push(Entry { owner, cols: want, dev: Rc::new(dev), indexes: Vec::new(), texts, verdicts, mapped, bytes, used: clock });
                 res.bytes = res.bytes();
                 res.entries.len() - 1
+                }
                 }
             }
         };
@@ -1402,7 +1445,8 @@ pub fn column_stats(cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStat
         .zip(&gathered)
         .map(|((c, d), g)| match (c, d, g) {
             (StatColumn::Values(v), _, _) => StatCol::Host(v),
-            (StatColumn::Rel(..), Some((d, at)), _) => StatCol::Device { buffer: &d.held().buffer, at: at * d.rows, rows: d.rows },
+            (StatColumn::Rel(..), Some((d, at)), _) if d.at != 0 => StatCol::Device { buffer: &d.held().buffer, at: d.at as usize, rows: d.rows, col: Some(*at as u32) },
+            (StatColumn::Rel(..), Some((d, at)), _) => StatCol::Device { buffer: &d.held().buffer, at: at * d.rows, rows: d.rows, col: None },
             (_, _, g) => StatCol::Host(g.as_deref().expect("gathered")),
         })
         .collect();
@@ -1416,7 +1460,7 @@ fn column_values(rel: &InRel, col: usize) -> Vec<i64> {
     let n = rel.len();
     let live = (0..n).filter(|&id| rel.ndead == 0 || !is_dead(&rel.dead, id as u32));
     if rel.view.is_none() {
-        live.map(|id| rel.row(id)[col]).collect()
+        live.map(|id| rel.value(id, col)).collect()
     } else {
         live.map(|id| rel.at(id).read().at(col)).collect()
     }
@@ -1582,7 +1626,7 @@ fn column_symbols(rel: &InRel, col: usize) -> Vec<i64> {
         if is_dead(&rel.dead, id as u32) {
             continue;
         }
-        let v = if rel.view.is_none() { rel.row(id)[col] } else { rel.at(id).read().at(col) };
+        let v = if rel.view.is_none() { rel.value(id, col) } else { rel.at(id).read().at(col) };
         if seen.insert(v) {
             ids.push(v);
         }
@@ -1923,6 +1967,35 @@ thread_local! {
     static TICKETS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
+/// A batch of its own (not the wave's), with a text arena of `arena` bytes when given. The thread's open wave is
+/// committed first: the relations kept resident (`resident`, `verdicts`, the texts) take their sorts, indexes and
+/// verdicts from the batch that first asked for them, often the wave, and the cache hands them out at once. A batch
+/// committed before the wave would read them unwritten (Q48: a stratum run apart, beside a wave it did not join,
+/// read its inputs' sorts empty). The queue is one, so the wave's work, committed first, runs first.
+fn direct_batch(arena: Option<usize>) -> Result<mj::Batch, String> {
+    commit_wave()?;
+    match arena {
+        Some(cap) => mj::Batch::with_arena(cap),
+        None => mj::Batch::new(),
+    }
+    .map_err(|e| format!("{e:?}"))
+}
+
+/// A batch of its own over `arena`, a recursive component's text arena (decision 0307), its rounds' texts going into
+/// it; the thread's open wave committed first, as `direct_batch`'s (Q48).
+fn shared_batch(arena: &Rc<mj::Arena>) -> Result<mj::Batch, String> {
+    commit_wave()?;
+    mj::Batch::with_shared_arena(Rc::clone(arena)).map_err(|e| format!("{e:?}"))
+}
+
+/// The thread's open wave, committed (`direct_batch`).
+fn commit_wave() -> Result<(), String> {
+    WAVE.with_borrow_mut(|w| match w {
+        Some((_, wave)) => wave.commit_open().map_err(|e| format!("{e:?}")),
+        None => Ok(()),
+    })
+}
+
 /// A stratum's joins encoded into the level's open command buffer, to wait for the wave (`lanes::wave::flush`
 /// commits it once, for every stratum in it): its ticket for `resume`. `None` when they do not all fit one
 /// submission's space (the stratum then runs on its own, `run`).
@@ -2005,7 +2078,7 @@ pub(in crate::code_rule_dsl) fn resume(ticket: u64, rules: &[(&Plan, &JoinRule, 
 
 /// The first rules of `rules` that fit one submission's space, run: their head rows as `run`'s.
 fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh], rep: &mut Report) -> Result<Vec<u64>, String> {
-    let mut batch = mj::Batch::new().map_err(|e| format!("{e:?}"))?;
+    let mut batch = direct_batch(None)?;
     let runs = encode_runs(rules, &mut batch, rep, names)?;
     finish_timed(&mut batch, rep)?;
     complete(runs, &rules[..], store, names, fresh, rep)
@@ -2113,7 +2186,7 @@ fn complete(mut runs: Vec<Run<'static>>, rules: &[(&Plan, &JoinRule, usize)], st
         }
         let b = match &mut batch {
             Some(b) => b,
-            None => batch.insert(mj::Batch::with_arena(arena.max(mj::ARENA_START)).map_err(|e| format!("{e:?}"))?),
+            None => batch.insert(direct_batch(Some(arena.max(mj::ARENA_START)))?),
         };
         for (k, s) in again {
             runs[k].encode(s, b, rep, &mut Own::default(), names)?;
@@ -2225,8 +2298,12 @@ pub(in crate::code_rule_dsl) fn reads_own(plan: &Plan) -> bool {
 
 /// One round's rules run in one batch: each one's head rows made distinct on the device, with their count. A rule
 /// over an own relation with no rows, or over an empty input (`reads_empty_input`), is not run (`None`).
-fn round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, names: &Interner, rep: &mut Report) -> Result<Vec<Option<(Run<'p>, usize)>>, String> {
-    let mut batch = mj::Batch::new().map_err(|e| format!("{e:?}"))?;
+/// `shared`: the component's text arena (decision 0307), which every round's texts go into.
+fn round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, names: &Interner, rep: &mut Report, shared: Option<&Rc<mj::Arena>>) -> Result<Vec<Option<(Run<'p>, usize)>>, String> {
+    let mut batch = match shared {
+        Some(a) => shared_batch(a)?,
+        None => direct_batch(None)?,
+    };
     let mut runs: Vec<Option<Run<'p>>> = Vec::with_capacity(rules.len());
     for (plan, j, _) in rules {
         if !own.ready(plan) || super::reads_empty_input(j) {
@@ -2307,8 +2384,35 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
     let _span = crate::code_rule_dsl::logic::profile::span(|| "device fixpoint".into());
     let c0 = thread_cpu();
     let mut rep = Report { rules: (seeds.len() + deltas.len()) as u32, stages: seeds.iter().chain(deltas).map(|r| r.0.stages.len() as u32).sum(), ..Report::default() };
-    if seeds.iter().chain(deltas).any(|r| r.0.stages.iter().any(|s| makes_text(s.desc.mode))) {
-        return Err("a made text in a recursive component (its rounds would join texts not yet symbols)".into());
+    // A made text crosses rounds only as a `shortlex_min` relation's value (decision 0307): its fold compares texts,
+    // so one text made in two rounds (two arena values) is one value to it. Anywhere else its rounds would join or
+    // make distinct texts by their arena values.
+    let text_head = |h: usize| matches!(store.rels[h].device_lattice(), Some(Ok((3, ..))));
+    for &(plan, _, h) in seeds.iter().chain(deltas) {
+        let value = store.rels[h].k - 1;
+        let makes = plan.stages.iter().any(|s| makes_text(s.desc.mode)) || plan.arena.iter().any(|&a| a);
+        if makes && !(text_head(h) && plan.arena.iter().enumerate().all(|(c, &a)| !a || c == value)) {
+            return Err("a made text in a recursive component outside a shortlex_min value (its rounds would join texts not yet symbols)".into());
+        }
+        if text_head(h) && !plan.arena.get(value).copied().unwrap_or(false) && plan.head.get(value).copied().flatten().is_none() {
+            return Err("a shortlex_min value its rule neither makes nor names (decision 0307)".into());
+        }
+    }
+    // The component's text arena, every round's (decision 0307), and the texts its rules name as constants there.
+    let shared: Option<Rc<mj::Arena>> = if heads.iter().any(|&h| text_head(h)) {
+        Some(Rc::new(mj::Arena::new(arena_max()).map_err(|e| format!("{e:?}: the component's text arena"))?))
+    } else {
+        None
+    };
+    let mut named: HashMap<i64, i64> = HashMap::new();
+    if let Some(a) = &shared {
+        for &(plan, _, h) in seeds.iter().chain(deltas) {
+            let value = store.rels[h].k - 1;
+            if let (true, Some(Some(v))) = (text_head(h), plan.head.get(value).copied()) && !named.contains_key(&v) {
+                let text = u32::try_from(v).ok().and_then(|atom| names.atoms().with_str(atom, |t| t.as_bytes().to_vec())).ok_or("a shortlex_min constant that is no symbol")?;
+                named.insert(v, a.put(&text).ok_or("the component's text arena too small for its constants")?);
+            }
+        }
     }
     for &h in heads {
         let rel = &store.rels[h];
@@ -2328,6 +2432,10 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
             lattices.insert(h, (mj::LatCode { code, top, after }, mj::LatKeys::default()));
         }
     }
+    // A head that keeps levels (decision 0311): each row's round, its level. A set head's rows are appended a round
+    // at a time, so its rounds are kept here by row; a lattice head's are a column of its total (`lat_merge`'s).
+    let leveled = |h: usize| store.rels[h].keeps_levels();
+    let mut set_levels: HashMap<usize, Vec<u32>> = HashMap::new();
     let mut made = vec![0u64; seeds.len() + deltas.len()];
     let mut rounds = 0;
     let mut first = true;
@@ -2337,11 +2445,11 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
             return Err(format!("a recursive component past {ROUNDS_MAX} rounds"));
         }
         let (rules, base) = if first { (seeds, 0) } else { (deltas, seeds.len()) };
-        let ran = round(rules, &mut own, names, &mut rep)?;
+        let ran = round(rules, &mut own, names, &mut rep, shared.as_ref())?;
         first = false;
         // Each head's rows this round, from every rule that made some, into one union; made distinct; less the
         // relation's rows: its new rows.
-        let mut batch = mj::Batch::new().map_err(|e| format!("{e:?}"))?;
+        let mut batch = direct_batch(None)?;
         let mut news: Vec<(usize, mj::Table, mj::Words, bool)> = Vec::new();
         // A lattice head's round: its new keys' rows (with their change counts), its changed rows, their counts.
         let mut folded: Vec<(usize, mj::Table, mj::Table, mj::Words)> = Vec::new();
@@ -2364,7 +2472,9 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
             let mut at = 0;
             for (x, r, n) in &from {
                 let plan = rules[*x].0;
-                let cols: Vec<mj::Col> = plan.head.iter().zip(&plan.head_slots).map(|(c, s)| match c {
+                let cols: Vec<mj::Col> = plan.head.iter().zip(&plan.head_slots).enumerate().map(|(col, (c, s))| match c {
+                    // A shortlex_min value named as a constant: its text in the arena (decision 0307).
+                    Some(v) if col == k - 1 && text_head(h) => mj::Col::Const(named[v]),
                     Some(v) => mj::Col::Const(*v),
                     None => mj::Col::From(r.uniq_cols.iter().position(|u| u == s).unwrap_or(0)),
                 }).collect();
@@ -2372,11 +2482,12 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
                 at += n;
             }
             if let Some((lat, keys)) = lattices.get_mut(&h) {
-                let new_keys = mj::Table::new(k + 1, cap).map_err(|e| format!("{e:?}"))?;
+                let new_keys = mj::Table::new(k + 1 + usize::from(leveled(h)), cap).map_err(|e| format!("{e:?}"))?;
                 let changed = mj::Table::new(k, cap).map_err(|e| format!("{e:?}"))?;
                 let counters = mj::Words::zeroed(2).map_err(|e| format!("{e:?}"))?;
                 let total = own.total.get(&h).cloned();
-                batch.lattice_fold(&union, cap, total.as_deref(), k - 1, *lat, keys, &counters, &new_keys, &changed).map_err(|e| format!("{e:?}"))?;
+                let level = leveled(h).then_some(rounds as u32);
+                batch.lattice_fold(&union, cap, total.as_deref(), k - 1, *lat, keys, &counters, &new_keys, &changed, shared.as_deref(), level).map_err(|e| format!("{e:?}"))?;
                 folded.push((h, new_keys, changed, counters));
                 hold.push(union);
                 continue;
@@ -2416,7 +2527,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         drop(ran);
         drop(hold);
         // The new rows onto each relation, and as its next delta; a relation with none has no delta.
-        let mut batch = mj::Batch::new().map_err(|e| format!("{e:?}"))?;
+        let mut batch = direct_batch(None)?;
         let mut any = false;
         let mut old: Vec<Rc<mj::DevRel>> = std::mem::take(&mut own.delta).into_values().collect();
         let mut rows_held: Vec<mj::Table> = Vec::new();
@@ -2429,6 +2540,12 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
             let k = store.rels[h].k;
             let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
             let had = own.total.get(&h).map_or(0, |t| t.rows);
+            if leveled(h) {
+                // Rows held before this run's rounds (none of them new) take no level here.
+                let lv = set_levels.entry(h).or_default();
+                lv.resize(had, 0);
+                lv.resize(had + n, rounds as u32);
+            }
             let total = mj::DevRel::empty(k, had + n).map_err(|e| format!("{e:?}: a relation of {} rows", had + n))?;
             if let Some(old) = own.total.get(&h) {
                 batch.copy_rows(mj::Rows::Rel(old), had, &ident, mj::Rows::Rel(&total), 0).map_err(|e| format!("{e:?}"))?;
@@ -2452,9 +2569,10 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
             any = true;
             let k = store.rels[h].k;
             if added > 0 {
-                let ident: Vec<mj::Col> = (0..=k).map(mj::Col::From).collect();
+                let width = k + 1 + usize::from(leveled(h));
+                let ident: Vec<mj::Col> = (0..width).map(mj::Col::From).collect();
                 let had = own.total.get(&h).map_or(0, |t| t.rows);
-                let total = mj::DevRel::empty(k + 1, had + added).map_err(|e| format!("{e:?}: a relation of {} rows", had + added))?;
+                let total = mj::DevRel::empty(width, had + added).map_err(|e| format!("{e:?}: a relation of {} rows", had + added))?;
                 if let Some(old) = own.total.get(&h) {
                     batch.copy_rows(mj::Rows::Rel(old), had, &ident, mj::Rows::Rel(&total), 0).map_err(|e| format!("{e:?}"))?;
                 }
@@ -2484,12 +2602,39 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         let Some(total) = own.total.get(&h) else { continue };
         let k = store.rels[h].k;
         let cols: Vec<&[i64]> = (0..k).map(|c| total.column(c)).collect();
+        // A shortlex_min value is an arena text (decision 0307): stored as a symbol, all of the head's at once.
+        let symbols: Option<HashMap<i64, i64>> = match &shared {
+            Some(a) if text_head(h) => {
+                // The top (no arena text) stays as it is.
+                let mut values: Vec<i64> = cols[k - 1].iter().copied().filter(|&v| v & mj::ARENA_TEXT != 0 && v != -1).collect();
+                values.sort_unstable();
+                values.dedup();
+                let strs = values.iter().map(|&v| {
+                    let b = a.text(v).ok_or("a shortlex_min value past the arena")?;
+                    std::str::from_utf8(b).map_err(|_| "an arena text that is not UTF-8".to_owned())
+                }).collect::<Result<Vec<&str>, String>>()?;
+                let ids = names.atoms().intern_all(&strs).map_err(|e| format!("the component's texts' symbols: {e}"))?;
+                Some(values.into_iter().zip(ids).map(|(v, id)| (v, i64::from(id))).collect())
+            }
+            _ => None,
+        };
+        // Each row's round where the head keeps levels: a lattice's column after its changes, a set's kept by row.
+        let lattice_levels = (lattices.contains_key(&h) && leveled(h)).then(|| total.column(k + 1));
+        let levels: Option<&[i64]> = lattice_levels;
+        let set_rounds = set_levels.get(&h).filter(|_| !lattices.contains_key(&h) && leveled(h));
         let mut row = vec![0i64; k];
         for x in 0..total.rows {
             for c in 0..k {
                 row[c] = cols[c][x];
             }
-            fresh[h].add(&row);
+            if let Some(m) = &symbols && let Some(&id) = m.get(&row[k - 1]) {
+                row[k - 1] = id;
+            }
+            match (levels, set_rounds) {
+                (Some(l), _) => fresh[h].add_leveled(&row, l[x] as u32),
+                (None, Some(r)) => fresh[h].add_leveled(&row, r.get(x).copied().unwrap_or(0)),
+                (None, None) => fresh[h].add(&row),
+            }
         }
         rep.distinct += total.rows as u64;
     }

@@ -222,7 +222,8 @@ impl<'v> Body<'v> {
                 let joined = |t: TermRef<'_>| t.var().is_some_and(|v| (0..self.len()).any(|j| self.is_join(j) && self.vars(j).contains(v)));
                 let free = |t: TermRef<'_>| t.var().is_some() && !joined(t);
                 let call = matches!(l, TermRef::Call(..)) || matches!(r, TermRef::Call(..));
-                let constant = |t: TermRef<'_>| matches!(t, TermRef::Int(_) | TermRef::Str(_));
+                // A kind, field or name is branded (decision 0270): a constant like any other.
+                let constant = |t: TermRef<'_>| matches!(t, TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_));
                 match op {
                     CmpOp::Eq if free(l) || free(r) => 1.0,
                     CmpOp::Eq if call => 0.4,

@@ -798,16 +798,14 @@ pub fn cli(args: &[String]) -> Result<String, String> {
     crate::code_rule_dsl::logic::profile::command_begins();
     let out = cli_in(args, &mut Default::default());
     let (age, after) = crate::code_rule_dsl::logic::profile::command_ends();
-    match (out, after) {
-        (Ok(mut text), Some(c)) => {
-            text += &format!(
-                "  after the run {:.2} s wall: the command's thread {:.2} s own, {:.2} s off a core; the other threads {:.2} s; ready with no core {:.2} s\n  before the command: {age:.2} s since the process started\n",
-                c.wall, c.own + c.helped, c.off_core(), c.others(), c.no_core()
-            );
-            Ok(text)
-        }
-        (out, _) => out,
+    // On stderr: a command's output is its own (`run-rr`'s, `sql`'s: JSON), and a line after it made that unreadable.
+    if let (Ok(_), Some(c)) = (&out, after) {
+        eprint!(
+            "  after the run {:.2} s wall: the command's thread {:.2} s own, {:.2} s off a core; the other threads {:.2} s; ready with no core {:.2} s\n  before the command: {age:.2} s since the process started\n",
+            c.wall, c.own + c.helped, c.off_core(), c.others(), c.no_core()
+        );
     }
+    out
 }
 
 /// `cli`, in the session `kept` keeps across its caller's commands (`RERAIL_SESSION`): the caller owns it.
@@ -1063,12 +1061,7 @@ fn translate_json_command(args: &[String]) -> Result<String, String> {
     Ok(format!("{} translated, {failed} failed", files.len() - failed))
 }
 
-/// A timeline's mark (dev, `RERAIL_TIMELINE`): where the process is, with its instructions retired so far.
-fn timeline_mark(what: &str) {
-    if std::env::var_os("RERAIL_TIMELINE").is_some() {
-        eprintln!("RERAIL_TIMELINE {what}: @{:.3} i={:.3}", crate::code_rule_dsl::logic::profile::timeline_clock(), crate::code_rule_dsl::logic::profile::retired_instructions() as f64 / 1e9);
-    }
-}
+use crate::code_rule_dsl::logic::profile::timeline_mark;
 
 fn logic_command(args: &[String]) -> Result<String, String> {
     timeline_mark("cli start");
@@ -1130,7 +1123,10 @@ fn logic_command(args: &[String]) -> Result<String, String> {
             })
             .collect();
         files.retain(|path| !path.file_name().is_some_and(|n| included.contains(n)));
-        crate::tools::program_texts(&files.iter().map(|p| p.as_ref()).collect::<Vec<&std::path::Path>>())?
+        timeline_mark("the program files listed");
+        let texts = crate::tools::program_texts(&files.iter().map(|p| p.as_ref()).collect::<Vec<&std::path::Path>>())?;
+        timeline_mark("the program texts read");
+        texts
     } else {
         vec![crate::tools::program_text(Path::new(program.as_str()))?]
     };

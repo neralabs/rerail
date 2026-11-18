@@ -659,7 +659,7 @@ pub(in crate::code_rule_dsl) fn image_store() -> Option<std::sync::Arc<crate::co
 
 /// How long a module's or program's image stays in the store after the last run that read or wrote it
 /// (`keep_image`): collection keeps a source while a pin's lease runs, as it keeps the combined program's entry before
-/// a run names it (`combined::remember`). Naming the images in the run's record is decision 0246 §6's.
+/// a run names it (`combined::record`). Naming the images in the run's record is decision 0246 §6's.
 const IMAGE_LEASE_SECS: i64 = 7 * 24 * 3600;
 
 /// The owner of the images' pins.
@@ -676,11 +676,14 @@ fn keep_image(store: Option<&crate::content_store::ContentStore>, what: &'static
     use crate::content_store::write_back::{Key, Syms};
     images::export(key, &bytes);
     let Some(store) = store else { return false };
-    let n = bytes.len();
-    store.write_back_unless_full(Syms::None, what, n, vec![(Key::of(&[what.as_bytes(), &key.sha256_bytes().unwrap_or_default()]), None)], Box::new(move |store| {
-        let id = store.put_source(&bytes, &[key])?;
-        store.pin_source(id, IMAGE_OWNER, image_lease())
-    }))
+    // A record of its own (decision 0306), dropped where the queue is full: the image in its byte area.
+    fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
+        let key: crate::content_store::HashKey = crate::content_store::record::codec::from_body("an image", body)?;
+        let id = cx.store.put_source(cx.bytes, &[key])?;
+        cx.store.pin_source(id, IMAGE_OWNER, image_lease())
+    }
+    let queued = Key::of(&[what.as_bytes(), &key.sha256_bytes().unwrap_or_default()]);
+    store.queue_record(Syms::None, what, vec![queued], &key, Some(bytes), apply, true)
 }
 
 /// The text tests' compiled groups of automata as images (decisions 0075, 0264): each under its key, read from the
@@ -718,6 +721,40 @@ impl crate::code_rule_dsl::text::vocabulary::DfaCache for ImageDfas {
     }
 }
 
+/// Phase 0's graph of a seed as an image (decision 0246): read from the shipped bundle, else `store` (the engine
+/// build's, `image_store`, opened once by the caller for all its seeds), its lease renewed; `phase0::graphs` checks it
+/// holds before it takes it.
+pub(in crate::code_rule_dsl) fn graph_image(store: Option<&crate::content_store::ContentStore>, key: crate::content_store::HashKey) -> Option<Vec<u8>> {
+    let (bytes, id) = images::read(store, key)?;
+    if let (Some(store), Some(id)) = (store, id) {
+        renew_image(store, id);
+    }
+    Some(bytes.into_owned())
+}
+
+/// Keeps a graph's image (`graph_image`) where none is kept under its key yet. A seed's key names the seed, not the
+/// files its graph reached, so an edited library gives the same key another graph: the store's alias holds one
+/// image, and the first stays. A run then finds it does not hold (`Graph::holds`) and derives the graph, as without
+/// images. The shipped bundle's graphs are its library's; exported, the last derived is the one written.
+pub(in crate::code_rule_dsl) fn keep_graph_image(store: Option<&crate::content_store::ContentStore>, key: crate::content_store::HashKey, bytes: Vec<u8>) -> bool {
+    use crate::content_store::write_back::{Key, Syms};
+    const WHAT: &str = "phase 0's graph of a seed";
+    images::export(key, &bytes);
+    let Some(store) = store else { return false };
+    // A record of its own (decision 0306), dropped where the queue is full, as `keep_image`'s: the graph in its byte
+    // area, the first kept under its key staying.
+    fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
+        let key: crate::content_store::HashKey = crate::content_store::record::codec::from_body(WHAT, body)?;
+        if cx.store.source_by_alias(key)?.is_some() {
+            return Ok(());
+        }
+        let id = cx.store.put_source(cx.bytes, &[key])?;
+        cx.store.pin_source(id, IMAGE_OWNER, image_lease())
+    }
+    let queued = Key::of(&[WHAT.as_bytes(), &key.sha256_bytes().unwrap_or_default()]);
+    store.queue_record(Syms::None, WHAT, vec![queued], &key, Some(bytes), apply, true)
+}
+
 /// The lease of image `id`, read by this run, renewed (`keep_image`) once more than half of it has run: a run that reads
 /// images an earlier run kept or renewed within that writes nothing (decision 0250), and an image read at least
 /// every half lease is never collected.
@@ -727,7 +764,11 @@ fn renew_image(store: &crate::content_store::ContentStore, id: crate::content_st
     if store.source_lease(id, IMAGE_OWNER).ok().flatten().is_some_and(|until| until - now > IMAGE_LEASE_SECS / 2) {
         return;
     }
-    store.write_back_unless_full(Syms::None, "an image's lease", 0, Vec::new(), Box::new(move |store| store.pin_source(id, IMAGE_OWNER, image_lease())));
+    fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
+        let id: crate::content_store::SourceId = crate::content_store::record::codec::from_body("an image's lease", body)?;
+        cx.store.pin_source(id, IMAGE_OWNER, image_lease())
+    }
+    store.queue_record(Syms::None, "an image's lease", Vec::new(), &id, None, apply, true);
 }
 
 /// Adds to `program`, which derives library relations `asked`, the linked library's part a request copies (decision
@@ -868,7 +909,7 @@ pub fn read_seed(src: &str) -> Result<TextRead, Error> {
         .collect();
     let seed = (!includes.is_empty() && !phase0::active()).then(|| {
         let t_shape = statements.iter().any(|(item, _)| matches!(item, syntax::Item::Decl { name, .. } if name == "doc"));
-        phase0::Seed::Text { t_shape, includes }
+        phase0::Seed::Text { t_shape, includes, phases: phases_named(&statements) }
     });
     Ok(TextRead { seed, statements })
 }
@@ -954,7 +995,7 @@ fn resolve_shared(statements: Vec<syntax::Statement>) -> Result<(SharedFiles, Ve
             _ => None,
         })
         .collect();
-    let g = phase0::graph(&phase0::Seed::Text { t_shape, includes: names.iter().map(|(k, n, _)| (*k, n.clone())).collect() })?;
+    let g = phase0::graph(&phase0::Seed::Text { t_shape, includes: names.iter().map(|(k, n, _)| (*k, n.clone())).collect(), phases: phases_named(&own) })?;
     if let Some((_, at, name)) = g.missing.iter().find(|(f, _, _)| f == phase0::TEXT) {
         let line = names.iter().find(|(k, _, _)| k == at).map_or(0, |(_, _, l)| *l);
         return Err(Error::Syntax(format!("line {line}: #include {name:?}: no such file in the library")));
@@ -972,6 +1013,33 @@ fn resolve_shared(statements: Vec<syntax::Statement>) -> Result<(SharedFiles, Ve
 }
 
 /// Each module's statements, without its includes (the graph placed them), read off its stored tape.
+
+/// The phase programs a text's own declarations name (`<phase>__<export>`, as `phases::phase_files` reads them): not
+/// its own phase (`.phase`), a typing program's or the engine's (`typing_`, `rr_`). Phase 0 resolves them with its
+/// includes (`p0_text_phase`), so the run's rule files are listed without reading a module again (decision 0246).
+pub fn phases_named(statements: &[syntax::Statement]) -> Vec<String> {
+    let own = statements.iter().find_map(|(item, _)| match item {
+        syntax::Item::Setting { key, text } if key == "phase" => Some(text.trim().to_owned()),
+        _ => None,
+    });
+    let mut out: Vec<String> = statements
+        .iter()
+        .filter_map(|(item, _)| match item {
+            syntax::Item::Decl { name, .. } => name.split_once("__"),
+            _ => None,
+        })
+        .filter(|(phase, export)| !phase.is_empty() && !export.is_empty() && own.as_deref() != Some(*phase) && !phase.starts_with("typing_") && !phase.starts_with("rr_"))
+        .map(|(phase, _)| phase.to_owned())
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// The engine's own library programs a run is given besides its includes (`TextNames::included`), canonical.
+pub fn engine_files() -> Vec<PathBuf> {
+    ENGINE_FILES.iter().filter_map(|f| library().join(f).canonicalize().ok()).collect()
+}
 
 /// The seed phase 0 starts from for a program text: whether it is in T's shape, and the names it includes. `None`
 /// for a text that includes nothing, or while phase 0 itself runs.
@@ -1008,7 +1076,7 @@ fn read_text_seed(src: &str) -> Result<Option<super::plan::corpus::phase0::Seed>
         return Ok(None);
     }
     let t_shape = statements.iter().any(|(item, _)| matches!(item, syntax::Item::Decl { name, .. } if name == "doc"));
-    Ok(Some(phase0::Seed::Text { t_shape, includes: names }))
+    Ok(Some(phase0::Seed::Text { t_shape, includes: names, phases: phases_named(&statements) }))
 }
 
 /// The program's module graph's digest (`phase0::Graph::digest`): what its text is a function of besides itself.
@@ -1177,8 +1245,7 @@ pub fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
     let program = lower_files_dropping(path, statements, false)?;
     // Kept behind the run (the store's writer), with what it read: the next run's check above.
     if let Some((entry, Some(store), None)) = kept {
-        let (read, program) = (files.clone(), program.clone());
-        store.write_back_syms(crate::content_store::write_back::Syms::None, "a rule file's program", 0, vec![(super::plan::corpus::combined::queued(&entry), None)], Box::new(move |store| super::plan::corpus::combined::remember(store, &entry, &read, &program, &[]).map(drop)));
+        super::plan::corpus::combined::record(&store, "a rule file's program", &entry, &files, &program, &[]);
         super::plan::corpus::combined::read_before_the_run(entry);
     }
     cache.lock().expect("the program cache").insert(key, (files.clone(), program.clone()));
@@ -1205,8 +1272,7 @@ pub fn text_header(src: &str) -> Result<Program, Error> {
     };
     let program = text.header()?;
     if let Some(store) = store {
-        let kept = program.clone();
-        store.write_back_syms(crate::content_store::write_back::Syms::None, "a text's header", 0, vec![(combined::queued(&key), None)], Box::new(move |store| combined::remember(store, &key, &read, &kept, &[]).map(drop)));
+        combined::record(&store, "a text's header", &key, &read, &program, &[]);
         combined::read_before_the_run(key);
     }
     Ok(program)

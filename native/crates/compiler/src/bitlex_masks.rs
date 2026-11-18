@@ -8,8 +8,9 @@
 //! Built one construct at a time (`docs/parser-generators/13-tape-on-the-gpu.md` §7, step 2).
 //!
 //! - **Classes.** Each class is a union of products of a set of high nibbles and a set of low
-//!   nibbles. Products are shared between classes and packed eight to a nibble table. A one-byte
-//!   class is an `eq`.
+//!   nibbles, packed eight to a nibble table. A class's products are placed together, in one
+//!   table (`place`), so a class is one lookup, as simdjson's are; a product two classes share
+//!   in one table serves both. A one-byte class is an `eq`.
 //! - **Masks** over `~ & | ^`, `empty`, `prev`, `next`, `starts`, `lasts`, `after`, `span`,
 //!   `aligned`, `toggle`, `after_odd_run` and `fill`.
 //! - **Counts** as bit-planes, and `C.frame(a)` (below).
@@ -217,6 +218,7 @@ pub fn first_bits(ops: &[BlockOp], tables: &[ClassTable], v: u16) -> Option<u32>
                 Bounds { zero_from: None, ones: all.then_some((0, None)), zero_past: (!t.member(0, bits)).then_some(0) }
             }
             BlockOp::Within(d) => Bounds { zero_from: None, ones: Some((u32::from(d), Some(u32::from(d)))), zero_past: Some(u32::from(d)) },
+            BlockOp::Prefix(n, _) => Bounds { zero_from: Some(u32::from(n)), ones: None, zero_past: Some(0) },
             BlockOp::And(a, c) => {
                 let (x, y) = (get(a), get(c));
                 let ones = match (x.ones, y.ones) {
@@ -282,8 +284,8 @@ pub struct Lowering {
     pub program: BlockProgram,
     /// Each operation's value, so an operation is emitted once.
     pub seen: HashMap<BlockOp, u16>,
-    /// Each product's table and bit.
-    pub products: HashMap<Product, (u16, u8)>,
+    /// Each table's products, bit by bit (`place`).
+    pub table_products: Vec<Vec<Product>>,
     /// Classes, lowered when first used.
     pub classes: HashMap<String, Vec<(u32, u32)>>,
     pub names: HashMap<String, Val>,
@@ -437,7 +439,7 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         shape,
         program: BlockProgram::default(),
         seen: HashMap::new(),
-        products: HashMap::new(),
+        table_products: Vec::new(),
         classes: HashMap::new(),
         names: HashMap::new(),
         fallbacks: Vec::new(),
@@ -481,9 +483,7 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
     // Every class's products first: the tables come before the operations.
     for stmt in stmts {
         if let Stmt::Class(name, ranges) = stmt {
-            for product in products(ranges) {
-                low.product(product);
-            }
+            low.place(&products(ranges));
             low.classes.insert(name.clone(), ranges.clone());
         }
     }
@@ -842,6 +842,14 @@ impl Lowering {
                         Some(r) => {
                             let (pair, e) = match r {
                                 ::bitlex::syntax::TokenRule::Run(e) => (false, e),
+                                // `pair empty`: no byte pairs, a table of none (`EndRule::Next`), as
+                                // `pair P` with no spellings. Its tokens are one byte, read from the
+                                // first byte's entry (the fused pair rule's), not a mask's word that is
+                                // always zero, by a call a token (0355).
+                                ::bitlex::syntax::TokenRule::Pair(e @ ::bitlex::syntax::Expr::Empty) => {
+                                    self.token_pairs.insert(kind.clone(), Vec::new());
+                                    (true, e)
+                                }
                                 ::bitlex::syntax::TokenRule::Pair(e) => (true, e),
                                 ::bitlex::syntax::TokenRule::Pairs { pairs, mask } => {
                                     self.token_pairs.insert(kind.clone(), pairs.clone());
@@ -1026,6 +1034,25 @@ impl Lowering {
             let w = me.within(d)?;
             Ok(me.op(BlockOp::And(v, w)))
         };
+        // One kind whose opener is its closer, one byte, with no `else`: simdjson's string,
+        // `prefix_xor(quote)`. Its fill is the toggle of its quotes, with no fixed point and no
+        // walk: by induction, with `t = toggle(q)` and the fill `t` a byte before, the hidden
+        // byte is `prev(t)`, the opener `q & ~prev(t)`, and the fill
+        // `open | (prev(t) & ~q) = q ^ prev(t) = t`.
+        if let ([r], [(o, c)]) = (regions.kinds.as_slice(), inputs.as_slice()) {
+            if r.empty.is_none() && r.or.is_none() && !r.outside && r.bytes == 1 && (o.v, o.d) == (c.v, c.d) {
+                let q = Val { v: clean(self, *o, d)?, d, dirty: false, set: None };
+                let fill = self.carried(q, BlockOp::Toggle);
+                let hidden = self.op(BlockOp::Prev(fill.v, 1));
+                let open = self.op(BlockOp::AndNot(q.v, hidden));
+                for (name, v) in [(regions.hidden.clone(), hidden), (format!("o_{}", r.kind), open), (format!("f_{}", r.kind), fill.v)] {
+                    self.names.insert(name, Val { v, d, dirty: true, set: None });
+                }
+                // A mode of tier 2's states, as a toggle is (`row_modes`).
+                self.toggles.push((fill, q));
+                return Ok(());
+            }
+        }
         // Each kind's opener and closer at `D`; with `or C2`, the closer `C | C2` and `C2`.
         let mut ins = Vec::new();
         for (&(o, c), second) in inputs.iter().zip(&seconds) {
@@ -1150,26 +1177,45 @@ impl Lowering {
         Ok(by_delay)
     }
 
-    pub fn product(&mut self, product: Product) -> (u16, u8) {
-        if let Some(&at) = self.products.get(&product) {
-            return at;
+    /// A class's products placed together, and the bits of each table it reads: a table that
+    /// holds them all, else the one with room for the fewest missing, else a new one. So a
+    /// class of eight products or fewer is one lookup, as each of simdjson's classes is, though
+    /// a product may then be in two tables. More than eight: eight to a table.
+    pub fn place(&mut self, ps: &[Product]) -> Vec<(u16, u8)> {
+        if ps.len() > 8 {
+            return ps.chunks(8).flat_map(|c| self.place(c)).collect();
         }
-        let n = self.products.len();
-        let (table, bit) = ((n / 8) as u16, 1u8 << (n % 8));
-        if usize::from(table) == self.program.tables.len() {
-            self.program.tables.push(ClassTable::default());
-        }
-        let t = &mut self.program.tables[usize::from(table)];
-        for h in 0..16 {
-            if product.0 >> h & 1 == 1 {
-                t.hi[h] |= bit;
+        let missing = |held: &Vec<Product>| ps.iter().filter(|p| !held.contains(p)).count();
+        let room = self.table_products.iter().enumerate().filter(|(_, held)| held.len() + missing(held) <= 8).min_by_key(|(t, held)| (missing(held), *t)).map(|(t, _)| t);
+        let t = match room {
+            Some(t) => t,
+            None => {
+                self.table_products.push(Vec::new());
+                self.program.tables.push(ClassTable::default());
+                self.table_products.len() - 1
             }
-            if product.1 >> h & 1 == 1 {
-                t.lo[h] |= bit;
-            }
+        };
+        let mut bits = 0u8;
+        for &p in ps {
+            let bit = match self.table_products[t].iter().position(|&q| q == p) {
+                Some(bit) => bit,
+                None => {
+                    self.table_products[t].push(p);
+                    let (bit, table) = (self.table_products[t].len() - 1, &mut self.program.tables[t]);
+                    for h in 0..16 {
+                        if p.0 >> h & 1 == 1 {
+                            table.hi[h] |= 1 << bit;
+                        }
+                        if p.1 >> h & 1 == 1 {
+                            table.lo[h] |= 1 << bit;
+                        }
+                    }
+                    bit
+                }
+            };
+            bits |= 1 << bit;
         }
-        self.products.insert(product, (table, bit));
-        (table, bit)
+        vec![(t as u16, bits)]
     }
 
     pub fn op(&mut self, op: BlockOp) -> u16 {
@@ -1291,36 +1337,18 @@ impl Lowering {
         }
     }
 
-    /// A prefix's value (`Stmt::Prefix`): at the file's first byte where its bytes follow, and
-    /// at the bytes after it that it covers. Made before the prefix is set, from the file's own
-    /// `within`. Its `n` bytes are a test at delay `n - 1` (at least 1), brought to delay 0 by
-    /// one `early` over the whole of it: every value that reads the prefix reads that `early`,
-    /// so a window past the file's first bytes makes none of it (`native_cpu_bytes`), and a full
-    /// block knows it is zero (`native_cpu_lanes`' `full_words`).
+    /// A prefix's value (`Stmt::Prefix`): the file's first `n` positions, where it starts with
+    /// the prefix's bytes. One leaf (`BlockOp::Prefix`), which an executor makes once a file
+    /// from the file's first word, as simdjson strips a byte order mark before its loop: a full
+    /// block knows it is zero (`native_cpu_lanes`' `full_words`), and a window past the file's
+    /// first bytes makes none of it (`native_cpu_bytes`).
     pub fn prefix_value(&mut self, bytes: &[u8]) -> Result<Val, String> {
         debug_assert!(self.prefix.is_none());
-        let all = self.within_val(0)?;
-        let before = self.prev(all, 1)?;
-        let mut at = self.andnot(all, before)?;
-        for (j, &b) in bytes.iter().enumerate() {
-            let mut set = [0u64; 4];
-            set[usize::from(b) / 64] |= 1 << (b % 64);
-            let x = self.class_set(set);
-            let x = self.next(x, j as u64)?;
-            at = self.and(at, x)?;
+        if !(1..=8).contains(&bytes.len()) {
+            return Err(format!("a prefix of {} bytes: from 1 to 8", bytes.len()));
         }
-        // The test and the bytes after it, at delay `top`, by `prev`s of the test there.
-        let top = (bytes.len() as u8 - 1).max(1);
-        let t = self.at(at, top)?;
-        let mut v = t;
-        for j in 1..bytes.len() {
-            let x = self.prev_op(t, j as u8);
-            v = self.op(BlockOp::Or(v, x));
-        }
-        let v = self.op(BlockOp::Early(v, top));
-        if !first_bits(&self.program.ops, &self.program.tables, v).is_some_and(|s| s <= crate::block::EARLY_BITS) {
-            return Err(format!("a prefix of {} bytes is not a value of the file's first {} bytes", bytes.len(), crate::block::EARLY_BITS));
-        }
+        let word = bytes.iter().enumerate().fold(0u64, |a, (j, &b)| a | u64::from(b) << (8 * j));
+        let v = self.op(BlockOp::Prefix(bytes.len() as u8, word));
         Ok(Val { v, d: 0, dirty: false, set: None })
     }
 
@@ -1659,14 +1687,7 @@ impl Lowering {
                 _ => ranges.push((u32::from(b), u32::from(b))),
             }
         }
-        let mut per_table: Vec<(u16, u8)> = Vec::new();
-        for product in products(&ranges) {
-            let (table, bit) = self.product(product);
-            match per_table.iter_mut().find(|(t, _)| *t == table) {
-                Some((_, bits)) => *bits |= bit,
-                None => per_table.push((table, bit)),
-            }
-        }
+        let per_table = self.place(&products(&ranges));
         let mut value = None;
         for (table, bits) in per_table {
             let v = self.op(BlockOp::Class { table, bits });

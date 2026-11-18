@@ -484,8 +484,6 @@ dependencies = [
 [[package]]
 name = "cranelift-assembler-x64-meta"
 version = "0.125.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c03f887a763abb9c1dc08f722aa82b69067fda623b6f0273050f45f8b1a6776"
 dependencies = [
  "cranelift-srcgen",
 ]
@@ -508,8 +506,6 @@ checksum = "ac0790c83cfdab95709c5d0105fd888221e3af9049a7d7ec376ec901ab4e4dba"
 [[package]]
 name = "cranelift-codegen"
 version = "0.125.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9a98aed2d262eda69310e84bae8e053ee4f17dbdd3347b8d9156aa618ba2de0a"
 dependencies = [
  "bumpalo",
  "cranelift-assembler-x64",
@@ -534,8 +530,6 @@ dependencies = [
 [[package]]
 name = "cranelift-codegen-meta"
 version = "0.125.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6906852826988563e9b0a9232ad951f53a47aa41ffd02f8ac852d3f41aae836a"
 dependencies = [
  "cranelift-assembler-x64-meta",
  "cranelift-codegen-shared",
@@ -630,8 +624,6 @@ dependencies = [
 [[package]]
 name = "cranelift-native"
 version = "0.125.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56f697bbbe135c655ea1deb7af0bae4a5c4fae2c88fdfc0fa57b34ae58c91040"
 dependencies = [
  "cranelift-codegen",
  "libc",
@@ -3174,9 +3166,30 @@ dependencies = [
 name = "rerail-blocks"
 version = "0.1.0"
 dependencies = [
+ "block",
  "libc",
  "metal",
  "rayon",
+]
+
+[[package]]
+name = "rerail-c-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+ "unicode-ident",
+]
+
+[[package]]
+name = "rerail-clif"
+version = "0.1.0"
+dependencies = [
+ "cranelift-codegen",
+ "cranelift-frontend",
+ "cranelift-jit",
+ "cranelift-module",
+ "rerail-blocks",
 ]
 
 [[package]]
@@ -3189,8 +3202,10 @@ dependencies = [
  "cranelift-jit",
  "cranelift-jit-wasm",
  "cranelift-module",
+ "cranelift-native",
  "libc",
  "rayon",
+ "rerail-clif",
  "rerail-compiler",
  "rerail-tape-format",
 ]
@@ -3338,12 +3353,15 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-c-lean",
+ "rerail-clif",
  "rerail-compiler",
  "rerail-csharp-lean",
  "rerail-css-lean",
  "rerail-device-metal",
  "rerail-ecma-lean",
  "rerail-facts",
+ "rerail-go-lean",
  "rerail-html-lean",
  "rerail-java-lean",
  "rerail-kotlin-lean",
@@ -3484,6 +3502,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-go-lean"
+version = "0.1.0"
+dependencies = [
+ "rerail-simd8",
+ "rerail-tape-format",
+ "unicode-ident",
+]
+
+[[package]]
 name = "rerail-html-lean"
 version = "0.1.0"
 dependencies = [
@@ -3498,6 +3525,15 @@ dependencies = [
  "rerail-simd8",
  "rerail-tape-format",
  "unicode-ident",
+]
+
+[[package]]
+name = "rerail-json-lean"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "rerail-simdjson",
+ "rerail-simdjson-native",
 ]
 
 [[package]]
@@ -3559,10 +3595,13 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-c-lean",
+ "rerail-clif",
  "rerail-compiler",
  "rerail-csharp-lean",
  "rerail-css-lean",
  "rerail-ecma-lean",
+ "rerail-go-lean",
  "rerail-html-lean",
  "rerail-java-lean",
  "rerail-kotlin-lean",
@@ -4031,6 +4070,7 @@ name = "rerail-logic"
 version = "0.1.0"
 dependencies = [
  "aho-corasick",
+ "arc-swap",
  "ast-grep-core",
  "ast-grep-language",
  "base64 0.22.1",
@@ -4124,6 +4164,7 @@ dependencies = [
  "metal",
  "rerail-accel",
  "rerail-blocks",
+ "rerail-clif",
  "rerail-compiler",
  "rerail-metal",
  "rerail-prof",
@@ -4138,6 +4179,7 @@ dependencies = [
  "bitlex",
  "rerail-compiler",
  "rerail-metal",
+ "rerail-parser-tests",
  "rerail-rr-syntax",
  "tree-sitter",
  "tree-sitter-json",
@@ -4297,6 +4339,7 @@ version = "0.1.0"
 dependencies = [
  "libc",
  "rerail-compiler",
+ "rerail-rr-aot",
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-tape-format",
@@ -4311,6 +4354,7 @@ dependencies = [
  "libc",
  "rerail-compiler",
  "rerail-metal",
+ "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-simdjson-native",
  "rerail-tape-format",
@@ -4509,6 +4553,7 @@ dependencies = [
  "regex",
  "regex-syntax",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-prof",
  "rerail-store",
  "rusqlite",
@@ -4533,6 +4578,8 @@ name = "rerail-tape-format"
 version = "0.1.0"
 dependencies = [
  "lz4-sys",
+ "memchr",
+ "rerail-clif",
  "sha2 0.10.9",
 ]
 
@@ -4575,6 +4622,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-clif",
  "rerail-compiler",
  "rerail-facts",
  "rerail-lang",

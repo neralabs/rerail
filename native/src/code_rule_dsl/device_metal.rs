@@ -56,8 +56,8 @@ impl SolverDevice for Metal {
         packed::metal_join::available()
     }
 
-    fn compile_join(&self, join: &JoinRule, spec: &str) -> Result<JoinPlan, String> {
-        joins::compile(join, spec).map(|plan| JoinPlan(std::sync::Arc::new(plan)))
+    fn compile_join(&self, join: &JoinRule, spec: &str, own_texts: &[(usize, usize)]) -> Result<JoinPlan, String> {
+        joins::own_texts(own_texts.to_vec(), || joins::compile(join, spec)).map(|plan| JoinPlan(std::sync::Arc::new(plan)))
     }
 
     fn refuse(&self, why: String) {
@@ -115,12 +115,11 @@ impl SolverDevice for Metal {
 
 pub mod matcher {
     use std::collections::BTreeSet;
-    use std::sync::Arc;
 
-    use crate::code_rule_dsl::tape::{TapeDoc, TapeSource};
-    use crate::code_rule_dsl::transducer::packed::device::{Engine, MatcherDevice, Outcome, PageConsumer, RootJobs};
+    use crate::code_rule_dsl::tape::TapeDoc;
+    use crate::code_rule_dsl::transducer::packed::device::{Engine, MatcherDevice, Outcome, RootJobs};
     use crate::code_rule_dsl::transducer::packed::{
-        BatchOutcome, Error, ExecutionBackend, LoweredMatcher, LoweredWave, PackedExecution, Program, matcher_metal, metal_grid_backend as grid,
+        BatchOutcome, Error, ExecutionBackend, LoweredMatcher, LoweredWave, PackedExecution, Program, matcher_metal,
         metal_program_backend as programs,
     };
 
@@ -149,7 +148,6 @@ pub mod matcher {
                     let engine = programs::compile_jit_cached(batch)?;
                     programs::execute_outcomes(&engine, batch, files, anchors)
                 }
-                ExecutionBackend::Metal => grid::execute_outcomes(batch, files, anchors),
                 _ => Err(Error::UnsupportedBackend),
             }
         }
@@ -169,14 +167,6 @@ pub mod matcher {
         fn compile_background(&self, batch: &[Program]) -> Result<(), Error> {
             programs::compile_sweep_cached()?;
             programs::compile_jit_cached(batch).map(|_| ())
-        }
-
-        fn execute_shared_corpus(&self, batch: &[Program], files: &[TapeDoc], anchors: &[Vec<Arc<[u32]>>], result_limits: &[u32]) -> Result<PackedExecution, Error> {
-            grid::execute_shared_corpus(batch, files, anchors, result_limits)
-        }
-
-        fn execute_shared_corpus_pages(&self, batch: &[Program], files: &[TapeSource], anchors: &[Vec<Arc<[u32]>>], result_limits: &[u32], consumer: &mut PageConsumer<'_>) -> Result<(), Error> {
-            grid::execute_shared_corpus_pages(batch, files, anchors, result_limits, consumer)
         }
 
         fn matcher_roots(&self, matcher: &LoweredMatcher, tapes: &[TapeDoc]) -> Result<(Vec<BTreeSet<u32>>, Outcome), Error> {

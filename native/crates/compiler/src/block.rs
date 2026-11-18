@@ -77,6 +77,11 @@ pub enum BlockOp {
     /// with this, so no value has bits outside the stream. No carry: each executor knows the
     /// length and the position, so `within` at a delay is never a `prev` of `within`.
     Within(u8),
+    /// The file's positions before the stream (decision 0335's prefix, 0389): `0 <= i < n` where
+    /// the file starts with the prefix's `n` bytes (`word`, the first in its low byte), none
+    /// else. Once a file, as simdjson strips a byte order mark before its loop: an executor
+    /// compares the file's first word, and a full block knows it is zero. No carry.
+    Prefix(u8, u64),
     /// The bytes at stream positions `i` with `i % k == r` (`k` in 1..=63, `r < k`): a residue
     /// of the position, for a period that does not divide 64 (`Const` holds the others). No
     /// carry: each executor knows the position, as for `within`.
@@ -256,6 +261,7 @@ impl BlockOp {
             BlockOp::BackFill(a, b) => two("back_fill", a, b),
             BlockOp::Within(0) => "within".to_owned(),
             BlockOp::Within(d) => format!("within {d}"),
+            BlockOp::Prefix(n, w) => format!("prefix {n} {w:#x}"),
             BlockOp::Phase(k, r) => format!("phase {k} {r}"),
             BlockOp::Position(j) => format!("position {j}"),
             BlockOp::Carry(a) => format!("carry %{a}"),
@@ -273,7 +279,7 @@ impl BlockOp {
     /// The values the operation reads.
     pub fn operands(&self) -> Vec<u16> {
         match *self {
-            BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) | BlockOp::Phase(..) | BlockOp::Position(_) | BlockOp::Cmp { .. } | BlockOp::Bit { .. } => vec![],
+            BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) | BlockOp::Prefix(..) | BlockOp::Phase(..) | BlockOp::Position(_) | BlockOp::Cmp { .. } | BlockOp::Bit { .. } => vec![],
             BlockOp::Not(a) | BlockOp::Prev(a, _) | BlockOp::Early(a, _) | BlockOp::Toggle(a) | BlockOp::Escaped(a) | BlockOp::Carry(a) => vec![a],
             BlockOp::And(a, b) | BlockOp::Or(a, b) | BlockOp::Xor(a, b) | BlockOp::AndNot(a, b) | BlockOp::Fill(a, b) | BlockOp::BackFill(a, b) => {
                 vec![a, b]
@@ -284,7 +290,7 @@ impl BlockOp {
     /// The operation with each operand `v` replaced by `f(v)`.
     pub fn renumbered(&self, f: impl Fn(u16) -> u16) -> Self {
         match *self {
-            BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) | BlockOp::Phase(..) | BlockOp::Position(_) | BlockOp::Cmp { .. } | BlockOp::Bit { .. } => *self,
+            BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) | BlockOp::Prefix(..) | BlockOp::Phase(..) | BlockOp::Position(_) | BlockOp::Cmp { .. } | BlockOp::Bit { .. } => *self,
             BlockOp::Not(a) => BlockOp::Not(f(a)),
             BlockOp::Prev(a, k) => BlockOp::Prev(f(a), k),
             BlockOp::Early(a, k) => BlockOp::Early(f(a), k),
@@ -356,6 +362,10 @@ impl BlockOp {
                 Ok(d) if (1..=63).contains(&d) => Ok(BlockOp::Within(d)),
                 _ => Err(format!("a bad within delay `{d}`")),
             },
+            ["prefix", n, w] => match (n.parse::<u8>(), w.strip_prefix("0x").and_then(|w| u64::from_str_radix(w, 16).ok())) {
+                (Ok(n), Some(w)) if (1..=8).contains(&n) && (n == 8 || w >> (8 * n) == 0) => Ok(BlockOp::Prefix(n, w)),
+                _ => Err(format!("a bad prefix `{n} {w}`")),
+            },
             ["phase", k, r] => match (k.parse::<u8>(), r.parse::<u8>()) {
                 (Ok(k), Ok(r)) if (1..=63).contains(&k) && r < k => Ok(BlockOp::Phase(k, r)),
                 _ => Err(format!("a bad phase `{k} {r}`")),
@@ -425,6 +435,10 @@ impl BlockOp {
                 out.extend_from_slice(&col.to_le_bytes());
             }
             BlockOp::Early(a, k) => two(out, 21, a, u16::from(k)),
+            BlockOp::Prefix(n, w) => {
+                out.extend([22, n]);
+                out.extend_from_slice(&w.to_le_bytes());
+            }
         }
     }
 }
@@ -1145,6 +1159,7 @@ impl BlockProgram {
             let one = |a: u16| v(a).iter().enumerate().map(|(i, &x)| (i, x, 0));
             let words: Vec<u64> = match *op {
                 BlockOp::Within(d) => place.iter().map(|&(at, len)| within_at(at, len, d)).collect(),
+                BlockOp::Prefix(n, w) => blocks.iter().zip(&place).map(|(block, &(at, len))| prefix_at(block, at, len, n, w)).collect(),
                 BlockOp::Phase(k, r) => place.iter().map(|&(at, _)| phase(64 * at, k, r)).collect(),
                 BlockOp::Position(j) => place.iter().map(|&(at, _)| position(at, j)).collect(),
                 BlockOp::Carry(_) => unreachable!("a carry is its group's, run with it"),
@@ -1528,6 +1543,14 @@ pub fn position(at: usize, j: u8) -> u64 {
         _ if (at as u64) >> (j - 6) & 1 == 1 => u64::MAX,
         _ => 0,
     }
+}
+
+/// `prefix n w` for block `at` of a stream of `len` bytes (`BlockOp::Prefix`): the low `n`
+/// bits of the file's first block where its first `n` bytes are `w`'s.
+pub fn prefix_at(block: &[u8; 64], at: usize, len: usize, n: u8, w: u64) -> u64 {
+    let n = usize::from(n);
+    let first = block[..n].iter().enumerate().fold(0u64, |a, (j, &b)| a | u64::from(b) << (8 * j));
+    if at == 0 && len >= n && first == w { (1u64 << n) - 1 } else { 0 }
 }
 
 pub fn within_at(at: usize, len: usize, d: u8) -> u64 {

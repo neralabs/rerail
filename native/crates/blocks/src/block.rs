@@ -5,9 +5,12 @@
 //! corruption is the storage's and ECC's to handle.
 
 use crate::structure;
-use std::fs::{File, OpenOptions};
+use std::fs::File;
+#[cfg(unix)]
+use std::fs::OpenOptions;
 use std::io;
 use std::ops::Deref;
+#[cfg(unix)]
 use std::os::fd::AsRawFd;
 use std::path::Path;
 use std::sync::Arc;
@@ -87,16 +90,21 @@ impl Block {
     /// An anonymous block of `reserved` bytes of address space: nothing is resident until written.
     pub fn anon(kind: u32, reserved: usize) -> Block {
         let reserved = round_up(reserved.max(PAGE), PAGE);
-        let p = unsafe {
-            libc::mmap(std::ptr::null_mut(), reserved, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_ANON | libc::MAP_PRIVATE, -1, 0)
-        };
-        assert!(p != libc::MAP_FAILED, "mmap of {reserved} bytes failed");
-        let b = Block::make(p.cast(), reserved, 0, None, true, None);
+        let p = crate::mem::reserve(reserved);
+        let b = Block::make(p, reserved, 0, None, true, None);
         b.init(kind);
         b
     }
 
+    /// A block backed by the file at `path`: sparse, and written back by the OS (no `fsync`). Unix only: elsewhere
+    /// `Unsupported`.
+    #[cfg(not(unix))]
+    pub fn file(_path: &Path, _kind: u32, _reserved: usize) -> io::Result<Block> {
+        Err(io::Error::new(io::ErrorKind::Unsupported, "a block in a file needs a shared mapping"))
+    }
+
     /// A block backed by the file at `path`: sparse, and written back by the OS (no `fsync`).
+    #[cfg(unix)]
     pub fn file(path: &Path, kind: u32, reserved: usize) -> io::Result<Block> {
         let reserved = round_up(reserved.max(PAGE), PAGE);
         let f = OpenOptions::new().read(true).write(true).create(true).truncate(true).open(path)?;
@@ -130,10 +138,17 @@ impl Block {
     /// A block in memory it does not own: `backing`'s, which may be dirty. Freezing it does not protect it (a
     /// slab's pages are the pool's); its owner gets it back when the block is dropped.
     pub fn over(kind: u32, backing: Box<dyn Backing>) -> Block {
+        Block::over_with(kind, backing, true)
+    }
+
+    /// `over`, saying whether the backing may hold earlier bytes (`dirty`): a backing known to read zero (a new
+    /// file, a new buffer) is not zeroed as it is allocated.
+    pub fn over_with(kind: u32, backing: Box<dyn Backing>, dirty: bool) -> Block {
         let (base, reserved) = (backing.base(), backing.len());
         assert!(reserved >= PAGE && base as usize % 64 == 0, "a backing of at least a page, 64-byte aligned");
         unsafe { std::ptr::write_bytes(base, 0, size_of::<Header>()) };
-        let b = Block::make(base, reserved, 0, None, true, Some(backing));
+        let mut b = Block::make(base, reserved, 0, None, true, Some(backing));
+        b.dirty = dirty;
         b.init(kind);
         b
     }
@@ -149,6 +164,14 @@ impl Block {
         let b = Block::make(base, backing.len(), used, None, true, Some(backing));
         unsafe { b.header_mut().reserved = b.reserved as u64 };
         b
+    }
+
+    /// Lets go of the no-copy wrap `gpu_buffer` kept; the device must be done with it. It does not let the OS write
+    /// back a file block's pages a kernel wrote: the driver holds them wired until the range is unmapped (decision
+    /// 0295 §1 and §7, measured by `examples/deferrable`).
+    #[cfg(target_os = "macos")]
+    pub fn release_gpu_buffer(&self) {
+        self.gpu.lock().unwrap().take();
     }
 
     /// The device buffer to bind this block with: its slab's own, or a no-copy wrap of its used extent made once
@@ -306,8 +329,22 @@ impl Block {
         if let Some(f) = &self.file {
             f.set_len(len as u64).expect("truncate a journal block");
         } else if self.backing.is_none() {
-            let r = unsafe { libc::mprotect(self.base.cast(), self.reserved, libc::PROT_READ) };
-            assert_eq!(r, 0, "mprotect");
+            unsafe { crate::mem::protect_read(self.base, self.reserved) };
+        }
+        let mut b = self;
+        b.writable = false;
+        Frozen(Arc::new(b))
+    }
+
+    /// Seals a block whose state is written later, by someone else (a deferrable slab, decision 0295 §1): its length
+    /// is written and it takes no more writes, but its state stays open, and nothing is truncated or protected. Its
+    /// readers in the process read it as any frozen block.
+    pub fn seal(self) -> Frozen {
+        let len = self.used();
+        unsafe {
+            let h = self.header_mut();
+            h.length = len as u64;
+            fence(Release);
         }
         let mut b = self;
         b.writable = false;
@@ -322,20 +359,25 @@ impl Block {
         if len < size_of::<Header>() {
             return Err(format!("{}: {len} bytes, shorter than a header", path.display()));
         }
-        let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ, libc::MAP_SHARED, f.as_raw_fd(), 0) };
-        if p == libc::MAP_FAILED {
-            return Err(io::Error::last_os_error().to_string());
-        }
-        let b = Block::make(p.cast(), len, len, Some(f), false, None);
-        let h = b.header();
-        if h.magic != MAGIC || h.kind != kind {
-            return Err(format!("{}: not a block of kind {kind}", path.display()));
-        }
-        if h.state != FROZEN {
-            return Err(format!("{}: not frozen (state {})", path.display(), h.state));
-        }
-        if h.length as usize != len {
-            return Err(format!("{}: header says {} bytes, the file has {len}", path.display(), h.length));
+        #[cfg(unix)]
+        let b = {
+            let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ, libc::MAP_SHARED, f.as_raw_fd(), 0) };
+            if p == libc::MAP_FAILED {
+                return Err(io::Error::last_os_error().to_string());
+            }
+            Block::make(p.cast(), len, len, Some(f), false, None)
+        };
+        // No mapping: the file read into a reservation of its own.
+        #[cfg(not(unix))]
+        let b = {
+            let mut f = f;
+            let p = crate::mem::reserve(len.div_ceil(PAGE) * PAGE);
+            std::io::Read::read_exact(&mut f, unsafe { std::slice::from_raw_parts_mut(p, len) }).map_err(|e| e.to_string())?;
+            Block::make(p, len.div_ceil(PAGE) * PAGE, len, None, false, None)
+        };
+        let at = frozen_at(unsafe { std::slice::from_raw_parts(b.base, len) }, kind).map_err(|e| format!("{}: {e}", path.display()))?;
+        if at.length != len {
+            return Err(format!("{}: header says {} bytes, the file has {len}", path.display(), at.length));
         }
         Ok(Frozen(Arc::new(b)))
     }
@@ -344,7 +386,7 @@ impl Block {
 impl Drop for Block {
     fn drop(&mut self) {
         if self.backing.is_none() {
-            unsafe { libc::munmap(self.base.cast(), self.reserved) };
+            unsafe { crate::mem::release(self.base, self.reserved) };
         }
     }
 }
@@ -358,4 +400,118 @@ impl Deref for Frozen {
     fn deref(&self) -> &Block {
         &self.0
     }
+}
+
+/// A run of `T`s in a shared block, read as a slice by the host: an array the host builds once and the device then
+/// reads in the same block (decision 0289 §3). The block lives as long as any of its `Cells`.
+pub struct Cells<T: crate::Pod> {
+    block: Arc<Block>,
+    at: usize,
+    len: usize,
+    _t: std::marker::PhantomData<T>,
+}
+
+impl<T: crate::Pod> Cells<T> {
+    /// Up to `capacity` `T`s, zero, filled by `fill`, which returns how many it used: the rest is given back to the
+    /// block when nothing was allocated after it. `None` when the block cannot hold `capacity`.
+    pub fn build(block: &Arc<Block>, capacity: usize, fill: impl FnOnce(&mut [T]) -> usize) -> Option<Self> {
+        let size = capacity * size_of::<T>();
+        let at = block.try_alloc(size, align_of::<T>().max(8))?;
+        // SAFETY: `at..at + size` was just allocated to this call alone, zero (a dirty block zeroes it), and zero
+        // is a `T` (`Pod`).
+        let cells = unsafe { std::slice::from_raw_parts_mut(block.ptr::<T>(at), capacity) };
+        let len = fill(cells);
+        assert!(len <= capacity, "cells filled past their capacity");
+        block.shrink_last(at, size, len * size_of::<T>());
+        Some(Cells { block: Arc::clone(block), at, len, _t: std::marker::PhantomData })
+    }
+
+    /// `src` copied into `block`.
+    pub fn copied(block: &Arc<Block>, src: &[T]) -> Option<Self> {
+        Self::build(block, src.len(), |cells| {
+            // SAFETY: `cells` holds `src.len()` `T`s, apart from `src`.
+            unsafe { std::ptr::copy_nonoverlapping(src.as_ptr(), cells.as_mut_ptr(), src.len()) };
+            src.len()
+        })
+    }
+
+    /// The block it is in.
+    pub fn block(&self) -> &Arc<Block> {
+        &self.block
+    }
+
+    pub fn as_ptr(&self) -> *const T {
+        self.block.ptr(self.at)
+    }
+}
+
+impl<T: crate::Pod> Deref for Cells<T> {
+    type Target = [T];
+    fn deref(&self) -> &[T] {
+        // SAFETY: `build` filled `len` `T`s at `at`, and nothing writes them after it returns.
+        unsafe { std::slice::from_raw_parts(self.block.ptr::<T>(self.at), self.len) }
+    }
+}
+
+impl<T: crate::Pod + std::fmt::Debug> std::fmt::Debug for Cells<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_list().entries(self.iter()).finish()
+    }
+}
+
+/// Where a frozen block's root lies and how long it is, as its header says.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct At {
+    pub root: usize,
+    pub length: usize,
+}
+
+/// The alignment of a framed block's root and length (`frame`): a block that follows another starts aligned.
+pub const FRAME_ALIGN: usize = 64;
+
+/// Checks the frozen block of `kind` at the start of `bytes` (a file of one block, or one of several written one
+/// after another): its magic and kind, its state frozen, its length within `bytes`, its root (when set) within its
+/// length.
+pub fn frozen_at(bytes: &[u8], kind: u32) -> Result<At, String> {
+    if bytes.len() < size_of::<Header>() {
+        return Err(format!("{} bytes, shorter than a header", bytes.len()));
+    }
+    // SAFETY: at least a header's bytes; every field is a plain integer, read unaligned.
+    let h: Header = unsafe { std::ptr::read_unaligned(bytes.as_ptr().cast::<Header>()) };
+    if h.magic != MAGIC || h.kind != kind {
+        return Err(format!("not a block of kind {kind}"));
+    }
+    if h.state != FROZEN {
+        return Err(format!("not frozen (state {})", h.state));
+    }
+    let (root, length) = (h.root as usize, h.length as usize);
+    // A root of 0 is none set (a block whose root was never set); any other lies past the header.
+    if length > bytes.len() || (root != 0 && root < size_of::<Header>()) || root > length {
+        return Err(format!("header says {length} bytes from a root at {root}, of {} bytes", bytes.len()));
+    }
+    Ok(At { root, length })
+}
+
+/// The header of a frozen block of `kind` whose root is `root_len` bytes, framed to be written with them: the
+/// header's bytes, padded to where the root starts (`FRAME_ALIGN`), and the zeros that pad the root to the block's
+/// length. A block made whole elsewhere (a file written by `write`, not mapped) reads as any frozen block.
+pub fn frame(kind: u32, root_len: usize) -> (Vec<u8>, Vec<u8>) {
+    let root = round_up(size_of::<Header>(), FRAME_ALIGN);
+    let length = root + round_up(root_len, FRAME_ALIGN);
+    let h = Header {
+        magic: MAGIC,
+        kind,
+        format: 1,
+        state: FROZEN,
+        delta: 0,
+        length: length as u64,
+        reserved: length as u64,
+        root: root as u64,
+        base: 0,
+        cost: std::sync::atomic::AtomicU64::new(0),
+    };
+    let mut head = vec![0u8; root];
+    // SAFETY: `head` holds at least a header; every field is a plain integer.
+    unsafe { std::ptr::write_unaligned(head.as_mut_ptr().cast::<Header>(), h) };
+    (head, vec![0u8; length - root - root_len])
 }

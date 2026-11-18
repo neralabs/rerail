@@ -91,7 +91,7 @@ priced within 2× fell from 92% to 85%. The class's measured 0.6 stays.
 
 - **`within` read from its container** (`within($f, $s)` with `$s` bound): priced at 0.24 M rows, ran 30 M in
   `pth_deferred($n, $s) :- demand_pth_deferred($n, $s), look($n, _, $s), rr_nearest_ks4($n, $f), within($f, $s)`.
-  Work queue Q27.
+  Work queue Q33 (Q27 on cost-classifier before the phased-facts merge).
 - Joins still mispriced by their statistics: `region`'s `comp_kind($ck, $k), kind($c, $ck)` (priced 10 M, ran
   0.17 M); `annotated_on_chain` (priced 0.03 M, ran 6.8 M).
 
@@ -99,4 +99,4 @@ priced within 2× fell from 92% to 85%. The class's measured 0.6 stays.
 
 - `plan::tests::a_filter_is_priced_at_the_rows_it_passes_on`: a scan and two filters priced at the rows each passes
   on, with each filter's share.
-- The planner's tests (`logic::plan::`) pass, except five that fail at 880f2a0de without this change (Q28; Q18 on cost-classifier).
+- The planner's tests (`logic::plan::`) pass, except five that fail at 880f2a0de without this change (work queue Q32).

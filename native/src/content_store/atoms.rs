@@ -37,6 +37,10 @@ pub use map::{ProcessIds, StoreIds, map_columns, mapped};
 
 pub type Sym = u32;
 
+/// The values `Atoms::intern_all` looks up under one read lock (decision 0315): a writer waits at most this many
+/// lookups for it.
+const READ_RUN: usize = 256;
+
 /// The fixed hash every string key uses: the interner's table, and the dependency keys of
 /// probes (`Engine::probe`), which must agree for strings that are not (yet) interned.
 pub fn hash_str(s: &str) -> u64 {
@@ -156,7 +160,11 @@ impl Interner {
     }
 
     pub fn intern(&mut self, s: &str) -> Sym {
-        let h = hash_str(s);
+        self.intern_h(s, hash_str(s))
+    }
+
+    /// `intern` of `s`, whose hash is `h`.
+    pub fn intern_h(&mut self, s: &str, h: u64) -> Sym {
         if let Some(id) = self.get_h(s, h) {
             return id;
         }
@@ -377,7 +385,7 @@ pub struct Atoms {
     /// memory is not interned, and is found without reading the store (decision 0104).
     complete: AtomicBool,
     /// A flush is queued to the store's writer and has not run yet (`queue_atoms_flush`).
-    flush_queued: AtomicBool,
+    pub(super) flush_queued: AtomicBool,
 }
 
 /// A store's atoms of at most this many bytes of text are read whole before a run's first wave (`ready_for_run`).
@@ -979,60 +987,68 @@ impl Atoms {
         self.reader.lock().take();
     }
 
-    /// The atom of each of `values`, giving out new ones (pending) under the lease.
+    /// The atom of each of `values`, giving out new ones (pending) under the lease. Decision 0315: each value is
+    /// hashed once, outside any lock; those held are found under the read lock, and only the rest are looked for
+    /// again and given ids under the write lock (`give`), so a batch of mostly known values stops the arena's readers
+    /// for its new ones only.
     pub fn intern_all(&self, values: &[&str]) -> StoreResult<Vec<Sym>> {
-        {
+        let hashes: Vec<u64> = values.iter().map(|value| hash_str(value)).collect();
+        // Looked up `READ_RUN` at a time, each run under a read lock of its own: a writer waits for every reader
+        // (`Sharded::write`), and while it waits every reader of a shard it holds waits too; a parser's batch read
+        // under one lock was the arena's longest hold (decision 0315).
+        let mut found: Vec<Option<Sym>> = Vec::with_capacity(values.len());
+        for (values, hashes) in values.chunks(READ_RUN).zip(hashes.chunks(READ_RUN)) {
             let state = self.state.read();
-            if let Some(found) = values.iter().map(|value| state.atoms.get(value)).collect::<Option<Vec<_>>>() {
-                return Ok(found);
-            }
+            found.extend(values.iter().zip(hashes).map(|(value, &h)| state.atoms.get_h(value, h)));
+        }
+        if found.iter().all(Option::is_some) {
+            return Ok(found.into_iter().flatten().collect());
         }
         // Inside a run, with every stored atom held: new ids are provisional, given out without the lease and checked
         // against the store's as they are written (decision 0160). Nothing is read. Forked, the store's are found as
         // they are written (decision 0170).
         if self.provisional() || self.forked() {
-            return Ok(self.give(values));
+            return Ok(self.give(values, &hashes, found));
         }
+        let missing = || -> Vec<&str> { values.iter().zip(&found).filter(|(_, f)| f.is_none()).map(|(v, _)| *v).collect() };
         // Outside the waves: what this process does not hold may be stored, found in the database first (decision
         // 0111), and the rest is provisional too. No lease (decision 0160).
         if lease_free() {
-            let missing: Vec<&str> = {
-                let state = self.state.read();
-                values.iter().copied().filter(|value| state.atoms.get(value).is_none()).collect()
-            };
-            if !missing.is_empty() {
-                self.catch_up_free()?;
-                self.find(&missing)?;
-            }
-            return Ok(self.give(values));
+            self.catch_up_free()?;
+            self.find(&missing())?;
+            return Ok(self.give(values, &hashes, found));
         }
         // The lease is held while ids are given out, so a flush on another thread cannot give it
         // back between the check and the new ids.
         let mut lease = self.lease.lock();
         self.acquire(&mut lease)?;
         // What this process does not hold may be stored: found in the database first (decision 0111).
-        let missing: Vec<&str> = {
-            let state = self.state.read();
-            values.iter().copied().filter(|value| state.atoms.get(value).is_none()).collect()
-        };
-        if !missing.is_empty() {
-            self.find(&missing)?;
-        }
-        let ids = self.give(values);
+        self.find(&missing())?;
+        let ids = self.give(values, &hashes, found);
         drop(lease);
         Ok(ids)
     }
 
-    /// The ids of `values`, new ones pending from this process's end.
-    fn give(&self, values: &[&str]) -> Vec<Sym> {
+    /// The ids of `values` (hashed: `hashes`), those not `found` looked for again and new ones pending from this
+    /// process's end, under the write lock: the only work under it is theirs.
+    fn give(&self, values: &[&str], hashes: &[u64], found: Vec<Option<Sym>>) -> Vec<Sym> {
+        let missing: Vec<usize> = found.iter().enumerate().filter(|(_, f)| f.is_none()).map(|(i, _)| i).collect();
+        let mut given = Vec::with_capacity(missing.len());
         let mut state = self.state.write();
         let before = state.atoms.len() as Sym;
-        let ids: Vec<Sym> = values.iter().map(|value| state.atoms.intern(value)).collect();
+        for &i in &missing {
+            given.push(state.atoms.intern_h(values[i], hashes[i]));
+        }
         if state.since.is_none() && state.atoms.pending().0 > 0 {
             state.since = Some(Instant::now());
         }
         let new = state.atoms.len() as Sym - before;
         drop(state);
+        let mut ids = found;
+        for (&i, id) in missing.iter().zip(given) {
+            ids[i] = Some(id);
+        }
+        let ids: Vec<Sym> = ids.into_iter().map(|id| id.expect("every value given an id")).collect();
         if new > 0 {
             self.test_fork(new as usize);
         }
@@ -1593,9 +1609,20 @@ impl Atoms {
         self.read_atoms(&ids)
     }
 
-    /// A run's end: the lease is given back with its next commit, as before the run.
+    /// A run's end: the lease is given back with its next commit, as before the run; at once when nothing is pending.
+    /// The run's last commit can come before its end (Q42): `committed` kept the lease then, the run still going, and
+    /// no commit came after to give it back, so the process held the store's lock file after its last run.
     pub fn run_over(&self) {
         let _ = self.runs.try_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1));
+        if self.path.is_none() || self.runs.load(Ordering::Acquire) != 0 {
+            return;
+        }
+        let mut lease = self.lease.lock();
+        let state = self.state.read();
+        if state.map.is_none() && state.atoms.pending().0 == 0 && lease.take().is_some() {
+            self.leased.store(false, Ordering::Release);
+            self.complete.store(false, Ordering::Release);
+        }
     }
 
     /// Whether a flush is due: enough pending (count, bytes or age), or another process waiting. Never inside a run
@@ -1771,11 +1798,12 @@ impl super::ContentStore {
 
     /// The pending atoms, appended by the store's writer behind the run (decision 0104).
     pub fn queue_atoms_flush(&self) {
-        let atoms = std::sync::Arc::clone(&self.atoms);
-        self.write_back_syms(crate::content_store::write_back::Syms::None, "the pending atoms", 0, Vec::new(), Box::new(move |store| {
-            atoms.flush_queued.store(false, Ordering::Release);
-            store.flush_atoms()
-        }));
+        self.write_back_syms(crate::content_store::write_back::Syms::None, "the pending atoms", 0, Vec::new(), crate::content_store::write_back::Work::atoms(true));
+    }
+
+    /// The pending atoms, appended by the store's writer behind the run's other writes, as `what`.
+    pub fn queue_atoms(&self, what: &'static str) {
+        self.write_back_syms(crate::content_store::write_back::Syms::None, what, 0, Vec::new(), crate::content_store::write_back::Work::atoms(false));
     }
 
     /// Appends the pending atoms now, unless another writer holds the store (a later write will).

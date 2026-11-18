@@ -49,14 +49,14 @@ pub(in crate::code_rule_dsl) fn image(tape_id: TapeId, doc: &TapeDoc, interrupte
     let mut positions = kinds::Builder::default();
     let mut counts = [0_u32; LANG_STRIDE as usize];
     let mut statistics = crate::code_rule_dsl::stats::ingest::TapeStatistics::new(lang);
-    for pre in 0..doc.transducer_len() as u32 {
+    for (pre, parent) in (0..doc.transducer_len() as u32).zip(doc.transducer_parents()) {
         if pre.is_multiple_of(256) && interrupted() {
             return Err(StoreError::Invalid("index construction interrupted".to_owned()));
         }
         let kind = kind_code(doc, pre);
         positions.push(kind, pre);
         counts[usize::from(kind)] += 1;
-        statistics.node(doc, pre, kind);
+        statistics.node(doc, pre, kind, parent);
     }
     let kinds = counts
         .iter()

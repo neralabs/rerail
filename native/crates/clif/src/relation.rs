@@ -1,0 +1,320 @@
+//! A relation's reads as CLIF functions, written once (decision 0325): what `rerail_blocks`' `Rows` and `Relation`
+//! read, for the host (the Rust backend: the blocks crate's `generated_reads.rs`), the kernels (the MSL backend:
+//! `relation_reads.metal`) and the JIT (inlined where hot).
+//!
+//! A read takes a descriptor's address (a `Rows`, or a `Relation`) and reaches everything else through the block's
+//! self-relative references: a span's items lie `off` bytes from the span's own address, a column's chunk `chunk[k]`
+//! bytes from its directory's. Every load is a word of the block, aligned to its size. The layout is the blocks
+//! crate's own (`offset_of!`), so a change to it changes these reads, and their generated forms with them.
+//!
+//! Rows come in doubling groups of four chunks (`rows::chunk_of`): row `i`'s group is `k = 63 - clz((i >> min_log)
+//! + 1)`, its place in the group `l = i - ((2^k - 1) << min_log)`, its chunk `4k + (l >> qlog)` and its place in
+//! that `l & (2^qlog - 1)`, with `qlog = min_log + k - 2`.
+
+use crate::reads::{B, fields};
+use cranelift_codegen::ir::{
+    InstBuilder, Value,
+    condcodes::IntCC,
+    types::{I32, I64},
+};
+use rerail_blocks::refs::Span;
+use rerail_blocks::relation::{Index, Relation};
+use rerail_blocks::rows::{ColDir, Rows};
+use std::mem::{offset_of, size_of};
+
+/// A span's offset from its own address, and its length (`refs::Span`).
+const SPAN_OFF: i32 = offset_of!(Span<u64>, off) as i32;
+const SPAN_LEN: i32 = offset_of!(Span<u64>, len) as i32;
+const ROWS_MIN_LOG: i32 = offset_of!(Rows, min_log) as i32;
+const ROWS_COLS: i32 = offset_of!(Rows, cols) as i32;
+const COL_WIDTH: i32 = offset_of!(ColDir, width) as i32;
+const COL_CHUNK: i32 = offset_of!(ColDir, chunk) as i32;
+const COL_SIZE: i64 = size_of::<ColDir>() as i64;
+const REL_BASE_ROWS: i32 = offset_of!(Relation, base_rows) as i32;
+const REL_ROWS: i64 = offset_of!(Relation, rows) as i64;
+const REL_DEAD: i32 = offset_of!(Relation, dead) as i32;
+const REL_INDEXES: i32 = offset_of!(Relation, indexes) as i32;
+const INDEX_MASK: i32 = offset_of!(Index, mask) as i32;
+const INDEX_OFFS: i32 = offset_of!(Index, offs) as i32;
+const INDEX_ROWS: i32 = offset_of!(Index, rows) as i32;
+const INDEX_SIZE: i64 = size_of::<Index>() as i64;
+
+impl B<'_, '_> {
+    /// The block's word of type `ty` at `p + offset` (aligned).
+    fn word_at(&mut self, ty: cranelift_codegen::ir::Type, p: Value, offset: i32) -> Value {
+        self.f.ins().load(ty, fields(), p, offset)
+    }
+    /// The address a span at `p + at` refers to: its own address plus its offset.
+    fn follow(&mut self, p: Value, at: i32) -> Value {
+        let off = self.word_at(I64, p, at + SPAN_OFF);
+        let span = self.f.ins().iadd_imm(p, i64::from(at));
+        self.f.ins().iadd(span, off)
+    }
+    /// `p + index * size` (`index` a u32).
+    fn item(&mut self, p: Value, index: Value, size: i64) -> Value {
+        let index = self.f.ins().uextend(I64, index);
+        let at = self.f.ins().imul_imm(index, size);
+        self.f.ins().iadd(p, at)
+    }
+    /// The read `name` of the descriptor at `desc` (in the same block) with `args`.
+    fn call_at(&mut self, name: &str, desc: Value, args: &[Value]) -> Value {
+        let tape = std::mem::replace(&mut self.tape, desc);
+        let value = self.call(name, args);
+        self.tape = tape;
+        value
+    }
+    /// Row `i`'s chunk and its place in it, as u64s, for chunks whose first holds `2^min_log` rows (a u32).
+    fn chunk_of(&mut self, i: Value, min_log: Value) -> (Value, Value) {
+        let min_log = self.f.ins().uextend(I64, min_log);
+        let i = self.f.ins().uextend(I64, i);
+        let shifted = self.f.ins().ushr(i, min_log);
+        let q = self.f.ins().iadd_imm(shifted, 1);
+        let lz = self.f.ins().clz(q);
+        let k = self.f.ins().irsub_imm(lz, 63);
+        let one = self.c64(1);
+        let group = self.f.ins().ishl(one, k);
+        let before = self.f.ins().iadd_imm(group, -1);
+        let first = self.f.ins().ishl(before, min_log);
+        let l = self.f.ins().isub(i, first);
+        let qlog = self.f.ins().iadd(min_log, k);
+        let qlog = self.f.ins().iadd_imm(qlog, -2);
+        let quarter = self.f.ins().ushr(l, qlog);
+        let four_k = self.f.ins().ishl_imm(k, 2);
+        let chunk = self.f.ins().iadd(four_k, quarter);
+        let size = self.f.ins().ishl(one, qlog);
+        let low = self.f.ins().iadd_imm(size, -1);
+        let place = self.f.ins().band(l, low);
+        (chunk, place)
+    }
+}
+
+/// `rows_col(rows, c)`: the address of column `c`'s directory.
+pub fn rows_col(b: &mut B<'_, '_>) -> Value {
+    let cols = b.follow(b.tape, ROWS_COLS);
+    let c = b.arg(0);
+    b.item(cols, c, COL_SIZE)
+}
+
+/// `rows_width(rows, c)`: column `c`'s width in bytes (4 or 8).
+pub fn rows_width(b: &mut B<'_, '_>) -> Value {
+    let c = b.arg(0);
+    let dir = b.call("rows_col", &[c]);
+    b.word_at(I32, dir, COL_WIDTH)
+}
+
+/// `col_at(dir, min_log, i)`: the address of row `i`'s value in the column whose directory is `dir`, its rows'
+/// first chunk `2^min_log` rows (a writer stores there, at the column's width).
+pub fn col_at(b: &mut B<'_, '_>) -> Value {
+    let (min_log, i) = (b.arg(0), b.arg(1));
+    let dir = b.tape;
+    let width = b.word_at(I32, dir, COL_WIDTH);
+    let (chunk, place) = b.chunk_of(i, min_log);
+    let slot = b.f.ins().ishl_imm(chunk, 3);
+    let slot = b.f.ins().iadd(dir, slot);
+    let off = b.word_at(I64, slot, COL_CHUNK);
+    let start = b.f.ins().iadd(dir, off);
+    let width = b.f.ins().uextend(I64, width);
+    let at = b.f.ins().imul(place, width);
+    b.f.ins().iadd(start, at)
+}
+
+/// `col_get(dir, min_log, i)`: row `i`'s value in the column whose directory is `dir` (a 4-byte column's
+/// unsigned): a reader of many rows of one column resolves its directory once (`rows::ColRead`).
+pub fn col_get(b: &mut B<'_, '_>) -> Value {
+    let (min_log, i) = (b.arg(0), b.arg(1));
+    let width = b.word_at(I32, b.tape, COL_WIDTH);
+    let p = b.call("col_at", &[min_log, i]);
+    let four = b.f.ins().icmp_imm(IntCC::Equal, width, 4);
+    b.either(
+        I64,
+        four,
+        |b| {
+            let v = b.word_at(I32, p, 0);
+            b.f.ins().uextend(I64, v)
+        },
+        |b| b.word_at(I64, p, 0),
+    )
+}
+
+/// `rows_at(rows, i, c)`: the address of row `i`'s value in column `c`.
+pub fn rows_at(b: &mut B<'_, '_>) -> Value {
+    let (i, c) = (b.arg(0), b.arg(1));
+    let min_log = b.word_at(I32, b.tape, ROWS_MIN_LOG);
+    let dir = b.call("rows_col", &[c]);
+    b.call_at("col_at", dir, &[min_log, i])
+}
+
+/// `rows_get(rows, i, c)`: row `i`'s value in column `c` (a 4-byte column's unsigned).
+pub fn rows_get(b: &mut B<'_, '_>) -> Value {
+    let (i, c) = (b.arg(0), b.arg(1));
+    let min_log = b.word_at(I32, b.tape, ROWS_MIN_LOG);
+    let dir = b.call("rows_col", &[c]);
+    b.call_at("col_get", dir, &[min_log, i])
+}
+
+/// `rel_get(rel, id, c)`: the relation's own row `id` (counted from its `base_rows`) in column `c`.
+pub fn rel_get(b: &mut B<'_, '_>) -> Value {
+    let (id, c) = (b.arg(0), b.arg(1));
+    let base_rows = b.word_at(I32, b.tape, REL_BASE_ROWS);
+    let i = b.f.ins().isub(id, base_rows);
+    let rows = b.f.ins().iadd_imm(b.tape, REL_ROWS);
+    b.call_at("rows_get", rows, &[i, c])
+}
+
+/// `rel_dead(rel, id)`: 1 if the relation's dead bits mark row `id` (a delta's kills of its base, or of its own).
+pub fn rel_dead(b: &mut B<'_, '_>) -> Value {
+    let id = b.arg(0);
+    let words = b.word_at(I64, b.tape, REL_DEAD + SPAN_LEN);
+    let w = b.f.ins().ushr_imm(id, 6);
+    let w = b.f.ins().uextend(I64, w);
+    let inside = b.f.ins().icmp(IntCC::UnsignedLessThan, w, words);
+    b.either(
+        I32,
+        inside,
+        |b| {
+            let dead = b.follow(b.tape, REL_DEAD);
+            let at = b.f.ins().ishl_imm(w, 3);
+            let p = b.f.ins().iadd(dead, at);
+            let word = b.word_at(I64, p, 0);
+            let bit = b.f.ins().band_imm(id, 63);
+            let bit = b.f.ins().uextend(I64, bit);
+            let shifted = b.f.ins().ushr(word, bit);
+            let one = b.f.ins().band_imm(shifted, 1);
+            b.f.ins().ireduce(I32, one)
+        },
+        |b| b.c32(0),
+    )
+}
+
+/// The address of the relation's index `idx`.
+fn index(b: &mut B<'_, '_>, idx: Value) -> Value {
+    let indexes = b.follow(b.tape, REL_INDEXES);
+    b.item(indexes, idx, INDEX_SIZE)
+}
+
+/// `rel_group(rel, idx, h)`: the group of rows index `idx` holds for a key of hash `h` (its bucket, before liveness
+/// and the key's own test): the first entry in the index's rows `<< 32`, or'd with how many. 0 for an index of no
+/// buckets.
+pub fn rel_group(b: &mut B<'_, '_>) -> Value {
+    let (idx, h) = (b.arg(0), b.arg(1));
+    let ix = index(b, idx);
+    let buckets = b.word_at(I64, ix, INDEX_OFFS + SPAN_LEN);
+    let none = b.f.ins().icmp_imm(IntCC::Equal, buckets, 0);
+    b.either(
+        I64,
+        none,
+        |b| b.c64(0),
+        |b| {
+            let mask = b.word_at(I64, ix, INDEX_MASK);
+            let bucket = b.f.ins().band(h, mask);
+            let offs = b.follow(ix, INDEX_OFFS);
+            let at = b.f.ins().ishl_imm(bucket, 2);
+            let p = b.f.ins().iadd(offs, at);
+            let start = b.word_at(I32, p, 0);
+            let end = b.word_at(I32, p, 4);
+            let len = b.f.ins().isub(end, start);
+            let start = b.f.ins().uextend(I64, start);
+            let start = b.f.ins().ishl_imm(start, 32);
+            let len = b.f.ins().uextend(I64, len);
+            b.f.ins().bor(start, len)
+        },
+    )
+}
+
+/// `rel_group_row(rel, idx, k)`: entry `k` of index `idx`'s rows (a row id; a group is a run of them).
+pub fn rel_group_row(b: &mut B<'_, '_>) -> Value {
+    let (idx, k) = (b.arg(0), b.arg(1));
+    let ix = index(b, idx);
+    let rows = b.follow(ix, INDEX_ROWS);
+    let p = b.item(rows, k, 4);
+    b.word_at(I32, p, 0)
+}
+
+#[cfg(test)]
+mod tests {
+    use rerail_blocks::block::{Block, kind};
+    use rerail_blocks::relation::{RelW, Relation, Spec, freeze};
+    use std::sync::Mutex;
+
+    /// The JIT's relation reads (each called through an exported function, its hot reads inlined into it: the pass
+    /// checked as `jit::Reads` builds) read a relation as the blocks crate's host reads do: every row's value in a
+    /// 4-byte and an 8-byte column over many chunks, through its rows and through a column resolved once, its dead
+    /// bit and its key's index group, for a frozen base and a frozen delta of it.
+    #[test]
+    fn the_jits_relation_reads_are_the_hosts() {
+        let reads = crate::jit::Reads::new();
+        type Two = extern "C" fn(*const u8, u32, u32) -> u64;
+        type One = extern "C" fn(*const u8, u32) -> u32;
+        type Group = extern "C" fn(*const u8, u32, u64) -> u64;
+        // SAFETY: each read's signature: its descriptor's address, then its parameters.
+        let (rows_get, col_get, rel_get): (Two, Two, Two) =
+            unsafe {
+                (
+                    std::mem::transmute::<*const u8, Two>(reads.function("rows_get")),
+                    std::mem::transmute::<*const u8, Two>(reads.function("col_get")),
+                    std::mem::transmute::<*const u8, Two>(reads.function("rel_get")),
+                )
+            };
+        let rel_dead: One = unsafe { std::mem::transmute(reads.function("rel_dead")) };
+        let rel_group: Group = unsafe { std::mem::transmute(reads.function("rel_group")) };
+
+        let spec = Spec { widths: vec![8, 4], order: vec![0], indexes: vec![vec![1]], min_log: 4 };
+        let lock = Mutex::new(());
+        let base_block = Block::anon(kind::FACTS, 16 << 20);
+        let base = Relation::create(&base_block, &spec, None);
+        let rows: Vec<i64> = (0..5_000i64).flat_map(|i| [(i * 7919) << 33 | i, i % 37]).collect();
+        RelW { block: &base_block, rel: base, lock: &lock }.extend(&rows);
+        freeze(&base_block, base, &spec, None);
+        let top_block = Block::anon(kind::FACTS, 16 << 20);
+        let top = Relation::create(&top_block, &spec, Some(base));
+        let w = RelW { block: &top_block, rel: top, lock: &lock };
+        for id in (0..base.rows.len()).step_by(13) {
+            w.kill(id);
+        }
+        w.extend(&(0..700i64).flat_map(|i| [-i - 1, 40 + i % 5]).collect::<Vec<_>>());
+        freeze(&top_block, top, &spec, Some(base));
+
+        for rel in [base, top] {
+            let desc = std::ptr::from_ref(rel).cast::<u8>();
+            let rows = std::ptr::from_ref(&rel.rows).cast::<u8>();
+            let cols = [rel.rows.col(0), rel.rows.col(1)];
+            for i in 0..rel.rows.len() {
+                let id = rel.base_rows + i;
+                for c in 0..2u32 {
+                    let want = rel.rows.get(i, c as usize);
+                    assert_eq!(rows_get(rows, i, c) as i64, want, "rows_get row {i} column {c}");
+                    let dir = std::ptr::from_ref(cols[c as usize]).cast::<u8>();
+                    assert_eq!(col_get(dir, rel.rows.min_log, i) as i64, want, "col_get row {i} column {c}");
+                    assert_eq!(rel_get(desc, id, c) as i64, want, "rel_get row {id} column {c}");
+                }
+                assert_eq!(rel_dead(desc, i) != 0, rel.dead_bit(i), "rel_dead row {i}");
+                let key = rel.own(id, 1);
+                let h = rerail_blocks::key_hash(&[key]);
+                let group = rel.group(0, h);
+                let g = rel_group(desc, 0, h);
+                let index_rows = rel.index(0).rows.as_slice();
+                let start = if group.is_empty() { 0 } else { (group.as_ptr() as usize - index_rows.as_ptr() as usize) / 4 };
+                assert_eq!(g, ((start as u64) << 32) | group.len() as u64, "rel_group of row {id}'s key");
+            }
+        }
+    }
+
+    /// The host's chunk arithmetic for ranges (`rows::chunk_of`) is the reads': every row's address through
+    /// `chunk_of` is the one `rows_at` gives.
+    #[test]
+    fn the_hosts_chunk_arithmetic_is_the_reads() {
+        let spec = Spec { widths: vec![8], order: vec![0], indexes: vec![], min_log: 4 };
+        let lock = Mutex::new(());
+        let block = Block::anon(kind::FACTS, 16 << 20);
+        let rel = Relation::create(&block, &spec, None);
+        RelW { block: &block, rel, lock: &lock }.extend(&(0..20_000i64).collect::<Vec<_>>());
+        let dir = rel.rows.col(0);
+        for i in 0..rel.rows.len() {
+            let (k, l) = rerail_blocks::rows::chunk_of(i, rel.rows.min_log);
+            let by_host = std::ptr::from_ref(dir) as i64 + dir.chunk[k].load(std::sync::atomic::Ordering::Relaxed) + 8 * l as i64;
+            // SAFETY: a live descriptor and a reserved row.
+            let by_read = unsafe { rerail_blocks::generated_reads::rows_at(std::ptr::from_ref(&rel.rows).cast(), i, 0) } as i64;
+            assert_eq!(by_read, by_host, "row {i}");
+        }
+    }
+}

@@ -84,6 +84,10 @@ pub enum BlockInst {
     Load(u16),
     /// The bytes inside the stream at a delay (`block::BlockOp::Within`), from its length.
     Within(u8),
+    /// The file's positions before the stream (`block::BlockOp::Prefix`): the low `n` bits of
+    /// the first block where the file starts with `word`'s `n` bytes. From the file's first
+    /// word, compared once (`native_cpu_block::stream_start`).
+    Prefix(u8, u64),
     /// The bytes whose position is `r` mod `k` (`block::BlockOp::Phase`), from the position.
     Phase(u8, u8),
     /// Plane `j` of each byte's position (`block::BlockOp::Position`), from the position.
@@ -145,6 +149,7 @@ impl BlockNative {
                 BlockOp::Fill(a, b) => BlockInst::Fill(a, b),
                 BlockOp::BackFill(a, b) => BlockInst::BackFill(a, b),
                 BlockOp::Within(d) => BlockInst::Within(d),
+                BlockOp::Prefix(n, w) => BlockInst::Prefix(n, w),
                 BlockOp::Phase(k, r) => BlockInst::Phase(k, r),
                 BlockOp::Position(j) => BlockInst::Position(j),
                 BlockOp::Carry(a) => BlockInst::Carry(a),
@@ -200,7 +205,14 @@ impl BlockNative {
     /// goes, and with it whatever only the rounds read (an `else`'s `back_fill`, and the
     /// backward pass it took). Metal runs the program as it is.
     pub fn cpu_form(&self) -> BlockNative {
-        let made = self.records_made();
+        self.cpu_form_keeping(&[])
+    }
+
+    /// `cpu_form`, with outputs `keep` made by the body though the record pass reads them from
+    /// the bytes elsewhere: the refill's words it reads from the rows (decision 0361).
+    pub fn cpu_form_keeping(&self, keep: &[usize]) -> BlockNative {
+        let mut made = self.records_made();
+        made.retain(|k| !keep.contains(k));
         if self.walks.is_empty() && made.is_empty() {
             return self.clone();
         }
@@ -372,6 +384,29 @@ impl BlockNative {
         v
     }
 
+    /// The totals whose words no one reads from the rows where the CPU's token loop runs
+    /// (decision 0347): a total is read as one running word, its file's flag (`Batch::results`),
+    /// and only tier 2 (`masks`), a mark, or the token loop's own reads (the skip, the end
+    /// rules', the readers', the tests') read a row. simdjson keeps its error flags so: one
+    /// register, OR-ed a block, never stored a block.
+    pub fn rowless_totals(&self) -> Vec<usize> {
+        use crate::records::EndRule;
+        let Some(r) = self.records.as_ref().filter(|r| r.skip.is_some()) else {
+            return Vec::new();
+        };
+        let mut read: Vec<usize> = self.masks.clone();
+        read.extend(r.skip.map(usize::from));
+        read.extend(r.marks.iter().filter(|m| m.0 != crate::records::WORD_ALONE).map(|m| usize::from(m.0)));
+        read.extend(r.rules.iter().filter_map(|x| match *x {
+            EndRule::Run(o) | EndRule::Pair(o) | EndRule::Last(o) => Some(usize::from(o)),
+            EndRule::Read(_) | EndRule::Next(_) => None,
+        }));
+        read.extend(r.readers.iter().flat_map(|rd| rd.arms.iter().flat_map(|a| [usize::from(a.opener), usize::from(a.closer)])));
+        read.extend(r.readers.iter().flat_map(|rd| rd.parts.iter().map(|p| usize::from(p.start))));
+        read.extend(r.checks.iter().map(|c| usize::from(c.o)));
+        self.totals.iter().copied().filter(|t| !read.contains(t)).collect()
+    }
+
     /// The outputs of the start masks the CPU's readers say instead (`Records::retags`): where
     /// its token loop runs, a reader gives its token's kind and marks, so it makes none of them.
     pub fn readers_tags(&self) -> Vec<usize> {
@@ -517,7 +552,7 @@ impl BlockNative {
         let mut pure = vec![false; n];
         for x in 0..n {
             pure[x] = match self.insts[x] {
-                BlockInst::Const(_) | BlockInst::Within(_) | BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) | BlockInst::PlaneBefore(_) | BlockInst::Pair { .. } => true,
+                BlockInst::Const(_) | BlockInst::Within(_) | BlockInst::Prefix(..) | BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) | BlockInst::PlaneBefore(_) | BlockInst::Pair { .. } => true,
                 BlockInst::Not(_) | BlockInst::And(..) | BlockInst::Or(..) | BlockInst::Xor(..) | BlockInst::AndNot(..) | BlockInst::Prev(..) | BlockInst::Early(..) => self.insts[x].operands().into_iter().all(|o| pure[o]),
                 _ => false,
             };

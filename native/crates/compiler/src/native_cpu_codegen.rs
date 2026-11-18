@@ -37,6 +37,8 @@ pub fn define_function(
     id: FuncId,
     context: &mut Context,
 ) -> Result<(), Box<ModuleError>> {
+    // The tape's hot reads it calls, inlined (decision 0310).
+    rerail_clif::inline::reads(module, context)?;
     // JIT code mappings can be farther apart than a direct branch can reach.
     // Local linkage proves symbol ownership, not physical code proximity.
     // Ask Cranelift for long-range calls before it selects instructions.
@@ -44,8 +46,12 @@ pub fn define_function(
         function.colocated = false;
     }
     switch_trees(&mut context.func);
-    // The function may have changed since its flow graph was made (`clif_fold`, `switch_trees`):
-    // made again.
+    // Each integer constant made again in the blocks that read it (decision 0351).
+    remat_consts(&mut context.func);
+    // No complement of a complement (0353).
+    fold_nots(&mut context.func);
+    // The function may have changed since its flow graph was made (`clif_fold`, `switch_trees`,
+    // `remat_consts`): made again.
     context.cfg.clear();
     context.domtree.clear();
     if let Err(e) = module.define_function(id, context) {
@@ -56,6 +62,13 @@ pub fn define_function(
     }
     #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos", target_arch = "aarch64"))]
     relocations::record(id, context);
+    Ok(())
+}
+
+/// The tape's cold reads (decision 0310), defined once in `module` as every function is
+/// (`define_function`): what a call the pass leaves calls.
+pub fn define_reads(module: &mut JITModule) -> Result<(), Box<ModuleError>> {
+    rerail_clif::inline::define_cold(module, &mut |module, id, context| define_function(module, id, context).map_err(|error| *error))?;
     Ok(())
 }
 
@@ -71,7 +84,12 @@ pub fn define_functions(module: &mut JITModule, items: Vec<(FuncId, Context)>, n
     use cranelift_module::{Module, ModuleReloc};
     let mut items = items;
     for (_, context) in &mut items {
+        // The tape's hot reads each calls, inlined (decision 0310).
+        rerail_clif::inline::reads(module, context)?;
+        // Each switch a tree of compares, as rustc lowers a match (0322): after the inlining, so
+        // an inlined read's switches are lowered too.
         switch_trees(&mut context.func);
+        // The function changed since its flow graph was made (`clif_fold`, the inlining above): made again.
         context.cfg.clear();
         context.domtree.clear();
         for (_, function) in context.func.dfg.ext_funcs.iter_mut() {
@@ -156,6 +174,89 @@ pub const SWITCH_TREE_RUNS: usize = 32;
 /// table's load. The IR keeps the table, as lean keeps its `match` (`clif_rust` writes it as
 /// one, and rustc lowers it so); only the JIT's copy is rewritten, before Cranelift lowers it.
 /// A table whose targets take arguments stays.
+/// Each integer constant a block reads but another made, made again in the block, before its
+/// first reader there (decision 0351): the optimizer's `remat` of an `iconst`, which tier 1 runs
+/// without (0069). A constant the token loop's entry makes (a table's address, the word hash's
+/// multiplier, zero, all ones) was one value live through the loop, its calls included: so it was
+/// spilled and reloaded at each token, where the lean lexer has it in an immediate or a `movz`
+/// beside its reader. Only the JIT's copy: the AOT's rustc does the same.
+/// A complement read complemented, folded (0353): `band_not`, `bor_not` and `bxor_not` of a
+/// `bnot y` are `band`, `bor` and `bxor` of `y`. The body keeps a class complemented while its
+/// readers can take it so (`Sym`); where one could not, it made the `bnot`, and a later reader
+/// that wanted the complement complemented it again: without the optimizer (0069) nothing folds
+/// that, and the `bnot` was one more value live. Only the JIT's copy; rustc folds the AOT's.
+pub fn fold_nots(func: &mut cranelift_codegen::ir::Function) {
+    use cranelift_codegen::ir::{InstructionData, Opcode, ValueDef};
+    let not_of = |func: &cranelift_codegen::ir::Function, v: cranelift_codegen::ir::Value| -> Option<cranelift_codegen::ir::Value> {
+        let v = func.dfg.resolve_aliases(v);
+        let ValueDef::Result(def, 0) = func.dfg.value_def(v) else { return None };
+        match func.dfg.insts[def] {
+            InstructionData::Unary { opcode: Opcode::Bnot, arg } => Some(arg),
+            _ => None,
+        }
+    };
+    let blocks: Vec<cranelift_codegen::ir::Block> = func.layout.blocks().collect();
+    for block in blocks {
+        let insts: Vec<cranelift_codegen::ir::Inst> = func.layout.block_insts(block).collect();
+        for inst in insts {
+            let InstructionData::Binary { opcode, args: [a, b] } = func.dfg.insts[inst] else { continue };
+            let plain = match opcode {
+                Opcode::BandNot => Opcode::Band,
+                Opcode::BorNot => Opcode::Bor,
+                Opcode::BxorNot => Opcode::Bxor,
+                _ => continue,
+            };
+            if let Some(y) = not_of(func, b) {
+                func.dfg.insts[inst] = InstructionData::Binary { opcode: plain, args: [a, y] };
+            }
+        }
+    }
+}
+
+pub fn remat_consts(func: &mut cranelift_codegen::ir::Function) {
+    use cranelift_codegen::cursor::{Cursor, FuncCursor};
+    use cranelift_codegen::ir::{InstBuilder, InstructionData, Opcode, ValueDef};
+    let blocks: Vec<cranelift_codegen::ir::Block> = func.layout.blocks().collect();
+    for block in blocks {
+        let mut made: std::collections::HashMap<cranelift_codegen::ir::Value, cranelift_codegen::ir::Value> = Default::default();
+        let insts: Vec<cranelift_codegen::ir::Inst> = func.layout.block_insts(block).collect();
+        for inst in insts {
+            let reads: Vec<cranelift_codegen::ir::Value> = func.dfg.inst_values(inst).collect();
+            let mut swap: Vec<(cranelift_codegen::ir::Value, cranelift_codegen::ir::Value)> = Vec::new();
+            for v in reads {
+                let v = func.dfg.resolve_aliases(v);
+                let ValueDef::Result(def, 0) = func.dfg.value_def(v) else { continue };
+                if func.layout.inst_block(def) == Some(block) {
+                    continue;
+                }
+                let InstructionData::UnaryImm { opcode: Opcode::Iconst, imm } = func.dfg.insts[def] else { continue };
+                let again = match made.get(&v) {
+                    Some(&x) => x,
+                    None => {
+                        let ty = func.dfg.value_type(v);
+                        let mut pos = FuncCursor::new(func).at_inst(inst);
+                        let x = pos.ins().iconst(ty, imm);
+                        made.insert(v, x);
+                        x
+                    }
+                };
+                swap.push((v, again));
+            }
+            if !swap.is_empty() {
+                let dfg = &mut func.dfg;
+                let resolved: Vec<cranelift_codegen::ir::Value> = dfg.inst_values(inst).map(|x| dfg.resolve_aliases(x)).collect();
+                let mut k = 0;
+                let new: Vec<cranelift_codegen::ir::Value> = resolved.iter().map(|&x| swap.iter().find(|s| s.0 == x).map_or(x, |s| s.1)).collect();
+                dfg.map_inst_values(inst, |_| {
+                    let x = new[k];
+                    k += 1;
+                    x
+                });
+            }
+        }
+    }
+}
+
 pub fn switch_trees(func: &mut cranelift_codegen::ir::Function) {
     use cranelift_codegen::ir::{Block, InstructionData};
     let mut found = Vec::new();

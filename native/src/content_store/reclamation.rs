@@ -73,122 +73,14 @@ impl ContentStore {
         Ok(())
     }
 
-    /// From now on, each source this handle stores (`put_source`, `put_source_and_tape`) or finds through
-    /// [`Self::held_source_by_hash`] is pinned for `owner` until unix second `lease_until`, in the transaction that
-    /// stores or finds it (O95). A run's sources are live only once its manifest names them; held, a collector
-    /// running meanwhile cannot take them, or their tapes' and memo rows' sources, from under it.
-    /// `release_pins(owner)` ends the hold.
-    pub fn hold_sources(&self, owner: &str, lease_until: i64) -> StoreResult<()> {
-        if owner.is_empty() || lease_until <= 0 {
-            return Err(StoreError::Invalid("object pin is invalid".to_owned()));
-        }
-        *self.holder.lock() = Some((owner.to_owned(), lease_until));
-        Ok(())
-    }
-
-    /// Pins `source` under this handle's holder, if it has one, in `transaction`.
-    pub(super) fn pin_held(&self, transaction: &rusqlite::Connection, source: SourceId) -> StoreResult<()> {
-        self.pin_held_object(transaction, OBJECT_SOURCE, source.0)
-    }
-
-    /// Pins `tape` under this handle's holder, if it has one, in `transaction`: a run's tapes stay until its manifest
-    /// makes them live, so the next run does not parse them again.
-    pub(super) fn pin_held_tape(&self, transaction: &rusqlite::Connection, tape: TapeId) -> StoreResult<()> {
-        self.pin_held_object(transaction, OBJECT_TAPE, tape.0)
-    }
-
-    fn pin_held_object(&self, transaction: &rusqlite::Connection, kind: i64, id: i64) -> StoreResult<()> {
-        let Some((owner, lease_until)) = self.holder.lock().clone() else { return Ok(()) };
-        let owner_id = intern_string(transaction, STRING_OWNER, &owner)?;
-        transaction
-            .prepare_cached(
-                "INSERT INTO object_pins(object_kind_id,object_id,owner_string_id,lease_until) VALUES (?1,?2,?3,?4)\
-                 ON CONFLICT(object_kind_id,object_id,owner_string_id) DO UPDATE SET lease_until=excluded.lease_until",
-            )?
-            .execute(params![kind, id, owner_id, lease_until])?;
-        Ok(())
-    }
-
-    /// The source whose SHA-256 is `hash`, pinned under the holder in the same transaction when the handle has one.
-    pub fn held_source_by_hash(&self, hash: HashKey) -> StoreResult<Option<SourceId>> {
-        if self.holder.lock().is_none() {
-            return self.source_by_hash(hash);
-        }
-        self.immediate_transaction(|transaction| {
-            let found = super::objects::source_id_by_hash(transaction, hash)?;
-            if let Some(source) = found {
-                self.pin_held(transaction, source)?;
-            }
-            Ok(found)
-        })
-    }
-
-    /// The stored source of each of `hashes`, in their order: one read, nothing written (no pin). A caller that
-    /// must hold them pins them after, with `pin_held_sources`, on the store's writer (decision 0104).
+    /// The stored source of each of `hashes`, in their order: one read, nothing written. A run holds what it finds by
+    /// its collection lease (`hold_collection`, decision 0306 step 4).
     pub fn sources_by_hashes(&self, hashes: &[HashKey]) -> StoreResult<Vec<Option<SourceId>>> {
         let connection = self.connection.lock().expect("content store mutex poisoned");
         sources_by_hashes(&connection, hashes)
     }
 
-    /// Pins `sources` under this handle's holder, if it has one: one transaction of a few statements.
-    pub fn pin_held_sources(&self, sources: &[SourceId]) -> StoreResult<()> {
-        let Some((owner, lease_until)) = self.holder.lock().clone() else { return Ok(()) };
-        if sources.is_empty() {
-            return Ok(());
-        }
-        self.immediate_transaction(|transaction| {
-            let owner_id = intern_string(transaction, STRING_OWNER, &owner)?;
-            super::bounded_insert::insert(
-                transaction,
-                "INSERT INTO object_pins(object_kind_id,object_id,owner_string_id,lease_until)",
-                "ON CONFLICT(object_kind_id,object_id,owner_string_id) DO UPDATE SET lease_until=excluded.lease_until",
-                sources.iter().map(|s| {
-                    use rusqlite::types::Value;
-                    [Value::Integer(OBJECT_SOURCE), Value::Integer(s.0), Value::Integer(owner_id), Value::Integer(lease_until)]
-                }),
-            )?;
-            Ok(())
-        })
-    }
-
-    /// `held_source_by_hash` of each of `hashes`, in their order: one read, and the sources found pinned under the
-    /// holder in the same transaction, a few statements whatever their number.
-    pub fn held_sources_by_hash(&self, hashes: &[HashKey]) -> StoreResult<Vec<Option<SourceId>>> {
-        if hashes.is_empty() {
-            return Ok(Vec::new());
-        }
-        let read = |connection: &rusqlite::Connection| sources_by_hashes(connection, hashes);
-        let Some((owner, lease_until)) = self.holder.lock().clone() else {
-            let connection = self.connection.lock().expect("content store mutex poisoned");
-            return read(&connection);
-        };
-        self.immediate_transaction(|transaction| {
-            let found = read(transaction)?;
-            let owner_id = intern_string(transaction, STRING_OWNER, &owner)?;
-            super::bounded_insert::insert(
-                transaction,
-                "INSERT INTO object_pins(object_kind_id,object_id,owner_string_id,lease_until)",
-                "ON CONFLICT(object_kind_id,object_id,owner_string_id) DO UPDATE SET lease_until=excluded.lease_until",
-                found.iter().flatten().map(|s| {
-                    use rusqlite::types::Value;
-                    [Value::Integer(OBJECT_SOURCE), Value::Integer(s.0), Value::Integer(owner_id), Value::Integer(lease_until)]
-                }),
-            )?;
-            Ok(found)
-        })
-    }
-
-    /// Ends this handle's holding under `owner` (`hold_sources`), in memory only: `release_pins` deletes its pins.
-    pub fn release_holder(&self, owner: &str) {
-        if self.holder.lock().as_ref().is_some_and(|(o, _)| o == owner) {
-            *self.holder.lock() = None;
-        }
-    }
-
     pub fn release_pins(&self, owner: &str) -> StoreResult<usize> {
-        if self.holder.lock().as_ref().is_some_and(|(o, _)| o == owner) {
-            *self.holder.lock() = None;
-        }
         // A write: it waits out other writers as every store write does, the connection held by each attempt alone.
         retry_busy(&mut BusyRetries::default(), || {
             self.connection
@@ -220,6 +112,8 @@ impl ContentStore {
                 Err(error) => return Err(StoreError::Io(error)),
             }
         }
+        // The segments beside it (decision 0295): tapes and sources, frames, memo entries, uncompressed.
+        let bytes = bytes.saturating_add(super::segments::segment_bytes(&self.database_path));
         Ok(StoreCapacity {
             bytes,
             state: capacity_state(bytes),
@@ -259,10 +153,14 @@ impl ContentStore {
         let report = retry_busy(&mut BusyRetries::default(), || self.collect_held_once(now, batch))?;
         // Free pages back to the file system, a write of its own after the pass committed: a writer holding the
         // store past the retries leaves them to the next pass. Failing the pass for it failed a collector whose rows
-        // were already collected.
+        // were already collected. A file mostly free is the upkeep job's, vacuumed whole: an incremental vacuum's
+        // cost grows with the free list (ep2: 8.1 s for these 4,096 pages with 1.8M free, behind every run).
         match retry_busy(&mut BusyRetries::default(), || {
             let connection = self.connection.lock().expect("content store mutex poisoned");
             connection.query_row_cached("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()))?;
+            if super::upkeep::leaves_to_whole_vacuum(&connection, self.database_path())? {
+                return Ok(());
+            }
             incremental_vacuum(&connection, 4096)
         }) {
             Ok(()) | Err(StoreError::Busy) => {}

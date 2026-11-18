@@ -16,6 +16,7 @@ default-filter = """not (
   | test(=code_rule_dsl::logic::rr::tests::rule_syntax_files_pass_check_rr)
   | test(/^code_rule_dsl::logic::program_image::tests::(pack_programs_read_back_from_their_images|the_passes_over_a_version_are_the_tree_passes|the_planners_reading_of_a_rule_is_the_trees|the_analyses_over_a_version_say_what_the_tree_says|views_and_overlays_are_the_programs_they_say)$/)
   | test(=code_rule_dsl::logic::program_text::tests::pack_programs_read_back_from_their_text)
+  | test(=code_rule_dsl::transducer::packed::metal_program_backend::tape_tests::the_label_kernels_compile_for_every_format)
   | test(=code_rule_dsl::logic::json_rules::tests::json_rules_pack_is_current)
   | test(/^code_rule_dsl::slice::tests::(the_napi_slice_audits_and_applies_as_the_slice_does|an_edit_reruns_its_file_and_a_whitespace_edit_cuts_off)$/)
   | test(/^code_rule_dsl::transducer::packed::compile_matcher_tests::(spilled_walks_find_the_cpus_roots|micro_walks_are_the_interpreters_label_outputs|lowered_python_clauses_match_where_ws_matcher_does|the_gate_catches_a_widened_walk)$/)
@@ -23,6 +24,7 @@ default-filter = """not (
   | test(=code_rule_dsl::sql_executor::tests::recursive::partitioned_recursive_lattices_remove_cycles_with_bounded_work_and_match_fresh)
   | test(=code_rule_dsl::sql_executor::tests::reductions::dependent_aggregate_keys_follow_old_and_new_dependencies_without_scanning_contexts)
   | test(/^code_rule_dsl::waves::matches::tests::the_wave_/)
+  | test(=class_pack::tests::random_needs_are_answered)
 )"""
 # A test past this is reported as slow; past four periods it is stopped.
 slow-timeout = { period = "60s", terminate-after = 4 }

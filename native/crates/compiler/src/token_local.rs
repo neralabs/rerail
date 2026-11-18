@@ -54,9 +54,9 @@ pub fn carried(program: &BlockProgram, members: &[bool], x: usize) -> bool {
 }
 
 /// Whether operation `x` is a leaf of position alone: a byte test, a constant, or a value of
-/// the position (`within`, a phase, a plane of the position).
+/// the position (`within`, the prefix's positions, a phase, a plane of the position).
 pub fn positional(op: &BlockOp) -> bool {
-    matches!(op, BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) | BlockOp::Phase(..) | BlockOp::Position(_))
+    matches!(op, BlockOp::Eq(_) | BlockOp::Class { .. } | BlockOp::Pair { .. } | BlockOp::Const(_) | BlockOp::Within(_) | BlockOp::Prefix(..) | BlockOp::Phase(..) | BlockOp::Position(_))
 }
 
 /// Each fixed point's members (`BlockProgram::rounds`).

@@ -390,6 +390,9 @@ pub fn grammar_json(lang: GrammarDialect) -> Option<&'static str> {
         GrammarDialect::Kotlin => grammar!("token-grammars/kotlin"),
         GrammarDialect::Swift => grammar!("token-grammars/swift"),
         GrammarDialect::Scala => grammar!("token-grammars/scala"),
+        GrammarDialect::Go => grammar!("token-grammars/go"),
+        GrammarDialect::C => grammar!("token-grammars/c"),
+        GrammarDialect::Cpp => grammar!("token-grammars/cpp"),
         _ => return None,
     })
 }

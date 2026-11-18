@@ -1657,8 +1657,9 @@ pub mod tests {
             rerail_compiler::records::EndRule::Next(i) => rerail_compiler::native_cpu_block::pair_nibbles(r, &r.nexts[usize::from(i)], k).map(|n| n[0].iter().fold(0u8, |a, &x| a | x).count_ones() as usize),
             _ => None,
         }).collect();
-        // `:` `=` `!` `<` `>` `-`: six first bytes, six bits.
-        assert_eq!(found, vec![6]);
+        // `:` `=` `!` `<` `>` `-`: six first bytes, six bits; and `pair empty`'s table of none,
+        // no bits (0355: its word is zero, no lookup).
+        assert_eq!(found, vec![6, 0]);
     }
 
     /// A `within(d)` the CPU's windows leave out (`native_cpu_lanes::unguarded`): where another
@@ -1785,15 +1786,20 @@ pub mod tests {
         let t = c.parser.tier1.records.as_ref().expect("the record pass");
         assert_eq!(t.layout, rerail_compiler::records::RecordLayout::Rows);
         // Every first byte of the fused pair rule (punctuation, most of rr's tokens) takes its
-        // code from the table, as the lean lexer's `TOKEN`: no word looked up. But `<`, whose
-        // two pairs (`<=`, `<:`) are two words: its two-byte tokens look theirs up. And `/`,
-        // the comment's reader's first byte, whose tokens not a comment are a pair rule's.
+        // code from the table, as the lean lexer's `TOKEN`: no word looked up. So does a byte
+        // whose reader's other rule reads the same pair table (`/` alone, the comment reader's
+        // other), as the lean lexer's `/` arm writes its punctuation (0177). But `<`, whose two
+        // pairs (`<=`, `<:`) are two words: its two-byte tokens look theirs up.
+        use rerail_compiler::records::EndRule;
         let r = c.native.records.as_ref().expect("records");
         let (kn, _) = t.fused.expect("the fused rules");
-        let rerail_compiler::records::EndRule::Next(_) = r.rules[kn] else { panic!("the fused pair rule reads a pair table") };
-        let pairs = |e: u8| usize::from(e) == kn || matches!(r.rules.get(usize::from(e)), Some(&rerail_compiler::records::EndRule::Read(i)) if matches!(r.rules.get(usize::from(r.readers[usize::from(i)].other)), Some(rerail_compiler::records::EndRule::Next(_))));
+        let EndRule::Next(table) = r.rules[kn] else { panic!("the fused pair rule reads a pair table") };
+        let pairs = |e: u8| {
+            usize::from(e) == kn
+                || matches!(r.rules.get(usize::from(e)), Some(&EndRule::Read(i)) if r.readers.get(usize::from(i)).is_some_and(|rd| matches!(r.rules.get(usize::from(rd.other)), Some(&EndRule::Next(o)) if o == table)))
+        };
         let pair_bytes: Vec<u8> = (0..=255u8).filter(|&b| r.ends.get(usize::from(b)).is_some_and(|&e| pairs(e)) && b != b'<').collect();
-        assert!(pair_bytes.contains(&b'/'), "the comment's reader's byte: {pair_bytes:?}");
+        assert!(pair_bytes.contains(&b'/'), "the comment reader's other reads the pair table");
         assert_eq!(c.parser.tier1.punct_bytes(), pair_bytes);
         // Their codes fit their entries: no load beside the entry's.
         assert!(c.parser.tier1.punct_in_entry());
@@ -3252,10 +3258,51 @@ mod json_probe {
         }
     }
 
+    /// The split tier 1 stores a block's word only where a reader reads it from the rows (decision
+    /// 0347): tier 2's masks and the marks. Its totals are its refusals' flags, each one running
+    /// word (simdjson's `error` register), no row: the token loop makes the rest from the bytes.
+    #[test]
+    fn json_split_stores_only_what_rows_are_read_for() {
+        use rerail_compiler::records::Split;
+        let n = rerail_compiler::native_ir::lower(&json_split(Split::Tier2), 0, 0).expect("lowers");
+        let p = &n.block_programs[0];
+        let r = p.records.as_ref().expect("records");
+        let unstored: Vec<usize> = p.records_made().into_iter().chain(p.rowless_totals()).collect();
+        let marks: Vec<usize> = r.marks.iter().filter(|m| m.0 != rerail_compiler::records::WORD_ALONE).map(|m| usize::from(m.0)).collect();
+        let stored: Vec<usize> = (0..p.outputs.len()).filter(|k| !unstored.contains(k)).collect();
+        assert!(!p.totals.is_empty(), "the refusals' totals");
+        for k in &stored {
+            assert!(p.masks.contains(k) || marks.contains(k), "output {k} stored a block, read by no row's reader");
+        }
+        for t in &p.totals {
+            assert!(!stored.contains(t) || p.masks.contains(t) || marks.contains(t), "total {t} stored a block");
+        }
+        eprintln!("{} outputs; stored a block: {stored:?}; totals {:?}", p.outputs.len(), p.totals);
+    }
+
+    /// JSON's tier 1 is structured control (0363): its passes' graphs are reducible, every loop
+    /// entered at its head alone, so its Rust form (`clif_rust`) is nested loops, as the lean
+    /// lexer's, with no loop over a label switch (a `goto`'s translation, which rustc compiles to
+    /// a jump table every transition passes).
+    #[test]
+    fn json_tier1_has_no_label_switch() {
+        use rerail_compiler::records::Split;
+        let mut n = rerail_compiler::native_ir::lower(&json_split(Split::Tier2), 0, 0).expect("lowers");
+        for p in &mut n.block_programs {
+            p.pad = rerail_compiler::native_cpu_block::BACK as u16;
+        }
+        rerail_compiler::native_cpu_stream::KEEP_IR.store(true, std::sync::atomic::Ordering::Relaxed);
+        let kept = json_parser(&n);
+        let src = rerail_compiler::clif_rust::rust_source(&kept).expect("to Rust");
+        let switches = src.matches("a dispatch's label is one of its entries").count();
+        assert_eq!(switches, 0, "tier 1 has {switches} loops over a label switch: a loop entered past its head");
+    }
+
     /// JSON's tier 1 by pass (decision 0323's next measure): over JSON's corpus
     /// (`RERAIL_JSON_CORPUS`) under B, each pass's instructions and cycles a byte, the least of
     /// `RR_ROUNDS`, against simdjson's stage 1 on the same files. `RERAIL_JSON_RUST=<path>`:
-    /// tier 1 written as Rust there (`clif_rust`, the ahead-of-time form), to read its shape.
+    /// tier 1 written as Rust there (`clif_rust`, the ahead-of-time form), to read its shape;
+    /// `RERAIL_JSON_ASM=<path>`, its machine code.
     #[test]
     #[ignore = "a benchmark: run by hand"]
     fn json_tier1_by_pass() {
@@ -3274,6 +3321,14 @@ mod json_probe {
             rerail_compiler::block::block_rows(&mut text, 0, &json_split(Split::Tier2).block_programs[0]);
             std::fs::write(&path, text).expect("writes");
         }
+        // `RERAIL_JSON_ASM=<path>`: tier 1's machine code, as the JIT made it.
+        if let Ok(path) = std::env::var("RERAIL_JSON_ASM") {
+            std::fs::write(&path, &p.tier1.disassembly).expect("writes");
+        }
+        // `RERAIL_JSON_CLIF=<path>`: each pass's Cranelift IR, as the JIT was given it.
+        if let Ok(path) = std::env::var("RERAIL_JSON_CLIF") {
+            std::fs::write(&path, p.tier1.passes.iter().map(|x| x.clif.as_str()).collect::<Vec<_>>().join("\n")).expect("writes");
+        }
         if let Ok(path) = std::env::var("RERAIL_JSON_RUST") {
             rerail_compiler::native_cpu_stream::KEEP_IR.store(true, std::sync::atomic::Ordering::Relaxed);
             let bit = rerail_compiler::native_cpu_lanes::BIT_TEST.swap(true, std::sync::atomic::Ordering::Relaxed);
@@ -3283,8 +3338,10 @@ mod json_probe {
             std::fs::write(&path, &src).expect("writes");
             eprintln!("tier 1 as Rust: {path}, {} bytes", src.len());
         }
-        let files: Vec<Vec<u8>> = json_files().into_iter().filter(|f| p.image(f).is_ok()).collect();
-        let bytes: usize = files.iter().map(Vec::len).sum();
+        // `RERAIL_JSON_ONLY=<name>`: that made input alone, no corpus (to trace one input's path).
+        let only = std::env::var("RERAIL_JSON_ONLY").ok();
+        let files: Vec<Vec<u8>> = if only.is_some() { Vec::new() } else { json_files().into_iter().filter(|f| p.image(f).is_ok()).collect() };
+        let bytes: usize = files.iter().map(Vec::len).sum::<usize>().max(1);
         let passes = p.tier1.pass_count();
         let mut batches: Vec<_> = files.iter().map(|f| rerail_compiler::native_cpu_block::Batch::new(&p.tier1, &[f.as_slice()])).collect();
         for b in &mut batches {
@@ -3320,14 +3377,17 @@ mod json_probe {
         // tokens: the masks alone), the same of two-byte UTF-8, white space, and dense tokens.
         // Each input is cut into files under the tape's 16-bit widths: 16 files of about 60 KB.
         let n = 60_000;
-        let synth: [(&str, Vec<u8>); 5] = [
+        // Numbers of 1, 4 and 12 digits part the token loop's cost a token from its cost a byte.
+        let synth: [(&str, Vec<u8>); 7] = [
             ("long ASCII strings", [b"[".as_slice(), &format!("\"{}\",", "a".repeat(5_000)).repeat(n / 5_000).into_bytes(), b"0]"].concat()),
             ("long UTF-8 strings", [b"[".as_slice(), &format!("\"{}\",", "\u{e9}".repeat(2_500)).repeat(n / 5_000).into_bytes(), b"0]"].concat()),
             ("white space", [b"[".as_slice(), &vec![b' '; n], b"]"].concat()),
             ("numbers", [b"[".as_slice(), &"1234,".repeat(n / 5).into_bytes(), b"0]"].concat()),
+            ("one-digit numbers", [b"[".as_slice(), &"1,".repeat(n / 2).into_bytes(), b"0]"].concat()),
+            ("12-digit numbers", [b"[".as_slice(), &"123456789012,".repeat(n / 13).into_bytes(), b"0]"].concat()),
             ("short strings", [b"[".as_slice(), &"\"ab\",".repeat(n / 5).into_bytes(), b"0]"].concat()),
         ];
-        for (name, f) in &synth {
+        for (name, f) in synth.iter().filter(|(name, _)| only.as_deref().is_none_or(|o| o == *name)) {
             p.image(f).unwrap_or_else(|e| panic!("{name}: {e:?}"));
             let mut bs: Vec<_> = (0..16).map(|_| rerail_compiler::native_cpu_block::Batch::new(&p.tier1, &[f.as_slice()])).collect();
             for b in &mut bs {

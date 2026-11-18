@@ -504,6 +504,13 @@ fn json_shapes() {
             eprintln!("  gated region: gate %{} = {gate:?} ({}){pre}, {} values zero without it, {} skipped", r.gate, of.join(", "), r.zero.len(), r.members.len());
         }
         eprintln!("  machine code: {} instructions in the function", machine(&c.parser.tier1.disassembly));
+        // The hot loop as `json_loop_keeps_values_in_registers` counts it, to set beside
+        // simdjson's (`scripts/dev/simdjson-stage1-loop`); `RERAIL_DUMP_LOOP`: a directory for it.
+        let hot = clif_text::machine_loop(&c.parser.tier1.loops_disassembly());
+        eprintln!("  hot loop: {} instructions, {} stack loads or stores", hot.len(), clif_text::loop_costs(&hot).0);
+        if let Ok(dir) = std::env::var("RERAIL_DUMP_LOOP") {
+            std::fs::write(format!("{dir}/{name}.s"), hot.join("\n")).expect("writes");
+        }
         eprintln!("tier 2: {} words {words:?}", c.native.structural.len());
         eprintln!("  switches {}, strings {}", c.native.switches.len(), c.native.strings.len());
         eprintln!("  machine code: {} instructions in the function", machine(&c.parser.tier2.disassembly));
@@ -547,6 +554,19 @@ fn json_tier1_vectors_equal_the_interpreter() {
             }
             files.push(f);
         }
+        // A byte order mark, then a string or a comment that runs into the next block: the full
+        // body takes the file's start check as zero (`Plan::full`), and the edge part's carries
+        // are the next block's (0383).
+        for at in 0..80 {
+            let escapes = [&b"\""[..], &[b'\\'; 70], b"\" 1"].concat();
+            let bodies: [&[u8]; 4] = [b"\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\" 1", b"/* xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx */ 1", &escapes, b"1.5e3"];
+            for body in bodies {
+                let mut f = b"\xef\xbb\xbf".to_vec();
+                f.extend(std::iter::repeat_n(b' ', at));
+                f.extend_from_slice(body);
+                files.push(f);
+            }
+        }
         // One non-ASCII sequence at each offset around the first two block edges.
         for at in 0..140 {
             for seq in [&b"\xe2\x82\xac"[..], b"\x80", b"\xf0\x9f\x98\x80"] {
@@ -565,6 +585,62 @@ fn json_tier1_vectors_equal_the_interpreter() {
     }
 }
 
+/// The values the full body gets wrong on an edge block (`native_cpu_edge`, 0383): JSON's are
+/// its checks at the stream's ends and what reads them, word operations all, a third of the
+/// body's or fewer, and found in one pass of the analysis. The byte order mark is the host's
+/// (0389): stripped before the passes, as simdjson strips it, the program the passes run has no
+/// check of it, and no value differs for it through block 0.
+#[test]
+fn json_edge_values_are_its_ends_checks() {
+    for name in ["14-json", "15-jsonc"] {
+        let c = form(name);
+        let (prefix, stripped) = native_cpu_block::host_stripped(&c.native.block_programs[0]).expect("the host strips the byte order mark");
+        assert_eq!(prefix, b"\xef\xbb\xbf", "{name}: the prefix");
+        assert_eq!(c.parser.tier1.prefix, prefix, "{name}: tier 1 strips it");
+        let native = &stripped;
+        let t = std::time::Instant::now();
+        let plan = native_cpu_block::State::of(native).plan;
+        let found = native_cpu_edge::edge_values(native, &plan.lanes, &plan.full).expect("bounded");
+        let took = t.elapsed();
+        println!("{name}: outputs needing no cut {:?}", found.cut_free);
+        let edge = found.differs;
+        let at: Vec<usize> = (0..edge.len()).filter(|&x| edge[x]).collect();
+        println!("{name}: {} of {} values differ on an edge block, found in {took:?}: {at:?}", at.len(), edge.len());
+        assert!(at.iter().all(|&x| !matches!(native.insts[x], block_native::BlockInst::EqByte(_) | block_native::BlockInst::Class { .. } | block_native::BlockInst::Pair { .. })), "{name}: a byte test differs");
+        assert!(at.len() * 3 <= edge.len(), "{name}: {} of {} differ", at.len(), edge.len());
+    }
+}
+
+/// JSON's tier 1 has no general body (0383): its full body runs on the edge blocks too, with
+/// its edge part, as simdjson's stage 1 runs one body and a `finish()`.
+#[test]
+fn json_tier1_has_no_general_body() {
+    for name in ["14-json", "15-jsonc"] {
+        let c = form(name);
+        for (k, pass) in c.parser.tier1.passes.iter().enumerate().filter(|(_, p)| !p.back) {
+            assert!(!pass.general, "{name}: tier 1's pass {k} calls a general body");
+        }
+    }
+}
+
+/// The full body's classes as simdjson's (0375): each place they are made in (the body's own
+/// part, a gated region, the ASCII split's inside) has at most one pair of nibble tables, its
+/// classes all in it, and none looked up again in a place inside the own part.
+#[test]
+fn json_classes_are_one_pair_a_place() {
+    for name in ["14-json", "15-jsonc"] {
+        let c = form(name);
+        let native = &c.native.block_programs[0];
+        let state = native_cpu_block::State::of(native);
+        let pack = native_cpu_block::full_pack(native, &state);
+        println!("{name}: tables by place {:?}", pack.places);
+        assert!(pack.places.first().is_some_and(|&(p, t)| p == 0 && t == 1), "{name}: the body's own part has not one pair: {:?}", pack.places);
+        assert!(pack.places.iter().all(|&(_, t)| t <= 1), "{name}: a place with more than one pair: {:?}", pack.places);
+        let total: usize = pack.places.iter().map(|p| p.1).sum();
+        assert_eq!(total, pack.packing.tables.len());
+    }
+}
+
 /// The gated regions (`native_cpu_lanes::Region`): skipped on a block without their gate's bytes
 /// and without their carried bits, so a number, an escape or a keyword must come out the same
 /// wherever it falls, a block edge inside it, or spanning a block, or ending one.
@@ -576,12 +652,12 @@ fn json_gated_regions_equal_the_interpreter() {
     ];
     for name in ["14-json", "15-jsonc"] {
         let c = form(name);
-        // Each region behind its branch in both full bodies, none computed in place.
-        // A region with a test before its gate's has two branches.
+        // Each region behind its branch in the full body (one: the ASCII test is a branch in it,
+        // 0364), none computed in place. A region with a test before its gate's has two.
         let plan = native_cpu_block::State::of(&c.native.block_programs[0]).plan;
         assert!(!plan.regions.is_empty(), "{name}: no gated region");
         let tests: usize = plan.regions.iter().map(|r| 1 + usize::from(r.pre.is_some())).sum();
-        assert_eq!(c.parser.tier1.gate_branches, tests * (1 + usize::from(c.parser.tier1.ascii_branch)), "{name}: a region without its branch");
+        assert_eq!(c.parser.tier1.gate_branches, tests, "{name}: a region without its branch, or made twice");
         let block = &c.program.block_programs[0];
         let mut files: Vec<Vec<u8>> = Vec::new();
         for t in tokens {

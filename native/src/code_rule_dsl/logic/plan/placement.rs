@@ -1,11 +1,11 @@
 //! Where a stratum runs, CPU or GPU, from its shape and the planner's estimates (decision 0095 §8).
 //!
 //! Before a stratum opens, its seeds' and probes' plans give an estimate of its work: the planner's own unit, the
-//! rows a join step reads. Each backend has a price for that work:
+//! executor's count (decision 0297: each step costs the rows it passes on). Each backend has a price for that work:
 //!
-//! - **CPU:** a floor per stratum (open, index building, close) and a cost per unit of work. Both were measured on
-//!   the Python pack, cold, on 2026-11-09: 5,476 strata, 177.9 M units of work and 20.6 s of joins. Strata above
-//!   10^5 units cost 92–109 ns a unit; the 3,372 strata under 10^3 units cost 0.13 ms each.
+//! - **CPU:** a floor per stratum run (open, its plans and replans, index building, close), a cost per row a scan
+//!   reads, and a cost per other unit of work: fitted on PostHog's `posthog/hogql` after 0297 (decision 0304). A
+//!   join step alone is priced by 0297's fit of the executor's CPU: per probe and per row out.
 //! - **GPU:** a submission's fixed cost (submit, schedule, wake: decision 0039's phases) and a cost per unit, both
 //!   **assumed**; and each **join step** priced on each form it can take (`price_join`): the CPU's index lookups, the
 //!   device's sort and probe (any equi-join; a relation sorted once a stratum for every probe of it by the same
@@ -91,6 +91,16 @@ pub(in crate::code_rule_dsl) struct JoinEst {
     pub(in crate::code_rule_dsl) walked: (f64, f64),
     pub(in crate::code_rule_dsl) keys: usize,
     pub(in crate::code_rule_dsl) range: bool,
+    /// Its lookup's CPU as a multiple of a derived relation's (`Source::lookup_cost`, decision 0312): a view that
+    /// walks the tree or searches the documents costs several.
+    pub(in crate::code_rule_dsl) cost: f64,
+}
+
+impl JoinEst {
+    /// Its lookups' CPU on the CPU's index: per probe (a row in) and per row out, times its relation's cost.
+    fn index_s(&self) -> f64 {
+        self.cost * (CPU_PER_PROBE * self.input + CPU_PER_ROW_OUT * self.output)
+    }
 }
 
 /// How a join step runs: the CPU engine's index lookups, or on the device a sort and probe (any equi-join) or a
@@ -155,8 +165,10 @@ const DEVICE_SORT: f64 = 45e-6;
 /// A head row back costs its read into the store and the store's insert after the wave, which the CPU's walk pays
 /// in its work too: 75 ns, measured on PostHog's `posthog/hogql` (437 files, 2026-11-14: 24 ns read back, about 50 ns
 /// inserted, over the strata whose every run was on the GPU). At the 40 ns measured before (the read alone), a pure
-/// copy (`kind(n, k) :- node(_, n, k, _, _)`) priced as cheaper on the GPU and cost the same there.
-const DEVICE_ROW_BACK: f64 = 75e-9;
+/// copy (`kind(n, k) :- node(_, n, k, _, _)`) priced as cheaper on the GPU and cost the same there. Refitted to 105 ns
+/// from that copy's 63 runs on the GPU (decision 0321, 2026-11-16): 443 ms of the host's CPU, 76 ms of it its
+/// submissions and uploads, for 3.52 M rows. The CPU's run of it took 437 ms.
+const DEVICE_ROW_BACK: f64 = 105e-9;
 /// A value of a relation the device reads, per column an atom reads (decision 0277), in the host's CPU: 2.2 ns,
 /// measured on PostHog's `posthog/hogql` (2026-11-16, the profile's split of the uploads: 13.9 ms for 6.3 M values).
 /// A flat relation's value is a copy (1.7 ns), a view's made on the host a row read (2.5 ns), and a view's made on
@@ -165,19 +177,26 @@ const DEVICE_ROW_BACK: f64 = 75e-9;
 /// every stratum, though a relation an earlier stratum of the chunk uploaded is found resident.
 const DEVICE_UPLOAD_PER_VALUE: f64 = 2.2e-9;
 
-/// CPU: seconds per unit of planned work, and per stratum (measured; see the module's comment).
-const CPU_PER_WORK: f64 = 100e-9;
-/// CPU: seconds per row a scan reads (decision 0277). A copy of an input (`kind(n, k) :- node(_, n, k, _, _)`) on
-/// PostHog's `posthog/hogql` (437 files, 2026-11-14): 8.5 M rows scanned and 4.9 M made in 0.56 s, the rows made
-/// costing what the device's rows back do (`DEVICE_ROW_BACK`), so about 30 ns a row scanned. Priced at
-/// `CPU_PER_WORK`, a copy looked twice as dear on the CPU as it was, and went to the device, which did it no cheaper.
-const CPU_PER_SCANNED: f64 = 30e-9;
-const CPU_PER_STRATUM: f64 = 0.13e-3;
+/// CPU: seconds per unit of planned work that is no scan's row, per row a scan reads, and per stratum run (decision
+/// 0304): a least-squares fit of the CPU-placed strata of a cold run over PostHog's `posthog/hogql` (169 strata,
+/// 2,395 runs, 2.5 s of CPU) against their runs, scanned rows and other units, the planned work counted as the
+/// executor counts it (0297). 50 ns a unit is between 0297's 72 ns a join's row out and 21 ns a filter's row. A
+/// scan's row now costs a view's row read in place (Q36's 150–300 instructions a row), not the stored copy's 30 ns
+/// measured before (decision 0277). A run's floor holds its plans and replans (0297: about 1.2 ms a plan, loaded),
+/// not only its open and close (0.13 ms on 2026-11-09).
+pub(in crate::code_rule_dsl) const CPU_PER_WORK: f64 = 50e-9;
+const CPU_PER_SCANNED: f64 = 117e-9;
+pub(in crate::code_rule_dsl) const CPU_PER_STRATUM: f64 = 0.7e-3;
+/// CPU: a join step's index lookup, per probe (a row in) and per row out: 0297's fit of the executor's CPU.
+const CPU_PER_PROBE: f64 = 124e-9;
+const CPU_PER_ROW_OUT: f64 = 72e-9;
 /// GPU: seconds per unit of planned work, and per submission (assumed; see the module's comment).
 const GPU_PER_WORK: f64 = 2e-9;
 const GPU_PER_SUBMISSION: f64 = 0.15e-3;
-/// The GPU is chosen only when it is this much cheaper: the estimates are rough.
-const MARGIN: f64 = 2.0;
+/// The GPU is chosen while its price is under this many times the CPU's (decision 0321): it is the wider of the two,
+/// with the more memory bandwidth, so the work it takes leaves the CPU's cores to the strata only they run. Before,
+/// the GPU had to be twice the cheaper (`MARGIN`, 2), against estimates 8 times off (decision 0320).
+pub(in crate::code_rule_dsl) const GPU_BIAS: f64 = 2.0;
 
 /// Where a thread's run may place strata: the CPU only, the device where it is the cheaper (the Metal binding), or
 /// the device wherever it has every form (`Always`: what the device can run, apart from what it should; the
@@ -251,6 +270,12 @@ pub(in crate::code_rule_dsl) struct Shape {
     /// For each form the device lacks, the operations that use it (`@sql_instr in a comparison`, `aggregate
     /// sum`): what the profile's hazards name.
     pub(in crate::code_rule_dsl) uses: BTreeMap<Form, BTreeSet<String>>,
+    /// The rows its seeds make, by the relation they make (the planner's estimates): a recursive relation's first
+    /// delta.
+    pub(in crate::code_rule_dsl) seeds: BTreeMap<String, f64>,
+    /// Its recursive probes, each with its delta relation, its planned work and rows, and the delta its plan was
+    /// priced at: totalled over every row the relation gains (`close_rounds`).
+    pub(in crate::code_rule_dsl) probes: Vec<(String, f64, f64, f64)>,
 }
 
 /// A call's name and arguments.
@@ -310,6 +335,14 @@ fn is_cat_of_rows(v: &Version, t: TermRef<'_>) -> bool {
     call(v, t).is_some_and(|(f, args)| (f == "cat" || f == "concat") && args.len() == 2 && args.iter().all(|a| !is_call(a)))
 }
 
+/// `cat(a, b)` whose parts are variables, constants, texts the device makes (`is_text_fn_of_rows`) or such cats (a
+/// three-part `@concat` lowers to two): a text the device makes per row into its arena (`mj::ROW_CONCAT`).
+fn is_made_cat(v: &Version, t: TermRef<'_>) -> bool {
+    call(v, t).is_some_and(|(f, args)| {
+        (f == "cat" || f == "concat") && args.len() == 2 && args.iter().all(|&a| !is_call(&a) || is_text_fn_of_rows(v, a) || is_made_cat(v, a))
+    })
+}
+
 /// A text function of variables and constants (its text argument perhaps another's value): a text the device makes.
 fn is_text_fn_of_rows(v: &Version, t: TermRef<'_>) -> bool {
     match call(v, t) {
@@ -337,8 +370,40 @@ impl Shape {
         }
     }
 
+    /// Seeds' rows `rows` made into `rel`.
+    pub(in crate::code_rule_dsl) fn seeded(&mut self, rel: &str, rows: f64) {
+        *self.seeds.entry(rel.to_owned()).or_default() += rows.max(0.0);
+    }
+
+    /// A recursive probe of delta `rel`, planned at `work` and `rows` for a delta of `delta` rows.
+    pub(in crate::code_rule_dsl) fn probe(&mut self, rel: &str, work: f64, rows: f64, delta: f64) {
+        self.probes.push((rel.to_owned(), work.max(0.0), rows.max(0.0), delta));
+    }
+
+    /// The probes' work over the stratum's rounds, as the executor counts it (decision 0304 §3): each row a
+    /// recursive relation gains is a delta once, and each probe of it reads every such row. A probe's plan was priced
+    /// at the delta the planner saw (one round's, often the relation's few rows when it opened); the rows its
+    /// relation gains are at least its seeds' rows, and the rows its probes make from them: one round more, at most
+    /// as many again (a round's estimate is rough, and its rounds after that compound its error).
+    pub(in crate::code_rule_dsl) fn close_rounds(&mut self) {
+        let mut by: BTreeMap<&str, (f64, f64)> = BTreeMap::new();
+        for (rel, work, rows, delta) in &self.probes {
+            let d = delta.max(1.0);
+            let at = by.entry(rel.as_str()).or_default();
+            at.0 += work / d;
+            at.1 += rows / d;
+        }
+        for (rel, (per_row, out_per_row)) in by {
+            let first = self.probes.iter().filter(|p| p.0 == rel).map(|p| p.3).fold(0.0, f64::max).max(self.seeds.get(rel).copied().unwrap_or(0.0)).max(1.0);
+            self.work += per_row * first * (1.0 + out_per_row.min(1.0));
+        }
+        self.probes.clear();
+    }
+
     /// Adds one planned rule: its steps in order (its head's terms the rule's) and its planned work.
-    pub(in crate::code_rule_dsl) fn add(&mut self, order: Order<'_, '_>, work: f64, recursive: bool) {
+    /// `texts_kept`: its head is a `shortlex_min` lattice, whose value its recursive rounds make into one device arena
+    /// (decision 0307).
+    pub(in crate::code_rule_dsl) fn add(&mut self, order: Order<'_, '_>, work: f64, recursive: bool, texts_kept: bool) {
         let (b, v) = (order.b, order.b.v);
         self.rules += 1;
         self.steps += order.len();
@@ -347,8 +412,10 @@ impl Shape {
             self.note(Form::Recursion, || "recursion".into());
         }
         // A cat of row terms in a head is made on the device (`mj::MAKE`), its text stored as a symbol after the run;
-        // not in a recursive stratum, whose rounds would join it before it is one.
-        // A text function's text, likewise (the device's arena; never in a recursive stratum).
+        // not in a recursive stratum, whose rounds would join it before it is one, unless the stratum keeps its texts
+        // in one arena (0307: the device's compile takes them into the lattice's value only).
+        // A text function's text, likewise (the device's arena).
+        let recursive = recursive && !texts_kept;
         let arena = |t: TermRef<'_>| if recursive { text_fn_in(v, t) } else { None };
         if let Some(op) = b.head().args().filter(|&t| recursive || !is_cat_of_rows(v, t)).find_map(|t| not_row(v, t).or_else(|| arena(t))) {
             self.note(Form::Computed, || format!("{op} in a head"));
@@ -375,10 +442,11 @@ impl Shape {
                 }
                 // A cat's text compared with a name (`=`, `!=`): the device compares the names' bytes (`CATEQ`).
                 // The other side a constant or a variable: a comparison of names, or (a variable no atom binds) the
-                // text bound, made on the device when the head alone reads it; not in a recursive stratum.
+                // text bound, made on the device when the head alone reads it; not in a recursive stratum, unless it
+                // keeps its texts (0307). A cat of made texts (`is_made_cat`) binds a variable only.
                 Lit::Cmp { l, op: CmpOp::Eq | CmpOp::Ne, r }
                     if [(l, r), (r, l)].into_iter().any(|(c, o)| {
-                        is_cat_of_rows(v, c)
+                        (is_cat_of_rows(v, c) || matches!(o, TermRef::Var(_)) && is_made_cat(v, c))
                             && match o {
                                 TermRef::Var(x) => {
                                     !recursive || order.steps.iter().any(|s| b.plain_atom(s.at).is_some_and(|a| !a.neg() && a.args().any(|t| t.var() == Some(x))))
@@ -433,8 +501,8 @@ impl Shape {
     }
 
     /// Adds a planned rule's join steps: `order` its steps, `plan` the planner's record of them (one per step, its
-    /// access and rows out), `card` a relation's rows.
-    pub(in crate::code_rule_dsl) fn add_joins(&mut self, order: Order<'_, '_>, plan: &crate::code_rule_dsl::logic::profile::RulePlan, card: impl Fn(&str) -> f64) {
+    /// access and rows out), `card` a relation's rows, `cost` a lookup on a relation's column (`Stats::lookup_cost`).
+    pub(in crate::code_rule_dsl) fn add_joins(&mut self, order: Order<'_, '_>, plan: &crate::code_rule_dsl::logic::profile::RulePlan, card: impl Fn(&str) -> f64, cost: impl Fn(&str, &str) -> f64) {
         let (mut input, mut walked) = (1.0, 1.0);
         for (step, priced) in order.steps.iter().zip(&plan.steps) {
             if let Some(a) = order.b.plain_atom(step.at) {
@@ -450,12 +518,15 @@ impl Shape {
             {
                 let rel = order.b.rel(a);
                 // "lookup on (c0, c1)", "membership on (c0)", "range in document on (c0)"; a scan has no key.
-                let keys = priced.access.split_once('(').map_or(0, |(_, cols)| cols.split(',').count());
+                let cols: Vec<&str> = priced.access.split_once('(').map_or(Vec::new(), |(_, cols)| cols.trim_end_matches(')').split(',').map(str::trim).collect());
+                let keys = cols.len();
                 if keys == 0 {
                     self.scanned += card(rel);
                 }
                 if keys > 0 {
-                    self.joins.push(JoinEst { rel: rel.to_string(), input, relation: card(rel), output: priced.rows, walked: (walked, priced.all), keys, range: step.mode == Some(Mode::Range) });
+                    // A lookup by several columns probes its first one and filters by the rest.
+                    let cost = cost(rel, cols[0]);
+                    self.joins.push(JoinEst { rel: rel.to_string(), input, relation: card(rel), output: priced.rows, walked: (walked, priced.all), keys, range: step.mode == Some(Mode::Range), cost });
                 }
             }
             input = priced.rows;
@@ -468,7 +539,7 @@ impl Shape {
 /// Prices a join step on each form. `sorted`: the stratum sorted its relation already (a sort and probe of the same
 /// relation and keys pays no sort).
 pub(in crate::code_rule_dsl) fn price_join(j: &JoinEst, sorted: bool) -> JoinChoice {
-    let index_s = CPU_PER_WORK * (j.input + j.output);
+    let index_s = j.index_s();
     let keys = j.keys as f64;
     let probe = |sorted: bool| {
         let sort = if sorted { 0.0 } else { SORT_FIXED + j.relation * (keys * UPLOAD_PER_VALUE + SORT_PER_ROW) };
@@ -476,13 +547,13 @@ pub(in crate::code_rule_dsl) fn price_join(j: &JoinEst, sorted: bool) -> JoinCho
     };
     let probe_s = (!j.range).then(|| probe(sorted));
     let tile_s = j.range.then(|| TILE_FIXED + (j.input + j.relation) * keys * TILE_HOST_PER_VALUE + j.output * TILE_COMPARES_PER_PAIR * TILE_PER_COMPARE);
-    let mut form = JoinForm::Index;
-    let mut best = index_s;
-    for (f, p) in [(JoinForm::Probe, probe_s), (JoinForm::Tile, tile_s)] {
-        if let Some(p) = p.filter(|&p| p * MARGIN < best) {
-            (form, best) = (f, p);
-        }
-    }
+    // The device's form is the cheaper of its own, and is taken over the CPU's index while under `GPU_BIAS` times it.
+    let device = [(JoinForm::Probe, probe_s), (JoinForm::Tile, tile_s)].into_iter()
+        .filter_map(|(f, p)| Some((f, p?))).min_by(|a, b| a.1.total_cmp(&b.1));
+    let form = match device {
+        Some((f, p)) if p < index_s * GPU_BIAS => f,
+        _ => JoinForm::Index,
+    };
     JoinChoice { rel: j.rel.clone(), form, index_s, probe_s, tile_s }
 }
 
@@ -568,7 +639,7 @@ pub(in crate::code_rule_dsl) fn device_on() -> bool {
 pub(in crate::code_rule_dsl) struct Placement {
     /// Whether it runs on the device.
     pub(in crate::code_rule_dsl) gpu: bool,
-    /// Whether the GPU's estimate is the cheaper by `MARGIN`.
+    /// Whether the GPU's estimate is under `GPU_BIAS` times the CPU's.
     pub(in crate::code_rule_dsl) gpu_cheaper: bool,
     /// The forms the device lacks (none when it has them all).
     pub(in crate::code_rule_dsl) missing: Vec<Form>,
@@ -587,10 +658,10 @@ impl Placement {
     /// Why, in a few words: for the profile.
     pub(in crate::code_rule_dsl) fn why(&self) -> String {
         match (self.gpu, self.gpu_cheaper, self.missing.is_empty(), self.device) {
-            (true, _, _, _) => "GPU: cheaper, and the device has every form".to_owned(),
+            (true, _, _, _) => "GPU: its price within the GPU's bias, and the device has every form".to_owned(),
             (false, false, _, _) => "CPU: cheaper".to_owned(),
-            (false, true, true, false) => "CPU: the GPU would be cheaper, but the run's binding is the CPU".to_owned(),
-            (false, true, _, _) => format!("CPU: the GPU would be cheaper, but it has no {}", self.missing.iter().map(|f| f.name()).collect::<Vec<_>>().join(", no ")),
+            (false, true, true, false) => "CPU: the GPU's price is within its bias, but the run's binding is the CPU".to_owned(),
+            (false, true, _, _) => format!("CPU: the GPU's price is within its bias, but it has no {}", self.missing.iter().map(|f| f.name()).collect::<Vec<_>>().join(", no ")),
         }
     }
 }
@@ -606,10 +677,13 @@ pub(in crate::code_rule_dsl) fn gpu_price(runs: u64, work: f64) -> f64 {
 /// the device's run of it costs (`setfix::device`): one submission, its rules and stages encoded, each relation it
 /// reads by keys sorted once, the joins' device work (left rows searched, pairs made, rows sorted), the rest of its
 /// work at the GPU's unit price, and its rows read back. The stratum's floor (planning, opening, closing) is paid
-/// wherever its joins run, so the choice weighs the joins alone: the GPU when its part is cheaper by `MARGIN`.
+/// wherever its joins run, so the choice weighs the joins alone: the GPU while its part is under `GPU_BIAS` times the CPU's.
 pub(in crate::code_rule_dsl) fn place(shape: &Shape) -> Placement {
     let scanned = shape.scanned.min(shape.work).max(0.0);
-    let cpu_work_s = CPU_PER_WORK * (shape.work - scanned) + CPU_PER_SCANNED * scanned;
+    // A lookup into a view that costs more than a derived relation's adds what it costs past one (decision 0312):
+    // the units of planned work are priced as the fit's mix, at about one.
+    let views: f64 = shape.joins.iter().filter(|j| j.cost > 1.0).map(|j| j.index_s() * (1.0 - 1.0 / j.cost)).sum();
+    let cpu_work_s = CPU_PER_WORK * (shape.work - scanned) + CPU_PER_SCANNED * scanned + views;
     let cpu_s = CPU_PER_STRATUM + cpu_work_s;
     let mut sorted: BTreeSet<(&str, usize)> = BTreeSet::new();
     let joins: Vec<JoinChoice> = shape.joins.iter().map(|j| {
@@ -638,7 +712,8 @@ pub(in crate::code_rule_dsl) fn place(shape: &Shape) -> Placement {
     let missing: Vec<Form> = shape.forms.iter().copied().filter(|f| !DEVICE_FORMS.contains(f)).collect();
     let binding = DEVICE.with(Cell::get);
     let device = binding != Binding::Cpu;
-    let gpu_cheaper = device_s * MARGIN < cpu_work_s;
+    // The GPU while its price is under `GPU_BIAS` times the CPU's (decision 0321).
+    let gpu_cheaper = device_s < cpu_work_s * GPU_BIAS;
     let gpu = missing.is_empty() && (binding == Binding::Always || device && gpu_cheaper);
     Placement { gpu, gpu_cheaper, missing, cpu_s, gpu_s, device, joins, lacking: shape.lacking() }
 }
@@ -659,7 +734,7 @@ pub mod tests {
         let head = Atom { rel: "out".into(), args: head.to_vec().into(), neg: false, gated: false };
         let made = crate::code_rule_dsl::logic::plan::body::alone(&Rule { head, body: lits.to_vec().into() }).expect("a rule");
         let b = crate::code_rule_dsl::logic::plan::body::nth(&made, 0);
-        shape.add(Order::new(&b, &steps), work, recursive);
+        shape.add(Order::new(&b, &steps), work, recursive, false);
     }
 
     #[test]
@@ -718,24 +793,57 @@ pub mod tests {
         assert_eq!(p.why(), "CPU: cheaper");
         // Join steps priced on each form: a large equi-join takes the sort and probe, its second probe of the same
         // relation pays no sort; a range inside a document takes the tile; a small lookup stays on the CPU's index.
-        let est = |rel: &str, input: f64, output: f64, range: bool| JoinEst { rel: rel.into(), input, relation: 1e6, output, walked: (input, output), keys: 1, range };
+        let est = |rel: &str, input: f64, output: f64, range: bool| JoinEst { rel: rel.into(), input, relation: 1e6, output, walked: (input, output), keys: 1, range, cost: 1.0 };
         let mut joined = Shape::default();
         joined.joins = vec![est("a", 1e6, 1e6, false), est("a", 1e6, 1e6, false), est("b", 1e6, 1e6, true), est("c", 10.0, 10.0, false)];
         let p = place(&joined);
         let forms: Vec<JoinForm> = p.joins.iter().map(|c| c.form).collect();
         assert_eq!(forms, vec![JoinForm::Probe, JoinForm::Probe, JoinForm::Tile, JoinForm::Index], "{p:?}");
         assert!(p.joins[1].probe_s < p.joins[0].probe_s, "the second probe finds the relation sorted");
-        // A copy of an input (one scan, every row out) stays on the CPU: the device saves no join, and pays the upload
-        // and the rows back (decision 0277). A join whose rows the device would make past the bound head, where the
-        // CPU's walk keeps one witness (decision 0229), is priced with every row on the device.
+        // A lookup into a view that costs several of a derived relation's (decision 0312: `within` by `n`, 5.5) is
+        // priced at that many, on its index and in the stratum's CPU; one at a derived relation's cost adds nothing.
+        let (plain, view) = (est("a", 1e4, 1e5, false), JoinEst { cost: 5.5, ..est("within", 1e4, 1e5, false) });
+        assert!((view.index_s() - 5.5 * plain.index_s()).abs() < 1e-12);
+        let one = |j: JoinEst| place(&Shape { work: 1.1e5, rules: 1, steps: 1, joins: vec![j], ..Shape::default() });
+        let (p0, p1) = (one(plain.clone()), one(view.clone()));
+        assert!((p1.cpu_s - p0.cpu_s - 4.5 * plain.index_s()).abs() < 1e-9, "{p0:?} {p1:?}");
+        assert_eq!(p0.cpu_s, place(&Shape { work: 1.1e5, rules: 1, steps: 1, ..Shape::default() }).cpu_s, "a cost of one is the units' price");
+        assert!(p1.joins[0].index_s > p0.joins[0].index_s);
+        // A copy of an input (one scan, every row out) costs the same on either: the device saves no join, and the host
+        // pays the upload and the rows back (decision 0277), at par with the CPU's scan. A run of `kind` on PostHog's
+        // `posthog/hogql` (decision 0321): 3.52 M rows over 66 runs, 437 ms of CPU, 443 ms of the host's on the device.
+        // A join whose rows the device would make past the bound head, where the CPU's walk keeps one witness
+        // (decision 0229), is priced with every row on the device.
         let was = set_device(true);
-        let mut copy = Shape { work: 250_000.0, rows: 150_000.0, scanned: 250_000.0, rules: 1, steps: 1, ..Shape::default() };
-        copy.reads = vec![("node".into(), 250_000.0, 2)];
+        let mut copy = Shape { work: 50_000.0, rows: 50_000.0, scanned: 50_000.0, rules: 1, steps: 1, ..Shape::default() };
+        copy.reads = vec![("node".into(), 50_000.0, 2)];
         let p = place(&copy);
-        assert!(!p.gpu_cheaper && !p.gpu, "{p:?}");
-        let cut = |walked: f64| Shape { work: 2e6, rows: 1e3, rules: 1, steps: 2, joins: vec![JoinEst { rel: "node".into(), input: 1e3, relation: 1e6, output: 1e3, walked: (1e3, walked), keys: 1, range: false }], ..Shape::default() };
+        assert!((p.gpu_s / p.cpu_s - 1.0).abs() < 0.1, "a copy is priced level: {p:?}");
+        // The bias (decision 0321): a stratum the GPU's price puts at 1.5 times the CPU's is the GPU's; at 2.5 times,
+        // the CPU's.
+        let joined = |work: f64| Shape { work, rules: 1, steps: 1, joins: vec![JoinEst { rel: "a".into(), input: 1e6, relation: 1e6, output: 1e6, walked: (1e6, 1e6), keys: 1, range: false, cost: 1.0 }], ..Shape::default() };
+        let device_s = place(&joined(2e6)).gpu_s - CPU_PER_STRATUM;
+        let at = |ratio: f64| place(&joined(device_s / ratio / CPU_PER_WORK));
+        let wide = at(1.5);
+        assert!(wide.gpu && wide.gpu_s > wide.cpu_s, "the GPU taken though priced above the CPU: {wide:?}");
+        assert!(!at(2.5).gpu, "{:?}", at(2.5));
+        let cut = |walked: f64| Shape { work: 2e6, rows: 1e3, rules: 1, steps: 2, joins: vec![JoinEst { rel: "node".into(), input: 1e3, relation: 1e6, output: 1e3, walked: (1e3, walked), keys: 1, range: false, cost: 1.0 }], ..Shape::default() };
         assert!(place(&cut(1e3)).gpu_s < place(&cut(1e7)).gpu_s, "every row walked costs the device more");
         set_device(was);
+        // A recursive probe planned for the delta it saw at open is priced over the rows its relation gains: its
+        // seeds' rows (here 500, against the 18 it saw) and one round more, at most as many again.
+        let mut rounds = Shape { work: 100.0, ..Shape::default() };
+        rounds.seeded("q", 500.0);
+        rounds.probe("q", 3600.0, 9.0, 18.0);
+        rounds.close_rounds();
+        assert_eq!(rounds.work, 100.0 + 200.0 * 500.0 * 1.5);
+        // A probe that makes more rows than it reads adds one round, not a divergent sum; one with no seeds keeps
+        // the delta it was priced at.
+        let mut many = Shape::default();
+        many.probe("r", 40.0, 80.0, 20.0);
+        many.close_rounds();
+        assert_eq!(many.work, 2.0 * 20.0 * 2.0);
+        assert!(many.probes.is_empty());
         // Recursion and computed terms are forms too.
         let mut rec = Shape::default();
         adds(&mut rec, &[atom("edge", false)], &[Term::Call("add".into(), vec![].into())], 1.0, true);
