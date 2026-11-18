@@ -2736,7 +2736,7 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
             // The observer's store, with what the passes left live (`observe::collect`).
             let live = store.live_plans()?;
             let swept = crate::content_store::observe::collect(&crate::content_store::observe::store_beside(&path), |plan| live.contains(plan)).map_err(crate::content_store::StoreError::from)?;
-            let swept = format!("; the observer's store: {} cursors, {} answers, {} records and {} output directories dropped", swept.cursors, swept.answers, swept.records, swept.outputs);
+            let swept = format!("; the observer's store: {} cursors, {} answers, {} records, {} output directories and {} rows of its own journal dropped", swept.cursors, swept.answers, swept.records, swept.outputs, swept.changes);
             Ok(match kept {
                 Some(k) => format!(
                     "{} manifests kept, {} evicted; history {:.1} MB (high water {} MB), protected {:.1} MB; {tapes} tapes, {sources} sources and {plan_rows} memo rows of dead plans deleted{}",
