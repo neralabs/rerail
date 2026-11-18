@@ -274,7 +274,10 @@ async function folderOwner(folder: string): Promise<FolderOwner> {
   return { kind: "dead", file, holder };
 }
 
-/** Clears a folder with no owner, or one whose owner is gone; true when the next rename may take it. */
+/**
+ * Clears a folder with no owner, or one whose owner is gone; true when the next rename may take it, false while another
+ * process deletes it or has it open (Windows), which the taker answers as busy.
+ */
 async function clear(folder: string, found: Exclude<FolderOwner, { kind: "held" }>): Promise<boolean> {
   try {
     if (found.kind === "dead") await unlink(join(folder, found.file));
@@ -284,7 +287,7 @@ async function clear(folder: string, found: Exclude<FolderOwner, { kind: "held" 
     // Another taker cleared it first and may hold it now (ENOENT, ENOTEMPTY or EEXIST): the next rename tells.
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "ENOENT" || code === "ENOTEMPTY" || code === "EEXIST") return true;
-    // On Windows, another process is deleting it or has it open: busy.
+    // On Windows, another process is deleting it or has it open: wait.
     if (heldOnWindows(error)) return false;
     throw error;
   }
