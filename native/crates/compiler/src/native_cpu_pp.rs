@@ -3474,14 +3474,8 @@ impl Lower<'_, '_> {
         self.like_tok(LITERAL, start, end);
     }
 
-    /// `Machine::line_of` of the token at `tok`: its physical line, moved by its file's `#line`.
-    fn line_of(&mut self, tok: Value) -> Value {
-        let buf = ldu(self.f, types::I32, tok, offset_of!(Tok, buf) as i32);
-        let start = ldu(self.f, types::I32, tok, offset_of!(Tok, start) as i32);
-        self.line_of_at(buf, start)
-    }
-
-    /// `line_of` of a token's `buf` and `start`.
+    /// `Machine::line_of` of a token's `buf` and `start`: its physical line, moved by its file's
+    /// `#line`.
     fn line_of_at(&mut self, buf: Value, start: Value) -> Value {
         let ctx = self.ctx;
         let nf = ld(self.f, types::I64, ctx, at!(nfiles));

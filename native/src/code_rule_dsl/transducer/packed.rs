@@ -2118,6 +2118,16 @@ impl Program {
                 digest.update(bytes);
             }
         }
+        // Likewise array programs.
+        if !self.array_programs.is_empty() {
+            digest.update(b"array-programs");
+            digest.update((self.array_programs.len() as u64).to_le_bytes());
+            for program in &self.array_programs {
+                let bytes = program.canonical_bytes();
+                digest.update((bytes.len() as u64).to_le_bytes());
+                digest.update(bytes);
+            }
+        }
         if !self.switches.is_empty() {
             digest.update(b"switches");
             digest.update((self.switches.len() as u64).to_le_bytes());

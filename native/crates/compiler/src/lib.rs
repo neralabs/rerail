@@ -15,6 +15,9 @@ pub mod bitlex_masks;
 pub mod bitlex_prove;
 pub mod bitlex_sat;
 pub mod bitlex_tier2;
+pub mod array;
+#[cfg(test)]
+mod array_tests;
 pub mod block;
 pub mod class_pack;
 pub mod block_native;
