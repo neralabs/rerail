@@ -101,14 +101,14 @@ if (daemon && slowStart !== null) {
 }
 
 const EXIT_WATCH_FILE = "exit-watch.cjs";
-/** How long the exit of a daemon {@link watchedExits} holds waits before the daemon's own exit steps: past a test's end. */
-const HELD_EXIT_MS = 60_000;
 
 /** What the daemons started with {@link watchedExits}'s environment show a test as their processes end. */
 export interface WatchedExits {
   readonly env: NodeJS.ProcessEnv;
-  /** Whether daemon `pid` has begun to exit, its close done: its exit is held from then on. */
+  /** Whether daemon `pid` has begun to exit, its close done: a held exit is held from then on. */
   exiting(pid: number): boolean;
+  /** Lets the held exit of `daemon`, started with a stdin pipe ({@link daemonProcess}), go on: a byte on that stdin. */
+  release(daemon: ChildProcess): void;
   /**
    * Whether the engine still waited for the home's daemon lock as daemon `pid` exited ("waiting"), so something else
    * than the end of that wait stopped it, or had ended that wait ("ended"); undefined when the daemon did not ask for
@@ -122,9 +122,10 @@ export interface WatchedExits {
  * test sees how the daemon's process ends. It wraps the engine's lock takes as the engine loads, to see whether the
  * wait for the home's daemon lock had ended when the daemon exited; an engine with no wait for a lock (before
  * `lockExclusive`) is tried until the bound, so that wait has always ended. With `holdExit`, the exit of a daemon that
- * closed cleanly (exit code 0) marks itself and then waits {@link HELD_EXIT_MS} before the daemon's own exit steps run,
- * as a process slow to exit after its close; the test ends it. A daemon that stops on a held home exits 1 and is not
- * held.
+ * closed cleanly (exit code 0) marks itself and then, before the daemon's own exit steps run, reads its stdin, as a
+ * process slow to exit after its close. A daemon started with a stdin pipe is held there until the test releases it
+ * ({@link WatchedExits.release}) or the test's process ends, and no clock ends the hold; any other daemon reads the end
+ * of its stdin at once. A daemon that stops on a held home exits 1 and is not held.
  */
 export function watchedExits(home: string, env: NodeJS.ProcessEnv, holdExit = false): WatchedExits {
   const script = join(home, EXIT_WATCH_FILE);
@@ -157,7 +158,8 @@ if (/[\\\\/]daemon-entry\\.js$/u.test(process.argv[1] ?? "")) {
     if (lockWait !== undefined) fs.writeFileSync(mark("lock-wait"), lockWait);
     if (!${String(holdExit)} || code !== 0) return;
     fs.writeFileSync(mark("exiting"), "");
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${HELD_EXIT_MS});
+    // Blocks until a byte arrives or the writer's end closes; an ignored stdin (/dev/null, NUL) is at its end already.
+    fs.readSync(0, Buffer.alloc(1));
   });
 }
 `);
@@ -165,6 +167,9 @@ if (/[\\\\/]daemon-entry\\.js$/u.test(process.argv[1] ?? "")) {
   return {
     env: { ...env, NODE_OPTIONS: [env.NODE_OPTIONS, preload].filter(Boolean).join(" ") },
     exiting: pid => existsSync(mark("exiting", pid)),
+    release: daemon => {
+      daemon.stdin?.end("\n");
+    },
     lockWaitAtExit: pid => {
       const answer = existsSync(mark("lock-wait", pid)) ? readFileSync(mark("lock-wait", pid), "utf8") : undefined;
       return answer === "waiting" || answer === "ended" ? answer : undefined;
@@ -218,12 +223,18 @@ export async function recordedPid(home: string): Promise<number | undefined> {
 /** What each daemon `daemonProcess` started wrote to stderr, whole once it has closed. */
 const errorsOf = new WeakMap<ChildProcess, Promise<string>>();
 
-/** A daemon process of this checkout's build in `home`, started as a start launches one, with `args` after its own. */
-export function daemonProcess(home: string, env: NodeJS.ProcessEnv, args: readonly string[] = []): ChildProcess {
+/**
+ * A daemon process of this checkout's build in `home`, started as a start launches one, with `args` after its own. Its
+ * stdin is ignored, as a start's is, or with `stdin: "pipe"` a pipe from the test, on which {@link watchedExits} holds
+ * its exit.
+ */
+export function daemonProcess(home: string, env: NodeJS.ProcessEnv, args: readonly string[] = [], stdin: "ignore" | "pipe" = "ignore"): ChildProcess {
   const entry = join(packageRoot, "dist", "cli", "daemon-entry.js");
   const child = spawn(process.execPath, [entry, "--state-file", join(home, DAEMON_STATE_FILE), "--workspace-root", home, "--dev", ...args], {
-    cwd: home, env, stdio: ["ignore", "ignore", "pipe"], windowsHide: true,
+    cwd: home, env, stdio: [stdin, "ignore", "pipe"], windowsHide: true,
   });
+  // A release written after the daemon has gone meets a closed pipe, and has nothing left to let go.
+  child.stdin?.on("error", () => undefined);
   let errors = "";
   child.stderr!.setEncoding("utf8").on("data", (chunk: string) => { errors += chunk; });
   errorsOf.set(child, once(child, "close").then(() => errors, () => errors));
