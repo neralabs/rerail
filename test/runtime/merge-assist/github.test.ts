@@ -1,6 +1,6 @@
 import type { ChildProcess, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { chmodSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -12,6 +12,7 @@ import {
   PULL_REQUEST_LIMIT,
   type GithubRepository,
 } from "../../../src/runtime/merge-assist/github.js";
+import { ghConfigDir, ghSignInStamp } from "../../../src/runtime/merge-assist/gh-config.js";
 
 const REPOSITORY: GithubRepository = { host: "github.com", owner: "neralabs", name: "rerail" };
 const COMMIT = "ed0e9fcf09b181eb3440042af2cb24e5cc63b722";
@@ -279,6 +280,44 @@ describe("readiness", () => {
     const gh = fakeGh(args => (args[0] === "auth" ? {} : { stdout: JSON.stringify({ login: "evil\u001b[2J" }) }));
     await expect(createGithubClient({ env, spawn: gh.spawn }).readiness(REPOSITORY))
       .resolves.toEqual({ state: "signed-in", login: null, repository: "neralabs/rerail" });
+  });
+});
+
+describe("the stamp of gh's sign-in", () => {
+  it("finds gh's configuration folder in gh's own order on each system", () => {
+    expect(ghConfigDir({ GH_CONFIG_DIR: "/c/gh", XDG_CONFIG_HOME: "/x", HOME: "/h" }, "linux")).toBe("/c/gh");
+    expect(ghConfigDir({ GH_CONFIG_DIR: "", XDG_CONFIG_HOME: "/x", HOME: "/h" }, "linux")).toBe("/x/gh");
+    expect(ghConfigDir({ APPDATA: "/a", HOME: "/h" }, "darwin")).toBe("/h/.config/gh");
+    expect(ghConfigDir({ AppData: "C:\\Users\\t\\AppData\\Roaming", USERPROFILE: "C:\\Users\\t" }, "win32")).toBe("C:\\Users\\t\\AppData\\Roaming\\GitHub CLI");
+    expect(ghConfigDir({ xdg_config_home: "D:\\cfg", APPDATA: "C:\\Roaming" }, "win32")).toBe("D:\\cfg\\gh");
+    expect(ghConfigDir({ UserProfile: "C:\\Users\\t" }, "win32")).toBe("C:\\Users\\t\\.config\\gh");
+  });
+
+  it("moves when gh writes, rewrites or removes its hosts file, or a token variable is set, and holds otherwise", () => {
+    const folder = mkdtempSync(join(tmpdir(), "rerail-gh-config-"));
+    try {
+      const env = { GH_CONFIG_DIR: folder };
+      const hosts = join(folder, "hosts.yml");
+      const none = ghSignInStamp(env);
+      // gh auth login writes the file; gh auth switch rewrites it in place, here at the same length.
+      writeFileSync(hosts, "github.com:\n    user: tbelanger\n");
+      utimesSync(hosts, 1_700_000_000, 1_700_000_000);
+      const login = ghSignInStamp(env);
+      writeFileSync(hosts, "github.com:\n    user: jbarnes01\n");
+      utimesSync(hosts, 1_700_000_001, 1_700_000_001);
+      const switched = ghSignInStamp(env);
+      // gh auth logout of the last account leaves the file with no login.
+      writeFileSync(hosts, "{}\n");
+      const loggedOut = ghSignInStamp(env);
+      const tokenSet = ghSignInStamp({ ...env, GH_TOKEN: "set" });
+      expect(new Set([none, login, switched, loggedOut, tokenSet]).size).toBe(5);
+      expect(ghSignInStamp(env)).toBe(loggedOut);
+      expect(ghSignInStamp({ ...env, GITHUB_TOKEN: "" })).toBe(loggedOut);
+      rmSync(hosts);
+      expect(ghSignInStamp(env)).toBe(none);
+    } finally {
+      removeFolderSync(folder);
+    }
   });
 });
 

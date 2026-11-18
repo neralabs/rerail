@@ -42,6 +42,8 @@ export interface FakeGithubOptions {
   readinessError?: boolean;
   /** `gh auth status` stalls: a readiness read never answers. */
   readinessStalls?: boolean;
+  /** The stamp of gh's sign-in file; a test changes it as `gh auth login`, `logout` or `switch` rewrites the file. */
+  signInStamp?: string;
   pullRequests?: PullRequestSummary[];
   /** Whether the listing stopped at its limit. */
   truncated?: boolean;
@@ -63,6 +65,10 @@ export class FakeGithub implements GithubClient {
     return this.options.readiness ?? { state: "signed-in", login: "tbelanger", repository: `${repository.owner}/${repository.name}` };
   }
 
+  signInStamp(): string {
+    return this.options.signInStamp ?? "hosts.yml as first written";
+  }
+
   async openPullRequests(): Promise<{ pulls: PullRequestSummary[]; truncated: boolean }> {
     if (this.options.pullsError === true) throw new GithubError("failed", "HTTP 502");
     return { pulls: this.options.pullRequests ?? [], truncated: this.options.truncated ?? false };
@@ -78,7 +84,7 @@ export interface Workspace {
   readonly databasePath: string;
   readonly repositoryKey: string;
   /** A Merge Assist over the workspace's database, with this `gh` stand-in. */
-  service(options?: { github?: GithubClient; now?: () => number; noteWaitMs?: number }): MergeAssistRuntime;
+  service(options?: { github?: GithubClient; now?: () => number; noteWaitMs?: number; answersOnce?: boolean }): MergeAssistRuntime;
   /** A linked worktree of the repository at `<folder>/<name>`, on a new branch from `main`. */
   worktree(name: string, options?: { record?: boolean }): string;
   /**
@@ -144,6 +150,7 @@ export function mergeAssistWorkspaces(): (options?: { setUp?: boolean; remote?: 
           github: options.github ?? new FakeGithub(),
           ...(options.now === undefined ? {} : { now: options.now }),
           ...(options.noteWaitMs === undefined ? {} : { noteWaitMs: options.noteWaitMs }),
+          ...(options.answersOnce === undefined ? {} : { answersOnce: options.answersOnce }),
         });
         services.push(service);
         return service;

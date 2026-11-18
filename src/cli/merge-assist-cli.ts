@@ -54,7 +54,7 @@ export interface MergeAssistCommandIo {
 
 function openDefaultService(): MergeAssistCommandSession {
   const database = openRerailDatabase(defaultRerailDatabasePath());
-  const service = createMergeAssistService({ database });
+  const service = createMergeAssistService({ database, answersOnce: true });
   // Ctrl-C while the person's hook command runs stops it (its own process group, whose timeout lives in this
   // process) before Rerail exits, so none is left running.
   const interrupt = (): void => {

@@ -40,12 +40,15 @@ class HeldGithub extends FakeGithub {
 class HeldReadiness extends FakeGithub {
   #release: PromiseWithResolvers<void> | undefined;
   readonly asked = Promise.withResolvers<void>();
+  /** Reads started, held ones included (readinessReads counts them once they answer). */
+  starts = 0;
 
   hold(): void {
     this.#release = Promise.withResolvers<void>();
   }
 
   override async readiness(repository: GithubRepository | null): Promise<GithubReadiness> {
+    this.starts += 1;
     const held = this.#release;
     if (held !== undefined) {
       this.asked.resolve();
@@ -159,24 +162,127 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     expect(github.readinessReads).toBe(reads + 3);
   });
 
-  it("says when gh could not tell whether it is signed in until a scan asks gh again, and makes it a problem of the scan", async () => {
+  it("says when gh could not tell, makes it a problem of the scan, and asks gh again past a minute without waiting for it", async () => {
     const ws = await workspace({ remote: "https://github.com/acme/app.git" });
     let now = Date.parse("2026-11-03T14:00:00Z");
-    const github = new FakeGithub({ readinessError: true });
+    const github = new HeldReadiness({ readinessError: true });
     const service = ws.service({ github, now: () => now });
     const status = await service.setEnabled(ws.repo, true);
-    const reads = github.readinessReads;
-    // Status reads run no gh again, however long after.
-    now += 10 * 60_000;
-    const later = await service.status(ws.repo);
-    expect(github.readinessReads).toBe(reads);
-    expect(status.readiness.github).toEqual({ state: "unavailable", login: null, repository: "acme/app", readAt: "2026-11-03T14:00:00Z" });
-    expect(later.readiness.github).toEqual(status.readiness.github);
     expect((await service.scan(ws.repo)).lastScan).toMatchObject({ peers: { pullRequests: 0 }, problems: [expect.any(String)] });
+    const starts = github.starts;
 
-    // Once gh answers, the next scan says so.
+    // Within the minute a status runs no gh.
+    now += 59_000;
+    const within = await service.status(ws.repo);
+    expect(github.starts).toBe(starts);
+    // The network is back and gh is slow: past the minute, status reads answer at once with the kept reading and its
+    // time, and one gh run serves them all; the next status shows what it said.
     github.options.readinessError = false;
-    expect((await service.scan(ws.repo)).readiness.github.state).toBe("signed-in");
+    github.hold();
+    now += 1_000;
+    const past = await Promise.all([service.status(ws.repo), service.status(ws.repo)]);
+    expect(github.starts).toBe(starts + 1);
+    github.release();
+    await service.settled();
+    const next = await service.status(ws.repo);
+    expect(github.starts).toBe(starts + 1);
+    expect(status.readiness.github).toEqual({ state: "unavailable", login: null, repository: "acme/app", readAt: "2026-11-03T14:00:00Z" });
+    expect(past.map(shown => shown.readiness.github)).toEqual([within.readiness.github, within.readiness.github]);
+    expect(within.readiness.github).toEqual(status.readiness.github);
+    expect(next.readiness.github).toEqual({ state: "signed-in", login: "tbelanger", repository: "acme/app", readAt: "2026-11-03T14:01:00Z" });
+  });
+
+  it("shows a gh auth logout, login or switch made outside Rerail at the next status read, and runs gh only then", async () => {
+    const ws = await workspace({ remote: "https://github.com/acme/app.git" });
+    let now = Date.parse("2026-11-03T14:00:00Z");
+    const github = new FakeGithub();
+    const service = ws.service({ github, now: () => now });
+    await service.setEnabled(ws.repo, true);
+    const reads = github.readinessReads;
+
+    // Each rewrites gh's hosts file, which moves the stamp of gh's sign-in.
+    now += 1_000;
+    github.options.readiness = { state: "signed-out", login: null, repository: "acme/app" };
+    github.options.signInStamp = "after gh auth logout";
+    const loggedOut = await service.status(ws.repo);
+    now += 1_000;
+    github.options.readiness = { state: "signed-in", login: "jbarnes", repository: "acme/app" };
+    github.options.signInStamp = "after gh auth login as jbarnes";
+    const loggedIn = await service.status(ws.repo);
+    now += 1_000;
+    delete github.options.readiness;
+    github.options.signInStamp = "after gh auth switch to tbelanger";
+    const switched = await service.status(ws.repo);
+    // The file unchanged, status reads from this process and another one run no gh, however long after.
+    now += 3 * 60 * 60_000;
+    const later = await Promise.all([service.status(ws.repo), ws.service({ github, now: () => now }).status(ws.repo)]);
+    expect(github.readinessReads).toBe(reads + 3);
+    expect(loggedOut.readiness.github).toEqual({ state: "signed-out", login: null, repository: "acme/app", readAt: "2026-11-03T14:00:01Z" });
+    expect(loggedIn.readiness.github).toEqual({ state: "signed-in", login: "jbarnes", repository: "acme/app", readAt: "2026-11-03T14:00:02Z" });
+    expect(switched.readiness.github).toEqual({ state: "signed-in", login: "tbelanger", repository: "acme/app", readAt: "2026-11-03T14:00:03Z" });
+    expect(later.map(shown => shown.readiness.github)).toEqual([switched.readiness.github, switched.readiness.github]);
+  });
+
+  it("asks gh again for a missing gh or a sign-out past five minutes, in the answer of a process that answers once", async () => {
+    const ws = await workspace({ remote: "https://github.com/acme/app.git" });
+    let now = Date.parse("2026-11-03T14:00:00Z");
+    const github = new FakeGithub({ readiness: { state: "missing", login: null, repository: "acme/app" } });
+    const service = ws.service({ github, now: () => now });
+    await service.setEnabled(ws.repo, true);
+    const reads = github.readinessReads;
+
+    // gh is installed, not signed in yet: no file of gh's tells it.
+    github.options.readiness = { state: "signed-out", login: null, repository: "acme/app" };
+    now += 5 * 60_000 - 1_000;
+    const within = await service.status(ws.repo);
+    expect(github.readinessReads).toBe(reads);
+    // The person's `rerail merge-assist status` past the five minutes shows what gh says now.
+    now += 1_000;
+    const once = await ws.service({ github, now: () => now, answersOnce: true }).status(ws.repo);
+    expect(github.readinessReads).toBe(reads + 1);
+    // Five minutes on, a status here answers with the kept sign-out and asks gh for the next one.
+    now += 5 * 60_000;
+    const past = await service.status(ws.repo);
+    await service.settled();
+    const next = await service.status(ws.repo);
+    expect(github.readinessReads).toBe(reads + 2);
+    expect(within.readiness.github).toEqual({ state: "missing", login: null, repository: "acme/app", readAt: "2026-11-03T14:00:00Z" });
+    expect(once.readiness.github).toEqual({ state: "signed-out", login: null, repository: "acme/app", readAt: "2026-11-03T14:05:00Z" });
+    expect(past.readiness.github).toEqual(once.readiness.github);
+    expect(next.readiness.github).toEqual({ state: "signed-out", login: null, repository: "acme/app", readAt: "2026-11-03T14:10:00Z" });
+  });
+
+  it("reads gh once more for a reading an older build kept without the stamp of gh's sign-in", async () => {
+    const ws = await workspace({ remote: "https://github.com/acme/app.git" });
+    const now = Date.parse("2026-11-03T14:00:00Z");
+    const github = new FakeGithub();
+    const service = ws.service({ github, now: () => now });
+    await service.setEnabled(ws.repo, true);
+    const reads = github.readinessReads;
+    const older = { at: now, readiness: { state: "signed-in", login: "tbelanger", repository: "acme/app" } };
+    ws.database.update(mergeAssistState).set({ valueJson: JSON.stringify(older) }).where(eq(mergeAssistState.key, `github:${ws.repositoryKey}`)).run();
+
+    await service.status(ws.repo);
+    await service.status(ws.repo);
+    expect(github.readinessReads).toBe(reads + 1);
+  });
+
+  it("keeps nothing gh says after the service stopped", async () => {
+    const ws = await workspace({ remote: "https://github.com/acme/app.git" });
+    let now = Date.parse("2026-11-03T14:00:00Z");
+    const github = new HeldReadiness({ readinessError: true });
+    const service = ws.service({ github, now: () => now });
+    const status = await service.setEnabled(ws.repo, true);
+    github.hold();
+    now += 60_000;
+    await service.status(ws.repo);
+    await service.stop();
+
+    github.options.readinessError = false;
+    github.release();
+    await service.settled();
+    const after = await ws.service({ github: new FakeGithub({ readinessError: true }), now: () => now }).status(ws.repo);
+    expect(after.readiness.github).toEqual(status.readiness.github);
   });
 
   it("reads gh's sign-in for a status only while none is kept, and once for listings at the same time", async () => {

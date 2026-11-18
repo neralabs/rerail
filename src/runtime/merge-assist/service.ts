@@ -45,8 +45,8 @@ export class MergeAssistError extends Error {
 
 export interface MergeAssistService {
   /**
-   * The checkout's state and its in-flight conflicts, with `gh`'s sign-in as the last listing, scan or turning on read
-   * it. Reads only; runs `gh` only while Merge Assist is on and no sign-in reading is kept for the repository.
+   * The checkout's state and its in-flight conflicts, with `gh`'s sign-in as `gh` last said it and when. Runs `gh`
+   * only while Merge Assist is on, and in its answer only when no reading is kept or `gh`'s sign-in changed since.
    */
   status(checkoutPath: string): Promise<MergeAssistStatus>;
   /**
@@ -102,7 +102,7 @@ export interface MergeAssistRuntime extends MergeAssistService {
    * Returns the call that stops listening.
    */
   onConflictsChanged(listener: (checkoutPath: string) => void): () => void;
-  /** Resolves once the conflict hook's handlers running now have finished. */
+  /** Resolves once the conflict hook's handlers and the reads of `gh`'s sign-in running now have finished. */
   settled(): Promise<void>;
   /**
    * Stop: no conflict event is handed to the hook any more, and a handler that answers later records nothing. Every
@@ -121,6 +121,11 @@ export interface MergeAssistServiceOptions {
   readonly env?: NodeJS.ProcessEnv;
   /** The most a conflict's agent note waits for the person's hook command (`NOTE_WAIT_MS` by default). */
   readonly noteWaitMs?: number;
+  /**
+   * The process answers once and ends (the CLI): a status read that starts reading `gh`'s sign-in again shows what it
+   * says, since no later read in the process would.
+   */
+  readonly answersOnce?: boolean;
 }
 
 /** A scan marked running for longer than this, or by a process that is gone, was cut short; another may start. */
@@ -171,7 +176,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   #github: GithubClient | undefined;
   /** Scans running in this process, by checkout, with the mark each claimed; a second request joins the first. */
   readonly #scans = new Map<string, { work: Promise<void>; mark: ScanMark }>();
-  /** `gh`'s sign-in per repository: read for each listing, shown by a status as last read. */
+  /** `gh`'s sign-in per repository: read for each listing and when it changed, shown by a status as last read. */
   readonly #signIn: SignInReads;
   /** When this process last found a checkout's conflicts after an edit, by checkout. */
   readonly #detectedAt = new Map<string, number>();
@@ -186,7 +191,13 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     this.#options = options;
     this.#now = options.now ?? Date.now;
     this.#hook = new ConflictHook([deliveryHandler, commandHandler(this.#commands)], options.noteWaitMs);
-    this.#signIn = new SignInReads({ database: () => this.#db, github: () => this.#githubClient, now: this.#now });
+    this.#signIn = new SignInReads({
+      database: () => this.#db,
+      github: () => this.#githubClient,
+      now: this.#now,
+      answersOnce: options.answersOnce === true,
+      stopped: () => this.#stopped,
+    });
   }
 
   get #db(): RerailDatabase {
@@ -523,7 +534,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   }
 
   async settled(): Promise<void> {
-    await this.#hook.settled();
+    await Promise.all([this.#hook.settled(), this.#signIn.settled()]);
   }
 
   async stop(waitMs = 2_000): Promise<void> {
@@ -550,7 +561,8 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
 /**
  * Merge Assist over one database. It runs `gh` only to list open pull requests, each listing with its sign-in read
  * afresh, and the person's hook command on conflict events; a status read runs neither, apart from reading `gh`'s
- * sign-in once while Merge Assist is on and none is kept, and nothing while it is off.
+ * sign-in while Merge Assist is on when none is kept or it changed, or in the background when what it said leaves pull
+ * requests unread (sign-in.ts), and nothing while it is off.
  */
 export function createMergeAssistService(options: MergeAssistServiceOptions): MergeAssistRuntime {
   return new DatabaseMergeAssist(options);

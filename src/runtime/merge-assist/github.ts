@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { z } from "zod";
 import type { GithubReadiness } from "../../engine/merge-assist/model.js";
 import { programOnPath } from "../../engine/system-programs.js";
+import { ghSignInStamp } from "./gh-config.js";
 
 /** Grace a stopped `gh` gets after SIGTERM before SIGKILL. */
 const KILL_GRACE_MS = 2_000;
@@ -46,6 +47,11 @@ export interface GithubClient {
    * failed otherwise, as with a token it could not check).
    */
   readiness(repository: GithubRepository | null): Promise<GithubReadiness>;
+  /**
+   * A stamp of `gh`'s sign-in, read without running `gh` (one stat): it moves at every `gh auth login`, `logout`,
+   * `switch` and `refresh`, and when a token variable `gh` signs in with is set or cleared.
+   */
+  signInStamp(): string;
   /**
    * Up to {@link PULL_REQUEST_LIMIT} open pull requests, newest first; entries that fail validation are left out.
    * Throws `GithubError` when `gh` fails.
@@ -395,5 +401,5 @@ export function createGithubClient(options: GithubClientOptions = {}): GithubCli
     return { pulls, truncated: entries.data.length >= PULL_REQUEST_LIMIT };
   }
 
-  return { readiness, openPullRequests };
+  return { readiness, openPullRequests, signInStamp: () => ghSignInStamp(options.env ?? process.env) };
 }
