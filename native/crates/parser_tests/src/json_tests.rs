@@ -504,6 +504,13 @@ fn json_shapes() {
             eprintln!("  gated region: gate %{} = {gate:?} ({}){pre}, {} values zero without it, {} skipped", r.gate, of.join(", "), r.zero.len(), r.members.len());
         }
         eprintln!("  machine code: {} instructions in the function", machine(&c.parser.tier1.disassembly));
+        // The hot loop as `json_loop_keeps_values_in_registers` counts it, to set beside
+        // simdjson's (`scripts/dev/simdjson-stage1-loop`); `RERAIL_DUMP_LOOP`: a directory for it.
+        let hot = clif_text::machine_loop(&c.parser.tier1.loops_disassembly());
+        eprintln!("  hot loop: {} instructions, {} stack loads or stores", hot.len(), clif_text::loop_costs(&hot).0);
+        if let Ok(dir) = std::env::var("RERAIL_DUMP_LOOP") {
+            std::fs::write(format!("{dir}/{name}.s"), hot.join("\n")).expect("writes");
+        }
         eprintln!("tier 2: {} words {words:?}", c.native.structural.len());
         eprintln!("  switches {}, strings {}", c.native.switches.len(), c.native.strings.len());
         eprintln!("  machine code: {} instructions in the function", machine(&c.parser.tier2.disassembly));
