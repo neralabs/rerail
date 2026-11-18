@@ -297,7 +297,28 @@ impl PackedBatch {
         Self::build_tapes(programs, file_count, anchors, materialize_tasks, Layout::Packed, load, after_file)
     }
 
+    /// `build_tapes_in`, its copies of the tapes counted (decision 0353's row 11): the node records, children and class
+    /// pairs, and the sources and line starts a batch holds of its own.
     fn build_tapes<'a, R: AsRef<[u32]>>(
+        programs: &[Program],
+        file_count: usize,
+        anchors: &[Vec<R>],
+        materialize_tasks: bool,
+        layout: Layout,
+        load: impl FnMut(usize) -> Result<std::borrow::Cow<'a, TapeDoc>, Error>,
+        after_file: impl FnMut(&mut Self) -> Result<(), Error>,
+    ) -> Result<Self, Error> {
+        static PACKED: rerail_prof::copies::Site = rerail_prof::copies::Site::new(11, "7", "the transducer's packed batch: node records, children, sources (PackedBatch)");
+        let copying = PACKED.start();
+        let batch = Self::build_tapes_in(programs, file_count, anchors, materialize_tasks, layout, load, after_file);
+        copying.done(batch.as_ref().map_or(0, |b| {
+            std::mem::size_of_val(b.nodes.as_slice()) + std::mem::size_of_val(b.children.as_slice()) + b.source.len() + std::mem::size_of_val(b.line_starts.as_slice()) + std::mem::size_of_val(b.supertypes.as_slice())
+        }));
+        batch
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_tapes_in<'a, R: AsRef<[u32]>>(
         programs: &[Program],
         file_count: usize,
         anchors: &[Vec<R>],

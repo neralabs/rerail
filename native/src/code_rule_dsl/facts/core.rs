@@ -206,8 +206,6 @@ fn queued_tape(source: &[u8; 32], tag: i64, gv: i64, fv: i64) -> crate::content_
 /// A parsed tape's stored bytes in their home and the image read there (decision 0353 step 4a): written straight
 /// into a slab's room, which the store's writer and every reader take. A host whose tape is not placed (no device,
 /// or the pool refused the room) keeps the parser's image, and the writer its bytes.
-// copy (0353 step 4a): the parsers write their columns into a vector of their own, which goes once its stored bytes
-// are in their room. It goes when a parser writes into the room (decision 0353).
 /// A tape still queued for the writer, read where it is: the room this process placed it in (decision 0353 step 4a),
 /// else its bytes read into a tape of its own.
 // copy (0353 step 4a): a queued tape not in a room (a frame of a gathered segment, decompressed) is read into a vector.
@@ -220,7 +218,8 @@ fn queued_image(stored: &crate::content_store::ObjectBytes, grammar: &Arc<crate:
         return TapeImage::from_home((*home).clone(), grammar);
     }
     crate::code_rule_dsl::prof::count("tape.queued_read_apart", 1);
-    TapeImage::from_bytes(stored, grammar)
+    static APART: rerail_prof::copies::Site = rerail_prof::copies::Site::new(15, "4a", "a queued tape not in a room, read into a vector (queued_image)");
+    APART.time(|| (TapeImage::from_bytes(stored, grammar), stored.len()))
 }
 
 /// A parse's tape in a slab's room where a device reads tapes (`placed_parse`), else as the parser made it.

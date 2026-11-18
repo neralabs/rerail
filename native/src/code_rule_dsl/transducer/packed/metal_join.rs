@@ -2059,6 +2059,12 @@ impl DevRel {
     /// `[c * rows .. (c + 1) * rows]`) and written by the host into a relation of the device's own.
 // copy (0353 step 6): an upload of rows from the host. It goes with its last caller (decision 0353).
     pub(in crate::code_rule_dsl) fn upload(cols: usize, rows: usize, fill: impl FnOnce(&mut [i64])) -> Result<DevRel, Error> {
+        // copy (0353 step 6): its site (row 5).
+        static UPLOAD: rerail_prof::copies::Site = rerail_prof::copies::Site::new(5, "6", "rows uploaded from the host (DevRel::upload)");
+        UPLOAD.time(|| (Self::upload_in(cols, rows, fill), 8 * cols * rows))
+    }
+
+    fn upload_in(cols: usize, rows: usize, fill: impl FnOnce(&mut [i64])) -> Result<DevRel, Error> {
         let mut values = vec![0i64; cols * rows];
         fill(&mut values);
         let dev = DevRel::empty(cols, rows)?;
@@ -2156,7 +2162,16 @@ pub(in crate::code_rule_dsl) struct DevText {
 impl DevText {
     /// The distinct symbols `ids` (in any order), each named by `name` (copied to the device: the host evaluates
     /// nothing).
-    pub(in crate::code_rule_dsl) fn upload(ids: &[i64], mut name: impl FnMut(i64, &mut Vec<u8>)) -> Result<DevText, Error> {
+    // copy (0353 step 6): symbols' names copied for the device (row 5). They go: the kernels read the strings block.
+    pub(in crate::code_rule_dsl) fn upload(ids: &[i64], name: impl FnMut(i64, &mut Vec<u8>)) -> Result<DevText, Error> {
+        static NAMES: rerail_prof::copies::Site = rerail_prof::copies::Site::new(5, "6", "symbols' names copied for the device (DevText::upload)");
+        let copying = NAMES.start();
+        let text = Self::upload_in(ids, name);
+        copying.done(text.as_ref().map_or(0, DevText::bytes));
+        text
+    }
+
+    fn upload_in(ids: &[i64], mut name: impl FnMut(i64, &mut Vec<u8>)) -> Result<DevText, Error> {
         let mut ids = ids.to_vec();
         ids.sort_unstable();
         ids.dedup();
@@ -2727,6 +2742,8 @@ impl Batch {
             }
 // copy (0353 step 6): a second key's index copies the relation. It goes: a relation is made with room for
 // the indexes its readers probe (decision 0353).
+            static MOVED: rerail_prof::copies::Site = rerail_prof::copies::Site::new(9, "6", "a relation copied for a second key's index (DevIndex::moved)");
+            MOVED.copied(8 * rel.cols * rel.rows);
             let copy = DevRel::empty(rel.cols, rel.rows)?;
             let ident: Vec<Col> = (0..rel.cols).map(Col::From).collect();
             self.copy_rows(Rows::Rel(rel), rel.rows, &ident, Rows::Rel(&copy), 0)?;
@@ -2777,6 +2794,8 @@ impl Batch {
 // read of the tape, and a stage reads it in place (decision 0353).
     pub(in crate::code_rule_dsl) fn expand_view(&mut self, block: &metal::Buffer, root: usize, view: u32, pairs: usize, cols: &[usize], out: &DevRel) -> Result<(), Error> {
         let expand = pipeline("chunk_views", "view_expand", chunk_views_source)?;
+        static EXPANDED: rerail_prof::copies::Site = rerail_prof::copies::Site::new(4, "4", "a view expanded into a device relation (expand_view)");
+        EXPANDED.copied(8 * out.rows * cols.len());
         self.writes(out, "a view expanded");
         let pass = self.pass(1)?;
         let at = |o: usize| u32::try_from(o).map_err(|_| Error::BackendCapacity);

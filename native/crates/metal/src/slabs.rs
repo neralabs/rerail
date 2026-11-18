@@ -570,7 +570,9 @@ pub fn gather(documents: Vec<Arc<Resident>>) -> Result<Vec<Arc<Resident>>, Error
             gathered.push(document);
             continue;
         }
-        let moved = Arc::new(document.copied(&slab, to));
+        // copy (0353 step 7): a document copied between slabs, for a batch that reads one slab (row 13).
+        static GATHERED: rerail_prof::copies::Site = rerail_prof::copies::Site::new(13, "7", "documents copied between slabs (residency gather)");
+        let moved = Arc::new(GATHERED.time(|| (document.copied(&slab, to), document.len)));
         to += aligned(document.len);
         copied += document.len;
         // The residency finds it here now; the slab it was in may be retired once no batch reads it.

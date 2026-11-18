@@ -1514,7 +1514,7 @@ data"; blocks never get copied into other data structures for convenience. Decis
 inventory of today's copies (12 sites, marked `copy (0353 step N)`) and the plan.
 
 1. Step 1 is done: the record, `AGENTS.md`, the guard (`scripts/check/check-no-block-copies.py`, in pre-commit) and
-   the marks. Left of it: the profile's `copies (decision 0353)` counter.
+   the marks, and the profile's `copies (decision 0353)` counter (2026-11-18; hogql 16z: 792.4 MB, 0.90 s CPU).
 2. Step 2 in progress. The granule table and its rank index answer every id equal to `DefIds::low`'s, in all three
    formats, and are measured: a point read is 171 instructions, a scan 59 an id (0353, "Node identity").
    `Projected`'s `core`, `local`, `up`, `size` and `fielded` are gone: the rank index, read by passes in order, at

@@ -201,9 +201,17 @@ fn place(
         }
         // A document in memory: its digest was made from these same bytes (`TapeDoc::tape_digest`), so
         // there is nothing read to check them against.
+        // copy (0353 step 7): an in-memory tape and its source copied into a slab (row 13). It goes: a parse writes
+        // its tape into its room (step 4a), and the residency takes that room as it lies.
         Parts::Bytes(image, text) => {
-            tape.copy_from_slice(image);
-            source.copy_from_slice(text);
+            static INTO_SLAB: rerail_prof::copies::Site = rerail_prof::copies::Site::new(13, "7", "an in-memory tape and its source copied into a slab (residency::place)");
+            INTO_SLAB.time(|| {
+                // copy (0353 step 7): the tape (row 13).
+                tape.copy_from_slice(image);
+                // copy (0353 step 7): its source (row 13).
+                source.copy_from_slice(text);
+                ((), image.len() + text.len())
+            });
         }
     }
     let tape = &*tape;

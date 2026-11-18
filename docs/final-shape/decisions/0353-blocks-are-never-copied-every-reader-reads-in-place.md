@@ -381,6 +381,7 @@ Each row is marked in the code with `copy (0353 step N)`.
 | 12 | Findings, frames and memo entries copied into rows of their own | The output, frames and memo stores | Not yet measured | Step 8 (0325 step 7) |
 | 13 | The transducer's residency: every tape it reads copied into slabs of its own, and documents copied between slabs | `residency::slabs::admit_docs`, `insert`'s `place`; `rerail_metal::slabs::gather` | Each tape a Metal batch reads | Step 7 |
 | 14 | Found 2026-11-17: the line starts copied into the chunk block for the `line` and `Loc` views, and the spans past a document's nodes beside them; a guest's places made there. Both views read in place where the batch's tapes are on the device (step 4d); the copies are the fallback of a batch whose tapes are not, or with a guest placed by pieces or segments | `device_chunk.rs`, `fill_lines`, `fill_locs` | 4 bytes a line, 8 a span, each batch that makes the views | Step 4 |
+| 15 | Found 2026-11-18: a parser's tape copied into its room (`place_stored`); a queued tape not in a room read into a vector (`queued_image`) | `tape.rs`, `place_stored`; `facts/core.rs`, `queued_image` | 4.1 MB a run on hogql 16z | Step 4a |
 | 15 | Gone (step 4b, 2026-11-18): a 16z tape's blocks laid out as format 16. `DocTape::in_place`'s copy went first (the CPU reads 16z in place); then the transducer's residency's (`unblock_into` into its slab, for the kernels: the label and program kernels read the stored bytes through the batch's cache), and a 16z batch's views made on the device (they are read in place through a cache). `unblock_into` is deleted. | — | — | Done |
 
 ## The plan
@@ -396,7 +397,15 @@ Each step ends with:
    - This record, `AGENTS.md` and the commit guard.
    - Each copy site above marked.
    - One profile heading that counts every copy that remains, by site, in bytes and CPU: the measure the steps drive
-     to 0.
+     to 0. Built (2026-11-18): `rerail_prof::copies`, a `static Site` at each marked copy (its row here and the step
+     that removes it), bytes and calls always counted, CPU timed when the profile is on; the profile's heading
+     `== copies (decision 0353)` lists every site that copied in the run. Row 12 has no site yet: step 8 counts it
+     first. The guard reads the residency's directories too.
+     hogql, 16z, the Metal binding, cold (load 38): 792.4 MB and 0.90 s of CPU in all. Row 4, views expanded on the
+     device, 472.1 MB (the axis's, with row 6's 143.0 MB of pairs in the chunk: step 5); row 3, the chunk's node
+     columns, 71.8 MB and 0.26 s; row 7, the per-node rows, 13.5 MB and 0.46 s; rows 8 to 10 (step 6), 71.8 MB; row 5,
+     uploads, 9.0 MB and 0.15 s; row 13, tapes copied into slabs, 6.8 MB; row 15, 4.1 MB. Row 11 copies nothing in
+     this run (its batches are resident).
    - 0289, 0293 and 0325 point here where this supersedes them.
 2. **Node identity in place.**
    - The granule table is placed beside each tape.

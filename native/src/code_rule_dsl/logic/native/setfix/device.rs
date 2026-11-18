@@ -2820,6 +2820,8 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         };
 // copy (0353 step 6): the fixpoint's total copied into a run's block. It goes: the total lives in a block
 // of the run's life from its start (decision 0353).
+        static TOTAL: rerail_prof::copies::Site = rerail_prof::copies::Site::new(10, "6", "a device fixpoint's total copied into a run's block");
+        TOTAL.copied(8 * k * total.rows);
         let part = crate::code_rule_dsl::facts::rows::Part::for_writes(k, total.rows);
         let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
         let dst = mj::DevRel::in_block(&crate::code_rule_dsl::facts::rows::InBlock { facts: part.facts().clone(), at: part.rel_at(), rows: total.rows as u32, dead: 0 }, k).map_err(|e| format!("{e:?}"))?;
@@ -2847,7 +2849,10 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
             continue;
         }
         let k = store.rels[h].k;
-        let cols: Vec<Vec<i64>> = (0..k).map(|c| total.column(c)).collect();
+        // copy (0353 step 6): a lattice head's or a text head's total read back to the host, then staged (0325 step 4's
+        // rest, row 10). It goes with row 10: the total lives in the run's block, its texts interned where made.
+        static READ_BACK: rerail_prof::copies::Site = rerail_prof::copies::Site::new(10, "6", "a device fixpoint's lattice or text head read back to the host");
+        let cols: Vec<Vec<i64>> = READ_BACK.time(|| ((0..k).map(|c| total.column(c)).collect(), 8 * k * total.rows));
         // A shortlex_min value is an arena text (decision 0307): stored as a symbol, all of the head's at once.
         let symbols: Option<HashMap<i64, i64>> = match &shared {
             Some(a) if text_head(h) => {

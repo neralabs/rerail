@@ -1125,8 +1125,15 @@ impl TapeImage {
 
     /// The tape as the store keeps it (`to_bytes`), written straight into its home, a slab's room (decision 0353
     /// step 4a): the store's writer and every reader take it there.
+    // copy (0353 step 4a): the parsers write their columns into a vector of their own, which goes once its stored
+    // bytes are in their room. It goes when a parser writes into the room (decision 0353).
     pub fn place_stored(&self) -> Result<rerail_tape_format::home::Home, String> {
+        static INTO_ROOM: rerail_prof::copies::Site = rerail_prof::copies::Site::new(15, "4a", "a parser's tape copied into its room (place_stored)");
         let len = self.stored_len();
+        INTO_ROOM.time(|| (self.place_stored_in(len), len))
+    }
+
+    fn place_stored_in(&self, len: usize) -> Result<rerail_tape_format::home::Home, String> {
         placed::place(len, |out| {
             let mut at = 0;
             self.emit(&mut |b| {

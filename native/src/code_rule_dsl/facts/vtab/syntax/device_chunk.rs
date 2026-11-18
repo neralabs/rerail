@@ -131,7 +131,9 @@ pub fn device_view(view: View) -> Option<u32> {
 // copy (0353 step 5): an axis's pairs copied into the chunk. It goes: the solve writes its answer once,
 // as ids, into a relation in the chunk block (decision 0353).
 pub fn put_pairs(chunk: &Chunk, pairs: &[u64]) -> Option<usize> {
+    static PAIRS: rerail_prof::copies::Site = rerail_prof::copies::Site::new(6, "5", "an axis's pairs put into the chunk (put_pairs)");
     let p: *mut u64 = chunk.block.try_alloc_t(pairs.len().max(1))?;
+    PAIRS.copied(8 * pairs.len());
     // SAFETY: `p` holds `pairs.len()` items, just allocated in the block.
     unsafe { std::ptr::copy_nonoverlapping(pairs.as_ptr(), p, pairs.len()) };
     Some(chunk.block.offset_of(p))
@@ -375,6 +377,18 @@ fn made_in_order<T: Copy>(b: &Block, span: *const Span<T>, n: usize, values: imp
 // copy (0353 step 4): the node columns (`core`, `up`, `ord`, `fielded`, `start`, `end`, `kind`, `field`), the canonical codes
 // and the projection's arrays copied or made here. They go: the kernels read the placed tapes (decision 0353).
 pub fn build(batch: &Batch) -> Chunk {
+    static COLUMNS: rerail_prof::copies::Site = rerail_prof::copies::Site::new(3, "4", "the chunk's node columns and codes (device_chunk::build)");
+    COLUMNS.time(|| in_block(&batch.block, || build_in(batch)))
+}
+
+/// What `f` puts into `block`, with the bytes the block grew by (a copy's size, `rerail_prof::copies`).
+fn in_block<T>(block: &Block, f: impl FnOnce() -> T) -> (T, usize) {
+    let before = block.used();
+    let out = f();
+    (out, block.used().saturating_sub(before))
+}
+
+fn build_in(batch: &Batch) -> Chunk {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "a batch's chunk block".into());
     let b = Arc::clone(&batch.block);
     let root: *mut ChunkRoot = b.alloc_t(1);
@@ -462,7 +476,8 @@ pub fn build(batch: &Batch) -> Chunk {
 // copy (0353 step 4): the facts' line starts copied into the chunk, for a batch whose `line` view is made (its tapes
 // not on the device). It goes with the made views: the views' reads read the lines where `LineTable::placed` put them.
 pub fn fill_lines(batch: &Batch, chunk: &Chunk) -> bool {
-    *chunk.lines.get_or_init(|| {
+    static LINES: rerail_prof::copies::Site = rerail_prof::copies::Site::new(14, "4", "the facts' line starts put into the chunk (fill_lines)");
+    *chunk.lines.get_or_init(|| LINES.time(|| in_block(&chunk.block, || {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "the facts' lines in the chunk block".into());
         let b = &chunk.block;
         // SAFETY: the root `build` wrote; its document table.
@@ -480,7 +495,7 @@ pub fn fill_lines(batch: &Batch, chunk: &Chunk) -> bool {
             }
         }
         true
-    })
+    })))
 }
 
 /// Puts the `Loc` views' arrays into `batch`'s chunk, once: each document's first row in them, its spans past its
@@ -491,7 +506,8 @@ pub fn fill_lines(batch: &Batch, chunk: &Chunk) -> bool {
 // copy (0353 step 4): the line starts and the spans past the nodes copied into the chunk for the `Loc` views. It goes:
 // the views' reads read the lines in place, and the spans where they are written once (Q123).
 pub fn fill_locs(batch: &Batch, chunk: &Chunk) -> bool {
-    *chunk.locs.get_or_init(|| {
+    static LOCS: rerail_prof::copies::Site = rerail_prof::copies::Site::new(14, "4", "the Loc views' lines and spans put into the chunk (fill_locs)");
+    *chunk.locs.get_or_init(|| LOCS.time(|| in_block(&chunk.block, || {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "core.rr's places in the chunk block".into());
         if batch.docs.iter().any(|p| p.extra.is_none()) {
             return false;
@@ -536,7 +552,7 @@ pub fn fill_locs(batch: &Batch, chunk: &Chunk) -> bool {
             }
         }
         true
-    })
+    })))
 }
 
 /// The MSL of the chunk's structures, as the kernels read them.
