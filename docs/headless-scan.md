@@ -122,6 +122,9 @@ You can also supply a local policy file using `--rr`.
 
 Git symlinks and submodules do not enter the source scan.
 The runner reports missing objects and makes no fetch.
+For `--revision` and `--rules-ref`, explicit relative Git paths start at the checkout root.
+The flags accept Git commit message searches such as `HEAD^{/^Release}`.
+A revision error identifies the expression and the cause of the failed lookup.
 The JSON report includes `source` for a revision scan. Its `commit` is null for a tree.
 One invocation covers one snapshot. Use a driver for repeated scans.
 Use the same analysis scope to retain cache entries across those scans.

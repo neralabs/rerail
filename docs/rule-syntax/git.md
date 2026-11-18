@@ -41,7 +41,10 @@ A shallow clone can lack some parents. Git requests use local objects and do not
 
 To query `HEAD` when scanning yesterday's source, request `"HEAD"` as above.
 The selected source has no effect on what that expression resolves to.
-An expression that follows a corrupt tag, parent, or tree gives a `git_revision_error`.
+Explicit relative paths in rule expressions start at the worktree root of the named repository.
+Paths in a bare repository can name tree entries from the tree root.
+Commit message searches use Git's regular expression syntax.
+The `git_revision_error` reason distinguishes resolution errors, wrong object kinds, and unreadable or corrupt objects.
 The resolver checks the objects it reads during navigation before it follows their IDs.
 
 ## Relations

@@ -73,6 +73,9 @@ The library must not derive present local storage merely from `git_object_result
 The provider records the storage state that it checked when it read an object.
 It checks loose file metadata and the pack and index files in the repository and its alternates.
 If the storage state changes, the provider reads and checks the object's checksum before it returns successful facts.
+The provider also checks storage before it reuses an observation within the same revision view.
+If a pack, index, or alternate changes, the view opens fresh Git handles for the affected reads.
+The selected object IDs stay pinned throughout the view.
 Failed object reads are checked again when a later run requests the object.
 Verify the selected commit or tree before opening the source view.
 The source view also verifies each annotated tag that it follows.
@@ -112,6 +115,7 @@ One native decoder request can answer all these families.
 ## 4. Language selection
 
 Language selection is a computation over path and applicable evidence.
+Both filesystem and revision inventories supply paths and registry facts to the same classifier.
 The registry exposes supported grammars, suffixes, and entry points as facts.
 Library rules express longest-suffix precedence, explicit overrides, and any content fallback.
 
@@ -290,7 +294,10 @@ An encoded fallback name is a dependency even when its namespace currently has n
 
 For an ordinary name or a bare import, use exact binding observations when the lookup ends at a direct definition or a known absence.
 Include each missing binding that could take precedence.
-For other lookups, start with the possible namespaces and follow their dependencies in the `.rr` phase.
+For a class, method, or alias lookup, record the table entries that the resolver reads.
+Include absent entries that can take precedence and the results of queries for candidate lists.
+Retain each file's contribution to the binding index by its summary and placement inputs.
+Use those contributions to update the binding index when a file changes.
 The key includes these ordered observations and the constructor fields setting.
 The phase records an empty observation for a missing binding or namespace.
 Derive the complete keys first. The next phase only requests links for those keys.
