@@ -120,7 +120,6 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     const service = ws.service({ github, now: () => now });
     // Turning it on reads gh's sign-in, so the person sees at once whether open pull requests can be read.
     const on = await service.setEnabled(ws.repo, true);
-    expect(on.readiness.github).toEqual({ state: "signed-in", login: "tbelanger", repository: "acme/app", readAt: "2026-11-03T14:00:00Z" });
     const reads = github.readinessReads;
 
     // Hours later, with gh stalled, status reads from this process and another one over the same database answer with
@@ -128,8 +127,9 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     now += 3 * 60 * 60_000;
     github.options.readinessStalls = true;
     const statuses = await Promise.all([service.status(ws.repo), ws.service({ github, now: () => now }).status(ws.repo)]);
-    expect(statuses.map(status => status.readiness.github)).toEqual([on.readiness.github, on.readiness.github]);
     expect(github.readinessReads).toBe(reads);
+    expect(on.readiness.github).toEqual({ state: "signed-in", login: "tbelanger", repository: "acme/app", readAt: "2026-11-03T14:00:00Z" });
+    expect(statuses.map(status => status.readiness.github)).toEqual([on.readiness.github, on.readiness.github]);
   });
 
   it("reads gh's sign-in afresh for every listing of open pull requests, and the status shows what it said", async () => {
@@ -165,13 +165,13 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     const github = new FakeGithub({ readinessError: true });
     const service = ws.service({ github, now: () => now });
     const status = await service.setEnabled(ws.repo, true);
-
-    expect(status.readiness.github).toEqual({ state: "unavailable", login: null, repository: "acme/app", readAt: "2026-11-03T14:00:00Z" });
     const reads = github.readinessReads;
     // Status reads run no gh again, however long after.
     now += 10 * 60_000;
-    expect((await service.status(ws.repo)).readiness.github.readAt).toBe("2026-11-03T14:00:00Z");
+    const later = await service.status(ws.repo);
     expect(github.readinessReads).toBe(reads);
+    expect(status.readiness.github).toEqual({ state: "unavailable", login: null, repository: "acme/app", readAt: "2026-11-03T14:00:00Z" });
+    expect(later.readiness.github).toEqual(status.readiness.github);
     expect((await service.scan(ws.repo)).lastScan).toMatchObject({ peers: { pullRequests: 0 }, problems: [expect.any(String)] });
 
     // Once gh answers, the next scan says so.
