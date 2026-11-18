@@ -119,6 +119,7 @@ pub const PREPARING: &[&str] = &[
     // `run_observed`'s preparation.
     "RERAIL_TEXT_TESTS",
     "RERAIL_DEMAND",
+    "RERAIL_READER_DEMAND",
     "RERAIL_AST_PARTS",
     "RERAIL_AST_PART_CAPTURES",
     "RERAIL_RULE_ORDER",
@@ -3483,10 +3484,16 @@ fn run_observed(
             // Bodies simplified first (decision 0038): implied atoms and set-member kind tests drop, identical relations merge.
             crate::code_rule_dsl::logic::simplify::simplify(&mut prog);
             prog = front::prune(prog);
-            let products = product_demand::rewrite(&mut prog).map_err(Error::Plan)?;
-            if !products.is_empty() {
+            let narrow_readers = !std::env::var("RERAIL_READER_DEMAND").is_ok_and(|v| v == "off");
+            let rewritten = product_demand::rewrite(&mut prog, narrow_readers).map_err(Error::Plan)?;
+            if !rewritten.products.is_empty() {
                 crate::code_rule_dsl::logic::profile::decision("node Cartesian products", || {
-                    format!("restricted to connected reader demands: {}", products.into_iter().collect::<Vec<_>>().join(", "))
+                    format!("restricted to connected reader demands: {}", rewritten.products.into_iter().collect::<Vec<_>>().join(", "))
+                });
+            }
+            if !rewritten.readers.is_empty() {
+                crate::code_rule_dsl::logic::profile::decision("projected reader demand", || {
+                    format!("{} ({} ordered node witnesses)", rewritten.readers.into_iter().collect::<Vec<_>>().join(", "), rewritten.order_witnesses)
                 });
             }
             // Transitive closures held as each start's bitmap, not as rows (decision 0119).
