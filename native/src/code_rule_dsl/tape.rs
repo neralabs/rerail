@@ -29,6 +29,8 @@ pub const TAPE_FORMAT_VERSION: u32 = rerail_tape_format::FORMAT_VERSION;
 /// (decision 0140), and an image is one byte string however it was made.
 pub use rerail_tape_format::{CODE_ERROR, CODE_MISSING, COLUMN_ALIGN, ERROR_CODE, FIELD_LIMIT, HEADER_BYTES, KIND_LIMIT, MAGIC as TAPE_MAGIC, SENTINEL, TAIL_FROM_START, header, padded};
 pub use rerail_tape_format::CODE_EXTRA;
+/// Format 16's writer and tables, for the parsers the engine's crates compile (JSON's kernels: `encode_16`).
+pub use rerail_tape_format::f16;
 /// The language tag (`language::tape_tag`) a stored tape image names in its header, if `bytes`
 /// starts like one (any format version): the store picks a frame's dictionary by it.
 pub fn stored_tape_tag(bytes: &[u8]) -> Option<u8> {
@@ -1505,7 +1507,7 @@ impl TapeImage {
                 image.source_digest = Some(source_digest(source, budget)?);
                 Ok(image)
             }
-            formats::RrTape::Written(written) => Self::written_16(written, grammar.lang, source, budget),
+            formats::RrTape::Written(written) => Self::written_16(written, grammar.lang, source, None, budget),
         }
     }
 
@@ -1568,7 +1570,7 @@ impl TapeImage {
         if let Some(mut ops) = formats::TreeOps::of_run(grammar.lang, source.as_bytes(), nodes) {
             walk(&mut ops)?;
             if let Some(written) = ops.finish() {
-                return Self::written_16(written, grammar.lang, source, budget);
+                return Self::written_16(written, grammar.lang, source, None, budget);
             }
         }
         let mut out = Pendings::default();

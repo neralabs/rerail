@@ -113,7 +113,7 @@ pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
         match finish.finish(p.w) {
             Ok(done) => return Ok(done),
             Err(Redo(w)) => {
-                if w == widths {
+                if w == widths && !finish.again() {
                     return Err(Refusal::TooLarge);
                 }
                 widths = w;
@@ -314,7 +314,15 @@ impl<'a> P<'a> {
             self.at = 3;
         }
         let root = self.open_node(K::Document, self.at)?;
+        // The first node's start, taken before its commit.
+        let mut first = None;
         loop {
+            if first.is_none() && self.w.len() > root + 1 {
+                first = Some(self.w.start(root + 1));
+            }
+            // A text, interpolation or tag read is final (an element it ends is closed, as a node passed on may
+            // be): its nodes are committed (passed to format 16's ops; decision 0399 §2).
+            self.w.commit();
             if self.at >= self.src.len() {
                 // An element open at the end is an error: the scanner finds no token there.
                 if !self.open.is_empty() {
@@ -351,7 +359,7 @@ impl<'a> P<'a> {
         }
         // The document spans its nodes, from the first one's start (the file's end where it has
         // none), to the file's end.
-        let first = if self.w.len() > root + 1 { self.w.start(root + 1) } else { self.src.len() as u32 };
+        let first = first.unwrap_or(self.src.len() as u32);
         self.w.set_start(root, first);
         self.close(root, self.src.len())
     }

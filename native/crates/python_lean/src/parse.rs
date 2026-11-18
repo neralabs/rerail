@@ -177,7 +177,7 @@ pub fn parse<Out>(src: &[u8], lexed: &Lexed, joins: &[u32], finish: &mut dyn Sin
         match finish.finish(p.w) {
             Ok(done) => return Ok(done),
             Err(Redo(w)) => {
-                if w == widths {
+                if w == widths && !finish.again() {
                     return Err(Err(Refusal::TooLarge));
                 }
                 widths = w;

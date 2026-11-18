@@ -5212,6 +5212,7 @@ fn a_file_stored_in_each_format_reads_back_as_format_15() {
 #[test]
 fn the_lean_parsers_write_each_format_directly() {
     use super::formats::{Format, as_run};
+    use crate::code_rule_dsl::transducer::packed::json_parser::simdjson as json_simdjson;
     use rerail_tape_format::tape::Tape;
     type Encode = fn(&Grammar, &str) -> Result<TapeImage, String>;
     fn lean<R: std::fmt::Debug>(r: Result<Result<TapeImage, String>, R>) -> Result<TapeImage, String> {
@@ -5219,25 +5220,32 @@ fn the_lean_parsers_write_each_format_directly() {
     }
     let python: String = (0..300).map(|i| format!("class C{i}(B):\n    def f(self, x={i}):\n        return [y for y in x if y]\n")).collect();
     let js: String = (0..200).map(|i| format!("const x{i} = (a) => a?.b ?? {i};\nfunction f{i}(y) {{ return y + 1; }}\n")).collect();
+    // Each language's file: a few hundred top-level items, so that the writer commits many times and its window
+    // (decision 0399 §2) holds a small part of the tape. `{i}` is the item's number.
+    let many = |item: &str| -> String { (0..200).map(|i| item.replace("{i}", &i.to_string())).collect() };
     let cases: Vec<(GrammarDialect, String, Encode)> = vec![
         (GrammarDialect::Python, python, |g, s| lean(super::python_lean::encode(g, s, &|| false))),
         (GrammarDialect::JavaScript, js, |g, s| lean(super::ecma_lean::encode(rerail_ecma_lean::Dialect::JavaScript, g, s, &|| false))),
-        (GrammarDialect::TypeScript, "interface A { x?: number }\nconst x: A = {};\n".into(), |g, s| lean(super::ecma_lean::encode(rerail_ecma_lean::Dialect::TypeScript, g, s, &|| false))),
-        (GrammarDialect::Tsx, "const A = () => <div title=\"x\">text</div>;\n".into(), |g, s| lean(super::ecma_lean::encode(rerail_ecma_lean::Dialect::Tsx, g, s, &|| false))),
-        (GrammarDialect::Rust, "fn main() { let x = Some(1); if let Some(y) = x { println!(\"{y}\"); } }\n".into(), |g, s| lean(super::rust_lean::encode(g, s, &|| false))),
-        (GrammarDialect::Php, "<?php function f($x) { return $x + 1; }\n".into(), |g, s| lean(super::php_lean::encode(g, s, &|| false))),
-        (GrammarDialect::Sql, "SELECT a, count(*) FROM t GROUP BY a;\n".into(), |g, s| lean(super::sql_lean::encode(g, s, &|| false))),
-        (GrammarDialect::Vue, "<template><div>{{ value }}</div></template>\n<script>\nlet value = 1;\n</script>\n".into(), |g, s| lean(super::vue_lean::encode(g, s, &|| false))),
-        (GrammarDialect::Css, "a { color: red; }\n.b > c { margin: 0 1px; }\n".into(), |g, s| lean(super::css_lean::encode(g, s, &|| false))),
-        (GrammarDialect::CSharp, "class A { void F() { var x = 1; } }\n".into(), |g, s| lean(super::csharp_lean::encode(g, s, &|| false))),
-        (GrammarDialect::Html, "<div class=\"a\"><p>hi</p></div>\n".into(), |g, s| lean(super::html_lean::encode(g, s, &|| false))),
-        (GrammarDialect::Java, "class A { void f() { int x = 1; } }\n".into(), |g, s| lean(super::java_lean::encode(g, s, &|| false))),
-        (GrammarDialect::Markdown, "# Title\n\nSome *text* here.\n\n- a\n- b\n".into(), |g, s| lean(super::markdown_lean::encode(g, s, &|| false))),
-        (GrammarDialect::MarkdownInline, "Some *text* and `code`".into(), |g, s| lean(super::markdown_inline_lean::encode(g, s, &|| false))),
+        (GrammarDialect::TypeScript, many("interface A{i} { x?: number }\nconst x{i}: A{i} = {};\n"), |g, s| lean(super::ecma_lean::encode(rerail_ecma_lean::Dialect::TypeScript, g, s, &|| false))),
+        (GrammarDialect::Tsx, many("const A{i} = () => <div title=\"x\">text {i}</div>;\n"), |g, s| lean(super::ecma_lean::encode(rerail_ecma_lean::Dialect::Tsx, g, s, &|| false))),
+        (GrammarDialect::Rust, many("// item {i}\n#[inline]\nfn f{i}() { let x = Some({i}); if let Some(y) = x { println!(\"{y}\"); } }\nstruct S{i} { a: u8 }\n"), |g, s| lean(super::rust_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Php, format!("<?php\n{}", many("// f{i}\nfunction f{i}($x) { return $x + {i}; }\n$a{i} = \"v{$x}\";\n")), |g, s| lean(super::php_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Sql, many("-- q{i}\nSELECT a, count(*) FROM t{i} GROUP BY a;\nINSERT INTO t VALUES ({i});\n"), |g, s| lean(super::sql_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Vue, format!("{}<script>\nlet value = 1;\n</script>\n", many("<template><div>{{ value{i} }}</div></template>\n<!-- c{i} -->\n")), |g, s| lean(super::vue_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Css, many("/* r{i} */\na{i} { color: red; }\n.b > c { margin: 0 {i}px; }\n@media screen { d { x: y } }\n"), |g, s| lean(super::css_lean::encode(g, s, &|| false))),
+        (GrammarDialect::CSharp, format!("using System;\n{}", many("// A{i}\nclass A{i} { void F() { var x = {i}; } }\n")), |g, s| lean(super::csharp_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Html, many("<div class=\"a\"><p>hi {i}<p>there</div>\n<!-- c{i} -->\ntext &amp; {i}\n"), |g, s| lean(super::html_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Java, format!("import a.b;\n{}", many("// A{i}\nclass A{i} { void f() { int x = {i}; } }\n")), |g, s| lean(super::java_lean::encode(g, s, &|| false))),
+        (GrammarDialect::Markdown, many("# Title {i}\n\nSome *text* here.\n\nSetext {i}\n---\n\n- a\n- b\n\n    code {i}\n\n"), |g, s| lean(super::markdown_lean::encode(g, s, &|| false))),
+        (GrammarDialect::MarkdownInline, many("Some *text* and `code` {i} [a](b) "), |g, s| lean(super::markdown_inline_lean::encode(g, s, &|| false))),
         (GrammarDialect::Rr, ".decl item(n:number)\nitem(1).\n.output item\n".into(), |g, s| TapeImage::encode_rr(g, s, &|| false)),
+        // simdjson's kernel (decision 0399): strict JSON, and JSONC with its comments and a trailing comma.
+        (GrammarDialect::Json, format!("[{}{{}}]", many("{\"k{i}\": [{i}, \"s\\n{i}\", true, null, {}, []], \"\": \"\"},\n")), |g, s| lean(json_simdjson::encode(g, s, &|| false))),
+        (GrammarDialect::Json, format!("// head\n[{}1,]", many("/* {i} */ {\"k\": {i}, // c\n\"v\": {/* in */}},\n")), |g, s| lean(json_simdjson::encode(g, s, &|| false))),
     ];
     let mut direct = Vec::new();
     for (lang, source, encode) in cases {
+        eprintln!("{lang:?}: {} bytes", source.len());
         let grammar = Grammar::new(lang).unwrap();
         let reference = as_run(Format::F15, || encode(&grammar, &source)).unwrap_or_else(|e| panic!("{lang:?}: {e}"));
         assert_eq!(reference.format(), Format::F15, "{lang:?}");
@@ -5251,8 +5259,12 @@ fn the_lean_parsers_write_each_format_directly() {
             }
             direct.push(at.clone());
             assert_eq!(image.source_digest, reference.source_digest, "{at}");
-            // The bytes format 15's image converts to (`in_format`): one writer, whichever way it is fed.
-            assert_eq!(image.to_bytes().unwrap(), reference.clone().in_format(format, source.as_bytes()).to_bytes().unwrap(), "{at}: bytes");
+            // Format 16: the bytes format 15's image converts to (`in_format`), one writer whichever way it is fed.
+            // 16z's pieces are in the order its blocks were finished, which follows the writer's commits (a parser
+            // commits at its statements, the conversion at each node): the same blocks, read node by node below.
+            if format == Format::F16 {
+                assert_eq!(image.to_bytes().unwrap(), reference.clone().in_format(format, source.as_bytes()).to_bytes().unwrap(), "{at}: bytes");
+            }
             let (a, b) = (reference.tape(), image.tape());
             rerail_tape_format::with_tape!(a, |a| rerail_tape_format::with_tape!(b, |b| {
                 assert_eq!(a.len(), b.len(), "{at}");
@@ -5316,8 +5328,8 @@ fn the_cursor_walk_writes_each_format_directly() {
 /// Decision 0399, R12: in a run of format 16 or 16z, every parser writes the run's format itself (the lean parsers
 /// through their `Sink`, tree-sitter's cursor walk, Blade's Forte tree, the format strings' trees and the embedded
 /// programs' documents through `TapeImage::walked`): a file's documents are never format 15's first, converted
-/// (`formats::converted`). JSON's parsers (simdjson's kernels, and tier 2) write format 15 until they call the ops (0399
-/// step 3).
+/// (`formats::converted`). JSON's simdjson kernels give their walk's events to the ops; tier 2 writes format 15
+/// until its words call them (0399 step 3).
 #[test]
 fn no_intermediate_tape() {
     use super::formats::{Format, as_run, converted};
@@ -5332,13 +5344,16 @@ fn no_intermediate_tape() {
         (GrammarDialect::Sql, "SELECT a FROM t;\n"),
         (GrammarDialect::Vue, "<template><div>{{ value }}</div></template>\n<script>\nlet value = 1;\n</script>\n"),
         (GrammarDialect::Rr, ".decl item(n:number)\nitem(1).\n"),
+        (GrammarDialect::Json, "{\"a\": [1, \"x\\n\", true, null], \"b\": {}}\n"),
+        (GrammarDialect::Json, "{\"a\": 1, // c\n}\n"),
     ];
     for format in [Format::F16, Format::F16Z] {
         for &(lang, source) in &cases {
             let grammar = Grammar::new(lang).unwrap();
+            let at = format!("{lang:?} in {}", format.name());
+            eprintln!("{at}");
             let before = converted();
             let image = as_run(format, || TapeImage::parse(&grammar, source, &|| false)).unwrap().unwrap();
-            let at = format!("{lang:?} in {}", format.name());
             assert_eq!(converted(), before, "{at}: a document made in format 15 and converted");
             let docs = std::iter::once((&image.primary, lang)).chain(image.derived.iter().map(|d| (&d.tape, d.dialect())));
             for (tape, dialect) in docs {

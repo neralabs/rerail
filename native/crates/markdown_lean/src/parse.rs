@@ -162,7 +162,7 @@ pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
         match finish.finish(p.w) {
             Ok(done) => return Ok(done),
             Err(Redo(w)) => {
-                if w == widths {
+                if w == widths && !finish.again() {
                     return Err(Refusal::TooLarge);
                 }
                 widths = w;
@@ -365,6 +365,11 @@ impl<'a> P<'a> {
         let mut blank_start = if ctx == Ctx::Item { 0 } else { u8::MAX };
         loop {
             let paragraph = after_paragraph.take();
+            // A document's blocks so far are final, unless a setext underline may follow the paragraph just read:
+            // their nodes are committed (passed to format 16's ops; decision 0399 §2).
+            if ctx == Ctx::Document && paragraph.is_none() {
+                self.w.commit();
+            }
             let Some(t) = next else {
                 if self.at >= self.src.len() {
                     if ctx != Ctx::Document {

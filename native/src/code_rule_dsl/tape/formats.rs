@@ -158,7 +158,7 @@ impl Columns15 {
 /// A language whose documents keep format 15, and why: said once a language where the run asked for its format
 /// (`RERAIL_TAPE`), and counted in the profile always (format 16 is the default, so a run that asked nothing is
 /// not told).
-fn keeps_15(language: GrammarDialect, tag: u8, why: &str) {
+pub fn keeps_15(language: GrammarDialect, tag: u8, why: &str) {
     static SAID: [AtomicBool; 256] = [const { AtomicBool::new(false) }; 256];
     if !SAID[usize::from(tag)].swap(true, Ordering::Relaxed) {
         crate::code_rule_dsl::prof::count_named(format!("tape.keeps_15.{language:?}"), 1);
@@ -193,7 +193,7 @@ fn sixteen(language: GrammarDialect, number: impl Fn(&'static Lang, u32) -> Opti
 
 /// The language's format 16 table, its tag and whether the run stores 16z: `None` where the run stores format 15, or
 /// the language has no format 16 table (said once).
-fn run_16(language: GrammarDialect) -> Option<(&'static Lang, u8, bool)> {
+pub fn run_16(language: GrammarDialect) -> Option<(&'static Lang, u8, bool)> {
     let format = Format::of_run();
     if format == Format::F15 {
         return None;
@@ -317,13 +317,15 @@ pub struct Lean<'a> {
     budget: &'a dyn Fn() -> bool,
     code_of: Arc<dyn Fn(&u32) -> Result<Code, String> + Send + Sync>,
     target: Option<rerail_tape_format::Sixteen>,
+    /// `finish` asks for the parse again, in format 15 (`Sink::again`).
+    again: bool,
 }
 
 pub fn lean<'a>(grammar: &'a Grammar, source: &'a str, budget: &'a dyn Fn() -> bool, code_of: impl Fn(&u32) -> Result<Code, String> + Send + Sync + 'static) -> Lean<'a> {
     let code_of: Arc<dyn Fn(&u32) -> Result<Code, String> + Send + Sync> = Arc::new(code_of);
     let codes = code_of.clone();
     let target = sixteen(grammar.lang, move |lang, key| codes(&key).ok().and_then(|c| lang.number(&c.entry())));
-    Lean { grammar, source, budget, code_of, target }
+    Lean { grammar, source, budget, code_of, target, again: false }
 }
 
 impl rerail_tape_format::Sink<Result<TapeImage, String>> for Lean<'_> {
@@ -331,12 +333,22 @@ impl rerail_tape_format::Sink<Result<TapeImage, String>> for Lean<'_> {
         self.target.clone().map_or(rerail_tape_format::Target::F15, rerail_tape_format::Target::F16)
     }
 
+    fn again(&mut self) -> bool {
+        std::mem::take(&mut self.again)
+    }
+
     fn finish(&mut self, mut w: Writer) -> Result<Result<TapeImage, String>, Redo> {
         let language = self.grammar.lang;
         if let Some(t) = &self.target {
             match w.finish_16()? {
-                Ok(f) => return Ok(TapeImage::written_16(f.tape, language, self.source, self.budget)),
+                Ok(f) => return Ok(TapeImage::written_16(f.tape, language, self.source, None, self.budget)),
                 Err(e) => keeps_15(language, t.tag, &e),
+            }
+            // The window gave back the nodes passed on: the parse runs again for format 15 (`again`).
+            self.target = None;
+            if !w.holds_all() {
+                self.again = true;
+                return Err(Redo(w.widths()));
             }
         }
         let columns = w.finish_columns()?;
@@ -384,9 +396,13 @@ impl TapeImage {
         Self { held, ..self }
     }
 
-    /// A lean parser's tape written in format 16 or 16z (`lean`), with its source's digest.
-    pub fn written_16(written: f16::Written, language: GrammarDialect, source: &str, budget: &dyn Fn() -> bool) -> Result<Self, String> {
-        let digest = super::source_digest(source, &budget)?;
+    /// A lean parser's tape written in format 16 or 16z (`lean`), with its source's digest: `digest`, where the parse
+    /// computed it (simdjson's kernels), else computed here.
+    pub fn written_16(written: f16::Written, language: GrammarDialect, source: &str, digest: Option<[u8; 32]>, budget: &dyn Fn() -> bool) -> Result<Self, String> {
+        let digest = match digest {
+            Some(d) => d,
+            None => super::source_digest(source, &budget)?,
+        };
         let held = match written {
             f16::Written::F16(t) => Held::F16(Arc::new(t)),
             f16::Written::F16Z(t) => Held::F16Z(Arc::new(t)),
@@ -413,11 +429,18 @@ pub(super) enum RrTape {
 
 /// The finish the `.rr` parser's writer is given (`rerail_rr_syntax::lean::tape_into`): `lean`'s, for a parser whose
 /// keys are the codes (`kf | flags << 16`, no supertypes).
-struct Rr<'s>(&'s str);
+struct Rr<'s> {
+    source: &'s str,
+    /// Format 16 failed: format 15's image, parsed again.
+    f15: bool,
+}
 
 impl rerail_tape_format::Finish for Rr<'_> {
     type Out = RrTape;
     fn target(&self) -> rerail_tape_format::Target {
+        if self.f15 {
+            return rerail_tape_format::Target::F15;
+        }
         let kind_mask = (1u16 << rerail_tape_format::KIND_BITS) - 1;
         let entry = move |key: u32| {
             let kf = (key & 0xffff) as u16;
@@ -432,14 +455,19 @@ impl rerail_tape_format::Finish for Rr<'_> {
                 Ok(f) => return Ok(RrTape::Written(f.tape)),
                 Err(e) => keeps_15(GrammarDialect::Rr, rerail_tape_format::RR_TAG, &e),
             }
+            // As `Lean`'s: the parse runs again for format 15.
+            self.f15 = true;
+            if !w.holds_all() {
+                return Err(Redo(w.widths()));
+            }
         }
-        w.finish(self.0.as_bytes()).map(RrTape::Image)
+        w.finish(self.source.as_bytes()).map(RrTape::Image)
     }
 }
 
 /// `source`'s tape from the `.rr` parser, in the run's format (`Rr`).
 pub(super) fn rr_tape(source: &str) -> RrTape {
-    rerail_rr_syntax::lean::tape_into(source, &mut Rr(source))
+    rerail_rr_syntax::lean::tape_into(source, &mut Rr { source, f15: false })
 }
 
 impl FileImage {

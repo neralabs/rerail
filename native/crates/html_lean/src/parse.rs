@@ -59,7 +59,7 @@ pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
         match finish.finish(p.w) {
             Ok(done) => return Ok(done),
             Err(Redo(w)) => {
-                if w == widths {
+                if w == widths && !finish.again() {
                     return Err(Refusal::TooLarge);
                 }
                 widths = w;
@@ -170,6 +170,9 @@ impl<'a> P<'a> {
                 b'>' => return self.refuse(),
                 _ => self.text()?,
             }
+            // A tag, entity or text read is final (an element it ends is closed, as a node passed on may be): its
+            // nodes are committed (passed to format 16's ops; decision 0399 §2).
+            self.w.commit();
         }
         self.close(root, self.src.len());
         Ok(())

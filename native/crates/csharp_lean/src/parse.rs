@@ -405,7 +405,7 @@ pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
         match finish.finish(p.w) {
             Ok(done) => return Ok(done),
             Err(Redo(w)) => {
-                if w == widths {
+                if w == widths && !finish.again() {
                     return Err(Refusal::TooLarge);
                 }
                 widths = w;
@@ -1166,6 +1166,8 @@ impl<'a> P<'a> {
         let root = self.w.push(key(K::CompilationUnit, f::NONE, C_NONE, false), first);
         while self.peek() != T::Eof {
             self.toplevel()?;
+            // A top-level declaration is final: its nodes are committed (passed to format 16's ops; decision 0399 §2).
+            self.w.commit();
         }
         let t = self.tok();
         if t.word == u8::MAX {

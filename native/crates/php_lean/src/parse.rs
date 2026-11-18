@@ -274,7 +274,7 @@ pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
         match finish.finish(p.w) {
             Ok(done) => return Ok(done),
             Err(Redo(w)) => {
-                if w == widths {
+                if w == widths && !finish.again() {
                     return Err(Refusal::TooLarge);
                 }
                 widths = w;
@@ -818,6 +818,8 @@ impl<'a> P<'a> {
         }
         while !matches!(self.peek(), T::Eof | T::CloseTag) {
             self.statement(STMT)?;
+            // A top-level statement is final: its nodes are committed (passed to format 16's ops; decision 0399 §2).
+            self.w.commit();
         }
         if self.peek() == T::CloseTag {
             self.leaf(K::PhpEndTag, f::NONE, C_NONE)?;

@@ -1341,6 +1341,11 @@ impl<'a> P<'a> {
                 }
                 let n = w.push(key(k), s);
                 stack.push((n, e, i + size as usize));
+                // The nodes are written in order and never edited: committed (passed to format 16's ops; decision
+                // 0399 §2) every 256.
+                if n % 256 == 255 {
+                    w.commit();
+                }
             }
             while let Some((n, e, _)) = stack.pop() {
                 w.close(n, e);
@@ -1348,7 +1353,7 @@ impl<'a> P<'a> {
             match finish.finish(w) {
                 Ok(done) => return Ok(done),
                 Err(Redo(nw)) => {
-                    if nw == widths {
+                    if nw == widths && !finish.again() {
                         return Err(Refusal::TooLarge);
                     }
                     widths = nw;

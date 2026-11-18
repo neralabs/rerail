@@ -2252,9 +2252,15 @@ holds the design, its requirements (R1–R12) and its steps.
 - **Done** (2026-11-18, step 3, first part): the cursor walk, `omitting`, Blade and the format strings write by the
   ops through `TapeImage::walked` (`TreeOut`); `no_intermediate_tape` (R12) holds for every language with a table
   but JSON.
-- **Next**: JSON's parsers on the ops (simdjson's kernels' tape writer, and tier 2's words); the lean writer's columns shrink to the window, and the lean parsers
-  that do not commit yet commit at their statements; C, C++, Go, Kotlin, Scala and Swift take a `Sink` when their
-  tables come.
+- **Done** (2026-11-18, step 2, second part): the lean writer's columns hold the window, the nodes since the last
+  commit (R7a); every lean parser with a table commits at its top-level items; a format 16 failure parses again for
+  format 15 (`Sink::again`).
+- **Done** (2026-11-18, step 3, JSON): simdjson's kernels give their walk's events to the ops, switched by the sink at
+  run time (one compile).
+- **Next**: step 4 (the ops in CLIF, three backends; tier 2's words call them, JSON's tier 2 among them; the GPU
+  writer); SQL commits at its statements once `claim` decides a program's held tokens as they come; C, C++, Go,
+  Kotlin, Scala and Swift take a `Sink` when their tables come; simdjson's index writer (a CPU no
+  kernel runs on) on the ops.
 
 ### Q181. (Q136 on oscar until 2026-11-18; Q25 on sync-integration-hub-tape) The label pipelines compile cold for 110 s
 

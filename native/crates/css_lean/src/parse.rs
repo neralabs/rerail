@@ -69,7 +69,7 @@ pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
         match finish.finish(p.w) {
             Ok(done) => return Ok(done),
             Err(Redo(w)) => {
-                if w == widths {
+                if w == widths && !finish.again() {
                     return Err(Refusal::TooLarge);
                 }
                 widths = w;
@@ -398,6 +398,8 @@ impl<'a> P<'a> {
                 break;
             }
             self.item(false)?;
+            // A top-level rule is final: its nodes are committed (passed to format 16's ops; decision 0399 §2).
+            self.w.commit();
         }
         self.flush(usize::MAX);
         self.w.close(root, self.src.len() as u32);

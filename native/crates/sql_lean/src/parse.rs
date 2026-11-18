@@ -75,7 +75,7 @@ pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
             Ok(done) => return Ok(done),
             // A value past the guessed widths: read again at the wider ones.
             Err(Redo(nw)) => {
-                if nw == widths {
+                if nw == widths && !finish.again() {
                     return Err(Refusal::TooLarge);
                 }
                 widths = nw;
