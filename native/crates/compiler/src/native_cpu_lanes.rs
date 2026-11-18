@@ -57,6 +57,9 @@ pub struct Plan {
     pub regions: Vec<Region>,
     /// Each value's region, if it is in one.
     pub region_of: Vec<Option<usize>>,
+    /// The values the full body gets wrong on an edge block (`native_cpu_edge::edge_values`,
+    /// 0383), where that is bounded: found when a body first asks (`Plan::edge`).
+    edge: std::cell::OnceCell<Option<crate::native_cpu_edge::Edge>>,
 }
 
 /// A gated region: values that are zero in a block where the gate is zero and their own carried
@@ -562,7 +565,7 @@ impl Plan {
         // Worth a branch: a byte test or class known on ASCII bytes (not a constant).
         let ascii_branch = native.insts.iter().enumerate().any(|(at, i)| lanes[at] && ascii[at].is_some() && matches!(i, BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Pair { .. } | BlockInst::Plane(_) | BlockInst::PlaneBefore(_)));
         let full = full_words(native, &lanes);
-        Plan { lanes, mask, at_zero, ascii, before, ascii_branch, full, regions, region_of }
+        Plan { lanes, mask, at_zero, ascii, before, ascii_branch, full, regions, region_of, edge: Default::default() }
     }
 
     /// The values made masks and the gated regions, for a choice of values on the vectors.
@@ -583,7 +586,13 @@ impl Plan {
     pub fn window(native: &BlockNative) -> Plan {
         let n = native.insts.len();
         let (lanes, _, at_zero, _) = lane_plan(native, true);
-        Plan { mask: lanes.clone(), lanes, at_zero, ascii: vec![None; n], before: false, ascii_branch: false, full: vec![None; n], regions: Vec::new(), region_of: vec![None; n] }
+        Plan { mask: lanes.clone(), lanes, at_zero, ascii: vec![None; n], before: false, ascii_branch: false, full: vec![None; n], regions: Vec::new(), region_of: vec![None; n], edge: Default::default() }
+    }
+
+    /// The values the full body gets wrong on an edge block (0383), where that is bounded: every
+    /// other value it makes right there. Found once, when first asked.
+    pub fn edge(&self, native: &BlockNative) -> Option<&crate::native_cpu_edge::Edge> {
+        self.edge.get_or_init(|| crate::native_cpu_edge::edge_values(native, &self.lanes, &self.full)).as_ref()
     }
 
     /// Whether `prev` instruction `at` reads a carried word (it is not on the vectors).
@@ -985,6 +994,27 @@ impl<'a> Lanes<'a> {
             assume: None,
             ranges: HashMap::new(),
         }
+    }
+
+    /// The lanes of an edge block's part (`native_cpu_block`'s `Emit::edge_part`, 0383): `within`
+    /// and a `prev`'s cut from block `i`'s position, and nothing the body made read again (its
+    /// bytes, lookups, chunks, constants), so that none of it is live to the body's end.
+    pub fn on_edge(&mut self, f: &mut FunctionBuilder<'_>, i: Value, len: Value, nibble: Value) {
+        self.position = Some((f.ins().ishl_imm(i, 6), len));
+        self.nibble = nibble;
+        let c = f.ins().iconst(types::I8, 0);
+        self.zero16 = f.ins().splat(types::I8X16, c);
+        self.bytes.clear();
+        self.nibbles.clear();
+        self.lookups.clear();
+        self.tables = vec![None; self.native.tables.len()];
+        self.splats = [None; 256];
+        self.index = None;
+        self.memo.clear();
+        self.packed = vec![None; self.packed.len()];
+        self.packed_lookups.clear();
+        self.tests.clear();
+        self.ranges.clear();
     }
 
     /// A window's values (`native_cpu_bytes`): its 64 bytes from `base`, the stream's position

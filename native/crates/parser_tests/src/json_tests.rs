@@ -547,6 +547,19 @@ fn json_tier1_vectors_equal_the_interpreter() {
             }
             files.push(f);
         }
+        // A byte order mark, then a string or a comment that runs into the next block: the full
+        // body takes the file's start check as zero (`Plan::full`), and the edge part's carries
+        // are the next block's (0383).
+        for at in 0..80 {
+            let escapes = [&b"\""[..], &[b'\\'; 70], b"\" 1"].concat();
+            let bodies: [&[u8]; 4] = [b"\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\" 1", b"/* xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx */ 1", &escapes, b"1.5e3"];
+            for body in bodies {
+                let mut f = b"\xef\xbb\xbf".to_vec();
+                f.extend(std::iter::repeat_n(b' ', at));
+                f.extend_from_slice(body);
+                files.push(f);
+            }
+        }
         // One non-ASCII sequence at each offset around the first two block edges.
         for at in 0..140 {
             for seq in [&b"\xe2\x82\xac"[..], b"\x80", b"\xf0\x9f\x98\x80"] {
@@ -562,6 +575,40 @@ fn json_tier1_vectors_equal_the_interpreter() {
         let refs: Vec<&[u8]> = files.iter().map(Vec::as_slice).collect();
         assert_eq!(c.parser.tier1.run_files(&refs), block.run_files(&refs), "{name}: the batch");
         assert!(c.parser.tier1.ascii_branch, "{name}: no ASCII test");
+    }
+}
+
+/// The values the full body gets wrong on an edge block (`native_cpu_edge`, 0383): JSON's are
+/// its checks at the stream's ends and what reads them (the byte order mark's check, which the
+/// full body takes as zero, reaches the strings' fills), word operations all, fewer than half
+/// the body's, and found in one pass of the analysis.
+#[test]
+fn json_edge_values_are_its_ends_checks() {
+    for name in ["14-json", "15-jsonc"] {
+        let c = form(name);
+        let native = &c.native.block_programs[0];
+        let t = std::time::Instant::now();
+        let plan = native_cpu_block::State::of(native).plan;
+        let found = native_cpu_edge::edge_values(native, &plan.lanes, &plan.full).expect("bounded");
+        let took = t.elapsed();
+        println!("{name}: outputs needing no cut {:?}", found.cut_free);
+        let edge = found.differs;
+        let at: Vec<usize> = (0..edge.len()).filter(|&x| edge[x]).collect();
+        println!("{name}: {} of {} values differ on an edge block, found in {took:?}: {at:?}", at.len(), edge.len());
+        assert!(at.iter().all(|&x| !matches!(native.insts[x], block_native::BlockInst::EqByte(_) | block_native::BlockInst::Class { .. } | block_native::BlockInst::Pair { .. })), "{name}: a byte test differs");
+        assert!(at.len() * 2 < edge.len(), "{name}: {} of {} differ", at.len(), edge.len());
+    }
+}
+
+/// JSON's tier 1 has no general body (0383): its full body runs on the edge blocks too, with
+/// its edge part, as simdjson's stage 1 runs one body and a `finish()`.
+#[test]
+fn json_tier1_has_no_general_body() {
+    for name in ["14-json", "15-jsonc"] {
+        let c = form(name);
+        for (k, pass) in c.parser.tier1.passes.iter().enumerate().filter(|(_, p)| !p.back) {
+            assert!(!pass.general, "{name}: tier 1's pass {k} calls a general body");
+        }
     }
 }
 

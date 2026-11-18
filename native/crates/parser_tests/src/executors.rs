@@ -57,13 +57,6 @@ pub fn runs() -> Vec<Vec<u8>> {
     out
 }
 
-/// Every executor's outputs for the program's first block program, with the executor's name.
-pub fn executors(p: &Program, bytes: &[u8]) -> Vec<(String, Vec<Vec<u64>>)> {
-    let (out, skipped) = Executors::new(p).run(bytes, true);
-    assert!(skipped.is_empty(), "over the launch budget: {skipped:?}");
-    out
-}
-
 /// A program's first block program, lowered and compiled once, for runs over many inputs.
 pub struct Executors<'a> {
     block: &'a block::BlockProgram,
@@ -76,6 +69,14 @@ impl<'a> Executors<'a> {
         let native = native_ir::lower(p, 0, 0).expect("lowers").block_programs.remove(0);
         let cranelift = native_cpu_block::compile(&native).expect("compiles");
         Executors { block: &p.block_programs[0], native, cranelift }
+    }
+
+    /// Every executor's outputs over `bytes`, with the executor's name; none over the launch
+    /// budget.
+    pub fn every(&self, bytes: &[u8]) -> Vec<(String, Vec<Vec<u64>>)> {
+        let (out, skipped) = self.run(bytes, true);
+        assert!(skipped.is_empty(), "over the launch budget: {skipped:?}");
+        out
     }
 
     /// Every executor's outputs over `bytes` (the Metal ones when `metal`), without a Metal

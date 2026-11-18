@@ -2,7 +2,7 @@
 //! (`tools/bitlex`): each named mask of the compiled block program equals the evaluator's mask on
 //! every input and every executor (`docs/parser-generators/13-tape-on-the-gpu.md` §7, step 2).
 
-use crate::block_tests::{Executors, executors, inputs, runs};
+use crate::block_tests::{Executors, inputs, runs};
 #[allow(unused_imports)]
 use rerail_compiler::*;
 use rerail_compiler::program::Words as Program;
@@ -71,11 +71,12 @@ fn forward_masks_equal_the_evaluator_on_every_executor() {
     let compiled = bitlex_compile::compile(&stmts, &names, None).unwrap_or_else(|e| panic!("compiles: {e}"));
     let text = format!("program -\n  mode set=0 query=0\n{}  0000 STOP 0\n", compiled.rows);
     let p = rir::assemble(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+    let ex = Executors::new(&p);
     let mut cases = inputs();
     cases.push(br#"{"a\"b": [1, -2.5e3, "x\\"], "c": true}"#.to_vec());
     for bytes in cases {
         let want = evaluated(&stmts, &bytes, &names);
-        for (executor, got) in executors(&p, &bytes) {
+        for (executor, got) in ex.every(&bytes) {
             for (k, name) in names.iter().enumerate() {
                 assert_eq!(cut(got[k].clone(), bytes.len()), want[k], "{name}, {executor}, {} bytes\n{}", bytes.len(), compiled.rows);
             }
@@ -127,6 +128,7 @@ fn errors_and_escapes_are_the_fallback_output() {
     let compiled = bitlex_compile::compile(&stmts, &names, None).unwrap_or_else(|e| panic!("compiles: {e}"));
     let text = format!("program -\n  mode set=0 query=0\n{}  0000 STOP 0\n", compiled.rows);
     let p = rir::assemble(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+    let ex = Executors::new(&p);
     let mut cases = inputs();
     cases.extend([b"{\"a/b\": 1}".to_vec(), b"{\"a\": 1} // c".to_vec(), b"\"a\nb\"".to_vec(), b"/".to_vec()]);
     let (mut clean, mut falls) = (0, 0);
@@ -143,7 +145,7 @@ fn errors_and_escapes_are_the_fallback_output() {
         // The program has no tokens, so the evaluator's "in no token" errors are not its own.
         let falls_back = out.errors.iter().any(|e| !e.contains("is in no token"));
         assert_eq!(want.iter().any(|&w| w != 0), falls_back, "{} bytes: {:?}", bytes.len(), out.errors);
-        for (executor, got) in executors(&p, &bytes) {
+        for (executor, got) in ex.every(&bytes) {
             // The fallback's outputs, one per delay, ORed: the OR of the masks.
             let mut any = vec![0u64; bytes.len().div_ceil(64)];
             for &k in &compiled.fallbacks {
@@ -230,11 +232,12 @@ fn later_masks_equal_the_evaluator_on_every_executor() {
     assert!(compiled.rows.contains("delay 5"), "the largest next is 5 bytes\n{}", compiled.rows);
     let text = format!("program -\n  mode set=0 query=0\n{}  0000 STOP 0\n", compiled.rows);
     let p = rir::assemble(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+    let ex = Executors::new(&p);
     let mut cases = inputs();
     cases.extend([b"1e+5 2E-x 3e 4e9 \"\\\\\\\"\0".to_vec(), vec![0u8; 70], b"\"\"\"".to_vec()]);
     for bytes in cases {
         let want = evaluated(&stmts, &bytes, &names);
-        for (executor, got) in executors(&p, &bytes) {
+        for (executor, got) in ex.every(&bytes) {
             for (k, name) in names.iter().enumerate() {
                 assert_eq!(cut(got[k].clone(), bytes.len()), want[k], "{name}, {executor}, {} bytes\n{}", bytes.len(), compiled.rows);
             }
@@ -799,9 +802,13 @@ fn json_loop_keeps_values_in_registers() {
 /// and Cranelift spills two values elsewhere. 667 and 4 with 0353: a class one `cmtst` (24
 /// fewer), the escaped quotes' rounds behind a branch (5), no complement of a complement (5),
 /// the bitmask's weights one load, the constants made at the body's head, and a total read
-/// back from its row at the step's end, not held through the body.
-const JSON_LOOP: usize = 667;
-const JSON_LOOP_STACK: usize = 4;
+/// back from its row at the step's end, not held through the body. 673 and 7 with 0383: the
+/// full body runs on the edge blocks too, its edge part behind one cold branch at its end, so
+/// the loop has no general body. The branch's test is a load of the edge slot (+1), and the
+/// edge part reads two of the body's early words, the string's, which then live to the body's
+/// end (one spill, +2). The head's test, outside this loop, is one compare where it was two.
+const JSON_LOOP: usize = 673;
+const JSON_LOOP_STACK: usize = 7;
 
 // --- Tier 1 is simdjson's stage 1 (decision 0071) ---------------------------------------------
 //
