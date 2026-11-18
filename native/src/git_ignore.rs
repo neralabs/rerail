@@ -607,6 +607,63 @@ mod tests {
         std::fs::remove_dir_all(root).unwrap();
     }
 
+    /// `gitoxide.parsePrecious` decides whether a `$` line is a precious pattern or a name that
+    /// starts with `$`, so turning it on changes what the same `.gitignore` ignores.
+    #[test]
+    fn says_a_matcher_opened_now_parses_precious_patterns_once_they_are_turned_on() {
+        let root = fixture(
+            "precious",
+            &[(".gitignore", "$local.py\n"), ("local.py", "")],
+        );
+        git(&root, &["init", "--initial-branch=main"]);
+        let root = root.canonicalize().unwrap();
+        let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
+        assert!(!ignore.ignored("local.py", false).unwrap());
+        assert!(ignore.sources_unchanged(), "nothing changed");
+        git(&root, &["config", "gitoxide.parsePrecious", "true"]);
+        assert!(
+            !ignore.sources_unchanged(),
+            "precious patterns are parsed now"
+        );
+        let mut fresh = GitIgnore::open(&root).unwrap().unwrap();
+        assert!(
+            fresh.ignored("local.py", false).unwrap(),
+            "a matcher opened now reads $local.py as a precious pattern"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    /// The repository's `core.worktree` names another folder: the same Git folder and, in each
+    /// folder, a root `.gitignore` of the same bytes, so only the worktree tells the two apart.
+    #[test]
+    fn says_a_root_whose_repository_now_names_another_worktree_has_changed() {
+        let root = fixture(
+            "worktree",
+            &[
+                (".gitignore", "local.py\n"),
+                ("sub/local.py", ""),
+                ("other/.gitignore", "local.py\n"),
+            ],
+        );
+        git(&root, &["init", "--initial-branch=main"]);
+        let root = root.canonicalize().unwrap();
+        let sub = root.join("sub");
+        let mut ignore = GitIgnore::open(&sub).unwrap().expect("a Git worktree");
+        assert!(ignore.ignored("local.py", false).unwrap());
+        assert!(ignore.sources_unchanged(), "nothing changed");
+        let other = config_path(&root.join("other"));
+        git(&root, &["config", "core.worktree", &other]);
+        assert!(
+            !ignore.sources_unchanged(),
+            "the repository's worktree is another folder"
+        );
+        assert!(
+            GitIgnore::open(&sub).unwrap().is_none(),
+            "a matcher opened now finds the root outside the worktree"
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn a_folder_outside_git_has_no_matcher() {
         let root = fixture("plain", &[(".gitignore", "*.py\n"), ("a.py", "")]);
