@@ -493,7 +493,9 @@ fn chained(sets: &[Vec<usize>], k: usize) -> Vec<usize> {
 #[derive(Clone)]
 enum Origin {
     /// Its first `n` rows are the old relation's (`Rel::based`), less those it marked dead; it added the rest.
-    Based { at: usize, n: usize },
+    /// `dead`: the old relation's dead rows, as it started (its version at the run's start, decision 0364 stage 2:
+    /// what `old`, `minus` and `plus` are read from, with no other relation kept).
+    Based { at: usize, n: usize, dead: Arc<Vec<u64>> },
     /// Made from the old relation's survivors (too many dead to keep in place): its first `kept` rows, then those
     /// it added; `removed`, the old rows it left out, row-major.
     Compacted { at: usize, old_n: usize, kept: usize, removed: Vec<i64> },
@@ -655,7 +657,7 @@ impl Rel {
         let serves = if made.is_none() && old.serves.len() == idx.len() { old.serves.clone() } else { idx.iter().map(|_| Vec::new()).collect() };
         let sketches = match made { Some((_, sketches)) => sketches, None => old.sketches.clone() };
         let level = if old.has_levels() { old.level.clone() } else { Vec::new() };
-        let from = Some(Origin::Based { at: old as *const InRel as usize, n: old.n });
+        let from = Some(Origin::Based { at: old as *const InRel as usize, n: old.n, dead: Arc::new(old.dead.clone()) });
         Some(Rel { table: table.to_string(), types: types.to_vec(), k, n: old.n, data: old.rows.shared(old.n), stored: 0, lo: 0, hi: 0, wave: 0, idx, serves,
                    indexed: old.n, pending: HashTable::new(), sketches, dead, ndead, summaries: Default::default(), sorted: old.sorted.clone(), from, level,
                    lbase: 0, leveled: true, stats: old.stats.clone(), stats_dead: old.dead.clone(), lat: None })
@@ -3281,6 +3283,16 @@ impl Keyed {
 }
 /// A base input read in place: the bound vtab source's columns `cols`, at its rows `ids` (all rows when `None`, the
 /// rows passing the atom's constant filters otherwise). Nothing of the source is copied.
+/// A version of a relation that started from a kept one (decision 0364 stage 2, `InRel::version_view`): its rows
+/// at the run's start (`Old`), those of them dead now (`Minus`), and those added since and live (`Plus`). The
+/// relation itself is its rows now.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ver {
+    Old,
+    Minus,
+    Plus,
+}
+
 pub struct View { pub src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: Vec<usize>, ids: Option<Vec<u32>>, eqs: Vec<(usize, i64)> }
 impl View {
     /// Whether the view reads every row of its source (no constant filters chose its rows).
@@ -4633,39 +4645,12 @@ impl InRel {
         if self as *const InRel as usize == old.at && self.n == old.n && self.dead == old.dead {
             return Some((Vec::new(), Vec::new()));
         }
-        let k = self.k;
-        match &self.from {
-            Some(Origin::Based { at: a, n }) if *a == old.at && *n == old.n => {}
-            Some(Origin::Compacted { at: a, old_n, kept, removed }) if *a == old.at && *old_n == old.n => {
-                let added = (*kept..self.n).filter(|&id| !is_dead(&self.dead, id as u32)).fold(Vec::new(), |mut v, id| { v.extend_from_slice(&self.row(id)); v });
-                return Some((added, removed.clone()));
-            }
-            _ => return None,
-        }
-        let mut removed = Vec::new();
-        for (w, &bits) in self.dead.iter().enumerate() {
-            let mut new = bits & !old.dead.get(w).copied().unwrap_or(0);
-            while new != 0 {
-                let id = w * 64 + new.trailing_zeros() as usize;
-                new &= new - 1;
-                if id < old.n {
-                    removed.extend_from_slice(&self.row(id));
-                }
-            }
-        }
-        let mut added = Vec::with_capacity((self.n - old.n) * k);
-        for id in old.n..self.n {
-            if !is_dead(&self.dead, id as u32) {
-                added.extend_from_slice(&self.row(id));
-            }
-        }
-        Some((added, removed))
+        self.delta_from(old.at, old.n)
     }
     /// Its rows' change from `old`, the kept relation it started as (`Rel::based`), as `(added, removed)` row-major:
     /// the rows it added after `old`'s, and `old`'s live rows it marked dead. A row deleted and derived again is in
     /// both. Costs the change and a pass over the dead bits, not the rows. `None` if it did not start as `old`.
     pub fn delta_since(&self, old: &InRel) -> Option<(Vec<i64>, Vec<i64>)> {
-        let at = old as *const InRel as usize;
         if self.k != old.k || self.view.is_some() {
             return None;
         }
@@ -4673,33 +4658,23 @@ impl InRel {
         if std::ptr::eq(self, old) {
             return Some((Vec::new(), Vec::new()));
         }
-        let k = self.k;
+        self.delta_from(old as *const InRel as usize, old.n)
+    }
+    /// `delta_since`'s change from the relation at `at` of `n` rows it started as: read from its version (decision
+    /// 0364 stage 2), the rows live at the start and dead now and those added since; from its survivors' record
+    /// when it was compacted.
+    fn delta_from(&self, at: usize, n: usize) -> Option<(Vec<i64>, Vec<i64>)> {
         match &self.from {
-            Some(Origin::Based { at: a, n }) if *a == at && *n == old.n => {}
-            Some(Origin::Compacted { at: a, old_n, kept, removed }) if *a == at && *old_n == old.n => {
+            Some(Origin::Based { at: a, n: n0, .. }) if *a == at && *n0 == n => {
+                let rows_of = |ids: Vec<u32>| ids.into_iter().fold(Vec::new(), |mut v, id| { v.extend_from_slice(&self.row(id as usize)); v });
+                Some((rows_of(self.version_ids(Ver::Plus)?), rows_of(self.version_ids(Ver::Minus)?)))
+            }
+            Some(Origin::Compacted { at: a, old_n, kept, removed }) if *a == at && *old_n == n => {
                 let added = (*kept..self.n).filter(|&id| !is_dead(&self.dead, id as u32)).fold(Vec::new(), |mut v, id| { v.extend_from_slice(&self.row(id)); v });
-                return Some((added, removed.clone()));
+                Some((added, removed.clone()))
             }
-            _ => return None,
+            _ => None,
         }
-        let mut removed = Vec::new();
-        for (w, &bits) in self.dead.iter().enumerate() {
-            let mut new = bits & !old.dead.get(w).copied().unwrap_or(0);
-            while new != 0 {
-                let id = w * 64 + new.trailing_zeros() as usize;
-                new &= new - 1;
-                if id < old.n {
-                    removed.extend_from_slice(&self.row(id));
-                }
-            }
-        }
-        let mut added = Vec::with_capacity((self.n - old.n) * k);
-        for id in old.n..self.n {
-            if !is_dead(&self.dead, id as u32) {
-                added.extend_from_slice(&self.row(id));
-            }
-        }
-        Some((added, removed))
     }
     /// Column `c`'s postings, from the index the engine kept on it (`Rel::new`): each value with the first-column
     /// values of its live rows (a row's document, as `syntax::measured` reads it), so nothing is hashed again. A
@@ -4811,6 +4786,65 @@ impl InRel {
     pub fn row(&self, id: usize) -> Row { self.rows.row(id as u32, self.k) }
     /// A flat relation's rows in one block, for a reader that binds its block (the device, decision 0325): none for
     /// a view, a relation with dead rows (a reader skips no rows yet) or no columns.
+    /// Its version at the run's start (decision 0364 stage 2): its row count then and its dead rows then, when it
+    /// started from a kept relation in place (`Rel::based`). `None` for one made from rows.
+    pub fn start(&self) -> Option<(usize, &[u64])> {
+        match &self.from {
+            Some(Origin::Based { n, dead, .. }) if self.view.is_none() => Some((*n, dead.as_slice())),
+            _ => None,
+        }
+    }
+    /// The ids of its version `ver` that are not the relation's own live rows (`Ver::Minus`: rows live at the
+    /// start and dead now; `Ver::Plus`: rows added since, live), ascending. `None` without a version, or for `Old`.
+    pub fn version_ids(&self, ver: Ver) -> Option<Vec<u32>> {
+        let (n0, dead0) = self.start()?;
+        match ver {
+            Ver::Old => None,
+            Ver::Minus => {
+                let mut out = Vec::new();
+                for (w, &now) in self.dead.iter().enumerate().take(n0.div_ceil(64)) {
+                    let mut gone = now & !dead0.get(w).copied().unwrap_or(0);
+                    while gone != 0 {
+                        let id = w * 64 + gone.trailing_zeros() as usize;
+                        gone &= gone - 1;
+                        if id < n0 {
+                            out.push(id as u32);
+                        }
+                    }
+                }
+                Some(out)
+            }
+            Ver::Plus => Some((n0..self.n).filter(|&id| !is_dead(&self.dead, id as u32)).map(|id| id as u32).collect()),
+        }
+    }
+    /// Its version `ver` as a relation read in place, no row copied (decision 0364 stage 2): `Old`, its first rows
+    /// with the start's dead rows (its rows shared); `Minus` and `Plus`, a view of their ids over it. `None` without
+    /// a version (a relation made from rows, or a view).
+    pub fn version_view(self: &Arc<Self>, ver: Ver) -> Option<Arc<InRel>> {
+        let (n0, dead0) = self.start()?;
+        match ver {
+            Ver::Old => {
+                let mut old = InRel::held(self.rows.shared(n0), n0, self.types.clone(), dead0.to_vec());
+                // Its rows' levels as they were (a recursive stratum's, decision 0364): a level is never lowered in
+                // place, so the first `n0` are the start's.
+                if self.has_levels() {
+                    Arc::get_mut(&mut old).expect("just made").level = self.level[..n0].to_vec();
+                }
+                Some(old)
+            }
+            Ver::Minus | Ver::Plus => {
+                let ids = self.version_ids(ver)?;
+                let k = self.k;
+                let names: Vec<String> = (0..k).map(|c| format!("c{c}")).collect();
+                // Over its rows with no dead marks (shared, not copied), so a view's ids are the relation's own: a
+                // source of it would number its live rows, and a row gone is not among them.
+                let every = InRel::held(self.rows.shared(self.n), self.n, self.types.clone(), Vec::new());
+                let view = View { src: every.source(names), cols: (0..k).collect(), ids: Some(ids), eqs: Vec::new() };
+                let n = view.ids.as_ref().map_or(0, Vec::len);
+                Some(Arc::new(InRel { viewed: false, keyed: None, k, n, rows: Rows::new(k), view: Some(view), base: false, types: self.types.clone(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None }))
+            }
+        }
+    }
     /// A relation read in place from every row of `src`, its columns in order (`hold_source`).
     pub fn over_source(src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, types: Vec<u8>) -> Arc<InRel> {
         let k = types.len();
@@ -7738,6 +7772,50 @@ pub mod posted_tests {
         let got = RelStats::from_postings(names, rel.rows() as i64, &mut |c, visit| rel.each_posting(c, visit)).expect("postings");
         assert_eq!(got, want);
         assert_eq!(got.statistics(&|_| true), want.statistics(&|_| true));
+    }
+
+    /// A maintained relation's versions (decision 0364 stage 2): `Old` is its rows at the start, dead rows then
+    /// skipped; `Minus` the rows live then and dead now; `Plus` the rows added since and live. Each is read in place:
+    /// `Old` shares the relation's rows, `Minus` and `Plus` are views of its ids. A relation made from rows has none.
+    #[test]
+    fn a_maintained_relations_versions_are_read_where_its_rows_lie() {
+        let rows_of = |r: &InRel| {
+            let mut out: Vec<Vec<i64>> = (0..r.len()).filter(|&i| r.view.is_some() || !is_dead(&r.dead, i as u32)).map(|i| { let row = r.at(i); (0..r.k).map(|c| row.at(c)).collect() }).collect();
+            out.sort();
+            out
+        };
+        let rel_of = |rows: &[[i64; 2]]| {
+            let mut r = Rel::new("g", b"ii");
+            for row in rows {
+                r.push(row);
+            }
+            InRel::moved(r)
+        };
+        let mut rel = Rel::new("t", b"ii");
+        for i in 0..40 {
+            rel.push(&[i, i % 3]);
+        }
+        // The kept relation has a dead row already (an earlier run's): it is no row of any version.
+        let first = Arc::new(InRel::moved(rel));
+        let kept = Arc::new(InRel::moved(Rel::based("t", b"ii", &first, Some(&rel_of(&[[7, 1]]))).expect("few dead")));
+        assert!(first.version_view(Ver::Old).is_none() && first.version_ids(Ver::Minus).is_none(), "a relation made from rows has no version");
+        let mut new = Rel::based("t", b"ii", &kept, Some(&rel_of(&[[2, 2], [5, 2], [30, 0]]))).expect("few dead");
+        new.push(&[5, 2]);
+        new.push(&[100, 1]);
+        let new = Arc::new(InRel::moved(new));
+        let old = new.version_view(Ver::Old).expect("a version");
+        assert_eq!(rows_of(&old), rows_of(&kept), "old is the kept rows");
+        assert!(old.rows.shares(&new.rows), "old shares the relation's rows");
+        let minus = new.version_view(Ver::Minus).expect("a version");
+        assert_eq!(rows_of(&minus), vec![vec![2, 2], vec![5, 2], vec![30, 0]]);
+        let plus = new.version_view(Ver::Plus).expect("a version");
+        assert_eq!(rows_of(&plus), vec![vec![5, 2], vec![100, 1]]);
+        assert_eq!(new.version_ids(Ver::Plus), Some(vec![40, 41]));
+        // The delta is the versions' rows.
+        let (mut added, mut removed) = new.delta_since(&kept).expect("started as kept");
+        let flat = |f: &mut Vec<i64>| { let mut r: Vec<Vec<i64>> = f.chunks_exact(2).map(<[i64]>::to_vec).collect(); r.sort(); r };
+        assert_eq!(flat(&mut added), rows_of(&plus));
+        assert_eq!(flat(&mut removed), rows_of(&minus));
     }
 
     /// A maintained relation's delta from the relation it started as: the rows it marked dead, and those it added
