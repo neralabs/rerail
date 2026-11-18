@@ -2261,6 +2261,9 @@ pub fn flatten(f: &mut FunctionBuilder<'_>, m: Value, at: Value, ptr: Value) -> 
 pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
     let (prefix, stripped) = host_stripped(native).map_or((Vec::new(), None), |(p, n)| (p, Some(n)));
     let native = stripped.as_ref().unwrap_or(native);
+    // The byte-pair rules as pairs (`native_cpu_pairs`), on the program the passes run.
+    let fused = crate::native_cpu_pairs::fused(native);
+    let native = fused.as_ref().unwrap_or(native);
     // Not optimised: the mid-end's code motion would hoist every vector constant out of the loop,
     // more than the registers hold, and spill them (decision 0069). The body is already
     // straight-line and deduplicated.

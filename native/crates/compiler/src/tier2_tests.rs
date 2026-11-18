@@ -353,3 +353,36 @@ fn a_tokens_end_is_its_gaps_as_the_lasts_extract() {
         assert!(with.iter().any(|n| n.starts_with(want)), "{want}'s tokens do not end at their gaps: {with:?}");
     }
 }
+
+/// Page 39's item 2: JSON's UTF-8 rules of two bytes (after `0xe0`, `0xed`, `0xf0`, `0xf4`) are
+/// one byte-pair lookup on the CPU, as simdjson's (`native_cpu_pairs`), and the CPU's tier 1
+/// still agrees with the interpreter's: every lead byte near them before every continuation
+/// byte, complete or cut short, across the chunks' and the blocks' edges.
+#[test]
+fn utf8s_two_byte_rules_are_one_pair_lookup() {
+    let (name, source) = crate::ladder::steps().into_iter().find(|(n, _)| n.starts_with("14-json")).expect("14-json");
+    let c = crate::ladder::compile_step(&name, &source);
+    let native = crate::block_native::BlockNative::lower(&c.program.block_programs[0]);
+    let (_, stripped) = crate::native_cpu_block::host_stripped(&native).expect("the host strips the mark");
+    let fused = crate::native_cpu_pairs::fused(&stripped).expect("the rules are pairs");
+    let pairs: Vec<u8> = fused.insts.iter().filter_map(|i| if let crate::block_native::BlockInst::Pair { bits, .. } = *i { Some(bits) } else { None }).collect();
+    assert_eq!(pairs.iter().map(|b| b.count_ones()).collect::<Vec<_>>(), [4], "{name}: one pair of the four rules: {pairs:?}");
+    let made = native.records_made();
+    let (mut docs, mut refused) = (0, 0);
+    for lead in [0xc2u8, 0xdf, 0xe0, 0xe1, 0xec, 0xed, 0xee, 0xef, 0xf0, 0xf1, 0xf3, 0xf4, 0xf5] {
+        let len = if lead < 0xe0 { 2 } else if lead < 0xf0 { 3 } else { 4 };
+        for next in (0x70u8..=0xc1).step_by(3).chain([0x8f, 0x90, 0x9f, 0xa0]) {
+            for pad in [0usize, 1, 13, 14, 15, 29, 45, 60, 61, 62, 63, 69] {
+                let mut doc = format!("[\"{}", "a".repeat(pad)).into_bytes();
+                doc.extend([lead, next]);
+                doc.extend(std::iter::repeat_n(0x80u8, len - 2));
+                doc.extend(b"\", 1]");
+                let (compiled, interpreted) = (c.parser.tier1.extract(&doc), c.program.block_programs[0].run_files(&[&doc]).remove(0));
+                assert!(crate::ladder::tier1_agrees(&compiled, &interpreted, &made), "{name}: {doc:02x?}");
+                refused += usize::from(interpreted.totals.iter().any(|&t| t != 0));
+                docs += 1;
+            }
+        }
+    }
+    assert!(refused > 0 && refused < docs, "{refused} of {docs} refused");
+}

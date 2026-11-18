@@ -564,7 +564,7 @@ pub fn check_shape(name: &str, c: &Compiled) {
 /// the interpreter goes on. The stage's outputs and positions, made before the loop, are the same.
 /// Outputs in `made` (`BlockNative::records_made`: the record pass makes their positions, as the
 /// lasts of decision 0400) are not compared: the CPU's tier 1 makes no mask for them.
-fn tier1_agrees(
+pub(crate) fn tier1_agrees(
     compiled: &crate::block::BlockRun,
     interpreted: &crate::block::BlockRun,
     made: &[usize],

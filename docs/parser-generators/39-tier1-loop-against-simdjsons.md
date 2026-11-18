@@ -172,6 +172,35 @@ file not refused, it does (0401):
 | After 0400 | 988 | 33 |
 | Token ends from the gaps (0401) | **814** | **27** |
 
+## Item 2 again: the UTF-8 rules' form (0402)
+
+The premise above, that the lane plan makes the UTF-8 check's previous-byte values as words,
+came from the program as Bitlex writes it, where `~prefix` cuts every class that holds a byte
+of the byte order mark. The CPU compiles the program the host strips (0389), and there the
+check is on the vectors, its `prev`s as `ext`s. The gap was the rules' form: four two-byte
+rules, each a compare, an `ext`, a test and an `and` a chunk. They are now one `pair` lookup,
+as simdjson's `check_special_cases`.
+
+| | Hot loop | Stack accesses | UTF-8 stretch |
+|---|---:|---:|---:|
+| `14-json` after 0400 | 616 | 5 | 195 |
+| `14-json`, rules as one pair (0402) | **574** | **1** | **153** |
+| `15-jsonc` after 0401 | 814 | 27 | |
+| `15-jsonc`, 0402 | **784** | **11** | |
+
+simdjson's UTF-8 check is 72. What is left of it:
+
+- **The block's first chunk** (about 25 instructions). Its previous bytes are loaded again at
+  −1, −2 and −3 and looked up again; simdjson carries the previous block's input vector.
+  Carrying it here would make a vector a carry between blocks, which the lane plan avoids so
+  that a gated region can skip a `prev`.
+- **The error's reduction** (12). Page 39's item 2 as written, errors as flags, needs totals no
+  one reads by their rows (0347), and `14-json`'s tier 1 runs no CPU token loop, so its totals
+  have rows.
+- **The other rules' form.** The three-byte "a continuation is needed" test, and the bytes that
+  never start a sequence, are tests of the class bits apart, where simdjson's lookup folds
+  them into one table.
+
 ## Reproducing
 
 ```
