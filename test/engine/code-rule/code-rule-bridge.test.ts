@@ -1355,6 +1355,10 @@ describe("CodeRuleBridge", () => {
     const bridge = createBridge(root, auditor(auditGeneratedEdits));
 
     await bridge.openWorkspace("session-1");
+    // The baseline walk, and the pass that follows it, end before the first call: one still running once the failed call
+    // has answered finds the file that call wrote, stamped while it ran, and audits it as the session's change. What this
+    // test pins is that no call's own result is audited but the committed one's.
+    await bridge.checkpoint("turn");
     await bridge.begin("failed", "write", { path: "src/a.py" });
     await writeFile(join(root, "src", "a.py"), "failed\n");
     await bridge.finish("failed", true);
