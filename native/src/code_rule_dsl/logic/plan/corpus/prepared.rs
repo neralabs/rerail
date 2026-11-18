@@ -440,7 +440,7 @@ pub(super) enum Found {
 /// The program `key` names, prepared for `dialect`, as an earlier process stored it under `source`, or else as the
 /// engine ships it; `None` when neither has it, or when what is kept no longer reads. With it, the sources of its
 /// programs' texts, and whether its atoms moved.
-pub(super) fn lookup(store: &ContentStore, source: Option<SourceId>, dialect: GrammarDialect, key: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<(Prepared, Vec<SourceId>, Found)>> {
+pub(super) fn lookup(store: &ContentStore, source: Option<SourceId>, dialect: GrammarDialect, key: &[u8; 32]) -> StoreResult<Option<(Prepared, Vec<SourceId>, Found)>> {
     super::memo::off();
     let start = std::time::Instant::now();
     let set = pointer_plan(key);
@@ -486,7 +486,7 @@ pub(super) fn lookup(store: &ContentStore, source: Option<SourceId>, dialect: Gr
     // Its atoms this store's, the version is read as opened; another store's (decision 0270), its tree is decoded
     // once to move them and imaged again (the one tree a lookup reads, and only on a move: work queue Q43).
     let mut version = version;
-    let found = match relocate(store, &mut facts, &version, lists) {
+    let found = match relocate(store, &mut facts, &version) {
         Some(None) => Found::Kept,
         Some(Some(moved)) => {
             version = moved;
@@ -512,7 +512,6 @@ pub fn relocate(
     store: &ContentStore,
     facts: &mut Facts,
     version: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
-    lists: &crate::code_rule_dsl::logic::front::Lists,
 ) -> Option<Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>> {
     let _s = crate::code_rule_dsl::logic::profile::span(|| "the prepared program's atoms, in this store".into());
     let rows = facts.get_mut("prepared_interned_atom")?;
@@ -523,15 +522,10 @@ pub fn relocate(
         return Some(None);
     }
     let to: rustc_hash::FxHashMap<u32, u32> = old.iter().copied().zip(new.iter().copied()).collect();
-    let mut lowered = version.program(lists).ok()?;
-    if !lower::relocate(&mut lowered, &to) {
-        return None;
-    }
-    // Its image made again of the moved program: the run reads it in place.
+    // The moved program, a version of its own: the run reads it in place.
     let moved = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the moved program's image".into());
-        let bytes = crate::code_rule_dsl::logic::program_image::encode(&lowered).ok()?;
-        crate::code_rule_dsl::logic::program_image::Version::open(&bytes).ok()?
+        lower::relocate(version, &to).ok()??
     };
     crate::code_rule_dsl::logic::profile::decision("the prepared program's atoms (decision 0270)", || format!("prepared by another store: its {} names moved to this store's atoms", strings.len()));
     for (row, &a) in rows.iter_mut().zip(&new) {

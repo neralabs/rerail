@@ -5085,11 +5085,13 @@ mod complete_answer_tests {
         // Its load requests are already complete, so loaded is in a later stratum, not their SCC.
         // Exercise that execution path with a whole demand batch, both all-held and mixed answers.
         for immediate in [0, 1] {
-            let mut program = super::super::front::parse(".decl seed(x:int)\n.decl req(x:int)\n.decl got(x:int)\n.decl shown(x:int)\nreq($x) :- seed($x).\nshown($x) :- got($x).\n.output shown\n").unwrap();
-            program.facts.insert("seed".into(), (0..1000).map(|n| super::super::front::List::from(vec![Value::Int(n)])).collect());
-            program.answers.insert("req".into(), vec!["got".into()]);
-            let lowered = lower::Given { domains: lower::domains(&program).unwrap(), program,
-                ops: [0; 3], dialect: crate::code_rule_dsl::language::GrammarDialect::Python }.image().unwrap();
+            use super::super::program_image::fields::FieldsMut as _;
+            let read = super::super::rr::parse_version(".decl seed(x:int)\n.decl req(x:int)\n.decl got(x:int)\n.decl shown(x:int)\nreq(x) :- seed(x).\nshown(x) :- got(x).\n.output shown\n").unwrap();
+            let mut b = super::super::program_image::Builder::on(&read);
+            b.set_facts("seed", &(0..1000).map(|n| super::super::front::List::from(vec![Value::Int(n)])).collect::<Vec<_>>());
+            b.set_field(super::super::program_facts::Field::Answers(&BTreeMap::from([("req".to_owned(), vec!["got".to_owned()])])));
+            let (program, _) = b.finish().unwrap();
+            let lowered = lower::Lowered::of_placed(body::Placed::whole(program.clone()), lower::domains_of(&program).unwrap(), [0; 3], crate::code_rule_dsl::language::GrammarDialect::Python);
             let path = crate::code_rule_dsl::fixtures::temp();
             let _store = crate::content_store::ContentStore::open(&path).unwrap();
             let db = Connection::open(&path).unwrap();
@@ -9564,7 +9566,7 @@ pub fn run_atoms(lowered: &lower::Lowered, db: &Connection, stats: &str) -> Resu
 
 /// `run_atoms` with T's native modes (O13): the components a mode takes run in `logic::native` (registered on
 /// `db`) over atoms, the rest in SQL. T's `nearest` and `kseed` modes read a per-run copy of the tree
-/// (`tape_load`), which is not kept: `nearest` is the transducer's (`Lowered::transduce_nearest`), so those two
+/// (`tape_load`), which is not kept: `nearest` is the transducer's (`preparation::nearest`), so those two
 /// modes are dropped from `modes`.
 pub fn run_atoms_native(lowered: &lower::Lowered, db: &Connection, stats: &str, modes: &str) -> Result<Outcome> {
     let mut native = native_modes(modes);

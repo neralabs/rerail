@@ -56,15 +56,14 @@
         let store = crate::content_store::ContentStore::open(&dir.join("other.sqlite")).unwrap();
         let fillers: Vec<String> = (0..64).map(|i| format!("a string interned first {i}")).collect();
         store.intern_atoms(&fillers.iter().map(String::as_str).collect::<Vec<_>>()).unwrap();
-        let lists = Default::default();
-        let moved = super::relocate(&store, &mut facts, &prepared.lowered.version, &lists).expect("every name has an atom here").expect("the names moved");
+        let moved = super::relocate(&store, &mut facts, &prepared.lowered.version).expect("every name has an atom here").expect("the names moved");
         assert_ne!(moved.digest(), prepared.lowered.version.digest(), "the moved image names other atoms");
         // The pointer's rows name this store's atoms, so the program read again is the store's.
         let strings: Vec<String> = facts["prepared_interned_atom"].iter().map(|r| match &r[2] { crate::code_rule_dsl::logic::front::Value::Str(s) => s.to_string(), other => panic!("{other:?}") }).collect();
         let here: Vec<i64> = store.intern_atoms(&strings.iter().map(String::as_str).collect::<Vec<_>>()).unwrap().into_iter().map(|a| i64::from(u32::from(a))).collect();
         let kept: Vec<i64> = facts["prepared_interned_atom"].iter().map(|r| r[3].integer().unwrap()).collect();
         assert_eq!(kept, here);
-        assert!(super::relocate(&store, &mut facts, &moved, &lists).expect("read").is_none(), "already this store's");
+        assert!(super::relocate(&store, &mut facts, &moved).expect("read").is_none(), "already this store's");
         super::prepared_of(&facts, std::sync::Arc::clone(&prepared.source), moved, prepared.lowered.dialect).expect("the moved program reads as prepared");
         let _ = std::fs::remove_dir_all(&dir);
     }

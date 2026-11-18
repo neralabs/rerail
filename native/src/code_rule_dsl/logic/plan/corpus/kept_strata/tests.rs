@@ -144,14 +144,14 @@
     fn a_kept_relations_kind_column_is_no_atom() {
         let dir = tempfile::tempdir().unwrap();
         let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
-        let p = rr::parse(
+        let p = rr::parse_version(
             ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.decl text(n: node, s: symbol)\n\
              .input node, text\n.decl kinded(n: node, k: symbol, s: symbol)\n.output kinded\n\
              kinded(n, k, s) :- node(_, n, k, _, _), text(n, s).\n",
         )
         .unwrap();
-        let domains = lower::domains(&p).unwrap();
-        let mut kept = Kept::new(&store, [42; 32], [0; 32], &[], HashMap::new()).typed(&crate::code_rule_dsl::logic::plan::body::Placed::of_program(&p).unwrap(), &domains);
+        let domains = lower::domains_of(&p).unwrap();
+        let mut kept = Kept::new(&store, [42; 32], [0; 32], &[], HashMap::new()).typed(&crate::code_rule_dsl::logic::plan::body::Placed::whole(p.clone()), &domains);
         kept.program(&HashMap::from([("kinded".into(), [1; 32])]));
         kept.ran("kinded", Some((7, vec![b's', b's', b's'], vec![1, 1132, 5], 1, vec![])));
         assert_eq!(kept.puts[0].rows.types, b"iis", "the node and the kind are no atoms, the text is");

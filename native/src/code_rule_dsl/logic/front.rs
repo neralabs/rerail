@@ -294,7 +294,7 @@ impl Parser<'_> {
         self.p("(")?;
         // Tree axes (decision 0036): `inside($n, $a, set)`, $a a strict ancestor of $n whose kind is in the set, the
         // input relation `rr_inside_<set>(n, a)`; and `has($a, $n, set)`, $n a strict descendant of $a whose kind is
-        // in the set, `rr_has_<set>(n, a)`. The transducer makes both (`Lowered::transduce_nearest`).
+        // in the set, `rr_has_<set>(n, a)`. The transducer makes both (`preparation::nearest`).
         if (rel == "inside" || rel == "has") && matches!(self.peek_at(4), Tok::Id(_)) {
             let x = self.term()?;
             self.p(",")?;

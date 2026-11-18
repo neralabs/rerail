@@ -1,5 +1,4 @@
-//! `lower_tree` on the version (decision 0281's path, step 6b): the program lowered for one dialect by passes over
-//! its image, as `lower_tree` lowers the tree. A membership of a kind or field in a set of them is a rule per member
+//! The program lowered for one dialect (decision 0281's path, step 6b), by passes over its image. A membership of a kind or field in a set of them is a rule per member
 //! (`Memberships`); then every string becomes its atom, by its column's domain (a name's atom, a kind's or a field's
 //! id), in rules (`Constants`), facts and kind sets (`FactsAndSets`).
 
@@ -21,8 +20,8 @@ pub fn lowered(v: Arc<Version>, dialect: GrammarDialect, intern: &mut dyn FnMut(
     Ok(super::Lowered::of_placed(super::super::body::Placed::whole(v), domains, ops, dialect))
 }
 
-/// `v` lowered for `dialect`, with the domains of its relations' columns (found before its strings became atoms, as
-/// `lower_tree` finds them) and the name atoms of `+`, `-` and `*`; `intern` gives the name atoms of strings.
+/// `v` lowered for `dialect`, with the domains of its relations' columns (found before its strings became atoms) and
+/// the name atoms of `+`, `-` and `*`; `intern` gives the name atoms of strings.
 pub fn lower_version(v: Arc<Version>, dialect: GrammarDialect, intern: &mut dyn FnMut(&[&str]) -> Result<Vec<u32>>) -> Result<(Arc<Version>, Domains, [i64; 3])> {
     let tag = tape_tag(dialect).ok_or_else(|| Error::Plan("the dialect has no tape tag".to_owned()))?;
     let mut p = Pipeline::new("lower", v);

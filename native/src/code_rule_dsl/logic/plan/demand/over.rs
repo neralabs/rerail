@@ -424,10 +424,10 @@ mod tests {
     use super::{R, disconnected};
     use super::super::super::body::Placed;
 
-    /// Whether rule `k` of `text` falls apart once its reads of `cut` are cut.
+    /// Whether rule `k` of `text` falls apart once its reads of `cut` are cut. Its variables are written `$x`, as the
+    /// planner shows them; the `.rr` text names them without the `$`.
     fn apart(text: &str, k: usize, cut: &str) -> bool {
-        let prog = super::super::super::super::front::parse(text).unwrap();
-        let p = Placed::of_program(&prog).unwrap();
+        let p = Placed::whole(super::super::super::super::rr::parse_version(&text.replace('$', "")).unwrap());
         let r = R::of(&p, k);
         disconnected(&r, &|j| r.plain(j).is_some_and(|a| r.rel(a) == cut))
     }
