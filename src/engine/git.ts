@@ -856,6 +856,8 @@ async function withinLimits<T>(look: Promise<T>, { timeoutMs, signal }: ReadLimi
   const stop = (): void => end(undefined);
   const timer = setTimeout(stop, timeoutMs);
   signal?.addEventListener("abort", stop, { once: true });
+  // The look can stop the call as it starts, before this listens: a read's owner stops it while the disk is asked.
+  if (signal?.aborted === true) stop();
   try {
     return await Promise.race([look, ended]);
   } finally {

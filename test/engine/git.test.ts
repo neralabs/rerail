@@ -1,6 +1,6 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, join, win32 } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -1442,6 +1442,12 @@ describe("ProcessGit", () => {
     await new Promise(setImmediate);
     expect(homes(git.startEnvironment(ucrt, env))).toEqual([env.USERPROFILE]);
     expect([disk.reads.now, disk.reads.later]).toEqual([[], []]);
+    // Another share has no answer yet; one that is not fully qualified puts no bin on PATH and is never looked at.
+    await new Promise(setImmediate);
+    const other = { ...env, HOMEDRIVE: String.raw`\\server\other` };
+    expect(homes(git.startEnvironment(ucrt, other))).toEqual([win32.join(other.HOMEDRIVE, other.HOMEPATH), env.USERPROFILE]);
+    asked.length = 0;
+    expect([homes(git.startEnvironment(ucrt, { ...env, HOMEDRIVE: "" })), asked]).toEqual([[env.USERPROFILE], []]);
   });
 
   it("starts a Git it kept with the environment its look decided, reading no file", () => {
@@ -1508,7 +1514,9 @@ describe("askedInThread", () => {
     await writeFile(join(root, "plain"), "#!/bin/sh\n");
     await writeFile(join(root, "runs"), "#!/bin/sh\n");
     await chmod(join(root, "runs"), 0o755);
-    const paths = ["folder", "plain", "runs", "missing"].map(name => join(root, name));
+    // A junction on Windows, which needs no privilege: its real path is the folder's.
+    await symlink(join(root, "folder"), join(root, "linked"), "junction");
+    const paths = ["folder", "plain", "runs", "missing", "linked"].map(name => join(root, name));
     const real = (path: string) => {
       try {
         return realpathSync.native(path);
