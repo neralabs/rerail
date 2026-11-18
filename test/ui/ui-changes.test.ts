@@ -522,6 +522,8 @@ describe("the dashboard following the daemon's change stream", () => {
     stream().send("t2");
     await settle();
     expect(data.mergeAssist?.readiness.github.readAt).toBe(githubReadAt);
+    // Only the watch for two missed beats waits: no wake is set for the reading on this page.
+    expect(vi.getTimerCount()).toBe(1);
     const before = reads.length;
 
     await after(10 * 60_000);

@@ -55,11 +55,18 @@ describe("the dashboard against a running daemon", () => {
     process.env.RERAIL_HOME = join(root, "home");
     const databasePath = join(root, "rerail.sqlite");
     // The folder's notices come as the test says: the writer's -wal write heard before readers can see its commit, as
-    // Linux tells it, on every system. The beat never comes within the test, and the page reads only what it is told.
+    // Linux tells it, on every system. The beat never comes within the test.
     const folder = drivenWatch();
     daemon = await RerailDaemon.start({
       version: "0.0.0-test", databasePath, workspaceRoot: root, port: 0, nativeHealth: healthyNative, accessToken: ACCESS,
       remoteSink: false, checkoutPruning: false, changeFeed: { watch: folder.watch, beatMs: 60 * 60_000 },
+    });
+    // The page's streams: a stall reopens one after two missed beats (12 s), and its first message reads.
+    const realFetch = globalThis.fetch;
+    let streams = 0;
+    vi.stubGlobal("fetch", (input: string | URL, init?: RequestInit) => {
+      if (new URL(input).pathname === "/api/changes") streams += 1;
+      return realFetch(input, init);
     });
     const page = openPage(daemon);
     await page.rendered(() => data.loaded);
@@ -71,6 +78,9 @@ describe("the dashboard against a running daemon", () => {
       await committed;
 
       await page.rendered(() => data.repositories.some(repository => repository.repositoryKey === "remote:github.com/acme/web"));
+
+      // Shown on the stream the page had: no beat, no read of its own and no new stream brought it.
+      expect(streams).toBe(1);
     } finally {
       await writer.close();
     }

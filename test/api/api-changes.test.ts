@@ -241,6 +241,23 @@ describe("the daemon's change stream (GET /api/changes)", () => {
     await stream.stop();
   });
 
+  it("sends a new token at the beat after origin's default branch moved between two branches a pack of refs holds", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const checkout = gitRepository(join(realpathSync(root), "web"));
+    for (const branch of ["main", "trunk"]) execFileSync("git", ["update-ref", `refs/remotes/origin/${branch}`, "HEAD"], { cwd: checkout });
+    execFileSync("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"], { cwd: checkout });
+    execFileSync("git", ["pack-refs", "--all"], { cwd: checkout });
+    recordCheckout(database, checkout);
+    const stream = await open(`?${new URLSearchParams({ checkout })}`);
+    const first = await stream.next();
+
+    execFileSync("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk"], { cwd: checkout });
+    await vi.advanceTimersByTimeAsync(BEAT_MS);
+
+    expect(await movedFrom(stream, first.data)).toBeDefined();
+    await stream.stop();
+  });
+
   it("sends a new token at the beat after a branch Merge Assist tries for the base first exists, as after a first fetch", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     const checkout = gitRepository(join(realpathSync(root), "web"));
