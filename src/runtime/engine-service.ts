@@ -585,7 +585,7 @@ function keepSuspended(state: EngineRoutingState, runtimeKey: string, suspension
 async function resumeSuspended(state: EngineRoutingState, sessionId: string, now: () => number): Promise<void> {
   const entry = state.suspended.get(sessionId);
   if (entry === undefined) return;
-  const { runtimeKey, runtimeOptions, suspension } = entry;
+  const { runtimeKey, suspension } = entry;
   keepRuntime(state, runtimeKey);
   const resuming = state.lanes.run(laneOf(runtimeKey, sessionId), async () => {
     // Asked again in the lane: an end that ran first has closed the session's record, which must stay closed.
@@ -596,18 +596,7 @@ async function resumeSuspended(state: EngineRoutingState, sessionId: string, now
       keepUnusedRuntime(state, runtimeKey);
       return;
     }
-    try {
-      // A runtime made again opens its stores, each of which writes.
-      if (!state.runtimes.has(runtimeKey)) failWhileWriteLocked(suspension.databasePath);
-      const runtime = runtimeFor(state, runtimeKey, runtimeOptions, sessionId);
-      noteSessionUse(state, sessionId, runtimeKey, now());
-      await runtime.resumeSession(suspension.descriptor);
-    } catch (error) {
-      if (!isBusy(error) || state.suspended.get(sessionId) !== entry) throw error;
-      state.lastEventAt.delete(laneOf(runtimeKey, sessionId));
-      releaseSessionRuntime(state, sessionId, runtimeKey);
-      retryResume(state, sessionId, now);
-    }
+    await openSuspended(state, sessionId, entry, now);
   });
   track(state, resuming);
   try {
@@ -616,6 +605,28 @@ async function resumeSuspended(state: EngineRoutingState, sessionId: string, now
     const reason = error instanceof Error ? error.message : String(error);
     process.stderr.write(`rerail: opening quiet session ${sessionId} again failed: ${reason}\n`);
     if (state.suspended.get(sessionId) === entry) failScans(suspension, reason);
+  }
+}
+
+/**
+ * Opens the suspended session `sessionId` of `entry` in its runtime (`RerailRuntime.resumeSession`), making the runtime
+ * again when it has closed. While another process holds the database's write lock the open stops before its first
+ * write and is tried again (`retryResume`); any other failure, or this one once the session's suspension was taken
+ * meanwhile, is thrown.
+ */
+async function openSuspended(state: EngineRoutingState, sessionId: string, entry: SuspendedEntry, now: () => number): Promise<void> {
+  const { runtimeKey, runtimeOptions, suspension } = entry;
+  try {
+    // A runtime made again opens its stores, each of which writes.
+    if (!state.runtimes.has(runtimeKey)) failWhileWriteLocked(suspension.databasePath);
+    const runtime = runtimeFor(state, runtimeKey, runtimeOptions, sessionId);
+    noteSessionUse(state, sessionId, runtimeKey, now());
+    await runtime.resumeSession(suspension.descriptor);
+  } catch (error) {
+    if (!isBusy(error) || state.suspended.get(sessionId) !== entry) throw error;
+    state.lastEventAt.delete(laneOf(runtimeKey, sessionId));
+    releaseSessionRuntime(state, sessionId, runtimeKey);
+    retryResume(state, sessionId, now);
   }
 }
 
