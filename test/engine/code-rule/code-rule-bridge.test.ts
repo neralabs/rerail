@@ -19,6 +19,7 @@ import {
   type SourceObservationCache,
   type TextEdit,
   undoTextEdits,
+  unreadAfter,
 } from "../../../src/engine/code-rule/code-rule-bridge.js";
 import { MAX_FINISHED_CALLS, ToolCallWindows } from "../../../src/engine/code-rule/tool-call-windows.js";
 import type { CodeRuleEditBatch, CodeRuleAuditor, CodeRuleResponse } from "../../../src/engine/code-rule/code-rule.js";
@@ -1956,6 +1957,18 @@ describe("the text a tool call's edits were made on, from the text they left", (
     const edit = once("    return 1", "    print(1)\n    return 1");
     expect(undoTextEdits("def a():\r\n    print(1)\r\n    return 1\r\n", [edit])).toBe("def a():\r\n    return 1\r\n");
     expect(undoTextEdits("x = 2\r\n", [once("x = 1\ny = 1", "x = 2")])).toBe("x = 1\r\ny = 1\r\n");
+  });
+});
+
+describe("the files a session could not read, after a pass of noticed paths", () => {
+  const tooLarge = (stamp: string): { stamp: string; readError: string } => ({ stamp, readError: "too large to read" });
+
+  it("takes out each path the pass read, keeps the others as the last walk found them, and adds what the pass found unread", () => {
+    const unread = new Map([["src/big.ts", tooLarge("1")], ["src/other.ts", tooLarge("2")]]);
+
+    const after = unreadAfter(unread, new Map([["src/big.ts", undefined], ["src/new.ts", undefined]]), new Map([["src/new.ts", tooLarge("3")]]));
+
+    expect([...after].sort()).toEqual([["src/new.ts", tooLarge("3")], ["src/other.ts", tooLarge("2")]]);
   });
 });
 

@@ -857,8 +857,12 @@ function walkedPaths(walk: WalkStart, current: ReadonlyMap<string, Source>): Ite
 function readsWholeFolder(discovery: SourceDiscovery, checkpoint: DiscoveryCheckpoint): boolean {
   return checkpoint !== "edit" || !discovery.baselineComplete || discovery.error !== undefined || discovery.baselineRoots.size > 0;
 }
-/** `unread` with each of `noticed` as a pass of those paths found it (`found`); the rest as the last walk found them. */
-function unreadAfter(unread: SourceDiscovery["unread"], noticed: ReadonlyMap<string, NoticedRead>, found: SourceScan["unread"]): SourceDiscovery["unread"] {
+/**
+ * `unread` with each of `noticed` as a pass of those paths found it (`found`); the rest as the last walk found them. A
+ * path the pass read is taken out, so one the last walk left unread for its size and the pass found readable or gone is
+ * no longer listed.
+ */
+export function unreadAfter(unread: SourceDiscovery["unread"], noticed: ReadonlyMap<string, unknown>, found: SourceScan["unread"]): SourceDiscovery["unread"] {
   const after = new Map([...unread].filter(([path]) => !noticed.has(path)));
   for (const [path, entry] of found) after.set(path, entry);
   return after;
