@@ -1407,6 +1407,18 @@ Their siblings, found later the same day (0310 steps 4 and 5):
   (`match_groups`).
 - `metal_tape.metal`'s `f16_word` is gone with the hand port (step 4): the generated reads load words.
 
+- **Done** (2026-11-17, sync-integration-hub-tape):
+  - the CPU JIT's `text_equal` compares 8 bytes a step, then at most one each of 4, 2 and 1;
+  - its `same_line` takes both starts' lines from the task's line starts (`line_for`, a search, as the JIT's line
+    properties read them), not a scan between them. Not `tape_line`: format 15's own view has no lines (the
+    device's come from the batch's block, `slabs.rs`), so the read answered 0 for every byte there;
+  - `metal_batch_runtime.metal`'s `text_equal` and its sibling `string_equal` compare a word at a time
+    (`bytes_equal`, aligned words of the block and of the strings' bytes);
+  - format 16's `match_groups` tests 64 code bytes a step by nibble tables (`ByteSet`, simdjson's lookups in
+    `rerail-simd8`), not a table lookup a byte.
+- **Left**: the device's `string_contains` is a naive substring search, a byte a step at every offset. A text
+  search is the chunked matcher's (string matching is chunked); it goes there, not to a word loop here.
+
 
 ### Q60. (Q53 at 8e2b232ad) On the device, a group of 64 nodes' roots run serially in one thread, and a parent is a search (oscar's to take)
 
@@ -1829,8 +1841,11 @@ too, not as walks from every start.
 
 - **Done** (0365 §8): the device evaluates the anchors (`label_leaves`, `label_formula`) for the label passes past the
   recursive groups, the wave's listed roots and the root records. Then (§8, §9) text tests read the walks' rows, and
-  0036's roots formula passes are device formulas (`Pass::Formula`); the count anchors are measured. Left: targets
-  passes as device formulas, and a fused pack's text (0365, Not yet).
+  0036's roots formula passes are device formulas (`Pass::Formula`); the count anchors are measured. Then (§10)
+  targets passes are their images on the device, and a fused pack's anchor keeps its members' text tests.
+- **Left**: anchors in the recursive groups' rounds (0365 §5 keeps them out). A design is with the user: each group
+  member's anchor with the group's own labels read as every node, a superset whatever they settle to, evaluated once
+  before the group's rounds.
 
 ### Q135. (Q24 on sync-integration-hub-tape) The wave's labelling: about 80 s of 93 s process CPU outside its stages
 
@@ -1838,6 +1853,17 @@ Found 2026-11-17 (measuring 0365, `anchored_walks_find_the_unanchored_roots`, 31
 debug build): `labels.wave.labelled` took 93 s process CPU without anchors and 85 s with, while its stages (formulas
 8.9 s, fallback 1.8 s, packed walks 1.8 s) and the sweeps (about 3 s thread CPU) account for a small part. Find
 where the rest goes (a sample of the run), before reading the wave's CPU totals as the walks'.
+
+- **Found** (2026-11-17, a 15 s sample of the CPU run on the M1 Max, 25 s in): 90% of the busy samples are the facts'
+  rows (`fact_rows`: the facts that are not node sets, W's matcher at every node of each fact's domain, a tape a
+  rayon task). `labels.facts` timed only the calling thread, so the pool's work was in no stage. It is
+  `fact_rows.tape` now, each tape on the thread that runs it: 81.8 s CPU of the labelling's 100.5 s process CPU
+  without anchors, 83.8 of 102.9 with (300 calls: 30 waves on 10 tapes; the same run, M1 Max, debug build).
+- Inside it, 55% is `tokens::stored_gaps`: the gap test (`matcher/gap.rs`, t31) rebuilds a node's parent's children,
+  fields and automaton gaps for every node it tests, so a parent of n children costs n² (a module's statements
+  each walk all of them). Fixing it needs each parent's gaps once per file. t31 says "nothing is cached or
+  indexed", so this waits for the user: per-file gaps through `file_index` (as the suppression indexes are kept),
+  or the gaps as a derived fact.
 
 ### Q136. (Q25 on sync-integration-hub-tape) The label pipelines compile cold for 110 s
 

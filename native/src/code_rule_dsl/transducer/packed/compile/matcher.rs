@@ -193,10 +193,13 @@ pub fn fact_rows<'a>(facts: impl Iterator<Item = &'a Arc<crate::code_rule_dsl::m
     }
     crate::code_rule_dsl::prof::count("labels.facts.distinct", distinct.len());
     crate::code_rule_dsl::prof::count("labels.facts.anywhere", distinct.iter().filter(|fact| fact.kinds.is_none()).count());
+    // `labels.facts` is the caller's thread CPU; each tape's rows, on whichever thread takes it, are `fact_rows.tape`
+    // (the pool's work, which the caller's does not hold: Q135). Not a `labels.` stage: those take process CPU too,
+    // which tapes in parallel would count again.
     crate::code_rule_dsl::prof::time("labels.facts", || {
         tapes
             .par_iter()
-            .flat_map_iter(|tape| {
+            .flat_map_iter(|tape| crate::code_rule_dsl::prof::time("fact_rows.tape", || {
                 let file = ast_grep_core::AstGrep::doc(tape.clone());
                 let _scopes = crate::code_rule_dsl::matcher::FileScopeSlot::install(Vec::new(), None, !tape.syntax_error_ranges().is_empty());
                 let source = Arc::as_ptr(tape.document_source()) as usize;
@@ -209,7 +212,7 @@ pub fn fact_rows<'a>(facts: impl Iterator<Item = &'a Arc<crate::code_rule_dsl::m
                         ((Arc::as_ptr(fact) as usize, source), fact.found(&file, domain(&starts, tape, &[]), &siblings))
                     })
                     .collect::<Vec<_>>()
-            })
+            }))
             .collect()
     })
 }
