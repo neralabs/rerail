@@ -3777,6 +3777,16 @@ impl Source for Viewed {
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
         self.lookup_docs(column, values, None)
     }
+    fn keys_rows(&self, column: usize) -> bool {
+        column == self.own()
+    }
+    /// `lookup_docs`' own column, for one value.
+    fn key_row(&self, column: usize, value: i64) -> Option<usize> {
+        debug_assert_eq!(column, self.own());
+        let b = &*self.batch;
+        let found = if matches!(self.view, View::Loc(_)) { b.loc(value) } else { b.node(value) };
+        found.and_then(|(doc, local)| b.row(self.view, doc, local))
+    }
     /// A field's children by parent and field (`field($a, #f, $t)`, `$a` bound): each child's field read off the
     /// tape as the children are walked, not its row's values found again. By child and field (`field(_, #f, $n)`,
     /// `$n` bound: whether `$n` is its parent's `#f`), the child's own field read off the tape: its one row or

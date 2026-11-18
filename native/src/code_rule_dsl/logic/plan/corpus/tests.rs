@@ -989,6 +989,7 @@ fn a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test() {
             assert!(path.to_string_lossy().contains("rerail-test-stores"), "{}", path.display());
             let count = |sql: &str| -> i64 { rusqlite::Connection::open(&path).unwrap().query_row(sql, [], |r| r.get(0)).unwrap() };
             assert!(count("SELECT count(*) FROM tape_objects") > tapes, "the library's tapes and the test's own");
+            assert_eq!(crate::content_store::holding(&path), (0, 0), "the run left store handles or connections open (handles, connections)");
             (path.parent().unwrap().to_path_buf(), count("SELECT id FROM store_identity"))
         }).unwrap()
     };
@@ -999,7 +1000,7 @@ fn a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test() {
     for dir in [a, b] {
         assert!(!dir.exists(), "{} is removed with its test", dir.display());
         #[cfg(target_vendor = "apple")]
-        assert_eq!(super::test_store::open_under(&dir), 0, "nothing of {} is held open after its test", dir.display());
+        assert_eq!(super::test_store::held_under(&dir), Vec::<String>::new(), "nothing of {} is held open after its test", dir.display());
     }
 }
 
@@ -1531,6 +1532,8 @@ fn every_switch_lowering_reads_is_classified() {
         "RERAIL_WARM",
         "RERAIL_MEMO_PROGRAM_DUMP",
         "RERAIL_STATS_KEEP_TRACE",
+        // A measurement aid: writes each program made from another to a trace directory (`version_trace`).
+        "RERAIL_VERSION_TRACE",
         "RERAIL_SESSION",
         // The library's directory: its files' paths and digests are in the texts' digest (the module graph).
         "RERAIL_RR_LIB",

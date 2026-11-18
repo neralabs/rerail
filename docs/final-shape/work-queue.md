@@ -1101,9 +1101,29 @@ pass.
     themselves, so the totals cannot show the 0.3 s; the per-stratum costs and equal statistics are the evidence.
     Outputs equal as sets (660), the warm run writes nothing. `retain`'s gated-reuse test now expects the views'
     rules (`docof`, `kind`) left in a reused program, as 6fe55cb12 made them; it had failed since then.
-  - Not done: hogql (3.5 M rows of `kind`) is not in this worktree. Lookups on the flat rows build their own
-    orders, where `node`'s source answers by node and by kind already; rows are one per source row, so the
-    source's row numbers are the view's, and its lookups could serve the view's probes.
+  - **hogql, and probes by a view's key** (2026-11-17, PostHog's `posthog/hogql`, 437 files, the same 317 rules,
+    cold). The run is chunked: `kind` is held once a chunk (119 views of 60–105 k rows). Measured first, with every
+    lazy order named (`RERAIL_SPIKE_INDEX` now prints the relation and whether it is a view): the flat views built
+    426 orders, 0.68 s (`kind`'s 0.60 s), on node and kind together (`[0, 1]`), node alone and kind alone. A
+    probe by node needs no order: each node is one row, and the view's rows are its source's, row for row. Node ids
+    are not in row order within a document (definition ids, decision 0083), so the rows themselves do not serve;
+    the source's own index does. `Source::keys_rows`/`key_row` (new, default none) give a node's row without
+    allocating (`syntax::Viewed`: the own column, through the batch's document and `local_of`, as `lookup` does).
+    `hold_view` keys the view by it (`InRel::keyed`, `Keyed`); where a source has no key, a column checked on the
+    rows to be one in ascending runs that do not overlap (`Keyed::of`) serves by two binary searches. A probe whose
+    columns hold the key (`[0]`, `[0, 1]`) is that key's row (`Csr::keyed`), candidates `Range(r, r + 1)`; a probe
+    by kind alone keeps its counted order, whose positions sampling and sizing read. Test:
+    `a_views_probes_by_its_key_are_its_copys` (both keys; probes, sizes and samples equal to a copy's orders).
+  - Then on hogql (m3, two rounds a side, load 9–25): every `kind` view keyed; orders on views 162 and 135, 0.18 s
+    and 0.19 s (before: 426, 0.68 s), those on `kind` its kind-only ones (0.12 s); `kind` 0.06–0.07 s against the
+    copy's 0.75–0.78 s. Strata CPU 115.6 and 118.6 s against the copies' 130.9 and 138.8 s, planned work 1.296 and
+    1.295 G against 1.402 and 1.318 G; user 178 and 180 s against 193 and 200 s. The copy runs differ by 8 s
+    between themselves and their per-stratum moves go both ways (plans vary run to run), so the 12–23 s is the
+    direction, not a measured saving; what the change removes is the copy (0.7 s) and the views' orders (0.5 s).
+    Outputs equal as sets (660 relations), the warm run writes nothing. `scope_node`'s views are not keyed (no
+    column of theirs is a key): their 19–24 orders remain.
+  - `retain`'s gated-reuse test removed the first kept relation by hash order and expected every stratum to run;
+    a view's relation is not kept, so removing it changed nothing, now and then. It removes a non-view now.
 
 ### Q38. (Q32 on Native-and-GPU-strata at e75b66095) A kind-set axis's tape code set counted ERROR nodes as members
 
@@ -1239,6 +1259,34 @@ pass.
   rows (was 8.2×), 84% within 2×. Still open: `qn`'s `walk` by `(x, s)` (about 170× under), the `ask_*` stratum's
   deltas of 1, and the kind memberships after a derived or `nearest` relation (`in_first_iter`, `tp_list`), which
   the tree's counts do not see.
+- **Measured again** (2026-11-17, this branch after the hub's 52a579d59, hogql cold, profiled, 317 rules, m3 at load
+  18-69; `placement.tsv`'s planned work against work done, strata with 100 K units of work or more):
+  - The named strata now: `qn` 0.24 M planned against 0.43 M done (within 2×, done); `qualname` 0.5-1.2 M against
+    4.2 M (3.5-8× under); `exports/resolve_export` 0.5-0.6 M against 0.15 M (3.6× over); the `ask_*` stratum
+    1,385 against 120,569 (87× under, 0.06 s of CPU).
+  - The largest misses had moved to overestimates: 18 G planned against 1.3 G done over the run, most of it three
+    recursive strata. `negate/number` 12.9 G against 0.18 M, `p188_parsed_within` 2.6 G against 0.69 M, `up_fn_of`
+    1.2-62 G against 2.1 M (it varies with the chunk that plans it). Placement prices `up_fn_of` at 2,337 s of CPU
+    for 0.31 s run, and finds the GPU cheaper in every run of it.
+- **Fixed** (2026-11-17): a lookup of a relation of the component being solved, whose columns no statistics have
+  measured yet, was priced as if each column held one value: the whole relation a key (`ndv_or_1`). In
+  `p188_parsed_within`'s self-join by `$p` that was 4,877 rows a binding, and none were made. Such a column now takes
+  PostgreSQL's prior, 200 distinct values at most the relation's rows (`Model::ndv_or_default`). Same build, two
+  runs each, alternated: rows-weighted miss 2.44× and 2.41× before, 2.12× and 2.20× after; work within 2× 68% and
+  66% before, 75% and 73% after; total work unchanged (1.41-1.44 G before, 1.35-1.40 G after). `negate/number`
+  0.75 M planned (was 12.9 G), `p188_parsed_within` 17-53 M (was 2.6-3.8 G). Test:
+  `plan::tests::a_lookup_of_a_relation_being_solved_is_priced_by_the_distinct_prior`.
+  - Tried and dropped: the same prior for every unmeasured column. What is kept or inlined (`keeps`) reads these
+    estimates; it inlined kept `pre_` relations, and `rr_ctx282` went from 0.8 M units to 39 M.
+  - Tried and dropped: pricing a probe's steps before its delta once a round, not once a row gained
+    (`Shape::close_rounds`). Right in principle, but every recursive probe on hogql has its delta first; nothing
+    changed.
+- **Open, `up_fn_of`**: its probe `up_fn_of($s, $f), run_scope($n, $s, $k)` is priced at `run_scope`'s mean
+  postings a scope (698), where most of the delta's `$s` are no scope at all: it makes nothing (its line counts 0
+  rows). The containment share (`hit`, decision 0299) would scale it, but it needs the binding's distinct values,
+  which a relation still being solved has none of. Next: give a probe's delta its live distinct counts (the
+  relation's sketches, as a copy's live statistics are, Q37) when the probe is planned after the seeds ran.
+- **Open, `qualname`** (3.5-8× under) and **`resolve_export`** (3.6× over), the `ask_*` stratum's deltas of 1.
 - **Done when**: these strata's planned work is within 2× of their work.
 
 ### Q48. (Q46 at 1adc44eff) Under load, a Metal run loses findings (Native-and-GPU-strata's) — done
@@ -2076,4 +2124,100 @@ differs (both sides `Ok`). The merged tree and oscar's own tip give the same cou
 Oscar's record (0334) has it passing, on the M3. Like Q123, an M1 Max difference. The test is ignored (`Q135`) until fixed.
 
 - **Done when**: the test passes on the M1 Max and the M3, and the ignore is gone.
+
+
+### Q136. (Q68 on cost-classifier) A join's morsel making a lazy order on the pool waited for itself (a hang)
+
+- **Found** (2026-11-17, Q37's hogql runs on the m3, load 25–43): four of about twenty cold runs hung, at 1–4 CPU-minutes
+  and then none, until killed; any mode, intermittently. A sample of a hung engine: a join's morsel
+  (`run_join_in_each`'s `morsels`) probed a derived input whose lazy order (decision 0186, `Csr::runs`, a `OnceLock`)
+  it was the first to need; the build sorted on the pool (`sort_unstable_par`, decision 0294); the wait for the
+  sort's parts ran another queued morsel of the same join on the same thread (`threads::scope`, rayon's
+  `in_place_scope`), which probed the same order and waited for the `OnceLock` its own thread was filling. Never
+  returns.
+- **Fix**: a build other jobs may wait for runs its sorts and merges on its own thread (`runs::inline`, a
+  thread-local depth the pool's sort and merge read: `on_pool`); `Csr::runs` builds its order so. Other jobs
+  waiting for it block on the `OnceLock` (not the pool), so the parts had no free thread to gain from there. Test:
+  `a_build_others_wait_for_sorts_on_its_own_thread` (nested, a panic, the result). The other lazy builds under a
+  `OnceLock` sort on their thread already (`Derived::order`, `sorted`). After: seven hogql runs (six cold, one warm), none hung.
+- **The hub's fix of the same hang** (ba519e73a, found on `public_api_triples` and `internal_dead_code`): the order
+  made outside the lock and published by `set`, a probe that finds none making its own. It holds the same property
+  (no probe waits on its own thread), but each probe racing the first builds the order again, one a thread, and a
+  probe run inside the sort's wait builds another: the same sort several times over. Superseded at this branch's
+  merge of the hub (52a579d59) by the build under the lock on its own thread, which does each order once.
+- **Seen beside it**: the measurement script's watchdog killed its shell, not the engine: four hung engines ran on
+  for hours on the m3. Scripts kill the engine by name now.
+
+### Q82. The learned correction of the join estimates (decision 0354)
+
+- **Asked** (the user, 2026-11-17): roll out the classifier; the extra planning work now costs more than the joins
+  it improves. Three steps: shadow, then in place of exact pair statistics at a slow flag, then every round's choice.
+- **Step 1 done** (decision 0354): samples per joined step in the cost store, the model trained and compared on the
+  newest fifth. hogql: weighted miss ×1.65 to ×1.42, median ×1.02 to ×1.04 (the gate wants no worse a median).
+- **Across corpora done** (0354, second part): trained on corpus0 and asked on hogql ×1.93 to ×1.83, the other way
+  ×1.81 to ×1.64; median worse (×1.05, ×1.08). Membership tests and the orders not kept are where it is weakest.
+- **Labels from runs, runs the model plans** (the user: "the training data should be from model runs, not from the
+  planner"): the target stays a ratio to the statistics' estimate (the fanout itself lost: ×2.18 against ×1.87);
+  `RERAIL_JOIN_MODEL=1` trains at start and prices every searched line's candidates, exploring a tenth. hogql:
+  1.412 G rows of work to 1.368 G; same findings on corpus0. Replaces the offline generator.
+- **The model's planning on the GPU** (the user: its planning must cost much less than it saves): prediction a
+  round at a time on the device, a stratum's first plans in one round, training's buckets on the device, features
+  for candidates within 16× only, exploration under 1 M rows. Overhead about 6 s to 1.3–2.2 s CPU on hogql; work
+  the planner's within the spread. Left on the host: the candidates' plan records (features).
+- **Features from the search, the prediction armed** (the user): features 0.67–0.94 s to 0.07–0.13 s (the search's
+  own steps); the device's command committed ahead, waiting on an event, so a round's rows start it. Prediction
+  about 80 µs a round, on the host or the device. Work and findings as the planner's.
+- **Step 2, a stratum's plans in one round** (the user): exact pair statistics not counted under the model
+  (3.2–4.4 s); every line planned in the round before its loop; whole replans a round a chunk; device from 6 steps.
+  Planning 5.2–5.3 s against the planner's 8.2–9.2 s; work −4.8% in two pairs. "Doubled searches" was chunking;
+  "probe re-planning" was an index build.
+- **Open**: a CPU-bound unprofiled run makes no plan records, so it stores no samples; rounds merged across strata
+  running at once (one a stratum is the floor now); more pairs for the work difference.
+- **Next**: model-planned runs over more corpora, the model retrained between; filters (×1.58 to ×1.70) and
+  the median; the first step's samples (delta and seed sizes); one sample per line and place with counts. Then the
+  model on by default where it wins, and step 2.
+- **Found along the way**: `facts_only::every_table_is_facts_or_listed` and `every_kept_map_is_state_or_listed` fail
+  on HEAD, on tables and maps the hub's merges brought (`frame_segments`, `object_segments`, `OWN_TEXTS`, setfix
+  rows' `OPEN`, `CARRY`, `DECODED`, the record's `KINDS` and `LOG`): each to be listed, with a reason, by the branch
+  that made it, or made facts.
+
+### Q80. (done) The slow-join net tripped again and again, and changed nothing (decision 0352)
+
+- **Asked** (the user, 2026-11-17): "we had designed and implemented a replanning for strata whose execution time
+  exceeds their expected runtime. What happened to that? The ultra-wrong plans should trigger a more accurate
+  replanning. Find and resurrect that".
+- **Found**: the replanning is decision 0203's slow flag (with 0206's handoff and 0271's bounds). It was on and
+  firing: 138 flags on hogql. But the flag re-keyed its own line (the exact-statistics epoch is in the plan key),
+  kept no measure of the slow order, and where the exact statistics planned the same order it ran on unchecked.
+  `pre_546` tripped in 32 chunks, each time priced at about 400 for 102 K rows of work. (Decision 0334, on
+  `sync-integration-hub-tape`, replans the packed batch's over-budget tasks; another mechanism, not merged here.)
+- **Done**: decision 0352. 138 flags to 60, `pre_540`-`pre_549` 26 M units of work to 18 M.
+
+### Q137. (done; Q69 on cost-classifier) A test's store stays open after its test (`a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test`)
+
+- **Found** (2026-11-17, at this branch's merge of the hub at 52a579d59): fails on both sides before the merge, on
+  the m3. After both probe runs end and their stores are dropped, the process still holds four descriptors of one
+  probe's store: `store.sqlite`, `-wal`, `-shm` and one more (the assertion names them now, `test_store::held_under`).
+- **Known**: at each probe run's end the store's handles and registered thread connections are none
+  (`content_store::holding` is `(0, 0)`, asserted in the probe now), and the run joins its collection
+  (`Collecting::join`). So the holder is a connection opened outside `ThreadConnection`'s registry, or one opened
+  after the run returned (a job behind the run: upkeep, the image store, a writer of another store's wave).
+- **Next**: list the raw `Connection::open` calls on the run's path (outside `content_store::connection`) and the
+  services that outlive a run; the one holding it closes with the run or registers its connection.
+- **Done when**: the test passes, the store's directory gone and nothing of it held.
+- **Done** (2026-11-17): the holder was upkeep's frames job (0303, `content_store::upkeep::Frames`), registered for
+  the process once a store, whose read connection for its poll (`due`) stayed on the deleted file until its next
+  poll; and each test's store added a job the process kept for its life. `ContentStore::forget` (a test store's
+  drop) now takes the file's jobs out (`rerail_accel::upkeep::forget_file`, a step under way waited for), which
+  closes their connections. The test passes three runs in a row on the m3; test: `a_forgotten_files_jobs_are_taken_out`.
+
+### Q138. `branded_constants_have_their_postings_counted` red on the hub: no field or kind constant is counted
+
+Found 2026-11-17, at the hub's merge of cost-classifier (0e110cd71). `Own::constants_of` gives no constants for
+`left_name(l) :- field(l, "left", t), kind(t, "identifier").` (`(0, 0)`, wanted `(1, 1)`). It fails the same at the
+hub's f40641e9c, before the merge; the test came with cost-classifier's Q36 (7b168853a, at the hub since ec3a74a87).
+To find: which later merge made `field`/`kind` no longer inputs here (or their constants not `Branded`), and whether
+Q36's pricing (`field($l, "left", $t)` priced at one row a line) is lost again. Ignored (`Q138`) until then.
+
+- **Done when**: the test passes and the ignore is gone.
 
