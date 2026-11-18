@@ -138,7 +138,7 @@ thread_local! {
 const W_TEXT_SUFFIXES: [&str; 9] = ["md", "markdown", "rst", "txt", "toml", "cfg", "ini", "yaml", "yml"];
 
 /// The `.scope text` setting of a converted program: W's text documents (`W_TEXT_SUFFIXES`, in any case), read
-/// as text only by the corpus runner (`front::Program::text_globs`).
+/// as text only by the corpus runner (the program's `text_globs`).
 fn w_text_scope() -> String {
     let any_case = |s: &str| s.chars().map(|c| format!("[{}{}]", c.to_ascii_lowercase(), c.to_ascii_uppercase())).collect::<String>();
     let globs = W_TEXT_SUFFIXES.iter().map(|s| format!("\"**/*.{}\"", any_case(s))).collect::<Vec<_>>();
@@ -352,19 +352,25 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
     clauses.sort_by_key(|(c, _)| order.iter().position(|o| o == c));
     // The emitter's text, in `.rr`: every program the converter gives is Soufflé form (decision 0043).
     let text = crate::code_rule_dsl::logic::rr::translate(&e.program(&["violation"])).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
-    let mut prog = crate::code_rule_dsl::logic::rr::parse(&text).unwrap_or_else(|e| panic!("{}: {e:?}", path.display()));
+    let read = crate::code_rule_dsl::logic::rr::parse_version(&text).unwrap_or_else(|e| panic!("{}: {e:?}", path.display()));
+    let mut settings = crate::code_rule_dsl::logic::program_image::fields::ProgramFields::settings(&*read);
     // W reads its documentation and configuration files as text: the `.scope text` setting (`w_text_scope`).
-    prog.settings.push(("scope".into(), w_text_scope()));
+    settings.push(("scope".into(), w_text_scope()));
     // The `.references` setting: the graph's configuration over the run's scope.
     if let Some(mut graph) = graphs.into_iter().next() {
         graph.insert("scope".into(), serde_json::json!({"include": include, "exclude": exclude}));
-        prog.settings.push(("references".into(), serde_json::Value::Object(graph).to_string()));
+        settings.push(("references".into(), serde_json::Value::Object(graph).to_string()));
     }
+    let prog = {
+        let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&read);
+        b.set_field(crate::code_rule_dsl::logic::program_facts::Field::Settings(&settings));
+        b.finish().unwrap_or_else(|e| panic!("{}: {e}", path.display())).0
+    };
     // The authored file's clauses over the converter's, with only what `violation` reaches.
     let file = authored.map(|dir| dir.join(format!("{id}.rr"))).filter(|f| f.exists());
     let prog = if let Some(file) = file {
-        let authored = crate::code_rule_dsl::logic::rr::parse_file(&file).map_err(|e| Failure::Authored(format!("{}: {e:?}", file.display())))?;
-        let (prog, given) = overlay(prog, authored, &id, &order, &|c| adjust.keep.as_ref().is_none_or(|keep| keep(c))).map_err(|e| Failure::Authored(format!("{}: {e}", file.display())))?;
+        let authored = crate::code_rule_dsl::logic::rr::parse_file_version(&file).map_err(|e| Failure::Authored(format!("{}: {e:?}", file.display())))?;
+        let (prog, given) = overlay(&prog, &authored, &id, &order, &|c| adjust.keep.as_ref().is_none_or(|keep| keep(c))).map_err(|e| Failure::Authored(format!("{}: {e}", file.display())))?;
         for (clause, result) in &mut clauses {
             if given.contains(clause) {
                 *result = Ok(Origin::Authored);
@@ -372,9 +378,9 @@ fn convert_over(path: &Path, adjust: &Adjust, authored: Option<&Path>) -> Result
         }
         prog
     } else {
-        reachable(prog)
+        reachable(&prog).map_err(|e| Failure::Authored(format!("{id}: {e}")))?
     };
-    let program = crate::code_rule_dsl::logic::rr::print(&prog).map_err(|e| Failure::Authored(format!("{id}: the merged program does not print: {e:?}")))?;
+    let program = crate::code_rule_dsl::logic::rr::print_version(&prog).map_err(|e| Failure::Authored(format!("{id}: the merged program does not print: {e:?}")))?;
     Ok(Converted { program, clauses, approx: e.approx.clone(), configured, when })
 }
 
@@ -450,7 +456,7 @@ fn hand_written_once(check: &str, given: bool) -> Option<String> {
         return None;
     }
     // A rule that does not lower falls back to the converted JSON; say why, so a broken rule is not silent.
-    let mut program = match crate::code_rule_dsl::logic::rr::parse_file(&path) {
+    let mut program = match crate::code_rule_dsl::logic::rr::parse_file_version(&path) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("{check}: the hand-written rule does not lower: {e}");
@@ -459,9 +465,9 @@ fn hand_written_once(check: &str, given: bool) -> Option<String> {
     };
     // `given`: the files are a test's own (`scan_files`, a recorded event's), with no discovery.
     if given {
-        crate::code_rule_dsl::logic::rr::files_given(&mut program);
+        program = crate::code_rule_dsl::logic::rr::files_given(&program).unwrap_or_else(|e| panic!("{check}: {e}"));
     }
-    let text = crate::code_rule_dsl::logic::rr::print(&program).unwrap_or_else(|e| panic!("{check}: {e}"));
+    let text = crate::code_rule_dsl::logic::rr::print_version(&program).unwrap_or_else(|e| panic!("{check}: {e}"));
     // `RERAIL_REPLAY_DUMP=<dir>`: the program as replayed, `<dir>/<check>.rr`.
     if let Some(dir) = std::env::var_os("RERAIL_REPLAY_DUMP") {
         std::fs::write(PathBuf::from(dir).join(format!("{check}.rr")), &text).unwrap();
@@ -490,7 +496,7 @@ fn pack_files(run: &[(String, Converted)]) -> BTreeMap<String, String> {
     let mut approx = BTreeMap::<String, usize>::new();
     let mut per_rule = Vec::new();
     for (id, c) in run {
-        crate::code_rule_dsl::logic::rr::parse(&c.program).unwrap_or_else(|e| panic!("{id}: {e:?}\n{}", c.program));
+        crate::code_rule_dsl::logic::rr::parse_version(&c.program).unwrap_or_else(|e| panic!("{id}: {e:?}\n{}", c.program));
         files.insert(format!("{id}.rr"), c.program.clone());
         let ok = c.clauses.iter().filter(|(_, r)| r.is_ok()).count();
         let by_hand = c.clauses.iter().filter(|(_, r)| *r == Ok(Origin::Authored)).count();
@@ -593,8 +599,8 @@ fn the_pack_holds_the_converters_run_over_every_authored_file() {
         }
         // The clauses the file's `violation`s name, each the policy's and authored.
         let file = authored().join(format!("{id}.rr"));
-        let program = crate::code_rule_dsl::logic::rr::parse_file(&file).unwrap_or_else(|e| panic!("{}: {e:?}", file.display()));
-        let named: BTreeSet<&str> = program.rules.iter().filter_map(violation_of).map(|(_, clause)| clause).collect();
+        let program = crate::code_rule_dsl::logic::rr::parse_file_version(&file).unwrap_or_else(|e| panic!("{}: {e:?}", file.display()));
+        let named: BTreeSet<&str> = program.rules().filter_map(|r| violation_of(&program, r)).map(|(_, clause)| clause).collect();
         if named.is_empty() {
             errors.push(format!("{}: no violation", file.display()));
         }
@@ -1543,25 +1549,27 @@ fn converted_programs_hold_only_what_violation_reaches() {
     for path in rule_files() {
         let c = convert_over(&path, &Adjust::default(), None).unwrap();
         failed += c.clauses.iter().filter(|(_, r)| r.is_err()).count();
-        let prog = crate::code_rule_dsl::logic::rr::parse(&c.program).unwrap();
+        let prog = crate::code_rule_dsl::logic::rr::parse_version(&c.program).unwrap();
+        let head = |r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>| prog.rel_name(r.head().rel()).to_owned();
         let (mut reached, mut todo) = (BTreeSet::new(), vec!["violation".to_owned()]);
         while let Some(rel) = todo.pop() {
             if reached.insert(rel.to_string()) {
-                todo.extend(prog.rules.iter().filter(|r| r.head.rel == rel).flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string())));
+                todo.extend(prog.rules().filter(|r| head(*r) == rel).flat_map(|r| r.reads().map(|a| prog.rel_name(a.rel()).to_owned()).collect::<Vec<_>>()));
             }
         }
         let id = path.display();
-        for r in &prog.rules {
-            assert!(reached.contains(r.head.rel.as_str()), "{id}: {} is not reached", r.head.rel);
+        for r in prog.rules() {
+            assert!(reached.contains(&head(r)), "{id}: {} is not reached", head(r));
         }
-        for rel in prog.decls.keys().map(|r| r.as_str()).chain(prog.inputs.iter().map(String::as_str)) {
-            assert!(reached.contains(rel), "{id}: {rel} is declared and not reached");
+        for rel in prog.declared_names().into_iter().chain(prog.input_names()) {
+            assert!(reached.contains(&rel), "{id}: {rel} is declared and not reached");
         }
-        let sets: BTreeSet<String> = reached.iter().filter_map(|r| crate::code_rule_dsl::logic::front::axis(r).map(|(set, _)| set)).map(str::to_owned).chain(prog.rules.iter().flat_map(|r| &r.body).filter_map(|l| match l {
-            crate::code_rule_dsl::logic::front::Literal::Nearest { kindset, .. } => Some(kindset.clone()),
+        let nearest = prog.rules().flat_map(|r| r.body()).filter_map(|l| match l.view() {
+            crate::code_rule_dsl::logic::program_image::Lit::Nearest { kindset, .. } => Some(prog.text(kindset).to_owned()),
             _ => None,
-        })).collect();
-        for set in prog.kindsets.keys() {
+        });
+        let sets: BTreeSet<String> = reached.iter().filter_map(|r| crate::code_rule_dsl::logic::front::axis(r).map(|(set, _)| set)).map(str::to_owned).chain(nearest).collect();
+        for set in crate::code_rule_dsl::logic::program_image::fields::ProgramFields::kindsets(&*prog).keys() {
             assert!(sets.contains(set), "{id}: kind set {set} is not read");
         }
     }
@@ -1622,7 +1630,7 @@ fn authored_clauses_replace_the_converters() {
 fn overlay_errors_are_named() {
     let rule = rule_file(TARGET).unwrap();
     let c = convert_over(&rule, &Adjust::default(), None).unwrap();
-    let converted = crate::code_rule_dsl::logic::rr::parse(&c.program).unwrap();
+    let converted = crate::code_rule_dsl::logic::rr::parse_version(&c.program).unwrap();
     let clauses: Vec<String> = c.clauses.iter().map(|(c, _)| c.clone()).collect();
     let head = ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.decl doc(d: number, path: symbol, module: symbol)\n.decl in_scope(d: number)\n.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)\n";
     let violation = |rule: &str, clause: &str, body: &str| format!("violation({}, {}, \"X\", p, 1) :- {body}, node(d, n, _, _, _), doc(d, p, _).\n", quote(rule), quote(clause));
@@ -1639,8 +1647,8 @@ fn overlay_errors_are_named() {
         (format!("{head}.decl report_when_gt(k: number)\nreport_when_gt(3).\n{}", ok("report_when_gt(_)")), "read it only"),
     ];
     for (text, error) in cases {
-        let authored = crate::code_rule_dsl::logic::rr::parse(&text).unwrap_or_else(|e| panic!("{e:?}\n{text}"));
-        match overlay(converted.clone(), authored, TARGET_ID, &clauses, &|_| true) {
+        let authored = crate::code_rule_dsl::logic::rr::parse_version(&text).unwrap_or_else(|e| panic!("{e:?}\n{text}"));
+        match overlay(&converted, &authored, TARGET_ID, &clauses, &|_| true) {
             Ok(_) => panic!("no error, wanted {error:?}:\n{text}"),
             Err(e) => assert!(e.contains(error), "{e}, wanted {error:?}:\n{text}"),
         }
@@ -2077,13 +2085,18 @@ fn library_relations_through_an_overlay_report() {
     };
     let includes = "#include \"python/ast.rr\"\n#include \"python/calls.rr\"\n";
     std::fs::write(dir.join("closure.rr"), includes).unwrap();
-    let closure = crate::code_rule_dsl::logic::rr::parse_file(&dir.join("closure.rr"));
+    let closure = crate::code_rule_dsl::logic::rr::parse_file_version(&dir.join("closure.rr"));
     let closure = match closure {
         Ok(p) => p,
         Err(e) => panic!("the closure does not lower: {e}"),
     };
     let rule = rule_file(TARGET).unwrap();
-    for (i, (rel, cols)) in closure.decls.iter().filter(|(rel, _)| !crate::code_rule_dsl::logic::front::is_axis(rel) && !closure.inputs.iter().any(|i| i == rel.as_str())).enumerate() {
+    let closure_inputs = closure.input_names();
+    let decls: Vec<(String, Vec<(String, String)>)> = closure.declared_names().into_iter().map(|r| {
+        let cols = closure.columns_of(&r).unwrap_or_default();
+        (r, cols)
+    }).collect();
+    for (i, (rel, cols)) in decls.iter().filter(|(rel, _)| !crate::code_rule_dsl::logic::front::is_axis(rel) && !closure_inputs.iter().any(|i| i == rel)).enumerate() {
         let args = vec!["_"; cols.len()].join(", ");
         let authored = format!(
             "{includes}.decl in_scope(d: number)\n\

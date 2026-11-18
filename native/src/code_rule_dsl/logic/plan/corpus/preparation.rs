@@ -10,7 +10,7 @@ use std::sync::Arc;
 mod merge;
 pub(super) mod combining;
 pub(super) mod hide;
-pub(crate) mod on_request;
+pub mod on_request;
 pub(super) mod whole;
 pub(crate) mod lowering_tail;
 pub mod demand;

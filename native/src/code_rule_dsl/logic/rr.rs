@@ -1439,17 +1439,28 @@ pub fn metadata(program: &(impl super::program_image::fields::ProgramFields + ?S
 
 /// A lowered program run over files a caller gives (a test's), not found by walking a repository: its
 /// `.scope` filter on findings is taken out, as `.scope given` leaves it out when lowering.
-pub fn files_given(program: &mut Program) {
-    let filter = ["rr_scope_drop", "rr_scope_in", "rr_report_in"];
-    program.rules.retain(|r| !filter.contains(&r.head.rel.as_str()));
-    for r in &mut program.rules {
-        r.body.retain(|l| !l.atom().is_some_and(|a| filter.contains(&a.rel.as_str())));
+pub fn files_given(v: &std::sync::Arc<super::program_image::Version>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
+    use super::program_facts::Field;
+    use super::program_image::{Builder, LitRef, Rewrite, fields::ProgramFields};
+    const FILTER: [&str; 3] = ["rr_scope_drop", "rr_scope_in", "rr_report_in"];
+    struct Unfiltered<'a>(&'a super::program_image::Version);
+    impl Rewrite for Unfiltered<'_> {
+        fn keep(&mut self, l: LitRef<'_>) -> bool {
+            !l.atom().is_some_and(|a| FILTER.contains(&self.0.rel_name(a.rel())))
+        }
     }
-    filter.iter().for_each(|f| {
-        program.decls.remove(*f);
-    });
-    program.settings.push(("scope".to_owned(), "given".to_owned()));
-    program.doc_scopes = None;
+    let mut b = Builder::derive(v);
+    for r in v.rules().filter(|r| !FILTER.contains(&v.rel_name(r.head().rel()))) {
+        b.rewrite(v, r, &mut Unfiltered(v)).finish().map_err(Error::Syntax)?;
+    }
+    for f in FILTER.iter().filter(|f| v.declares(f)) {
+        b.undeclare(f);
+    }
+    let mut settings = ProgramFields::settings(&**v);
+    settings.push(("scope".to_owned(), "given".to_owned()));
+    b.set_field(Field::Settings(&settings));
+    b.set_field(Field::DocScopes(None));
+    Ok(b.finish().map_err(Error::Syntax)?.0)
 }
 
 /// A program's `.rr` file, with what it includes.

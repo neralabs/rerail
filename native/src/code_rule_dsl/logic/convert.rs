@@ -69,7 +69,11 @@
 //!   reach, is printed with `rr::print`.
 
 #[cfg(test)]
-use super::front::{self, Literal, Program, Term};
+use super::front::{self, Literal, Term};
+#[cfg(test)]
+use super::program_image::{RuleRef, Version};
+#[cfg(test)]
+use std::sync::Arc;
 use crate::code_rule_dsl::language::{GrammarDialect, KindCatalog};
 use crate::code_rule_dsl::matcher::{AstMatcher, Axis, Semantic, StopBy};
 use ast_grep_core::matcher::{Pattern, PatternNode};
@@ -877,33 +881,46 @@ const KEYWORDS: [&str; 35] = [
 /// The strings a path or module condition tests.
 const DOC: [&str; 2] = ["doc(_, $s, _)", "doc(_, _, $s)"];
 
-/// `prog` less what its outputs do not reach: the rules (`front::prune`), then the declarations, inputs, facts and
-/// kind sets no rule left reads or derives.
+/// `v` less what its outputs do not reach: the rules (`preparation::Prune`), then the declarations, inputs, facts,
+/// lattices and kind sets no rule left reads or derives.
 #[cfg(test)]
-pub(in crate::code_rule_dsl) fn reachable(prog: Program) -> Program {
-    let mut prog = front::prune(prog);
-    let mut used: BTreeSet<String> = prog.outputs.iter().cloned().collect();
+pub(in crate::code_rule_dsl) fn reachable(v: &Arc<Version>) -> Result<Arc<Version>, String> {
+    use super::program_facts::Field;
+    use super::program_image::{Builder, fields::ProgramFields, manager::Pipeline};
+    let mut p = Pipeline::new("reachable", v.clone());
+    p.program(&mut super::plan::corpus::preparation::Prune::default());
+    let pruned = p.finish()?.0;
+    let mut used: BTreeSet<String> = pruned.output_names().into_iter().collect();
     let mut sets = BTreeSet::new();
-    for r in &prog.rules {
-        used.insert(r.head.rel.to_string());
-        for l in &r.body {
-            if let Some(a) = l.atom() {
-                used.insert(a.rel.to_string());
-                if let Some((set, _)) = front::axis(&a.rel) {
-                    sets.insert(set.to_owned());
-                }
+    for r in pruned.rules() {
+        used.insert(pruned.rel_name(r.head().rel()).to_owned());
+        for a in r.reads() {
+            let rel = pruned.rel_name(a.rel());
+            used.insert(rel.to_owned());
+            if let Some((set, _)) = front::axis(rel) {
+                sets.insert(set.to_owned());
             }
-            if let Literal::Nearest { kindset, .. } = l {
-                sets.insert(kindset.clone());
+        }
+        for l in r.body() {
+            if let super::program_image::Lit::Nearest { kindset, .. } = l.view() {
+                sets.insert(pruned.text(kindset).to_owned());
             }
         }
     }
-    prog.decls.retain(|r, _| used.contains(r.as_str()));
-    prog.inputs.retain(|r| used.contains(r));
-    prog.facts.retain(|r, _| used.contains(r));
-    prog.lattice.retain(|r, _| used.contains(r));
-    prog.kindsets.retain(|k, _| sets.contains(k));
-    prog
+    let mut b = Builder::on(&pruned);
+    for rel in pruned.declared_names().iter().filter(|r| !used.contains(*r)) {
+        b.undeclare(rel);
+    }
+    let inputs: Vec<String> = pruned.input_names().into_iter().filter(|r| used.contains(r)).collect();
+    b.set_inputs(&inputs);
+    for rel in pruned.fact_names().iter().filter(|r| !used.contains(*r)) {
+        b.drop_facts(rel);
+    }
+    let lattice: BTreeMap<String, front::LatticeDecl> = ProgramFields::lattice(&*pruned).into_iter().filter(|(r, _)| used.contains(r)).collect();
+    b.set_field(Field::Lattice(&lattice));
+    let kindsets: BTreeMap<String, Vec<String>> = ProgramFields::kindsets(&*pruned).into_iter().filter(|(k, _)| sets.contains(k)).collect();
+    b.set_field(Field::Kindsets(&kindsets));
+    Ok(b.finish()?.0)
 }
 
 /// Where a clause's rules come from.
@@ -975,9 +992,14 @@ fn spelled<'a>(types: impl IntoIterator<Item = &'a str>) -> String {
 
 /// The rule and clause a `violation` rule derives, where both are constants.
 #[cfg(test)]
-fn violation_of(r: &front::Rule) -> Option<(&str, &str)> {
-    match r.head.args.as_slice() {
-        [Term::Str(rule), Term::Str(clause), ..] if r.head.rel == "violation" => Some((rule, clause)),
+pub(in crate::code_rule_dsl) fn violation_of<'v>(v: &'v Version, r: RuleRef<'v>) -> Option<(&'v str, &'v str)> {
+    use super::program_image::TermRef;
+    if v.rel_name(r.head().rel()) != "violation" {
+        return None;
+    }
+    let mut args = r.head().args();
+    match (args.next(), args.next()) {
+        (Some(TermRef::Str(rule)), Some(TermRef::Str(clause))) => Some((v.text(rule), v.text(clause))),
         _ => None,
     }
 }
@@ -995,28 +1017,35 @@ fn push_new(list: &mut Vec<String>, items: impl IntoIterator<Item = String>) {
 /// clause ids; `keep`: the clauses this run keeps (the replay's, per event). The merged program, with only what
 /// `violation` reaches, and the clauses the authored program derives (kept or not).
 #[cfg(test)]
-pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, mut authored: Program, rule: &str, clauses: &[String], keep: &dyn Fn(&str) -> bool) -> Result<(Program, BTreeSet<String>), String> {
+pub(in crate::code_rule_dsl) fn overlay(converted: &Arc<Version>, authored: &Arc<Version>, rule: &str, clauses: &[String], keep: &dyn Fn(&str) -> bool) -> Result<(Arc<Version>, BTreeSet<String>), String> {
+    use super::program_facts::Field;
+    use super::program_image::{Builder, fields::ProgramFields, manager::Pipeline};
     let err = |m: String| Err(format!("authored {rule}: {m}"));
     // Both as their authors wrote them: the node attributes answered on request (decision 0174) are the merged
     // program's, made once over all its readers below.
-    super::rr::lower::undo_on_request(&mut converted);
-    super::rr::lower::undo_on_request(&mut authored);
+    let converted = super::rr::lower::undone_on_request(converted)?;
+    let authored = super::rr::lower::undone_on_request(authored)?;
     // The prelude's declarations the file does not use are core.rr's, not the file's (`rr::drop_unread_core`).
-    super::rr::drop_unread_core(&mut authored);
+    let a = super::rr::drop_unread_core(&authored)?;
     // `.global library …` is what reading the file wrote of the libraries it includes (decision 0091), not a
     // directive of its own: it goes with the merged program.
-    let (library, settings): (Vec<_>, Vec<_>) = std::mem::take(&mut authored.settings).into_iter().partition(|(key, _)| key == front::GLOBAL);
-    if !authored.policies.is_empty() || !settings.is_empty() {
+    let (library, settings): (Vec<_>, Vec<_>) = ProgramFields::settings(&*a).into_iter().partition(|(key, _)| key == front::GLOBAL);
+    if !ProgramFields::policies(&*a).is_empty() || !settings.is_empty() {
         return err("`.policy` and setting directives are the policy's, not the overlay's".into());
     }
-    converted.settings.extend(library);
-    if let Some(o) = authored.outputs.iter().find(|o| *o != "violation") {
+    let outputs = a.output_names();
+    if let Some(o) = outputs.iter().find(|o| *o != "violation") {
         return err(format!(".output {o}: the only output is violation"));
     }
-    let axis = |rel: &str| front::axis(rel).is_some_and(|(set, _)| authored.kindsets.contains_key(set));
+    let a_kindsets = ProgramFields::kindsets(&*a);
+    let axis = |rel: &str| front::axis(rel).is_some_and(|(set, _)| a_kindsets.contains_key(set));
     // Declarations: the base relations, `violation` and the scope as the converter declares them, and no name the
     // converter makes.
-    for (name, columns) in &authored.decls {
+    let decls: BTreeMap<String, Vec<(String, String)>> = a.declared_names().into_iter().map(|r| {
+        let cols = a.columns_of(&r).unwrap_or_default();
+        (r, cols)
+    }).collect();
+    for (name, columns) in &decls {
         if axis(name) {
             continue;
         }
@@ -1037,37 +1066,38 @@ pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, mut authored: Pr
             _ => {}
         }
     }
-    if let Some(set) = authored.kindsets.keys().find(|k| converter_name(k) || base_types(k).is_some()) {
+    if let Some(set) = a_kindsets.keys().find(|k| converter_name(k) || base_types(k).is_some()) {
         return err(format!("kind set {set} has a name the converter makes: name it after its clause"));
     }
     // What it derives: never a base relation or the scope; each relation declared, each one read given by
     // something; each `violation` at a constant clause of this rule.
-    let derived: BTreeSet<&str> = authored.rules.iter().map(|r| r.head.rel.as_str()).chain(authored.facts.keys().map(String::as_str)).collect();
+    let a_facts = a.fact_names();
+    let derived: BTreeSet<&str> = a.rules().map(|r| a.rel_name(r.head().rel())).chain(a_facts.iter().map(String::as_str)).collect();
     if let Some(rel) = derived.iter().find(|r| base_types(r).is_some() || GIVEN.contains(*r)) {
         return err(format!("{rel} is derived here, but the corpus or the converter gives it: read it only"));
     }
-    if let Some(rel) = derived.iter().find(|r| !authored.decls.contains_key(**r)) {
+    if let Some(rel) = derived.iter().find(|r| !decls.contains_key(**r)) {
         return err(format!("{rel} is derived and not declared"));
     }
+    let a_inputs = a.input_names();
     let mut authored_clauses = BTreeSet::new();
-    for r in &authored.rules {
+    for r in a.rules() {
         // `match_all("re", sp, m)` and `match_group("re", sp, m, g, gsp)` are built-ins, which the runner makes
         // relations of (`preparation::text::TextRelations`).
-        for a in r.body.iter().filter_map(Literal::atom).filter(|a| !matches!(a.rel.as_str(), "match_all" | "match_group")) {
-            let rel = a.rel.as_str();
-            if !authored.decls.contains_key(rel) {
+        for rel in r.reads().map(|x| a.rel_name(x.rel())).filter(|rel| !matches!(*rel, "match_all" | "match_group")) {
+            if !decls.contains_key(rel) {
                 return err(format!("{rel} is read and not declared"));
             }
             // A bridged relation (`typing_<program>__<output>`, the library's calls) is the runner's to give; so are
             // decision 0055's settings (`guest_policy`, the lowering's facts, empty where the program sets none), which
             // the library reads (`python/names.rr`).
-            if !(derived.contains(rel) || base_types(rel).is_some() || GIVEN.contains(&rel) || authored.inputs.iter().any(|i| i == rel) || super::plan::corpus::bridge::is_bridged(rel)
+            if !(derived.contains(rel) || base_types(rel).is_some() || GIVEN.contains(&rel) || a_inputs.iter().any(|i| i == rel) || super::plan::corpus::bridge::is_bridged(rel)
                 || rel == crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY) {
                 return err(format!("{rel} is read, and nothing derives or inputs it"));
             }
         }
-        if r.head.rel == "violation" {
-            let Some((of, clause)) = violation_of(r) else { return err(format!("a violation whose rule and clause are not constants: {r}")) };
+        if a.rel_name(r.head().rel()) == "violation" {
+            let Some((of, clause)) = violation_of(&a, r) else { return err(format!("a violation whose rule and clause are not constants: {}", a.show_rule(r))) };
             if of != rule {
                 return err(format!("a violation of rule {of:?}"));
             }
@@ -1078,57 +1108,74 @@ pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, mut authored: Pr
         }
     }
     // The converter's rules for the authored clauses give way; nothing else may be derived by both.
-    converted.rules.retain(|r| violation_of(r).is_none_or(|(_, c)| !authored_clauses.contains(c)));
-    let both = {
-        let defined: BTreeSet<&str> = converted.rules.iter().map(|r| r.head.rel.as_str()).chain(converted.facts.keys().map(String::as_str)).collect();
-        derived.iter().find(|r| **r != "violation" && defined.contains(**r)).map(|r| (*r).to_owned())
-    };
-    if let Some(rel) = both {
+    let kept = |r: RuleRef<'_>| violation_of(&converted, r).is_none_or(|(_, c)| !authored_clauses.contains(c));
+    let c_facts = converted.fact_names();
+    let defined: BTreeSet<&str> = converted.rules().filter(|r| kept(*r)).map(|r| converted.rel_name(r.head().rel())).chain(c_facts.iter().map(String::as_str)).collect();
+    if let Some(rel) = derived.iter().find(|r| **r != "violation" && defined.contains(**r)) {
         return err(format!("{rel} is derived by both the converter and the overlay"));
     }
+    let mut b = Builder::derive(&converted);
+    for r in converted.rules().filter(|r| kept(*r)) {
+        b.copy(&converted, r);
+    }
     // The base relations it reads are inputs, declared `.input` or not.
-    let reads_base: Vec<String> = authored.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.to_string()).filter(|r| base_types(r).is_some()).collect();
-    let Program { decls, lattice, facts, rules, inputs, outputs, kindsets, demand, .. } = authored;
-    for (name, columns) in decls {
-        match converted.decls.get(&name) {
-            Some(c) if types(c) != types(&columns) => {
-                return err(format!("{name} is declared as ({}) here and as ({}) by the converter", spelled(types(&columns)), spelled(types(c))));
+    let reads_base: Vec<String> = a.rules().flat_map(|r| r.reads()).map(|x| a.rel_name(x.rel()).to_owned()).filter(|r| base_types(r).is_some()).collect();
+    for (name, columns) in &decls {
+        match converted.columns_of(name) {
+            Some(c) if types(&c) != types(columns) => {
+                return err(format!("{name} is declared as ({}) here and as ({}) by the converter", spelled(types(columns)), spelled(types(&c))));
             }
             Some(_) => {}
-            None => {
-                converted.decls.insert(name, columns);
-            }
+            None => b.declare(name, &columns.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect::<Vec<_>>()),
         }
     }
-    for (name, kinds) in kindsets {
-        match converted.kindsets.get(&name) {
+    let mut kindsets = ProgramFields::kindsets(&*converted);
+    for (name, kinds) in a_kindsets.clone() {
+        match kindsets.get(&name) {
             Some(k) if *k != kinds => return err(format!("kind set {name} has other kinds than the converter's")),
             Some(_) => {}
             None => {
-                converted.kindsets.insert(name, kinds);
+                kindsets.insert(name, kinds);
             }
         }
     }
-    for (name, l) in lattice {
-        match converted.lattice.get(&name) {
+    b.set_field(Field::Kindsets(&kindsets));
+    let mut lattice = ProgramFields::lattice(&*converted);
+    for (name, l) in ProgramFields::lattice(&*a) {
+        match lattice.get(&name) {
             Some(c) if *c != l => return err(format!("{name}'s lattice differs from the converter's")),
             _ => {
-                converted.lattice.insert(name, l);
+                lattice.insert(name, l);
             }
         }
     }
-    for (rel, rows) in facts {
-        converted.facts.entry(rel).or_default().extend(rows);
+    b.set_field(Field::Lattice(&lattice));
+    for rel in &a_facts {
+        b.add_facts(rel, &ProgramFields::fact_rows(&*a, rel));
     }
     // core.rr's `.input` of a relation the converter gives (`option_item`) is the converter's facts, not an input.
-    push_new(&mut converted.inputs, inputs.into_iter().filter(|i| !GIVEN.contains(&i.as_str())).chain(reads_base));
-    push_new(&mut converted.outputs, outputs.into_iter().chain(["violation".to_owned()]));
-    push_new(&mut converted.demand, demand);
-    converted.rules.extend(rules.into_iter().filter(|r| violation_of(r).is_none_or(|(_, c)| keep(c))));
-    for round in super::rr::lower::ON_REQUEST {
-        super::rr::lower::sources_on_request(&mut converted, round);
+    let mut inputs = converted.input_names();
+    push_new(&mut inputs, a_inputs.into_iter().filter(|i| !GIVEN.contains(&i.as_str())).chain(reads_base));
+    b.set_inputs(&inputs);
+    let mut outs = converted.output_names();
+    push_new(&mut outs, outputs.into_iter().chain(["violation".to_owned()]));
+    b.set_outputs(&outs);
+    let mut demand = ProgramFields::demand(&*converted);
+    push_new(&mut demand, ProgramFields::demand(&*a));
+    b.set_field(Field::Demand(&demand));
+    let mut all = ProgramFields::settings(&*converted);
+    all.extend(library);
+    b.set_field(Field::Settings(&all));
+    for r in a.rules().filter(|r| violation_of(&a, *r).is_none_or(|(_, c)| keep(c))) {
+        b.copy(&a, r);
     }
-    Ok((reachable(converted), authored_clauses))
+    let merged = b.finish()?.0;
+    let mut p = Pipeline::new("overlay", merged);
+    for round in super::rr::lower::ON_REQUEST {
+        p.program(&mut super::plan::corpus::preparation::on_request::SourcesOnRequest { round });
+    }
+    let merged = p.finish()?.0;
+    Ok((reachable(&merged)?, authored_clauses))
 }
 
 fn quote(s: &str) -> String {

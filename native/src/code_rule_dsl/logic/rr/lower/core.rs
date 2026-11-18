@@ -182,24 +182,34 @@ pub fn declare_core(prog: &mut (impl crate::code_rule_dsl::logic::program_image:
     Ok(())
 }
 
-/// Takes out core.rr's relations `prog` neither reads, derives nor outputs, declared as core.rr declares them: the
+/// `v` less core.rr's relations it neither reads, derives nor outputs, declared as core.rr declares them: the
 /// prelude's declarations and inputs, which are no relations of the program. The converter's overlay reads an
 /// authored file so (`logic::convert::overlay`), its declarations checked against the converter's.
 #[cfg(any(test, feature = "test-hooks"))]
-pub fn drop_unread_core(prog: &mut crate::code_rule_dsl::logic::front::Program) {
-    let used: BTreeSet<String> = prog
-        .rules
-        .iter()
-        .flat_map(|r| std::iter::once(&r.head).chain(r.body.iter().filter_map(Literal::atom)))
-        .map(|a| a.rel.to_string())
-        .chain(prog.facts.keys().cloned())
-        .chain(prog.outputs.iter().cloned())
+pub fn drop_unread_core(v: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, String> {
+    use crate::code_rule_dsl::logic::program_image::Builder;
+    let used: BTreeSet<String> = v
+        .rules()
+        .flat_map(|r| std::iter::once(r.head()).chain(r.reads()))
+        .map(|a| v.rel_name(a.rel()).to_owned())
+        .chain(v.fact_names())
+        .chain(v.output_names())
         .collect();
-    let unused: Vec<String> = DECLS.iter().filter(|(rel, cols)| !used.contains(rel.as_str()) && prog.decls.get(rel.as_str()).is_none_or(|own| own.len() == cols.len() && own.iter().zip(cols.iter()).all(|((a, b), (c, d))| a == c && b == d))).map(|(rel, _)| rel.clone()).collect();
-    for rel in unused {
-        prog.decls.remove(rel.as_str());
-        prog.inputs.retain(|i| *i != rel);
+    let unused: Vec<String> = DECLS
+        .iter()
+        .filter(|(rel, cols)| !used.contains(rel.as_str()) && v.columns_of(rel).is_none_or(|own| own == **cols))
+        .map(|(rel, _)| rel.clone())
+        .collect();
+    if unused.is_empty() {
+        return Ok(v.clone());
     }
+    let mut b = Builder::on(v);
+    for rel in &unused {
+        b.undeclare(rel);
+    }
+    let inputs: Vec<String> = v.input_names().into_iter().filter(|i| !unused.contains(i)).collect();
+    b.set_inputs(&inputs);
+    Ok(b.finish()?.0)
 }
 
 fn term_vars(t: &Term, out: &mut BTreeSet<String>) {
