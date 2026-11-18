@@ -347,15 +347,14 @@ impl ContentStore {
     }
 
     pub fn retire_workspace(&self, workspace_id: WorkspaceId) -> StoreResult<()> {
-        let connection = self
-            .connection
-            .lock()
-            .expect("content store mutex poisoned");
-        connection.execute(
-            "UPDATE workspaces SET state_id=2, lease_until=0 WHERE workspace_id=?1",
-            [workspace_id.0],
-        )?;
-        Ok(())
+        // In a transaction, so the update takes its turn in the writer line like every write.
+        self.immediate_transaction_once(|transaction| {
+            transaction.execute(
+                "UPDATE workspaces SET state_id=2, lease_until=0 WHERE workspace_id=?1",
+                [workspace_id.0],
+            )?;
+            Ok(())
+        })
     }
 }
 
