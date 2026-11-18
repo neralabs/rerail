@@ -1888,7 +1888,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   /**
    * What this runtime holds of `event`'s session once it has taken the event, for the facts of its answer: the checkout
    * the session works in and, at a session's start, what the note says of its rules. Undefined for a session not open
-   * here. Read from memory, but for the configuration signature every tool call reads (`#sessionNoteRules`).
+   * here. Read from memory, but for the checkout's start state, which every event reads, and at a start the
+   * configuration signature, which every tool call reads (`#sessionNoteRules`).
    */
   heldSession(event: AdapterEvent): HeldSession | undefined {
     const state = this.#heldState(event);
