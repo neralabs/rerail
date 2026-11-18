@@ -44,7 +44,7 @@
 //!   `precedes_stop(a, b, S)` is a relation over `child` (`Lowerer::precedes_stop`);
 //! - `unset(x)` is the empty value -1, whose text is "", and `!unset(x)` is `x != -1`;
 //! - `match("(?<x>…)", s)` binds x to the named group (`Lowerer::captures`); `match_all` and `match_group` are the
-//!   text layer's relations (`strings::as_relations`); `+ - * / %` and Soufflé's `cat` of any arity (`concat`
+//!   text layer's relations (`preparation::text::TextRelations`); `+ - * / %` and Soufflé's `cat` of any arity (`concat`
 //!   folded from the left), `strlen`, `to_string`, `substr`, `to_number`, `to_float`, `max/2` and `min/2` are
 //!   functors. `to_number` reads as Soufflé's `symbol2numeric`; where Soufflé stops with an error (no digits, out
 //!   of range, `x % 0`) there is no value, and so no row. `@lower` is Unicode lowercase; `@dot("", b)` is b; a

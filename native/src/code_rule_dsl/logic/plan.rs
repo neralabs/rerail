@@ -4696,7 +4696,7 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "path_part" | "file_name" => &[&["d"], &["s", "d"]],
         // The transducer's `nearest` rows (`facts::vtab::syntax::with_nearest`), looked up either way.
         rel if crate::code_rule_dsl::logic::front::is_transduced(rel) => &[&["n"], &["a"]],
-        // A text test's symbols (decision 0037, `logic::strings::as_relations`).
+        // A text test's symbols (decision 0037, `preparation::text::TextRelations`).
         rel if rel.starts_with(super::strings::RELATION) => &[&["s"]],
         // A `match_all` regex's matches, by span and by match (`facts::vtab::syntax::Extra`).
         rel if rel.starts_with(super::strings::MATCHES) => &[&["sp"], &["m"]],
@@ -6135,7 +6135,7 @@ impl<'a> Run<'a, '_> {
         let (texts, k) = match given {
             Some(found) => found,
             None => {
-                // The program's tests, as `as_relations` numbered them: one vocabulary for the run's every test.
+                // The program's tests, as `preparation::text::TextRelations` numbered them: one vocabulary for the run's every test.
                 let f = self.fields();
                 let mut specs: Vec<(String, Vec<String>)> = f.natives().iter().filter_map(|n| match &n.spec {
                     super::program_image::NativeSpec::TextTest { op, patterns, .. } => Some((f.text(*op).to_owned(), patterns.iter().map(|&p| f.text(p).to_owned()).collect())),
@@ -9591,7 +9591,7 @@ pub struct Hooks<'a> {
     pub unload: Option<&'a mut dyn FnMut(&[String]) -> Result<()>>,
     /// Answers the requests a component makes, inside the fixpoint (decision 0065 §2a).
     pub answer: Option<Answer<'a>>,
-    /// The run's text tests (`strings::as_relations`): a test over strings the run answers (`front::Native::TextTest`)
+    /// The run's text tests (`preparation::text::TextRelations`): a test over strings the run answers (`front::Native::TextTest`)
     /// tests them with every other test at once, each string once a run, as the batches do. Without it the run
     /// makes its own from the program's tests.
     pub texts: Option<Arc<super::strings::Vocabulary>>,

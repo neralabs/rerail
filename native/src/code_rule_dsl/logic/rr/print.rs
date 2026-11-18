@@ -267,7 +267,7 @@ impl<'v> Printer<'v> {
                 let (x, e, q) = (var("rr_x"), var("rr_e"), var("rr_q"));
                 format!("{}({x}, {q}) :- {}({x}, {e}), {}({e}, {q}).", relation(head_rel), relation(reach), relation(map))
             }
-            // The text test over its input's rows, as the rule it was made from (`strings::as_relations`).
+            // The text test over its input's rows, as the rule it was made from (`preparation::text::TextRelations`).
             Native::TextTest { input, column, op, patterns } => {
                 let s = match head.args().nth(*column) {
                     Some(t) => self.term(r, t)?,

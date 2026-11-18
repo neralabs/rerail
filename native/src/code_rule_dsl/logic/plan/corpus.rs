@@ -1008,7 +1008,7 @@ pub struct Prepared {
     pub vocabulary: Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
     pub lowered: lower::Lowered,
     pub sets: Vec<(String, Vec<i64>)>,
-    /// The `ast` atoms' matchers, by relation (`matchers::lower`, decision 0106).
+    /// The `ast` atoms' matchers, by relation (`preparation::text::MatcherRelations`, decision 0106).
     pub matchers: Vec<(String, String, Vec<String>)>,
     pub demanded: Vec<String>,
     pub pushed: Vec<String>,

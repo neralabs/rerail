@@ -1703,7 +1703,7 @@ pub enum Place {
 /// is `core_rr`'s there (comments are nodes), so it is not made here.
 ///
 ///
-/// And each `matchall_<k>(sp, m)` read (`logic::strings::as_relations`, core.rr's `match_all`): `m` each match of
+/// And each `matchall_<k>(sp, m)` read (`preparation::text::TextRelations`, core.rr's `match_all`): `m` each match of
 /// regex `k` in span `sp`'s text, leftmost-first and non-overlapping (Rust's `find_iter`, as W's `regex` reads a
 /// file), over every span above. A match is a span (`MATCH`) with rows in `text` (what it matched), `line`,
 /// `end_line` and `col`, as W's finding of that regex is placed: in a line span, that line and the byte column in it
@@ -3453,7 +3453,7 @@ pub fn with_matchers(
     // The batch's relations and views, but none the program derives (`Projection::derived`).
     let mut out: Vec<(String, Arc<dyn Source>)> =
         relations.into_iter().filter(|(name, _)| !projection.derived.contains(*name)).map(|(name, r)| (name.to_owned(), as_source(name, r, &batch))).collect();
-    // The `match_all` relations (`logic::strings::as_relations`): each regex's matches in the batch's spans.
+    // The `match_all` relations (`preparation::text::TextRelations`): each regex's matches in the batch's spans.
     out.extend(match_all.into_iter().map(|(name, r)| (name, Arc::new(r) as Arc<dyn Source>)));
     if !matchers.is_empty() {
         if let Some(wave) = &matchers.0 {

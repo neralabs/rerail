@@ -613,7 +613,7 @@ pub enum Native {
     MatchAll { input: String, pattern: String, groups: Vec<String>, positions: bool },
     /// A text test (`@op(s, patterns) = 1`) over a column the program derives: the rows of `input` whose `column`
     /// passes it, each distinct string tested by the run's vocabulary with every other test at once (decision 0037),
-    /// once a run (`logic::strings::as_relations`). A row is there as its input row is and its string passes.
+    /// once a run (`preparation::text::TextRelations`). A row is there as its input row is and its string passes.
     TextTest { input: String, column: usize, op: String, patterns: Vec<String> },
     /// `components(d, c, key, edge, own)`: each document's strongly connected component of `edge(d, e)` (its
     /// smallest document) and the component's Merkle key over `own(d, digest)` (`logic::native::components`).

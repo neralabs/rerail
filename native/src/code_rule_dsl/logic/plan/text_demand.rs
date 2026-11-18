@@ -11,7 +11,7 @@ use rustc_hash::FxHashMap as HashMap;
 use rustc_hash::FxHashSet as HashSet;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// A program's matchers, by relation: its matcher text and its captures' names (`matchers::lower`).
+/// A program's matchers, by relation: its matcher text and its captures' names (`preparation::text::MatcherRelations`).
 pub type Matchers = [(String, String, Vec<String>)];
 
 /// The projection of the program `v`, reading `reads`, with its long text and anchors (`projection_of`, then

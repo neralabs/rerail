@@ -1,16 +1,15 @@
-//! The text passes on the version (decision 0281's path, step 6c), each the tree's function of the same name ported
-//! onto the version's rules:
+//! The text passes on the version (decision 0281's path, step 6c), each written on the version's rules:
 //!
-//! - `Absorb` (`matchers::absorb`): a Python program's tree-shaped parts as `ast` literals (decision 0106 §4);
-//! - `MatcherRelations` (`matchers::lower`): each `ast` literal an atom of its matcher's relation (decision 0106);
-//! - `NodeSubjects` (`strings::node_subject_tests`): a text test on a node tests the node's text;
+//! - `Absorb`: a Python program's tree-shaped parts as `ast` literals (decision 0106 §4);
+//! - `MatcherRelations`: each `ast` literal an atom of its matcher's relation (decision 0106);
+//! - `NodeSubjects`: a text test on a node tests the node's text;
 //! - `Twins`: twin rules reading text past the inline bound (decision 0109);
-//! - `ImpliedSets` (`strings::implied_set_tests`): a test over a constant table's values gains the whole table's;
-//! - `TextRelations` (`strings::as_relations`): text tests over text relations as the vocabulary's relations
+//! - `ImpliedSets`: a test over a constant table's values gains the whole table's;
+//! - `TextRelations`: text tests over text relations as the vocabulary's relations
 //!   (decision 0037), `match_all` and `match_group` as their regexes' relations, and the `fstring_template` markers.
 //!
 //! The names they make follow content (the tests', the regexes', the matchers'), and their fresh variables are
-//! counted per rule, as the tree's are: a program's names do not depend on the order of its rules.
+//! counted per rule: a program's names do not depend on the order of its rules.
 
 use crate::code_rule_dsl::logic::plan::corpus::matchers::{MOST_CAPTURES, PREFIX, columns, single_field};
 use crate::code_rule_dsl::logic::plan::text_demand;
@@ -31,7 +30,7 @@ pub struct Found {
     pub vocabulary: Vocabulary,
 }
 
-/// The text passes on `p`, for a program of `dialect`: as the tree's run in `plan::corpus`'s preparation.
+/// The text passes on `p`, for a program of `dialect`, as `plan::corpus`'s preparation runs them.
 pub fn passes(p: &mut Pipeline<'_>, dialect: crate::code_rule_dsl::language::GrammarDialect) -> Result<Found> {
     if dialect == crate::code_rule_dsl::language::GrammarDialect::Python && !std::env::var("RERAIL_AST_PARTS").is_ok_and(|v| v == "off") {
         p.rules(&mut Absorb { capture: !std::env::var("RERAIL_AST_PART_CAPTURES").is_ok_and(|v| v == "off"), rewritten: 0 });
@@ -43,7 +42,7 @@ pub fn passes(p: &mut Pipeline<'_>, dialect: crate::code_rule_dsl::language::Gra
     if text {
         p.rules(&mut NodeSubjects);
         p.rules(&mut Twins { matchers: matchers.clone(), by_rule: HashMap::new(), made: 0 });
-        // `as_relations` runs it again: on the twins.
+        // Again, on the twins.
         p.rules(&mut NodeSubjects);
     }
     p.rules(&mut ImpliedSets { added: 0 });
@@ -51,6 +50,15 @@ pub fn passes(p: &mut Pipeline<'_>, dialect: crate::code_rule_dsl::language::Gra
     p.rules(&mut relations);
     let vocabulary = Vocabulary::from_parts(relations.tests, relations.specs, relations.matches, relations.markers);
     Ok(Found { matchers, vocabulary })
+}
+
+/// Version `v` with its tree-shaped parts as `ast` literals (`Absorb`, decision 0106 §4), with `capture` a field the
+/// rule reads further captured: that version and the number of rules rewritten.
+pub fn tree_parts_as_matchers(v: Arc<Version>, capture: bool) -> Result<(Arc<Version>, usize)> {
+    let mut p = Pipeline::new("tree-shaped parts as matchers", v);
+    let mut absorb = Absorb { capture, rewritten: 0 };
+    p.rules(&mut absorb);
+    Ok((p.finish()?.0, absorb.rewritten))
 }
 
 /// Version `v` with each `ast` literal an atom of its matcher's relation (`MatcherRelations`, decision 0106): that
@@ -135,8 +143,15 @@ fn fresh(held: &mut HashSet<String>, count: &mut usize, stem: &str) -> String {
     }
 }
 
-// ---- matchers::absorb ----
+// ---- tree-shaped parts as matchers ----
 
+/// The tree-shaped parts of a Python program's rules as `ast` literals (decision 0106 §4): a root `r` with
+/// `kind(r, "K")` and fields `field(r, "F", x), kind(x, "K2")` whose `x` no other literal or the head reads becomes one
+/// matcher, `{"all": [{"kind": "K"}, {"has": {"field": "F", "kind": "K2", "stopBy": "neighbor"}}, …]}`. With
+/// `capture`, a field the rule reads further is part of it too, its node the matcher's capture (`"pattern": "$C1"`,
+/// `C1: x`: decision 0107). Only a field a node of kind `K` holds at most one of ([`single_field`]): a matcher's
+/// `field` is the field's first node, where `field(r, "F", x)` is each of them (`import os, sys`'s two names). A field
+/// tested without a kind stays a join. `rewritten` counts the rules rewritten.
 struct Absorb {
     capture: bool,
     rewritten: usize,
@@ -149,6 +164,8 @@ impl RulePass for Absorb {
     }
     fn rule(&mut self, cx: &Cx<'_>, r: RuleRef<'_>, out: &mut RuleOut<'_, '_>) -> Result<Step> {
         let v = cx.v();
+        // A kind or field name as the program holds it (`python:call`), as the matcher names it (`call`). Fresh names
+        // are counted per rule: a rule's do not depend on the others'.
         let str_of = |t: Option<&TermRef<'_>>| match t {
             Some(TermRef::Str(s)) => Some(v.text(*s).strip_prefix("python:").unwrap_or(v.text(*s)).to_owned()),
             _ => None,
@@ -239,17 +256,21 @@ impl RulePass for Absorb {
     }
 }
 
-// ---- matchers::lower ----
+// ---- ast literals as matcher relations ----
 
+/// The `ast` literals over the matchers' relations: each relation, its matcher's text and the names it captures
+/// (`out`; a literal naming more than [`MOST_CAPTURES`] is left as written).
 #[derive(Default)]
 struct MatcherRelations {
-    /// Each distinct matcher (text, captured names), in its content's order.
+    /// Each distinct matcher (text, captured names), numbered in its content's order, not the rules': a program's
+    /// names do not depend on the order its rules come in.
     texts: Vec<(String, Vec<String>)>,
     /// Whether a written rule reads `docof`.
     docof: bool,
     out: Matchers,
 }
 
+/// The relation of the `k`th distinct matcher, capturing `m` names.
 fn relation(k: usize, m: usize) -> String {
     if m == 0 { format!("{PREFIX}{k}") } else { format!("{PREFIX}{k}_{m}") }
 }
@@ -283,6 +304,7 @@ impl RulePass for MatcherRelations {
     }
     fn rule(&mut self, cx: &Cx<'_>, r: RuleRef<'_>, out: &mut RuleOut<'_, '_>) -> Result<Step> {
         let v = cx.v();
+        // The variables each literal reads, and the head's.
         let head = head_vars(r);
         let body: Vec<LitRef<'_>> = r.body().collect();
         let reads: Vec<BTreeSet<Slot>> = body.iter().map(|l| lit_vars(*l)).collect();
@@ -323,6 +345,7 @@ impl RulePass for MatcherRelations {
         let before = inputs.len();
         for (k, (text, names)) in self.texts.iter().enumerate() {
             let rel = relation(k, names.len());
+            // A name of the rule's `transform` binds text (a symbol); every other name, and the root, a node.
             let made = transformed(text);
             let types = std::iter::once("node").chain(names.iter().map(|n| if made.contains(n) { "sym" } else { "node" }));
             let cols: Vec<(&str, &str)> = columns(&rel).iter().copied().zip(types).collect();
@@ -333,7 +356,7 @@ impl RulePass for MatcherRelations {
             self.out.push((rel, text.clone(), names.clone()));
         }
         // `docof` is an input unless the program derives it already (`hiding` writes it as a view where documents
-        // are hidden).
+        // are hidden): then the rules read the view, and an input of the same name would have no statistics.
         let derived = v.rel("docof").is_some_and(|d| v.heads(d).next().is_some());
         let read = self.docof || v.rules().any(|r| r.body().filter_map(|l| l.atom()).any(|a| v.rel_name(a.rel()) == "docof"));
         if !self.out.is_empty() && !derived && !inputs.iter().any(|r| r == "docof") && read {
@@ -349,11 +372,14 @@ impl RulePass for MatcherRelations {
     }
 }
 
-// ---- strings::node_subject_tests ----
+// ---- text tests on nodes ----
 
+/// A text test on a node (`@rx(w, re) = 1` with `w` a node) tests the node's text: `text(w, t), @rx(t, re) = 1`, `t`
+/// fresh. Unrewritten, the test read the node's id as a string and held for no node. A node is a variable a positive
+/// atom binds in a `node` or `loc` column.
 struct NodeSubjects;
 
-/// A text test: `@op(s, patterns) = 0|1`.
+/// A text test in a rule body: `@op($s, patterns) = 1` (holds) or `= 0` (fails).
 fn test_of<'v>(v: &Version, l: LitRef<'v>) -> Option<(crate::code_rule_dsl::logic::program_image::AtomId, Vec<TermRef<'v>>, i64)> {
     let Lit::Cmp { l: TermRef::Call(op, a), op: CmpOp::Eq, r: TermRef::Int(x @ (0 | 1)) } = l.view() else { return None };
     is_test(v.text(op)).then(|| (op, a.collect(), x))
@@ -383,6 +409,7 @@ impl RulePass for NodeSubjects {
         if rewritten.is_empty() {
             return Ok(Step::Keep);
         }
+        // Fresh names counted per rule, the first a rule does not hold: a rule's names do not depend on the others'.
         let mut held: HashSet<String> = r.vars().map(|a| v.text(a).to_owned()).collect();
         let mut count = 0;
         let fresh_names: Vec<String> = rewritten.iter().map(|_| fresh(&mut held, &mut count, "rr_node_text")).collect();
@@ -511,11 +538,15 @@ impl RulePass for Twins {
     }
 }
 
-// ---- strings::implied_set_tests ----
+// ---- implied set tests ----
 
-/// Most patterns an implied set test takes: a bigger table is tested as written.
+/// Most patterns an implied set test takes (`ImpliedSets`): a bigger table is tested as written.
 const IMPLIED_SET_MAX: usize = 4096;
 
+/// A text test whose pattern is a variable taking a constant table's values (`contains(x, t)` for each deleted
+/// name x of a table) implies the test of the whole table as one set (`contains(t, {…})`): it is added before it.
+/// Over a text relation it becomes a vocabulary test (each string matched once, all patterns at a time), and the
+/// pattern-at-a-time test runs only on the strings that pass, not on every string for every pattern.
 struct ImpliedSets {
     added: usize,
 }
@@ -531,8 +562,10 @@ fn fact_rows(v: &Version, rel: &str) -> Option<Vec<Vec<Cell>>> {
     Some(f.rows().map(|row| row.collect()).collect())
 }
 
-/// The values column `col` of `rel` can hold when they come from the program's constants alone
-/// (`strings::constant_domain`).
+/// The values column `col` of `rel` can hold when they come from the program's constants alone: a fact relation's
+/// (rows matching the atom's constants), a constant relation's (`typing::file_local::FileLocal::constants`), or a
+/// derived column every rule fills from such a column or a literal (with its facts' values, where it has facts). A
+/// superset is enough for its one reader, `ImpliedSets`. `None` where a value may come from anything else.
 fn constant_domain(v: &Version, rel: &str, col: usize, visiting: &mut Vec<(String, usize)>) -> Option<BTreeSet<String>> {
     if visiting.iter().any(|(r, c)| r == rel && *c == col) || visiting.len() > 16 {
         return None;
@@ -550,6 +583,7 @@ fn constant_domain(v: &Version, rel: &str, col: usize, visiting: &mut Vec<(Strin
         return rows.iter().map(|row| str_cell(row.get(col))).collect();
     }
     visiting.push((rel.to_owned(), col));
+    // Its facts' values too: a relation of facts and rules holds both.
     let mut out = BTreeSet::new();
     for row in fact_rows(v, rel).into_iter().flatten() {
         let Some(s) = str_cell(row.get(col)) else {
@@ -645,9 +679,9 @@ impl RulePass for ImpliedSets {
     }
 }
 
-// ---- strings::as_relations ----
+// ---- text tests as relations ----
 
-/// A test's patterns: one string, or a set `{a, b}` (`strings::patterns`).
+/// A test's patterns: one string, or a set `{a, b}`.
 fn patterns(v: &Version, t: TermRef<'_>) -> Option<Vec<String>> {
     match t {
         TermRef::Str(s) => Some(vec![v.text(s).to_owned()]),
@@ -656,7 +690,7 @@ fn patterns(v: &Version, t: TermRef<'_>) -> Option<Vec<String>> {
     }
 }
 
-/// A text test: its operator, its string's variable, its patterns, and whether it holds (`strings::as_test`).
+/// A text test: its operator, its string's variable, its patterns, and whether it holds.
 fn as_test(v: &Version, l: LitRef<'_>) -> Option<(String, Slot, Vec<String>, bool)> {
     let (op, a, x) = test_of(v, l)?;
     let [TermRef::Var(s), p] = a.as_slice() else { return None };
@@ -674,8 +708,8 @@ fn same_term(a: TermRef<'_>, b: TermRef<'_>) -> bool {
     }
 }
 
-/// Whether the rule (head `head`, `width` literals, one `atom` and a holding test of its string) is a native test's
-/// definition (`strings::definition`).
+/// Whether a rule of `head` with `width` literals, one of them `atom` and a holding test of `atom`'s string, is a
+/// native test's definition: its head the atom's own distinct variables, in order, and nothing else in its body.
 fn definition(head: AtomRef<'_>, atom: AtomRef<'_>, width: usize, holds: bool) -> bool {
     let h = args(head);
     let vars: HashSet<Slot> = h.iter().filter_map(|t| t.var()).collect();
@@ -683,11 +717,16 @@ fn definition(head: AtomRef<'_>, atom: AtomRef<'_>, width: usize, holds: bool) -
 }
 
 enum How {
+    /// Over a batch's strings `s`: an atom of its input relation `strtest_<k>(s)`.
     Input { s: Slot },
+    /// Over strings answered during the run, given by column `column` of atom `at` (of `input`): its native test.
     During { input: String, column: usize, at: usize },
+    /// The rule is the native test's own definition.
     Defined { input: String, column: usize },
 }
 
+/// A text test `TextRelations` rewrites: its place in its rule, its operator and patterns (sorted, distinct), whether
+/// it holds, and what it reads.
 struct Plan {
     place: usize,
     key: (String, Vec<String>),
@@ -695,6 +734,18 @@ struct Plan {
     how: How,
 }
 
+/// Turns each text test whose string a text relation of the same rule gives (`TEXT_COLUMNS`) into an atom over
+/// the input relation `strtest_<k>(s)`, negated where the test is: rules then join on symbols, and the run fills
+/// each relation from the vocabulary (decision 0037). Equal tests share one relation. The others stay per row.
+///
+/// And each `match_all("re", sp, m)` (core.rr's built-in: `m` is each match of `re` in span `sp`'s text, as Rust's
+/// `find_iter` finds them) into an atom over the input relation `matchall_<k>(sp, m)`, and each
+/// `match_group("re", sp, m, g, gsp)` (`gsp` the span of named group `g` in match `m`) into one over
+/// `matchgroup_<k>(sp, m, g, gsp)`, `k` the regex's (one per distinct regex, so the two agree on `m`), which the
+/// batches fill (`facts::vtab::syntax`). The regex is a constant, in Rust `regex` syntax (W's).
+///
+/// And collects the markers of `fstring_template(n, "marker", v)` (W's `interpolation`): a constant, since the
+/// batches parse each host once per marker (`facts::vtab::syntax::fstring`).
 #[derive(Default)]
 struct TextRelations {
     plans: HashMap<crate::code_rule_dsl::logic::program_image::RuleId, Vec<Plan>>,
@@ -709,8 +760,13 @@ struct TextRelations {
     markers: Vec<String>,
 }
 
-/// The text columns of the program's relations, and of those the columns answered during the run
-/// (`strings::vocabulary_columns`).
+/// The text columns of the program's relations: `TEXT_COLUMNS`, and each symbol column every writer of a derived
+/// relation copies from one of them (a fixpoint), so a test on a copy is answered from the vocabulary too. And of
+/// those, the columns answered during the run: a `TEXT_COLUMNS` relation the program derives (a node attribute
+/// answered on request, decision 0174: `node_text`'s `@rr_node_text_any`) computes its strings after the batch's
+/// vocabulary is made, and so does a copy with a writer that copies only such a column. Each relation's rules are
+/// read by its head (`heads`): scanning every rule for every declaration in every round was quadratic in a combined
+/// pack (O111).
 fn vocabulary_columns(v: &Version) -> (HashMap<String, HashSet<usize>>, HashSet<(String, usize)>) {
     let derives = |rel: &str| v.rel(rel).is_some_and(|id| v.heads(id).next().is_some());
     let mut columns: HashMap<String, HashSet<usize>> = TEXT_COLUMNS.iter().map(|(n, c)| ((*n).to_owned(), c.iter().copied().collect())).collect();
@@ -721,6 +777,7 @@ fn vocabulary_columns(v: &Version) -> (HashMap<String, HashSet<usize>>, HashSet<
         let mut found = Vec::new();
         for d in &decls {
             let relation = v.text(d.name());
+            // Facts and unknown external inputs can introduce symbols not in this batch's vocabulary.
             if fact_rows(v, relation).is_some_and(|rows| !rows.is_empty()) || (inputs.contains(relation) && !columns.contains_key(relation)) {
                 continue;
             }
@@ -732,6 +789,10 @@ fn vocabulary_columns(v: &Version) -> (HashMap<String, HashSet<usize>>, HashSet<
                 if v.text(ty) != "sym" || columns.get(relation).is_some_and(|cols| cols.contains(&column)) {
                     continue;
                 }
+                // Every producer must copy a text column's symbol. One computed or constant arm is enough
+                // to make the rewrite unsafe: that arm's new values do not have strtest rows yet. A producer that
+                // copies a batch's column gives a string the batch tested; one that copies only answered columns
+                // gives strings tested during the run.
                 let source = |rule: &RuleRef<'_>| -> Option<bool> {
                     let Some(TermRef::Var(value)) = rule.head().args().nth(column) else { return None };
                     let mut from = rule
@@ -802,6 +863,7 @@ impl RulePass for TextRelations {
         let about = crate::code_rule_dsl::logic::program_image::About::of(v);
         let other_native: HashSet<&str> = about.natives.iter().filter(|n| n.kind != crate::code_rule_dsl::logic::program_image::NativeKind::TextTest).map(|n| v.rel_name(n.rel)).collect();
         let outputs: HashSet<&str> = v.outputs().map(|a| v.text(a)).collect();
+        // Only a relation of that one rule, no output or input, with no facts and no other native, is made so.
         let mut heads: HashMap<&str, usize> = HashMap::new();
         for r in v.rules() {
             *heads.entry(v.rel_name(r.head().rel())).or_default() += 1;
@@ -810,8 +872,17 @@ impl RulePass for TextRelations {
         let row_mode = std::env::var("RERAIL_TEXT_TESTS").is_ok_and(|x| x == "row");
         let mut set = crate::code_rule_dsl::logic::program_image::manager::RuleSet::new();
         let mut markers: BTreeSet<String> = BTreeSet::new();
+        // Planned first, rule by rule, then numbered: each test's relation, each native test's and each regex's number
+        // follow their content's order (the test's operator and patterns, the regex's text), not the rules', so a
+        // program's names do not depend on the order its rules come in (a pass on the version writes the rules it
+        // rewrites after those it keeps), and an edit of one rule does not rename another's.
         for r in v.rules() {
             let body: Vec<LitRef<'_>> = r.body().collect();
+            // Each string the rule's text relations give: from a batch's column (`None`), or else from the first atom
+            // that gives it over an answered `TEXT_COLUMNS` relation itself (the atom, and its column). A string only
+            // a copy of an answered column gives stays tested per row: a native reading the copy would keep the copy
+            // whole (a relation a native reads is not factorized, `typing::file_local::FactorizeExports`), and with
+            // it its reads of `node_text` in the cross-file part.
             let mut texts: HashMap<Slot, Option<(usize, usize)>> = HashMap::new();
             for (at, l) in body.iter().enumerate() {
                 let Lit::Atom(a) = l.view() else { continue };
@@ -833,12 +904,18 @@ impl RulePass for TextRelations {
             for (place, l) in body.iter().enumerate() {
                 let Some((op, s, mut pats, holds)) = as_test(v, *l) else { continue };
                 let Some(from) = texts.get(&s) else { continue };
+                // `RERAIL_TEXT_TESTS=row`: a test over strings answered during the run stays per row, as before the
+                // native test (to compare).
                 if from.is_some() && row_mode {
                     continue;
                 }
                 pats.sort();
                 pats.dedup();
                 let key = (op, pats);
+                // A string answered during the run: the test is a relation made natively, the rows of the atom that
+                // gives the string whose string passes (keyed as the atom is, so a file-local atom's stays
+                // file-local), its strings tested by the run's vocabulary. A holding test reads it in the atom's place
+                // (its rows are the atom's that pass); a failing one reads its negation beside the atom.
                 let how = match *from {
                     Some((column, at)) => {
                         let Lit::Atom(atom) = body[at].view() else { unreachable!("a text atom") };
@@ -880,6 +957,7 @@ impl RulePass for TextRelations {
                 self.plans.insert(r.id(), plan);
             }
         }
+        // The markers and regexes, each in its text's order.
         self.markers = markers.into_iter().collect();
         let keys: BTreeSet<(String, Vec<String>)> = self.plans.values().flatten().map(|p| p.key.clone()).collect();
         self.ids = keys.into_iter().enumerate().map(|(k, key)| (key, k)).collect();
@@ -894,6 +972,8 @@ impl RulePass for TextRelations {
             self.tests.push((rel, Arc::new(matcher)));
             self.specs.push(key.clone());
         }
+        // Each test over strings answered during the run, by the relation and column that give them: its native
+        // relation.
         let during: BTreeSet<(usize, String, usize)> = self
             .plans
             .values()
@@ -921,10 +1001,14 @@ impl RulePass for TextRelations {
         // Each literal's replacement: an atom (relation, the terms of literal `from`'s atom or the test's string,
         // negated or not), or none (dropped).
         let mut put: BTreeMap<usize, Option<(String, From, bool)>> = BTreeMap::new();
+        // The atoms a holding native test stands for (its rows are theirs that pass).
         let mut replaced: Vec<usize> = Vec::new();
         for Plan { place, key, holds, how } in plan {
             let k = self.ids[&key];
             match how {
+                // The rule that is a native test's own definition, `h(x…) :- input(x…), test(x_c)` (as `rr::print`
+                // writes one, and as this makes it): `h` is the native, read back as it was made, not a second native
+                // under it.
                 How::Defined { input, column } => self.defined.push((v.rel_name(r.head().rel()).to_owned(), input, column, key.0, key.1)),
                 How::Input { s } => {
                     put.insert(place, Some((format!("{RELATION}{k}"), From::Var(s), !holds)));
@@ -968,7 +1052,8 @@ impl RulePass for TextRelations {
         let mut inputs: Vec<String> = v.inputs().map(|a| v.text(a).to_owned()).collect();
         let before = inputs.len();
         let mut natives: Vec<(String, String, usize, String, Vec<String>)> = Vec::new();
-        // Each native test's one rule orders it after its input, and is the test row by row.
+        // Each native test's one rule orders it after its input, and is the test row by row: what an evaluator that
+        // does not make it natively (a maintained form's pieces) derives instead.
         for ((k, input, column), native) in std::mem::take(&mut self.during) {
             let (op, pats) = self.specs[k].clone();
             let decl: Vec<(String, String)> = v.decl_of(&input).ok_or_else(|| format!("{input} is not declared"))?.cols().map(|(n, t)| (v.text(n).to_owned(), v.text(t).to_owned())).collect();

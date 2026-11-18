@@ -1052,7 +1052,7 @@ pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, mut authored: Pr
     let mut authored_clauses = BTreeSet::new();
     for r in &authored.rules {
         // `match_all("re", sp, m)` and `match_group("re", sp, m, g, gsp)` are built-ins, which the runner makes
-        // relations of (`strings::as_relations`).
+        // relations of (`preparation::text::TextRelations`).
         for a in r.body.iter().filter_map(Literal::atom).filter(|a| !matches!(a.rel.as_str(), "match_all" | "match_group")) {
             let rel = a.rel.as_str();
             if !authored.decls.contains_key(rel) {
