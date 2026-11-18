@@ -292,6 +292,9 @@ Rerail's files are private to the person's OS user: folders 0700, files 0600, le
   (`src/engine/storage/private-files.ts`).
 - State files go through a 0600 temp file and rename; logs open 0600.
 - Session directories are created 0700 and explicitly chmod 0700; ledgers append 0600 (`src/runtime/runtime.ts`).
+- A steer's receipt the daemon took while another process held the database waits in `rerail.sqlite-receipts/`
+  beside it, 0700 with files 0600, until its record is made; the next daemon records what is left
+  (`keepReceipt` in `src/runtime/session-store.ts`).
 - Windows ignores modes. A Rerail home or `.rerail\sessions` folder made outside the profile folder, whose ACL would
   let every local user read it, gets a protected ACL granting the person, SYSTEM and Administrators alone, which
   everything written in it inherits; a home an earlier release made gets it at the next daemon launch

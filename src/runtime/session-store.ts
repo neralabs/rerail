@@ -1,4 +1,7 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { deserialize, serialize } from "node:v8";
 import { and, asc, count, desc, eq, gt, gte, inArray, lt, sql } from "drizzle-orm";
 import { z } from "zod";
@@ -16,7 +19,7 @@ import { awaitingApprovalOf } from "../engine/catalog/rule-approval.js";
 import { auditViolations, checkouts, events, sessions, sessionsOfRepository, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import type { DroppedEvents } from "./session-state.js";
-import type { SteerReceipt } from "./event-protocol.js";
+import { SteerReceiptSchema, type SteerReceipt } from "./event-protocol.js";
 import { conflictFooter, type ConflictFooter } from "./merge-assist/notes.js";
 import { mergeAssistExperimentEnabled } from "../engine/experimental-features.js";
 import { physicalPath, withinCheckout } from "../engine/catalog/checkout-control.js";
@@ -768,5 +771,86 @@ function checkoutRepository(database: RerailDatabase, cwd: string): string | nul
     return lookupCheckout(database, cwd)?.repositoryKey ?? null;
   } catch {
     return null;
+  }
+}
+
+/*
+ * The receipts of steers the daemon took from hooks while another process held the database's write lock, kept on
+ * disk until their records are made. The hook that handed one over has ended by then, so a daemon that dies first
+ * (killed, crashed, the machine shut down) would lose it, where the hook used to wait for the lock and record it
+ * itself. One file per receipt in a folder beside the database (`rerail.sqlite-receipts`), named by its id's hash, which
+ * goes once its record is made; the next daemon's start records what is left (`keptReceipts`). A receipt recorded twice
+ * counts once, so a file a removal missed costs one more insert of nothing.
+ */
+
+/** A receipt kept on disk, and the record write that removes its file once queued behind the receipt's own write. */
+export interface KeptReceipt {
+  readonly receipt: SteerReceipt;
+  /**
+   * Removes the receipt's file. A record writer makes writes in the order they were asked for, so queued behind the
+   * receipt's own write it runs only once that one is made. A removal that fails leaves the file for the next start.
+   */
+  readonly forget: RecordWrite;
+}
+
+function keptReceiptsFolder(databasePath: string): string {
+  return `${databasePath}-receipts`;
+}
+
+/** Removes `file`; one a scanner holds on Windows stays, and the next start records it again, which counts once. */
+function forgetFile(file: string): void {
+  try {
+    rmSync(file, { force: true });
+  } catch {
+    // Left for the next start.
+  }
+}
+
+function keptReceipt(file: string, receipt: SteerReceipt): KeptReceipt {
+  return { receipt, forget: () => forgetFile(file) };
+}
+
+/**
+ * Keeps `receipt` in a file beside the database at `databasePath` (0600, in a 0700 folder) before it resolves, off the
+ * calling thread. The file survives the end of this process; it is not flushed to the drive, as the hook that held
+ * the receipt in memory before survived no power loss either.
+ */
+export async function keepReceipt(databasePath: string, receipt: SteerReceipt): Promise<KeptReceipt> {
+  const folder = keptReceiptsFolder(databasePath);
+  await mkdir(folder, { recursive: true, mode: 0o700 });
+  const file = join(folder, `${createHash("sha256").update(receipt.receiptId).digest("hex")}.json`);
+  await writeFile(file, JSON.stringify(receipt), { mode: 0o600 });
+  return keptReceipt(file, receipt);
+}
+
+/**
+ * The receipts kept beside the database at `databasePath` whose records were never made: a daemon took them and ended
+ * first. A file that holds no receipt (one whose write the daemon's end cut short, before it answered the hook, which
+ * then recorded the receipt itself) is removed. None when the folder does not exist, as it does not until a receipt
+ * is handed over while the lock is held.
+ */
+export function keptReceipts(databasePath: string): KeptReceipt[] {
+  const folder = keptReceiptsFolder(databasePath);
+  let names: string[];
+  try {
+    names = readdirSync(folder);
+  } catch {
+    return [];
+  }
+  return names.flatMap(name => {
+    const file = join(folder, name);
+    const receipt = receiptIn(file);
+    if (receipt !== undefined) return [keptReceipt(file, receipt)];
+    forgetFile(file);
+    return [];
+  });
+}
+
+/** The receipt in `file`, or undefined when it holds none. */
+function receiptIn(file: string): SteerReceipt | undefined {
+  try {
+    return SteerReceiptSchema.parse(JSON.parse(readFileSync(file, "utf8")));
+  } catch {
+    return undefined;
   }
 }

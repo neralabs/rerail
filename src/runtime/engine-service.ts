@@ -31,7 +31,7 @@ import {
   endSuspendedSessions, failQueuedScans, RerailRuntime, type RerailRuntimeOptions, type SessionSuspension, type SuspendedSessions,
 } from "./runtime.js";
 import { SessionLanes } from "./session-lanes.js";
-import { steerReceiptWrite } from "./session-store.js";
+import { keepReceipt, keptReceipts, steerReceiptWrite } from "./session-store.js";
 
 export interface EngineService {
   /** Where it listens: the socket path it was given, or its `pipeFallback` when another process held that pipe. */
@@ -416,22 +416,48 @@ async function routeEngineEvent(
 
 /**
  * Records the receipt of a steer a hook handed over (`answerReceipt`), never waiting for the database's write lock on
- * this thread: in the runtime its session's events go to, found as theirs are, as an OMP or Pi host's receipts are
- * (`RerailRuntime.recordHeldSteer`); else, when no open runtime holds the session (its runtime retired, or this daemon
- * started after the event), through the service's own use of the database's record writer. Either way the record
- * writer makes it now, or keeps it until another process gives the lock back. A receipt recorded twice counts once.
+ * this thread, and resolves once the receipt would survive this process's end. A hook hands one over only while
+ * another process holds the lock, and ends once the daemon takes it, so the receipt is first kept on disk
+ * (`keepReceipt`) until its record is made. It is then recorded in the runtime its session's events go to, found as
+ * theirs are, as an OMP or Pi host's receipts are (`RerailRuntime.recordHeldSteer`); else, when no open runtime holds the
+ * session (its runtime retired, or this daemon started after the event), through the service's own use of the
+ * database's record writer. Either way the record writer makes it now, or keeps it until another process gives the
+ * lock back, and removes the kept file after it. A receipt recorded twice counts once.
  */
-function recordHandedReceipt(
+async function recordHandedReceipt(
   state: EngineRoutingState,
   options: EngineServiceOptions,
   receipt: SteerReceipt,
   configuration: EngineRuntimeConfiguration | undefined,
-): void {
+): Promise<void> {
+  const databasePath = resolvePath(configuration?.databasePath ?? state.databasePath);
+  // Opened first: a runtime whose store has closed records on a store of its own, whose close would otherwise be the
+  // writer's last and wait for the lock on this thread.
+  const writer = receiptWriter(state, databasePath);
+  const kept = await keepReceipt(databasePath, receipt);
   const { session, receiptId, ruleIds } = receipt;
   const { runtimeKey } = resolveRuntimeRoute(session, configuration, options, state);
-  if (state.runtimes.get(runtimeKey)?.recordHeldSteer(session.sessionId, receiptId, ruleIds) === true) return;
-  const databasePath = resolvePath(configuration?.databasePath ?? state.databasePath);
-  receiptWriter(state, databasePath).write(steerReceiptWrite(databasePath, receipt));
+  if (state.runtimes.get(runtimeKey)?.recordHeldSteer(session.sessionId, receiptId, ruleIds) !== true) writer.write(steerReceiptWrite(databasePath, receipt));
+  writer.write(kept.forget);
+}
+
+/**
+ * Records the receipts a daemon over the service's database took and ended before their records were made
+ * (`keptReceipts`), through the record writer, now or once the lock is given back, removing each kept file after its
+ * record. A receipt that cannot be recorded (the database cannot be read) stays kept for the next start.
+ */
+function recordKeptReceipts(state: EngineRoutingState): void {
+  const kept = keptReceipts(state.databasePath);
+  if (kept.length === 0) return;
+  try {
+    const writer = receiptWriter(state, state.databasePath);
+    for (const { receipt, forget } of kept) {
+      writer.write(steerReceiptWrite(state.databasePath, receipt));
+      writer.write(forget);
+    }
+  } catch (error) {
+    process.stderr.write(`rerail: the steer receipts kept from the last daemon were not recorded: ${errorMessage(error)}\n`);
+  }
 }
 
 /** The service's use of the record writer of the database at `databasePath`, opened once and closed with the service. */
@@ -968,7 +994,7 @@ type EngineRoute = "proof" | "event" | "receipt";
 /** What the engine socket's requests reach: the service's events, and the receipts hooks hand over. */
 interface EngineAnswers {
   ingest: EngineService["ingest"];
-  recordReceipt(receipt: SteerReceipt, configuration: EngineRuntimeConfiguration | undefined): void;
+  recordReceipt(receipt: SteerReceipt, configuration: EngineRuntimeConfiguration | undefined): Promise<void>;
 }
 
 const POSTED_ROUTES: ReadonlyMap<string | undefined, EngineRoute> = new Map([[EVENTS_PATH, "event"], [RECEIPTS_PATH, "receipt"]]);
@@ -1016,12 +1042,13 @@ async function answerEvent(body: unknown, response: ServerResponse, service: Eng
 
 /**
  * Takes the receipt of a steer a hook posted once its answer was written (`recordHandedReceipt`), which never waits for
- * the write lock, and then answers: a receipt answered is recorded, or kept until the lock is given back. A record that
- * fails is answered with why, so the hook records the receipt itself.
+ * the write lock, and then answers: a receipt answered is recorded, or kept until the lock is given back, on disk so
+ * that it survives the daemon. A receipt that cannot be kept or recorded is answered with why, so the hook records it
+ * itself.
  */
-function answerReceipt(body: unknown, response: ServerResponse, service: EngineAnswers): void {
+async function answerReceipt(body: unknown, response: ServerResponse, service: EngineAnswers): Promise<void> {
   const { receipt, configuration } = ReceiptRequestSchema.parse(body);
-  service.recordReceipt(receipt, configuration);
+  await service.recordReceipt(receipt, configuration);
   response.end("{}");
 }
 
@@ -1239,6 +1266,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
   }
   // In the same turn as the listen, before any request is read: a session this service opens is its own.
   endAbandonedSessions(databasePath, options.idleSessionMs ?? IDLE_SESSION_MS, options.now ?? Date.now);
+  recordKeptReceipts(routing);
   return engineService;
 }
 

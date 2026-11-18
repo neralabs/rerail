@@ -1,10 +1,10 @@
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { engineLink, startEngineService, type EngineService } from "../../../src/runtime/engine-service.js";
-import { SqliteSessionStore } from "../../../src/runtime/session-store.js";
+import { keepReceipt, SqliteSessionStore } from "../../../src/runtime/session-store.js";
 import { testEmbedder } from "../../support/hook-events.js";
 import { startTestRepository } from "../../support/started-repository.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
@@ -17,14 +17,18 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => removeFolder(root)));
 });
 
-/** An engine service over one started checkout, with the capability `accessToken` when one is given. */
-async function serviceOverCheckout(accessToken?: string) {
+/**
+ * An engine service over one started checkout, with the capability `accessToken` when one is given; `beforeStart` runs
+ * once the checkout is started and the database made, before the service starts.
+ */
+async function serviceOverCheckout(accessToken?: string, beforeStart?: (databasePath: string, checkout: string) => Promise<void>) {
   const root = await mkdtemp(join(tmpdir(), "rerail-receipts-"));
   roots.push(root);
   const databasePath = join(root, "rerail.sqlite");
   const checkout = join(root, "checkout");
   await mkdir(checkout);
   const repositoryKey = startTestRepository(checkout, databasePath);
+  await beforeStart?.(databasePath, checkout);
   const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-receipts-${process.pid}-${Date.now()}` : join(root, "engine.sock");
   const service = await startEngineService({
     socketPath,
@@ -62,6 +66,11 @@ function recordsMade(databasePath: string): void {
   } finally {
     store.close();
   }
+}
+
+/** The receipts the service keeps on disk beside the database at `databasePath` until their records are made. */
+async function keptFiles(databasePath: string): Promise<string[]> {
+  return await readdir(`${databasePath}-receipts`).catch(() => []);
 }
 
 /** When each session's row says it started. */
@@ -114,7 +123,7 @@ describe("the engine service's receipts", () => {
   });
 
   it.each([["in its session's runtime", true], ["for a session no runtime holds", false]] as const)(
-    "takes a receipt while another connection holds the write lock, its thread never waiting, and records it once the lock is given back (%s)",
+    "takes a receipt while another connection holds the write lock, its thread never waiting, keeps it on disk, and records it once the lock is given back (%s)",
     async (_case, started) => {
       const { databasePath, repositoryKey, socketPath, session } = await serviceOverCheckout();
       const link = engineLink({ socketPath });
@@ -124,6 +133,8 @@ describe("the engine service's receipts", () => {
       try {
         await expect(link.handReceipt({ session: session("b"), receiptId: "receipt-4", ruleIds: ["rule:a"] })).resolves.toBe(true);
         expect(receipts(databasePath)).toEqual([]);
+        // The hook has ended: a daemon that died now would leave the receipt for the next one to record.
+        expect(await keptFiles(databasePath)).toHaveLength(1);
       } finally {
         release();
       }
@@ -131,8 +142,25 @@ describe("the engine service's receipts", () => {
       expect(receipts(databasePath)).toEqual([
         { sessionId: "b", eventId: "steering-delivered:receipt-4", payloadJson: JSON.stringify({ ruleIds: ["rule:a"] }), repositoryId: repositoryKey },
       ]);
+      expect(await keptFiles(databasePath)).toEqual([]);
     },
   );
+
+  it("records at its start each receipt a daemon took and ended before recording, once, and removes what it kept", async () => {
+    const receipt = (checkout: string) => ({ session: { host: "claude-code" as const, sessionId: "left", cwd: checkout }, receiptId: "receipt-6", ruleIds: ["rule:a"] });
+    const { databasePath, repositoryKey } = await serviceOverCheckout(undefined, async (databasePath, checkout) => {
+      // What a daemon killed while another process held the write lock leaves: the receipt it took, kept but never
+      // recorded, and a file whose write its end cut short.
+      await keepReceipt(databasePath, receipt(checkout));
+      await keepReceipt(databasePath, receipt(checkout));
+      await writeFile(join(`${databasePath}-receipts`, "cut-short.json"), "{\"session\":");
+    });
+    recordsMade(databasePath);
+    expect(receipts(databasePath)).toEqual([
+      { sessionId: "left", eventId: "steering-delivered:receipt-6", payloadJson: JSON.stringify({ ruleIds: ["rule:a"] }), repositoryId: repositoryKey },
+    ]);
+    expect(await keptFiles(databasePath)).toEqual([]);
+  });
 
   it("answers a receipt it could not record with why, so the hook records it itself", async () => {
     const { root, databasePath, socketPath, session } = await serviceOverCheckout();
