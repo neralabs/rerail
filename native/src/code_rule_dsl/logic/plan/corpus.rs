@@ -5441,6 +5441,9 @@ fn run_observed(
     // reads its input deltas from the documents whose content changed.
     let run_docs_held: std::sync::Mutex<input_delta::Docs> = std::sync::Mutex::new(HashMap::new());
     let run_docs = &run_docs_held;
+    // The cross program's strata identities, read with the cross part's frames (kept as a stored fact, before the
+    // first wave): what `Retained::from_frames` names its frames by.
+    let mut cross_idents: Vec<(u64, retain::StrataIdents)> = Vec::new();
     // The run's waves: from its first chunk to the cross-file part's last stratum. SQL a wave's thread runs or waits on
     // meanwhile is a hazard in the profile (decision 0104); before is the run's beginning, after its end.
     {
@@ -5462,7 +5465,10 @@ fn run_observed(
                     // And what the run binds from an earlier phase, which `Retained::from_frames` reads as an input,
                     // declared or not.
                     let bound: Vec<&str> = repository.iter().map(|(rel, _, _)| rel.as_str()).collect();
-                    Some(retain::frame_rels(&[&cross.placed()?, &maintained.0.placed()?], &binds, &bound)?)
+                    let progs = [cross.placed()?, maintained.0.placed()?];
+                    let (rels, strata) = retain::frame_rels_kept(store, &[&progs[0], &progs[1]], &binds, &bound)?;
+                    cross_idents = progs.iter().map(super::body::Placed::digest).zip(strata).collect();
+                    Some(rels)
                 }
             }
             None => None,
@@ -8299,7 +8305,7 @@ fn run_observed(
                         retain::renamed(Arc::clone(&k.source), bound.clone())
                     } else {
                         changed += 1;
-                        Arc::new(retain::Layered::new(bound.clone(), Arc::clone(&k.source), Arc::clone(&k.ranges), std::mem::take(&mut patch.changed)))
+                        Arc::new(retain::Layered::new(bound.clone(), Arc::clone(&k.source), Arc::clone(k.ranges()?), std::mem::take(&mut patch.changed)))
                     };
                     results.push((rel.clone(), width, base.is_some(), bound, source, patch));
                 }
@@ -8319,7 +8325,7 @@ fn run_observed(
                     if let Some(st) = &k.stats {
                         kept_input_stats.insert(rel.clone(), (k.digest, st.clone()));
                     }
-                    adopted.insert(rel.clone(), retain::KeptInput { source: retain::renamed(Arc::clone(&k.source), bound.clone()), docs: Arc::clone(&k.docs), digest: k.digest, ranges: Arc::clone(&k.ranges), stats: k.stats.clone() });
+                    adopted.insert(rel.clone(), retain::KeptInput { source: retain::renamed(Arc::clone(&k.source), bound.clone()), layout: Arc::clone(&k.layout), digest: k.digest, stats: k.stats.clone() });
                     if let Some(docs) = patch.docs {
                         // Its rows' digests by owner, for the frames written back and the next run.
                         kept_input_docs.insert(rel.clone(), Arc::new(docs));
@@ -8909,7 +8915,8 @@ fn run_observed(
                     let frames_space = kept_strata::space(root);
                     if cell.is_none() && from_frames.is_some() {
                         let _s = span("the kept part, from the frames");
-                        cell = Some(retain::Retained::from_frames(store, frames_space, ckey, binds, &cross_placed, &cross_sccs, &digests)?);
+                        let strata = cross_idents.iter().find(|(d, _)| *d == cross_placed.digest()).map(|(_, s)| s);
+                        cell = Some(retain::Retained::from_frames_named(store, frames_space, ckey, binds, &cross_placed, &cross_sccs, &digests, strata)?);
                         if let (Some(c), Some(k)) = (cell.as_mut(), kept_loaded.as_ref()) {
                             c.adopt_inputs(k);
                         }
@@ -9218,7 +9225,7 @@ fn run_observed(
                     let derived_again: std::cell::RefCell<BTreeSet<String>> = std::cell::RefCell::new(BTreeSet::new());
                     // The inputs' frames, before the run: they depend on the inputs alone.
                     let inputs_done = match (&was_frames, let_go_inputs) {
-                        (Some(was), true) => Some(retain::write_input_frames(store, was, &cross_placed, &cross.domains, &split.locations, &cross_inputs, &digests, &input_docs, &semijoin_stats)),
+                        (Some(was), true) => Some(retain::write_input_frames(store, was, &cross_placed, &cross.domains, &split.locations, &cross_inputs, &digests, &|rel: &str| input_docs.get(rel).cloned(), &semijoin_stats)),
                         _ => None,
                     };
                     // `false`: not taken, so the run holds it to its end as before.
@@ -11771,7 +11778,7 @@ pub mod tests {
         let hash = super::super::row_digest(&[string]);
         let docs: retain::DocDigests = [(string, (hash.wrapping_mul(3), 3))].into_iter().collect();
         let ranges: retain::Ranges = [(string, (0u32, 3u32))].into_iter().collect();
-        let kept = retain::KeptInput { source, digest: retain::digest_of_docs(&docs), docs: Arc::new(docs), ranges: Arc::new(ranges), stats: None };
+        let kept = retain::KeptInput::laid(source, docs, ranges);
         let evaluated: BTreeSet<i64> = [string].into_iter().collect();
         // The changed file held the string, and holds it still.
         let cells = super::super::Cells::plain(1);
@@ -11794,13 +11801,7 @@ pub mod tests {
         let sum = rows.iter().map(|r| super::super::row_digest(r)).fold(0u64, u64::wrapping_add);
         let docs: retain::DocDigests = [(doc, (sum, 2))].into_iter().collect();
         let ranges: retain::Ranges = [(doc, (0u32, 2u32))].into_iter().collect();
-        let kept_of = |c1: Vec<i64>| retain::KeptInput {
-            source: crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into(), "c1".into()], vec![Some(vec![doc; 2]), Some(c1)]),
-            digest: retain::digest_of_docs(&docs),
-            docs: Arc::new(docs.clone()),
-            ranges: Arc::new(ranges.clone()),
-            stats: None,
-        };
+        let kept_of = |c1: Vec<i64>| retain::KeptInput::laid(crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into(), "c1".into()], vec![Some(vec![doc; 2]), Some(c1)]), docs.clone(), ranges.clone());
         let evaluated: BTreeSet<i64> = [doc].into_iter().collect();
         let cells = super::super::Cells::plain(2);
         let other = kept_of(vec![9, 9]);
@@ -12255,11 +12256,19 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&
     // evaluated file that has no rows of this input now has its kept ones removed.
     // The evaluated documents the kept rows hold: from the smaller side (an input keeps a few owners, or many).
     let mut touched: BTreeSet<i64> = by_old.keys().chain(by_new.keys()).copied().collect();
-    if kept.ranges.len() < evaluated.len() {
-        touched.extend(kept.ranges.keys().copied().filter(|o| evaluated.contains(o)));
-    } else {
-        touched.extend(evaluated.iter().copied().filter(|o| kept.ranges.contains_key(o)));
+    // The kept layout is read only where an owner may be touched: a rule edit evaluates none (Q91).
+    if !evaluated.is_empty() {
+        let ranges = kept.ranges()?;
+        if ranges.len() < evaluated.len() {
+            touched.extend(ranges.keys().copied().filter(|o| evaluated.contains(o)));
+        } else {
+            touched.extend(evaluated.iter().copied().filter(|o| ranges.contains_key(o)));
+        }
     }
+    if touched.is_empty() {
+        return Ok(OwnerPatch { changed: Vec::new(), plus: Vec::new(), minus: Vec::new(), docs: None, digest: kept.digest, read: (0, 0, 0) });
+    }
+    let (kept_docs, kept_ranges) = (kept.docs()?, kept.ranges()?);
     let all: Vec<usize> = (0..width).collect();
     let mut docs: Option<retain::DocDigests> = None;
     let (mut changed, mut plus, mut minus) = (Vec::new(), Vec::new(), Vec::new());
@@ -12284,21 +12293,21 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&
             } else {
                 (cells.rows(&rows.concat()).into_iter().fold(0u64, u64::wrapping_add), rows.len())
             };
-            if kept.docs.get(&o).copied() == (n > 0).then_some((sum, n as u64)) {
+            if kept_docs.get(&o).copied() == (n > 0).then_some((sum, n as u64)) {
                 by_new.remove(&o);
                 continue;
             }
         }
         // Read (`RERAIL_STATS_KEEP_TRACE`): an owner found unchanged above reads no kept rows and is not counted.
         read.0 += 1;
-        read.1 += kept.ranges.get(&o).map_or(0, |r| r.1 as usize);
+        read.1 += kept_ranges.get(&o).map_or(0, |r| r.1 as usize);
         // The owner's kept rows, checked against its digest: the only kept rows the edit reads.
-        let was: Vec<Vec<i64>> = match kept.ranges.get(&o) {
+        let was: Vec<Vec<i64>> = match kept_ranges.get(&o) {
             Some(&(start, n)) => {
                 let mut row = vec![0i64; width];
                 let rows: Vec<Vec<i64>> = (start..start + n).map(|r| { kept.source.row_at(r as usize, &all, &mut row); row.clone() }).collect();
                 let sum = cells.rows(&rows.concat()).into_iter().fold(0u64, u64::wrapping_add);
-                if kept.docs.get(&o) != Some(&(sum, n as u64)) {
+                if kept_docs.get(&o) != Some(&(sum, n as u64)) {
                     return Err(format!("{rel}: owner {o}'s kept rows are not its digest's"));
                 }
                 rows
@@ -12370,7 +12379,7 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&
         let (a, b) = (set(&was), set(&now));
         minus.extend(a.difference(&b).cloned());
         plus.extend(b.difference(&a).cloned());
-        let d = docs.get_or_insert_with(|| (*kept.docs).clone());
+        let d = docs.get_or_insert_with(|| (**kept_docs).clone());
         if now.is_empty() {
             d.remove(&o);
         } else {

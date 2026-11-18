@@ -255,7 +255,7 @@ fn a_kept_input_is_decoded_where_it_is_first_read() {
     assert_eq!((good.len(), read_bad.len()), (3, 3), "each input's rows counted from its documents' table");
     // Q70: a row read before the input is read whole decodes its granule alone, so input1's good granules read as
     // kept while its bad one is not decoded yet.
-    let one = kept["input1"].ranges[&3];
+    let one = kept["input1"].ranges().unwrap()[&3];
     assert_eq!(read_bad.value(one.0 as usize, 0), (3 << 32) | 1, "input1's row of document 3, from its granule alone");
     assert_eq!(good.failure(), None);
     let mut rows: Vec<i64> = (0..3).map(|r| good.value(r, 0)).collect();
