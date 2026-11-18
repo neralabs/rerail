@@ -35,8 +35,11 @@ class PlayedThread {
   /** How many of this thread's waits ended at once, with no answer to read: turns of a spin. */
   spins = 0;
 
-  constructor(workerData: { answered: Int32Array; port: MessagePort }, files: ReadonlySet<string>) {
-    this.#answered = workerData.answered;
+  constructor(workerData: Record<string, unknown>, files: ReadonlySet<string>) {
+    // The shared cell git.ts hands the thread, whatever it names it, and the thread's end of the channel.
+    const cell = Object.values(workerData).find((value): value is Int32Array => value instanceof Int32Array);
+    if (cell === undefined || !(workerData.port instanceof actual.MessagePort)) throw new Error("the thread was given no shared cell or port");
+    this.#answered = cell;
     this.#port = workerData.port;
     this.#files = files;
   }
@@ -94,7 +97,7 @@ function playThread(files: ReadonlySet<string>): { readonly thread: () => Played
   let played: PlayedThread | undefined;
   // A constructor that returns its own object: `new` gives that object, not an instance of the mocked Worker, whose
   // methods are the real thread's.
-  vi.mocked(Worker).mockImplementationOnce(function startThread(_code: string, options: { workerData: { answered: Int32Array; port: MessagePort } }) {
+  vi.mocked(Worker).mockImplementationOnce(function startThread(_code: string, options: { workerData: Record<string, unknown> }) {
     played = new PlayedThread(options.workerData, files);
     return { unref: () => undefined, terminate: async () => await Promise.resolve(0) };
   } as unknown as typeof Worker);
