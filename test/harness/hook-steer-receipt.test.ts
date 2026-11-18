@@ -125,7 +125,9 @@ describe("a steered hook's receipt", () => {
     const output = await steeredAnswer(root, daemon);
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const emitted = emitHookOutput(output, sink());
-    await daemon.receiptRead;
+    // Whichever comes first: the daemon reads the receipt, or the hook ends without handing it over.
+    await Promise.race([daemon.receiptRead, emitted]);
+    expect(daemon.receipts).toHaveLength(1);
     expect(receiptRows(root)).toEqual([]);
     // The bound a running daemon has to read the receipt runs out.
     await vi.runOnlyPendingTimersAsync();
