@@ -861,7 +861,8 @@ pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::Gra
     // linked rules, where it can see the product's readers and what supplies their joins.
     let mut pipeline = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("bound node products after linking", version);
     pipeline.program(&mut super::super::product_demand::BoundProducts::Linked);
-    Ok((pipeline.current()?.clone(), front, sources))
+    let (version, _) = pipeline.finish()?;
+    Ok((version, front, sources))
 }
 
 fn link_front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, store: &ContentStore, keep: bool, lists: &front::Lists) -> Result<(Arc<Version>, Front, Vec<SourceId>)> {

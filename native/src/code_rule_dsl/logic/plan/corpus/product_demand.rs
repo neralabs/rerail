@@ -473,6 +473,23 @@ mod tests {
     }
 
     #[test]
+    fn preparation_by_parts_propagates_an_unbounded_product_refusal() {
+        use crate::code_rule_dsl::language::GrammarDialect;
+        use crate::code_rule_dsl::logic::program_image::Builder;
+        use crate::content_store::ContentStore;
+
+        let program = parse(&format!("{INPUTS}\n.output product\n")).unwrap();
+        let (version, _) = Builder::of_program(&program).unwrap().finish().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
+
+        let error = super::super::preparation::parts::front(version, GrammarDialect::Python, &store, false, &Default::default())
+            .err()
+            .expect("the preparation must refuse an output that requires all pairs");
+        assert!(error.contains("unbounded node Cartesian product in `product`"), "{error}");
+    }
+
+    #[test]
     fn connected_joins_and_program_constants_stay_as_written() {
         let mut program = parse(
             "
