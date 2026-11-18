@@ -1714,6 +1714,9 @@ pass.
 
 ### Q45. A warm run on the m3 records observer answers, where the same check on the m1max records none
 
+- **Again** (2026-11-18): `the_run_after_a_cold_one_writes_nothing` fails 2 of 4 on the m3 under load, a cause
+  other than the racy window: the journal's timing (Q189).
+
 - **Found** (2026-11-16, at 28d25b6a8 plus a change since reverted): the 317 rules over fixtures/python, a strict cold
   run and then a strict warm run with `RERAIL_WARM=list`, on the m3: the warm run exits 3 with "the observer recorded
   answers in a warm run" and "a SQLite write committed to a file in a warm run" (thread `rerail-observer-writer`),
@@ -2423,6 +2426,32 @@ regenerated since keep the wider condition. The profiling build has none (Q13).
          as a token mark's test already was. The production parser (clusters by rules) was not
          affected.
 
+### Q189. (bend's Q117, benchmarks-on-integration's Q54) The journal's answer across processes is not a guarantee FSEvents makes
+
+- **Found** (2026-11-18, the same day on two branches): a run started just after an edit is not told of it. Bend's
+  O125 replay wrote a step's files by `rsync` just before the step: the replay named none of them, and the whole-run
+  cutoff answered the last step's findings. The bench's edit steps (`bench-shapes.sh full`) read 0 components for
+  one step, then both edits in the next. Both trusted the journal (decision 0105).
+- **Cause, measured** (t46, `scripts/profiling/fsevents-history-probe.py` on the m3 at load 31–60): a change made
+  before a stream starts reaches it only through fseventsd's on-disk log, and the log is written late under load.
+  In 12 of 40 trials a new stream from the last run's cursor named neither the edited file nor a new one, though
+  the cookie and `HistoryDone` came (the sync answered "complete"). The missing events never came later on that
+  stream; a replay from the same cursor 2.5 s later named every one. `FullHistory` does not fix it. A marker
+  written before the stream came in its history in 2 of 40 trials, so fil's check (accept a replay only when the
+  marker is in it) would replay again or scan nearly every time on this host. Watchman documents the same: cookie
+  sync on macOS is unsupported under load.
+- **Its mirror image, the same day**: `the_run_after_a_cold_one_writes_nothing` fails 2 of 4 on the m3 at load 30–56
+  (same binary, after the hub's merge 586ae50d6, which touches no observer code). A cold run takes its cursor from
+  `FSEventsGetCurrentEventId`, which is read before fseventsd has numbered the test's just-written sources; the
+  warm run is told of them, and forgets and records answers (RERAIL_WARM faults: "forgot answers the journal named
+  changed", "settled a root the journal could not speak for", "recorded answers").
+- **Also found reading the code against t46**: `journal::since` keeps only events with `id > cursor`; a history
+  record can carry an id older than a change it holds (duscope), so that filter can drop a change.
+- **Done when**: a test edits a file and starts the next run within milliseconds, many times over on the m3, and
+  every run is told; `the_run_after_a_cold_one_writes_nothing` passes every time there. The design is the user's
+  (Questions for the user, 3). Until then the 0364 measurement runs with `RERAIL_JOURNAL=off`, as bend does.
+- **Record**: —
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
@@ -2451,6 +2480,16 @@ regenerated since keep the wider condition. The profiling build has none (Q13).
   (0177), which Go-C's has not, so `tier1_equal` takes a file both refuse as the same up to the refusal (its
   positions a prefix of the interpreter's, its codes none or 0s past it); the hub's `tier1_agrees` is folded into it.
   The state-table guard takes `self.arms` in `Reader`'s methods (0332) as a reader's.
+
+3. **Q189: what the observer trusts between processes.** FSEvents does not guarantee that a new process is told of
+   a change made just before it (t46: 12 of 40 trials missed one on the m3, with the cookie and `HistoryDone` in
+   hand). Options: (a) `stat` every path the run would trust from the journal, for a root of a few hundred files
+   (ep2's 300: about 1 ms CPU, and no 0.16–0.77 s replay wait), the journal kept for large roots with (b) or (c);
+   (b) a replay is trusted only once a marker written before the stream comes in its history, else replayed
+   again, then `stat` (fil's fix; on the loaded m3 it would fall back nearly always); (c) a settle period
+   (Watchman's): nothing changed under the root for N ms before the run; (d) a stream that outlives the process
+   (a daemon, which 0105 ruled out). Each keeps decision 0105's within-process journal, where a stream that was
+   running when the change was made is told of it.
 
 ### Q55. (Q66 at Native-and-GPU-strata e0a0362b9) Relations are blocks the CPU and GPU read in place (0325): steps 4–7
 
@@ -3766,4 +3805,3 @@ down). The CPU runs it; Metal refuses the batch (`metal-form`, "an early start")
 
 - **Done when**: generated MSL shifts a file's first lane as the CPU does, and `every_step_on_metal_equals_the_interpreter`
   runs every step, none refused.
-
