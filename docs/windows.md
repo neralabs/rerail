@@ -168,12 +168,14 @@ Rerail runs Git for Windows' own `git.exe`, not its launcher, and reads Git's gl
 - Rerail starts that `git.exe` with the environment the launcher gives it (`gitStartEnvironment`): `MSYSTEM` named
   for the build, `PATH` led by the build's `bin`, `<Git>\usr\bin` and the home's `bin`, and `PLINK_PROTOCOL` when
   unset. An unset `HOME` stays unset: `git.exe` sets it in its own process by the launcher's rule, `HOMEDRIVE` and
-  `HOMEPATH` when that folder exists, else `USERPROFILE`. Rerail never waits for a look at the home folder in its own
-  thread, since on a home share that does not answer (a domain account's laptop off the network) Windows waits about
-  21 s, which then holds that Git call, within its time limit, and not the daemon. For the home's `bin` on `PATH`, each
-  start asks whether the share is a folder off Rerail's thread, one ask at a time, and the next start takes that
-  answer: the share's `bin` or the profile's, as the launcher puts one. Only before the first answer, where `HOMEDRIVE`
-  and `HOMEPATH` name another folder than `USERPROFILE`, do both homes' `bin` go on `PATH`, the share's first. Where the
+  `HOMEPATH` when that folder exists, else `USERPROFILE`. A Git start never waits for a look at the home folder in
+  Rerail's thread, since on a home share that does not answer (a domain account's laptop off the network) Windows waits
+  about 21 s, which then holds that Git call, within its time limit, and not the daemon. For the home's `bin` on
+  `PATH`, the daemon asks at each start whether the share is a folder, off Rerail's thread, one ask at a time, and its
+  next start takes that answer: the share's `bin` or the profile's, as the launcher puts one. A hook or a command asks
+  nothing, since a pending ask would keep it alive after its work until Windows gives up on the server. Where
+  `HOMEDRIVE` and `HOMEPATH` name another folder than `USERPROFILE`, its starts put both homes' `bin` on `PATH`, the
+  share's first, as the daemon's do before its first answer. Where the
   launcher would put a folder that Windows finds from the repository Git runs in, Rerail puts none: the home's `bin` only for a fully qualified home, never an empty, relative or drive-relative
   one, and no empty entry when `PATH` is empty. Git finds `sh.exe` on that `PATH` for every command it runs through
   its shell (a filter such as Git LFS's, a textconv, an alias with arguments), and the programs those commands name.
@@ -188,7 +190,9 @@ Rerail runs Git for Windows' own `git.exe`, not its launcher, and reads Git's gl
   waits no longer than its own time limit and only until it is stopped: then it fails as its start did, and the look
   goes on for the calls after it. A blocking call, such as the one that finds the repository a session works in, asks
   the disk in another thread (`askedInThread`) and waits for that look no longer than its time limit, as it waits for
-  any Git it starts. When it finds none,
+  any Git it starts. That wait holds the daemon's thread: 60 to 330 ms on Windows 11 and 20 to 30 ms on Linux, once
+  per blocking call while no Git is found, and up to the call's limit when a `PATH` entry the look reaches first
+  does not answer. When it finds none,
   as while an installer is still at work, that call fails and the next one looks again. A `git.exe` it finds that Windows cannot
   run yet, as one the installer is still writing, fails each call as a Git that cannot start does until it runs.
 - Anyone can put a `cmd\git.exe` or `bin\git.exe` on `PATH`, so Rerail goes behind one only into a Git for Windows
