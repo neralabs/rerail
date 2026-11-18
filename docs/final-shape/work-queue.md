@@ -2123,5 +2123,39 @@ to 13 files, and in 0 of 2 unprofiled runs. One run had 18 extra B030 findings i
 Runs on the old export path, with the same binary, differed as often (2 of 4), so this predates Q93. The CPU
 binding's findings are the reference's in every run. Timing matters: profiled runs differ more often.
 
-Next: find the first relation that differs between two Metal runs of the same input (the stratum outputs' digests),
-then the device form that made it.
+Narrowed 2026-11-17 at 100 files (about 13 s a run), against the CPU's findings, 10 runs an arm. Arms of 4–5 runs
+misled at first: at a failure rate near 40%, five clean runs in a row come up about 8% of the time.
+
+| Arm | Runs that differ |
+|---|---|
+| `--metal` as is | about 4 in 10 |
+| CPU | 0 of 10 |
+| `RERAIL_DEVICE_JOINS=off` | 0 of 10 |
+| `RERAIL_THREADS=1` | 0 of 10 |
+| `RERAIL_DEVICE_WAVES=off` | 3 of 10 |
+| Relations not bound in place (uploaded instead) | 2 of 8 |
+| Pooled buffers released, not reused | 3 of 10 |
+| Resident entries never trimmed | 4 of 8 |
+| Relations' pages never given back | 4 of 6 (300 files) |
+| Device indexes built in a copy, not the shared block | 4 of 5 (300 files) |
+
+So it is a race between threads inside the device joins, and the waves are not needed for it. These are ruled out:
+- binding in place;
+- the buffer pool's reuse;
+- the resident cache's eviction;
+- the page give-back;
+- device indexes built in shared blocks.
+
+A per-thread check found that rows bound in place do not change between their bind and their batch's end. Host-built and
+device-built indexes use the same hash (`clif_rel_key_mix`, `KEY_SEED`) and the same order within a bucket, and every
+probe reads an index through its own buffer (`ix.bound()`).
+
+Fixed on the way, though it is not this race: `Rows::in_block_dead` kept the first kills delta it made. A live head's dead
+rows change with no row added (`setfix::Levels` kills a line's rows, then brings them back), so the device's subtraction
+of a head's rows (`device.rs`, "less the rows the head holds") could read old dead bits. The delta is now reused only
+while its bits are the ones given. Test: `the_dead_rows_bound_are_those_given_now`.
+
+Next, still open:
+- What the threads share in a device join that one thread does not reach at once: the one command queue; the blocks'
+  buffers (`Block::gpu_buffer`, remade larger as a block grows); and the relations' descriptors in shared blocks.
+- Which strata differ: dump each device stratum's output digest in two runs and diff them.

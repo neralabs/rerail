@@ -434,9 +434,9 @@ pub struct Rows {
     life: Life,
     /// Every part merged into one, made once for a reader that binds one relation (`in_block`).
     merged: std::sync::OnceLock<Part>,
-    /// The dead rows' delta of that one relation (`in_block_dead`), its descriptor's offset; `None` when its block
-    /// could not hold it.
-    kills: std::sync::OnceLock<Option<usize>>,
+    /// The dead rows' delta of that one relation (`in_block_dead`), its descriptor's offset: kept while its dead bits
+    /// are the relation's.
+    kills: Mutex<Option<usize>>,
 }
 
 /// Where a relation's rows lie for a reader that binds its block (the device, decision 0325): the block, kept while
@@ -578,7 +578,7 @@ impl Rows {
         debug_assert_eq!(rows.len() % self.k, 0, "rows of {} values", self.k);
         // The rows merged for a reader that binds one relation (`in_block`) are these no longer.
         self.merged.take();
-        self.kills.take();
+        *self.kills.get_mut().unwrap_or_else(|e| e.into_inner()) = None;
         let n = rows.len() / self.k;
         let tail = self.tail.get_or_insert_with(|| Part::new(self.life, self.k, self.hint.max(n).max(16)));
         if n > 1 {
@@ -636,14 +636,25 @@ impl Rows {
     }
 
     /// `in_block`, with the rows `dead` marks (bit `id`, as setfix keeps them) dead in it: a delta of the one
-    /// relation in its block, no rows of its own, whose dead bits are these (made once, and kept while these rows
-    /// are). `None` for no rows, or when the block cannot hold the delta.
+    /// relation in its block, no rows of its own, whose dead bits are these (kept, and made again when the dead rows
+    /// are others). `None` for no rows, or when the block cannot hold the delta.
     pub fn in_block_dead(&self, dead: &[u64]) -> Option<InBlock> {
         let one = self.one()?;
-        let at = (*self.kills.get_or_init(|| {
-            let block = &one.facts.block;
-            Relation::try_kills(block, &spec(self.k), one.rel(), dead).map(|r| block.offset_of(r))
-        }))?;
+        let block = &one.facts.block;
+        let mut kills = self.kills.lock().unwrap_or_else(|e| e.into_inner());
+        // A relation's dead rows change with no row added (a level's rows killed, then brought back as their levels
+        // are checked, `setfix::Levels`): a delta made before holds the dead bits of then. Reused only while they are
+        // these (Q94: the device's subtraction of a head's rows read the old bits, and some runs' findings differed).
+        // SAFETY: `at` is a delta's descriptor in `one`'s block, which `one` keeps.
+        let fresh = |at: usize| unsafe { (*block.ptr::<Relation>(at)).dead.as_slice() == dead };
+        let at = match *kills {
+            Some(at) if fresh(at) => at,
+            _ => {
+                let at = block.offset_of(Relation::try_kills(block, &spec(self.k), one.rel(), dead)?);
+                *kills = Some(at);
+                at
+            }
+        };
         Some(InBlock { facts: one.facts.clone(), own: one.own.clone(), at: one.facts.block.offset_of(one.rel), rows: one.len(), dead: at })
     }
 
@@ -680,7 +691,7 @@ impl Rows {
         debug_assert!(self.k == 0 || self.k == k, "a part of {k} columns after rows of {}", self.k);
         self.k = k;
         self.merged.take();
-        self.kills.take();
+        *self.kills.get_mut().unwrap_or_else(|e| e.into_inner()) = None;
         let at = match self.tail.take() {
             Some(t) if t.len() > 0 => {
                 let next = self.from + t.len();
@@ -911,6 +922,22 @@ mod tests {
         assert_eq!(next.len(), 2 * k);
         assert_eq!(*next.row(1, k), [4, 5, 6]);
         assert_eq!(*next.freeze(2).row(0, k), [1, 2, 3]);
+    }
+
+    /// Q94: a relation's dead rows change with no row added (a level's rows killed, then brought back). The delta a
+    /// reader binds holds the dead bits it is given now, not those of an earlier bind.
+    #[test]
+    fn the_dead_rows_bound_are_those_given_now() {
+        let mut rows = Rows::new(1);
+        rows.extend_from_slice(&[1, 2, 3, 4]);
+        let bits = |b: &InBlock| unsafe { (*b.facts.block.ptr::<Relation>(b.dead)).dead.as_slice().to_vec() };
+        let first = rows.in_block_dead(&[0b0101]).expect("a delta");
+        assert_eq!(bits(&first), [0b0101]);
+        assert_eq!(rows.in_block_dead(&[0b0101]).expect("a delta").dead, first.dead, "the same bits: the same delta");
+        let all = rows.in_block_dead(&[0b1111]).expect("a delta");
+        assert_eq!(bits(&all), [0b1111], "every row killed");
+        let back = rows.in_block_dead(&[0b0010]).expect("a delta");
+        assert_eq!(bits(&back), [0b0010], "rows brought back");
     }
 
     /// A part another writer filled, after rows pushed and before rows pushed again: every row read by its id, the
