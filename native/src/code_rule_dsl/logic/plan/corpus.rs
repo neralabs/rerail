@@ -1433,31 +1433,56 @@ fn tail_kept(v: Arc<crate::code_rule_dsl::logic::program_image::Version>, tail: 
             .into()
     };
     let runs = crate::code_rule_dsl::logic::program_text::StoredRuns(&store);
+    // The run the key names (decision 0385): kept under its own input's identity (`anchor`), the key a replaceable
+    // pointer to it, so a run kept later replaces it where a run's own facts are kept once.
+    let anchor = |run: &crate::code_rule_dsl::logic::program_image::manager::Run| -> [u8; 32] {
+        use sha2::Digest as _;
+        sha2::Sha256::new().chain_update(b"rerail/combine tail run kept\0").chain_update(key).chain_update(crate::code_rule_dsl::logic::program_image::manager::identity(run.input())).finalize().into()
+    };
     let last = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the combine's last tail run, from the store (decision 0380)".into());
-        runs.open(&key, "combine").ok().flatten()
+        let named = preparation::parts::kept_facts_alone(&store, &key).and_then(|f| f.get("anchor").and_then(|r| r.first()).and_then(|r| match r.first() {
+            Some(front::Value::Str(h)) => preparation::parts::unhex(h),
+            _ => None,
+        }));
+        // Its versions a few edits deep made flat (decision 0385): the edit runs over an edit, not whole.
+        named.and_then(|a| runs.open(&a, "combine").ok().flatten()).map(crate::code_rule_dsl::logic::program_image::manager::Run::shallow)
     };
     let rebased = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the link, as an edit of the last tail run's input (decision 0380)".into());
         last.and_then(|last| rebase(last.input(), &v).ok().flatten().map(|r| (last, r)))
     };
-    let p = match rebased {
+    let (p, edit) = match rebased {
         Some((last, r)) => {
-            crate::code_rule_dsl::logic::profile::decision("the combine's tail (decision 0380)", || format!("run again over an edit of the last run's input ({} rules)", Delta::of(last.input(), &r).size()));
-            Pipeline::again(last, r)
+            let n = Delta::of(last.input(), &r).size();
+            crate::code_rule_dsl::logic::profile::decision("the combine's tail (decision 0380)", || format!("run again over an edit of the last run's input ({n} rules)"));
+            (Pipeline::again(last, r), Some(n))
         }
         None => {
             crate::code_rule_dsl::logic::profile::decision("the combine's tail (decision 0380)", || "run whole: no last run of the link's family, or the link is no edit of its input".into());
-            Pipeline::keeping("combine", v)
+            (Pipeline::keeping("combine", v), None)
         }
     };
     let run = tail_passes(p, tail)?.done().map_err(Error::Plan)?;
     for s in run.stages() {
         crate::code_rule_dsl::logic::profile::decision("the combine's tail: a pass (decision 0380)", || format!("{}: {:?}, {:?}, {} rules visited", s.pass, s.ran, s.form, s.visited));
     }
-    {
-        let _s = crate::code_rule_dsl::logic::profile::span(|| "keep the combine's tail run (decision 0380)".into());
-        crate::code_rule_dsl::logic::program_text::record_runs(&store, &[(key, &run)]);
+    // Kept where it pays (decision 0385): a run made whole, or one whose edit from the kept run's input reached
+    // `TAIL_REKEPT` rules. Otherwise the kept run stands, and the next edit is an edit of its input as this one was:
+    // nothing is written.
+    match edit {
+        Some(n) if n < TAIL_REKEPT => crate::code_rule_dsl::logic::profile::decision("the combine's tail run, kept (decision 0385)", || format!("no: the kept run stands, the edit from its input {n} rules (kept again from {TAIL_REKEPT})")),
+        _ => {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "keep the combine's tail run (decision 0380)".into());
+            let at = anchor(&run);
+            crate::code_rule_dsl::logic::program_text::record_runs(&store, &[(at, &run)]);
+            let pointer: crate::code_rule_dsl::logic::program_facts::Facts = std::iter::once(("anchor".to_owned(), vec![vec![preparation::parts::str(&preparation::parts::hex(&at))].into()])).collect();
+            preparation::parts::keep_facts(&store, &key, &pointer);
+            crate::code_rule_dsl::logic::profile::decision("the combine's tail run, kept (decision 0385)", || match edit {
+                Some(n) => format!("yes: the edit from the kept run's input reached {n} rules"),
+                None => "yes: a run made whole".into(),
+            });
+        }
     }
     let out = run.output().clone();
     Ok(match out.base_bytes() {
@@ -1465,6 +1490,10 @@ fn tail_kept(v: Arc<crate::code_rule_dsl::logic::program_image::Version>, tail: 
         None => out.fold().map_err(Error::Plan)?,
     })
 }
+
+/// How many rules an edit of the kept tail run's input reaches before the run over it is kept in its place
+/// (decision 0385): below it, each edit runs again from the kept run, and keeping costs nothing.
+const TAIL_REKEPT: usize = 64;
 
 /// The tail's passes on `p` (`tail_version`), their decisions stated.
 fn tail_passes<'s>(mut p: crate::code_rule_dsl::logic::program_image::manager::Pipeline<'s>, tail: &Tail) -> Result<crate::code_rule_dsl::logic::program_image::manager::Pipeline<'s>> {
@@ -1542,9 +1571,6 @@ fn requests_where_documents_are<'s>(mut p: crate::code_rule_dsl::logic::program_
         let mut pass = crate::code_rule_dsl::typing::file_local::RequestsFileLocal { requests, narrowed: Vec::new() };
         p.program(&mut pass);
         p.current().map_err(Error::Plan)?;
-        for (req, how) in &pass.narrowed {
-            crate::code_rule_dsl::logic::profile::decision("on request: narrowed to the node's document", || format!("{req}: {how}"));
-        }
     }
     // The tree's narrowing beside it: the two agree.
     #[cfg(debug_assertions)]
@@ -1566,6 +1592,34 @@ struct AnswersWhereDocumentsAre;
 
 impl crate::code_rule_dsl::logic::program_image::manager::ProgramPass for AnswersWhereDocumentsAre {
     const NAME: &'static str = "answers where documents are";
+    /// Over an edit (decision 0385): the edit as it is, where the last run undid no round, the edit leaves the header
+    /// as it was, and it defines no answer a round is undone for, nor what one reads, down.
+    fn again(&mut self, cx: &crate::code_rule_dsl::logic::program_image::manager::Cx<'_>, last: &crate::code_rule_dsl::logic::program_image::manager::Last<'_>, w: &mut crate::code_rule_dsl::logic::program_image::manager::ProgramW<'_>) -> std::result::Result<bool, String> {
+        use crate::code_rule_dsl::logic::program_image::manager::{Reads, edit_as_is};
+        use crate::code_rule_dsl::logic::rr::lower::{Answer, ON_REQUEST};
+        if last.delta.touched != Reads::RULES || !Arc::ptr_eq(last.input, last.output) {
+            return Ok(false);
+        }
+        // The split places a relation from its rules and what they read, down: where the edit defines none of the
+        // answers' relations nor what they read, it places them as it did, file-local, and is not asked for.
+        let v = cx.v();
+        let mut down: std::collections::BTreeSet<&str> = Default::default();
+        let mut todo: Vec<&str> = ON_REQUEST.iter().flat_map(|round| round.iter()).filter(|a| matches!(a.answer, Answer::Function(_))).map(|a| a.rel).collect();
+        while let Some(rel) = todo.pop() {
+            if !down.insert(rel) {
+                continue;
+            }
+            let Some(id) = v.rel(rel) else { continue };
+            for r in v.heads(id) {
+                todo.extend(r.body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel())).filter(|x| !down.contains(x)));
+            }
+        }
+        let head = |of: &crate::code_rule_dsl::logic::program_image::Version, r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>| down.contains(of.rel_name(r.head().rel()));
+        if last.delta.removed.iter().any(|id| last.input.rule(id).is_none_or(|r| head(last.input, r))) || last.delta.added.iter().any(|&id| v.rule(id).is_none_or(|r| head(v, r))) {
+            return Ok(false);
+        }
+        edit_as_is(cx, last, w)
+    }
     fn run(&mut self, _cx: &crate::code_rule_dsl::logic::program_image::manager::Cx<'_>, w: &mut crate::code_rule_dsl::logic::program_image::manager::ProgramW<'_>) -> std::result::Result<(), String> {
         let v = w.input().clone();
         let out = answers_where_documents_are_version(v.clone()).map_err(|e| e.to_string())?;
@@ -4281,7 +4335,7 @@ fn run_observed(
                 let outputs = program.outputs.clone();
                 program.inputs.retain(|rel| read.contains(rel) || outputs.contains(rel));
                 let (tree_version, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&program).and_then(|b| b.finish()).map_err(Error::Plan)?;
-                assert_eq!((tree_version.size(), tree_version.digest()), (version.size(), version.digest()), "the version's program is the tree's after the merges");
+                assert_eq!((tree_version.size(), tree_version.digest()), (version.size(), version.digest()), "the version's program is the tree's after the merges: {}", crate::code_rule_dsl::logic::program_image::differences(&tree_version, &version));
                 assert_eq!(lower::domains(&program)?, lowered.domains, "the version's domains are the tree's");
                 crate::code_rule_dsl::typing::file_local::programs_over(&program, version.clone()).map_err(Error::Plan)?;
             }

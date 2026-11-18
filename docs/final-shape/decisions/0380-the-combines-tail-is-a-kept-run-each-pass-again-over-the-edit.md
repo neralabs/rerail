@@ -78,6 +78,9 @@ ep2 on the m3 (300 files, 317 rules, `RERAIL_PREPARE=parts`, an edit of B101's b
 
 ## What it does not do
 
+0385 takes up each of these, and finds the run was kept once per key (every edit ran from the first run) and a
+`again` that kept the last run's facts over an edit that changed them.
+
 - The last tail run is read from the store whole (0.04–0.05 s): every step's input and output, each down to its
   bases.
 - The file-local split's locations (fact spaces, the narrowing, the answers where documents are) are split again for

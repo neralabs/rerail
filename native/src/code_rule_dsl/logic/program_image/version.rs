@@ -219,6 +219,16 @@ impl Version {
             Version::View { size, .. } | Version::Overlay { size, .. } => *size,
         }
     }
+    /// Every rule its stack numbers, by id, ascending: its own and those an overlay above removed (decision 0385,
+    /// `build::flat`).
+    pub(crate) fn stack_rules(&self) -> Vec<RuleRef<'_>> {
+        let mut layers: Vec<&Image> = self.down().collect();
+        layers.reverse();
+        layers.into_iter().flat_map(|im| {
+            let base = if im.is_delta() { im.rule_base() } else { 0 };
+            (0..im.rules() as u32).map(move |k| RuleRef::new(im, k, RuleId(base + k)))
+        }).collect()
+    }
     /// How many deltas are stacked on the base.
     pub fn depth(&self) -> usize {
         match self {

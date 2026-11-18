@@ -1547,3 +1547,44 @@ fn a_new_process_reruns_only_the_passes_after_a_stored_step() {
     let (_, _, runs, _) = run(2, Some(&7u64.to_le_bytes()));
     assert_eq!(runs, [0, 0, 0], "found again under the same part");
 }
+
+/// A chain of edits past `REBASE_DEPTH` runs again over each one (decision 0385): at that depth the last run is made
+/// shallow, each deep version flat (a view of one base, its ids, size and digest the deep one's), so the next edit is
+/// still an edit of its input; the output is a run from scratch's every time.
+#[test]
+fn a_chain_of_edits_past_the_rebase_depth_runs_again_over_each() {
+    use super::manager::{Pipeline, REBASE_DEPTH, Ran, rebase};
+    let v0 = managed();
+    let fresh = |v: &Arc<Version>| Version::open(v.fold().unwrap().base_bytes().unwrap()).unwrap();
+    let scratch = |v: &Arc<Version>| {
+        let mut p = Pipeline::new("scratch", v.clone());
+        p.rules(&mut RenameAll { from: "e", to: "e2", needs: false, seen: 0 });
+        p.finish().unwrap().0
+    };
+    let mut p = Pipeline::keeping("test", fresh(&v0));
+    p.rules(&mut RenameAll { from: "e", to: "e2", needs: false, seen: 0 });
+    let mut last = p.done().unwrap();
+    let mut prog = v0.clone();
+    let mut flattened = 0;
+    for i in 0..2 * REBASE_DEPTH + 2 {
+        let gone = prog.rules().nth(6).unwrap().id();
+        prog = fresh(&edited(&prog, &[gone], &[r_of_f(30 + i as i64)]));
+        let deep = last.input().clone();
+        last = last.shallow();
+        if deep.depth() >= REBASE_DEPTH {
+            flattened += 1;
+            let flat = last.input();
+            assert_eq!(flat.depth(), 0, "edit {i}: made flat");
+            assert_eq!((flat.size(), flat.digest()), (deep.size(), deep.digest()), "edit {i}: the same program");
+            assert!(flat.rules().map(|r| (r.id(), r.hash())).eq(deep.rules().map(|r| (r.id(), r.hash()))), "edit {i}: the same rules under the same ids");
+        }
+        let v = rebase(last.input(), &prog).unwrap().expect("an edit of the last input, however many came before");
+        let mut p = Pipeline::again(last, v);
+        p.rules(&mut RenameAll { from: "e", to: "e2", needs: false, seen: 0 });
+        last = p.done().unwrap();
+        assert_eq!(last.stages()[0].ran, Ran::Delta, "edit {i}: run again over the edit");
+        let want = scratch(&prog);
+        assert_eq!((last.output().digest(), last.output().size()), (want.digest(), want.size()), "edit {i}: the program a run from scratch makes");
+    }
+    assert!(flattened >= 2, "made flat {flattened} times");
+}

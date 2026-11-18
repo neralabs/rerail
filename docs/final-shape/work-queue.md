@@ -680,6 +680,15 @@ pass.
   0.003 s, fact spaces 0.094 → 0.045 s, the sources on request, the narrowing and the merges over the edit alone;
   `combine` 0.52 → 0.31 s. Left in the tail: the last run read from the store (0.04 s, every step's versions down
   to their bases), and every ninth edit runs whole (an overlay past `REBASE_DEPTH`).
+- **Built** (2026-11-17, ep2 parts on the m3, rows h1's, the check passing on eleven edits in a row): the tail's
+  last whole costs over the edit (0385). The stored run's analyses' rows apart and decoded when asked (its facts
+  4.5 → 0.48 MB, the open 0.049 → 0.032 s); the narrowing and the answers no longer ask for the split, its keys made
+  for the edit's heads alone (fact spaces' split 0.025 → 0.012 s); every pass over the edit; a run eight deep made
+  flat. Found: the tail's run was kept once per key, so every edit ran from the first run and wrote a run nothing
+  read; now a replaceable pointer, kept only when made whole or 64 rules away (the keep, 0.009 s, gone from an
+  edit). Found: 0380's `again` kept the last run's facts over an edit that changed them; a program pass now runs
+  over rule edits alone. `combine` 0.33 → 0.23 s. Left: the stored run's images read whole (0.019 s for 8: the
+  store decompresses and hashes each).
 
 ### Q19. A new process reads every kept frame of the cross part, its own or not
 

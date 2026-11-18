@@ -191,6 +191,9 @@ pub struct Delta {
     pub decls: RelSet,
     /// Which kinds changed.
     pub touched: Reads,
+    /// The heads of the rules removed (by the input) and added (by the output), by name, where the edit is read off
+    /// the output (`None` where it is rebuilt or made otherwise): what a relation's key reads (decision 0385).
+    pub heads: Option<std::collections::BTreeSet<String>>,
 }
 
 impl Delta {
@@ -234,6 +237,11 @@ impl Delta {
         }
         if d.rebuilt || !d.removed.is_empty() || !d.added.is_empty() {
             d.touched = d.touched | Reads::RULES;
+        }
+        if !d.rebuilt {
+            let removed = d.removed.iter().filter_map(|id| input.rule(id)).map(|r| input.rel_name(r.head().rel()).to_owned());
+            let added = d.added.iter().filter_map(|&id| output.rule(id)).map(|r| output.rel_name(r.head().rel()).to_owned());
+            d.heads = Some(removed.chain(added).collect());
         }
         // An overlay of the input whose own layer states no declaration or fact (one that removes rules or sets the
         // inputs and outputs, a part's or a selection's) has the input's: those are not compared (each comparison
@@ -402,6 +410,14 @@ impl Store {
     /// How many times analysis `name` was read from a stored run's rows (decision 0333 §4).
     pub fn loaded(&self, name: &str) -> usize {
         self.loaded.lock().get(name).copied().unwrap_or(0)
+    }
+    /// `from`'s analyses held and kept as rows, as this store's: `from` is a version of the same rules under the same
+    /// ids (`Run::shallow`, decision 0385).
+    pub fn adopt(&self, from: &Store) {
+        let held: Vec<(TypeId, Entry)> = from.of.lock().iter().map(|(t, e)| (*t, e.clone())).collect();
+        self.of.lock().extend(held);
+        *self.stored.lock() = from.stored.lock().clone();
+        *self.lineage.lock() = from.lineage.lock().clone();
     }
     /// Records that this store's version was opened from a store's image of sha256 `digest` (`kept_image`).
     pub fn set_kept_image(&self, digest: [u8; 32]) {
@@ -739,8 +755,8 @@ pub trait ProgramPass {
         Vec::new()
     }
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<()>;
-    /// Over an edit of its last run's input (`Pipeline::again`, decision 0380): its output written onto its last
-    /// output (`w`'s input) from the edit alone, where the decisions it made over the whole are the edit's input's
+    /// Over an edit of its last run's input of rules alone (`Pipeline::again`, decisions 0380, 0385): its output
+    /// written onto its last output (`w`'s input) from the edit alone, where the decisions it made over the whole are the edit's input's
     /// too. `Ok(false)`, the default, runs it whole. A pass that writes here leaves in its last output every rule but
     /// what came from the edit's removed rules (`Version::derived`), and writes what its added rules make.
     fn again(&mut self, _cx: &Cx<'_>, _last: &Last<'_>, _w: &mut ProgramW<'_>) -> Result<bool> {
@@ -957,6 +973,9 @@ struct Kept {
     rule: Option<RuleKept>,
     /// A program pass's plan (`ProgramPass::plan`).
     plan: Vec<Row>,
+    /// The profile's decisions a program pass made when it ran whole, stated again where it runs over an edit
+    /// (decision 0385).
+    said: Vec<crate::code_rule_dsl::logic::profile::Decided>,
 }
 
 struct RuleKept {
@@ -995,6 +1014,35 @@ impl Run {
     }
     pub fn decisions(&self) -> &[Decided] {
         &self.decided
+    }
+
+    /// The run with each of its versions `REBASE_DEPTH` deltas deep or more made flat (`build::flat`, decision
+    /// 0385): the same rules under the same ids, a view of one base. The next edit is written onto it a layer deep,
+    /// and run again over the edit, where before it ran whole (`rebase` refuses a version that deep). Its analyses are
+    /// the deep one's. A version that cannot be made flat is left as it is.
+    pub fn shallow(self) -> Run {
+        if self.steps.iter().all(|k| k.input.depth() < REBASE_DEPTH && k.output.depth() < REBASE_DEPTH) && self.input.depth() < REBASE_DEPTH && self.output.depth() < REBASE_DEPTH {
+            return self;
+        }
+        let _s = crate::code_rule_dsl::logic::profile::span(|| format!("a run made shallow ({} steps; decision 0385)", self.steps.len()));
+        let mut made: HashMap<*const Version, Arc<Version>> = HashMap::new();
+        let mut flat = |v: &Arc<Version>| -> Arc<Version> {
+            if v.depth() < REBASE_DEPTH {
+                return v.clone();
+            }
+            made.entry(Arc::as_ptr(v))
+                .or_insert_with(|| match super::build::Builder::flat(v) {
+                    Ok(Some(f)) => {
+                        f.analyses().adopt(v.analyses());
+                        f
+                    }
+                    _ => v.clone(),
+                })
+                .clone()
+        };
+        let Run { name, input, output, stages, steps, decided } = self;
+        let steps = steps.into_iter().map(|k| Kept { input: flat(&k.input), output: flat(&k.output), ..k }).collect();
+        Run { name, input: flat(&input), output: flat(&output), stages, steps, decided }
     }
 }
 
@@ -1124,7 +1172,7 @@ impl<'s> Pipeline<'s> {
         out.analyses().set_lineage(from, &delta);
         self.stages.push(Stage { pass, ran, form, visited, input: (self.v.size(), self.v.digest()), output: (out.size(), out.digest()), delta: delta.size(), touched: delta.touched });
         if self.keep {
-            self.kept.push(Kept { pass: pass.into(), input: self.v.clone(), output: out.clone(), form, rule, plan: Vec::new() });
+            self.kept.push(Kept { pass: pass.into(), input: self.v.clone(), output: out.clone(), form, rule, plan: Vec::new(), said: Vec::new() });
         }
         self.v = out;
         Ok(())
@@ -1218,8 +1266,12 @@ impl<'s> Pipeline<'s> {
     fn program_step<P: ProgramPass>(&mut self, pass: &mut P) -> Result<()> {
         let prior = self.prior(P::NAME)?;
         let v = self.v.clone();
-        // Over an edit of the last run's input: the pass writes the edit onto its last output where it can.
-        if let Prior::Edit(k, d) = &prior {
+        // Over an edit of the last run's input: the pass writes the edit onto its last output where it can. Only an
+        // edit of rules alone: the last output holds the last input's declarations, facts, inputs and outputs, which
+        // a pass writing onto it does not state again (decision 0385).
+        if let Prior::Edit(k, d) = &prior
+            && d.touched == Reads::RULES
+        {
             let made = {
                 let cx = Cx { v: &v, store: v.analyses(), pass: P::NAME, decided: &self.decided, asked: None };
                 let mut w = ProgramW::new(&k.output);
@@ -1229,15 +1281,19 @@ impl<'s> Pipeline<'s> {
                 }
             };
             if let Some((out, form, visited)) = made {
+                // What it said when it ran whole stands with its decisions (decision 0385).
+                crate::code_rule_dsl::logic::profile::restate(&k.said);
                 self.record(P::NAME, out, Ran::Delta, form, visited, &k.output, None)?;
-                return Ok(self.planned(pass.plan()));
+                return Ok(self.planned(pass.plan(), k.said.clone()));
             }
         }
+        let deciding = crate::code_rule_dsl::logic::profile::Deciding::open();
         let made = {
             let cx = Cx { v: &v, store: v.analyses(), pass: P::NAME, decided: &self.decided, asked: None };
             let mut w = ProgramW::new(&v);
             pass.run(&cx, &mut w).and_then(|()| w.finish())
         };
+        let said = deciding.close();
         let (out, form, visited) = made?;
         // Over an edit, its output written as an edit of its last output (`rebase`, decision 0380): the steps after
         // it are run again over an edit too, not whole.
@@ -1246,18 +1302,19 @@ impl<'s> Pipeline<'s> {
             && let Some(r) = rebase_output(&k.output, &out)?
         {
             self.record(P::NAME, r, Ran::Whole, Form::Overlay, visited, &k.output, None)?;
-            return Ok(self.planned(pass.plan()));
+            return Ok(self.planned(pass.plan(), said));
         }
         self.record(P::NAME, out, Ran::Whole, form, visited, &v, None)?;
-        Ok(self.planned(pass.plan()))
+        Ok(self.planned(pass.plan(), said))
     }
 
-    /// The plan of the step just recorded, kept with it.
-    fn planned(&mut self, plan: Vec<Row>) {
+    /// The plan of the step just recorded, and the profile's decisions it made, kept with it.
+    fn planned(&mut self, plan: Vec<Row>, said: Vec<crate::code_rule_dsl::logic::profile::Decided>) {
         if self.keep
             && let Some(k) = self.kept.last_mut()
         {
             k.plan = plan;
+            k.said = said;
         }
     }
 
@@ -1372,6 +1429,8 @@ pub struct StoredStep {
     pub rule: Option<StoredRule>,
     /// A program pass's plan (`ProgramPass::plan`).
     pub plan: Vec<Row>,
+    /// What it said (`Kept::said`).
+    pub said: Vec<crate::code_rule_dsl::logic::profile::Decided>,
 }
 
 /// A rule pass's selection (its kind, 0–3 for `All`, `Heads`, `Readers` and `Rules`, and its ids), the names of the
@@ -1470,7 +1529,7 @@ impl Run {
                 asked: rk.asked.iter().map(|a| a.name.to_owned()).chain(rk.named.iter().cloned()).collect(),
                 own_end: rk.own_end,
             });
-            steps.push(StoredStep { pass: k.pass.to_string(), input: i, output: o, form: k.form, rule, plan: k.plan.clone() });
+            steps.push(StoredStep { pass: k.pass.to_string(), input: i, output: o, form: k.form, rule, plan: k.plan.clone(), said: k.said.clone() });
         }
         let output = add(&self.output, &mut table, &mut versions);
         inputs.sort_unstable();
@@ -1490,7 +1549,7 @@ impl Run {
                 Some(r) => Some(RuleKept { select: Select::of_stored(&r.select).ok_or("a stored step's selection is not one")?, asked: Vec::new(), named: r.asked, own_end: r.own_end }),
                 None => None,
             };
-            kept.push(Kept { pass: s.pass.into(), input: at(s.input)?, output: at(s.output)?, form: s.form, rule, plan: s.plan });
+            kept.push(Kept { pass: s.pass.into(), input: at(s.input)?, output: at(s.output)?, form: s.form, rule, plan: s.plan, said: s.said });
         }
         Ok(Run { name, input: at(input)?, output: at(output)?, stages: Vec::new(), steps: kept, decided })
     }

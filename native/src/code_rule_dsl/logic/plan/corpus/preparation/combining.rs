@@ -137,10 +137,11 @@ impl ProgramPass for FactSpaces<'_> {
         if groups.is_empty() || std::env::var("RERAIL_SCOPE_GUARDS").is_ok_and(|x| x == "off") {
             return Ok(());
         }
-        let locations = {
+        let split = {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "fact spaces: the file-local split's locations".into());
-            cx.get::<FileLocal>()?.locations.clone()
+            cx.get::<FileLocal>()?
         };
+        let locations = &split.locations;
         let derived: BTreeSet<String> =
             v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).chain(f.natives().iter().map(|n| v.rel_name(n.rel).to_owned())).filter(|r| !f.is_input(r)).collect();
         let place = |rel: &str| place_of(f, &locations, derived.contains(rel), rel);
@@ -246,15 +247,16 @@ impl ProgramPass for FactSpaces<'_> {
         if heads.iter().any(|h| derived_in(&**v, h) != derived_in(&**last.input, h)) {
             return Ok(false);
         }
-        let locations = {
+        let split = {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "fact spaces: the file-local split's locations".into());
             let now = cx.get::<FileLocal>()?;
             let then = crate::code_rule_dsl::logic::program_image::manager::analysis::<FileLocal>(last.input)?;
             if now.locations != then.locations {
                 return Ok(false);
             }
-            now.locations.clone()
+            now
         };
+        let locations = &split.locations;
         // Every removed rule made one rule of the last output (a guard keeps or rewrites a rule, never drops one).
         if last.delta.removed.iter().any(|id| last.output.derived(id).count() != 1) {
             return Ok(false);

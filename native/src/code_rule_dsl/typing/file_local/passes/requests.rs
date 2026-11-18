@@ -233,10 +233,10 @@ impl ProgramPass for RequestsFileLocal {
         self.requests.join("\n").into_bytes()
     }
     /// Over an edit (decision 0380): the edit as it is, onto the last output, where no rule of it is a request and
-    /// the file-local split places every relation's documents as it did (what a request is narrowed by). Otherwise
-    /// it runs whole.
+    /// none defines what a request reads, down (so the file-local split places what a request is narrowed by as it
+    /// did). Otherwise it runs whole.
     fn again(&mut self, cx: &Cx<'_>, last: &Last<'_>, w: &mut ProgramW<'_>) -> Result<bool, String> {
-        use crate::code_rule_dsl::logic::program_image::manager::{Reads, analysis, edit_as_is};
+        use crate::code_rule_dsl::logic::program_image::manager::{Reads, edit_as_is};
         if last.delta.touched != Reads::RULES {
             return Ok(false);
         }
@@ -252,11 +252,10 @@ impl ProgramPass for RequestsFileLocal {
                 return Ok(false);
             }
         }
-        let (now, then) = (cx.get::<FileLocal>()?, analysis::<FileLocal>(last.input)?);
-        if now.local != then.local || now.same_doc != then.same_doc {
-            return Ok(false);
-        }
-        // Nor does one define what a request's body unfolds (`Narrower::unfold`): what the requests read, down.
+        // Nor does one define what a request's body unfolds (`Narrower::unfold`): what the requests read, down. The
+        // split places a relation from its rules and what they read, down (its maintain splits a changed head's
+        // readers, up), so where the edit defines none of these, the split places the requests and what they read as
+        // it did, and is not asked for (decision 0385).
         let mut down: BTreeSet<String> = BTreeSet::new();
         let mut todo: Vec<String> = Vec::new();
         for req in &self.requests {
@@ -331,6 +330,10 @@ impl ProgramPass for RequestsFileLocal {
             };
             changed |= !matches!(made, Made::Keep);
             plan.push((rule, made));
+        }
+        // Said from the pass, so a run over an edit says it again with its step (decision 0385).
+        for (req, how) in &self.narrowed {
+            crate::code_rule_dsl::logic::profile::decision("on request: narrowed to the node's document", || format!("{req}: {how}"));
         }
         if !changed {
             return Ok(());
