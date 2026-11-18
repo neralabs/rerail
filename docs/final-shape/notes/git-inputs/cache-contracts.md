@@ -69,6 +69,12 @@ The provider records the storage state that it checked when it read an object.
 It checks loose file metadata and the pack and index files in the repository and its alternates.
 If the storage state changes, the provider reads and checks the object's checksum before it returns successful facts.
 Failed object reads are checked again when a later run requests the object.
+A loose object's storage observation depends only on the loose copies that Git can use when no pack index lists the object.
+Use a conservative pack observation when an index cannot prove whether it contains the object.
+A source request checks the same storage observation before it uses saved content.
+It verifies bytes from changed storage against the Git object ID.
+The scan reports unreadable selected sources by path and continues to check readable sources.
+Listing files and evaluating metadata do not demand the source blobs.
 
 A tree decoder's cache key includes hash format:
 
@@ -84,6 +90,8 @@ tree_decode_result(content, format, decoder_v, version, name, mode, target) :-
 
 The empty tree has a complete successful decoder outcome with zero entry rows.
 That outcome is retained too. Zero rows alone do not encode completeness.
+The explicit walk, the source inventory, and direct path lookup use the same verified tree entries within a scan.
+Count a decode where the provider reads the entries from the Git object.
 Commit decoding uses the same form for commit records, ordered parents, signatures, and extra headers.
 One native decoder request can answer all these families.
 
@@ -230,6 +238,14 @@ Import resolution can depend on other files and package metadata.
 Equal tape identity does not justify reuse of semantic results whose import or configuration inputs changed.
 The existing component and relation dependency mechanisms retain that distinction.
 Embedded-language parsing uses the same content/grammar cache and preserves its existing source map.
+
+The Python reference extractor currently takes the file's tape and effective module as inputs.
+Its local result describes definitions and reference names. It contains no resolved edges to other files.
+Retain those local facts by tape, effective module, and extractor version.
+Include whether the module has a containing package, because that changes relative imports.
+Use file-local definition ranges to join the summary to each placement's current nodes.
+The link step reads the current placements, import names, and rule settings.
+A change in another file can change those links without rebuilding this file's summary.
 
 ## 7. Mutable observations and failure retry
 
