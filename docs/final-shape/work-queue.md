@@ -1889,6 +1889,12 @@ side of the merge has (neither history holds them).
 - **Keep**: the mirror's incremental sends.
 - **Done when**: a file the checkout deleted (tracked at the host's copy's last sync, now gone) is removed from the
   host's copy before the command runs, and a test of the mirror covers it.
+- **Hand-off** (2026-11-18): the farm is installed at version 27, from final-rerail-shape-phased-facts; this
+  branch's farm is version 20 and is not where the farm is worked on. Handed to the farm's session through the user,
+  with the design: a `prune` op in farm-agent, sent by `mirror.work` for a test command (`verify`) after the sync,
+  with the paths just synced under each checkout root; the agent removes each file under that root's copy that
+  carries its `sent` attribute (a file the mirror wrote) and is not listed, and replies with what it removed, which
+  the daemon forgets from `Host.sent`. Files the host made itself (no attribute) are never touched.
 
 ### Q64. (Q22 at f15aac19d) Metal's semantic fixtures on the packed JIT: refusals, failures and different results
 
