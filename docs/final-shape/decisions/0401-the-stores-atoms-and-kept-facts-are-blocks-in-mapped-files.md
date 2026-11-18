@@ -3,7 +3,7 @@
 Status: decided by the user (2026-11-18: "everything should be in blocks all the time"; "these should be blocks …
 I would prefer memory-mappable files than blobs"). Builds 0266's `Atoms` and `Facts` as what the store keeps.
 Replaces the atoms' segment rows and key (0049, 0111) and the cross part's frames (0104, 0295 §4) as storage.
-Steps 1–3 (atoms) built and 4 measured; 5–10 (facts) next.
+Steps 1–3 (atoms) built and 4 measured; 5 (the kept block) built; 6–10 next.
 
 ## Intro
 
@@ -206,33 +206,47 @@ overflow chains row by row). The space's size is then what its live programs rea
 
 Each space's kept relations are readable through a virtual table over the mapped blocks, as the atoms are.
 
-### Interface (rerail-blocks)
+### Interface (rerail-blocks), as built in step 5 (`kept.rs`)
 
 ```rust
-/// A kept relation's key.
+/// A kept relation's key; ordered as the directory is.
 pub struct FactKey<'a> { pub rel: &'a str, pub ident: &'a [u8; 32], pub part: i64 }
 
-/// A kept relation, in place: its key, its metadata, and its rows as a view.
-pub struct Kept<'b> { pub key: FactKey<'b>, pub digest: u64, pub reads: &'b [Read], pub types: &'b [u8], pub rows: relation::View<'b> }
+/// A kept relation, where it lies: its key, what a run checks of it, and its rows (`view()` reads them).
+pub struct Kept<'b> { pub key: FactKey<'b>, pub digest: u64, pub types: &'b [u8], pub rows: &'b Relation, .. }
+impl<'b> Kept<'b> { pub fn reads(&self) -> impl Iterator<Item = (&'b str, u64)>; pub fn view(&self) -> View<'b>; }
 
-/// What reads a space's kept facts (a base, or a base and its delta read as one).
+/// What reads a space's kept facts: one block (`KeptFacts`), or a base and its delta read as one (`KeptView`).
 pub trait KeptRead {
     fn get(&self, key: &FactKey) -> Option<Kept<'_>>;
     /// Every entry for `rel`, in key order (its parts).
-    fn of(&self, rel: &str) -> Box<dyn Iterator<Item = Kept<'_>> + '_>;
-    fn keys(&self) -> Box<dyn Iterator<Item = FactKey<'_>> + '_>;
+    fn of<'s>(&'s self, rel: &str) -> Box<dyn Iterator<Item = Kept<'s>> + 's>;
+    fn all(&self) -> Box<dyn Iterator<Item = Kept<'_>> + '_>;
 }
 
-/// The next delta of a space: written behind the run by the store's writer.
+/// A frozen kept block, mapped read-only; its kind, state and tag checked against the store's row.
+impl KeptFacts { pub fn open(path: &Path, tag: u64) -> io::Result<KeptFacts>; pub fn base_tag(&self) -> Option<u64>; }
+pub struct KeptView<'a> { pub base: Option<&'a KeptFacts>, pub delta: Option<&'a KeptFacts> }
+
+/// A space's next base or delta, written under a making name and renamed into place by the store's writer.
 impl KeptW {
-    pub fn create(path: &Path, base: Option<&KeptFacts>) -> io::Result<KeptW>;
-    /// A relation the run derived (frozen in its own `Facts` block), copied whole.
-    pub fn put(&mut self, key: FactKey, digest: u64, reads: &[Read], types: &[u8], rows: &Relation);
+    pub fn create(path: &Path, tag: u64, base_tag: Option<u64>, reserve: usize) -> io::Result<KeptW>;
+    /// A relation a run derived (frozen in its own block), copied whole (`Relation::try_copy_into`).
+    pub fn put(&mut self, key: FactKey, digest: u64, reads: &[(&str, u64)], types: &[u8], rows: &Relation) -> io::Result<()>;
     /// An entry of the previous delta, kept as it is.
-    pub fn carry(&mut self, kept: &Kept);
-    pub fn finish(self) -> io::Result<KeptFacts>;
+    pub fn carry(&mut self, kept: &Kept) -> io::Result<()>;
+    /// In a delta: the base's entry for `key` is no longer kept.
+    pub fn gone(&mut self, key: FactKey);
+    /// The directory sorted and written, the block frozen (truncated to what it holds) and on the disk.
+    pub fn finish(self) -> io::Result<()>;
 }
 ```
+
+The copy is `Relation::try_copy_into(&self, block) -> Option<&Relation>`. It makes the descriptor again with the
+source's widths, order and `min_log`, so each chunk covers the same rows. Each column's chunks, the kills, the dead
+bits, every index's buckets and rows, and the statistics are then copied by `memcpy`, and each reference set to its
+copy. Nothing is decoded, sorted again or rebuilt. A relation's pieces need not be one range of its block, so the
+copy goes piece by piece.
 
 ## Required behavior, asserted (a test each)
 
@@ -268,7 +282,8 @@ Facts:
 3. (built) The roll-up and its sweep; A-R7. The conversion became the floor's rise (A7); `atom_segment`, `atom_key`
    and the holding paths went in step 2.
 4. (measured, below) ep2: a new process's atoms (0.046 s, 215 MB before), its cold and warm runs.
-5. `rerail_blocks` kept facts: the directory, `KeptW`, `KeptRead` over a base and its delta; F-R1 at the block.
+5. (built) `rerail_blocks::kept`: the directory, `KeptW`, `KeptRead` over a base and its delta; F-R1 at the block
+   (`a_kept_relation_is_read_where_it_lies`), `a_delta_reads_over_its_base`, `a_key_put_twice_is_refused`.
 6. The keep (`retain::write_frames`, `write_input_frames`) writes a space's delta.
 7. The read (`preload_frames_live`, `kept_inputs`, the clean relations) binds views; F-R1–F-R3.
 8. Collection as a roll-up; F-R4.

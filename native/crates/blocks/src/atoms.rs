@@ -302,22 +302,7 @@ impl AtomsW {
     /// written to its file.
     pub fn sync(&self) -> io::Result<()> {
         #[cfg(unix)]
-        {
-            // SAFETY: the block's own mapping, its whole length.
-            if unsafe { libc::msync(self.block.base_ptr().cast(), self.block.reserved(), libc::MS_SYNC) } != 0 {
-                return Err(io::Error::last_os_error());
-            }
-            let Some(f) = self.block.mapped_file() else { return Ok(()) };
-            use std::os::fd::AsRawFd as _;
-            #[cfg(target_os = "macos")]
-            let done = unsafe { libc::fcntl(f.as_raw_fd(), libc::F_BARRIERFSYNC) };
-            #[cfg(not(target_os = "macos"))]
-            let done = unsafe { libc::fdatasync(f.as_raw_fd()) };
-            if done != 0 {
-                return Err(io::Error::last_os_error());
-            }
-            Ok(())
-        }
+        return self.block.sync_mapped();
         #[cfg(not(unix))]
         {
             use std::io::{Seek, Write};

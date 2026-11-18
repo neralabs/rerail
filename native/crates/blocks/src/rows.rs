@@ -234,6 +234,35 @@ impl Rows {
         true
     }
 
+    /// Makes these rows (empty, of `src`'s widths and `min_log`, in open `block`) hold `src`'s: the same chunks made,
+    /// each column's chunks copied whole by `memcpy`, nothing decoded. False when `block` has no room (the rows are
+    /// then empty).
+    pub fn try_copy_from(&self, block: &Block, src: &Rows) -> bool {
+        assert!(self.is_empty() && self.ncols == src.ncols && self.min_log == src.min_log, "a copy into rows of another shape");
+        let n = src.len();
+        if !self.try_reserve(block, u64::from(n)) {
+            return false;
+        }
+        for c in 0..self.ncols as usize {
+            let (from, to) = (src.col(c), self.col(c));
+            assert_eq!(from.width, to.width);
+            let mut k = 0;
+            while chunk_first(k, self.min_log) < u64::from(n) {
+                let rows = (u64::from(n) - chunk_first(k, self.min_log)).min(chunk_rows(k, self.min_log)) as usize;
+                // SAFETY: chunk `k` of both columns is made (`n` is within both reserves) and holds `rows` rows of
+                // `width` bytes; they lie in different blocks' memory, and this block is open with this one writer.
+                unsafe {
+                    let a = (from as *const ColDir as *const u8).offset(from.chunk[k].load(Relaxed) as isize);
+                    let b = (to as *const ColDir as *const u8).offset(to.chunk[k].load(Relaxed) as isize) as *mut u8;
+                    std::ptr::copy_nonoverlapping(a, b, rows * from.width as usize);
+                }
+                k += 1;
+            }
+        }
+        self.len.store(n, Release);
+        true
+    }
+
     /// Gives every column's chunks back to `block`'s free list (decision 0342), when it keeps one; the rows are
     /// then none. Returns the bytes given to the OS with them (`Block::free_chunk`).
     ///

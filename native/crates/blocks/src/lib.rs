@@ -35,6 +35,7 @@ pub mod generated_reads;
 /// The same reads in MSL, for every kernel that reads a relation in its block (decision 0325).
 pub const RELATION_READS: &str = include_str!("relation_reads.metal");
 pub mod journal;
+pub mod kept;
 pub mod mem;
 pub mod packed;
 pub mod ranged;

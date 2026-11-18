@@ -31,6 +31,8 @@ pub mod kind {
     pub const SCRATCH: u32 = 6;
     /// The store's atoms (decision 0401): strings and their hash table.
     pub const ATOMS: u32 = 7;
+    /// A space's kept facts (decision 0401 F1).
+    pub const KEPT: u32 = 8;
 }
 
 structure! {
@@ -561,6 +563,25 @@ impl Block {
             return Err(invalid(format!("state {}", h.state)));
         }
         Ok(b)
+    }
+
+    /// What is written in a block mapped from its file on the disk: its dirty pages written back, then the file
+    /// flushed (a barrier on macOS, `fdatasync` elsewhere). Nothing to do for a block with no file.
+    #[cfg(unix)]
+    pub fn sync_mapped(&self) -> io::Result<()> {
+        // SAFETY: the block's own mapping, its whole length.
+        if unsafe { libc::msync(self.base.cast(), self.reserved, libc::MS_SYNC) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let Some(f) = &self.file else { return Ok(()) };
+        #[cfg(target_os = "macos")]
+        let done = unsafe { libc::fcntl(f.as_raw_fd(), libc::F_BARRIERFSYNC) };
+        #[cfg(not(target_os = "macos"))]
+        let done = unsafe { libc::fdatasync(f.as_raw_fd()) };
+        if done != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
     }
 
     /// The file a block maps, when it maps one.
