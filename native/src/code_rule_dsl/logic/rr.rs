@@ -1574,7 +1574,7 @@ fn kept_header(src: &str) -> ([u8; 32], Option<std::sync::Arc<crate::content_sto
     let found = store.as_ref().and_then(|store| {
         let _held = store.hold_collection().ok()?;
         store.settle(&combined::queued(&key));
-        combined::lookup_read(store, &key, &Default::default()).ok().flatten()
+        combined::lookup_read(store, &key).ok().flatten()
     });
     (key, store, found)
 }
@@ -1608,7 +1608,7 @@ fn kept_program(path: &Path) -> Option<([u8; 32], Option<std::sync::Arc<crate::c
         // Read while collection is held off, as a combined program's is (`combine_stored`).
         let _held = store.hold_collection().ok()?;
         store.settle(&combined::queued(&key));
-        combined::lookup_read(&store, &key, &Default::default()).ok().flatten()
+        combined::lookup_read(&store, &key).ok().flatten()
     };
     if found.is_some() {
         combined::read_before_the_run(key);

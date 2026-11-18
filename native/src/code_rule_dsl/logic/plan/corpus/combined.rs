@@ -92,17 +92,17 @@ pub(in crate::code_rule_dsl) fn text_header_key(src: &str) -> [u8; 32] {
 /// The entry `key`'s program with the read record: every library file the program read or probed, in reading order. Each is checked
 /// as `LibraryFile::unchanged` checks it, by its `stat` while that holds and by its bytes' sha256 when it moved: the
 /// first key that settles it.
-pub(in crate::code_rule_dsl) fn lookup_read(store: &ContentStore, key: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<(std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Vec<LibraryFile>)>> {
+pub(in crate::code_rule_dsl) fn lookup_read(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<(std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Vec<LibraryFile>)>> {
     let Some((digest, read)) = entry_read(store, key)? else { return Ok(None) };
-    Ok(program_text::load_image(store, &digest, lists)?.map(|(v, _)| (v, read)))
+    Ok(program_text::load_image(store, &digest)?.map(|(v, _)| (v, read)))
 }
 
 /// The combined program of texts `key`, when the store keeps one whose library files all still read as recorded; or,
 /// where the store has none, the one the engine ships (decision 0264). Opened from its image as its version (decision
 /// 0281's path, step 7a-1).
-pub(super) fn lookup_version(store: &ContentStore, key: &[u8; 32], lists: &crate::code_rule_dsl::logic::front::Lists) -> StoreResult<Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>> {
+pub(super) fn lookup_version(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>> {
     let Some((digest, _)) = entry_read(store, key)? else { return Ok(None) };
-    Ok(program_text::load_image(store, &digest, lists)?.map(|(v, _)| v))
+    Ok(program_text::load_image(store, &digest)?.map(|(v, _)| v))
 }
 
 /// The digest of the program `key`'s entry keeps, and the library files it read, when the store (or the engine's
@@ -176,16 +176,9 @@ fn unhex(text: &str) -> Option<[u8; 32]> {
 /// written by the store's writer in the run's record as `what` (decisions 0102, 0306). A program that does not read
 /// back as written is not kept: the next run combines it again. Its image is kept as it is
 /// (`program_text::encode_version`, Typing-support's `remember_version`, taken at the merge of e829e72a7 as an item
-/// of the run's record); with images off, its tree, decoded at this edge alone.
+/// of the run's record).
 pub(in crate::code_rule_dsl) fn record_version(store: &ContentStore, what: &'static str, key: &[u8; 32], read: &[LibraryFile], v: &crate::code_rule_dsl::logic::program_image::Version, images: &[HashKey]) {
-    let encoded = match program_text::encode_version(v) {
-        Some(encoded) => encoded,
-        None => {
-            let Ok(program) = v.program(&crate::code_rule_dsl::logic::front::Lists::default()) else { return };
-            let Some(encoded) = program_text::encode(&program) else { return };
-            encoded
-        }
-    };
+    let Some(encoded) = program_text::encode_version(v) else { return };
     record_encoded(store, what, key, read, encoded, images);
 }
 
@@ -198,7 +191,7 @@ fn record_encoded(store: &ContentStore, what: &'static str, key: &[u8; 32], read
     facts.insert(IMAGE.to_owned(), images);
     let entry = program_facts::encode(&facts);
     // A run building the engine's bundle (`RERAIL_EXPORT_IMAGES`) ships the entry (its program's image ships with
-    // `program_text::encode`).
+    // `program_text::encode_version`).
     rr::images::export(shipped_key(key), &entry);
     let (packed, bytes) = program_text::pack(vec![encoded], entry);
     store.record(what, vec![queued(key)], &(*key, packed), Some(bytes), apply);

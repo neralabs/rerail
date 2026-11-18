@@ -386,6 +386,16 @@ Progress (2026-11-18):
   written through the builder, rules of one shape merge by `shape` over slots, and the wave's source joins them as
   versions (`matches::joined`, keyed by `Placed::whole`). Still to go in stage 2: `front`'s passes and
   `lower::sources_on_request`.
+- **Stage 1, the planner** (2026-11-18): the native fixpoints (`native_fixpoint`'s lattice parts, the set
+  fixpoint's edge tables) read rules through their handles and write their parts through the builder
+  (`made_parts`); `Run::tree`, `identities_of` and `Leaves`' tree entries are gone; the version trace, the inline
+  and run dumps print versions. The findings layer reads its tables from its version.
+- **Stage 3, `program_text`** (2026-11-18): a stored program is its image only. The `.rr` text form of 0155 and its
+  tape reader of 0162 (`print`, `read`, `program_text/from_tape.rs`) read and wrote the tree, and are gone with it,
+  as is `RERAIL_PROGRAM_IMAGE` (`off` kept texts, `require` refused them). A program a store kept as text alone (a
+  store written before images) is not read: `stored` leaves it out, the run compiles it again, and its source stays
+  named (`sources`) so collection keeps it with the run that named it. Plan choices and the combined program are
+  written by `encode_version` and opened from their images.
 
 ## 9. Retired, not ported (the user's questions, answered 2026-11-15)
 

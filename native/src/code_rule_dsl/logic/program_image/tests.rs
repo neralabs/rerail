@@ -79,9 +79,6 @@ fn a_program_reads_back_from_its_image() {
     let prog = every_part();
     let bytes = encode(&prog).unwrap();
     same(&decode(&bytes, &Lists::default()).unwrap(), &prog);
-    // And as its text reads it.
-    let text = crate::code_rule_dsl::logic::program_text::print(&prog).unwrap();
-    same(&decode(&bytes, &Lists::default()).unwrap(), &crate::code_rule_dsl::logic::program_text::read(&text).unwrap());
 }
 
 /// Every pack program, as read from its file, reads back from its image; and its handles say what its tree says:

@@ -587,9 +587,9 @@ fn split(s: &str) -> Vec<String> {
 
 /// The part kept under `key`, with the sources its image is kept as.
 /// The version and facts kept under `key` (`keep`), and the sources they were read from.
-pub(in crate::code_rule_dsl::logic::plan::corpus) fn kept(store: &ContentStore, key: &[u8; 32], lists: &front::Lists) -> StoreResult<Option<(Arc<Version>, Facts, Vec<SourceId>)>> {
+pub(in crate::code_rule_dsl::logic::plan::corpus) fn kept(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<(Arc<Version>, Facts, Vec<SourceId>)>> {
     let Some((facts, digest, source)) = kept_facts(store, key)? else { return Ok(None) };
-    let Some((version, mut sources)) = kept_image(store, &digest, lists)? else { return Ok(None) };
+    let Some((version, mut sources)) = kept_image(store, &digest)? else { return Ok(None) };
     sources.push(source);
     Ok(Some((version, facts, sources)))
 }
@@ -604,13 +604,13 @@ fn kept_facts(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<(Facts
     Ok(Some((facts, digest, source)))
 }
 
-fn kept_image(store: &ContentStore, digest: &[u8; 32], lists: &front::Lists) -> StoreResult<Option<(Arc<Version>, Vec<SourceId>)>> {
+fn kept_image(store: &ContentStore, digest: &[u8; 32]) -> StoreResult<Option<(Arc<Version>, Vec<SourceId>)>> {
     let _s = crate::code_rule_dsl::logic::profile::span(|| "a part, from the store: its image".into());
-    program_text::load_image(store, digest, lists)
+    program_text::load_image(store, digest)
 }
 
-fn lookup(store: &ContentStore, key: &[u8; 32], lists: &front::Lists) -> StoreResult<Option<(Prepared, Vec<SourceId>)>> {
-    let Some((version, facts, sources)) = kept(store, key, lists)? else { return Ok(None) };
+fn lookup(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<(Prepared, Vec<SourceId>)>> {
+    let Some((version, facts, sources)) = kept(store, key)? else { return Ok(None) };
     Ok(Some((Prepared::of_facts(version, &facts), sources)))
 }
 
@@ -819,7 +819,7 @@ fn merge_header(all: &mut Builder<'_>, before: &dyn ProgramFields, after: &dyn P
 /// (`link_key`), with each part's key and interface. Where only some parts' keys changed, and their interfaces
 /// (`interface`) did not, those parts' rules are spliced into the last linked version in their places, and the
 /// other parts are neither read nor linked again.
-pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, store: &ContentStore, keep: bool, lists: &front::Lists) -> Result<(Arc<Version>, Front, Vec<SourceId>)> {
+pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, store: &ContentStore, keep: bool) -> Result<(Arc<Version>, Front, Vec<SourceId>)> {
     let parts = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the parts and their interfaces (decision 0345)".into());
         parts_of(&version)
@@ -855,7 +855,7 @@ pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::Gra
     let prepare = |j: usize| -> Result<(Prepared, Vec<SourceId>)> {
         let kept = {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "a part, from the store".into());
-            lookup(store, &keys[j], lists).map_err(|e| e.to_string())?
+            lookup(store, &keys[j]).map_err(|e| e.to_string())?
         };
         if let Some(found_part) = kept {
             found.set(found.get() + 1);
@@ -899,7 +899,7 @@ pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::Gra
             }
             if same {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "splice the changed parts into the last link (Q18)".into());
-                if let Some((linked, front, sources)) = splice(store, &facts, &digest, source, &slots, &changed, &prepared, &keys, &heads, &version, &parts, &family, keep, lists)? {
+                if let Some((linked, front, sources)) = splice(store, &facts, &digest, source, &slots, &changed, &prepared, &keys, &heads, &version, &parts, &family, keep)? {
                     crate::code_rule_dsl::logic::profile::decision("the kept link (Q18)", || format!("before lowering: {} of {} parts changed, spliced into the last link ({} read from the store, {} prepared)", changed.len(), parts.len(), found.get(), made.get()));
                     return Ok((linked, front, sources));
                 }
@@ -1054,9 +1054,8 @@ fn splice(
     parts: &[Part],
     family: &[u8; 32],
     keep: bool,
-    lists: &front::Lists,
 ) -> Result<Option<(Arc<Version>, Front, Vec<SourceId>)>> {
-    let Some((last, mut sources)) = kept_image(store, digest, lists).map_err(|e| e.to_string())? else { return Ok(None) };
+    let Some((last, mut sources)) = kept_image(store, digest).map_err(|e| e.to_string())? else { return Ok(None) };
     sources.push(source);
     let last_rules: Vec<_> = last.rules().collect();
     if slots.iter().map(|s| s.rules).sum::<usize>() != last_rules.len() {
@@ -1335,7 +1334,7 @@ fn after_key(before: [u8; 32], factorize: bool) -> [u8; 32] {
 /// The passes after lowering, by part (decision 0345 stage 2): `preparation::run`'s passes, with what reads the whole
 /// program (the nearest sets, the bound check, the split, the push's mode, the merges) run over the whole, and the
 /// rewriting (push, factorize, the export cut, locate) run per part against its interface, kept under its key.
-pub fn run(version: Arc<Version>, factorize: bool, dialect: crate::code_rule_dsl::language::GrammarDialect, store: &ContentStore, keep_parts: bool, lists: &front::Lists, bound: impl FnMut(&Version) -> Result<()>) -> Result<(Arc<Version>, super::Found, Vec<SourceId>)> {
+pub fn run(version: Arc<Version>, factorize: bool, dialect: crate::code_rule_dsl::language::GrammarDialect, store: &ContentStore, keep_parts: bool, bound: impl FnMut(&Version) -> Result<()>) -> Result<(Arc<Version>, super::Found, Vec<SourceId>)> {
     use crate::code_rule_dsl::logic::plan::fields::{GIVEN, PART_CROSS_READ, PART_LOCAL_READ, PART_OUT, PART_WHOLE, PUSH_BASE, PUSH_DECIDED};
     use crate::code_rule_dsl::logic::program_image::manager::Pipeline;
     use crate::code_rule_dsl::typing::file_local::FileLocal;
@@ -1501,7 +1500,7 @@ pub fn run(version: Arc<Version>, factorize: bool, dialect: crate::code_rule_dsl
     let image = |j: usize, versions: &mut Vec<Option<(Arc<Version>, Vec<SourceId>)>>| -> Result<()> {
         if versions[j].is_none() {
             let digest = digests[j].ok_or_else(|| "a kept part's image is not named".to_owned())?;
-            versions[j] = Some(kept_image(store, &digest, lists).map_err(|e| e.to_string())?.ok_or_else(|| "a kept part's image is missing".to_owned())?);
+            versions[j] = Some(kept_image(store, &digest).map_err(|e| e.to_string())?.ok_or_else(|| "a kept part's image is missing".to_owned())?);
         }
         Ok(())
     };
@@ -1531,7 +1530,7 @@ pub fn run(version: Arc<Version>, factorize: bool, dialect: crate::code_rule_dsl
             }
             if same {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "splice the changed parts into the last link after lowering (Q18)".into());
-                spliced = splice_after(store, &digest, source, &kept_slots, &changed, &versions, &keys, &heads, &v1, &parts, &family, keep_parts, lists, &mut sources)?.map(|v| (v, changed.len()));
+                spliced = splice_after(store, &digest, source, &kept_slots, &changed, &versions, &keys, &heads, &v1, &parts, &family, keep_parts, &mut sources)?.map(|v| (v, changed.len()));
                 if spliced.is_none() {
                     why = "the last link's image is missing or its rules miscounted".to_owned();
                 }
@@ -1685,10 +1684,9 @@ fn splice_after(
     parts: &[Part],
     family: &[u8; 32],
     keep_parts: bool,
-    lists: &front::Lists,
     sources: &mut Vec<SourceId>,
 ) -> Result<Option<Arc<Version>>> {
-    let Some((last, read)) = kept_image(store, digest, lists).map_err(|e| e.to_string())? else { return Ok(None) };
+    let Some((last, read)) = kept_image(store, digest).map_err(|e| e.to_string())? else { return Ok(None) };
     let last_rules: Vec<_> = last.rules().collect();
     if slots.iter().map(|s| s.rules).sum::<usize>() != last_rules.len() {
         return Ok(None);

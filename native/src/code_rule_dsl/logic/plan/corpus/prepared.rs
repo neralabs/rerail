@@ -471,13 +471,13 @@ pub(super) fn lookup(store: &ContentStore, source: Option<SourceId>, dialect: Gr
     // split's parts are views of the lowered one.
     let source = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "open the program's image before lowering".into());
-        let Some((version, sources)) = program_text::load_image(store, source, lists)? else { return Ok(None) };
+        let Some((version, sources)) = program_text::load_image(store, source)? else { return Ok(None) };
         documents.extend(sources);
         version
     };
     let version = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "open the lowered program's image".into());
-        let Some((version, sources)) = program_text::load_image(store, lowered, lists)? else { return Ok(None) };
+        let Some((version, sources)) = program_text::load_image(store, lowered)? else { return Ok(None) };
         documents.extend(sources);
         version
     };
@@ -581,9 +581,8 @@ pub(super) fn record(store: &ContentStore, source: Option<SourceId>, text: Strin
     let mut facts = rest_of(prepared);
     let mut programs = Vec::new();
     for (name, version) in [("source", &prepared.source), ("lowered", &prepared.lowered.version)] {
-        // Each program's image is its version's, taken as it is (no encode of a tree, decision 0281). With images
-        // off (`RERAIL_PROGRAM_IMAGE=off`) it is not kept, as a version has no text form: the program is prepared
-        // again.
+        // Each program's image is its version's, taken as it is (decision 0281). One whose image is not made is not
+        // kept: the program is prepared again.
         let Some(encoded) = program_text::encode_version(version) else { return };
         facts.entry(PROGRAM.to_owned()).or_default().push([Value::Str(name.to_owned().into()), Value::Str(hex(&encoded.digest).into())].into());
         programs.push(encoded);
@@ -591,7 +590,7 @@ pub(super) fn record(store: &ContentStore, source: Option<SourceId>, text: Strin
     let entry = program_facts::encode(&facts);
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, entry.len() as u64);
     // A run building the engine's bundle (`RERAIL_EXPORT_IMAGES`, decision 0264) ships the pointer; its programs'
-    // images ship with `program_text::encode`.
+    // images ship with `program_text::encode_version`.
     crate::code_rule_dsl::logic::rr::images::export(shipped_key(key), &entry);
     let (packed, bytes) = program_text::pack(programs, entry);
     store.record("the prepared program", vec![queued(key)], &(source, text, *key, packed), Some(bytes), apply);
