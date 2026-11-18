@@ -92,6 +92,9 @@ pub(in crate::code_rule_dsl) struct Retained {
     /// The relations this run derived past the budget: written to the frames with the kept ones (`write_frames`,
     /// `parts`), then let go (`let_go_past`), never held for the next run of this process.
     past: HashMap<String, Kept>,
+    /// The relations the run holds as views of an input's columns (`maintain::held_views`): never kept, their old
+    /// rows the view over their input's old rows (decision 0090), read in place.
+    views: BTreeMap<String, (String, Vec<usize>)>,
 }
 
 /// A relation's statistics kept by delta, of the engine's relation at address `at`, with its counts of the
@@ -422,22 +425,8 @@ pub(in crate::code_rule_dsl) fn cut(kept: Option<&Retained>, key: [u8; 32], prog
         true => super::maintain::input_views(prog)?.into_keys().map(|r| (r, ())).collect(),
         false => BTreeMap::new(),
     };
-    // A copy of an input's columns is held as a view of it in every run (Q37, `input_view_shape`): not kept either.
-    {
-        let f = prog.fields()?;
-        let mut by_head: BTreeMap<&str, Vec<RuleRef<'_>>> = BTreeMap::new();
-        for r in prog.v.rules() {
-            by_head.entry(prog.v.rel_name(r.head().rel())).or_default().push(r);
-        }
-        for (rel, rules) in by_head {
-            if let [rule] = rules.as_slice()
-                && !f.has_facts(rel) && f.native(rel).is_none() && !f.lattice(rel) && !f.request(rel) && !f.produced(rel) && !f.gate(rel)
-                && crate::code_rule_dsl::logic::plan::input_view_shape(&prog.v, *rule, |r| f.is_input(r)).is_some()
-            {
-                views.insert(rel.to_owned(), ());
-            }
-        }
-    }
+    // A copy of an input's columns is held as a view of it in every run (Q37, `maintain::held_views`): not kept either.
+    views.extend(super::maintain::held_views(prog)?.into_keys().map(|r| (r, ())));
     let complete = kept.is_some_and(|k| sccs.iter().flatten().all(|r| k.holds(r, prog) || views.contains_key(r)));
     let whole = kept.is_none() || (!prog.fields()?.gates().is_empty() && (!changed.is_empty() || !complete));
     let mut ran = 0;
@@ -815,11 +804,22 @@ impl Retained {
     /// Whether `rel`'s old rows are kept, read or not yet: a derived relation the part holds or the frames hold, or an
     /// input whose source the last run kept (decision 0298: what a general form takes as kept).
     pub(in crate::code_rule_dsl) fn holds_old(&self, rel: &str) -> bool {
-        self.keeps(rel) || self.input_srcs.contains_key(rel)
+        self.keeps(rel) || self.input_srcs.contains_key(rel) || self.view_of(rel).is_some()
     }
 
     pub(in crate::code_rule_dsl) fn has_old(&self, rel: &str) -> bool {
-        self.rels.contains_key(rel) || self.late.borrow().contains_key(rel) || self.input_srcs.contains_key(rel)
+        self.rels.contains_key(rel) || self.late.borrow().contains_key(rel) || self.input_srcs.contains_key(rel) || self.view_of(rel).is_some()
+    }
+
+    /// The views the run holds of its inputs' columns (`maintain::held_views`), of the program this part is of.
+    pub(in crate::code_rule_dsl) fn set_views(&mut self, views: BTreeMap<String, (String, Vec<usize>)>) {
+        self.views = views;
+    }
+
+    /// View `rel`'s input's old rows and the input's column of each of its columns, where its input's are held.
+    fn view_of(&self, rel: &str) -> Option<(&Arc<dyn Source>, &[usize])> {
+        let (input, at) = self.views.get(rel)?;
+        Some((self.input_srcs.get(input)?, at.as_slice()))
     }
     /// A relation's or an input's rows as the last run had them, as a source named `name` (`sql_col`), with the
     /// engine's relation for a derived one (to adopt, read in place).
@@ -838,9 +838,14 @@ impl Retained {
         if let Some(k) = self.late.borrow().get(rel) {
             return Some((k.source(name), Some(Arc::clone(&k.rel))));
         }
-        self.input_srcs.get(rel).map(|s| {
+        if let Some(s) = self.input_srcs.get(rel) {
             let names = (0..s.columns().len()).map(|c| crate::code_rule_dsl::logic::plan::sql_col(name, c)).collect();
-            (Arc::new(Renamed(Arc::clone(s), names)) as Arc<dyn Source>, None)
+            return Some((Arc::new(Renamed(Arc::clone(s), names)) as Arc<dyn Source>, None));
+        }
+        // A view's old rows: its input's, its columns picked in place.
+        self.view_of(rel).map(|(s, at)| {
+            let names = (0..at.len()).map(|c| crate::code_rule_dsl::logic::plan::sql_col(name, c)).collect();
+            (Arc::new(Picked(Arc::clone(s), at.to_vec(), names)) as Arc<dyn Source>, None)
         })
     }
     /// A relation's or an input's rows as the last run had them, copied (for the spikes' checks).
@@ -876,7 +881,7 @@ impl Retained {
             }
         }
         let mut lines = Vec::new();
-        let mut totals = [("supports", 0usize, 0usize, 0usize, 0usize), ("other", 0, 0, 0, 0)];
+        let mut totals = [("kept", 0usize, 0usize, 0usize, 0usize)];
         let mut dedup_only = (0usize, 0usize, 0usize, 0usize);
         let mut by_size: Vec<(&String, &Kept)> = self.rels.iter().collect();
         by_size.sort_by_key(|(_, k)| std::cmp::Reverse(k.rel.held_bytes().2));
@@ -894,7 +899,7 @@ impl Retained {
             let probed = shapes.get(rel.as_str());
             let sets = probed.map_or(0, BTreeMap::len);
             let proposed = sets * n * 9 / 2 + if sets == 0 { n * 6 } else { 0 } + k * 256;
-            let t = &mut totals[usize::from(!super::supports::is_support(rel))];
+            let t = &mut totals[0];
             t.1 += n;
             t.2 += now;
             t.3 += proposed;
@@ -993,14 +998,13 @@ impl Retained {
         out.sort();
         out
     }
-    /// What the kept relations hold, by kind of relation (a counting support, `h__sup…`, or any other): rows,
+    /// What the kept relations hold: rows,
     /// values, levels, and indexes and sets, in bytes (`InRel::held_bytes`). `RERAIL_KEPT_BYTES` prints it.
-    pub(in crate::code_rule_dsl) fn held(&self) -> [(&'static str, usize, usize, usize, usize); 2] {
-        let mut out = [("supports", 0, 0, 0, 0), ("other", 0, 0, 0, 0)];
-        for (rel, k) in &self.rels {
-            let at = usize::from(!super::supports::is_support(rel));
+    pub(in crate::code_rule_dsl) fn held(&self) -> [(&'static str, usize, usize, usize, usize); 1] {
+        let mut out = [("kept", 0, 0, 0, 0)];
+        for k in self.rels.values() {
             let (values, levels, index) = k.rel.held_bytes();
-            let o = &mut out[at];
+            let o = &mut out[0];
             o.1 += k.rel.rows();
             o.2 += values;
             o.3 += levels;
@@ -1011,6 +1015,119 @@ impl Retained {
 }
 
 /// An input's source under another relation's column names (`r__old`'s, `sql_col`): read in place, not copied.
+/// Columns of a source, picked (`.1`, the source's column of each) and named (`.2`): a view's old rows over its
+/// input's, read in place.
+struct Picked(Arc<dyn Source>, Vec<usize>, Vec<String>);
+impl Picked {
+    fn of(&self, columns: &[usize]) -> Vec<usize> {
+        columns.iter().map(|&c| self.1[c]).collect()
+    }
+    fn eqs(&self, eqs: &[(usize, i64)]) -> Vec<(usize, i64)> {
+        eqs.iter().map(|&(c, v)| (self.1[c], v)).collect()
+    }
+}
+impl Source for Picked {
+    fn columns(&self) -> Vec<String> {
+        self.2.clone()
+    }
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+    fn estimated_len(&self) -> usize {
+        self.0.estimated_len()
+    }
+    fn row_id(&self, row: usize) -> i64 {
+        self.0.row_id(row)
+    }
+    fn value(&self, row: usize, column: usize) -> i64 {
+        self.0.value(row, self.1[column])
+    }
+    fn cell(&self, row: usize, column: usize) -> rusqlite::types::Value {
+        self.0.cell(row, self.1[column])
+    }
+    fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
+        self.0.row_at(row, &self.of(columns), out)
+    }
+    fn rows_of(&self, columns: &[usize], out: &mut Vec<i64>) {
+        self.0.rows_of(&self.of(columns), out)
+    }
+    fn estimated_matches(&self, column: usize, batch: bool) -> usize {
+        self.0.estimated_matches(self.1[column], batch)
+    }
+    fn lookup_cost(&self, column: usize) -> f64 {
+        self.0.lookup_cost(self.1[column])
+    }
+    fn estimated_matches_all(&self, columns: &[usize]) -> usize {
+        self.0.estimated_matches_all(&self.of(columns))
+    }
+    fn composite(&self) -> bool {
+        self.0.composite()
+    }
+    fn lookup_all(&self, equal: &[(usize, i64)]) -> Option<Vec<usize>> {
+        self.0.lookup_all(&self.eqs(equal))
+    }
+    fn doc_column(&self) -> Option<usize> {
+        self.0.doc_column().and_then(|d| self.1.iter().position(|&c| c == d))
+    }
+    fn lookup_in(&self, column: usize, values: &[i64], doc: i64) -> Option<Vec<usize>> {
+        self.0.lookup_in(self.1[column], values, doc)
+    }
+    fn kept_to_doc(&self, column: usize) -> bool {
+        self.0.kept_to_doc(self.1[column])
+    }
+    fn filter_eq(&self, eqs: &[(usize, i64)]) -> Vec<u32> {
+        self.0.filter_eq(&self.eqs(eqs))
+    }
+    fn made_on_lookup(&self) -> bool {
+        self.0.made_on_lookup()
+    }
+    fn complete_rows(&self) -> bool {
+        self.0.complete_rows()
+    }
+    fn expect_lookups(&self, column: usize, keys: f64) {
+        self.0.expect_lookups(self.1[column], keys);
+    }
+    fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        let names = self.0.columns();
+        let stats = self.0.statistics()?;
+        Some(stats.into_iter().filter_map(|(c, a, b, x, y)| {
+            let at = names.iter().position(|n| *n == c)?;
+            let mine = self.1.iter().position(|&k| k == at)?;
+            Some((self.2[mine].clone(), a, b, x, y))
+        }).collect())
+    }
+    fn indexed(&self, column: usize) -> bool {
+        self.0.indexed(self.1[column])
+    }
+    fn range_upper_compatible(&self, lower: usize, upper: usize) -> bool {
+        self.0.range_upper_compatible(self.1[lower], self.1[upper])
+    }
+    fn range_indexed(&self, column: usize) -> bool {
+        self.0.range_indexed(self.1[column])
+    }
+    fn range_lookup(&self, column: usize, lower: Option<(i64, bool)>, upper: Option<(i64, bool)>) -> Option<Vec<usize>> {
+        self.0.range_lookup(self.1[column], lower, upper)
+    }
+    fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
+        self.0.lookup(self.1[column], values)
+    }
+    fn lookup_eq(&self, column: usize, value: i64, eqs: &[(usize, i64)]) -> Option<Vec<usize>> {
+        self.0.lookup_eq(self.1[column], value, &self.eqs(eqs))
+    }
+    fn sorted_rows(&self, column: usize, value: i64) -> Option<&[u32]> {
+        self.0.sorted_rows(self.1[column], value)
+    }
+    fn sorts_rows(&self, column: usize) -> bool {
+        self.0.sorts_rows(self.1[column])
+    }
+    fn prepare_lookup(&self, columns: &[usize]) {
+        self.0.prepare_lookup(&self.of(columns))
+    }
+    fn prepare_index(&self, columns: &[usize]) {
+        self.0.prepare_index(&self.of(columns))
+    }
+}
+
 struct Renamed(Arc<dyn Source>, Vec<String>);
 impl Source for Renamed {
     fn columns(&self) -> Vec<String> {
@@ -1303,7 +1420,7 @@ pub mod tests {
             let width=p.decls[name.as_str()].len();
             (name.clone(),Kept { rel:InRel::flat(&[],vec![b'i';width]),width,output:None })
         }).collect();
-        let mut kept=Retained {key,inputs:inputs.clone(),rels,input_srcs:Default::default(),measured:Default::default(),input_stats:Default::default(),input_docs:Default::default(),docs:Default::default(),patched:Default::default(),frames:None,admitted:Default::default(),late:Default::default(),late_stats:Default::default(),past:Default::default()};
+        let mut kept=Retained {key,inputs:inputs.clone(),rels,input_srcs:Default::default(),measured:Default::default(),input_stats:Default::default(),input_docs:Default::default(),docs:Default::default(),patched:Default::default(),frames:None,admitted:Default::default(),late:Default::default(),late_stats:Default::default(),past:Default::default(),views:Default::default()};
         let result=cut(Some(&kept),key,&pl(&p),&st(&p),&inputs).unwrap();
         assert_eq!(result.strata,(0,strata.len()));
         let v=crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap().0;

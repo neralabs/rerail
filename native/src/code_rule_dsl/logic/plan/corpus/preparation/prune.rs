@@ -81,8 +81,19 @@ impl ProgramPass for Prune {
             }
         }
         let dropped_natives: HashSet<String> = native_reads.keys().filter(|r| !need.contains(**r)).map(|r| (*r).to_owned()).collect();
+        // An attribute answered on request (decision 0174) whose readers were all pruned has no request and no answer
+        // left: it is an input again, as the tree's prune makes it (734317304).
+        let fd = cx.get::<crate::code_rule_dsl::logic::plan::fields::FieldsData>().map_err(|e| e.to_string())?;
+        let f = crate::code_rule_dsl::logic::plan::fields::Fields::over(v, &fd);
+        let derives = |rel: &str| (0..rules.len()).any(|i| kept[i] && head(i) == rel);
+        let mut revived: Vec<String> = Vec::new();
+        for attr in crate::code_rule_dsl::logic::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()) {
+            if f.declared(attr.rel) && !f.is_input(attr.rel) && !derives(attr.rel) && !derives(attr.req) && !revived.iter().any(|x| x == attr.rel) {
+                revived.push(attr.rel.to_owned());
+            }
+        }
         let dropped = kept.iter().filter(|k| !**k).count();
-        if dropped == 0 && asked_after == asked && dropped_natives.is_empty() {
+        if dropped == 0 && asked_after == asked && dropped_natives.is_empty() && revived.is_empty() {
             return Ok(());
         }
         self.0 += dropped;
@@ -90,7 +101,11 @@ impl ProgramPass for Prune {
         if !gone.is_empty() {
             w.keep(|r| !gone.contains(&r.id()))?;
         }
+        let inputs: Vec<String> = v.inputs().map(|a| v.text(a).to_owned()).chain(revived.iter().cloned()).collect();
         let b = w.on()?;
+        if !revived.is_empty() {
+            b.set_inputs(&inputs);
+        }
         if asked_after != asked {
             set_asked(b, &asked_after);
         }

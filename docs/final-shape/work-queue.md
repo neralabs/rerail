@@ -1414,19 +1414,32 @@ pass.
 - **Done when**: the move rewrites the image's branded name leaves and cells in place (`kind::BRANDED` with the name
   class, `Cell::Branded`), no tree decoded, and the version's digests stay right; the test above passes unchanged.
 
-### Q35. Store the general forms through 0281 step 5's keyed preparation steps
+### Q35. Store the general forms through 0281 step 5's keyed preparation steps (done, 2026-11-16)
 
-- **Keep**: 0298's general forms (steps 1–3, behind `RERAIL_GENERAL_FORMS`): every reached stratum not recursive
-  selects its rules from them, with the same rows as the forms written per run; 0281's pass manager and its keyed
-  steps (Typing-support), one way of storing every preparation step's output.
-- **Done when**: Typing-support's step 5 has landed and is merged here; the general forms are one keyed step of it
-  (key: the program's digest and `olds_signature`), read by a new process instead of written; the switch is the
-  default and removed; the edit's cross-file part costs about 0.29 s less than today's (0298's table), with the
-  same rows on the five steps.
-- **Record**: the user's call (2026-11-16): watch Typing-support until step 5 is done, then integrate here.
+- **Keep**: 0298's general forms: every reached stratum selects its rules from them, with the same rows as the
+  forms written per run; 0281's pass manager and its keyed steps (Typing-support), one way of storing every
+  preparation step's output; decision 0104 (no SQL inside the waves) and 0290 (a relation naming no document moves
+  to the cross-file part).
+- **Done when**: Typing-support's step 5 storage is merged here; each general form is a keyed step, read by a new
+  process instead of written; the switch is removed; an edit costs less than today's, with the same rows on the
+  five steps.
+- **Record**: merged Typing-support 7a07e4081 (step 5 (a), (b), (c) storage). One semantic conflict, fixed: their
+  version passes (`Locate`, the `FileLocal` split) were ported before 0290, so the 4 relations naming no document
+  were refused, not moved (a debug check against the tree's `locate` stopped every run). Ported: the version split
+  holds a `cross_file` relation cross-file with 0290's cause, and `preparation::run` qualifies what `Locate` leaves
+  (`MoveCrossFile`) and locates again, as the tree's rounds. Then 0298 step 4, two of the user's calls (2026-11-16):
+  one keyed step per stratum, written when first reached (over one image per part); its reads inside the waves
+  (0104's one exception, `profile::read_in_waves`). On the manager: `Pipeline::keyed_by` (an identity given) and
+  `made` (a step whose output another writer makes); `StoredSteps::keep_bytes`, `find_unpinned`,
+  `open_bytes_unpinned`; `Version::layer`. Edit 79.3–79.6 G → 77.4–77.7 G; cold +2.8 G, the first edit after a
+  cold run +5.5 G (0298's results). Rows: each of the five steps against a cold run on a fresh store, 0 files
+  differ. Tests: general_tests, run_state, preparation::, file_local (16), program_image::tests (27),
+  corpus::session::tests (17). Review (reviewer-brief, by the author, no subagents): the forms' identity was read on
+  every driven run, now at the first stratum reached; nothing else found.
   For Typing-support, when it pulls this branch: `program_image/manager.rs`' `Delta::of` no longer compares the
   declarations and facts of an overlay of the input whose own layer states none (0298, "A selection's own cost");
-  the program image's 26 tests, which check carried analyses in a debug build, pass.
+  `Pipeline::keyed_by` and `made` are added beside `keyed`; the version split and `preparation::run` carry 0290's
+  moves (`file_local::MoveCrossFile`).
 
 ### Q46. (Q29 at 64e416c9b) A rule reading `value` sends SQL inside the waves
 

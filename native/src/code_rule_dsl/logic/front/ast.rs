@@ -369,22 +369,15 @@ pub enum ShapeWait {
     Bound(Vec<String>),
 }
 
-/// The relation a form's relation was made from, for matching directives (`Shape`): `pv__ins`, `pv__sup3` and
-/// `pv__old` are `pv`'s.
+/// The relation a form's relation was made from, for matching directives (`Shape`): `pv__ins` and `pv__old` are
+/// `pv`'s.
 pub fn shape_base(rel: &str) -> &str {
-    const SUFFIXES: [&str; 13] = ["__ins", "__del", "__plus", "__minus", "__old", "__redo", "__held", "__gone", "__lost", "__cand", "__chk", "__live", "__prev"];
+    const SUFFIXES: [&str; 12] = ["__ins", "__del", "__plus", "__minus", "__old", "__redo", "__held", "__gone", "__cand", "__chk", "__live", "__prev"];
     let mut r = rel;
-    loop {
-        if let Some(s) = SUFFIXES.iter().find_map(|s| r.strip_suffix(s)) {
-            r = s;
-            continue;
-        }
-        if let Some(i) = r.rfind("__sup").filter(|&i| i > 0 && r[i + 5..].bytes().all(|b| b.is_ascii_digit()) && r.len() > i + 5) {
-            r = &r[..i];
-            continue;
-        }
-        return r;
+    while let Some(s) = SUFFIXES.iter().find_map(|s| r.strip_suffix(s)) {
+        r = s;
     }
+    r
 }
 
 impl Shape {

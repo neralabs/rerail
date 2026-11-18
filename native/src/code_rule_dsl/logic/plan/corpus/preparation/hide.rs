@@ -202,7 +202,8 @@ impl ProgramPass for Hide {
                                 changed = true;
                                 continue;
                             }
-                            // Read negated too (`!def_or_class(k)`), as the tree's: the host's rows name the host's kinds.
+                            // Negated as well, as the tree's (`hiding.rs`): `kind(s, k), !def_or_class(k)` over a guest's node
+                            // reads the set's qualified copy; the bare set holds none of the guest's kinds.
                             L::Atom(a)
                                 if !a.rel.starts_with("rr_in_")
                                     && !ruled.contains_key(a.rel.as_str())
@@ -908,4 +909,29 @@ fn analyse(rule: &W, base: &HashMap<String, Vec<usize>>, carried: &HashMap<Strin
         }
     }
     facts
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::code_rule_dsl::logic::program_image::Builder;
+    use crate::code_rule_dsl::logic::program_image::manager::Pipeline;
+
+    /// A kind set read negated over a guest's node (`kind(r, k), !ok_kind(k)`) reads its qualified copy on the
+    /// version as on the tree (`hiding::hide`): the version's pass left negated reads alone, the bare set holds none of
+    /// the guest's kinds, and the Python pack's combine stopped on the debug check that the two agree.
+    #[test]
+    fn a_negated_kind_set_over_a_guest_reads_its_copy_as_on_the_tree() {
+        let text = ".decl parsed(s: node, g: symbol, r: node)\n.decl kind(n: node, k: symbol)\n.input parsed, kind\n\
+                    .decl ok_kind(k: symbol)\nok_kind(\"select\").\n\
+                    .decl out(r: node)\n.output out\nout(r) :- parsed(_, \"sql\", r), kind(r, k), !ok_kind(k).\n";
+        let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+        let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+        let mut p = Pipeline::new("test", v);
+        p.program(&mut super::Hide { bound: 1 << 30 });
+        let (out, _) = p.finish().unwrap();
+        crate::code_rule_dsl::logic::plan::corpus::hiding::hide(&mut tree, 1 << 30);
+        let (want, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+        assert!(want.show().contains("!rr_in_sql_rows_ok_kind("), "the tree reads the copy: {}", want.show());
+        assert_eq!((out.size(), out.digest()), (want.size(), want.digest()), "{}\n---\n{}", out.show(), want.show());
+    }
 }
