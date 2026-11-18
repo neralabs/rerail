@@ -8,7 +8,7 @@
 #   cold     a process per step over an empty store: the truth each edit's findings are compared with
 #
 # Per step: `NN.json` (findings), `NN.err` (`/usr/bin/time -l`: instructions retired, footprint; the frames queued;
-# RERAIL_KEPT_BYTES; with PROFILE_STEP=NN, that step's RERAIL_PROFILE in prof-NN/). Steps 00 to LAST (default 08). Each run is capped (tmp/capped.sh-style: CAP_MB, CAP_S).
+# RERAIL_KEPT_BYTES; with PROFILE_STEP=NN, that step's RERAIL_PROFILE in prof-NN/; with SAMPLE_STEP=NN, its stacks in sample-NN.txt). Steps 00 to LAST (default 08). Each run is capped (tmp/capped.sh-style: CAP_MB, CAP_S).
 set -eu
 cd "${0:A:h}/../../.."; mkdir -p /tmp/ai-trash
 MODE=$1; LAST=${2:-08}; IN=${IN:-tmp/mm-in}; OUT=${OUT:-tmp/mm/$MODE}; ENGINE=${ENGINE:?the engine binary}
@@ -21,7 +21,7 @@ export RERAIL_COSTS=$PWD/$OUT/costs.sqlite RERAIL_IMAGE_STORE=$PWD/$OUT/images
 POLICY=$PWD/$IN/calls-policy.rr
 steps=(00 $(seq 1 $((10#$LAST)) | xargs printf "%02d\n"))
 apply() {  # the files step $1 changed, and those it removed
-  rsync -a --exclude .deleted $IN/o125-replay/$1/ $W/
+  rsync -rlpc --exclude .deleted $IN/o125-replay/$1/ $W/
   while read f; do [ -n "$f" ] && mv $W/$f /tmp/ai-trash/mm-$$-$(echo $f | tr / _) 2>/dev/null || true; done < $IN/o125-replay/$1/.deleted
 }
 capped() { zsh $IN/capped.sh $CAP_MB $CAP_S /usr/bin/time -l env "$@"; }
@@ -31,7 +31,13 @@ case $MODE in
       if [ $s != 00 ]; then apply $s; fi
       store=$PWD/$OUT/store.sqlite; [ $MODE = cold ] && store=$PWD/$OUT/store-$s.sqlite
       prof=(); [ "${PROFILE_STEP:-}" = $s ] && prof=(env RERAIL_PROFILE=$PWD/$OUT/prof-$s)
-      RERAIL_TAPE_CACHE=$store capped $prof $ENGINE run-policies $W $OUT/out-$s $POLICY > $OUT/$s.json 2> $OUT/$s.err || echo "step $s failed"
+      if [ "${SAMPLE_STEP:-}" = $s ]; then
+        # The step's stacks (`/usr/bin/sample`, 1 ms) from a second in, over the engine's own process.
+        RERAIL_TAPE_CACHE=$store capped $prof $ENGINE run-policies $W $OUT/out-$s $POLICY > $OUT/$s.json 2> $OUT/$s.err &
+        sleep 1; /usr/bin/sample $(pgrep -n -f "$ENGINE run-policies") ${SAMPLE_S:-40} 1 -mayDie -file $OUT/sample-$s.txt > /dev/null 2>&1; wait || echo "step $s failed"
+      else
+        RERAIL_TAPE_CACHE=$store capped $prof $ENGINE run-policies $W $OUT/out-$s $POLICY > $OUT/$s.json 2> $OUT/$s.err || echo "step $s failed"
+      fi
       echo "$MODE $s: $(grep 'instructions retired' $OUT/$s.err | awk '{print $1}') instructions"
       [ $MODE = cold ] && mv $store /tmp/ai-trash/mm-store-$s-$$ 2>/dev/null || true
     done ;;
@@ -40,7 +46,7 @@ case $MODE in
     echo "env RERAIL_SESSION=$PWD/$OUT/session" >> $script
     echo "env RERAIL_TAPE_CACHE=$PWD/$OUT/store.sqlite" >> $script
     for s in $steps; do
-      [ $s != 00 ] && echo "sh cd $PWD && rsync -a --exclude .deleted $IN/o125-replay/$s/ $W/ && (while read f; do [ -n \"\$f\" ] && mv $W/\$f /tmp/ai-trash/mm-$$-\$(echo \$f | tr / _); done < $IN/o125-replay/$s/.deleted; true)" >> $script
+      [ $s != 00 ] && echo "sh cd $PWD && rsync -rlpc --exclude .deleted $IN/o125-replay/$s/ $W/ && (while read f; do [ -n \"\$f\" ] && mv $W/\$f /tmp/ai-trash/mm-$$-\$(echo \$f | tr / _); done < $IN/o125-replay/$s/.deleted; true)" >> $script
       [ "${PROFILE_STEP:-}" = $s ] && echo "env RERAIL_PROFILE=$PWD/$OUT/prof-$s" >> $script
       echo "run-policies $W $OUT/out-$s $POLICY" >> $script
     done

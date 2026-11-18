@@ -214,14 +214,21 @@ maintenance relations and copies 15,000–110,000 rows to state its changes. 430
 **What costs the most** (`RERAIL_PROFILE` of kept step 01, 16.5 s CPU in the cross part):
 - 10.1 s (8.2 s of its own) goes to the mode's removals and rechecks, over 92 strata. All the run's native join work
   is 0.72 s.
-- The recheck (`MaintMode::derives`) runs a rule's whole join with the head's slots preset. The join's spec is made
-  without them bound (`bound_head_order`, then `whole_join_spec`), so its first atom is a scan filtered by the
-  preset: one scan of a relation per candidate. It also collects every row the rule derives rather than stopping at
-  the first.
+- The recheck (`MaintMode::derives`) runs a rule's whole join with the head's slots preset as keys. That join is
+  keyed (`join_rule_bound` makes a bound head slot a key). But the mode's joins never asked the component's relations
+  for their orders: only the probes' joins call `Rel::want`. And the kept rows the store is given are in no order
+  until the first wave's `set_delta`, which comes after the mode. So each recheck read every row of the component
+  relation it probed: `best_order` found no order and fell back to the whole range, and `Cands::Pending` added every
+  row not yet indexed. A stack sample (`SAMPLE_STEP=01`) showed this directly: the time sat in the walk's per-row
+  dead and value tests.
+- **Fixed** (2026-11-18): the mode's removal, add, recheck and readers joins ask for their orders when the component
+  opens, and `MaintMode::run` first indexes the kept rows as rows of the wave before the first
+  (`Rel::index_kept`). Step 01's mode went from 5.8 s to 2.3 s, and the 196 rows gone of one stratum from 1.14 s to
+  0.03 s. The step went from 216 G to 186 G instructions, 0.58 of cold, against the forms' 0.64.
 - Every row an add join gives is rechecked too (`derives` in the add loops), though the add join over the new state
   is itself a derivation. Only an add driven by a negated atom needs a check (0328's checked add).
 - After that: the changed inputs' deltas from the documents' entries (1.2 s, `input delta by document`), and the kept
   rows from the frames (0.9 s).
 
-So R7 (the recheck planned with its head bound, and priced) and the adds is where the cost is, ahead of R1–R3. The
-plan's order changes to: step 2 (R4), then the recheck and the adds (R7), then step 3.
+So the recheck was where the cost was, from a missing index rather than from the design. With that fixed, the rest of
+the plan's order stands: the copies (step 3), then the derive-again kinds (step 4).

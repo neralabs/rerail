@@ -928,6 +928,20 @@ impl Rel {
         self.hi = hi;
         self.wave = w;
     }
+    /// The rows pushed before the first wave (the kept rows the store was given) in every order, as rows of the wave
+    /// before it: the maintain mode probes before any wave (decision 0364), and a probe reads every row in no order
+    /// yet (`Cands::Pending`). Its rechecks then scanned the kept relation, a candidate at a time (t43, step 1).
+    fn index_kept(&mut self) {
+        let (from, n, k) = (self.indexed, self.n, self.k);
+        if from >= n {
+            return;
+        }
+        for ix in &mut self.idx {
+            let known = self.sorted.within(&ix.cols, k, from as u32, n as u32);
+            ix.add_run_in(&self.data, k, from, n, self.wave, &known);
+        }
+        self.indexed_to_n();
+    }
     /// The rows pushed since the last wave as runs of no wave's delta (a relation frozen, `InRel::moved`), then at
     /// most `FROZEN_RUNS` runs an order: its probes cannot merge them later.
     fn index_rest(&mut self) {
@@ -1252,6 +1266,19 @@ impl MaintMode {
         Ok(false)
     }
 
+    /// A profile's view of `head`'s rechecks: per rule, its steps as source:keys (`F` full, `M` several keys, `D`
+    /// delta, `I` input), `!` negated.
+    fn recheck_shape(&self, head: Option<usize>) -> String {
+        let Some(head) = head else { return String::new() };
+        self.rechecks.iter().filter(|(h, _)| *h == head).map(|(_, j)| {
+            j.steps.iter().filter_map(|s| match s {
+                Step::Atom { src, neg, keys, .. } => Some(format!("{}{}{}:{}", if *neg { "!" } else { "" }, match src { Src::Full(_) => "F", Src::FullMulti(..) => "M", Src::Delta(_) => "D", Src::In(r, _) => if r.view.is_some() { "V" } else { "I" } },
+                    match src { Src::Full(r) | Src::FullMulti(r, _) | Src::Delta(r) => r.to_string(), Src::In(r, _) => r.n.to_string() }, keys.len())),
+                _ => None,
+            }).collect::<Vec<_>>().join(" ")
+        }).collect::<Vec<_>>().join(" | ")
+    }
+
     /// The rows of `driver`'s head that read `row` of its relation (`drivers`): its atom's slots preset from the row,
     /// where the row matches the atom's constants and repeated slots.
     fn readers(driver: &(usize, usize, JoinRule, Vec<Arg>), row: &[i64], store: &Store, syms: &mut Interner, out: &mut Vec<i64>) -> Result<()> {
@@ -1295,11 +1322,13 @@ impl MaintMode {
             }
         };
         for (head, j) in &self.removes {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "mode: a removal join (levels)".into());
             let mut rows = Vec::new();
             run_join_collect(j, store, syms, &[], &mut rows)?;
             push(&mut heap, store, *head, &rows, &mut seen, &mut self.counts);
         }
         let mut gone: Vec<(usize, Vec<i64>)> = Vec::new();
+        let _s = crate::code_rule_dsl::logic::profile::span(|| format!("mode: candidates by levels ({} first)", heap.len()));
         while let Some(Reverse((l, r, id))) = heap.pop() {
             let row: Vec<i64> = store.rels[r].row(id as usize).to_vec();
             for rel in &mut store.rels {
@@ -1325,15 +1354,19 @@ impl MaintMode {
             }
             gone.push((r, row));
         }
+        drop(_s);
         // Added again where a rule derives it now, and the checked adds; then the first wave's delta.
         let before: Vec<usize> = store.rels.iter().map(|r| r.n).collect();
         let mut again: Vec<(usize, Vec<i64>)> = Vec::new();
+        let _s = crate::code_rule_dsl::logic::profile::span(|| format!("mode: the rows gone derived again? ({}) {}", gone.len(), self.recheck_shape(gone.first().map(|g| g.0))));
         for (r, row) in gone {
             if self.derives(r, &row, store, syms, &mut out)? {
                 again.push((r, row));
             }
         }
+        drop(_s);
         for (head, j) in &self.adds {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "mode: a checked add (levels)".into());
             let mut rows = Vec::new();
             run_join_collect(j, store, syms, &[], &mut rows)?;
             let k = store.rels[*head].k;
@@ -1364,6 +1397,12 @@ impl MaintMode {
             return Ok(());
         }
         self.done = true;
+        {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "mode: the kept rows indexed".into());
+            for rel in &mut store.rels {
+                rel.index_kept();
+            }
+        }
         if self.leveled {
             return self.run_leveled(store, syms);
         }
@@ -1372,7 +1411,11 @@ impl MaintMode {
         let mut seen: rustc_hash::FxHashSet<(usize, u32)> = Default::default();
         for (head, j) in &self.removes {
             let mut rows = Vec::new();
-            run_join_collect(j, store, syms, &[], &mut rows)?;
+            {
+                let _s = crate::code_rule_dsl::logic::profile::span(|| "mode: a removal join".into());
+                run_join_collect(j, store, syms, &[], &mut rows)?;
+            }
+            let _s = crate::code_rule_dsl::logic::profile::span(|| format!("mode: rechecks ({} candidate rows)", rows.len() / store.rels[*head].k.max(1)));
             let k = store.rels[*head].k;
             // A derived relation has a column at least (`simplify::unit_columns`).
             for row in rows.chunks_exact(k.max(1)) {
@@ -1396,6 +1439,7 @@ impl MaintMode {
         }
         let mut added: Vec<(usize, Vec<i64>)> = Vec::new();
         for (head, j) in &self.adds {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "mode: a checked add".into());
             let mut rows = Vec::new();
             run_join_collect(j, store, syms, &[], &mut rows)?;
             let k = store.rels[*head].k;
@@ -2020,6 +2064,12 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
     for p in &probes {
         if let Body::Join(j) = &p.body { for (r, cols) in &j.multi { rels[*r].want(cols); } }
         if let Some(j) = &p.whole { for (r, cols) in &j.multi { rels[*r].want(cols); } }
+    }
+    // The maintain mode's joins probe the component's relations too (decision 0364): a recheck by its head's
+    // values, a level's readers by the row gone. Without their orders, each probe read every row (t43, step 1).
+    let mode_joins = maint.removes.iter().chain(&maint.adds).chain(&maint.rechecks).map(|(_, j)| j).chain(maint.drivers.iter().map(|d| &d.2));
+    for j in mode_joins {
+        for (r, cols) in &j.multi { rels[*r].want(cols); }
     }
     syms.check()?;
     drop(syms);
