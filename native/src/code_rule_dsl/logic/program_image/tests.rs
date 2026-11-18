@@ -1852,6 +1852,22 @@ mod layouts {
         l.of(v.rel(rel).unwrap()).cloned().collect()
     }
 
+    /// An input the transducer makes from a kind set has the engine's facts (decision 0361 step 5): `nearest`'s a key
+    /// on its node, an axis's a fan-out from it; one with facts declared keeps its own.
+    #[test]
+    fn a_relation_made_from_a_kind_set_has_the_engines_facts() {
+        use crate::code_rule_dsl::logic::front::{Fan, LayoutValues};
+        let (v, l) = of(".decl rr_nearest_ks1(n: node, a: node)\n.input rr_nearest_ks1\n\
+                         .decl rr_inside_ks2(n: node, a: node)\n.input rr_inside_ks2\n\
+                         .decl rr_has_ks3(n: node, a: node)\n.input rr_has_ks3\n.layout rr_has_ks3 key(n)\n\
+                         .decl f(n: node)\n.output f\nf(n) :- rr_nearest_ks1(n, _), rr_inside_ks2(n, _), rr_has_ks3(n, _).\n");
+        let ancestors = F::Values { col: 1, values: LayoutValues::OneIn(4) };
+        assert_eq!(facts(&v, &l, "rr_nearest_ks1"), [F::Key(vec![0]), F::Local, ancestors.clone()]);
+        assert_eq!(facts(&v, &l, "rr_inside_ks2"), [F::Fanout { from: vec![0], to: vec![1], fan: Fan::About(2) }, F::Local, ancestors]);
+        assert_eq!(facts(&v, &l, "rr_has_ks3"), [F::Key(vec![0])], "declared: its own");
+        assert!(l.0.get(&v.rel("rr_nearest_ks1").unwrap()).unwrap().iter().all(|(_, o)| *o == Origin::Made));
+    }
+
     /// A projection keeps the key its columns hold, the fan-out and the tree; a filter keeps them too, and the order
     /// but not its density; the relation renamed keeps the order dense (decision 0361 step 3).
     #[test]

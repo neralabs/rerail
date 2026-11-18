@@ -3779,3 +3779,16 @@ native join it falls back to the planner's whole-rule order.
   Tests: `a_later_run_reads_the_prepared_plans_an_earlier_one_made` (loaded 1, computed 0) and
   `kept_plans_read_back_from_the_store_by_rule_and_scale` (the entry's round trip). The plan-cache counts line says
   how many versions' plans a run read and made.
+
+### Q184. Derived relations' sizes estimated at preparation are off by over 2x about half the time
+
+- **Found** (2026-11-18, 0361 step 5): sizing derived relations from their rules' plans (summed up the strata from
+  the facts, at a nominal scale) let 7,881 lines be prepared on corpus0 x B-now, but their orders ran the joins 70%
+  longer. With each plan checked against the sizes it assumed (`Prepared::take`, `PRICE_DRIFT`), 2,870 of 6,063 were
+  refused, and the run is neutral: the estimates miss by over 2x as often as not.
+- **Next**: size them from what runs saw, not from the facts alone: a run knows each derived relation's rows when
+  it plans the strata above it. Kept per node with the prepared plans (by the version's identity, Q183's entry), a
+  later process prepares from them, and the check keeps them honest. Measure the refused share first and after.
+- **Done when**: a cold run's refused prepared lines are under a tenth of those taken, with the joins' CPU no worse
+  than with prepared plans off.
+

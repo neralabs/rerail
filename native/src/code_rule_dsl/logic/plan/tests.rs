@@ -3161,12 +3161,21 @@ fn a_run_takes_a_prepared_plan_without_searching() {
     assert_ne!(odd, planned.0);
     model.stats.nodes = 2_000.0;
     model.stats.prepared = std::sync::Arc::new(prepared::Prepared(
-        [(crate::code_rule_dsl::logic::plan::line_key(&b, None), prepared::PreparedPlan { order: odd.clone(), work_per_node: 3.0, rows_per_node: 0.5 })].into_iter().collect(),
+        [(crate::code_rule_dsl::logic::plan::line_key(&b, None), prepared::PreparedPlan { order: odd.clone(), work_per_node: 3.0, rows_per_node: 0.5, assumed: vec![("child2".to_owned(), 0.5)] })].into_iter().collect(),
     ));
+    // It assumed `child2` at 0.5 rows a node (1,000 at 2,000 nodes), as the run's statistics hold it: taken.
     let got = model.plan_rule(f, &b, None).unwrap();
-    assert_eq!(got, (odd, 6_000.0, 1_000.0));
+    assert_eq!(got, (odd.clone(), 6_000.0, 1_000.0));
     // Another line (its delta) is not held: searched.
     assert!(model.plan_rule(f, &b, Some(0)).is_ok());
+    // Assumed at 5 rows a node (10,000), past `PRICE_DRIFT` of the run's 1,000: not taken, searched as with none.
+    model.stats.prepared = std::sync::Arc::new(prepared::Prepared(
+        [(crate::code_rule_dsl::logic::plan::line_key(&b, None), prepared::PreparedPlan { order: odd.clone(), work_per_node: 3.0, rows_per_node: 0.5, assumed: vec![("child2".to_owned(), 5.0)] })].into_iter().collect(),
+    ));
+    let refused = prepared::REFUSED.load(std::sync::atomic::Ordering::Relaxed);
+    let got = model.plan_rule(f, &b, None).unwrap();
+    assert_ne!(got.0, odd, "searched, not the order kept");
+    assert!(prepared::REFUSED.load(std::sync::atomic::Ordering::Relaxed) > refused);
 }
 
 /// The prepared plans as an image stores them (decision 0333 §4): read back the same.
@@ -3241,4 +3250,33 @@ fn a_later_run_reads_the_prepared_plans_an_earlier_one_made() {
     assert_eq!(Some(&*read), held.values().next().map(|p| &**p));
     assert!(super::prepared_to_store().is_none(), "nothing new to store");
     assert!(std::sync::Arc::ptr_eq(&read, &prepared::Prepared::of_version(&v)), "held by the version");
+}
+
+/// Decision 0361 step 5, derived relations: one the facts do not size is sized from its rules' plans, in dependency
+/// order, so the rules that read it are prepared too. A union's rows are its rules' summed, and only where every rule
+/// is planned (`u` has a branch over `part`, which has no size: what reads it is not prepared); a recursion's are its
+/// base rules' times a nominal depth (`anc`, with no fact declared).
+#[test]
+fn a_rule_over_a_derived_relation_is_prepared_once_its_rules_size_it() {
+    let p = parse(".decl child2(p: node, c: node, i: number)\n.input child2\n.layout child2 key(c) fanout(p -> c, few) order(i dense in p)\n\
+                   .decl kind2(n: node, k: symbol)\n.input kind2\n.layout kind2 key(n) size(per n) values(k, kinds)\n\
+                   .decl part(x: number, y: number)\n.input part\n\
+                   .decl o(c: node, k: symbol)\no(c, k) :- child2(p, c, _), kind2(c, k), kind2(p, \"x\").\n\
+                   .decl r(c: node)\n.output r\nr(c) :- o(c, k), kind2(c, k).\n\
+                   .decl u(c: node)\nu(c) :- o(c, _).\nu(c) :- part(c, _).\n\
+                   .decl w(c: node)\n.output w\nw(c) :- u(c), kind2(c, _).\n\
+                   .decl anc(a: node, b: node)\nanc(a, b) :- child2(a, b, _).\nanc(a, c) :- anc(a, b), child2(b, c, _).\n\
+                   .decl z(a: node)\n.output z\nz(a) :- anc(a, b), kind2(b, \"y\").\n").unwrap();
+    let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
+    let placed = body::Placed::whole(std::sync::Arc::clone(&v));
+    let prep = prepared::Prepared::of_version(&v);
+    let line = |head: &str, nth: usize, first: Option<usize>| {
+        let k = bodies_by_head(&placed).into_iter().filter(|(h, _)| h == head).nth(nth).unwrap().1;
+        crate::code_rule_dsl::logic::plan::line_key(&placed.body(k), first)
+    };
+    assert!(prep.0.contains_key(&line("r", 0, None)), "`o` sized by its rule: `r` is prepared");
+    assert!(prep.0.contains_key(&line("u", 0, None)) && !prep.0.contains_key(&line("u", 1, None)), "`u`'s branch over `part` is not");
+    assert!(!prep.0.contains_key(&line("w", 0, None)), "`u` is not sized: one of its rules is not planned");
+    assert!(prep.0.contains_key(&line("anc", 1, None)) && prep.0.contains_key(&line("anc", 1, Some(0))), "the recursion, sized by its base rule");
+    assert!(prep.0.contains_key(&line("z", 0, None)), "`anc` sized: `z` is prepared");
 }

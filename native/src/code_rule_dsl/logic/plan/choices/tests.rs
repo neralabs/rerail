@@ -120,7 +120,7 @@
         // The prepared plans of the versions planned (decision 0361 step 5, Q183) are kept in the same entry, by the
         // version's identity, and read back the same.
         use super::super::prepared::{ByVersion, Prepared, PreparedPlan};
-        let made = Prepared([(0xfeed_u128 << 64 | 7, PreparedPlan { order: vec![Step { at: 2, mode: None }, Step { at: 0, mode: Some(Mode::Climb) }], work_per_node: 0.75, rows_per_node: 0.125 })].into_iter().collect());
+        let made = Prepared([(0xfeed_u128 << 64 | 7, PreparedPlan { order: vec![Step { at: 2, mode: None }, Step { at: 0, mode: Some(Mode::Climb) }], work_per_node: 0.75, rows_per_node: 0.125, assumed: vec![("anc".to_owned(), 8.0)] })].into_iter().collect());
         let by: ByVersion = [([3u8; 32], Arc::new(made.clone())), ([4u8; 32], Arc::new(Prepared::default()))].into_iter().collect();
         let entry = plans_entry(&[StoredPlan::row(key, &stored).into_iter().map(Value::Int).collect()], &Default::default(), &super::super::prepared::store_rows(&by));
         apply_plans(&crate::content_store::record::Apply { store: &store, bytes: &entry }, crate::content_store::record::codec::body(&prepared)).unwrap();

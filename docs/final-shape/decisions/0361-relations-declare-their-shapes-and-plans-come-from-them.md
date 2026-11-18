@@ -421,3 +421,27 @@ lines it plans are those of rules over AST matches, aggregates and relations wit
 inferred for more derived relations (unions and recursion keep only `local`) and prepared aggregate rules. (A debug
 build stops before planning at the check after `simplify`: Q180, apart from this step.)
 
+**Wider: the inputs the engine makes, and derived relations sized from their rules** (2026-11-18). Of the 8,968
+rules a corpus0 x B-now run did not prepare, the first literal that stopped 7,158 was a derived relation with no
+size and 1,726 an input with no layout (`RERAIL_PREPARED_WHY=FILE` lists each; 23 were aggregates). So:
+
+- The inputs: `core.rr` declares `doc`'s, `op`'s and `within`'s facts, and the layouts analysis gives an input the
+  transducer makes from a kind set (`nearest`'s, an axis's) the engine's (`front::ast::made_from_a_kind_set`,
+  `Origin::Made`): inferred, not written into the program, so neither side's request record moves (a pass that
+  wrote them as about rows moved it; the debug run's check after the merges caught it).
+- Derived relations: components in dependency order, each relation no fact sizes is sized from its rules' plans,
+  their rows summed (a union's only where every branch is planned), a head column's distinct values those of the
+  body column that binds it; a recursion's rows its base rules' times a nominal depth (8). `RERAIL_DERIVED_ESTIMATES
+  =off` leaves them out.
+
+Measured on corpus0 x B-now (profiling build, a new store each, M3 at load 60-130): taken as they were, the plans
+over estimated relations ran the joins 70% longer (`engine run (joins)` 43.9 s -> 74.4 s, 1,053 -> 1,453 billion
+instructions): an estimate carried up the strata errs, and an order chosen for it costs what the error does. The
+inputs' facts alone were neutral (1,018 billion). So a prepared plan keeps the rows per node it assumed of each
+relation only an estimate sized, and a run takes it only while those relations, made by then, are within
+`PRICE_DRIFT` of it (`Prepared::take`); else the line is searched (step 6's check, for the sizes a plan assumed).
+With it: 1,020 -> 1,024 billion instructions (off -> on), 463 findings, d067ec2ebf6f; 3,193 lines taken, 2,870
+refused, 14,565 searched against 15,146. Planning is 1-3% of the run's CPU (search 0.3 s, statistics about 2.7 s
+of 94 s); a wrong order costs ten times that. The criterion "a run plans none of the relations that have shapes"
+is met for the relations whose facts size them; for the rest it waits on estimates good enough to keep (Q184).
+
