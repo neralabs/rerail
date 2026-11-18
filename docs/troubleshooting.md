@@ -638,10 +638,12 @@ Off loopback:
 
 </details>
 
-### The dashboard says "Needs the dashboard link"
+### The dashboard asks to connect this browser
 
-Run `rerail manage` (or `rerail daemon start --open`) to open the page with the daemon's access capability, a secret
-carried in the dashboard link.
+The page says "Connect this browser to Rerail" in place of every view. Run `rerail manage` (or
+`rerail daemon start --open`) in a terminal to open the page with the daemon's access capability, a secret carried in
+the dashboard link. The page that asked then continues on its own. If it opens in a browser other than the one you
+want, paste the link it prints into that one.
 
 <details>
 <summary>Why the link is needed, scripts, and a refused capability</summary>

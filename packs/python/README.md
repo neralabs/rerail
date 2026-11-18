@@ -2,7 +2,7 @@
 
 **Linter-equivalent to Ruff 0.16.9 and Bandit 1.9.4.** Each rule flags what the original flags, bar declared differences. [What this means](../../docs/rule-packs.md#linter-equivalent).
 
-537 code rules for Python, ported from Ruff 0.16.9 (488 rules) and Bandit 1.9.4 (49 tests). Each is scored against the
+538 code rules for Python, ported from Ruff 0.16.9 (488 rules) and Bandit 1.9.4 (50 tests). Each is scored against the
 tool's own findings on the tool's test fixtures, and against the labelled lines of the tool's real-code samples
 ([docs/upstream.md](../../docs/upstream.md#samples)), through the engine's production workspace path, with
 every disagreement declared in `divergences.json` (55 today, across 15 shipped rules: all but one on Ruff's
@@ -27,7 +27,7 @@ checked by `npx vitest run test/engine/catalog/packs.test.ts`.
 | `divergences.json` | Declared disagreements with the tools |
 | `upstream/<tool>/` | The tool's copied tests (`fixtures/`), the cases Rerail wrote for it (`fixtures/rerail/`, listed in `UPSTREAM.md`: every shipped rule on lines carrying `# noqa` or `# nosec`, as a stub for rules Ruff reports only in stubs, and D104 exempt, since it reports once per package; and probes of inputs the ports once misread or their reviews pinned), its expected findings (`fixtures.expected.json`), the generator (`generate.py`, sharing `upstream/common.py`), and the lock naming its real-code samples (`samples.lock`, fetched by `npm run fixtures:pull`) with their sources and licences (`SAMPLES.md`) |
 | `licenses/<tool>/` | The tool's licence and `UPSTREAM.md`, per upstream repository: its source, the patterns of the files taken and how (each file's provenance is `provenance.json` in the tool's test-data archive) |
-| `candidates/rules/` | Ports still being evaluated (104 Ruff and Bandit ports): never shipped or listed in `pack.json`. 103 have a `conformance.json` port and are scored against the expected findings without gating; A005 (GPL-derived fixtures only) has none, and INP001 (tested only with a `namespace-packages` option) has no expected findings. The Conformance comment on a pull request says where each candidate stops |
+| `candidates/rules/` | Ports still being evaluated (103 Ruff and Bandit ports): never shipped or listed in `pack.json`. 102 have a `conformance.json` port and are scored against the expected findings without gating; A005 (GPL-derived fixtures only) has none, and INP001 (tested only with a `namespace-packages` option) has no expected findings. The Conformance comment on a pull request says where each candidate stops |
 | `candidates/README.md` | What each candidate is waiting on and its rule details; not published |
 
 Taking a new snapshot is a maintainer deriving the pack's test data from its pins and publishing it
@@ -508,6 +508,10 @@ Port of Bandit 1.9.4's B406 import_xml_sax. Divergence: an import of only xml.sa
 ### `bandit-b610-django-extra-used`
 
 Port of Bandit 1.9.4's B610 django_extra_used: a call of `extra` whose `where` or `tables` is not a list of plain strings, or whose `select` is not a dict of plain strings, bound to QuerySet.extra's six positional slots. Port of the kernel test b610_extra_with_a_non_literal_where_tables_or_select. `# nosec` honoured. Divergence: Bandit reports a call of any function or method named `extra`; the port reports only a method call whose receiver looks like a Django QuerySet or Manager: a name or attribute named `objects`, `qs`, `QS`, `queryset`, `querysets`, `manager` or `managers`, alone or after an underscore-joined prefix (`User.objects`, `self.queryset`, `base_qs`, `_default_manager`); a call of `get_queryset`; a method call on such a receiver (`User.objects.filter(...)`); or `self` or `super()` inside a class with a base whose name ends in `QuerySet` or is `Manager`, `BaseManager` or `BaseUserManager`, optionally dotted (`models.QuerySet`); a base that only ends in `Manager` (`AbstractContextManager`, `PluginManager`, `TreeManager`) does not count. A bare `extra(...)` call and `extra` on any other receiver are not reported.
+
+### `bandit-b105-hardcoded-password-string`
+
+Port of Bandit 1.9.4's B105 hardcoded_password_string. A candidate name is a name, attribute or string key containing `password`, `passwd`, `pwd`, `pass`, `passphrase`, `token` or `secret` as a whole underscore-separated word (`db_password`, `API_TOKEN`; not `passport` or `tokenizer`). Reported: a plain string assigned to a candidate name or attribute (an annotated assignment is not, as in Bandit); every string compared with a candidate name or attribute when the first comparator is a string, each at its own position; a candidate dict key whose value is any constant; and `d["password"] = "x"`, at the key. Bytes and f-strings are not plain strings, and a string on the left of a comparison is not reported. `# nosec` honoured.
 
 ### `ruff-air001-airflow-variable-name-task-id-mismatch`
 
