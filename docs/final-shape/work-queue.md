@@ -2632,7 +2632,7 @@ always a refusal.
   host again for them before each compile. Not installed: the farm owner merges and installs it.
 - **Done when**: farm 24 (or its merge) is installed and the reproduction above no longer fails.
 
-### Q123. An M1 Max repeats the persistent dispatch's launch (`a_batch_of_files_and_programs_is_one_launch`)
+### Q123. (Done) An M1 Max repeats the persistent dispatch's launch (`a_batch_of_files_and_programs_is_one_launch`)
 
 - **Found** (2026-11-17, roll-up after 7d4a35093): on the farm's M1 Max the test sees 5–9 launches where it expects
   1 (Interpreter, 16-byte lanes, spins > 0); it passes on the M3. `run_batch` repeats a launch when a look-back runs
@@ -2640,6 +2640,14 @@ always a refusal.
   results are equal; only the launch count differs.
 - **To do**: the workers from the device's residency (its cores and threadgroup limits), not a constant, so the M1
   (which must work, platform priorities) runs one launch too.
+- **Done** (2026-11-18): not residency. With `RERAIL_WORKERS` at 768, 512, 384, 256, 128 or 32 the M1 Max took 3–9
+  launches, and as many with 65,536 polls as with none: no poll ever saw a predecessor's word. A relaxed
+  `atomic_load_explicit` in the poll loops read a stale copy there; a `volatile` or `coherent(device)` load did no
+  better. A relaxed `atomic_fetch_or_explicit(x, 0)` reads the coherent word: one launch in all 9 configurations
+  (3 executors x 3 widths). The five poll loops (`look_back`, `halo_exchange`, `exchange_word`'s two, the sinks'
+  look-back) read through `poll`, which `batch_helpers` defines per device: the read-modify-write below Apple GPU
+  family 9, the plain load from family 9 on (the M3 passes with it). `WORKERS` stays a constant.
+- **Found on the way** (Q170): five parser tests red on the M1 Max at the hub's HEAD, with or without this change.
 
 ### Q124. (Q30 on Swift-Kotlin-Scala-support) A Kotlin header's same-line comment: a mark that settles the extras before its line break
 
@@ -3535,3 +3543,17 @@ sha) or `program_shared`'s order may hand back the files recorded before the edi
   unchanged. Farm (M1 Max): `executors_are_shared` and the three `randomforest_predict` device tests pass.
 - **Also seen**: on m3 the guard reads three files the checkout deleted (`metal_frontier_conformance.rs`,
   `metal_frontier_reduce.rs`, `metal_register_conformance.rs`). That is Q63's stale mirror, not the tree.
+
+
+### Q170. Five parser tests red at the hub's HEAD on the M1 Max
+
+Found 2026-11-18 (Q123's run of `rerail-parser-tests` and `rerail-metal`'s libs; the same five fail with Q123's
+change taken out):
+
+- `compile_tests::unsupported_operations_are_refused` (line 104: `text` is no longer refused);
+- `compile_tests::only_the_compiler_reads_tier2s_states` (line 999: a reader outside the compiler);
+- `metal_tests::every_step_on_metal_equals_the_interpreter` (`run_split` gives `UnsupportedBackend`);
+- `rr_tests::rr_cases_parse_from_their_steps` and `rr_steps_parse_as_the_reference_and_the_engine` (lines 409, 394).
+
+Not yet checked on the M3. **Done when**: each passes, or is fixed at its root.
+

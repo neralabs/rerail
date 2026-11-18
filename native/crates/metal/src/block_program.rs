@@ -663,7 +663,20 @@ fn ticket_order(groups: &[usize]) -> Vec<[u32; 2]> {
 /// The helpers both executors share: the file table's row, reading a file's bytes, and the
 /// look-backs.
 fn batch_helpers() -> String {
-    format!("{FILE_ROW}\n{}{LOOK_BACK}{HALO_EXCHANGE}{EXCHANGE_WORD}{SINKS}\n", table_helpers(1))
+    format!("{}{FILE_ROW}\n{}{LOOK_BACK}{HALO_EXCHANGE}{EXCHANGE_WORD}{SINKS}\n", poll_helper(), table_helpers(1))
+}
+
+/// `poll`: a read of a word another group of the launch publishes (a look-back's state, a halo, an exchange's
+/// record). On the M1 Max (Apple GPU family 7, Q123) a relaxed load in a poll loop kept reading the polling core's
+/// copy and never saw the store of a group running beside it: every launch of a batch ran out of polls, whatever
+/// their number (5–9 launches at 65,536 polls, as at none, at 768 workers as at 32), though a `volatile` or
+/// `coherent(device)` load did no better. A relaxed read-modify-write reads the coherent copy: one launch. Family 9
+/// on (the M3, the M5) the load sees it, and stays a load there.
+fn poll_helper() -> &'static str {
+    const LOAD: &str = "static inline uint poll(device atomic_uint* x) { return atomic_load_explicit(x, memory_order_relaxed); }\n";
+    const RMW: &str = "static inline uint poll(device atomic_uint* x) { return atomic_fetch_or_explicit(x, 0u, memory_order_relaxed); }\n";
+    static COHERENT_LOADS: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| crate::device().map_or(true, |d| d.supports_family(metal::MTLGPUFamily::Apple9)));
+    if *COHERENT_LOADS { LOAD } else { RMW }
 }
 
 /// A file of a batch, and its bytes read in place in its slab: 16-byte chunks from `src16`, zero
@@ -709,7 +722,7 @@ const LOOK_BACK: &str = "static inline bool look_back(device atomic_uint* state,
   for (uint back = 1u; back <= g; back++) {
     uint st = 0u;
     for (uint spin = 0u; spin <= spins && (st >> 30u) == 0u; spin++) {
-      st = simd_broadcast(atomic_load_explicit(&state[g - back], memory_order_relaxed), ushort(0));
+      st = simd_broadcast(poll(&state[g - back]), ushort(0));
     }
     if ((st >> 30u) == 0u) return false;
     prefix = tcompose1(st & CARRY_VALUE, prefix);
@@ -737,7 +750,7 @@ static inline bool halo_exchange(device atomic_uint* halos, uint g, uint l, ulon
   for (uint w = 0u; w < 3u; w++) {
     uint x = 0u;
     for (uint spin = 0u; spin <= spins && (x & HALO_FLAG) == 0u; spin++) {
-      x = simd_broadcast(atomic_load_explicit(&halos[(g - 1u) * 3u + w], memory_order_relaxed), ushort(0));
+      x = simd_broadcast(poll(&halos[(g - 1u) * 3u + w]), ushort(0));
     }
     if ((x & HALO_FLAG) == 0u) return false;
     before |= ulong(x & 0x3ffffffful) << (30u * w);
@@ -772,7 +785,7 @@ const EXCHANGE_WORD: &str = "static inline bool exchange_word(device atomic_uint
     if (g == 0u) return true;
     uint x = 0u;
     for (uint spin = 0u; spin <= spins && (x & HALO_FLAG) == 0u; spin++) {
-      x = atomic_load_explicit(&rec[(g - 1u) * stride], memory_order_relaxed);
+      x = poll(&rec[(g - 1u) * stride]);
     }
     got = x & 0x3ffffffful;
     return (x & HALO_FLAG) != 0u;
@@ -783,7 +796,7 @@ const EXCHANGE_WORD: &str = "static inline bool exchange_word(device atomic_uint
   for (uint back = 1u; back <= g; back++) {
     uint st = 0u;
     for (uint spin = 0u; spin <= spins && (st >> 30u) == 0u; spin++) {
-      st = atomic_load_explicit(&rec[(g - back) * stride], memory_order_relaxed);
+      st = poll(&rec[(g - back) * stride]);
     }
     if ((st >> 30u) == 0u) return false;
     prefix = select(prefix + (st & CARRY_VALUE), tcompose1(st & CARRY_VALUE, prefix), kind == 1u);
