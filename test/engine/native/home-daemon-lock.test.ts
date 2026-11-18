@@ -99,12 +99,29 @@ describe("the daemon lock of a Rerail home", () => {
     lease!.release();
     const asking = loadNativeBinding().tryLockExclusive(join(home, LOCKS_DIR, "daemon.lock"));
     expect(asking).not.toBeNull();
-    setTimeout(() => asking!.release(), 200);
-    const taken = await holdHomeDaemonLock(home);
+    // The daemon's wait has begun when the call returns; the asker lets go whether or not the OS has queued it yet.
+    const taking = holdHomeDaemonLock(home);
+    asking!.release();
+    const taken = await taking;
     expect(taken).toBeDefined();
     leases.push(taken!);
     expect(homeDaemonHolder(home)).toBe(process.pid);
   });
+
+  it("is handed the lock as its holder ends, as when a daemon is killed or one of an earlier release restarts", async () => {
+    const home = await temporaryHome();
+    const predecessor = await holdInAnotherProcess(home);
+    const exited = once(predecessor, "exit");
+
+    const taking = holdHomeDaemonLock(home);
+    predecessor.kill("SIGKILL");
+    await exited;
+    const taken = await taking;
+
+    expect(taken).toBeDefined();
+    leases.push(taken!);
+    expect(homeDaemonHolder(home)).toBe(process.pid);
+  }, 30_000);
 
   it("goes on without the lock when its file does not open, as where the engine does not load", async () => {
     const home = await temporaryHome();

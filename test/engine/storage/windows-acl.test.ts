@@ -107,7 +107,7 @@ describe("an owner-only ACL on Windows", () => {
     const lock = {
       name: "work",
       busy: () => new Error("busy"),
-      engine: () => ({ tryLockExclusive: () => ({ release: () => undefined }) }),
+      engine: () => ({ lockExclusive: async () => ({ release: () => undefined }) }),
       machine: { acl, platform: "win32" as const, profile: ELSEWHERE },
     };
     await withHomeLock(home, lock, async () => undefined);

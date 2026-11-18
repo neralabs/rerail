@@ -14,7 +14,7 @@ import { spawn } from "../engine/child-process.js";
 import { replaceFile } from "../engine/file-replace.js";
 import { searchGitFrom } from "../engine/git.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
-import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, relaunchDaemon, sameSecret, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
+import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, lookupDaemon, relaunchDaemon, sameSecret, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
 import { daemonExit } from "./daemon-exit.js";
 import { watchHeap } from "./heap-ceiling.js";
 import { startRemoteSink, type RemoteSinkLoop } from "../runtime/remote-outbox.js";
@@ -41,7 +41,7 @@ import { moveRuleProvenancesInWorker } from "../engine/storage/rule-provenance-m
 import { enabledExperiments, mergeAssistExperimentEnabled, remoteSinkEnabled } from "../engine/experimental-features.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { openToOthers, type AccessReader } from "../engine/storage/private-files.js";
-import { holdHomeDaemonLock } from "../engine/native/home-daemon-lock.js";
+import { holdHomeDaemonLock, type HolderRuns, type HomeDaemonLease } from "../engine/native/home-daemon-lock.js";
 import { acquireMainInstance } from "../engine/native/main-instance.js";
 import { currentRerailBuild, isMainRerailBuild } from "../engine/native/rerail-build.js";
 
@@ -109,6 +109,12 @@ export interface RerailDaemonOptions {
    * (`runHomeDaemon`), since it alone holds the home's lock; omitted, the state file is written once.
    */
   recordCheck?: { readonly everyMs: number; readonly home: string; readonly holdsHome: () => boolean };
+  /**
+   * The Rerail home's daemon lock this daemon holds (`holdHomeDaemonLock`), given up as the last step of `close`: a
+   * daemon restarting at its heap ceiling closes, then launches the next one, so that one finds the home free however
+   * long this process then takes to exit. The daemon of a home passes it (`runHomeDaemon`).
+   */
+  homeLease?: Pick<HomeDaemonLease, "release">;
   nativeHealth?: () => NativeHealth;
   /** Local IPC endpoint for the engine service; mainly useful for isolated embedding and tests. */
   kernelSocketPath?: string;
@@ -770,6 +776,9 @@ export class RerailDaemon {
         await this.#mergeAssist?.stop();
         this.#stores.close();
         if (this.#options.stateFile !== undefined) await this.#removeOwnRecord(this.#options.stateFile);
+        // Last, once nothing of this daemon is open and its record is gone. Where a step above threw, the process's exit
+        // gives the lock up instead.
+        this.#options.homeLease?.release();
       }
     }
   }
@@ -1230,24 +1239,39 @@ async function packageVersion(): Promise<string> {
  * from the layers above the daemon, the record check of the home's one daemon, which only `runHomeDaemon` sets, and why
  * it serves this computer alone, which only `serveRerailDaemon`'s loopback restart sets.
  */
-type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents" | "recordCheck" | "remoteRefused">;
+type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents" | "recordCheck" | "homeLease" | "remoteRefused">;
 
 /**
  * Runs the daemon (`serveRerailDaemon`) as the one daemon of its Rerail home, whatever the build. It takes the home's
  * daemon lock before anything opens a store or binds a pipe, a socket or a port, so a second daemon stops here naming
  * the first: two starts at once, or a start whose wait for a slow daemon ran out, could otherwise leave two, one holding
  * the port and the other the one daemon.json names. Only the holder keeps daemon.json (`recordCheck`): two daemons
- * that each did would write over each other. The lock goes with the process however it ends; an exit also removes the
- * holder's record beside it. A loopback restart for a TLS key it may not serve with runs in this process and keeps the
- * lock. A restart at the heap ceiling launches the next daemon just before this one exits, and that one keeps trying
- * for the lock for a second.
+ * that each did would write over each other. The daemon gives the lock up at the end of its close (`homeLease`), and
+ * the lock goes with the process however else it ends; an exit also removes the holder's record beside it. A loopback
+ * restart for a TLS key it may not serve with runs in this process and keeps the lock. A restart at the heap ceiling
+ * closes the daemon, so the home is free before it launches the next daemon, whatever this process does before it exits.
  */
 export async function runHomeDaemon(argv: readonly string[], services: Omit<RerailDaemonServices, "remoteRefused"> = {}): Promise<void> {
   const home = defaultRerailHome();
-  const homeLock = await holdHomeDaemonLock(home);
+  const homeLock = await holdHomeDaemonLock(home, holderAnswers(home));
   if (homeLock === undefined) return await serveRerailDaemon(argv, services);
   process.once("exit", () => homeLock.release());
-  await serveRerailDaemon(argv, { ...services, recordCheck: { everyMs: RECORD_CHECK_MS, home, holdsHome: () => homeLock.holdsHome() } });
+  await serveRerailDaemon(argv, {
+    ...services,
+    recordCheck: { everyMs: RECORD_CHECK_MS, home, holdsHome: () => homeLock.holdsHome() },
+    homeLease: homeLock,
+  });
+}
+
+/**
+ * Whether the process the home's lock record names is the daemon daemon.json records, answering as it does to a start
+ * (`lookupDaemon`, its record's proof and its health) within the bound given.
+ */
+function holderAnswers(home: string): HolderRuns {
+  return async (pid, withinMs) => {
+    const lookup = await lookupDaemon(home, undefined, withinMs);
+    return lookup.status === "running" && lookup.health.pid === pid;
+  };
 }
 
 /**

@@ -1,6 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, type BigIntStats } from "node:fs";
 import { join } from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
 import { replaceFileSync } from "../file-replace.js";
 import { LOCKS_DIR } from "./file-lock.js";
 import { loadNativeBinding, type NativeExclusiveFileLock } from "./native.js";
@@ -17,12 +16,15 @@ const LOCK_FILE = "daemon.lock";
 const HOLDER_FILE = "daemon.json";
 
 /**
- * How long a daemon keeps trying for a lock another process holds. A start that asks whether a daemon runs
- * ({@link homeDaemonLockHeld}) holds it for an instant, and a daemon restarting itself lets go as it exits, just after it
- * launches the next one; only a running daemon holds it for longer.
+ * How long a daemon waits for a lock another process holds before it takes that holder for a running daemon. A daemon
+ * restarting itself gives the lock up as it closes, before it launches the next one, so that one never waits for it,
+ * and a running daemon that answers as one is told apart at once ({@link HolderRuns}). The bound stays for the holders
+ * no fact tells apart: a start asking whether a daemon runs ({@link homeDaemonLockHeld}), for an instant; a daemon
+ * between its take and its record, for an instant; a daemon still starting, or too busy to answer; and a daemon of a
+ * Rerail before this one, which lets go only as it exits, after it launched the next. The OS hands the lock over at any
+ * release, so the bound paces nothing: it only says when a holder that has not let go is taken for a running daemon.
  */
 const ACQUIRE_WAIT_MS = 1_000;
-const ACQUIRE_POLL_MS = 50;
 
 /** Another process is the daemon of the home; `pid` is undefined while it has not recorded itself. */
 export class HomeDaemonConflictError extends Error {
@@ -41,7 +43,7 @@ export interface HomeDaemonLease {
    * missing file, or no file id), the home counts as held, as before the check.
    */
   holdsHome(): boolean;
-  /** Gives the lock up before process exit, once the daemon has closed. */
+  /** Gives the lock up before process exit, once the daemon has closed (`RerailDaemonOptions.homeLease`). */
   release(): void;
 }
 
@@ -84,26 +86,32 @@ export function forgetHomeDaemonHolder(home: string, pid: number): void {
 }
 
 /**
- * Makes this process the daemon of `home` for the rest of its life, or throws {@link HomeDaemonConflictError} when
- * another process still holds the home after {@link ACQUIRE_WAIT_MS}; when the last try of that wait threw instead of
- * finding the lock held, its error ({@link waitForLock}). Undefined where the first try cannot be made (the native
- * binding does not load, or the lock file does not open): the engine pipe's or socket's own check is then all that keeps
- * a second daemon out, as on a build without the lock.
+ * Whether process `pid` answers, within `withinMs`, as the running daemon of the home, as a start asks one (its health,
+ * from the record it serves by): the daemon layer, which can ask, supplies it.
  */
-export async function holdHomeDaemonLock(home: string): Promise<HomeDaemonLease | undefined> {
+export type HolderRuns = (pid: number, withinMs: number) => Promise<boolean>;
+
+/**
+ * Makes this process the daemon of `home` for the rest of its life, or throws {@link HomeDaemonConflictError} when
+ * another process still holds the home: at once when the holder its record names answers as the running daemon
+ * (`holderRuns`), else after {@link ACQUIRE_WAIT_MS}; when the wait itself failed, its error. Undefined where the first
+ * try cannot be made (the native binding does not load, the lock file does not open, or the try fails): the engine
+ * pipe's or socket's own check is then all that keeps a second daemon out, as on a build without the lock.
+ */
+export async function holdHomeDaemonLock(home: string, holderRuns?: HolderRuns): Promise<HomeDaemonLease | undefined> {
   if (held !== undefined) throw new Error("This process already holds a Rerail home's daemon lock");
   mkdirSync(join(home, LOCKS_DIR), { recursive: true, mode: 0o700 });
   const path = join(home, LOCKS_DIR, LOCK_FILE);
-  let tryLock: () => NativeExclusiveFileLock | null;
-  let lock: NativeExclusiveFileLock | null;
+  let waiting: Promise<NativeExclusiveFileLock | null>;
   try {
-    const native = loadNativeBinding();
-    tryLock = () => native.tryLockExclusive(path);
-    lock = tryLock();
+    // The engine's first try is made before this returns, and a free lock is already taken. One open serves the whole
+    // wait: a lock file another program opens meanwhile (Windows) cannot end it.
+    waiting = loadNativeBinding().lockExclusive(path, ACQUIRE_WAIT_MS);
   } catch {
     return undefined;
   }
-  const taken = lock ?? await waitForLock(home, tryLock);
+  const taken = await handedOrRefused(waiting, home, holderRuns);
+  if (taken === null) throw new HomeDaemonConflictError(home, homeDaemonHolder(home));
   recordHolder(home);
   held = taken;
   // The file this process locked, read by path just after: only a home moved in that instant could give another.
@@ -130,25 +138,31 @@ export async function holdHomeDaemonLock(home: string): Promise<HomeDaemonLease 
   };
 }
 
+/** What a race against a wait the engine left pending settles with first. */
+const PENDING = Symbol("the engine waits");
+
 /**
- * Tries for the lock another process held at the first try until {@link ACQUIRE_WAIT_MS} runs out. A try that throws,
- * as one can on Windows while another program has the lock file open, does not end the wait; when the last try threw,
- * its error is what the wait ends with, since nothing then says another daemon holds the home.
+ * The lock the engine's wait is handed, or null: at the wait's bound, or at once when the holder the record beside the
+ * lock names answers as the home's running daemon, a fact no bound need stand in for. A lock the engine took before it
+ * returned is answered before anything is read or asked. The holder is asked before this process takes the lock it may
+ * be handed meanwhile, so nothing the ask does to the home's records meets this daemon's own; it answers within the
+ * wait's bound, and a lock handed to a wait refused meanwhile is let go.
  */
-async function waitForLock(home: string, tryLock: () => NativeExclusiveFileLock | null): Promise<NativeExclusiveFileLock> {
-  const deadline = Date.now() + ACQUIRE_WAIT_MS;
-  let failure: { readonly error: unknown } | undefined;
-  for (;;) {
-    if (Date.now() >= deadline) throw failure === undefined ? new HomeDaemonConflictError(home, homeDaemonHolder(home)) : failure.error;
-    await sleep(ACQUIRE_POLL_MS);
-    try {
-      const lock = tryLock();
-      if (lock !== null) return lock;
-      failure = undefined;
-    } catch (error) {
-      failure = { error };
-    }
-  }
+async function handedOrRefused(waiting: Promise<NativeExclusiveFileLock | null>, home: string, holderRuns: HolderRuns | undefined): Promise<NativeExclusiveFileLock | null> {
+  if (holderRuns === undefined || !(await leftWaiting(waiting))) return await waiting;
+  if (!(await recordedHolderRuns(home, holderRuns))) return await waiting;
+  void waiting.then(lock => lock?.release(), () => undefined);
+  return null;
+}
+
+/** Whether the engine left `waiting` pending: a promise already settled wins a race with a marker settled after it. */
+async function leftWaiting(waiting: Promise<NativeExclusiveFileLock | null>): Promise<boolean> {
+  return await Promise.race([waiting, Promise.resolve(PENDING)]) === PENDING;
+}
+
+async function recordedHolderRuns(home: string, holderRuns: HolderRuns): Promise<boolean> {
+  const holder = homeDaemonHolder(home);
+  return holder !== undefined && await holderRuns(holder, ACQUIRE_WAIT_MS).catch(() => false);
 }
 
 /**
