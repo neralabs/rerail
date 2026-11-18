@@ -57,7 +57,7 @@ use crate::code_rule_dsl::logic::program_image::t_of;
 use super::retain::{Cut, Retained};
 use super::{Error, Result, lower};
 use crate::code_rule_dsl::facts::vtab::Source;
-use crate::code_rule_dsl::logic::front::{self, Atom, Literal, Rule, Term};
+use crate::code_rule_dsl::logic::front;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
@@ -162,19 +162,6 @@ fn named(rel: &str, suffix: &str) -> String {
 pub(in crate::code_rule_dsl) fn levels_wanted() -> bool {
     // The default (decision 0090, levels checked); `RERAIL_RECURSIVE=dred` keeps delete-and-rederive.
     std::env::var("RERAIL_RECURSIVE").map_or(true, |v| v != "dred")
-}
-
-/// `rule` with each computed head term named by a variable the body binds: `h(@f(x)) :- B` as `h(v) :- B, v = @f(x)`.
-fn named_heads(rule: &Rule) -> Rule {
-    let mut rule = rule.clone();
-    for (i, t) in rule.head.args.iter_mut().enumerate() {
-        if matches!(t, Term::Call(..)) {
-            let v = Term::Var(format!("_h{i}").into());
-            let call = std::mem::replace(t, v.clone());
-            rule.body.push(Literal::Cmp { l: v, op: "=", r: call });
-        }
-    }
-    rule
 }
 
 /// `part` (the cut's program) with each changed stratum maintained where it can be, and the old rows it reads.
@@ -654,12 +641,6 @@ fn unmaintainable_over(f: Fields<'_>, scc: &BTreeSet<String>, rules: &[Named<'_>
     None
 }
 
-/// Source rule `k` as a tree, its computed head terms named: for the debugging aids that print rules.
-fn tree_named(src: &Part<'_>, k: usize) -> Rule {
-    let lists = front::Lists::default();
-    named_heads(&crate::code_rule_dsl::logic::program_image::Tree::new(&src.p.v, &lists).rule(src.p.rule(src.rules[k])))
-}
-
 /// The part `src` with each changed stratum maintained where it can be, and the old rows it reads, over its version
 /// (decision 0241): its rules and the parts it adds (declarations, nullary relations, gates) written into `b`, a
 /// builder under `src`'s ids that holds the part's other parts as the caller stated them. Its inputs, and what the
@@ -790,28 +771,23 @@ pub(in crate::code_rule_dsl) fn rewrite_over<'b>(src: &Part<'_>, mut b: Builder<
             BY_LEVELS.with(|n| n.set(n.get() + 1));
         }
         if is_recursive && levels_wanted() && std::env::var_os("RERAIL_LEVELS_WHY").is_some() {
-            let trees: Vec<Rule> = at.iter().map(|&k| tree_named(src, k)).collect();
-            let not_join = trees.iter().filter(|r| !r.body.iter().all(|l| matches!(l, Literal::Atom(_) | Literal::Cmp { .. }))).count();
+            let not_join = mine.iter().filter(|r| !joins(r)).count();
             let no_levels: Vec<(&String, (usize, usize, bool))> = scc.iter().filter_map(|r| kept.levels(r).filter(|(has, _)| !has).map(|(_, shape)| (r, shape))).take(4).collect();
             let unkept: Vec<&String> = scc.iter().filter(|r| kept.levels(r).is_none()).take(4).collect();
             eprintln!("RERAIL_LEVELS_WHY {:?} ({} relations): levels {lv}; rules not joins {not_join}; without levels {no_levels:?}; not kept {unkept:?}", scc.iter().next(), scc.len());
-            let kind = |l: &Literal| match l {
-                Literal::Atom(_) | Literal::Cmp { .. } => None,
-                Literal::Agg { .. } => Some("aggregate"),
-                other => Some(match format!("{other:?}").split(['(', ' ', '{']).next() { Some("Assign") => "assignment", Some("Nearest") => "nearest", Some("Ast") => "ast", _ => "other" }),
-            };
-            let mut kinds: BTreeMap<String, usize> = BTreeMap::new();
-            for r in &trees {
-                for l in &r.body {
-                    if let Some(k) = kind(l) {
-                        let shown = if k == "other" { format!("other: {}", format!("{l:?}").split(['(', ' ', '{']).next().unwrap_or("")) } else { k.to_owned() };
-                        *kinds.entry(shown).or_default() += 1;
-                    }
-                }
+            let mut kinds: BTreeMap<&str, usize> = BTreeMap::new();
+            for l in mine.iter().flat_map(|r| &r.lits) {
+                let kind = match l.view() {
+                    PLit::Atom(_) | PLit::Cmp { .. } => continue,
+                    PLit::Agg { .. } => "aggregate",
+                    PLit::Nearest { .. } => "nearest",
+                    PLit::Ast { .. } => "ast",
+                };
+                *kinds.entry(kind).or_default() += 1;
             }
             eprintln!("RERAIL_LEVELS_WHY   literals not joins, by kind: {kinds:?}");
-            for r in trees.iter().filter(|r| !r.body.iter().all(|l| matches!(l, Literal::Atom(_) | Literal::Cmp { .. }))).take(6) {
-                eprintln!("RERAIL_LEVELS_WHY   {r}");
+            for r in mine.iter().filter(|r| !joins(r)).take(6) {
+                eprintln!("RERAIL_LEVELS_WHY   {}", r.v.show_rule(r.r));
             }
         }
         let gone = if lv { "gone" } else { "del" };

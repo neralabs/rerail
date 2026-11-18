@@ -31,7 +31,7 @@ use std::path::Path;
 
 use super::super::Result;
 use super::{Report, Typing};
-use crate::code_rule_dsl::logic::front::{Program, Value};
+use crate::code_rule_dsl::logic::front::Value;
 use crate::code_rule_dsl::logic::program_image::Version;
 use crate::code_rule_dsl::typing::file_local::option_input;
 

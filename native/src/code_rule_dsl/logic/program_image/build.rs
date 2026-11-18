@@ -765,7 +765,7 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
         self
     }
     /// An aggregate `var = op over : { rel(args) }`, written as the encoder writes a tree's (`over` `None` for a
-    /// count); `var` a variable. A join's separator and keys are not written term by term: refused.
+    /// count); `var` a variable. A join's keys follow `over`, a variable each, then its separator.
     pub fn agg(mut self, var: T<'_>, op: &crate::code_rule_dsl::logic::front::ast::AggOp, over: Option<T<'_>>, rel: impl Into<Rel<'b>>, args: &[T<'_>]) -> Self {
         use crate::code_rule_dsl::logic::front::ast::AggOp;
         self.body();
@@ -775,10 +775,7 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
             AggOp::Max => 2,
             AggOp::Sum => 3,
             AggOp::Product => 4,
-            AggOp::Join { .. } => {
-                self.failed = Some(super::bad("a join aggregate written term by term"));
-                return self;
-            }
+            AggOp::Join { .. } => 5,
         };
         let s = match var {
             T::Var(v) => {
@@ -795,6 +792,13 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
         match over {
             Some(t) => self.term(&t),
             None => self.b.enc.leaf(kind::WILD, 0),
+        }
+        if let AggOp::Join { by, sep } = op {
+            for k in by {
+                self.term(&T::Var(k));
+            }
+            let a = self.b.enc.atom(sep);
+            self.b.enc.leaf(kind::STR, a);
         }
         self.atom_node(rel.into(), args, 0);
         self.b.enc.close(at);

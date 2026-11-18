@@ -58,7 +58,6 @@
 //! becomes `pre_i($n) :- m126($n)`, `demand_m131($n) :- pre_i($n)`, `m131` over `demand_m131`, and
 //! `m132($n) :- pre_i($n), m131($n)`. Corpus runs only, so the golden plans are unchanged.
 
-use super::super::front::{Atom, Literal, Program, Rule, Term};
 use super::super::program_image::{Builder, CmpOp, RuleId, RuleRef, T, TermRef, Version};
 use super::keeps::inline::{named, renumbered};
 use std::collections::{BTreeMap, BTreeSet};
