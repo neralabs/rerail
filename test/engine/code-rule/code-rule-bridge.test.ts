@@ -3499,6 +3499,42 @@ describe("CodeRuleBridge and Git's own writes", () => {
     expect(auditGeneratedEdits).toHaveBeenCalledTimes(2);
   });
 
+  // A checkout inside the session's folder stopped on a conflict before the session opens, whose unmerged entries Git
+  // cannot list until the first walk that finds a change there reads its Git verdicts. The reading that stands keeps
+  // those entries as the checkout's first snapshot, so the next walk knows the conflict was there before it: the agent's
+  // edit of the conflicted file is its own, not a conflict Git just wrote.
+  it("audits the agent's edit of a file in conflict since before the session, in a checkout inside the session's folder whose entries Git first listed for a walk's verdicts", async () => {
+    const root = await twoBranches();
+    git(root, "switch", "--quiet", "-c", "ours");
+    await writeFile(join(root, "src", "a.py"), "old\nours\n");
+    git(root, "commit", "--quiet", "-am", "ours");
+    git(root, "switch", "--quiet", "main");
+    const worktree = join(root, "wt");
+    git(root, "worktree", "add", "--quiet", "wt", "ours");
+    try { git(worktree, "merge", "--quiet", "other"); } catch { /* The conflict is the point. */ }
+    const conflicted = await readFile(join(worktree, "src", "a.py"), "utf8");
+    await awaitClockAfter(join(worktree, "src", "a.py"));
+    asyncGitCalls.failing = "--unmerged";
+    try {
+      const { bridge, auditGeneratedEdits } = await opened(root, {
+        sourceRoot: path => resolve(root, path).startsWith(`${worktree}${sep}`) ? worktree : root,
+      });
+      // Git lists the entries again once the walk's verdicts read that checkout's `HEAD`, the first read of it.
+      asyncGitCalls.before = args => {
+        if (readsHead(args) && args[args.indexOf("-C") + 1] === worktree) asyncGitCalls.failing = undefined;
+      };
+      await shell(bridge, () => writeFile(join(worktree, "src", "new.py"), "mine\n"));
+      expect(asyncGitCalls.failing).toBeUndefined();
+      await shell(bridge, () => writeFile(join(worktree, "src", "a.py"), "old\nours\nmine\n"));
+      expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+        [{ path: "wt/src/new.py", language: "python", generatedText: "mine\n" }],
+        [{ path: "wt/src/a.py", language: "python", previousText: conflicted, generatedText: "old\nours\nmine\n" }],
+      ]);
+    } finally {
+      asyncGitCalls.failing = undefined;
+    }
+  });
+
   it("audits nothing a merge wrote when it stopped on a conflict, and a later shell edit from the conflicted text", async () => {
     const root = await twoBranches();
     await writeFile(join(root, "src", "a.py"), "old\nours\n");
