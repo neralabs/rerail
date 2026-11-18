@@ -110,10 +110,6 @@ type WaveFound = Result<(Vec<Vec<BTreeSet<u32>>>, crate::code_rule_dsl::transduc
 const WAVE_CPU_PER_NODE_PASS: f64 = 2e-8;
 const WAVE_GPU_PER_NODE_PASS: f64 = 2.5e-8;
 
-/// The profile's topic for a wave the GPU lane ran on the CPU, its Metal run having failed (`MatcherWave::run`).
-#[cfg(target_os = "macos")]
-pub const METAL_FELL_BACK: &str = "ast matcher wave fell back to the CPU (its Metal run failed)";
-
 impl MatcherWave {
     fn on(&self, backend: crate::code_rule_dsl::transducer::packed::MatcherBackend) -> WaveFound {
         let started = std::time::Instant::now();
@@ -144,20 +140,12 @@ impl rerail_accel::kernel::Program for MatcherWave {
         use crate::code_rule_dsl::transducer::packed::MatcherBackend;
         #[cfg(target_os = "macos")]
         if lane == rerail_accel::Lane::Gpu {
-            match self.on(MatcherBackend::MetalInterpreter) {
-                // The CPU's wave instead, named in the profile's warnings: a Metal path that fails (a kernel that does
-                // not compile, a run over its bounds) is never silent.
-                Ok(found) => {
-                    // The wave's GPU form is the Metal interpreter: no generated kernel (decision 0202).
-                    rerail_accel::forms::missing("metal-jit-form", "ast matcher wave", "ast matcher wave", "the wave runs the Metal interpreter: no generated MSL", 1);
-                    return Ok(Arc::new(Ok(found) as WaveFound));
-                }
-                Err(e) => {
-                    let reason: String = e.lines().next().unwrap_or("").chars().take(160).collect();
-                    rerail_accel::forms::missing("metal-form", "ast matcher wave", "ast matcher wave", &reason, 1);
-                    crate::code_rule_dsl::logic::profile::decision(METAL_FELL_BACK, || reason.clone())
-                }
-            }
+            // A Metal run that fails stops the run (decision 0382 §6): no CPU wave in its place. What does not fit is
+            // split, and work past its budget replanned, inside the run (0334).
+            let found = self.on(MatcherBackend::MetalInterpreter).unwrap_or_else(|e| panic!("rerail: the ast matcher wave failed on Metal: {e}"));
+            // The wave's GPU form is the Metal interpreter: no generated kernel (decision 0202).
+            rerail_accel::forms::missing("metal-jit-form", "ast matcher wave", "ast matcher wave", "the wave runs the Metal interpreter: no generated MSL", 1);
+            return Ok(Arc::new(Ok(found) as WaveFound));
         }
         let _ = lane;
         // The wave's CPU form is the interpreter: no Cranelift form of its roots (decision 0202).
@@ -204,7 +192,7 @@ fn matched(
     let (found, limited) = if docs.is_empty() || active.iter().all(|a| !a.iter().any(|&on| on)) {
         (vec![vec![BTreeSet::new(); docs.len()]; matchers.len()], Vec::new())
     } else {
-        let program = MatcherWave { wave: Arc::clone(wave), tapes: docs, active, gpu: cfg!(target_os = "macos") && metal };
+        let program = MatcherWave { wave: Arc::clone(wave), tapes: docs, active, gpu: cfg!(target_os = "macos") && metal && crate::code_rule_dsl::transducer::packed::device::matcher().is_some() };
         let kernel = rerail_accel::Kernel::Program(rerail_accel::kernel::ProgramKernel(Arc::new(program)));
         let ex = crate::code_rule_dsl::logic::lanes::executor_for(metal);
         let (mut done, _) = crate::code_rule_dsl::logic::lanes::prof::run_on(ex, "ast matcher wave", rerail_accel::Batch(vec![rerail_accel::Launch::new(kernel)])).map_err(StoreError::Invalid)?;

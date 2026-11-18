@@ -70,11 +70,10 @@ relational lane's threadgroup limit and the walks that outgrow their frames stay
      cores run that batch. Every other error (an allocation, a launch past its limits once the split is down to one
      file) is the span prefilter launch's error.
 
-## Found since, for the user
-
-- The ast matcher wave's GPU lane (`facts::vtab::syntax::ast_wave`, `run`): a Metal run that fails for any reason
-  is named in the profile (`metal-form`, `METAL_FELL_BACK`) and the CPU's wave runs instead. A fallback on an error,
-  not yet agreed.
+6. **The ast matcher wave's Metal run that fails stops the run** (the user, 2026-11-18: "crash on metal error").
+   Before, its GPU lane (`facts::vtab::syntax::ast_wave`, `run`) named any failure in the profile (`metal-form`,
+   `METAL_FELL_BACK`) and ran the CPU's wave instead. A wave that does not fit is still split, and work past its
+   budget replanned, inside the run (0334); with no device registered the wave offers no GPU form (point 2).
 
 ## Evidence
 
