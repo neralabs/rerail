@@ -7,6 +7,8 @@
 use crate::code_rule_dsl::logic::front::{Atom, Literal, Program, Rule, Term, Value, components_of};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod upstream;
+
 pub(in crate::code_rule_dsl::logic::plan) const PREFIX: &str = "rr_product_demand_";
 
 fn atom(name: String, args: &[Term]) -> Atom {
@@ -167,14 +169,44 @@ fn check_target(program: &Program, rel: &str) -> Result<(), String> {
 }
 
 /// Guard the products before splitting the program by document or planning its joins.
-pub(super) fn rewrite(program: &mut Program) -> Result<BTreeSet<String>, String> {
+pub(super) fn rewrite(program: &mut Program, narrow_readers: bool) -> Result<Rewritten, String> {
     let varies = corpus_relations(program);
-    let mut demanded: BTreeSet<String> = program
+    let products: BTreeSet<String> = program
         .rules
         .iter()
         .filter(|rule| program.decls.contains_key(&rule.head.rel) && disconnected_nodes(rule, program, &varies))
         .map(|rule| rule.head.rel.to_string())
         .collect();
+    if narrow_readers && !products.is_empty() {
+        let mut strict = program.clone();
+        let products = rewrite_products(&mut strict, products)?;
+        let mut trial = program.clone();
+        let mut readers = upstream::start(&mut trial, &products);
+        if !readers.is_empty() {
+            if let Ok(products) = rewrite_products(&mut trial, products.clone()) {
+                upstream::propagate(&mut trial, &products, &mut readers);
+                let order_witnesses = upstream::restore_order_witnesses(&mut trial, &readers);
+                *program = trial;
+                return Ok(Rewritten { products, readers, order_witnesses });
+            }
+        }
+        *program = strict;
+        return Ok(Rewritten { products, readers: BTreeSet::new(), order_witnesses: 0 });
+    }
+    Ok(Rewritten {
+        products: rewrite_products(program, products)?,
+        readers: BTreeSet::new(),
+        order_witnesses: 0,
+    })
+}
+
+pub(super) struct Rewritten {
+    pub products: BTreeSet<String>,
+    pub readers: BTreeSet<String>,
+    pub order_witnesses: usize,
+}
+
+fn rewrite_products(program: &mut Program, mut demanded: BTreeSet<String>) -> Result<BTreeSet<String>, String> {
     if demanded.is_empty() {
         return Ok(demanded);
     }
@@ -301,7 +333,7 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(
-            rewrite(&mut program).unwrap(),
+            rewrite(&mut program, false).unwrap().products,
             BTreeSet::from(["product".to_owned(), "relay".to_owned()])
         );
         let rules: BTreeSet<String> = program.rules.iter().map(ToString::to_string).collect();
@@ -315,7 +347,7 @@ mod tests {
     fn an_output_that_requires_every_pair_is_refused() {
         let mut program = parse(&format!("{INPUTS}\n.output product\n")).unwrap();
         let before = program.rules.clone();
-        let error = rewrite(&mut program).unwrap_err();
+        let error = rewrite(&mut program, true).err().unwrap();
         assert!(
             error.contains("unbounded node Cartesian product in `product`"),
             "{error}"
@@ -340,7 +372,7 @@ mod tests {
         )
         .unwrap();
         let before = program.rules.clone();
-        assert!(rewrite(&mut program).unwrap().is_empty());
+        assert!(rewrite(&mut program, false).unwrap().products.is_empty());
         assert_eq!(program.rules, before);
     }
 }
