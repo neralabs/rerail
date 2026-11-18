@@ -1777,6 +1777,11 @@ describe("CodeRuleBridge", () => {
       const reason = `EPERM: operation not permitted, realpath '${top}'`;
       await expect(bridge.checkpoint("turn")).resolves.toEqual(failedWith(`.: ${reason}`));
       expect(onDiscoveryGaps.mock.calls).toEqual([[[toldGap(".", reason, "EPERM")]]]);
+      // Once the record holds it, it is not looked at again.
+      const looked = vi.fn(async () => undefined);
+      discovery.accesses.set(top, [looked]);
+      await expect(bridge.checkpoint("turn")).resolves.toEqual(failedWith(`.: ${reason}`));
+      expect(looked).not.toHaveBeenCalled();
     });
 
     it("walks 10,000 files with a folder that refuses its listing with EPERM after them at what they cost without it, the first walk but one look more", { timeout: 240_000 }, async () => {
@@ -2869,6 +2874,36 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await shell(bridge, run);
     await bridge.settleWorktreeWalk();
   }
+
+  // A walk of the other worktrees that fails whole checks no shell write there: here the shared walk stops on a lookup
+  // that throws, the router's, of a file the walk found changed. The turn's answer says so at each boundary, and the
+  // session's record is told once, with no place.
+  it("says a walk of the other worktrees that fails whole, and tells the record once, with no place", async () => {
+    const root = await twoBranches();
+    const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const file = join(worktree, "src", "a.py");
+    const reason = "the checkout lookup failed";
+    const lookup = { fails: false };
+    const sourceRoot = (path: string): string | undefined => {
+      if (lookup.fails && resolve(root, path) === file) throw new Error(reason);
+      return extra.sourceRoot!(path);
+    };
+    const onDiscoveryGaps = vi.fn();
+    const audit = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, { ...auditor(audit), ...extra, sourceRoot }, { worktreeWalkGapMs: 0, onDiscoveryGaps });
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+
+    lookup.fails = true;
+    await shellThenWalk(bridge, () => writeFile(file, "old\nmine\n"));
+    for (let turn = 0; turn < 2; turn += 1) {
+      await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({
+        failures: [{ clauseId: "source-discovery", code: "source-incomplete", message: reason, stage: "scan" }],
+      }));
+    }
+    expect(onDiscoveryGaps.mock.calls.flatMap(([gaps]) => gaps as unknown[])).toEqual([{ boundary: "turn", reason, key: JSON.stringify(["", reason]) }]);
+  });
 
   it.each(eitherWay)("records a shell edit of a file a modify/delete conflict left as it was, in a checkout inside another worktree whose walk dropped what it kept%s", async (_name, earlier) => {
     const { root, nested, extra: listed } = await checkoutInWorktree();
