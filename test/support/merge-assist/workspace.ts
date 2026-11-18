@@ -40,6 +40,8 @@ export interface FakeGithubOptions {
   readiness?: GithubReadiness;
   /** `gh`'s sign-in could not be read (a timeout, a crash): readiness is `unavailable`. */
   readinessError?: boolean;
+  /** `gh auth status` stalls: a readiness read never answers. */
+  readinessStalls?: boolean;
   pullRequests?: PullRequestSummary[];
   /** Whether the listing stopped at its limit. */
   truncated?: boolean;
@@ -55,6 +57,7 @@ export class FakeGithub implements GithubClient {
 
   async readiness(repository: GithubRepository | null): Promise<GithubReadiness> {
     this.readinessReads += 1;
+    if (this.options.readinessStalls === true) return await new Promise<never>(() => undefined);
     if (repository === null) return { state: "not-github", login: null, repository: null };
     if (this.options.readinessError === true) return { state: "unavailable", login: null, repository: `${repository.owner}/${repository.name}` };
     return this.options.readiness ?? { state: "signed-in", login: "tbelanger", repository: `${repository.owner}/${repository.name}` };

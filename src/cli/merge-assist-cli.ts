@@ -20,6 +20,7 @@ import {
   type GithubState,
   type MergeAssistSettings,
   type MergeAssistStatus,
+  type ShownReadiness,
 } from "../engine/merge-assist/model.js";
 import { defaultRerailDatabasePath, openRerailDatabase } from "../engine/storage/database.js";
 import { readRulesDashboard } from "../presentation/session-presentation.js";
@@ -182,10 +183,20 @@ const GITHUB_LINES: Record<Exclude<GithubState, "signed-in">, string> = {
   unavailable: "gh did not say whether it is signed in (it did not answer in time or failed), so recent remote branches stand in for open pull requests this time.",
 };
 
+/**
+ * When `gh` said what the status shows, and for a sign-in that keeps pull requests unread, what reads it again;
+ * nothing when Rerail ran no `gh` for it.
+ */
+function readText(github: ShownReadiness): string {
+  if (github.readAt === null) return "";
+  if (github.state === "signed-in") return `, read ${timeText(github.readAt)}`;
+  return ` Read ${timeText(github.readAt)}; rerail merge-assist scan reads it again.`;
+}
+
 function githubLine(status: MergeAssistStatus): string {
   const { github } = status.readiness;
-  if (github.state !== "signed-in") return `  GitHub: ${GITHUB_LINES[github.state]}`;
-  return `  GitHub: gh signed in${github.login === null ? "" : ` as ${plain(github.login)}`}${github.repository === null ? "" : ` (${plain(github.repository)})`}`;
+  if (github.state !== "signed-in") return `  GitHub: ${GITHUB_LINES[github.state]}${readText(github)}`;
+  return `  GitHub: gh signed in${github.login === null ? "" : ` as ${plain(github.login)}`}${github.repository === null ? "" : ` (${plain(github.repository)})`}${readText(github)}`;
 }
 
 function scanLines(status: MergeAssistStatus, scanRequested: boolean): string[] {

@@ -79,7 +79,7 @@ for it:
 
 | When | What `gh` reads |
 | --- | --- |
-| Merge Assist reads its readiness (at most every five minutes, every minute while `gh` cannot tell, and at each scan) | Your sign-in state and login |
+| Merge Assist reads its readiness (when you turn it on, and before each listing of open pull requests below; a status shows the last one and reads it only when none is kept) | Your sign-in state and login |
 | A Merge Assist scan (at session start and on demand), and detection after your agent's edits (at most every five minutes) | The 200 newest open pull requests of the repository: number, title, URL, author, draft state, last update, head and base branch, head repository owner and whether it is a fork, and head commit |
 
 Rerail runs only `gh auth status`, `gh pr list` and `gh api` with `GET`; it never writes to GitHub. A repository whose

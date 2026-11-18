@@ -51,9 +51,10 @@ so the daemon keeps answering sessions while it runs. It never runs while Merge 
   upstream's) and whose fork is the person's (its owner is the login `gh` is signed in with), or whose head commit
   this branch once pointed at (its reflog holds it), so it stays left out after an amend or a rebase. Pull requests
   are listed through `gh`, read-only and with the person's own sign-in: afresh by a scan, else at most every five
-  minutes, the 200 newest open ones; when more are open, the scan says so. `gh` is signed out only when `gh auth
-  status` says it holds no login for the host; any other failure of it (a token it could not check, offline) is
-  `unavailable`, reused for a minute only.
+  minutes, the 200 newest open ones; when more are open, the scan says so. Each listing reads `gh`'s sign-in afresh
+  first. `gh` is signed out only when `gh auth status` says it holds no login for the host; any other failure of it (a
+  token it could not check, offline) is `unavailable`. A status shows the sign-in as the last listing, scan or turning
+  on read it, with when (`readAt`), and runs no `gh` for it unless none is kept.
 - A branch's own change is its diff from where it left its base branch, so mainline work it merged in does not count,
   and a change of its that the base tip already holds (a squash merge, a cherry-pick) is not live work.
 - **Overlap**: two `git diff --unified=0` hunks in the same file that touch the same base lines or leave at most 3
@@ -169,8 +170,8 @@ it. Otherwise the conflict closes when the overlap is gone.
   `repositories-merge-assist`).
 - `merge_assist_state`, one JSON value per key: `conflicts:<checkout>` (open and dismissed, each with the files and
   content anchor its id rests on), `scan:<checkout>` and `scanning:<checkout>` (the scanning process's pid, so a mark
-  left by a process that died does not block scans), `github:<repository>` (`gh` readiness, reused for five minutes;
-  one that could not be read for one), `delivered:<session>` (the notes a session was handed) and
+  left by a process that died does not block scans), `github:<repository>` (`gh` readiness as last read, and when: each
+  listing of open pull requests writes it, a status reads it), `delivered:<session>` (the notes a session was handed) and
   `settings:<repository>` (the hook command). A value that does not match what the build expects reads as absent, one
   conflict at a time. A checkout Rerail forgets takes its `conflicts:`, `scan:` and `scanning:` rows with it; a
   repository that takes a new key (a clone that gains a remote) takes its `settings:` row along and drops its
