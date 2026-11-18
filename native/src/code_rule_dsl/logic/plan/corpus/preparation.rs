@@ -131,6 +131,12 @@ pub fn pruned(version: Arc<Version>) -> Result<Arc<Version>, String> {
 /// tests, the program's own demand (`RERAIL_DEMAND=off` computes the listed relations in full) and a prune after
 /// it, the reaches in cycles made rows again, the counts below a bound made by rank, then the text passes. Their decisions reach the run's profile.
 pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, last: Option<Run>) -> Result<(Arc<Version>, Front, Run), String> {
+    front_of(version, dialect, last, true)
+}
+
+/// `front`, with the node products bounded by their readers (`product_demand`) where `whole`: a whole program's; a
+/// part's are bounded once the parts are linked (`parts::front`), where the products' readers are.
+pub(super) fn front_of(version: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, last: Option<Run>, whole: bool) -> Result<(Arc<Version>, Front, Run), String> {
     let mut p = kept(FRONT, version, last)?;
     // @py_unparse(n) and @ast_dump(n) read the relations the batches bind them as; the base relations the program
     // reads and does not derive are inputs, as an authored file's are.
@@ -142,6 +148,9 @@ pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::Gra
     let simplified = simplify::passes(&mut p)?;
     simplify::decide(&simplified);
     p.program(&mut prune::Prune::default());
+    if whole {
+        p.program(&mut super::product_demand::BoundProducts::Whole);
+    }
     let mut reach = demand::ReachForm::default();
     p.program(&mut reach);
     let mut negated = demand::NegatedDemand::default();

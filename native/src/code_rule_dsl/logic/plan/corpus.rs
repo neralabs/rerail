@@ -137,6 +137,7 @@ pub mod cross_memo;
 pub mod switches;
 pub mod matchers;
 pub mod preparation;
+pub(super) mod product_demand;
 /// The prefix of an `ast` matcher's relation (decision 0106).
 pub(in crate::code_rule_dsl) const AST_MATCHES: &str = matchers::PREFIX;
 pub use matchers::columns as ast_columns;

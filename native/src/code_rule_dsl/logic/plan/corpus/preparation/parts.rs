@@ -856,6 +856,15 @@ fn merge_header(all: &mut Builder<'_>, before: &dyn ProgramFields, after: &dyn P
 /// (`interface`) did not, those parts' rules are spliced into the last linked version in their places, and the
 /// other parts are neither read nor linked again.
 pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, store: &ContentStore, keep: bool, lists: &front::Lists) -> Result<(Arc<Version>, Front, Vec<SourceId>)> {
+    let (version, front, sources) = link_front(version, dialect, store, keep, lists)?;
+    // A part's inputs and outputs are its linking interface. The demand proof needs the
+    // linked rules, where it can see the product's readers and what supplies their joins.
+    let mut pipeline = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("bound node products after linking", version);
+    pipeline.program(&mut super::super::product_demand::BoundProducts::Linked);
+    Ok((pipeline.current()?.clone(), front, sources))
+}
+
+fn link_front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, store: &ContentStore, keep: bool, lists: &front::Lists) -> Result<(Arc<Version>, Front, Vec<SourceId>)> {
     let parts = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "the parts and their interfaces (decision 0345)".into());
         parts_of(&version)
@@ -902,7 +911,7 @@ pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::Gra
         let _s = crate::code_rule_dsl::logic::profile::span(|| format!("prepare part {} ({} rules)", part.name, part.rules.len()));
         let input = program_of(&version, &rules, &heads[j], part)?;
         let had = names_of(&input);
-        let (v, f, _) = crate::code_rule_dsl::logic::profile::quiet(|| super::front(input, dialect, None))?;
+        let (v, f, _) = crate::code_rule_dsl::logic::profile::quiet(|| super::front_of(input, dialect, None, false))?;
         let made_names: Vec<String> = names_of(&v).into_iter().filter(|r| !had.contains(r)).collect();
         let v = stripped(&v, &version)?;
         let p = Prepared::of(v, f, made_names);
