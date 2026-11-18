@@ -93,9 +93,12 @@ describe("the Git a process keeps, gone under it", () => {
     await removeFolder(root);
   });
 
-  /** `performance.now()` held by the test from now on: it moves only by `move`, until `release`. */
+  /**
+   * `performance.now()` held by the test from now on: it moves only by `move`, until `release`. It starts on a whole
+   * millisecond, so the time left of a limit reads as a whole number of them, as the moves make it.
+   */
   function holdClock(): { move(ms: number): void; release(): void } {
-    let now = performance.now();
+    let now = Math.ceil(performance.now());
     const held = vi.spyOn(performance, "now").mockImplementation(() => now);
     return {
       move(ms) {
