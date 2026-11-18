@@ -596,8 +596,9 @@ A second daemon, from another `RERAIL_HOME` or left behind, holds Rerail's machi
 
 ### `Another Rerail daemon (pid …) runs in …`
 
-Another daemon holds this Rerail home's lock (`locks/daemon.lock`). A daemon started there waits a second for it, then
-writes this line to the home's `daemon.log` and exits; a `rerail daemon start` that launched it prints the line under
+Another daemon holds this Rerail home's lock (`locks/daemon.lock`). A daemon started there writes this line to the
+home's `daemon.log` and exits as soon as the holder answers as the home's daemon, or after waiting a second for the lock
+when the holder does not answer. A `rerail daemon start` that launched it prints the line under
 `Rerail daemon exited with code 1 before it was ready`. While the daemon it names answers, the next
 `rerail daemon start` finds it. If it does not, `rerail daemon stop` stops it once `daemon.json` names it, or gives the
 pid to end; if the stop finds none and a start prints this line again, end the process it names and start again.
