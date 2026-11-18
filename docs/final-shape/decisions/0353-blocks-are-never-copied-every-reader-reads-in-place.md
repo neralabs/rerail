@@ -417,6 +417,22 @@ Each step ends with:
      is decompressed (zstd, on disk only) into its slab; format 16 is placed as stored; a 16z tape stays compressed
      (its LZ4 blocks as stored), so the reads written once read 16z in place, a block decoded where a read falls in
      it, and `DocTape::in_place`'s laid-out copy goes. A host without a device uses the same blocks.
+   - Its parts, each committed with its check (2026-11-17):
+     - **4a.** Tapes placed in slabs and read there by the host: `Columns15`, `Tape16` and `Tape16Z` hold their
+       bytes in a slab room, which the store's load decompresses (a zstd frame) or reads (a segment) into;
+       `residency::slabs::admit` and `admit_docs` find a placed tape and copy nothing. A parsed tape is written into
+       its room. Check: every format's reads equal the heap image's.
+     - **4b.** 16z read in place by the reads written once (a block decoded where a read falls), on the CPU, then
+       the kernels; `in_place`'s laid-out copy and the slab's `unblock_into` go.
+     - **4c.** The views' reads written once (CLIF, for Rust, the JIT and MSL), over a document's `TapeView` and
+       its projection's `Numbering`: each view's scan over 64-node groups (the open subtrees from one descent) and
+       its probes (by id; by parent, first child and next numbered sibling). Check: their rows equal `Viewed`'s,
+       for every view and format.
+     - **4d.** A stage's input is a relation or a view, through one read (a kernel template over it). The batch's
+       descriptors are in its chunk block, the tapes in their slabs, reached by GPU address (no `gather`).
+       `expand_view`, `VIEW_EXPAND`, the chunk block's node columns (row 3) and the residency's view entries go.
+       Check: `device::parity` for every view.
+     - **4e.** Measured: the 660.8 MB is 0; refusals and strata apart, against Q68's.
    - A stage's input may be a tape view: the kernels read the chunk block's placed tapes through the generated MSL
      (`metal_tape.metal`'s reads, 0293 §9).
    - A scan is a dispatch over 64-node groups.
