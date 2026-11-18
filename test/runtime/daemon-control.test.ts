@@ -799,16 +799,28 @@ describe("a state file Windows left behind", () => {
       return Response.json({ status: "ok", pid: DEAD_PID });
     }));
     // A process keeps its pid for life, so one that started before the record was stamped is the daemon that wrote it,
-    // and holds the port of the URL it recorded.
+    // and holds the port of the URL it recorded. Its start is read within what is left of the lookup's own 2 s once the
+    // proof has taken 1.5 s of them.
     const limits: number[] = [];
     await writeFile(stateFile, JSON.stringify(state));
-    expect(await lookupDaemon(home, olderEngine(OLDER_STARTED_AT - 600, limits))).toMatchObject({ status: "running", state: { pid: DEAD_PID } });
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.now() });
+    try {
+      const slowProof: DaemonMachine = {
+        ...olderEngine(OLDER_STARTED_AT - 600, limits),
+        capabilityProof: async () => {
+          vi.setSystemTime(Date.now() + 1_500);
+          return "no-proof";
+        },
+      };
+      expect(await lookupDaemon(home, slowProof)).toMatchObject({ status: "running", state: { pid: DEAD_PID } });
+    } finally {
+      vi.useRealTimers();
+    }
     expect(sent).toEqual(["capability"]);
     expect(existsSync(stateFile)).toBe(true);
-    // The start is read within what is left of the lookup's own limit.
     expect(limits).toHaveLength(1);
     expect(limits[0]).toBeGreaterThan(0);
-    expect(limits[0]).toBeLessThanOrEqual(2_000);
+    expect(limits[0]).toBeLessThanOrEqual(500);
     expect(await recordedDaemonAlive(state, olderEngine(OLDER_STARTED_AT - 600))).toBe(true);
 
     // A process that took the pid once the daemon was gone started later: the record is stale, and nothing is sent.
