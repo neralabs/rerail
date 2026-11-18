@@ -2,8 +2,9 @@
 //! the writer ahead, in arrival order; behind a writer that commits batch after batch it waits for
 //! the batch in progress, not the run; a wait ends at the cancel its owner sets; a waiter that
 //! waited its whole deadline marks the holder stalled until that holder lets go. No test waits on
-//! a clock: holders let go by channel, a waiter says it waits through `LINE_WAIT_HOOK`, and a
-//! bound passes at once under a deadline of a nanosecond or with the operation's deadline spent.
+//! a clock: holders let go by channel, a waiter says where it waits through `LINE_WAIT_HOOK` (in
+//! the line) or `BUSY_WAIT_HOOK` (at SQLite's lock, outside it), and a bound passes at once under a
+//! deadline of a nanosecond or with the operation's deadline spent.
 
 use super::connection::retry_busy;
 use super::test_support::{TemporaryDatabase, TemporaryFolder};
@@ -23,6 +24,14 @@ use std::time::Duration;
 
 /// A deadline no test waits out: a write gets only what its operation has not spent of it.
 const HOUR: Duration = Duration::from_secs(3_600);
+/// A write deadline a test can afford to see waited whole: only a write that waits it whole marks
+/// a holder stalled, and a write with less of it left waits that less, so a bound that forgot the
+/// operation's spent part shows as a stall mark within these seconds, not after an hour.
+const AFFORDABLE: Duration = Duration::from_secs(5);
+/// Where a writer said it waits for the holder: its place in the store's line (`LINE_WAIT_HOOK`).
+const IN_THE_LINE: &str = "in the store's line";
+/// Where a writer said it waits for the holder: SQLite's lock, outside the line (`BUSY_WAIT_HOOK`).
+const AT_SQLITE_LOCK: &str = "at SQLite's lock, outside the store's line";
 
 fn store(label: &str) -> (TemporaryDatabase, Arc<ContentStore>) {
     let path = TemporaryDatabase::new(&format!("rerail-writer-line-{label}"));
@@ -88,7 +97,8 @@ impl Waiter {
 }
 
 /// Starts a write named `name` on its own thread, with a deadline of an hour, and returns once it
-/// waits in the store's line.
+/// waits in the store's line. A writer that waits at SQLite's lock instead, outside the line, fails
+/// the test at once: it would wait out the hour behind a holder that lets go only after.
 fn waiting_writer(
     store: &Arc<ContentStore>,
     order: &Arc<Mutex<Vec<&'static str>>>,
@@ -99,15 +109,22 @@ fn waiting_writer(
     let (store, order) = (Arc::clone(store), Arc::clone(order));
     thread::spawn(move || {
         BUSY_DEADLINE_OVERRIDE.set(Some(HOUR));
-        LINE_WAIT_HOOK.set(Some(Box::new(move || waiting.send(()).unwrap())));
+        let at_lock = waiting.clone();
+        LINE_WAIT_HOOK.set(Some(Box::new(move || {
+            let _ = waiting.send(IN_THE_LINE);
+        })));
+        BUSY_WAIT_HOOK.set(Some(Box::new(move |_| {
+            let _ = at_lock.send(AT_SQLITE_LOCK);
+        })));
         let result = store.immediate_transaction(|_| {
             order.lock().unwrap().push(name);
             Ok(())
         });
         LINE_WAIT_HOOK.set(None);
+        BUSY_WAIT_HOOK.set(None);
         let _ = done.send(result);
     });
-    waits.recv().unwrap();
+    assert_eq!(waits.recv().unwrap(), IN_THE_LINE, "the writer {name} waits");
     Waiter(written)
 }
 
@@ -288,15 +305,16 @@ fn a_writer_that_panics_while_holding_the_store_hands_it_on() {
     written.unwrap();
 }
 
-/// A write behind a holder after its operation spent `spent` of an hour's deadline: whether the
-/// holder was then marked stalled.
+/// A write behind a holder after its operation spent `spent` of an `AFFORDABLE` deadline: whether
+/// the holder was then marked stalled. A write that waited the deadline whole, as one whose bound
+/// forgot the spent part does, marks it.
 fn stalls_after_spending(label: &str, spent: Duration) -> bool {
     let (_path, store) = store(label);
     let order = Arc::new(Mutex::new(Vec::new()));
     let holder = Holder::hold(&store, &order);
     let operation = OperationDeadline::enter();
     spend_operation_wait(spent);
-    BUSY_DEADLINE_OVERRIDE.set(Some(HOUR));
+    BUSY_DEADLINE_OVERRIDE.set(Some(AFFORDABLE));
     let given_up = batch(&store, 1);
     BUSY_DEADLINE_OVERRIDE.set(None);
     drop(operation);
@@ -310,7 +328,7 @@ fn stalls_after_spending(label: &str, spent: Duration) -> bool {
 /// the holder: the holder is not marked stalled.
 #[test]
 fn a_write_with_no_time_left_does_not_mark_the_holder_stalled() {
-    assert!(!stalls_after_spending("no-time-left", HOUR));
+    assert!(!stalls_after_spending("no-time-left", AFFORDABLE));
 }
 
 /// A write whose operation already spent most of the deadline waits for the rest and gives up,
@@ -320,7 +338,7 @@ fn a_write_with_no_time_left_does_not_mark_the_holder_stalled() {
 fn a_write_with_part_of_the_deadline_left_does_not_mark_the_holder_stalled() {
     assert!(!stalls_after_spending(
         "part-left",
-        HOUR - Duration::from_nanos(1)
+        AFFORDABLE - Duration::from_nanos(1)
     ));
 }
 
