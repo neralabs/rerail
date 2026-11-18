@@ -21,6 +21,8 @@
 //!   - `Pop`: the next entry of a stack the machine keeps, popped (the preprocessing words: a
 //!     source at its end, the conditionals opened in a file), so at most what was pushed.
 //!   - `Probe`: the next slot of a hash table probed, at most every slot once.
+//!   - `Item`: the next item of a list the machine stored (a definition's argument uses, a
+//!     level's tokens, a frame's expansions), so at most its length.
 //!
 //!   So no loop steps a byte at a time. The check is on the graph: with the named blocks taken
 //!   out, it must have no cycle (a depth-first search), as the words' verifier cuts `TOKEN`'s
@@ -44,6 +46,7 @@ pub enum Step {
     Return,
     Pop,
     Probe,
+    Item,
 }
 
 /// Why a function was refused.

@@ -194,6 +194,14 @@ const ROUNDS: usize = 16;
 /// The TU whose main file is `main`, its files found and read by `io` (the lean pass's
 /// `Files`), expanded by the words; `Err` where a grammar or the words refuse it.
 pub fn expand_tu<F: rerail_c_pp::files::Files>(main: &str, io: &mut F, cpp: bool, g: &Grammars) -> Result<Vec<Out>, String> {
+    expand_tu_with(main, io, cpp, g, &pp_words::run)
+}
+
+/// The words' runner: the interpreter (`pp_words::run`) or compiled words.
+pub type Runner<'r> = dyn Fn(&rerail_compiler::program::Words, &[File], &pp_words::Env, &Bounds) -> Result<pp_words::Expanded, pp_words::Refused> + 'r;
+
+/// `expand_tu`, the words run by `run`.
+pub fn expand_tu_with<F: rerail_c_pp::files::Files>(main: &str, io: &mut F, cpp: bool, g: &Grammars, run: &Runner<'_>) -> Result<Vec<Out>, String> {
     let program = program(cpp)?;
     let mut tu = Tu { io, g, cpp, units: Vec::new(), spelled: Vec::new() };
     if tu.file(main.to_string(), None, true)? == pp_words::NONE {
@@ -206,7 +214,7 @@ pub fn expand_tu<F: rerail_c_pp::files::Files>(main: &str, io: &mut F, cpp: bool
         let tapes: Vec<Vec<Tok>> = tu.units.iter().map(|u| u.lexed.as_ref().map_or(Vec::new(), |l| l.tape.iter().map(|t| if t.buf == u32::MAX { Tok { buf: n + 1, ..*t } } else { *t }).collect())).collect();
         let mut files: Vec<File> = tu.units.iter().zip(&tapes).map(|(u, t)| File { path: u.path.as_bytes(), bytes: &u.src, lines: &u.lines, toks: t, chains: u.lexed.as_ref().map_or(&[][..], |l| &l.chains), includes: &u.includes, named: &u.named }).collect();
         files.push(File { bytes: &tu.spelled, ..File::default() });
-        let e = pp_words::run(program, &files, &pp_words::Env::DEFAULT, &Bounds::of(&files)).map_err(|r| format!("refused at word {}: {}", r.pc, r.why))?;
+        let e = run(program, &files, &pp_words::Env::DEFAULT, &Bounds::of(&files)).map_err(|r| format!("refused at word {}: {}", r.pc, r.why))?;
         if e.wanted.is_empty() {
             return Ok(e.toks.iter().map(|t| (t.kind, t.flags & (pp_words::BOL | pp_words::SPACE), e.text(&files, t).to_vec())).collect());
         }

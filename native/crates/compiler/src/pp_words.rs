@@ -451,18 +451,19 @@ impl Slot {
 }
 
 #[derive(Clone, Copy)]
-struct Frame {
-    def: u32,
-    name: Tok,
+#[repr(C)]
+pub(crate) struct Frame {
+    pub(crate) def: u32,
+    pub(crate) name: Tok,
     /// Its arguments: `argv[args..]`; their expansions: `pres[pres..pres + params]`.
-    args: u32,
-    pres: u32,
-    depth: u32,
-    next_use: u32,
+    pub(crate) args: u32,
+    pub(crate) pres: u32,
+    pub(crate) depth: u32,
+    pub(crate) next_use: u32,
     /// Its arguments are being read (to its `)`).
-    open: bool,
+    pub(crate) open: bool,
     /// Its last token: its `)`, or its name.
-    end: Tok,
+    pub(crate) end: Tok,
 }
 
 struct Machine<'a> {
@@ -771,6 +772,23 @@ pub(crate) struct Ctx {
     pub kept: *mut Tok,
     pub nkept: u64,
     pub room_kept: u64,
+    pub frames: *mut Frame,
+    pub nframes: u64,
+    pub room_frames: u64,
+    /// `(u32, u32)`s, `(u32, u32)`s, `(u16, bool)`s and `(u16, u32)`s, at their Rust layouts
+    /// (`PAIR`, `USE`, `LEVEL`).
+    pub argv: *mut u8,
+    pub nargv: u64,
+    pub room_argv: u64,
+    pub pres: *mut u8,
+    pub npres: u64,
+    pub room_pres: u64,
+    pub uses: *mut u8,
+    pub nuses: u64,
+    pub room_uses: u64,
+    pub levels: *mut u8,
+    pub nlevels: u64,
+    pub room_levels: u64,
     /// The macro table: its slots, and its length less one (a power of two).
     pub table: *mut Slot,
     pub table_mask: u64,
@@ -798,6 +816,12 @@ pub(crate) struct FileC {
 /// A conditional's layout (`Machine::conds`): its size and its file source's offset.
 pub(crate) const COND_SIZE: usize = std::mem::size_of::<(u32, bool, bool)>();
 pub(crate) const COND_SRC: usize = std::mem::offset_of!((u32, bool, bool), 0);
+/// An argument's or an expansion's range: its size, and its two ends' offsets.
+pub(crate) const PAIR: (usize, usize, usize) = (std::mem::size_of::<(u32, u32)>(), std::mem::offset_of!((u32, u32), 0), std::mem::offset_of!((u32, u32), 1));
+/// An argument use: its size, its parameter's offset, its "inside `__VA_OPT__`"'s.
+pub(crate) const USE: (usize, usize, usize) = (std::mem::size_of::<(u16, bool)>(), std::mem::offset_of!((u16, bool), 0), std::mem::offset_of!((u16, bool), 1));
+/// A level: its size, its parameter's offset, its start's in `kept`.
+pub(crate) const LEVEL: (usize, usize, usize) = (std::mem::size_of::<(u16, u32)>(), std::mem::offset_of!((u16, u32), 0), std::mem::offset_of!((u16, u32), 1));
 
 /// Runs compiled words (`native_cpu_pp`): `code` over the machine's buffers, the result `0`
 /// (accepted) or `pc + 1` and a reason's index into `reasons` above bit 32.
@@ -836,6 +860,21 @@ pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, boun
         room_kept: room(&mut m.kept, bounds.arena),
         kept: m.kept.as_mut_ptr(),
         nkept: m.kept.len() as u64,
+        room_frames: room(&mut m.frames, bounds.depth),
+        frames: m.frames.as_mut_ptr(),
+        nframes: m.frames.len() as u64,
+        room_argv: room(&mut m.argv, bounds.arena),
+        argv: m.argv.as_mut_ptr().cast(),
+        nargv: m.argv.len() as u64,
+        room_pres: room(&mut m.pres, bounds.arena),
+        pres: m.pres.as_mut_ptr().cast(),
+        npres: m.pres.len() as u64,
+        room_uses: room(&mut m.uses, bounds.arena),
+        uses: m.uses.as_mut_ptr().cast(),
+        nuses: m.uses.len() as u64,
+        room_levels: room(&mut m.levels, bounds.depth),
+        levels: m.levels.as_mut_ptr().cast(),
+        nlevels: m.levels.len() as u64,
         table_mask: m.table.len() as u64 - 1,
         table: m.table.as_mut_ptr(),
         d: u64::from(m.d),
@@ -858,6 +897,11 @@ pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, boun
         m.scratch.set_len(c.nscratch as usize);
         m.conds.set_len(c.nconds as usize);
         m.kept.set_len(c.nkept as usize);
+        m.frames.set_len(c.nframes as usize);
+        m.argv.set_len(c.nargv as usize);
+        m.pres.set_len(c.npres as usize);
+        m.uses.set_len(c.nuses as usize);
+        m.levels.set_len(c.nlevels as usize);
     }
     (m.collecting, m.t, m.from_file, m.in_if, m.d, m.line_last) = (c.collecting as u32, c.t, c.from_file != 0, c.in_if != 0, c.d as u32, c.line_last);
     if r == 0 {
@@ -1109,11 +1153,23 @@ impl<'a> Machine<'a> {
         let def = self.defs[self.d as usize];
         self.frames.push(Frame { def: self.d, name: self.t, args: self.argv.len() as u32, pres: self.pres.len() as u32, depth: 0, next_use: 0, open: def.fnlike, end: self.t });
         self.collecting += u32::from(def.fnlike);
+        if self.pres.len() + usize::from(def.params) > self.bounds.arena {
+            return Err("past the arena's bound");
+        }
         self.pres.extend(std::iter::repeat_n((NONE, NONE), usize::from(def.params)));
         if def.fnlike {
             let a = self.arena.len() as u32;
-            self.argv.push((a, a));
+            self.push_argv((a, a))?;
         }
+        Ok(())
+    }
+
+    /// An argument opened: its range in the arena.
+    fn push_argv(&mut self, a: (u32, u32)) -> R<()> {
+        if self.argv.len() >= self.bounds.arena {
+            return Err("past the arena's bound");
+        }
+        self.argv.push(a);
         Ok(())
     }
 
@@ -1165,7 +1221,7 @@ impl<'a> Machine<'a> {
                 let nargs = self.argv.len() - f.args as usize;
                 if f.depth == 0 && !(def.variadic && nargs == usize::from(def.params)) {
                     let a = self.arena.len() as u32;
-                    self.argv.push((a, a));
+                    self.push_argv((a, a))?;
                 } else {
                     self.append()?;
                 }
@@ -1190,7 +1246,7 @@ impl<'a> Machine<'a> {
                     self.argv.truncate(f.args as usize);
                 } else if nargs + 1 == n {
                     let a = self.arena.len() as u32;
-                    self.argv.push((a, a));
+                    self.push_argv((a, a))?;
                 }
                 return Ok(Some(true));
             }
@@ -2168,6 +2224,9 @@ impl<'a> Machine<'a> {
                     return Ok(Some(false));
                 }
                 self.bi = (b, self.t, 0);
+                if self.levels.len() >= self.bounds.depth {
+                    return Err("past the sources' bound");
+                }
                 self.levels.push((u16::MAX, self.kept.len() as u32));
                 self.collecting += 1;
                 Ok(Some(true))
@@ -2778,6 +2837,9 @@ impl<'a> Machine<'a> {
             if inside {
                 return Err("a __VA_OPT__ inside a __VA_OPT__");
             }
+            if self.uses.len() >= self.bounds.arena {
+                return Err("past the arena's bound");
+            }
             self.uses.push((va, false));
             let (clo, chi, end) = self.va_opt_content(&def, k, hi);
             (self.def.lo, self.def.i, self.def.hi, self.def.content) = (clo, clo, chi, Some((end, hi)));
@@ -2787,6 +2849,9 @@ impl<'a> Machine<'a> {
             let before = i > v.lo && self.body_tok(&def, i - 1).flags & PASTE != 0;
             let after = i + 1 < hi && self.body_tok(&def, i + 1).flags & PASTE != 0;
             if !(before || after) {
+                if self.uses.len() >= self.bounds.arena {
+                    return Err("past the arena's bound");
+                }
                 self.uses.push((p as u16, inside));
             }
         }

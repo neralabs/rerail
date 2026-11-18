@@ -14,13 +14,20 @@
 
 use crate::Error;
 use crate::native_cpu_shape::Step;
-use crate::pp_words::{self, BOL, Bounds, COND_SIZE, COND_SRC, Ctx, Def, EOF, Env, Expanded, File, FileC, HASH, IDENT, NOEXP, NONE, Refused, Slot, Src, Tok};
-use crate::program::{ACCEPT, GOTO, IS, KEEP, LINE, LOOKUP, MACRO, PAINT, PEEK, PUSH, PUT, READ, RETURN, SKIPLINE, STOP, Words, split};
+use crate::pp_words::{self, BOL, Bounds, COND_SIZE, COND_SRC, Ctx, Def, EOF, Env, Expanded, File, FileC, Frame, HASH, IDENT, LEVEL, NOEXP, NONE, PAIR, Refused, SPACE, Slot, Src, Tok, USE};
+use crate::program::{ACCEPT, ARG, FRAME, GOTO, IS, KEEP, LINE, LOOKUP, MACRO, PAINT, PEEK, PRE, PUSH, PUT, READ, RETURN, SKIPLINE, STOP, Words, split};
 use cranelift_codegen::ir::{AbiParam, Block, BlockCall, InstBuilder, JumpTableData, MemFlags, Value, condcodes::IntCC, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module, default_libcall_names};
 use std::mem::{offset_of, size_of};
+
+/// `Ctx`'s field `$f`'s offset.
+macro_rules! at {
+    ($f:ident) => {
+        offset_of!(Ctx, $f) as i32
+    };
+}
 
 /// Why the compiled words refuse a TU: the index the code returns above bit 32 (`run_native`),
 /// each the interpreter's reason.
@@ -34,6 +41,14 @@ const REASONS: &[&str] = &[
     "a directive's line not in a file",
     "past the arena's bound",
     "past the macro table's bound",
+    "past the frames' bound",
+    "an argument with no frame",
+    "past the sources' bound",
+    "no level open",
+    "a level's source not on top",
+    "a level with no frame",
+    "an expansion with no frame",
+    "a word not lowered yet",
 ];
 const R_STOPPED: u64 = 1;
 const R_CALLS: u64 = 2;
@@ -43,6 +58,42 @@ const R_NO_FILE: u64 = 5;
 const R_NOT_FILE: u64 = 6;
 const R_ARENA: u64 = 7;
 const R_TABLE: u64 = 8;
+const R_FRAMES: u64 = 9;
+const R_ARG_FRAME: u64 = 10;
+const R_SOURCES: u64 = 11;
+const R_NO_LEVEL: u64 = 12;
+const R_LEVEL_SRC: u64 = 13;
+const R_LEVEL_FRAME: u64 = 14;
+const R_PRE_FRAME: u64 = 15;
+/// `compile_partial`'s refusal at a word it has no code for.
+pub const NOT_LOWERED: &str = "a word not lowered yet";
+const R_NOT_LOWERED: u64 = 16;
+
+/// One of the machine's buffers in `Ctx`: its start's, length's and room's fields, its
+/// element's size, and why a push past its room refuses.
+#[derive(Clone, Copy)]
+struct V {
+    ptr: i32,
+    len: i32,
+    room: i32,
+    size: i64,
+    full: u64,
+}
+
+macro_rules! v {
+    ($p:ident, $n:ident, $r:ident, $size:expr, $full:expr) => {
+        V { ptr: at!($p), len: at!($n), room: at!($r), size: $size as i64, full: $full }
+    };
+}
+
+const SOURCES: V = v!(sources, nsources, room_sources, size_of::<Src>(), R_SOURCES);
+const ARENA: V = v!(arena, narena, room_arena, size_of::<Tok>(), R_ARENA);
+const KEPT: V = v!(kept, nkept, room_kept, size_of::<Tok>(), R_ARENA);
+const FRAMES: V = v!(frames, nframes, room_frames, size_of::<Frame>(), R_FRAMES);
+const ARGV: V = v!(argv, nargv, room_argv, PAIR.0, R_ARENA);
+const PRES: V = v!(pres, npres, room_pres, PAIR.0, R_ARENA);
+const USES: V = v!(uses, nuses, room_uses, USE.0, R_ARENA);
+const LEVELS: V = v!(levels, nlevels, room_levels, LEVEL.0, R_SOURCES);
 
 /// A program's words, compiled.
 pub struct CompiledPp {
@@ -61,13 +112,6 @@ impl CompiledPp {
         // against its buffer's room, every read is of a buffer's written part.
         unsafe { pp_words::run_native(program, files, env, bounds, self.entry, REASONS) }
     }
-}
-
-/// `Ctx`'s field `$f`'s offset.
-macro_rules! at {
-    ($f:ident) => {
-        offset_of!(Ctx, $f) as i32
-    };
 }
 
 const TOK: i64 = size_of::<Tok>() as i64;
@@ -128,6 +172,8 @@ struct Lower<'a, 'b> {
     /// Returns its one argument, the run's result.
     exit: Block,
     heads: Vec<(Block, Step)>,
+    /// A word not lowered refuses the TU when it runs (`NOT_LOWERED`), not the compile.
+    partial: bool,
 }
 
 impl Lower<'_, '_> {
@@ -189,6 +235,456 @@ impl Lower<'_, '_> {
         let p = f.ins().iadd(base, start);
         let n = f.ins().isub(end, start);
         (p, n)
+    }
+
+    fn vlen(&mut self, v: V) -> Value {
+        ld(self.f, types::I64, self.ctx, v.len)
+    }
+
+    fn vset_len(&mut self, v: V, n: Value) {
+        st(self.f, types::I64, n, self.ctx, v.len);
+    }
+
+    /// Element `i`'s address.
+    fn vat(&mut self, v: V, i: Value) -> Value {
+        let base = ld(self.f, types::I64, self.ctx, v.ptr);
+        elem(self.f, base, i, v.size)
+    }
+
+    /// The last element's address, refusing for `why` where there is none.
+    fn vtop(&mut self, v: V, pc: usize, why: u64) -> Value {
+        let n = self.vlen(v);
+        self.check(n, pc, why);
+        let i = self.f.ins().iadd_imm(n, -1);
+        self.vat(v, i)
+    }
+
+    /// Room for one more (refusing past it): the new element's address, the length one more.
+    fn vpush(&mut self, v: V, pc: usize) -> Value {
+        let n = self.vlen(v);
+        let room = ld(self.f, types::I64, self.ctx, v.room);
+        let ok = self.f.ins().icmp(IntCC::UnsignedLessThan, n, room);
+        self.check(ok, pc, v.full);
+        let n1 = self.f.ins().iadd_imm(n, 1);
+        self.vset_len(v, n1);
+        self.vat(v, n)
+    }
+
+    /// A pair `(a, b)` of `u32`s stored at `p` (`PAIR`'s layout).
+    fn put_pair(&mut self, p: Value, a: Value, b: Value) {
+        st(self.f, types::I32, a, p, PAIR.1 as i32);
+        st(self.f, types::I32, b, p, PAIR.2 as i32);
+    }
+
+    fn pair(&mut self, p: Value) -> (Value, Value) {
+        (ldu(self.f, types::I32, p, PAIR.1 as i32), ldu(self.f, types::I32, p, PAIR.2 as i32))
+    }
+
+    /// `Src::arena(a, b, def, stop)` pushed (refusing past the sources' bound).
+    fn push_arena_src(&mut self, pc: usize, a: Value, b: Value, def: u32, stop: bool) {
+        let s = self.vpush(SOURCES, pc);
+        let f = &mut *self.f;
+        let none = f.ins().iconst(types::I32, i64::from(NONE));
+        let z = f.ins().iconst(types::I32, 0);
+        let d = f.ins().iconst(types::I32, i64::from(def));
+        let stop = f.ins().iconst(types::I8, i64::from(stop));
+        f.ins().store(flags(), none, s, offset_of!(Src, file) as i32);
+        st(f, types::I32, a, s, offset_of!(Src, pos) as i32);
+        st(f, types::I32, b, s, offset_of!(Src, end) as i32);
+        f.ins().store(flags(), d, s, offset_of!(Src, def) as i32);
+        f.ins().store(flags(), stop, s, offset_of!(Src, stop) as i32);
+        f.ins().store(flags(), none, s, offset_of!(Src, hash) as i32);
+        f.ins().store(flags(), z, s, offset_of!(Src, delta) as i32);
+        let p = offset_of!(Src, presumed);
+        f.ins().store(flags(), none, s, (p + offset_of!((u32, u32), 0)) as i32);
+        f.ins().store(flags(), none, s, (p + offset_of!((u32, u32), 1)) as i32);
+    }
+
+    /// The token at `from` (its offset `off`) pushed to the arena; its new length.
+    fn push_arena_tok(&mut self, pc: usize, from: Value, off: i32) -> Value {
+        let p = self.vpush(ARENA, pc);
+        copy_tok(self.f, from, off, p, 0);
+        self.vlen(ARENA)
+    }
+
+    /// `Machine::append`: `T` to the open argument (a line's first token, with space before it).
+    fn append(&mut self, pc: usize) {
+        let ctx = self.ctx;
+        let p = self.vpush(ARENA, pc);
+        copy_tok(self.f, ctx, at!(t), p, 0);
+        let fo = offset_of!(Tok, flags) as i32;
+        let fl = ldu(self.f, types::I8, p, fo);
+        let bol = self.f.ins().band_imm(fl, i64::from(BOL));
+        let cleared = self.f.ins().band_imm(fl, !i64::from(BOL));
+        let spaced = self.f.ins().bor_imm(cleared, i64::from(SPACE));
+        let fl = self.f.ins().select(bol, spaced, fl);
+        st(self.f, types::I8, fl, p, fo);
+        let n = self.vlen(ARENA);
+        let a = self.vtop(ARGV, pc, R_ARG_FRAME);
+        st(self.f, types::I32, n, a, PAIR.2 as i32);
+    }
+
+    /// `Machine::close_args`: the top frame's arguments read.
+    fn close_args(&mut self, fr: Value) {
+        let ctx = self.ctx;
+        let oo = offset_of!(Frame, open) as i32;
+        let open = ldu(self.f, types::I8, fr, oo);
+        let on = self.f.create_block();
+        let done = self.f.create_block();
+        self.f.ins().brif(open, on, &[], done, &[]);
+        self.f.switch_to_block(on);
+        let z = self.f.ins().iconst(types::I8, 0);
+        self.f.ins().store(flags(), z, fr, oo);
+        let c = ld(self.f, types::I64, ctx, at!(collecting));
+        let c = self.f.ins().iadd_imm(c, -1);
+        st(self.f, types::I64, c, ctx, at!(collecting));
+        self.f.ins().jump(done, &[]);
+        self.f.switch_to_block(done);
+    }
+
+    /// `Machine::drop_frame`: the top frame (at `fr`, of `n` frames) and its arguments gone.
+    fn drop_frame(&mut self, fr: Value) {
+        let n = self.vlen(FRAMES);
+        let n1 = self.f.ins().iadd_imm(n, -1);
+        self.vset_len(FRAMES, n1);
+        let args = ldu(self.f, types::I32, fr, offset_of!(Frame, args) as i32);
+        let pres = ldu(self.f, types::I32, fr, offset_of!(Frame, pres) as i32);
+        self.vset_len(ARGV, args);
+        self.vset_len(PRES, pres);
+    }
+
+    /// The definition of the frame at `fr`.
+    fn frame_def(&mut self, fr: Value) -> Value {
+        let d = ldu(self.f, types::I32, fr, offset_of!(Frame, def) as i32);
+        let defs = ld(self.f, types::I64, self.ctx, at!(defs));
+        elem(self.f, defs, d, DEF)
+    }
+
+    /// `FRAME` (`Machine::frame`): a call of `d` opened.
+    fn frame(&mut self, pc: usize) {
+        let ctx = self.ctx;
+        let nargv = self.vlen(ARGV);
+        let npres = self.vlen(PRES);
+        let fr = self.vpush(FRAMES, pc);
+        let d = ld(self.f, types::I64, ctx, at!(d));
+        let defs = ld(self.f, types::I64, ctx, at!(defs));
+        let def = elem(self.f, defs, d, DEF);
+        let fnlike = ldu(self.f, types::I8, def, offset_of!(Def, fnlike) as i32);
+        let params = ldu(self.f, types::I16, def, offset_of!(Def, params) as i32);
+        let f = &mut *self.f;
+        st(f, types::I32, d, fr, offset_of!(Frame, def) as i32);
+        copy_tok(f, ctx, at!(t), fr, offset_of!(Frame, name) as i32);
+        copy_tok(f, ctx, at!(t), fr, offset_of!(Frame, end) as i32);
+        st(f, types::I32, nargv, fr, offset_of!(Frame, args) as i32);
+        st(f, types::I32, npres, fr, offset_of!(Frame, pres) as i32);
+        let z = f.ins().iconst(types::I32, 0);
+        f.ins().store(flags(), z, fr, offset_of!(Frame, depth) as i32);
+        f.ins().store(flags(), z, fr, offset_of!(Frame, next_use) as i32);
+        st(f, types::I8, fnlike, fr, offset_of!(Frame, open) as i32);
+        let c = ld(f, types::I64, ctx, at!(collecting));
+        let c = f.ins().iadd(c, fnlike);
+        st(f, types::I64, c, ctx, at!(collecting));
+        // Its expansions, none made yet: a parameter a step (`Step::Item`).
+        let end = f.ins().iadd(npres, params);
+        let room = ld(f, types::I64, ctx, at!(room_pres));
+        let ok = f.ins().icmp(IntCC::UnsignedLessThanOrEqual, end, room);
+        self.check(ok, pc, R_ARENA);
+        let head = self.f.create_block();
+        self.f.append_block_param(head, types::I64);
+        self.heads.push((head, Step::Item));
+        let done = self.f.create_block();
+        self.f.ins().jump(head, &[npres.into()]);
+        self.f.switch_to_block(head);
+        let i = self.f.block_params(head)[0];
+        let more = self.f.ins().icmp(IntCC::UnsignedLessThan, i, end);
+        let body = self.f.create_block();
+        self.f.ins().brif(more, body, &[], done, &[]);
+        self.f.switch_to_block(body);
+        let p = self.vat(PRES, i);
+        let none = self.f.ins().iconst(types::I64, i64::from(NONE));
+        self.put_pair(p, none, none);
+        let i1 = self.f.ins().iadd_imm(i, 1);
+        self.f.ins().jump(head, &[i1.into()]);
+        self.f.switch_to_block(done);
+        self.vset_len(PRES, end);
+        // A function-like macro's first argument, empty.
+        let open = self.f.create_block();
+        let next = self.blocks[pc + 1];
+        self.f.ins().brif(fnlike, open, &[], next, &[]);
+        self.f.switch_to_block(open);
+        let a = self.vlen(ARENA);
+        let p = self.vpush(ARGV, pc);
+        self.put_pair(p, a, a);
+        self.f.ins().jump(next, &[]);
+    }
+
+    /// `ARG` (`Machine::arg`), its modes.
+    fn arg(&mut self, pc: usize, mode: u8) {
+        let ctx = self.ctx;
+        let fr = self.vtop(FRAMES, pc, R_ARG_FRAME);
+        let def = self.frame_def(fr);
+        let next = self.blocks[pc + 1];
+        let depth_at = offset_of!(Frame, depth) as i32;
+        match mode {
+            0 | 1 => {
+                if mode == 1 {
+                    let d = ldu(self.f, types::I32, fr, depth_at);
+                    let d = self.f.ins().iadd_imm(d, 1);
+                    st(self.f, types::I32, d, fr, depth_at);
+                }
+                self.append(pc);
+                self.f.ins().jump(next, &[]);
+            }
+            2 => {
+                // A `)`: the call's end at depth 0 (held), else an argument's token.
+                let d = ldu(self.f, types::I32, fr, depth_at);
+                let end = self.f.create_block();
+                let inner = self.f.create_block();
+                self.f.ins().brif(d, inner, &[], end, &[]);
+                self.f.switch_to_block(end);
+                copy_tok(self.f, ctx, at!(t), fr, offset_of!(Frame, end) as i32);
+                self.close_args(fr);
+                self.f.ins().jump(next, &[]);
+                self.f.switch_to_block(inner);
+                let d1 = self.f.ins().iadd_imm(d, -1);
+                st(self.f, types::I32, d1, fr, depth_at);
+                self.append(pc);
+                let skip = self.blocks[pc + 2];
+                self.f.ins().jump(skip, &[]);
+            }
+            3 => {
+                // A `,`: the next argument, unless nested or in the variadic one.
+                let d = ldu(self.f, types::I32, fr, depth_at);
+                let args = ldu(self.f, types::I32, fr, offset_of!(Frame, args) as i32);
+                let nargv = self.vlen(ARGV);
+                let nargs = self.f.ins().isub(nargv, args);
+                let variadic = ldu(self.f, types::I8, def, offset_of!(Def, variadic) as i32);
+                let params = ldu(self.f, types::I16, def, offset_of!(Def, params) as i32);
+                let last = self.f.ins().icmp(IntCC::Equal, nargs, params);
+                let va = self.f.ins().icmp_imm(IntCC::NotEqual, variadic, 0);
+                let in_va = self.f.ins().band(va, last);
+                let top = self.f.ins().icmp_imm(IntCC::Equal, d, 0);
+                let not_va = self.f.ins().bxor_imm(in_va, 1);
+                let split_here = self.f.ins().band(top, not_va);
+                let new = self.f.create_block();
+                let tok = self.f.create_block();
+                self.f.ins().brif(split_here, new, &[], tok, &[]);
+                self.f.switch_to_block(new);
+                let a = self.vlen(ARENA);
+                let p = self.vpush(ARGV, pc);
+                self.put_pair(p, a, a);
+                self.f.ins().jump(next, &[]);
+                self.f.switch_to_block(tok);
+                self.append(pc);
+                self.f.ins().jump(next, &[]);
+            }
+            4 => {
+                // The count of arguments checked (held), else the call is its name alone.
+                let args = ldu(self.f, types::I32, fr, offset_of!(Frame, args) as i32);
+                let nargv = self.vlen(ARGV);
+                let nargs = self.f.ins().isub(nargv, args);
+                let variadic = ldu(self.f, types::I8, def, offset_of!(Def, variadic) as i32);
+                let params = ldu(self.f, types::I16, def, offset_of!(Def, params) as i32);
+                let none = self.f.create_block();
+                let some = self.f.create_block();
+                let good = self.f.create_block();
+                self.f.append_block_param(good, types::I8);
+                let bad = self.f.create_block();
+                self.f.ins().brif(params, some, &[], none, &[]);
+                // No parameters: one argument, empty, and it is dropped.
+                self.f.switch_to_block(none);
+                let a0 = self.vat(ARGV, args);
+                let (a, b) = self.pair(a0);
+                let one = self.f.ins().icmp_imm(IntCC::Equal, nargs, 1);
+                let empty = self.f.ins().icmp(IntCC::Equal, a, b);
+                let ok = self.f.ins().band(one, empty);
+                let drop = self.f.ins().iconst(types::I8, 0);
+                self.f.ins().brif(ok, good, &[drop.into()], bad, &[]);
+                // The variadic arguments may be left out.
+                self.f.switch_to_block(some);
+                let exact = self.f.ins().icmp(IntCC::Equal, nargs, params);
+                let n1 = self.f.ins().iadd_imm(nargs, 1);
+                let short = self.f.ins().icmp(IntCC::Equal, n1, params);
+                let va = self.f.ins().icmp_imm(IntCC::NotEqual, variadic, 0);
+                let left_out = self.f.ins().band(short, va);
+                let ok = self.f.ins().bor(exact, left_out);
+                self.f.ins().brif(ok, good, &[left_out.into()], bad, &[]);
+                self.f.switch_to_block(good);
+                let add = self.f.block_params(good)[0];
+                let drop_all = self.f.create_block();
+                let push = self.f.create_block();
+                let done = self.f.create_block();
+                let has = self.f.create_block();
+                self.f.ins().brif(params, has, &[], drop_all, &[]);
+                self.f.switch_to_block(drop_all);
+                self.vset_len(ARGV, args);
+                self.f.ins().jump(next, &[]);
+                self.f.switch_to_block(has);
+                self.f.ins().brif(add, push, &[], done, &[]);
+                self.f.switch_to_block(push);
+                let a = self.vlen(ARENA);
+                let p = self.vpush(ARGV, pc);
+                self.put_pair(p, a, a);
+                self.f.ins().jump(next, &[]);
+                self.f.switch_to_block(done);
+                self.f.ins().jump(next, &[]);
+                self.f.switch_to_block(bad);
+                self.drop_frame(fr);
+                copy_tok(self.f, fr, offset_of!(Frame, name) as i32, ctx, at!(t));
+                let fo = at!(t) + offset_of!(Tok, flags) as i32;
+                let fl = ld(self.f, types::I8, ctx, fo);
+                let fl = self.f.ins().bor_imm(fl, i64::from(NOEXP));
+                self.f.ins().store(flags(), fl, ctx, fo);
+                let skip = self.blocks[pc + 2];
+                self.f.ins().jump(skip, &[]);
+            }
+            _ => {
+                self.close_args(fr);
+                self.drop_frame(fr);
+                self.f.ins().jump(next, &[]);
+            }
+        }
+    }
+
+    /// Whether the variadic argument of the frame at `fr` (its definition at `def`) has tokens
+    /// once expanded (`Machine::va_present`).
+    fn va_present(&mut self, fr: Value, def: Value) -> Value {
+        let params = ldu(self.f, types::I16, def, offset_of!(Def, params) as i32);
+        let va = self.f.ins().iadd_imm(params, -1);
+        let args = ldu(self.f, types::I32, fr, offset_of!(Frame, args) as i32);
+        let pres = ldu(self.f, types::I32, fr, offset_of!(Frame, pres) as i32);
+        let ai = self.f.ins().iadd(args, va);
+        let pi = self.f.ins().iadd(pres, va);
+        let ap = self.vat(ARGV, ai);
+        let (a, b) = self.pair(ap);
+        let pp = self.vat(PRES, pi);
+        let (x, y) = self.pair(pp);
+        let f = &mut *self.f;
+        let has = f.ins().icmp(IntCC::NotEqual, a, b);
+        let made = f.ins().icmp_imm(IntCC::NotEqual, x, i64::from(NONE));
+        let some = f.ins().icmp(IntCC::NotEqual, x, y);
+        let r = f.ins().band(has, made);
+        f.ins().band(r, some)
+    }
+
+    /// `PRE m=0` (`Machine::pre`), a test: the next argument a use asks for, not expanded yet,
+    /// pushed to be expanded (a stop source, a level); the uses walked a step at a time
+    /// (`Step::Item`).
+    fn pre(&mut self, pc: usize) {
+        let ctx = self.ctx;
+        let fr = self.vtop(FRAMES, pc, R_PRE_FRAME);
+        let def = self.frame_def(fr);
+        let pre0 = ldu(self.f, types::I32, def, (offset_of!(Def, pre) + offset_of!((u32, u32), 0)) as i32);
+        let pre1 = ldu(self.f, types::I32, def, (offset_of!(Def, pre) + offset_of!((u32, u32), 1)) as i32);
+        let nu = offset_of!(Frame, next_use) as i32;
+        let u0 = ldu(self.f, types::I32, fr, nu);
+        let head = self.f.create_block();
+        self.f.append_block_param(head, types::I64);
+        self.heads.push((head, Step::Item));
+        self.f.ins().jump(head, &[u0.into()]);
+        self.f.switch_to_block(head);
+        let u = self.f.block_params(head)[0];
+        let k = self.f.ins().iadd(pre0, u);
+        let more = self.f.ins().icmp(IntCC::UnsignedLessThan, k, pre1);
+        let body = self.f.create_block();
+        let none = self.f.create_block();
+        self.f.ins().brif(more, body, &[], none, &[]);
+        self.f.switch_to_block(none);
+        st(self.f, types::I32, u, fr, nu);
+        let skip = self.blocks[pc + 2];
+        self.f.ins().jump(skip, &[]);
+
+        self.f.switch_to_block(body);
+        let up = self.vat(USES, k);
+        let p = ldu(self.f, types::I16, up, USE.1 as i32);
+        let inside = ldu(self.f, types::I8, up, USE.2 as i32);
+        let u1 = self.f.ins().iadd_imm(u, 1);
+        let pres = ldu(self.f, types::I32, fr, offset_of!(Frame, pres) as i32);
+        let pi = self.f.ins().iadd(pres, p);
+        let pp = self.vat(PRES, pi);
+        let (x, _) = self.pair(pp);
+        let made = self.f.ins().icmp_imm(IntCC::NotEqual, x, i64::from(NONE));
+        let on = self.f.create_block();
+        let check_va = self.f.create_block();
+        self.f.ins().brif(made, head, &[u1.into()], check_va, &[]);
+        self.f.switch_to_block(check_va);
+        let va_test = self.f.create_block();
+        self.f.ins().brif(inside, va_test, &[], on, &[]);
+        self.f.switch_to_block(va_test);
+        let present = self.va_present(fr, def);
+        self.f.ins().brif(present, on, &[], head, &[u1.into()]);
+        self.f.switch_to_block(on);
+        let args = ldu(self.f, types::I32, fr, offset_of!(Frame, args) as i32);
+        let ai = self.f.ins().iadd(args, p);
+        let ap = self.vat(ARGV, ai);
+        let (a, b) = self.pair(ap);
+        let empty = self.f.ins().icmp(IntCC::Equal, a, b);
+        let fill = self.f.create_block();
+        let push = self.f.create_block();
+        self.f.ins().brif(empty, fill, &[], push, &[]);
+        // An empty argument's expansion is empty.
+        self.f.switch_to_block(fill);
+        self.put_pair(pp, b, b);
+        self.f.ins().jump(head, &[u1.into()]);
+        self.f.switch_to_block(push);
+        st(self.f, types::I32, u1, fr, nu);
+        let ns = self.vlen(SOURCES);
+        let nl = self.vlen(LEVELS);
+        let room = ld(self.f, types::I64, ctx, at!(room_sources));
+        let s_ok = self.f.ins().icmp(IntCC::UnsignedLessThan, ns, room);
+        let l_ok = self.f.ins().icmp(IntCC::UnsignedLessThan, nl, room);
+        let ok = self.f.ins().band(s_ok, l_ok);
+        self.check(ok, pc, R_SOURCES);
+        self.push_arena_src(pc, a, b, NONE, true);
+        let nk = self.vlen(KEPT);
+        let lp = self.vpush(LEVELS, pc);
+        st(self.f, types::I16, p, lp, LEVEL.1 as i32);
+        st(self.f, types::I32, nk, lp, LEVEL.2 as i32);
+        let next = self.blocks[pc + 1];
+        self.f.ins().jump(next, &[]);
+    }
+
+    /// `PRE m=1` (`Machine::pre_end`): the level closed, its tokens copied from `kept` to the
+    /// arena a token a step (`Step::Item`), the argument's expansion their range.
+    fn pre_end(&mut self, pc: usize) {
+        let lp = self.vtop(LEVELS, pc, R_NO_LEVEL);
+        let p = ldu(self.f, types::I16, lp, LEVEL.1 as i32);
+        let at = ldu(self.f, types::I32, lp, LEVEL.2 as i32);
+        let nl = self.vlen(LEVELS);
+        let nl1 = self.f.ins().iadd_imm(nl, -1);
+        self.vset_len(LEVELS, nl1);
+        let s = self.vtop(SOURCES, pc, R_LEVEL_SRC);
+        let stop = ldu(self.f, types::I8, s, offset_of!(Src, stop) as i32);
+        self.check(stop, pc, R_LEVEL_SRC);
+        let ns = self.vlen(SOURCES);
+        let ns1 = self.f.ins().iadd_imm(ns, -1);
+        self.vset_len(SOURCES, ns1);
+        let a = self.vlen(ARENA);
+        let nk = self.vlen(KEPT);
+        let head = self.f.create_block();
+        self.f.append_block_param(head, types::I64);
+        self.heads.push((head, Step::Item));
+        let done = self.f.create_block();
+        self.f.ins().jump(head, &[at.into()]);
+        self.f.switch_to_block(head);
+        let k = self.f.block_params(head)[0];
+        let more = self.f.ins().icmp(IntCC::UnsignedLessThan, k, nk);
+        let body = self.f.create_block();
+        self.f.ins().brif(more, body, &[], done, &[]);
+        self.f.switch_to_block(body);
+        let kp = self.vat(KEPT, k);
+        self.push_arena_tok(pc, kp, 0);
+        let k1 = self.f.ins().iadd_imm(k, 1);
+        self.f.ins().jump(head, &[k1.into()]);
+        self.f.switch_to_block(done);
+        self.vset_len(KEPT, at);
+        let fr = self.vtop(FRAMES, pc, R_LEVEL_FRAME);
+        let pres = ldu(self.f, types::I32, fr, offset_of!(Frame, pres) as i32);
+        let pi = self.f.ins().iadd(pres, p);
+        let pp = self.vat(PRES, pi);
+        let b = self.vlen(ARENA);
+        self.put_pair(pp, a, b);
+        self.next(pc);
     }
 
     fn word(&mut self, pc: usize) -> Result<(), Error> {
@@ -280,6 +776,10 @@ impl Lower<'_, '_> {
                 st(self.f, types::I64, n1, ctx, at!(nout));
                 self.next(pc);
             }
+            FRAME => self.frame(pc),
+            ARG => self.arg(pc, mode),
+            PRE if mode == 0 => self.pre(pc),
+            PRE => self.pre_end(pc),
             LINE => {
                 let (held, _) = self.line(pc);
                 self.test(pc, held);
@@ -334,6 +834,7 @@ impl Lower<'_, '_> {
                 st(self.f, types::I64, n1, ctx, at!(nkept));
                 self.next(pc);
             }
+            _ if self.partial => self.refuse(pc, R_NOT_LOWERED),
             _ => return Err(Error::RefusedShape(format!("the preprocessing word {op:#04x} m={mode} at {pc} is not lowered yet"))),
         }
         Ok(())
@@ -789,6 +1290,16 @@ impl Lower<'_, '_> {
 
 /// Compile `program`'s words (validated first).
 pub fn compile(program: &Words) -> Result<CompiledPp, Error> {
+    compile_as(program, false)
+}
+
+/// `compile`, where a word with no code yet refuses the TU when it runs (`NOT_LOWERED`): the
+/// lowering's tests, word group by word group.
+pub fn compile_partial(program: &Words) -> Result<CompiledPp, Error> {
+    compile_as(program, true)
+}
+
+fn compile_as(program: &Words, partial: bool) -> Result<CompiledPp, Error> {
     pp_words::validate(program)?;
     let builder = JITBuilder::with_flags(&[("opt_level", "speed")], default_libcall_names()).map_err(|_| Error::BackendFailure)?;
     let mut module = JITModule::new(builder);
@@ -811,7 +1322,7 @@ pub fn compile(program: &Words) -> Result<CompiledPp, Error> {
         f.switch_to_block(entry);
         let ctx = f.block_params(entry)[0];
         f.ins().jump(blocks[0], &[]);
-        let mut l = Lower { f: &mut f, ctx, words: &program.words, strings: &program.strings, blocks, exit, heads: Vec::new() };
+        let mut l = Lower { f: &mut f, ctx, words: &program.words, strings: &program.strings, blocks, exit, heads: Vec::new(), partial };
         for pc in 0..program.words.len() {
             let b = l.blocks[pc];
             l.f.switch_to_block(b);
