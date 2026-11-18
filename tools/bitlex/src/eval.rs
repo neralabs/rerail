@@ -126,6 +126,8 @@ pub struct Ev<'a> {
     unless: HashMap<usize, Vec<Vec<u8>>>,
     /// A mark's `else escape` reason (`Stmt::Mark`), by its index in `marks`.
     unplaced: HashMap<usize, String>,
+    /// A mark's `before` (`Stmt::Mark`), by its index in `marks`: what the token after must be.
+    next: HashMap<usize, Vec<TokenElem>>,
     tables: &'a HashMap<String, Vec<(u32, u32)>>,
     tree: Option<TreeDecl>,
     /// Each class's byte ranges, for `check`; and each `check`: a token kind and its grammar.
@@ -197,6 +199,7 @@ impl<'a> Ev<'a> {
             skip: Mask::zeros(n),
             marks: vec![],
             token_marks: HashMap::new(),
+            next: HashMap::new(),
             unless: HashMap::new(),
             unplaced: HashMap::new(),
             tables,
@@ -436,8 +439,11 @@ impl<'a> Ev<'a> {
             Stmt::Remember(names) => self.tree.get_or_insert_with(TreeDecl::default).remember.extend(names.iter().cloned()),
             // Applied by the parser (`A as IMPLIED` in the rule's body).
             Stmt::Implied { .. } => {}
-            Stmt::Mark { kind, at, end, unless, unplaced, checks, .. } => {
+            Stmt::Mark { kind, at, end, unless, unplaced, checks, next, .. } => {
                 let m = self.mask(at)?;
+                if let Some(next) = next {
+                    self.next.insert(self.marks.len(), next.clone());
+                }
                 for c in checks {
                     let x = self.mask(&c.expr)?;
                     self.mark_checks.push((self.marks.len(), c.after, c.kind.clone(), c.test, x, c.least));
@@ -1237,6 +1243,8 @@ impl<'a> Ev<'a> {
                     continue;
                 }
                 match grammar.get(g) {
+                    // `before`: the token after is one of its choices (`~`: none of them).
+                    Some(&t) if self.next.get(&k).is_some_and(|e| !is(Some(t), e)) => {}
                     Some(&t) => before[t][k] = true,
                     // `else escape`: no grammar token at or after the bit.
                     None => {

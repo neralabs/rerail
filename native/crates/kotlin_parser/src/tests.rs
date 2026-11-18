@@ -692,7 +692,16 @@ fn corpus() {
 #[ignore = "a tool: set RERAIL_KOTLIN_SHOW"]
 fn show() {
     let c = compiled().expect("compiles");
-    eprintln!("tier 2: {} words", c.program.words.len());
+    let r = c.program.block_programs[0].records.as_ref();
+    eprintln!("tier 2: {} words; the code holds {:?} marks and {:?} bits in all", c.program.words.len(), r.map(|r| r.mark_bits()), r.map(|r| r.marks.len()));
+    // `RERAIL_KOTLIN_WORDS=PC`: tier 2's words from 20 lines before its to 20 after.
+    if let Ok(pc) = std::env::var("RERAIL_KOTLIN_WORDS") {
+        let lines: Vec<&str> = c.words.lines().collect();
+        let at = lines.iter().position(|l| l.trim_start().starts_with(&format!("{pc:0>4}"))).unwrap_or(0);
+        for l in &lines[at.saturating_sub(20)..(at + 20).min(lines.len())] {
+            eprintln!("  {l}");
+        }
+    }
     for p in std::env::var("RERAIL_KOTLIN_SHOW").expect("set RERAIL_KOTLIN_SHOW").split(':') {
         let text = std::fs::read_to_string(p).expect("a file");
         let lean = lean_text(&text).unwrap_or_else(|| "refused".into());
@@ -812,6 +821,63 @@ fn program_size() {
     if let Ok(out) = std::env::var("RERAIL_KOTLIN_MACHINE") {
         std::fs::write(out, format!("{}", c.machine)).expect("the machine written");
     }
+}
+
+/// The grammar's compile, phase by phase (`compile_timed`): what a JIT pays before its first
+/// file. Run on an optimized build (`--profile profiling`).
+#[test]
+#[ignore = "a measurement: run by hand, on an optimized build"]
+fn compile_time() {
+    let text = match std::env::var("RERAIL_KOTLIN_GRAMMAR") {
+        Ok(p) => std::fs::read_to_string(p).expect("the grammar file"),
+        Err(_) => crate::GRAMMAR.to_owned(),
+    };
+    // Cold, then with the answers the cold compile made (decision 0414). With
+    // `RERAIL_KOTLIN_EDIT` (a grammar file): that grammar with the first's answers, then cold.
+    let edit = std::env::var("RERAIL_KOTLIN_EDIT").ok().map(|p| std::fs::read_to_string(p).expect("the edited grammar"));
+    let mut passes = vec![("cold", &text), ("warm", &text)];
+    if let Some(e) = &edit {
+        passes = vec![("cold", &text), ("edited, warm", e), ("edited, cold", e)];
+    }
+    let mut known = crate::Proofs::default();
+    let mut prints = Vec::new();
+    for (pass, text) in passes {
+        eprintln!("{pass}:");
+        let mut total = std::time::Duration::ZERO;
+        let given = if pass.ends_with("cold") { crate::Proofs::default() } else { std::mem::take(&mut known) };
+        let c = crate::compile_timed(text, given, &mut |name, t| {
+            total += t;
+            eprintln!("  {name:>16}: {:8.1} ms", t.as_secs_f64() * 1e3);
+        })
+        .expect("the grammar compiles");
+        eprintln!("  {:>16}: {:8.1} ms", "total", total.as_secs_f64() * 1e3);
+        eprintln!("  {:>16}: {} made", "answers", c.proofs.len());
+        eprintln!("  {:>16}: {:016x}", "fingerprint", fingerprint(&c));
+        prints.push(fingerprint(&c));
+        if known.is_empty() {
+            known = c.proofs.iter().cloned().collect();
+        }
+    }
+    assert_eq!(prints[prints.len() - 2], prints[prints.len() - 1], "the known answers make the same program");
+}
+
+/// What was compiled, as one number: tier 2's words and machine, and tier 1's program.
+fn fingerprint(c: &crate::Compiled) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (&c.words, &c.machine, c.program.block_programs.iter().map(|b| b.canonical_bytes()).collect::<Vec<_>>()).hash(&mut h);
+    h.finish()
+}
+
+/// The answers a compile made, given to another compile of the grammar (decision 0414): it asks
+/// none of its questions again, and makes the same program.
+#[test]
+fn known_answers_make_the_same_program() {
+    let cold = compiled().expect("compiles");
+    let known: crate::Proofs = cold.proofs.iter().cloned().collect();
+    let warm = crate::compile_timed(crate::GRAMMAR, known, &mut |_, _| {}).expect("compiles");
+    assert_eq!(warm.proofs.len(), 0, "a question asked again");
+    assert_eq!(fingerprint(&warm), fingerprint(cold));
 }
 
 /// Tier 1 alone: `RERAIL_KOTLIN_GRAMMAR`'s, the interpreter's records against the CPU's, over

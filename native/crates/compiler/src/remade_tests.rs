@@ -13,6 +13,7 @@ use crate::native_cpu_block;
 /// `aligned(_, 3)` makes `phase 3 r` (3 does not divide 64): read in the first pass by
 /// `aligned(d, 3)` and after the backward pass by `aligned(s, 3)`.
 const ALIGNED_LATE: &str = "lexer t
+deprecated back_fill
 class d  = '0'..'9'
 class q  = '\"'
 class sp = ' '
@@ -26,6 +27,7 @@ escape \"y\" when b
 /// `position`'s planes from 6 on are `position j`: read before the backward pass (into
 /// `back_fill`'s value) and after it (`end - position`), a run of backticks' length to its end.
 const POSITION_LATE: &str = "lexer t
+deprecated back_fill
 class tick = '`'
 mask last = tick & ~next(tick)
 number end = back_fill(last, ~tick, position)

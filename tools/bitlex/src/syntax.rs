@@ -705,7 +705,11 @@ pub enum Stmt {
     /// ends at, for its caller to take: tree-sitter's scanner gives its semicolon wherever one is
     /// valid, before the token after it, which the level might read on (`a` then `b` on the next
     /// line is two statements, not an infix call).
-    Mark { kind: String, at: Expr, end: bool, unless: Vec<Vec<u8>>, unplaced: Option<String>, checks: Vec<MarkCheck>, settles: bool, ends: bool },
+    ///
+    /// `, before A | B …` and `, unless before A | B …` (decision 0416): the token the mark is
+    /// before must be (or must not be) one of these choices, as a parser asks of the token it
+    /// peeks at. `next` holds them: a `~` of the choices for `unless before`.
+    Mark { kind: String, at: Expr, end: bool, unless: Vec<Vec<u8>>, unplaced: Option<String>, checks: Vec<MarkCheck>, settles: bool, ends: bool, next: Option<Vec<TokenElem>> },
     /// `mark KIND = tokens [after E] E …` (decision 0129): a mark before a token that begins a
     /// run of tokens, each one of an element's choices (`|`): a token kind (a name) or a word
     /// (a string), the extras between them skipped. `after`: the token before is one of
@@ -924,9 +928,26 @@ struct P {
     classed: Vec<u8>,
     /// The `pairs` read so far, by name, for a token's `pair` (`TokenRule::Pairs`).
     pair_sets: Vec<(String, Vec<[u8; 2]>)>,
+    /// `deprecated back_fill`: the grammar still uses `back_fill`, while it moves to what replaces
+    /// it (`BACK_FILL_REMOVED`).
+    back_fill_ok: bool,
 }
 
 type R<T> = Result<T, String>;
+
+/// Why `back_fill` is refused, and what to write instead (decision 0416).
+pub const BACK_FILL_REMOVED: &str = "`back_fill` is removed from Bitlex (decision 0416). A value at a byte that is made from the \
+bytes after it needs a pass backward over the whole file, and the lean parsers never make one: they look ahead from \
+where they stand, and only where they need to. Write what the back fill asks, at the token:
+  - the next token, or a run of tokens from here: a token mark, `mark K = tokens [after E] A B ...`, \
+which tier 2 tests at the token, as a parser peeks; a run of choices is `(A | B)*`;
+  - a gap mark that the token after the gap decides: `mark K = E, before A | B ...` or \
+`mark K = E, unless before A | B ...`, which tier 2 tests at that token, as a scanner asks of the next token;
+  - the token's own later bytes: a test of the token, `escape \"WHY\" at KIND when count(E) at least N`, \
+or a mark's `at KIND when ...`;
+  - what the text is inside (a class's header, a declaration's run up to its `(`): the tree's rules, \
+which carry it as a parser carries its state.
+A grammar not yet moved may say `deprecated back_fill` on a line of its own, for the time it takes.";
 
 impl P {
     fn peek(&self) -> Option<&Tok> {
@@ -1308,6 +1329,9 @@ impl P {
             }
         }
         self.want_p(")")?;
+        if last == "back_fill" && !self.back_fill_ok {
+            return Err(BACK_FILL_REMOVED.into());
+        }
         Ok(Expr::Call(last, args))
     }
     /// A number: terms joined by `-`, left to right.
@@ -1328,6 +1352,9 @@ impl P {
             return Ok(NExpr::Position);
         }
         let name = self.ident()?;
+        if name == "back_fill" && !self.back_fill_ok {
+            return Err(BACK_FILL_REMOVED.into());
+        }
         if (name == "fill" || name == "back_fill") && self.eat_p("(") {
             let s = self.expr()?;
             self.want_p(",")?;
@@ -1595,6 +1622,16 @@ impl P {
     fn stmt(&mut self) -> R<Stmt> {
         let kw = self.ident()?;
         let s = match kw.as_str() {
+            // The grammar still uses `back_fill` (`BACK_FILL_REMOVED`): then the next statement.
+            "deprecated" => {
+                let what = self.ident()?;
+                if what != "back_fill" {
+                    return self.err("`deprecated back_fill`");
+                }
+                self.back_fill_ok = true;
+                self.nls();
+                return self.stmt();
+            }
             "lexer" => Stmt::Lexer(self.ident()?),
             "class" => {
                 let n = self.ident()?;
@@ -1934,9 +1971,21 @@ impl P {
                     }
                 }
                 let (mut end, mut unplaced, mut checks, mut settles, mut ends) = (false, None, vec![], false, false);
+                let mut next: Option<Vec<TokenElem>> = None;
                 while self.eat_p(",") {
                     self.nls();
-                    if self.eat_kw("settles") {
+                    let not = self.eat_kw("unless");
+                    if not || self.is_kw("before") {
+                        self.want_kw("before")?;
+                        if next.is_some() {
+                            return self.err("one `before` a mark");
+                        }
+                        let choices = self.token_choices()?;
+                        if choices.iter().any(|c| matches!(c, TokenElem::Not(_) | TokenElem::End)) {
+                            return self.err("a `before`'s kinds and words");
+                        }
+                        next = Some(if not { vec![TokenElem::Not(choices)] } else { choices });
+                    } else if self.eat_kw("settles") {
                         settles = true;
                     } else if self.eat_kw("ends") {
                         ends = true;
@@ -1957,7 +2006,7 @@ impl P {
                         end = true;
                     }
                 }
-                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends }
+                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends, next }
             }
             "token" => {
                 let kind = self.kind()?;
@@ -2208,7 +2257,7 @@ pub fn prefix_of(stmts: &[Stmt]) -> Result<Option<Vec<u8>>, String> {
 }
 
 pub fn parse(src: &str) -> Result<Vec<Stmt>, String> {
-    let mut p = P { t: lex(src)?, i: 0, regions: vec![], before: vec![], after: vec![], classed: vec![], pair_sets: vec![] };
+    let mut p = P { t: lex(src)?, i: 0, regions: vec![], before: vec![], after: vec![], classed: vec![], pair_sets: vec![], back_fill_ok: false };
     p.nls();
     let mut out = vec![];
     while p.peek().is_some() {
@@ -2224,6 +2273,37 @@ pub fn parse(src: &str) -> Result<Vec<Stmt>, String> {
 #[cfg(test)]
 mod tier2_tests {
     use super::*;
+
+    /// `back_fill` is refused, as a mask's and as a number's, with what to write instead
+    /// (decision 0416); `deprecated back_fill` lets a grammar not yet moved use it.
+    #[test]
+    fn back_fill_is_refused() {
+        for body in ["mask m = back_fill(q, sp)\n", "number n = back_fill(q, sp, position)\n"] {
+            let src = format!("lexer t\nclass q = '\"'\nclass sp = ' '\n{body}");
+            assert_eq!(parse(&src).err().as_deref(), Some(BACK_FILL_REMOVED), "{body}");
+            let allowed = format!("lexer t\ndeprecated back_fill\nclass q = '\"'\nclass sp = ' '\n{body}");
+            assert!(parse(&allowed).is_ok(), "{body}");
+        }
+    }
+
+    /// A gap mark's `before` and `unless before` (decision 0416): the choices of the token after
+    /// it, `unless before` as their `~`; one a mark, of kinds and words.
+    #[test]
+    fn a_mark_is_before_a_token() {
+        let mark = |m: &str| {
+            let src = format!("lexer t\nclass lf = '\\n'\n{m}\n");
+            parse(&src).map(|s| match s.into_iter().last() {
+                Some(Stmt::Mark { next, end, .. }) => (next, end),
+                other => panic!("{other:?}"),
+            })
+        };
+        let word = |w: &str| TokenElem::Word(w.as_bytes().to_vec());
+        assert_eq!(mark("mark k = lf, before \".\" | name, end"), Ok((Some(vec![word("."), TokenElem::Kind("name".into())]), true)));
+        assert_eq!(mark("mark k = lf, unless before \"}\""), Ok((Some(vec![TokenElem::Not(vec![word("}")])]), false)));
+        assert!(mark("mark k = lf, before ~\"}\"").is_err());
+        assert!(mark("mark k = lf, before end").is_err());
+        assert!(mark("mark k = lf, before \".\", unless before \"}\"").is_err());
+    }
 
     /// The tier-2 forms of decision 0071, as JSON's tree section writes them.
     #[test]
@@ -2264,7 +2344,7 @@ tree json {
     /// that restarts at each of its starts, and the compares, with a constant too.
     #[test]
     fn numbers_evaluate_per_byte() {
-        let src = "lexer t\nclass tick = '`'\nmask last = tick & ~next(tick)\nnumber end = back_fill(last, ~tick, position)\nnumber rem = end - position\nmask long = tick & at_least(rem, 3)\nnumber n = fill(long, long, rem)\nmask close = tick & at_least(rem, n) & ~long\nmask over = above(n, rem)\n";
+        let src = "lexer t\ndeprecated back_fill\nclass tick = '`'\nmask last = tick & ~next(tick)\nnumber end = back_fill(last, ~tick, position)\nnumber rem = end - position\nmask long = tick & at_least(rem, 3)\nnumber n = fill(long, long, rem)\nmask close = tick & at_least(rem, n) & ~long\nmask over = above(n, rem)\n";
         let stmts = parse(src).expect("parses");
         let tables = std::collections::HashMap::new();
         let text = b"a````b``c`````d";
@@ -2286,7 +2366,7 @@ tree json {
         assert_eq!(ones("close"), Vec::<usize>::new(), "no run after a long one as long as it");
         assert!(stmts.iter().any(|s| matches!(s, Stmt::Number(n, NExpr::Sub(..)) if n == "rem")));
         assert_eq!(ones("over"), [2, 3, 4, 6, 7, 11, 12, 13]);
-        let bad = "lexer t\nclass q = '\"'\nrounds until settled {\n  carry h = empty\n  number x = back_fill(q, h, position)\n  next h = prev(at_least(x, 1))\n}\n";
+        let bad = "lexer t\ndeprecated back_fill\nclass q = '\"'\nrounds until settled {\n  carry h = empty\n  number x = back_fill(q, h, position)\n  next h = prev(at_least(x, 1))\n}\n";
         let stmts = parse(bad).expect("parses");
         assert!(strictly_causal(match &stmts[2] {
             Stmt::Rounds { body, .. } => body,

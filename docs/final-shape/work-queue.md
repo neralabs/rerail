@@ -4632,7 +4632,7 @@ in the test's inputs, it fails the same at Parser-generators' 612201517 (before 
   digits or more` (`run(digit) at least 19`, 22-test-blocks.bitlex), at `1152921504606846976`; the interpreter
   refuses the file too (its totals set). A refusal leaves the compiled loop (0177), on the CPU and on Metal alike
   (Metal's codes are the same 2214-code prefix), while the interpreter reads on. The test compared the codes whole,
-  where `ladder::tier1_equal` compares them up to a refusal. It now does the same (`codes_agree`: equal, or for a
+  where `ladder::tier1_agrees` (then `tier1_equal`) compares them up to a refusal. It now does the same (`codes_agree`: equal, or for a
   refused file equal up to the refusal with none or 0s after), for the CPU against the interpreter, Metal against
   the interpreter, and Metal against the CPU. It samples the file explicitly (every fifth file did not reach it):
   529 files, passing.
@@ -4939,3 +4939,39 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
     `COUNTING`, `KEPT_DOCS` and `KEPT_ROWS`, and more.
 - **Next**: classify each by its decision (0103, 0104), or move it where the guard says. A table or map that is a
   cache is to be rules, not a list entry ([[caches-are-ordinary-rules]]).
+
+### Q234. (Q213 on Swift-Kotlin-Scala-support) The engine keeps the grammars' proof answers as it keeps images (0414)
+
+- **What**: a compile takes the provers' known answers and returns the ones it made
+  (`bitlex_masks::compile_proved`, `Compiled::proofs`; `bitlex_prove::encode`/`decode` as bytes).
+  Kotlin: cold 2,355 answers; with them the Bitlex compiler takes 0.57 s, not 16–33 s, and the
+  program is the same (`known_answers_make_the_same_program`); an edit to a class asks 521 of them
+  again (7.3 s, against 35 s cold). Nothing keeps them across processes
+  yet: each process's first compile of a grammar is cold.
+- **Needs**: where a grammar is compiled for a run (`rerail_rr_parser::compiled`, the Bitlex
+  languages' parsers once they are the engine's), the answers read from and written to the engine
+  build's content store under a digest of the grammar's family (0264's `images::read`, a shipped
+  bundle as the seed): the encoded answers are one entry. No map of its own (0092, 0103).
+- **Done when**: a second process's compile of an unchanged or edited grammar makes no proofs it
+  made before, measured.
+
+### Q235. (Q220 on Swift-Kotlin-Scala-support) Bitlex's reference does not implement a mark's `, settles`
+
+- **What**: `, settles` (a mark whose arm keeps the extras before its bit in the nodes it closes)
+  is parsed but read nowhere in `tools/bitlex` (`eval.rs`, `tree.rs`): the reference closes a node
+  before its trailing extras, where the compiled parser keeps them in it. Found by
+  `ladder_tests::a_gap_mark_is_decided_by_the_token_after` (0416) with a settling mark:
+  `package Z// c` then line breaks at the file's end, the header 8..17 in the reference and 8..24
+  in the interpreter and Cranelift. Kotlin's grammar is checked against the lean parser's tapes,
+  which agree with the compiled side, so nothing caught it.
+- **Done when**: the reference places a settling mark's extras as tier 2 does, and the test's
+  grammar says `settles` again.
+
+### Q236. (Q221 on Swift-Kotlin-Scala-support) The C directives' Metal reads refuse with `UnsupportedBackend` in this worktree
+
+- **What**: `rerail-c-directives`' `directives_read_as_the_lean_scan_reads_them` and
+  `a_file_past_64_kib_is_read_at_wide_columns` fail at their Metal step: `run_resident` returns
+  `UnsupportedBackend` (seen 2026-11-18 after the merge of Parser-generators-final-shape, with and
+  without 0407's change to the marks the code holds). The cause is one of `starts_late` (an
+  `Early` or a prefix in the program), no device in the process, or a single-program check.
+- **Done when**: the cause is named and the two tests pass on a Mac with Metal.
