@@ -290,6 +290,27 @@ loop, reduced where the loop leaves, as simdjson's `error`.
 
 JSONC: 693 / 9 → 667 / 11.
 
+### simdjson's registers (0411)
+
+The four ORs a block were simdjson's four `error |=` already. What differed was the ASCII
+way's copy of the error vector, lags 2 and 3 compared before their `ext` (and chunk 0 compared
+again each block), and six constants built in the loop. Now lags 2 and 3 are `ext`s of the
+bytes, then compares, as simdjson's `prev<2>(input)`, and the vector passes no join. Each
+rowless total, and each word leaf of the flag, is ORed into the running word where made, an
+edge block remaking them.
+
+| `14-json` | Hot loop | Stack accesses | UTF-8 stretch |
+|---|---:|---:|---:|
+| After 0406 | 485 | 1 | 76 |
+| 0411 | **481** | **1** | **74** |
+| simdjson | | | 72 |
+
+JSONC: 667 / 11 → 651 / 7. A chunk of the stretch is simdjson's 16 instructions. The gap is the
+six constants (`movi` of `0xe0`, `0xf0`, `0x80`, three table loads) built in the loop, where
+simdjson holds them in registers. The mid-end's code motion would hoist every constant and
+spill them (0069), so hoisting needs to choose which constants to hold, against the vector
+pressure of the number and string checks (peak 32).
+
 ## Reproducing
 
 ```

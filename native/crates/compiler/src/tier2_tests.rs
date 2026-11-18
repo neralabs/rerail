@@ -393,6 +393,39 @@ fn the_hot_loop_carries_the_bytes_before_its_block() {
     }
 }
 
+/// Decision 0411: the hot loop's UTF-8 check and totals in simdjson's form.
+/// - Lags 2 and 3 are made from the bytes 2 and 3 back, as simdjson's `prev2 >= 0xe0` of
+///   `prev<2>(input)`: one `ext` of each lag a chunk, its compare after it.
+/// - The error vector is copied on no way through the loop: the only vector copy is the
+///   carried chunk's (0405).
+/// - Each total with no row is ORed into the running word where it is made, a flag's word
+///   leaves too, and an edge block remakes them: the stack accesses are a ratchet.
+#[test]
+#[cfg(target_arch = "aarch64")]
+fn the_hot_loop_keeps_simdjsons_utf8_and_error_registers() {
+    for (name, source) in crate::ladder::steps().into_iter().filter(|(n, _)| n.starts_with("14-json") || n.starts_with("15-jsonc")) {
+        let c = crate::ladder::compile_step(&name, &source);
+        let hot = crate::clif_text::machine_loop(&c.parser.tier1.loops_disassembly());
+        for k in [14, 13] {
+            let exts: Vec<usize> = (0..hot.len()).filter(|&i| hot[i].starts_with("ext v") && hot[i].ends_with(&format!(", #{k}"))).collect();
+            assert_eq!(exts.len(), 4, "{name}: the bytes {} back, one `ext` a chunk", 16 - k);
+            // Each `ext` of bytes, compared next: its result's first reader is a `cmhs`.
+            for &i in &exts {
+                let dest = hot[i]["ext ".len()..].split(',').next().expect("a destination").to_owned();
+                let reads = |l: &String| l.split_once(", ").is_some_and(|(_, src)| src.split(", ").any(|r| r == dest));
+                let reader = hot[i + 1..].iter().find(|l| reads(l)).expect("read");
+                assert!(reader.starts_with("cmhs "), "{name}: `{}` read by `{reader}`, not compared", hot[i]);
+            }
+        }
+        let copies: Vec<&String> = hot.iter().filter(|l| l.starts_with("mov v") && l.contains(".16b, v")).collect();
+        assert!(copies.len() <= 1, "{name}: vector copies in the hot loop: {copies:?}");
+        let stack = crate::clif_text::loop_costs(&hot).0;
+        // `machine_loop`'s loop, which takes in more of JSONC's than `json_shapes`'s (7 there).
+        let most = if name.starts_with("14-json") { 1 } else { 9 };
+        assert!(stack <= most, "{name}: {stack} stack loads or stores in the hot loop (at most {most})");
+    }
+}
+
 /// Decisions 0402, 0404 and 0405: JSON's UTF-8 rules of two bytes are byte-pair lookups on the
 /// CPU, as simdjson's (`native_cpu_pairs`): the eight ORed in the check seven boxes of one pair
 /// (simdjson's bits: `f4..ff` before `9x..bx` one, `f0` and `f5..ff` before `8x` one),
