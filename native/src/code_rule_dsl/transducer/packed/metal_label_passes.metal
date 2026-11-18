@@ -382,7 +382,8 @@ kernel void label_group_256(device const DocView* docs [[buffer(0)]],device cons
 // the buffer was too small). A walk outgrowing its frames, captures or steps flags its program.
 // pad: 1 where the walk ends at its first emit (set mode, one label); 1 + its emit count for a
 // pack in set mode.
-struct RootPass { uint wordStart,wordCount,textStart,pad; };
+// `anchor`: its anchor's row in `texts` (decision 0365), a start outside it not walked; `0xffffffff` none.
+struct RootPass { uint wordStart,wordCount,textStart,pad,anchor; };
 struct RootFrame { uint pc,node,resume,named,next,end,cursors[8],captured,caps[8],labs[8]; };
 // The 32-frame roots run as a pool of ROOT_POOL threads with device stacks (metal_label_passes.rs's ROOT_POOL).
 constant uint ROOT_CAPTURES=8u,ROOT_RECORD=20u,ROOT_POOL=4096u;
@@ -456,6 +457,7 @@ template<uint FRAMES,typename Stack>
 static void root_records_run(device const DocView* docs,thread const Slabs& slabs,device const uint* head,device const RootPass* passes,device const uint* words,device const uint4* items,device const uint* texts,device uint* records,device atomic_uint* cursor,device atomic_uint* failures,constant Shape& shape,uint tid,Stack stack){
   if(tid>=shape.itemCount)return;
   uint4 item=items[tid];RootPass pass=passes[item.x];
+  if(pass.anchor!=0xffffffffu&&((texts[pass.anchor*shape.words+item.w/32u]>>(item.w%32u))&1u)==0u)return;
   Tree t={slabs,doc_of(docs,shape.fileCount,item.w)};
   uint emitted=0u;
   if(!root_walk<FRAMES>(t,head,pass,words,item.w,texts,shape,stack,nullptr,0u,tid,0u,emitted)){atomic_fetch_or_explicit(&failures[item.x],1u,memory_order_relaxed);return;}
@@ -468,3 +470,244 @@ static void root_records_run(device const DocView* docs,thread const Slabs& slab
 
 kernel void root_records_8(device const DocView* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const RootPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint4* items [[buffer(4)]],device const uint* texts [[buffer(5)]],device uint* records [[buffer(6)]],device atomic_uint* cursor [[buffer(7)]],device atomic_uint* failures [[buffer(8)]],constant Shape& shape [[buffer(9)]],device const uchar* s0 [[buffer(27)]],device const uchar* s1 [[buffer(28)]],device const uchar* s2 [[buffer(29)]],device const uchar* s3 [[buffer(30)]],device RootFrame* stacks [[buffer(10)]],uint tid [[thread_position_in_grid]],uint grid [[threads_per_grid]]){Slabs slabs={s0,s1,s2,s3};for(uint item=tid;item<shape.itemCount;item+=grid)root_records_run<8u>(docs,slabs,head,passes,words,items,texts,records,cursor,failures,shape,item,stacks+tid*8u);}
 kernel void root_records_32(device const DocView* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const RootPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint4* items [[buffer(4)]],device const uint* texts [[buffer(5)]],device uint* records [[buffer(6)]],device atomic_uint* cursor [[buffer(7)]],device atomic_uint* failures [[buffer(8)]],constant Shape& shape [[buffer(9)]],device const uchar* s0 [[buffer(27)]],device const uchar* s1 [[buffer(28)]],device const uchar* s2 [[buffer(29)]],device const uchar* s3 [[buffer(30)]],device RootFrame* stacks [[buffer(10)]],uint tid [[thread_position_in_grid]]){Slabs slabs={s0,s1,s2,s3};for(uint item=tid;item<shape.itemCount;item+=ROOT_POOL)root_records_run<32u>(docs,slabs,head,passes,words,items,texts,records,cursor,failures,shape,item,stacks+tid*32u);}
+
+// A level's anchors (decision 0365, `Runner::formulas`). First `label_leaves`: each node's code read once, and every
+// distinct leaf test of the level's formulas (kind, field, flags, a grammar supertype) into its row of `leaves`, a
+// file's words at its region (`FORMULA_REGION`). Then `label_formula`: a threadgroup a (file, formula), the formula
+// (`compile_sets::DeviceFormula`, postfix over a stack of node sets in `scratch`, the file's region) into its rule's row
+// in `roots`: set where `mode` 0 (a rule over codes, kind 2), cleared outside the anchor where 1 (a listed rule). A leaf
+// is a copy of its row, a label a read of `head` (the levels before have settled), and an axis step goes over the
+// members of its set only (a climb stops at a node another thread set, whose climb goes on).
+// A formula: its targets (`FormulaTarget`: {row, mode, rule (`0xffffffff` none: a root walk's anchor in `texts`)}) and
+// words; identical formulas of a group are one, written to each target. Shape:
+// `round` a formula's slots, `itemCount` the dispatch's first formula, `queue` the words of a formula's scratch,
+// `recursive` the words of a leaf's row, `targetCount` (`label_leaves`) the leaves.
+struct Formula { uint targetStart,targetCount,wordStart,wordCount,pad; };
+// Where a formula's set goes: a rule's row, as `Formula` was (one formula, several rules).
+struct FormulaTarget { uint row,mode,rule; };
+#define FORMULA_REGION(d,file) ((d).nodeBase/32u+2u*(file))
+static bool formula_get(device atomic_uint* slot,uint n){return ((atomic_load_explicit(&slot[n/32u],memory_order_relaxed)>>(n%32u))&1u)!=0u;}
+static bool formula_set(device atomic_uint* slot,uint n){uint bit=1u<<(n%32u);return (atomic_fetch_or_explicit(&slot[n/32u],bit,memory_order_relaxed)&bit)!=0u;}
+static bool formula_named(thread const Tree& t,uint n,bool named){return !named||(tape_flags(t.s,t.d,n)&1u)!=0u;}
+// The members of a slot: `FORMULA_EACH(slot, fw, lane, width, n) { ... }`, a word a thread.
+#define FORMULA_EACH(SLOT_,FW,LANE,WIDTH,N) for(uint formulaW=(LANE);formulaW<(FW);formulaW+=(WIDTH))for(uint formulaBits=atomic_load_explicit(&(SLOT_)[formulaW],memory_order_relaxed);formulaBits!=0u;formulaBits&=formulaBits-1u)for(uint N=formulaW*32u+ctz(formulaBits),formulaOnce=0u;formulaOnce==0u;formulaOnce=1u)
+
+kernel void label_leaves(device const DocView* docs [[buffer(0)]],device const uint* tests [[buffer(1)]],device atomic_uint* leaves [[buffer(2)]],constant Shape& shape [[buffer(3)]],device const uchar* s0 [[buffer(27)]],device const uchar* s1 [[buffer(28)]],device const uchar* s2 [[buffer(29)]],device const uchar* s3 [[buffer(30)]],uint file [[threadgroup_position_in_grid]],uint lane [[thread_index_in_threadgroup]],uint width [[threads_per_threadgroup]]){
+  Slabs slabs={s0,s1,s2,s3};
+  DocView d=docs[file];
+  uint nodes=d.nodes,fw=(nodes+31u)/32u,region=FORMULA_REGION(d,file);
+  for(uint w=lane;w<fw;w+=width){
+    for(uint l=0u;l<shape.targetCount;l++)atomic_store_explicit(&leaves[l*shape.recursive+region+w],0u,memory_order_relaxed);
+    for(uint k=0u;k<32u&&w*32u+k<nodes;k++){
+      uint n=w*32u+k;
+      device const DeviceCode& code=tape_code(slabs,d,n);
+      for(uint l=0u;l<shape.targetCount;l++){
+        uint test=tests[l],op=test&255u,arg=test>>8u;bool hit;
+        if(op==18u)hit=tape_next(slabs,d,n)!=TAPE_NONE;
+        else if(op==19u)hit=tape_size(slabs,d,n)>1u;
+        else if(op==1u)hit=code.kind==arg;
+        else if(op==2u)hit=code.field==arg;
+        else if(op==3u){uint m=arg&255u,a=arg>>8u;hit=(code.flags&m)==m&&(code.flags&a)==0u;}
+        else{hit=false;for(uint c=0u;c<code.classCount;c++){if(code.classes[c]==arg){hit=true;break;}if(code.classes[c]>arg)break;}}
+        if(hit)atomic_fetch_or_explicit(&leaves[l*shape.recursive+region+w],1u<<k,memory_order_relaxed);
+      }
+    }
+  }
+}
+
+kernel void label_formula(device const DocView* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const Formula* formulas [[buffer(2)]],device const uint* words [[buffer(3)]],device atomic_uint* roots [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],constant Shape& shape [[buffer(6)]],device const uint* leaves [[buffer(7)]],device atomic_uint* stats [[buffer(8)]],device const FormulaTarget* targets [[buffer(9)]],device const uchar* s0 [[buffer(27)]],device const uchar* s1 [[buffer(28)]],device const uchar* s2 [[buffer(29)]],device const uchar* s3 [[buffer(30)]],uint2 group [[threadgroup_position_in_grid]],uint2 lanes [[thread_position_in_threadgroup]],uint2 widths [[threads_per_threadgroup]]){
+  Slabs slabs={s0,s1,s2,s3};
+  uint file=group.x,lane=lanes.x,width=widths.x;
+  // A descendant step's prefix of its members' counts (a block of words a thread, `FORMULA_WIDTH` threads), and the
+  // member counts a step within a conjunction is priced by.
+  threadgroup uint partials[128];
+  threadgroup atomic_uint tally[2];
+  DocView d=docs[file];
+  Tree t={slabs,d};
+  uint nodes=d.nodes,fw=(nodes+31u)/32u,region=FORMULA_REGION(d,file);
+  if(nodes==0u)return;
+  Formula formula=formulas[shape.itemCount+group.y];
+  // A rule over codes that does not run in this file: its row is never read here; none runs here, nothing to do.
+  bool wanted=false;
+  for(uint i=0u;i<formula.targetCount&&!wanted;i++){FormulaTarget target=targets[formula.targetStart+i];wanted=target.mode!=0u||target.rule==0xffffffffu||((atomic_load_explicit(&roots[target.rule+atomic_load_explicit(&roots[target.rule+1u],memory_order_relaxed)+1u+file/32u],memory_order_relaxed)>>(file%32u))&1u)!=0u;}
+  if(!wanted)return;
+  device atomic_uint* base=scratch+group.y*shape.queue+shape.round*region;
+  #define SLOT(i) (base+(i)*fw)
+  // The bits of local word `w` that are nodes of the file.
+  #define VALID(w) ((w)*32u+32u<=nodes?0xffffffffu:((1u<<(nodes-(w)*32u))-1u))
+  // Profiling (`shape.profile`): per step kind its members, then parent and child reads, then the (file, formula)s.
+  bool profile=shape.profile!=0u;
+  uint parents=0u,childs=0u;
+  #define FORMULA_COUNT(I,N) if(profile)atomic_fetch_add_explicit(&stats[I],N,memory_order_relaxed)
+  if(lane==0u)FORMULA_COUNT(18u,1u);
+  uint top=0u;
+  for(uint pc=0u;pc<formula.wordCount;pc++){
+    uint word=words[formula.wordStart+pc],op=word&255u,arg=word>>8u;
+    if(op==0u||op==4u||op==12u||op==13u){
+      // A set: every node, a label (its row in `head`, in the batch's numbering), none, or a leaf's row.
+      device atomic_uint* out=SLOT(top);
+      for(uint w=lane;w<fw;w+=width){
+        uint bits=0u;
+        if(op==0u)bits=VALID(w);
+        else if(op==13u)bits=leaves[arg*shape.recursive+region+w];
+        else if(op==4u){device const uint* row=head+2u+(arg-16384u)*head[1];uint b=d.nodeBase+w*32u,at=b/32u,sh=b%32u;bits=sh==0u?row[at]:(row[at]>>sh)|(row[at+1u]<<(32u-sh));bits&=VALID(w);}
+        atomic_store_explicit(&out[w],bits,memory_order_relaxed);
+      }
+      top++;
+    }else if(op==5u||op==6u){
+      uint first=top-arg;
+      device atomic_uint* out=SLOT(first);
+      for(uint w=lane;w<fw;w+=width){
+        uint bits=atomic_load_explicit(&out[w],memory_order_relaxed);
+        for(uint k=1u;k<arg;k++){uint other=atomic_load_explicit(&SLOT(first+k)[w],memory_order_relaxed);bits=op==5u?bits&other:bits|other;}
+        atomic_store_explicit(&out[w],bits,memory_order_relaxed);
+      }
+      top=first+1u;
+    }else if(op>=14u&&op<=16u){
+      // A step within a conjunction: slot `c` its set, `src` the step's inner set, the result `c` ∩ the step's. Read
+      // down from `c`'s members (children, the subtree by rank, the next siblings), or climb from the inner set's
+      // (a parent is a search on the tape), whichever has fewer members (S277: priced by work).
+      bool named=(arg&1u)!=0u;
+      uint c=top-2u,src=top-1u,at=top;
+      device atomic_uint* cand=SLOT(c);device atomic_uint* from=SLOT(src);device atomic_uint* out=SLOT(at);
+      uint mine=0u,theirs=0u;
+      for(uint w=lane;w<fw;w+=width){mine+=popcount(atomic_load_explicit(&cand[w],memory_order_relaxed));theirs+=popcount(atomic_load_explicit(&from[w],memory_order_relaxed));atomic_store_explicit(&out[w],0u,memory_order_relaxed);}
+      if(lane==0u){atomic_store_explicit(&tally[0],0u,memory_order_relaxed);atomic_store_explicit(&tally[1],0u,memory_order_relaxed);}
+      threadgroup_barrier(mem_flags::mem_threadgroup|mem_flags::mem_device);
+      atomic_fetch_add_explicit(&tally[0],mine,memory_order_relaxed);atomic_fetch_add_explicit(&tally[1],theirs,memory_order_relaxed);
+      threadgroup_barrier(mem_flags::mem_threadgroup);
+      uint candidates=atomic_load_explicit(&tally[0],memory_order_relaxed),members=atomic_load_explicit(&tally[1],memory_order_relaxed);
+      bool down=candidates<=4u*members;
+      if(lane==0u){FORMULA_COUNT(op,down?candidates:members);FORMULA_COUNT(down?19u:20u,1u);}
+      if(down&&op==15u){
+        // The inner set's members (named where it says) ranked by a prefix of their words' counts.
+        device atomic_uint* ranked=SLOT(at+1u);device atomic_uint* prefix=SLOT(at+2u);
+        for(uint w=lane;w<fw;w+=width){
+          uint bits=atomic_load_explicit(&from[w],memory_order_relaxed);
+          if(named)for(uint rest=bits;rest!=0u;rest&=rest-1u){uint k=ctz(rest);if((tape_flags(slabs,d,w*32u+k)&1u)==0u)bits&=~(1u<<k);}
+          atomic_store_explicit(&ranked[w],bits,memory_order_relaxed);
+        }
+        threadgroup_barrier(mem_flags::mem_device);
+        uint block=(fw+width-1u)/width,low=min(lane*block,fw),high=min(low+block,fw),sum=0u;
+        for(uint w=low;w<high;w++)sum+=popcount(atomic_load_explicit(&ranked[w],memory_order_relaxed));
+        partials[lane]=sum;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        if(lane==0u){uint run=0u;for(uint k=0u;k<width;k++){uint here=partials[k];partials[k]=run;run+=here;}}
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        uint run=partials[lane];
+        for(uint w=low;w<high;w++){atomic_store_explicit(&prefix[w],run,memory_order_relaxed);run+=popcount(atomic_load_explicit(&ranked[w],memory_order_relaxed));}
+        threadgroup_barrier(mem_flags::mem_device);
+        FORMULA_EACH(cand,fw,lane,width,n){
+          uint end=min(n+tape_size(slabs,d,n),nodes),first=n+1u;
+          if(end<=first)continue;
+          // The ranked members before `end`, less those before `first`.
+          uint we=(end-1u)/32u,wf=first/32u,re=(end-1u)%32u;
+          uint be=atomic_load_explicit(&prefix[we],memory_order_relaxed)+popcount(atomic_load_explicit(&ranked[we],memory_order_relaxed)&(re==31u?0xffffffffu:((1u<<(re+1u))-1u)));
+          uint bf=atomic_load_explicit(&prefix[wf],memory_order_relaxed)+popcount(atomic_load_explicit(&ranked[wf],memory_order_relaxed)&((1u<<(first%32u))-1u));
+          if(be>bf)formula_set(out,n);
+        }
+      }else if(down){
+        // Each candidate's children (a child step) or next siblings (following): one in the inner set keeps it.
+        FORMULA_EACH(cand,fw,lane,width,n){
+          for(uint k=op==14u?tape_first_child(slabs,d,n):tape_next(slabs,d,n);k!=TAPE_NONE;k=tape_next(slabs,d,k)){
+            childs++;
+            if(formula_get(from,k)&&formula_named(t,k,named)){formula_set(out,n);break;}
+          }
+        }
+      }else{
+        // The climb, as the step alone (`CHILD`, `DESCENDANT`, `FOLLOWING`), then within the candidates.
+        if(op==14u){
+          FORMULA_EACH(from,fw,lane,width,n)if(formula_named(t,n,named)){parents++;uint p=tape_parent(slabs,d,n);if(p!=TAPE_NONE&&formula_get(cand,p))formula_set(out,p);}
+        }else if(op==15u){
+          FORMULA_EACH(from,fw,lane,width,n)if(formula_named(t,n,named)){for(uint p=tape_parent(slabs,d,n);p!=TAPE_NONE;p=tape_parent(slabs,d,p)){parents++;if(formula_set(out,p))break;}}
+        }else{
+          // The members' parents, then each such parent's children before its last member.
+          device atomic_uint* parentSet=SLOT(at+1u);
+          for(uint w=lane;w<fw;w+=width)atomic_store_explicit(&parentSet[w],0u,memory_order_relaxed);
+          threadgroup_barrier(mem_flags::mem_device);
+          FORMULA_EACH(from,fw,lane,width,n)if(formula_named(t,n,named)){parents++;uint p=tape_parent(slabs,d,n);if(p!=TAPE_NONE)formula_set(parentSet,p);}
+          threadgroup_barrier(mem_flags::mem_device);
+          FORMULA_EACH(parentSet,fw,lane,width,p){
+            uint last=TAPE_NONE;
+            for(uint k=tape_first_child(slabs,d,p);k!=TAPE_NONE;k=tape_next(slabs,d,k)){childs++;if(formula_get(from,k)&&formula_named(t,k,named))last=k;}
+            if(last!=TAPE_NONE)for(uint k=tape_first_child(slabs,d,p);k!=last;k=tape_next(slabs,d,k)){childs++;formula_set(out,k);}
+          }
+        }
+        threadgroup_barrier(mem_flags::mem_device);
+        // Within the candidates (a descendant's climb marked every ancestor).
+        for(uint w=lane;w<fw;w+=width)atomic_store_explicit(&out[w],atomic_load_explicit(&out[w],memory_order_relaxed)&atomic_load_explicit(&cand[w],memory_order_relaxed),memory_order_relaxed);
+      }
+      threadgroup_barrier(mem_flags::mem_device);
+      for(uint w=lane;w<fw;w+=width)atomic_store_explicit(&cand[w],atomic_load_explicit(&out[w],memory_order_relaxed),memory_order_relaxed);
+      top=c+1u;
+    }else{
+      // An axis step: from slot `src` (a chain's through, then to) into the slot past them, then back to `src`.
+      bool named=(arg&1u)!=0u;
+      uint src=op==11u?top-2u:top-1u,at=top;
+      device atomic_uint* from=SLOT(src);device atomic_uint* out=SLOT(at);
+      for(uint w=lane;w<fw;w+=width){atomic_store_explicit(&out[w],0u,memory_order_relaxed);if(op==10u)atomic_store_explicit(&SLOT(at+1u)[w],0u,memory_order_relaxed);}
+      threadgroup_barrier(mem_flags::mem_device);
+      uint members=0u;
+      if(profile)FORMULA_EACH(op==11u?SLOT(src+1u):from,fw,lane,width,n)members++;
+      FORMULA_COUNT(op,members);
+      if(op==7u){
+        // The parents of the members.
+        FORMULA_EACH(from,fw,lane,width,n)if(formula_named(t,n,named)){parents++;uint p=tape_parent(slabs,d,n);if(p!=TAPE_NONE)formula_set(out,p);}
+      }else if(op==8u){
+        // The ancestors of the members.
+        FORMULA_EACH(from,fw,lane,width,n)if(formula_named(t,n,named)){for(uint p=tape_parent(slabs,d,n);p!=TAPE_NONE;p=tape_parent(slabs,d,p)){parents++;if(formula_set(out,p))break;}}
+      }else if(op==9u){
+        // The children of the members.
+        FORMULA_EACH(from,fw,lane,width,n)for(uint c=tape_first_child(slabs,d,n);c!=TAPE_NONE;c=tape_next(slabs,d,c)){childs++;formula_set(out,c);}
+      }else if(op==10u){
+        // The earlier siblings of the members: the members' parents, then each such parent's children before its last member.
+        device atomic_uint* parentSet=SLOT(at+1u);
+        FORMULA_EACH(from,fw,lane,width,n)if(formula_named(t,n,named)){parents++;uint p=tape_parent(slabs,d,n);if(p!=TAPE_NONE)formula_set(parentSet,p);}
+        threadgroup_barrier(mem_flags::mem_device);
+        FORMULA_EACH(parentSet,fw,lane,width,p){
+          uint last=TAPE_NONE;
+          for(uint c=tape_first_child(slabs,d,p);c!=TAPE_NONE;c=tape_next(slabs,d,c)){childs++;if(formula_get(from,c)&&formula_named(t,c,named))last=c;}
+          if(last!=TAPE_NONE)for(uint c=tape_first_child(slabs,d,p);c!=last;c=tape_next(slabs,d,c)){childs++;formula_set(out,c);}
+        }
+      }else{
+        // A chain: the parents of `to`'s members, and on up through `through`'s.
+        device atomic_uint* through=SLOT(src);device atomic_uint* to=SLOT(src+1u);
+        FORMULA_EACH(to,fw,lane,width,n){
+          if(!formula_named(t,n,named))continue;
+          for(uint p=tape_parent(slabs,d,n);p!=TAPE_NONE;p=tape_parent(slabs,d,p)){
+            parents++;
+            if(formula_set(out,p))break;
+            if(!formula_get(through,p)||!formula_named(t,p,named))break;
+          }
+        }
+      }
+      threadgroup_barrier(mem_flags::mem_device);
+      for(uint w=lane;w<fw;w+=width)atomic_store_explicit(&from[w],atomic_load_explicit(&out[w],memory_order_relaxed),memory_order_relaxed);
+      top=src+1u;
+    }
+    threadgroup_barrier(mem_flags::mem_device);
+  }
+  FORMULA_COUNT(16u,parents);
+  FORMULA_COUNT(17u,childs);
+  #undef FORMULA_COUNT
+  // The anchor into its rule's row, in the batch's numbering: a file's word spans two of the row's.
+  device atomic_uint* anchor=SLOT(0u);
+  uint sh=d.nodeBase%32u;
+  for(uint i=0u;i<formula.targetCount;i++){
+    FormulaTarget target=targets[formula.targetStart+i];
+    device atomic_uint* row=roots+target.row;
+    for(uint w=lane;w<fw;w+=width){
+      uint bits=atomic_load_explicit(&anchor[w],memory_order_relaxed),valid=VALID(w),at=(d.nodeBase+w*32u)/32u;
+      if(target.mode==0u){
+        if(bits==0u)continue;
+        atomic_fetch_or_explicit(&row[at],bits<<sh,memory_order_relaxed);
+        if(sh!=0u)atomic_fetch_or_explicit(&row[at+1u],bits>>(32u-sh),memory_order_relaxed);
+      }else{
+        atomic_fetch_and_explicit(&row[at],~(valid<<sh)|(bits<<sh),memory_order_relaxed);
+        if(sh!=0u)atomic_fetch_and_explicit(&row[at+1u],~(valid>>(32u-sh))|(bits>>(32u-sh)),memory_order_relaxed);
+      }
+    }
+  }
+  #undef SLOT
+  #undef VALID
+}

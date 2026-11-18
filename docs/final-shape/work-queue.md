@@ -579,6 +579,10 @@ formulas); on Metal every label pass is a micro walk per (pass, start) and the r
 label bits, and each walk's starts read its anchor's bits; 0036's formula passes then run on the device as formulas
 too, not as walks from every start.
 
+- **Done** (0365 §8): the device evaluates the anchors (`label_leaves`, `label_formula`) for the label passes past the
+  recursive groups, the wave's listed roots and the root records. Left: text tests on the device (dropped there now),
+  and 0036's formula passes as device formulas (0365, Not yet 1 and 2).
+
 ### Q24. The wave's labelling: about 80 s of 93 s process CPU outside its stages
 
 Found 2026-11-17 (measuring 0365, `anchored_walks_find_the_unanchored_roots`, 31 waves on 10 of corpus0's files,

@@ -869,6 +869,106 @@ fn anchored_walks_find_the_unanchored_roots() {
     assert!(!crate::code_rule_dsl::prof::on() || dropped > 0, "the anchors dropped no start");
 }
 
+/// Decision 0365 on Metal: the anchors evaluated on the device (`label_formula`), for the label passes past the
+/// recursive groups, the wave's listed roots and the root records' walks. With and without them (`RERAIL_ANCHORS`),
+/// on Metal both: the settled findings of the wave's roots are the same, and so are the root records from every node.
+#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[test]
+fn on_metal_anchored_walks_find_the_unanchored_roots() {
+    use super::compile_matcher::Backend;
+    use crate::code_rule_dsl::transducer::packed::RootJobs;
+    let mut tapes = fixtures();
+    if std::env::var_os("RERAIL_S1_FILES").is_none() {
+        tapes.truncate(6);
+    }
+    let compiled = clauses();
+    let lowered: Vec<_> = compiled
+        .iter()
+        .flat_map(|(_, compiled)| python_matchers(compiled).filter_map(|(_, grammar)| Some((grammar, LoweredMatcher::lower(&match_tree(grammar).ok()?).ok()?))).collect::<Vec<_>>())
+        .collect();
+    // Every third wave of a dozen clauses: a few seconds a mode.
+    let chunks: Vec<_> = lowered.chunks(12).step_by(3).collect();
+    let waves: Vec<LoweredWave> = chunks.iter().map(|chunk| LoweredWave::new(&chunk.iter().map(|(_, m)| m).collect::<Vec<_>>()).unwrap()).collect();
+    let every: Vec<Vec<u32>> = tapes.iter().map(|tape| (0..tape.transducer_len() as u32).collect()).collect();
+    type Records = Vec<Option<Vec<BTreeSet<String>>>>;
+    let run = |mode: &str| {
+        // SAFETY: nextest runs each test in a process of its own.
+        unsafe { std::env::set_var("RERAIL_ANCHORS", mode) };
+        drop(std::mem::take(&mut *crate::code_rule_dsl::prof::stages()));
+        let started = std::time::Instant::now();
+        let found: Vec<_> = waves
+            .iter()
+            .map(|wave| {
+                let active = vec![vec![true; tapes.len()]; wave.clauses.len()];
+                let roots = wave.roots_batch(Backend::MetalInterpreter, &tapes, &active).ok().map(|(roots, run)| (roots, run.limited, run.metal));
+                // The root records from every node (as the engine's demand runs them, `waves::matches`).
+                let programs = wave.programs();
+                let jobs = RootJobs { programs: programs.iter().collect(), starts: vec![every.clone(); programs.len()] };
+                let records: Option<Records> = wave.labelled_metal(&tapes, &active, Some(&jobs)).ok().map(|(_, outcome)| {
+                    outcome
+                        .records
+                        .into_iter()
+                        .map(|program| program.map(|files| files.into_iter().map(|records| records.into_iter().map(|record| format!("{record:?}")).collect()).collect()))
+                        .collect()
+                });
+                (roots, records)
+            })
+            .collect();
+        let elapsed = started.elapsed();
+        // Under `RERAIL_PROF` (and `RERAIL_GPU_KERNEL_TIMES`, each kernel's device time): where the time went.
+        let counts = std::mem::take(&mut *crate::code_rule_dsl::prof::stages());
+        let mut kernels: Vec<_> = counts.iter().filter(|(name, _)| name.starts_with("kernel_us.") || name.starts_with("gpu.") || name.starts_with("formula.")).map(|(name, &(time, calls))| (name.clone(), time, calls)).collect();
+        kernels.sort_by_key(|(_, time, calls)| std::cmp::Reverse((*time, *calls)));
+        for (name, time, calls) in kernels.iter().take(30) {
+            eprintln!("  {mode:>3} {name:<36} {:>9.1} ms {calls:>10}", time.as_secs_f64() * 1e3);
+        }
+        (found, elapsed)
+    };
+    // Warm: the pipelines and programs compiled before either timed run.
+    let _ = run("on");
+    let (unanchored, plain) = run("off");
+    let (anchored, with) = run("on");
+    unsafe { std::env::remove_var("RERAIL_ANCHORS") };
+    let settled = |found: &(Vec<Vec<BTreeSet<u32>>>, Vec<(usize, usize)>, bool), w: usize, c: usize, t: usize| -> BTreeSet<u32> {
+        if !found.1.contains(&(c, t)) {
+            return found.0[c][t].clone();
+        }
+        let root = Root::doc(tapes[t].clone());
+        let mut work = usize::MAX;
+        found.0[c][t].iter().copied().filter(|&n| chunks[w][c].0.match_root(node_at(&root, n), &mut work).ok().flatten().is_some()).collect()
+    };
+    let (mut differ, mut compared, mut roots, mut records) = (Vec::new(), 0, 0, 0);
+    for (w, ((a, ar), (u, ur))) in anchored.iter().zip(&unanchored).enumerate() {
+        if let (Some(a), Some(u)) = (a, u)
+            && a.2
+            && u.2
+        {
+            compared += 1;
+            for c in 0..a.0.len() {
+                for t in 0..tapes.len() {
+                    let (with, without) = (settled(a, w, c, t), settled(u, w, c, t));
+                    roots += without.len();
+                    if with != without {
+                        differ.push(format!("wave {w} clause {c} tape {t}: {} roots with, {} without", with.len(), without.len()));
+                    }
+                }
+            }
+        }
+        if let (Some(a), Some(u)) = (ar, ur) {
+            for (c, (a, u)) in a.iter().zip(u).enumerate() {
+                let (Some(a), Some(u)) = (a, u) else { continue };
+                records += u.iter().map(BTreeSet::len).sum::<usize>();
+                for (t, (a, u)) in a.iter().zip(u).enumerate().filter(|(_, (a, u))| a != u) {
+                    differ.push(format!("wave {w} program {c} tape {t}: {} records with, {} without", a.len(), u.len()));
+                }
+            }
+        }
+    }
+    eprintln!("metal anchors: {compared} of {} waves compared on {} tapes, {roots} roots, {records} records; {plain:?} without, {with:?} with", waves.len(), tapes.len());
+    assert!(compared * 2 > waves.len() && roots > 0 && records > 0, "most waves ran on Metal ({compared} of {}), with roots ({roots}) and records ({records})", waves.len());
+    assert!(differ.is_empty(), "anchored walks differ on Metal: {differ:#?}");
+}
+
 /// The spike's anchor measure (prior work, ast-index-spike S151: anchor rows per answer, 1.05 there) for the wave:
 /// over the fixtures (10 unless `RERAIL_S1_FILES` says), each clause's candidate roots (its domain past its entry,
 /// where its root walk starts) against the roots it finds, the root walk's steps, and the rows its label passes

@@ -25,6 +25,8 @@ use metal::{Buffer, CommandBuffer};
 use std::collections::{BTreeMap, HashMap};
 use crate::code_rule_dsl::residency::slabs::ResidentParts as _;
 use crate::code_rule_dsl::tape::DERIVED_CLASS_BASE;
+pub use crate::code_rule_dsl::transducer::packed::compile_sets::DeviceFormula;
+use crate::code_rule_dsl::transducer::packed::compile_sets;
 pub use crate::code_rule_dsl::transducer::packed::device::{Outcome, RootJobs, RootsFound};
 
 /// A pass writes the label `target` (an index, not a class); labels it reads are its classes.
@@ -70,13 +72,17 @@ pub(in crate::code_rule_dsl) enum Pass<'a> {
 /// thread takes a pass and a group of 64 of a document's nodes and finds the group's roots from
 /// the tape's code bytes (`root_mask`). Listed roots (a clause's prefilter candidates, few and
 /// scattered) are a row of bits over the batch's nodes.
+///
+/// Either may have an anchor (decision 0365): a formula `label_formula` evaluates on the device before the walks
+/// of its level, into a row of bits the rule's roots are also in (a rule over codes: its row; listed: the list's
+/// row, the nodes outside the anchor cleared). The host's view of the roots (`nodes`) is the rule's, a superset.
 #[derive(Debug)]
 pub(in crate::code_rule_dsl) enum Roots {
     /// The nodes whose kind is one of `kinds` (any where `None`) and whose code passes `entry`
     /// (`(KIND, kind)` or `(SUPERTYPE, class)`), in the files `active` marks.
-    Codes { kinds: Option<Vec<u16>>, entry: Vec<(u8, u16)>, active: Vec<bool> },
+    Codes { kinds: Option<Vec<u16>>, entry: Vec<(u8, u16)>, active: Vec<bool>, anchor: Option<std::sync::Arc<DeviceFormula>> },
     /// Per file, its listed nodes (document-local, ascending).
-    Listed(Vec<Vec<u32>>),
+    Listed(Vec<Vec<u32>>, Option<std::sync::Arc<DeviceFormula>>),
 }
 
 impl Roots {
@@ -101,8 +107,8 @@ impl Roots {
     /// The roots in file `file` on the host, ascending (the CPU's readers and the counters).
     pub(in crate::code_rule_dsl) fn nodes<'a>(&'a self, file: usize, tape: &'a TapeDoc) -> Box<dyn Iterator<Item = u32> + 'a> {
         match self {
-            Self::Listed(lists) => Box::new(lists.get(file).into_iter().flatten().copied()),
-            Self::Codes { kinds, entry, active } => {
+            Self::Listed(lists, _) => Box::new(lists.get(file).into_iter().flatten().copied()),
+            Self::Codes { kinds, entry, active, .. } => {
                 if !active.get(file).copied().unwrap_or(false) {
                     return Box::new(std::iter::empty());
                 }
@@ -117,18 +123,36 @@ impl Roots {
     /// `active` marks; a list, where it has some).
     fn runs_in(&self, file: usize) -> bool {
         match self {
-            Self::Listed(lists) => lists.get(file).is_some_and(|list| !list.is_empty()),
+            Self::Listed(lists, _) => lists.get(file).is_some_and(|list| !list.is_empty()),
             Self::Codes { active, .. } => active.get(file).copied().unwrap_or(false),
         }
     }
 
-    /// This rule as the device reads it (`root_mask`), appended to `words`: its kind (0 over codes,
-    /// 1 listed); over codes, a bit per file it runs in, then its test (`device_rule`); listed,
-    /// its nodes as a row of bits over the batch's nodes (two words past the last, which a 64-bit
-    /// window at the end reads).
-    fn table(&self, files: &[TapeDoc], words: &mut Vec<u32>) -> Result<(), Error> {
+    /// The rule's anchor, if it has one.
+    pub(in crate::code_rule_dsl) fn anchor(&self) -> Option<&std::sync::Arc<DeviceFormula>> {
         match self {
-            Self::Codes { active, .. } => {
+            Self::Codes { anchor, .. } | Self::Listed(_, anchor) => anchor.as_ref(),
+        }
+    }
+
+    /// This rule as the device reads it (`root_mask`), appended to `words`: its kind (0 over codes,
+    /// 1 listed, 2 over codes with an anchor); over codes, a bit per file it runs in, then its test
+    /// (`device_rule`); listed, its nodes as a row of bits over the batch's nodes. With an anchor,
+    /// over codes: the offset of the rule without it, the anchor's row (zero: the formula sets it),
+    /// then that rule. A row has two words past the last, which a 64-bit window at the end reads.
+    /// With an anchor: the row's word, and whether the formula sets it (0, codes) or clears it (1,
+    /// listed).
+    fn table(&self, files: &[TapeDoc], words: &mut Vec<u32>) -> Result<Option<(u32, u32)>, Error> {
+        let nodes = files.iter().map(TapeDoc::transducer_len).sum::<usize>();
+        match self {
+            Self::Codes { active, anchor, .. } => {
+                // With an anchor: 2, the codes rule's offset from here, the row, then the rule as one without.
+                let row = anchor.as_ref().map(|_| {
+                    let at = words.len();
+                    words.extend([2, (2 + nodes.div_ceil(32) + 2) as u32]);
+                    words.resize(at + 2 + nodes.div_ceil(32) + 2, 0);
+                    (at + 2) as u32
+                });
                 words.push(0);
                 let mut bits = vec![0_u32; files.len().div_ceil(32)];
                 for file in (0..files.len()).filter(|&file| active.get(file).copied().unwrap_or(false)) {
@@ -136,10 +160,12 @@ impl Roots {
                 }
                 words.extend(bits);
                 words.extend(self.device_rule()?);
+                if let Some(row) = row {
+                    return Ok(Some((row, 0)));
+                }
             }
-            Self::Listed(lists) => {
+            Self::Listed(lists, anchor) => {
                 words.push(1);
-                let nodes = files.iter().map(TapeDoc::transducer_len).sum::<usize>();
                 let row = words.len();
                 words.resize(row + nodes.div_ceil(32) + 2, 0);
                 let mut base = 0;
@@ -150,9 +176,12 @@ impl Roots {
                     }
                     base += tape.transducer_len();
                 }
+                if anchor.is_some() {
+                    return Ok(Some((row as u32, 1)));
+                }
             }
         }
-        Ok(())
+        Ok(None)
     }
 }
 
@@ -166,6 +195,8 @@ const ROOT_GROUP: usize = 64;
 struct RootTable {
     words: Vec<u32>,
     by_rule: HashMap<usize, (u32, bool)>,
+    /// By rule, its anchor's row and mode (`Roots::table`), for `label_formula`.
+    anchors: HashMap<usize, (u32, u32)>,
 }
 
 impl RootTable {
@@ -198,7 +229,9 @@ impl RootTable {
             return Ok(*found);
         }
         let at = self.words.len() as u32;
-        roots.table(files, &mut self.words)?;
+        if let Some(row) = roots.table(files, &mut self.words)? {
+            self.anchors.insert(std::sync::Arc::as_ptr(roots) as usize, row);
+        }
         let found = (at, (0..files.len()).any(|file| roots.runs_in(file)));
         self.by_rule.insert(std::sync::Arc::as_ptr(roots) as usize, found);
         Ok(found)
@@ -259,6 +292,33 @@ const ROOT_STACK_WORDS: usize = 32 * 31;
 const _: () = assert!(ROOT_POOL * ROOT_STACK_WORDS <= STACK_WORDS);
 /// A deep group walk's device stack: 32 `MicroFrame`s of 17 words, per thread launched.
 const GROUP_STACK_WORDS: usize = 32 * 17;
+
+/// A formula's word that is a leaf (decision 0365): a test of the node alone, read for every formula by `label_leaves`.
+fn formula_leaf(word: u32) -> bool {
+    use compile_sets::device_ops;
+    let (op, arg) = (word & 255, word >> 8);
+    matches!(op, device_ops::KIND | device_ops::FIELD | device_ops::FLAGS | device_ops::HAS_NEXT | device_ops::HAS_BELOW)
+        || (op == device_ops::CLASS && arg < u32::from(DERIVED_CLASS_BASE))
+}
+
+/// A walk's anchor (decision 0365): `Set::anchor` of its micro walk, its text tests dropped (the device's anchors read no
+/// text row). `None` where it tests no more than a rule over codes does (`narrowing`).
+pub(in crate::code_rule_dsl) fn anchor_set(walk: &Micro) -> Option<compile_sets::Set> {
+    let set = compile_sets::Set::anchor(&walk.words, &|_| false);
+    narrowing(&set).map(|_| set)
+}
+
+/// `set` as the device evaluates it, where it tests more than kinds and grammar supertypes (which a rule over codes and
+/// a walk's entry test already): an axis step, a label, a field or flags.
+pub(in crate::code_rule_dsl) fn narrowing(set: &compile_sets::Set) -> Option<std::sync::Arc<DeviceFormula>> {
+    use compile_sets::device_ops;
+    let formula = set.device()?;
+    let narrows = formula.words.iter().any(|&word| {
+        let (op, arg) = (word & 255, word >> 8);
+        !matches!(op, device_ops::ALL | device_ops::KIND | device_ops::AND | device_ops::OR) && !(op == device_ops::CLASS && arg < u32::from(DERIVED_CLASS_BASE))
+    });
+    narrows.then(|| std::sync::Arc::new(formula))
+}
 
 /// The flushed roots as `RootsFound`: each record to its item's (program, file, task), its
 /// nodes back to the file's, sorted by task and the walk's order.
@@ -649,8 +709,12 @@ fn label_rows(plan: &Plan<'_>, micro: bool) -> Option<(Vec<u32>, Vec<u32>)> {
     };
     for pass in plan.steps.iter().flat_map(|(_, levels)| levels).flatten() {
         match pass {
-            Pass::Program { target, program, .. } | Pass::Count { target, program, .. } => {
+            Pass::Program { target, program, roots, .. } | Pass::Count { target, program, roots, .. } => {
                 mark(*target)?;
+                // The labels its anchor reads (decision 0365).
+                for &label in roots.anchor().iter().flat_map(|anchor| &anchor.labels) {
+                    mark(label)?;
+                }
                 for &word in &Micro::of(program)?.words {
                     let (op, _, arg) = super::super::split(word);
                     if op == super::super::SUPERTYPE && arg >= DERIVED_CLASS_BASE {
@@ -769,7 +833,7 @@ const TAPE_VIEW: &str = concat!("#include <metal_stdlib>\nusing namespace metal;
 const SOURCE: &str = concat!("#include <metal_stdlib>\nusing namespace metal;\n", include_str!("metal_tape_reads.metal"), include_str!("metal_tape.metal"), include_str!("metal_work_queue.metal"), include_str!("metal_label_passes.metal"));
 /// Where a label kernel binds the batch's four slabs (`Slabs`): past every other buffer.
 const SLAB_SLOT: u64 = 27;
-const KERNELS: [&str; 14] = [
+const KERNELS: [&str; 16] = [
     "label_sink",
     "label_settle",
     "label_round",
@@ -784,7 +848,17 @@ const KERNELS: [&str; 14] = [
     "label_group_64",
     "label_group_128",
     "label_group_256",
+    "label_formula",
+    "label_leaves",
 ];
+/// `label_formula` and `label_leaves` in `KERNELS` (decision 0365).
+const FORMULA_KERNEL: usize = 14;
+const LEAVES_KERNEL: usize = 15;
+/// `label_formula`'s threads a (file, formula).
+const FORMULA_WIDTH: u64 = 128;
+/// `label_formula`'s scratch: the formulas of a dispatch each have their own, so a level's formulas take as many
+/// dispatches as this holds.
+const FORMULA_SCRATCH_BYTES: usize = 32 << 20;
 /// The fused group kernels in `KERNELS` (`Runner::group`): 8, 32, 64, 128 and 256 frames a walk.
 const GROUP_KERNELS: [usize; 5] = [7, 8, 11, 12, 13];
 /// The frames of each fused group kernel (`GROUP_KERNELS`). A walk takes the fewest that hold its
@@ -1036,6 +1110,13 @@ struct Runner<'a> {
     /// Every pass's roots as rules (`RootTable`), one buffer for the run (`root_words`).
     root_table: RootTable,
     root_words: Option<MappedBuffer>,
+    /// The rules whose anchors were evaluated this run (`anchors`), by address.
+    anchored: std::collections::HashSet<usize>,
+    /// Under `RERAIL_PROF`, each `label_formula` group's counts, read after the flush.
+    formula_stats: Vec<MappedBuffer>,
+    /// The anchors' leaf tests for the whole run (`size`), and their rows once read (`formulas`).
+    run_leaves: Vec<u32>,
+    run_leaf_rows: Option<MappedBuffer>,
     /// The loop tier's stacks (`MICRO_POOL` of them), committed only as walks use them.
     stacks: Option<MappedBuffer>,
     /// The deep fused groups' stacks, one buffer for all of them: the groups run one after
@@ -1400,6 +1481,10 @@ fn encode(
         walks: HashMap::new(),
         root_table: RootTable::default(),
         root_words: None,
+        anchored: Default::default(),
+        formula_stats: Vec::new(),
+        run_leaves: Vec::new(),
+        run_leaf_rows: None,
         stacks: kept.as_mut().and_then(|kept| kept.stacks.as_ref().map(|stacks| MappedBuffer::wrap(stacks.buffer.clone()))),
         group_stacks: [None, None, None, None, None],
         encoded: false,
@@ -1465,6 +1550,18 @@ fn encode(
     mark("encoded");
     crate::code_rule_dsl::prof::time("gpu.flush", || runner.flush())?;
     mark("flushed");
+    for stats in &runner.formula_stats {
+        let words = unsafe { std::slice::from_raw_parts(stats.buffer.contents().cast::<u32>(), 21) };
+        let names = ["", "", "", "", "", "", "", "child", "descendant", "parent", "following", "chain", "", "", "child_in", "descendant_in", "following_in"];
+        for (op, name) in names.iter().enumerate().filter(|(_, name)| !name.is_empty()) {
+            crate::code_rule_dsl::prof::count_named(format!("formula.members.{name}"), words[op] as usize);
+        }
+        crate::code_rule_dsl::prof::count("formula.parent_reads", words[16] as usize);
+        crate::code_rule_dsl::prof::count("formula.child_reads", words[17] as usize);
+        crate::code_rule_dsl::prof::count("formula.groups", words[18] as usize);
+        crate::code_rule_dsl::prof::count("formula.within_down", words[19] as usize);
+        crate::code_rule_dsl::prof::count("formula.within_climb", words[20] as usize);
+    }
     // A micro walk that outgrew its frames: the passes again on the interpreter.
     if runner.flag(0) & 2 != 0 {
         crate::code_rule_dsl::prof::count("gpu.frames_overflow", 1);
@@ -1784,6 +1881,20 @@ impl Runner<'_> {
             }
         }
         self.root_table.prefix(self.files);
+        // The anchors' leaves for the run (decision 0365), where their rows fit: no leaf reads a label.
+        let mut leaves = Vec::new();
+        for pass in plan.steps.iter().flat_map(|(_, levels)| levels).flatten() {
+            if let Pass::Program { roots, .. } | Pass::Count { roots, .. } = pass {
+                for &word in roots.anchor().iter().flat_map(|anchor| &anchor.words).filter(|&&word| formula_leaf(word)) {
+                    if !leaves.contains(&word) {
+                        leaves.push(word);
+                    }
+                }
+            }
+        }
+        if leaves.len() * self.region() * 4 <= FORMULA_SCRATCH_BYTES {
+            self.run_leaves = leaves;
+        }
         crate::code_rule_dsl::prof::count("size.root_words", self.root_table.words.len());
         self.root_words = Some(MappedBuffer::from_slice(self.device, &self.root_table.words)?);
         // A sweeping group is one batch of all its programs, by its address; a level is one by
@@ -2121,6 +2232,193 @@ impl Runner<'_> {
         Ok(())
     }
 
+    /// The anchors of a level's passes not yet evaluated (decision 0365), by `label_formula`: a threadgroup a file,
+    /// each anchor's formula over the file's nodes into its rule's row, before the level's walks read the rows.
+    /// The labels a formula reads are the levels' before, settled in the command buffer by now; a label test
+    /// reads the label's row in the prefix (`label_rows`).
+    fn anchors(&mut self, passes: &[Pass<'_>]) -> Result<(), Error> {
+        let mut list = Vec::new();
+        for pass in passes {
+            let (Pass::Program { roots, .. } | Pass::Count { roots, .. }) = pass else { continue };
+            let Some(anchor) = roots.anchor() else { continue };
+            let key = std::sync::Arc::as_ptr(roots) as usize;
+            let Some(&(row, mode)) = self.root_table.anchors.get(&key) else { return Err(Error::BackendFailure) };
+            if !self.anchored.insert(key) {
+                continue;
+            }
+            let (rule, _) = self.root_table.at(roots)?;
+            list.push((std::sync::Arc::clone(anchor), row, mode, rule));
+        }
+        let rows = self.root_words.as_ref().ok_or(Error::BackendFailure)?.buffer.clone();
+        self.formulas(&list, &rows)
+    }
+
+    /// `label_formula` over `list` (formula, its row's word in `rows`, mode, rule: `Formula`'s, `u32::MAX` no rule),
+    /// after `label_leaves` (decision 0365): the formulas in groups whose distinct leaf tests' rows fit
+    /// `FORMULA_SCRATCH_BYTES`, each group's leaves read in one pass over the nodes.
+    fn formulas(&mut self, list: &[(std::sync::Arc<DeviceFormula>, u32, u32, u32)], rows: &Buffer) -> Result<(), Error> {
+        if list.is_empty() {
+            return Ok(());
+        }
+        let region = self.region();
+        let most = (FORMULA_SCRATCH_BYTES / 4 / region).max(1);
+        // The run's leaves (`size`), read once at the first level that needs them, where they hold every leaf here.
+        if !self.run_leaves.is_empty() && list.iter().all(|(anchor, ..)| anchor.words.iter().all(|&word| !formula_leaf(word) || self.run_leaves.contains(&word))) {
+            if self.run_leaf_rows.is_none() {
+                let rows = MappedBuffer::untouched::<u32>(self.device, region * self.run_leaves.len())?;
+                let tests = self.run_leaves.clone();
+                self.leaves_pass(&tests, &rows.buffer)?;
+                self.segment_bytes += rows.buffer.length() as usize;
+                self.run_leaf_rows = Some(rows);
+            }
+            let (tests, leaves) = (self.run_leaves.clone(), self.run_leaf_rows.as_ref().expect("the run's leaves").buffer.clone());
+            return self.formula_group(list, &tests, Some(&leaves), region, rows);
+        }
+        let mut at = 0;
+        while at < list.len() {
+            // The group: formulas while their leaves fit (one at least).
+            let mut tests = Vec::<u32>::new();
+            let mut end = at;
+            while end < list.len() {
+                let mut with = tests.clone();
+                for &word in list[end].0.words.iter().filter(|&&word| formula_leaf(word)) {
+                    if !with.contains(&word) {
+                        with.push(word);
+                    }
+                }
+                if end > at && with.len() > most {
+                    break;
+                }
+                tests = with;
+                end += 1;
+            }
+            self.formula_group(&list[at..end], &tests, None, region, rows)?;
+            at = end;
+        }
+        Ok(())
+    }
+
+    /// A leaf's row, and a formula's scratch a slot: each file's words at its region (`FORMULA_REGION`).
+    fn region(&self) -> usize {
+        self.words + 2 * self.files.len() + 2
+    }
+
+    /// `label_leaves`: `tests`' rows into `leaves`.
+    fn leaves_pass(&mut self, tests: &[u32], leaves: &Buffer) -> Result<(), Error> {
+        if tests.is_empty() {
+            return Ok(());
+        }
+        let tests_buffer = self.upload(tests)?;
+        let docs = self.tapes.docs.buffer.clone();
+        let shape = Shape { target_count: tests.len() as u32, recursive: self.region() as u32, ..self.shape() };
+        let encoder = self.command.new_compute_command_encoder();
+        encoder.set_label(KERNELS[LEAVES_KERNEL]);
+        crate::code_rule_dsl::prof::count_named(format!("kernel.{}", KERNELS[LEAVES_KERNEL]), 1);
+        crate::code_rule_dsl::prof::count("gpu.anchor_leaves", tests.len());
+        encoder.set_compute_pipeline_state(&self.kernels[LEAVES_KERNEL]);
+        for (index, buffer) in [&docs, &tests_buffer, leaves].into_iter().enumerate() {
+            encoder.set_buffer(index as u64, Some(buffer), 0);
+        }
+        encoder.set_bytes(3, std::mem::size_of::<Shape>() as u64, std::ptr::from_ref(&shape).cast());
+        self.bind_slabs(encoder);
+        encoder.checked_dispatch_thread_groups(&self.command, MTLSize::new(self.files.len().max(1) as u64, 1, 1), MTLSize::new(FORMULA_WIDTH, 1, 1));
+        encoder.end_encoding();
+        self.outcome.dispatches += 1;
+        self.encoded = true;
+        self.split(KERNELS[LEAVES_KERNEL]);
+        Ok(())
+    }
+
+    /// One group of `formulas`: its leaves (`tests`; read here unless `leaves` holds them), then its formulas in
+    /// dispatches of `FORMULA_SCRATCH_BYTES` of scratch.
+    fn formula_group(&mut self, list: &[(std::sync::Arc<DeviceFormula>, u32, u32, u32)], tests: &[u32], leaves: Option<&Buffer>, region: usize, rows: &Buffer) -> Result<(), Error> {
+        use crate::code_rule_dsl::transducer::packed::compile_sets::device_ops;
+        // Identical formulas once, each with its targets.
+        let mut unique = Vec::<(&std::sync::Arc<DeviceFormula>, Vec<[u32; 3]>)>::new();
+        for (anchor, row, mode, rule) in list {
+            match unique.iter_mut().find(|(known, _)| *known == anchor) {
+                Some((_, targets)) => targets.push([*row, *mode, *rule]),
+                None => unique.push((anchor, vec![[*row, *mode, *rule]])),
+            }
+        }
+        let mut headers = Vec::<u32>::new();
+        let mut targets = Vec::<[u32; 3]>::new();
+        let mut words = Vec::<u32>::new();
+        let mut depth = 0_u32;
+        for (anchor, to) in &unique {
+            headers.extend([targets.len() as u32, to.len() as u32, words.len() as u32, anchor.words.len() as u32, 0]);
+            targets.extend(to);
+            for &word in &anchor.words {
+                let (op, arg) = (word & 255, word >> 8);
+                words.push(if let Some(index) = tests.iter().position(|&test| test == word) {
+                    device_ops::LEAF | (index as u32) << 8
+                } else if op == device_ops::CLASS {
+                    // A label by its row in the prefix (`label_rows`); one the prefix lacks tests every node (a superset).
+                    let label = arg - u32::from(DERIVED_CLASS_BASE);
+                    let row = self.label_rows.as_ref().map_or(Some(label), |rows| rows.get(label as usize).copied().filter(|&row| row != u32::MAX));
+                    row.map_or(device_ops::ALL, |row| op | (u32::from(DERIVED_CLASS_BASE) + row) << 8)
+                } else {
+                    word
+                });
+            }
+            depth = depth.max(anchor.depth);
+        }
+        let count = unique.len();
+        crate::code_rule_dsl::prof::count("gpu.anchors", list.len());
+        crate::code_rule_dsl::prof::count("gpu.anchors_distinct", count);
+        let (headers, words, targets) = (self.upload(&headers)?, self.upload(&words)?, self.upload(&targets)?);
+        let own = match leaves {
+            Some(_) => None,
+            None => {
+                let own = MappedBuffer::untouched::<u32>(self.device, region * tests.len().max(1))?;
+                self.leaves_pass(tests, &own.buffer)?;
+                Some(own)
+            }
+        };
+        let leaves = leaves.cloned().unwrap_or_else(|| own.as_ref().expect("the group's leaves").buffer.clone());
+        let stride = depth as usize * region;
+        let per = (FORMULA_SCRATCH_BYTES / 4 / stride).clamp(1, count);
+        let scratch = MappedBuffer::untouched::<u32>(self.device, stride * per)?;
+        let docs = self.tapes.docs.buffer.clone();
+        let head = self.tapes.supertypes.buffer.clone();
+        let base = Shape { round: depth, recursive: region as u32, ..self.shape() };
+        let state = self.kernels[FORMULA_KERNEL].clone();
+        // Profiling (`RERAIL_PROF`): each step kind's members, the parent and child reads, the (file, formula)s.
+        let profile = crate::code_rule_dsl::prof::on();
+        let stats = MappedBuffer::zeroed::<u32>(self.device, if profile { 21 } else { 1 })?;
+        for first in (0..count).step_by(per) {
+            let formulas = per.min(count - first);
+            let shape = Shape { item_count: first as u32, target_count: formulas as u32, queue: stride as u32, profile: u32::from(profile), ..base };
+            let encoder = self.command.new_compute_command_encoder();
+            encoder.set_label(KERNELS[FORMULA_KERNEL]);
+            crate::code_rule_dsl::prof::count_named(format!("kernel.{}", KERNELS[FORMULA_KERNEL]), 1);
+            encoder.set_compute_pipeline_state(&state);
+            for (index, buffer) in [&docs, &head, &headers, &words, rows, &scratch.buffer].into_iter().enumerate() {
+                encoder.set_buffer(index as u64, Some(buffer), 0);
+            }
+            encoder.set_bytes(6, std::mem::size_of::<Shape>() as u64, std::ptr::from_ref(&shape).cast());
+            encoder.set_buffer(7, Some(&leaves), 0);
+            encoder.set_buffer(8, Some(&stats.buffer), 0);
+            encoder.set_buffer(9, Some(&targets), 0);
+            self.bind_slabs(encoder);
+            encoder.checked_dispatch_thread_groups(&self.command, MTLSize::new(self.files.len().max(1) as u64, formulas as u64, 1), MTLSize::new(FORMULA_WIDTH, 1, 1));
+            encoder.end_encoding();
+            self.outcome.dispatches += 1;
+            self.split(KERNELS[FORMULA_KERNEL]);
+        }
+        self.segment_bytes += scratch.buffer.length() as usize;
+        self.retained.push(scratch);
+        if let Some(own) = own {
+            self.segment_bytes += own.buffer.length() as usize;
+            self.retained.push(own);
+        }
+        if profile {
+            self.formula_stats.push(stats);
+        }
+        self.encoded = true;
+        Ok(())
+    }
+
     fn shape(&self) -> Shape {
         Shape {
             node_count: self.nodes as u32,
@@ -2199,6 +2497,10 @@ impl Runner<'_> {
             });
         }
         if !programs.is_empty() {
+            // A level past the recursive groups: its walks start within their anchors (decision 0365).
+            if round.is_none() {
+                self.anchors(passes)?;
+            }
             self.programs(passes.as_ptr() as usize)?;
             self.walk(passes.as_ptr() as usize)?;
         }
@@ -2553,7 +2855,17 @@ impl Runner<'_> {
             })
             .collect::<Vec<_>>();
         let (largest, mut longest) = (self.files.iter().map(TapeDoc::transducer_len).max().unwrap_or(0), 0);
-        let (mut passes, mut words, mut texts, mut walked) = (Vec::<[u32; 4]>::new(), Vec::<u32>::new(), Vec::<u32>::new(), Vec::new());
+        let (mut passes, mut words, mut texts, mut walked) = (Vec::<[u32; 5]>::new(), Vec::<u32>::new(), Vec::<u32>::new(), Vec::new());
+        // Decision 0365: each walk's anchor, as a row of `texts` past the text rows (`label_formula` sets it), the
+        // walk's starts outside it not walked. A pack's is its members' union.
+        // A pass's fifth word: its anchor's index here until the text rows are known, then its row.
+        let mut anchors = Vec::<std::sync::Arc<DeviceFormula>>::new();
+        let on = crate::code_rule_dsl::transducer::packed::compile_matcher::anchors_on();
+        let mut anchor_of = |set: Option<compile_sets::Set>| -> u32 {
+            let Some(formula) = set.filter(|_| on).and_then(|set| narrowing(&set)) else { return u32::MAX };
+            anchors.push(formula);
+            (anchors.len() - 1) as u32
+        };
         let mut tiers: [Vec<[u32; 4]>; 2] = Default::default();
         // Root programs of one entry test as one walk (t1 spec-fusion §4.3, §4.4; the host's
         // `PackedDemand::packs`): a pack's passes follow the programs', its items are the union of
@@ -2598,7 +2910,7 @@ impl Runner<'_> {
         for (at, program) in jobs.programs.iter().enumerate() {
             if packed[at] {
                 // Walked in its pack.
-                passes.push([0; 4]);
+                passes.push([0; 5]);
                 walked.push(true);
                 continue;
             }
@@ -2607,14 +2919,15 @@ impl Runner<'_> {
                 (0..walk.texts.len()).map(|slot| text_row(walk, program, slot, self.files, &bases, self.words)).collect::<Option<Vec<_>>>()
             });
             let (Some(walk), Some(rows)) = (walk, rows) else {
-                passes.push([0; 4]);
+                passes.push([0; 5]);
                 walked.push(false);
                 continue;
             };
             let text_start = (texts.len() / self.words) as u32;
             rows.iter().for_each(|row| texts.extend_from_slice(row));
             // The fourth word: set mode with one label, so the walk ends at its first emit.
-            passes.push([words.len() as u32, walk.words.len() as u32, text_start, u32::from(walk.key_stop())]);
+            let anchor = anchor_of(anchor_set(&walk));
+            passes.push([words.len() as u32, walk.words.len() as u32, text_start, u32::from(walk.key_stop()), anchor]);
             longest = longest.max(walk.words.len());
             match &self.label_rows {
                 None => words.extend_from_slice(&walk.words),
@@ -2638,7 +2951,10 @@ impl Runner<'_> {
             let text_start = (texts.len() / self.words) as u32;
             rows.iter().for_each(|row| texts.extend_from_slice(row));
             let pad = if *set { 1 + pack.emits.len() as u32 } else { 0 };
-            passes.push([words.len() as u32, walk.words.len() as u32, text_start, pad]);
+            // The union of its members' anchors: none where one has none.
+            let members = pack.members.iter().map(|&at| Micro::of(jobs.programs[at]).as_ref().and_then(anchor_set)).collect::<Option<Vec<_>>>();
+            let anchor = anchor_of(members.map(compile_sets::Set::Or));
+            passes.push([words.len() as u32, walk.words.len() as u32, text_start, pad, anchor]);
             longest = longest.max(walk.words.len());
             match &self.label_rows {
                 None => words.extend_from_slice(&walk.words),
@@ -2659,7 +2975,20 @@ impl Runner<'_> {
                 tiers[tier].extend(starts.iter().map(|&start| [pass, file as u32, u32::MAX, bases[file] + start]));
             }
         }
+        drop(anchor_of);
         let packs = packs.into_iter().map(|(pack, ..)| pack).collect::<Vec<_>>();
+        // The anchors' rows past the text rows, zero (two words more, which a file's last word may reach).
+        let first = (texts.len() / self.words) as u32;
+        for pass in &mut passes {
+            if pass[4] != u32::MAX && pass[1] != 0 {
+                pass[4] += first;
+            } else {
+                pass[4] = u32::MAX;
+            }
+        }
+        if !anchors.is_empty() {
+            texts.resize(texts.len() + anchors.len() * self.words + 2, 0);
+        }
         let items = tiers.iter().flatten().copied().collect::<Vec<_>>();
         crate::code_rule_dsl::prof::count("gpu.root_items", items.len());
         // Plan-sized (list step 13): a record per 16 roots, where a root's matches are a few per
@@ -2672,6 +3001,11 @@ impl Runner<'_> {
         let steps = super::super::micro_steps(largest, longest.max(1));
         let (passes, words) = (self.upload(&passes)?, self.upload(&words)?);
         let texts = if texts.is_empty() { self.upload(&[0_u32])? } else { self.upload(&texts)? };
+        if !anchors.is_empty() {
+            crate::code_rule_dsl::prof::count("gpu.root_anchors", anchors.len());
+            let list = anchors.iter().enumerate().map(|(k, formula)| (std::sync::Arc::clone(formula), (first as usize + k) as u32 * self.words as u32, 0, u32::MAX)).collect::<Vec<_>>();
+            self.formulas(&list, &texts)?;
+        }
         let mut offset = 0_u64;
         for (tier, tier_items) in tiers.iter().enumerate() {
             if tier_items.is_empty() {
