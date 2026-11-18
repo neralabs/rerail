@@ -458,7 +458,7 @@ export class SessionNotices {
   #watching = false;
   /** The folders the watch follows (Linux). */
   readonly #followed = new FollowedFolders();
-  /** What the last whole walk saw, which notices are weighed against; undefined until one finished with the watch up. */
+  /** What the last whole walk saw, which notices are weighed against; undefined before the first and while one runs. */
   #seen: WorktreeRead | undefined;
   /** Whether the next pass reads the whole folder. */
   #whole = true;
@@ -515,7 +515,7 @@ export class SessionNotices {
     }
     this.#linked = linked;
     if (this.#refused !== undefined && seen.folders.size < this.#refused) this.#refused = undefined;
-    this.#seen = this.#watching ? seen : undefined;
+    this.#seen = seen;
     this.#whole = this.#follow(seen.folders);
   }
 
