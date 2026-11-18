@@ -79,10 +79,8 @@ export class HookAsk implements StartAsk {
     if (folder === undefined || !hasKeptAnswer(daemon, workspace)) return true;
     const name = join(folder, answerName(workspace));
     this.#unasked = plainFile(name + WAITING) && this.#repeats();
-    if (this.#unasked) return false;
-    const asking = madeAlone(`${name}.${this.#hook}${ASKING}`);
-    this.#mark = asking === undefined ? undefined : { asking, waiting: name + WAITING };
-    return true;
+    if (!this.#unasked) this.#mark = pendingMark(name, this.#hook);
+    return !this.#unasked;
   }
 
   sent(): void {
@@ -141,6 +139,15 @@ export class ServedAsks {
       if (marksRemoved(folder, name, entries)) this.#refused.delete(name);
     }
   }
+}
+
+/**
+ * The pending mark `<name>.<hook>.asking` of the hook `hook`, made where nothing is at its name, with the `.waiting` it
+ * becomes; undefined where something is there or the system refuses it, and the hook then marks nothing.
+ */
+function pendingMark(name: string, hook: string): { readonly asking: string; readonly waiting: string } | undefined {
+  const asking = madeAlone(`${name}.${hook}${ASKING}`);
+  return asking === undefined ? undefined : { asking, waiting: name + WAITING };
 }
 
 /** The names in `folder`; undefined where it cannot be read. */
