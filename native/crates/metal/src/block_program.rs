@@ -130,7 +130,7 @@ fn encoded(inst: &BlockInst, carry: u32) -> [u32; 4] {
         BlockInst::Carry(_) => unreachable!("refused at `run_batch`: Metal runs no fixed point yet"),
         BlockInst::Walk { .. } | BlockInst::Args(..) => unreachable!("the CPU's form only: Metal runs a walk's rounds"),
         BlockInst::BackFill(..) | BlockInst::Load(_) => unreachable!("refused at `run_batch`: Metal runs no backward pass yet"),
-        BlockInst::Early(..) => unreachable!("refused at `run_batch`: Metal runs no `early` yet"),
+        BlockInst::Early(..) | BlockInst::Prefix(..) => unreachable!("refused at `run_batch`: Metal runs no `early` or prefix yet"),
         // `j` in `a`; below 6 the period's pattern in `b` and `imm`.
         BlockInst::Position(j) => {
             let pattern = (0..64u32).filter(|i| u32::from(j) < 6 && i >> j & 1 == 1).fold(0u64, |a, i| a | 1 << i);
@@ -206,10 +206,10 @@ const SLAB_BUFFERS: [u64; crate::slabs::MAX_SLABS] = [0, 16, 17, 18];
 pub static REPEATED_LAUNCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Whether a program starts a file's stream late, which Metal does not generate yet: an
-/// `early` (decision 0330), a file's first lane shifted down; or a prefix (decision 0335), the
-/// token loop's first state past it. Both are the CPU's for now.
+/// `early` (decision 0330), a file's first lane shifted down; or a prefix (decision 0335), its
+/// positions (`prefix`) and the token loop's first state past it. Both are the CPU's for now.
 pub(crate) fn starts_late(p: &BlockNative) -> bool {
-    p.insts.iter().any(|i| matches!(i, BlockInst::Early(..))) || p.records.as_ref().is_some_and(|r| !r.prefix.is_empty())
+    p.insts.iter().any(|i| matches!(i, BlockInst::Early(..) | BlockInst::Prefix(..))) || p.records.as_ref().is_some_and(|r| !r.prefix.is_empty())
 }
 
 /// Run `files` in one launch, each under `programs[file.program]` (decision 0066). `spins` is the
@@ -1360,7 +1360,7 @@ fn emit(
             }
             BlockInst::Position(j) => format!("{m}(0) - {m}((uint({offset}) >> {j}u) & 1u)"),
             BlockInst::Carry(_) => unreachable!("a carry is its group's loop's (`emit`)"),
-            BlockInst::Early(..) => unreachable!("refused at `run_batch`: Metal runs no `early` yet"),
+            BlockInst::Early(..) | BlockInst::Prefix(..) => unreachable!("refused at `run_batch`: Metal runs no `early` or prefix yet"),
             BlockInst::Walk { .. } | BlockInst::Args(..) => unreachable!("the CPU's form only: Metal runs a walk's rounds"),
             // A slot word of a pass before (`native_ir::Passes`): the forward carry's, a block a
             // word, in the output buffer `out`.

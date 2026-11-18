@@ -218,6 +218,7 @@ pub fn first_bits(ops: &[BlockOp], tables: &[ClassTable], v: u16) -> Option<u32>
                 Bounds { zero_from: None, ones: all.then_some((0, None)), zero_past: (!t.member(0, bits)).then_some(0) }
             }
             BlockOp::Within(d) => Bounds { zero_from: None, ones: Some((u32::from(d), Some(u32::from(d)))), zero_past: Some(u32::from(d)) },
+            BlockOp::Prefix(n, _) => Bounds { zero_from: Some(u32::from(n)), ones: None, zero_past: Some(0) },
             BlockOp::And(a, c) => {
                 let (x, y) = (get(a), get(c));
                 let ones = match (x.ones, y.ones) {
@@ -1208,36 +1209,18 @@ impl Lowering {
         }
     }
 
-    /// A prefix's value (`Stmt::Prefix`): at the file's first byte where its bytes follow, and
-    /// at the bytes after it that it covers. Made before the prefix is set, from the file's own
-    /// `within`. Its `n` bytes are a test at delay `n - 1` (at least 1), brought to delay 0 by
-    /// one `early` over the whole of it: every value that reads the prefix reads that `early`,
-    /// so a window past the file's first bytes makes none of it (`native_cpu_bytes`), and a full
-    /// block knows it is zero (`native_cpu_lanes`' `full_words`).
+    /// A prefix's value (`Stmt::Prefix`): the file's first `n` positions, where it starts with
+    /// the prefix's bytes. One leaf (`BlockOp::Prefix`), which an executor makes once a file
+    /// from the file's first word, as simdjson strips a byte order mark before its loop: a full
+    /// block knows it is zero (`native_cpu_lanes`' `full_words`), and a window past the file's
+    /// first bytes makes none of it (`native_cpu_bytes`).
     pub fn prefix_value(&mut self, bytes: &[u8]) -> Result<Val, String> {
         debug_assert!(self.prefix.is_none());
-        let all = self.within_val(0)?;
-        let before = self.prev(all, 1)?;
-        let mut at = self.andnot(all, before)?;
-        for (j, &b) in bytes.iter().enumerate() {
-            let mut set = [0u64; 4];
-            set[usize::from(b) / 64] |= 1 << (b % 64);
-            let x = self.class_set(set);
-            let x = self.next(x, j as u64)?;
-            at = self.and(at, x)?;
+        if !(1..=8).contains(&bytes.len()) {
+            return Err(format!("a prefix of {} bytes: from 1 to 8", bytes.len()));
         }
-        // The test and the bytes after it, at delay `top`, by `prev`s of the test there.
-        let top = (bytes.len() as u8 - 1).max(1);
-        let t = self.at(at, top)?;
-        let mut v = t;
-        for j in 1..bytes.len() {
-            let x = self.prev_op(t, j as u8);
-            v = self.op(BlockOp::Or(v, x));
-        }
-        let v = self.op(BlockOp::Early(v, top));
-        if !first_bits(&self.program.ops, &self.program.tables, v).is_some_and(|s| s <= crate::block::EARLY_BITS) {
-            return Err(format!("a prefix of {} bytes is not a value of the file's first {} bytes", bytes.len(), crate::block::EARLY_BITS));
-        }
+        let word = bytes.iter().enumerate().fold(0u64, |a, (j, &b)| a | u64::from(b) << (8 * j));
+        let v = self.op(BlockOp::Prefix(bytes.len() as u8, word));
         Ok(Val { v, d: 0, dirty: false, set: None })
     }
 

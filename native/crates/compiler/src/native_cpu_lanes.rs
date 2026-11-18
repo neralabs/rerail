@@ -98,7 +98,7 @@ fn weight(inst: &BlockInst, lane: bool, mask: bool) -> usize {
             };
             own + if mask { 9 } else { 0 }
         }
-        BlockInst::Const(_) | BlockInst::Within(_) => 0,
+        BlockInst::Const(_) | BlockInst::Within(_) | BlockInst::Prefix(..) => 0,
         BlockInst::Prev(..) => 6,
         BlockInst::Fill(..) => 9,
         BlockInst::Toggle(_) => 14,
@@ -635,6 +635,8 @@ fn full_words(native: &BlockNative, lanes: &[bool]) -> Vec<Option<u64>> {
         w[at] = match *inst {
             BlockInst::Const(c) => (all(c), all(c)),
             BlockInst::Within(d) => (all(u64::MAX), all(if d == 0 { u64::MAX } else { !((1u64 << d) - 1) })),
+            // None in a full block; in the first, what the file's first bytes say.
+            BlockInst::Prefix(..) => (all(0), NONE),
             _ if lanes[at] => (NONE, NONE),
             BlockInst::Not(a) => {
                 let (x, y) = get(a);
@@ -697,7 +699,7 @@ fn regions(native: &BlockNative, lanes: &[bool], mask: &[bool], users: &[Vec<usi
     for (x, inst) in native.insts.iter().enumerate() {
         let c = |o: u16| conditions[usize::from(o)];
         conditions[x] = match *inst {
-            BlockInst::Const(_) | BlockInst::Within(_) => 0,
+            BlockInst::Const(_) | BlockInst::Within(_) | BlockInst::Prefix(..) => 0,
             BlockInst::And(a, b) => c(a) + c(b),
             BlockInst::AndNot(a, _) => c(a) + 1,
             BlockInst::Prev(a, _) | BlockInst::Early(a, _) => c(a),
@@ -709,7 +711,7 @@ fn regions(native: &BlockNative, lanes: &[bool], mask: &[bool], users: &[Vec<usi
             BlockInst::AndNot(a, p) if matches!(native.insts[usize::from(p)], BlockInst::Prev(q, 1) if q == a) => true,
             BlockInst::And(a, b) => carried[usize::from(a)] || carried[usize::from(b)],
             BlockInst::AndNot(a, _) | BlockInst::Prev(a, _) | BlockInst::Early(a, _) => carried[usize::from(a)],
-            _ => !lanes[x] && inst.operands().is_empty() && !matches!(inst, BlockInst::Const(_) | BlockInst::Within(_)) || matches!(inst, BlockInst::Escaped(_) | BlockInst::Toggle(_) | BlockInst::Fill(..) | BlockInst::Carry(_) | BlockInst::Walk { .. }) || grouped[x],
+            _ => !lanes[x] && inst.operands().is_empty() && !matches!(inst, BlockInst::Const(_) | BlockInst::Within(_) | BlockInst::Prefix(..)) || matches!(inst, BlockInst::Escaped(_) | BlockInst::Toggle(_) | BlockInst::Fill(..) | BlockInst::Carry(_) | BlockInst::Walk { .. }) || grouped[x],
         };
     }
     let mut region_of: Vec<Option<usize>> = vec![None; n];
@@ -849,7 +851,7 @@ fn regions(native: &BlockNative, lanes: &[bool], mask: &[bool], users: &[Vec<usi
 pub fn remade(native: &BlockNative) -> Vec<bool> {
     let pure = native.pure();
     let n = native.insts.len();
-    let mut remade: Vec<bool> = (0..n).map(|x| pure[x] && matches!(native.insts[x], BlockInst::Const(_) | BlockInst::Within(_))).collect();
+    let mut remade: Vec<bool> = (0..n).map(|x| pure[x] && matches!(native.insts[x], BlockInst::Const(_) | BlockInst::Within(_) | BlockInst::Prefix(..))).collect();
     let trial = native.passes_with(&pure);
     for (k, pass) in trial.passes.iter().enumerate().skip(1) {
         let crate::block_native::Pass::Forward { body, .. } = pass else { continue };

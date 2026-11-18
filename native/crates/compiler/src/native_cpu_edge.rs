@@ -223,7 +223,11 @@ fn span(words: usize, lo: i64, from: i64, to: i64) -> Vec<u64> {
 /// One run of both bodies over positions `lo..hi` of a stream of `len` bytes, 64 positions a
 /// word but for the carried scans (a toggle, a fill, an escape), which go a position at a time.
 /// The carried values come in zero at the stream's start, unknown inside it. Each value's row.
-fn run(native: &BlockNative, lanes: &[bool], full: &[Option<u64>], len: i64, lo: i64, hi: i64) -> Vec<Row> {
+///
+/// With `prefixed`, the stream is one that starts with the program's prefix (`BlockInst::Prefix`,
+/// a byte order mark): its positions are the prefix's and its bytes known. Without, the prefix's
+/// value is zero. A file is one or the other, so the two runs together cover every file.
+fn run(native: &BlockNative, lanes: &[bool], full: &[Option<u64>], prefixed: bool, len: i64, lo: i64, hi: i64) -> Vec<Row> {
     let w = (hi - lo) as usize;
     let words = w.div_ceil(64);
     let start = if lo <= 0 { Same(Z) } else { Same(U) };
@@ -235,6 +239,30 @@ fn run(native: &BlockNative, lanes: &[bool], full: &[Option<u64>], len: i64, lo:
         let mut r = Row::same(words, U);
         r.put(&outside, Same(bit(zero)));
         r
+    };
+    // The prefix's bytes where the stream starts with them, and the padding's zeros: the bytes
+    // known.
+    let prefix = native.insts.iter().find_map(|i| if let BlockInst::Prefix(n, w) = *i { Some((i64::from(n), w)) } else { None }).filter(|&(n, _)| prefixed && len >= n);
+    let byte_at = |q: i64| -> Option<u8> {
+        if q < 0 || q >= len {
+            return Some(0);
+        }
+        prefix.filter(|&(n, _)| q < n).map(|(_, w)| (w >> (8 * q)) as u8)
+    };
+    let member = |t: u16, b: u8| {
+        let t = &native.tables[usize::from(t)];
+        t.lo[usize::from(b & 15)] & t.hi[usize::from(b >> 4)]
+    };
+    // A byte test where its bytes are known.
+    let tested = |inst: &BlockInst, p: i64| -> Option<bool> {
+        Some(match *inst {
+            BlockInst::EqByte(e) => byte_at(p)? == e,
+            BlockInst::Class { table, bits } => member(table, byte_at(p)?) & bits != 0,
+            BlockInst::Plane(k) => byte_at(p)? >> k & 1 == 1,
+            BlockInst::PlaneBefore(k) => byte_at(p - 1)? >> k & 1 == 1,
+            BlockInst::Pair { before, table, bits } => member(before, byte_at(p - 1)?) & member(table, byte_at(p)?) & bits != 0,
+            _ => return None,
+        })
     };
     let mut vals: Vec<Row> = Vec::with_capacity(native.insts.len());
     for (x, inst) in native.insts.iter().enumerate() {
@@ -275,6 +303,13 @@ fn run(native: &BlockNative, lanes: &[bool], full: &[Option<u64>], len: i64, lo:
             BlockInst::Const(c) => {
                 let v: Vec<u64> = (0..words).map(|_| c.rotate_right(lo.rem_euclid(64) as u32)).collect();
                 Row { gk: vec![u64::MAX; words], gv: v.clone(), fk: vec![u64::MAX; words], fv: v, eq: vec![u64::MAX; words] }
+            }
+            BlockInst::Prefix(..) => {
+                let mut r = Row::same(words, Z);
+                if let Some((n, _)) = prefix {
+                    r.put(&span(words, lo, 0, n), Same(O));
+                }
+                r
             }
             BlockInst::Within(d) => {
                 let d = i64::from(d);
@@ -381,6 +416,19 @@ fn run(native: &BlockNative, lanes: &[bool], full: &[Option<u64>], len: i64, lo:
             // Not in a program this analysis takes (`edge_values`).
             BlockInst::BackFill(..) | BlockInst::Load(_) | BlockInst::Carry(_) | BlockInst::Cmp { .. } | BlockInst::Bit { .. } | BlockInst::Walk { .. } | BlockInst::Args(..) => Row::same(words, U),
         };
+        // A byte test of the prefix's bytes, and of the first after them.
+        let row = match prefix {
+            Some((n, _)) if matches!(inst, BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) | BlockInst::PlaneBefore(_) | BlockInst::Pair { .. }) => {
+                let mut r = row;
+                for p in lo.max(0)..hi.min(n + 1) {
+                    if let Some(b) = tested(inst, p) {
+                        r.set((p - lo) as usize, Same(bit(b)));
+                    }
+                }
+                r
+            }
+            _ => row,
+        };
         // A value the full body folds (`Plan::full`: of constants and `within`, `prev`s of such
         // values included, and what such a zero masks) is that word there at every position, the
         // stream's ends too: a `prev` of all ones is all ones in the full body, where the general
@@ -417,6 +465,7 @@ fn before(native: &BlockNative, x: u16, q: i64) -> Option<T> {
         BlockInst::Const(c) => bit((c >> q.rem_euclid(64)) & 1 == 1),
         // Folded to ones in the full body.
         BlockInst::Within(_) => O,
+        BlockInst::Prefix(..) => Z,
         BlockInst::Not(a) => not(at(a, q)?),
         BlockInst::And(a, b) => and(at(a, q)?, at(b, q)?),
         BlockInst::Or(a, b) => or(at(a, q)?, at(b, q)?),
@@ -503,9 +552,12 @@ pub fn edge_values(native: &BlockNative, lanes: &[bool], full: &[Option<u64>]) -
     };
     // The stream's start, the stream long: where its differences end.
     let window = 4 * 64 + 2 * reach + ahead;
-    let front = run(native, lanes, full, i64::MAX / 4, 0, window);
-    let front_end = mark(&front, i64::MAX / 4, 0, window, &mut differs).ok()?.map_or(0, |l| l + 1);
-    cuts(&front, i64::MAX / 4, 0, window, &mut cut_free);
+    let mut front_end = 0;
+    for prefixed in [false, true] {
+        let front = run(native, lanes, full, prefixed, i64::MAX / 4, 0, window);
+        front_end = front_end.max(mark(&front, i64::MAX / 4, 0, window, &mut differs).ok()?.map_or(0, |l| l + 1));
+        cuts(&front, i64::MAX / 4, 0, window, &mut cut_free);
+    }
     if front_end + reach >= window {
         return None;
     }
@@ -517,7 +569,7 @@ pub fn edge_values(native: &BlockNative, lanes: &[bool], full: &[Option<u64>]) -
         let len = 64 * (back_from / 64 + 1) + r;
         let lo = len - 2 * reach;
         let hi = len + delay + 2 * 64 + reach + ahead;
-        let vals = run(native, lanes, full, len, lo, hi);
+        let vals = run(native, lanes, full, false, len, lo, hi);
         // A difference at the window's first positions may come from further back.
         let first = span(vals[0].eq.len(), lo, lo, lo + reach);
         if vals.iter().any(|row| row.eq.iter().zip(&first).any(|(&e, &m)| !e & m != 0)) {
@@ -529,9 +581,11 @@ pub fn edge_values(native: &BlockNative, lanes: &[bool], full: &[Option<u64>]) -
     // Every shorter stream whole: its two ends near each other.
     for len in 0..64 * (back_from / 64 + 1) {
         let hi = len + delay + 2 * 64 + reach + ahead;
-        let vals = run(native, lanes, full, len, 0, hi);
-        mark(&vals, len, 0, hi, &mut differs).ok()?;
-        cuts(&vals, len, 0, hi, &mut cut_free);
+        for prefixed in [false, true] {
+            let vals = run(native, lanes, full, prefixed, len, 0, hi);
+            mark(&vals, len, 0, hi, &mut differs).ok()?;
+            cuts(&vals, len, 0, hi, &mut cut_free);
+        }
     }
     Some(Edge { differs, cut_free })
 }

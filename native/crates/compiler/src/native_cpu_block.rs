@@ -90,6 +90,11 @@ pub struct CompiledBlock {
     /// The record pass's tables (`records`), which its code reads by address; its function is
     /// the last entry. A file's codes are the column after its extracts'.
     pub records: Option<RecordTables>,
+    /// The program's prefix (decision 0335), where the host strips it before the passes, as
+    /// simdjson strips a byte order mark: on a file that starts with it, the passes run on the
+    /// bytes after it, and `Batch` brings what they wrote back to the file's positions
+    /// (`strip_prefix`, 0389). Empty where there is none, or the passes make it themselves.
+    pub prefix: Vec<u8>,
     /// With `native_cpu_stream::KEEP_IR`: each function's IR as Cranelift was given it (its
     /// `FuncId`), and the entries' ids in order, for an ahead-of-time build (`clif_rust`).
     pub ir: Vec<(u32, cranelift_codegen::ir::Function)>,
@@ -226,6 +231,9 @@ impl CompiledBlock {
 pub struct Batch {
     pub bytes: Vec<u8>,
     pub rows: Vec<Row>,
+    /// Each file's prefix length where it starts with the program's (`CompiledBlock::prefix`):
+    /// the passes run past it.
+    pub stripped: Vec<u8>,
     pub out: Vec<u64>,
     pub positions: Vec<u32>,
     pub counts: Vec<u64>,
@@ -235,6 +243,8 @@ pub struct Batch {
 impl Batch {
     pub fn new(program: &CompiledBlock, files: &[&[u8]]) -> Self {
         let (mut bytes, mut rows) = (Vec::new(), Vec::with_capacity(files.len()));
+        let p = &program.prefix;
+        let stripped: Vec<u8> = files.iter().map(|f| if !p.is_empty() && f.starts_with(p) { p.len() as u8 } else { 0 }).collect();
         let (mut words, mut positions, mut counts, mut scratch) = (0u64, 0u64, 0u64, 0u64);
         for file in files {
             // The file's blocks and `delay` bytes past its end, zero beyond it.
@@ -262,6 +272,7 @@ impl Batch {
         Self {
             bytes,
             rows,
+            stripped,
             out: vec![0u64; words as usize],
             positions: vec![0u32; positions as usize],
             counts: vec![0u64; counts as usize],
@@ -270,15 +281,74 @@ impl Batch {
     }
 
     pub fn call(&mut self, program: &CompiledBlock) {
+        let rows = self.strip(program);
         for entry in &program.entries {
             self.run(*entry);
         }
+        self.unstrip(program, rows);
     }
 
     /// The program's pass `k` alone (the record pass last): for the profile, the passes before
     /// it run first.
     pub fn call_pass(&mut self, program: &CompiledBlock, k: usize) {
+        let rows = self.strip(program);
         self.run(program.entries[k]);
+        self.rows = rows;
+        self.restore_prefixes(program);
+    }
+
+    /// The rows the passes run over where a file starts with the program's prefix
+    /// (`CompiledBlock::prefix`, 0389): the bytes after it, its own zeroed, so that the 16 bytes
+    /// before the stream are zeros as before a file's. As simdjson strips a byte order mark
+    /// before stage 1. The files' rows, for `unstrip`.
+    fn strip(&mut self, program: &CompiledBlock) -> Vec<Row> {
+        let rows = self.rows.clone();
+        for (row, &k) in self.rows.iter_mut().zip(&self.stripped).filter(|(_, k)| **k > 0) {
+            let k = u64::from(k);
+            self.bytes[row.bytes as usize..(row.bytes + k) as usize].fill(0);
+            row.bytes += k;
+            row.len -= k;
+            row.blocks = (row.len + u64::from(program.delay)).div_ceil(64);
+        }
+        rows
+    }
+
+    /// The prefixes' bytes back in the files, which tier 2 reads (`strip`).
+    fn restore_prefixes(&mut self, program: &CompiledBlock) {
+        for (row, &k) in self.rows.iter().zip(&self.stripped).filter(|(_, k)| **k > 0) {
+            self.bytes[row.bytes as usize..row.bytes as usize + usize::from(k)].copy_from_slice(&program.prefix);
+        }
+    }
+
+    /// After the passes over the stripped rows (`strip`): the files' rows and prefixes back, and
+    /// what the passes wrote at the file's positions. A mask's bits move up by the prefix's
+    /// length, a position by as much; a count and a code stay.
+    fn unstrip(&mut self, program: &CompiledBlock, rows: Vec<Row>) {
+        self.rows = rows;
+        self.restore_prefixes(program);
+        for (row, &k) in self.rows.iter().zip(&self.stripped).filter(|(_, k)| **k > 0) {
+            let k32 = u32::from(k);
+            let blocks = (row.len as usize + usize::from(program.delay)).div_ceil(64);
+            for o in 0..program.outputs {
+                let at = |i: usize| row.out as usize + i * program.outputs + o;
+                for i in (0..blocks).rev() {
+                    let below = if i == 0 { 0 } else { self.out[at(i - 1)] >> (64 - k32) };
+                    self.out[at(i)] = (self.out[at(i)] << k32) | below;
+                }
+            }
+            let count = |c: usize| self.counts[row.counts as usize + c] as usize;
+            let fields: Option<[u64; 3]> = program.records.as_ref().map(|t| [u64::from(t.starts), u64::from(t.lasts), program.extracts.len() as u64]);
+            for e in 0..program.extracts.len() {
+                let field = program.records.as_ref().and_then(|t| [t.starts, t.lasts].iter().position(|&x| usize::from(x) == e));
+                for j in 0..count(e) {
+                    let at = match (field, &program.records, fields) {
+                        (Some(field), Some(t), Some(cols)) => row.positions + t.layout.index(field, j as u64, cols, row.capacity),
+                        _ => row.positions + e as u64 * row.capacity + j as u64,
+                    };
+                    self.positions[at as usize] += k32;
+                }
+            }
+        }
     }
 
     fn run(&mut self, entry: Entry) {
@@ -894,7 +964,10 @@ fn demand_order(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, grouped: &[Op
     let native = e.native;
     let plan = &e.state.plan;
     let n = native.insts.len();
-    let needs = |o: usize, x: usize| !(plan.lanes[o] && plan.lanes[x]);
+    // An operand is made first unless both are on the vectors and the reader makes it there: a
+    // reader made from words (`Emit::as_words`) reads its operands' words, which must be made.
+    let as_words = e.as_words.clone();
+    let needs = |o: usize, x: usize| !(plan.lanes[o] && plan.lanes[x] && !as_words[x]);
     // Read by a value that makes it first: one on the vectors read only on the vectors (an output
     // made a mask, say) is a root of its own.
     let mut read = vec![false; n];
@@ -1178,6 +1251,8 @@ fn ascii_known(native: &BlockNative, plan: &crate::native_cpu_lanes::Plan) -> Ve
                     _ => None,
                 },
                 BlockInst::Early(a, sh) => g(a).map(|c| c >> sh),
+                // A full block lies past the file's first.
+                BlockInst::Prefix(..) => Some(0),
                 _ => None,
             }
         };
@@ -1398,6 +1473,7 @@ impl Emit<'_, '_> {
         let folded = match inst {
             BlockInst::Const(c) => Some(Sym::Known(c)),
             BlockInst::Within(_) if self.full => Some(Sym::Known(u64::MAX)),
+            BlockInst::Prefix(..) if self.full => Some(Sym::Known(0)),
             BlockInst::Not(a) => Some(logic(a).not()),
             BlockInst::And(a, b) => Some(Sym::and(&mut *f, logic(a), logic(b))),
             BlockInst::AndNot(a, b) => Some(Sym::and(&mut *f, logic(a), logic(b).not())),
@@ -1443,6 +1519,16 @@ impl Emit<'_, '_> {
                 f.ins().ineg(bit)
             }
             BlockInst::Within(d) => within_word(&mut *f, i, len, d),
+            // The prefix's positions, in the file's first block (`block::prefix_at`): its first
+            // word compared once, as simdjson's byte order mark.
+            BlockInst::Prefix(n, w) => {
+                let base = self.lanes.base();
+                let start = prefix_start(&mut *f, n, w, base, len);
+                let first = f.ins().icmp_imm(IntCC::Equal, i, 0);
+                let zero = f.ins().iconst(types::I64, 0);
+                let start = f.ins().select(first, start, zero);
+                below(&mut *f, start)
+            }
             // A slot an earlier pass stored: the block's word, as that pass made it.
             BlockInst::Load(k) => f.ins().load(types::I64, MemFlags::trusted().with_readonly(), self.row, 8 * i32::from(k)),
             BlockInst::BackFill(..) => unreachable!("a pass of its own (`native_ir::passes`)"),
@@ -2173,6 +2259,8 @@ pub fn flatten(f: &mut FunctionBuilder<'_>, m: Value, at: Value, ptr: Value) -> 
 /// Compile a block program's native IR: one function per pass (`native_ir::Passes`), in one
 /// module.
 pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
+    let (prefix, stripped) = host_stripped(native).map_or((Vec::new(), None), |(p, n)| (p, Some(n)));
+    let native = stripped.as_ref().unwrap_or(native);
     // Not optimised: the mid-end's code motion would hoist every vector constant out of the loop,
     // more than the registers hold, and spill them (decision 0069). The body is already
     // straight-line and deduplicated.
@@ -2319,9 +2407,46 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         passes: shapes,
         disassembly,
         records,
+        prefix,
         ir,
         entry_ids,
     })
+}
+
+/// The prefix the host strips before a program's passes (`CompiledBlock::prefix`, 0389): the
+/// program's, where its values do not depend on where the stream lies in the file, so that the
+/// passes over the bytes after it make the same values, moved. A phase or a plane of the
+/// position, or a constant pattern of positions, would not be the same.
+fn strip_prefix(native: &BlockNative) -> Option<Vec<u8>> {
+    let from_op = native.insts.iter().find_map(|i| if let BlockInst::Prefix(n, w) = *i { Some((0..n).map(|j| (w >> (8 * j)) as u8).collect::<Vec<u8>>()) } else { None });
+    let bytes = native.records.as_ref().map(|r| r.prefix.clone()).filter(|p| !p.is_empty()).or(from_op)?;
+    let placed = native.insts.iter().any(|i| match *i {
+        BlockInst::Phase(..) | BlockInst::Position(_) => true,
+        BlockInst::Const(c) => !matches!(c, 0 | u64::MAX),
+        _ => false,
+    });
+    (!placed).then_some(bytes)
+}
+
+/// The prefix the host strips and the program the passes run (`CompiledBlock::prefix`, 0389):
+/// `native` with the prefix's positions zero, and the token loop starting at the stream's first
+/// byte. `None` where the host strips none.
+pub fn host_stripped(native: &BlockNative) -> Option<(Vec<u8>, BlockNative)> {
+    strip_prefix(native).map(|p| (p, without_prefix(native)))
+}
+
+/// `native` with its prefix left to the host (`strip_prefix`).
+fn without_prefix(native: &BlockNative) -> BlockNative {
+    let mut n = native.clone();
+    for i in &mut n.insts {
+        if let BlockInst::Prefix(..) = *i {
+            *i = BlockInst::Const(0);
+        }
+    }
+    if let Some(r) = n.records.as_mut() {
+        r.prefix.clear();
+    }
+    n
 }
 
 /// What a token compares past a word's first eight bytes, by the table's longest word: as
@@ -6131,15 +6256,28 @@ fn stream_start(f: &mut FunctionBuilder<'_>, prefix: &[u8], bytes: Value, len: V
     if prefix.is_empty() {
         return zero;
     }
-    let n = prefix.len();
+    let want = prefix.iter().enumerate().fold(0u64, |a, (j, &b)| a | u64::from(b) << (8 * j));
+    prefix_start(f, prefix.len() as u8, want, bytes, len)
+}
+
+/// `stream_start` of a prefix of `n` bytes, `want` (the first in its low byte), for the file at
+/// `bytes`: `n` where the file starts with them, else 0.
+pub(crate) fn prefix_start(f: &mut FunctionBuilder<'_>, n: u8, want: u64, bytes: Value, len: Value) -> Value {
     let word = f.ins().load(types::I64, MemFlags::trusted().with_readonly(), bytes, 0);
     let low = if n == 8 { word } else { f.ins().band_imm(word, ((1u64 << (8 * n)) - 1) as i64) };
-    let want = prefix.iter().enumerate().fold(0u64, |a, (j, &b)| a | u64::from(b) << (8 * j));
     let same = f.ins().icmp_imm(IntCC::Equal, low, want as i64);
-    let long = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, len, n as i64);
+    let long = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, len, i64::from(n));
     let both = f.ins().band(same, long);
-    let k = f.ins().iconst(types::I64, n as i64);
+    let k = f.ins().iconst(types::I64, i64::from(n));
+    let zero = f.ins().iconst(types::I64, 0);
     f.ins().select(both, k, zero)
+}
+
+/// The low `k` bits of a word, `k` at most 63: `(1 << k) - 1`.
+pub(crate) fn below(f: &mut FunctionBuilder<'_>, k: Value) -> Value {
+    let one = f.ins().iconst(types::I64, 1);
+    let up = f.ins().ishl(one, k);
+    f.ins().iadd_imm(up, -1)
 }
 
 /// A file's token loop: the whole file's (`part` none), then its end (`record_end`); or a

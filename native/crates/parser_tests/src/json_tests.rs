@@ -579,14 +579,18 @@ fn json_tier1_vectors_equal_the_interpreter() {
 }
 
 /// The values the full body gets wrong on an edge block (`native_cpu_edge`, 0383): JSON's are
-/// its checks at the stream's ends and what reads them (the byte order mark's check, which the
-/// full body takes as zero, reaches the strings' fills), word operations all, fewer than half
-/// the body's, and found in one pass of the analysis.
+/// its checks at the stream's ends and what reads them, word operations all, a third of the
+/// body's or fewer, and found in one pass of the analysis. The byte order mark is the host's
+/// (0389): stripped before the passes, as simdjson strips it, the program the passes run has no
+/// check of it, and no value differs for it through block 0.
 #[test]
 fn json_edge_values_are_its_ends_checks() {
     for name in ["14-json", "15-jsonc"] {
         let c = form(name);
-        let native = &c.native.block_programs[0];
+        let (prefix, stripped) = native_cpu_block::host_stripped(&c.native.block_programs[0]).expect("the host strips the byte order mark");
+        assert_eq!(prefix, b"\xef\xbb\xbf", "{name}: the prefix");
+        assert_eq!(c.parser.tier1.prefix, prefix, "{name}: tier 1 strips it");
+        let native = &stripped;
         let t = std::time::Instant::now();
         let plan = native_cpu_block::State::of(native).plan;
         let found = native_cpu_edge::edge_values(native, &plan.lanes, &plan.full).expect("bounded");
@@ -596,7 +600,7 @@ fn json_edge_values_are_its_ends_checks() {
         let at: Vec<usize> = (0..edge.len()).filter(|&x| edge[x]).collect();
         println!("{name}: {} of {} values differ on an edge block, found in {took:?}: {at:?}", at.len(), edge.len());
         assert!(at.iter().all(|&x| !matches!(native.insts[x], block_native::BlockInst::EqByte(_) | block_native::BlockInst::Class { .. } | block_native::BlockInst::Pair { .. })), "{name}: a byte test differs");
-        assert!(at.len() * 2 < edge.len(), "{name}: {} of {} differ", at.len(), edge.len());
+        assert!(at.len() * 3 <= edge.len(), "{name}: {} of {} differ", at.len(), edge.len());
     }
 }
 
