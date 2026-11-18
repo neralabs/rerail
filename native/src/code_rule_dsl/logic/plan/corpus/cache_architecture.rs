@@ -39,6 +39,9 @@ const NOT_CACHES: &[&str] = &[
     // The segments sources (and tapes) are in (decision 0295 step 5).
     "object_segments",
     "push_pending", "snapshots", "snapshot_files", "workspaces", "workspace_overlay", "git_trees", "git_tree_entries", "git_alias",
+    // Analysis claims, release receipts, and collection work. Their rows reference results held elsewhere.
+    "analysis_scope_snapshot", "analysis_scope_workspace_snapshot", "analysis_scope_manifest",
+    "analysis_scope_generation", "analysis_scope_release", "analysis_scope_collect",
     "corpus_roots", "corpus_manifests", "corpus_manifest_plans", "corpus_live", "corpus_plans", "corpus_plan_relations",
     "corpus_decided", "corpus_swept", "corpus_state",
     "x", "rows", "facts", "x.node_type", "s.stat_col", "s.stat_docrange", "s.stat_edge", "s.stat_kind", "s.stat_meta", "s.stat_val",
