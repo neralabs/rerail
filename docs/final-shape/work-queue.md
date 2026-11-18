@@ -4276,10 +4276,17 @@ path runs: Cranelift leaves a later output's word 0 (or another value) where the
 (`Some(Edge)`) for these programs that the edge part does not keep: either `differs` misses a value or `cut_free`
 holds for an output that is not zero outside the stream.
 
-The test is ignored with this item as its reason until then.
-
 - **Done when**: the 14 equal the interpreter (`edge_values` refusing where it cannot bound, or the edge part
   remaking the missed values), and the test runs again, unignored.
+- **Done** (2026-11-18, in the hub): neither `differs` nor `cut_free`; the analysis flags every value it should. The
+  edge part (`Emit::edge_part`) took a constant operand as made by the body (`valid`'s `|| Const`), but a constant a
+  gated region reads is made inside the region, and after it the body's symbols are those from before the region
+  (`Emit::region`), so the constant's is `Known(0)`. In `0374` on `5x5`, the region's `v38 = v35 & evens` and
+  `v42 = v35 & odds` then folded to 0 in the edge part, and with them both fills and the output (Cranelift `[0]`,
+  the interpreter `[2]`). A constant is remade there now like any value the body did not keep, which folds to its
+  word with no instruction. Found by bisection: with the edge path off (the general body's call) the corpus passes;
+  the edge part's words reach the outputs; its CLIF stored `band 0, within`. `corpus_cranelift_equals_the_interpreter`
+  runs unignored and passes; so does Q199's `rr_steps_parse_as_the_reference_and_the_engine`.
 
 ### Q198. (Q33 on Swift-Kotlin-Scala-support, then its Q186) The CPU's tier 1 loses a fill's bit where its stop is a delayed output and the fill crosses a word
 
@@ -4304,6 +4311,7 @@ The test is ignored with this item as its reason until then.
   `io_bare`, leaving too few for the engine comparison. Green at Go-C's dd6dcc161; at
   Parser-generators' 975117c82 33 steps differ (without dd6dcc161's `tier1_equal`).
 - **Done when**: both pass; Parser-generators' area (the edge body), taken at the next merge.
+- **Done** (2026-11-18, in the hub): Q197's fix (the edge part's region constants); both tests pass.
 
 ### Q200. The CPU's tier 1 of the rr grammar leaves the loop at a 19-digit number the interpreter reads on
 
@@ -4314,10 +4322,16 @@ tier 1 leaves the loop there (0177's exit), and the interpreter goes on (codes `
 in the test's inputs, it fails the same at Parser-generators' 612201517 (before 0383), ee0041caa, and the hub's
 08dfc3831, so it is older than this roll-up.
 
-The test leaves the file out of its sample, with this item as the reason.
-
 - **Done when**: the CPU's tier 1 and the interpreter agree on the file (the refusal's cause named: a count, a
   check's, or the token loop's), and the test samples it again.
+- **Done** (2026-11-18, in the hub): not a tier 1 fault. The cause is the number rule's escape, `a number of 19
+  digits or more` (`run(digit) at least 19`, 22-test-blocks.bitlex), at `1152921504606846976`; the interpreter
+  refuses the file too (its totals set). A refusal leaves the compiled loop (0177), on the CPU and on Metal alike
+  (Metal's codes are the same 2214-code prefix), while the interpreter reads on. The test compared the codes whole,
+  where `ladder::tier1_equal` compares them up to a refusal. It now does the same (`codes_agree`: equal, or for a
+  refused file equal up to the refusal with none or 0s after), for the CPU against the interpreter, Metal against
+  the interpreter, and Metal against the CPU. It samples the file explicitly (every fifth file did not reach it):
+  529 files, passing.
 
 ### Q204. (Q170 on cost-classifier-metal-rf; Q137 at django-bugs 42b33a424; Q100 on Typing-support-final-shape at 6ce382887, Q91 before it) A cut of a gated program keeps `node`'s projections: retain's test expects an empty part
 

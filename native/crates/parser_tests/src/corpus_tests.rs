@@ -586,7 +586,6 @@ fn corpus_equals_the_evaluator() {
 
 /// Check 1 on Cranelift.
 #[test]
-#[ignore = "Q197: 0383's edge path differs from the interpreter on 14 one-block corpus programs"]
 fn corpus_cranelift_equals_the_interpreter() {
     executors_equal_the_interpreter(false);
 }

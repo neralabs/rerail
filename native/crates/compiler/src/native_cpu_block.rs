@@ -2087,8 +2087,10 @@ impl Emit<'_, '_> {
         // What to make: the differing values; and what they read that is not a word the body
         // made (a byte test, or a value the body did not keep: made on the vectors only, or
         // inside a region or the ASCII split), transitively. A value made on the vectors reads
-        // its operands there, from the bytes.
-        let valid = |o: usize| (matches!(self.syms[o], Sym::Value(..) | Sym::Slot(..)) && !plan.lanes[o]) || matches!(native.insts[o], BlockInst::Const(_));
+        // its operands there, from the bytes. A constant is no exception: one a region reads is
+        // made inside it, and its symbol after the region is the one from before, `Known(0)`
+        // (`Emit::region`); made again here it folds to its word, no instruction (Q197).
+        let valid = |o: usize| matches!(self.syms[o], Sym::Value(..) | Sym::Slot(..)) && !plan.lanes[o];
         let mut remake = ed.differs.clone();
         let mut stack: Vec<usize> = (0..n).filter(|&x| remake[x]).collect();
         while let Some(x) = stack.pop() {
