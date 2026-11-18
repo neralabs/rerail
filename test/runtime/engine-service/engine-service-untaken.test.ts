@@ -21,21 +21,25 @@ const SOCKET_ROOT = "/tmp";
 const LATE = "late steer";
 const SESSION = "left-untaken";
 
-/** The steer for an edit of `path` whose lines hold a print the call wrote. */
-const printSteer = (path: string): string => `print in ${path}`;
+/** The steer for a line of an edit of `path` that holds a print the call wrote. */
+const printSteer = (path: string, line: number): string => `print in ${path}:${line}`;
 
-/** Whether the call wrote a print: its text holds one, and what the file held before it did not, or is unknown. */
-function wrotePrint(edit: EditBatch["edits"][number]): boolean {
-  if (edit.generatedText?.includes("print(") !== true) return false;
-  return edit.previousReadError !== undefined || edit.previousText?.includes("print(") !== true;
+/**
+ * The lines (from 1) holding a print the call wrote: each line of its text with one that what the file held before did
+ * not hold; every such line when that is unknown, as the rules then read the whole text the call left.
+ */
+function printedLines(edit: EditBatch["edits"][number]): number[] {
+  const before = new Set(edit.previousReadError === undefined ? edit.previousText?.split("\n") : []);
+  const lines = edit.generatedText?.split("\n") ?? [];
+  return lines.flatMap((line, index) => (line.includes("print(") && !before.has(line) ? [index + 1] : []));
 }
 
 /**
  * An engine service over a checkout of its own that checks the events hooks leave in its home (the checkout's folder),
- * with a Claude Code session started: its auditor keeps each edit batch, steers once for each edit of the session that
- * wrote a print (`printSteer`), and steers `LATE` once at the first turn end whose checks it settles. Its evaluator
- * opens once `opening` settles; `walking` settles once a walk of the session's folder asks about a file. Takes no event
- * until the test asks (`untaken.taken()`) or sends one.
+ * with a Claude Code session started: its auditor keeps each edit batch, steers once for each line holding a print an
+ * edit of the session wrote (`printSteer`), and steers `LATE` once at the first turn end whose checks it settles. Its
+ * evaluator opens once `opening` settles; `walking` settles once a walk of the session's folder asks about a file.
+ * Takes no event until the test asks (`untaken.taken()`) or sends one.
  */
 async function serviceWithUntaken(opening: Promise<void> = Promise.resolve()) {
   const root = await realpath(await mkdtemp(join(process.platform === "win32" ? tmpdir() : SOCKET_ROOT, "rerail-untaken-")));
@@ -69,8 +73,8 @@ async function serviceWithUntaken(opening: Promise<void> = Promise.resolve()) {
       },
       auditGeneratedEdits: async (_sessionId, batch) => {
         batches.push(batch);
-        const steering = batch.mode === "log" ? [] : batch.edits.filter(wrotePrint);
-        for (const { path } of steering) await steerDelivery.requestSteer(SESSION, "steer", printSteer(path), { revision: batch.revision, scope: [path] });
+        const steering = batch.mode === "log" ? [] : batch.edits.flatMap(edit => printedLines(edit).map(line => ({ path: edit.path, line })));
+        for (const { path, line } of steering) await steerDelivery.requestSteer(SESSION, "steer", printSteer(path, line), { revision: batch.revision, scope: [path] });
         return { revision: batch.revision, disposition: "continue" as const, violations: [], failures: [] };
       },
       settleGeneratedEdits: async () => {
@@ -105,11 +109,29 @@ async function recordedDeliveries(root: string, content: string): Promise<number
   return (await ledgerEntries(root)).filter(entry => entry.type === "delivery" && JSON.stringify(entry).includes(content)).length;
 }
 
-/** The events hooks left for a Write call that ran at `ran`: the call a minute before, the result a minute after. */
-async function leftWrite(held: Awaited<ReturnType<typeof serviceWithUntaken>>, toolCallId: string, path: string, content: string, ran: number): Promise<void> {
-  const tool = { sessionId: SESSION, toolCallId, toolName: "Write" } as const;
-  await held.leave({ kind: "call", eventId: `${toolCallId}:call`, ...tool, input: { file_path: path, content } }, ran - 60_000);
+type HeldService = Awaited<ReturnType<typeof serviceWithUntaken>>;
+
+/** The events hooks left for a call of `toolName` that ran at `ran`: the call a minute before, the result a minute after. */
+async function leftCall(held: HeldService, toolCallId: string, toolName: "Write" | "Edit", input: unknown, ran: number): Promise<void> {
+  const tool = { sessionId: SESSION, toolCallId, toolName } as const;
+  await held.leave({ kind: "call", eventId: `${toolCallId}:call`, ...tool, input }, ran - 60_000);
   await held.leave({ kind: "result", eventId: `${toolCallId}:result`, ...tool, output: "ok" }, ran + 60_000);
+}
+
+/** The events hooks left for a Write call that ran at `ran`. */
+async function leftWrite(held: HeldService, toolCallId: string, path: string, content: string, ran: number): Promise<void> {
+  await leftCall(held, toolCallId, "Write", { file_path: path, content }, ran);
+}
+
+/** Waits for the session's first view of its folder: its walk asks about a file, and a turn's end waits for that walk. */
+async function firstView(held: HeldService): Promise<void> {
+  await held.walking;
+  await held.send({ kind: "turn-end", eventId: "view", sessionId: SESSION, text: "" });
+}
+
+/** The edits of `path` the session's checks read with steers (not as another writer's, logged only). */
+function checkedEdits(held: HeldService, path: string): EditBatch["edits"] {
+  return held.batches.filter(batch => batch.mode !== "log").flatMap(batch => batch.edits).filter(edit => edit.path === path);
 }
 
 /**
@@ -117,12 +139,11 @@ async function leftWrite(held: Awaited<ReturnType<typeof serviceWithUntaken>>, t
  * turn's end waits for it), which takes them as another writer's: they changed since the session started, while no
  * call of it ran, as its calls are still untaken.
  */
-async function firstViewAfter(held: Awaited<ReturnType<typeof serviceWithUntaken>>, opening: () => void, files: Record<string, string>): Promise<void> {
+async function firstViewAfter(held: HeldService, opening: () => void, files: Record<string, string>): Promise<void> {
   for (const [path, content] of Object.entries(files)) writeFileSync(join(held.root, path), content);
   opening();
   // Once the walk runs, the evaluator is open, so the turn's end waits for that walk rather than going on without it.
-  await held.walking;
-  await held.send({ kind: "turn-end", eventId: "view", sessionId: SESSION, text: "" });
+  await firstView(held);
 }
 
 function recordedEvents(databasePath: string): { eventId: string; observedAt: number }[] {
@@ -186,7 +207,7 @@ describe("an engine service beside the events hooks left while its daemon did no
     for (const [name, content] of Object.entries(files)) await leftWrite(held, name, name, content, ran);
     await held.service.untaken.taken();
     // Read against that view, each edit was no change, and no steer for it ever reached the agent.
-    expect(await held.send(prompt("next"))).toEqual(expect.arrayContaining([printSteer("w1.py"), printSteer("w2.py")]));
+    expect(await held.send(prompt("next"))).toEqual(expect.arrayContaining([printSteer("w1.py", 2), printSteer("w2.py", 2)]));
     // Nothing of what the files held is taken as the calls' "before": their tool had already written them.
     const calls = (await ledgerEntries(held.root)).filter(entry => entry.type === "policy-call");
     expect(calls.map(({ toolCallId, preimages }) => ({ toolCallId, preimages }))).toEqual([
@@ -204,9 +225,28 @@ describe("an engine service beside the events hooks left while its daemon did no
     await held.service.untaken.taken();
     // The first call's read of the file holds what the second wrote: taken as the second's "before", it was no change,
     // and the first call's steer, overtaken by the second's check of the file, never reached the agent.
-    expect(await held.send(prompt("next"))).toContain(printSteer("w3.py"));
-    const edits = held.batches.filter(batch => batch.mode !== "log").flatMap(batch => batch.edits).filter(edit => edit.path === "w3.py");
+    expect(await held.send(prompt("next"))).toContain(printSteer("w3.py", 2));
+    const edits = checkedEdits(held, "w3.py");
     expect(edits.map(edit => edit.previousReadError === undefined ? edit.previousText : "unknown")).toEqual(["unknown", "unknown"]);
+  });
+
+  it("reads an Edit left untaken of a file the session's own call edited against that call's text, so it tells only its own lines", async () => {
+    const held = await serviceWithUntaken();
+    await firstView(held);
+    const live = "def a():\n    print(1)\n    return 1\n";
+    const edit = { sessionId: SESSION, toolCallId: "live", toolName: "Edit" } as const;
+    await held.send({ kind: "call", eventId: "live:call", ...edit, input: { file_path: "a.py", old_string: "    return 1", new_string: "    print(1)\n    return 1" } });
+    writeFileSync(join(held.root, "a.py"), live);
+    await held.send({ kind: "result", eventId: "live:result", ...edit, output: "ok" });
+    // The next Edit's hooks left it while the daemon did not read, and the tool wrote the file.
+    const left = "def a():\n    print(1)\n    print(2)\n    return 1\n";
+    writeFileSync(join(held.root, "a.py"), left);
+    await leftCall(held, "left", "Edit", { file_path: "a.py", old_string: "    return 1", new_string: "    print(2)\n    return 1" }, Date.now());
+    await held.service.untaken.taken();
+    // Read whole, as the session's view of the file came from a call and carries no time, it told line 2 once more.
+    const told = await held.send(prompt("next"));
+    expect(told.filter(steer => steer.startsWith("print in a.py"))).toEqual([printSteer("a.py", 3)]);
+    expect(checkedEdits(held, "a.py").filter(read => read.generatedText === left).map(read => read.previousText)).toEqual([live]);
   });
 
   it("takes what a shell command left untaken wrote as the session's own, from when its hooks met it", async () => {

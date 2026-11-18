@@ -417,7 +417,7 @@ describe("CodeRuleBridge", () => {
     await bridge.begin("edit-1", "write", { path: "src/a.py" });
     await writeFile(path, "middle\n");
     await bridge.finish("edit-1");
-    // Its start was seen, and no time says otherwise: the session's last sight of the file is its "before".
+    // The session last saw the file as the call before left it, not as this one left it: that sight is its "before".
     await expect(bridge.begin("edit-2", "write", { path: "src/a.py" }, {})).resolves.toEqual({});
     await writeFile(path, "after\n");
     await bridge.finish("edit-2");
