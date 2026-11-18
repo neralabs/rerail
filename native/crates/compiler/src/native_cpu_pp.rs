@@ -1710,30 +1710,11 @@ impl Lower<'_, '_> {
         st(self.f, types::I64, end, ctx, at!(nscratch));
     }
 
-    /// `w`'s first `k` bytes (`k` at least 1) stored at `p`: one store where `k` is 8 or more,
-    /// else the few one by one (straight code: at most seven).
-    fn store_bytes(&mut self, p: Value, w: Value, k: Value) {
-        let f = &mut *self.f;
-        let done = f.create_block();
-        let full = f.create_block();
-        let tail = f.create_block();
-        let eight = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, k, 8);
-        f.ins().brif(eight, full, &[], tail, &[]);
-        f.switch_to_block(full);
-        f.ins().store(bytes_flags(), w, p, 0);
-        f.ins().jump(done, &[]);
-        f.switch_to_block(tail);
-        for i in 0..7i64 {
-            let more = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, k, i);
-            let put = f.create_block();
-            f.ins().brif(more, put, &[], done, &[]);
-            f.switch_to_block(put);
-            let b = f.ins().ushr_imm(w, 8 * i);
-            let b = f.ins().ireduce(types::I8, b);
-            f.ins().store(bytes_flags(), b, p, i as i32);
-        }
-        f.ins().jump(done, &[]);
-        f.switch_to_block(done);
+    /// `w`'s first `k` bytes (`k` at least 1) stored at `p`, at a byte buffer's end: one store of
+    /// all eight, the bytes past `k` past the buffer's length, in the eight bytes of capacity a
+    /// byte buffer has past its room (`pp_words::run_native`), where the next bytes go.
+    fn store_bytes(&mut self, p: Value, w: Value, _k: Value) {
+        self.f.ins().store(bytes_flags(), w, p, 0);
     }
 
     /// The high bit of each of a word's bytes that is zero (exact: no borrow between bytes).
@@ -6317,19 +6298,31 @@ impl Lower<'_, '_> {
         f.block_params(got)[0]
     }
 
-    /// Bytes `p[0..min(rem, 8)]` as a little-endian word, zeros past them: eight at once where
-    /// eight are left, else the few left one by one (straight code: at most seven), so no load
-    /// passes the spelling's end.
+    /// Bytes `p[0..min(rem, 8)]` as a little-endian word, zeros past them: one load of eight,
+    /// masked to the `rem` left, where the eight are within `p`'s page (so the load cannot fault,
+    /// though it may read past the spelling); else, the few left one by one (straight code: at
+    /// most seven), as at a page's last seven bytes. A token's length decides only the mask, not
+    /// a branch.
     fn chunk(&mut self, p: Value, rem: Value) -> Value {
         let f = &mut *self.f;
         let join = f.create_block();
         f.append_block_param(join, types::I64);
-        let full = f.create_block();
+        let fast = f.create_block();
         let tail = f.create_block();
         let eight = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, rem, 8);
-        f.ins().brif(eight, full, &[], tail, &[]);
-        f.switch_to_block(full);
+        let at = f.ins().band_imm(p, 4095);
+        let in_page = f.ins().icmp_imm(IntCC::UnsignedLessThanOrEqual, at, 4096 - 8);
+        let safe = f.ins().bor(eight, in_page);
+        f.ins().brif(safe, fast, &[], tail, &[]);
+        f.switch_to_block(fast);
         let w = f.ins().load(types::I64, bytes_flags(), p, 0);
+        let bits = f.ins().ishl_imm(rem, 3);
+        let one = f.ins().iconst(types::I64, 1);
+        let m = f.ins().ishl(one, bits);
+        let m = f.ins().iadd_imm(m, -1);
+        let all = f.ins().iconst(types::I64, -1);
+        let m = f.ins().select(eight, all, m);
+        let w = f.ins().band(w, m);
         f.ins().jump(join, &[w.into()]);
         f.switch_to_block(tail);
         let mut w = f.ins().iconst(types::I64, 0);

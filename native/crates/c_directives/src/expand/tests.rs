@@ -523,6 +523,10 @@ fn the_corpus_timed() {
         cost.set(Cost { instructions: c.instructions + (i1 - i0), cycles: c.cycles + (c1 - c0), wall: c.wall + (t1 - t0) });
     };
     let (words, jit, lean_pass) = (Cell::new(Cost::default()), Cell::new(Cost::default()), Cell::new(Cost::default()));
+    // Each timed run: its cycles, the interpreter's and the compiled words', and what it did
+    // (tokens in, `#` at a line's start, tokens out, expansions).
+    let runs: std::cell::RefCell<Vec<[u64; 6]>> = Default::default();
+    let last = Cell::new([0u64; 6]);
     let mut tus = 0;
     for (dir, cpp) in [("c", false), ("cpp", true)] {
         let Ok(entries) = std::fs::read_dir(root.join(dir)) else { continue };
@@ -534,12 +538,29 @@ fn the_corpus_timed() {
             let on = Cell::new(pass == 1);
             let run_words = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| {
                 let mut r = None;
-                if on.get() { timed(&words, &mut || r = Some(pp_words::run(w, f, e, b))) } else { r = Some(pp_words::run(w, f, e, b)) }
+                if on.get() {
+                    let before = words.get().cycles;
+                    timed(&words, &mut || r = Some(pp_words::run(w, f, e, b)));
+                    let x = r.as_ref().unwrap().as_ref().ok();
+                    let toks: usize = f.iter().map(|f| f.toks.len()).sum();
+                    let hashes = f.iter().flat_map(|f| f.toks.iter()).filter(|t| t.kind == pp_words::HASH && t.flags & pp_words::BOL != 0).count();
+                    last.set([words.get().cycles - before, 0, toks as u64, hashes as u64, x.map_or(0, |x| x.toks.len() as u64), x.map_or(0, |x| x.exps.len() as u64)]);
+                } else {
+                    r = Some(pp_words::run(w, f, e, b))
+                }
                 r.unwrap()
             };
             let run_jit = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| {
                 let mut r = None;
-                if on.get() { timed(&jit, &mut || r = Some(c.run(w, f, e, b))) } else { r = Some(c.run(w, f, e, b)) }
+                if on.get() {
+                    let before = jit.get().cycles;
+                    timed(&jit, &mut || r = Some(c.run(w, f, e, b)));
+                    let mut x = last.get();
+                    x[1] = jit.get().cycles - before;
+                    runs.borrow_mut().push(x);
+                } else {
+                    r = Some(c.run(w, f, e, b))
+                }
                 r.unwrap()
             };
             for src in &srcs {
@@ -563,6 +584,29 @@ fn the_corpus_timed() {
         eprintln!("{name:28} {:>8.1} M instructions {:>8.1} M cycles {:>10.3?}", c.instructions as f64 / 1e6, c.cycles as f64 / 1e6, c.wall);
     }
     eprintln!("over {tus} TUs");
+    // The compiled words' cycles over the interpreter's, by what the runs do: a bucket's sums.
+    let runs = runs.borrow();
+    let ratio = |rs: &[&[u64; 6]]| rs.iter().map(|r| r[1]).sum::<u64>() as f64 / rs.iter().map(|r| r[0]).sum::<u64>().max(1) as f64;
+    let share = |rs: &[&[u64; 6]]| rs.iter().map(|r| r[0]).sum::<u64>() as f64 / runs.iter().map(|r| r[0]).sum::<u64>().max(1) as f64;
+    for (name, key) in [("tokens out a token in", 0usize), ("expansions a token in", 1), ("directives a token in", 2), ("tokens in", 3)] {
+        let v = |r: &[u64; 6]| -> f64 {
+            let toks = r[2].max(1) as f64;
+            match key {
+                0 => r[4] as f64 / toks,
+                1 => r[5] as f64 / toks,
+                2 => r[3] as f64 / toks,
+                _ => r[2] as f64,
+            }
+        };
+        let mut sorted: Vec<&[u64; 6]> = runs.iter().collect();
+        sorted.sort_by(|a, b| v(a).total_cmp(&v(b)));
+        let q = sorted.len() / 4;
+        let parts: Vec<String> = (0..4).map(|i| {
+            let part = &sorted[i * q..if i == 3 { sorted.len() } else { (i + 1) * q }];
+            format!("{:.3}..{:.3}: x{:.2} ({:.0}% of the interpreter's)", v(part[0]), v(part[part.len() - 1]), ratio(part), 100.0 * share(part))
+        }).collect();
+        eprintln!("by {name}, quarters: {}", parts.join("; "));
+    }
 }
 
 /// `if_depth` on lines whose calls are counted by hand on `expand.lab`'s `cond`.

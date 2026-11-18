@@ -1114,6 +1114,12 @@ pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, boun
         v.reserve_exact(n.saturating_sub(v.len()));
         n as u64
     }
+    // A byte buffer: its room, and eight bytes more of capacity, so the words store a run's last
+    // bytes as a whole word (`native_cpu_pp`'s `store_bytes`).
+    fn room_bytes(v: &mut Vec<u8>, n: usize) -> u64 {
+        v.reserve_exact((n + 8).saturating_sub(v.len()));
+        n as u64
+    }
     let mut returns = vec![0u32; bounds.depth];
     let features: Vec<FeatureC> = env
         .features
@@ -1134,10 +1140,7 @@ pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, boun
         room_out: room(&mut m.out, bounds.output),
         out: m.out.as_mut_ptr(),
         nout: m.out.len() as u64,
-        room_scratch: {
-            m.scratch.reserve_exact(bounds.scratch.saturating_sub(m.scratch.len()));
-            bounds.scratch as u64
-        },
+        room_scratch: room_bytes(&mut m.scratch, bounds.scratch),
         scratch: m.scratch.as_mut_ptr(),
         nscratch: m.scratch.len() as u64,
         room_conds: room(&mut m.conds, bounds.depth * 16),
@@ -1183,7 +1186,7 @@ pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, boun
         room_wanted: room(&mut m.wanted, bounds.output),
         wanted: m.wanted.as_mut_ptr(),
         nwanted: m.wanted.len() as u64,
-        room_wanted_bytes: room(&mut m.wanted_bytes, bounds.scratch),
+        room_wanted_bytes: room_bytes(&mut m.wanted_bytes, bounds.scratch),
         wanted_bytes: m.wanted_bytes.as_mut_ptr(),
         nwanted_bytes: m.wanted_bytes.len() as u64,
         room_vals: room(&mut m.ex.vals, bounds.depth * 4),
@@ -1213,7 +1216,7 @@ pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, boun
         room_asked: room(&mut m.asked, bounds.output),
         asked: m.asked.as_mut_ptr(),
         nasked: m.asked.len() as u64,
-        room_asked_bytes: room(&mut m.asked_bytes, bounds.scratch),
+        room_asked_bytes: room_bytes(&mut m.asked_bytes, bounds.scratch),
         asked_bytes: m.asked_bytes.as_mut_ptr(),
         nasked_bytes: m.asked_bytes.len() as u64,
         date: env.date.as_ptr(),
