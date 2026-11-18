@@ -375,7 +375,7 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
     writeFileSync(packJson, JSON.stringify({ ...JSON.parse(readFileSync(packJson, "utf8")) as Record<string, unknown>, rules: [] }));
     const asked = agentIo();
     await runSetup(asked, request(setup, fakeSetupEnvironment({ packs: directoryPackStore(packsRoot, ["typescript"]) }), { answer: "yes", repo: setup.repo }));
-    expect(asked.text()).toContain("TypeScript would fit, but has no rules yet, so set-up does not offer it.");
+    expect(asked.text()).toContain("TypeScript would be suggested, but has no rules yet, so set-up does not offer it.");
     expect(asked.text()).not.toContain("--packs typescript@");
   });
 
@@ -406,7 +406,7 @@ describe("set-up and rule packs from npm", { timeout: SETUP_TIMEOUT_MS }, () => 
     const environment = fakeSetupEnvironment({ packs });
     expect(await runSetup(io, request(setup, environment))).toEqual({ status: "not-now" });
     expect(packs.fetches).toHaveLength(2);
-    expect(io.text()).toContain("Couldn’t download Rerail’s rule packs, so set-up can’t tell which fit acme-api.");
+    expect(io.text()).toContain("Couldn’t download Rerail’s rule packs, so set-up can’t suggest rule packs for acme-api.");
     expect(io.text()).toContain("npm error code E401");
     expect(io.text()).toContain("Try downloading them again?");
     expect(io.text()).not.toContain("No rule pack matches");

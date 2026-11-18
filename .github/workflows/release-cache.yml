@@ -104,6 +104,18 @@ jobs:
         if: steps.lookup.outputs.cache-hit != 'true'
         run: npm ci # NOSONAR githubactions:S6505 -- trusted native dependency lifecycle scripts are required
 
+      # The Linux engine's C is compiled by the runner's compilers, as in package.yml (its comment says why).
+      - name: Compile the Linux engine's C with the runner's compilers
+        if: steps.lookup.outputs.cache-hit != 'true' && matrix.napi_cross
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          for tool in CC:cc CXX:c++ AR:ar RANLIB:ranlib; do
+            path="$(command -v "${tool#*:}")"
+            echo "${tool%%:*}_${TARGET//-/_}=$path" >> "$GITHUB_ENV"
+          done
+
       - name: Build native engine
         if: steps.lookup.outputs.cache-hit != 'true'
         run: ./node_modules/.bin/napi build --platform --release --target ${{ matrix.target }} ${{ matrix.napi_cross && '--use-napi-cross --strip' || '' }} --manifest-path native/Cargo.toml --output-dir native
