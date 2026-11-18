@@ -265,8 +265,10 @@ mask goes       = code & goes_on | code & text("!=") | else_w & ~next(arrow_next
 # A line break after a `;` (and blanks or comments): the `;` was the semicolon.
 mask after_semi = fill(prev(code & semicolon), solid)
 mask ends_line  = lf & code & ~back_fill(goes, solid) & ~after_semi
+# The line breaks that may end a statement: the semicolon's gap. Its tokens after decide (`semi`).
+mask lf_end     = lf & code & ~after_semi
 # A `}` after a `;`: the `;` closed the line, so the `}` closes as after a line break.
-mask close_at   = ends_line | code & rbrace & (prev(after_semi) | prev(code & semicolon))
+mask close_at   = lf_end | code & rbrace & (prev(after_semi) | prev(code & semicolon))
 
 # The scanner reads a block comment that starts a line through, and where what follows it goes
 # on, tree-sitter loses the comment: not read yet.
@@ -441,9 +443,14 @@ skip ws
 # A swallowed comment's bytes (step 30): no token's.
 skip swallowed
 
-# A line break that ends a statement, or the file's end: the scanner's semicolon. The comments
-# before it are the statement's (`settles`).
-mark semi       = ends_line, unless before "}", end, settles, ends
+# A line break that ends a statement, or the file's end: the scanner's semicolon (the lean lexer's
+# `asi`), unless the next token goes on the line: one that starts with a byte of `goes_on`, `!=`,
+# `as`, `where`, `catch`, `finally`, `by`, and `else` but a `when` entry's (`else ->`). Before a
+# `}`, `semi_close`. In a class's header (the scanner's `constructor` context), `constructor` goes
+# on too, and so does an annotation or a visibility modifier before it. The comments before it
+# are the statement's (`settles`).
+mark semi       = lf_end & ~class_head, unless before "}" | "," | "." | ".." | "..<" | ":" | "::" | "*" | "*=" | "%" | "%=" | ">" | ">=" | "<" | "<=" | "=" | "==" | "===" | "{" | "[" | "(" | "?" | "?." | "?:" | "||" | "&&" | "/" | "/=" | "!=" | "!==" | "as" | "as?" | "where" | "catch" | "finally" | "by", unless before "else" ~"->", unless before "else" end, end, settles, ends
+mark semi       = lf_end & class_head, unless before "}" | "," | "." | ".." | "..<" | ":" | "::" | "*" | "*=" | "%" | "%=" | ">" | ">=" | "<" | "<=" | "=" | "==" | "===" | "{" | "[" | "(" | "?" | "?." | "?:" | "||" | "&&" | "/" | "/=" | "!=" | "!==" | "as" | "as?" | "where" | "catch" | "finally" | "by", unless before "else" ~"->", unless before "else" end, unless before "constructor", unless before "@" | "public" | "private" | "internal" | "protected" (simple_identifier | "." | "@")* "constructor", end, settles, ends
 mark semi_close = close_at, before "}", settles, ends
 # A function type's receiver's `.`: the next solid byte is a `(` (no expression has `.(`).
 mask ft_dot     = code & dot & next(back_fill(code & text("("), solid))
