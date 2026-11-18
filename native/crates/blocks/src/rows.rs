@@ -235,25 +235,27 @@ impl Rows {
     }
 
     /// Gives every column's chunks back to `block`'s free list (decision 0342), when it keeps one; the rows are
-    /// then none.
+    /// then none. Returns the bytes given to the OS with them (`Block::free_chunk`).
     ///
     /// # Safety
     /// These rows lie in `block`, and no one reads or writes them after.
-    pub unsafe fn release(&self, block: &Block) {
+    pub unsafe fn release(&self, block: &Block) -> usize {
         if !block.has_free_list() {
-            return;
+            return 0;
         }
+        let mut given = 0;
         let n = self.nchunks.load(Relaxed) as usize;
         for c in 0..self.ncols as usize {
             let d = self.col(c);
             for k in 0..n {
                 let p = unsafe { (d as *const ColDir as *const u8).offset(d.chunk[k].load(Relaxed) as isize) };
-                block.free_chunk(block.offset_of(p), chunk_rows(k, self.min_log) as usize * d.width as usize);
+                given += block.free_chunk(block.offset_of(p), chunk_rows(k, self.min_log) as usize * d.width as usize);
             }
         }
         self.nchunks.store(0, Relaxed);
         self.reserved.store(0, Release);
         self.len.store(0, Release);
+        given
     }
 
     /// Claims `n` rows: one atomic add, and chunks made under `lock` only when the claim passes what is reserved.
@@ -403,6 +405,49 @@ impl Rows {
 mod tests {
     use super::*;
     use crate::block::{Block, kind};
+
+    /// A relation whose last holder went gives its chunks' pages back to the OS (Q99) as they go to the block's free
+    /// list (0342), and the relation beside it reads every row it wrote: interleaved chunks of the two never share a
+    /// page given back. A relation made after takes the freed chunks again, their pages in use, and reads its rows.
+    #[test]
+    fn a_dead_relations_pages_go_back_and_its_neighbours_rows_stay() {
+        let block = Block::anon(kind::FACTS, 64 << 20).with_free_list();
+        let spec = crate::relation::Spec { widths: vec![8, 8], order: Vec::new(), indexes: Vec::new(), min_log: MIN_LOG };
+        let dead = crate::relation::Relation::create(&block, &spec, None);
+        let kept = crate::relation::Relation::create(&block, &spec, None);
+        let n = 200_000u32;
+        // Grown in turns, so their chunks interleave in the block.
+        for step in 1..=8u64 {
+            dead.rows.reserve(&block, step * n as u64 / 8);
+            kept.rows.reserve(&block, step * n as u64 / 8);
+        }
+        let fill = |r: &crate::relation::Relation, sign: i64| unsafe {
+            r.rows.claim_reserved(n);
+            for i in 0..n {
+                r.rows.put(i, 0, i64::from(i));
+                r.rows.put(i, 1, sign * i64::from(i));
+            }
+        };
+        fill(dead, -1);
+        fill(kept, -1);
+        let used = block.used();
+        let given = unsafe { dead.release(&block) };
+        assert!(given > (n as usize * 16) / 2, "{given} bytes given back of {} written", n as usize * 16);
+        for i in 0..n {
+            assert_eq!((kept.rows.get(i, 0), kept.rows.get(i, 1)), (i64::from(i), -i64::from(i)), "row {i}");
+        }
+        // The next relation of the same size takes the freed chunks: the block grows by its descriptor alone.
+        let next = crate::relation::Relation::create(&block, &spec, None);
+        for step in 1..=8u64 {
+            next.rows.reserve(&block, step * n as u64 / 8);
+        }
+        fill(next, 3);
+        assert!(block.used() < used + 64 << 10, "{} bytes used after, {used} before", block.used());
+        for i in 0..n {
+            assert_eq!((next.rows.get(i, 0), next.rows.get(i, 1)), (i64::from(i), 3 * i64::from(i)), "row {i}");
+            assert_eq!(kept.rows.get(i, 1), -i64::from(i), "row {i}");
+        }
+    }
 
     #[test]
     fn chunks_are_quarter_steps_and_cover_every_row_once() {

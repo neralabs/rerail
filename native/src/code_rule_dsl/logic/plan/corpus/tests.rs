@@ -934,7 +934,7 @@ fn a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test() {
     for dir in [a, b] {
         assert!(!dir.exists(), "{} is removed with its test", dir.display());
         #[cfg(target_vendor = "apple")]
-        assert_eq!(super::test_store::open_under(&dir), 0, "nothing of {} is held open after its test", dir.display());
+        assert_eq!(super::test_store::open_under(&dir), Vec::<String>::new(), "nothing of {} is held open after its test (handles, connections: {:?})", dir.display(), crate::content_store::holding(&dir.join("store.sqlite")));
     }
 }
 
@@ -1447,8 +1447,10 @@ fn every_switch_lowering_reads_is_classified() {
         "RERAIL_SPLIT_DUMP",
         "RERAIL_DEMAND_DUMP",
         "RERAIL_PREPARED_TRACE",
-        // Decision 0173's version simulation, traced to a directory (`version_trace`): written, never read back.
+        // A measurement aid (decision 0173): each version a program takes, written to a directory; the program is the same.
         "RERAIL_VERSION_TRACE",
+        // A profile's live heap by allocating stack (`heap-frames.tsv`): a diagnostic; the program is the same.
+        "RERAIL_HEAP_FRAMES",
         "RERAIL_SPIKE_PROJECTION",
         // A diagnostic: a refused component's members, printed (`front::unstratified_trace`).
         "RERAIL_STRATA_COUNTS",

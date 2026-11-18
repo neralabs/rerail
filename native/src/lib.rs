@@ -129,7 +129,7 @@ pub(crate) fn install_store_functions() {
 
 /// The device crate's tests register the packs they read (`rerail_device_metal::test_languages`); mounted here, the
 /// same tests read the engine's, which `install_store_functions` registers as the library loads.
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(test, target_os = "macos", feature = "metal-tests"))]
 pub(crate) fn test_languages() {
     install_store_functions();
 }

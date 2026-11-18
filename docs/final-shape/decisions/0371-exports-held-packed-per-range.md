@@ -1,6 +1,17 @@
 # 0371. The exports are held packed: canonical order, each column per range, node ids split at the granule
 
-Numbered 0365 where it was written (0365 is also two other records). Date: 2026-11-17. Status: decided (user, 2026-11-17); built.
+Numbered 0365 where it was written (0365 is also two other records). Date: 2026-11-17. Status: superseded
+(user, 2026-11-17) by 0325's "Exports held where they lie" (Q103, Q83 at 837f4b40d), taken at the merge of
+final-rerail-shape-phased-facts.
+
+**Superseded.** The user chose phased-facts' in-place exports over this record's copy and pack at the freeze: an
+export holds the chunks' own relations where they lie (0353: data lives in one place, in one layout), not a packed
+copy of their rows. Gone with it: `packed_source`, `Stored`'s packed columns (`ColRef::Packed`), the freeze's sort
+and pack, and the totals read off the frozen rows. Kept: a column in row order is probed as a range
+(`Source::sorted_range`, `a_column_in_row_order_is_probed_as_a_range`), and the totals count each export's
+distinct rows (as rows are kept once on their way in, `Exports::add`'s count). `rerail_blocks::ranged` stays in
+the blocks crate, unused by the engine: packing may come back as the kept blocks' own layout. The rest of this
+record is as it was decided.
 
 ## Intro
 

@@ -88,3 +88,12 @@ languages. That batch made about 100k probes of a few kinds (kind 1204 alone 25,
 
 A probe that binds the document as well as the kind reads that document alone (`View::find_keyed` through
 `Source::lookup_in`). B-now does not bind it. The 50-file run is 316 G now.
+
+## The kind index not taken (merge of final-rerail-shape-phased-facts, 2026-11-17)
+
+That line answered the same probes with a kind index of the batch (`Batch::kinds`): `node`'s rows read once, placed
+by kind in a `Vec` of their own, and a probe read its run. Measured there, the probes had been 20 s of a 10-file
+cold run's 53 s (`assign_name`'s delta probing a kind no file holds 27 times a chunk). The index is `node`'s rows
+made: 0353 holds that a view is a read of the tape and nothing makes its rows, so the merge keeps this record's
+reads in place (`of_tag`, the step's last probe) and not the index. Whether they cover that line's case (a kind
+counted 0, probed per delta row) is Q110.

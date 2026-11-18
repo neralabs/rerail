@@ -177,7 +177,7 @@ into notes once the queue is done).
   `dropping_unreached_clauses_prunes_to_the_same_program` comparing programs as they are.
 - **Done when**: lowering whole then pruning yields no `rr_wide_*` relation whose rules are its relation's own; the
   test's widened-copy collapse (rr/tests.rs, f2653a913) is removed and the 8 dropping tests pass.
-- **Record**: built, pending review. The copy that stayed is a copy of a request relation (eslint-yoda's
+- **Record**: done (2026-11-16, review 6). The copy that stayed is a copy of a request relation (eslint-yoda's
   `rr_wide_node_text_rr_token_req`): `rr_token_req` has a rule that reads `node_text` for a reader that is never
   reached, so its copy is made. Gated `prune` drops that rule with its reader, and the copy is left with
   `rr_token_req`'s own rules. Only `prune` can see this, so lowering records each copy and its relation
@@ -245,6 +245,20 @@ into notes once the queue is done).
     compares as `congruence` does, `simplify::canonical_rule` (the engine's own canonical form). The exact copy
     name and the new test hold: under the suffix rule `same_q` would name the class and `out` read it, which the
     test refuses. Verified live under Relax (9/9) and under cargo.
+  - *Review 6* (2026-11-16, by me against the brief, on the head): the review-5 comparison holds
+    (`template::canonical` labels heads, atoms and aggregates' atoms, numbers variables in every position). But the
+    slow tier showed 6 of the 7 dropping tests red: decision 0291 (f015b1360, merged at cb86d2d64 after Q3 was
+    green; no merge ran the slow tier) broke the property. (1) an ask's variables were named after its reader's
+    index in the whole program; (2) an unreached reader's ask kept narrowing; (3) an unreached reader that asks for
+    all kept the request whole; (4) then a request's widened copy, equal once both were narrowed alike, could not
+    merge (0291 made requests fixed). Fixed (0291 item 4): asks named from their reader alone and gated by it; a
+    site asking for all adds the whole request gated by its reader, and `simplify` drops a request rule another of
+    its relation's subsumes (`front::subsume_requests`); a request takes in its own widened copies and names the
+    class; `merge` moves or drops a merged relation's gate; `undo_round` removes the demand relations. The test's
+    helper mask covers a helper number before the ask's suffix (`rr_text20_rr_d`). Verified: the 7 dropping tests
+    (slow tier), lowering_is_idempotent, the rr, simplify, program_image, program_facts, vtab syntax and base
+    tests (210/211: Q27's), rerail-logic's (50), and strict 10-file cold, warm and edit runs (same rows,
+    byte-identical outputs). **Done.**
 
 ### Q4. The `.rdl` comparison checks the on-request step independently
 
@@ -389,6 +403,16 @@ data-layer-eager-resolve fails (rc 1), on 50 sampled data-layer files.
     exempts only its native build (rr-align's form).
   - The Native-and-GPU-strata merge (645070bce) takes its generator-made mounts (`tools/cratify/mounts.py`): the
     engine's library and test builds compile with no warning but the linker's `__eh_frame` note.
+  - Review (2026-11-16, by me): no code warning in the engine's debug CLI, test or rerail-logic builds. The jobserver
+    lines are not only cargo's old replays: a build at 18:20 captured them again for ast-grep-core,
+    rerail-tape-format and tree-sitter (`target/debug/.fingerprint/*/output-*`, 524 files in all). Cause: sccache
+    keeps each compile's stderr with its entry, and `CARGO_MAKEFLAGS` is not in its key, so a hit on an entry made
+    before the farm stripped the variables (farm.py 1178) replays the warning; the wrapper `execve`s sccache
+    (farm.py 503), so nothing sees a hit's output. Waiting for the crates to compile again does not end it while
+    the entries hit. To decide (question 3 below). Also: `diagnose` says this checkout pins rustc 1.95.0; it pins
+    1.99.1 (c88acc0e7): the farm's check reads something stale.
+  - **Done** (2026-11-16): no code warning is left; the jobserver lines are left to age out of the cache (question 3,
+    answered (c)). The linker's `__eh_frame` note is the engine test binary's size, not a code warning.
 
 ### Q14. Plan-time switches and the plan cache
 
@@ -803,6 +827,9 @@ pass.
   no such digest and queues nothing. Passes, as does `the_run_after_a_cold_one_writes_nothing`. (The record first
   written here put the short manifest on the second run; the trace above, from phased-facts, is right: it is the
   second process's first run, its phase 0, as the manifests' `last_run` order shows.)
+  At the merge of the hub (8e4b6b68e, 2026-11-16) into phased-facts, which had fixed it separately (14c0e061a: the
+  digests carried in the manifest's item): the hub's form is kept, one mechanism (its record item `the sources the
+  manifest names by digest`, applied before the manifest, resolves the same digests the same way).
 
 ### Q25. `rrs_records_are_rows_on_the_cpu` expects no `/` among the punctuation bytes
 
@@ -1133,7 +1160,7 @@ pass.
 - **Done when**: the observer's functions take what they dereference safely, or are `unsafe` with their callers'
   contract written down, and `cargo clippy -p rerail-engine --lib --tests` runs to the end.
 
-### Q21. Red tests that predate 0281 step 4
+### Q109. (a second Q21 until 2026-11-17) Red tests that predate 0281 step 4
 
 - **Found** (2026-11-16, while testing 0281 step 4's slices; both fail at 38d1272f5, before them):
   - `corpus::phases::tests::a_phase_hands_on_its_exports_and_its_reader_follows_each_edit`: phase `p1` reads
@@ -1348,7 +1375,7 @@ transducer crate, which the engine's `waves::matches` test calls; now `pub`). Co
 - **Done when**: the D416 clause's work is accounted (a limit too small for its walk, or a walk that loops), and
   the coverage test's count is explained (the pack's clauses) or met; both gates pass.
 - **Also held back by it** (2026-11-16, 0324): 16 of Metal's semantic fixtures, moved from the grid to the packed
-  JIT and ignored with "Q49". In each, the device stops a task at its estimate (`WorkLimit`) where the CPU
+  JIT and ignored with "Q49" (Q19 at f15aac19d, Q55 at 64ef54cb0). In each, the device stops a task at its estimate (`WorkLimit`) where the CPU
   interpreter does not:
   - `accepted_witness_limits_follow_shared_predicates_and_preserve_duplicate_captures`
   - `finite_literals_filter_before_witness_limits_across_register_and_dynamic_branches`
@@ -1366,6 +1393,7 @@ transducer crate, which the engine's `waves::matches` test calls; now `pub`). Co
   - `shared_query_capture_text_batches_programs_and_files_without_output_directives`
   - `transformed_candidate_rejection_precedes_accepted_witness_limits`
   - `typed_output_preserves_late_operand_failures_without_publishing_failed_evaluations`
+
 
 ### Q84. (Q65 at Native-and-GPU-strata e0a0362b9; Q57 at django-bugs 49dad1939) The warm run after a cold one asks the observer's store inside the waves (the hub, 8e4b6b68e)
 
@@ -1436,23 +1464,7 @@ transducer crate, which the engine's `waves::matches` test calls; now `pub`). Co
     against 2.9–3.3 s. The lane's wall now equals the wave's own (`== Device`), about 315 ms of GPU, 320 ms of host
     CPU and 150 ms off a core. `RERAIL_GPU_KERNEL_TIMES` (a command buffer a kernel) was not it: without it the
     waiting was the same.
-  - **The overlap, the lock, the sizing and the price** (2026-11-17, the user: "do we really need a process-wide
-    Metal execution lock? Shouldn't we take leases on the resources instead?"):
-    - The lock is gone (0344): runs hold leases on the memory they write. The GPU backend's `start` runs a batch of
-      programs on a slot pool of its own, so the worker begins the next wave beside it. On s1000, 6 to 8 of 19 wave
-      batches began while another ran.
-    - `gpu.size` was 173 of its 217 ms in the profile's own count, which walked every root node of every file for
-      each pass. It now counts the groups each walk launches; the real sizing is about 45–60 ms, most of it text rows
-      (`size.texts`).
-    - A program's price learns from the run's own launches (`price::observe`, from 4 samples). Wall and host CPU are
-      each a robust line: a launch's fixed cost plus a unit's. The wave on the GPU: about 6 ms + 1.1–2.0e-8 s a unit of
-      wall, 4.3 ms + 4e-9 s of host CPU. The cores' samples are fitted net of their load, and the lane's host ratio
-      no longer scales a learned host price. The wave's priors are today's measurements.
-    - **Open**: with two waves in flight, a launch's wall includes the time it shares the device, so the per-launch
-      estimates sum past the lane's span (2.36 s against 1.00 s pinned). Placement still treats the GPU lane as one
-      queue, so an unpinned run sent 10 of 20 waves to the cores while the GPU lane looked busy.
-- **Two blockers to the overlap, found** (both resolved by 0344: no lock, and no begin/finish split of the label
-  passes; a program's whole run is the spawned submission):
+- **Two blockers to the overlap, found**:
   - `rerail_metal::metal_execution_guard` (a process-wide lock from the grid's launch budget, copied from Tempo)
     is held for a whole label run, encode through readback. A launch begun on the worker (encode and commit in
     `start`, wait and decode in `finish`) would hold it while the worker begins the next, which then waits on the
@@ -1481,7 +1493,6 @@ Their siblings, found later the same day (0310 steps 4 and 5):
 - `rerail_tape_format::f16::group`: it matches a format 16 code group's bytes a byte at a time
   (`match_groups`).
 - `metal_tape.metal`'s `f16_word` is gone with the hand port (step 4): the generated reads load words.
-
 
 ### Q60. (Q53 at 8e2b232ad) On the device, a group of 64 nodes' roots run serially in one thread, and a parent is a search (oscar's to take)
 
@@ -1519,35 +1530,6 @@ Their siblings, found later the same day (0310 steps 4 and 5):
     control flow"). That took the label passes from 710 to 349 ms, and `label_micro` from 355 to 159 ms, under the
     hand-written reads' 211.
   - Left: `label_micro_8`'s parent climbs (171 against the hub's 91), and the walk test.
-  - **The parent climb, read** (2026-11-17): format 16's parent (`reads.rs`, `parent16`) is at most `K - 1 = 7`
-    sibling steps back, each a slot read whose address depends on the one before: a memory latency a step.
-    Every language's slots are one byte (`tables/*.tsv`, `widths 1 1 1`), so a step back over a sibling of 64
-    nodes or more escapes to the side list (`tape_f16_side`): a binary search of up to 8 dependent byte loads, then
-    the value. The view is a thread copy (`thread const uint* v`), so its loads are not the cost. The hub's 91 ms
-    read a parent column, a decoded structure the tape-in-place rule refuses.
-  - **Next, in shape**: a walk's thread runs one window of 64 consecutive nodes (0293 §10). The window's parents
-    come from one forward pass over its slots (8 slots a word load, a stack of open ancestors in thread memory),
-    and `parent` of a node in the window is a read of that, not a climb. That is the walk kernel's change Q60
-    asks for too (a group's roots as a SIMD group's), so it goes with Q60. The side lookup's search can be a word
-    compare (SWAR, the offsets 8 a load) for every escaped read, sizes and gaps included; worth it only if the
-    escapes are a large share, which the device does not count yet (a `walk_escapes` counter beside
-    `walk_steps`).
-  - **The spike** (2026-11-17, decision 0359): the parent climb is not the cost.
-    - An oracle parent column (every parent made by a kernel before the walks) gained nothing (220 ms against
-      172–217 ms), and neither did the window pass (170 ms).
-    - Counted: 4.0 M climbs in 97 M steps, 1.8 hops each, 92% inside the start's window.
-    - The cost was the dispatch's shape: a thread a 64-node group gave `label_micro_8` about 8,800 threads a launch.
-      A group's nodes are now a SIMD group's in the short tiers: `label_micro_8` 88–134 ms, the hub engine's
-      75–107 ms, with the same walks.
-    - `clause_patterns`: a pass's group takes 4 threads and a fact's root one, so no lane idles for a fact. 6.8 →
-      2.1–2.5 ms, under the hub engine's 3.0–3.2.
-    - Nothing is precomputed, parents included (the user): the oracle column was a measurement bound only.
-  - **Left:**
-    - the walk test (a device test that fails on a walk whose steps change);
-    - the reads' widths;
-    - `lowered_clauses_find_the_same_roots_on_the_resident_interpreter` fails on
-      `ruff-d416-missing-section-name-colon/missing-colon-underlined` (`BackendFailure`) without this change too.
-      It was hidden while the engine's `metal-tests` build did not compile (`crate::test_languages`, fixed).
 
 ### Q61. (Q54 at 8e2b232ad) Oscar's engine stops on the data-layer corpus in `step_histograms` (to check on the merged tree)
 
@@ -1872,8 +1854,6 @@ measured on hogql (load 68–80, so noisy): instructions 67.7–76.8 B against 6
   remade when it has outgrown its wrap. Count the remakes.
 - **The build itself** (bucket, radix sort, place) against the old per-binding sort, by GPU time, on quiet runs.
 - **Done when**: each has a measurement on a quiet machine, and what it shows is either fixed or recorded in 0325.
-- **Also seen**: refusals at run time of an index (`an index of 715457 rows`) at the default budget. 0325 step
-  6's run-time refusals no longer lose findings (ef6c6c386), but each one still costs the stratum's device work.
 
 ### Q86. (Q68 at Native-and-GPU-strata e0a0362b9) Step 6's prices spend the device's budget: refusals redone on the CPU (0325 step 6)
 
@@ -1906,3 +1886,354 @@ inventory of today's copies (12 sites, marked `copy (0353 step N)`) and the plan
    6 (in-place writes and indexes), 7 (the transducer's packed batch, its owners'), 8 (0325 step 7), 9 (prices).
 
 Q86 (step 6's prices) waits for step 4: most of what it prices goes.
+
+### Q68. (Q49 on final-rerail-shape-phased-facts at dfb0e0e02) `the_run_after_a_cold_one_writes_nothing` fails at the hub's 8e4b6b68e
+
+- **Found** (2026-11-16, merging the hub into phased-facts): the warm child run exits 3, "the observer's store not
+  asked inside the waves in a warm run (<tmp>/src: its answers unknown, read again)", several times. It fails the same
+  at the hub's own tip (a scratch worktree at 8e4b6b68e, on a farm host), so the merge did not bring it. The test
+  writes its sources just before the cold run: Q45's racy window is the lead (its answers kept untrusted, settled at
+  the run's end since Q45's fix, which the warm run then finds unknown).
+- **Done when**: the test passes, with the cause named.
+- **Record**: done (2026-11-16). Two faults, the second hidden behind the first. (1) A run whose rules make requests
+  makes its `World` inside the fixpoint ("requests answered inside the fixpoint"), and `World::new` watched its
+  roots there: `watch` reads a root's part of the observer's store, which no wave may ask (0104). The roots are now
+  watched before the first wave (`World::watch`), and the `World` made inside finds each asked already. (2) The
+  warm run then recorded a new manifest: same plan and sources, other `also`. Phase 0's graph was read from its
+  image (0246), which kept no plans ("a graph read so used none"), so the outer run's manifest left out the
+  bootstrap run's plans that the cold run's named. The image now keeps them (a seventh list; images are keyed by
+  the engine's build), so a warm run names what the cold run named, and they stay live while the image is used.
+  Not the racy window (Q45). Verified: the test, a_second_run_in_one_process, the phase 0, graph, world, load,
+  observe, racy and manifest tests (84/84); strict 10-file cold, warm and edit runs, outputs byte-identical, the
+  warm run writing nothing.
+
+### Q69. (Q50 on final-rerail-shape-phased-facts at dfb0e0e02) No edit of a phased run takes the kept inputs (decision 0117 step 1)
+
+- **Found** (2026-11-16, measuring the edit's peak, t34 item 10): on 300 files × 317 rules every edit decodes the
+  299 unchanged files' memo entries whole (348.5 MB of values, 454 MB live at the peak). The profile's decision:
+  "not taken (alias_value: no frame of its documents (0 of 989 inputs have one))", on every edit, though the
+  store holds that frame under the same space and identity the check asks.
+- **Cause**: `kept_inputs_stored` runs before the first wave, but after an earlier run of the process (phase 0's,
+  the sources phase's) installed the store's frames snapshot. The snapshot leaves every root's cross space out until
+  the run's own `preload_frames_live`, which comes after the check, and `frames` answers from the snapshot alone.
+- **Fix**: the check reads past the snapshot (`ContentStore::frames_stored`, as `admit_parts_stored` does for a
+  memo's entries looked up outside the waves). Test: `the_kept_inputs_are_found_past_an_earlier_runs_snapshot`.
+- **Record**: done (2026-11-16). Steady state (an edit after one that counted every file in): 299 hits read for
+  their outputs alone, 51 of 989 inputs changed; memo replay 8.5 MB of values (was 348.5); peak footprint 1.38 GB
+  (was 1.70), profiled. The first edit after a new build counts every file in again (its memo space is new), as
+  before. Outputs: the 300-file edit's 660 outputs (30,449 rows) equal a cold run's over the same corpus as row
+  sets; strict 10-file cold, warm and edit byte-identical; frame, partial and kept-input tests 10/10.
+
+### Q70. (Q51 on final-rerail-shape-phased-facts at dfb0e0e02) A kept input's first row read decodes it whole
+
+- **Found** (2026-11-16, after Q69, t34 item 10): live at the edit's peak, 312 MB under "a kept input, decoded where
+  read", inside "the evaluated owners, patched". The patch read 8,987 kept rows (523 owners) of 13 inputs; `Lazy`
+  decoded each input whole at its first `row_at`.
+- **Fix**: `Lazy` answers `row_at` and `value` from the row's granule alone (each decoded once, checked at its
+  owners' range ends as the whole decode checks) until something reads the input whole, which lets them go.
+- **Record**: done (2026-11-16). Peak 1.24 GB profiled (was 1.38), 1.28–1.30 GB unprofiled (was 1.37); outputs
+  equal a cold run's (660 outputs); strict 10-file runs byte-identical; kept-input tests 8/8, the decode test
+  extended to read a granule before the whole.
+- **Open**: a new build's first two edits replay every hit whole (2.12 and 1.79 GB unprofiled): the keeper fails
+  on the edited file's entry in the old build's memo space, then counts every file in. Done as Q71.
+
+### Q71. (Q52 on final-rerail-shape-phased-facts at dfb0e0e02) A new build's second edit replays every hit whole
+
+- **Found** (2026-11-16, after Q70): on 300 files × 317 rules, a new engine build's first edit evaluates every file
+  (no entry of the old build's is a hit) and its keeper gives up ("c.py: the memo no longer holds the rows
+  counted"), so the second edit counts every file in again, decoding every hit whole: 1.79 GB unprofiled.
+- **Cause**: what is kept of every file together (the keeper's blob, the space's last program, a session's and the
+  kept part's documents) was keyed by `memo_whole`, the file-local program without the engine build, while the
+  entries it counts are under `plan_digest` (the build, the grammar, the node ids' scheme). A new build read the
+  old build's keeper, trusted its counts of the unchanged files (of rows this build may make otherwise), and could
+  not count the edited file out.
+- **Fix**: `memo_whole` is under `plan_digest` too: a new build's keeper starts empty, and its first edit, which
+  evaluates every file anyway, counts every file in.
+- **Tests** (TDD: the new one failed with the production message before the fix):
+  `a_new_builds_first_edit_counts_every_file_in_so_its_next_edit_is_steady` (a test hook,
+  `build_ids::rebuild_for_tests`, makes the next runs another build's over the same store), and
+  `a_hit_read_for_its_outputs_alone_decodes_no_export_or_base_rows` extended. Both now assert, through the report's
+  new `stats_kept` (the keeper's files counted in and out, or why it gave up): a cold run counts every file in; a
+  rerun with nothing changed has every file a hit read for its outputs alone and counts none; a steady edit has the
+  unchanged files read for their outputs alone, decodes none of their rows and counts the edited file alone out
+  and in; a new build's first edit hits nothing and counts every file in, its second is steady.
+- **Record**: done (2026-11-17). Bench (unprofiled, the new build over the Q70 store): first edit 2.05 GB, keeper
+  `in 300 out 0` (was given up); second edit 1.23 GB (was 1.79), 299 files unchanged, keeper `in 1 out 1`. Strict
+  10-file cold, warm and edit byte-identical; the warm run writes nothing; warm-writes and session tests pass.
+- **Open**: a keeper given up for another reason (an entry the memo dropped within a build) still leaves the next
+  run counting every file in by decoding every hit whole, though the kept inputs hold those rows.
+- **Open, done** (2026-11-17). Which runs start with no valid keeper while the memo has hits, within a build:
+  - *An entry dropped*: not reached. The memo keeps a path's newest `MEMO_CONTENTS` (4) contents, and every ended
+    run's keeper counts the newest; a plan's entries go only with the plan.
+  - *A stopped run* (killed, out of memory, a strict abort): its mark, "a run is under way" of no program, emptied the
+    keeper, so the next edit decoded every hit whole. A run that started from what an ended run of its program kept
+    now marks itself under way *of that program* (`memo::set_under_way`), and the next run of it keeps the keeper:
+    the stopped run's entries are of that program and of the contents it read, and the contents counted are still in
+    the memo. The kept part's frames are queued after the run's "ended" mark, so no such stop has written any.
+  - *A run of another program* (a rule edited, decision 0225 §2): it rewrites entries the keeper counts, so the next
+    run of the first counts every file in. Kept as it is; it is tested now.
+  - Tests: `an_edit_after_a_stopped_run_of_the_same_program_is_steady` (failed before the fix: no hit read for its
+    outputs alone) and `a_stopped_run_of_another_program_leaves_nothing_kept_trusted`, through a test hook,
+    `corpus::STOP_AFTER_ENTRIES` (the program's run stops once its first entries are written). Partial-hit tests 12/12;
+    strict 10-file cold, warm and edit byte-identical.
+  - Left: such a run of another program (and a lost blob) still counts every file in by decoding every hit whole. The
+    kept inputs could give those rows if the kept part recorded which content each document's rows are of; it does
+    not today (a new process's `Retained::docs` is empty).
+
+### Q72. (Q53 on final-rerail-shape-phased-facts at dfb0e0e02) 50 unused re-exports in the engine's `code_rule_dsl/mod.rs`
+
+- **Found** (2026-11-17, a `--bin rerail-engine --features test-hooks` build): 50 `unused import` warnings for the
+  language crates' re-exports in `native/src/code_rule_dsl/mod.rs` (e.g. line 9, `rerail_lang_php::…::forte::tree::*`),
+  from the crate split.
+- **Cause**: re-exports gated on `any(test, feature = "test-hooks")` that only the library's own tests use: a
+  test-hooks build that is not a test build reaches none of them (no crate depends on rerail-engine).
+- **Fix**: those 50 gated on `test` alone (four Metal ones on `all(test, target_os = "macos")`; the
+  `component_loop` glob on `any(test, feature = "headless")`, its module's other build). The CLI's test-hooks build
+  has no compiler warning; the test target builds and its partial-hit tests pass. Done (2026-11-17).
+- **Then**: 53 `#[cfg_attr(any(test, feature = "test-hooks"), path = …)]` on inline modules were unused too (`unused
+  attribute`; missed at first, as a sorted, cut list of the build's warnings showed the farm's lines alone): the paths
+  only their `#[cfg(test)]` child modules use. Gated on `test`, outer modules first (narrowing one showed the nested).
+  The test-hooks build has no compiler warning; 61 tests across the modules touched pass.
+
+### Q73. (Q54 on final-rerail-shape-phased-facts at dfb0e0e02) A new build reads the old build's kept cross-file inputs
+
+- **Found** (2026-11-17, profiling a new build's first edit on 300 files × 317 rules): live at the peak, 358.8 MB
+  under "cross/the kept part's rows, from the frames"; the decision line "2712 of 2712 strata run (0 maintained from
+  deltas … 1983 derived again)". The run read the old rows of every changed input to make deltas, and had no old
+  derived rows to apply them to: a stratum's identity is of the engine build (`plan::identities`), its inputs' frames
+  were not (`retain::keys`: the prepared program's key and the cross program's digest). Decision 0077 §4 keeps the
+  part per engine build.
+- **Fix**: `retain::keys` under the engine build and the grammar (`rerail.cross-retained/v3`). A new build finds no
+  kept input: every input is new to it, and an old build's input frames age out of the space as derived ones do.
+- **Test**: `a_new_builds_first_edit_counts_every_file_in_so_its_next_edit_is_steady` asserts the new build's first
+  edit compares no input with the old build's (`defined`, which the edit leaves, is among its changed inputs: before,
+  only `col` and `xd_called` were). A cross-file rule (`twice`) the edit does not reach was added to the tests'
+  program; `assert_steady` asserts the cross part is kept, some strata not run.
+- **Also**: an input's frames job copied every changed granule's rows into per-owner vectors, then each granule's
+  joined, before encoding: about twice the input, several inputs at once. It now records the rows' places (4 bytes
+  a row) and copies, encodes and lets go one granule at a time; the frames are the same rows in the same order.
+- **Record**: done (2026-11-17). Profiled first edits of a new build: peak 2.44 GB before both, 2.40 GB after; the
+  359 MB is gone from the live heap. Kept-input and frame tests 18/18, partial-hit tests pass; strict 10-file cold,
+  warm and edit byte-identical.
+
+### Q74. (Q55 on final-rerail-shape-phased-facts at dfb0e0e02) A new build's first edit is a cold run, at 2.3–2.4 GB
+
+- **Found** (2026-11-17, after Q73): the first edit of a new build evaluates every file and derives every cross-file
+  stratum, as a cold run does, and its peak is the cold run's. Profiled, by phase (footprint, live heap): parse
+  0.70, 0.52 GB; the files' evaluation up to 1.92, 1.58 GB (chunks on 14 threads at once); the cross-file part 2.34,
+  2.12 GB, its live heap the run's inputs (exports 215 MB, base rows 191 MB, held for it), the writer's transaction
+  (130 MB) and a long tail of every stratum's rows (none above 25 MB). The footprint stands 0.2–0.5 GB above the live
+  heap.
+- **Done, step 1** (2026-11-17): the cross part hands each relation it derives again off once no later stratum reads
+  it (`plan::Hooks::hand_off`, `retain::Handed`): its frame's digest and bytes made then, its rows let go;
+  `write_frames` writes the handed frames in their stratum order. A cold run and a new build's first edit hand off
+  every derived relation but the outputs and the caller's (1,950 at 300 files); a delta-driven run hands off what it
+  derives again. The hook now says whether it took a relation (`Result<bool>`): one it does not take (a view, a
+  maintained one) is held as before, and a relation a view that stays reads is never offered. Tests:
+  `cross_handed` in the partial tests (a cold run and a new build's first hand off, a delta-driven edit none).
+  Profiled peak 2.34 → 2.10 GB. Strict 10-file outputs identical.
+- **Where the rest is** (`heap.tsv`, the whole live heap at the peak, now written beside `memory.tsv`): at the cross
+  part's peak (2.09 GB footprint), 0.51 GB is live from the local chunks' spans (strata rows, specs, guests, the
+  profile's records), 0.42 GB the exports and base rows held for the cross part, 0.37 GB the cross strata (0.20 GB
+  of it sorted-column indexes on its inputs, held as long as the inputs), 0.12 GB parse, 0.10 GB input frames.
+- **Done, step 2** (2026-11-17): the chunks in flight share the run's headroom. Decision 0254 let 8 chunks evaluate at
+  once, each sized to three quarters of the whole headroom (`RUN_MB`'s invariant, written for one chunk), and the
+  builder projected 9 ahead at the probe's size before any was measured. Now one chunk until a credible measurement
+  (a rise of 16 MB or more: a smaller one is pages freed before it, reused), then as many at once as the headroom
+  holds at 64 MB each (`CHUNK_FLOOR_MB`), each sized to its share; bytes a node the most measured this run; the
+  builder projects ahead only as many as are allowed. A chunk's working set is 7–22 KB a node (rows derived,
+  guests' documents, statistics), so at 300 files one or two run at once.
+- **Done, step 3**: each input's frames are queued as its job makes them, into the run's wave (`Carry`; one
+  transaction with the derived ones), placed in segments of their own (decision 0295 §1): 270 MB of encoded frames
+  were held at once beside the inputs at the cross part's end.
+- **Measured** (300 files, cold, unprofiled, `/usr/bin/time`): 2.13 GB, 12.7 s wall, 61 s user before; 1.65 GB,
+  24.3 s wall, 55.6 s user after steps 2–3 (wall: one or two chunks at once while the base under them is 0.7–1.4
+  GB). Outputs the same relation by relation (sorted CSVs); strict 10-file outputs byte-identical.
+- **A profile's own memory**: 0.42 GB of a profiled cold peak is the profiler's records (`profile::planned`,
+  `native`, `report::placed`, `placement::record`), kept per stratum per chunk for the report: profiled peaks are
+  0.4–0.5 GB above unprofiled ones. `RERAIL_HEAP_FRAMES=1` (with `RERAIL_HEAP_SAMPLE`) writes `heap-frames.tsv`, the
+  live heap by span and allocating stack (frame-pointer walk, aarch64 macOS), for `atos`.
+- **Done, step 4** (2026-11-17): a cross run that keeps nothing (no clean relation: cold, a new build's first) writes
+  its inputs' frames before it runs (`retain::write_input_frames`) and lets each input go after its last reader
+  (`Hooks::unload`: its binding, its place among the run's inputs, its export's rows; `Report::cross_unloaded`). At
+  300 files only 5 inputs are let go early: the rest are read by late strata.
+- **Done, step 5**: the planner's exact pair statistics (decision 0203 §3) counted a step's rows by a `Vec<i64>` key
+  each, up to 2^20 rows a histogram, strands at once: 0.24 GB at the cold peak. Keyed by a `u64` now (the value for
+  one column, a 64-bit mix for several).
+- **Done, step 6**: each document built a grammar of its own (its kind table), 61 MB of them live at the peak (the
+  guests'); one per dialect a process now (`Grammar::embedded`), and 10% fewer instructions in the local part.
+- **Measured** (300 files, cold, unprofiled): 1.65 GB before steps 4–6, 1.56 GB after; the engine's live heap at the
+  peak 1.51 GB → 1.11 GB (profiled, without the profiler's records). The footprint's rest is the allocator's and
+  SQLite's. Findings the same relation by relation; strict 10-file outputs byte-identical.
+- **Open**: at the peak (cross part, 1.11 GB live): base rows 161 MB and exports 36 MB, read by late strata; the cross
+  part's sorted-column indexes about 190 MB (`Sorted::of`), its evaluation 67 MB, the writer's transaction 75 MB.
+  Next: inputs read in place (the tape, not copies of its columns) so a late reader does not pin a copy; indexes on
+  derived relations let go with them; the allocator's 0.45 GB between live heap and footprint.
+- **After the trunk merge (3cd2ecdb4)**: 3.6 GB. Q98 and Q99 below bring it to 1.77–1.90 GB (five runs, unprofiled);
+  the rest over 1.56 GB is 0325's relation storage (below). 18 of 31 chunk sizings cut by the memory line, as before
+  the merge (it was 21 of 32 at 3.6 GB).
+
+### Q98. (Q75 at 837f4b40d) A kind-set axis built its code set once a document (done, 5efa8f1a7)
+
+Format 16 numbers a tape's codes in its language's table, so `Within::set` built a copy of the same whole-table set
+for every document: 734 MB live at the 300-file cold peak after the trunk merge, which made one chunk add 2.65 GB.
+The sets are shared by table and dialect for the batch. Peak 3.6 → 2.0–2.7 GB.
+
+The 20× fan-out the profile names in that chunk (`rr_agg56`, 80 K → 1.6 M rows) is not a regression: the rule pairs
+every child with every earlier sibling, and the pre-merge plan (`kind`, `child` in place of `rr_ctx57`) made 1.48 M
+rows at the same step. A nearest-earlier-sibling aggregate written as an ordered walk would remove it (rule shape,
+not planning).
+
+### Q99. (Q76 at 837f4b40d) A dead relation kept its block's pages until every relation sharing the block went (done)
+
+0325 step 2's open item, measured: setfix's relations share 64 MB blocks, given back with their last relation, so a
+chunk's dead relations (a stratum's deltas, a tail moved to a bigger block, finished strata) stayed resident: about
+500 MB of anonymous block pages at the cold peak, and the heaviest chunk 1.35 GB against 0.95 GB before the merge.
+
+- A relation's last holder (`rows::Owned`, shared by a part's copies and the device's `InBlock`) gives its chunks'
+  whole pages back to the OS (`Block::give_back_rows`); the block's room is not reused. Anonymous blocks only: a
+  pooled slab's pages are the device buffer's.
+- macOS keeps `MADV_FREE` pages in the footprint; `MADV_FREE_REUSABLE` takes them out at once (measured: 512 MB
+  touched, then 9 MB of footprint after it, 521 MB after `MADV_FREE`). The scratch regions' `free_pages` uses it now,
+  with `MADV_FREE_REUSE` before a region's pages are taken again.
+- Measured: 2.0–2.7 GB → 1.77–1.90 GB; the heaviest chunk 1.35 → 1.09 GB. Findings the same relation by relation.
+- Open: the device pool holds 262 MB of row blocks throughout (Metal buffers, which give no page back); with the pool
+  too small for them (`RERAIL_METAL_MB=200`) the peak is only about 50 MB lower, so the rows themselves are the rest.
+
+### Q100. (Q80 at 837f4b40d) A later guest round's derived-again native operator read kept relations it never held (done)
+
+Found by the strict 300-file cold run after the Native-and-GPU-strata merge (908baa86a): 6 runs in 8 aborted with
+`chain_below: the native engine declined: a native fact operator over input relations` in "a later round,
+maintained (round 2)". In that round's maintained program (0331), `chain_below` (a reach, 0119) is derived again
+when the round prices it so (hence intermittent: the price is measured), and it reads `chain_step` and
+`rr_reach_seed_chain_below`, kept from the earlier round and no strata of the round's program. The level read them
+(`m.need`) but held only the program's own quiet strata (`unread`), so the reach found neither held and declined.
+Now every needed kept relation the run does not hold, and that is no stratum or input of the program, is held as
+kept (`hold_quiet`). Four runs pass, findings identical to the reference (660 relations, 30,449 rows).
+
+### Q101. (Q81 at 837f4b40d) Frames were written from a copy of each relation's rows (done, first of the in-place removals)
+
+The user (2026-11-17): "remove the rest of the places where data that's in a block is transformed into a
+pointer-chasing data-structure or copied when it could be accessed in-place". Every frame written (`write_frames`'
+whole relations and its loop, `Handed::of`, `kept_strata`) copied the relation's live rows into a `Vec` (`live_rows`),
+digested the copy, then encoded it. Now `InRel::each_live_batch` and `each_live_column` read the rows where they lie,
+4,096 at a time into one scratch; the digest is summed over those batches (`Cells::digest_batches`, parallel over
+parts as before) and the frame's bytes are encoded a column at a time from them (`FramePut::encode_columns`, the
+columns at once). `kept_strata`'s inputs are encoded from their source the same way, and its frames go to the writer
+encoded. `a_frame_read_in_place_is_the_frame_of_the_copied_rows` checks digest and bytes against the copy's, with
+dead rows and batch edges. `retain/frame_tests.rs` had not been updated for Q55's two `write_frames` arguments (it
+is only built in rerail-logic's tests); it is now.
+
+Still to do, by size (the 300-file peak's owners, Q74): the setfix fixpoint's host indexes over block rows (`Rel.idx`
+runs, `pending` dedup table, lattice maps), `InRel`'s `Csr` and sorted orders where the relation's own block index
+(0325 step 5) can answer, `Exports::add`'s hash map, the base rows copied for the cross part and the memo, vtab
+`Relation::push` staging, `Rows::clone`/`shared` tail copies and `merged`; `live_rows` remains only for traces,
+tests, `read_derived`/`rows_of` (tests and outputs) and the session deltas.
+
+### Q102. (Q82 at 837f4b40d) Relations declare their shapes; plans come from them (0361)
+
+The user (2026-11-17): a directive giving relations enough data in the `.rr` files for good default shapes, so runs
+pay for planning only in exceptional circumstances. Designed with the user in 0361 (`.layout` lines; classes with
+optional numbers; a broken fact replans and is reported; algorithms found from the facts, with a rare override).
+Build steps 1-7 in 0361. Step 7's running aggregate is the `rr_agg56` planner fix, so that fix waits for steps 1-2.
+
+### Q103. (Q83 at 837f4b40d) Exports held where they lie (0325)
+
+Done 2026-11-17. The user's list, item "the hash map behind Exports::add". An export holds the chunks' relations as
+segments, in `Life::Kept` blocks (`keptrows` spec line), with duplicates marked dead and read part by part. 140 MB of
+heap copies gone at 300 files, peak unchanged. Next on the list: the base rows for the cross part (191 MB),
+the memo's rows, `Relation::push` staging, `Rows::clone`/`shared` tails and `merged`, the fixpoint's host indexes,
+and the input relations' hash indexes and sorted orders. Then `rr_agg56` (Q102, 0361 step 7).
+
+### Q104. (Q84 at 837f4b40d) Base rows for the cross part: no flattened copy, rows moved into entries
+
+Done 2026-11-17. The user's list, item "the copies of base rows for the cross part and the memo". A memoised
+chunk used to read each base row into its files' rows, flatten them all into a full-width copy (`canonical`), copy
+that into the cross part's columns, and copy the files' rows into their entries. Now:
+
+- the columns the cross part reads are written as each row is read (once for each file that holds it, as before);
+- a file's rows are moved into its entry, which starts empty;
+- a chunk the memo cannot attribute, and a cone, cut the columns back to their lengths before the chunk.
+
+The columns themselves stay: they are the only copy of rows whose batch is gone, and they hold only the columns
+read. Their accumulated size, about 160–190 MB at 300 files, is data, not a copy. "base rows for the memo" plus
+"for the cross part" took 0.96 s; they take 0.73 s now.
+
+### Q105. (Q85 at 837f4b40d) The vtab's relations written at their size, not staged
+
+Done 2026-11-17. The user's list, item "the virtual-table staging in Relation::push". Producers build a relation from
+an iterator. `Relation::from_rows` writes the rows straight into a block relation reserved at their number when the
+iterator knows it exactly, as the producers' iterators over vectors do. There is no heap staging, and no growth or
+move: the moves are why rows were staged (70 MB more at the peak on hogql, 0325 step 3). An iterator that doesn't
+know its length is staged as before. 300 files: peak 2.36 GB (2.38 before), findings the reference's.
+
+### Q106. (Q86 at 837f4b40d) A copy of rows shares their tail, not a copy of it
+
+Done 2026-11-17. The user's list, item "the tail copies in Rows::clone and Rows::shared". A part may now be a prefix
+of its relation (`Part::cap`): its first rows as they were when it was taken. `clone` and `shared` take the tail
+that way, so the writer goes on past it and the copy never sees those rows. A prefix is never written, and is not
+bound as its relation (`one` merges it instead). Test: `a_copy_shares_the_tail_and_sees_only_its_rows`. Strict
+10-file outputs byte-identical; 300 files: findings the reference's, peak 2.37 GB.
+
+`merged` (`Rows::one`, a relation of many parts merged for a reader that binds one relation: the device) stays a
+copy until the device reads a relation of many parts. Each part's descriptor would be bound, a step of 0325.
+
+Red tests found, not from this work:
+- `facts_only::every_kept_map_is_state_or_listed` (0104) flags maps from merged commits: `OWN_TEXTS` (e3bc911dd),
+  `DECODED` (91f5b131a), `record.rs` `KINDS` and `LOG` (f86a550c8), `upkeep.rs` `GONE` (dfb0e0e02). Each is state
+  or a cache to make facts: a 0104 call for their authors' decisions.
+- `git_seeing_no_file_under_the_root_is_kept` fails in the `git commit` it runs in a scratch repository on the farm
+  host: that host's git setup.
+- The pre-commit hook can't run in this worktree: no node packages (`tsc`, `semver`), and `check:reference` reports
+  three differences in `src/engine/code-rule/*.ts`, which this branch doesn't touch. Commits since 58f1627c3 skip it
+  (`--no-verify`).
+
+### Q107. (Q87 at 837f4b40d) A whole source is probed by its relation's own index in the block
+
+Done 2026-11-17. The user's list, item "the input relations' hash indexes … can read the relation's own index in its
+block". Some base inputs are a whole source whose rows are one block relation: a vtab relation's cells. For a key no
+sorted or lead index answers, such an input used to build a host hash table (`Csr::build`) of its rows. It now uses
+that relation's own index (`InBlock::own_index`): found where the device or an earlier probe built it, else built
+by the host into the block, as the device builds it, and shared with the device from then on. Probes read the
+bucket's rows as candidates and check the key (`Csr::exact`; `probe_each` checks it too).
+
+Measured at 300 files, two runs of this build against the five before it:
+- peak 2.54 and 2.48 GB, against 2.36–2.49 GB (load 25–77);
+- the cross-file joins took 3.08 s, against 4.54 s;
+- findings: the reference's.
+
+Strict 10-file outputs are byte-identical. 194 setfix, vtab, probe, index and device tests pass.
+
+Still host structures over rows, the next items:
+- each stored column's sorted index over the cross part's held columns (`Stored::sorted`, 120–140 MB at the peak);
+- derived inputs' sorted orders (`Csr::runs`, 24–38 MB);
+- the fixpoint's own runs, dedup table and lattice maps.
+
+The held columns are heap columns. For their index to be a block relation's own, they would have to be held as
+block relations, as exports now are (Q103).
+
+### Q108. (Q88 at 837f4b40d) A count over earlier siblings is a running count (0361 step 7, first form)
+
+Done 2026-11-17. The user's list: "the planner fix for the rr_agg56 sibling-pair blow-up". `rr_agg56` was
+python/ast's `body_stmt` (`i = count : { child(b, s2, _), !kind(s2, "comment"), s2 < s }`): every statement paired
+with every earlier one. Lowering now writes such a count as a running count along `child`'s dense index, one row
+per child (decision 0361, "Step 7, first form").
+
+At 300 files it went from 2.36 s CPU and 17.1 M work to 0.6 s and 2.2 M, with findings the reference's. Strict
+10-file outputs are byte-identical. New tests: `a_count_of_earlier_siblings_is_a_running_count` and
+`a_running_count_numbers_the_statements_past_comments`. The 166 rr, aggregate and cycle tests pass.
+
+Next: key the rewrite by a declared `order(i dense in p)`, not by `child`'s name, once `.layout` lands (steps 1–2).
+The run takes one wave per child index. A body of thousands of statements is thousands of small waves: watch for it
+in the profile's per-stratum waves.
+
+### Q110. A kind no file holds, probed once per delta row
+
+- **Found** (2026-11-17, merging final-rerail-shape-phased-facts): that line measured `kind(n, #k)` probes at 20 s of
+  a 10-file cold run's 53 s. Exact counts give a kind no file holds a count of 0, so the planner probes it first,
+  and `assign_name`'s delta (27 rows) probed it 27 times a chunk. Its fix, a kind index of `node`'s rows
+  (`Batch::kinds`), is a copy of a view's rows, so it was not taken (0353; 0329, "The kind index not taken").
+- **Open:** measure the case here. Ours reads a probe's language alone (`of_tag`) and answers a repeated key from the
+  step's last probe. If those leave it slow, the fix is a read of the tape's kind postings or an index in the
+  block, never rows made.
+

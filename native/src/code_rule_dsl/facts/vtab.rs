@@ -1287,6 +1287,21 @@ impl Relation {
             identity: OnceLock::new(),
         }
     }
+    /// A relation of `rows`: written straight into its block, at their number, when the iterator knows it exactly
+    /// (no staging, no growth or move); else staged, as `push` stages them.
+    pub fn from_rows(columns: &[&str], rows: &mut dyn Iterator<Item = Vec<i64>>) -> Self {
+        let mut r = Relation::new(columns);
+        if let (n, Some(m)) = rows.size_hint()
+            && n == m
+            && n > 0
+        {
+            let mut cells = super::rows::Rows::living(r.columns.len(), super::rows::Life::Source);
+            cells.reserve(n * r.columns.len());
+            let _ = r.cells.set(cells);
+        }
+        rows.for_each(|row| r.push(&row));
+        r
+    }
     pub fn push(&mut self, row: &[i64]) {
         assert_eq!(row.len(), self.columns.len());
         assert!(self.len() < u32::MAX as usize);

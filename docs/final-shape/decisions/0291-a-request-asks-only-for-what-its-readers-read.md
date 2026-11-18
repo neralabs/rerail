@@ -1,8 +1,9 @@
 # 0291: A request asks only for what its readers read
 
-Status: built (2026-11-15). Refines decision 0174 (attributes answered on request) and 0145's shape.
-`logic/rr/lower.rs` (`sources_on_request`, `Widen::demand_of`, `Widen::joined`, `wild_singletons`),
-`logic/simplify.rs` (`request`).
+Status: built (2026-11-15); item 4 2026-11-16 (work queue Q3). Refines decision 0174 (attributes answered on
+request) and 0145's shape. `logic/rr/lower.rs` (`sources_on_request`, `Widen::demand_of`, `Widen::joined`,
+`wild_singletons`, `undo_round`), `logic/simplify.rs` (`request`, `congruence`), `logic/front.rs`
+(`subsume_requests`).
 
 ## Intro
 
@@ -62,8 +63,11 @@ for the `v` that `PYI064` binds: a `field(_, "right", _)` through `unparen`. On 
    its variables renamed apart. It is not narrowed when:
 
    - the relation is an output or an input;
-   - it is read in an aggregate or by its own rules;
-   - some reading site reads that column as a constant, or the site's widened body does not bind it.
+   - it is read by its own rules;
+   - no reading site asks anything narrower.
+
+   A site that asks for all (read in an aggregate or by name, with that column a constant, or a widened body that
+   does not bind it) keeps the request whole for its reader: item 4.
 
    Widened copies (`rr_wide_*`) are left out of an ask. Dropping them only widens it. A widened copy of a
    recursive relation can lose what bounds it (a counter's `@add` step, once its text test is dropped), and the
@@ -75,6 +79,30 @@ for the `v` that `PYI064` binds: a `field(_, "right", _)` through `unparen`. On 
    any reader written as `node(_, n, "number", _, _), value(n, v)` hit it before this change. Item 1 made the
    failure appear in `rule_files_have_text_facts`, because `node(_, $n, $k, _, _)` with `$k` read once became
    `node(_, $n, _, _, _)`.
+
+4. **What a reader asks holds only while the reader is reached** (2026-11-16, work queue Q3). Lowered whole and
+   then pruned, a program must be the one lowered without its unreached clauses
+   (`dropping_unreached_clauses_prunes_to_the_same_program`). Three things broke that:
+
+   - *Names.* An ask's variables were named after the reading rule's index in the program (`k_rr_d117_4`), so the
+     request's text, and every key made from it, changed with any rule added or dropped elsewhere. Each ask is a
+     rule of its own (`dem(rr_dn) :- ask`), so its variables need only stay clear of `rr_dn`: they are `<v>_rr_d`.
+     Equal asks are one rule, its gate their readers' union.
+   - *An unreached reader's ask.* An ask is a rule of the demand relation with its reading rule's relation as its
+     gate (`Program::asked_by`), so `prune` drops it with that reader.
+   - *An unreached reader that asks for all.* Such a site used to stop narrowing for every reader. Narrowing at
+     lowering from the program's outputs is not sound: a later prune may have more roots (`sql_executor::producers`
+     adds the relations its SQL names). So the site adds the request kept whole, gated by its reader, beside the
+     narrowed one. Where both are reached, `simplify` drops the narrowed one (`front::subsume_requests`: a request
+     rule whose body holds every literal of another of its relation's, with the same head); the one kept takes the
+     dropped one's readers into its gate. Where only the narrowed one is reached, the request is narrowed, as it is
+     when the unreached clause is never read.
+
+   A request's widened copy (`rr_wide_<attr>_<req>`) that is left equal to its request merges into it, and the
+   request names the class (`congruence`): it is still never renamed or inlined. `merge` now moves a merged
+   relation's gate with its rules, or drops it with them. `undo_round` removes a request's demand relations with
+   it; before, a program lowered again (`convert::overlay`) kept the first lowering's asks under the same names.
+   Strict 10-file cold, warm and edit runs give the same rows and byte-identical outputs.
 
 ## Measured
 
@@ -97,3 +125,4 @@ Wall time (35 s to 34 s) moved within the machine's load.
   atom.
 - `simplify::tests::an_attributes_request_is_not_inlined`.
 - `rr::tape_tests::rule_files_have_text_facts` (item 3).
+- `rr::tests::dropping_unreached_clauses_prunes_to_the_same_program` and its 6 pack parts (item 4).

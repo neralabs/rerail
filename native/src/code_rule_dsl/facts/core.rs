@@ -192,7 +192,7 @@ fn kept_tape(keep: bool, file: &dyn SourceFile, grammar: &Arc<crate::code_rule_d
 pub fn build_with_tape(file: &dyn SourceFile, keep: bool) -> Result<(Built, Option<TapeDoc>), String> {
     use crate::code_rule_dsl::{lines::Terminators, tape::{Grammar, TapeImage}};
     let language = file_language(file).ok_or_else(|| format!("{} has no grammar", file.language()))?;
-    let grammar = Arc::new(Grammar::new(language)?);
+    let grammar = Grammar::embedded(language)?;
     let parse = crate::code_rule_dsl::logic::profile::span(|| "tape parse".into());
     let Some(image) = TapeImage::parse(&grammar, file.source(), &|| false) else { return Ok((Built::Unparsed, None)); };
     let image = image?;
@@ -264,7 +264,7 @@ pub fn build_in_wave_with_tape(
         }
     };
     let key = queued_tape(&digest, tag, gv, fv);
-    let grammar = Arc::new(tape::Grammar::new(language)?);
+    let grammar = tape::Grammar::embedded(language)?;
     let kept: Option<crate::content_store::ObjectBytes> = match found {
         // Stored: read in its segment, or (an older row) decompressed.
         Some(frame) => {
@@ -338,7 +338,7 @@ pub(crate) fn build_cached_with_tape(
         let digest: [u8; 32] = sha2::Sha256::digest(bytes).into();
         if let Some(held) = cache.queued_tape(&queued_tape(&digest, tag, gv, fv)) {
             let held = held.map_err(|e| e.to_string())?;
-            let grammar = Arc::new(tape::Grammar::new(language)?);
+            let grammar = tape::Grammar::embedded(language)?;
             let primary = TapeImage::from_bytes(&held, &grammar)?;
             let lines = Arc::new(LineTable::new(file.source(), Terminators::of(language)));
             let doc = kept_tape(keep, file, &grammar, &primary, &lines)?;
@@ -359,7 +359,7 @@ pub(crate) fn build_cached_with_tape(
         None => None,
     };
     drop(lookup);
-    let grammar = Arc::new(tape::Grammar::new(language)?);
+    let grammar = tape::Grammar::embedded(language)?;
     let primary = match stored.and_then(|id| cache.get_tapes_bulk(&[id]).ok()?.remove(&id)) {
         Some((stored, _)) => {
             crate::code_rule_dsl::logic::profile::decision("input tape cache", || "hit".into());

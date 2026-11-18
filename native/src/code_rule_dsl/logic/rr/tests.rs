@@ -396,6 +396,37 @@ fn a_context_in_a_negations_cycle_is_widened() {
     assert!(!ctx.is_empty() && ctx.iter().all(|r| !r.contains("ask(")), "{ctx:?}");
 }
 
+/// Decision 0361 step 7: a count over a node's earlier children (python/ast's `body_stmt`) is a running count
+/// along `child`'s index, a row per child, not a helper of every child with every earlier sibling.
+#[test]
+fn a_count_of_earlier_siblings_is_a_running_count() {
+    let p = parse(concat!(
+        ".decl child(p: node, c: node, i: number)\n.decl kind(n: node, k: symbol)\n.decl body(b: node)\n.input child, kind, body\n",
+        ".decl stmt(b: node, s: node, i: number)\n.output stmt\n",
+        "stmt(b, s, i) :- body(b), child(b, s, _), !kind(s, \"comment\"), i = count : { child(b, s2, _), !kind(s2, \"comment\"), s2 < s }.\n",
+    ))
+    .unwrap();
+    front::strata(&p).unwrap_or_else(|e| panic!("{e}"));
+    let helpers: Vec<String> = p.rules.iter().filter(|r| r.head.rel.starts_with("rr_")).map(|r| r.to_string()).collect();
+    assert!(helpers.iter().any(|r| r.starts_with("rr_run")), "{helpers:?}");
+    assert!(helpers.iter().all(|r| !r.starts_with("rr_agg")), "no pair helper: {helpers:?}");
+}
+
+/// The running count's values: each statement's place among its module's, comments not counted.
+#[test]
+fn a_running_count_numbers_the_statements_past_comments() {
+    let rows = finding_contract("a = 1\n# c\nb = 2\n# d\n# e\nc = 3\n", r#"
+.policy "contract:running" revision 1
+.language python
+.violation At(at: node, i: number) code "RUN001"
+    "{i}"
+At(s, i) :- kind(m, "module"), child(m, s, _), !kind(s, "comment"),
+    i = count : { child(m, s2, _), !kind(s2, "comment"), s2 < s }.
+"#);
+    let got: BTreeSet<(i64, String)> = rows.iter().map(|r| (r["line"].as_i64().unwrap(), r["message"].as_str().unwrap().to_owned())).collect();
+    assert_eq!(got, [(1, "0".to_owned()), (3, "1".to_owned()), (6, "2".to_owned())].into_iter().collect());
+}
+
 /// An aggregate's context leaves out the clause's own head where the rest binds its variables: through it, the
 /// aggregate would sit in the head's recursion (lazy-analyzer.rr's `la_cb`).
 #[test]
@@ -3459,7 +3490,9 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
         // made them. So the programs are compared with every helper's number masked (`rr_agg#`, `rr_earlier#_f18`),
         // and a helper's rules by its stem alone (an aggregate's columns are its fresh variables in the order of
         // their names, which the numbers change).
-        let helper = regex::Regex::new(r"\brr_([a-z_]*[a-z])([0-9]+)\b").unwrap();
+        // A helper variable a reader's ask takes (decision 0291) keeps its number before the ask's suffix
+        // (`rr_text20_rr_d`): masked as the helper is.
+        let helper = regex::Regex::new(r"\brr_([a-z_]*[a-z])([0-9]+)((?:_rr_d)?)\b").unwrap();
         let fresh = regex::Regex::new(r"\brr_([a-z]+)([0-9]+)_([ft][0-9]+)\b").unwrap();
         let shape = |mut p: Program| {
             // Pruned as a corpus run prunes it: the requests the engine reads are outputs where a rule makes them
@@ -3519,7 +3552,7 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
                 }
             }
             let kept = p.rules.clone();
-            let mask = |s: &str| helper.replace_all(&fresh.replace_all(s, "rr_${1}#_$3"), "rr_$1#").into_owned();
+            let mask = |s: &str| helper.replace_all(&fresh.replace_all(s, "rr_${1}#_$3"), "rr_$1#$3").into_owned();
             // A violation's rule for `@place` values (`rr_v0 < -1`) is made when any rule of the program makes one
             // (`lower`'s `place_values`): an unreached clause made it for the whole program, where no reached
             // rule makes the value it reads.

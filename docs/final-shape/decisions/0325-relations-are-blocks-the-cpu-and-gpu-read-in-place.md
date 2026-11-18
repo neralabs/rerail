@@ -156,6 +156,8 @@ Step by step, each leaving the engine working (see the commits that name this de
   - Open: a block is given back when its last part goes, so a long session's kept relations hold the blocks they
     were made in, with whatever else died there. If the memory profile shows it, a freeze copies a kept segment
     out of a block that is mostly dead.
+  - Built for anonymous blocks (2026-11-17, Q99): a relation's last holder gives its chunks' pages back to the OS,
+    so a dead relation no longer holds memory while its block lives (about 500 MB at a 300-file cold peak).
   - Compares read the columns they compare (`RowData::value`, `cmp_ids`), not the row copied. A `Row` keeps 16
     values on the stack, and a wider one goes on the heap. On posthog/hogql the CPU binding is then level with
     step 1.
@@ -350,3 +352,45 @@ Step by step, each leaving the engine working (see the commits that name this de
 - **Left**: about 35 MB of median footprint above the run before 0325, and with it a few hundred more chunks: a
   block is bump-allocated, so a relation a chunk drops (or a tail moved to a bigger place) keeps its written pages
   until the chunk ends, where a vector's memory went back at once.
+
+## Exports held where they lie (2026-11-17, Q103)
+
+A chunk's exports used to be copied into heap columns (`Exports::add`), with a hash set over them. The cross-file
+part then read that copy. At 300 files the copy took 140 MB at the peak ("hold the export").
+
+- **Held in place.** An export now holds the chunk's own relation: its parts are appended as segments
+  (`Rows::append_part`), not copied. A row another chunk gave first, or one dead in its relation, is marked dead in
+  the export. The set that keeps rows once is a table of row ids; the values are read where they lie. The
+  cross-file part reads the export as a held relation (`InRel::held`), and the engine binds those rows as its input
+  (no view, no reads through the source).
+- **Kept rows get blocks of their own.** Holding a chunk's relation first kept the whole run block it lay in:
+  681–795 MB of run blocks, against 141–295 MB, and the peak rose from 2.39 to 2.73 GB. The relations a run keeps
+  past it are now named in its spec (`keptrows`), and setfix makes them in `Life::Kept` blocks. Holding them keeps
+  only export rows: 12–17 blocks, 163–243 MB.
+- **Read part by part.** A value-at-a-time read of a relation made of many parts looks for its part each time. The
+  input digest, the inputs' frames and `exported/public_name` slowed 3–15× that way. `Rows::each_run` walks the
+  parts in order, and `each_live_batch`, `each_live_column`, `retain::each_row` and the frames' column reads use it.
+- **Measured** (cold, 300 files, profiling build, load 54–68):
+  - before: peak 2.39 GB, 94 s CPU;
+  - after: peak 2.38 GB, 89 s CPU, heap at the peak 1.67 GB against 1.83 GB;
+  - findings: the reference's (30,449 rows);
+  - strict 10-file outputs: byte-identical.
+
+## Merged with django-bugs's frames and free lists (2026-11-17)
+
+Both lines changed how a dead relation's memory goes back and how frames are written. The merge keeps one form of
+each, with both sides' properties:
+
+- **A dead relation's pages.** django-bugs gave its chunks to the block's free list (0342), to be reused; this line
+  gave their pages to the OS (Q99, Q76 at 837f4b40d), but never reused the room. Now a chunk freed in an anonymous
+  block goes on the free list and its whole pages past the list's link go back to the OS (`Block::free_chunk`); the
+  list marks them in use again when it hands the chunk out (`reuse_pages`). A pooled slab's or a file's pages stay.
+  Pinned by `a_dead_relations_pages_go_back_and_its_neighbours_rows_stay` (`rerail_blocks::rows`): the bytes given
+  back, the neighbour's rows, and the next relation taking the freed chunks.
+- **Frames.** django-bugs encoded each frame straight into its write's segments (`FramePlacer`, Q95); this line read
+  the rows part by part (`each_live_batch`), wrote the inputs' frames before the run, and handed derived relations
+  off after their last reader (Q74). Kept: this line's structure, with every frame placed. An input's job places
+  its granules in a placer of its own and queues it with them; the cross part opens its write's placer before the
+  run, so a handed-off relation is encoded into it then (no bytes on the heap until `write_frames`), and one whose
+  rows are the stored ones keeps its frame (its reads retagged). The heap form is left only where no segment takes
+  a frame, encoded through the same `encode_windows`; the column-at-a-time encoder is gone.

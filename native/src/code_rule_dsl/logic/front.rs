@@ -1192,7 +1192,53 @@ pub fn prune(mut prog: Program) -> Program {
     // Native metadata owns real dependency edges. A dead producer must not keep its demands
     // alive in the file-local split or cause them to be exported across every chunk.
     prog.natives.retain(|rel, _| need.contains(rel));
+    // An attribute answered on request (decision 0174) whose readers were all pruned has no request and no answer
+    // left: it is an input again, as an attribute no rule reads stays one when lowered (734317304). Else a program
+    // lowered whole would prune to one without the input that the program lowered without its unreached clauses has.
+    for attr in crate::code_rule_dsl::logic::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()) {
+        let derives = |rel: &str| prog.rules.iter().any(|r| r.head.rel == rel);
+        if prog.decls.contains_key(attr.rel) && !prog.inputs.iter().any(|i| i == attr.rel) && !derives(attr.rel) && !derives(attr.req) {
+            prog.inputs.push(attr.rel.to_owned());
+        }
+    }
     prog
+}
+
+/// Drops each request rule (`Program::asked_by`) whose body holds every literal of another rule of its relation with
+/// the same head: that one derives all it does. The request kept whole for a reader that asks for all, beside the one
+/// its other readers' asks narrow (decision 0291, `rr::lower`'s `demand_of`), where both are reached. The rule kept
+/// takes the dropped one's readers into its gate, so it is kept wherever the dropped one would have been. Run by
+/// `simplify`, before relations merge, between the prunes that keep the reached ones. How many were dropped.
+pub fn subsume_requests(prog: &mut Program) -> usize {
+    let mut dropped = vec![false; prog.rules.len()];
+    for (req, readers) in prog.asked_by.iter_mut() {
+        let at: Vec<usize> = prog.rules.iter().enumerate().filter(|(_, r)| r.head.rel == req.as_str()).map(|(i, _)| i).collect();
+        let aligned = at.len() == readers.len();
+        for (x, &a) in at.iter().enumerate() {
+            let by = at.iter().enumerate().find(|&(y, &b)| {
+                y != x
+                    && !dropped[b]
+                    && prog.rules[b].head == prog.rules[a].head
+                    && prog.rules[b].body.len() < prog.rules[a].body.len()
+                    && prog.rules[b].body.iter().all(|l| prog.rules[a].body.contains(l))
+            });
+            if let Some((y, _)) = by {
+                dropped[a] = true;
+                if aligned {
+                    let gate = readers[x].clone();
+                    readers[y].extend(gate);
+                }
+            }
+        }
+        if aligned {
+            let mut it = at.iter();
+            readers.retain(|_| !dropped[*it.next().unwrap()]);
+        }
+    }
+    let n = dropped.iter().filter(|d| **d).count();
+    let mut it = dropped.into_iter();
+    prog.rules.retain(|_| !it.next().unwrap());
+    n
 }
 
 // cratify: `tests` is rerail-logic's (it mounts it)
