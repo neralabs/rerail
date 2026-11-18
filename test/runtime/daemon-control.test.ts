@@ -2,7 +2,7 @@ import * as childProcess from "node:child_process";
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import { connect, createServer, type AddressInfo, type Socket } from "node:net";
-import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -1309,6 +1309,30 @@ describe("a record whose live pid is not the home's daemon", () => {
       + "left that record as it is; run rerail daemon stop again to stop the daemon it names now.\n");
     expect(signals).toEqual([]);
     expect(existsSync(stateFile) ? await readFile(stateFile, "utf8") : undefined).toBe(changed);
+  });
+
+  // A daemon's own shutdown removes daemon.json just before it exits; one that ends so between the read of its start,
+  // which proves it the home's, and the SIGTERM has stopped, as one the signal itself finds gone.
+  it.each(["linux", "win32"] as const)("counts a daemon whose record goes with it just before its SIGTERM as stopped (%s)", async platform => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const signals: Array<string | number | undefined> = [];
+    await writeFile(stateFile, JSON.stringify(state(platform)));
+    let running = true;
+    const machine = fakeMachine(platform, {
+      kill: (_pid, signal) => {
+        if (!running) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+        if (signal !== 0) signals.push(signal);
+        return true;
+      },
+      processStartedAt: () => {
+        rmSync(stateFile);
+        running = false;
+        return STARTED_AT - 500;
+      },
+    });
+    expect(await stopFoundDaemon(home, { status: "unresponsive", state: state(platform) }, machine)).toBe("stopped");
+    expect(signals).toEqual([]);
+    expect(existsSync(stateFile)).toBe(false);
   });
 
   it.each(["linux", "win32"] as const)("ends nothing and says so when daemon.json cannot be read just before the signal (%s)", async platform => {

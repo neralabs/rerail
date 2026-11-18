@@ -1514,18 +1514,18 @@ async function requestDaemonShutdown(state: DaemonState, machine: DaemonMachine)
 }
 
 /**
- * Whether daemon.json in `home` still names `pid`: false once it is gone or names another; undefined when it cannot be
- * read or parsed, which tells neither.
+ * What daemon.json in `home` says of `pid` now: it still names it (`named`), names another (`other`) or is gone (`gone`);
+ * undefined when it cannot be read or parsed, which tells neither.
  */
-function recordNames(home: string, pid: number): boolean | undefined {
+function recordNow(home: string, pid: number): "named" | "other" | "gone" | undefined {
   let text: string;
   try {
     text = readFileSync(join(home, DAEMON_STATE_FILE), "utf8");
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "ENOENT" ? false : undefined;
+    return (error as NodeJS.ErrnoException).code === "ENOENT" ? "gone" : undefined;
   }
   try {
-    return (JSON.parse(text) as { pid?: unknown } | null)?.pid === pid;
+    return (JSON.parse(text) as { pid?: unknown } | null)?.pid === pid ? "named" : "other";
   } catch {
     return undefined;
   }
@@ -1566,12 +1566,15 @@ async function signalWhenProven(state: DaemonState, verdict: SignalVerdict, home
  * Sends SIGTERM to the pid `state` names while daemon.json in `home` still names it, read just before it is sent: a
  * start removes a record that names no daemon of the home before it launches one, which takes the home's lock an instant
  * before it records its own pid beside it, so the lock's record may still name the pid daemon.json named. A daemon.json
- * that cannot be read tells neither, and the stop ends nothing and says so ({@link unprovenDaemonMessage}).
+ * that cannot be read tells neither, and the stop ends nothing and says so ({@link unprovenDaemonMessage}). A daemon's own
+ * shutdown removes daemon.json just before it exits, so a record gone with its pid is the daemon ending by itself between
+ * the proof and the signal: the stop goes on as for one the signal finds gone ({@link signalDaemon}).
  */
 function signalWhileNamed(state: DaemonState, home: string, machine: DaemonMachine): StopAsk {
-  const named = recordNames(home, state.pid);
-  if (named === undefined) throw new Error(unprovenDaemonMessage(home, state.pid, machine.platform));
-  if (!named) return "record-changed";
+  const record = recordNow(home, state.pid);
+  if (record === undefined) throw new Error(unprovenDaemonMessage(home, state.pid, machine.platform));
+  if (record === "gone" && !processAlive(state.pid, machine.kill)) return "asked";
+  if (record !== "named") return "record-changed";
   signalDaemon(state.pid, "SIGTERM", machine);
   return "asked";
 }
