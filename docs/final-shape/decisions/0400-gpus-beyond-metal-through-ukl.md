@@ -555,7 +555,7 @@ Progress (2026-11-18):
     - Separately, `rerail-accel` does not build on Linux. This predates this work: it declares `rerail-blocks`
       for macOS only but uses it everywhere.
 
-- **Step 5: the library, most of it done** (2026-11-18). The library is Rerail's UKL headers in
+- **Step 5: the library, done** (2026-11-18). The library is Rerail's UKL headers in
   `native/crates/ukl/lib/ukl/`. `rerail-ukl` carries them, and every kernel, hand-written or generated, finds them
   as `<ukl/NAME.h>`.
   - **Layers.** `backend.h` is the one per-backend file: qualifiers, bit counts, shuffles, ballot, match, barriers
@@ -572,6 +572,8 @@ Progress (2026-11-18):
     | `histogram.h` | windowed counting in threadgroup memory; the per-partition histogram kernels (u16 and u32 codes) | threadgroup, device |
     | `scan.h`, `compact.h` | exclusive scan (output `n + 1`, the total last) and compaction, written for no forward progress between threadgroups | device |
     | `radix.h` | stable LSD radix sort of u32 and u64 keys with a u32 value, an 8-bit digit a pass | device |
+    | `hash.h` | hash table of u32 keys: open addressing, claimed by compare-and-swap, every probe bounded by the capacity (a full table reported); build kernel (each key's first row, by atomic minimum, and its count), probe kernel | thread, device |
+    | `workqueue.h` | the persistent dispatch's work queue (0027's protocol, from `metal_work_queue.metal`): take a thread at a time, or a SIMD group at a time | thread, SIMD group |
 
   - **Native and reference forms.** Each operation a backend has natively keeps its reference form beside it:
     - Metal's `simd_sum`, `simd_prefix_*_sum` and so on;
@@ -599,13 +601,25 @@ Progress (2026-11-18):
     |---|---|---|---|
     | Exclusive scan, 16M u32 | 0.742 ms | 0.701 ms | 0.95× |
     | Radix sort, 4M u32 keys with rows (4 passes) | 0.928 ms | 0.854 ms | 0.92× |
+    | Histogram, 4M u16 codes, 1,024 partitions, width 1,000 | 0.077 ms | 0.075 ms | 0.97× |
+    | Histogram, the same, width 5,000 (3 windows) | 0.255 ms | 0.221 ms | 0.87× |
 
-  - **Still to do in step 5:**
-    - the work queue of a persistent dispatch (`metal_work_queue.metal`, 0027);
-    - a hash table's build and probe (the table above names `table.metal`, which is count tables, so the hash table
-      is new);
-    - the histogram's speed against `accel`'s `hist` (its call is inside the executor's jobs);
-    - the scan of popcounts that `accel`'s `scan_block` also does.
+    The histogram's pair ran in `accel`'s `gpu::library_speed`, at a load average of 16, where the scan and the sort
+    ran again at 0.95× and 0.93×.
+  - **The work queue on CUDA: a SIMD group at a time.** 0027's protocol, a thread at a time, is correct on CUDA but
+    slow: every take is a compare-and-swap on the head that every worker contends for. With 4,096 workers on a GB10,
+    whose blocks are pinned host memory, an item cost 1.5 ms, linear in the items (10,000 items: 16 s; Metal's whole
+    test takes under half a second). `ukl_wq_take_sg` has one lane claim up to 32 items with one swap and hand them out
+    by shuffle, so there are 32 times fewer contenders and swaps; the idle test is the group's, so the worker loop
+    stays uniform. 100,000 items then take well under a second on the GB10 and on the V100. The thread-at-a-time
+    form stays, for workers that are few. The engine's work queue moves to the group form when it is ported (step 7).
+  - **The scan of popcounts** (`accel`'s `scan_block` with `pop`): `scan_exclusive_popcount_u32`, the scan's
+    `popcount` field: each word counts as its set bits, so the scan of a bitset's words gives each word's first rank.
+
+  - **14 tests** (`gpu/src/library_tests.rs`), passing on Metal (Mac), on a GB10 (sm_121) and on a V100 (sm_70,
+    two runs out of two, with the forest's 40).
+  - **Not in step 5:** 64-bit hash keys. Metal has no 64-bit compare-and-swap, so they need a two-word claim, and no
+    kernel asks for them yet.
 
     The kernels already written move onto the library in steps 6 and 7: the generated tape reads call `memory.h`,
     the 16z decoder calls `lz4.h`, and `accel`'s scan, sort and histogram are the library's calls.

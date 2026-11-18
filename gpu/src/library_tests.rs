@@ -4,7 +4,7 @@
 
 use crate::device::{ComputeQueue, BACKEND};
 use crate::kernels::{alloc, buffer_of, launch, program, read, Program};
-use crate::library::{compact_u32, histogram, radix_sort_pairs, scan_exclusive_u32, RadixKey, Sorted};
+use crate::library::{compact_u32, histogram, radix_sort_pairs, scan_exclusive_popcount_u32, scan_exclusive_u32, HashTable, RadixKey, Sorted};
 use crate::Pod;
 
 const TESTS: &str = include_str!("library_tests.ukl");
@@ -409,6 +409,19 @@ fn device_wide_scans_and_compaction() {
             }
         }
 
+        // The same values as bitset words: each word's first rank.
+        let out = alloc::<u32>(n as usize + 1).unwrap();
+        scan_exclusive_popcount_u32(&q, &inb, &out, n).unwrap();
+        q.flush().await_().unwrap();
+        let got: Vec<u32> = read(&out, n as usize + 1);
+        let mut rank = 0u32;
+        for i in 0..=n as usize {
+            assert_eq!(got[i], rank, "{BACKEND}: popcount scan of {n}, at {i}");
+            if i < n as usize {
+                rank += vals[i].count_ones();
+            }
+        }
+
         let flags: Vec<u32> = (0..n).map(|i| (vals[i as usize] % 2 == 0) as u32).collect();
         let fb = buffer_of(&flags).unwrap();
         let (kept, offsets) = (alloc::<u32>(n as usize).unwrap(), alloc::<u32>(n as usize + 1).unwrap());
@@ -496,4 +509,93 @@ fn radix_sorts_are_stable() {
             sort_and_check(&mut q, &keys, bits);
         }
     }
+}
+
+/// The tree walk of `nodes` by `kernel`'s workers, launched again while items remain; the launches.
+fn walk(p: &Program, q: &mut ComputeQueue, kernel: &str, nodes: u32, polls: u32) -> u32 {
+    {
+        let capacity = 4 * nodes as usize;
+        let mut slots = vec![0u32; capacity];
+        slots[0] = 1; // node 0, pushed by the host
+        let (sb, cb) = (buffer_of(&slots).unwrap(), buffer_of(&[0u32, 1, 1, 0]).unwrap());
+        let vb = buffer_of(&vec![0u32; nodes as usize]).unwrap();
+        // Workers that give up early leave items to the next launch.
+        let mut launches = 0;
+        loop {
+            launches += 1;
+            assert!(launches <= 1000, "{BACKEND}: the work queue of {nodes} did not drain");
+            launch(q, p.function(kernel).unwrap())
+                .value("args", &TestArgs { n: polls, w: nodes })
+                .buffer("slots", &sb)
+                .buffer("control", &cb)
+                .buffer("visits", &vb)
+                .run(&[64], &[64])
+                .unwrap();
+            q.flush().await_().unwrap();
+            if read::<u32>(&cb, 4)[2] == 0 {
+                break;
+            }
+        }
+        let control: Vec<u32> = read(&cb, 4);
+        assert_eq!(control[3], 0, "{BACKEND}: the queue of {nodes} overflowed");
+        let visits: Vec<u32> = read(&vb, nodes as usize);
+        let wrong = visits.iter().position(|&v| v != 1);
+        assert_eq!(wrong, None, "{BACKEND}: {kernel}: every node visited once ({nodes} nodes, {launches} launches)");
+        launches
+    }
+}
+
+#[test]
+fn a_work_queue_visits_every_item_once() {
+    let Some((p, mut q)) = setup() else { return };
+    // A SIMD group at a time: the form for many workers.
+    for (nodes, polls) in [(1u32, 64u32), (1000, 64), (100_000, 64), (100_000, 2)] {
+        walk(p, &mut q, "t_workqueue_sg", nodes, polls);
+    }
+    // A thread at a time: each item a swap that every worker contends for, so few items.
+    for (nodes, polls) in [(1u32, 64u32), (300, 64), (300, 1)] {
+        walk(p, &mut q, "t_workqueue", nodes, polls);
+    }
+}
+
+#[test]
+fn hash_tables_build_and_probe() {
+    let Some((_, mut q)) = setup() else { return };
+    let mut rng = Rng(43);
+    for (n, distinct, capacity) in [(0usize, 1u64, 16u32), (1, 1, 16), (1000, 50, 128), (100_000, 30_000, 1 << 16), (100_000, 1 << 32, 1 << 18)] {
+        let rows: Vec<u32> = (0..n).map(|_| (rng.below(distinct) as u32).min(u32::MAX - 1)).collect();
+        let table = HashTable::new(capacity).unwrap();
+        let rb = buffer_of(&rows).unwrap();
+        table.build(&q, &rb, n as u32).unwrap();
+        // Queries: every row's key, and keys that are absent.
+        let mut queries = rows.clone();
+        queries.extend((0..1000).map(|_| rng.next() as u32 | 0x8000_0000).filter(|k| *k != u32::MAX));
+        let qb = buffer_of(&queries).unwrap();
+        let (fo, co) = (alloc::<u32>(queries.len()).unwrap(), alloc::<u32>(queries.len()).unwrap());
+        table.probe(&q, &qb, queries.len() as u32, &table.first, &fo).unwrap();
+        table.probe(&q, &qb, queries.len() as u32, &table.counts, &co).unwrap();
+        q.flush().await_().unwrap();
+        assert_eq!(read::<u32>(&table.full, 1)[0], 0, "{BACKEND}: {n} rows fit {capacity} slots");
+        let mut want: std::collections::HashMap<u32, (u32, u32)> = Default::default();
+        for (i, &k) in rows.iter().enumerate() {
+            want.entry(k).or_insert((i as u32, 0)).1 += 1;
+        }
+        let (first, counts): (Vec<u32>, Vec<u32>) = (read(&fo, queries.len()), read(&co, queries.len()));
+        for (i, k) in queries.iter().enumerate() {
+            let (f, c) = want.get(k).copied().unwrap_or((u32::MAX, u32::MAX));
+            assert_eq!((first[i], counts[i]), (f, c), "{BACKEND}: key {k:#x} ({n} rows): first row, count");
+        }
+    }
+
+    // A table too small: reported, not looped on; the keys it holds are each in it once.
+    let rows: Vec<u32> = (0..200).collect();
+    let table = HashTable::new(64).unwrap();
+    let rb = buffer_of(&rows).unwrap();
+    table.build(&q, &rb, 200).unwrap();
+    q.flush().await_().unwrap();
+    assert_eq!(read::<u32>(&table.full, 1)[0], 1, "{BACKEND}: a full table is reported");
+    let mut keys: Vec<u32> = read(&table.keys, 64);
+    keys.sort();
+    keys.dedup();
+    assert_eq!(keys.len(), 64, "{BACKEND}: each slot holds a distinct key");
 }

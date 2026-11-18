@@ -55,6 +55,8 @@ pub const LIBRARY: &[(&str, &str)] = &[
     ("ukl/compact.h", include_str!("../lib/ukl/compact.h")),
     ("ukl/histogram.h", include_str!("../lib/ukl/histogram.h")),
     ("ukl/radix.h", include_str!("../lib/ukl/radix.h")),
+    ("ukl/hash.h", include_str!("../lib/ukl/hash.h")),
+    ("ukl/workqueue.h", include_str!("../lib/ukl/workqueue.h")),
 ];
 
 /// A GPU backend a kernel is preprocessed for.
