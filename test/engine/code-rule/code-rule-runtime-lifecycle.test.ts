@@ -885,6 +885,20 @@ describe("source-scoped steers", () => {
           await reopened();
           return { answer };
         },
+        /**
+         * The answer of `boundary`, begun under faked timers, once its wait for the rules has run out: faked time runs
+         * on until it answers, and the rules stay held.
+         */
+        outwaited: async (boundary: Promise<readonly AdapterDelivery[]>) => {
+          let answered = false;
+          const settled = () => { answered = true; };
+          void boundary.then(settled, settled);
+          await vi.waitFor(async () => {
+            await vi.advanceTimersByTimeAsync(60_000);
+            expect(answered).toBe(true);
+          }, { timeout: 10_000 });
+          return await boundary;
+        },
         close: async () => {
           vi.useRealTimers();
           for (const workspace of attachments.workspaces) workspace.release();
@@ -934,21 +948,15 @@ describe("source-scoped steers", () => {
       }
     }, 30_000);
 
-    it("waits its bound out once: no later boundary of the opening waits again, and what they skipped is checked once the rules open", async () => {
+    it("waits its bound out once: no later tool call or result of the opening waits again, and what they skipped is checked once the rules open", async () => {
       const test = await reopenedFixture();
       try {
         await test.reopen();
         vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-        let answered = false;
-        const first = test.write("first", "first.py").finally(() => { answered = true; });
         // The call waits for the rules within the bound, and the bound runs out before they open.
-        await vi.waitFor(async () => {
-          await vi.advanceTimersByTimeAsync(60_000);
-          expect(answered).toBe(true);
-        }, { timeout: 10_000 });
-        expect(await first).toEqual([]);
+        expect(await test.outwaited(test.write("first", "first.py"))).toEqual([]);
         await writeFile(join(test.root, "first.py"), "NEEDLE\n");
-        // Each later boundary answers with the bound never firing again.
+        // Each later tool call and result answers with the bound never firing again.
         expect(await test.result("first", "Write")).toEqual([]);
         expect(await test.write("second", "second.py")).toEqual([]);
         await writeFile(join(test.root, "second.py"), "NEEDLE\n");
@@ -958,6 +966,24 @@ describe("source-scoped steers", () => {
         await test.runtime.codeRulesOpened("reopened");
         // The first pass once they are open checks both edits, and the turn's end carries their steers.
         expect(await test.turnEnd("turn")).toEqual(expect.arrayContaining([needle("first.py"), needle("second.py")]));
+      } finally {
+        await test.close();
+      }
+    }, 30_000);
+
+    it("still waits at the turn's end once a tool call waited its bound out, so the turn's steers reach the agent in that turn", async () => {
+      const test = await reopenedFixture();
+      try {
+        await test.reopen();
+        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+        expect(await test.outwaited(test.write("first", "first.py"))).toEqual([]);
+        await writeFile(join(test.root, "first.py"), "NEEDLE\n");
+        expect(await test.result("first", "Write")).toEqual([]);
+        vi.useRealTimers();
+        // The rules open while the turn's end waits for them, and its answer carries the skipped edit's steer.
+        const stop = test.turnEnd("turn");
+        test.attachments.workspaces[1]!.release();
+        expect(await stop).toEqual([needle("first.py")]);
       } finally {
         await test.close();
       }

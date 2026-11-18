@@ -102,9 +102,19 @@ function noteCallsAwaitingResult(calls: Set<string>, event: AdapterEvent): void 
   else if (event.kind === "turn-end") calls.clear();
 }
 
-/** Whether a session `recorded` before, opening again in `host`, waits at its code-rule boundaries for its rules (`waitsForRules`). */
-function waitsForRulesOnReopen(recorded: boolean, host: RerailHost): boolean {
-  return recorded && ADAPTER_CAPABILITIES[host].toolSurface !== "native";
+/**
+ * Which code-rule boundaries of a session whose rules are still opening wait for them, within
+ * `REOPENED_RULES_WAIT_MS` (`#codeRuleWorkspaceNow`). `none`: a first start, or a host that does not wait. `needed`: a
+ * reopened session in a hook host, whose boundaries that need the rules wait (`needsRules`). `turn-end`: such a session
+ * after one of them waited the bound out: only its turn ends still wait, since a turn's end is the last boundary whose
+ * answer reaches the agent in that turn, and holding every tool call for rules that take longer would cost each one the
+ * bound.
+ */
+type RulesWait = "none" | "needed" | "turn-end";
+
+/** How a session `recorded` before, opening again in `host`, waits for its rules at its boundaries (`RulesWait`). */
+function rulesWaitOnReopen(recorded: boolean, host: RerailHost): RulesWait {
+  return recorded && ADAPTER_CAPABILITIES[host].toolSurface !== "native" ? "needed" : "none";
 }
 
 /**
@@ -124,26 +134,33 @@ const HOOK_EDIT_CHECK_MS = 1_000;
  */
 const NATIVE_EDIT_CHECK_MS = 10_000;
 /**
- * How long a reopened session waits for its rules to open, once. A session opens again on its next event after an idle
- * close (`IDLE_SESSION_MS`), a daemon restart or a resume, and its rules may compile again (about 12 s of CPU for a
- * TypeScript repository's five packs on a Windows laptop). Its first edit went unchecked at its own result while they
- * did, and its steer arrived a turn later. The prompt that reopens the session starts the opening, so the first tool
- * call usually finds it nearly done. Inside the 30 s the hook gives the daemon to answer (`ingestEngineEvent`). Only a
- * boundary whose check needs the rules waits (`needsRules`), and once one has waited this out no later boundary of the
- * same opening waits again: rules that take longer would hold every tool call for it while they open.
+ * How long a code-rule boundary of a reopened session waits for its rules to open. A session opens again on its next
+ * event after an idle close (`IDLE_SESSION_MS`), a daemon restart or a resume, and its rules may compile again (about
+ * 12 s of CPU for a TypeScript repository's five packs on a Windows laptop). Its first edit went unchecked at its own
+ * result while they did, and its steer arrived a turn later. The prompt that reopens the session starts the opening, so
+ * the first tool call usually finds it nearly done. Inside the 30 s the hook gives the daemon to answer
+ * (`ingestEngineEvent`). Only a boundary whose check needs the rules waits (`needsRules`), and once a tool call or
+ * result has waited this out only turn ends wait again (`RulesWait`): rules that take longer would hold every tool call
+ * for it.
  */
 const REOPENED_RULES_WAIT_MS = 20_000;
 
 /**
- * Whether a code-rule boundary of a reopened session waits for its rules: one whose check needs them, so a steer from
- * it rides its own answer. A call the evaluator checks at its result (`checkedAtResult`) and that call's result do, and
- * so does a turn's end, whose walk checks what the turn's shell and other tools wrote. A call that writes nothing the
- * evaluator checks, and its result, go on at once, as every boundary does while a session's first index runs.
+ * Whether a code-rule boundary of a reopened session needs its rules, so a steer from it rides its own answer: a call
+ * the evaluator checks at its result (`checkedAtResult`) and that call's result do, and so does a turn's end, whose
+ * walk checks what the turn's shell and other tools wrote. A call that writes nothing the evaluator checks, and its
+ * result, go on at once, as every boundary does while a session's first index runs.
  */
 function needsRules(event: AdapterEvent, pending: readonly PendingCodeRuleCall[]): boolean {
   if (event.kind === "call") return checkedAtResult(event.toolName, generatedEditPaths(event.toolName, event.input));
   if (event.kind === "result") return pending.some(call => call.id === event.toolCallId && call.checked);
   return event.kind === "turn-end";
+}
+
+/** Whether the code-rule boundary `event` of a session whose rules are still opening waits for them (`RulesWait`). */
+function waitsForRules(wait: RulesWait, event: AdapterEvent, pending: readonly PendingCodeRuleCall[]): boolean {
+  if (wait === "none") return false;
+  return wait === "needed" ? needsRules(event, pending) : event.kind === "turn-end";
 }
 
 /**
@@ -665,11 +682,11 @@ interface RuntimeSessionState {
   /** The evaluator is still opening and owns its own release: closing the session does not wait for it. */
   codeRuleOpening: boolean;
   /**
-   * The session opened again (after an idle close, a daemon restart or a resume) in a hook host: its boundaries that
-   * need its rules (`needsRules`) wait for them to open, within `REOPENED_RULES_WAIT_MS`. Cleared once one has waited
-   * that out, so the opening holds no later boundary.
+   * Which of its code-rule boundaries wait for its rules while they open (`RulesWait`): `needed` once it opened again
+   * (after an idle close, a daemon restart or a resume) in a hook host, `turn-end` once a tool call or result waited
+   * `REOPENED_RULES_WAIT_MS` out, so the opening holds no later tool call.
    */
-  waitsForRules: boolean;
+  rulesWait: RulesWait;
   ownerClaim: PolicyOwnerClaim | undefined;
   /** The database's `data_version` this session's settings and audit queue were last read at; undefined to read on the next tick. */
   controlsVersion: number | undefined;
@@ -1503,15 +1520,15 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * is not waited for at a session's first start, so the agent is never held up by a first index: such a boundary is
    * answered without code rules and recorded in the session's history. The boundary's own check is skipped, but the file
    * stays checked: the first pass once the evaluator is open finds the edit and checks it, so its steer can arrive a
-   * turn later. A reopened session (`waitsForRules`) waits for its rules instead at a boundary that needs them
-   * (`needsRules`), within `REOPENED_RULES_WAIT_MS`, so its first edit is checked at its own result as every later one
-   * is. Once one boundary has waited that out, the later ones go on without code rules as at a first start.
+   * turn later. A reopened session waits for its rules instead at a boundary that needs them (`RulesWait`), within
+   * `REOPENED_RULES_WAIT_MS`, so its first edit is checked at its own result as every later one is. Once a tool call or
+   * result has waited that out, later ones go on without code rules as at a first start, and only turn ends still wait.
    */
   async #codeRuleWorkspaceNow(state: RuntimeSessionState, event: AdapterEvent): Promise<CodeRuleBridge | undefined> {
     if (!state.codeRuleOpening) return await state.codeRuleWorkspace;
-    if (state.waitsForRules && needsRules(event, state.pendingCodeRuleCalls)) {
+    if (waitsForRules(state.rulesWait, event, state.pendingCodeRuleCalls)) {
       if (await settledWithin(state.codeRuleWorkspace, REOPENED_RULES_WAIT_MS)) return await state.codeRuleWorkspace;
-      state.waitsForRules = false;
+      state.rulesWait = "turn-end";
     }
     this.#recordRulesPending(state, event);
     return undefined;
@@ -2060,7 +2077,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     }
     const settings = { ...this.#auditSettings, ...auditSettings };
     opened.codeRuleOpening = true;
-    opened.waitsForRules = waitsForRulesOnReopen(recordedSession !== undefined, session.host);
+    opened.rulesWait = rulesWaitOnReopen(recordedSession !== undefined, session.host);
     opened.codeRuleWorkspace = this.#openCodeRuleWorkspace(opened, bridge, auditor, ledger.entries, settings).then(open => {
       if (open === undefined) {
         retired = true;
@@ -2168,7 +2185,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       codeRuleWorkspace: Promise.resolve(undefined),
       codeRuleReady: false,
       codeRuleOpening: false,
-      waitsForRules: false,
+      rulesWait: "none",
       auditRequestWork: undefined,
       mergeAssistNotesInFlight: new Set(),
       mergeAssistEdits: new Set(),
