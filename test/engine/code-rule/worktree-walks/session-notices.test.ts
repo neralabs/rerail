@@ -275,6 +275,22 @@ describe("a shell command's result reads the session folder by its change notice
     expect(checked(audits)).toEqual([["src/pkg_3/m.py"]]);
   });
 
+  it("checks at their own results the writes into a folder a command deleted and made again", async () => {
+    const root = await workspace();
+    const { bridge, audits } = await opened(root, platformWatch());
+    const made = join(root, "src", "pkg_0");
+    // As a code generator that empties its output folder: on Linux the watch lets go of the folder that went.
+    await command(bridge, "shell-1", async () => {
+      await removeFolder(made);
+      await mkdir(made);
+      await writeFile(join(made, "m.py"), "eval(g)\n");
+    });
+    await command(bridge, "shell-2", async () => await writeFile(join(made, "after.py"), "eval(h)\n"));
+    expect(checked(audits).at(-1)).toEqual(["src/pkg_0/after.py"]);
+    await command(bridge, "shell-3", async () => await writeFile(join(made, "later.py"), "eval(i)\n"));
+    expect(checked(audits).at(-1)).toEqual(["src/pkg_0/later.py"]);
+  });
+
   it("walks the whole folder at the next result after a write into a new folder while a walk listed it", async () => {
     const root = await workspace();
     const { bridge, audits } = await opened(root, platformWatch());

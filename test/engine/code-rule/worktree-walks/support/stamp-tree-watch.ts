@@ -31,7 +31,8 @@ function entriesOf(root: string): Map<string, string> {
  * makes it miss writes (`silence`), hand notices late (`hold`), lose notices (`lose`), end a watch (`end`) or refuse
  * roots (`unwatchable`), and reads which roots it watches and with which folders. `byFolder` makes it watch as Linux's
  * watch does: only the entries of the folders a root was watched with, a folder made in one as an entry with nothing
- * under it, and a folder it takes up from the moment it is given, not before.
+ * under it, a folder it takes up from the moment it is given, not before, and a folder deleted or put back as another
+ * let go of, with the folders under it, until a `watch` names it again.
  */
 export class StampTreeWatch implements TreeWatch {
   readonly #entries = new Map<string, Map<string, string>>();
@@ -91,7 +92,19 @@ export class StampTreeWatch implements TreeWatch {
     this.#entries.set(root, after);
     const notice = this.#watched(root, noticeOf(root, before, after, this.#lost.delete(root), this.#ended.delete(root)));
     if (notice.ended) this.unwatch(root);
+    else if (this.#byFolder) this.#letGo(root, before, after);
     return tells(notice) ? notice : undefined;
+  }
+
+  /**
+   * As Linux's watch lets go of a folder deleted or moved away, with the folders under it: one put back at the same path
+   * is another folder, and tells nothing until a `watch` names it again.
+   */
+  #letGo(root: string, before: ReadonlyMap<string, string>, after: ReadonlyMap<string, string>): void {
+    const followed = this.folders.get(root) ?? [];
+    const gone = followed.filter(folder => folder !== "" && inodeOf(after.get(folder)) !== inodeOf(before.get(folder)));
+    if (gone.length === 0) return;
+    this.folders.set(root, followed.filter(folder => !gone.some(path => folder === path || folder.startsWith(`${path}/`))));
   }
 
   /** `notice` as the watch of `root` tells it: with `byFolder`, only the entries of the folders it was watched with. */
@@ -149,10 +162,17 @@ function parentOf(path: string): string {
   return slash < 0 ? "" : path.slice(0, slash);
 }
 
+/** The inode of an entry's stamp (`entriesOf`); undefined for no entry. */
+function inodeOf(stamp: string | undefined): string | undefined {
+  return stamp?.slice(0, stamp.indexOf(":"));
+}
+
+/** What changed between two takes: an entry that came, went or was put back as another (a new inode) is renamed. */
 function noticeOf(root: string, before: ReadonlyMap<string, string>, after: ReadonlyMap<string, string>, lost: boolean, ended: boolean): TreeNotice {
   if (lost || ended) return { root, changed: [], renamed: [], lost, ended };
-  const renamed = [...after.keys()].filter(path => !before.has(path));
+  const replaced = (path: string): boolean => inodeOf(before.get(path)) !== inodeOf(after.get(path));
+  const renamed = [...after.keys()].filter(replaced);
   renamed.push(...[...before.keys()].filter(path => !after.has(path)));
-  const changed = [...after].filter(([path, stamp]) => before.has(path) && before.get(path) !== stamp).map(([path]) => path);
+  const changed = [...after].filter(([path, stamp]) => before.has(path) && !replaced(path) && before.get(path) !== stamp).map(([path]) => path);
   return { root, changed, renamed, lost: false, ended: false };
 }

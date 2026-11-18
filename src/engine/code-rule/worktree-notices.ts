@@ -78,9 +78,50 @@ function counts(seen: WorktreeRead, notice: TreeNotice): boolean {
   return notice.renamed.some(path => noticeCounts(seen, "rename", path)) || notice.changed.some(path => noticeCounts(seen, "change", path));
 }
 
+/**
+ * The folders a Linux watch of one root follows (`TreeWatch.watch`), as last given to it, less each one the engine let go
+ * of since. The engine lets go of a folder that is deleted or moved away, with every folder under it, and a folder put
+ * back at the same path is another, which no watch follows until a `watch` names it again; a notice that lost its paths
+ * may have lost such a going, so after one no folder counts as followed. Elsewhere the watch holds the whole tree.
+ */
+export class FollowedFolders {
+  #folders: ReadonlySet<string> = new Set([""]);
+
+  /** From the root folder alone, as a watch opened before a walk names its folders. */
+  restart(): void {
+    this.#folders = new Set([""]);
+  }
+
+  /**
+   * Has the engine follow `walked`, the folders a walk walked into, through `watch` (false when it refuses), unless it
+   * follows them already: "added" when one was not followed (a write in it before now was told by nothing), "followed"
+   * when only folders went, "refused" when the engine refused them, undefined when nothing changed.
+   */
+  follow(walked: ReadonlySet<string>, watch: (folders: readonly string[]) => boolean): "added" | "followed" | "refused" | undefined {
+    const added = [...walked].some(folder => !this.#folders.has(folder));
+    if (!added && walked.size === this.#folders.size) return undefined;
+    if (!watch([...walked])) return "refused";
+    this.#folders = walked;
+    return added ? "added" : "followed";
+  }
+
+  /** Lets go of what the engine let go of by `notice`: every folder after lost notices, else each that came or went. */
+  noticed(notice: TreeNotice): void {
+    if (notice.lost) this.#folders = new Set();
+    else this.#replaced(notice.renamed);
+  }
+
+  /** Drops each followed folder that came or went (`renamed`), and every folder under it. */
+  #replaced(renamed: readonly string[]): void {
+    const gone = renamed.filter(path => this.#folders.has(path));
+    if (gone.length === 0) return;
+    this.#folders = new Set([...this.#folders].filter(folder => !gone.some(path => folder === path || folder.startsWith(`${path}/`))));
+  }
+}
+
 interface Watched {
-  /** The folders the watch follows (Linux), as last given to `TreeWatch.watch`. */
-  folders: ReadonlySet<string>;
+  /** The folders the watch follows (Linux). */
+  readonly followed: FollowedFolders;
   /** What the last finished read saw; undefined while a read runs or before the first, when every notice counts. */
   seen: WorktreeRead | undefined;
   changed: boolean;
@@ -192,7 +233,7 @@ export class WorktreeNotices {
       this.#failed.set(root, this.#now());
       return undefined;
     }
-    const watched: Watched = { folders: new Set([""]), seen: undefined, changed: true };
+    const watched: Watched = { followed: new FollowedFolders(), seen: undefined, changed: true };
     this.#watched.set(root, watched);
     return watched;
   }
@@ -203,16 +244,12 @@ export class WorktreeNotices {
    * every walk until the retry.
    */
   #follow(root: string, watched: Watched, folders: ReadonlySet<string>): void {
-    const added = [...folders].some(folder => !watched.folders.has(folder));
-    if (!added && folders.size === watched.folders.size) return;
-    if (!this.#watch!.watch(root, [...folders])) {
-      this.#watched.delete(root);
-      this.#watch!.unwatch(root);
-      this.#failed.set(root, this.#now());
-      return;
-    }
-    watched.folders = folders;
-    if (added) watched.changed = true;
+    const followed = watched.followed.follow(folders, list => this.#watch!.watch(root, list));
+    if (followed === "added") watched.changed = true;
+    if (followed !== "refused") return;
+    this.#watched.delete(root);
+    this.#watch!.unwatch(root);
+    this.#failed.set(root, this.#now());
   }
 
   #notice(notice: TreeNotice): void {
@@ -224,30 +261,12 @@ export class WorktreeNotices {
       this.#watched.delete(notice.root);
       this.#ended.set(notice.root, this.#now());
     }
-    if (this.#byFolder) this.#unfollow(watched, notice);
+    // The next read's folders are watched again where the engine let go of them; it keeps the watches it holds.
+    if (this.#byFolder) watched.followed.noticed(notice);
     if (marksChanged(watched, notice)) {
       watched.changed = true;
       this.#noticed.add(notice.root);
     }
-  }
-
-  /**
-   * A notice that lost its paths may have lost a folder that went and came back: the next read's folders are all
-   * watched again, and the engine keeps the watches it holds. Otherwise only the folders that came or went are (`#replaced`).
-   */
-  #unfollow(watched: Watched, notice: TreeNotice): void {
-    if (notice.lost) watched.folders = new Set();
-    else this.#replaced(watched, notice.renamed);
-  }
-
-  /**
-   * Drops from the folders watched each one that came or went, and every folder under it: a folder put back at the
-   * same path is another folder, which the watch of the old one never tells of, so the next read's folders watch it.
-   */
-  #replaced(watched: Watched, renamed: readonly string[]): void {
-    const gone = renamed.filter(path => watched.folders.has(path));
-    if (gone.length === 0) return;
-    watched.folders = new Set([...watched.folders].filter(folder => !gone.some(path => folder === path || folder.startsWith(`${path}/`))));
   }
 }
 
@@ -422,11 +441,12 @@ export type SessionReads = { readonly whole: true } | { readonly whole: false; r
  * walk finished with the watch up, when the folder cannot be watched (a network or WSL path, past Linux's watch budget),
  * after the watch ended or lost notices, after Linux's watch took up folders the last walk found (a write in one before
  * its watch is told by nothing), after a pass that did not finish, and when a notice names what changes which files a
- * walk reads: a `.gitignore`, a `.git` entry, a folder that came or went, or a path in a folder no walk walked. A file
- * with another name (a hard link) can be written through a name outside the folder, which no notice of the folder
- * tells of: a pass of noticed paths reads each such file a pass found, too. A watch the engine refused is not asked
- * for again until a whole walk walks fewer folders than it refused, or the watch it had ended: each ask costs the
- * engine a look at the folder's file system, and on Linux each watch it took up before the refusal, then let go.
+ * walk reads: a `.gitignore`, a `.git` entry, a folder that came or went, or a path in a folder no walk walked. On
+ * Linux a folder that came or went is followed again from the next whole walk on (`FollowedFolders`), which the pass
+ * after reads whole too. A file a pass found with another name (a hard link) can be written through a name outside the
+ * folder, which no notice of the folder tells of: a pass of noticed paths reads each such file, too. A watch the engine
+ * refused is not asked for again until a whole walk walks fewer folders than it refused, or the watch it had ended:
+ * each ask costs the engine a look at the folder's file system, and on Linux each watch it took up before the refusal.
  */
 export class SessionNotices {
   readonly #root: string;
@@ -436,8 +456,8 @@ export class SessionNotices {
   readonly #byFolder: boolean;
   /** Whether the watch holds the folder now. */
   #watching = false;
-  /** The folders the watch follows (Linux), as last given to it. */
-  #folders: ReadonlySet<string> = new Set([""]);
+  /** The folders the watch follows (Linux). */
+  readonly #followed = new FollowedFolders();
   /** What the last whole walk saw, which notices are weighed against; undefined until one finished with the watch up. */
   #seen: WorktreeRead | undefined;
   /** Whether the next pass reads the whole folder. */
@@ -507,7 +527,7 @@ export class SessionNotices {
 
   #open(): void {
     if (this.#watch === undefined || this.#watching || this.#refused !== undefined) return;
-    this.#folders = new Set([""]);
+    this.#followed.restart();
     this.#watching = this.#watchFolders([""]);
   }
 
@@ -519,17 +539,16 @@ export class SessionNotices {
   }
 
   /**
-   * On Linux, watches the folders the whole walk walked into, in place of those before; true when one is new, or the
-   * watch refused them: a write made in it before its watch was told by nothing, so the next pass reads whole.
+   * On Linux, watches the folders the whole walk walked into, in place of those before; true when the watch is down, one
+   * is new, or the watch refused them: a write made in it before its watch was told by nothing, so the next pass reads
+   * whole.
    */
   #follow(folders: ReadonlySet<string>): boolean {
     if (!this.#watching) return true;
     if (!this.#byFolder) return false;
-    const added = [...folders].some(folder => !this.#folders.has(folder));
-    if (!added && folders.size === this.#folders.size) return false;
-    this.#watching = this.#watchFolders([...folders]);
-    this.#folders = folders;
-    return added || !this.#watching;
+    const followed = this.#followed.follow(folders, list => this.#watchFolders(list));
+    if (followed === "refused") this.#watching = false;
+    return followed === "added" || followed === "refused";
   }
 
   #collect(): void {
@@ -538,6 +557,8 @@ export class SessionNotices {
   }
 
   #notice(notice: TreeNotice): void {
+    // A folder the engine let go of is watched again by the next whole pass, which walks it.
+    if (this.#byFolder) this.#followed.noticed(notice);
     // A watch that ended is asked for again at the next whole pass, whatever was refused before.
     if (notice.ended) [this.#watching, this.#refused] = [false, undefined];
     if (notice.ended || notice.lost || this.#seen === undefined) this.#whole = true;
