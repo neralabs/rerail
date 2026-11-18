@@ -15,6 +15,7 @@ import {
   type DaemonState,
   type NativeLaunch,
   type StartedChild,
+  type StopDaemonResult,
   AUTOSTART_CLAIM_FILE,
   AutostartOffError,
   autostartDaemon,
@@ -1453,6 +1454,51 @@ describe("a record whose live pid is not the home's daemon", () => {
     expect(JSON.parse(await readFile(stateFile, "utf8"))).toMatchObject({ pid: LIVE_PID });
     expect(JSON.parse(await readFile(join(home, LOCKS_DIR, "daemon.json"), "utf8"))).toMatchObject({ pid: LIVE_PID });
     expect(forgotten).toEqual([]);
+  });
+
+  /**
+   * Stops the daemon a lookup found in `home`, which its start proves until its SIGTERM, which it outlives, as a busy one
+   * on Linux does until its handler runs; its start cannot be read after that. The holder record beside the home's lock
+   * names it, and the lock is asked of the files in `home` as Rerail asks it. Every signal sent goes to `sent`.
+   */
+  const stopOutlivingDaemon = async (platform: NodeJS.Platform, sent: Array<string | number | undefined>): Promise<StopDaemonResult> => {
+    const lock = await vi.importActual<typeof import("../../src/engine/native/home-daemon-lock.js")>("../../src/engine/native/home-daemon-lock.js");
+    await holdHome(home, LIVE_PID);
+    await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(state(platform)));
+    const base = machineWith(platform, [], () => undefined, () => (sent.includes("SIGTERM") ? undefined : STARTED_AT - 500));
+    const { machine, undo } = clockOnEachLook({
+      ...base,
+      homeDaemonLockHeld: asked => lock.homeDaemonLockHeld(asked),
+      kill: (pid, signal) => {
+        if (signal !== 0) sent.push(signal);
+        return signal === "SIGTERM" || base.kill(pid, signal);
+      },
+    });
+    try {
+      return await stopFoundDaemon(home, { status: "unresponsive", state: state(platform) }, machine);
+    } finally {
+      undo();
+    }
+  };
+
+  // A lock file deleted under the daemon leaves it holding its lock all the same: a missing file is no lock let go.
+  it.each(["linux", "win32"] as const)("sends no SIGKILL, keeps every record and says so when the home's lock file is missing and the daemon outlives its SIGTERM unproven (%s)", async platform => {
+    const sent: Array<string | number | undefined> = [];
+    await expect(stopOutlivingDaemon(platform, sent)).rejects.toThrow(new RegExp(`could not prove that pid ${LIVE_PID}`, "u"));
+    expect(sent).toEqual(["SIGTERM"]);
+    expect(JSON.parse(await readFile(join(home, DAEMON_STATE_FILE), "utf8"))).toMatchObject({ pid: LIVE_PID });
+    expect(JSON.parse(await readFile(join(home, LOCKS_DIR, "daemon.json"), "utf8"))).toMatchObject({ pid: LIVE_PID });
+  });
+
+  // The daemon let go of the lock once it had closed, and its record beside the lock outlived it, as one another program
+  // holds open does on Windows: the daemon is about to exit, and the next daemon may take the home.
+  it.each(["linux", "win32"] as const)("sends no SIGKILL and says stopped when the daemon outlives its SIGTERM unproven after it let go of the home's lock file (%s)", async platform => {
+    const sent: Array<string | number | undefined> = [];
+    await mkdir(join(home, LOCKS_DIR), { recursive: true });
+    await writeFile(join(home, LOCKS_DIR, "daemon.lock"), "");
+    expect(await stopOutlivingDaemon(platform, sent)).toBe("stopped");
+    expect(sent).toEqual(["SIGTERM"]);
+    expect(existsSync(join(home, DAEMON_STATE_FILE))).toBe(false);
   });
 
   // A PowerShell that never answers stands in for the start's read on Windows, and the proof is silent at once, so the
