@@ -296,11 +296,19 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     return await reading;
   }
 
-  /** The reading kept for the repository while it is young enough to reuse: five minutes, one while gh could not tell. */
+  /** The reading kept for the repository while it is young enough to reuse (`readAgainIn` above 0). */
   #keptReading(repositoryKey: string): GithubReading | undefined {
     const cached = readState(this.#db, STATE_KEYS.github(repositoryKey), githubCacheSchema);
-    const reuse = cached?.readiness.state === "unavailable" ? GITHUB_UNAVAILABLE_MS : GITHUB_READINESS_MS;
-    return cached !== undefined && this.#now() - cached.at < reuse ? cached : undefined;
+    return cached !== undefined && this.#readAgainIn(cached.readiness, cached.at) > 0 ? cached : undefined;
+  }
+
+  /**
+   * How long until a status reads gh again rather than reuse the reading taken `at`: five minutes from it, one while gh
+   * could not tell (`unavailable`); 0 once due.
+   */
+  #readAgainIn(readiness: GithubReadiness, at: number): number {
+    const reuse = readiness.state === "unavailable" ? GITHUB_UNAVAILABLE_MS : GITHUB_READINESS_MS;
+    return Math.max(0, at + reuse - this.#now());
   }
 
   #keepReadiness(repositoryKey: string, readiness: GithubReadiness): GithubReading {
@@ -418,13 +426,13 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   }
 
   /**
-   * `gh`'s readiness as the status shows it, with when it was read: `unchecked` while Merge Assist is off, when Rerail
-   * runs no `gh`.
+   * `gh`'s readiness as the status shows it, with how long until a status reads gh again, on this process's clock so a
+   * page on another machine's needs none of it: `unchecked` while Merge Assist is off, when Rerail runs no `gh`.
    */
   async #statusReadiness(repositoryKey: string, enabled: boolean): Promise<MergeAssistStatus["readiness"]["github"]> {
     if (enabled) {
       const { readiness, at } = await this.#githubReadiness(repositoryKey, false);
-      return at === undefined ? readiness : { ...readiness, readAt: new Date(at).toISOString() };
+      return at === undefined ? readiness : { ...readiness, readAgainInMs: this.#readAgainIn(readiness, at) };
     }
     const repository = githubRepositoryOf(repositoryKey);
     return { state: "unchecked", login: null, repository: repository === null ? null : `${repository.owner}/${repository.name}` };

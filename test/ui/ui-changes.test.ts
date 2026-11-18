@@ -17,32 +17,48 @@ let up = true;
 let streams404 = false;
 /** Reads the daemon answers with an error (500), by path, while the daemon itself stays up. */
 let failing = new Set<string>();
+type GithubState = MergeAssistStatus["readiness"]["github"]["state"];
 /** Whether the Merge Assist status the daemon answers says a scan runs, and gh's state in it. */
 let scanning = false;
-let githubState: MergeAssistStatus["readiness"]["github"]["state"] = "signed-in";
-/** When the daemon says it read gh's sign-in; none where it ran no gh. */
-let githubReadAt: string | undefined;
+let githubState: GithubState = "signed-in";
+/**
+ * When the daemon read gh's sign-in, on its own clock, which runs `daemonAheadMs` ahead of the page's; none where it
+ * ran no gh. A status past five minutes from it reads gh again, which then says `githubNext`.
+ */
+let githubReading: { at: number } | undefined;
+let githubNext: GithubState = "signed-in";
+let daemonAheadMs = 0;
 let renders: boolean[] = [];
 let visibility: (() => void)[] = [];
 const encoder = new TextEncoder();
 
 const json = (body: unknown, status = 200): Response => new Response(JSON.stringify(body), { status });
 
+/** gh's readiness as the daemon's status says it: a reading reused for five minutes, then read again. */
+function githubShown(): MergeAssistStatus["readiness"]["github"] {
+  const shown = { state: githubState, login: null, repository: "acme/app" };
+  if (githubReading === undefined) return shown;
+  const daemonNow = Date.now() + daemonAheadMs;
+  if (daemonNow - githubReading.at >= 5 * 60_000) {
+    githubReading = { at: daemonNow };
+    githubState = githubNext;
+  }
+  return { ...shown, state: githubState, readAgainInMs: githubReading.at + 5 * 60_000 - daemonNow };
+}
+
 /** Every read a page makes, each empty; Merge Assist with one checkout's status. */
 function answer(url: URL): Response {
-  const bodies: Record<string, unknown> = {
-    "/healthz": { version: "1", pid: 1 },
-    "/api/repositories": { repositories: [] },
-    "/api/repository": { repository: { setUp: true, repositoryKey: "A" }, checkout: null },
-    "/api/repository/rules": { rules: [], unavailable: [] },
-    "/api/rule-packs": { packs: [] },
-    "/api/merge-assist": sampleStatus("/work/a", {
-      scanning, readiness: { github: { state: githubState, login: null, repository: "acme/app", ...(githubReadAt === undefined ? {} : { readAt: githubReadAt }) } },
-    }),
+  const bodies: Record<string, () => unknown> = {
+    "/healthz": () => ({ version: "1", pid: 1 }),
+    "/api/repositories": () => ({ repositories: [] }),
+    "/api/repository": () => ({ repository: { setUp: true, repositoryKey: "A" }, checkout: null }),
+    "/api/repository/rules": () => ({ rules: [], unavailable: [] }),
+    "/api/rule-packs": () => ({ packs: [] }),
+    "/api/merge-assist": () => sampleStatus("/work/a", { scanning, readiness: { github: githubShown() } }),
   };
   const body = bodies[url.pathname];
   if (body === undefined) throw new Error(`unexpected ${url.pathname}`);
-  return json(body);
+  return json(body());
 }
 
 function openStream(signal: AbortSignal): Response {
@@ -87,7 +103,9 @@ beforeEach(async () => {
   failing = new Set();
   scanning = false;
   githubState = "signed-in";
-  githubReadAt = undefined;
+  githubReading = undefined;
+  githubNext = "signed-in";
+  daemonAheadMs = 0;
   renders = [];
   vi.stubGlobal("location", { origin: "http://127.0.0.1:4000" });
   vi.stubGlobal("fetch", async (input: URL, init: { signal?: AbortSignal } = {}) => {
@@ -496,18 +514,23 @@ describe("the dashboard following the daemon's change stream", () => {
     expect(readsOf("/api/merge-assist")).toBe(3);
   });
 
-  it("asks for the Merge Assist status once when the gh sign-in it shows reaches the daemon's five minutes, so a sign-out shows", async () => {
+  it("asks for the Merge Assist status once when the daemon reads gh's sign-in again, so a sign-out shows, though the browser's clock is 10 minutes behind the daemon's", async () => {
     ui.view = "merge";
-    githubReadAt = new Date(Date.now() - 60_000).toISOString();
+    daemonAheadMs = 10 * 60_000;
+    githubReading = { at: Date.now() + daemonAheadMs - 60_000 };
     stream().send("t1");
     await settle();
     expect(readsOf("/api/merge-assist")).toBe(1);
+    // gh signs out meanwhile; the daemon reads it again for a status past its five minutes, 4 minutes from now.
+    githubNext = "signed-out";
 
-    await after(4 * 60_000 - 1);
+    for (let beat = 0; beat < 47; beat += 1) {
+      await after(5_000);
+      stream().send("t1");
+      await settle();
+    }
+    await after(4_999);
     expect(readsOf("/api/merge-assist")).toBe(1);
-    // The daemon reads gh again for a status past its five minutes: signed out since.
-    githubState = "signed-out";
-    githubReadAt = new Date(Date.now() + 1).toISOString();
     await after(2);
 
     expect(readsOf("/api/merge-assist")).toBe(2);
@@ -515,18 +538,23 @@ describe("the dashboard following the daemon's change stream", () => {
   });
 
   it("wakes for gh's sign-in on no page but Merge Assist's, though the sidebar's count holds a reading", async () => {
-    githubReadAt = new Date(Date.now()).toISOString();
+    githubReading = { at: Date.now() };
     stream().send("t1");
     await settle();
     // The count waits for the first read, which draws the page.
     stream().send("t2");
     await settle();
-    expect(data.mergeAssist?.readiness.github.readAt).toBe(githubReadAt);
+    expect(data.mergeAssist?.readiness.github.readAgainInMs).toBe(5 * 60_000);
     // Only the watch for two missed beats waits: no wake is set for the reading on this page.
     expect(vi.getTimerCount()).toBe(1);
     const before = reads.length;
 
-    await after(10 * 60_000);
+    // Past the reading's five minutes, the stream beating with nothing new.
+    for (let beat = 0; beat < 61; beat += 1) {
+      await after(5_000);
+      stream().send("t2");
+      await settle();
+    }
 
     expect(reads.length).toBe(before);
   });

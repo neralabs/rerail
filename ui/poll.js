@@ -355,8 +355,21 @@ function takeMergeAssist(body, request) {
   const changed = data.mergeAssistError !== null || data.mergeAssistExperiment !== true;
   Object.assign(data, { mergeAssistError: null, mergeAssistExperiment: true });
   if (body === undefined) return changed;
-  data.mergeAssist = body;
+  holdMergeAssist(body);
   return true;
+}
+
+/**
+ * When the daemon reads gh's sign-in again for the Merge Assist status the page holds (`performance.now()`, the page's
+ * own clock from the moment the status came, so neither clock's time of day counts); `null` where it runs no gh.
+ */
+let githubDueAt = null;
+
+/** Hold a Merge Assist status the daemon answered, and when it reads gh again for one (`readAgainInMs`). */
+function holdMergeAssist(status) {
+  data.mergeAssist = status;
+  const readAgainInMs = status.readiness?.github?.readAgainInMs;
+  githubDueAt = readAgainInMs === undefined ? null : performance.now() + readAgainInMs;
 }
 
 /**
@@ -434,7 +447,7 @@ function loadMergeAssist(maxAge = 0) {
 function keepWriteStatus(write, request, status) {
   if (status === undefined || write !== mergeAssistWrites.sent) return;
   mergeAssistRequests.held = request;
-  data.mergeAssist = status;
+  holdMergeAssist(status);
   data.mergeAssistError = null;
   mergeAssistRead.at = Date.now();
 }
@@ -866,27 +879,20 @@ function mergeAssistMoves() {
   return status.scanning || GITHUB_WAITING.has(status.readiness.github.state);
 }
 
-/**
- * The age past which a status reads gh's sign-in again (`GITHUB_READINESS_MS` in src/runtime/merge-assist/service.ts):
- * the daemon reuses a reading that long, as the poll's status reads found it.
- */
-const GITHUB_READING_MS = 5 * 60_000;
 let githubTimer = null;
 
 /**
- * While the Merge Assist page shows gh signed in, ask for the status once when the reading it shows reaches the age
- * past which the daemon reads gh again: a sign-out, an expired token or another account then shows as soon as the
- * poll showed it, though nothing commits or tells of it. One wake at that moment, on that page only; at least the
- * pace away, so a reading the daemon has not read again yet (or a clock ahead of the daemon's) costs no more reads
- * than the poll did.
+ * While the Merge Assist page shows gh signed in, ask for the status once when the daemon says it reads gh again for
+ * one (`githubDueAt`): a sign-out, an expired token or another account then shows as soon as the poll showed it,
+ * though nothing commits or tells of it. One wake at that moment, on that page only; at least the pace away, so a
+ * reading the daemon has not read again yet costs no more reads than the poll did.
  */
 function armGithubRead() {
   clearTimeout(githubTimer);
   githubTimer = null;
-  const github = mergeAssistShown()?.readiness?.github;
-  if (github?.state !== "signed-in" || github.readAt === undefined) return;
-  const wait = Date.parse(github.readAt) + GITHUB_READING_MS - Date.now();
-  githubTimer = setTimeout(() => { githubTimer = null; if (mergeAssistShown() !== null) void refresh(); }, Math.max(INTERVAL, wait || 0));
+  if (mergeAssistShown()?.readiness?.github?.state !== "signed-in" || githubDueAt === null) return;
+  const wait = Math.max(INTERVAL, githubDueAt - performance.now());
+  githubTimer = setTimeout(() => { githubTimer = null; if (mergeAssistShown() !== null) void refresh(); }, wait);
 }
 
 /**
