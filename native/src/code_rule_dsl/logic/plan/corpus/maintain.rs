@@ -1965,8 +1965,7 @@ h(x, z) :- a(x, y), b(y, z), !c(x).
 h(x, n) :- c(x), n = count : { b(x, _) }.
 .output h
 "#;
-        let prog = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
-        let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&prog).unwrap().finish().unwrap();
+        let v = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
         let v0 = Placed::whole(v);
         let atoms = Builder::under(&v0.v).finish().unwrap().0;
         let scc: BTreeSet<String> = ["h".to_owned()].into();

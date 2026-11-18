@@ -60,8 +60,8 @@
     #[test]
     fn kept_plans_read_back_from_the_store_by_rule_and_scale() {
         use super::super::{Kept, Mode, Priced, Step, StoredPlan, scale};
-        let prog = super::super::super::rr::parse(".decl e(x: int, y: int)\n.decl f(x: int)\n.decl g(x: int)\n.output g\ng(x) :- e(x, y), f(y), x != y.\n").unwrap();
-        let body = &prog.rules[0].body;
+        let prog = super::super::super::rr::parse_version(".decl e(x: int, y: int)\n.decl f(x: int)\n.decl g(x: int)\n.output g\ng(x) :- e(x, y), f(y), x != y.\n").unwrap();
+        let body = super::super::body::nth(&prog, 0);
         let order = vec![
             Step { at: 1, mode: None },
             Step { at: 0, mode: Some(Mode::Range) },
@@ -128,9 +128,12 @@
     fn a_message_setting_is_not_in_the_choices_key() {
         use crate::code_rule_dsl::logic::rr::lower::findings::MESSAGE;
         let with = |settings: &[(&str, &str)]| {
-            let mut p = super::super::super::rr::parse(".decl e(x: int)\n.decl f(x: int)\n.output f\ne(1).\nf(x) :- e(x).\n").unwrap();
-            p.settings = settings.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect();
-            key(&super::super::body::Placed::of_program(&p).unwrap())
+            use crate::code_rule_dsl::logic::program_image::fields::FieldsMut;
+            let p = super::super::super::rr::parse_version(".decl e(x: int)\n.decl f(x: int)\n.output f\ne(1).\nf(x) :- e(x).\n").unwrap();
+            let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&p);
+            let settings: Vec<(String, String)> = settings.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect();
+            b.set_field(crate::code_rule_dsl::logic::program_facts::Field::Settings(&settings));
+            key(&super::super::body::Placed::whole(b.finish().unwrap().0))
         };
         let base = with(&[(MESSAGE, "f \"one\"")]);
         assert_eq!(base, with(&[(MESSAGE, "f \"two\"")]), "a message's edit keeps the key");

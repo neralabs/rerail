@@ -800,11 +800,7 @@ grew(e) :- now_entry(e), !was(_, e).
 
     /// The version of program `text`.
     fn version(text: &str) -> V {
-        image(&crate::code_rule_dsl::logic::rr::parse(text).unwrap())
-    }
-
-    fn image(p: &front::Program) -> V {
-        crate::code_rule_dsl::logic::program_image::Builder::of_program(p).unwrap().finish().unwrap().0
+        crate::code_rule_dsl::logic::rr::parse_version(text).unwrap()
     }
 
     /// `v` with its inputs read (`populate_with`).
@@ -897,8 +893,8 @@ grew(e) :- now_entry(e), !was(_, e).
 
     #[test]
     fn artifact_declarations_are_parsed_and_must_agree() {
-        let program = crate::code_rule_dsl::logic::rr::parse(".artifact \"test_collection\" inputs \"**/*.py\", \"pyproject.toml\"\n").unwrap();
-        let declared = artifacts(&program.settings).unwrap();
+        let program = crate::code_rule_dsl::logic::rr::parse_version(".artifact \"test_collection\" inputs \"**/*.py\", \"pyproject.toml\"\n").unwrap();
+        let declared = artifacts(&crate::code_rule_dsl::logic::program_image::fields::ProgramFields::settings(&*program)).unwrap();
         assert_eq!(declared["test_collection"], vec!["**/*.py".to_owned(), "pyproject.toml".to_owned()]);
         let twice = vec![
             ("artifact".to_owned(), "\"a\" inputs \"*.py\"".to_owned()),

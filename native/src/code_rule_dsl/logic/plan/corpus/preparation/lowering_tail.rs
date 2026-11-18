@@ -1613,31 +1613,27 @@ impl ProgramPass for Declared {
 mod tests {
     use crate::code_rule_dsl::logic::program_image::{build::Builder, manager::Pipeline};
 
-    /// `Declared` on a version refuses what the tree's `front::declared` refuses: a read of a relation not declared,
-    /// and an atom with other columns than its relation declares; it passes a program the tree's passes.
+    /// `Declared` on a version refuses a read of a relation not declared, and an atom with other columns than its
+    /// relation declares; it passes a program whose reads are declared.
     #[test]
-    fn declared_on_a_version_is_the_trees() {
-        use crate::code_rule_dsl::logic::front::{Atom, Literal, Term};
+    fn declared_on_a_version_refuses_undeclared_reads() {
+        use crate::code_rule_dsl::logic::program_image::T;
         let text = ".decl e(x: number)\n.input e\n.decl r(x: number)\nr(x) :- e(x).\n.output r\n";
         let check = |rel: &str, args: usize| {
-            let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
-            let mut reads = tree.rules[0].clone();
-            let arg = Term::Var("x".to_owned().into());
-            reads.body = [Literal::Atom(Atom { rel: rel.to_owned().into(), args: vec![arg; args].into(), neg: false, gated: false })].into();
-            tree.rules.push(reads);
-            let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+            let v = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
+            let mut b = Builder::on(&v);
+            b.rule().head("r", &[T::Var("x")]).atom(rel, &vec![T::Var("x"); args]).finish().unwrap();
+            let (v, _) = b.finish().unwrap();
             let mut p = Pipeline::new("test", v);
             p.program(&mut super::Declared);
-            let got = p.finish().map(|_| ()).map_err(|e| e.to_string());
-            let want = crate::code_rule_dsl::logic::front::declared(&tree).map_err(|e| e.to_string());
-            (got, want)
+            p.finish().map(|_| ()).map_err(|e| e.to_string())
         };
-        let (got, want) = check("nowhere", 1);
-        assert!(want.is_err() && got.as_ref().err().is_some_and(|e| e.contains(want.as_ref().unwrap_err().as_str())), "{got:?} {want:?}");
-        let (got, want) = check("e", 2);
-        assert!(want.is_err() && got.as_ref().err().is_some_and(|e| e.contains(want.as_ref().unwrap_err().as_str())), "{got:?} {want:?}");
-        let (got, want) = check("e", 1);
-        assert!(got.is_ok() && want.is_ok(), "{got:?} {want:?}");
+        let got = check("nowhere", 1);
+        assert!(got.as_ref().err().is_some_and(|e| e.contains("nowhere")), "{got:?}");
+        let got = check("e", 2);
+        assert!(got.as_ref().err().is_some_and(|e| e.contains("relation e is declared with 1 columns and read with 2")), "{got:?}");
+        let got = check("e", 1);
+        assert!(got.is_ok(), "{got:?}");
     }
 
     /// `BuiltinsOut` on a version: the built-ins' and the rewritten relations' declarations and inputs go, and `within`, read by a rule, is declared and an input. (On a modular text's path
@@ -1645,22 +1641,18 @@ mod tests {
     #[test]
     fn builtins_out_on_a_version_takes_the_builtins_out() {
         let text = ".decl e(x: number)\n.input e\n.decl r(x: number)\nr(x) :- e(x).\n.output r\n";
-        let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
-        for b in ["nearest", "earlier", "precedes"] {
-            tree.decls.insert(b.to_owned().into(), [("x".into(), "number".into())].into());
-            tree.inputs.push(b.to_owned());
+        let v = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
+        let mut b = Builder::on(&v);
+        for name in ["nearest", "earlier", "precedes"] {
+            crate::code_rule_dsl::logic::program_image::fields::FieldsMut::declare(&mut b, name, &[("x", "number")]);
+            crate::code_rule_dsl::logic::program_image::fields::FieldsMut::add_input(&mut b, name);
         }
         // A rule reading `within`, undeclared.
-        let mut reads = tree.rules[0].clone();
-        reads.body = [crate::code_rule_dsl::logic::front::Literal::Atom(crate::code_rule_dsl::logic::front::Atom {
-            rel: "within".to_owned().into(),
-            args: [crate::code_rule_dsl::logic::front::Term::Var("x".to_owned().into()), crate::code_rule_dsl::logic::front::Term::Wild].into(),
-            neg: false,
-            gated: false,
-        })]
-        .into();
-        tree.rules.push(reads);
-        let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+        {
+            use crate::code_rule_dsl::logic::program_image::T;
+            b.rule().head("r", &[T::Var("x")]).atom("within", &[T::Var("x"), T::Wild]).finish().unwrap();
+        }
+        let (v, _) = b.finish().unwrap();
         let rewritten = vec!["precedes".to_owned()];
         let mut p = Pipeline::new("test", v);
         p.program(&mut super::BuiltinsOut { rewritten: rewritten.clone() });

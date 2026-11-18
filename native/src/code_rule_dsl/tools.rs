@@ -185,8 +185,8 @@ pub const CAPABILITIES: &str = include_str!("capabilities.json");
 /// Read a public `.rr` file, including its core prelude and libraries. The CLI and migration
 /// harness use the same reader as the engine; they never strip directives or run a lab interpreter.
 pub fn read_rr(path: &std::path::Path) -> Result<String, String> {
-    let program = super::logic::rr::parse_file(path).map_err(|e| e.to_string())?;
-    super::logic::rr::print(&program).map_err(|e| e.to_string())
+    let program = super::logic::rr::parse_file_version(path).map_err(|e| e.to_string())?;
+    super::logic::rr::print_version(&program).map_err(|e| e.to_string())
 }
 
 /// Convert whole AST policies for review. Unsupported clauses refuse the entire candidate.
@@ -606,8 +606,8 @@ fn dialect_runs(programs: &[&str], root: &std::path::Path, options: &serde_json:
         let named = line.and_then(|i| text.lines().nth(i)).map(|l| l.trim_start()[".language ".len()..].trim().trim_matches('"').to_owned());
         let several = named.as_deref().is_some_and(|n| CodeRuleLanguage::ALL.into_iter().any(|l| l.name() == n && l.dialects().len() > 1));
         let labels = if several {
-            let prog = super::logic::rr::parse_own(text).map_err(|e| e.to_string())?;
-            corpus::run_dialects_in(&files, &prog, options).map_err(|e| e.to_string())?
+            let prog = super::logic::rr::parse_own_version(text).map_err(|e| e.to_string())?;
+            corpus::run_dialects_in(&files, &*prog, options).map_err(|e| e.to_string())?
         } else {
             Vec::new()
         };

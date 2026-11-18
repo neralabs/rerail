@@ -1349,9 +1349,8 @@ impl Source for Layered {
 
 #[cfg(test)]
 pub mod tests {
-    fn st(p: &front::Program) -> Vec<BTreeSet<String>> { front::strata(p).unwrap().0 }
     /// A program's version, as a run reads it (t36 item 7).
-    fn pl(p: &front::Program) -> Placed { Placed::of_program(p).unwrap() }
+    fn pl(p: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Placed { Placed::whole(p.clone()) }
     /// A version's strata, each by its relations' names (the `Strata` analysis).
     fn strata_of(v: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Vec<BTreeSet<String>> {
         let s = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::program_image::Strata>(v).unwrap();
@@ -1406,7 +1405,7 @@ pub mod tests {
     #[test]
     fn a_relation_bound_from_an_earlier_phase_is_read_by_identity_declared_or_not() {
         let text = ".decl e(x: number)\n.input e\n.decl out(x: number)\nout(x) :- e(x), types__wgen(x).\n.output out\n";
-        let placed = pl(&crate::code_rule_dsl::logic::rr::parse(text).unwrap());
+        let placed = pl(&crate::code_rule_dsl::logic::rr::parse_version(text).unwrap());
         let binds = [3; 32];
         let rels = frame_rels(&[&placed], &binds, &["types__wgen"]).unwrap();
         for rel in ["e", "types__wgen"] {

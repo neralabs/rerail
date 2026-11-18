@@ -2,8 +2,12 @@
     use crate::code_rule_dsl::logic::{native, plan, rr};
     use crate::code_rule_dsl::logic::plan::lower;
     /// A program's version, as a run reads it (t36 item 7).
-    fn pl(p: &crate::code_rule_dsl::logic::front::Program) -> crate::code_rule_dsl::logic::plan::body::Placed { crate::code_rule_dsl::logic::plan::body::Placed::of_program(p).unwrap() }
-    fn st(p: &crate::code_rule_dsl::logic::front::Program) -> Vec<std::collections::BTreeSet<String>> { crate::code_rule_dsl::logic::front::strata(p).unwrap().0 }
+    type V = std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>;
+    fn pl(p: &V) -> crate::code_rule_dsl::logic::plan::body::Placed { crate::code_rule_dsl::logic::plan::body::Placed::whole(p.clone()) }
+    fn st(p: &V) -> Vec<std::collections::BTreeSet<String>> {
+        let s = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::program_image::Strata>(p).unwrap();
+        s.sccs.iter().map(|scc| scc.iter().map(|&r| p.rel_name(r).to_owned()).collect()).collect()
+    }
 
     #[test]
     fn cross_process_admission_batches_inputs_and_eligible_derived_frames() {
@@ -18,7 +22,7 @@
             text += &format!(".decl input{i}(x:number)\n.input input{i}\n.decl result{i}(x:number)\nresult{i}(x) :- input{i}(x).\n.output result{i}\n");
             inputs.push((format!("input{i}"), native::component::columns_source(vec!["c0".into()], vec![Some(vec![i])])));
         }
-        let prog = rr::parse(&text).unwrap();
+        let prog = rr::parse_version(&text).unwrap();
         let now: HashMap<_, _> = inputs.iter().map(|(r, s)| (r.clone(), super::super::retain::digest(s.as_ref(), &crate::code_rule_dsl::logic::plan::Cells::plain(s.columns().len())))).collect();
         let (_, part) = load(&store, dir.path(), [7; 32], [7; 32], &pl(&prog), &Default::default(), &st(&prog), &inputs, &now).unwrap();
         let puts: Vec<_> = part.frames.iter().map(|(name, (rel, _))| {
@@ -63,7 +67,7 @@
             for deleted in [false, true] {
                 let dir = tempfile::tempdir().unwrap();
                 let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
-                let prog = rr::parse(".decl input(x:number)\n.input input\n.decl result(x:number)\nresult(x) :- input(x).\n.output result\n").unwrap();
+                let prog = rr::parse_version(".decl input(x:number)\n.input input\n.decl result(x:number)\nresult(x) :- input(x).\n.output result\n").unwrap();
                 let inputs = vec![("input".to_owned(), native::component::columns_source(vec!["c0".into()], vec![Some(vec![42])]))];
                 let now = HashMap::from([("input".to_owned(), super::super::retain::digest(inputs[0].1.as_ref(), &crate::code_rule_dsl::logic::plan::Cells::plain(inputs[0].1.columns().len())))]);
                 let (_, part) = load(&store, dir.path(), [7; 32], [7; 32], &pl(&prog), &Default::default(), &st(&prog), &inputs, &now).unwrap();

@@ -873,7 +873,7 @@ fn keep_combined(key: [u8; 32], edit: impl FnOnce(&mut Combined)) {
 /// digest. For the tests of decision 0275.
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn combine_handed(read: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<(Arc<crate::code_rule_dsl::logic::program_image::Version>, Arc<crate::code_rule_dsl::logic::program_image::Version>, Option<Arc<crate::code_rule_dsl::logic::program_image::Version>>)> {
-    let text = crate::code_rule_dsl::logic::rr::print(&read.program(&front::Lists::default()).map_err(Error::Plan)?)?;
+    let text = crate::code_rule_dsl::logic::rr::print_version(read)?;
     let none = added::Added::default();
     let key = texts_digest(&[text.as_str()], &[None], &none);
     let made = combine_stored_version(&[text.as_str()], &none, &key, Some(read))?;
