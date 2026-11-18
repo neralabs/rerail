@@ -2390,6 +2390,23 @@ gigabytes into its tree. Waiting for the journal is planning, and it cost 100 to
   still saves the `stat`s where they cost more than its wait (a 9,010-file tree).
 - **Record**: —
 
+### Q185. Relax stops on the vendored Cranelift: every test of rerail-logic and the engine goes to cargo
+
+Seen 2026-11-18 (`scripts/dev/live-test-remote --once rerail-logic --lib -- FILTER`, and the same for
+rerail-engine): the session ends before `main` with "build script failed (exit 1): relax: load error
+cranelift_assembler_x64_meta: <the host's copy>/native/vendor/cranelift-assembler-x64-meta-0.125.4/src/lib.rs: No such
+file or directory". The file is there on the host (the checkout's copy holds it, tracked); the registry crate
+`cranelift-assembler-x64`'s build script, run by Relax as a child, loads its dependency, which `[patch]` puts in
+`native/vendor` since 0341, by the disk path, and the child's file view does not serve it. Every crate over the JIT
+(rerail-logic, rerail-engine, rerail-parser-tests) is cut off from the live loop since the vendoring, so their
+tests run through farm nextest with `-E`.
+
+- Find how a build script's child gets the mounts (`RELAX_VFS`, `share_from_env`; vfs.rs `virtual_of`, which maps
+  "a path a script gave under its folder on disk") and why a `[patch]` path under the shared workspace reads as
+  missing there; fix it in `scripts/dev/relax/rerail.patch`.
+- **Done when**: `live-test-remote --once rerail-logic --lib -- chunks_are_sized_by_the_prior` passes.
+- **Record**: —
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
