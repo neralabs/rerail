@@ -507,7 +507,7 @@ Validation failures return `400 { error: "invalid-request", issues }`. Handler e
 
 The bridge relays to the daemon recorded in `daemon.json`, following port changes and restarts, so the entry never needs editing. It first waits for that daemon's `/healthz` to answer with the recorded pid. A stale file therefore yields "Rerail daemon is not running" rather than reaching whatever holds the port.
 
-Each request has 30 s from its arrival for all of its waits: on Windows the daemon's engine proving it holds the access capability, the `/healthz` check of a newly recorded daemon, and the daemon's answer. A daemon busy in an audit is waited for and answers; one still silent at 30 s gives "Rerail daemon is running but did not answer within 30 s", never "not running".
+The bridge relays one request at a time, in the order they come. Before it sends one, it gives the daemon 30 s from the moment it takes the request to pass its checks: on Windows the daemon's engine proving it holds the access capability, then the `/healthz` check of a newly recorded daemon. The daemon then has 30 s from the send to answer. A daemon busy in an audit is waited for and answers; one still silent at either bound gives "Rerail daemon is running but did not answer within 30 s".
 
 After that check a request costs one file read, and the bridge re-checks only on connection failure. Suppose a checked daemon is killed with SIGKILL, its pid is reused, and another daemon takes its port before the next request: that request reaches the other daemon.
 

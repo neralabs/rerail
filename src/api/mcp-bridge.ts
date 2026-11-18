@@ -91,23 +91,30 @@ const DAEMON_NOT_RUNNING = "Rerail daemon is not running; start it with rerail d
 const DAEMON_REFUSED = "Rerail daemon refused the access capability in daemon.json (401); run rerail daemon stop, then rerail daemon start";
 
 /**
- * How long one relayed call may take, from its line's arrival to its answer. The engine's proof, the health check of a
- * newly recorded daemon and the daemon's answer each wait for what is left of it, so a daemon whose one event loop is in
- * an audit or a long garbage collection is waited for and answers, and one that never answers fails the call here. The
- * coding agent's own limit on an MCP call is far longer.
+ * How long the daemon has to answer each part of a relayed call. The checks before it may be sent the capability (on
+ * Windows its engine's proof, then the health check of a newly recorded daemon) have it from the moment the bridge takes
+ * the call; the call itself has it from its send, as it always had. A daemon whose one event loop is in an audit or a
+ * long garbage collection is waited for and answers, and one that never answers fails the call here. The coding agent's
+ * own limit on an MCP call is far longer.
  */
 const CALL_TIMEOUT_MS = 30_000;
 /** The daemon runs, and took the call, but gave no answer by the call's bound: busy or stuck, never "not running". */
 const DAEMON_NOT_ANSWERING = `Rerail daemon is running but did not answer within ${CALL_TIMEOUT_MS / 1_000} s; try again, and if it stays silent run rerail daemon stop, then rerail daemon start`;
 
 /**
- * One relayed call's single bound, {@link CALL_TIMEOUT_MS} from its line's arrival: each wait of the call ends on its
- * answer or at the bound, whichever comes first. Its timer ends with the call, so an idle bridge holds none.
+ * One relayed call's bound, {@link CALL_TIMEOUT_MS}: the checks have it from the moment the bridge takes the call, and from
+ * {@link CallBound.sent} the daemon's answer has it whole, so a check that waited for a busy daemon never shortens the
+ * time a tool has to answer. Each wait ends on its answer or at the bound, whichever comes first. Its one timer ends
+ * with the call, so an idle bridge holds none.
  */
 class CallBound {
-  readonly #ends = Date.now() + CALL_TIMEOUT_MS;
   readonly #abort = new AbortController();
-  readonly #timer = setTimeout(() => this.#abort.abort(new Error(DAEMON_NOT_ANSWERING)), CALL_TIMEOUT_MS);
+  #ends = 0;
+  #timer: NodeJS.Timeout | undefined;
+
+  constructor() {
+    this.#start();
+  }
 
   /** Aborts at the bound, with the call's answer as its reason: the signal each request of the call carries. */
   get signal(): AbortSignal {
@@ -127,9 +134,20 @@ class CallBound {
     return Math.max(1, this.#ends - Date.now());
   }
 
+  /** The call goes to the daemon now: its answer has the whole bound from here, whatever the checks took. */
+  sent(): void {
+    this.#start();
+  }
+
   /** Ends the bound's timer once the call has its answer. */
   end(): void {
     clearTimeout(this.#timer);
+  }
+
+  #start(): void {
+    clearTimeout(this.#timer);
+    this.#ends = Date.now() + CALL_TIMEOUT_MS;
+    this.#timer = setTimeout(() => this.#abort.abort(new Error(DAEMON_NOT_ANSWERING)), CALL_TIMEOUT_MS);
   }
 }
 
@@ -195,7 +213,10 @@ class DaemonLocator {
   }
 }
 
-/** Sends `request` to the home's daemon within `bound`; a failure to connect has the home's daemon checked again. */
+/**
+ * Sends `request` to the home's daemon once its checks pass within `bound`, then gives the daemon the bound whole to
+ * answer; a failure to connect has the home's daemon checked again within that time.
+ */
 async function post(
   request: string,
   daemon: DaemonLocator,
@@ -204,6 +225,7 @@ async function post(
   bound: CallBound,
 ): Promise<Response> {
   const endpoint = await daemon.endpoint(bound);
+  bound.sent();
   try {
     return await (fetchImpl ?? endpoint.fetch)(endpoint.url, {
       method: "POST",

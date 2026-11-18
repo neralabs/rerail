@@ -486,7 +486,11 @@ describe("Rerail MCP bridge beside a busy daemon", () => {
 
   it("waits for a newly recorded daemon's health answer as long as the call's bound, then relays", async () => {
     const health = heldAnswer();
-    const pending = runBridge([ping], [new Response(pong, { status: 200 })], { health: health.answer });
+    let relayed: RequestInit["signal"];
+    const pending = runBridge([ping], [async (_machine, init) => {
+      relayed = init.signal;
+      return new Response(pong, { status: 200 });
+    }], { health: health.answer });
     const signal = await health.asked;
     await vi.advanceTimersByTimeAsync(29_999);
     expect(signal.aborted).toBe(false);
@@ -494,8 +498,26 @@ describe("Rerail MCP bridge beside a busy daemon", () => {
     const run = await pending;
     expect(run.stdout).toEqual([pong]);
     expect(run.requests).toEqual([ping]);
+    // The health check waits on the call's own bound, the one the relay carries, and on no clock of its own.
+    expect(relayed).toBe(signal);
     // The call's bound ends with the call: an idle bridge keeps no timer to fire after its answer.
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("gives a tool the whole bound from its send, however long the health check before it waited", async () => {
+    const health = heldAnswer();
+    const relayed = heldAnswer();
+    const pending = runBridge([ping], [async (_machine, init) => await relayed.answer(init)], { health: health.answer });
+    await health.asked;
+    // The new daemon is busy 1.5 s at the check, then runs a tool that takes up to the bound to answer.
+    await vi.advanceTimersByTimeAsync(1_500);
+    health.release(jsonResponse(200, { status: "ok", pid: process.pid }));
+    const signal = await relayed.asked;
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(signal.aborted).toBe(false);
+    relayed.release(new Response(pong, { status: 200 }));
+    const run = await pending;
+    expect(run.stdout).toEqual([pong]);
   });
 
   it("calls a newly recorded daemon still silent to its health check at the bound busy, and sends it nothing", async () => {
