@@ -1828,7 +1828,8 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
   in the interpreter and Cranelift. Kotlin's grammar is checked against the lean parser's tapes,
   which agree with the compiled side, so nothing caught it.
 - **Done when**: the reference places a settling mark's extras as tier 2 does, and the test's
-  grammar says `settles` again.
+  grammar says `settles` again. `, drops W` (0406) is the same: the reference keeps the extra the
+  compiled side drops; it drops it too.
 
 ### Q221. The C directives' Metal reads refuse with `UnsupportedBackend` in this worktree
 
@@ -1838,3 +1839,28 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
   without 0407's change to the marks the code holds). The cause is one of `starts_late` (an
   `Early` or a prefix in the program), no device in the process, or a single-program check.
 - **Done when**: the cause is named and the two tests pass on a Mac with Metal.
+
+### Q222. A run of tokens that counts a depth, as `type_args_end` does
+
+- **What**: a token run (`(A | B)*`, 0406) ends at the first place its rest holds. The lean
+  parser's `type_args_end` counts `<` and `>` (and `(`, `)`), and ends where the depth closes.
+  `lambda_params_end` stops at an unmatched closer. Kotlin's `generic` holds at `a<b>c>(d)` where
+  the lean parser's does not (no corpus file has one).
+- **Done when**: a run can count a pair of tokens (as tier 1's `count(up, down)` does), Kotlin's
+  type arguments and lambda parameters use it, and a test has the nested case.
+
+### Q223. A token run cannot stop at a line break
+
+- **What**: line breaks are no tokens, so a run passes them. Kotlin's annotation before `if` /
+  `when` ran to a line break before (`@A(x)` then `if` on the next line was no annotated `if`).
+  The lean parser reads an annotation and then any expression, without asking.
+- **Done when**: the annotated expression is the lean parser's (an annotation, then an
+  expression, with no peek), or a run can name a gap mark as a stop. A test has the line break.
+
+### Q224. `deprecated back_fill` leaves the language
+
+- **What**: Kotlin's step 36 has no back fill (0406). Kotlin's step 35, the `.rr` ladder's steps 15
+  to 21, and the tests of the IR's backward pass still say `deprecated back_fill`.
+- **Done when**: the `.rr` steps are moved as Kotlin's was, or they stop being compiled. Step 35 is
+  history, kept or dropped from the tests. The IR's tests write the `BackFill` op directly, and
+  the parse refuses `back_fill` with no way back.
