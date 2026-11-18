@@ -147,15 +147,16 @@ describe("the daemon's change stream (GET /api/changes)", () => {
     }
   });
 
-  it("sends nothing for a checkpoint of the write-ahead log, which commits nothing", async () => {
-    // The folder's notices come as the test says, so the checkpoint's are heard alone, before any commit.
+  it("sends nothing for a checkpoint that copies the write-ahead log into the database, which commits nothing", async () => {
+    // The folder's notices come as the test says, so the checkpoint's are heard alone, before any commit. A passive
+    // checkpoint, as SQLite runs after commits, leaves the log's header as it was, so no reader's version moves.
     const folder = drivenWatch();
     const watched = storesFor({ changeFeed: { beatMs: BEAT_MS, watch: folder.watch } });
     const stream = messagesOf(await createRerailApi(watched, operations, { version: "0.0.0-test" }).request("/api/changes"));
     const other = new SqliteSessionStore(databasePath);
     try {
       const first = await stream.next();
-      database.$client.pragma("wal_checkpoint(TRUNCATE)");
+      database.$client.pragma("wal_checkpoint(PASSIVE)");
       folder.report(root, "rerail.sqlite");
       folder.report(root, "rerail.sqlite-wal");
       await new Promise(resolve => setImmediate(resolve));
