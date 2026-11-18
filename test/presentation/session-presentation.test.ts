@@ -11,8 +11,8 @@ import {
   presentedSessionNoteRules,
   readPresentation,
   readRepositoryState,
+  readRerailSummary,
   readRulesDashboard,
-  readSummaryState,
 } from "../../src/presentation/session-presentation.js";
 import { type AdapterDelivery, type RepositoryStartState, sessionStartNote } from "../../src/engine/index.js";
 import type { presentationResponseSchema, sessionResponseSchema } from "../../src/api/index.js";
@@ -70,6 +70,10 @@ afterEach(async () => {
 });
 
 const read = (onDemand = false) => readPresentation({ sessionId: "session /?&one", host: "claude-code", cwd, onDemand });
+/** `/rerail`'s read where the coding agent names no session (Cursor). */
+const summaryWithout = (startState: () => RepositoryStartState) => readRerailSummary({ host: "cursor", sessionId: undefined, cwd, startState });
+/** `/rerail`'s read of the session under test. */
+const summaryOf = (startState: () => RepositoryStartState) => readRerailSummary({ host: "claude-code", sessionId, cwd, startState });
 
 describe("session-start note rules", () => {
   it("says a repository is not set up even where the person keeps the footer silent", async () => {
@@ -281,9 +285,33 @@ describe("installed session presentation", () => {
   });
 
   it("summarizes a repository without a session from the daemon first, else the local state", async () => {
+    response = { presence: "compact", repositoryState: "not-set-up" };
+    expect(await summaryWithout(() => "stopped")).toMatchObject({ presentation: null, repositoryState: "not-set-up" });
     await rm(join(home, "daemon.json"));
-    expect(await readSummaryState(cwd, "cursor", () => "stopped")).toBe("stopped");
-    expect(await readSummaryState(cwd, "cursor", () => "started")).toBeNull();
+    expect(await summaryWithout(() => "stopped")).toEqual({ presentation: null, repositoryState: "stopped", rulesUrl: null });
+    expect(await summaryWithout(() => "started")).toEqual({ presentation: null, repositoryState: null, rulesUrl: null });
+  });
+
+  it("gives /rerail the rules page from the daemon's one answer, scoped as the answer names it", async () => {
+    const repositoryKey = "remote:github.com/acme/app";
+    response.scope = { repositoryKey, checkoutPath: cwd };
+    const rulesPage = `http://127.0.0.1:4737/?${new URLSearchParams({ repository: repositoryKey, checkout: cwd })}#rules`;
+    expect(await summaryOf(() => "started")).toMatchObject({ presentation: { status: "on" }, repositoryState: "started", rulesUrl: rulesPage });
+    expect(await summaryWithout(() => "started")).toEqual({ presentation: null, repositoryState: "started", rulesUrl: rulesPage });
+    // The answer that shows the daemon runs carries the page: no health or repository read follows it.
+    expect(requested.map(href => new URL(href).pathname)).toEqual(["/api/presentation", "/api/presentation"]);
+  });
+
+  it("links /rerail to the repository picker where the daemon's answer names no checkout", async () => {
+    response.scope = null;
+    expect((await summaryWithout(() => "started")).rulesUrl).toBe("http://127.0.0.1:4737/#rules");
+    expect((await summaryOf(() => "started")).rulesUrl).toBe("http://127.0.0.1:4737/#rules");
+  });
+
+  it("gives /rerail no rules page where no daemon answered as itself, and asks it nothing more", async () => {
+    response.context!.daemon.pid++;
+    expect(await summaryOf(() => "started")).toMatchObject({ presentation: { status: "not-running" }, repositoryState: null, rulesUrl: null });
+    expect(requested).toHaveLength(1);
   });
 
   it("rereads the daemon locator after restart", async () => {
@@ -323,6 +351,8 @@ describe("installed session presentation", () => {
 
 describe("a live daemon that does not answer in time", () => {
   let held: Server | undefined;
+  /** The paths the held listener was asked for. */
+  let asked: string[];
 
   afterEach(async () => {
     const server = held;
@@ -337,7 +367,9 @@ describe("a live daemon that does not answer in time", () => {
    */
   const holdRequests = async (recorded: Record<string, unknown> = {}): Promise<void> => {
     vi.unstubAllGlobals();
-    held = createServer(() => { /* The answer never comes. */ });
+    asked = [];
+    // The answer never comes.
+    held = createServer(request => { asked.push(new URL(request.url ?? "/", "http://daemon").pathname); });
     await new Promise<void>((resolve, reject) => held!.once("error", reject).listen(0, "127.0.0.1", () => resolve()));
     const { port } = held.address() as AddressInfo;
     await writeFile(join(home, "daemon.json"), JSON.stringify({ ...state, pid: process.pid, port, url: `http://127.0.0.1:${port}/`, ...recorded }));
@@ -360,23 +392,27 @@ describe("a live daemon that does not answer in time", () => {
   const readWith = (startState: () => RepositoryStartState, onDemand = true) =>
     readPresentation({ sessionId, host: "claude-code", cwd, startState, onDemand });
 
-  it("says not answering, never not running, where the checkout is started", async () => {
+  it("says not answering, never not running, where the checkout is started, and /rerail asks it once", async () => {
     await holdRequests();
     // Each read waits out its time, so they wait together.
-    const [started, stopped, summary, stoppedSummary, hookState] = await Promise.all([
+    const [started, stopped, summary, stoppedSummary, sessionSummary, hookState] = await Promise.all([
       readWith(() => "started"),
       readWith(() => "stopped", false),
-      readSummaryState(cwd, "cursor", () => "started"),
-      readSummaryState(cwd, "cursor", () => "stopped"),
+      summaryWithout(() => "started"),
+      summaryWithout(() => "stopped"),
+      summaryOf(() => "started"),
       readRepositoryState(cwd, "omp"),
     ]);
     expect(started).toMatchObject({ status: "not-answering", text: "R E R A I L ● not answering", repositoryState: null, counts: null });
     // Where Rerail is off here, the ambient footer still draws nothing.
     expect(stopped).toMatchObject({ status: "not-on-here", text: "", repositoryState: "stopped" });
-    expect(summary).toBe("not-answering");
-    expect(stoppedSummary).toBe("stopped");
+    expect(summary).toEqual({ presentation: null, repositoryState: "not-answering", rulesUrl: null });
+    expect(stoppedSummary).toEqual({ presentation: null, repositoryState: "stopped", rulesUrl: null });
+    expect(sessionSummary).toMatchObject({ presentation: { status: "not-answering" }, repositoryState: null, rulesUrl: null });
     // The hook start check reads the database when no answer comes, as it did.
     expect(hookState).toBeNull();
+    // One request per read: /rerail does not ask a daemon that gave no answer again for its rules page.
+    expect(asked).toEqual(Array.from({ length: 6 }, () => "/api/presentation"));
   });
 
   it("says not answering where the daemon's engine says nothing to the proof of its capability either", async () => {
@@ -388,11 +424,11 @@ describe("a live daemon that does not answer in time", () => {
       await holdRequests({ kernelSocketPath: engine, accessToken: "capability" });
       const [started, summary, hookState] = await Promise.all([
         readWith(() => "started"),
-        readSummaryState(cwd, "cursor", () => "started"),
+        summaryWithout(() => "started"),
         readRepositoryState(cwd, "omp"),
       ]);
       expect(started).toMatchObject({ status: "not-answering", text: "R E R A I L ● not answering" });
-      expect(summary).toBe("not-answering");
+      expect(summary).toEqual({ presentation: null, repositoryState: "not-answering", rulesUrl: null });
       expect(hookState).toBeNull();
     } finally {
       await closeEngine();
@@ -405,7 +441,7 @@ describe("a live daemon that does not answer in time", () => {
     held = undefined;
     await new Promise<void>(resolve => server.close(() => resolve()));
     expect(await readWith(() => "started")).toMatchObject({ status: "not-running", text: "R E R A I L ✕ not running" });
-    expect(await readSummaryState(cwd, "cursor", () => "started")).toBeNull();
+    expect(await summaryWithout(() => "started")).toEqual({ presentation: null, repositoryState: null, rulesUrl: null });
   });
 });
 

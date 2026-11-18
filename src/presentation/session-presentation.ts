@@ -447,7 +447,7 @@ export async function readRulesDashboard({ cwd }: RulesDashboardRequest): Promis
  * ask this first.
  */
 export async function readRepositoryState(cwd: string, host: RerailHost): Promise<RepositoryStartState | null> {
-  const state = await daemonRepositoryState(cwd, host);
+  const { state } = await daemonRepositoryState(cwd, host);
   return state === "not-answering" ? null : state;
 }
 
@@ -457,15 +457,21 @@ export async function readRepositoryState(cwd: string, host: RerailHost): Promis
  */
 export type SummaryState = RepositoryStartState | "not-answering" | null;
 
+/** What the daemon said of a repository without a session, and its answer, which only a live daemon gives. */
+interface RepositoryOutcome {
+  state: SummaryState;
+  answer?: LiveResponse;
+}
+
 /** Like `readRepositoryState`, but says `not-answering` when the live daemon gave no answer in time (`NotAnswering`). */
-async function daemonRepositoryState(cwd: string, host: RerailHost): Promise<SummaryState> {
+async function daemonRepositoryState(cwd: string, host: RerailHost): Promise<RepositoryOutcome> {
   try {
     const daemon = await verifyDaemon(cwd);
-    if (typeof daemon === "string" || !(await readableDaemon(daemon.state))) return null;
+    if (typeof daemon === "string" || !(await readableDaemon(daemon.state))) return { state: null };
     const response = await get(daemon, `/api/presentation?${new URLSearchParams({ repository: daemon.workspace, host })}`, presentationReadSchema);
-    return response.repositoryState;
+    return { state: response.repositoryState, answer: { daemon, response } };
   } catch (error) {
-    return error instanceof NotAnswering ? "not-answering" : null;
+    return { state: error instanceof NotAnswering ? "not-answering" : null };
   }
 }
 
@@ -495,13 +501,10 @@ async function withoutDaemon(
 }
 
 /**
- * The repository state `/rerail` shows without a session: the live daemon's answer, else the caller's local
- * reading. A started checkout with no daemon answering stays null, or `not-answering` where the daemon is alive.
+ * The repository state `/rerail` shows without a session: the live daemon's answer (`fromDaemon`), else the caller's
+ * local reading. A started checkout with no daemon answering stays null, or `not-answering` where the daemon is alive.
  */
-export async function readSummaryState(
-  cwd: string, host: RerailHost, startState: NonNullable<PresentationRequest["startState"]>,
-): Promise<SummaryState> {
-  const fromDaemon = await daemonRepositoryState(cwd, host);
+async function summaryState(fromDaemon: SummaryState, startState: NonNullable<PresentationRequest["startState"]>): Promise<SummaryState> {
   if (fromDaemon !== null && fromDaemon !== "not-answering") return fromDaemon;
   // In a started checkout, or one whose state cannot be read, what the daemon gave decides: nothing, or no answer in time.
   try {
@@ -519,7 +522,10 @@ function isPresentationRequest(sessionId: unknown, host: RerailHost, cwd: unknow
 
 type PresentationResponse = PresentationRead;
 type AnsweredSession = NonNullable<NonNullable<PresentationResponse["context"]>["session"]>;
-/** A live daemon of this checkout, and what it answered for the session. */
+/**
+ * A live daemon of this checkout, and what it answered for the session or the repository. The session read's answer is
+ * the recorded pid's (`readLiveResponse`); the repository read's names no pid, and is taken as its start state is.
+ */
 type LiveResponse = { daemon: VerifiedDaemon; response: PresentationResponse };
 
 /** The daemon's answer for the session; undefined when no live daemon of this checkout answers as itself. */
@@ -564,22 +570,75 @@ async function answeredPresentation(answer: LiveResponse, request: PresentationR
   return await answeredSessionPresentation(context.session, context.daemon.native.ok, answer, request);
 }
 
-/** Passive session reads: never start a daemon, mutate discovery, or open a writable database. */
-export async function readPresentation(request: PresentationRequest): Promise<SessionPresentation> {
+/** A session's presentation, and the answer it was made from, which only a daemon that answered as itself gives. */
+interface PresentationOutcome {
+  presentation: SessionPresentation;
+  answer?: LiveResponse;
+}
+
+/** `readPresentation`, with the daemon's answer kept for the rules page `/rerail` links (`readRerailSummary`). */
+async function presentationOutcome(request: PresentationRequest): Promise<PresentationOutcome> {
   const { sessionId, host, cwd, startState } = request;
   const onDemand = request.onDemand === true;
-  if (!isPresentationRequest(sessionId, host, cwd)) return unavailable("unavailable", "session unavailable", "compact");
-  let presence: PresentationPresence | undefined;
+  if (!isPresentationRequest(sessionId, host, cwd)) return { presentation: unavailable("unavailable", "session unavailable", "compact") };
+  let answer: LiveResponse | undefined;
   try {
-    const answer = await readLiveResponse(request);
-    if (answer === undefined) return await withoutDaemon(startState, "compact", onDemand, "not-running");
-    presence = answer.response.presence;
-    return await answeredPresentation(answer, request);
+    answer = await readLiveResponse(request);
+    if (answer === undefined) return { presentation: await withoutDaemon(startState, "compact", onDemand, "not-running") };
+    return { presentation: await answeredPresentation(answer, request), answer };
   } catch (error) {
-    if (presence !== undefined) return unavailable("not-running", NOT_RUNNING, presence);
+    if (answer !== undefined) return { presentation: unavailable("not-running", NOT_RUNNING, answer.response.presence), answer };
     // The locator named a live process, but nothing answered as the daemon: none listens, or it is busy.
-    return await withoutDaemon(startState, "compact", onDemand, error instanceof NotAnswering ? "not-answering" : "not-running");
+    const silence = error instanceof NotAnswering ? "not-answering" : "not-running";
+    return { presentation: await withoutDaemon(startState, "compact", onDemand, silence) };
   }
+}
+
+/** Passive session reads: never start a daemon, mutate discovery, or open a writable database. */
+export async function readPresentation(request: PresentationRequest): Promise<SessionPresentation> {
+  return (await presentationOutcome(request)).presentation;
+}
+
+/** What `/rerail` shows of the daemon (`renderRerailSummary`), from one read of it (`readRerailSummary`). */
+export interface RerailSummaryRead {
+  /** The session's presentation, read on demand; null where the coding agent cannot name its session (Cursor). */
+  presentation: SessionPresentation | null;
+  /** The presentation's repository state; without a session, the repository's (`SummaryState`). */
+  repositoryState: SummaryState;
+  /**
+   * The rules page of the daemon that answered the read, scoped to the repository and checkout its answer names (the
+   * repository picker where it names none); null when no daemon answered.
+   */
+  rulesUrl: string | null;
+}
+
+export interface RerailSummaryRequest {
+  host: RerailHost;
+  /** The session to present; undefined where the coding agent cannot name it (Cursor). */
+  sessionId: string | undefined;
+  cwd: string;
+  /** The checkout's start state as the caller reads it locally, for when no daemon answers (`PresentationRequest`). */
+  startState: NonNullable<PresentationRequest["startState"]>;
+}
+
+/**
+ * What `/rerail` shows: the session's presentation (or, without a session, the repository's state) and the rules page,
+ * from one read of the daemon. The answer that shows the daemon runs carries the page's origin and scope, so the page
+ * is never asked for apart, and a daemon that gave no answer in time is not asked again: the person waits at most one
+ * read's time, and gets no link, which the lines for that state never show. Passive, as `readPresentation`.
+ */
+export async function readRerailSummary({ host, sessionId, cwd, startState }: RerailSummaryRequest): Promise<RerailSummaryRead> {
+  if (sessionId === undefined) {
+    const { state, answer } = await daemonRepositoryState(cwd, host);
+    return { presentation: null, repositoryState: await summaryState(state, startState), rulesUrl: rulesPage(answer) };
+  }
+  const { presentation, answer } = await presentationOutcome({ sessionId, host, cwd, onDemand: true, startState });
+  return { presentation, repositoryState: presentation.repositoryState, rulesUrl: rulesPage(answer) };
+}
+
+/** The rules page of the daemon that gave `answer`, scoped as the answer names; null with no answer. */
+function rulesPage(answer: LiveResponse | undefined): string | null {
+  return answer === undefined ? null : rulesDashboardUrl(answer.daemon.origin, answer.response.scope ?? null);
 }
 
 /**
