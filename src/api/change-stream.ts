@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { OpenAPIHono } from "@hono/zod-openapi";
-import type { CheckoutContext } from "../engine/catalog/repository-model.js";
+import type { CheckoutContext, RuleCatalog } from "../engine/catalog/repository-model.js";
+import { worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
 import type { ChangeFeed, ChangeNotice } from "./change-feed.js";
 import type { RerailApiStores } from "./operation.js";
-import { checkoutAt, checkoutRuleCatalog } from "./repository-operations.js";
+import { checkoutAt } from "./repository-operations.js";
 
 const STREAM_HEADERS = { "content-type": "text/event-stream", "cache-control": "no-store" } as const;
 const encoder = new TextEncoder();
@@ -20,16 +21,39 @@ function recordedCheckout(stores: RerailApiStores, path: string | undefined): Ch
   }
 }
 
+/** The checkout's own Git folder (a worktree's `.git` is a file naming it), or none when it cannot be read. */
+function gitFolderOf(checkout: CheckoutContext): string | undefined {
+  const dotGit = join(checkout.checkoutPath, ".git");
+  const named = statSync(dotGit).isDirectory() ? dotGit : /^gitdir: (.+)/u.exec(readFileSync(dotGit, "utf8"))?.[1]?.trim();
+  return named === undefined ? undefined : resolve(checkout.checkoutPath, named);
+}
+
+/** A file's text, or empty when it cannot be read. */
+function textOf(path: string): string {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+/** The refs Merge Assist tries for the base branch after `origin/HEAD`'s target (`baseBranchAsync`). */
+const BASE_REFS = ["refs/remotes/origin/main", "refs/remotes/origin/master", "refs/heads/main", "refs/heads/master"];
+
 /**
- * The checkout's `HEAD` file as it reads now: the branch Merge Assist's status names. Git writes it with no commit to
- * the database, so the beat reads it. A worktree's `.git` is a file naming its folder; anything unreadable is empty.
+ * What the branches Merge Assist's status names depend on, as files say it: the checkout's `HEAD` (its branch), and
+ * for the base branch `origin/HEAD`'s target, which of the candidate refs exist as files, and the packed refs (a fetch
+ * or a pack of refs rewrites them). Git writes them with no commit to the database. Anything unreadable is empty.
  */
-function headOf(checkout: CheckoutContext | undefined): string {
+function branchFiles(checkout: CheckoutContext | undefined): string {
   if (checkout === undefined) return "";
   try {
-    const dotGit = join(checkout.checkoutPath, ".git");
-    const named = statSync(dotGit).isDirectory() ? dotGit : /^gitdir: (.+)/u.exec(readFileSync(dotGit, "utf8"))?.[1]?.trim();
-    return named === undefined ? "" : readFileSync(join(resolve(checkout.checkoutPath, named), "HEAD"), "utf8");
+    const git = gitFolderOf(checkout);
+    if (git === undefined) return "";
+    const common = resolve(git, textOf(join(git, "commondir")).trim() || ".");
+    const packed = statSync(join(common, "packed-refs"), { throwIfNoEntry: false });
+    const refs = BASE_REFS.map(ref => (existsSync(join(common, ref)) ? ref : ""));
+    return [textOf(join(git, "HEAD")), textOf(join(common, "refs", "remotes", "origin", "HEAD")), ...refs, `${packed?.mtimeMs}:${packed?.size}`].join("\u0000");
   } catch {
     return "";
   }
@@ -37,25 +61,32 @@ function headOf(checkout: CheckoutContext | undefined): string {
 
 /**
  * What files say for a page scoped to `path`, as one digest: the rule catalog it reads (the installed packs, and the
- * checkout's own rules in `.rerail/rules`) and the checkout's branch.
+ * checkout's own rules in `.rerail/rules`) and its branches (`branchFiles`). The installed catalog is read again only
+ * at a `files` notice, its folders being watched; the checkout's files at each beat, since a watch inside a person's
+ * checkout or its Git folder holds that folder open on Windows, where it can make Git's removal of a worktree or a
+ * person's switch of branches fail.
  */
-function filesStamp(stores: RerailApiStores, path: string | undefined): string {
-  const checkout = recordedCheckout(stores, path);
-  const digest = createHash("sha256").update(checkoutRuleCatalog(stores, checkout).digest).update("\u0000").update(headOf(checkout));
-  return digest.digest("hex").slice(0, 32);
+function filesStamp(stores: RerailApiStores, path: string | undefined): (notice: ChangeNotice | "start") => string {
+  let installed: RuleCatalog | undefined;
+  let stamp = "";
+  return notice => {
+    if (installed === undefined || notice === "files") installed = stores.ruleCatalog();
+    if (notice === "data" || notice === "conflicts") return stamp;
+    const checkout = recordedCheckout(stores, path);
+    const catalog = checkout === undefined ? installed : worktreeRuleCatalog(installed, checkout.checkoutPath);
+    stamp = createHash("sha256").update(catalog.digest).update("\u0000").update(branchFiles(checkout)).digest("hex").slice(0, 32);
+    return stamp;
+  };
 }
 
 /**
  * The token a page compares, for one stream: it moves when the database commits (`historyVersion`, which creates no
  * database) or what files say for the scope changes (`filesStamp`). `salt` is the daemon's, so a restarted daemon
- * never repeats a token. The files are read again only at the stream's start and its beats: no notice covers them.
+ * never repeats a token.
  */
 function streamToken(stores: RerailApiStores, salt: string, checkout: string | undefined): (notice: ChangeNotice | "start") => string {
-  let files = "";
-  return notice => {
-    if (notice === "start" || notice === "beat") files = filesStamp(stores, checkout);
-    return `${salt}.${stores.historyVersion() ?? "none"}.${files}`;
-  };
+  const files = filesStamp(stores, checkout);
+  return notice => `${salt}.${stores.historyVersion() ?? "none"}.${files(notice)}`;
 }
 
 /** The message a notice sends: the feed tells `data` only once a commit shows, and a beat says the daemon is alive. */

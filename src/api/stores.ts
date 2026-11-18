@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 import type { z } from "zod";
-import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
+import { installedPacksPrefix, loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { databaseInstalledAt, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { SqliteAuditReader } from "../engine/audit/audit-store.js";
 import { SqlitePresentationPreferenceStore } from "../runtime/presentation-preference-store.js";
@@ -149,7 +150,9 @@ export class DatabaseApiStores implements RerailApiStores {
 
   changes(): ChangeFeed {
     if (this.#changes !== undefined) return this.#changes;
-    const feed = databaseChangeFeed(this.#path, () => this.historyVersion(), this.#options.changeFeed);
+    // An install or removal of a pack rewrites the prefix's package files and its node_modules.
+    const packs = installedPacksPrefix();
+    const feed = databaseChangeFeed(this.#path, () => this.historyVersion(), { files: [packs, join(packs, "node_modules")], ...this.#options.changeFeed });
     // A conflict event of the Merge Assist these stores answer with reaches the stream as it happens.
     this.#stopConflicts = this.#options.mergeAssist?.onConflictsChanged?.(() => feed.notify("conflicts"));
     this.#changes = feed;

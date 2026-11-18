@@ -22,16 +22,16 @@ const BEAT_MS = 60 * 60_000;
 
 interface Message { readonly event: string; readonly data: string }
 
-/** A folder watch the test drives: `report(name)` is the OS saying `name` in the database's folder changed. */
-function drivenWatch(): { watch: typeof watchFolder; report: (name: string) => void } {
-  let listener: ((event: string, name: string) => void) | undefined;
-  const watch = ((_folder: string, _options: unknown, onChange: (event: string, name: string) => void) => {
-    listener = onChange;
+/** Folder watches the test drives: `report(folder, name)` is the OS saying `name` in `folder` changed. */
+function drivenWatch(): { watch: typeof watchFolder; report: (folder: string, name: string) => void } {
+  const listeners = new Map<string, (event: string, name: string) => void>();
+  const watch = ((folder: string, _options: unknown, onChange: (event: string, name: string) => void) => {
+    listeners.set(folder, onChange);
     const watcher = new EventEmitter() as FSWatcher;
-    watcher.close = () => { listener = undefined; };
+    watcher.close = () => { listeners.delete(folder); };
     return watcher;
   }) as unknown as typeof watchFolder;
-  return { watch, report: name => listener?.("change", name) };
+  return { watch, report: (folder, name) => listeners.get(folder)?.("change", name) };
 }
 
 /** One server-sent event's lines; `event` is "message" when it names none. */
@@ -156,12 +156,12 @@ describe("the daemon's change stream (GET /api/changes)", () => {
     try {
       const first = await stream.next();
       database.$client.pragma("wal_checkpoint(TRUNCATE)");
-      folder.report("rerail.sqlite");
-      folder.report("rerail.sqlite-wal");
+      folder.report(root, "rerail.sqlite");
+      folder.report(root, "rerail.sqlite-wal");
       await new Promise(resolve => setImmediate(resolve));
 
       other.openSession({ host: "codex", sessionId: "session-c", cwd: root });
-      folder.report("rerail.sqlite-wal");
+      folder.report(root, "rerail.sqlite-wal");
 
       // The first message after the checkpoint is the commit's: the checkpoint's own notices sent nothing.
       expect((await stream.next()).data).not.toBe(first.data);
@@ -206,16 +206,37 @@ describe("the daemon's change stream (GET /api/changes)", () => {
     await stream.stop();
   });
 
-  it("sends the token at each beat, read again for what no notice covers: a pack removed", async () => {
+  it("sends the token again at each beat, the same while nothing changed", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     const stream = await open();
     const first = await stream.next();
 
     await vi.advanceTimersByTimeAsync(BEAT_MS);
+
     expect(await stream.next()).toEqual(first);
+    await stream.stop();
+  });
+
+  it("sends a new token when a pack is removed, with no beat: the packs' folders are watched", async () => {
+    const stream = await open();
+    const first = await stream.next();
 
     uninstallPack("complexity");
+
+    expect((await stream.next()).data).not.toBe(first.data);
+    await stream.stop();
+  });
+
+  it("sends a new token at the beat after origin's default branch moved, which Merge Assist names as the base", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const checkout = gitRepository(join(realpathSync(root), "web"));
+    recordCheckout(database, checkout);
+    const stream = await open(`?${new URLSearchParams({ checkout })}`);
+    const first = await stream.next();
+
+    execFileSync("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk"], { cwd: checkout });
     await vi.advanceTimersByTimeAsync(BEAT_MS);
+
     expect((await stream.next()).data).not.toBe(first.data);
     await stream.stop();
   });

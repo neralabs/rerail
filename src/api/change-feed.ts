@@ -3,11 +3,12 @@ import { basename, dirname } from "node:path";
 
 /**
  * What a listener of the {@link ChangeFeed} hears. `data`: the database holds a commit it did not (any connection's,
- * in this process or another), or the API's own stores wrote. `conflicts`: Merge Assist's conflicts may have changed.
- * `beat`: every {@link BEAT_MS} while anyone listens, so a listener can say it is alive and look again at what no
- * notice covers (installed packs, a checkout's own rules, a notice the OS dropped).
+ * in this process or another), or the API's own stores wrote. `files`: a folder of {@link ChangeFeedOptions.files}
+ * changed (the installed rule packs). `conflicts`: Merge Assist's conflicts may have changed. `beat`: every
+ * {@link BEAT_MS} while anyone listens, so a listener can say it is alive and look again at what no notice covers (a
+ * checkout's own rules and branches, a notice the OS dropped).
  */
-export type ChangeNotice = "data" | "conflicts" | "beat";
+export type ChangeNotice = "data" | "files" | "conflicts" | "beat";
 
 /**
  * When what the dashboard reads may have changed, for the daemon's change stream (`GET /api/changes`). A notice says
@@ -42,6 +43,33 @@ export interface ChangeFeedOptions {
   /** `node:fs`'s `watch` by default; tests pass one that reports what they say. */
   readonly watch?: typeof watchFolder;
   readonly beatMs?: number;
+  /** Folders of Rerail's own whose every change is a `files` notice: the installed packs' prefix and its packages. */
+  readonly files?: readonly string[];
+}
+
+/**
+ * One folder's watch, which `ensure` starts when it is not running: a folder that does not exist yet, or no watch
+ * left (Linux's inotify budget), is tried again at the next `ensure`, and a watch that failed is dropped for it.
+ */
+function folderWatch(watch: typeof watchFolder, folder: string, onName: (name: string | null) => void): { ensure(): void; close(): void } {
+  let watcher: FSWatcher | undefined;
+  const close = (): void => {
+    watcher?.close();
+    watcher = undefined;
+  };
+  return {
+    ensure() {
+      if (watcher !== undefined) return;
+      try {
+        watcher = watch(folder, { persistent: false }, (_event, name) => onName(name === null ? null : String(name)));
+        watcher.on("error", close);
+      } catch {
+        // Not there yet, or no watch left: the beat looks until a later `ensure` starts it.
+        watcher = undefined;
+      }
+    },
+    close,
+  };
 }
 
 /** Whether the version moved since the last look: told once per move. A version that cannot be read counts as moved. */
@@ -98,8 +126,8 @@ function lookAgain(moved: () => boolean, onMoved: () => void): { start(): void; 
  * hears it; a `data` notice is told once `version` moved, at once for this process's commits, and after the looks
  * again of {@link LOOK_AGAIN_MS} for another process's. A notice for the main file covers a database not in WAL mode
  * yet, and a name the OS does not report is taken as either. The folder is watched, not the file, so a database
- * created, removed or replaced keeps its watch. A watch that could not start or failed is tried again at the next
- * beat; until then the beat alone looks.
+ * created, removed or replaced keeps its watch. Each folder of `options.files` is watched too. A watch that could not
+ * start or failed is tried again at the next beat; until then the beat alone looks.
  */
 export function databaseChangeFeed(databasePath: string, version: () => string | undefined, options: ChangeFeedOptions = {}): ChangeFeed {
   const names = new Set([basename(databasePath), `${basename(databasePath)}-wal`]);
@@ -107,7 +135,6 @@ export function databaseChangeFeed(databasePath: string, version: () => string |
   const listeners = new Set<(notice: ChangeNotice) => void>();
   const pending = new Set<ChangeNotice>();
   const committed = versionTracker(version);
-  let watcher: FSWatcher | undefined;
   let beat: NodeJS.Timeout | undefined;
   let flushing = false;
 
@@ -135,27 +162,18 @@ export function databaseChangeFeed(databasePath: string, version: () => string |
       setImmediate(flush);
     }
   };
-  const unwatch = (): void => {
-    watcher?.close();
-    watcher = undefined;
-  };
-  const startWatch = (): void => {
-    if (watcher !== undefined) return;
-    try {
-      watcher = watch(dirname(databasePath), { persistent: false }, (_event, name) => {
-        if (name === null || names.has(String(name))) hear("data");
-      });
-      watcher.on("error", unwatch);
-    } catch {
-      // No folder yet, or no watch left (Linux's inotify budget): the beat looks, and the next beat tries again.
-      watcher = undefined;
-    }
+  const watches = [
+    folderWatch(watch, dirname(databasePath), name => { if (name === null || names.has(name)) hear("data"); }),
+    ...(options.files ?? []).map(folder => folderWatch(watch, folder, () => hear("files"))),
+  ];
+  const startWatches = (): void => {
+    for (const folder of watches) folder.ensure();
   };
   const start = (): void => {
     committed.reset();
-    startWatch();
+    startWatches();
     beat = setInterval(() => {
-      startWatch();
+      startWatches();
       hear("beat");
     }, options.beatMs ?? BEAT_MS);
     beat.unref();
@@ -164,7 +182,7 @@ export function databaseChangeFeed(databasePath: string, version: () => string |
     clearInterval(beat);
     beat = undefined;
     looks.stop();
-    unwatch();
+    for (const folder of watches) folder.close();
     pending.clear();
   };
 
