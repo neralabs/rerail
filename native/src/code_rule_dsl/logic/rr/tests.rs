@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::code_rule_dsl::logic::front::{self, Literal, Term};
+use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
 use std::collections::BTreeSet;
 
 #[test]
@@ -3952,8 +3953,7 @@ fn the_lowerings_sets_are_made_on_the_version() {
     let r: Vec<String> = v.rules().filter(|x| v.rel_name(x.head().rel()) == "r").map(|x| v.show_rule(x)).collect();
     assert_eq!(r.len(), 1, "one rule of r, its literal once: {r:?}");
     assert_eq!(r[0].matches("a(").count(), 1, "{r:?}");
-    let head = v.header(&Default::default()).unwrap();
-    assert_eq!(head.facts.get("a").map(|rows| rows.len()), Some(2), "a's facts once each: {:?}", head.facts.get("a"));
+    assert_eq!(v.fact_rows("a").len(), 2, "a's facts once each: {:?}", v.fact_rows("a"));
 }
 
 /// `unit` after aggregate demand runs on a modular text's version (decision 0281's path, step 7b): `count : { b(_) }
@@ -4020,10 +4020,9 @@ fn finishs_rewrites_run_on_the_version() {
     let before = rules.iter().find(|x| x.starts_with("before(")).expect("before's rule");
     assert!(before.contains("node_order("), "{before}");
     assert!(rules.iter().any(|x| x.starts_with("rr_ordered0(")), "the max's helper: {rules:#?}");
-    let head = v.header(&Default::default()).unwrap();
     let owner = rules.iter().find(|x| x.starts_with("owner(")).expect("owner's rule");
     let axis = owner.split(|c: char| !(c.is_alphanumeric() || c == '_')).find(|w| w.starts_with("rr_inside_")).unwrap_or_else(|| panic!("an axis read: {owner}"));
-    assert!(head.inputs.iter().any(|i| i == axis) && head.decls.contains_key(axis), "the axis {axis} an input: {:?}", head.inputs);
+    assert!(v.input_names().iter().any(|i| i == axis) && v.declares(axis), "the axis {axis} an input: {:?}", v.input_names());
 }
 
 /// `whole()`'s last passes before `front::finish` run on a modular text's version (decision 0281's path, step 7b): a
@@ -4045,9 +4044,9 @@ fn nullary_relations_and_the_scope_are_made_on_the_version() {
     let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
     let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
     assert!(rules.iter().any(|x| x.starts_with("flag(1)")) && rules.iter().any(|x| x.starts_with("r(") && x.contains("flag(1)")), "{rules:#?}");
-    let head = v.header(&Default::default()).unwrap();
-    assert!(head.nullary.contains("flag") && head.decls["flag"].len() == 1, "{:?}", head.decls.get("flag"));
-    assert!(head.doc_scopes.as_ref().is_some_and(|s| s.iter().any(|(inc, _)| inc.iter().any(|g| g.contains("impl")))), "{:?}", head.doc_scopes);
+    assert!(ProgramFields::nullary(&*v).contains("flag") && v.columns_of("flag").is_some_and(|c| c.len() == 1), "{:?}", v.columns_of("flag"));
+    let scopes = ProgramFields::doc_scopes(&*v);
+    assert!(scopes.as_ref().is_some_and(|s| s.iter().any(|(inc, _)| inc.iter().any(|g| g.contains("impl")))), "{scopes:?}");
     // `value` is answered on request (decision 0174): its reader asks.
     assert!(rules.iter().any(|x| x.starts_with("rr_value_req")), "{rules:#?}");
 }
@@ -4070,8 +4069,8 @@ fn kind_sets_are_made_on_the_version() {
     let library = super::lower_library(&files, None).unwrap();
     let scoped = library.scoped(&files);
     let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
-    let head = v.header(&Default::default()).unwrap();
-    assert!(head.kindsets.get("calls").is_some_and(|k| k == &["call"]), "{:?}", head.kindsets);
+    let kindsets = ProgramFields::kindsets(&*v);
+    assert!(kindsets.get("calls").is_some_and(|k| k == &["call"]), "{kindsets:?}");
     let heads: BTreeSet<&str> = v.rules().map(|x| v.rel_name(x.head().rel())).collect();
     assert!(["rr_anc_code", "rr_near_code", "rr_in_code"].iter().all(|h| heads.contains(h)), "{heads:?}");
 }
@@ -4092,8 +4091,7 @@ fn grammar_names_and_builtins_are_checked_on_the_version() {
     let refused = lower("hit(s) :- kind(s, \"string\"), parsed(s, \"postgres\", _).").map(|_| ()).unwrap_err().to_string();
     assert!(refused.contains("no grammar \"postgres\""), "{refused}");
     let v = lower("hit(s) :- kind(s, \"name\"), within(s, a), kind(a, \"call\").").unwrap();
-    let head = v.header(&Default::default()).unwrap();
-    assert!(!["nearest", "earlier", "split_dot", "unset"].iter().any(|b| head.decls.contains_key(*b)), "{:?}", head.decls.keys().collect::<Vec<_>>());
+    assert!(!["nearest", "earlier", "split_dot", "unset"].iter().any(|b| v.declares(b)), "{:?}", v.declared_names());
 }
 
 /// The span patterns are read off a modular text's version (decision 0281's path, step 7b): a `match` over a line
@@ -4111,10 +4109,10 @@ fn span_patterns_are_found_on_the_version() {
     let library = super::lower_library(&files, None).unwrap();
     let scoped = library.scoped(&files);
     let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
-    let head = v.header(&Default::default()).unwrap();
     use crate::code_rule_dsl::logic::front::SpanIn;
-    assert!(head.rx_spans.iter().any(|(w, p)| *w == SpanIn::Line && p.contains("TODO")), "{:?}", head.rx_spans);
-    assert!(head.rx_spans.iter().any(|(w, p)| *w == SpanIn::Comment && p.contains("fixme")), "{:?}", head.rx_spans);
+    let rx_spans = ProgramFields::rx_spans(&*v);
+    assert!(rx_spans.iter().any(|(w, p)| *w == SpanIn::Line && p.contains("TODO")), "{rx_spans:?}");
+    assert!(rx_spans.iter().any(|(w, p)| *w == SpanIn::Comment && p.contains("fixme")), "{rx_spans:?}");
 }
 
 /// core.rr's declarations and `node`'s projections are made on a modular text's version (decision 0281's path, step
@@ -4129,8 +4127,7 @@ fn core_declarations_and_projections_are_made_on_the_version() {
     let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
     let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
     assert!(rules.first().is_some_and(|r| r.starts_with("kind($n, $k) :- node(")), "{rules:#?}");
-    let head = v.header(&Default::default()).unwrap();
-    assert!(!head.inputs.iter().any(|i| i == "kind"), "{:?}", head.inputs);
+    assert!(!v.input_names().iter().any(|i| i == "kind"), "{:?}", v.input_names());
 }
 
 /// The findings of a modular text's `.violation`s are written on its version (decision 0281's path, step 7b): the
@@ -4157,8 +4154,7 @@ fn findings_are_written_on_the_version() {
     assert!(rules.iter().any(|r| r.contains("$rr_message")), "{rules:#?}");
     // The text's own `violation` rule, in the older five columns, read at column 0.
     assert!(rules.iter().any(|r| r.starts_with("violation(\"p\", \"own\", \"X\", $p, 1, 0)")), "{rules:#?}");
-    let head = v.header(&Default::default()).unwrap();
-    assert!(head.outputs.iter().any(|o| o == "violation") && head.decls.get("violation").is_some_and(|c| c.len() == 6), "{:?}", head.outputs);
+    assert!(v.output_names().iter().any(|o| o == "violation") && v.columns_of("violation").is_some_and(|c| c.len() == 6), "{:?}", v.output_names());
 }
 
 /// The three-valued relations are written on a modular text's version (decision 0281's path, step 7b): `p` declared
@@ -4182,8 +4178,7 @@ fn three_valued_relations_are_written_on_the_version() {
     assert!(has("rr_must_p($x) :- known($x)") && has("p($x) :- known($x)") && has("p($x) :- base($x), !known($x)"), "{rules:#?}");
     assert!(!rules.iter().any(|x| x.starts_with("rr_must_p($x) :- base(")), "{rules:#?}");
     assert!(has("rr_must_q($x) :- base($x), !p($x)") && has("q($x) :- base($x), !rr_must_p($x)"), "{rules:#?}");
-    let head = v.header(&Default::default()).unwrap();
-    assert!(head.decls.contains_key("rr_must_p") && head.decls.contains_key("rr_must_q"), "{:?}", head.decls.keys().collect::<Vec<_>>());
+    assert!(v.declares("rr_must_p") && v.declares("rr_must_q"), "{:?}", v.declared_names());
 }
 
 /// A modular text's module is linked onto its scope's version and checked declared there (decision 0281's path, step

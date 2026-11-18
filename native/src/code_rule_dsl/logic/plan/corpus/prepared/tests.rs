@@ -86,7 +86,6 @@
         let lowered_image = |p: &super::Prepared| crate::code_rule_dsl::logic::program_image::Version::open(p.lowered.version.base_bytes().expect("a prepared program's version is a base")).unwrap();
         // The source's version, read back the same way.
         let source_image = |p: &super::Prepared| crate::code_rule_dsl::logic::program_image::Version::open(p.source.base_bytes().expect("the source is a base")).unwrap();
-        let lists = crate::code_rule_dsl::logic::front::Lists::default();
         let digest = |l: &crate::code_rule_dsl::logic::plan::lower::Lowered| l.placed().unwrap().digest();
         let back = super::prepared_of(&facts, source_image(&prepared), lowered_image(&prepared), dialect).unwrap();
         // Program has no PartialEq: its Debug form is the comparison, field by field; versions compare by digest.

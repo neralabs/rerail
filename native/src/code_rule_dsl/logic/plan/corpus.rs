@@ -3955,11 +3955,9 @@ fn run_observed(
                     l.sort();
                     l.join(" ")
                 };
-                if let Ok(h) = version.header(&lists) {
-                    let mut decls: Vec<String> = h.decls.iter().map(|(r, d)| format!("{r} {d:?}")).collect();
-                    decls.sort();
-                    rules.push(format!("~inputs {}\n~outputs {}\n~decls {}\n", sorted(&h.inputs), sorted(&h.outputs), decls.join(" | ")));
-                }
+                let mut decls: Vec<String> = version.declared_names().into_iter().map(|r| format!("{r} {:?}", version.columns_of(&r).unwrap_or_default())).collect();
+                decls.sort();
+                rules.push(format!("~inputs {}\n~outputs {}\n~decls {}\n", sorted(&version.input_names()), sorted(&version.output_names()), decls.join(" | ")));
                 let mut matched: Vec<String> = matchers.iter().map(|m| format!("{m:?}")).collect();
                 matched.sort();
                 let demand_shown = demand.as_ref().map(|(l, o)| (sorted(l), o.as_ref().map(|t| (t.magic_rules, sorted(&t.full), t.adornments.len()))));
