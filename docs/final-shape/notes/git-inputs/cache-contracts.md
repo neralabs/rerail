@@ -20,6 +20,11 @@ Transient handles and buffers are implementation data structures, bounded by the
 A retained native map of computed Git answers is not an alternative implementation of these relations.
 Existing legacy caches can remain during their documented migration. New Git behavior does not expand that exception list.
 
+Tests that inspect the native content store with another SQLite binding must open it in a separate process.
+Two SQLite libraries in one process have separate lock records for the same database.
+Closing a connection through one library can drop locks still in use by the other.
+See [SQLite's guide to file locking problems](https://www.sqlite.org/howtocorrupt.html#_multiple_copies_of_sqlite_linked_into_the_same_application).
+
 ## 2. Keys by layer
 
 | Result | Key dependencies | Excluded unless actually read |

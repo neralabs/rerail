@@ -16,6 +16,7 @@ import { openRerailDatabase } from "../../src/engine/storage/database.js";
 import { recordCheckout } from "../../src/engine/catalog/repository-registry.js";
 import { setCheckoutStarted, stopRerail } from "../../src/runtime/repository-start.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
+import { queryContentStore } from "../support/query-content-store.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
 
 const roots: string[] = [];
@@ -57,6 +58,9 @@ function checkout(): string {
 
 const scan = (repo: string, options: Partial<Parameters<typeof runHeadlessScan>[0]> = {}): Promise<ScanReport> =>
   runHeadlessScan({ repo, scope: "repository", packs: [], version: "0.0.0-test", databasePath: join(`${repo}-home`, "rerail.sqlite"), ...options });
+
+const directoryOwnerCount = (store: string): number | undefined =>
+  queryContentStore<{ count: number }>(store, "SELECT count(*) AS count FROM analysis_scope_workspace_snapshot")[0]?.count;
 
 describe("headless rerail scan", () => {
   it("scans a checkout with no daemon and no set-up, reporting 1-based positions with an exclusive end", async () => {
@@ -351,22 +355,17 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
       const subdirectory = join(root, "subdirectory");
       mkdirSync(subdirectory);
       await scan(subdirectory, { databasePath });
-      const store = new Database(scanContentStore(databasePath), { readonly: true });
-      try {
-        const owners = () => store.prepare("SELECT scope, snapshot_id FROM analysis_scope_snapshot UNION SELECT scope, snapshot_id FROM analysis_scope_workspace_snapshot ORDER BY scope")
-          .all() as { scope: string; snapshot_id: number }[];
-        expect(owners().map(owner => owner.scope)).toEqual([`cwd:${analysisScopeHome(databasePath)}:${subdirectory}`, "named:release", "named:review"]);
-        stopRerail(root, { lane: "terminal", say: () => undefined }, { databasePath });
-        const both = owners();
-        expect(both.map(owner => owner.scope)).toEqual(["named:release", "named:review"]);
-        expect(both[0]?.snapshot_id).toBe(both[1]?.snapshot_id);
-        loadNativeBinding().deleteAnalysisScope(storePath, "review", false);
-        expect(owners()).toEqual([both[0]]);
-        loadNativeBinding().deleteAnalysisScope(storePath, "release", false);
-        expect(owners()).toEqual([]);
-      } finally {
-        store.close();
-      }
+      const owners = () => queryContentStore<{ scope: string; snapshot_id: number }>(storePath,
+        "SELECT scope, snapshot_id FROM analysis_scope_snapshot UNION SELECT scope, snapshot_id FROM analysis_scope_workspace_snapshot ORDER BY scope");
+      expect(owners().map(owner => owner.scope)).toEqual([`cwd:${analysisScopeHome(databasePath)}:${subdirectory}`, "named:release", "named:review"]);
+      stopRerail(root, { lane: "terminal", say: () => undefined }, { databasePath });
+      const both = owners();
+      expect(both.map(owner => owner.scope)).toEqual(["named:release", "named:review"]);
+      expect(both[0]?.snapshot_id).toBe(both[1]?.snapshot_id);
+      loadNativeBinding().deleteAnalysisScope(storePath, "review", false);
+      expect(owners()).toEqual([both[0]]);
+      loadNativeBinding().deleteAnalysisScope(storePath, "release", false);
+      expect(owners()).toEqual([]);
     } finally {
       vi.unstubAllEnvs();
     }
@@ -387,12 +386,7 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
         expect(pending()).toBe(1);
         settleAnalysisScopeReleases(databasePath);
         expect(pending()).toBe(0);
-        const store = new Database(storePath, { readonly: true });
-        try {
-          expect(store.prepare("SELECT count(*) FROM analysis_scope_workspace_snapshot").pluck().get()).toBe(0);
-        } finally {
-          store.close();
-        }
+        expect(directoryOwnerCount(storePath)).toBe(0);
       } finally {
         database.$client.close();
       }
@@ -421,10 +415,7 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
         const report = await scan(root, { databasePath });
         expect(report.status, JSON.stringify(report.failures)).toBe("completed");
         settleAnalysisScopeReleases(databasePath);
-        const store = new Database(storePath, { readonly: true });
-        try {
-          expect(store.prepare("SELECT count(*) FROM analysis_scope_workspace_snapshot").pluck().get()).toBe(1);
-        } finally { store.close(); }
+        expect(directoryOwnerCount(storePath)).toBe(1);
       } finally { database.$client.close(); }
     } finally { vi.unstubAllEnvs(); }
   });
@@ -440,11 +431,9 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
       expect(report.status, JSON.stringify(report.failures)).toBe("completed");
       expect(report.violations.map(finding => finding.ruleId).sort()).toEqual(["needle", "relational"]);
       expect(report.cacheWarnings).toEqual(["test ownership write failed"]);
-      const store = new Database(scanContentStore(databasePath), { readonly: true });
-      try {
-        expect(store.prepare("SELECT scope FROM analysis_scope_manifest WHERE scope = 'named:atomic' OR scope GLOB 'pending:*'").all()).toEqual([]);
-        expect(store.prepare("SELECT scope FROM analysis_scope_snapshot WHERE scope = 'named:atomic'").all()).toEqual([]);
-      } finally { store.close(); }
+      const store = scanContentStore(databasePath);
+      expect(queryContentStore(store, "SELECT scope FROM analysis_scope_manifest WHERE scope = 'named:atomic' OR scope GLOB 'pending:*'")).toEqual([]);
+      expect(queryContentStore(store, "SELECT scope FROM analysis_scope_snapshot WHERE scope = 'named:atomic'")).toEqual([]);
     } finally { fail.mockRestore(); }
   });
 
@@ -582,11 +571,8 @@ Seen(@place("commit", 1), text) :- git_source_commit(_, _), marker(text).
       } finally { db.$client.close(); }
       expect((await scan(root, { databasePath: second })).status).toBe("completed");
       settleAnalysisScopeReleases(first);
-      const store = new Database(storePath, { readonly: true });
-      try {
-        expect(store.prepare("SELECT scope FROM analysis_scope_workspace_snapshot").pluck().all())
-          .toEqual([`cwd:${analysisScopeHome(second)}:${root}`]);
-      } finally { store.close(); }
+      expect(queryContentStore(storePath, "SELECT scope FROM analysis_scope_workspace_snapshot"))
+        .toEqual([{ scope: `cwd:${analysisScopeHome(second)}:${root}` }]);
     } finally { vi.unstubAllEnvs(); }
   });
 
@@ -598,20 +584,15 @@ Seen(@place("commit", 1), text) :- git_source_commit(_, _), marker(text).
     const earlier = join(home, "first.sqlite");
     const current = join(home, "second.sqlite");
     const unrelated = join(home, "unrelated.sqlite");
-    const owners = (path: string) => {
-      const db = new Database(path, { readonly: true });
-      try { return db.prepare("SELECT count(*) FROM analysis_scope_workspace_snapshot").pluck().get(); }
-      finally { db.close(); }
-    };
     try {
       for (const store of [earlier, current]) {
         vi.stubEnv("RERAIL_CONTENT_STORE_PATH", store);
         expect((await scan(root, { databasePath })).status).toBe("completed");
-        expect(owners(store)).toBe(1);
+        expect(directoryOwnerCount(store)).toBe(1);
       }
       vi.stubEnv("RERAIL_CONTENT_STORE_PATH", unrelated);
       expect((await scan(other, { databasePath })).status).toBe("completed");
-      expect(owners(unrelated)).toBe(1);
+      expect(directoryOwnerCount(unrelated)).toBe(1);
       const homeDb = openRerailDatabase(databasePath);
       try {
         const checkout = recordCheckout(homeDb, root);
@@ -627,14 +608,14 @@ Seen(@place("commit", 1), text) :- git_source_commit(_, _), marker(text).
         try {
           expect(() => settleAnalysisScopeReleases(databasePath)).toThrow("store unavailable");
           expect(pending()).toBe(1);
-          expect(owners(earlier)).toBe(1);
-          expect(owners(current)).toBe(0);
+          expect(directoryOwnerCount(earlier)).toBe(1);
+          expect(directoryOwnerCount(current)).toBe(0);
           expect(fail.mock.calls.every(([store]) => store !== unrelated)).toBe(true);
         } finally { fail.mockRestore(); }
         settleAnalysisScopeReleases(databasePath, -1);
         expect(pending()).toBe(0);
-        expect(owners(earlier)).toBe(0);
-        expect(owners(unrelated)).toBe(1);
+        expect(directoryOwnerCount(earlier)).toBe(0);
+        expect(directoryOwnerCount(unrelated)).toBe(1);
       } finally { homeDb.$client.close(); }
     } finally { vi.unstubAllEnvs(); }
   });
@@ -673,16 +654,13 @@ Seen(@place("commit", 1), text) :- git_source_commit(_, _), marker(text).
       try { registry.prepare("UPDATE analysis_directory_store SET directory=?").run(join(root, "..", "another-checkout")); }
       finally { registry.close(); }
       const db = openRerailDatabase(databasePath);
-      const store = new Database(storePath, { readonly: true });
       try {
-        const owners = () => store.prepare("SELECT count(*) FROM analysis_scope_workspace_snapshot").pluck().get();
-        expect(owners()).toBe(1);
+        expect(directoryOwnerCount(storePath)).toBe(1);
         setCheckoutStarted(db, recordCheckout(db, root), false);
         settleAnalysisScopeReleases(databasePath);
-        expect(owners()).toBe(0);
+        expect(directoryOwnerCount(storePath)).toBe(0);
         expect(db.$client.prepare("SELECT count(*) FROM analysis_scope_releases").pluck().get()).toBe(0);
       } finally {
-        store.close();
         db.$client.close();
       }
     } finally { vi.unstubAllEnvs(); }
@@ -745,10 +723,7 @@ Seen(@place("commit", 1), text) :- git_source_commit(_, _), marker(text).
         expect(pending()).toContain(root);
         settleAnalysisScopeReleases(databasePath);
         expect(pending()).toEqual([...blocked].sort());
-        const store = new Database(available, { readonly: true });
-        try {
-          expect(store.prepare("SELECT count(*) FROM analysis_scope_workspace_snapshot").pluck().get()).toBe(0);
-        } finally { store.close(); }
+        expect(directoryOwnerCount(available)).toBe(0);
       } finally { unavailableStore.mockRestore(); }
       const next = database.$client.prepare("SELECT max(next_attempt_at) FROM analysis_scope_releases").pluck().get() as number;
       const clock = vi.spyOn(Date, "now").mockReturnValue(next);
@@ -771,10 +746,8 @@ Seen(@place("commit", 1), text) :- git_source_commit(_, _), marker(text).
     const report = await scan(root, { revision: "HEAD", analysisScope: "duplicates", rr: files, databasePath });
     expect(report.status).toBe("failed");
     expect(report.failures[0]?.message).toContain("duplicate .rr policy ID");
-    const store = new Database(scanContentStore(databasePath), { readonly: true });
-    try {
-      expect(store.prepare("SELECT scope FROM analysis_scope_manifest WHERE scope = 'named:duplicates' OR scope LIKE 'pending:%'").all()).toEqual([]);
-    } finally { store.close(); }
+    expect(queryContentStore(scanContentStore(databasePath),
+      "SELECT scope FROM analysis_scope_manifest WHERE scope = 'named:duplicates' OR scope LIKE 'pending:%'")).toEqual([]);
   });
 
   it("discovers and approves worktree .rr policies and reports their source spans", async () => {
@@ -1140,12 +1113,10 @@ LanguageKey(@place(path, 1), k) :- source_language_key(path, k, _).
       const counters = new Map([...readFileSync(join(profile, "profile.txt"), "utf8")
         .matchAll(/^\s*count\s+(\d+)\s+(source_(?:language|tape)\.[a-z]+)$/gmu)]
         .map(([, count, name]) => [name, Number(count)]));
-      const db = new Database(store, { readonly: true });
-      try {
-        return { paths, keys, classifications: counters.get("source_language.evaluations") ?? 0, parses: counters.get("source_tape.parses") ?? 0,
-          tapes: db.prepare("SELECT printf('%015x', grammar_version) AS version, count(*) AS count FROM tape_objects GROUP BY grammar_version ORDER BY grammar_version")
-            .all() as { version: string; count: number }[] };
-      } finally { db.close(); }
+      const tapes = queryContentStore<{ version: string; count: number }>(store,
+        "SELECT printf('%015x', grammar_version) AS version, count(*) AS count FROM tape_objects GROUP BY grammar_version ORDER BY grammar_version");
+      return { paths, keys, classifications: counters.get("source_language.evaluations") ?? 0,
+        parses: counters.get("source_tape.parses") ?? 0, tapes };
     };
     const original = { ".py": "python" };
     const extended = { ...original, ".sample": "python" };
@@ -1184,11 +1155,10 @@ LanguageKey(@place(path, 1), k) :- source_language_key(path, k, _).
       expect(report.status, JSON.stringify(report.failures)).toBe("completed");
       expect(report.violations.map(finding => finding.message)).toEqual([body]);
     }
-    const store = new Database(scanContentStore(databasePath), { readonly: true });
-    try {
-      const sets = store.prepare("SELECT count(DISTINCT lane) AS lanes FROM analysis_scope_manifest JOIN corpus_manifests USING(manifest_id) WHERE scope = ? AND policy <> lane GROUP BY policy").all(`cwd:${analysisScopeHome(databasePath)}:${root}`);
-      expect(sets).toEqual([{ lanes: 2 }]);
-    } finally { store.close(); }
+    const sets = queryContentStore(scanContentStore(databasePath),
+      "SELECT count(DISTINCT lane) AS lanes FROM analysis_scope_manifest JOIN corpus_manifests USING(manifest_id) WHERE scope = ? AND policy <> lane GROUP BY policy",
+      [`cwd:${analysisScopeHome(databasePath)}:${root}`]);
+    expect(sets).toEqual([{ lanes: 2 }]);
   });
 
   it.each(["configured", "rr"])("reports a corrupt selected blob and keeps other %s findings", async policy => {

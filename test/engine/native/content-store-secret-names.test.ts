@@ -2,10 +2,10 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import { loadNativeBinding } from "../../../src/engine/native/native.js";
 import { SENSITIVE_FILE_NAMES, SENSITIVE_FOLDER_NAMES } from "../../../src/engine/path-boundary.js";
+import { queryContentStore } from "../../support/query-content-store.js";
 
 const capabilities = JSON.stringify({
   format: "rerail.policy-capabilities/v1",
@@ -28,7 +28,7 @@ describe("content store admission", () => {
     try {
       execFileSync("git", ["init", "--quiet", checkout]);
       writeFileSync(join(checkout, "seed.py"), "value = 1\n");
-      execFileSync("git", ["add", "."], { cwd: checkout });
+      execFileSync("git", ["add", "seed.py"], { cwd: checkout });
       execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "seed"], { cwd: checkout });
       workspace.addCodeRule(loadNativeBinding().CodeRuleDslRuntime!.compile(needle, "json", capabilities));
       const attachment = await workspace.enableStorageAsync(checkout, storePath, { files: SENSITIVE_FILE_NAMES, folders: SENSITIVE_FOLDER_NAMES });
@@ -44,19 +44,14 @@ describe("content store admission", () => {
       };
       expect(applied.evaluation.violations.map(violation => violation.path).sort()).toEqual([".aws/settings.py", "config/secrets.py", "src/a.py"]);
 
-      const store = new Database(storePath, { readonly: true });
-      try {
-        const paths = store.prepare(
-          "SELECT strings.value AS path FROM workspace_overlay JOIN paths USING (path_id) JOIN strings ON strings.string_id = paths.string_id",
-        ).all() as Array<{ path: string }>;
-        expect(paths.map(row => row.path)).toEqual(["src/a.py"]);
-        const sources = store.prepare("SELECT raw_length AS bytes FROM source_objects").all() as Array<{ bytes: number }>;
-        expect(sources.map(row => row.bytes)).toEqual([Buffer.byteLength(source)]);
-      } finally {
-        store.close();
-      }
+      const paths = queryContentStore(storePath,
+        "SELECT strings.value AS path FROM workspace_overlay JOIN paths USING (path_id) JOIN strings ON strings.string_id = paths.string_id");
+      expect(paths).toEqual([{ path: "src/a.py" }]);
+      expect(queryContentStore(storePath, "SELECT raw_length AS bytes FROM source_objects"))
+        .toEqual([{ bytes: Buffer.byteLength(source) }]);
     } finally {
       workspace.close();
+      loadNativeBinding().retireUpkeepUnder?.(root);
       rmSync(root, { force: true, recursive: true });
     }
   });
