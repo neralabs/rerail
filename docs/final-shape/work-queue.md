@@ -1375,7 +1375,25 @@ thread waited on it (and spun, fixed in af32e3c4c). There is no binary archive o
 
 - **Done when**: a stratum whose pipeline is not ready runs on the CPU while it compiles (compiled off the run's
   path), or the pipelines come from an archive the build makes; a cold Metal run's wall is not over the CPU run's.
+- **Record**: built (7eb45c680, decision 0387): the machine's store of compiled kernels, `ready` and the modes,
+  maintenance after a run and in upkeep, `rerail-engine kernels`, shipped kernels for the interpreters. Measured
+  in 0387 § Measured.
+
+### Q54. An edit made right after a run is sometimes missed by the next run (the journal)
+
+Seen 2026-11-18 (the M3, t44, `bench-shapes.sh full` on Metal, three runs A/B/C): in each run one edit step read
+0 components and the step after it read both edits (A: `comment` 0, then `import`; B: `body` 0, then `comment`;
+C: `import` 0, then `rule` 3875 components where a rule edit reads 1). The bench edits the file within
+milliseconds of the previous step's end, and every edit changes the file's size, so a stat would see it: the run
+trusted the journal (decision 0105, `observe.rs` `trusted`), which named no change. Not seen in the t43 runs of
+2026-11-17 (every step read its edit). The findings came out right in the end (464 at every later step), but a
+missed edit is a wrong answer for the step that missed it.
+
+- **Done when**: a test edits a file at once after a run (no sleep) and the next run reads it, many times over;
+  the bench's full shape shows every edit step's components.
 - **Record**: —
+
+## Questions for the user
 
 ## Questions for the user
 

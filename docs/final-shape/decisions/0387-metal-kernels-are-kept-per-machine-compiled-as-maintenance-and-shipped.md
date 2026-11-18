@@ -118,4 +118,36 @@ The three tiers are:
 
 ## Measured
 
-(Filled from the M3 runs below.)
+All runs on the M3 (t44, t45), on the 300-file, 317-rule shape with every thread. The machine was shared, with load
+averages of 33–79, so wall times vary by a second or two between repeats.
+
+`RERAIL_DIAG_MSL_NONCE` makes every source new to macOS's shader cache, the worst case for a first process on a
+machine. The runs:
+- **A:** an empty store; generated kernels are deferred, and fixed ones are compiled in the foreground.
+- **B:** the store A filled, plus `kernels compile --all`.
+- **C:** an empty store, with A's fixed kernels shipped (`kernels ship`).
+
+| Run (cold) | CPU s | Wall s | Notes |
+|---|---|---|---|
+| t43 (0386, before this) | 52.5 | 20.0 | macOS's shader cache only |
+| A: empty store | 55.1 | 32.9 | load 79 at its end; profiled, 57.6 / 15.3 |
+| B: the store filled | 52.2 | 17.6 | every kernel from its archive (18 loads, 7.7 ms) |
+| C: shipped fixed kernels, empty store | 47.0 | 13.8 | the wave on the cores until its kernels compile |
+| t45, nonce, empty store | 52.3 | 15.1 | |
+| t45, no nonce, empty store | 56.2 | 14.0 | |
+| the CPU alone (t44) | 61.7 | 15.5 | |
+
+- **What compiles cost.** `kernels compile --all` after A compiled what A went without, `tempo_batch` and one
+  `clause_patterns`, in 0.33 s: 0.29 s front end, 0.02 s back end. Profiled A spent 100 ms in the front end and
+  12 ms in the back end on its lane threads; profiled B spent 1.4 s in front ends, the pattern kernels' sources,
+  which no AIR covers.
+  - So the 26–33 s waits of t42 and t43 were not the compiler's own work. They came through macOS's shader cache,
+    which several worktrees and test runs on the host share, while the host was busy. Making pipelines from our
+    archives goes around that cache.
+  - Shipping AIR (`--air`) would save front ends of 0.1–0.3 s for each fixed library, so the Metal Toolchain is not
+    worth requiring for now.
+- **Maintenance.** A `defer` run that wanted one kernel started the detached compile at once; 15 s later the kernel
+  was archived and the wanted list removed.
+- **Shipping.** `kernels ship` from A's store shipped 3 fixed libraries, 7 kernels, in 0.45 s, as this device's
+  archives.
+- **Findings** were 463 at cold and 464 after each edit in every run, as on the CPU.
