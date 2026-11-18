@@ -873,11 +873,20 @@ pass.
 - **Record** (2026-11-17, 0348 stage 4d): ruled out by measurement: reservations per TU,
   `readonly` invariant loads, `T` and `D` in SSA variables (patch not kept). Small and
   expansion-light TUs are worst (1.28–1.48×); the half that expand most run at 0.92×.
+- **Record** (2026-11-17, later): the same IR built by rustc (`rerail-pp-aot`, Q37) runs the
+  corpus at depth 0 in 533–556 M cycles against Cranelift's 1,240–1,258 M: the stall is
+  Cranelift's code, not the words' IR (1.35× the instructions, 2.33× the cycles). Refusal
+  blocks marked cold: −1.4%, not kept. The plan: `docs/final-shape/notes/t44-pp-words-codegen-plan.md`
+  (cycles by word, the two compilers' code side by side, fixes one at a time, K judged on both,
+  and a decision for the user on which code the CPU path runs).
 
 ### Q37. The pp words' ahead-of-time Rust (`clif_rust`), checked once
 
 - **Done when**: `clif_rust` writes the run's function and the outlined words as Rust, it
   compiles, and it equals the interpreter on the examples (0348's plan, stage 4b).
+- **Done** (2026-11-17): `rerail-pp-aot` (C and C++ at depth 0, C++ at 4) equals the
+  interpreter on the examples and TUs, 90 runs (`the_aot_words_are_the_interpreters`, with
+  `--features generated`).
 
 ## Questions for the user
 

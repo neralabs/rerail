@@ -429,6 +429,32 @@ fn the_words_translate_to_rust() {
     }
 }
 
+/// The run's function as Cranelift compiles it, C at depth 0: its instructions, its accesses
+/// relative to the stack pointer (the register allocator's spills and reloads, and the frame's),
+/// its branches by kind (before emission: a jump to the next block still there); its text and
+/// its emitted bytes written to `RERAIL_PP_DISASM` (and `.bin`) where set (Q36: beside rustc's code of the
+/// same IR, `the_aot_words_are_the_interpreters`' builds).
+#[test]
+#[ignore = "a report (Q36)"]
+fn the_compiled_words_code_counted() {
+    let c = rerail_compiler::native_cpu_pp::disassemble(program(false).unwrap(), 0).unwrap();
+    let text = &c.disasm[0];
+    let insts: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.ends_with(':') && !l.starts_with(';')).collect();
+    let count = |f: &dyn Fn(&str) -> bool| insts.iter().filter(|l| f(l)).count();
+    let sp = count(&|l| l.contains("[sp"));
+    let (ldr_sp, str_sp) = (count(&|l| l.contains("[sp") && l.starts_with("ld")), count(&|l| l.contains("[sp") && l.starts_with("st")));
+    let b = count(&|l| l.starts_with("b ") || l.starts_with("b\t"));
+    let bcond = count(&|l| l.starts_with("b.") || l.starts_with("cbz") || l.starts_with("cbnz") || l.starts_with("tbz") || l.starts_with("tbnz"));
+    let br = count(&|l| l.starts_with("br "));
+    let mov = count(&|l| l.starts_with("mov "));
+    eprintln!("Cranelift, C, k 0, the run's function: {} instructions, {sp} at sp ({ldr_sp} loads, {str_sp} stores), {b} jumps, {bcond} conditional branches, {br} indirect, {mov} moves", insts.len());
+    if let Ok(path) = std::env::var("RERAIL_PP_DISASM") {
+        std::fs::write(&path, text).unwrap();
+        // Its bytes as emitted (jumps to the next block dropped), to disassemble beside rustc's.
+        std::fs::write(format!("{path}.bin"), &c.code[0]).unwrap();
+    }
+}
+
 /// The words' code built ahead of time (`clif_rust`, the `generated` feature) gives the
 /// interpreter's tokens on every example and TU, for each build; each build is the source the
 /// words translate to now (its fingerprint), so it is the JIT's code compiled by rustc.

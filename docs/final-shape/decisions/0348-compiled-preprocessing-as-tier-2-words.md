@@ -413,11 +413,19 @@ So the cost is not in the instructions, which halved. Something stalls the compi
 does not stall the interpreter. The counters that would name it (branch misses, cache misses)
 need a profiler run, which is open.
 
-**Left:**
-- The profile above.
-- The ahead-of-time Rust of the same IR (`clif_rust`), checked once.
-- `_Pragma`'s text is lexed by a word over its bytes, eight a step (`pragma_words`). The plan had
-  wanted the token grammar to lex it.
+**Built since:**
+- **The ahead-of-time Rust of the same IR.** `native_cpu_pp::rust_source` passes the JIT's
+  functions through `clif_rust`, and `rerail-pp-aot` compiles them with rustc behind its
+  `generated` feature. It is built without debug info: LLVM's debug info overflowed rustc's
+  stack on the nested blocks. It equals the interpreter on the examples and TUs (90 runs). On
+  the corpus at depth 0 it takes 533–556 M cycles against Cranelift's 1,240–1,258 M. So the
+  stall above is Cranelift's code, not the words' IR. The plan that follows is note t44.
+- **`_Pragma`'s text lexed by the token grammar,** as the lean pass lexes it: as a file of its
+  own. The text is a named entry of the file on top, of a kind of its own (`Named::pragma`).
+  Where the host has not lexed it yet, it is wanted, and the TU runs again. `#pragma` and
+  `_Pragma` share `pragma_of`, and the byte scan (`pragma_words`) is gone.
+
+**Left:** Q36's plan (t44).
 
 ## Open
 

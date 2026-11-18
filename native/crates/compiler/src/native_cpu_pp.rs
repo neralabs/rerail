@@ -206,6 +206,11 @@ pub struct CompiledPp {
     pub ir: Vec<(u32, cranelift_codegen::ir::Function)>,
     /// The run's function's id.
     pub run_id: u32,
+    /// Each function's machine code as Cranelift prints it, the run's first, where asked for
+    /// (`disassemble`).
+    pub disasm: Vec<String>,
+    /// Each function's machine code's bytes, the run's first, where asked for.
+    pub code: Vec<Vec<u8>>,
 }
 
 impl CompiledPp {
@@ -6672,8 +6677,16 @@ pub unsafe fn run_aot(entry: unsafe extern "C" fn(u64) -> u64, program: &Words, 
     unsafe { pp_words::run_native(program, files, env, bounds, code, REASONS) }
 }
 
+/// The compiled words at depth `k`, their IR and machine code kept (`ir`, `disasm`): to read
+/// Cranelift's code beside rustc's of the same IR (`rust_source`).
+pub fn disassemble(program: &Words, k: usize) -> Result<CompiledPp, Error> {
+    compile_kept(program, k, true)
+}
+
 fn compile_kept(program: &Words, k: usize, keep: bool) -> Result<CompiledPp, Error> {
     let mut ir = Vec::new();
+    let mut disasm = Vec::new();
+    let mut code_kept = Vec::new();
     pp_words::validate(program)?;
     if k > MAX_K {
         return Err(Error::RefusedShape(format!("#if's depth {k} is past {MAX_K}")));
@@ -6740,8 +6753,13 @@ fn compile_kept(program: &Words, k: usize, keep: bool) -> Result<CompiledPp, Err
         all_heads.extend(heads.iter().map(|h| h.1));
         if keep {
             ir.push((fid.as_u32(), context.func.clone()));
+            context.set_disasm(true);
         }
         module.define_function(fid, &mut context).map_err(|e| Error::RefusedShape(format!("word {pc}: {e:?}")))?;
+        if keep {
+            disasm.push(context.compiled_code().and_then(|c| c.vcode.clone()).unwrap_or_default());
+            code_kept.push(context.compiled_code().map_or(Vec::new(), |c| c.code_buffer().to_vec()));
+        }
         sizes.push(context.compiled_code().map_or(0, |c| c.code_info().total_size as usize));
         module.clear_context(&mut context);
         outlined.push((pc, fid));
@@ -6832,15 +6850,20 @@ fn compile_kept(program: &Words, k: usize, keep: bool) -> Result<CompiledPp, Err
     all_heads.extend(heads.iter().map(|h| h.1));
     if keep {
         ir.push((id.as_u32(), context.func.clone()));
+        context.set_disasm(true);
     }
     module.define_function(id, &mut context).map_err(|e| Error::RefusedShape(format!("pp_run: {e:?}")))?;
+    if keep {
+        disasm.insert(0, context.compiled_code().and_then(|c| c.vcode.clone()).unwrap_or_default());
+        code_kept.insert(0, context.compiled_code().map_or(Vec::new(), |c| c.code_buffer().to_vec()));
+    }
     sizes.insert(0, context.compiled_code().map_or(0, |c| c.code_info().total_size as usize));
     module.clear_context(&mut context);
     module.finalize_definitions().map_err(|_| Error::BackendFailure)?;
     let code = module.get_finalized_function(id);
     // SAFETY: `pp_run` was declared and defined with this signature.
     let entry = unsafe { std::mem::transmute::<*const u8, unsafe extern "C" fn(*mut Ctx) -> u64>(code) };
-    Ok(CompiledPp { _module: module, entry, clif, heads: all_heads, code_bytes: sizes, word_insts, ir, run_id: id.as_u32() })
+    Ok(CompiledPp { _module: module, entry, clif, heads: all_heads, code_bytes: sizes, word_insts, ir, run_id: id.as_u32(), disasm, code: code_kept })
 }
 
 #[cfg(test)]
