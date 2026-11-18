@@ -72,10 +72,12 @@ impl std::fmt::Debug for ObjectBytes {
     }
 }
 
-/// A stored object as its row has it: a zstd frame (inline), or its bytes in a segment.
+/// A stored object as its row has it: a zstd frame (inline), its bytes as they are (inline: a tape that compresses
+/// its own blocks, `compression::compress_tape`), or its bytes in a segment.
 #[derive(Clone, Debug)]
 pub enum ObjectFrame {
     Zstd(Arc<Vec<u8>>),
+    Plain(Arc<Vec<u8>>),
     Raw(SegmentBytes),
 }
 
@@ -83,7 +85,7 @@ impl ObjectFrame {
     /// The bytes it takes as stored.
     pub fn len(&self) -> usize {
         match self {
-            ObjectFrame::Zstd(f) => f.len(),
+            ObjectFrame::Zstd(f) | ObjectFrame::Plain(f) => f.len(),
             ObjectFrame::Raw(b) => b.len(),
         }
     }
@@ -94,6 +96,7 @@ impl ObjectFrame {
     pub fn bytes(&self, raw_length: usize) -> std::io::Result<ObjectBytes> {
         match self {
             ObjectFrame::Zstd(f) => super::compression::decompress(f, raw_length).map(|b| ObjectBytes::Heap(Arc::new(b))),
+            ObjectFrame::Plain(f) => Ok(ObjectBytes::Heap(Arc::clone(f))),
             ObjectFrame::Raw(b) => Ok(ObjectBytes::Mapped(b.clone())),
         }
     }
@@ -101,6 +104,7 @@ impl ObjectFrame {
     pub fn head(&self, n: usize) -> std::io::Result<Vec<u8>> {
         match self {
             ObjectFrame::Zstd(f) => super::compression::decompress_head(f, n),
+            ObjectFrame::Plain(f) => Ok(f[..n.min(f.len())].to_vec()),
             ObjectFrame::Raw(b) => Ok(b.bytes()[..n.min(b.len())].to_vec()),
         }
     }
@@ -108,6 +112,10 @@ impl ObjectFrame {
     pub fn chunks(&self, mut each: impl FnMut(&[u8])) -> std::io::Result<()> {
         match self {
             ObjectFrame::Zstd(f) => super::compression::decompress_chunks(f, each),
+            ObjectFrame::Plain(f) => {
+                each(f);
+                Ok(())
+            }
             ObjectFrame::Raw(b) => {
                 each(b.bytes());
                 Ok(())
@@ -118,6 +126,11 @@ impl ObjectFrame {
     pub fn copy_into(&self, out: &mut [u8]) -> std::io::Result<()> {
         match self {
             ObjectFrame::Zstd(f) => super::compression::decompress_into(f, out),
+            ObjectFrame::Plain(f) if f.len() == out.len() => {
+                out.copy_from_slice(f);
+                Ok(())
+            }
+            ObjectFrame::Plain(_) => Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "an object's length")),
             ObjectFrame::Raw(b) if b.len() == out.len() => {
                 out.copy_from_slice(b.bytes());
                 Ok(())
@@ -133,10 +146,11 @@ pub(super) fn row_frame(maps: &mut SegmentMaps, codec: i64, frame: Vec<u8>, seg:
     if seg != 0 {
         return Ok(maps.at(Place { seg, at: at as u64, len: len as usize }).map(ObjectFrame::Raw));
     }
-    if codec != CODEC_ZSTD {
-        return Err(StoreError::Corrupt(format!("unsupported object codec {codec}")));
+    match codec {
+        CODEC_ZSTD => Ok(Some(ObjectFrame::Zstd(Arc::new(frame)))),
+        CODEC_RAW => Ok(Some(ObjectFrame::Plain(Arc::new(frame)))),
+        _ => Err(StoreError::Corrupt(format!("unsupported object codec {codec}"))),
     }
-    Ok(Some(ObjectFrame::Zstd(Arc::new(frame))))
 }
 
 /// The store's segments, mapped as rows name them, for a reader on a connection of its own (a SQL module's).

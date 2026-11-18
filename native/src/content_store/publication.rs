@@ -786,7 +786,8 @@ fn prepare_object_pass(
         }
         tape_sql.push_str(
             ") INSERT OR IGNORE INTO tape_objects(source_id,canonical_hash_id,grammar_id,grammar_version,tape_format_version,codec_id,raw_length,frame,created_generation) \
-             SELECT so.source_id,th.hash_id,i.grammar_id,i.grammar_version,i.format_version,?,i.raw_length,i.frame,\
+             SELECT so.source_id,th.hash_id,i.grammar_id,i.grammar_version,i.format_version,\
+             CASE WHEN substr(i.frame,1,4)=x'28B52FFD' THEN 1 ELSE 0 END,i.raw_length,i.frame,\
              (SELECT generation FROM store_state WHERE singleton=1) FROM input i \
              JOIN hashes sh INDEXED BY hashes_by_prefix ON sh.algorithm_id=i.source_algorithm AND sh.lane0=i.source_lane0 \
              AND sh.lane1=i.source_lane1 AND sh.lane2=i.source_lane2 AND sh.lane3=i.source_lane3 \
@@ -794,7 +795,6 @@ fn prepare_object_pass(
              JOIN hashes th INDEXED BY hashes_by_prefix ON th.algorithm_id=i.tape_algorithm AND th.lane0=i.tape_lane0 \
              AND th.lane1=i.tape_lane1 AND th.lane2=i.tape_lane2 AND th.lane3=i.tape_lane3",
         );
-        tape_values.push(CODEC_ZSTD.into());
     }
 
     // Every row joins its primary tape and its own tape, both written above in this transaction

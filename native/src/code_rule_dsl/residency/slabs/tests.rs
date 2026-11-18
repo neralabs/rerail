@@ -210,6 +210,7 @@ kernel void tape_conformance(device const DocView* docs [[buffer(0)]],device con
             .collect::<Vec<_>>();
         assert!(docs.last().unwrap().transducer_len() > 2 * 1024, "a document of several parts");
         // Stored as the run stores them, and admitted from the store: each read from its frames.
+        crate::install_store_functions();
         let path = temp();
         let store = ContentStore::open(&path).unwrap();
         let mut digests = Vec::new();
@@ -219,6 +220,9 @@ kernel void tape_conformance(device const DocView* docs [[buffer(0)]],device con
             store.put_tape(source_id, i64::from(language::tape_tag(*lang).unwrap()), 1, i64::from(format.store_version()), &bytes).unwrap();
             digests.push(crate::code_rule_dsl::tape::tape_identity(&Sha256::digest(source.as_bytes()).into(), &bytes));
         }
+        // A 16z tape is stored as it is (its blocks are compressed; a load decodes none), the others in zstd frames.
+        let codecs: Vec<i64> = rusqlite::Connection::open(&path).unwrap().prepare("SELECT codec_id FROM tape_objects").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+        assert!(!codecs.is_empty() && codecs.iter().all(|&c| c == i64::from(format != Format::F16Z)), "{format:?} stored with codecs {codecs:?}");
         let table = DocTable::one_block(admit(&store, &digests, &grammar).unwrap()).unwrap();
         let expected_format = match format {
             Format::F15 => 15,

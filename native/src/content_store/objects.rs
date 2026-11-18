@@ -1313,7 +1313,7 @@ fn put_tape_prepared_tx(
             tape.grammar_id,
             tape.grammar_version,
             tape.tape_format_version,
-            CODEC_ZSTD,
+            super::compression::tape_codec(frame),
             raw_length,
             frame,
             created_generation,
