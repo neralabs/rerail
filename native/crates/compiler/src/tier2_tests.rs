@@ -527,3 +527,30 @@ error "invalid UTF-8" when never | (needed ^ cont)
     }
     assert!(differ.is_empty() && refused > 0 && refused < n, "{n} documents, {refused} refused; differ: {differ:#?}");
 }
+
+/// Decision 0420: a mask is taken out of its vector where it is read. In every ladder step's hot
+/// loop, each `extractlane` to a word comes just before its first reader in its block, or ends
+/// the block (its readers are in the blocks after).
+#[test]
+fn a_mask_leaves_its_vector_where_it_is_read() {
+    let mut checked = 0;
+    for (name, source) in crate::ladder::steps() {
+        let c = crate::ladder::compile_step(&name, &source);
+        for (block, lines) in crate::clif_text::hot_loop(&c.parser.tier1.clif) {
+            for (i, l) in lines.iter().enumerate() {
+                let Some((v, rest)) = l.split_once(" = ") else { continue };
+                if !rest.starts_with("extractlane ") || rest.starts_with("extractlane.i8x16") {
+                    continue;
+                }
+                // Past the others moved before the same reader (a vector's two halves, say).
+                let j = (i + 1..lines.len()).find(|&j| crate::clif_text::opcode(&lines[j]) != "extractlane").expect("a terminator");
+                let next = &lines[j];
+                let reads = next.split(|ch: char| !ch.is_alphanumeric()).any(|w| w == v);
+                let last = j + 1 == lines.len() || matches!(crate::clif_text::opcode(next), "brif" | "jump" | "return");
+                assert!(reads || last, "{name} {block}: `{l}` held before `{next}`");
+                checked += 1;
+            }
+        }
+    }
+    assert!(checked > 100, "{checked} masks");
+}

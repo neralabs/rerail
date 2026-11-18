@@ -327,6 +327,12 @@ bytes first, so each chunk's `ext`s are made where read.
 JSONC: 651 / 7 → 647 / 8. The stretch is the four chunks' 64 and four ORs. simdjson's 72
 includes its incomplete-sequence check, folded away here in a full block.
 
+### Masks taken out where read (0420)
+
+Each mask leaves its vector (`extractlane`) just before its first reader, so it is not held in
+an integer register meanwhile. JSONC: 647 / 8 → 644–645 / 6–7; `14-json` 475 / 1. Parking idle
+loop values in vector registers was tried and rejected: it costs about what a spill costs.
+
 ## Reproducing
 
 ```

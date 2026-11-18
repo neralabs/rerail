@@ -8625,6 +8625,47 @@ fn hoist_constants(func: &mut cranelift_codegen::ir::Function, body: cranelift_c
     }
 }
 
+/// A mask taken out of its vector where it is read (decision 0420): each `extractlane` of the
+/// hot loop (the blocks `body` dominates) moves to just before its first reader in its block, or
+/// to the block's end, so the word is not held in an integer register over a stretch where the
+/// vector it comes from holds it. Cranelift does not move it itself (its mid-end is off, 0069).
+fn sink_extracts(func: &mut cranelift_codegen::ir::Function, body: cranelift_codegen::ir::Block) {
+    use cranelift_codegen::ir::Opcode;
+    let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(func);
+    let domtree = cranelift_codegen::dominator_tree::DominatorTree::with_function(func, &cfg);
+    let blocks: Vec<_> = func.layout.blocks().filter(|&b| domtree.is_reachable(b) && domtree.block_dominates(body, b)).collect();
+    for b in blocks {
+        let insts: Vec<_> = func.layout.block_insts(b).collect();
+        for &e in &insts {
+            if func.dfg.insts[e].opcode() != Opcode::Extractlane {
+                continue;
+            }
+            let r = func.dfg.first_result(e);
+            if func.dfg.value_type(r).is_vector() {
+                continue;
+            }
+            // Its first reader in this block, after it; else the block's end.
+            let mut seen = false;
+            let mut to = None;
+            for i in func.layout.block_insts(b) {
+                if i == e {
+                    seen = true;
+                    continue;
+                }
+                if seen && func.dfg.inst_values(i).any(|v| v == r) {
+                    to = Some(i);
+                    break;
+                }
+            }
+            let to = to.or_else(|| func.layout.last_inst(b)).expect("a terminator");
+            if func.layout.next_inst(e) != Some(to) {
+                func.layout.remove_inst(e);
+                func.layout.insert_inst(e, to);
+            }
+        }
+    }
+}
+
 fn forward(context: &mut Context, general_context: &mut Context, outlined: (cranelift_module::FuncId, cranelift_codegen::ir::Signature), module: &mut JITModule, name: &str, native: &BlockNative, slot_of: &[u16], slots: u16, hot: &mut Vec<cranelift_codegen::ir::Block>, records: Option<(&crate::records::Records, &RecordTables, usize)>, made: &BlockNative) -> Result<(bool, usize, usize, usize, Vec<(cranelift_module::FuncId, cranelift_codegen::ir::Function)>, Vec<(usize, usize)>, usize, usize, usize, usize), Error> {
     // The outputs the token loop makes from the bytes (`native_cpu_bytes`), from the program
     // before its CPU form.
@@ -9328,6 +9369,9 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         // 0418): not round the token loop, whose calls would spill them (0350).
         if !tokened && let Some(&body) = hot.first() {
             hoist_constants(&mut context.func, body, &lp.slow.borrow());
+        }
+        if let Some(&body) = hot.first() {
+            sink_extracts(&mut context.func, body);
         }
         let mut owns = vec![own.clone()];
         owns.extend(calls.ids.iter().map(|id| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())));
