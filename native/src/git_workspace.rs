@@ -38,7 +38,9 @@ const UNCOMPARED_INDEX_ENTRY: gix::index::entry::Flags = gix::index::entry::Flag
 /// How a restore compares a clean file's worktree stat with its index entry: every field Git
 /// records, nanoseconds and change time included, stricter than Git's defaults. A mismatch only
 /// costs a hash, while a false match would reuse results of other bytes: a write that restores
-/// the size and modification time (`touch -r`) still changes the change time.
+/// the size and modification time (`touch -r`) still changes the change time on Unix. On Windows
+/// the stat holds the creation time in that field, so `WorktreeStat` adds the file's own change
+/// time there.
 const RESTORE_STAT: gix::index::entry::stat::Options = gix::index::entry::stat::Options {
     trust_ctime: true,
     check_stat: true,
@@ -118,6 +120,78 @@ pub struct BaseFile {
     /// size-preserving conversion applies to the path: while the worktree file still has exactly
     /// this stat it holds the bytes Git compared with the blob (`holds_blob_bytes`).
     pub checkout: Option<gix::index::entry::Stat>,
+}
+
+/// A worktree file's stat, as `lstat` gives it without following a link, and whether the file
+/// changed in no way after its modification time.
+struct WorktreeStat {
+    metadata: gix::index::fs::Metadata,
+    /// On Unix the stat's change time shows every write, so this holds. On Windows the stat holds
+    /// the creation time where Unix has the change time (Git for Windows records the same), and a
+    /// write that keeps the size and puts the modification time back leaves the stat as it was:
+    /// this is whether NTFS's change time, which every write and every time set moves, still
+    /// equals the modification time.
+    unchanged_since_written: bool,
+}
+
+impl WorktreeStat {
+    #[cfg(not(windows))]
+    fn read(path: &Path) -> Option<Self> {
+        let metadata = gix::index::fs::Metadata::from_path_no_follow(path).ok()?;
+        Some(Self {
+            metadata,
+            unchanged_since_written: true,
+        })
+    }
+
+    /// One handle answers both questions, opened as `lstat` opens a file: a link is not followed.
+    #[cfg(windows)]
+    fn read(path: &Path) -> Option<Self> {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
+        };
+        let file = std::fs::OpenOptions::new()
+            .access_mode(FILE_READ_ATTRIBUTES)
+            .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
+            .open(path)
+            .ok()?;
+        let metadata = gix::index::fs::Metadata::from_file(&file).ok()?;
+        Some(Self {
+            metadata,
+            unchanged_since_written: unchanged_since_written(&file),
+        })
+    }
+
+    /// Whether the file still holds the bytes Git compared with the blob when it recorded
+    /// `recorded`: it has exactly that stat and nothing changed it after its last write.
+    fn proves(&self, recorded: &gix::index::entry::Stat) -> bool {
+        self.unchanged_since_written
+            && gix::index::entry::Stat::from_fs(&self.metadata)
+                .is_ok_and(|current| recorded.matches(&current, RESTORE_STAT))
+    }
+}
+
+/// Whether `file`'s NTFS change time equals its modification time: false once anything wrote the
+/// file or set one of its times after that modification time, and where the volume keeps no
+/// change time.
+#[cfg(windows)]
+fn unchanged_since_written(file: &std::fs::File) -> bool {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_BASIC_INFO, FileBasicInfo, GetFileInformationByHandleEx,
+    };
+    let mut info = FILE_BASIC_INFO::default();
+    // SAFETY: an open handle, and a buffer of the size given that lives across the call.
+    let read = unsafe {
+        GetFileInformationByHandleEx(
+            file.as_raw_handle(),
+            FileBasicInfo,
+            (&raw mut info).cast(),
+            std::mem::size_of::<FILE_BASIC_INFO>() as u32,
+        )
+    };
+    read != 0 && info.ChangeTime == info.LastWriteTime
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -597,17 +671,15 @@ impl GitWorkspace {
         else {
             return false;
         };
-        let Ok(metadata) =
-            gix::index::fs::Metadata::from_path_no_follow(&self.worktree_root.join(relative_path))
-        else {
+        let Some(current) = WorktreeStat::read(&self.worktree_root.join(relative_path)) else {
             return false;
         };
-        if !metadata.is_file() || metadata.len() != blob_length {
+        if !current.metadata.is_file() || current.metadata.len() != blob_length {
             return false;
         }
-        if let Some(recorded) = self.base_files[index].checkout
-            && gix::index::entry::Stat::from_fs(&metadata)
-                .is_ok_and(|current| recorded.matches(&current, RESTORE_STAT))
+        if self.base_files[index]
+            .checkout
+            .is_some_and(|recorded| current.proves(&recorded))
         {
             return true;
         }
@@ -1052,9 +1124,12 @@ mod tests {
         backdate(&path, written);
         initialize_repository(&root, &[]);
         let workspace = discover(&root).unwrap();
+        let recorded = workspace.base_files[0]
+            .checkout
+            .expect("the entry of a file written before the index is not racy");
         assert!(
-            workspace.base_files[0].checkout.is_some(),
-            "the entry of a file written before the index is not racy"
+            WorktreeStat::read(&path).unwrap().proves(&recorded),
+            "an untouched file is proven by its stat alone, with no hash"
         );
         assert!(workspace.holds_blob_bytes("a.py", 9));
 
@@ -1065,6 +1140,7 @@ mod tests {
             .unwrap()
             .set_modified(written)
             .unwrap();
+        assert!(!WorktreeStat::read(&path).unwrap().proves(&recorded));
         assert!(
             !workspace.holds_blob_bytes("a.py", 9),
             "bytes written after Git compared the file are not its blob's"
