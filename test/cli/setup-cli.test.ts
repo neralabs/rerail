@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 const daemonStop = vi.hoisted(() => ({
   beforeStopped: undefined as undefined | ((home: string) => Promise<void>),
-  result: "stopped" as "stopped" | "record-changed",
+  result: "stopped" as "stopped" | "not-running" | "not-daemon" | "record-changed",
 }));
 vi.mock("../../src/runtime/daemon-control.js", async () => {
   const actual = await vi.importActual<typeof import("../../src/runtime/daemon-control.js")>("../../src/runtime/daemon-control.js");
@@ -197,21 +197,27 @@ describe("rerail install --root", () => {
     expect((await readdir(context.home)).filter(name => name.includes(".sqlite"))).toEqual([]);
   });
 
+  // A record naming a live process that is not the home's daemon was removed, and nothing ran: no daemon was running.
   // daemon.json named another daemon, or none, when the stop would signal the one it named: nothing was stopped, and the
-  // daemon it names now may run.
-  it("says daemon.json changed under the stop, never that the daemon was not running, before it backs up or deletes the data", async () => {
+  // daemon it names now may run, which the stop's own answer says.
+  it.each([
+    ["stopped", "Stopped the Rerail daemon.\n"],
+    ["not-running", "The Rerail daemon was not running.\n"],
+    ["not-daemon", "The Rerail daemon was not running.\n"],
+    ["record-changed", undefined],
+  ] as const)("says what its stop came to before it backs up or deletes the data (%s)", async (result, line) => {
     const { context, packageRoot } = await fixture();
     const { STOP_ANSWERS } = await vi.importActual<typeof import("../../src/runtime/daemon-control.js")>("../../src/runtime/daemon-control.js");
     daemonStop.beforeStopped = async () => undefined;
-    daemonStop.result = "record-changed";
+    daemonStop.result = result;
+    const lines = ["Stopped the Rerail daemon.\n", "The Rerail daemon was not running.\n", STOP_ANSWERS["record-changed"]];
     const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
     for (const remove of [["--remove"], ["--remove", "--delete-data"]]) {
       await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
       output.mockClear();
       expect(await runInstallCommand(["--root", packageRoot, ...remove], context)).toBe(0);
       const text = output.mock.calls.join("");
-      expect(text, remove.join(" ")).toContain(STOP_ANSWERS["record-changed"]);
-      expect(text, remove.join(" ")).not.toContain("The Rerail daemon was not running.");
+      for (const each of lines) expect(text.includes(each), `${remove.join(" ")}: ${each}`).toBe(each === (line ?? STOP_ANSWERS["record-changed"]));
     }
   });
 
