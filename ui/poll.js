@@ -5,7 +5,8 @@
  * conditional GET per resource (`If-None-Match`; 304 means nothing changed), at once after a quiet spell and at most
  * every 5 s while changes keep coming. Nothing is read while nothing changes or the tab is hidden. When the stream
  * ends (the daemon stopped) the page reads once, which says whether the daemon answers, and opens it again after a
- * pause that backs off to 30 s while the daemon is unreachable. Data lands in the store; the caller re-renders and
+ * pause that backs off to 30 s while the daemon is unreachable; a stream that never brings a message (something between
+ * holds it whole) makes the page read at that pace until one does. Data lands in the store; the caller re-renders and
  * reconciles in place. Every poll reads the repository list and the daemon's health, and with a repository in scope
  * its context; beyond that only the needs the page names (`setNeeds`: the open view's, the sidebar's and an open
  * sheet's, from `views/index.js`). Long lists are paged with a cursor: a poll refreshes their first page and keeps the
