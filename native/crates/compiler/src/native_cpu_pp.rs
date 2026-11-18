@@ -14,8 +14,8 @@
 
 use crate::Error;
 use crate::native_cpu_shape::Step;
-use crate::pp_words::{self, BOL, Bounds, COND_SIZE, COND_SRC, Ctx, Def, EOF, Env, Expanded, File, FileC, HASH, NONE, Refused, Src, Tok};
-use crate::program::{ACCEPT, GOTO, IS, PUSH, PUT, READ, RETURN, STOP, Words, split};
+use crate::pp_words::{self, BOL, Bounds, COND_SIZE, COND_SRC, Ctx, Def, EOF, Env, Expanded, File, FileC, HASH, IDENT, NOEXP, NONE, Refused, Slot, Src, Tok};
+use crate::program::{ACCEPT, GOTO, IS, KEEP, LINE, LOOKUP, MACRO, PAINT, PEEK, PUSH, PUT, READ, RETURN, SKIPLINE, STOP, Words, split};
 use cranelift_codegen::ir::{AbiParam, Block, BlockCall, InstBuilder, JumpTableData, MemFlags, Value, condcodes::IntCC, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
@@ -24,11 +24,25 @@ use std::mem::{offset_of, size_of};
 
 /// Why the compiled words refuse a TU: the index the code returns above bit 32 (`run_native`),
 /// each the interpreter's reason.
-const REASONS: &[&str] = &["the compiled words refuse", "the program stopped", "past the calls' bound", "a return with no call", "past the output's bound"];
+const REASONS: &[&str] = &[
+    "the compiled words refuse",
+    "the program stopped",
+    "past the calls' bound",
+    "a return with no call",
+    "past the output's bound",
+    "a directive with no file",
+    "a directive's line not in a file",
+    "past the arena's bound",
+    "past the macro table's bound",
+];
 const R_STOPPED: u64 = 1;
 const R_CALLS: u64 = 2;
 const R_NO_CALL: u64 = 3;
 const R_OUTPUT: u64 = 4;
+const R_NO_FILE: u64 = 5;
+const R_NOT_FILE: u64 = 6;
+const R_ARENA: u64 = 7;
+const R_TABLE: u64 = 8;
 
 /// A program's words, compiled.
 pub struct CompiledPp {
@@ -60,6 +74,16 @@ const TOK: i64 = size_of::<Tok>() as i64;
 const SRC: i64 = size_of::<Src>() as i64;
 const FILE: i64 = size_of::<FileC>() as i64;
 const DEF: i64 = size_of::<Def>() as i64;
+const SLOT: i64 = size_of::<Slot>() as i64;
+
+/// `pp_words::key`'s constants.
+const KEY_SEED: i64 = 0x9e37_79b9_7f4a_7c15_u64 as i64;
+const KEY_MUL: i64 = 0xff51_afd7_ed55_8ccd_u64 as i64;
+
+/// A load of bytes at any address (a spelling's).
+fn bytes_flags() -> MemFlags {
+    MemFlags::new().with_notrap()
+}
 
 fn flags() -> MemFlags {
     MemFlags::trusted()
@@ -136,10 +160,16 @@ impl Lower<'_, '_> {
 
     /// `T`'s spelling: its first byte's address and its length.
     fn text(&mut self) -> (Value, Value) {
+        let ctx = self.ctx;
+        self.spelling(ctx, at!(t))
+    }
+
+    /// The spelling of the token at `tok + off`: scratch's bytes (`buf` 0) or a file's.
+    fn spelling(&mut self, tok: Value, off: i32) -> (Value, Value) {
         let (ctx, f) = (self.ctx, &mut *self.f);
-        let buf = ldu(f, types::I32, ctx, at!(t) + offset_of!(Tok, buf) as i32);
-        let start = ldu(f, types::I32, ctx, at!(t) + offset_of!(Tok, start) as i32);
-        let end = ldu(f, types::I32, ctx, at!(t) + offset_of!(Tok, end) as i32);
+        let buf = ldu(f, types::I32, tok, off + offset_of!(Tok, buf) as i32);
+        let start = ldu(f, types::I32, tok, off + offset_of!(Tok, start) as i32);
+        let end = ldu(f, types::I32, tok, off + offset_of!(Tok, end) as i32);
         let scratch = f.create_block();
         let file = f.create_block();
         let join = f.create_block();
@@ -250,6 +280,60 @@ impl Lower<'_, '_> {
                 st(self.f, types::I64, n1, ctx, at!(nout));
                 self.next(pc);
             }
+            LINE => {
+                let (held, _) = self.line(pc);
+                self.test(pc, held);
+            }
+            SKIPLINE => {
+                // The line's tokens passed, a token a turn.
+                let head = self.f.create_block();
+                self.heads.push((head, Step::Token));
+                self.f.ins().jump(head, &[]);
+                self.f.switch_to_block(head);
+                let (held, _) = self.line(pc);
+                let next = self.blocks[pc + 1];
+                self.f.ins().brif(held, head, &[], next, &[]);
+            }
+            PEEK => {
+                let s = self.strings[usize::from(operand)].clone();
+                let held = self.peek(&s);
+                self.test(pc, held);
+            }
+            LOOKUP => {
+                let held = self.lookup(pc);
+                self.test(pc, held);
+            }
+            MACRO => {
+                let d = ld(self.f, types::I64, ctx, at!(d));
+                let defs = ld(self.f, types::I64, ctx, at!(defs));
+                let p = elem(self.f, defs, d, DEF);
+                let off = match mode {
+                    0 => offset_of!(Def, disabled),
+                    1 => offset_of!(Def, fnlike),
+                    _ => offset_of!(Def, builtin),
+                } as i32;
+                let x = ldu(self.f, types::I8, p, off);
+                let held = self.f.ins().icmp_imm(IntCC::NotEqual, x, 0);
+                self.test(pc, held);
+            }
+            PAINT => {
+                let fl = ld(self.f, types::I8, ctx, at!(t) + offset_of!(Tok, flags) as i32);
+                let fl = self.f.ins().bor_imm(fl, i64::from(NOEXP));
+                self.f.ins().store(flags(), fl, ctx, at!(t) + offset_of!(Tok, flags) as i32);
+                self.next(pc);
+            }
+            KEEP => {
+                let n = ld(self.f, types::I64, ctx, at!(nkept));
+                let room = ld(self.f, types::I64, ctx, at!(room_kept));
+                let ok = self.f.ins().icmp(IntCC::UnsignedLessThan, n, room);
+                self.check(ok, pc, R_ARENA);
+                let kept = ld(self.f, types::I64, ctx, at!(kept));
+                let p = elem(self.f, kept, n, TOK);
+                copy_tok(self.f, ctx, at!(t), p, 0);
+                let n1 = self.f.ins().iadd_imm(n, 1);
+                st(self.f, types::I64, n1, ctx, at!(nkept));
+                self.next(pc);
+            }
             _ => return Err(Error::RefusedShape(format!("the preprocessing word {op:#04x} m={mode} at {pc} is not lowered yet"))),
         }
         Ok(())
@@ -258,6 +342,10 @@ impl Lower<'_, '_> {
     /// Whether `T` is spelled `s`: its length, then its bytes, unrolled (`s` is the program's).
     fn spelled(&mut self, s: &[u8]) -> Value {
         let (p, n) = self.text();
+        self.spelled_at(p, n, s)
+    }
+
+    fn spelled_at(&mut self, p: Value, n: Value, s: &[u8]) -> Value {
         let no = self.f.create_block();
         let join = self.f.create_block();
         self.f.append_block_param(join, types::I8);
@@ -277,6 +365,281 @@ impl Lower<'_, '_> {
         self.f.switch_to_block(no);
         let zero = self.f.ins().iconst(types::I8, 0);
         self.f.ins().jump(join, &[zero.into()]);
+        self.f.switch_to_block(join);
+        self.f.block_params(join)[0]
+    }
+
+    /// `Machine::line`: the directive line's next token from the file on top, into `T` (and
+    /// `line_last`); the result whether there was one (a token at a line's start ends it).
+    fn line(&mut self, pc: usize) -> (Value, ()) {
+        let ctx = self.ctx;
+        let n = ld(self.f, types::I64, ctx, at!(nsources));
+        self.check(n, pc, R_NO_FILE);
+        let f = &mut *self.f;
+        let srcs = ld(f, types::I64, ctx, at!(sources));
+        let i = f.ins().iadd_imm(n, -1);
+        let s = elem(f, srcs, i, SRC);
+        let file = ldu(f, types::I32, s, offset_of!(Src, file) as i32);
+        let in_file = f.ins().icmp_imm(IntCC::NotEqual, file, i64::from(NONE));
+        self.check(in_file, pc, R_NOT_FILE);
+        let f = &mut *self.f;
+        let pos = ldu(f, types::I32, s, offset_of!(Src, pos) as i32);
+        let end = ldu(f, types::I32, s, offset_of!(Src, end) as i32);
+        let join = f.create_block();
+        f.append_block_param(join, types::I8);
+        let no = f.ins().iconst(types::I8, 0);
+        let has = f.ins().icmp(IntCC::UnsignedLessThan, pos, end);
+        let take = f.create_block();
+        f.ins().brif(has, take, &[], join, &[no.into()]);
+        f.switch_to_block(take);
+        let files = ld(f, types::I64, ctx, at!(files));
+        let fp = elem(f, files, file, FILE);
+        let toks = ld(f, types::I64, fp, offset_of!(FileC, toks) as i32);
+        let p = elem(f, toks, pos, TOK);
+        let fl = ldu(f, types::I8, p, offset_of!(Tok, flags) as i32);
+        let bol = f.ins().band_imm(fl, i64::from(BOL));
+        let on = f.create_block();
+        f.ins().brif(bol, join, &[no.into()], on, &[]);
+        f.switch_to_block(on);
+        copy_tok(f, p, 0, ctx, at!(t));
+        copy_tok(f, p, 0, ctx, at!(line_last));
+        let pos1 = f.ins().iadd_imm(pos, 1);
+        st(f, types::I32, pos1, s, offset_of!(Src, pos) as i32);
+        let yes = f.ins().iconst(types::I8, 1);
+        f.ins().jump(join, &[yes.into()]);
+        f.switch_to_block(join);
+        (f.block_params(join)[0], ())
+    }
+
+    /// `Machine::peek`: whether the next token any source gives is spelled `s`, without reading
+    /// it: the sources from the top passed (`Step::Pop`) while they are spent, not past a stop
+    /// source's end or a file's.
+    fn peek(&mut self, s: &[u8]) -> Value {
+        let ctx = self.ctx;
+        let join = self.f.create_block();
+        self.f.append_block_param(join, types::I8);
+        let head = self.f.create_block();
+        self.f.append_block_param(head, types::I64);
+        self.heads.push((head, Step::Pop));
+        let n = ld(self.f, types::I64, ctx, at!(nsources));
+        self.f.ins().jump(head, &[n.into()]);
+        self.f.switch_to_block(head);
+        let k = self.f.block_params(head)[0];
+        let no = self.f.ins().iconst(types::I8, 0);
+        let some = self.f.create_block();
+        self.f.ins().brif(k, some, &[], join, &[no.into()]);
+        self.f.switch_to_block(some);
+        let srcs = ld(self.f, types::I64, ctx, at!(sources));
+        let i = self.f.ins().iadd_imm(k, -1);
+        let src = elem(self.f, srcs, i, SRC);
+        let pos = ldu(self.f, types::I32, src, offset_of!(Src, pos) as i32);
+        let end = ldu(self.f, types::I32, src, offset_of!(Src, end) as i32);
+        let file = ldu(self.f, types::I32, src, offset_of!(Src, file) as i32);
+        let has = self.f.ins().icmp(IntCC::UnsignedLessThan, pos, end);
+        let look = self.f.create_block();
+        let spent = self.f.create_block();
+        self.f.ins().brif(has, look, &[], spent, &[]);
+        self.f.switch_to_block(look);
+        let p = self.src_tok(file, pos);
+        let (q, m) = self.spelling(p, 0);
+        let r = self.spelled_at(q, m, s);
+        self.f.ins().jump(join, &[r.into()]);
+        self.f.switch_to_block(spent);
+        let stop = ldu(self.f, types::I8, src, offset_of!(Src, stop) as i32);
+        let in_file = self.f.ins().icmp_imm(IntCC::NotEqual, file, i64::from(NONE));
+        let stopped = self.f.ins().icmp_imm(IntCC::NotEqual, stop, 0);
+        let end_here = self.f.ins().bor(in_file, stopped);
+        let no = self.f.ins().iconst(types::I8, 0);
+        let down = self.f.create_block();
+        self.f.ins().brif(end_here, join, &[no.into()], down, &[]);
+        self.f.switch_to_block(down);
+        self.f.ins().jump(head, &[i.into()]);
+        self.f.switch_to_block(join);
+        self.f.block_params(join)[0]
+    }
+
+    /// The address of source token `pos` of `file` (`NONE`: the arena's).
+    fn src_tok(&mut self, file: Value, pos: Value) -> Value {
+        let (ctx, f) = (self.ctx, &mut *self.f);
+        let in_file = f.ins().icmp_imm(IntCC::NotEqual, file, i64::from(NONE));
+        let from_file = f.create_block();
+        let from_arena = f.create_block();
+        let got = f.create_block();
+        f.append_block_param(got, types::I64);
+        f.ins().brif(in_file, from_file, &[], from_arena, &[]);
+        f.switch_to_block(from_arena);
+        let arena = ld(f, types::I64, ctx, at!(arena));
+        let p = elem(f, arena, pos, TOK);
+        f.ins().jump(got, &[p.into()]);
+        f.switch_to_block(from_file);
+        let files = ld(f, types::I64, ctx, at!(files));
+        let fp = elem(f, files, file, FILE);
+        let toks = ld(f, types::I64, fp, offset_of!(FileC, toks) as i32);
+        let p = elem(f, toks, pos, TOK);
+        f.ins().jump(got, &[p.into()]);
+        f.switch_to_block(got);
+        f.block_params(got)[0]
+    }
+
+    /// Bytes `p[0..min(rem, 8)]` as a little-endian word, zeros past them: eight at once where
+    /// eight are left, else the few left one by one (straight code: at most seven), so no load
+    /// passes the spelling's end.
+    fn chunk(&mut self, p: Value, rem: Value) -> Value {
+        let f = &mut *self.f;
+        let join = f.create_block();
+        f.append_block_param(join, types::I64);
+        let full = f.create_block();
+        let tail = f.create_block();
+        let eight = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, rem, 8);
+        f.ins().brif(eight, full, &[], tail, &[]);
+        f.switch_to_block(full);
+        let w = f.ins().load(types::I64, bytes_flags(), p, 0);
+        f.ins().jump(join, &[w.into()]);
+        f.switch_to_block(tail);
+        let mut w = f.ins().iconst(types::I64, 0);
+        for i in 0..7i64 {
+            let more = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, rem, i);
+            let take = f.create_block();
+            f.ins().brif(more, take, &[], join, &[w.into()]);
+            f.switch_to_block(take);
+            let b = f.ins().load(types::I8, bytes_flags(), p, i as i32);
+            let b = f.ins().uextend(types::I64, b);
+            let b = f.ins().ishl_imm(b, 8 * i);
+            w = f.ins().bor(w, b);
+        }
+        f.ins().jump(join, &[w.into()]);
+        f.switch_to_block(join);
+        f.block_params(join)[0]
+    }
+
+    /// `pp_words::key` of the `n` bytes at `p`, eight a step (`Step::Word`).
+    fn key(&mut self, p: Value, n: Value) -> Value {
+        let head = self.f.create_block();
+        self.f.append_block_param(head, types::I64);
+        self.f.append_block_param(head, types::I64);
+        self.heads.push((head, Step::Word));
+        let done = self.f.create_block();
+        self.f.append_block_param(done, types::I64);
+        let h0 = self.f.ins().bxor_imm(n, KEY_SEED);
+        let z = self.f.ins().iconst(types::I64, 0);
+        self.f.ins().jump(head, &[h0.into(), z.into()]);
+        self.f.switch_to_block(head);
+        let (h, i) = (self.f.block_params(head)[0], self.f.block_params(head)[1]);
+        let more = self.f.ins().icmp(IntCC::UnsignedLessThan, i, n);
+        let step = self.f.create_block();
+        self.f.ins().brif(more, step, &[], done, &[h.into()]);
+        self.f.switch_to_block(step);
+        let q = self.f.ins().iadd(p, i);
+        let rem = self.f.ins().isub(n, i);
+        let w = self.chunk(q, rem);
+        let x = self.f.ins().bxor(h, w);
+        let x = self.f.ins().imul_imm(x, KEY_MUL);
+        let x = self.f.ins().rotl_imm(x, 31);
+        let i8 = self.f.ins().iadd_imm(i, 8);
+        self.f.ins().jump(head, &[x.into(), i8.into()]);
+        self.f.switch_to_block(done);
+        self.f.block_params(done)[0]
+    }
+
+    /// Whether the `n` bytes at `p` and at `q` are the same, eight a step (`Step::Word`).
+    fn same_bytes(&mut self, p: Value, q: Value, n: Value) -> Value {
+        let head = self.f.create_block();
+        self.f.append_block_param(head, types::I64);
+        self.heads.push((head, Step::Word));
+        let join = self.f.create_block();
+        self.f.append_block_param(join, types::I8);
+        let z = self.f.ins().iconst(types::I64, 0);
+        self.f.ins().jump(head, &[z.into()]);
+        self.f.switch_to_block(head);
+        let i = self.f.block_params(head)[0];
+        let more = self.f.ins().icmp(IntCC::UnsignedLessThan, i, n);
+        let step = self.f.create_block();
+        let yes = self.f.ins().iconst(types::I8, 1);
+        self.f.ins().brif(more, step, &[], join, &[yes.into()]);
+        self.f.switch_to_block(step);
+        let rem = self.f.ins().isub(n, i);
+        let a = self.f.ins().iadd(p, i);
+        let b = self.f.ins().iadd(q, i);
+        let wa = self.chunk(a, rem);
+        let wb = self.chunk(b, rem);
+        let eq = self.f.ins().icmp(IntCC::Equal, wa, wb);
+        let i8 = self.f.ins().iadd_imm(i, 8);
+        let no = self.f.ins().iconst(types::I8, 0);
+        let on = self.f.create_block();
+        self.f.ins().brif(eq, on, &[], join, &[no.into()]);
+        self.f.switch_to_block(on);
+        self.f.ins().jump(head, &[i8.into()]);
+        self.f.switch_to_block(join);
+        self.f.block_params(join)[0]
+    }
+
+    /// `LOOKUP` (`Machine::lookup`): `T` an identifier not painted, and a defined macro's name:
+    /// its key, then the table probed a slot a step (`Step::Probe`), at most every slot once.
+    fn lookup(&mut self, pc: usize) -> Value {
+        let ctx = self.ctx;
+        let join = self.f.create_block();
+        self.f.append_block_param(join, types::I8);
+        let no = self.f.ins().iconst(types::I8, 0);
+        let k = ldu(self.f, types::I8, ctx, at!(t) + offset_of!(Tok, kind) as i32);
+        let fl = ldu(self.f, types::I8, ctx, at!(t) + offset_of!(Tok, flags) as i32);
+        let ident = self.f.ins().icmp_imm(IntCC::Equal, k, i64::from(IDENT));
+        let painted = self.f.ins().band_imm(fl, i64::from(NOEXP));
+        let unpainted = self.f.ins().icmp_imm(IntCC::Equal, painted, 0);
+        let go = self.f.ins().band(ident, unpainted);
+        let probe = self.f.create_block();
+        self.f.ins().brif(go, probe, &[], join, &[no.into()]);
+        self.f.switch_to_block(probe);
+        let (p, n) = self.text();
+        let key = self.key(p, n);
+        let mask = ld(self.f, types::I64, ctx, at!(table_mask));
+        let table = ld(self.f, types::I64, ctx, at!(table));
+        let head = self.f.create_block();
+        self.f.append_block_param(head, types::I64);
+        self.f.append_block_param(head, types::I64);
+        self.heads.push((head, Step::Probe));
+        let i0 = self.f.ins().band(key, mask);
+        let z = self.f.ins().iconst(types::I64, 0);
+        self.f.ins().jump(head, &[i0.into(), z.into()]);
+        self.f.switch_to_block(head);
+        let (i, tries) = (self.f.block_params(head)[0], self.f.block_params(head)[1]);
+        let within = self.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, tries, mask);
+        self.check(within, pc, R_TABLE);
+        let slot = elem(self.f, table, i, SLOT);
+        let sk = ldu(self.f, types::I8, slot, (offset_of!(Slot, name) + offset_of!(Tok, kind)) as i32);
+        let empty = self.f.ins().icmp_imm(IntCC::Equal, sk, i64::from(EOF));
+        let used = self.f.create_block();
+        let no = self.f.ins().iconst(types::I8, 0);
+        self.f.ins().brif(empty, join, &[no.into()], used, &[]);
+        self.f.switch_to_block(used);
+        let skey = ld(self.f, types::I64, slot, offset_of!(Slot, key) as i32);
+        let keyed = self.f.ins().icmp(IntCC::Equal, skey, key);
+        let compare = self.f.create_block();
+        let on = self.f.create_block();
+        self.f.ins().brif(keyed, compare, &[], on, &[]);
+        self.f.switch_to_block(compare);
+        let (q, m) = self.spelling(slot, offset_of!(Slot, name) as i32);
+        let len_eq = self.f.ins().icmp(IntCC::Equal, m, n);
+        let bytes = self.f.create_block();
+        self.f.ins().brif(len_eq, bytes, &[], on, &[]);
+        self.f.switch_to_block(bytes);
+        let eq = self.same_bytes(p, q, n);
+        let found = self.f.create_block();
+        self.f.ins().brif(eq, found, &[], on, &[]);
+        self.f.switch_to_block(found);
+        let def = ldu(self.f, types::I32, slot, offset_of!(Slot, def) as i32);
+        let defined = self.f.ins().icmp_imm(IntCC::NotEqual, def, i64::from(NONE));
+        let set = self.f.create_block();
+        let no = self.f.ins().iconst(types::I8, 0);
+        self.f.ins().brif(defined, set, &[], join, &[no.into()]);
+        self.f.switch_to_block(set);
+        st(self.f, types::I64, def, ctx, at!(d));
+        let yes = self.f.ins().iconst(types::I8, 1);
+        self.f.ins().jump(join, &[yes.into()]);
+        self.f.switch_to_block(on);
+        let i1 = self.f.ins().iadd_imm(i, 1);
+        let i1 = self.f.ins().band(i1, mask);
+        let t1 = self.f.ins().iadd_imm(tries, 1);
+        self.f.ins().jump(head, &[i1.into(), t1.into()]);
         self.f.switch_to_block(join);
         self.f.block_params(join)[0]
     }
@@ -496,10 +859,14 @@ mod tests {
 
     /// The JIT gives what the interpreter gives, for a program and a file.
     fn same(words: &str) {
-        let p = program(words);
         let text = b"a b\n# c b";
         let toks = [tok(IDENT, BOL, 0, 1), tok(IDENT, SPACE, 2, 3), tok(HASH, BOL, 4, 5), tok(IDENT, SPACE, 6, 7), tok(IDENT, SPACE, 8, 9), tok(PUNCT, SPACE, 8, 9)];
-        let files = [file(text, &toks)];
+        same_on(words, text, &toks);
+    }
+
+    fn same_on(words: &str, text: &[u8], toks: &[Tok]) {
+        let p = program(words);
+        let files = [file(text, toks)];
         let bounds = Bounds::of(&files);
         let env = Env::DEFAULT;
         let want = pp_words::run(&p, &files, &env, &bounds);
@@ -525,6 +892,31 @@ mod tests {
             "  0005 IS m=1 s0\n  0006 GOTO @0009\n  0007 PUT 0\n  0008 GOTO @0000\n",
             "  0009 PUSH @0011\n  0010 GOTO @0013\n  0011 PUT 0\n  0012 GOTO @0000\n",
             "  0013 PUT 0\n  0014 RETURN 0\n",
+        ));
+    }
+
+    #[test]
+    fn a_lookup_is_the_interpreters() {
+        // Built-ins (the table's names) painted, others put as they are; long and short names.
+        let text = b"__LINE__ x __FILE__ __has_cpp_attribute __LINE__x __COUNTER__";
+        let toks = [tok(IDENT, BOL, 0, 8), tok(IDENT, SPACE, 9, 10), tok(IDENT, SPACE, 11, 19), tok(IDENT, SPACE, 20, 39), tok(IDENT, SPACE, 40, 49), tok(IDENT, SPACE, 50, 61)];
+        same_on(
+            concat!(
+                "  0000 READ 0\n  0001 IS m=0 8\n  0002 ACCEPT 0\n  0003 LOOKUP 0\n  0004 GOTO @0007\n",
+                "  0005 PUT 0\n  0006 GOTO @0000\n  0007 MACRO m=2 0\n  0008 PAINT 0\n  0009 PUT 0\n  0010 GOTO @0000\n",
+            ),
+            text,
+            &toks,
+        );
+    }
+
+    #[test]
+    fn a_directive_line_is_the_interpreters() {
+        // A token before `b` painted (PEEK); a directive's first token put, the rest passed.
+        same(concat!(
+            "  0000 READ 0\n  0001 IS m=0 8\n  0002 ACCEPT 0\n  0003 IS m=3 0\n  0004 GOTO @0009\n",
+            "  0005 PEEK m=1 s0\n  0006 PAINT 0\n  0007 PUT 0\n  0008 GOTO @0000\n",
+            "  0009 LINE 0\n  0010 GOTO @0012\n  0011 GOTO @0000\n  0012 PUT 0\n  0013 SKIPLINE 0\n  0014 KEEP 0\n  0015 GOTO @0000\n",
         ));
     }
 

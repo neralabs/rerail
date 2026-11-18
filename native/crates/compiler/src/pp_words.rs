@@ -436,12 +436,18 @@ pub(crate) struct Def {
     pub(crate) builtin: u8,
 }
 
+/// A macro table's slot: a name's key, the name, and its definition (`NONE`: undefined). An
+/// empty slot's name is of kind `EOF` (`Slot::EMPTY`).
 #[derive(Clone, Copy)]
-struct Slot {
-    key: u64,
-    name: Tok,
-    /// The definition, or `NONE` (undefined).
-    def: u32,
+#[repr(C)]
+pub(crate) struct Slot {
+    pub(crate) key: u64,
+    pub(crate) name: Tok,
+    pub(crate) def: u32,
+}
+
+impl Slot {
+    pub(crate) const EMPTY: Slot = Slot { key: 0, name: Tok { kind: EOF, flags: 0, buf: 0, start: 0, end: 0, exp: 0 }, def: NONE };
 }
 
 #[derive(Clone, Copy)]
@@ -472,7 +478,7 @@ struct Machine<'a> {
     /// `__VA_OPT__` (expanded only where the variadic argument is present).
     uses: Vec<(u16, bool)>,
     params: Vec<Tok>,
-    table: Vec<Option<Slot>>,
+    table: Vec<Slot>,
     frames: Vec<Frame>,
     argv: Vec<(u32, u32)>,
     /// An argument's expansion, or `(NONE, NONE)` while it is not made.
@@ -697,7 +703,7 @@ impl<'a> Machine<'a> {
         marks: Vec::new(),
         uses: Vec::new(),
         params: Vec::new(),
-        table: vec![None; table],
+        table: vec![Slot::EMPTY; table],
         frames: Vec::new(),
         argv: Vec::new(),
         pres: Vec::new(),
@@ -762,11 +768,20 @@ pub(crate) struct Ctx {
     pub nconds: u64,
     pub room_conds: u64,
     pub defs: *mut Def,
+    pub kept: *mut Tok,
+    pub nkept: u64,
+    pub room_kept: u64,
+    /// The macro table: its slots, and its length less one (a power of two).
+    pub table: *mut Slot,
+    pub table_mask: u64,
+    /// The definition `LOOKUP` found.
+    pub d: u64,
     pub returns: *mut u32,
     pub nreturns: u64,
     pub room_returns: u64,
     pub collecting: u64,
     pub t: Tok,
+    pub line_last: Tok,
     pub from_file: u8,
     pub in_if: u8,
 }
@@ -818,11 +833,18 @@ pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, boun
         conds: m.conds.as_mut_ptr().cast(),
         nconds: m.conds.len() as u64,
         defs: m.defs.as_mut_ptr(),
+        room_kept: room(&mut m.kept, bounds.arena),
+        kept: m.kept.as_mut_ptr(),
+        nkept: m.kept.len() as u64,
+        table_mask: m.table.len() as u64 - 1,
+        table: m.table.as_mut_ptr(),
+        d: u64::from(m.d),
         returns: returns.as_mut_ptr(),
         nreturns: 0,
         room_returns: bounds.depth as u64,
         collecting: u64::from(m.collecting),
         t: m.t,
+        line_last: m.line_last,
         from_file: u8::from(m.from_file),
         in_if: u8::from(m.in_if),
     };
@@ -835,8 +857,9 @@ pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, boun
         m.out.set_len(c.nout as usize);
         m.scratch.set_len(c.nscratch as usize);
         m.conds.set_len(c.nconds as usize);
+        m.kept.set_len(c.nkept as usize);
     }
-    (m.collecting, m.t, m.from_file, m.in_if) = (c.collecting as u32, c.t, c.from_file != 0, c.in_if != 0);
+    (m.collecting, m.t, m.from_file, m.in_if, m.d, m.line_last) = (c.collecting as u32, c.t, c.from_file != 0, c.in_if != 0, c.d as u32, c.line_last);
     if r == 0 {
         return Ok(m.finish());
     }
@@ -1054,11 +1077,14 @@ impl<'a> Machine<'a> {
         let mask = self.table.len() - 1;
         let mut i = k as usize & mask;
         for _ in 0..self.table.len() {
-            match &self.table[i] {
-                None => return Ok(Err(i)),
-                Some(s) if s.key == k && self.text(&s.name) == b => return Ok(Ok(i)),
-                _ => i = (i + 1) & mask,
+            let s = &self.table[i];
+            if s.name.kind == EOF {
+                return Ok(Err(i));
             }
+            if s.key == k && self.text(&s.name) == b {
+                return Ok(Ok(i));
+            }
+            i = (i + 1) & mask;
         }
         Err("past the macro table's bound")
     }
@@ -1068,8 +1094,8 @@ impl<'a> Machine<'a> {
             return Ok(false);
         }
         Ok(match self.find(self.text(&self.t))? {
-            Ok(i) if self.table[i].unwrap().def != NONE => {
-                self.d = self.table[i].unwrap().def;
+            Ok(i) if self.table[i].def != NONE => {
+                self.d = self.table[i].def;
                 true
             }
             _ => false,
@@ -1961,7 +1987,7 @@ impl<'a> Machine<'a> {
         }
         let n = self.t;
         let v = n.kind == IDENT && {
-            matches!(self.find(self.text(&n))?, Ok(i) if self.table[i].unwrap().def != NONE)
+            matches!(self.find(self.text(&n))?, Ok(i) if self.table[i].def != NONE)
         };
         if paren {
             self.read();
@@ -2097,7 +2123,7 @@ impl<'a> Machine<'a> {
             Ok(i) => i,
             Err(i) if push => {
                 let n = Tok { kind: IDENT, flags: 0, buf: 0, start: n0, end: n1, exp: 0 };
-                self.table[i] = Some(Slot { key: key(self.spell(name)), name: n, def: NONE });
+                self.table[i] = Slot { key: key(self.spell(name)), name: n, def: NONE };
                 i
             }
             Err(_) => return Ok(()),
@@ -2106,10 +2132,10 @@ impl<'a> Machine<'a> {
             if self.pushed.len() >= self.bounds.macros * 4 {
                 return Err("past push_macro's bound");
             }
-            self.pushed.push((slot as u32, self.table[slot].unwrap().def));
+            self.pushed.push((slot as u32, self.table[slot].def));
         } else if let Some(k) = self.pushed.iter().rposition(|p| p.0 == slot as u32) {
             let (_, d) = self.pushed.remove(k);
-            self.table[slot].as_mut().unwrap().def = d;
+            self.table[slot].def = d;
         }
         Ok(())
     }
@@ -2122,7 +2148,7 @@ impl<'a> Machine<'a> {
             self.defs.push(Def { fnlike, variadic: false, params: 0, file: 0, first: 0, end: 0, marks: 0, pre: (0, 0), disabled: false, builtin: k as u8 + 1 });
             let d = (self.defs.len() - 1) as u32;
             match self.find(name.as_bytes())? {
-                Err(i) => self.table[i] = Some(Slot { key: key(name.as_bytes()), name: n, def: d }),
+                Err(i) => self.table[i] = Slot { key: key(name.as_bytes()), name: n, def: d },
                 Ok(_) => return Err("a built-in twice"),
             }
         }
@@ -2689,8 +2715,8 @@ impl<'a> Machine<'a> {
                 self.defs.push(d);
                 let k = (self.defs.len() - 1) as u32;
                 match self.find(self.text(&v.name))? {
-                    Ok(i) => self.table[i].as_mut().unwrap().def = k,
-                    Err(i) => self.table[i] = Some(Slot { key: key(self.text(&v.name)), name: v.name, def: k }),
+                    Ok(i) => self.table[i].def = k,
+                    Err(i) => self.table[i] = Slot { key: key(self.text(&v.name)), name: v.name, def: k },
                 }
                 return Ok(None);
             }
@@ -2771,7 +2797,7 @@ impl<'a> Machine<'a> {
     fn undef(&mut self) -> R<()> {
         if let Some(n) = self.line_tok()?.filter(|t| t.kind == IDENT) {
             if let Ok(i) = self.find(self.text(&n))? {
-                self.table[i].as_mut().unwrap().def = NONE;
+                self.table[i].def = NONE;
             }
         }
         self.skip_line()
