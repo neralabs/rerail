@@ -111,3 +111,41 @@ Recursion keeps a fact only when it is declared, or proved by the base case and 
 
 Done when a cold 300-file run plans nothing at run time outside the exceptions, its findings are the reference's,
 and the planning share of its profile (cold13: 3.2 % plus statistics) is gone.
+
+## Step 7, first form: the running count (2026-11-17, Q88)
+
+Built ahead of steps 1–6, by the form of the rule, with `child`'s order as core.rr states it today: a node's
+children are numbered from 0, densely, in node order. When `.layout` lands (step 2), the same rewrite is to be
+keyed by `order(i dense in p)` and not by the relation's name.
+
+Lowering (`rr::lower`, `running_count`) takes an aggregate `i = count : { child(g, y, _), F(y), y < x }` (or
+`x > y`) in a rule that also holds `child(g, x, _)`. `F` must read only `y` and `g`. It writes the aggregate as a
+running count along the index:
+
+```
+rr_runf(g, y, i) :- ctx(g), child(g, y, i), F(y).
+rr_run(g, 0, 0) :- ctx(g).
+rr_run(g, j, k1) :- rr_run(g, i, k), rr_runf(g, y, i), j = i + 1, child(g, _, j), k1 = k + 1, k1 <= j.
+rr_run(g, j, k)  :- rr_run(g, i, k), child(g, y, i), !rr_runf(g, y, i), j = i + 1, child(g, _, j).
+// the aggregate:   child(g, x, ix), rr_run(g, ix, i)
+```
+
+These are ordinary rules on the engine's own fixpoint, with no new evaluator:
+- Each step reads the next child, which bounds the index the way 0043's joins in child order are bounded.
+- `k1 <= j` always holds, and it bounds the count for `front::cycles`.
+- Maintenance is the fixpoint's, as for any recursion.
+
+Measured at 300 files (cold57 against cold56), python/ast's `body_stmt`:
+
+| | CPU | Work |
+|---|---|---|
+| `rr_agg56` (the sibling pairs) with `body_stmt` | 2.36 s | 17.1 M |
+| `rr_run` with `rr_runf` and `body_stmt` | 0.6 s | 2.2 M |
+
+The other results:
+- `rr_agg56`'s fan-out (80 K to 1.6 M rows) is gone from the analysis.
+- Findings are the reference's.
+- The peak was 2.35 GB.
+- Strict 10-file outputs are byte-identical.
+
+lengths.rr's `len_splat` (`kind(s2, "list_splat")`) has the same form and takes the rewrite too.

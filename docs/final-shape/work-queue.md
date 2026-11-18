@@ -1985,3 +1985,18 @@ Still host structures over rows, the next items:
 
 The held columns are heap columns. For their index to be a block relation's own, they would have to be held as
 block relations, as exports now are (Q83).
+
+### Q88. A count over earlier siblings is a running count (0361 step 7, first form)
+
+Done 2026-11-17. The user's list: "the planner fix for the rr_agg56 sibling-pair blow-up". `rr_agg56` was
+python/ast's `body_stmt` (`i = count : { child(b, s2, _), !kind(s2, "comment"), s2 < s }`): every statement paired
+with every earlier one. Lowering now writes such a count as a running count along `child`'s dense index, one row
+per child (decision 0361, "Step 7, first form").
+
+At 300 files it went from 2.36 s CPU and 17.1 M work to 0.6 s and 2.2 M, with findings the reference's. Strict
+10-file outputs are byte-identical. New tests: `a_count_of_earlier_siblings_is_a_running_count` and
+`a_running_count_numbers_the_statements_past_comments`. The 166 rr, aggregate and cycle tests pass.
+
+Next: key the rewrite by a declared `order(i dense in p)`, not by `child`'s name, once `.layout` lands (steps 1–2).
+The run takes one wave per child index. A body of thousands of statements is thousands of small waves: watch for it
+in the profile's per-stratum waves.
