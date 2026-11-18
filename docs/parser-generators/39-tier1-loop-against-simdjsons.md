@@ -32,6 +32,16 @@ Measured 2026-11-18 on arm64, at d169f605b.
 | JSONC's tier 1 (`15-jsonc.bitlex`) | 1,332 | 58 |
 | `lexers/json.bitlex` (`json_loop_keeps_values_in_registers`) | 673 | 7 |
 
+**Now (2026-11-18, after 0421).** The table above is the page's starting point; the sections
+below take it to these:
+
+| Loop | Instructions | Stack loads or stores |
+|---|---:|---:|
+| simdjson's stage 1, by clang | **344** | 0 |
+| `stage1.rir`, by our compiler | **332** | 1 |
+| JSON's tier 1 (`14-json`) | **462** | 1 |
+| JSONC's tier 1 (`15-jsonc`) | 632 | 7 |
+
 **A correction.** The 673 quoted in 0383 and 0389 as "JSON's hot loop" is the loop of
 `docs/parser-generators/lexers/json.bitlex`, the program `compile_tests` measures. That lexer is
 laxer than simdjson: it checks no UTF-8, and its only string error is a newline. The program
@@ -332,6 +342,37 @@ includes its incomplete-sequence check, folded away here in a full block.
 Each mask leaves its vector (`extractlane`) just before its first reader, so it is not held in
 an integer register meanwhile. JSONC: 647 / 8 → 644–645 / 6–7; `14-json` 475 / 1. Parking idle
 loop values in vector registers was tried and rejected: it costs about what a spill costs.
+
+### Stage 1 at clang's size (0421)
+
+The trace of `stage1.rir`'s loop against clang's (389 against 344):
+
+| Where | Ours | clang |
+|---|---:|---:|
+| Word `and`s in the position writer | 16 | 0 |
+| Masks reduced to words | 7 | 5 |
+| Vector `and`s besides the reductions | 24 | 16 |
+
+- **The writer** (the compiler): `ctz` and `w & (w - 1)` a position, where clang reverses the
+  word once and takes `clz`, clearing the bit with `^ (1 << 63) >> z`. Now clang's: −13 in
+  every loop.
+- **The two masks** (the program): the UTF-8 errors and the open sequence were asked as masks.
+  They are now totals, as simdjson keeps its error: the open sequence is tested at the byte past
+  the stream, which a full block folds away (−33). The compiler still reduced the error, a
+  total that is one vector value: 0406's flag refused a root that is its own leaf. Fixed (−11).
+- **The last 8 vector `and`s** are the program's classify, the older simdjson's two-nibble
+  table for all five classes. The simdjson clang builds here uses `cmeq` for quote and
+  backslash, a whitespace lookup and a `tbx` for operators. That is the program's statement,
+  left as it is.
+
+| | `stage1.rir` | `14-json` | `15-jsonc` |
+|---|---:|---:|---:|
+| After 0420 | 389 / 1 | 475 / 1 | 644–645 / 6–7 |
+| 0421 | **332 / 1** | **462 / 1** | **632 / 7** |
+| clang's simdjson | 344 / 0 | | |
+
+`14-json` is 118 over clang's stage 1. Its extra checks (control characters, the first bytes
+of numbers and escapes) are 130 over `stage1.rir`: the next part to trace.
 
 ## Reproducing
 

@@ -1412,7 +1412,9 @@ fn flags(native: &BlockNative, state: &State, live: &[bool], slot_of: &[u16], ea
         let ours = |y: usize| y == x || inner.contains(&y);
         // Inner values read by the tree only, no output; leaves read as words by the tree only.
         let inner_ok = inner.iter().all(|&y| y == x || (plain(y) && readers[y].iter().all(|&r| ours(r)) && !native.outputs.contains(&(y as u16))));
-        let leaves_ok = leaves.iter().all(|&l| plain(l) && !native.outputs.contains(&(l as u16)) && readers[l].iter().all(|&r| ours(r) || plan.lanes[r]));
+        // The root itself may be the one leaf: a total made on the vectors as it is (stage 1's
+        // UTF-8 error, decision 0421).
+        let leaves_ok = leaves.iter().all(|&l| plain(l) && (l == x || !native.outputs.contains(&(l as u16))) && readers[l].iter().all(|&r| ours(r) || plan.lanes[r]));
         // A word leaf is made as it is: outside regions, or a region's value read past it (its
         // `zero`, the branch's word after it), so the body has its word.
         let out_of_region = |w: usize| plan.region_of[w].is_some_and(|r| plan.regions[r].zero.contains(&w)) && state.top[w].is_none() && state.flag[w].is_none() && !grouped[w] && !plan.lanes[w];
@@ -2536,20 +2538,27 @@ pub fn within_word(f: &mut FunctionBuilder<'_>, i: Value, len: Value, d: u8) -> 
 /// `u32`s from `ptr`. Eight are written whatever the count (the ones past it are slack the next
 /// write covers), then eight at a time while more are left. Gives the count, and the loop's block
 /// (a `Bits` progress point, `native_cpu_shape`). The builder is left in the block after.
+///
+/// As clang compiles simdjson's (decision 0421): the word is reversed once, and each position is
+/// its leading zeros, the bit cleared by `^ (1 << 63) >> z`, three operations where `ctz` and
+/// `w & (w - 1)` are five. Past the last set bit `z` is 64, the shift wraps to 0 and the top bit
+/// flips: what follows is slack, which the count leaves out, and the eight more are not entered.
 pub fn flatten(f: &mut FunctionBuilder<'_>, m: Value, at: Value, ptr: Value) -> (Value, cranelift_codegen::ir::Block) {
     let flags = MemFlags::new().with_notrap();
     let cnt = f.ins().popcnt(m);
-    let eight = |f: &mut FunctionBuilder<'_>, mut w: Value, ptr: Value| {
+    let top = f.ins().iconst(types::I64, i64::MIN);
+    let eight = |f: &mut FunctionBuilder<'_>, mut r: Value, ptr: Value| {
         for j in 0..8 {
-            let tz = f.ins().ctz(w);
-            let p = f.ins().iadd(at, tz);
+            let z = f.ins().clz(r);
+            let p = f.ins().iadd(at, z);
             f.ins().istore32(flags, p, ptr, 4 * j);
-            let less = f.ins().iadd_imm(w, -1);
-            w = f.ins().band(w, less);
+            let bit = f.ins().ushr(top, z);
+            r = f.ins().bxor(r, bit);
         }
-        w
+        r
     };
-    let w = eight(f, m, ptr);
+    let r = f.ins().bitrev(m);
+    let w = eight(f, r, ptr);
     let more = f.create_block();
     let after = f.create_block();
     f.append_block_param(more, types::I64);
