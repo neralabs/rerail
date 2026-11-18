@@ -8892,7 +8892,10 @@ fn run_observed(
                         given_rels = g;
                         m
                     } else {
-                        maintain::rewrite(&cut, cell.as_ref(), &cross, &cross_sccs, &mut answer)?
+                        // No kept part, or a part with gates (which the level driver does not walk): the strata the cut
+                        // runs are derived again from their reads, the clean ones bound as kept (decision 0364: no
+                        // maintained forms).
+                        maintain::Maintained { program: cut.program(cross)?, sources: Vec::new(), maintained: 0, derived_again: cut.strata.0, recursive: 0, again: Vec::new(), views: BTreeSet::new() }
                     };
                     if maintain::levels_wanted() && !driven {
                         qualify(&mut maintained.program, |heads, qualifiers| {
