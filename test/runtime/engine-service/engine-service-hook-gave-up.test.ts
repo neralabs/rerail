@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { subscribe, unsubscribe } from "node:diagnostics_channel";
 import { once } from "node:events";
 import { mkdtemp, readFile } from "node:fs/promises";
+import { ServerResponse } from "node:http";
 import { connect, Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -86,6 +87,22 @@ function nextServerSocket(): Promise<Socket> {
   return taken.promise;
 }
 
+/** The engine's answer to the next event request it takes in, so a test can see whether it has been written. */
+function nextEventAnswer(): Promise<ServerResponse> {
+  const taken = Promise.withResolvers<ServerResponse>();
+  const take = (message: unknown): void => {
+    const response: unknown = typeof message === "object" && message !== null ? Reflect.get(message, "response") : undefined;
+    if (!(response instanceof ServerResponse) || response.req.url !== "/events") return;
+    unsubscribe("http.server.request.start", take);
+    taken.resolve(response);
+  };
+  subscribe("http.server.request.start", take);
+  onTestFinished(() => {
+    unsubscribe("http.server.request.start", take);
+  });
+  return taken.promise;
+}
+
 /**
  * Sends the turn's end as a hook does, on a connection the test closes as the hook gives up: `giveUp` resolves once the
  * engine's side of it has closed.
@@ -131,10 +148,16 @@ describe("an engine service whose hook gave up on a stop", () => {
     expect(await recordedDeliveries(held.root, LATE)).toBe(1);
   });
 
-  it("answers a stop whose hook still waits with the steers its checks find", async () => {
+  it("answers a stop whose hook still waits once its checks end, with the steers they find", async () => {
     const held = await heldStopService();
+    const answer = nextEventAnswer();
     const stop = ingestEngineEvent(held.engine, { kind: "turn-end", eventId: "stop", sessionId: SESSION, text: "" });
+    const response = await answer;
     await held.settling;
+    // From the checks' start to the written answer only promise jobs run when nothing is pending, so a stop that stopped
+    // waiting for its checks while its hook still waits would have written its answer by now, with none of their steers.
+    await new Promise<void>(done => setImmediate(done));
+    expect(response.writableEnded).toBe(false);
     held.release();
     expect((await stop).map(delivery => delivery.content)).toEqual([LATE]);
     expect(await held.next("next")).toEqual([]);
