@@ -1393,7 +1393,17 @@ missed edit is a wrong answer for the step that missed it.
   the bench's full shape shows every edit step's components.
 - **Record**: —
 
-## Questions for the user
+### Q55. Device-budget refusals are reported as `BackendFailure`
+
+Seen 2026-11-18 (t45, with `From<String> for Error` now saying its message): every bare `BackendFailure` refusal of
+the 300-file Metal run, 13–15 strata, is the device budget ("a lease of N MB past the Metal budget of 512 MB"),
+with or without the nonce. They are 0334's agreed replanning, run on the CPU, but the conversion drops the reason.
+They rose after 0386 (2 in t43's profile, 15–32 since): plausibly the strata that 0386 stopped refusing as "not
+submitted" now hold device memory at once.
+
+- **Done when**: a budget refusal says so, with its numbers, in the profile's refusals (an error kind of its own);
+  the 512 MB budget's refusals measured against the strata a wave holds at once.
+- **Record**: —
 
 ## Questions for the user
 
