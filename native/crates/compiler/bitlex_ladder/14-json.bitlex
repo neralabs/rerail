@@ -41,9 +41,6 @@ class u         = 'u'
 class dee       = 'd' 'D'
 class high_2    = '8' '9' 'a' 'b' 'A' 'B'
 class low_2     = 'c'..'f' 'C'..'F'
-class ef        = 0xef
-class bb        = 0xbb
-class bf        = 0xbf
 
 # --- UTF-8, as simdjson's stage 1 checks it --------------------------------------------------------
 
@@ -62,9 +59,10 @@ class below_90  = 0x80..0x8f
 class from_90   = 0x90..0xbf
 
 mask last_byte  = ~next(~empty)
-# A UTF-8 byte order mark at the start of the file, which simdjson skips.
-mask bom        = ~prev(~empty) & ef & next(bb) & next(bf, 2)
-mask bom_bytes  = bom | prev(bom, 1) | prev(bom, 2)
+# A UTF-8 byte order mark at the start of the file, which simdjson skips before its loop: the
+# stream starts after it (decisions 0335, 0389), so no class, token or error has its bytes.
+prefix 0xef 0xbb 0xbf
+
 # A byte a lead byte before it needs to be a continuation; a continuation is one exactly there.
 mask needed     = prev(lead2 | lead3 | lead4, 1) | prev(lead3 | lead4, 2) | prev(lead4, 3)
 error "invalid UTF-8" when never | (needed ^ cont)
@@ -88,18 +86,22 @@ mask content    = body & ~esc & ~esc_last
 mask unicode    = esc_last & u
 
 error "a control byte in a string" when body & control
-error "\\u without four hex digits" when (prev(unicode, 1) | prev(unicode, 2) | prev(unicode, 3) | prev(unicode, 4)) & ~hex
+# Each `\u`'s own test, at its `u`, of the bytes after it: tier 2 runs it at the escape's
+# token, and tier 1 makes the `u`s only (decision 0399).
+error "\\u without four hex digits" when unicode & ~(next(hex, 1) & next(hex, 2) & next(hex, 3) & next(hex, 4))
 # A surrogate escape, at its `u`: `\uD800` to `\uDBFF` must be followed by one of `\uDC00` to
-# `\uDFFF`, six bytes on, and that one must follow one (simdjson refuses either alone).
+# `\uDFFF`, six bytes on, and that one must follow one (simdjson refuses either alone). After a
+# high one's four hex digits, a backslash can only start an escape: its test is the bytes'.
 mask high       = unicode & next(dee, 1) & next(high_2, 2)
 mask low        = unicode & next(dee, 1) & next(low_2, 2)
-error "a lone surrogate" when (high & ~next(low, 6)) | (low & ~prev(high, 6))
+error "a lone high surrogate" when high & ~(next(backslash, 5) & next(u, 6) & next(dee, 7) & next(low_2, 8))
+error "a lone low surrogate" when low & ~prev(high, 6)
 
 # --- Outside strings -----------------------------------------------------------------------------
 
 mask code       = ~inside & ~closing
 # Any other byte outside a string is in a word: a number or a literal, checked per token.
-mask word       = code & ~ws & ~op & ~bom_bytes
+mask word       = code & ~ws & ~op
 
 # --- Tokens --------------------------------------------------------------------------------------
 
@@ -118,7 +120,7 @@ keywords punctuation { "{"  "}"  "["  "]"  ","  ":" } required
 token number          = start starts(word) last lasts(word)
 keywords number { "true" -> true  "false" -> false  "null" -> null }
 
-skip code & (ws | bom_bytes)
+skip code & ws
 
 check number = ['-'] ('0' | nonzero digit*) ['.' digit+] [expo ['+' | '-'] digit+]
 

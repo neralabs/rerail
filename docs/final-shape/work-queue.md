@@ -4064,3 +4064,18 @@ down). The CPU runs it; Metal refuses the batch (`metal-form`, "an early start")
 - **Done when**: generated MSL shifts a file's first lane as the CPU does, and `every_step_on_metal_equals_the_interpreter`
   runs every step, none refused.
 
+
+### Q197. Tier 1 with no general body (0383) differs from the interpreter on 14 corpus programs
+
+Found 2026-11-18 at the roll-up's Parser-generators merge (9290ecec4). `corpus_tests::corpus_cranelift_equals_the_interpreter`
+fails on Parser-generators' own commits from 0383 on: 612201517 (0375) passes, d7b12474c (0383) fails, as does the tip.
+The 14 are random programs (`03xx`/`04xx-mix-seed_*`) on files of 1 to 23 bytes, one block each, so only the edge
+path runs: Cranelift leaves a later output's word 0 (or another value) where the interpreter has bits, for example
+`0371-mix-seed_11`, output 12: `[0]` against `[40000]`. `native_cpu_edge::edge_values` claims a bound
+(`Some(Edge)`) for these programs that the edge part does not keep: either `differs` misses a value or `cut_free`
+holds for an output that is not zero outside the stream.
+
+The test is ignored with this item as its reason until then.
+
+- **Done when**: the 14 equal the interpreter (`edge_values` refusing where it cannot bound, or the edge part
+  remaking the missed values), and the test runs again, unignored.
