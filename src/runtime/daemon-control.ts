@@ -1615,9 +1615,10 @@ function commandLineCheck(pid: number, platform: NodeJS.Platform): string {
 /**
  * Whether the pid a stop signalled in `home` may be killed, now that it outlived the stop's wait, by `verdict`: only while
  * it is proven the home's daemon. One that is ending or another process's by now is left alone, and so is one recorded
- * as the holder of the home's lock that no longer holds it, as a daemon lets go of it when it ends. One that runs while
- * nothing proves it either way is left alone too, with every record, and the stop says so ({@link unprovenDaemonMessage}):
- * the cleanup after a stop would forget a daemon that may still run.
+ * as the holder of the home's lock whose lock file is there and held by no one: a daemon lets go of it once it has
+ * closed, just before it exits. One that runs while nothing proves it either way is left alone too, with every record,
+ * and the stop says so ({@link unprovenDaemonMessage}): the cleanup after a stop would forget a daemon that may still
+ * run. A missing lock file is no lock let go ({@link homeDaemonLockHeld}).
  */
 function killable(home: string, pid: number, verdict: SignalVerdict, machine: DaemonMachine): boolean {
   if (verdict !== "unknown") return verdict === "ours";
