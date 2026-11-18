@@ -63,12 +63,15 @@ pub(in crate::code_rule_dsl) struct Test {
     pub path: String,
 }
 
+/// The utils a rule's clauses define, by name, borrowed from the document (a later clause's of a name wins).
+type Utils<'a> = BTreeMap<&'a str, &'a Value>;
+
 struct Walk<'a> {
     dialect: crate::code_rule_dsl::language::GrammarDialect,
     /// The dialect's token census, made when a token test or a layout first asks (`lang`): most rules test no
     /// token, and the census decodes the dialect's automata and walks every kind's.
     census: std::cell::OnceCell<Option<&'static Lang>>,
-    utils: &'a Map<String, Value>,
+    utils: &'a Utils<'a>,
     tests: BTreeSet<Test>,
     active: Vec<String>,
     /// A util already walked in a context (its name and the context, printed): walked once.
@@ -84,14 +87,14 @@ const SAME_NODE: [&str; 6] = ["$option", "cases", "default", "true", "false", "c
 /// Keys whose values are rules over some other node, matched from scratch.
 const FRESH: [&str; 5] = ["site", "rule", "context", "ofRule", "stopBy"];
 
-impl Walk<'_> {
+impl<'a> Walk<'a> {
     fn lang(&self) -> Option<&'static Lang> {
         *self.census.get_or_init(|| Lang::of(self.dialect))
     }
 
     /// `rule`, a sub-rule over a node reached by `rel` from a node `from` (the node the relation
     /// left); `frame` is what the enclosing same-node rules said about this node.
-    fn rule(&mut self, rule: &Value, rel: &Rel, from: &Frame, frame: &Frame, negated: bool, path: &str) {
+    fn rule(&mut self, rule: &'a Value, rel: &Rel, from: &Frame, frame: &Frame, negated: bool, path: &str) {
         match rule {
             Value::Array(items) => {
                 for (at, item) in items.iter().enumerate() {
@@ -103,7 +106,7 @@ impl Walk<'_> {
         }
     }
 
-    fn object(&mut self, map: &Map<String, Value>, rel: &Rel, from: &Frame, frame: &Frame, negated: bool, path: &str) {
+    fn object(&mut self, map: &'a Map<String, Value>, rel: &Rel, from: &Frame, frame: &Frame, negated: bool, path: &str) {
         let mut frame = frame.clone();
         if let Some(kind) = node_kind(map, self.utils, 0) {
             frame.kind = Some(kind);
@@ -130,9 +133,11 @@ impl Walk<'_> {
             }
         }
         for (key, value) in map {
-            let here = format!("{path}/{key}");
+            // The path of a key the walk goes into, made where it does.
+            let here = || format!("{path}/{key}");
             match key.as_str() {
                 "has" | "follows" | "precedes" | "inside" => {
+                    let here = here();
                     use crate::code_rule_dsl::compile::ast_rule::{gap_split, gap_test};
                     use crate::code_rule_dsl::matcher::AstMatcher;
                     if let Some(test) = gap_test(key, value, self.dialect, Some(Box::new(AstMatcher::Never))) {
@@ -156,11 +161,11 @@ impl Walk<'_> {
                     };
                     self.rule(value, &next, &frame, &child, false, &here);
                 }
-                "not" => self.rule(value, rel, from, &frame, !negated, &here),
-                key if COMPOSITE.contains(&key) || SAME_NODE.contains(&key) => self.rule(value, rel, from, &frame, negated, &here),
+                "not" => self.rule(value, rel, from, &frame, !negated, &here()),
+                key if COMPOSITE.contains(&key) || SAME_NODE.contains(&key) => self.rule(value, rel, from, &frame, negated, &here()),
                 key if FRESH.contains(&key) && value.is_object() => {
                     let tag = FRESH.iter().find(|tag| **tag == key).copied().unwrap_or("fresh");
-                    self.rule(value, &Rel::Root(tag), &Frame::default(), &Frame::default(), false, &here);
+                    self.rule(value, &Rel::Root(tag), &Frame::default(), &Frame::default(), false, &here());
                 }
                 "matches" => {
                     let names: Vec<String> = match value {
@@ -173,11 +178,11 @@ impl Walk<'_> {
                             continue;
                         }
                         let context = format!("{name} {rel:?} {from:?} {frame:?} {negated}");
-                        if let Some(util) = self.utils.get(&name).cloned()
+                        if let Some(&util) = self.utils.get(name.as_str())
                             && self.seen.insert(context)
                         {
                             self.active.push(name.clone());
-                            self.rule(&util, rel, from, &frame, negated, &format!("utils/{name}"));
+                            self.rule(util, rel, from, &frame, negated, &format!("utils/{name}"));
                             self.active.pop();
                         }
                     }
@@ -249,7 +254,7 @@ impl Walk<'_> {
 
 /// The node's kind as the rule says it: its own `kind`, one an `all` member or a util it
 /// `matches` gives, or the first of an `any` whose every alternative gives one.
-fn node_kind(map: &Map<String, Value>, utils: &Map<String, Value>, depth: usize) -> Option<String> {
+fn node_kind(map: &Map<String, Value>, utils: &Utils<'_>, depth: usize) -> Option<String> {
     if depth > 8 {
         return None;
     }
@@ -260,7 +265,7 @@ fn node_kind(map: &Map<String, Value>, utils: &Map<String, Value>, depth: usize)
     if let Some(kind) = map.get("all").and_then(Value::as_array).and_then(|all| all.iter().find_map(of)) {
         return Some(kind);
     }
-    if let Some(kind) = map.get("matches").and_then(Value::as_str).and_then(|name| utils.get(name)).and_then(of) {
+    if let Some(kind) = map.get("matches").and_then(Value::as_str).and_then(|name| utils.get(name)).copied().and_then(of) {
         return Some(kind);
     }
     let any = map.get("any")?.as_array()?;
@@ -279,12 +284,12 @@ pub(in crate::code_rule_dsl) const UNANSWERED: [&str; 4] = ["root", "below", "ga
 /// once, in its worst category.
 pub(in crate::code_rule_dsl) fn tests(document: &Value) -> Vec<(String, Test)> {
 
-    let clauses = document.get("clauses").and_then(Value::as_array).cloned().unwrap_or_default();
-    let mut utils = Map::new();
-    for clause in &clauses {
+    let clauses: &[Value] = document.get("clauses").and_then(Value::as_array).map_or(&[], Vec::as_slice);
+    let mut utils = Utils::new();
+    for clause in clauses {
         for found in [clause.pointer("/define/utils"), clause.pointer("/forbid/ast/utils")].into_iter().flatten() {
             if let Some(map) = found.as_object() {
-                utils.extend(map.clone());
+                utils.extend(map.iter().map(|(name, util)| (name.as_str(), util)));
             }
         }
     }
