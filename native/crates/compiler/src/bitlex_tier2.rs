@@ -1157,7 +1157,11 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
                 let (mut kinds, mut words, mut end) = (Vec::new(), Vec::new(), false);
                 let (not, run, choices) = match choices.as_slice() {
                     [::bitlex::syntax::TokenElem::Not(inner)] => (true, false, inner.as_slice()),
-                    [::bitlex::syntax::TokenElem::Many(inner)] => (false, true, inner.as_slice()),
+                    // A run of tokens none of the choices.
+                    [::bitlex::syntax::TokenElem::Many(inner)] => match inner.as_slice() {
+                        [::bitlex::syntax::TokenElem::Not(none)] => (true, true, none.as_slice()),
+                        _ => (false, true, inner.as_slice()),
+                    },
                     c => (false, false, c),
                 };
                 for c in choices {

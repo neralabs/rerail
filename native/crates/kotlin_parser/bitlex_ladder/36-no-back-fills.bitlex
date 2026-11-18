@@ -440,10 +440,6 @@ skip swallowed
 mark semi       = lf_end & ~class_head, unless before "}" | "," | "." | ".." | "..<" | ":" | "::" | "*" | "*=" | "%" | "%=" | ">" | ">=" | "<" | "<=" | "=" | "==" | "===" | "{" | "[" | "(" | "?" | "?." | "?:" | "||" | "&&" | "/" | "/=" | "!=" | "!==" | "as" | "as?" | "where" | "catch" | "finally" | "by", unless before "else" ~"->", unless before "else" end, end, settles, ends
 mark semi       = lf_end & class_head, unless before "}" | "," | "." | ".." | "..<" | ":" | "::" | "*" | "*=" | "%" | "%=" | ">" | ">=" | "<" | "<=" | "=" | "==" | "===" | "{" | "[" | "(" | "?" | "?." | "?:" | "||" | "&&" | "/" | "/=" | "!=" | "!==" | "as" | "as?" | "where" | "catch" | "finally" | "by", unless before "else" ~"->", unless before "else" end, unless before "constructor", unless before "@" | "public" | "private" | "internal" | "protected" (simple_identifier | "." | "@")* "constructor", end, settles, ends
 mark semi_close = close_at, before "}", settles, ends
-# An annotation's `@` before an `if` or a `when`: back from the `)` before it to the `@`.
-mask ann_go     = kw_start & (text("if") & ~next(w, 2) | text("when") & ~next(w, 4))
-mask ann_tail   = code & text(")") & next(back_fill(ann_go, solid))
-mask ann_expr   = code & at_sign & next(back_fill(ann_tail, code & (at_sign | lf | lbrace | text(";"))))
 # A receiver's `.`, where the name's loop of `.`s must stop (with the receiver's first token,
 # where the optional part opens), and a delegation's `{`. Before `generic`, which holds at a
 # receiver's first token too.
@@ -477,10 +473,11 @@ mask colon_ty   = code & text(":") & ~text("::") & ~prev(text(":")) & ~prev(text
 mask after_ty   = prev(fill(prev(colon_ty), solid))
 # And a function type's receiver's first name: names, dots and type arguments from it to a `.`
 # before a `(`.
-# And an annotation's `@` before an `if` or a `when`. One mark: each `before` starts with its
+# And an annotation's `@` before an `if` or a `when`: its tokens to a `)` that one follows, past
+# no `@`, `{` or `;` (the lean parser reads an annotation, then any expression). One mark: each `before` starts with its
 # own token (a receiver's name not `suspend`).
 mask frecv_at   = w & ~prev(w | dot | text("<") | text(">")) & ~text("suspend")
-mark generic    = code & text("<") & ~text("<=") & prev(w) | code & text("(") & after_ty | code & text("suspend") & ~next(w, 7) & after_ty | frecv_at | ann_expr, before "<" (simple_identifier | backtick_name | "in" | "," | "." | "?" | "*" | "@" | ":" | "->" | "(" | ")" | "[" | "]" | "<" | ">")* ">" "(" | "{" | "." | "?." | "::", before "(" "(", before "suspend" "(", before simple_identifier (simple_identifier | "." | "<" | ">")* "." "(", before "@"
+mark generic    = code & text("<") & ~text("<=") & prev(w) | code & text("(") & after_ty | code & text("suspend") & ~next(w, 7) & after_ty | frecv_at | code & at_sign, before "<" (simple_identifier | backtick_name | "in" | "," | "." | "?" | "*" | "@" | ":" | "->" | "(" | ")" | "[" | "]" | "<" | ">")* ">" "(" | "{" | "." | "?." | "::", before "(" "(", before "suspend" "(", before simple_identifier (simple_identifier | "." | "<" | ">")* "." "(", before "@" (~("@" | "{" | ";"))* ")" "if" | "when"
 # A backtick name before `::`: no rule takes it, so the file is refused where it holds. It
 # refuses at every level, tested once a token by its bit: the code holds it (decision 0407).
 mark bt_cref    = tokens backtick_name "::"

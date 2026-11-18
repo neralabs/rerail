@@ -17,7 +17,8 @@ enum Tok {
 /// A token mark's choice (`Stmt::TokenMark`): a token of a kind, or a token whose text is a word.
 /// After the first element, three more: `~C` (`Not`), a token none of `C`'s choices, never the
 /// file's end, the only choice of its element; `end` (`End`), no token left, in the last element;
-/// `(C)*` (`Many`, decision 0406), any number of tokens of `C`'s choices, then the elements after
+/// `(C)*` (`Many`, decision 0406), any number of tokens of `C`'s choices (or of none of them, for
+/// a `C` that is one `~`), then the elements after
 /// it from any of them on (as a forward scan for the first place they hold), the only choice of
 /// its element, one a run and never its last.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1014,8 +1015,10 @@ impl P {
             let inner = self.token_choices()?;
             self.want_p(")")?;
             self.want_p("*")?;
-            if inner.iter().any(|c| !matches!(c, TokenElem::Kind(_) | TokenElem::Word(_))) {
-                return self.err("a run of kinds and words");
+            // Kinds and words, or one `~` of them: a run of any other tokens.
+            let not = matches!(inner.as_slice(), [TokenElem::Not(_)]);
+            if !not && inner.iter().any(|c| !matches!(c, TokenElem::Kind(_) | TokenElem::Word(_))) {
+                return self.err("a run of kinds and words, or of a `~` of them");
             }
             return Ok(vec![TokenElem::Many(inner)]);
         }
@@ -2296,7 +2299,11 @@ mod tier2_tests {
         assert!(mark("mark k = lf, before (name)* \"->\"").is_err());
         assert!(mark("mark k = lf, before \"{\" (name)*").is_err());
         assert!(mark("mark k = lf, before \"{\" (name)* \",\" (name)* \"->\"").is_err());
-        assert!(mark("mark k = lf, before \"{\" (~name)* \"->\"").is_err());
+        assert!(mark("mark k = lf, before \"{\" (~name | \",\")* \"->\"").is_err());
+        assert_eq!(
+            mark("mark k = lf, before \"{\" (~(name | \",\"))* \"->\""),
+            Ok((vec![(false, vec![vec![word("{")], vec![TokenElem::Many(vec![TokenElem::Not(vec![name.clone(), word(",")])])], vec![word("->")]])], false))
+        );
         assert!(parse("lexer t\nmark k = tokens \"{\" (name | \",\")* \"->\"\n").is_ok());
     }
 
