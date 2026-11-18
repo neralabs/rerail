@@ -32,6 +32,16 @@ inputs:
     description: >-
       Store what the job compiles. "false" only reads: for a job that runs code it does not trust before compiling.
     default: "true"
+  persist:
+    description: >-
+      How the disk store outlives the job. "cache": restored from and saved to the Actions cache (above). "none": not
+      at all; the caller moves the directory (the `dir` output) itself, e.g. as an artifact between the jobs of one run.
+    default: cache
+
+outputs:
+  dir:
+    description: The disk store's directory (SCCACHE_DIR).
+    value: ${{ steps.env.outputs.dir }}
 
 runs:
   using: composite
@@ -74,7 +84,7 @@ runs:
     # A new entry per run (its id), restored by prefix: the newest this branch or the default branch saved. actions/cache
     # saves it in its post-job step, after the job's compiles, unless the job failed.
     - name: Restore the compile cache
-      if: inputs.store == 'disk' && inputs.write != 'false'
+      if: inputs.store == 'disk' && inputs.persist == 'cache' && inputs.write != 'false'
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.env.outputs.dir }}
@@ -83,7 +93,7 @@ runs:
           rust-compile-cache-1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.name }}-
 
     - name: Restore the compile cache (read only)
-      if: inputs.store == 'disk' && inputs.write == 'false'
+      if: inputs.store == 'disk' && inputs.persist == 'cache' && inputs.write == 'false'
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.env.outputs.dir }}
