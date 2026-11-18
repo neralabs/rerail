@@ -40,7 +40,7 @@ import { repositories } from "../engine/storage/schema.js";
 import { tableColumns } from "../engine/storage/table-probe.js";
 import { setRepositoryStarted, stateOf } from "../runtime/repository-start.js";
 import type { PackStore } from "../setup/rule-pack-store.js";
-import { declaredPacksOf, declaredScanPacks, type DeclaredPacks, type DeclaredScanPacks, type ScanPack } from "./scan-packs.js";
+import { declaredPacksOf, declaredScanPacks, type DeclaredPacks, type DeclaredScanPacks, type ScanPack, type ScanPackAttachment } from "./scan-packs.js";
 
 export const SCAN_SCHEMA = "rerail.scan/1";
 
@@ -287,7 +287,7 @@ function copyTables(home: RerailDatabase, scratch: RerailDatabase, tables: reado
  */
 function prepareScratchDatabase(
   databasePath: string, root: string, home: RerailDatabase | undefined, useHome: boolean,
-  packs: readonly string[], refRules: RefRules | undefined, ruleDocuments: Map<string, RuleDocument> | undefined,
+  packs: readonly ScanPackAttachment[], refRules: RefRules | undefined, ruleDocuments: Map<string, RuleDocument> | undefined,
   catalog: RuleCatalog,
 ): Set<string> {
   const database = openRerailDatabase(databasePath);
@@ -311,7 +311,7 @@ function prepareScratchDatabase(
  */
 function setUpThrowawayConfiguration(
   database: RerailDatabase, root: string, home: RerailDatabase | undefined,
-  packs: readonly string[], refRules: RefRules | undefined, ruleDocuments: Map<string, RuleDocument> | undefined,
+  packs: readonly ScanPackAttachment[], refRules: RefRules | undefined, ruleDocuments: Map<string, RuleDocument> | undefined,
   catalog: RuleCatalog,
 ): Set<string> {
   const refRuleIds = new Set<string>();
@@ -326,7 +326,7 @@ function setUpThrowawayConfiguration(
       libraryRules.push({ sourceKind: "library_rule", sourceId: ruleId, folder: "" });
     }
   }
-  setUpRepository(database, repositoryKey, { packs: packs.map(packId => ({ packId, folder: "" })), rules: libraryRules });
+  setUpRepository(database, repositoryKey, { packs: [...packs], rules: libraryRules });
   if (refRules !== undefined) {
     // The working tree's own rules are what the change under review may have edited: they do not run.
     setRuleSetting(database, { owner: { kind: "checkout", checkoutPath: root }, folder: "", targetKind: "pack", targetId: WORKTREE_PACK_ID, on: false, mode: null });
@@ -591,7 +591,7 @@ async function scanReport(
   const refRules = options.rulesRef === undefined ? undefined : await rulesAtRef(root, options.rulesRef, scratch, catalog);
   let refRuleIds: Set<string>;
   try {
-    const attached = declaredPacks === undefined ? packs : declaredPacks.packs.map(pack => pack.id);
+    const attached = declaredPacks?.attachments ?? packs.map(packId => ({ packId, folder: "" }));
     refRuleIds = prepareScratchDatabase(databasePath, root, home, useHome, attached, refRules, options.ruleDocuments, catalog);
   } finally {
     home?.$client.close();

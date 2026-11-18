@@ -103,9 +103,10 @@ runs the same rules ([design](repository-packs.md)):
 
 ```json
 {
-  "format": "rerail.packs/v1",
+  "schema": "rerail.packs/1",
   "packs": [
     { "id": "complexity", "version": "0.1.8" },
+    { "id": "typescript", "version": "0.1.8", "folders": ["web"] },
     { "id": "@acme/rerail-pack-sql", "version": "1.2.0" },
     { "path": "packs/acme" }
   ]
@@ -114,9 +115,12 @@ runs the same rules ([design](repository-packs.md)):
 
 - **`id` and `version`**: a published pack, by Rerail pack id or any pack's package name, at one exact version.
 - **`path`**: a pack kept in the repository, its folder relative to the repository's root.
+- **`folders`** (optional, on either kind): the folders the pack judges, relative to the repository's root. Left out,
+  the pack judges the whole repository.
 
-With the file, the scan runs exactly those packs, each starting with its own `on` and `mode`, and the tree's own
-rules. Your Rerail home's installed packs, attachments and rule settings are not used; its approvals are.
+With the file, the scan runs exactly those packs, each in its folders and starting with its own `on` and `mode`, and
+the tree's own rules. Your Rerail home's installed packs, attachments and rule settings are not used; its approvals
+are.
 
 <details>
 <summary>How listed packs are read, fetched and checked</summary>
@@ -124,12 +128,14 @@ rules. Your Rerail home's installed packs, attachments and rule settings are not
 - **Fetched for the scan.** Each published pack is installed with npm at exactly its version into the scan's own
   temporary folder (no install scripts, npm's cache first), never into the Rerail home. A pack npm cannot give fails the
   scan with npm's reason.
-- **Read from the tree.** A `path` pack comes from the working tree, or from the `--rules-ref` commit with the file
-  itself; its path must stay inside the repository, with no `..`, absolute path or symbolic link on the way.
+- **Read from the tree.** A `path` pack and every listed folder come from the working tree, or from the `--rules-ref`
+  commit with the file itself. Each must be a folder of that tree inside the repository, with no `..`, absolute path or
+  symbolic link on the way; a listed folder that is not there fails the scan rather than judging nothing.
 - **Every listed pack must run.** One the catalog leaves out (its core range, a clash with another listed pack, a rule
   that does not compile) fails the scan, naming it and why.
-- **A bad file fails the scan**, saying what is wrong: not JSON, a repeated key, a `format` other than
-  `rerail.packs/v1`, a key the format does not define, a version that is a range or tag, or a pack listed twice.
+- **A bad file fails the scan**, saying what is wrong: not JSON, a repeated key, a `schema` other than
+  `rerail.packs/1`, a key the format does not define, a version that is a range or tag, a pack listed twice, or
+  `folders` that are empty or repeat a folder.
 - **Approval.** A `path` pack counts as installed from a folder: it runs in Log until a person approves that content
   (`rerail rules approve <package> --repo <checkout>`, which lists it), even when its `package.json` names
   `@neralabs`. A third party's published pack waits for approval as it does installed; Rerail's own need none.
@@ -188,6 +194,7 @@ rerail scan --repo ./head --scope git-diff --base origin/main --rules-ref origin
   "rulesSource": { "kind": "home" } | { "kind": "worktree" } | { "kind": "ref", "ref": "origin/main" } | null,
   "packs": [                             // the rule packs it ran, besides the tree's own rules
     { "id": "complexity", "packageName": "@neralabs/rerail-pack-complexity", "version": "0.1.8", "from": "npm" | "home" },
+    { "id": "typescript", "packageName": "@neralabs/rerail-pack-typescript", "version": "0.1.8", "from": "npm", "folders": ["web"] },
     { "id": "acme", "packageName": "@acme/rerail-pack-acme", "version": "1.0.0", "from": "repository", "path": "packs/acme" }
   ],
   "status": "completed" | "failed",
@@ -210,7 +217,8 @@ rerail scan --repo ./head --scope git-diff --base origin/main --rules-ref origin
 - **`payloadHash`**: digest of the exact rule text that produced the finding.
 - **`fingerprint`**: stable across scans, so you can tell new findings from existing ones.
 - **`packs`**: `npm` and `repository` for packs `.rerail/packs.json` lists, `home` for the home's installed packs that
-  ran (its configuration, or `--pack`). Each rule's `source.packId` names its pack.
+  ran (its configuration, or `--pack`); `folders` when the file keeps a pack to some folders. Each rule's
+  `source.packId` names its pack.
 - **`failures`**: execution failures and coverage gaps, as an audit records them ([reference](reference.md#scan-and-settings-controls)).
   The scan adds its own: `rule-left-out` for a rule file at `--rules-ref` that does not load, and
   `checkout-not-audited` for each checkout it meant to audit, when it had files to scan and no audit ran.

@@ -10,9 +10,11 @@ import { basename, isAbsolute, join, relative } from "node:path";
 import type { RuleCatalog } from "../engine/catalog/repository-model.js";
 import { activeCoreVersion, installedPacksPrefix } from "../engine/catalog/rule-catalog.js";
 import {
+  checkPackFolders,
   declaredPackCatalog,
   declaredPackLabel,
   MAX_PACKS_FILE_BYTES,
+  packAttachmentFolders,
   PACKS_FILE,
   PacksFileError,
   parsePacksFile,
@@ -37,6 +39,14 @@ export interface ScanPack {
    */
   readonly from: "npm" | "repository" | "home";
   readonly path?: string;
+  /** The folders `.rerail/packs.json` gives it; absent when it judges the whole repository. */
+  readonly folders?: readonly string[];
+}
+
+/** Where a scan attaches one of its packs: the whole repository (`""`) or one folder. */
+export interface ScanPackAttachment {
+  readonly packId: string;
+  readonly folder: string;
 }
 
 /** The packs a tree declares, and how messages name the file they came from. */
@@ -48,10 +58,14 @@ export interface DeclaredPacks {
   readonly commit?: string;
 }
 
-/** The catalog a scan runs on when the repository declares its packs, and those packs as the report names them. */
+/**
+ * The catalog a scan runs on when the repository declares its packs, those packs as the report names them, and where
+ * each is attached.
+ */
 export interface DeclaredScanPacks {
   readonly catalog: RuleCatalog;
   readonly packs: readonly ScanPack[];
+  readonly attachments: readonly ScanPackAttachment[];
 }
 
 /** A file of a pack at a ref larger than this is left out, and the pack then fails to load with why. */
@@ -156,7 +170,20 @@ function loadedPack(catalog: RuleCatalog, entry: DeclaredPackDirectory): ScanPac
     packageName: found.packageName,
     version: found.version,
     ...(pack.kind === "published" ? { from: "npm" as const } : { from: "repository" as const, path: pack.path }),
+    ...(pack.folders === undefined ? {} : { folders: pack.folders }),
   };
+}
+
+/**
+ * Checks that every folder `pack` names is a folder at `commit`: each part of its path a tree, so a symbolic link on
+ * the way (a blob) or a missing folder is refused, as in a working tree.
+ */
+function checkPackFoldersAtCommit(root: string, commit: string, label: string, pack: DeclaredPack): void {
+  for (const folder of pack.folders ?? []) {
+    const parts = folder.split("/");
+    const inTree = parts.every((_, index) => gitOutput(root, ["cat-file", "-t", `${commit}:${parts.slice(0, index + 1).join("/")}`])?.trim() === "tree");
+    if (!inTree) throw new PacksFileError(`${label} lists the folder ${folder} for ${declaredPackLabel(pack)}, which is not a folder at that commit`);
+  }
 }
 
 /**
@@ -167,6 +194,10 @@ function loadedPack(catalog: RuleCatalog, entry: DeclaredPackDirectory): ScanPac
 export async function declaredScanPacks(
   root: string, declared: DeclaredPacks, scratch: string, storeOf: (home: string) => PackStore = npmPackStore,
 ): Promise<DeclaredScanPacks> {
+  for (const pack of declared.packs) {
+    if (declared.commit === undefined) checkPackFolders(root, pack);
+    else checkPackFoldersAtCommit(root, declared.commit, declared.label, pack);
+  }
   const published = await installPublished(declared.packs.filter((pack): pack is PublishedPack => pack.kind === "published"), scratch, declared.label, storeOf);
   const directories: DeclaredPackDirectory[] = [];
   for (const [index, pack] of declared.packs.entries()) {
@@ -183,13 +214,17 @@ export async function declaredScanPacks(
   const catalog = declaredPackCatalog(directories, { coreVersion: activeCoreVersion(), compile: true });
   const problems: string[] = [];
   const packs: ScanPack[] = [];
+  const attachments: ScanPackAttachment[] = [];
   for (const entry of directories) {
     const loaded = loadedPack(catalog, entry);
     const skipped = catalog.skipped.find(left => left.path === entry.directory);
     if (loaded === undefined) problems.push(`${declaredPackLabel(entry.pack)}: ${skipped?.reason ?? "it did not load"}`);
     else if (entry.pack.kind === "published" && loaded.version !== entry.pack.version) problems.push(`${declaredPackLabel(entry.pack)}: npm installed ${loaded.version ?? "no version"}`);
-    else packs.push(loaded);
+    else {
+      packs.push(loaded);
+      for (const folder of packAttachmentFolders(entry.pack)) attachments.push({ packId: loaded.id, folder });
+    }
   }
   if (problems.length > 0) throw new Error(`${declared.label} lists packs that do not run: ${problems.join("; ")}`);
-  return { catalog, packs };
+  return { catalog, packs, attachments };
 }

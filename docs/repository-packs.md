@@ -1,7 +1,7 @@
 # Rule packs declared in the repository
 
-Status: a design for the Rerail owners to react to. In internal testing, `rerail scan` reads the file as described
-here (`src/engine/catalog/packs-file/`, `src/cli/scan-packs.ts`); sessions do not read it yet.
+Status: the design the Rerail owners settled in review. In internal testing, `rerail scan` reads the file as described
+here (`src/engine/catalog/packs-file/`, `src/cli/scan-packs.ts`); sessions do not read it yet (a later change, below).
 
 ## Problem
 
@@ -21,9 +21,10 @@ the packs.
 
 ```json
 {
-  "format": "rerail.packs/v1",
+  "schema": "rerail.packs/1",
   "packs": [
     { "id": "complexity", "version": "0.1.8" },
+    { "id": "typescript", "version": "0.1.8", "folders": ["web", "admin"] },
     { "id": "@acme/rerail-pack-sql", "version": "1.2.0" },
     { "path": "packs/rerail" }
   ]
@@ -37,36 +38,45 @@ the packs.
 - **`path`**: a pack kept in the repository, a folder holding `pack.json` (and optionally `package.json`), relative to
   the repository's root. It must stay inside the repository; a path with `..`, an absolute path or a symbolic link on
   the way is refused.
+- **`folders`** (optional, on either kind): the folders the pack judges, each relative to the repository's root, as
+  set-up's folder attachments are (the TypeScript pack on `web` only). Each follows the rules of `path`: inside the
+  repository, no `..`, no absolute path, no symbolic link on the way, and a folder of the scanned tree. Left out, the
+  pack judges the whole repository. A list keeps one entry per pack, so "names a pack twice" and one version per pack
+  stand as written.
 - **No file**: nothing changes. A scan and a session choose packs as they do today (below).
 
-Each entry names one pack for the whole repository. The file is refused, with the reason, when it is not JSON, has a
-key it does not define, names a pack twice, or gives a published pack no exact version.
+The file is refused, with the reason, when it is not JSON, has a key it does not define, names a pack twice, gives a
+published pack no exact version, or lists a folder that is empty, repeated, outside the repository or not a folder.
 
 <details>
-<summary>Why this shape, and what changed from the first proposal</summary>
+<summary>Why this shape</summary>
 
-- `format` and `/v1`, not `schema` and `/1`: the documents people write for Rerail say what they are with `format`
-  (`rerail.rule-pack/v1` in `pack.json`, `rerail.policy/v1` in a rule document). `schema: "rerail.scan/1"` is the
-  scan's output.
+- `schema` and `rerail.packs/1`: the shape repositories already commit (this one's own `.rerail/packs.json` among
+  them) and a scanner outside Rerail already reads. Rerail takes that spelling and no other, so nothing already in
+  use changes.
+- `folders` is optional, so every file written before it keeps its meaning: each pack judges the whole repository. A
+  reader that predates `folders` and ignores it runs such a pack on the whole repository, wider than the file says.
 - `id` takes a package name as well as an id, as `rerail packs add` and `--pack` do: a third party's pack has no
   short id of its own, and a Rerail pack id is its package name's short form.
-- No `folder` per entry yet. A session's attachments can add a pack to one folder (set-up adds a TypeScript pack to
-  `web/` when only `web/` has TypeScript); the file adds every pack to the whole repository. A pack's own `match` and
-  each rule's `scope` already keep its rules to the files they read. Adding `"folder"` later is a compatible change.
+- `folders` is in the first version rather than later: without it the file cannot say what set-up writes today, and a
+  repository moving to the file would have its packs widened to the whole repository, with new findings in folders
+  never checked on the day it adopts the file. A pack's `match` and each rule's `scope` cannot say "this pack judges
+  `web` and not `legacy`" when both hold the same language.
 
 </details>
 
 ## `rerail scan` reads it
 
-**One commit decides.** The scan reads its rules from one tree: `.rerail/rules/`, `.rerail/packs.json` and every
-`path` pack the file lists come from the working tree, or, with `--rules-ref <ref>`, all three from that ref. A change
-under review can then add, remove or edit neither a pack nor a rule that judges it.
+**One commit decides.** The scan reads its rules from one tree: `.rerail/rules/`, `.rerail/packs.json`, every `path`
+pack and every folder the file lists come from the working tree, or, with `--rules-ref <ref>`, all from that ref. A
+change under review can then add, remove, edit or widen neither a pack nor a rule that judges it.
 
 **The file replaces the machine's choice.** When the file exists, the scan always uses a throwaway configuration: the
-file's packs and the tree's own rules, each starting with its pack's `on` and `mode`. The home's attachments and rule
-settings are not used, even where Rerail is set up in the checkout. The home's approvals are, exactly as today
-([Approval](#approval)). Without the file, the scan is what it is today: the home's configuration when Rerail is set
-up there, else the tree's rules plus each `--pack`.
+file's packs, each attached at its `folders` or the whole repository, and the tree's own rules, each rule starting
+with its pack's `on` and `mode`. The home's attachments and rule settings are not used, even where Rerail is set up in
+the checkout, so a developer's local scan reproduces CI exactly. The home's approvals are, exactly as today
+([Approval](#approval)). Without the file, the scan is what it is today: the home's configuration when Rerail is set up
+there, else the tree's rules plus each `--pack`.
 
 **Published packs are fetched at their version for the scan.** Each is installed with npm, at exactly the version the
 file names, into the scan's own temporary folder, as set-up's staging install does: `--ignore-scripts`, no lockfile,
@@ -76,34 +86,40 @@ machine, and a pack linked there from a folder can be edited in place. Nothing e
 session's packs are untouched.
 
 **A listed pack that does not run fails the scan.** A pack npm cannot give (no such version, no read access, registry
-unreachable), a `path` that is not a pack, or a pack the catalog leaves out (its core range, a clash, a rule that does
-not compile) is an error naming the pack and why, exit `1`, never a scan that passes with its rules missing. That is
-how `--pack` treats a pack that is not installed today.
+unreachable), a `path` that is not a pack, a listed folder that is not a folder of the scanned tree, or a pack the
+catalog leaves out (its core range, a clash, a rule that does not compile) is an error naming the pack and why, exit
+`1`, never a scan that passes with its rules missing. That is how `--pack` treats a pack that is not installed today.
 
-**`--pack` is refused when the file exists.** `rerail scan --pack x` there fails: `this repository lists its packs in
-.rerail/packs.json; add x there`. Adding on top would let a CI job's command line run rules the repository does not
-declare, which is the drift the file removes; a pack to try out is one line in the file on a branch. Without the
-file, `--pack` works as it does today.
+**`--pack` is refused when the file exists** (settled in review). `rerail scan --pack x` there fails: `this repository
+lists its packs in .rerail/packs.json; add x there`. `--pack` names no version, so adding it on top would mix the
+home's installed version with the file's pinned ones, and let a CI job's command line run rules the repository does
+not declare. Refusing is also the choice that can be loosened later without breaking anyone. Without the file,
+`--pack` works as it does today.
 
 **The report names the packs.** `rerail.scan/1` gains a field, which its contract allows: `packs`, each pack the scan
-ran with its `id`, `packageName`, `version` and `from` (`npm`, `repository` with its `path`, or `home` for one from the
-home's configuration or `--pack`). Every rule keeps `source.packId`, so each finding still names its pack.
+ran with its `id`, `packageName`, `version`, `from` (`npm`, `repository` with its `path`, or `home` for one from the
+home's configuration or `--pack`) and its `folders` when the file gives them. Every rule keeps `source.packId`, so
+each finding still names its pack.
 
 ## A session on a developer's machine reads it
 
 A session in a started, set-up checkout whose tree has `.rerail/packs.json` runs the file's packs:
 
-- **Attachments.** The file's packs are the repository's pack attachments for that checkout, for the whole
-  repository, the way `.rerail/rules/` is attached without a row today. The database's pack attachments for that
-  repository are not used while the file exists. Rule settings, library rules and approvals still apply by id, as
-  they do across a pack upgrade.
+- **Attachments.** The file's packs are the repository's pack attachments for that checkout, at their `folders` or
+  the whole repository, the way `.rerail/rules/` is attached without a row today. The database's pack attachments for
+  that repository are not used while the file exists. Rule settings, library rules and approvals still apply by id,
+  as they do across a pack upgrade.
 - **`path` packs** are read from the checkout's working tree, as `.rerail/rules/` is, and seen at the next event after
   an edit.
 - **Published packs** come from a store of exact versions in the Rerail home (`$RERAIL_HOME/pack-versions/`, one
-  folder per package and version), so two repositories that list different versions of one pack each run theirs. A
-  person fills it: `rerail packs add --repo <dir>` installs what the checkout's file lists, and set-up and
-  `rerail start` offer to. The daemon never fetches by itself because a branch changed a file. A listed version not in
-  the store is reported where a missing attachment is today (`rerail status`, the dashboard), and the other packs run.
+  folder per package and version), so two repositories that list different versions of one pack each run theirs.
+- **Who fetches them** (settled in review). The daemon fetches a listed version of Rerail's own packs
+  (`@neralabs/*`) into the store by itself, since they already run without approval: a branch that bumps one runs the
+  same rules in a session as in CI. A third party's pack still waits for a person: `rerail packs add --repo <dir>`
+  installs what the checkout's file lists, and set-up and `rerail start` offer to. So no branch, including someone
+  else's pull request, makes the daemon run an npm install of a third party's package with the developer's login. A
+  listed version not in the store is reported where a missing attachment is today (`rerail status`, the dashboard),
+  and the other packs run.
 - **Dashboard and API.** While the file exists, adding or removing a pack for the repository is refused with
   `this repository lists its packs in .rerail/packs.json`; turning rules on or off and their modes work as today.
 
@@ -127,29 +143,37 @@ Content no one approved on this machine runs in Log, exactly as today, and nothi
 ## What it changes for existing installations
 
 Nothing without the file. A repository that adds it changes what its scans run, and once sessions read it, what its
-sessions run; its database attachments stay and apply again if the file is removed. Rule settings stay in the
-database; moving them into `.rerail` is a separate decision.
+sessions run; its database attachments stay and apply again if the file is removed. Files already committed in the
+`rerail.packs/1` shape keep working unchanged: `folders` is optional, and without it a pack judges the whole
+repository, as before.
+
+Rule settings stay in the database, and a scan with the file does not use them: every listed pack runs at its own
+starting `on` and `mode`, so the only way past one noisy rule in CI is dropping its pack. Moving rule settings into
+`.rerail` is therefore the next step after this one, so that a repository's tuning reaches every machine as its packs
+do.
 
 ## The change
 
-Behind `RERAIL_EXPERIMENTAL_HEADLESS_SCAN`, the switch `rerail scan` already needs; read by the daemon for sessions.
+Behind `RERAIL_EXPERIMENTAL_HEADLESS_SCAN`, the switch `rerail scan` already needs.
 
 1. This note.
-2. `rerail scan` reads the file as above, with tests: two fresh Rerail homes scanning the same commit run the same
-   rules; changing the file changes the next scan's rules; a file that cannot be parsed is a clear error; the report
-   names every rule's pack.
+2. `rerail scan` reads the file as above, `folders` included, with tests: two fresh Rerail homes scanning the same
+   commit run the same rules; changing the file changes the next scan's rules; a file that cannot be parsed is a clear
+   error; the report names every rule's pack; a pack with `folders` judges only those folders; this repository's own
+   committed file reads as it is.
 3. `rerail rules approve` lists a checkout's `path` packs.
 4. Docs ([headless scan](headless-scan.md), [rule packs](rule-packs.md), [internal testing](internal-testing.md)) and a
    changelog entry.
 
-A session reading the file (above) needs the version store, the daemon's catalog per checkout and the dashboard's
-refusal: its own pull request, after this one.
+Next, each its own pull request: sessions reading the file (the version store, the daemon's catalog per checkout, its
+fetching of `@neralabs/*` packs, the dashboard's refusal), then rule settings in `.rerail`.
 
-## Questions for the owners
+## Decisions
 
-- `--pack` when the file exists: refused (proposed) or added on top?
-- Sessions: the daemon never fetches a listed pack by itself (proposed), or does once a person has started Rerail in
-  the checkout?
-- `folder` per entry: needed in v1, or later?
-- A scan with the file ignores the home's rule settings (proposed), so tuning made on one machine does not reach CI.
-  Is that the intent until settings move into `.rerail` too?
+Settled in review of the first draft:
+
+- `--pack` when the file exists: refused.
+- Sessions: the daemon fetches Rerail's own `@neralabs/*` packs by itself; a third party's pack waits for a person.
+- `folders` per entry: in the first version, optional.
+- A scan with the file ignores the home's rule settings; moving rule settings into `.rerail` is the next step.
+- The file keeps the `schema: "rerail.packs/1"` shape already in use.

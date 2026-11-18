@@ -82,7 +82,7 @@ const npm = registry({ "@neralabs/rerail-pack-needles@1.0.0": ONE, "@neralabs/re
 
 function writePacksFile(root: string, packs: unknown): void {
   mkdirSync(join(root, ".rerail"), { recursive: true });
-  writeFileSync(join(root, ".rerail", "packs.json"), typeof packs === "string" ? packs : JSON.stringify({ format: "rerail.packs/v1", packs }));
+  writeFileSync(join(root, ".rerail", "packs.json"), typeof packs === "string" ? packs : JSON.stringify({ schema: "rerail.packs/1", packs }));
 }
 
 /**
@@ -201,14 +201,47 @@ describe("rerail scan with the packs a repository declares in .rerail/packs.json
   it("refuses a file that cannot be parsed, saying what is wrong", async () => {
     const root = checkout();
     const home = freshHome();
-    writePacksFile(root, "{ \"format\": \"rerail.packs/v1\", \"packs\": [");
+    writePacksFile(root, "{ \"schema\": \"rerail.packs/1\", \"packs\": [");
     await expect(scanIn(home, root)).rejects.toThrow(".rerail/packs.json is not valid JSON");
     writePacksFile(root, [{ id: "needles", version: "^1.0.0" }]);
     await expect(scanIn(home, root)).rejects.toThrow(".rerail/packs.json packs[0].version must be one exact version, such as 1.4.0, not \"^1.0.0\"");
     writePacksFile(root, [{ path: "../elsewhere" }]);
     await expect(scanIn(home, root)).rejects.toThrow("packs[0].path \"../elsewhere\" must name a folder inside the repository");
-    writePacksFile(root, JSON.stringify({ format: "rerail.packs/v2", packs: [] }));
-    await expect(scanIn(home, root)).rejects.toThrow(".rerail/packs.json is not a rerail.packs/v1 document: format:");
+    writePacksFile(root, JSON.stringify({ schema: "rerail.packs/2", packs: [] }));
+    await expect(scanIn(home, root)).rejects.toThrow(".rerail/packs.json is not a rerail.packs/1 document: schema:");
+  });
+
+  it("runs a pack with folders only in those folders, in the working tree and at --rules-ref", async () => {
+    const root = checkout();
+    const home = freshHome();
+    for (const at of ["web", "legacy"]) {
+      mkdirSync(join(root, at));
+      writeFileSync(join(root, at, "a.py"), "a = ALPHA\n");
+    }
+    writePacksFile(root, [{ id: "needles", version: "1.0.0", folders: ["web"] }]);
+    git(root, "add", ".");
+    git(root, "commit", "--quiet", "-m", "needles in web only");
+
+    const scanned = await scanIn(home, root);
+    expect(scanned.status).toBe("completed");
+    expect(scanned.packs).toEqual([{ id: "needles", packageName: "@neralabs/rerail-pack-needles", version: "1.0.0", from: "npm", folders: ["web"] }]);
+    expect(scanned.violations.map(violation => violation.path)).toEqual(["web/a.py"]);
+
+    // The same commit judged with its own file at a ref, while the working tree widens the pack: the ref's folders win.
+    writePacksFile(root, [{ id: "needles", version: "1.0.0" }]);
+    const atRef = await scanIn(home, root, { rulesRef: "HEAD" });
+    expect(atRef.violations.map(violation => violation.path)).toEqual(["web/a.py"]);
+    const widened = await scanIn(home, root);
+    expect(widened.violations.map(violation => violation.path).sort()).toEqual(["a.py", "legacy/a.py", "web/a.py"]);
+  });
+
+  it("refuses a folder that is not in the scan's tree rather than scanning a pack that judges nothing", async () => {
+    const root = checkout();
+    writePacksFile(root, [{ id: "needles", version: "1.0.0", folders: ["web"] }]);
+    await expect(scanIn(freshHome(), root)).rejects.toThrow(".rerail/packs.json lists the folder web for @neralabs/rerail-pack-needles@1.0.0, which is not in the repository");
+    git(root, "add", ".");
+    git(root, "commit", "--quiet", "-m", "web listed, not added");
+    await expect(scanIn(freshHome(), root, { rulesRef: "HEAD" })).rejects.toThrow("HEAD:.rerail/packs.json lists the folder web for @neralabs/rerail-pack-needles@1.0.0, which is not a folder at that commit");
   });
 
   it("fails rather than scanning without a listed pack npm cannot give", async () => {
