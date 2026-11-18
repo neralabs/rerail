@@ -1622,7 +1622,9 @@ whose offset word was data. Both runs saw a relation's descriptor overwritten wi
   below `ncols`, at the column's width, and otherwise counts `needed`. A batch whose kernels counted one fails,
   naming the relation (`a device batch refused: … (Q125)`), and its strata run on the CPU.
 - Runs: 180 clean with the diagnostic engine (the descriptor compared when an index is marked built); with `rows_put`, 179 of 180 clean (no refusal, no panic, 1,629 findings each), and one killed at the 300 s cap with
-  no output (Q127), three at a time, on 2026-11-18.
+  no output (Q127), three at a time, on 2026-11-18. 180 more: 174 clean, none refused, and 6 failed in the same
+  seconds when the disk filled (the store's writes: "database or disk is full"), not the engine's work. So 353 of
+  360 runs clean with `rows_put`, against 1 to 2 in 150 lost before it.
 - **Open**: which host sizing gives a relation more rows than its chunks. A refusal will name it; none seen yet.
 
 ### Q126. Source reads at a node's span, held to the source (0403's open part) — done 2026-11-18
@@ -1639,7 +1641,8 @@ The header's length is checked against the held source when a document is made r
 Of 180 hogql 16z cold runs on Metal (2026-11-18, three at a time, load about 50), one ran to the 300 s cap with
 nothing in its log, between two warm runs of 4 s. Two cold runs before had waited about 3 minutes on the Metal
 compiler service (`xpc_connection_send_message_with_reply_sync`), then finished. This one was not cold. It was not
-sampled. `tmp/gpu/q36/hang127.sh` samples any run still going at 90 s, beside the loops.
+sampled. `tmp/gpu/q36/hang127.sh` samples any run still going at 90 s, beside the loops (its first run read no
+elapsed time: macOS's `ps` has no `etimes`; it reads `etime` now). 180 more runs had no hang.
 
 - **Do**: from a sample, name where it waits (a GPU hang, a compile, or a lock), then fix it at its cause.
 - **Done when**: 180 runs, three at a time, have none past 60 s.
