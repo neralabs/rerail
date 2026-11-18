@@ -791,3 +791,51 @@ fn a_cores_rate_is_fitted_net_of_the_load_it_ran_under() {
     let wall = prices.wall(&k, Lane::Cpu).unwrap();
     assert!((wall - (fixed.launch + 1e-8 * 1e6)).abs() < 1e-9, "the unloaded rate: {wall}");
 }
+
+/// Launches of one size cannot tell a rate's slope. The cores' matcher waves at s1000 ran six small launches first
+/// (6.7e4–8.3e4 units), whose line had a slope of about nothing: a wave 80 times larger was priced at 6.5 ms and took
+/// 200. Past the samples' reach (`SPREAD`), a price runs from what was measured at the largest sample, with the
+/// prior's slope or that sample's own rate a unit, the less.
+#[test]
+fn a_rate_past_its_samples_takes_the_priors_slope() {
+    use rerail_accel::price::{Prices, RUN_MIN_SAMPLES, learned_rates, observe};
+    let prices = Prices::default();
+    let fixed = prices.fixed[Lane::Cpu.index()];
+    // Small launches at 1e-8 s a unit, with noise that leaves their line flat: 0.7 to 0.8 ms each.
+    let small = [(7.0e4, 7.6e-4), (7.5e4, 7.0e-4), (8.0e4, 7.4e-4), (7.2e4, 7.8e-4), (7.8e4, 7.2e-4)];
+    for (units, busy) in small.iter().take(RUN_MIN_SAMPLES.max(4)) {
+        observe(Lane::Cpu, "a test's program", 1, *units, fixed.submission + fixed.launch + busy, 0.0, 1.0, false, true);
+    }
+    let rate = learned_rates().into_iter().find(|l| l.name == "a test's program" && l.lane == Lane::Cpu).expect("a rate");
+    assert!(!rate.spread && rate.largest == 8e4, "the samples span under SPREAD: {rate:?}");
+    // A prior steeper than the samples: the samples' own rate a unit, about 1e-8, through the origin.
+    let k = program(6e6, Some(4e-8), None);
+    let wall = prices.wall(&k, Lane::Cpu).unwrap() - fixed.launch;
+    assert!((wall - 6e6 * 1e-8).abs() < 0.2 * 6e-2, "the samples' rate: {wall}");
+    // A prior gentler than the samples: the fixed part the samples leave over the prior's slope, then that slope.
+    let k = program(6e6, Some(2e-9), None);
+    let wall = prices.wall(&k, Lane::Cpu).unwrap() - fixed.launch;
+    let want = (7.6e-4 - 2e-9 * 8e4) + 2e-9 * 6e6;
+    assert!((wall - want).abs() < 0.1 * want, "the prior's slope past the anchor: {wall} against {want}");
+}
+
+/// A line of launches that spread prices up to `SPREAD` times its largest; past that, a launch far larger than any
+/// sample grows from the largest by the prior's slope where the line's is steeper (the GPU's first small waves).
+#[test]
+fn a_spread_line_prices_within_its_reach() {
+    use rerail_accel::price::{Prices, RUN_MIN_SAMPLES, SPREAD, observe};
+    let prices = Prices::default();
+    let fixed = prices.fixed[Lane::Cpu.index()];
+    // 1 ms a launch and 3e-8 s a unit, from 5e4 to 1.5e5 units.
+    let units = [5e4, 7.5e4, 1e5, 1.25e5, 1.5e5];
+    for u in units.iter().take(RUN_MIN_SAMPLES.max(5)) {
+        observe(Lane::Cpu, "a test's program", 1, *u, fixed.submission + fixed.launch + 1e-3 + 3e-8 * u, 0.0, 1.0, false, true);
+    }
+    let within = prices.wall(&program(SPREAD * 1.5e5, Some(1e-8), None), Lane::Cpu).unwrap() - fixed.launch;
+    let want = 1e-3 + 3e-8 * SPREAD * 1.5e5;
+    assert!((within - want).abs() < 1e-6, "within reach, the line: {within} against {want}");
+    // Far past it: from the largest sample (5.5 ms) by the prior's 1e-8 a unit.
+    let far = prices.wall(&program(3e7, Some(1e-8), None), Lane::Cpu).unwrap() - fixed.launch;
+    let want = (1e-3 + 3e-8 * 1.5e5 - 1e-8 * 1.5e5) + 1e-8 * 3e7;
+    assert!((far - want).abs() < 1e-6, "past reach, the prior's slope: {far} against {want}");
+}

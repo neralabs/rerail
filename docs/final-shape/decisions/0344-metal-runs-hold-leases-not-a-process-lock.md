@@ -46,6 +46,21 @@ s1000 internal_dead_code, the wave pinned to the GPU:
 - 19 wave batches began, 8 of them while another ran, with the same 0 findings.
 - The machine's load was 54–91 during these runs, too high to time the overlap. The timing is still open.
 
+The overlap's timing (2026-11-17, 0373's engine). `RERAIL_GPU_OVERLAP=off` runs each batch of programs as it
+begins, for this comparison. The runs used an M3 Max with the wave pinned to the GPU, at s1000, with on and off in
+turn, 4 runs each. A quiet machine was not to be had: the M3's load was 67–72 on 16 cores, and this M5 Max's 64–71,
+where run walls swung from 3.5 to 13.4 s.
+
+| M3 Max | Overlap on | Overlap off |
+|---|---|---|
+| Run wall | 5.35–6.61 s (mean 5.91) | 5.59–6.45 s (mean 6.03) |
+| Matcher waves, the executor's wall | 1.32–1.92 s (mean 1.70) | 1.74–2.21 s (mean 1.90) |
+| Jobs' wait in the GPU lane's queue | 0.28–0.47 s | 0.60–0.85 s |
+| Batches begun beside another | 1–11 of 16–18 | 0 |
+
+The findings and the peak memory (934–978 MB) are the same. The overlap halves the GPU lane's queueing and takes
+about a tenth off the waves' wall. That is 0.2 s of a 6 s run, inside the run-to-run noise at this load.
+
 ## Consequences
 
 - Two waves' buffers can be live at once. The peak was 925 MB against 906–956 MB before, within the 1 GB line.

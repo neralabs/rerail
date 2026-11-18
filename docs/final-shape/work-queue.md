@@ -1374,9 +1374,16 @@ transducer crate, which the engine's `waves::matches` test calls; now `pub`). Co
       each a robust line: a launch's fixed cost plus a unit's. The wave on the GPU: about 6 ms + 1.1–2.0e-8 s a unit of
       wall, 4.3 ms + 4e-9 s of host CPU. The cores' samples are fitted net of their load, and the lane's host ratio
       no longer scales a learned host price. The wave's priors are today's measurements.
-    - **Open**: with two waves in flight, a launch's wall includes the time it shares the device, so the per-launch
-      estimates sum past the lane's span (2.36 s against 1.00 s pinned). Placement still treats the GPU lane as one
-      queue, so an unpinned run sent 10 of 20 waves to the cores while the GPU lane looked busy.
+    - **The price of overlapped waves** (0373, 2026-11-17). With two waves in flight, a launch's wall included the
+      time it shared the device, so the estimates summed past the lane's span (2.36 s against 1.00 s pinned). A
+      device job is now charged its share of the lane (`share_clock`). Also, a line from the first small waves was
+      stretched to waves 400× larger; it now prices only within 2× of its largest sample, and past that takes the
+      prior's slope (`SPREAD`).
+      - Unpinned s1000: the large waves stayed on the GPU in 3 of 3 runs, at 11.0–12.2 s CPU and 3.1–3.7 s wall.
+        Before, 2 of 4 runs sent them to the cores (2.7–3.2 s of wall there).
+      - The overlap's timing (0344's Measured section). On an M3 Max at load 67–72 with no quiet host to be had,
+        `RERAIL_GPU_OVERLAP=off` against on, 4 runs each: the wave executor's wall went 1.90 → 1.70 s and the GPU
+        lane's queueing 0.60–0.85 → 0.28–0.47 s. The run's wall is the same within the noise (6.03 → 5.91 s).
 - **Two blockers to the overlap, found** (both resolved by 0344: no lock, and no begin/finish split of the label
   passes; a program's whole run is the spawned submission):
   - `rerail_metal::metal_execution_guard` (a process-wide lock from the grid's launch budget, copied from Tempo)

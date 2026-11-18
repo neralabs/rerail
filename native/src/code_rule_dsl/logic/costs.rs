@@ -662,9 +662,10 @@ pub fn summary() -> String {
     }
     for l in rerail_accel::price::learned_rates() {
         let from = if l.this_run { "this run's" } else { "stored" };
+        let reach = if l.spread { format!("to {:.1e} units", rerail_accel::price::SPREAD * l.largest) } else { "unspread".to_owned() };
         s.push_str(&format!(
-            "  {:<4} {:<28} wall {:>9.3} ms a launch + {:>10.3e} s a unit; host CPU {:>9.3} ms + {:>10.3e} s  ({} {from} samples)\n",
-            l.lane.name(), l.name, l.per_launch * 1e3, l.per_unit, l.host_per_launch * 1e3, l.host_per_unit, l.samples
+            "  {:<4} {:<28} wall {:>9.3} ms a launch + {:>10.3e} s a unit; host CPU {:>9.3} ms + {:>10.3e} s  ({} {from} samples, largest {:.1e}: {reach})\n",
+            l.lane.name(), l.name, l.per_launch * 1e3, l.per_unit, l.host_per_launch * 1e3, l.host_per_unit, l.samples, l.largest
         ));
     }
     s

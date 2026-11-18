@@ -229,7 +229,7 @@ impl Backend for GpuBackend {
         // A batch of programs: each submits its own command buffers and waits for them, so it runs on the lanes'
         // pool while the worker begins the next submission. One program's host part then runs beside another's on
         // the device; each holds its own device memory (decision 0344: leases, no process-wide lock).
-        if !ks.is_empty() && ks.iter().all(|k| matches!(k, Kernel::Program(_))) {
+        if overlap() && !ks.is_empty() && ks.iter().all(|k| matches!(k, Kernel::Program(_))) {
             let programs: Vec<_> = ks.iter().map(|k| match k {
                 Kernel::Program(p) => Arc::clone(&p.0),
                 _ => unreachable!("a program"),
@@ -277,6 +277,13 @@ impl crate::exec::Pending for space::Started {
     fn finish(self: Box<Self>) -> Result<Vec<Output>, String> {
         objc::rc::autoreleasepool(|| space::Started::finish(*self))
     }
+}
+
+/// Whether a batch of programs runs beside the one before (0344): on unless `RERAIL_GPU_OVERLAP=off`, which runs
+/// each as it begins on the lane's worker, to time what the overlap gives.
+fn overlap() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("RERAIL_GPU_OVERLAP").as_deref() != Ok("off"))
 }
 
 /// A submission that ran as it began.
