@@ -560,6 +560,30 @@ impl Builder<'_> {
             .collect();
         self.set_about_rows("answer", rows);
     }
+    /// States the request record (`Program::asked_by`, `Version::asked`): each request relation's rules, in order, each
+    /// with the relations whose readers it serves. Replaces the program's.
+    pub fn set_asked(&mut self, asked: &Asked) {
+        let p = program_cell(self);
+        let mut rows = Vec::new();
+        for (req, by) in asked {
+            for (k, readers) in by.iter().enumerate() {
+                for b in readers {
+                    rows.push(vec![p, Cell::Str(self.atom(req)), Cell::Int(k as i64), Cell::Str(self.atom(b))]);
+                }
+            }
+        }
+        self.set_about_rows("asked", rows);
+    }
+    /// Keeps the request record (`asked`) of the request relations `keep` takes: a part's, of the relations whose
+    /// rules it holds.
+    pub fn keep_asked(&mut self, keep: &dyn Fn(&str) -> bool) {
+        let rows = self.about_rows("asked");
+        let n = rows.len();
+        let kept: Vec<Vec<Cell>> = rows.into_iter().filter(|r| !matches!(r.get(1), Some(&Cell::Str(a)) if !keep(self.text(a)))).collect();
+        if kept.len() != n {
+            self.set_about_rows("asked", kept);
+        }
+    }
     /// Adds gates (`Program::gates`' entries, after the program's): each its key, relation, level, the relations
     /// that must be quiet and the gates it waits on, as `program_facts` writes them.
     pub fn add_gates(&mut self, gates: &[(String, String, usize, Vec<String>, Vec<String>)]) {

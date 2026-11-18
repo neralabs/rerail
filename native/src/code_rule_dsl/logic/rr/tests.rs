@@ -3519,7 +3519,19 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
                 }
             }
             let kept = p.rules.clone();
-            let mask = |s: &str| helper.replace_all(&fresh.replace_all(s, "rr_${1}#_$3"), "rr_$1#").into_owned();
+            // A desugared clause's variables (`k_rr_d117_4`, renamed apart `t_rr_d699_3_f258`) are numbered by the
+            // clauses before it too, inside a variable's name where `helper` sees no word boundary.
+            let desugared = regex::Regex::new(r"rr_d[0-9]+_([0-9]+)(?:_([ft])[0-9]+)?").unwrap();
+            // And a fresh variable's number before it (`rr_text20_rr_d#_0`).
+            let fresh_desugared = regex::Regex::new(r"\brr_([a-z_]*[a-z])[0-9]+_rr_d#").unwrap();
+            let mask = |s: &str| {
+                let s = desugared.replace_all(s, |c: &regex::Captures| match c.get(2) {
+                    Some(k) => format!("rr_d#_{}_{}#", &c[1], k.as_str()),
+                    None => format!("rr_d#_{}", &c[1]),
+                });
+                let s = fresh_desugared.replace_all(&s, "rr_${1}#_rr_d#");
+                helper.replace_all(&fresh.replace_all(&s, "rr_${1}#_$3"), "rr_$1#").into_owned()
+            };
             // A violation's rule for `@place` values (`rr_v0 < -1`) is made when any rule of the program makes one
             // (`lower`'s `place_values`): an unreached clause made it for the whole program, where no reached
             // rule makes the value it reads.
@@ -3543,8 +3555,11 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
             let mut facts: Vec<String> = p.facts.iter().filter(|(r, _)| named.contains(r.as_str()) || p.outputs.contains(r)).map(|(r, rows)| mask(&format!("{r}{rows:?}"))).collect();
             facts.sort();
             // The inputs the rules read: the lowering declares one (`node_order`, `rr_inside_<set>`) for each clause
-            // that reads it, and an unreached clause's stays among the inputs after `prune`, read by none.
+            // that reads it, and an unreached clause's stays among the inputs after `prune`, read by none. A string
+            // constant is no read: `field($x, "value", _)` names a field, not the attribute `value` (an input where no
+            // clause reads it, answered on request and pruned where the unreached ones did).
             let text = format!("{:?}{:?}", p.rules, p.natives);
+            let text = regex::Regex::new(r#"Str\("(?:[^"\\]|\\.)*"\)"#).unwrap().replace_all(&text, "Str");
             let mut inputs: Vec<String> = p.inputs.iter().filter(|i| text.contains(&format!("\"{i}\""))).cloned().collect();
             inputs.sort();
             let mut outputs = p.outputs.clone();
@@ -3911,4 +3926,11 @@ fn a_request_is_kept_for_a_gone_reader_and_for_a_readers_copy() {
     // The copy folded back into `a` (hiding's `fold_own`), or merged: its requests serve `a`.
     p.rename_readers(|b| (b == "a_g").then(|| "a".to_owned()));
     assert_eq!(p.asked_by["q"], vec![by(&["a"]), by(&["b"])]);
+    // A reader `prune` drops leaves the record, beside one it keeps: a later gate cannot take it for a gone one.
+    p.asked_by.insert("q".into(), vec![by(&["a", "b"]), by(&["b"])]);
+    let pruned = front::prune(p.clone());
+    assert!(pruned.rules.iter().all(|r| r.head.rel != "a"), "a is not needed");
+    assert_eq!(pruned.asked_by["q"], vec![by(&["b"]), by(&["b"])]);
 }
+
+

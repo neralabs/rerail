@@ -88,10 +88,12 @@ fn expand_memberships(prog: &Program) -> Result<Option<Program>> {
     let domains = domains(prog)?;
     let cols = columns_of(&domains);
     let mut out = prog.clone();
-    out.rules.clear();
-    for rule in &prog.rules {
+    // Each rule with its source, so the request record (decision 0331) follows a split rule: each part serves its
+    // source's readers.
+    let mut rules = Vec::with_capacity(prog.rules.len());
+    for (k, rule) in prog.rules.iter().enumerate() {
         if !rule.body.iter().any(|l| membership(l).is_some()) {
-            out.rules.push(rule.clone());
+            rules.push((rule.clone(), vec![k]));
             continue;
         }
         let vars = rule_vars(rule, &mut |a: &Atom| cols.get(a.rel.as_str()).map(Vec::as_slice))?;
@@ -109,8 +111,9 @@ fn expand_memberships(prog: &Program) -> Result<Option<Program>> {
                 _ => bodies.iter_mut().for_each(|b| b.push(l.clone())),
             }
         }
-        out.rules.extend(bodies.into_iter().map(|body| super::super::front::Rule { head: rule.head.clone(), body: body.into() }));
+        rules.extend(bodies.into_iter().map(|body| (super::super::front::Rule { head: rule.head.clone(), body: body.into() }, vec![k])));
     }
+    out.set_rules_from(rules);
     Ok(Some(out))
 }
 

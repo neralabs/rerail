@@ -157,6 +157,38 @@ impl ProgramPass for MergeIdentical {
                 b.set_about_rows(name, rows);
             }
         }
+        // The request record (decision 0331) as the tree's `merge_identical` leaves it: a renamed reader is read by its
+        // class's name, and a request's copy merged into it leaves the record with its rules.
+        {
+            let rows = b.about_rows("asked");
+            let n = rows.len();
+            let mut seen = HashSet::new();
+            let key = |row: &[Cell]| format!("{row:?}");
+            let mut changed = false;
+            let mut kept = Vec::with_capacity(n);
+            for mut row in rows {
+                if let Some(Cell::Str(a)) = row.get(1).copied()
+                    && rename.contains_key(b.text(a))
+                {
+                    changed = true;
+                    continue;
+                }
+                if let Some(Cell::Str(a)) = row.get(3).copied()
+                    && let Some(t) = rename.get(b.text(a))
+                {
+                    row[3] = Cell::Str(b.atom(t));
+                    changed = true;
+                }
+                if seen.insert(key(&row)) {
+                    kept.push(row);
+                } else {
+                    changed = true;
+                }
+            }
+            if changed {
+                b.set_about_rows("asked", kept);
+            }
+        }
         // The declarations and facts, each class's held by its name: the first member's where the name is new; an
         // output merged keeps its own declaration.
         let mut declared: HashSet<String> = taken.iter().filter(|t| f.declared(t)).cloned().collect();

@@ -898,6 +898,7 @@ fn inline_node_tests(prog: &mut Program) -> Vec<String> {
         return Vec::new();
     }
     // A candidate's body may read another: inline readers in turn until none reads one (each pass removes a level).
+    let inlined = prog.inlined_readers(bodies.keys());
     let mut rules = prog.rules.clone();
     let mut fresh = 0usize;
     for _ in 0..8 {
@@ -947,6 +948,7 @@ fn inline_node_tests(prog: &mut Program) -> Vec<String> {
     }
     rules.retain(|r| !bodies.contains_key(r.head.rel.as_str()));
     prog.rules = rules;
+    prog.replace_readers(&inlined);
     for rel in bodies.keys() {
         prog.decls.remove(rel.as_str());
     }
@@ -1154,7 +1156,9 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
             work.push((c, from));
         }
     }
+    let inlined = prog.inlined_readers(bodies.keys());
     prog.set_rules_from(out);
+    prog.replace_readers(&inlined);
     for rel in bodies.keys() {
         prog.decls.remove(rel.as_str());
     }
@@ -1683,6 +1687,11 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
         .collect();
     let fixed = |r: &str| fixed_set.contains(r) || prog.natives.contains_key(r) || prog.lattice.contains_key(r) || prog.qualifiers.contains_key(r) || request(r);
     debug_assert!(prog.rules.iter().map(|r| r.head.rel.as_str()).all(|r| fixed(r) == self::fixed(prog, r)));
+    // A request (decision 0174), read by name by its answer and never merged into another (0291), joins only a class
+    // with its own widened copy (`rr_wide_<attr>_<req>`), and names it (below): a copy whose rules gated `prune` left
+    // as the request's own is the request.
+    let copy_of = |copy: &str, of: &str| super::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| copy == format!("rr_wide_{}_{of}", a.rel));
+    let copied_request = |r: &str| request(r) && !(fixed_set.contains(r) || prog.natives.contains_key(r) || prog.lattice.contains_key(r) || prog.qualifiers.contains_key(r)) && rules_of.keys().any(|c| copy_of(c, r));
     // A relation nothing reads (`unread`) is read by name if at all (`env`'s settings, `unconverged`, a guest
     // policy, a library's `function_kind` passed to `nearest`): it joins only a class with a widened copy of itself
     // (below), and keeps its name there (`merge`).
@@ -1693,7 +1702,7 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
         .chain(prog.facts.iter().filter(|(_, f)| !f.is_empty()).map(|(r, _)| r.as_str()))
         .collect::<BTreeSet<&str>>()
         .into_iter()
-        .filter(|r| !fixed(r))
+        .filter(|r| !fixed(r) || copied_request(r))
         .collect();
     // The candidates by number, in `cands`' order; every other relation a rule names numbered after them, each a
     // label of its own in every round.
@@ -1880,7 +1889,20 @@ fn congruence(prog: &Program, abstract_constants: bool) -> Vec<Vec<String>> {
     // name keeps its name.
     groups
         .into_values()
+        .flat_map(|g| {
+            // A request's class is the request and its copies alone; the rest of the class stays a class without it.
+            let (with_request, g): (Vec<String>, Vec<String>) = match g.iter().find(|r| request(r)).cloned() {
+                Some(req) => g.into_iter().partition(|r| *r == req || copy_of(r, &req)),
+                None => (Vec::new(), g),
+            };
+            [(with_request.len() > 1).then_some(with_request), (!g.is_empty()).then_some(g)].into_iter().flatten()
+        })
         .filter_map(|g| {
+            if g.iter().any(|r| request(r)) {
+                let mut g = g;
+                g.sort();
+                return Some(g);
+            }
             let (mut kept, unread): (Vec<String>, Vec<String>) = g.into_iter().partition(|r| read.contains(r.as_str()));
             let copies = |u: &str| {
                 super::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| kept.iter().any(|k| *k == format!("rr_wide_{}_{u}", a.rel)))
@@ -2159,6 +2181,8 @@ fn merge(prog: &mut Program, report: &mut Report) -> bool {
         native.rename_reads(|rel| rename.get(rel).cloned().unwrap_or_else(|| rel.to_owned()));
     }
     prog.rename_readers(|b| rename.get(b).cloned());
+    // A request's copy merged into it (`congruence`) leaves its record with its rules.
+    prog.asked_by.retain(|req, _| !rename.contains_key(req.as_str()));
     prog.rules.extend(copies);
     for (from, t) in &rename {
         let output = prog.outputs.iter().any(|o| o == from);

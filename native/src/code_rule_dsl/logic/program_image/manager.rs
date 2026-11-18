@@ -27,7 +27,7 @@ use super::version::{Made, Version};
 use super::{RelId, RuleId};
 use std::any::{Any, TypeId};
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::marker::PhantomData;
 use std::sync::Arc;
 
@@ -826,11 +826,99 @@ pub struct Pipeline<'s> {
     kept: Vec<Kept>,
     /// A keyed pipeline's store and chain (0281 §6).
     keyed: Option<Keyed<'s>>,
+    /// The request record by rule, carried through each step (`AskedByRule`); `None` once a step is read from a
+    /// keyed store (its delta unknown: the record is left as the output states it).
+    asked: Option<AskedByRule>,
+}
+
+/// The request record (`Version::asked`, decision 0174's `asked` rows) by rule id, carried through a pipeline's
+/// steps (decision 0331): a rule kept serves its readers; a rule a pass rewrote, its source's (`RuleRef::source`);
+/// a rule equal to rules the step removed (a repeat dropped, a rule made again alike), theirs too; any other rule
+/// its own relation, which `prune` keeps wherever the relation is needed. The record is by place among a relation's
+/// rules, which a pass that adds, drops or reorders rules shifts: the pipeline states it again at its end.
+#[derive(Clone, Debug)]
+struct AskedByRule {
+    by: HashMap<RuleId, BTreeSet<String>>,
+    reqs: BTreeSet<String>,
+}
+
+impl AskedByRule {
+    fn of(v: &Version) -> Option<AskedByRule> {
+        let asked = v.asked();
+        if asked.is_empty() {
+            return None;
+        }
+        let mut by = HashMap::new();
+        for (req, readers) in &asked {
+            let Some(rel) = v.rel(req) else { continue };
+            let ids: Vec<RuleId> = v.heads(rel).map(|r| r.id()).collect();
+            if ids.len() == readers.len() {
+                by.extend(ids.into_iter().zip(readers.iter().cloned()));
+            }
+        }
+        Some(AskedByRule { by, reqs: asked.into_keys().collect() })
+    }
+    fn step(&mut self, from: &Version, out: &Version, delta: &Delta) {
+        if delta.is_empty() {
+            return;
+        }
+        let mut next = HashMap::new();
+        // A pass that states the record itself (the merge renames readers) is taken at its word where its record
+        // holds an entry a rule.
+        let (was, stated) = (from.asked(), out.asked());
+        for req in &self.reqs {
+            let Some(rel) = out.rel(req) else { continue };
+            if let Some(by) = stated.get(req).filter(|by| was.get(req) != Some(*by) && by.len() == out.heads(rel).count()) {
+                next.extend(out.heads(rel).map(|r| r.id()).zip(by.iter().cloned()));
+                continue;
+            }
+            // The input's rules of this relation the step removed, by content.
+            let mut gone: HashMap<u64, BTreeSet<String>> = HashMap::new();
+            if let Some(old) = from.rel(req) {
+                for r in from.heads(old).filter(|r| delta.rebuilt || delta.removed.has(r.id())) {
+                    if let Some(b) = self.by.get(&r.id()) {
+                        gone.entry(r.hash()).or_default().extend(b.iter().cloned());
+                    }
+                }
+            }
+            for r in out.heads(rel) {
+                let mut readers = BTreeSet::new();
+                let kept = !delta.rebuilt && !delta.added.contains(&r.id());
+                if kept && let Some(b) = self.by.get(&r.id()) {
+                    readers.extend(b.iter().cloned());
+                }
+                if let Some(b) = r.source().and_then(|s| self.by.get(&s)) {
+                    readers.extend(b.iter().cloned());
+                }
+                if let Some(b) = gone.get(&r.hash()) {
+                    readers.extend(b.iter().cloned());
+                }
+                if readers.is_empty() {
+                    readers.insert(req.clone());
+                }
+                next.insert(r.id(), readers);
+            }
+        }
+        self.by = next;
+    }
+    /// The record as `Version::asked` states it, for `v`'s rules.
+    fn asked(&self, v: &Version) -> super::about::Asked {
+        let mut asked = super::about::Asked::new();
+        for req in &self.reqs {
+            let Some(rel) = v.rel(req) else { continue };
+            let by: Vec<BTreeSet<String>> = v.heads(rel).map(|r| self.by.get(&r.id()).cloned().unwrap_or_else(|| BTreeSet::from([req.clone()]))).collect();
+            if !by.is_empty() {
+                asked.insert(req.clone(), by);
+            }
+        }
+        asked
+    }
 }
 
 impl<'s> Pipeline<'s> {
     pub fn new(name: &'static str, v: Arc<Version>) -> Pipeline<'s> {
-        Pipeline { name, input: v.clone(), v, decided: RefCell::new(Vec::new()), stages: Vec::new(), failed: None, keep: false, last: Vec::new(), kept: Vec::new(), keyed: None }
+        let asked = AskedByRule::of(&v);
+        Pipeline { name, input: v.clone(), v, decided: RefCell::new(Vec::new()), stages: Vec::new(), failed: None, keep: false, last: Vec::new(), kept: Vec::new(), keyed: None, asked }
     }
     /// A pipeline whose steps are keyed and kept in `steps` (0281 §6). A step's key is a chain: the input version's
     /// identity (`identity`), the pipeline's name and the engine build, then for each step so far its pass's `NAME`,
@@ -916,6 +1004,9 @@ impl<'s> Pipeline<'s> {
     #[allow(clippy::too_many_arguments)]
     fn record(&mut self, pass: &'static str, out: Arc<Version>, ran: Ran, form: Form, visited: usize, from: &Arc<Version>, rule: Option<RuleKept>) -> Result<()> {
         let delta = Delta::of(from, &out);
+        if let Some(asked) = &mut self.asked {
+            asked.step(from, &out, &delta);
+        }
         let cx = Cx { v: &out, store: out.analyses(), pass, decided: &self.decided, asked: None };
         out.analyses().carry(from.analyses(), &cx, &delta)?;
         self.stages.push(Stage { pass, ran, form, visited, input: (self.v.size(), self.v.digest()), output: (out.size(), out.digest()), delta: delta.size(), touched: delta.touched });
@@ -1031,6 +1122,7 @@ impl<'s> Pipeline<'s> {
         if found.pass != pass || found.version != version {
             return Ok(Some(key));
         }
+        self.asked = None;
         let input = self.stages.last().map_or((self.v.size(), self.v.digest()), |s| s.output);
         self.stages.push(Stage { pass, ran: Ran::Stored, form: Form::Unchanged, visited: 0, input, output: found.output, delta: 0, touched: Reads::default() });
         self.decided.borrow_mut().extend(found.decided.iter().cloned());
@@ -1082,10 +1174,23 @@ impl<'s> Pipeline<'s> {
         self.failed.get_or_insert_with(|| format!("{}: still changing after {rounds} rounds", self.name));
         self
     }
+    /// States the carried request record in the current version (`AskedByRule`), where the steps shifted it.
+    fn state_asked(&mut self) -> Result<()> {
+        let Some(carried) = &self.asked else { return Ok(()) };
+        let asked = carried.asked(&self.v);
+        if asked == self.v.asked() {
+            return Ok(());
+        }
+        let v = self.v.clone();
+        let mut b = v.builder();
+        b.set_asked(&asked);
+        self.v = b.finish_overlay()?;
+        Ok(())
+    }
     /// The last version, or the first step's error.
     pub fn finish(mut self) -> Result<(Arc<Version>, Vec<Stage>)> {
         if self.failed.is_none()
-            && let Err(e) = self.load()
+            && let Err(e) = self.load().and_then(|()| self.state_asked())
         {
             self.failed = Some(e);
         }
@@ -1097,7 +1202,7 @@ impl<'s> Pipeline<'s> {
     /// The run, kept to run again (`again`), or the first step's error.
     pub fn done(mut self) -> Result<Run> {
         if self.failed.is_none()
-            && let Err(e) = self.load()
+            && let Err(e) = self.load().and_then(|()| self.state_asked())
         {
             self.failed = Some(e);
         }

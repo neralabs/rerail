@@ -174,3 +174,26 @@ an edit (one line added to one file). Medians, CPU:
 
 Outputs identical, cold and edit (660 relations, 30,449 rows). Four runs' wall stalled 46 to 147 s at their usual
 CPU, across engines, while the host's connection was dropping: the host's, not an engine's.
+
+### The record kept through every pass (Q50, 2026-11-17)
+
+Working Q50 (the red `dropping_unreached` family) found that the record still broke in four places, each now
+fixed: `plan::lower`'s `expand_memberships` split a rule per set member without its source; `prune` kept readers
+it had dropped, so a later gate took them for readers gone by a rename; the pass manager's steps did not carry the
+record (60 entries against 56 rules after `drop repeated rules`, 12 against 13 after the pushed joins); and the
+version's merge did not rename readers as the tree's does. The pipeline now carries it by rule id
+(`AskedByRule`: a rule kept, made from a source, or equal to a rule the step removed keeps its readers; any other
+serves its own relation) and restates it at its end; a part keeps the record of the relations whose rules it
+holds; a debug build asserts an entry per request rule where the image is made. The narrowing (0291) is per
+reader site now: a narrowed request serves its askers, and only the sites that cannot narrow get a wide request.
+
+On the M3, three samples each, interleaved (load 8 to 69, sample 1 of the new engine under the highest). Medians,
+CPU:
+
+| | t9 (before the hub) | the record carried (19ecd0b18) | kept through every pass |
+|---|---|---|---|
+| cold, s | 59.7 | 54.1 | 51.2 (50.6–63.6) |
+| edit, s | 5.56 | 4.04 | 4.03 |
+| warm, s | 0.23 | 0.11 | 0.12 |
+
+Outputs identical, cold and edit (660 relations, 30,449 rows); the embed slice 491 rules, 285 relations.

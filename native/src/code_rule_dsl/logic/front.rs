@@ -1189,6 +1189,14 @@ pub fn prune(mut prog: Program) -> Program {
             readers.retain(|_| *it.next().unwrap());
         }
     }
+    // A reader `prune` drops is not needed: it leaves the record, so a later gate (the embed slice's) does not take
+    // it for one gone by a rename, whose requests stay.
+    let dropped: BTreeSet<String> = prog.rules.iter().zip(&kept).filter(|(r, k)| !**k && !need.contains(r.head.rel.as_str())).map(|(r, _)| r.head.rel.to_string()).collect();
+    for readers in prog.asked_by.values_mut().flatten() {
+        if readers.iter().any(|b| dropped.contains(b)) && readers.iter().any(|b| !dropped.contains(b)) {
+            readers.retain(|b| !dropped.contains(b));
+        }
+    }
     let mut keep = kept.into_iter();
     prog.rules.retain(|_| keep.next().unwrap());
     prog.asked_by.retain(|req, readers| !readers.is_empty() || prog.rules.iter().any(|r| r.head.rel == req.as_str()));

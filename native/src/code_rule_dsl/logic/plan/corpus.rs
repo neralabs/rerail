@@ -3618,6 +3618,12 @@ fn run_observed(
             #[cfg_attr(not(debug_assertions), allow(unused_mut))]
             let mut program: front::Program = std::mem::take(&mut lowered.program);
             bound(&program)?;
+            // Every pass so far stated its rules' sources: the request record is one entry a rule (decision 0331), which
+            // the image's pipelines carry from here.
+            debug_assert!(
+                program.asked_by.iter().all(|(r, by)| program.rules.iter().filter(|x| x.head.rel == r.as_str()).count() == by.len()),
+                "the request record holds an entry for each request rule"
+            );
             drop(_step);
             // The prepared program's one image (decision 0281's path, step 4): made here, after the last pass that edits
             // the tree; the passes after it run on the manager over the version (step 5: the file-local joins pushed,

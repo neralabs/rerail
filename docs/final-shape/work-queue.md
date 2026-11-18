@@ -1261,7 +1261,30 @@ are the same.
 - **Keep**: the test's property (a program pruned whole is the program pruned without its unreached clauses),
   strict, and the on-request lowering of `value` (0174, 0291).
 - **Done when**: the seven pass on this branch, with the cause named.
-- **Record**: —
+- **Record**: built, verified (2026-11-17). Not `value` alone, and not the record's carry: the family failed for
+  six causes, each named and fixed.
+  1. The test's input check counted relation names inside string constants (`Str("…")`) as inputs: it strips them.
+  2. Desugared helpers (`rr_d<k>_<n>_f<k>`) and fresh helpers named after them were numbered apart on the two sides:
+     the test's masks cover them.
+  3. 0291's narrowing was all or nothing: one reader site that could not narrow (read in an aggregate, by name,
+     by its own relation, with a non-variable column, or unbound) left the whole request wide, so the two sides
+     differed by which reader was reached. `Widen::demand_of` returns the asks with their askers and the sites
+     that block; the narrowed request serves its askers, and a wide request (`wild_singletons`) is added for the
+     blockers only. `undo_round` removes the narrowing relations with the round.
+  4. A narrowed request was gated by the request's reader, not by its askers: it is recorded with the askers.
+  5. Readers inlined away (`inline_node_tests`, `inline_filters`) left the record naming them:
+     `Program::inlined_readers` and `replace_readers` name their readers instead.
+  6. Q3's copy property: a widened copy of a request relation (`rr_wide_node_text_rr_token_req`) left with the
+     request's own rules was never merged, since `congruence` keeps requests apart. A request now joins a class
+     with its own widened copies only (and names it); the merged copy's record goes with it.
+  Found by the version build's check on the way: four passes that broke the record. `plan::lower`'s
+  `expand_memberships` splits a rule per set member (now states each part's source); `prune` kept readers it had
+  dropped (it removes them from a set that keeps another); the pass manager's steps did not carry it at all
+  (`AskedByRule`: a rule kept, rewritten from a source, or equal to a removed one keeps its readers; restated at a
+  pipeline's end; `PartOf` cuts a part's); the version's merge did not rename readers as the tree's does. A debug
+  build asserts the record holds an entry a request rule where the image is made. Tests: the family (8), the
+  targeted set (548), `the_request_record_follows_the_preparation_steps` (logic crate), the prune case in
+  `a_request_is_kept_for_a_gone_reader_and_for_a_readers_copy`.
 
 ## Questions for the user
 

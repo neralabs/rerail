@@ -483,6 +483,48 @@ impl Program {
             }
         }
     }
+    /// For relations `gone` that a pass inlines into their readers, the relations whose rules read them (through other
+    /// relations `gone`), taken before the pass: what `replace_readers` puts in their place.
+    pub fn inlined_readers<'a>(&self, gone: impl IntoIterator<Item = &'a String>) -> BTreeMap<String, BTreeSet<String>> {
+        let gone: BTreeSet<&str> = gone.into_iter().map(String::as_str).collect();
+        if self.asked_by.is_empty() || gone.is_empty() {
+            return BTreeMap::new();
+        }
+        let mut direct: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+        for r in &self.rules {
+            for a in r.body.iter().filter_map(Literal::atom).filter(|a| gone.contains(a.rel.as_str())) {
+                direct.entry(a.rel.as_str()).or_default().insert(r.head.rel.as_str());
+            }
+        }
+        gone.iter()
+            .map(|g| {
+                let (mut out, mut seen, mut todo) = (BTreeSet::new(), BTreeSet::from([*g]), vec![*g]);
+                while let Some(x) = todo.pop() {
+                    for &h in direct.get(x).into_iter().flatten() {
+                        if !gone.contains(h) {
+                            out.insert(h.to_owned());
+                        } else if seen.insert(h) {
+                            todo.push(h);
+                        }
+                    }
+                }
+                ((*g).to_owned(), out)
+            })
+            .filter(|(_, out)| !out.is_empty())
+            .collect()
+    }
+    /// Puts each reader `inlined` names in the record in place of its readers (`inlined_readers`): a request of a
+    /// relation inlined into its readers serves them.
+    pub fn replace_readers(&mut self, inlined: &BTreeMap<String, BTreeSet<String>>) {
+        if inlined.is_empty() {
+            return;
+        }
+        for readers in self.asked_by.values_mut().flatten() {
+            if readers.iter().any(|b| inlined.contains_key(b)) {
+                *readers = std::mem::take(readers).into_iter().flat_map(|b| inlined.get(&b).cloned().unwrap_or_else(|| BTreeSet::from([b]))).collect();
+            }
+        }
+    }
     /// The request record by rule (`readers_of_rules`), taken before a pass that takes the rules apart; empty when
     /// the program has no requests.
     pub fn carry(&self) -> Carry {

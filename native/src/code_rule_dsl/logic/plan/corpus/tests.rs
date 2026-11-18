@@ -1427,6 +1427,8 @@ fn every_switch_lowering_reads_is_classified() {
         "RERAIL_SPLIT_DUMP",
         "RERAIL_DEMAND_DUMP",
         "RERAIL_PREPARED_TRACE",
+        // Writes each program made from another (decision 0173's survey), as `note_versions` in the split: changes none.
+        "RERAIL_VERSION_TRACE",
         "RERAIL_SPIKE_PROJECTION",
         // A diagnostic: a refused component's members, printed (`front::unstratified_trace`).
         "RERAIL_STRATA_COUNTS",
