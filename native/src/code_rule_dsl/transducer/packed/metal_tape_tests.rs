@@ -251,6 +251,18 @@ fn label_kernels_compile_cost() {
         _ => source.replace("#define clif_view(v,a) ((tape_format!=0u&&", &format!("#define clif_view(v,a) ((tape_format!=0u&&tape_format!={nonce}u&&")),
     };
     assert!(source.contains(&nonce.to_string()), "the nonce is in the source");
+    // `RERAIL_PROBE_NOINLINE=read,read`: those generated reads (`clif_tape_<read>`) compiled out of line;
+    // `RERAIL_PROBE_INLINE=read,read`: those inlined.
+    let mut source = source;
+    for (var, from, to) in [("RERAIL_PROBE_NOINLINE", "inline", "__attribute__((noinline))"), ("RERAIL_PROBE_INLINE", "__attribute__((noinline))", "inline")] {
+        for read in std::env::var(var).unwrap_or_default().split(',').filter(|r| !r.is_empty()) {
+            let before = source.clone();
+            for ty in ["uint", "ulong"] {
+                source = source.replace(&format!("{from} {ty} clif_tape_{read}("), &format!("{to} {ty} clif_tape_{read}("));
+            }
+            assert_ne!(source, before, "clif_tape_{read} is a read marked {from}");
+        }
+    }
     eprintln!("source: {} bytes, {} lines", source.len(), source.lines().count());
     let clock = Instant::now();
     let library = device.new_library_with_source(&source, &metal::CompileOptions::new()).expect("the library");
@@ -293,9 +305,11 @@ fn label_kernels_compile_cost() {
             let descriptor = metal::ComputePipelineDescriptor::new();
             descriptor.set_compute_function(Some(&function));
             let clock = Instant::now();
-            let _pipeline = device.new_compute_pipeline_state(&descriptor).expect("the pipeline");
+            let pipeline = device.new_compute_pipeline_state(&descriptor).expect("the pipeline");
             let pipeline_s = clock.elapsed().as_secs_f64();
-            eprintln!("  format {format:>2} {name:<18} function {function_s:>6.2} s  pipeline {pipeline_s:>6.2} s");
+            // The thread limit: under 1,024, the kernel's registers cap its occupancy (t41).
+            let threads = pipeline.max_total_threads_per_threadgroup();
+            eprintln!("  format {format:>2} {name:<18} function {function_s:>6.2} s  pipeline {pipeline_s:>6.2} s  max threads {threads}");
             functions += function_s;
             pipelines += pipeline_s;
         }

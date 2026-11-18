@@ -2250,7 +2250,12 @@ precompile the libraries (a `.metallib` built with the engine).
   another.
 - **Done** (2026-11-18, decision 0397): one kernel per walk family, its frames the dispatch's (`Shape::frames`), 16
   kernels to 8; a format's pipelines compile in parallel. Format 16: 10.7 s of back end, 6.9 s wall.
-- **Left**: `label_micro` alone is 6.5 s; format 16's generated reads cost 9× format 15's in the back end.
+- **Done** (2026-11-18, decision 0398): `label_micro` and `root_records` each called their walk twice, and the
+  compiler inlined a copy of it, with every format 16 read under it, at each call; one loop each, one call. Format
+  16's pipelines 10 to 5.5 s; device time unchanged. The side lists' search out of line halved the compile too, but
+  cost the walks 28% of device time: rejected.
+- **Left**: `label_group` (1.5 s) and the reads' own expansion (`tape_next` computes `size` four times), which
+  would be a change of the reads in CLIF; a measure of the compile by the compiler service's CPU, not wall.
 
 ### Q69. The `.rr` ladder's field ids lose 64 in the interpreters and the compiled parser
 

@@ -185,59 +185,68 @@ static uint walk_next(thread const Tree& t,thread Frame& frame,WalkRead r){
 template<typename Stack>
 static void micro_from(uint FRAMES,thread const Tree& t,device const uint* head,MicroPass pass,device const uint* words,uint start,device atomic_uint* scratch,device atomic_uint* flags,device const uint* texts,device atomic_uint* counts,constant Shape& shape,Stack stack,thread uint& steps,MicroQ q,uint depth0);
 
+// A thread's walks: its items' roots, then the queue's spilled frames (`MicroQ`), each walked from its frame, until
+// none is left or the worker has polled its limit for nothing (`wq_idle`: `MICRO_POLLS` a standby thread's, else 1).
+// One loop calls the walk (`micro_from`) once for both: the compiler inlines the walk at every call, and two calls
+// held two copies of it and of every tape read under it (work queue Q181).
+//
+// An item is a group of 64 nodes of the batch, each `shape.lanes` lanes' (`TIER_LANES`); a pass's items are
+// contiguous from its threadStart. A lane finds the roots among its share of the group's nodes (`root_mask_in`, read
+// from the code bytes), and the SIMD group walks all its lanes' roots, one a lane a round (`simd_roots`). Every lane
+// takes every item step and every round, a lane past the items too: the rounds are the SIMD group's, and what decides
+// them (`item - lane`, `r.total`) is the same on every lane, so the shuffles see the whole group. The queue's turns
+// are each lane's own.
 template<typename Stack>
-static void micro_walk(uint FRAMES,device const DocView* docs,device const uchar* chunk,device const uint* head,device const MicroPass* passes,device const uint* words,device const uint* items,device atomic_uint* scratch,device atomic_uint* flags,device const uint* texts,device atomic_uint* counts,constant Shape& shape,Stack stack,uint tid,uint lane,device atomic_uint* wstats,MicroQ q){
-  // A pass's items are contiguous from its threadStart, one a group of 64 nodes of the batch, each `shape.lanes`
-  // lanes' (`TIER_LANES`): a lane finds the roots among its share of the group's nodes (`root_mask_in`, read from
-  // the code bytes), and the SIMD group walks all its lanes' roots, one a lane a round (`simd_roots`). Every lane
-  // comes here, a lane past the items too: the rounds are the SIMD group's.
-  uint lanes=max(shape.lanes,1u),part=tid%lanes;
+static void micro_run(uint FRAMES,device const DocView* docs,device const uchar* chunk,device const uint* head,device const MicroPass* passes,device const uint* words,device const uint* items,device atomic_uint* scratch,device atomic_uint* flags,device const uint* texts,device atomic_uint* counts,constant Shape& shape,Stack stack,uint tid,uint grid,uint lane,device atomic_uint* wstats,MicroQ q){
+  uint lanes=max(shape.lanes,1u),limit=shape.itemCount*lanes;
+  uint item=tid,round=0u;
   ulong mask=0ul;uint pass=0u,file=0u,group=0u;
-  tid/=lanes;
-  if(tid<shape.itemCount&&atomic_load_explicit(&flags[2],memory_order_relaxed)==0u){
-    uint low=0u,high=shape.targetCount;while(high-low>1u){uint middle=(low+high)/2u;if(passes[middle].threadStart<=tid)low=middle;else high=middle;}
-    pass=low;group=tid-passes[low].threadStart;file=roots_file(items,group);group-=roots_first_group(items,file);
-    mask=root_mask_in(chunk,docs[file],items,passes[low].itemStart,file,group,part*(ROOT_GROUP/lanes),(part+1u)*(ROOT_GROUP/lanes));
-  }
-  SimdRoots r=simd_roots(mask);
-  for(uint round=0u;round<r.total;round+=32u){
-    uint i=round+lane;ushort owner=ushort(simd_root_lane(r,i));
-    uint lo=simd_shuffle(uint(mask),owner),hi=simd_shuffle(uint(mask>>32u),owner),from=simd_shuffle(r.prefix,owner);
-    uint p=simd_shuffle(pass,owner),f=simd_shuffle(file,owner),g=simd_shuffle(group,owner);
-    if(i>=r.total)continue;
+  SimdRoots r=simd_roots(0ul);
+  bool walking=true,fresh=true;
+  WorkQueue wq={q.slots,q.control,q.capacity};
+  uint polls=0u,idle=tid<MICRO_STANDBY?MICRO_POLLS:1u,turn=0u;
+  while(true){
+    uint p=0u,f=0u,start=0u,depth0=0u;
+    if(walking){
+      if(fresh){
+        if(item-lane>=limit){walking=false;continue;}
+        uint at=item/lanes,part=item%lanes;
+        mask=0ul;pass=0u;file=0u;group=0u;
+        if(at<shape.itemCount&&atomic_load_explicit(&flags[2],memory_order_relaxed)==0u){
+          uint low=0u,high=shape.targetCount;while(high-low>1u){uint middle=(low+high)/2u;if(passes[middle].threadStart<=at)low=middle;else high=middle;}
+          pass=low;group=at-passes[low].threadStart;file=roots_file(items,group);group-=roots_first_group(items,file);
+          mask=root_mask_in(chunk,docs[file],items,passes[low].itemStart,file,group,part*(ROOT_GROUP/lanes),(part+1u)*(ROOT_GROUP/lanes));
+        }
+        r=simd_roots(mask);round=0u;fresh=false;
+      }
+      if(round>=r.total){item+=grid;fresh=true;continue;}
+      uint i=round+lane;ushort owner=ushort(simd_root_lane(r,i));
+      uint lo=simd_shuffle(uint(mask),owner),hi=simd_shuffle(uint(mask>>32u),owner),from=simd_shuffle(r.prefix,owner);
+      p=simd_shuffle(pass,owner);f=simd_shuffle(file,owner);uint g=simd_shuffle(group,owner);
+      round+=32u;
+      if(i>=r.total)continue;
+      start=docs[f].node_base+g*ROOT_GROUP+mask_nth(lo,hi,i-from);depth0=0u;
+    }else{
+      if(q.capacity==0u||turn>=WQ_TURNS)return;
+      turn++;
+      if(atomic_load_explicit(&flags[2],memory_order_relaxed)!=0u)return;
+      uint at;
+      if(!wq_take(wq,at)){if(wq_idle(wq,polls,idle))return;continue;}
+      atomic_thread_fence(mem_flags::mem_device,memory_order_seq_cst,thread_scope_device);
+      device atomic_uint* spilled=q.items+at*MICRO_ITEM;
+      uint w[MICRO_ITEM];
+      for(uint k=0u;k<MICRO_ITEM;k++)w[k]=atomic_load_explicit(&spilled[k],memory_order_relaxed);
+      MicroFrame frame={w[0],w[1],w[2],w[3],w[4],w[5],{w[6],w[7],w[8],w[9],w[10],w[11],w[12],w[13]},w[14],w[15],w[16]};
+      stack[0]=frame;
+      p=w[18];f=w[19];start=w[17];depth0=1u;
+    }
     Tree t={chunk,docs[f]};
     q.pass=p;q.doc=f;
     uint steps=0u;
-    micro_from(FRAMES,t,head,passes[p],words,t.d.node_base+g*ROOT_GROUP+mask_nth(lo,hi,i-from),scratch,flags,texts,counts,shape,stack,steps,q,0u);
+    micro_from(FRAMES,t,head,passes[p],words,start,scratch,flags,texts,counts,shape,stack,steps,q,depth0);
     // Profiling (`RERAIL_GPU_WALK_STEPS`): the pass's walks, their steps, its longest walk's.
-    if(shape.profile!=0u){device atomic_uint* w=wstats+3u*(shape.profile-1u+p);atomic_fetch_add_explicit(&w[0],1u,memory_order_relaxed);atomic_fetch_add_explicit(&w[1],steps,memory_order_relaxed);atomic_fetch_max_explicit(&w[2],steps,memory_order_relaxed);}
-  }
-}
-
-// The queue's spilled frames (`MicroQ`), each walked from its frame, until none is left or the
-// worker has polled its limit for nothing (`wq_idle`: `MICRO_POLLS` a standby thread's, else 1).
-template<typename Stack>
-static void micro_drain(uint FRAMES,device const DocView* docs,device const uchar* chunk,device const uint* head,device const MicroPass* passes,device const uint* words,device atomic_uint* scratch,device atomic_uint* flags,device const uint* texts,device atomic_uint* counts,constant Shape& shape,Stack stack,device atomic_uint* wstats,MicroQ q,uint tid){
-  if(q.capacity==0u)return;
-  WorkQueue wq={q.slots,q.control,q.capacity};
-  uint polls=0u,limit=tid<MICRO_STANDBY?MICRO_POLLS:1u;
-  for(uint turn=0u;turn<WQ_TURNS;turn++){
-    if(atomic_load_explicit(&flags[2],memory_order_relaxed)!=0u)return;
-    uint at;
-    if(!wq_take(wq,at)){if(wq_idle(wq,polls,limit))return;continue;}
-    atomic_thread_fence(mem_flags::mem_device,memory_order_seq_cst,thread_scope_device);
-    device atomic_uint* item=q.items+at*MICRO_ITEM;
-    uint w[MICRO_ITEM];
-    for(uint k=0u;k<MICRO_ITEM;k++)w[k]=atomic_load_explicit(&item[k],memory_order_relaxed);
-    MicroFrame f={w[0],w[1],w[2],w[3],w[4],w[5],{w[6],w[7],w[8],w[9],w[10],w[11],w[12],w[13]},w[14],w[15],w[16]};
-    stack[0]=f;
-    Tree t={chunk,docs[w[19]]};
-    q.pass=w[18];q.doc=w[19];
-    uint steps=0u;
-    micro_from(FRAMES,t,head,passes[w[18]],words,w[17],scratch,flags,texts,counts,shape,stack,steps,q,1u);
-    if(shape.profile!=0u){device atomic_uint* s=wstats+3u*(shape.profile-1u+w[18]);atomic_fetch_add_explicit(&s[0],1u,memory_order_relaxed);atomic_fetch_add_explicit(&s[1],steps,memory_order_relaxed);atomic_fetch_max_explicit(&s[2],steps,memory_order_relaxed);}
-    wq_done(wq);
-    polls=0u;
+    if(shape.profile!=0u){device atomic_uint* s=wstats+3u*(shape.profile-1u+p);atomic_fetch_add_explicit(&s[0],1u,memory_order_relaxed);atomic_fetch_add_explicit(&s[1],steps,memory_order_relaxed);atomic_fetch_max_explicit(&s[2],steps,memory_order_relaxed);}
+    if(!walking){wq_done(wq);polls=0u;}
   }
 }
 
@@ -588,7 +597,7 @@ static void micro_from(uint FRAMES,thread const Tree& t,device const uint* head,
 // A micro walk tier: its frames are the shape's (`frames`: 8, 32, the loop tier's 64, the deep run's 128), its stacks in
 // device memory (`stacks`, `frames` a thread), its threads striding over the items (work queue Q181: one kernel for
 // every tier, compiled once, not once a tier).
-kernel void label_micro(device const DocView* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const MicroPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint* items [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],device atomic_uint* flags [[buffer(6)]],device const uint* texts [[buffer(7)]],device atomic_uint* counts [[buffer(8)]],device MicroFrame* stacks [[buffer(9)]],constant Shape& shape [[buffer(10)]],device const uchar* chunk [[buffer(27)]],device atomic_uint* qslots [[buffer(23)]],device atomic_uint* qcontrol [[buffer(24)]],device atomic_uint* qitems [[buffer(25)]],device atomic_uint* wstats [[buffer(26)]],uint tid [[thread_position_in_grid]],uint grid [[threads_per_grid]],uint lane [[thread_index_in_simdgroup]]){MicroQ q={qslots,qcontrol,qitems,shape.queue,0u,0u,items};for(uint item=tid;item-lane<shape.itemCount*max(shape.lanes,1u);item+=grid)micro_walk(shape.frames,docs,chunk,head,passes,words,items,scratch,flags,texts,counts,shape,stacks+tid*shape.frames,item,lane,wstats,q);micro_drain(shape.frames,docs,chunk,head,passes,words,scratch,flags,texts,counts,shape,stacks+tid*shape.frames,wstats,q,tid);}
+kernel void label_micro(device const DocView* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const MicroPass* passes [[buffer(2)]],device const uint* words [[buffer(3)]],device const uint* items [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],device atomic_uint* flags [[buffer(6)]],device const uint* texts [[buffer(7)]],device atomic_uint* counts [[buffer(8)]],device MicroFrame* stacks [[buffer(9)]],constant Shape& shape [[buffer(10)]],device const uchar* chunk [[buffer(27)]],device atomic_uint* qslots [[buffer(23)]],device atomic_uint* qcontrol [[buffer(24)]],device atomic_uint* qitems [[buffer(25)]],device atomic_uint* wstats [[buffer(26)]],uint tid [[thread_position_in_grid]],uint grid [[threads_per_grid]],uint lane [[thread_index_in_simdgroup]]){MicroQ q={qslots,qcontrol,qitems,shape.queue,0u,0u,items};micro_run(shape.frames,docs,chunk,head,passes,words,items,scratch,flags,texts,counts,shape,stacks+tid*shape.frames,tid,grid,lane,wstats,q);}
 
 // A recursive group's rounds to its fixpoint in one dispatch (decision 0024 §3): a threadgroup
 // per file, whose labels are its own (a walk never leaves its tree). A round runs each level in
@@ -768,13 +777,18 @@ static void root_records_run(uint FRAMES,device const DocView* docs,device const
   uint4 item=items[tid];RootPass pass=passes[item.x];
   if(pass.anchor!=0xffffffffu&&((texts[pass.anchor*shape.words+item.w/32u]>>(item.w%32u))&1u)==0u)return;
   Tree t={chunk,doc_of(docs,shape.fileCount,item.w)};
-  uint emitted=0u;
-  if(!root_walk(FRAMES,t,head,pass,words,item.w,texts,shape,stack,nullptr,0u,tid,0u,emitted)){atomic_fetch_or_explicit(&failures[item.x],1u,memory_order_relaxed);return;}
-  if(emitted==0u)return;
-  uint at=atomic_fetch_add_explicit(&cursor[0],emitted,memory_order_relaxed);
-  if(at+emitted>shape.targetCount){atomic_fetch_or_explicit(&cursor[1],1u,memory_order_relaxed);return;}
-  uint again=0u;
-  root_walk(FRAMES,t,head,pass,words,item.w,texts,shape,stack,records,shape.targetCount,shape.round+tid,at,again);
+  // The walk counts its records, claims their place, then walks again to write them there: one call in a loop of
+  // the two, as the compiler inlines the walk at every call (work queue Q181).
+  uint at=0u;
+  for(uint write=0u;write<2u;write++){
+    uint emitted=0u;
+    bool walked=root_walk(FRAMES,t,head,pass,words,item.w,texts,shape,stack,write!=0u?records:nullptr,write!=0u?shape.targetCount:0u,write!=0u?shape.round+tid:tid,at,emitted);
+    if(write!=0u)return;
+    if(!walked){atomic_fetch_or_explicit(&failures[item.x],1u,memory_order_relaxed);return;}
+    if(emitted==0u)return;
+    at=atomic_fetch_add_explicit(&cursor[0],emitted,memory_order_relaxed);
+    if(at+emitted>shape.targetCount){atomic_fetch_or_explicit(&cursor[1],1u,memory_order_relaxed);return;}
+  }
 }
 
 // A root walk's frames are the shape's (`frames`: 8 or 32), one kernel for both (Q181).
