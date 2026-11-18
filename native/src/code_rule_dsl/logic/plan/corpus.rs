@@ -5311,7 +5311,7 @@ fn run_observed(
             Some(memo::Memo::Stored(_)) if memoised => {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "the memo entries the waves may look up, admitted".into());
                 let looked: std::collections::HashSet<&str> = docs.iter().map(|(_, p)| world::store_path(p)).collect();
-                store.admit_memo_entries(&crate::content_store::local_space(&memo::plan_digest(&memo_program)), &looked, &|b| memo::hold(store, b)).map_err(|e| Error::Plan(e.to_string()))?
+                store.admit_memo_entries(&crate::content_store::local_space(&memo::plan_digest(&memo_program)), &looked, &|b| memo::hold(store, b.iter().copied())).map_err(|e| Error::Plan(e.to_string()))?
             }
             _ => (0, 0, None),
         };

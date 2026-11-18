@@ -17,6 +17,8 @@ use crate::content_store::{SegmentBytes, StoreError, StoreResult};
 use std::collections::HashMap;
 
 const NODES: &str = "#nodes";
+/// How many of the image's first strings are its symbols' (`encode_parts` writes them first).
+const SYMS: &str = "#syms";
 
 fn bad(what: impl std::fmt::Display) -> StoreError {
     StoreError::Invalid(format!("a corpus memo entry {what}"))
@@ -35,8 +37,27 @@ pub(super) fn encode(entry: &Entry, syms: &Syms, atoms: &Atoms) -> StoreResult<V
 /// `atoms`, the table its rows were made under.
 pub(super) fn encode_parts(entry: &Entry, syms: &Syms, atoms: &Atoms) -> StoreResult<Finished> {
     let mut b = Builder::new(0, false);
-    b.rows_as_is(NODES, &[col::INT], vec![entry.nodes as i64]);
+    // The symbols' strings first, so they are the image's strings `0..SYMS`: holding the entry's atoms reads them
+    // there, not every row (`hold`).
     let mut shown: HashMap<i64, i64> = HashMap::new();
+    for (key, (w, values)) in &entry.rows {
+        let w = *w;
+        if w == 0 {
+            continue;
+        }
+        let Some(cols) = syms.columns(key, w).filter(|c| c.len() == w) else { continue };
+        for row in values.chunks_exact(w) {
+            for (c, &v) in row.iter().enumerate() {
+                if cols[c] && !shown.contains_key(&v) {
+                    let atom = Sym::try_from(v).map_err(|_| bad(format!("of {key}: symbol {v} is no atom")))?;
+                    let at = atoms.with_str(atom, |s| i64::from(b.text(s))).ok_or_else(|| bad(format!("of {key}: symbol {v} is no atom of this process's")))?;
+                    shown.insert(v, at);
+                }
+            }
+        }
+    }
+    b.rows_as_is(SYMS, &[col::INT], vec![shown.len() as i64]);
+    b.rows_as_is(NODES, &[col::INT], vec![entry.nodes as i64]);
     for (key, (w, values)) in &entry.rows {
         let w = *w;
         let name = format!("r:{key}");
@@ -113,8 +134,38 @@ fn atoms_of(image: &Image, keep: &dyn Fn(&str) -> bool, atoms: &Atoms) -> StoreR
 
 /// Holds the atoms of the entry's symbols in this process (interned, or found where the store holds them), before a
 /// run's waves: so a wave decoding the entry finds each in memory.
-pub(super) fn hold(bytes: &SegmentBytes, atoms: &Atoms) -> StoreResult<()> {
-    atoms_of(&image(bytes)?, &|_| true, atoms).map(drop)
+/// All of `entries` at once: one lookup of what this process lacks, not one per entry.
+pub(super) fn hold(entries: &[&SegmentBytes], atoms: &Atoms) -> StoreResult<()> {
+    let images = entries.iter().map(|b| image(b)).collect::<StoreResult<Vec<_>>>()?;
+    let mut strings: Vec<&str> = Vec::new();
+    let mut wanted: Vec<u32> = Vec::new();
+    for image in &images {
+        if let Some(n) = image.rel(SYMS).and_then(|r| r.col(0).first().copied()) {
+            strings.extend((0..n as u32).map(|i| image.string(i)));
+            continue;
+        }
+        // An entry written before `SYMS`: its symbol columns read.
+        // Each image's strings by index, once: a symbol column repeats them row after row.
+        wanted.clear();
+        for (name, rel) in image.relations() {
+            if !name.starts_with("r:") {
+                continue;
+            }
+            for (c, &t) in rel.types().iter().enumerate() {
+                if t == col::TEXT {
+                    wanted.extend(rel.col(c).iter().map(|&v| v as u32));
+                }
+            }
+        }
+        wanted.sort_unstable();
+        wanted.dedup();
+        strings.extend(wanted.iter().map(|&i| image.string(i)));
+    }
+    // The strings many entries share, once, by hash: no string sort.
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::with_capacity(strings.len());
+    strings.retain(|s| seen.insert(s));
+    let _s = crate::code_rule_dsl::logic::profile::span(|| format!("memo lookup: the entries' {} strings interned", strings.len()));
+    atoms.intern_all(&strings).map(drop)
 }
 
 /// The entry of `bytes` (`encode`'s; its key is its row's), keeping only the relations `keep` takes: the others are
@@ -126,7 +177,9 @@ pub(super) fn decode(bytes: &SegmentBytes, keep: &dyn Fn(&str) -> bool, atoms: &
     let mut columns: HashMap<&str, Vec<usize>> = HashMap::new();
     let mut counts: HashMap<&str, usize> = HashMap::new();
     for (name, rel) in image.relations() {
-        if name == NODES {
+        if name == SYMS {
+            continue;
+        } else if name == NODES {
             entry.nodes = rel.col(0).first().copied().unwrap_or(0) as u64;
         } else if let Some(key) = name.strip_prefix("r:") {
             if !keep(key) {

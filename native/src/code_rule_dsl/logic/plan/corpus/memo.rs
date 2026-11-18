@@ -616,8 +616,9 @@ impl Frame {
 }
 
 /// Holds the atoms an entry's symbols name (`image::hold`), as it is read before a run's waves.
-pub(super) fn hold(store: &ContentStore, blob: &crate::content_store::MemoBlob) -> StoreResult<()> {
-    image::hold(&blob.bytes, &store.atoms_handle())
+pub(super) fn hold<'a>(store: &ContentStore, blobs: impl IntoIterator<Item = &'a crate::content_store::MemoBlob>) -> StoreResult<()> {
+    let bytes: Vec<_> = blobs.into_iter().map(|b| &b.bytes).collect();
+    image::hold(&bytes, &store.atoms_handle())
 }
 
 /// The newest corpus run of `root`: the relations its memo plan holds, by name, as recorded (`.decl` columns as
@@ -732,9 +733,7 @@ fn by_digest(store: &ContentStore, program: &Program, paths: &[&str], wanted: Ve
     };
     if stored {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "memo lookup: the entries' atoms held".into());
-        for blob in blobs.values() {
-            hold(store, blob)?;
-        }
+        hold(store, blobs.values().map(|b| &**b))?;
     }
     let atoms = store.atoms_handle();
     let mut out = Vec::new();
