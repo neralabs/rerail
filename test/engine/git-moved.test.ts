@@ -265,6 +265,8 @@ describe("the Git a process keeps, gone under it", () => {
       clock.release();
       answer();
     }
+    // A read waits for the look the call left going, so the next case starts from the Git that look keeps.
+    await expect(gitHead(repository)).resolves.toBe(head);
   });
 
   it("runs a Git call that does not block once more with the Git found again", async () => {
