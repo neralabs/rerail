@@ -16,12 +16,13 @@
 //
 //   node scripts/check/native-test-legs.mjs build <dir>    compile, run the doc tests, check the legs, pack
 //   node scripts/check/native-test-legs.mjs run <leg> <dir> run one leg's tests from the unpacked artifact
+//   node scripts/check/native-test-legs.mjs deps <file>     pack the compiled dependencies for a later run's build
 //   node scripts/check/native-test-legs.mjs legs            the legs, as the `rust` job's matrix (JSON)
 //
 // NATIVE_TESTS_REPORT_TIME=1 has `run` add libtest's unstable `--report-time` (under RUSTC_BOOTSTRAP=1), each test's
 // time, to rebalance the legs from a run's log.
 import { spawn, spawnSync } from "node:child_process";
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -179,6 +180,30 @@ function build(dir) {
   if (tar.status !== 0) process.exit(tar.status ?? 1);
 }
 
+/**
+ * Packs what the test build compiled of the dependencies (target/debug without the workspace's own crates, its test
+ * binaries and examples) into `file`: a later run unpacks it before its build (ci.yml's warm start from main) and
+ * compiles only the workspace's crates, which a fresh checkout's file times make cargo rebuild anyway.
+ */
+function packDependencies(file) {
+  const metadata = spawnSync("cargo", ["metadata", "--manifest-path", "Cargo.toml", "--no-deps", "--format-version", "1"], {
+    cwd: ROOT, encoding: "utf8", maxBuffer: 1 << 28,
+  });
+  if (metadata.status !== 0) throw new Error(`cargo metadata failed:\n${metadata.stderr}`);
+  const { packages } = JSON.parse(metadata.stdout);
+  // `.fingerprint/` and `build/` name a unit by its package, `deps/` by its crate (`-` as `_`), with `-<hash>` (but for
+  // the copies of a library cargo keeps under its own name) and an extension.
+  const names = new Set(packages.flatMap((pkg) => [pkg.name, ...pkg.targets.map((target) => target.name)]).flatMap((name) => [name, name.replaceAll("-", "_")]));
+  const own = (entry) => names.has(entry.replace(/^lib/u, "").replace(/(-[0-9a-f]{16})?(\.[^-]*)?$/u, ""));
+  const files = [];
+  for (const directory of ["deps", "build", ".fingerprint"]) {
+    const path = join(ROOT, "target", "debug", directory);
+    for (const entry of readdirSync(path)) if (!own(entry)) files.push(`target/debug/${directory}/${entry}`);
+  }
+  const tar = spawnSync("tar", ["-I", "zstd -T0 -3", "-cf", file, ...files], { cwd: ROOT, stdio: "inherit" });
+  if (tar.status !== 0) process.exit(tar.status ?? 1);
+}
+
 function runBinary(binary, args) {
   const env = { ...process.env, ...binary.env };
   const extra = [];
@@ -233,9 +258,10 @@ async function main([command, ...rest]) {
   if (command === "capture") capture();
   else if (command === "build" && rest.length === 1) build(resolve(rest[0]));
   else if (command === "run" && rest.length === 2) await run(rest[0], resolve(rest[1]));
+  else if (command === "deps" && rest.length === 1) packDependencies(resolve(rest[0]));
   else if (command === "legs" && rest.length === 0) console.log(JSON.stringify(LEGS.map(({ id, name }) => ({ leg: id, name }))));
   else {
-    console.error("usage: native-test-legs.mjs build <dir> | run <leg> <dir> | legs");
+    console.error("usage: native-test-legs.mjs build <dir> | run <leg> <dir> | deps <file> | legs");
     process.exit(2);
   }
 }
