@@ -3,7 +3,7 @@
 Status: decided by the user (2026-11-18: "everything should be in blocks all the time"; "these should be blocks …
 I would prefer memory-mappable files than blobs"). Builds 0266's `Atoms` and `Facts` as what the store keeps.
 Replaces the atoms' segment rows and key (0049, 0111) and the cross part's frames (0104, 0295 §4) as storage.
-Steps 1–3 (atoms) built; 4 next; 5–10 (facts) after.
+Steps 1–3 (atoms) built and 4 measured; 5–10 (facts) next.
 
 ## Intro
 
@@ -267,7 +267,7 @@ Facts:
    over `Stored`; A-R3–A-R5, A-R8.
 3. (built) The roll-up and its sweep; A-R7. The conversion became the floor's rise (A7); `atom_segment`, `atom_key`
    and the holding paths went in step 2.
-4. Measured on ep2: a new process's atoms (0.046 s, 215 MB today), its cold and warm runs.
+4. (measured, below) ep2: a new process's atoms (0.046 s, 215 MB before), its cold and warm runs.
 5. `rerail_blocks` kept facts: the directory, `KeptW`, `KeptRead` over a base and its delta; F-R1 at the block.
 6. The keep (`retain::write_frames`, `write_input_frames`) writes a space's delta.
 7. The read (`preload_frames_live`, `kept_inputs`, the clean relations) binds views; F-R1–F-R3.
@@ -277,4 +277,31 @@ Facts:
 
 ## Measured
 
-To fill.
+### Atoms (step 4, 2026-11-18)
+
+ep2 (`tmp/m/ep2r`) on m3 with the profiling build, at load 22–23. The state is a fresh v6 store, because the v5 one
+is refused (A7). The run `a0` is cold; `a1`–`a3` are warm, each with one rule's constant changed (`go.sh`). The
+"before" column is `e152` from the hub merge's measurement: the same seed and binary flags, over the floor-5 store
+(`ep2r-parts`). That store is older, and its history and frames hold more (364.7 MB of history and 59,374 frames,
+against 44.4 MB and 31,914 here).
+
+| | before (e152, warm) | after (a2, warm) |
+|---|---|---|
+| rows vs h1 | 1334, 0 differ | 1334, 0 differ (cold and every warm run) |
+| instructions | 28.3 G | 21.6 G |
+| CPU | 2.36 s | 1.65 s |
+| wall | 2.05 s | 1.43 s |
+| the atoms' lease span: allocated, kept | 215.2 MB, 58.3 MB | gone (no span; nothing held) |
+| jemalloc heap at the end: live, resident | 251.8 MB, 312.8 MB | 169.0 MB, 238.7 MB |
+| maximum RSS | 690 MB | 541 MB |
+| page reclaims | 94,265 | 49,178 |
+| peak footprint | 505 MB (529 MB by `time -l`) | 570 MB (598 MB by `time -l`) |
+
+The cold run `a0`: 1,290 G instructions, 104 s CPU, 42.5 s wall, a 1,764 MB peak. It appended 477,430 atoms, which
+went into four deltas: `d1`–`d4`, 65,536, 107,629, 168,807 and 135,457 atoms, in 90 MB on the disk. They were not yet
+rolled up: with no base, a roll-up is due only past four deltas.
+
+Open: the peak footprint rose 65 MB while the heap fell 83 MB and RSS fell 149 MB. The footprint is above the RSS, so
+it counts pages that are not resident. The different store states may be the cause. So may the atoms writer's
+writable shared mapping of `d4` (50 MB): the writer is opened only to append, and this warm run appended one atom.
+Neither `footprint` nor `vmmap` can attach to a process over the farm's ssh session, so it is not yet known (Q214).

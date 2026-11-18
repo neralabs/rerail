@@ -718,7 +718,7 @@ impl Atoms {
     }
 
     /// Whether a text not held in memory has no atom `existing` would find (it reads nothing then): inside a run's
-    /// provisional ids, forked, or every stored atom held while this process holds the lease. Atomic loads only, no
+    /// provisional ids, forked, or the store's blocks mapped to their end while this process holds the lease. Atomic loads only, no
     /// lock: a walk in morsels asks it for each text it misses.
     pub fn misses_are_final(&self) -> bool {
         self.provisional() || self.forked() || (self.complete.load(Ordering::Acquire) && self.leased.load(Ordering::Acquire))
@@ -829,7 +829,7 @@ impl Atoms {
         if found.iter().all(Option::is_some) {
             return Ok(found.into_iter().flatten().collect());
         }
-        // Inside a run, with every stored atom held: new ids are provisional, given out without the lease and checked
+        // Inside a run, with the store's blocks mapped to its end: new ids are provisional, given out without the lease and checked
         // against the store's as they are written (decision 0160). Nothing is read. Forked, the store's are found as
         // they are written (decision 0170).
         if self.provisional() || self.forked() {

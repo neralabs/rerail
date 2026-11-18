@@ -4482,3 +4482,13 @@ native join it falls back to the planner's whole-rule order.
   history, so an empty `Changed` means the marker check passed on a history that did not yet hold the edit's event.
 - **Next**: find what the marker check reads under load: the cookie's event id compared with the edit's, or the
   history's flush. Record it in 0400, and add a test that loads the machine while it replays.
+
+### Q214. ep2's warm peak footprint rose 65 MB with the atoms on blocks, while the heap and RSS fell
+
+- **Found** (2026-11-18, 0401 step 4): a2 against e152. The jemalloc heap fell from 251.8 to 169.0 MB and the
+  maximum RSS from 690 to 541 MB, but the peak footprint rose from 505 to 570 MB, which is above the RSS. The stores
+  differ (a fresh v6 store against an older v5 one), and the warm run opens the atoms writer's writable shared
+  mapping of `d4.blk` (50 MB) to append one atom.
+- **Next**: the writer opens only to append, and each warm run appended one atom. Compare a warm run that appends
+  none on the same store. `vmmap` and `footprint` cannot attach over the farm's ssh, so take the footprint from
+  inside the process (`task_info(TASK_VM_INFO)`) before and after the append.
