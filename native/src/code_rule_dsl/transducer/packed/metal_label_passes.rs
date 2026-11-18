@@ -1453,6 +1453,15 @@ fn encode(
     mark("encoded");
     crate::code_rule_dsl::prof::time("gpu.flush", || runner.flush())?;
     mark("flushed");
+    // A node past the batch's, which a pass would have marked or counted (decision 0403): not written, and the
+    // passes again on the interpreter. Said once a run: it is a tape's walk or a capture that left its tape.
+    if runner.flag(0) & 256 != 0 {
+        crate::code_rule_dsl::prof::count("gpu.node_past_batch", 1);
+        static SAID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if !SAID.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            eprintln!("rerail: a label pass took a node past its batch's {} (decision 0403, Q125): not written; the passes on the interpreter", runner.nodes);
+        }
+    }
     // A micro walk that outgrew its frames: the passes again on the interpreter.
     if runner.flag(0) & 2 != 0 {
         crate::code_rule_dsl::prof::count("gpu.frames_overflow", 1);

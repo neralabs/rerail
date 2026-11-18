@@ -1624,8 +1624,15 @@ whose offset word was data. Both runs saw a relation's descriptor overwritten wi
 - Runs: 180 clean with the diagnostic engine (the descriptor compared when an index is marked built); with `rows_put`, 179 of 180 clean (no refusal, no panic, 1,629 findings each), and one killed at the 300 s cap with
   no output (Q127), three at a time, on 2026-11-18. 180 more: 174 clean, none refused, and 6 failed in the same
   seconds when the disk filled (the store's writes: "database or disk is full"), not the engine's work. So 353 of
-  360 runs clean with `rows_put`, against 1 to 2 in 150 lost before it.
-- **Open**: which host sizing gives a relation more rows than its chunks. A refusal will name it; none seen yet.
+  360 runs clean with `rows_put`, against 1 to 2 in 150 lost before it; 180 more clean (no hang, the sampler on).
+- **Second chain, also bounded**: the label passes' marks and tallies (`bits[node / 32]`, `tally[node]`, atomic)
+  took any node a walk or capture gave them. Before the walk bounds and the dead entry (`4289c4f60`, `3f2c1748f`), a
+  torn 16z read could make that any number, an atomic write up to 16 GB away. Now a node past the batch's is not
+  written, and the passes rerun on the interpreter (`gpu.node_past_batch`), or the task fails (runtime error 8).
+- **Which it was**: `rows_put` refused nothing in 540 runs, and every device part's chunks cover its rows. The
+  crashes stopped with the walk bounds and the dead entry: 533 clean since, against 2 in about 245 before. The
+  garbage words look like ORed bits more than row values. So the label marks are the likely writer; both chains are
+  bounded now, which no run can tell apart from here (0403, "Open").
 
 ### Q126. Source reads at a node's span, held to the source (0403's open part) — done 2026-11-18
 

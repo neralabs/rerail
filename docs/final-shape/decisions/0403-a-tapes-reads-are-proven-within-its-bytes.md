@@ -94,6 +94,14 @@ The reads are the CLIF ones (`crates/clif/src/reads.rs`). Each line is why one k
   kernel stored through `rows_at` and 8 bytes whatever the column's width. A row past the chunks made finds its
   chunk's offset 0, so its address is the column's directory itself. A write there overwrites the directory and
   the descriptors after it (Q125, below).
+- **A node a label pass marks or counts.** The label passes set a node's bit (`bits[node / 32]`) and add to its
+  tally (`tally[node]`) at a node a pattern started at or captured, often reached by a walk. These are atomic
+  writes at an offset from the node: unbounded, a node from a bad read reaches 512 MB past the bits and 16 GB past
+  the tallies. Each is written only for a node below the batch's (`MARK`, `TALLY` in `metal_label_passes.metal`;
+  the runtime's own, in `metal_batch_runtime.metal`). Any other is not written: the label kernels set flag 256,
+  and the passes run again on the interpreter, counted (`gpu.node_past_batch`) and said once; the runtime fails
+  its task (error 8), and the batch runs on the CPU. A walk's hop can give the tape's node count itself, one past
+  the last, so this bound is needed even with the walks bounded.
 - **A node a kernel reads** comes from a loop over the tape's nodes, from a walk (above), or from a view's row
   (`vread`: the document whose rows hold it). So reads of formats 15 and 16 take nodes below the tape's count, which
   their checked regions and columns hold.
@@ -156,8 +164,13 @@ The same descriptor words were written over in both: a row writer that missed it
 
 ## Open
 
-- **Which host sizing gave a relation more rows than its chunks.** `rows_put` keeps it from corrupting anything,
-  and a refusal names the relation (its device side's rows, its chunks', its claimed). None has been seen since.
+- **Which write it was, proven.** The runs point at the label marks and tallies. The crashes stopped when the walks
+  were bounded and a shared read whose tries ran out began reading the dead entry (533 clean runs since, against
+  2 bad in about 245 before). Before those, a torn read could give a walk any node. A mark or a tally at that node
+  is an atomic OR of one bit, or an add of one, up to 16 GB from its buffer. A word built up by such ORs looks like
+  the garbage seen (`base_rows` 0x91346E83, an offset 0x0101463c52c300cd) more than row values do. And `rows_put`
+  has refused no row in 540 runs. Every write in both chains is now bounded where it is made (above). Naming it
+  for certain would take the old engine's runs again, with these guards counting instead of preventing.
 
 ## What it replaces
 
@@ -167,3 +180,4 @@ The same descriptor words were written over in both: a row writer that missed it
 - A shared 16z read whose tries ran out, which read the entry as it was.
 - Spans taken from the tape as stated by every reader, the kernels among them.
 - The device's row stores through `rows_at`, 8 bytes whatever the column's width.
+- The label passes' marks and tallies at any node they were given.

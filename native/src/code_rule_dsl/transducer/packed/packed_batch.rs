@@ -1329,6 +1329,8 @@ fn status_error(status: &TaskStatus) -> Option<Error> {
         2 => Error::BackendCapacity,
         4 => Error::WorkLimit,
         7 => Error::InvalidOperand(status.program_counter as usize),
+        // A mark or a tally of a node past the batch's (decision 0403): not written.
+        8 => Error::BackendFailure,
         _ => Error::BackendFailure,
     })
 }
