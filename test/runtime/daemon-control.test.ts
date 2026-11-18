@@ -56,6 +56,12 @@ import { fakeMachine } from "../support/platform/daemon-machine.js";
 import { otherUserPid } from "../support/other-user-pid.js";
 import { removeFolder, runningIn } from "../support/platform/remove-folder.js";
 
+// These tests fake the daemon with a stubbed global fetch, so the transport hands an http daemon's requests to it.
+vi.mock(import("../../src/runtime/daemon-control/transport.js"), async importOriginal => ({
+  ...(await importOriginal()),
+  httpDaemonFetch: async (endpoint: URL, init: RequestInit) => await fetch(endpoint, init),
+}));
+
 const originalRerailHome = process.env.RERAIL_HOME;
 
 function stateFor(overrides: Partial<DaemonState>): DaemonState {

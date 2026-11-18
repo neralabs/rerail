@@ -40,6 +40,12 @@ import { startTestRepository } from "../../support/started-repository.js";
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
 import { withExperiments } from "../../support/environment/experiments.js";
 
+// These tests fake the daemon with a stubbed global fetch, so the transport hands an http daemon's requests to it.
+vi.mock(import("../../../src/runtime/daemon-control/transport.js"), async importOriginal => ({
+  ...(await importOriginal()),
+  httpDaemonFetch: async (endpoint: URL, init: RequestInit) => await fetch(endpoint, init),
+}));
+
 withExperiments("CONVERSATION_RULES", "SEMANTIC_TOOLS");
 
 /** The steer block a `mode` conversation rule delivers for a step of the conversation. */

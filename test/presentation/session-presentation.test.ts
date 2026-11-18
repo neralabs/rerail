@@ -23,6 +23,12 @@ import { holdEngineEndpoint, testEngineEndpoint } from "../support/platform/engi
 import { startTestRepository } from "../support/started-repository.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
+// These tests fake the daemon with a stubbed global fetch, so the transport hands an http daemon's requests to it.
+vi.mock(import("../../src/runtime/daemon-control/transport.js"), async importOriginal => ({
+  ...(await importOriginal()),
+  httpDaemonFetch: async (endpoint: URL, init: RequestInit) => await fetch(endpoint, init),
+}));
+
 let home: string;
 let cwd: string;
 let database: string;

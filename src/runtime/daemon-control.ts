@@ -18,6 +18,7 @@ import { withHomeLock } from "../engine/native/file-lock.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
 import { ensureSqlite, type SqliteRepairResult } from "./sqlite-repair.js";
 import { engineCapabilityProof, type EngineProofAnswer } from "./engine-proof.js";
+import { agentFetch, httpDaemonFetch, type DaemonFetch } from "./daemon-control/transport.js";
 import { databasePipeListed, enginePipeListed, isNamedPipe, listPipes, pipeListed, pipeNameOf } from "./engine-pipe.js";
 import { processState, type ProcessSignal } from "../engine/process-liveness.js";
 import {
@@ -109,8 +110,7 @@ export async function engineEndpointAt(socketPath: string, home: string = defaul
   return state !== undefined && resolve(state.kernelSocketPath) === resolve(socketPath) ? engineEndpointOf(state) : { socketPath };
 }
 
-/** How a Rerail process sends one request to the daemon: `fetch`'s shape, over the transport the daemon serves. */
-export type DaemonFetch = (endpoint: URL, init: RequestInit) => Promise<Response>;
+export type { DaemonFetch };
 
 /** Where a Rerail process sends requests to a daemon, the headers that admit them, and the transport that reaches it. */
 export interface DaemonEndpoint {
@@ -204,20 +204,22 @@ function nodeFetch(send: typeof httpsRequest | typeof httpRequest, agent: HttpsA
 }
 
 /**
- * How a Rerail process reaches the daemon `state` records: plain `fetch` for an `http:` daemon; for an `https:` one, a
- * client that pins the certificate fingerprint the daemon recorded. An `https:` state without a fingerprint is refused
- * rather than trusted. A caller that gives `sent` is told once each request was handed to the OS, so its `http:`
- * requests go through Node's own client, on a connection of their own.
+ * How a Rerail process reaches the daemon `state` records: for an `http:` daemon, Node's http client over the one
+ * keep-alive agent of the process (`httpDaemonFetch`); for an `https:` one, a client that pins the certificate
+ * fingerprint the daemon recorded. An `https:` state without a fingerprint is refused rather than trusted. A caller that
+ * gives `sent` is told once each request was handed to the OS, so its requests go through Node's own client, on a
+ * connection of their own.
  */
 export function daemonFetch(state: Pick<DaemonState, "url" | "tlsFingerprint256">, sent?: () => void): DaemonFetch {
-  if (new URL(state.url).protocol !== "https:") return sent === undefined ? fetch : nodeFetch(httpRequest, false, sent);
+  if (new URL(state.url).protocol !== "https:") return sent === undefined ? httpDaemonFetch : nodeFetch(httpRequest, false, sent);
   const fingerprint = state.tlsFingerprint256;
   if (fingerprint === undefined) {
     return async () => {
       throw new Error("daemon.json names an https Rerail daemon without the certificate fingerprint to pin");
     };
   }
-  return nodeFetch(httpsRequest, new PinnedDaemonAgent(fingerprint), sent);
+  const agent = new PinnedDaemonAgent(fingerprint);
+  return sent === undefined ? agentFetch(agent, httpsRequest) : nodeFetch(httpsRequest, agent, sent);
 }
 
 /** `url` on the origin a browser on this machine reaches: an unspecified bind address (`0.0.0.0`, `::`) is loopback. */

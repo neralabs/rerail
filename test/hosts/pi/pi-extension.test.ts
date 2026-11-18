@@ -35,6 +35,12 @@ import { startTestRepository, stopTestRepository } from "../../support/started-r
 import { removeFolderSync } from "../../support/platform/remove-folder.js";
 import { withExperiments } from "../../support/environment/experiments.js";
 
+// These tests fake the daemon with a stubbed global fetch, so the transport hands an http daemon's requests to it.
+vi.mock(import("../../../src/runtime/daemon-control/transport.js"), async importOriginal => ({
+  ...(await importOriginal()),
+  httpDaemonFetch: async (endpoint: URL, init: RequestInit) => await fetch(endpoint, init),
+}));
+
 withExperiments("CONVERSATION_RULES", "SEMANTIC_TOOLS");
 
 // Every test here builds real sessions (native model, engine, rule catalog); on a loaded CI runner a
