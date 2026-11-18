@@ -1333,15 +1333,38 @@ pub fn link_seeded(m: Module, seeds: &Seeds, core: &BTreeSet<String>) -> Result<
 }
 
 /// The scope's own declarations taken out of a module's program linked in it (`link_seeded`), but for `core`'s.
-pub fn unseed(program: &mut Program, seeds: &Seeds, core: &BTreeSet<String>) {
+pub fn unseed(program: &mut (impl crate::code_rule_dsl::logic::program_image::fields::FieldsMut + ?Sized), seeds: &Seeds, core: &BTreeSet<String>) {
+    use crate::code_rule_dsl::logic::program_facts::Field;
     let seeded = &seeds.seeded;
     let gone = |r: &str| !core.contains(r);
-    program.decls.retain(|r, _| !(seeded.decls.contains(r.as_str()) && gone(r)));
-    program.inputs.retain(|r| !(seeded.inputs.contains(r) && gone(r)));
-    program.natives.retain(|r, _| !(seeded.natives.contains(r) && gone(r)));
-    program.lattice.retain(|r, _| !(seeded.lattice.contains(r) && gone(r)));
-    program.tapes.retain(|r, _| !(seeded.tapes.contains(r) && gone(r)));
-    program.qualifiers.retain(|r, _| !(seeded.qualifiers.contains(r) && gone(r)));
+    for r in program.declared_names() {
+        if seeded.decls.contains(&r) && gone(&r) {
+            program.undeclare(&r);
+        }
+    }
+    if program.input_names().iter().any(|r| seeded.inputs.contains(r) && gone(r)) {
+        program.retain_inputs(&|r: &str| !(seeded.inputs.contains(r) && gone(r)));
+    }
+    let natives = program.natives();
+    if natives.keys().any(|r| seeded.natives.contains(r) && gone(r)) {
+        let kept: BTreeMap<_, _> = natives.into_iter().filter(|(r, _)| !(seeded.natives.contains(r) && gone(r))).collect();
+        program.set_field(Field::Natives(&kept));
+    }
+    let lattice = program.lattice();
+    if lattice.keys().any(|r| seeded.lattice.contains(r) && gone(r)) {
+        let kept: BTreeMap<_, _> = lattice.into_iter().filter(|(r, _)| !(seeded.lattice.contains(r) && gone(r))).collect();
+        program.set_field(Field::Lattice(&kept));
+    }
+    let tapes = program.tapes();
+    if tapes.keys().any(|r| seeded.tapes.contains(r) && gone(r)) {
+        let kept: BTreeMap<_, _> = tapes.into_iter().filter(|(r, _)| !(seeded.tapes.contains(r) && gone(r))).collect();
+        program.set_field(Field::Tapes(&kept));
+    }
+    let qualifiers = program.qualifiers();
+    if qualifiers.keys().any(|r| seeded.qualifiers.contains(r) && gone(r)) {
+        let kept: BTreeMap<_, _> = qualifiers.into_iter().filter(|(r, _)| !(seeded.qualifiers.contains(r) && gone(r))).collect();
+        program.set_field(Field::Qualifiers(&kept));
+    }
 }
 
 /// `link_seeded` up to the program's analyses, apart: the scope's program (its seeds' header: no rules), the

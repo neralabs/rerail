@@ -239,8 +239,7 @@ impl ProgramPass for RequestsFileLocal {
             return Ok(());
         }
         let split = cx.get::<FileLocal>()?;
-        let header = v.header(&Default::default())?;
-        let node_arity = header.decls.get("node").map(|cols| cols.len());
+        let node_arity = v.columns_of("node").map(|cols| cols.len());
         let narrower = Narrower { v, same: &split.same_doc, local: &split.local, fresh: std::cell::Cell::new(0) };
         let own = |r: RuleRef<'_>| -> Vec<Piece> { r.body().map(|l| Piece { src: r.id(), node: l.node(), names: None }).collect() };
         let shown = |pieces: &[Piece]| pieces.iter().map(|p| p.show(v)).collect::<Vec<_>>().join(", ");
@@ -289,10 +288,8 @@ impl ProgramPass for RequestsFileLocal {
         }
         let input = Arc::clone(w.input());
         let b = w.derive()?;
-        if every_node && !header.inputs.iter().any(|i| i == "node") {
-            let mut with = header.clone();
-            with.inputs.push("node".to_owned());
-            b.set_header(&header, &with);
+        if every_node {
+            b.add_input("node");
         }
         // Two rules narrowed to one body are one rule (a request's, the tree's `seen`).
         let mut seen: HashSet<String> = HashSet::new();

@@ -909,8 +909,9 @@ fn cone_of<'a>(heads_reads: &[(&'a str, Vec<&'a str>)], natives: &'a std::collec
 /// set in the header.
 pub(crate) fn with_cone_version(program: &std::sync::Arc<super::program_image::Version>, library: &std::sync::Arc<super::program_image::Version>, asked: &BTreeSet<String>, declared: &BTreeSet<String>) -> Result<std::sync::Arc<super::program_image::Version>, String> {
     use super::program_image::Lit;
-    let lists = super::front::Lists::default();
-    let lib = library.header(&lists)?;
+    use super::program_image::fields::{FieldsMut, ProgramFields};
+    use super::program_facts::Field;
+    let lib_natives = ProgramFields::natives(&**library);
     // The library as written: the on-request rewrite's rules are the program's to make again over its cone (`with_cone`).
     let written = |r: &super::program_image::RuleRef<'_>| !lower::on_request_rule(library.rel_name(r.head().rel()));
     let heads_reads: Vec<(&str, Vec<&str>)> = library
@@ -928,7 +929,7 @@ pub(crate) fn with_cone_version(program: &std::sync::Arc<super::program_image::V
             )
         })
         .collect();
-    let take = cone_of(&heads_reads, &lib.natives, asked, declared);
+    let take = cone_of(&heads_reads, &lib_natives, asked, declared);
     let mut b = super::program_image::Builder::on(program);
     // A rule the program holds is not copied again: by its contents' hash (`RuleRef::hash`, of its texts), as
     // `manager::rebase` matches rules, where the tree's `contains` compares them.
@@ -938,21 +939,35 @@ pub(crate) fn with_cone_version(program: &std::sync::Arc<super::program_image::V
             b.copy(library, r);
         }
     }
-    let was = program.header(&lists)?;
-    let mut header = was.clone();
-    for (rel, cols) in lib.decls.iter().filter(|(r, _)| take.contains(r.as_str())) {
-        header.decls.entry(rel.clone()).or_insert_with(|| cols.clone());
+    // Their declarations, natives, facts and lattices, where the program has none of its own.
+    for rel in library.declared_names().into_iter().filter(|r| take.contains(r)) {
+        if !program.declares(&rel) {
+            let cols = library.columns_of(&rel).unwrap_or_default();
+            let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
+            FieldsMut::declare(&mut b, &rel, &pairs);
+        }
     }
-    for (rel, n) in lib.natives.iter().filter(|(r, _)| take.contains(*r)) {
-        header.natives.entry(rel.clone()).or_insert_with(|| n.clone());
+    let mut natives = ProgramFields::natives(&**program);
+    let n = natives.len();
+    for (rel, native) in lib_natives.iter().filter(|(r, _)| take.contains(*r)) {
+        natives.entry(rel.clone()).or_insert_with(|| native.clone());
     }
-    for (rel, rows) in lib.facts.iter().filter(|(r, _)| take.contains(*r)) {
-        header.facts.entry(rel.clone()).or_insert_with(|| rows.clone());
+    if natives.len() != n {
+        b.set_field(Field::Natives(&natives));
     }
-    for (rel, d) in lib.lattice.iter().filter(|(r, _)| take.contains(*r)) {
-        header.lattice.entry(rel.clone()).or_insert_with(|| d.clone());
+    for rel in library.fact_names().into_iter().filter(|r| take.contains(r)) {
+        if !program.states_facts(&rel) {
+            b.set_facts(&rel, &library.fact_rows(&rel));
+        }
     }
-    b.set_header(&was, &header);
+    let mut lattice = ProgramFields::lattice(&**program);
+    let n = lattice.len();
+    for (rel, d) in ProgramFields::lattice(&**library).into_iter().filter(|(r, _)| take.contains(r)) {
+        lattice.entry(rel).or_insert(d);
+    }
+    if lattice.len() != n {
+        b.set_field(Field::Lattice(&lattice));
+    }
     b.finish_overlay()
 }
 
@@ -1008,11 +1023,8 @@ fn link_seeded_version(linked: lower::Linked, own_v: std::sync::Arc<super::progr
     let lower::Linked { lowered, own, stated, own_stated, .. } = linked;
     drop(own);
     let v = lowering_tail_on(scoped.version()?, vec![(own_v, stated, own_stated)], true, lowered)?;
-    let was = v.header(&Default::default()).map_err(Error::Syntax)?;
-    let mut head = was.clone();
-    lower::unseed(&mut head, seeds, core);
     let mut b = Builder::on(&v);
-    b.set_header(&was, &head);
+    lower::unseed(&mut b, seeds, core);
     b.finish().map(|(v, _)| v).map_err(Error::Syntax)
 }
 

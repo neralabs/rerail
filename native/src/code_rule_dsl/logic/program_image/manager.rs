@@ -1590,8 +1590,6 @@ pub fn rebase(last: &Arc<Version>, new: &Arc<Version>) -> Result<Option<Arc<Vers
     if 2 * (removed.len() + added.len()) > last.size().max(1) {
         return Ok(None);
     }
-    let lists = crate::code_rule_dsl::logic::front::Lists::default();
-    let (was, header) = (last.header(&lists)?, new.header(&lists)?);
     let mut b = Builder::on(last);
     for id in removed {
         b.remove(id);
@@ -1599,7 +1597,7 @@ pub fn rebase(last: &Arc<Version>, new: &Arc<Version>) -> Result<Option<Arc<Vers
     for r in added {
         b.copy(new, r);
     }
-    b.set_header(&was, &header);
+    b.state_fields_as(last, new);
     b.finish_overlay().map(Some)
 }
 

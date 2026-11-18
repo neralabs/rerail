@@ -376,6 +376,50 @@ impl ProgramFields for Version {
 }
 
 impl Builder<'_> {
+    /// States `now`'s fields (its declarations, facts, inputs, outputs and `.about` rows) where they differ from
+    /// `was`'s, each read by name: `now` a version made apart from `was`, the version this builder edits, its rules
+    /// the builder's own (`manager`'s edit of the last version to the new one).
+    pub fn state_fields_as(&mut self, was: &Version, now: &Version) {
+        for rel in now.declared_names() {
+            let cols = now.columns_of(&rel);
+            if was.columns_of(&rel) != cols {
+                let cols = cols.unwrap_or_default();
+                let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
+                FieldsMut::declare(self, &rel, &pairs);
+            }
+        }
+        for rel in was.declared_names() {
+            if !now.declares(&rel) {
+                self.undeclare(&rel);
+            }
+        }
+        for rel in now.fact_names() {
+            let rows = now.fact_rows(&rel);
+            if !was.states_facts(&rel) || was.fact_rows(&rel) != rows {
+                self.set_facts(&rel, &rows);
+            }
+        }
+        for rel in was.fact_names() {
+            if !now.states_facts(&rel) {
+                self.drop_facts(&rel);
+            }
+        }
+        let inputs = now.input_names();
+        if was.input_names() != inputs {
+            self.set_inputs(&inputs);
+        }
+        let outputs = now.output_names();
+        if was.output_names() != outputs {
+            self.set_outputs(&outputs);
+        }
+        let names: BTreeSet<String> = [was, now].iter().flat_map(|v| v.about_facts().into_iter().map(|f| v.text(f.name()).to_owned()).collect::<Vec<_>>()).collect();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        let about = now.about(&names);
+        if was.about(&names) != about {
+            self.set_about(&about);
+        }
+    }
+
     /// A cell of this builder's atoms as a value.
     fn value_of(&self, c: Cell) -> Value {
         match c {
