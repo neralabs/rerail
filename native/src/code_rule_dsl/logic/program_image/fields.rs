@@ -294,6 +294,12 @@ pub trait ProgramFields {
     fn asked(&self) -> BTreeMap<String, Vec<BTreeSet<String>>> {
         field(self, &["asked"], |f| f.asked())
     }
+    fn magic_extras(&self) -> Option<usize> {
+        field(self, &["magic_extras"], |f| f.magic_extras())
+    }
+    fn magic_report(&self) -> Option<Report> {
+        field(self, &["magic_report", "report_list"], |f| f.magic_report())
+    }
 }
 
 /// Field `relations` of `p`, read (`program_facts::Fields`). A program's fields read as they were written: a row
@@ -603,6 +609,12 @@ impl ProgramFields for Tree {
     fn asked(&self) -> BTreeMap<String, Vec<BTreeSet<String>>> {
         self.asked_by.clone()
     }
+    fn magic_extras(&self) -> Option<usize> {
+        self.magic_extras
+    }
+    fn magic_report(&self) -> Option<Report> {
+        self.magic_report.clone()
+    }
 }
 
 impl FieldsMut for Tree {
@@ -760,6 +772,8 @@ impl std::fmt::Debug for Shown<'_> {
             .field("answers", &p.answers())
             .field("asked", &p.asked())
             .field("rx_spans", &p.rx_spans())
+            .field("magic_extras", &p.magic_extras())
+            .field("magic_report", &p.magic_report())
             .finish()
     }
 }
