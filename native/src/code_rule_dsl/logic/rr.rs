@@ -329,16 +329,15 @@ impl Text {
         Ok(Some(Own { version, asked, declared }))
     }
 
-    /// The text's own program as its walk writes it (`lower::lower_module_seeded_written`) and as the tree's rules
-    /// encode, and whether the linked module held its header alone: a test's view of decision 0377 step 3.
+    /// The text's own program as its walk writes it (`lower::lower_module_seeded_written`), and whether the linked
+    /// module held its header alone: a test's view of decision 0377 step 3.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub fn own_written_and_tree(self, scoped: &Scoped) -> Result<(bool, std::sync::Arc<super::program_image::Version>, std::sync::Arc<super::program_image::Version>), Error> {
+    pub fn own_written(self, scoped: &Scoped) -> Result<(bool, std::sync::Arc<super::program_image::Version>), Error> {
         let Read::Modular { own, .. } = self.0 else { return Err(Error::Syntax("not a modular text".to_owned())) };
         let own: Vec<syntax::Statement> = own.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_))).collect();
-        let tree = lower::link_seeded_parts(lower::lower_module_seeded(own.clone(), &scoped.seeds)?, &scoped.seeds)?;
         let mut w = lower::link_seeded_parts(lower::lower_module_seeded_written(own, &scoped.seeds)?, &scoped.seeds)?;
         let header_alone = w.own.rules.is_empty() && w.version.is_some();
-        Ok((header_alone, own_version(&w.own, w.version.take())?, version_of(&tree.own)?))
+        Ok((header_alone, own_version(&w.own, w.version.take())?))
     }
 
     /// `lower_in` as a version: the stored image handed on unread (decision 0281's path, step 7a-2); else the text

@@ -251,7 +251,7 @@ struct Lowerer {
 /// Where `Lowerer::write` puts a rule.
 #[derive(Clone, Default)]
 enum Out {
-    /// `prog.rules`: a module kept as parts, the unseeded link, `lower`.
+    /// `prog.rules`: a lowerer not walking a module's clauses (a scope's seeds, a link).
     #[default]
     Tree,
     /// A text's own program, written as a version in the walk (decision 0377 step 3): `prog` holds its header alone.
@@ -440,22 +440,10 @@ pub fn seeds(scope: &[&Module]) -> Seeds {
     Seeds { l, seeded, given, printed }
 }
 
-pub fn lower_module_in(statements: Vec<Statement>, scope: &[&Module]) -> Result<Module, Error> {
-    lower_module_seeded(statements, &seeds(scope))
-}
-
-/// `lower_module_in`, in a scope seeded already.
-pub fn lower_module_seeded(statements: Vec<Statement>, seeds: &Seeds) -> Result<Module, Error> {
-    lower_module_seeded_as(statements, seeds, false)
-}
-
-/// `lower_module_seeded`, its rules written as a version in the walk (decision 0377 step 3): a text's own program,
-/// which `link_seeded_parts` links without editing its rules and `rr::link_seeded_version` appends onto its scope.
+/// `statements` lowered as a module of a scope seeded already (`seeds`), its rules written as a version in the walk
+/// (decision 0377 step 3), which `link_seeded_parts` links without editing its rules and `rr::link_seeded_version`
+/// appends onto its scope.
 pub fn lower_module_seeded_written(statements: Vec<Statement>, seeds: &Seeds) -> Result<Module, Error> {
-    lower_module_seeded_as(statements, seeds, true)
-}
-
-fn lower_module_seeded_as(statements: Vec<Statement>, seeds: &Seeds, as_version: bool) -> Result<Module, Error> {
     let typing = crate::code_rule_dsl::logic::profile::span(|| "type the tapes' terms".to_owned());
     let written: BTreeMap<String, Vec<String>> = statements
         .iter()
@@ -555,14 +543,12 @@ fn lower_module_seeded_as(statements: Vec<Statement>, seeds: &Seeds, as_version:
     // stated. A demand an include's lowering made is not one: this module makes its own.
     l.printed_demands = DEMANDS.iter().chain(WORLD.iter().map(|(_, d)| d)).filter(|d| l.prog.decls.contains_key(**d) && !seeded.decls.contains(**d)).map(|d| (*d).to_owned()).collect();
     l.printed_demands.extend(seeds.printed.iter().cloned());
-    if as_version {
-        // From here the rules go to the version; what the statements wrote before goes first, in its order.
-        let mut w = Written::new(shapes.iter().map(|(shape, _)| shape.head.clone()).collect());
-        for rule in std::mem::take(&mut l.prog.rules) {
-            w.write(rule);
-        }
-        l.out = Out::Version(Box::new(w));
+    // From here the rules go to the version; what the statements wrote before goes first, in its order.
+    let mut w = Written::new(shapes.iter().map(|(shape, _)| shape.head.clone()).collect());
+    for rule in std::mem::take(&mut l.prog.rules) {
+        w.write(rule);
     }
+    l.out = Out::Version(Box::new(w));
     for (heads, body, edits, line) in clauses {
         // A rule ending in `=> edits` defines a fix; fixes are not run, so it is left out.
         if !edits.is_empty() {
@@ -601,7 +587,8 @@ fn lower_module_seeded_as(statements: Vec<Statement>, seeds: &Seeds, as_version:
     Ok(Module { l, written, docof, places, version })
 }
 
-/// `lower_module_in`, its rules written as a version in the walk: a library's module (`rr::lower_library`).
+/// A module of the modules `scope` reaches (each once), its rules written as a version in the walk: a library's
+/// module (`rr::lower_library`).
 pub fn lower_module_in_written(statements: Vec<Statement>, scope: &[&Module]) -> Result<Module, Error> {
     lower_module_seeded_written(statements, &seeds(scope))
 }

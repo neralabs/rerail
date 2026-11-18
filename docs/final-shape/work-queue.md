@@ -2581,3 +2581,12 @@ and the input relations' hash indexes and sorted orders. Then `rr_agg56` (Q82, 0
   `logical_line_predicates_and_aliases_use_the_vocabulary_batch` (the strings' relations numbered in another order
   than the tests expect, after 0281 step 6c named them by content). None reads `finish` or a version's fields.
 - **Done when**: each list names what it lists once, and the strings tests assert by content, not number.
+
+### Q106. Relax's JIT refuses `sha2`'s `sha512h` inline asm
+
+- **Found** (2026-11-18, running `rr::tests` under Relax for 0276 step 5):
+  `rr::tests::shared_signing_library_verifies_an_existing_empty_allowlist` stops at "compile error in
+  `sha2::sha512::aarch64::vsha512hq_u64`: asm!: unsupported instruction `sha512h`". The test passes under cargo;
+  every test that signs a library through `sha2`'s SHA-512 on aarch64 stops the same way under Relax.
+- **To do:** teach Relax's assembler `sha512h`, `sha512h2`, `sha512su0`, `sha512su1` (FEAT_SHA512), or build `sha2`
+  for Relax with its `force-soft` path. A draft for upstream goes to the user (never filed by me).
