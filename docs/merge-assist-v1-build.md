@@ -51,8 +51,11 @@ so the daemon keeps answering sessions while it runs. It never runs while Merge 
   upstream's) and whose fork is the person's (its owner is the login `gh` is signed in with), or whose head commit
   this branch once pointed at (its reflog holds it), so it stays left out after an amend or a rebase. Pull requests
   are listed through `gh`, read-only and with the person's own sign-in: afresh by a scan, else at most every five
-  minutes, the 200 newest open ones; when more are open, the scan says so. Each listing reads `gh`'s sign-in afresh
-  first. `gh` is signed out only when `gh auth status` says it holds no login for the host; any other failure of it (a
+  minutes, the 200 newest open ones; when more are open, the scan says so. A scan reads `gh`'s sign-in afresh first;
+  another listing starts from the kept reading while a status would show it without reading `gh` (same environment,
+  `hosts.yml` unmoved, under five minutes old, one while `gh` could not tell), and reads `gh` first otherwise, or when
+  that file's stat has not answered by the time the listing has, or when the kept reading lists nothing (not signed
+  in). `gh` is signed out only when `gh auth status` says it holds no login for the host; any other failure of it (a
   token it could not check, offline) is `unavailable`. A status shows the sign-in as `gh` last said it, with when
   (`readAt`). A reading is kept per `gh` environment, `hosts.yml`'s path and which of `GH_TOKEN` and `GITHUB_TOKEN`
   are set (a CLI and the daemon may differ, and so hold two sign-ins), for the last four environments that read it. A
@@ -61,7 +64,8 @@ so the daemon keeps answering sessions while it runs. It never runs while Merge 
   `XDG_CONFIG_HOME/gh`, else `%AppData%\GitHub CLI` on Windows, else `~/.config/gh`), and a status compares that
   file's identity, size and times, read with one stat off the daemon's thread, with the ones kept beside the reading.
   It waits for that stat no longer than its own Git reads take; one that has not answered by then leaves the kept
-  reading shown with its time. A reading five minutes old, or one minute old while `gh` could not tell, is read again
+  reading shown with its time, and the CLI's process ends once its answer is written, whether the stat has answered
+  or not. A reading five minutes old, or one minute old while `gh` could not tell, is read again
   when a status asks for it, which covers what no file tells (a token GitHub refuses, the network back, `gh`
   installed): in the background, so that status shows the kept one and the next shows the new one; the CLI, which
   answers once, shows it in that answer. No timer runs for it.
