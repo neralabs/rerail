@@ -137,6 +137,9 @@ pub struct Records {
     /// program's masks), and nothing else does: on the CPU, tier 2 reads each from the bytes
     /// where they make it (`native_cpu_bytes`), so the CPU's body makes none of them.
     pub check_masks: Vec<u16>,
+    /// The prefix (`prefix B …`, decision 0335): where the file starts with these bytes, the
+    /// stream, and the loop, start after them. Empty: no prefix.
+    pub prefix: Vec<u8>,
 }
 
 /// A token test (`Records::checks`): over the tokens whose first byte's end rule is `rule`,
@@ -260,6 +263,54 @@ pub struct Reader {
     /// the code's kind for its token, which no first byte gives, and the marks it has (the
     /// extra's), as the lean lexer's reader says what it read (`Records::retags`).
     pub retag: Option<(u8, u32)>,
+    /// Its region read in parts (`read K parts { … }`), one arm: each part's start (an output)
+    /// and bytes. Its tokens are the opener's byte, each part, each run of the bytes between,
+    /// and the closer (`read_parts`). None: the region is one token.
+    pub parts: Vec<ReadPart>,
+    /// Where its parts are split (decision 0323): by tier 1's token loop (`Split::Tier1`, its
+    /// records the parts'), or by tier 2's token fetch (`Split::Tier2`, tier 1's record the
+    /// whole region, as a reader without parts gives it).
+    pub split: Split,
+}
+
+/// Where a region read in parts is split into its tokens (`Reader::split`, decision 0323).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Split {
+    /// Tier 1's records are the parts (lowering A).
+    #[default]
+    Tier1,
+    /// Tier 1's record is the region; tier 2's token fetch splits it (lowering B).
+    Tier2,
+}
+
+impl Records {
+    /// Where the stream starts in `bytes`: past the prefix, where the file starts with it.
+    pub fn start(&self, bytes: &[u8]) -> usize {
+        if !self.prefix.is_empty() && bytes.starts_with(&self.prefix) { self.prefix.len() } else { 0 }
+    }
+
+    /// Every region read in parts split where `at` says (decision 0323): a compile option, the
+    /// grammar the same either way.
+    pub fn split_parts_in(&mut self, at: Split) {
+        for rd in self.readers.iter_mut().filter(|rd| !rd.parts.is_empty()) {
+            rd.split = at;
+        }
+    }
+}
+
+impl Reader {
+    /// Whether tier 1 splits its region into parts (`Split::Tier1`).
+    pub fn parts_in_tier1(&self) -> bool {
+        !self.parts.is_empty() && self.split == Split::Tier1
+    }
+}
+
+/// A part of a region read in parts (`Reader::parts`): at a bit of output `start`, `bytes`
+/// bytes, as a lexer reads an escape in a string.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ReadPart {
+    pub start: u16,
+    pub bytes: u8,
 }
 
 /// A reader's kind and marks as a mask says them (`Reader::retag`), where no reader runs: at a
@@ -291,6 +342,47 @@ pub enum ReadNone {
     End,
     /// `else E bytes M`: the opener's first `M` bytes.
     Bytes(u8),
+}
+
+/// The first bit of output `o` at or after byte `from`, a word at a time; `None`, none.
+fn first_bit(outputs: &[Vec<u64>], o: u16, from: usize) -> Option<usize> {
+    let w = outputs.get(usize::from(o)).map_or(&[][..], |v| v.as_slice());
+    let mut q = from / 64;
+    let mut x = w.get(q)? & (!0u64 << (from % 64));
+    while x == 0 {
+        q += 1;
+        x = *w.get(q)?;
+    }
+    Some(64 * q + x.trailing_zeros() as usize)
+}
+
+/// A region read in parts from its opener at `s` (`Reader::parts`): its tokens' starts and
+/// lasts, in order, as a lexer reads a string: the opener's byte; then from the byte after,
+/// the nearer of the closer's next bit and each part's next bit, the bytes before it a token
+/// of their own (the content's), a part its bytes, and on after it, until the closer, its
+/// bytes the last token. `Err` where the closer never comes (the file is refused).
+pub fn read_parts(reader: &Reader, s: usize, outputs: &[Vec<u64>]) -> Result<Vec<(usize, usize)>, ()> {
+    let a = reader.arms.first().ok_or(())?;
+    let mut out = vec![(s, s)];
+    let mut at = s + 1;
+    loop {
+        let c = first_bit(outputs, a.closer, at).ok_or(())?;
+        let part = reader.parts.iter().filter_map(|p| first_bit(outputs, p.start, at).filter(|&e| e < c).map(|e| (e, p.bytes))).min();
+        let to = part.map_or(c, |(e, _)| e);
+        if to > at {
+            out.push((at, to - 1));
+        }
+        match part {
+            Some((e, n)) => {
+                out.push((e, e + usize::from(n) - 1));
+                at = e + usize::from(n);
+            }
+            None => {
+                out.push((c, c.wrapping_add_signed(isize::from(a.off))));
+                return Ok(out);
+            }
+        }
+    }
 }
 
 /// A reader's token's last byte from its first, `s` (`Reader`), a word of the closer's bits at
@@ -398,7 +490,7 @@ pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vec<u64>]) ->
     let blank = outputs.get(usize::from(skip)).map_or(&[][..], |v| v.as_slice());
     let held = |q: usize| !blank.get(q).copied().unwrap_or(0);
     let (mut starts, mut lasts) = (Vec::new(), Vec::new());
-    let mut at = 0usize;
+    let mut at = records.start(bytes);
     let mut untaken = false;
     let mut checked = false;
     let mut read = false;
@@ -417,6 +509,30 @@ pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vec<u64>]) ->
             break;
         }
         let k = records.ends[usize::from(bytes[s])];
+        // A region read in parts: each of its tokens.
+        if let Some(&EndRule::Read(i)) = records.rules.get(usize::from(k)) {
+            let reader = &records.readers[usize::from(i)];
+            let opens = reader.arms.first().is_some_and(|a| outputs.get(usize::from(a.opener)).and_then(|w| w.get(s / 64)).is_some_and(|w| w >> (s % 64) & 1 == 1));
+            if reader.parts_in_tier1() && opens {
+                match read_parts(reader, s, outputs) {
+                    Ok(tokens) => {
+                        let l = tokens.last().map_or(s, |t| t.1);
+                        for (a, b) in tokens {
+                            starts.push(a as u32);
+                            lasts.push(b as u32);
+                        }
+                        at = l + 1;
+                    }
+                    Err(()) => {
+                        read = true;
+                        starts.push(s as u32);
+                        lasts.push(s as u32);
+                        at = s + 1;
+                    }
+                }
+                continue;
+            }
+        }
         let l = match records.rules.get(usize::from(k)) {
             Some(&EndRule::Read(i)) => {
                 let l = match read_last(records, &records.readers[usize::from(i)], s, bytes, outputs) {

@@ -1522,6 +1522,19 @@ product runs, 79 of 115 pass, 18 fail on Q49's work limit, and 18 fail in the wa
 - **Keep**: the fixtures' CPU results as the oracle.
 - **Done when**: each fixture passes on the packed JIT, or its difference is shown to be the CPU's error.
 
+### Q69. The `.rr` ladder's field ids lose 64 in the interpreters and the compiled parser
+
+Found 2026-11-17 (0366, running `rr_tests::rr_steps_parse_as_the_reference_and_the_engine`). 33 steps
+differ from the reference. In every one the nodes are the same but for a field: the interpreters
+(`stream::run`) and the compiled parser give the reference's field id less 64 (65 → 1, 75 → 11, 128 → 0,
+137 → 9), from `04-clauses` on. Both sides agree with each other, so the fault is in the program they share
+(a field operand narrowed to 6 bits where the words are lowered or encoded), not in tier 1 or tier 2's
+code. 0366's change is tier 1's alone and leaves both sides' trees as they were.
+
+- **Where to start**: `stream.rs`'s `NODE_FIELD` (lines 721–722) reads the operand, so look at where
+  the word's operand is packed; `native_cpu_tape.rs:82` masks a field with `0x3f`.
+- **Done when**: the test passes (it takes about 90 s here, so run it alone).
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
@@ -1820,3 +1833,30 @@ always a refusal.
 - Route a parked member back to the thread that holds its submission, or flush that wave before the job hands its
   members back (the job's mark taken before the thread's open wave, not after).
 - **Done when**: no hogql run has the refusal, findings unchanged over 20 runs.
+
+### Q68. The shared cache returns a crate built against another version of a vendored crate
+
+- **Seen** (2026-11-17, three times in this worktree): an edit to `native/vendor/cranelift-codegen-0.125.4`
+  (a line added to `src/opts/remat.isle`), then the edit taken back. `rerail-clif` then fails with E0463,
+  "can't find crate for `cranelift_frontend`". `RUSTC_LOG=rustc_metadata::locator` shows the `.rmeta` at
+  `libcranelift_frontend-07f6dc4d375062f6` was rejected: it names `cranelift_codegen`'s hash `bff3b16d…`,
+  and the `libcranelift_codegen-0c39364acc0c618e` in `target/` has another. The vendored crates' file names
+  (`-C extra-filename`) don't change with their sources, so both builds of `cranelift_codegen` have one
+  name, and the cache gave back a `cranelift_frontend` compiled against the other.
+- **Seen again** (2026-11-17, 0381): a new edit with no revert, `cmtst` added to the vendored
+  aarch64 backend. So any edit to a vendored crate can bring it, not only one taken back.
+- **Way round**: move `target/debug/deps/*cranelift_frontend-07f6…*` and its `.fingerprint` directory out,
+  then build once with `SCCACHE_RECACHE=1 RERAIL_FARM_LOCAL=1`. Moving it out alone isn't enough: the
+  cache returns the same file.
+- **Cause** (2026-11-17, read in the farm's source): sccache's key already hashes each `--extern`
+  file's whole content (`hash_all_externs`), so a compile here can't mismatch. `cranelift-frontend`
+  is a registry crate, so it may compile on a host through the mirror. The host links against its
+  own copy of `libcranelift_codegen-0c39….rmeta`, the same file name for every version of the
+  vendored crate. After the compile the daemon checks only the files the dep-info lists, and those
+  leave out `--extern`. So a host holding another version built the crate against it, and the
+  result was cached under this version's key.
+- **Fix**: branch `jeremybarnes/farm-extern-check` (`13fc8d062`, farm 24, on farm 23's
+  `jeremybarnes/build-and-test-loop-time`). The caller sends the `--extern` paths; the agent
+  reports each one as it read it; a difference compiles here, uncached. The daemon also asks the
+  host again for them before each compile. Not installed: the farm owner merges and installs it.
+- **Done when**: farm 24 (or its merge) is installed and the reproduction above no longer fails.

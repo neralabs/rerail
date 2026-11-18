@@ -565,6 +565,24 @@ fn json_tier1_vectors_equal_the_interpreter() {
     }
 }
 
+/// The full body's classes as simdjson's (0375): each place they are made in (the body's own
+/// part, a gated region, the ASCII split's inside) has at most one pair of nibble tables, its
+/// classes all in it, and none looked up again in a place inside the own part.
+#[test]
+fn json_classes_are_one_pair_a_place() {
+    for name in ["14-json", "15-jsonc"] {
+        let c = form(name);
+        let native = &c.native.block_programs[0];
+        let state = native_cpu_block::State::of(native);
+        let pack = native_cpu_block::full_pack(native, &state);
+        println!("{name}: tables by place {:?}", pack.places);
+        assert!(pack.places.first().is_some_and(|&(p, t)| p == 0 && t == 1), "{name}: the body's own part has not one pair: {:?}", pack.places);
+        assert!(pack.places.iter().all(|&(_, t)| t <= 1), "{name}: a place with more than one pair: {:?}", pack.places);
+        let total: usize = pack.places.iter().map(|p| p.1).sum();
+        assert_eq!(total, pack.packing.tables.len());
+    }
+}
+
 /// The gated regions (`native_cpu_lanes::Region`): skipped on a block without their gate's bytes
 /// and without their carried bits, so a number, an escape or a keyword must come out the same
 /// wherever it falls, a block edge inside it, or spanning a block, or ending one.
@@ -576,12 +594,12 @@ fn json_gated_regions_equal_the_interpreter() {
     ];
     for name in ["14-json", "15-jsonc"] {
         let c = form(name);
-        // Each region behind its branch in both full bodies, none computed in place.
-        // A region with a test before its gate's has two branches.
+        // Each region behind its branch in the full body (one: the ASCII test is a branch in it,
+        // 0364), none computed in place. A region with a test before its gate's has two.
         let plan = native_cpu_block::State::of(&c.native.block_programs[0]).plan;
         assert!(!plan.regions.is_empty(), "{name}: no gated region");
         let tests: usize = plan.regions.iter().map(|r| 1 + usize::from(r.pre.is_some())).sum();
-        assert_eq!(c.parser.tier1.gate_branches, tests * (1 + usize::from(c.parser.tier1.ascii_branch)), "{name}: a region without its branch");
+        assert_eq!(c.parser.tier1.gate_branches, tests, "{name}: a region without its branch, or made twice");
         let block = &c.program.block_programs[0];
         let mut files: Vec<Vec<u8>> = Vec::new();
         for t in tokens {
