@@ -26,7 +26,7 @@ vi.mock("node:fs", async importOriginal => {
 import { execFileSync } from "node:child_process";
 import { auditSettings, checkoutStatus, openRerailDatabase, recordCheckout, type RerailDatabase } from "../../../src/engine/index.js";
 import { SqliteAuditControlStore } from "../../../src/engine/audit/audit-control.js";
-import { createCheckoutResolver } from "../../../src/engine/catalog/repository-registry.js";
+import { createCheckoutResolver, EARLIER_KEYS_HELD, spelledCheckout } from "../../../src/engine/catalog/repository-registry.js";
 import { SqliteSessionStore } from "../../../src/runtime/index.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
@@ -58,6 +58,24 @@ describe.runIf(process.platform === "win32")("On Windows, the key Rerail 0.1.4 r
     const first = jsRealpaths.calls;
     for (let check = 0; check < 5; check++) checkoutStatus(database, resolve(spelled));
     expect({ first, later: jsRealpaths.calls - first }).toEqual({ first: 1, later: 0 });
+  });
+
+  it("is held for at most EARLIER_KEYS_HELD spellings, the first added dropped first and resolved again once when asked about", async () => {
+    const { database, stored } = await plainFolder("Notebooks");
+    const checkout = recordCheckout(database, stored);
+    // The folder's name in each mix of letter cases but the one the disk stores: one folder, as many spellings.
+    const name = "notebooks";
+    const spellings = Array.from({ length: 2 ** name.length }, (_, mix) => join(dirname(stored), [...name].map((letter, at) => (mix >> at) & 1 ? letter.toUpperCase() : letter).join("")))
+      .filter(spelling => spelling !== stored).slice(0, EARLIER_KEYS_HELD + 1);
+    expect(spellings).toHaveLength(EARLIER_KEYS_HELD + 1);
+    const [first, last] = [spellings[0]!, spellings.at(-1)!];
+    const [firstKey, lastKey] = [realpathSync(first), realpathSync(last)];
+    for (const spelling of spellings) spelledCheckout(checkout, spelling);
+    jsRealpaths.calls = 0;
+    expect(spelledCheckout(checkout, last)?.earlierCheckoutPath).toBe(lastKey);
+    const latest = jsRealpaths.calls;
+    expect(spelledCheckout(checkout, first)?.earlierCheckoutPath).toBe(firstKey);
+    expect({ latest, first: jsRealpaths.calls - latest }).toEqual({ latest: 0, first: 1 });
   });
 
   it("is resolved after recording the folder writes its row, not while the write holds the database", async () => {

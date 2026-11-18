@@ -104,11 +104,19 @@ export function spelledCheckout(checkout: CheckoutContext | undefined, spelling:
 }
 
 /**
- * The keys {@link earlierPhysicalPath} gave each folder spelling this process asked about. A daemon checks the start
- * state of a session's folder on each of its events, so the realpath runs once per spelling rather than once per
- * event; a link in the path changed while this process runs keeps the key it had.
+ * The keys {@link earlierPhysicalPath} gave folder spellings this process asked about, at most
+ * {@link EARLIER_KEYS_HELD} of them. A daemon checks the start state of a session's folder on each of its events, so
+ * the realpath runs once per spelling rather than once per event; a link in the path changed while this process runs
+ * keeps the key it had.
  */
 const earlierKeys = new Map<string, string>();
+
+/**
+ * The most spellings {@link earlierKeys} holds: a caller can send any spelling, and each new one past the bound drops
+ * the one added first; a hit moves nothing. A daemon meets one or two per folder outside Git; a spelling dropped is
+ * resolved again once, at the cost of one realpath.
+ */
+export const EARLIER_KEYS_HELD = 256;
 
 /**
  * {@link earlierPhysicalPath} of `folder`, kept in {@link earlierKeys}; undefined where it throws. The earlier key is a
@@ -125,6 +133,7 @@ function earlierKeyAt(folder: string): string | undefined {
       return undefined;
     }
     earlierKeys.set(folder, key);
+    if (earlierKeys.size > EARLIER_KEYS_HELD) earlierKeys.delete(earlierKeys.keys().next().value!);
   }
   return key;
 }
