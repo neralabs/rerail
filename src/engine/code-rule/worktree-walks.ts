@@ -708,9 +708,9 @@ export class WorktreeWalks {
    * Of the changes each read found, those no session made (`WatcherWalk.claims`), handed to one session watching the
    * worktree to record once for the repository: the first that has taken the worktree before, as only a session that
    * holds the read before it takes a change as one. None when every session watching it takes it for the first time: the
-   * read is their baseline. The sessions watching the worktree are asked, and so are those whose folder is in it. None of
-   * a change in a session's folder: that session's own walk judges what changes there, as every session's does in its
-   * folder; nor of one made in the folder of a session that closed since, before it closed (`#departed`).
+   * read is their baseline (`#unclaimed` says which sessions are asked). None of a change in a session's folder: that
+   * session's own walk judges what changes there, as every session's does in its folder; nor of one made in the folder of
+   * a session that closed since, before it closed (`#departed`).
    */
   async #recorders(
     starts: ReadonlyMap<Watching, WatcherWalk>,
@@ -724,16 +724,24 @@ export class WorktreeWalks {
       if (findings.changes.length === 0) continue;
       const recorder = [...walking].find(([, walk]) => walk.worktrees.has(root) && !walk.firstSight.has(root))?.[0];
       if (recorder === undefined) continue;
-      const askable = [...starts.values()].filter(walk => walk.worktrees.has(root) || walk.checkout === root);
-      const judged = this.#judgedElsewhere(root);
-      const claimed = new Set<string>();
-      // A session that cannot say claims nothing: the change is still recorded, once, for the repository.
-      for (const walk of askable) for (const path of await walk.claims(root, findings).catch(() => new Set<string>())) claimed.add(path);
-      const unclaimed = new Set(findings.changes.filter(change => !claimed.has(change.path) && !judged(change)).map(change => change.path));
+      const unclaimed = await this.#unclaimed(starts, root, findings);
       if (unclaimed.size > 0) records.set(recorder, (records.get(recorder) ?? new Map<string, ReadonlySet<string>>()).set(root, unclaimed));
     }
     this.#pruneDeparted(found);
     return records;
+  }
+
+  /**
+   * The paths of the changes a read found in the worktree at `root` that no session claims and no session's own folder
+   * walk judges (`#judgedElsewhere`). The sessions watching the worktree are asked, and so are those whose folder is in it.
+   */
+  async #unclaimed(starts: ReadonlyMap<Watching, WatcherWalk>, root: string, findings: WorktreeFindings): Promise<Set<string>> {
+    const askable = [...starts.values()].filter(walk => walk.worktrees.has(root) || walk.checkout === root);
+    const judged = this.#judgedElsewhere(root);
+    const claimed = new Set<string>();
+    // A session that cannot say claims nothing: the change is still recorded, once, for the repository.
+    for (const walk of askable) for (const path of await walk.claims(root, findings).catch(() => new Set<string>())) claimed.add(path);
+    return new Set(findings.changes.filter(change => !claimed.has(change.path) && !judged(change)).map(change => change.path));
   }
 
   /**

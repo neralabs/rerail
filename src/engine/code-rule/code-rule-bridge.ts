@@ -2285,12 +2285,10 @@ export class CodeRuleBridge {
     const claimed = new Set<string>();
     if (this.#abandoned(discovery)) return claimed;
     const worktree = sessionPath(discovery.root, root);
-    // Else the session's own checkout, which holds its folder: the session takes nothing of it outside the folder, so
-    // only an edit tool, whose result checked the file, made a change there it records.
     const watched = discovery.worktrees.roots.has(worktree);
+    const claimant = this.#claimant(discovery, root, worktree, watched);
     for (const change of findings.changes) {
-      const path = watched ? inWorktree(worktree, change.path) : sessionPath(discovery.root, join(root, change.path));
-      const counted = watched ? this.#ranIn(discovery, worktree, path) : (call: CallPlace) => call.paths.includes(path);
+      const { path, counted } = claimant(change.path);
       const since = change.before?.observedAt ?? discovery.startedAt;
       const written = { stamp: change.after?.modifiedAt, deleted: change.after === undefined, since, until: findings.readFrom };
       if (await this.#callRanAsWritten(discovery, counted, path, written)) claimed.add(change.path);
@@ -2302,6 +2300,25 @@ export class CodeRuleBridge {
       discovery.toolCalls.answered(findings.readFrom, { place: REST_OF_CHECKOUT, placesOf: this.#callPlaces(discovery) });
     }
     return claimed;
+  }
+
+  /**
+   * For a change at `path` in the worktree at `root` (physical), named `worktree` from the session folder, the path
+   * the session knows it by and the calls of its that count as having made it. In a worktree it watches, a call that
+   * ran there (`#ranIn`). Else the session's own checkout, which holds its folder: the session takes nothing of it
+   * outside the folder, so only an edit tool, whose result checked the file, made a change there it records.
+   */
+  #claimant(discovery: SourceDiscovery, root: string, worktree: string, watched: boolean): (path: string) => { path: string; counted: CallsCounted } {
+    if (watched) {
+      return changed => {
+        const path = inWorktree(worktree, changed);
+        return { path, counted: this.#ranIn(discovery, worktree, path) };
+      };
+    }
+    return changed => {
+      const path = sessionPath(discovery.root, join(root, changed));
+      return { path, counted: (call: CallPlace) => call.paths.includes(path) };
+    };
   }
 
   /**
