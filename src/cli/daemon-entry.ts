@@ -8,6 +8,7 @@ import { scrubWrites } from "../engine/secret-scrub.js";
 import { runHomeDaemon } from "../daemon/daemon.js";
 import { codingAgentHome, codingAgentStates, registrationRoot } from "../setup/coding-agents.js";
 import { checkNodeVersion } from "../setup/node-version.js";
+import { recordLateCheck } from "../harness/hook-failures.js";
 import { stampLines } from "./daemon-log.js";
 
 // The daemon's stdout and stderr are `daemon.log`: what Rerail logs there is scrubbed of secrets, then each line starts
@@ -29,6 +30,8 @@ if (!node.ok) {
 try {
   await runHomeDaemon(process.argv.slice(2), {
     codingAgents: () => codingAgentStates(registrationRoot(defaultRerailHome(), PACKAGE_ROOT), codingAgentHome()),
+    // The hook failure log, where `rerail status` says which events the daemon checked late.
+    lateChecked: pass => recordLateCheck(pass),
   });
 } catch (error) {
   process.stderr.write(`rerail daemon: ${(error as Error).message}\n`);

@@ -113,6 +113,7 @@ export { NativeSemanticEmbedder, SemanticWorkspace } from "./native/semantic-pri
 export { type SemanticEmbedder, type Watermark } from "./native/semantic-types.js";
 export { deniedByPathBoundary, SENSITIVE_FILE_NAMES } from "./path-boundary.js";
 export { agentTranscriptPayload, callNamesDeniedPath, WITHHELD_INPUT, WITHHELD_OUTPUT, WITHHELD_PAYLOAD } from "./transcript-boundary.js";
+export { leaveUntaken, UNTAKEN_EVENTS_DIR, UNTAKEN_MOST_EVENTS, untakenFolderId, type UntakenPass } from "./untaken-events.js";
 export { compareDeterministicStrings, ruleDocumentDigest, stableJsonText } from "./stable-json.js";
 export { commandLine, shellWord, type Shell } from "./command-line.js";
 export {

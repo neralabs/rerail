@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -287,5 +287,50 @@ describe("Cursor plugin contract", () => {
     expect(await handleCursorEvent({ ...common, loop_count: 0 }, scriptedLoop({ "turn-end": [delivery("steer", "Do not write bad.")] }), storage)).toEqual({});
     const toolResult = { ...common, hook_event_name: "postToolUse", tool_use_id: "read-1", tool_name: "Read", tool_output: "ok" };
     expect(await handleCursorEvent(toolResult, scriptedLoop({}), storage)).toEqual({ additional_context: expect.stringContaining("Do not write bad.") });
+  });
+});
+
+describe("a Cursor hook while the daemon is not reading", () => {
+  /** A transcript-mode session (no beforeSubmitPrompt) whose transcript holds a prompt and an answer no hook has read. */
+  async function unreadTranscript(): Promise<{ storage: string; common: Record<string, unknown> }> {
+    const root = await temporaryDirectory();
+    const transcript = join(root, "transcript.jsonl");
+    const line = (role: string, text: string) => JSON.stringify({ role, message: { content: [{ type: "text", text }] } });
+    await writeFile(transcript, `${line("user", "<timestamp>t</timestamp>\n<user_query>\nprompt one\n</user_query>")}\n${line("assistant", "answer one")}\n`);
+    return { storage: join(root, "sessions"), common: { conversation_id: "cursor-session", generation_id: "g1", cwd: root, transcript_path: transcript } };
+  }
+
+  /** A loop that leaves each event for a daemon that is not reading, as a hook does once one was left untaken. */
+  function untakenLoop(): RerailEventLoop & { events: AdapterEvent[] } {
+    return { ...scriptedLoop({}), untaken: true };
+  }
+
+  it("answers as with nothing to deliver, keeping the steers held for the session for the next hook the daemon answers", async () => {
+    const root = await temporaryDirectory();
+    const storage = join(root, "sessions");
+    const common = { conversation_id: "cursor-held", generation_id: "g1", cwd: root };
+    const tool = (id: string) => ({ tool_use_id: id, tool_name: "Shell", tool_input: { command: "ls" } });
+    const steer: AdapterDelivery = { sessionId: "cursor-held", requested: "steer", mechanism: "deferred-context", content: "Held steer.", ruleIds: [], rules: [] };
+    // Cursor shows nothing at a call, so its steer waits for a result that can carry it.
+    expect(await handleCursorEvent({ ...common, ...tool("t1"), hook_event_name: "preToolUse" }, scriptedLoop({ call: [steer] }), storage)).toEqual({ permission: "allow" });
+    const left = untakenLoop();
+    // Before, the hook routed the held steer into its own answer and emptied the session's file, under the lock.
+    expect(await handleCursorEvent({ ...common, ...tool("t1"), hook_event_name: "postToolUse", tool_output: "a" }, left, storage)).toEqual({});
+    expect(await handleCursorEvent({ ...common, ...tool("t2"), hook_event_name: "postToolUse", tool_output: "a" }, scriptedLoop({}), storage))
+      .toEqual({ additional_context: expect.stringContaining("Held steer.") });
+  });
+
+  it("leaves the transcript unread for the next hook the daemon answers, and leaves only the hook's own event", async () => {
+    const { storage, common } = await unreadTranscript();
+    const tool = { tool_use_id: "shell-1", tool_name: "Shell", tool_input: { command: "ls" } };
+    const left = untakenLoop();
+    expect(await handleCursorEvent({ ...common, ...tool, hook_event_name: "preToolUse" }, left, storage)).toEqual({ permission: "allow" });
+    expect(left.events.map(event => event.kind)).toEqual(["call"]);
+    const answer = untakenLoop();
+    expect(await handleCursorEvent({ ...common, hook_event_name: "afterAgentResponse", text: "answer one" }, answer, storage)).toEqual({});
+    expect(answer.events).toEqual([]);
+    const live = scriptedLoop({});
+    await handleCursorEvent({ ...common, ...tool, tool_use_id: "shell-2", hook_event_name: "preToolUse" }, live, storage);
+    expect(live.events.map(event => event.kind)).toEqual(["user-prompt", "assistant-message", "call"]);
   });
 });

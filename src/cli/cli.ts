@@ -88,7 +88,7 @@ import {
 import { checkNodeVersion } from "../setup/node-version.js";
 import { codingAgentHome, codingAgentStates, registrationRoot } from "../setup/coding-agents.js";
 import { missingClaudeHookScripts } from "../setup/registered-hooks.js";
-import { HOOK_FAILURE_WINDOW_MS, hookFailureLines, readHookFailures } from "../harness/hook-failures.js";
+import { HOOK_FAILURE_WINDOW_MS, hookFailureLines, lateCheckLines, readHookFailures, untakenWaitingLines } from "../harness/hook-failures.js";
 import { lastObservedEventAt } from "../runtime/session-store.js";
 import { modelStatusLine } from "../engine/native/model-status.js";
 import { SETUP_FLAGS } from "../harness/setup-screens.js";
@@ -401,7 +401,7 @@ async function runStatusCommand(home: string): Promise<number> {
   }
   process.stdout.write(workspaceStatus(process.cwd()));
   const code = printDaemonStatus(lookup);
-  for (const line of hookHealthLines(home)) process.stdout.write(`${line}\n`);
+  for (const line of hookHealthLines(home, lookup)) process.stdout.write(`${line}\n`);
   printRemoteStatus(home);
   await printCodingAgentDataAccess(home);
   return code;
@@ -451,16 +451,18 @@ async function printCodingAgentDataAccess(home: string): Promise<void> {
 
 /**
  * What `rerail status` says of the hooks: Claude Code's registration naming Rerail scripts that are gone, where every
- * hook fails before Rerail runs, and the hook events Rerail could not record in the last day, with why.
+ * hook fails before Rerail runs, the hook events Rerail could not record in the last day, with why, those that wait now
+ * for the daemon `lookup` found, and those it checked late.
  */
-function hookHealthLines(home: string): string[] {
+function hookHealthLines(home: string, lookup: DaemonLookup): string[] {
   const missing = missingClaudeHookScripts(codingAgentHome());
   const registration = missing.length === 0 ? [] : [
     `Claude Code's Rerail hooks run ${missing.join(", ")}, which ${missing.length === 1 ? "is" : "are"} missing, so every hook fails before Rerail runs and nothing is recorded. Run rerail install --refresh.`,
   ];
   const log = readHookFailures(home, Date.now() - HOOK_FAILURE_WINDOW_MS);
   const recorded = log.failures.length === 0 ? null : lastObservedEventAt(join(home, RERAIL_DATABASE_FILE));
-  return [...registration, ...hookFailureLines(log, recorded)];
+  const waiting = lookup.status === "absent" ? [] : untakenWaitingLines(home, lookup.state.pid);
+  return [...registration, ...hookFailureLines(log, recorded), ...waiting, ...lateCheckLines(log)];
 }
 
 /** What `rerail status` says of the daemon, and the exit code that goes with it. */

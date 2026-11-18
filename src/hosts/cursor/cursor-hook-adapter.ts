@@ -5,7 +5,7 @@ import {
   answeredFacts, hookText, type AdapterDelivery, type AdapterEvent, type AdapterSession, type EventAnswerFacts, type RerailEventLoop, type SteerRule,
 } from "../../engine/adapter-contract.js";
 import { missedSteerDigestEnabled } from "../../engine/experimental-features.js";
-import { ingestCursorTranscript } from "./cursor-transcript.js";
+import { ingestCursorTranscript, transcriptCarriesText } from "./cursor-transcript.js";
 import {
   deliveryRuleIds,
   deliveryRules,
@@ -218,11 +218,23 @@ export async function handleCursorEvent(
   const event = cursorHookEvent(input);
   const descriptor = event.session ?? cursorSession(input);
   const path = pendingPath(storageRoot, "cursor", descriptor.sessionId);
-  const transcript = () => ingestCursorTranscript(input, descriptor, eventLoop, storageRoot);
-  const transcriptOwnsText = hook !== "sessionStart" && await keptBy(lock, transcript);
+  const transcriptOwnsText = hook !== "sessionStart" && await keptBy(lock, transcriptStep(input, descriptor, eventLoop, storageRoot));
   const deliveries = transcriptOwnsText && (hook === "afterAgentResponse" || hook === "stop")
     ? []
     : await eventLoop.ingest(event);
+  // Left for a daemon that is not reading: the answer of a hook with nothing to deliver, and the session's held steers
+  // wait in their file for the next hook the daemon answers.
+  if (eventLoop.untaken === true) return cursorHookOutput(hook, []);
+  return await answerCursorHook(input, { hook, descriptor, path, answered: answeredFacts(eventLoop) }, deliveries);
+}
+
+/** The answer of a hook the daemon answered with `deliveries`: the session's held steers routed through its file. */
+async function answerCursorHook(
+  input: CursorHookInput,
+  at: { hook: string; descriptor: AdapterSession; path: string; answered: EventAnswerFacts },
+  deliveries: readonly AdapterDelivery[],
+): Promise<CursorHookOutput> {
+  const { hook, path } = at;
   switch (hook) {
     case "beforeSubmitPrompt":
       await persistPending(path, deliveries.filter(delivery => steers(delivery.requested)));
@@ -231,8 +243,18 @@ export async function handleCursorEvent(
       await rm(path, { force: true });
       return {};
     default:
-      return cursorAnswer(input, { hook, descriptor, path, answered: answeredFacts(eventLoop) }, deliveries);
+      return cursorAnswer(input, at, deliveries);
   }
+}
+
+/**
+ * The hook's read of the transcript: its unread lines through `eventLoop`, or, while the daemon is not reading
+ * (`RerailEventLoop.untaken`), only whether the transcript carries the session's text, so its lines stay unread for the
+ * next hook the daemon answers, which sends them through the rules.
+ */
+function transcriptStep(input: CursorHookInput, descriptor: AdapterSession, eventLoop: RerailEventLoop, storageRoot: string): () => Promise<boolean> {
+  if (eventLoop.untaken === true) return async () => await transcriptCarriesText(input, descriptor, storageRoot);
+  return async () => await ingestCursorTranscript(input, descriptor, eventLoop, storageRoot);
 }
 
 /** Runs `work` while `lock` is kept, or as it is when there is no lock. */

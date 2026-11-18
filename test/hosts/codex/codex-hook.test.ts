@@ -243,3 +243,19 @@ describe("Codex one-shot hook", () => {
     expect(await handleCodexEvent({ ...common, hook_event_name: "Stop", last_assistant_message: "Done." }, scriptedLoop({}), storageRoot)).toEqual({});
   });
 });
+
+describe("a Codex hook while the daemon is not reading", () => {
+  it("leaves its event and answers as with nothing to deliver, keeping the steers held for the session for the next hook the daemon answers", async () => {
+    const root = await temporaryDirectory();
+    const storageRoot = join(root, "sessions");
+    const common = { session_id: "codex-session", cwd: root };
+    const stopLoop = scriptedLoop({ "turn-end": [delivery("steer", "Deferred steer.")] });
+    expect(await handleCodexEvent({ ...common, hook_event_name: "Stop", turn_id: "t1", last_assistant_message: "Done." }, stopLoop, storageRoot)).toEqual({});
+    const left = { ...scriptedLoop({}), untaken: true as const };
+    // Before, the hook routed the held steer into its own answer and emptied the session's file, under the lock.
+    expect(await handleCodexEvent({ ...common, hook_event_name: "UserPromptSubmit", turn_id: "t2", prompt: "next" }, left, storageRoot)).toEqual({});
+    expect(left.events.map(event => event.kind)).toEqual(["user-prompt"]);
+    expect(await handleCodexEvent({ ...common, hook_event_name: "UserPromptSubmit", turn_id: "t3", prompt: "later" }, scriptedLoop({}), storageRoot))
+      .toEqual({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: "Deferred steer." } });
+  });
+});

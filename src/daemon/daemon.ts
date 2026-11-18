@@ -21,6 +21,7 @@ import { startRemoteSink, type RemoteSinkLoop } from "../runtime/remote-outbox.j
 import { chooseEngineSocketPath, engineWorktreeWalks, startEngineService, type EngineService } from "../runtime/engine-service.js";
 import { engineIdentity, enginePipeName, fallbackPipe } from "../runtime/engine-pipe.js";
 import { resolveSessionPaths } from "../runtime/session-paths.js";
+import type { UntakenPass } from "../engine/untaken-events.js";
 import { createMergeAssistService, type MergeAssistRuntime } from "../runtime/merge-assist/service.js";
 import { NativeSessionServer } from "./native-session-server.js";
 import { startCheckoutPruning, type CheckoutPruning } from "./checkout-pruning.js";
@@ -129,6 +130,11 @@ export interface RerailDaemonOptions {
   enginePlatform?: NodeJS.Platform;
   /** The coding agent check `GET /api/coding-agents` reports; the daemon's entry point passes set-up's. */
   codingAgents?: () => Promise<CodingAgentState[]>;
+  /**
+   * Hears of each pass over the events hooks left untaken while the daemon did not read, once their checks ended: the
+   * daemon's entry point writes it to the hook failure log, where `rerail status` reads it.
+   */
+  lateChecked?: (pass: UntakenPass) => void;
   /**
    * The certificate (a PEM chain, leaf first) and private key to serve https with; omitted, the daemon serves http.
    * The state file records the leaf's SHA-256 fingerprint, which Rerail's own clients pin.
@@ -445,6 +451,8 @@ interface StartedServices {
  * stderr, so a later EADDRINUSE has its cause on record.
  */
 async function closeAfterFailedStart({ engineService, nativeServer, server, worktreeWalks }: StartedServices, stores: DatabaseApiStores): Promise<void> {
+  // A watch of the untaken folder holds it open, and on Windows keeps the home from being removed: the engine service's
+  // close ends it first.
   const failed = (what: string, reason: unknown): void => {
     process.stderr.write(`rerail daemon: could not close ${what} after a failed start: ${reason instanceof Error ? reason.message : String(reason)}\n`);
   };
@@ -472,6 +480,33 @@ async function closeAfterFailedStart({ engineService, nativeServer, server, work
  */
 function daemonMergeAssist(database: () => RerailDatabase): { mergeAssist?: MergeAssistRuntime } {
   return mergeAssistExperimentEnabled() ? { mergeAssist: createMergeAssistService({ database }) } : {};
+}
+
+/**
+ * The engine service's option naming the home whose untaken events it checks (`EngineService.untaken`): the one
+ * `stateFile` is in, since hooks find the daemon there; none for a daemon no state file names. Each pass goes to
+ * daemon.log and to `lateChecked`.
+ */
+function untakenEventsOption(
+  stateFile: string | undefined, lateChecked: RerailDaemonOptions["lateChecked"],
+): { untakenEvents?: { home: string; lateChecked: (pass: UntakenPass) => void } } {
+  if (stateFile === undefined) return {};
+  return {
+    untakenEvents: {
+      home: dirname(stateFile),
+      lateChecked: pass => {
+        process.stdout.write(`rerail daemon: ${lateCheckLine(pass)}\n`);
+        lateChecked?.(pass);
+      },
+    },
+  };
+}
+
+/** What daemon.log says of a pass over the events hooks left while the daemon did not read. */
+function lateCheckLine({ events, from, to, failed }: UntakenPass): string {
+  const what = events === 1 ? "1 hook event" : `${events} hook events`;
+  const lost = failed === 0 ? "" : `; ${failed} could not be checked and ${failed === 1 ? "is" : "are"} lost`;
+  return `checked late ${what} left from ${new Date(from).toISOString()} to ${new Date(to).toISOString()} while it did not read${lost}`;
 }
 
 export class RerailDaemon {
@@ -505,6 +540,8 @@ export class RerailDaemon {
   /** What this daemon wrote to the state file, which its close removes only while the file still holds it. */
   #recordText: string | undefined;
   #provenanceMove: { readonly stop: AbortController; readonly done: Promise<void> } | undefined;
+  /** The id of the untaken folder its watch watches, which the state file names so hooks leave events there unasked. */
+  #untakenFolder: string | undefined;
 
   private constructor({
     server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot, nativeServer, nativeToken, accessToken, mergeAssist,
@@ -594,6 +631,7 @@ export class RerailDaemon {
         databasePath,
         workspaceRoot,
         accessToken,
+        ...untakenEventsOption(options.stateFile, options.lateChecked),
         worktreeWalks,
         ...sharedMergeAssist,
         // Until the dashboard listens, a hook reads what it needs as it did before answers carried it.
@@ -642,6 +680,38 @@ export class RerailDaemon {
   }
 
   /**
+   * Watches this daemon's home for the events hooks leave untaken (`untaken-events.ts`), taking each as soon as this
+   * daemon's event loop runs. Only while the watch runs does the state file tell hooks they may leave events for it
+   * without asking it, naming the folder it watches (`#untakenFollowed`). Without one, events left by a hook that waited
+   * out this daemon are still taken at its next event and its next start.
+   */
+  #watchUntaken(stateFile: string): void {
+    this.#untakenFolder = this.#engineService.untaken.watch(folder => this.#untakenFollowed(stateFile, folder));
+  }
+
+  /**
+   * The watch followed the untaken folder to another one at its path (`folder`), or could follow it no more (undefined):
+   * the state file names that folder, or none, so hooks leave events unasked only where this daemon watches.
+   */
+  #untakenFollowed(stateFile: string, folder: string | undefined): void {
+    if (folder === this.#untakenFolder) return;
+    this.#untakenFolder = folder;
+    this.#recordChecked = this.#recordChecked.then(async () => {
+      if (this.#closed) return;
+      await this.#writeRecord(stateFile).catch((error: unknown) => {
+        process.stderr.write(`rerail daemon: could not write ${stateFile} again: ${errorText(error)}\n`);
+      });
+    });
+  }
+
+  /** Writes this daemon's state to `stateFile`, as what its record check keeps there. */
+  async #writeRecord(stateFile: string): Promise<void> {
+    const text = `${JSON.stringify(this.state(), null, 2)}\n`;
+    await replaceFile(stateFile, text, { mode: 0o600 });
+    this.#recordText = text;
+  }
+
+  /**
    * Internal testing: the remote sink sends nothing until a remote is added (`rerail remote add`), and nothing at all
    * while it is off in the daemon.
    */
@@ -662,13 +732,15 @@ export class RerailDaemon {
    * start and hook in that home while it records into a database that home does not hold.
    */
   async #record(stateFile: string): Promise<void> {
-    const text = `${JSON.stringify(this.state(), null, 2)}\n`;
-    await replaceFile(stateFile, text, { mode: 0o600 });
-    this.#recordText = text;
+    this.#watchUntaken(stateFile);
+    await this.#writeRecord(stateFile);
+    // After the file, so a launcher waiting for it is not held by a backlog; an event sent meanwhile waits for the pass
+    // to begin every check of it first (the engine service's before-event step).
+    void this.#engineService.untaken.taken();
     const check = this.#options.recordCheck;
     if (check === undefined) return;
     this.#recordCheck = setInterval(() => {
-      this.#recordChecked = this.#recordChecked.then(async () => await this.#restoreRecord(stateFile, text, check));
+      this.#recordChecked = this.#recordChecked.then(async () => await this.#restoreRecord(stateFile, this.#recordText!, check));
     }, check.everyMs);
     this.#recordCheck.unref();
   }
@@ -735,6 +807,7 @@ export class RerailDaemon {
       accessToken: this.#accessToken,
       ...(this.#tlsFingerprint256 === undefined ? {} : { tlsFingerprint256: this.#tlsFingerprint256 }),
       ...(this.#options.remoteRefused === undefined ? {} : { remoteRefused: this.#options.remoteRefused }),
+      ...(this.#untakenFolder === undefined ? {} : { untakenFolder: this.#untakenFolder }),
     };
   }
 
@@ -771,6 +844,7 @@ export class RerailDaemon {
     if (this.#closed) return;
     this.#closed = true;
     clearInterval(this.#recordCheck);
+    this.#engineService.untaken.close();
     // A write in flight lands before the state file is removed below, never after.
     await this.#recordChecked;
     try {
@@ -1252,7 +1326,7 @@ async function packageVersion(): Promise<string> {
  * from the layers above the daemon, the record check of the home's one daemon, which only `runHomeDaemon` sets, and why
  * it serves this computer alone, which only `serveRerailDaemon`'s loopback restart sets.
  */
-type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents" | "recordCheck" | "homeLease" | "remoteRefused">;
+type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents" | "lateChecked" | "recordCheck" | "homeLease" | "remoteRefused">;
 
 /**
  * Runs the daemon (`serveRerailDaemon`) as the one daemon of its Rerail home, whatever the build. It takes the home's

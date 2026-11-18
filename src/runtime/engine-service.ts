@@ -32,8 +32,9 @@ import { memoryRoom } from "./memory/memory-room.js";
 import { checkoutStatus } from "./repository-start.js";
 import { nativeTreeWatch, type TreeWatch } from "../engine/code-rule/tree-watch.js";
 import { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
+import { NO_UNTAKEN_EVENTS, untakenEventTaker, type UntakenEventTaker, type UntakenPass } from "../engine/untaken-events.js";
 import {
-  endSuspendedSessions, failQueuedScans, RerailRuntime, type RerailRuntimeOptions, type SessionSuspension, type SuspendedSessions,
+  endSuspendedSessions, failQueuedScans, type IngestOptions, RerailRuntime, type RerailRuntimeOptions, type SessionSuspension, type SuspendedSessions,
 } from "./runtime.js";
 import { SessionLanes } from "./session-lanes.js";
 import { keepReceipt, keptReceipts, steerReceiptWrite } from "./session-store.js";
@@ -50,6 +51,15 @@ export interface EngineService {
     event: AdapterEvent,
     configuration?: EngineRuntimeConfiguration,
   ): Promise<readonly AdapterDelivery[]>;
+  /**
+   * The taker of the events hooks left in the home `untakenEvents` names while its daemon did not read
+   * (`untaken-events.ts`); one that takes nothing without it. Each event it takes is checked as one sent to `ingest`,
+   * recorded at the time its hook met it. No one waits for its answer, so it takes none of what the session holds for
+   * its agent: its own findings and the steers they raise wait for the session's next event, whose answer carries them
+   * (`IngestOptions.signal`). `ingest` waits for it to begin every such check first, so none is checked after an event
+   * sent later.
+   */
+  readonly untaken: UntakenEventTaker;
   /** How many runtimes are open: one per checkout some live session uses, and those kept for their checkout's next session. */
   openRuntimes(): number;
   /**
@@ -120,14 +130,23 @@ const RequestSchema = z
   })
   .strict();
 
-interface EngineRequest {
+/** One event as a hook hands it to the engine service, with the configuration of the runtime that takes it. */
+export interface EngineRequest {
   event: AdapterEvent;
   configuration: EngineRuntimeConfiguration | undefined;
 }
 
-function parseEngineRequest(value: unknown): EngineRequest {
+/** `value`, read from a request's body or an untaken event's file, as a request the engine service takes; throws when it is not one. */
+export function parseEngineRequest(value: unknown): EngineRequest {
   const { event, configuration } = RequestSchema.parse(value);
   return { event, configuration };
+}
+
+/** The body that hands `event` to the engine service: over its socket, or left untaken in the home (`untaken-events.ts`). */
+export function engineRequestBody(event: AdapterEvent, configuration?: EngineRuntimeConfiguration): string {
+  const body = JSON.stringify(RequestSchema.parse({ event, configuration }));
+  if (Buffer.byteLength(body) > RERAIL_EVENT_MAX_FRAME_BYTES) throw new RangeError("Kernel event exceeds frame limit");
+  return body;
 }
 
 
@@ -246,6 +265,11 @@ type EngineServiceOptions = Omit<RerailRuntimeOptions, "workspaceRoot"> & {
    * asked at each minute's sweep while one has been kept 15 minutes (`KeptRuntimes`).
    */
   needsRoom?: () => boolean;
+  /**
+   * The Rerail home whose untaken events the service checks (`EngineService.untaken`), and who hears of each pass over
+   * them once its checks end; none taken without it.
+   */
+  untakenEvents?: { home: string; lateChecked: (pass: UntakenPass) => void };
 };
 
 /** How the facts of an answer are read from the runtime that took its event, in the session's lane right after it. */
@@ -282,6 +306,8 @@ function guardedFacts(read: () => EventAnswerFacts | undefined): EventAnswerFact
 interface EventCaller {
   readonly signal?: AbortSignal | undefined;
   readonly readFacts?: AnswerFactsReader | undefined;
+  /** When the event's hook met it (epoch ms), for an event a hook left while the daemon did not read (`untakenTaker`). */
+  readonly observedAt?: number | undefined;
 }
 
 /** An event's deliveries, and the facts of its answer where its caller reads them. */
@@ -451,7 +477,7 @@ async function routeEngineEvent(
   { event, configuration }: EngineRequest,
   options: EngineServiceOptions,
   state: EngineRoutingState,
-  { signal, readFacts }: EventCaller = {},
+  { signal, readFacts, observedAt }: EventCaller = {},
 ): Promise<RoutedEvent> {
   const session = eventSession(event);
   const { sessionId } = session;
@@ -464,7 +490,7 @@ async function routeEngineEvent(
     const runtime = runtimeFor(state, runtimeKey, runtimeOptions, sessionId);
     // Every event, not only a start: a session whose start was lost still uses this runtime until it ends.
     if (event.kind !== "session-end") noteSessionUse(state, sessionId, runtimeKey, (options.now ?? Date.now)());
-    const deliveries = await runtime.ingest(event, { signal });
+    const deliveries = await runtime.ingest(event, { signal, observedAt });
     // Read in the session's lane, so the facts are this event's and not those of the session's next one.
     return { deliveries, facts: readFacts === undefined ? undefined : guardedFacts(() => readFacts(runtime, deliveries)) };
   });
@@ -1132,6 +1158,24 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** The signal of an event no one has waited for since it arrived: one a hook left while the daemon did not read. */
+const NO_ONE_WAITS = AbortSignal.abort();
+
+/**
+ * The taker of `options.untakenEvents`' home, which begins each event's check through `route` in its session's queue,
+ * as no one's request (`NO_ONE_WAITS`), at the time its hook met it; one that takes nothing without a home.
+ */
+function untakenTaker(options: EngineServiceOptions, route: (request: EngineRequest, caller: EventCaller) => Promise<RoutedEvent>): UntakenEventTaker {
+  const untaken = options.untakenEvents;
+  if (untaken === undefined) return NO_UNTAKEN_EVENTS;
+  return untakenEventTaker(untaken.home, {
+    take: async ({ body, arrivedAt }) => {
+      await route(parseEngineRequest(JSON.parse(body)), { signal: NO_ONE_WAITS, observedAt: arrivedAt });
+    },
+    passed: untaken.lateChecked,
+  });
+}
+
 /**
  * Runs the event a hook posted and answers with its deliveries, and the facts beside them for a hook that reads them.
  * The hook's request is watched from before its body is read, so the hook giving up at any point before its answer is
@@ -1295,9 +1339,13 @@ export async function startEngineService(options: EngineServiceOptions): Promise
   // Walks a caller gave are the caller's to close.
   const closeWalks = options.worktreeWalks === undefined ? () => routing.worktreeWalks.close() : () => undefined;
   const sweepIdleSessions = (): Promise<void> => sweepIdle(routing, options, databasePath);
+  const untaken = untakenTaker(options, async (request, caller) => await routeEngineEvent(request, options, routing, caller));
   const answers: EngineAnswers = {
-    ingest: (incoming, request, signal) =>
-      routeEngineEvent(request, options, routing, { signal, readFacts: answerFactsReader(incoming, request.event, options) }),
+    ingest: async (incoming, request, signal) => {
+      // Every event hooks left before this one was sent begins its check first, in its session's queue.
+      await untaken.taken();
+      return await routeEngineEvent(request, options, routing, { signal, readFacts: answerFactsReader(incoming, request.event, options) });
+    },
     recordReceipt: (receipt, configuration) => recordHandedReceipt(routing, options, receipt, configuration),
   };
   const server = createServer((incoming, response) => void answerEngineRequest(incoming, response, answers, options.accessToken));
@@ -1307,12 +1355,18 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     get socketPath() {
       return socketPath;
     },
-    ingest: async (event, configuration) => (await routeEngineEvent({ event, configuration }, options, routing)).deliveries,
+    ingest: async (event, configuration) => {
+      // Every event hooks left before this one was sent begins its check first, in its session's queue.
+      await untaken.taken();
+      return (await routeEngineEvent({ event, configuration }, options, routing)).deliveries;
+    },
+    untaken,
     openRuntimes: () => routing.runtimes.size,
     closeUnusedRuntimes: () => routing.kept.closeAll(),
     closeIdleSessions: sweepIdleSessions,
     resumeSession: sessionId => resumeSuspended(routing, sessionId, options.now ?? Date.now),
     async close() {
+      untaken.close();
       clearInterval(idleSweep);
       for (const wait of routing.resumeRetries.values()) wait.abort();
       routing.resumeRetries.clear();
@@ -1426,8 +1480,7 @@ async function postEngineEvent(
   configuration: EngineRuntimeConfiguration | undefined,
   call: EngineCall,
 ): Promise<RerailEventSuccessFrame> {
-  const body = JSON.stringify(RequestSchema.parse({ event, configuration }));
-  if (Buffer.byteLength(body) > RERAIL_EVENT_MAX_FRAME_BYTES) throw new RangeError("Kernel event exceeds frame limit");
+  const body = engineRequestBody(event, configuration);
   const { sent, answer } = postEngine(endpoint, call, EVENTS_PATH, body);
   sent.setTimeout(30_000, () => sent.destroy(new Error("Kernel request timed out")));
   const { status, text } = await answer;

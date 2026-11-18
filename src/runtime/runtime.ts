@@ -23,8 +23,8 @@ import {
   type FileDigests, type OwedEntry, type OwedSteer,
 } from "./owed-ledger.js";
 import {
-  CodeRuleBridge, generatedEditPaths, ledgerPreimage, type HeldCall, type Preimage, type RewoundEdit, type SessionWalkResume,
-  checkAtResult, type SourceObservationCache,
+  CodeRuleBridge, generatedEditPaths, ledgerPreimage, UNSEEN_START, type HeldCall, type Preimage, type RewoundEdit,
+  type SessionWalkResume, checkAtResult, type SourceObservationCache,
 } from "../engine/code-rule/code-rule-bridge.js";
 import type { IgnoreRulesChange } from "../engine/code-rule/ignore-rule-files.js";
 import { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
@@ -192,6 +192,11 @@ async function settledWithin(work: Promise<unknown>, ms: number): Promise<boolea
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** When the event `state` is ingesting happened, for its record: only for one that reaches the runtime later (`IngestOptions.observedAt`). */
+function happenedAt(state: Pick<RuntimeSessionState, "observedAt">): { observedAt?: number } {
+  return state.observedAt === undefined ? {} : { observedAt: state.observedAt };
 }
 
 /**
@@ -700,6 +705,8 @@ interface RuntimeSessionState {
   steerStrategy: SteerStrategy;
   /** Open while a tool call's result is ingested; unset otherwise. */
   resultWindow: ResultWindow | undefined;
+  /** While an event that happened earlier is ingested, when it happened (`IngestOptions.observedAt`); unset otherwise. */
+  observedAt: number | undefined;
   codeRuleRevision: number;
   codeRuleSourceVersions: Map<string, number>;
   /** Sources whose queued steer a newer revision of them dropped before delivery, until the auditor asks (`undelivered`). */
@@ -1125,9 +1132,15 @@ export interface IngestOptions {
    * Aborts once whoever waits for the answer stops waiting: the engine service's hook request closed before its answer
    * was written (the hook gave up at its 30 s, or its process ended). Such an event stops waiting for edit checks and
    * takes none of what the session holds for its agent, which waits for the session's next event. Without one, the
-   * answer counts as read.
+   * answer counts as read. One aborted when the event begins says its tool may have run already: a call then captures
+   * no "before" of its files (`#beginCall`).
    */
   signal?: AbortSignal | undefined;
+  /**
+   * When the event happened (epoch ms), where it reaches the runtime later: a hook left it while the daemon did not read
+   * (`untaken-events.ts`). Its record keeps that time. Without one, the event happens as it is ingested.
+   */
+  observedAt?: number | undefined;
 }
 
 export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
@@ -1271,7 +1284,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     return this.#startWatch !== undefined && !this.#startWatch.started();
   }
 
-  ingest(event: AdapterEvent, { signal }: IngestOptions = {}): Promise<readonly AdapterDelivery[]> {
+  ingest(event: AdapterEvent, options: IngestOptions = {}): Promise<readonly AdapterDelivery[]> {
     const sessionId = event.kind === "session-start" ? event.session.sessionId : event.sessionId;
     if (this.#stopped() && event.kind !== "session-end") return Promise.resolve([]);
     return this.#ingestLanes.run(sessionId, async () => {
@@ -1281,7 +1294,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         return [];
       }
       const sourceSignature = this.#sessions.get(sessionId)?.ruleSync?.sourceSignature;
-      const deliveries = await this.#ingestOrDropOwed(event, signal);
+      const deliveries = await this.#ingestOrDropOwed(event, options);
       if (event.kind !== "assistant-delta" || event.final
           || sourceSignature !== this.#sessions.get(sessionId)?.ruleSync?.sourceSignature) this.recordRuleCoverage(sessionId);
       return deliveries;
@@ -1305,9 +1318,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * `owed` entry its ledger keeps emptied before the failure goes on: an end drops what the session owed, as any end
    * does, and the session's next start under the same id would take it back. Its engine service ends its record.
    */
-  async #ingestOrDropOwed(event: AdapterEvent, signal: AbortSignal | undefined): Promise<readonly AdapterDelivery[]> {
+  async #ingestOrDropOwed(event: AdapterEvent, options: IngestOptions): Promise<readonly AdapterDelivery[]> {
     try {
-      return await this.#ingest(event, signal);
+      return await this.#ingest(event, options);
     } catch (error) {
       if (event.kind === "session-end" && !this.#sessions.has(event.sessionId)) await this.#dropLedgerOwed(event.sessionId);
       throw error;
@@ -1331,8 +1344,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#session(sessionId).turn = turn;
   }
 
-  /** One event in its session's lane; `signal`: `IngestOptions.signal`. */
-  async #ingest(event: AdapterEvent, signal: AbortSignal | undefined): Promise<readonly AdapterDelivery[]> {
+  /** One event in its session's lane, waited for and timed as `IngestOptions` says. */
+  async #ingest(event: AdapterEvent, { signal, observedAt }: IngestOptions): Promise<readonly AdapterDelivery[]> {
     if (event.kind === "session-start") {
       this.#sessions.get(event.session.sessionId)?.ruleSync?.refresh();
       return this.#ingestSessionStart(event);
@@ -1346,11 +1359,16 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     // A code-rule boundary reached while the session's evaluator is still opening (indexing) goes on without code rules.
     const bridge = CODE_RULE_BOUNDARIES[event.kind] === true ? await this.#codeRuleWorkspaceNow(state, event) : state.codeRuleBridge;
     bridge?.refreshCodeRules();
-    await this.#noteTurnWindow(state, event);
-
     // A hook host's stop hook is the end of the agent's run; OMP and Pi end a turn at every model call, and yield later.
     const yields = event.kind === "turn-end" && ADAPTER_CAPABILITIES[descriptor.host].toolSurface !== "native";
-    await this.#ingestEventWork(state, bridge, event, yields, signal);
+    // The event's record, and the run of its tool call, at the time it happened.
+    state.observedAt = observedAt;
+    try {
+      await this.#noteTurnWindow(state, event);
+      await this.#ingestEventWork(state, bridge, event, yields, signal);
+    } finally {
+      state.observedAt = undefined;
+    }
     if (event.kind === "session-end") return [];
     return this.#boundaryDeliveries(state, event.eventId, yields, signal);
   }
@@ -1360,7 +1378,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * (no result comes after it), a result's edit check, a turn end's waits.
    */
   async #ingestEventWork(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, event: AdapterEvent, yields: boolean, signal: AbortSignal | undefined): Promise<void> {
-    if (event.kind === "call") await this.#recordCall(state, bridge, event);
+    if (event.kind === "call") await this.#recordCall(state, bridge, event, signal);
     if (event.kind === "session-end") await this.#settleUnresolvedCalls(state, true);
     await this.#router(state.descriptor.host).ingest(event);
     noteCallsAwaitingResult(state.callsAwaitingResult, event);
@@ -1519,14 +1537,18 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   /**
    * Begins a tool call on the open evaluator. One answered while the evaluator opens is never begun, but what it writes
-   * is the session's own, so it opens only its window (`CodeRuleBridge.unwatchedCall`).
+   * is the session's own, so it opens only its window (`CodeRuleBridge.unwatchedCall`). One no one waited for as it
+   * began (`signal` aborted: its hook gave up, or left it while the daemon did not read) may have run already, so what
+   * its files hold now is no "before": it captures none, and its edit is read against the text it was made on where its
+   * own text edits make that certain, else whole (`UNSEEN_START`).
    */
   async #beginCall(
     state: RuntimeSessionState,
     bridge: CodeRuleBridge | undefined,
     event: Extract<AdapterEvent, { kind: "call" }>,
+    signal: AbortSignal | undefined,
   ): Promise<Readonly<Record<string, Preimage>> | undefined> {
-    if (bridge !== undefined) return await bridge.begin(event.toolCallId, event.toolName, event.input);
+    if (bridge !== undefined) return await bridge.begin(event.toolCallId, event.toolName, event.input, signal?.aborted === true ? UNSEEN_START : undefined);
     await state.codeRuleBridge?.unwatchedCall(event.toolCallId);
     return undefined;
   }
@@ -1536,10 +1558,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * it: a subagent's call outlives the main agent's stop, after a daemon restart too, which settled it at the first stop.
    * An edit is marked for Merge Assist's detection at its result.
    */
-  async #recordCall(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, event: Extract<AdapterEvent, { kind: "call" }>): Promise<void> {
+  async #recordCall(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, event: Extract<AdapterEvent, { kind: "call" }>, signal: AbortSignal | undefined): Promise<void> {
     const id = event.toolCallId;
     const agent = event.agentId === undefined ? {} : { agentId: event.agentId };
-    const preimages = await this.#beginCall(state, bridge, event);
+    const preimages = await this.#beginCall(state, bridge, event, signal);
     const paths = generatedEditPaths(event.toolName, event.input);
     await this.#append(state, {
       type: "policy-call", toolCallId: id, toolName: event.toolName, paths,
@@ -2188,6 +2210,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       });
       bridge = new CodeRuleBridge(checkout.cwd, auditor, {
         observations: this.#sourceObservations,
+        // A call checked after it ran (`IngestOptions.observedAt`) ran when its hooks met it.
+        eventTime: () => opened.observedAt,
         ...walkResumeOption(suspension),
         heldCalls: heldCallsOf(opened.restoredCalls),
         // Every checkout of a clone has its clone id; a checkout the catalog does not know walks on its own. The walk is
@@ -2340,6 +2364,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       pendingSteers: [],
       steerStrategy,
       resultWindow: undefined,
+      observedAt: undefined,
       codeRuleRevision: 0,
       codeRuleSourceVersions: new Map(),
       undeliveredSources: new Set(),
@@ -2697,13 +2722,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       state.secretCalls.add(event.toolCallId);
     }
     const withheld = event.kind === "result" && state.secretCalls.has(event.toolCallId);
-    this.#sessionStore.append({
-      sessionId,
-      eventId: event.eventId,
-      kind: event.kind,
-      // Stored scrubbed of secrets (`scrubValue`); the live event, which rules match, keeps them.
-      payload: event.kind === "result" && withheld ? { ...event, output: withheldOutput(event.output) } : scrubValue(event),
-    }, state.descriptor);
+    this.#storeEvent(state, sessionId, event, withheld);
     if (withheld) {
       await this.#append(state, { type: "secret-result", toolCallId: event.toolCallId, eventId: event.eventId });
       state.secretCalls.delete(event.toolCallId);
@@ -2711,6 +2730,18 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     }
     await this.#append(state, { type: "event", eventId: event.eventId });
     state.processed.add(event.eventId);
+  }
+
+  /** The event's row in the session store, `withheld` when it is a result whose output Rerail keeps no copy of. */
+  #storeEvent(state: RuntimeSessionState, sessionId: string, event: AdapterEvent, withheld: boolean): void {
+    this.#sessionStore.append({
+      sessionId,
+      eventId: event.eventId,
+      kind: event.kind,
+      // Stored scrubbed of secrets (`scrubValue`); the live event, which rules match, keeps them.
+      payload: event.kind === "result" && withheld ? { ...event, output: withheldOutput(event.output) } : scrubValue(event),
+      ...happenedAt(state),
+    }, state.descriptor);
   }
 
   async persistTurn(sessionId: string, eventId: string): Promise<void> {

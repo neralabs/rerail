@@ -107,6 +107,25 @@ export async function handleClaudeEvent(
   const sessionId = requiredText(input, "session_id");
   const deliveries: AdapterDelivery[] = [];
   for (const event of claudeHookEvents(input)) deliveries.push(...await eventLoop.ingest(event));
+  // Left for a daemon that is not reading: the session's held steers wait in their file for the next hook it answers.
+  if (eventLoop.untaken === true) return {};
+  // The daemon's answer carries the note's link and rules and the steers' links; an older daemon's is read after it.
+  return await answerClaudeHook(input, { hook, sessionId, storageRoot, env, answered: answeredFacts(eventLoop) }, deliveries);
+}
+
+/** What a hook's answer is made for: its event, its session, where its steers wait, and what the daemon's answers told. */
+interface ClaudeAnswerAt {
+  hook: string;
+  sessionId: string;
+  storageRoot: string;
+  env: NodeJS.ProcessEnv;
+  answered: EventAnswerFacts;
+}
+
+/** The answer of a hook the daemon answered with `deliveries`: the session's held steers routed through its file. */
+async function answerClaudeHook(
+  input: HookInput, { hook, sessionId, storageRoot, env, answered }: ClaudeAnswerAt, deliveries: readonly AdapterDelivery[],
+): Promise<HookOutput> {
   const path = pendingPath(storageRoot, "claude-code", sessionId);
   if (hook === "SessionEnd") {
     await rm(path, { force: true });
@@ -122,8 +141,6 @@ export async function handleClaudeEvent(
   const cwd = claudeWorkspace(input.cwd);
   const links = terminalDrawsHyperlinks(env) ? "hyperlink" : "plain";
   const mark = rerailMark(colourDepth(env));
-  // The daemon's answer carries the note's link and rules and the steers' links; an older daemon's is read after it.
-  const answered = answeredFacts(eventLoop);
   const note = await sessionNote(hook, { host: "claude-code", sessionId, cwd }, answered);
   const routed = await routeDeliveries(path, hook, deliveries, CONTEXT_EVENTS);
   // `linkDeliveries` copies each delivery, so a steer the 0.1.2 hook held at `Stop` keeps its `late` mark.

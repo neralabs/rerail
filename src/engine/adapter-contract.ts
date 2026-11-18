@@ -494,6 +494,14 @@ export interface RerailEventLoop {
   ingest(event: AdapterEvent): Promise<readonly AdapterDelivery[]>;
   /** The {@link EventAnswerFacts} of the answers to the events ingested so far; absent where answers carry none. */
   answerFacts?(): EventAnswerFacts;
+  /**
+   * True when the daemon is not reading: each event given to `ingest` is left for it to check once it reads again, and
+   * answered with nothing; what the check finds reaches the agent with a later answer. The hook then touches none of
+   * its session's files and holds no session lock: it answers `{}`, and the steers held for the session wait for the
+   * next hook the daemon answers. A host whose hook reads the agent's own record up to a mark (Cursor's transcript)
+   * leaves both the record and the mark alone then, so the next hook the daemon answers sends it through the rules.
+   */
+  readonly untaken?: true;
 }
 
 /** What `loop`'s answers so far carried beside their deliveries; nothing from a loop whose answers carry none. */
