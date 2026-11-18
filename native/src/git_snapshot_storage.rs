@@ -3,11 +3,17 @@
 use sha2::{Digest as _, Sha256};
 use std::path::{Path, PathBuf};
 
-pub(super) struct Storage {
+pub struct Storage {
     roots: Vec<PathBuf>,
     loose: Sha256,
     packs: Sha256,
     indices: Option<Vec<PackIndex>>,
+}
+
+impl std::fmt::Debug for Storage {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("Storage").field("roots", &self.roots).finish_non_exhaustive()
+    }
 }
 
 enum PackIndex {
@@ -25,7 +31,7 @@ impl PackIndex {
 }
 
 impl Storage {
-    pub(super) fn of(repo: &gix::Repository) -> Option<Self> {
+    pub fn of(repo: &gix::Repository) -> Option<Self> {
         let store = repo.objects.store_ref();
         let mut roots = vec![store.path().to_owned()];
         roots.extend(store.alternate_db_paths().ok()?);
@@ -68,7 +74,7 @@ impl Storage {
         Some(Self { roots, loose, packs, indices })
     }
 
-    pub(super) fn object(&self, id: gix::ObjectId) -> Option<String> {
+    pub fn object(&self, id: gix::ObjectId) -> Option<String> {
         let oid = id.to_string();
         let mut stamp = self.loose.clone();
         // Git can prefer a pack over a loose copy. Only omit pack state when
@@ -79,7 +85,7 @@ impl Storage {
         for root in &self.roots {
             stat(&mut stamp, &root.join(&oid[..2]).join(&oid[2..]))?;
         }
-        Some(format!("readable:{}", super::hex(&stamp.finalize())))
+        Some(format!("readable:{}", crate::content_store::observe::hex(&stamp.finalize().into())))
     }
 }
 

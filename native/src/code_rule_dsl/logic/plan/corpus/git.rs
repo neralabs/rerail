@@ -1,11 +1,9 @@
 //! Explicit Git requests in the corpus fixpoint. The handle belongs to this run.
 
 use super::front::{Program, Value};
-use crate::git_workspace::snapshot::{self, RawTreeEntry};
+use crate::git_workspace::snapshot::{self, RawTreeEntry, storage};
 use gix::bstr::ByteSlice as _;
 use std::path::{Path, PathBuf};
-
-mod storage;
 
 pub(super) const REVISION: &str = "git_revision_request";
 pub(super) const OBJECT: &str = "git_object_request";
@@ -196,21 +194,9 @@ impl Git {
                 }
             }
             gix::object::Kind::Tree => {
-                crate::code_rule_dsl::prof::count("git.tree_decodes", 1);
-                let tree = object.into_tree();
-                let mut entries = Vec::new();
-                for entry in tree.iter() {
-                    let entry = entry.map_err(|_| "malformed")?;
-                    let name = entry.filename().as_bytes();
-                    if name.is_empty() || name == b"." || name == b".." || name.contains(&b'/') {
-                        return Err("malformed");
-                    }
-                    entries.push(RawTreeEntry { name: name.to_vec(), mode: entry.mode().value(), target: entry.id().detach() });
-                }
+                let entries = snapshot::decode_verified_tree(self.snapshot_root.as_deref(), observed.as_deref(), object.into_tree())
+                    .map_err(|_| "malformed")?;
                 records.extend(entries.iter().map(raw_tree_record));
-                if let (Some(root), Some(stamp)) = (&self.snapshot_root, observed.as_deref()) {
-                    snapshot::record_tree(root, id, stamp, entries.into());
-                }
             }
             gix::object::Kind::Tag => {
                 let tag = object.into_tag();
@@ -238,6 +224,9 @@ impl Git {
     }
 
     fn storage_stamp(&self, repo: &gix::Repository, id: gix::ObjectId) -> Option<String> {
+        if let Some(root) = &self.snapshot_root {
+            return snapshot::object_storage(root, repo, id);
+        }
         self.storage.get_or_init(|| storage::Storage::of(repo)).as_ref()?.object(id)
     }
 

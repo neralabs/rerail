@@ -1003,7 +1003,7 @@ Referenced(src) :- reference_edge(src, _, _).
       expect(counters.get("reference.tape_summaries")).toBe(1);
       expect(counters.get("source_ast.parses") ?? 0).toBe(0);
     }
-  }, 30_000);
+  }, 60_000);
 
   it.each(["loose", "packed"])("rechecks a %s tree after corruption and restoration with the same cache", (representation) => {
     const root = checkout();

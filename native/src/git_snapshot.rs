@@ -13,6 +13,9 @@ use gix::bstr::ByteSlice;
 #[path = "git_ignore_coverage.rs"]
 mod ignore_coverage;
 
+#[path = "git_snapshot_storage.rs"]
+pub mod storage;
+
 #[derive(Debug)]
 struct View {
     id: u64,
@@ -26,6 +29,7 @@ struct View {
     owner: OnceLock<crate::content_store::analysis_scope::AnalysisOwner>,
     inventory: OnceLock<Inventory>,
     observed_trees: Mutex<std::collections::HashMap<gix::ObjectId, ObservedTree>>,
+    storage: OnceLock<Option<storage::Storage>>,
     source_errors: Mutex<std::collections::BTreeMap<String, String>>,
     ignore_blob: OnceLock<Result<Option<gix::ObjectId>, String>>,
     paths: Mutex<Option<Vec<String>>>,
@@ -41,11 +45,28 @@ pub struct Inventory {
     pub tree_observations: std::collections::BTreeMap<HashKey, String>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct RawTreeEntry {
     pub name: Vec<u8>,
     pub mode: u16,
     pub target: gix::ObjectId,
+}
+
+impl RawTreeEntry {
+    fn is_tree(&self) -> bool { self.mode & 0o170000 == 0o040000 }
+    fn is_blob(&self) -> bool { self.mode & 0o170000 == 0o100000 }
+}
+
+fn decode_tree(tree: gix::Tree<'_>) -> io::Result<Arc<[RawTreeEntry]>> {
+    rerail_prof::count("git.tree_decodes", 1);
+    tree.iter().map(|entry| {
+        let entry = entry.map_err(error)?;
+        let name = entry.filename().as_bytes();
+        if name.is_empty() || name == b"." || name == b".." || name.contains(&b'/') {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid Git entry name"));
+        }
+        Ok(RawTreeEntry { name: name.to_vec(), mode: entry.mode().value(), target: entry.id().detach() })
+    }).collect()
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -128,44 +149,63 @@ enum Entry {
     Dir(gix::ObjectId),
 }
 
-/// Return absence only after reading a tree and checking its entries.
-fn lookup_tree_entry(
-    repo: &gix::Repository,
-    mut id: gix::ObjectId,
-    path: &Path,
-) -> io::Result<Option<(gix::ObjectId, gix::objs::tree::EntryMode)>> {
-    let mut components = path.components().peekable();
-    while let Some(component) = components.next() {
-        let tree = repo.find_tree(id).map_err(error)?;
-        let name = component.as_os_str().as_encoded_bytes();
-        let mut found = None;
-        for entry in tree.iter() {
-            let entry = entry.map_err(error)?;
-            if entry.filename().as_bytes() == name {
-                found = Some((entry.id().detach(), entry.mode()));
-                break;
-            }
-        }
-        let Some((target, mode)) = found else {
-            return Ok(None);
-        };
-        if components.peek().is_none() {
-            return Ok(Some((target, mode)));
-        }
-        if !mode.is_tree() {
-            return Ok(None);
-        }
-        id = target;
-    }
-    Ok(None)
-}
-
 impl View {
+    fn storage_stamp(&self, repo: &gix::Repository, id: gix::ObjectId) -> Option<String> {
+        self.storage.get_or_init(|| storage::Storage::of(repo)).as_ref()?.object(id)
+    }
+
+    fn observed_tree(&self, id: gix::ObjectId, stamp: &str) -> Option<Arc<[RawTreeEntry]>> {
+        self.observed_trees.lock().unwrap_or_else(|err| err.into_inner())
+            .get(&id).filter(|tree| tree.stamp == stamp).map(|tree| Arc::clone(&tree.entries))
+    }
+
+    fn remember_tree(&self, stamp: &str, tree: gix::Tree<'_>) -> io::Result<Arc<[RawTreeEntry]>> {
+        let id = tree.id;
+        let mut trees = self.observed_trees.lock().unwrap_or_else(|err| err.into_inner());
+        if let Some(tree) = trees.get(&id).filter(|tree| tree.stamp == stamp) {
+            return Ok(Arc::clone(&tree.entries));
+        }
+        let entries = decode_tree(tree)?;
+        trees.insert(id, ObservedTree { stamp: stamp.to_owned(), entries: Arc::clone(&entries) });
+        Ok(entries)
+    }
+
+    fn tree_entries(&self, repo: &gix::Repository, id: gix::ObjectId) -> io::Result<Arc<[RawTreeEntry]>> {
+        let stamp = self.storage_stamp(repo, id);
+        if let Some(stamp) = &stamp && let Some(tree) = self.observed_tree(id, stamp) && repo.has_object(id) {
+            return Ok(tree);
+        }
+        let tree = verified_object(repo, id)?.try_into_tree().map_err(error)?;
+        match stamp {
+            Some(stamp) => self.remember_tree(&stamp, tree),
+            None => decode_tree(tree),
+        }
+    }
+
+    /// Return absence only after reading a tree and checking its entries.
+    fn lookup_tree_entry(&self, repo: &gix::Repository, path: &Path) -> io::Result<Option<RawTreeEntry>> {
+        let mut id = self.tree;
+        let mut components = path.components().peekable();
+        while let Some(component) = components.next() {
+            let tree = self.tree_entries(repo, id)?;
+            let name = component.as_os_str().as_encoded_bytes();
+            let Some(entry) = tree.iter().find(|entry| entry.name == name) else { return Ok(None) };
+            if components.peek().is_none() {
+                return Ok(Some(entry.clone()));
+            }
+            if !entry.is_tree() {
+                return Ok(None);
+            }
+            id = entry.target;
+        }
+        Ok(None)
+    }
+
     fn ignore_blob(&self) -> Result<Option<gix::ObjectId>, String> {
         self.ignore_blob.get_or_init(|| self.with_repo(|repo| {
-            let entry = lookup_tree_entry(repo, self.tree, Path::new(".rerailignore"))
+            let entry = self.lookup_tree_entry(repo, Path::new(".rerailignore"))
                 .map_err(|e| e.to_string())?;
-            Ok(entry.filter(|(_, mode)| mode.is_blob()).map(|(id, _)| id))
+            Ok(entry.filter(RawTreeEntry::is_blob).map(|entry| entry.target))
         })).clone()
     }
 
@@ -216,11 +256,11 @@ impl View {
             )));
         }
         self.with_repo(|repo| {
-            let (id, mode) = lookup_tree_entry(repo, self.tree, &full)?.ok_or_else(missing)?;
-            if mode.is_tree() {
-                Ok(Entry::Dir(id))
-            } else if mode.is_blob() {
-                Ok(Entry::File(id))
+            let entry = self.lookup_tree_entry(repo, &full)?.ok_or_else(missing)?;
+            if entry.is_tree() {
+                Ok(Entry::Dir(entry.target))
+            } else if entry.is_blob() {
+                Ok(Entry::File(entry.target))
             } else {
                 Err(missing())
             } // Never follow symlinks or enter submodules.
@@ -356,15 +396,8 @@ impl Snapshot {
             Err(err) => return Err(err),
         };
         self.view.with_repo(|repo| {
-            let tree = repo.find_tree(directory).map_err(error)?;
-            tree.iter().map(|entry| {
-                let entry = entry.map_err(error)?;
-                let name = entry.filename().as_bytes();
-                if name.is_empty() || name == b"." || name == b".." || name.contains(&b'/') {
-                    return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid Git entry name"));
-                }
-                Ok((name.to_vec(), entry.mode().value()))
-            }).collect::<io::Result<Vec<_>>>().map(Some)
+            let tree = self.view.tree_entries(repo, directory)?;
+            Ok(Some(tree.iter().map(|entry| (entry.name.clone(), entry.mode)).collect()))
         })
     }
 
@@ -426,16 +459,6 @@ impl Snapshot {
         } else {
             PathBuf::new()
         };
-        if !prefix.as_os_str().is_empty() {
-            repo.find_tree(tree).map_err(|e| e.to_string())?
-                .lookup_entry_by_path(&prefix)
-                .map_err(|e| e.to_string())?
-                .ok_or("the revision lacks the run root")?
-                .object()
-                .map_err(|e| e.to_string())?
-                .try_into_tree()
-                .map_err(|e| e.to_string())?;
-        }
         let git_dir = repo
             .git_dir()
             .canonicalize()
@@ -461,12 +484,21 @@ impl Snapshot {
             owner: OnceLock::new(),
             inventory: OnceLock::new(),
             observed_trees: Mutex::default(),
+            storage: OnceLock::new(),
             source_errors: Mutex::default(),
             ignore_blob: OnceLock::new(),
             paths: Mutex::new(None),
             host_languages: OnceLock::new(),
             repository: repo.into_sync(),
         });
+        if !view.prefix.as_os_str().is_empty() {
+            view.with_repo(|repo| {
+                let entry = view.lookup_tree_entry(repo, &view.prefix).map_err(|err| err.to_string())?
+                    .filter(RawTreeEntry::is_tree).ok_or("the revision lacks the run root")?;
+                view.tree_entries(repo, entry.target).map_err(|err| err.to_string())?;
+                Ok::<(), String>(())
+            })?;
+        }
         let mut views = VIEWS.lock().unwrap_or_else(|e| e.into_inner());
         views.push(Arc::clone(&view));
         ACTIVE.store(views.len(), Ordering::Release);
@@ -558,16 +590,18 @@ pub fn with_inventory_tree<T>(
 
 /// The trees already read during this invocation, before or after source selection.
 pub fn observed_tree(root: &Path, id: gix::ObjectId, stamp: &str) -> Option<Arc<[RawTreeEntry]>> {
-    let view = view(root)?;
-    let observed = view.observed_trees.lock().unwrap_or_else(|error| error.into_inner());
-    observed.get(&id).filter(|tree| tree.stamp == stamp).map(|tree| Arc::clone(&tree.entries))
+    view(root)?.observed_tree(id, stamp)
 }
 
-pub fn record_tree(root: &Path, id: gix::ObjectId, stamp: &str, entries: Arc<[RawTreeEntry]>) {
-    if let Some(view) = view(root) {
-        view.observed_trees.lock().unwrap_or_else(|error| error.into_inner())
-            .insert(id, ObservedTree { stamp: stamp.to_owned(), entries });
+pub fn decode_verified_tree(root: Option<&Path>, stamp: Option<&str>, tree: gix::Tree<'_>) -> io::Result<Arc<[RawTreeEntry]>> {
+    match (root.and_then(view), stamp) {
+        (Some(view), Some(stamp)) => view.remember_tree(stamp, tree),
+        _ => decode_tree(tree),
     }
+}
+
+pub fn object_storage(root: &Path, repo: &gix::Repository, id: gix::ObjectId) -> Option<String> {
+    view(root)?.storage_stamp(repo, id)
 }
 
 pub struct InventoryFilter {
@@ -746,14 +780,13 @@ pub fn listing(path: impl AsRef<Path>) -> io::Result<Vec<(String, bool)>> {
             return Err(io::Error::from(io::ErrorKind::NotADirectory));
         };
         v.with_repo(|repo| {
-            let tree = repo.find_tree(id).map_err(error)?;
+            let tree = v.tree_entries(repo, id)?;
             let mut entries = Vec::new();
             for entry in tree.iter() {
-                let entry = entry.map_err(error)?;
-                if entry.mode().is_tree() || entry.mode().is_blob() {
+                if entry.is_tree() || entry.is_blob() {
                     entries.push((
-                        entry.filename().to_str().map_err(error)?.to_owned(),
-                        entry.mode().is_tree(),
+                        std::str::from_utf8(&entry.name).map_err(error)?.to_owned(),
+                        entry.is_tree(),
                     ));
                 }
             }
