@@ -319,6 +319,106 @@ nested `?:`, 20 parentheses, malformed lines) and `#embed`'s (nested and unclose
 - `_Pragma`'s text is scanned a byte at a time (`pragma_words`); the token grammar should lex
   it instead, as it lexes a file.
 
+## Stage 4b–4d, built: the words on Cranelift
+
+`compiler/src/native_cpu_pp.rs` lowers every word of `expand.rir` to Cranelift. `CompiledPp::run`
+returns the same `Expanded` the interpreter does, and the host takes either as its runner
+(`expand::expand_tu_with`).
+
+**The shape of the code.**
+
+- One function for the run, one block per word. A test word goes to the next word where it holds
+  and the one after where it fails, as in the interpreter.
+- The machine's state is a `#[repr(C)]` `Ctx`: the buffers `pp_words::run_native` reserves to the
+  bounds of §3, their lengths and rooms, and the scalars (`T`, `D`, the flags). A store past a
+  buffer's room refuses the TU, which then goes to the lean pass. A refusal is returned as
+  `(pc + 1) | reason << 32`, one of the interpreter's reasons.
+- The return stack holds a *rank*: which of the program's return points (`PUSH`'s operands) to go
+  back to. Each `RETURN` is a jump table over the ranks, its own stated step (`Step::Return`).
+  The plan had calls on the machine's stack, as tier 2's rules do. But a word's `RETURN` goes
+  back to a return point it doesn't know, so a rank and a table are the direct form.
+- Every function passes `native_cpu_shape::check`. It calls only its own functions, makes no
+  indirect or tail call, and every cycle passes a stated step: `Token`, `Word`, `Pop`, `Probe`,
+  `Item`, `Halve`, `Return`. No loop steps a byte: a spelling is read and written eight bytes a
+  step. Its last bytes are one load, masked, where the eight lie within the spelling's page. They
+  are one store where the buffer is a byte buffer with eight bytes of slack (scratch, the asked
+  and wanted bytes).
+- The records handed to the host on a miss are rows now: wanted files and unanswered features
+  (`asked`) are each a row plus a range of bytes.
+
+**`#if` flattened to a depth K (4c).** This follows the user's steer: a stack is fine, but the
+first levels are flattened, and the file decides how many.
+
+- The evaluator's region is the words reached from `#if`'s `PUSH` of `EXPR m=14` (`evaluator`). It
+  holds only `EXPR`, `PUSH`, `GOTO` and `RETURN`, and is lowered once per static depth `d` in
+  `0..=K`.
+- Return points at depths below K are SSA variables. A `PUSH` at `d < K` sets one and goes on at
+  `d + 1`. At K it spills them all to the return stack and goes on at depth 0. A `RETURN` at
+  `d > 0` branches on its variable to the copy at `d - 1`; at depth 0 it is the dynamic `RETURN`.
+- Each `EXPR` word in the region is a function of its own, called from every depth, so the
+  copies stay small.
+- K comes from the files. `expand::if_depth` counts, on each `#if` and `#elif` line's tokens
+  (mode (a)'s condition spans), the calls the evaluator makes: a primary 3, a prefix 1, `(` 4,
+  `?:` 2 and 1, a binary operator 2, at most 10 a level. The TU's K is the largest count rounded
+  up to a power of two, at most 16 (`Compiled::depth`).
+- `Compiled`, owned by the caller, compiles each K once. Over the corpus, 2,272 TUs ran at K 0,
+  182 at 4, 313 at 8 and 297 at 16.
+
+**Large words outlined (4d).** The run's function was 198–248 KB of machine code, larger than an
+M1 core's instruction cache. `BUILTIN`'s three modes each held the whole of `builtin_value`: 19k
+of its 47k CLIF instructions. `GLUE`, `PRAGMA`, `LINEDIR`, `DEFINED` and `EXPR`'s primary held
+9k more. Every token passes through the run's function, but these words run rarely.
+
+- Each word is now lowered alone first. One over 512 CLIF instructions (`OUTLINE`) becomes a
+  function of its own, called by `call_word`. Its result is 0 for the next word, 1 for the one
+  after, or a refusal.
+- The run's function is now 56–68 KB at K 0–1 and 97 KB at K 16. The shape test refuses any
+  function over 128 KB, and reports each function's bytes and each word's instructions.
+
+**Tests.**
+
+- `the_compiled_words_are_the_interpreters`: the standard's examples and the TUs, in C and C++,
+  at K 0, 1, 4 and 16, each token's kind, flags and spelling and the expansions. All 60 runs
+  equal.
+- `the_compiled_ifs_have_the_interpreters_values`: deep `#if`s past K and at exactly K.
+- `the_compiled_words_have_their_shape`.
+- `an_ifs_depth_is_estimated_from_above`.
+- The corpus, ignored and run on the farm: 3,060 TUs the same, 75 refused by both (the token
+  grammar's refusals, Q35), 0 differ.
+
+**Time.** Over the corpus's 3,060 TUs, on an M1 Max in a quiet run, profiling build. The words
+are timed alone: the TUs' files are lexed ahead, as stage 1 does once per file content. The lean
+pass's time includes its lexing.
+
+| Run | Instructions | Cycles |
+|---|---|---|
+| The words' interpreter | 5,124 M | 1,150–1,190 M |
+| The compiled words | 2,290 M | 1,290 M |
+| The lean pass (lexing too) | 8,040 M | 1,900–2,000 M |
+
+- The compiled words retire 45% of the interpreter's instructions, at 1.8 instructions a cycle
+  against its 4.4. Their cycles are 1.09× the interpreter's.
+- By quarters of the TUs, the half that expand most run at 0.92×. The TUs with least expansion
+  run at 1.28×, and the smallest at 1.48×.
+- The steps that moved it: outlining the large words (1,410 M to 1,294 M cycles) and the masked
+  byte words (to 1,290 M).
+- Tried, measured and not kept:
+  - A reservation per TU sized to its own work, not to the bounds: no change.
+  - The run-invariant fields' loads marked `readonly`: no change. A word's block is a merge of
+    many paths, so no load dominates the next word's.
+  - `T` and `D` as SSA variables, spilled around calls (the plan's form), with a guard that no
+    access reaches them in memory: 1.13×, and larger code. The patch is kept out of the tree.
+
+So the cost is not in the instructions, which halved. Something stalls the compiled words that
+does not stall the interpreter. The counters that would name it (branch misses, cache misses)
+need a profiler run, which is open.
+
+**Left:**
+- The profile above.
+- The ahead-of-time Rust of the same IR (`clif_rust`), checked once.
+- `_Pragma`'s text is lexed by a word over its bytes, eight a step (`pragma_words`). The plan had
+  wanted the token grammar to lex it.
+
 ## Open
 
 - **Header units:** a header expanded once per entry macro state (0327, open).
