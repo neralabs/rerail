@@ -21,7 +21,7 @@ struct Op { uint kind,target,of,slot,minimum,maximum,row; };
 
 static void mark(device atomic_uint* bits,uint node){atomic_fetch_or_explicit(&bits[node/32u],1u<<(node%32u),memory_order_relaxed);}
 
-// A node's bit set, or its tally counted, only for a node of the batch (decision 0403): a node from a walk or a
+// A node's bit set, or its tally counted, only for a node of the batch (decision 0427): a node from a walk or a
 // capture indexes a row of `nodeCount`, and one past it would write past the row, past the buffer for the last. Any
 // other is not written: flag 256 (with 2, the passes again deep, then on the interpreter), which the host counts.
 #define NODE_OK(n) ((n)<shape.nodeCount)
@@ -33,7 +33,7 @@ kernel void label_sink(device const Arena* arenas [[buffer(0)]],device const Res
   if(atomic_load_explicit(&flags[2],memory_order_relaxed)!=0u)return;
   // Bit 1: a task failed. Decision 0334: bit 4, a task ran over its budget below the ceiling (status 8); bit 8, a
   // task stopped at the ceiling (status 4). Its evaluation says which (`Runner::unfinished`). Status 9: a mark or a
-  // tally of a node past the batch's, not written (decision 0403): `NODE_PAST`'s flags.
+  // tally of a node past the batch's, not written (decision 0427): `NODE_PAST`'s flags.
   if(tid<shape.taskCount&&statuses[tid].error!=0u){uint error=statuses[tid].error;atomic_fetch_or_explicit(&flags[0],error==8u?4u:error==4u?8u:error==9u?258u:1u,memory_order_relaxed);}
   Arena arena=arenas[shape.resultArena];
   if(tid>=arena.cursor)return;

@@ -1,4 +1,4 @@
-# 0399. Format 16 is block-major and written in one pass, with a presence structure beside it
+# 0426. Format 16 is block-major and written in one pass, with a presence structure beside it
 
 Status: accepted (2026-11-18)
 

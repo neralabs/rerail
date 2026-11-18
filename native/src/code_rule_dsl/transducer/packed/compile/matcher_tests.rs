@@ -388,7 +388,6 @@ fn lowered_clauses_find_the_same_roots_on_metal() {
 /// same ones) is counted, not compared: it runs as walks in production.
 #[cfg(all(target_os = "macos", feature = "metal-tests"))]
 #[test]
-#[ignore = "Q135: on an M1 Max one clause (PYI056 add-to-all) differs, at oscar da5892e9c too"]
 fn lowered_clauses_find_the_same_roots_on_the_resident_interpreter() {
     use super::compile_matcher::Backend;
     use metal_program_backend::label_passes::INTERPRET_ONLY;

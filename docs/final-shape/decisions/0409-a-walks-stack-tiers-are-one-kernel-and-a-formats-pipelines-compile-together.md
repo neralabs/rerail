@@ -1,4 +1,4 @@
-# 0397. A walk's stack tiers are one kernel, and a format's label pipelines compile together
+# 0409. A walk's stack tiers are one kernel, and a format's label pipelines compile together
 
 Status: accepted (2026-11-18)
 
@@ -53,7 +53,7 @@ The walks are as fast with their frames a value. `on_metal_anchored_walks_find_t
 corpus0's files, `RERAIL_GPU_KERNEL_TIMES`, the warmed anchored run, device µs, against 0396's evidence (same machine,
 load average 41–75):
 
-| kernel | 0396 | 0397 |
+| kernel | 0396 | 0409 |
 |---|---|---|
 | `label_group` (8, 32 and 64) | 200,702 | 198,033 |
 | `label_formula` + `label_leaves` | 309,354 | 289,847 |

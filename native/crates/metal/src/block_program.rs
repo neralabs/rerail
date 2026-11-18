@@ -130,7 +130,7 @@ fn encoded(inst: &BlockInst, carry: u32) -> [u32; 4] {
         BlockInst::Carry(_) => unreachable!("refused at `run_batch`: Metal runs no fixed point yet"),
         BlockInst::Walk { .. } | BlockInst::Args(..) => unreachable!("the CPU's form only: Metal runs a walk's rounds"),
         BlockInst::BackFill(..) | BlockInst::Load(_) => unreachable!("refused at `run_batch`: Metal runs no backward pass yet"),
-        BlockInst::Early(..) => unreachable!("refused at `run_batch`: Metal runs no `early` yet"),
+        BlockInst::Early(..) | BlockInst::Prefix(..) => unreachable!("refused at `run_batch`: Metal runs no `early` or prefix yet"),
         // `j` in `a`; below 6 the period's pattern in `b` and `imm`.
         BlockInst::Position(j) => {
             let pattern = (0..64u32).filter(|i| u32::from(j) < 6 && i >> j & 1 == 1).fold(0u64, |a, i| a | 1 << i);
@@ -206,10 +206,27 @@ const SLAB_BUFFERS: [u64; crate::slabs::MAX_SLABS] = [0, 16, 17, 18];
 pub static REPEATED_LAUNCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// Whether a program starts a file's stream late, which Metal does not generate yet: an
-/// `early` (decision 0330), a file's first lane shifted down; or a prefix (decision 0335), the
-/// token loop's first state past it. Both are the CPU's for now.
+/// `early` (decision 0330), a file's first lane shifted down; or a prefix (decision 0335), its
+/// positions (`prefix`) and the token loop's first state past it. Both are the CPU's for now.
 pub(crate) fn starts_late(p: &BlockNative) -> bool {
-    p.insts.iter().any(|i| matches!(i, BlockInst::Early(..))) || p.records.as_ref().is_some_and(|r| !r.prefix.is_empty())
+    p.insts.iter().any(|i| matches!(i, BlockInst::Early(..) | BlockInst::Prefix(..))) || p.records.as_ref().is_some_and(|r| !r.prefix.is_empty())
+}
+
+/// What `program` needs that generated MSL lacks (decision 0202's `metal-form` list), if any: a
+/// `run_batch` of it is refused. A fixed point (`rounds`) is the CPU's for now: each lane would run
+/// its rounds in its own frame, within `block::MAX_ROUNDS`, to the same values. A `back_fill`
+/// likewise: a backward pass over the groups' summaries, not generated yet. An `early` too
+/// (decision 0330): a file's first lane shifted down, not generated yet.
+pub fn missing_form(program: &BlockNative) -> Option<&'static str> {
+    if !program.groups.is_empty() {
+        Some("a fixed point (rounds)")
+    } else if program.insts.iter().any(|i| matches!(i, BlockInst::BackFill(..) | BlockInst::Load(_))) {
+        Some("a back fill or a load")
+    } else if starts_late(program) {
+        Some("an early start (a file's first lane shifted down)")
+    } else {
+        None
+    }
 }
 
 /// Run `files` in one launch, each under `programs[file.program]` (decision 0066). `spins` is the
@@ -221,19 +238,7 @@ pub fn run_batch(
     executor: Executor,
     spins: u32,
 ) -> Result<BatchRun, Error> {
-    // A fixed point (`rounds`) is the CPU's for now: each lane would run its rounds in its own
-    // frame, within `block::MAX_ROUNDS`, to the same values.
-    // A `back_fill` likewise: a backward pass over the groups' summaries, not generated yet. An
-    // `early` too (decision 0330): a file's first lane shifted down, not generated yet.
-    if programs.iter().any(|p| !p.groups.is_empty() || p.insts.iter().any(|i| matches!(i, BlockInst::BackFill(..) | BlockInst::Load(_))) || starts_late(p)) {
-        // Decision 0202's `metal-form` list: what the program needs that Metal lacks.
-        let reason = if programs.iter().any(|p| !p.groups.is_empty()) {
-            "a fixed point (rounds)"
-        } else if programs.iter().any(|p| p.insts.iter().any(|i| matches!(i, BlockInst::BackFill(..) | BlockInst::Load(_)))) {
-            "a back fill or a load"
-        } else {
-            "an early start (a file's first lane shifted down)"
-        };
+    if let Some(reason) = programs.iter().find_map(|p| missing_form(p)) {
         rerail_accel::forms::missing("metal-form", "block program", "block program", reason, files.len() as u64);
         return Err(Error::UnsupportedBackend);
     }
@@ -376,7 +381,7 @@ pub fn run_batch(
             for (k, block) in interpreter.iter().enumerate() {
                 buffers.push((12 + k as u64, block.buffer(), 0));
             }
-            pipeline_named(&INTERPRETER, &format!("block_batch_{}", width.bytes()))?
+            crate::runtime::pipeline_named_fixed(&INTERPRETER, &format!("block_batch_{}", width.bytes()), None)?
         }
         Executor::Generated(_) => {
             let refs: Vec<&BlockNative> = forms.iter().collect();
@@ -663,7 +668,20 @@ fn ticket_order(groups: &[usize]) -> Vec<[u32; 2]> {
 /// The helpers both executors share: the file table's row, reading a file's bytes, and the
 /// look-backs.
 fn batch_helpers() -> String {
-    format!("{FILE_ROW}\n{}{LOOK_BACK}{HALO_EXCHANGE}{EXCHANGE_WORD}{SINKS}\n", table_helpers(1))
+    format!("{}{FILE_ROW}\n{}{LOOK_BACK}{HALO_EXCHANGE}{EXCHANGE_WORD}{SINKS}\n", poll_helper(), table_helpers(1))
+}
+
+/// `poll`: a read of a word another group of the launch publishes (a look-back's state, a halo, an exchange's
+/// record). On the M1 Max (Apple GPU family 7, Q123) a relaxed load in a poll loop kept reading the polling core's
+/// copy and never saw the store of a group running beside it: every launch of a batch ran out of polls, whatever
+/// their number (5–9 launches at 65,536 polls, as at none, at 768 workers as at 32), though a `volatile` or
+/// `coherent(device)` load did no better. A relaxed read-modify-write reads the coherent copy: one launch. Family 9
+/// on (the M3, the M5) the load sees it, and stays a load there.
+fn poll_helper() -> &'static str {
+    const LOAD: &str = "static inline uint poll(device atomic_uint* x) { return atomic_load_explicit(x, memory_order_relaxed); }\n";
+    const RMW: &str = "static inline uint poll(device atomic_uint* x) { return atomic_fetch_or_explicit(x, 0u, memory_order_relaxed); }\n";
+    static COHERENT_LOADS: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| crate::device().map_or(true, |d| d.supports_family(metal::MTLGPUFamily::Apple9)));
+    if *COHERENT_LOADS { LOAD } else { RMW }
 }
 
 /// A file of a batch, and its bytes read in place in its slab: 16-byte chunks from `src16`, zero
@@ -709,7 +727,7 @@ const LOOK_BACK: &str = "static inline bool look_back(device atomic_uint* state,
   for (uint back = 1u; back <= g; back++) {
     uint st = 0u;
     for (uint spin = 0u; spin <= spins && (st >> 30u) == 0u; spin++) {
-      st = simd_broadcast(atomic_load_explicit(&state[g - back], memory_order_relaxed), ushort(0));
+      st = simd_broadcast(poll(&state[g - back]), ushort(0));
     }
     if ((st >> 30u) == 0u) return false;
     prefix = tcompose1(st & CARRY_VALUE, prefix);
@@ -737,7 +755,7 @@ static inline bool halo_exchange(device atomic_uint* halos, uint g, uint l, ulon
   for (uint w = 0u; w < 3u; w++) {
     uint x = 0u;
     for (uint spin = 0u; spin <= spins && (x & HALO_FLAG) == 0u; spin++) {
-      x = simd_broadcast(atomic_load_explicit(&halos[(g - 1u) * 3u + w], memory_order_relaxed), ushort(0));
+      x = simd_broadcast(poll(&halos[(g - 1u) * 3u + w]), ushort(0));
     }
     if ((x & HALO_FLAG) == 0u) return false;
     before |= ulong(x & 0x3ffffffful) << (30u * w);
@@ -772,7 +790,7 @@ const EXCHANGE_WORD: &str = "static inline bool exchange_word(device atomic_uint
     if (g == 0u) return true;
     uint x = 0u;
     for (uint spin = 0u; spin <= spins && (x & HALO_FLAG) == 0u; spin++) {
-      x = atomic_load_explicit(&rec[(g - 1u) * stride], memory_order_relaxed);
+      x = poll(&rec[(g - 1u) * stride]);
     }
     got = x & 0x3ffffffful;
     return (x & HALO_FLAG) != 0u;
@@ -783,7 +801,7 @@ const EXCHANGE_WORD: &str = "static inline bool exchange_word(device atomic_uint
   for (uint back = 1u; back <= g; back++) {
     uint st = 0u;
     for (uint spin = 0u; spin <= spins && (st >> 30u) == 0u; spin++) {
-      st = atomic_load_explicit(&rec[(g - back) * stride], memory_order_relaxed);
+      st = poll(&rec[(g - back) * stride]);
     }
     if ((st >> 30u) == 0u) return false;
     prefix = select(prefix + (st & CARRY_VALUE), tcompose1(st & CARRY_VALUE, prefix), kind == 1u);
@@ -1360,7 +1378,7 @@ fn emit(
             }
             BlockInst::Position(j) => format!("{m}(0) - {m}((uint({offset}) >> {j}u) & 1u)"),
             BlockInst::Carry(_) => unreachable!("a carry is its group's loop's (`emit`)"),
-            BlockInst::Early(..) => unreachable!("refused at `run_batch`: Metal runs no `early` yet"),
+            BlockInst::Early(..) | BlockInst::Prefix(..) => unreachable!("refused at `run_batch`: Metal runs no `early` or prefix yet"),
             BlockInst::Walk { .. } | BlockInst::Args(..) => unreachable!("the CPU's form only: Metal runs a walk's rounds"),
             // A slot word of a pass before (`native_ir::Passes`): the forward carry's, a block a
             // word, in the output buffer `out`.

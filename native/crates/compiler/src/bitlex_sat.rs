@@ -20,6 +20,46 @@ pub enum Answer {
     Unknown,
 }
 
+/// Clauses end to end, in one arena: each a run of `lits`, ending at its `ends` entry. A
+/// window's thousands of clauses are two allocations, not one each.
+#[derive(Clone, Debug, Default)]
+pub struct Clauses {
+    lits: Vec<Lit>,
+    ends: Vec<u32>,
+}
+
+impl Clauses {
+    pub fn push(&mut self, c: &[Lit]) {
+        self.lits.extend_from_slice(c);
+        self.ends.push(self.lits.len() as u32);
+    }
+
+    pub fn len(&self) -> usize {
+        self.ends.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.ends.is_empty()
+    }
+
+    fn range(&self, i: usize) -> std::ops::Range<usize> {
+        (if i == 0 { 0 } else { self.ends[i - 1] as usize })..self.ends[i] as usize
+    }
+
+    pub fn get(&self, i: usize) -> &[Lit] {
+        &self.lits[self.range(i)]
+    }
+
+    fn get_mut(&mut self, i: usize) -> &mut [Lit] {
+        let r = self.range(i);
+        &mut self.lits[r]
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &[Lit]> {
+        (0..self.len()).map(|i| self.get(i))
+    }
+}
+
 /// Not in the heap (`Solver::at`).
 const NONE: usize = usize::MAX;
 
@@ -33,7 +73,9 @@ fn slot(l: Lit) -> usize {
 }
 
 pub struct Solver {
-    clauses: Vec<Vec<Lit>>,
+    clauses: Clauses,
+    /// `add`'s clause, sorted (kept to reuse its allocation).
+    scratch: Vec<Lit>,
     watches: Vec<Vec<usize>>,
     /// Each variable's value: 0 unset, 1 true, -1 false.
     value: Vec<i8>,
@@ -57,28 +99,57 @@ pub struct Solver {
 
 impl Solver {
     pub fn new(vars: usize) -> Self {
-        // Every activity 0: the heap's order is the numbers', highest first, a valid heap as
-        // it stands.
-        let heap: Vec<usize> = (1..=vars).rev().collect();
-        let mut at = vec![NONE; vars + 1];
-        for (i, &v) in heap.iter().enumerate() {
-            at[v] = i;
-        }
-        Solver {
-            clauses: Vec::new(),
-            watches: vec![Vec::new(); 2 * vars + 2],
-            value: vec![0; vars + 1],
-            level: vec![0; vars + 1],
-            reason: vec![None; vars + 1],
+        let mut s = Solver {
+            clauses: Clauses::default(),
+            scratch: Vec::new(),
+            watches: Vec::new(),
+            value: Vec::new(),
+            level: Vec::new(),
+            reason: Vec::new(),
             trail: Vec::new(),
             limits: Vec::new(),
             head: 0,
-            activity: vec![0.0; vars + 1],
+            activity: Vec::new(),
             bump: 1.0,
-            heap,
-            at,
-            seen: vec![false; vars + 1],
+            heap: Vec::new(),
+            at: Vec::new(),
+            seen: Vec::new(),
             broken: false,
+        };
+        s.reset(vars);
+        s
+    }
+
+    /// No clauses, of `vars` variables: as `new`, in the memory this one has (a prover asks
+    /// thousands of formulas, each of tens of thousands of clauses).
+    pub fn reset(&mut self, vars: usize) {
+        self.clauses.lits.clear();
+        self.clauses.ends.clear();
+        for w in &mut self.watches {
+            w.clear();
+        }
+        self.watches.resize_with(2 * vars + 2, Vec::new);
+        self.value.clear();
+        self.value.resize(vars + 1, 0);
+        self.level.clear();
+        self.level.resize(vars + 1, 0);
+        self.reason.clear();
+        self.reason.resize(vars + 1, None);
+        self.at.clear();
+        self.at.resize(vars + 1, NONE);
+        self.activity.clear();
+        self.activity.resize(vars + 1, 0.0);
+        self.seen.clear();
+        self.seen.resize(vars + 1, false);
+        self.trail.clear();
+        self.limits.clear();
+        (self.head, self.bump, self.broken) = (0, 1.0, false);
+        // Every activity 0: the heap's order is the numbers', highest first, a valid heap as
+        // it stands.
+        self.heap.clear();
+        self.heap.extend((1..=vars).rev());
+        for (i, &v) in self.heap.iter().enumerate() {
+            self.at[v] = i;
         }
     }
 
@@ -177,15 +248,20 @@ impl Solver {
 
     /// A clause, before the search: duplicates dropped, a tautology ignored.
     pub fn add(&mut self, lits: &[Lit]) {
-        let mut c: Vec<Lit> = lits.to_vec();
+        let mut c = std::mem::take(&mut self.scratch);
+        c.clear();
+        c.extend_from_slice(lits);
         c.sort_unstable();
         c.dedup();
-        if c.windows(2).any(|w| w[0] == -w[1]) || c.iter().any(|&l| -l == c[0] && l != c[0]) {
-            return;
+        // A tautology (a literal and its negation; sorted, so by a search) is ignored.
+        if !c.iter().any(|&a| c.binary_search(&-a).is_ok()) {
+            self.place(&c);
         }
-        if c.iter().any(|a| c.contains(&-a)) {
-            return;
-        }
+        self.scratch = c;
+    }
+
+    /// A clause sorted, without repeats or a tautology: watched, or a unit assigned.
+    fn place(&mut self, c: &[Lit]) {
         match c.len() {
             0 => self.broken = true,
             1 => match self.lit_value(c[0]) {
@@ -202,6 +278,13 @@ impl Solver {
         }
     }
 
+    /// Each of `clauses`, as `add` takes it.
+    pub fn add_all(&mut self, clauses: &Clauses) {
+        for c in clauses.iter() {
+            self.add(c);
+        }
+    }
+
     /// Unit propagation from the trail's head: a conflicting clause, if any.
     fn propagate(&mut self) -> Option<usize> {
         while self.head < self.trail.len() {
@@ -215,20 +298,20 @@ impl Solver {
                 let ci = ws[i];
                 let falsified = -l;
                 // The other watch first.
-                if self.clauses[ci][0] == falsified {
-                    self.clauses[ci].swap(0, 1);
+                if self.clauses.get(ci)[0] == falsified {
+                    self.clauses.get_mut(ci).swap(0, 1);
                 }
-                let other = self.clauses[ci][0];
+                let other = self.clauses.get(ci)[0];
                 if self.lit_value(other) == 1 {
                     i += 1;
                     continue;
                 }
                 // A new literal to watch: not false.
                 let mut moved = false;
-                for k in 2..self.clauses[ci].len() {
-                    let x = self.clauses[ci][k];
+                for k in 2..self.clauses.get(ci).len() {
+                    let x = self.clauses.get(ci)[k];
                     if self.lit_value(x) != -1 {
-                        self.clauses[ci].swap(1, k);
+                        self.clauses.get_mut(ci).swap(1, k);
                         self.watches[slot(-x)].push(ci);
                         ws.swap_remove(i);
                         moved = true;
@@ -260,8 +343,8 @@ impl Solver {
         let mut clause = conflict;
         let mut p: Option<Lit> = None;
         loop {
-            for k in 0..self.clauses[clause].len() {
-                let q = self.clauses[clause][k];
+            for k in 0..self.clauses.get(clause).len() {
+                let q = self.clauses.get(clause)[k];
                 if Some(q) == p {
                     continue;
                 }
@@ -349,7 +432,7 @@ impl Solver {
                     self.watches[slot(-learned[0])].push(i);
                     self.watches[slot(-learned[1])].push(i);
                     let first = learned[0];
-                    self.clauses.push(learned);
+                    self.clauses.push(&learned);
                     self.assign(first, Some(i));
                 }
                 continue;

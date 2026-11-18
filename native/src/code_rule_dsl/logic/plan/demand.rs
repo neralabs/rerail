@@ -97,8 +97,8 @@ pub(super) fn split_negations(placed: &Placed, model: &super::Model) -> Option<(
     if WHOLE.with(|w| w.get()) {
         return None;
     }
-    let Some(f) = Fields::of(placed).filter(|_| placed.maint.is_none()) else {
-        super::super::profile::decision("demand (decision 0048)", || "a maintained program (again, together): nothing demanded".to_owned());
+    let Some(f) = Fields::of(placed) else {
+        super::super::profile::decision("demand (decision 0048)", || "a version of rules alone: nothing demanded".to_owned());
         return None;
     };
     let mut candidates = over::candidates(&f, placed, model);

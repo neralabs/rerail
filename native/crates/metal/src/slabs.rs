@@ -101,7 +101,7 @@ impl Slab {
         // touched the device (the parser crate's tests) had every lease refused as over capacity.
         let device = crate::METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
         // From the one block policy (decision 0342): a device slab, room made within the Metal budget.
-        let need = rerail_blocks::alloc::Need { kind: rerail_blocks::block::kind::CHUNK, bytes, writes: rerail_blocks::alloc::Writes::Once, device: rerail_blocks::alloc::Device::Must };
+        let need = rerail_blocks::alloc::Need { kind: rerail_blocks::block::kind::CHUNK, bytes, writes: rerail_blocks::alloc::Writes::Once, device: rerail_blocks::alloc::Device::Must, ..rerail_blocks::alloc::Need::SLAB };
         let block = rerail_blocks::alloc::block(&need).map_err(|_| Error::BackendCapacity)?;
         let buffer = block.gpu_buffer(device);
         Ok(Slab { id, block, buffer, tables: Mutex::default() })
@@ -317,7 +317,7 @@ pub fn zcache_failed(cache: &metal::Buffer) -> u32 {
     zcache_counts(cache).failed
 }
 
-/// A cache's counts once its batch's kernels are done, the cache checked (`Spec::check`, decision 0403).
+/// A cache's counts once its batch's kernels are done, the cache checked (`Spec::check`, decision 0427).
 fn zcache_counts(cache: &metal::Buffer) -> rerail_clif::view::cache::Counts {
     // SAFETY: the cache's shared buffer, all of it; its batch's kernels are done.
     rerail_clif::view::cache::Counts::checked(unsafe { std::slice::from_raw_parts(cache.contents().cast::<u8>(), cache.length() as usize) })

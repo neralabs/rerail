@@ -1,10 +1,53 @@
 use super::*;
+use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
+use crate::code_rule_dsl::logic::program_image::manager::{self, Pipeline};
+use crate::code_rule_dsl::logic::program_image::{Builder, CmpOp, Lit as L, RuleRef, TermRef, Version};
+use std::sync::Arc;
+
+/// Program text `text` as a version, as a run reads it.
+fn read(text: &str) -> Arc<Version> {
+    crate::code_rule_dsl::logic::rr::parse_version(text).unwrap()
+}
+
+/// `v`'s file-local split (`FileLocal`).
+fn split_of(v: &Arc<Version>) -> Arc<FileLocal> {
+    manager::analysis::<FileLocal>(v).unwrap()
+}
+
+/// `v` with the file-local joins of its cross-file rules pushed into the chunks (`PushLocalJoins`), and the joins made.
+fn pushed(v: Arc<Version>) -> (Arc<Version>, Vec<String>) {
+    let mut pass = PushLocalJoins::default();
+    let mut p = Pipeline::new("test", v);
+    p.program(&mut pass);
+    (p.finish().unwrap().0, pass.made)
+}
+
+/// `v` with every row the chunks hand on located (`locate_all`), and the relations located.
+fn located(v: Arc<Version>) -> (Arc<Version>, Result<Vec<String>, Vec<String>>) {
+    let mut p = Pipeline::new("test", v);
+    let found = locate_all(&mut p);
+    (p.finish().unwrap().0, found)
+}
+
+/// The relations `locate_all` moved to the cross-file part (`CROSS_FILE`).
+fn moved(v: &Version) -> Vec<String> {
+    ProgramFields::qualifiers(v).into_iter().filter(|(_, w)| w.contains(CROSS_FILE)).map(|(r, _)| r).collect()
+}
+
+/// `v`'s rules for `head`.
+fn rules_of<'v>(v: &'v Version, head: &str) -> Vec<RuleRef<'v>> {
+    v.rules().filter(|r| v.rel_name(r.head().rel()) == head).collect()
+}
+
+/// The relations rule `r`'s body atoms read, in order.
+fn reads(v: &Version, r: RuleRef<'_>) -> Vec<String> {
+    r.body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel()).to_owned()).collect()
+}
 
 /// Source spans are locations but are not tree nodes. Their explicit document column must
 /// survive the local split, so locating their rows never adds `node(d, span, ...)`.
 #[test]
 fn source_relations_keep_their_document_location() {
-    use crate::code_rule_dsl::logic::rr::parse;
     for (relation, columns, arguments) in [
         ("source", "d: number, sp: loc", "d, sp"),
         ("src_line", "d: number, l: number, sp: loc", "d, l, sp"),
@@ -12,33 +55,33 @@ fn source_relations_keep_their_document_location() {
         ("docof", "sp: loc, d: number", "sp, d"),
     ] {
         let text = format!(".decl {relation}({columns})\n.input {relation}\n.decl selected(d: number)\nselected(d) :- {relation}({arguments}).\n.output selected\n");
-        let program = parse(&text).unwrap();
-        let (_, locations, _) = split_located(&program);
-        assert_eq!(locations["selected"], [0], "{relation}: {locations:?}");
-        let mut located = program;
-        locate(&mut located).unwrap();
-        assert!(!located.rules.iter().any(|rule| rule.body.iter().filter_map(|lit| lit.atom()).any(|atom| atom.rel == "node")), "{relation}: a span acquired a tree-node constraint");
+        let v = read(&text);
+        assert_eq!(split_of(&v).locations["selected"], [0], "{relation}: {:?}", split_of(&v).locations);
+        let (out, found) = located(v);
+        found.unwrap();
+        assert!(!out.rules().any(|r| reads(&out, r).iter().any(|a| a == "node")), "{relation}: a span acquired a tree-node constraint");
     }
 }
 
 /// A relation whose rows name no document (`aware()`, as data-layer's `ma_branch_aware`), handed on to a cross-file
 /// reader (`found`, as `MA033` over `ma_owner(_)`), is moved to the cross-file part with its file-local readers
-/// (decision 0290), so `locate` leaves every row the chunks hand on located.
+/// (decision 0290), so `locate_all` leaves every row the chunks hand on located.
 #[test]
 fn a_relation_naming_no_document_moves_to_the_cross_file_part() {
-    use crate::code_rule_dsl::logic::rr::parse;
     let text = ".decl doc(d: number, p: symbol, x: number)\n.input doc\n.decl owner(d: number)\nowner(d) :- doc(d, \"a.py\", _).\n\
                 .decl aware()\naware() :- owner(d), d > 0.\n.decl found(k: number)\nfound(1) :- owner(_), !aware().\n.output found\n";
-    let mut program = parse(text).unwrap();
-    assert!(split(&program).contains("aware"), "the case: aware is file-local before the move");
-    let located = locate(&mut program).expect("every row the chunks hand on located");
-    assert_eq!(moved(&program), ["aware"]);
-    let parts = split(&program);
-    assert!(!parts.contains("aware") && !parts.contains("found") && parts.contains("owner"), "{parts:?}, located {located:?}");
-    assert_eq!(cross_causes(&program)["aware"], "its rows name no document (moved by `locate`)");
+    let v = read(text);
+    assert!(split_of(&v).local.contains("aware"), "the case: aware is file-local before the move");
+    let (v, found) = located(v);
+    let found = found.expect("every row the chunks hand on located");
+    assert_eq!(moved(&v), ["aware"]);
+    let parts = split_of(&v);
+    assert!(!parts.local.contains("aware") && !parts.local.contains("found") && parts.local.contains("owner"), "{:?}, located {found:?}", parts.local);
+    assert_eq!(parts.causes["aware"], "its rows name no document (moved by `locate`)");
     // Located again, nothing more moves.
-    locate(&mut program).unwrap();
-    assert_eq!(moved(&program), ["aware"]);
+    let (v, found) = located(v);
+    found.unwrap();
+    assert_eq!(moved(&v), ["aware"]);
 }
 
 /// Two trees in one chunk (kinds 1 = module, 2 = function, 3 = other):
@@ -195,7 +238,6 @@ fn nearest_costs(cap: usize) {
 /// A cross-file rule's file-local part is made per chunk: the rule reads one exported join, not its base relations.
 #[test]
 fn a_cross_file_rules_local_join_is_pushed_into_the_chunks() {
-    use crate::code_rule_dsl::logic::rr::parse;
     let text = r#"
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
@@ -210,27 +252,25 @@ defined(s) :- node(_, n, "function_definition", _, _), field(n, "name", c), text
 .output finding
 finding(n, s) :- node(_, n, "call", _, _), field(n, "function", f), text(f, s), !op(n, "await"), s != "print", !defined(s).
 "#;
-    let mut prog = parse(text).unwrap();
-    assert!(!split(&prog).contains("finding"), "finding negates a cross-file relation");
-    let made = push_local_joins(&mut prog);
+    let v = read(text);
+    assert!(!split_of(&v).local.contains("finding"), "finding negates a cross-file relation");
+    let (v, made) = pushed(v);
     assert_eq!(made.len(), 1, "{made:?}");
-    let local = split(&prog);
-    assert!(local.contains(&made[0]), "the made join is file-local");
-    let finding: Vec<_> = prog.rules.iter().filter(|r| r.head.rel == "finding").collect();
+    let split = split_of(&v);
+    assert!(split.local.contains(&made[0]), "the made join is file-local");
+    let finding = rules_of(&v, "finding");
     assert_eq!(finding.len(), 1);
     // What is left of the rule: the join and the cross-file negation.
-    let reads: Vec<&str> = finding[0].body.iter().filter_map(|l| l.atom()).map(|a| a.rel.as_str()).collect();
-    assert_eq!(reads, [made[0].as_str(), "defined"]);
-    let split = programs(&prog).unwrap();
-    assert!(split.exports.contains(&made[0]));
-    assert!(!split.base.iter().any(|b| b == "field" || b == "text" || b == "op"), "{:?}", split.base);
+    assert_eq!(reads(&v, finding[0]), [made[0].as_str(), "defined"]);
+    let parts = programs_of(Arc::clone(&v)).unwrap();
+    assert!(parts.exports.contains(&made[0]));
+    assert!(!parts.base.iter().any(|b| b == "field" || b == "text" || b == "op"), "{:?}", parts.base);
     // The join takes the comparison and the negated base read along.
-    let join = prog.rules.iter().find(|r| r.head.rel == made[0]).unwrap();
-    assert_eq!(join.body.len(), 5, "{join:?}");
-    assert_eq!(join.head.args.len(), 2);
+    let join = rules_of(&v, &made[0])[0];
+    assert_eq!(join.body().count(), 5, "{}", v.show_rule(join));
+    assert_eq!(join.head().args().count(), 2);
     // Its rows are attributable to their file: the node column is a location.
-    let (_, locations, _) = split_located(&prog);
-    assert_eq!(locations[&made[0]], [0], "{locations:?}");
+    assert_eq!(split.locations[&made[0]], [0], "{:?}", split.locations);
 }
 
 /// Position comparisons must retain the semantic candidate filters. Document equality alone
@@ -253,12 +293,12 @@ triangle(a, b, c) :- chosen(a), chosen(b), chosen(c),
     docof(a, d), docof(b, d), docof(c, d), visit_index(a, ai), visit_index(b, bi), visit_index(c, ci), ai < bi, bi < ci.
 .output triangle
 "#;
-    let mut program = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
-    assert!(!split(&program).contains("chosen"));
-    let original = program.rules.iter().find(|rule| rule.head.rel == "triangle").unwrap().clone();
-    push_local_joins(&mut program);
-    let actual = program.rules.iter().find(|rule| rule.head.rel == "triangle").unwrap();
-    assert_eq!(actual, &original, "do not materialize all document-local node triples before chosen() filters them");
+    let v = read(text);
+    assert!(!split_of(&v).local.contains("chosen"));
+    let original = v.show_rule(rules_of(&v, "triangle")[0]);
+    let (v, _) = pushed(v);
+    let actual = v.show_rule(rules_of(&v, "triangle")[0]);
+    assert_eq!(actual, original, "do not materialize all document-local node triples before chosen() filters them");
 }
 
 /// `v = v0` carries a location: a disjunction's branch (`(kind(v0, "as_pattern"), child(v0, v, 0) ; v = v0)`, as
@@ -267,8 +307,7 @@ triangle(a, b, c) :- chosen(a), chosen(b), chosen(c),
 /// both parts derive it.
 #[test]
 fn equalities_and_constant_relations_keep_rules_file_local() {
-    use crate::code_rule_dsl::logic::rr::parse;
-    let program = parse(r#"
+    let v = read(r#"
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
 .decl text(n: node, s: symbol)
@@ -284,20 +323,19 @@ under(s, n) :- root(s, r), child(r, n, _).
 .decl named(n: node)
 named(n) :- node(_, n, "identifier", _, _), text(n, x), side(x).
 .output under, named
-"#).unwrap();
-    let (local, locations, _) = split_located(&program);
-    assert_eq!(locations["root"], [0, 1], "{locations:?}");
-    assert!(local.contains("under") && local.contains("named"), "{local:?}");
-    assert!(constant_relations(&program).contains("side"));
-    let parts = programs(&program).unwrap();
+"#);
+    let split = split_of(&v);
+    assert_eq!(split.locations["root"], [0, 1], "{:?}", split.locations);
+    assert!(split.local.contains("under") && split.local.contains("named"), "{:?}", split.local);
+    assert!(split.constants.contains("side"), "{:?}", split.constants);
+    let parts = programs_of(Arc::clone(&v)).unwrap();
     let lv = &parts.versions.local;
     assert!(lv.rules().any(|r| lv.rel_name(r.head().rel()) == "side"), "the chunks derive side for named");
-    assert!(cross_causes(&program).get("under").is_none(), "{:?}", cross_causes(&program));
+    assert!(split.causes.get("under").is_none(), "{:?}", split.causes);
 }
 
 #[test]
 fn the_cross_part_takes_node_attributes_as_a_semi_join_only_when_each_lookup_is_of_a_held_node() {
-    use crate::code_rule_dsl::logic::rr::parse;
     let source = |extra: &str| format!(r#"
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
@@ -316,11 +354,7 @@ hit(n, l) :- pick(n), line(n, l).
 .output hit
 "#);
     // As the corpus run splits: after the file-local joins are pushed into the chunks.
-    let split = |text: &str| {
-        let mut program = parse(text).unwrap();
-        push_local_joins(&mut program);
-        programs(&program).unwrap()
-    };
+    let split = |text: &str| programs_of(pushed(read(text)).0).unwrap();
     let parts = split(&source(""));
     assert!(parts.base.iter().any(|b| b == "line"), "{:?}", parts.base);
     let held = semijoin_bases(&parts.versions.cross, &parts.base).expect("every lookup is of a node an export holds");
@@ -330,7 +364,7 @@ hit(n, l) :- pick(n), line(n, l).
     let parts = split(&source(".decl kid(c: node, l: number)\nkid(c, l) :- pick(p), child(p, c, _), line(c, l).\n.output kid"));
     assert!(parts.base.iter().any(|b| b == "child"), "{:?}", parts.base);
     assert!(!semijoin_bases(&parts.versions.cross, &parts.base).unwrap().contains("line"));
-    let parts = programs(&parse(&source(".decl own(n: node)\nown(n) :- node(_, n, \"identifier\", _, _), text(n, x), names(x).\n.decl seen(n: node, l: number)\nseen(n, l) :- own(n), line(n, l).\n.output seen")).unwrap()).unwrap();
+    let parts = programs_of(read(&source(".decl own(n: node)\nown(n) :- node(_, n, \"identifier\", _, _), text(n, x), names(x).\n.decl seen(n: node, l: number)\nseen(n, l) :- own(n), line(n, l).\n.output seen"))).unwrap();
     let held = semijoin_bases(&parts.versions.cross, &parts.base).unwrap();
     assert!(!held.contains("line") && !held.contains("node") && !held.contains("text"), "{held:?}");
     // Per relation: a walk of `child` that looks up no attribute leaves `line` a semi-join for the other rules.
@@ -352,15 +386,13 @@ hit(n, l) :- pick(n), line(n, l).
 /// cross-file, every climb of a pack joined the corpus on one worker (O-cold-seed-join).
 #[test]
 fn a_climb_over_the_tapes_parent_column_is_file_local() {
-    use crate::code_rule_dsl::logic::rr::parse;
     let text = ".decl kind(n: node, k: number)\n.input kind\n.decl tape(n: int, par: int, size: int, depth: int)\n.input tape\n\
         .decl stop(n: node)\nstop(n) :- kind(n, 7).\n\
         .decl up(n: node, a: int)\nup(n, p) :- kind(n, 3), tape(n, p, _, _), p >= 0.\nup(n, q) :- up(n, p), !stop(p), tape(p, q, _, _), q >= 0.\n\
         .decl under(n: node)\nunder(n) :- up(n, a), stop(a).\n.output under\n";
-    let program = parse(text).unwrap();
-    let (local, locations, _) = split_located(&program);
-    assert!(local.contains("up") && local.contains("under"), "{local:?}");
-    assert!(locations["up"].contains(&0), "{locations:?}");
+    let split = split_of(&read(text));
+    assert!(split.local.contains("up") && split.local.contains("under"), "{:?}", split.local);
+    assert!(split.locations["up"].contains(&0), "{:?}", split.locations);
 }
 
 /// `boot-python.rr`'s `deco_word`: a disjunction's branch `(e0 = d ; …)` leaves `e0 = d` between two per-file pieces.
@@ -368,8 +400,6 @@ fn a_climb_over_the_tapes_parent_column_is_file_local() {
 /// and left their join to the cross-file part (decision 0093 §4, O140).
 #[test]
 fn an_equality_between_two_pieces_joins_them_in_the_chunks() {
-    use crate::code_rule_dsl::logic::front::{Literal, Term};
-    use crate::code_rule_dsl::logic::rr::parse;
     let text = r#"
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl field(p: node, f: symbol, c: node)
@@ -381,17 +411,15 @@ defined(s) :- node(_, n, "function_definition", _, _), field(n, "name", c), text
 .output finding
 finding(f, x) :- node(_, f, "decorated_definition", _, _), field(f, "decorator", d), e = d, field(e, "name", c), text(c, x), !defined(x).
 "#;
-    let mut prog = parse(text).unwrap();
-    let made = push_local_joins(&mut prog);
-    let local = split(&prog);
+    let (v, made) = pushed(read(text));
+    let local = &split_of(&v).local;
     assert!(made.iter().all(|m| local.contains(m)), "{made:?}");
-    let finding: Vec<_> = prog.rules.iter().filter(|r| r.head.rel == "finding").collect();
+    let finding = rules_of(&v, "finding");
     assert_eq!(finding.len(), 1);
-    let body = &finding[0].body;
-    let equal = body.iter().any(|l| matches!(l, Literal::Cmp { l: Term::Var(_), op: "=", r: Term::Var(_) }));
-    assert!(!equal, "the equality stays in the cross-file rule: {}", finding[0]);
-    let pushed: Vec<&str> = body.iter().filter_map(|l| l.atom()).filter(|a| made.iter().any(|x| x == &a.rel)).map(|a| a.rel.as_str()).collect();
-    assert_eq!(pushed.len(), 1, "one pushed join, not one per piece: {}", finding[0]);
+    let equal = finding[0].body().any(|l| matches!(l.view(), L::Cmp { l: TermRef::Var(_), op: CmpOp::Eq, r: TermRef::Var(_) }));
+    assert!(!equal, "the equality stays in the cross-file rule: {}", v.show_rule(finding[0]));
+    let pushed: Vec<String> = reads(&v, finding[0]).into_iter().filter(|a| made.contains(a)).collect();
+    assert_eq!(pushed.len(), 1, "one pushed join, not one per piece: {}", v.show_rule(finding[0]));
 }
 
 /// Decision 0099, the factorized store: an export that joins two parts at a variable its head projects away
@@ -401,8 +429,6 @@ finding(f, x) :- node(_, f, "decorated_definition", _, _), field(f, "decorator",
 #[test]
 #[ignore = "t31 A1 keeps outer's join in the cross-file part (uses, a cross-file read of the same rule, filters it), so this program has no export for decision 0099 to factorize; open: a case 0099 still factorizes"]
 fn an_export_joined_at_a_projected_key_is_handed_on_as_its_parts() {
-    use crate::code_rule_dsl::logic::front::Literal;
-    use crate::code_rule_dsl::logic::rr::parse;
     let text = r#"
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
@@ -424,27 +450,31 @@ outer(f, x) :- uses(f, x), encl(f, p), bound(p, x).
 .output named
 named(f, s) :- uses(f, _), child(p, f, _), text(p, s).
 "#;
-    let mut prog = parse(text).unwrap();
-    let pushed = push_local_joins(&mut prog);
+    let (v, pushed) = pushed(read(text));
     assert_eq!(pushed.len(), 2, "{pushed:?}");
-    let lines = factorize_exports(&mut prog);
+    let mut pass = FactorizeExports::new(true);
+    let mut p = Pipeline::new("test", v);
+    p.program(&mut pass);
+    let (v, _) = p.finish().unwrap();
+    let lines = pass.lines;
     assert_eq!(lines.len(), 1, "only outer's join is factorized: {lines:?}");
     let product = pushed.iter().find(|p| p.ends_with("_outer")).unwrap();
     assert!(lines[0].starts_with(&format!("{product}: handed on as parts")), "{lines:?}");
-    assert!(!prog.rules.iter().any(|r| r.head.rel == *product), "the product's rule is gone");
+    assert!(rules_of(&v, product).is_empty(), "the product's rule is gone");
     // The reader reads the parts, joined by the key, where it read the product.
-    let outer: Vec<_> = prog.rules.iter().filter(|r| r.head.rel == "outer").collect();
+    let outer = rules_of(&v, "outer");
     assert_eq!(outer.len(), 1);
-    let parts: Vec<&str> = outer[0].body.iter().filter_map(|l| l.atom()).map(|a| a.rel.as_str()).filter(|r| r.starts_with("fz")).collect();
-    assert_eq!(parts.len(), 2, "{}", outer[0]);
-    let keys: Vec<_> = outer[0].body.iter().filter_map(|l| l.atom()).filter(|a| a.rel.starts_with("fz")).map(|a| a.args.last().cloned().unwrap()).collect();
-    assert_eq!(keys[0], keys[1], "the parts meet at the key: {}", outer[0]);
+    let parts: Vec<String> = reads(&v, outer[0]).into_iter().filter(|r| r.starts_with("fz")).collect();
+    assert_eq!(parts.len(), 2, "{}", v.show_rule(outer[0]));
+    let keys: Vec<Option<crate::code_rule_dsl::logic::program_image::Slot>> = outer[0].body().filter_map(|l| l.atom()).filter(|a| v.rel_name(a.rel()).starts_with("fz")).map(|a| match a.args().last() { Some(TermRef::Var(s)) => Some(s), _ => None }).collect();
+    assert!(keys[0].is_some(), "the key is a variable: {}", v.show_rule(outer[0]));
+    assert_eq!(keys[0], keys[1], "the parts meet at the key: {}", v.show_rule(outer[0]));
     // Each part is reduced by the other's keys, and both are file-local exports.
     for part in &parts {
-        let rule = prog.rules.iter().find(|r| r.head.rel == *part).unwrap();
-        assert!(rule.body.iter().any(|l| matches!(l, Literal::Atom(a) if a.rel.starts_with("fzk"))), "{rule}");
+        let rule = rules_of(&v, part)[0];
+        assert!(reads(&v, rule).iter().any(|a| a.starts_with("fzk")), "{}", v.show_rule(rule));
     }
-    let split = programs(&prog).unwrap();
+    let split = programs_of(Arc::clone(&v)).unwrap();
     for part in &parts {
         assert!(split.exports.iter().any(|e| e == part), "{part} is exported: {:?}", split.exports);
     }
@@ -458,7 +488,6 @@ named(f, s) :- uses(f, _), child(p, f, _), text(p, s).
 /// chunks would export every (function, name bound around it) pair, not the few the filter asks about.
 #[test]
 fn a_composition_filtered_by_a_cross_file_read_is_not_pushed() {
-    use crate::code_rule_dsl::logic::rr::parse;
     let text = r#"
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
@@ -476,12 +505,10 @@ bound_in(p, x) :- field(p, "name", c), text(c, x).
 .output outer
 outer(f, x) :- wanted(f, x), field(p, "body", f), bound_in(p, x).
 "#;
-    let mut prog = parse(text).unwrap();
-    let made = push_local_joins(&mut prog);
+    let (v, made) = pushed(read(text));
     assert!(!made.iter().any(|m| m.ends_with("_outer")), "{made:?}");
-    let outer: Vec<_> = prog.rules.iter().filter(|r| r.head.rel == "outer").collect();
-    let reads: Vec<&str> = outer[0].body.iter().filter_map(|l| l.atom()).map(|a| a.rel.as_str()).collect();
-    assert_eq!(reads, ["wanted", "field", "bound_in"]);
+    let outer = rules_of(&v, "outer");
+    assert_eq!(reads(&v, outer[0]), ["wanted", "field", "bound_in"]);
 }
 
 /// The split read from the version (`FileLocal`) is maintained across an edit of a few rules: computed again only
@@ -490,7 +517,7 @@ outer(f, x) :- wanted(f, x), field(p, "body", f), bound_in(p, x).
 /// `q`, and `reads_q` with it, file-local.
 #[test]
 fn the_split_of_a_version_is_maintained_across_an_edit() {
-    use crate::code_rule_dsl::logic::program_image::manager::{Cx, Pipeline, ProgramPass, ProgramW};
+    use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
     let mut text = String::from(
         ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.input node\n\
          .decl q(n: node)\nq(n) :- node(_, n, \"a\", _, _).\nq(n) :- node(_, n, \"a\", _, _), node(_, m, \"b\", _, _), m != n.\n\
@@ -500,9 +527,7 @@ fn the_split_of_a_version_is_maintained_across_an_edit() {
     for k in 0..6 {
         text.push_str(&format!(".decl other{k}(n: node)\nother{k}(n) :- node(_, n, \"k{k}\", _, _).\n.output other{k}\n"));
     }
-    let program = crate::code_rule_dsl::logic::rr::parse(&text).unwrap();
-    let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&program).unwrap().finish().unwrap();
-    let mut p = Pipeline::new("test", v.clone());
+    let mut p = Pipeline::new("test", read(&text));
     let before = p.get::<FileLocal>().unwrap();
     assert!(!before.local.contains("q") && !before.local.contains("reads_q") && before.local.contains("other0"), "{:?}", before.local);
     struct DropJoin;
@@ -517,75 +542,68 @@ fn the_split_of_a_version_is_maintained_across_an_edit() {
     assert!(after.local.contains("q") && after.local.contains("reads_q"), "{:?}", after.local);
     assert_eq!(p.store().computed("file-local split"), 0, "maintained from the input's split, not computed again");
     let (out, _) = p.finish().unwrap();
-    let whole = crate::code_rule_dsl::logic::program_image::manager::analysis::<FileLocal>(&crate::code_rule_dsl::logic::program_image::Builder::of_program(&out.program(&Default::default()).unwrap()).unwrap().finish().unwrap().0).unwrap();
+    // The same program opened afresh, with no analysis carried: its split is computed whole.
+    let fresh = Version::open(out.fold().unwrap().base_bytes().unwrap()).unwrap();
+    let whole = split_of(&fresh);
     assert_eq!(*after, *whole, "the maintained split is a whole split's");
 }
 
-/// Rows located on the version (`Locate`) as the tree's `locate` locates them: each export with no location column
-/// derived as `<r>_at(d, …)`, its document a column a rule binds (`named2`), one it leaves unnamed (`named`), or one
-/// through a node it binds (`named3`, by `node`; not a lone input atom, which the cross-file part derives itself), and
-/// read back by the cross-file part. The same program.
+/// Rows located on the version (`Locate`): each export with no location column derived as `<r>_at(d, …)`, its
+/// document a column a rule binds (`named2`), one it leaves unnamed (`named`), or one through a node it binds
+/// (`named3`, by `node`; not a lone input atom, which the cross-file part derives itself), and read back by the
+/// cross-file part.
 #[test]
-fn rows_are_located_on_a_version_as_on_the_tree() {
-    use crate::code_rule_dsl::logic::program_image::{Builder, manager::Pipeline};
+fn rows_are_located_on_a_version() {
     let text = ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.decl text(n: node, s: symbol)\n.input node, text\n\
                 .decl named(s: symbol)\nnamed(s) :- node(_, n, \"function\", _, _), text(n, s).\n\
                 .decl named2(s: symbol)\nnamed2(s) :- node(d, n, \"class\", _, _), text(n, s), d > 0.\n\
                 .decl named3(s: symbol)\nnamed3(s) :- text(n, s), s != \"x\".\n\
                 .decl all(s: symbol)\nall(s) :- named(s), named2(s), named3(s).\n.output all\n";
-    let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
-    let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
     let mut pass = Locate::default();
-    let mut p = Pipeline::new("test", v);
+    let mut p = Pipeline::new("test", read(text));
     p.program(&mut pass);
     let (out, _) = p.finish().unwrap();
-    let want = locate(&mut tree);
-    assert_eq!(want, Ok(vec!["named".to_owned(), "named2".to_owned(), "named3".to_owned()]));
-    assert_eq!(pass.result(), want);
-    let (tv, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
-    assert_eq!((out.size(), out.digest()), (tv.size(), tv.digest()), "{}\n---\n{}", out.show(), tv.show());
+    assert_eq!(pass.result(), Ok(vec!["named".to_owned(), "named2".to_owned(), "named3".to_owned()]));
+    for rel in ["named", "named2", "named3"] {
+        let at = format!("{rel}_at");
+        assert_eq!(rules_of(&out, &at).len(), 1, "{at} derived by the chunks:\n{}", out.show());
+        let back = rules_of(&out, rel);
+        assert!(back.len() == 1 && reads(&out, back[0]) == [at.as_str()], "{rel} read back from {at}:\n{}", out.show());
+    }
 }
 
 /// A located rule keeps its branded atoms (decision 0270, a lowered program's atoms): `named`'s `node(_, n,
 /// "function", _, _)`, its kind branded as lowering brands it, is the atom whose unnamed document column the located
-/// rule names, its other terms copied (`passes::t_of`): the kind stays the same branded atom. The same program as the
-/// tree's `locate`.
+/// rule names, its other terms copied (`passes::t_of`): the kind stays the same branded atom.
 #[test]
 fn a_located_rule_keeps_its_branded_atoms() {
-    use crate::code_rule_dsl::logic::front::{Branded, Class, Literal, Term};
-    use crate::code_rule_dsl::logic::program_image::{Builder, manager::Pipeline};
-    let text = ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.decl text(n: node, s: symbol)\n.input node, text\n\
-                .decl named(s: symbol)\nnamed(s) :- node(_, n, \"function\", _, _), text(n, s).\n\
-                .decl all(s: symbol)\nall(s) :- named(s).\n.output all\n";
+    use crate::code_rule_dsl::logic::front::{Branded, Class};
+    use crate::code_rule_dsl::logic::program_image::T;
     let kind = Branded { class: Class::Kind, atom: 7 };
-    let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
-    for r in &mut tree.rules {
-        for l in &mut r.body {
-            if let Literal::Atom(a) = l {
-                a.args.iter_mut().filter(|t| matches!(t, Term::Str(_))).for_each(|t| *t = Term::Branded(kind));
-            }
-        }
-    }
-    let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    let mut b = Builder::base();
+    b.declare("node", &[("d", "number"), ("n", "node"), ("kind", "symbol"), ("start", "number"), ("end", "number")]);
+    b.declare("text", &[("n", "node"), ("s", "symbol")]);
+    b.declare("named", &[("s", "symbol")]);
+    b.declare("all", &[("s", "symbol")]);
+    b.set_inputs(&["node", "text"]);
+    b.set_outputs(&["all"]);
+    b.rule().head("named", &[T::Var("s")]).atom("node", &[T::Wild, T::Var("n"), T::Branded(kind), T::Wild, T::Wild]).atom("text", &[T::Var("n"), T::Var("s")]).finish().unwrap();
+    b.rule().head("all", &[T::Var("s")]).atom("named", &[T::Var("s")]).finish().unwrap();
+    let (v, _) = b.finish().unwrap();
     assert!(!v.show().contains("\"function\""), "branded: {}", v.show());
     let mut pass = Locate::default();
     let mut p = Pipeline::new("test", v);
     p.program(&mut pass);
     let (out, _) = p.finish().unwrap();
-    let want = locate(&mut tree);
-    assert_eq!(want, Ok(vec!["named".to_owned()]));
-    assert_eq!(pass.result(), want);
-    let keeps = |l: &Literal| matches!(l, Literal::Atom(a) if a.rel.as_str() == "node" && a.args.iter().any(|t| *t == Term::Branded(kind)));
-    assert!(tree.rules.iter().any(|r| r.head.rel.as_str() == "named_at" && r.body.iter().any(keeps)), "the tree's located rule keeps it");
-    let (tv, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
-    assert_eq!((out.size(), out.digest()), (tv.size(), tv.digest()), "{}\n---\n{}", out.show(), tv.show());
+    assert_eq!(pass.result(), Ok(vec!["named".to_owned()]));
+    let keeps = |r: RuleRef<'_>| r.body().filter_map(|l| l.atom()).any(|a| out.rel_name(a.rel()) == "node" && a.args().any(|t| matches!(t, TermRef::Branded(b) if b == kind)));
+    assert!(rules_of(&out, "named_at").into_iter().any(keeps), "the located rule keeps it:\n{}", out.show());
 }
 
-/// An export read by a cross-file rule with a demand is cut on a version as the tree cuts it: the same lines, the
-/// same program (`xd_fl_later` through `dm_demand_0` and the key `xk_text_0`).
+/// An export read by a cross-file rule with a demand is cut on a version: the cut's line, and the program made
+/// (`xd_fl_later` through `dm_demand_0` and the key `xk_text_0`).
 #[test]
-fn exports_are_cut_on_a_version_as_on_the_tree() {
-    use crate::code_rule_dsl::logic::program_image::{Builder, manager::Pipeline};
+fn exports_are_cut_on_a_version() {
     let text = ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.decl text(n: node, s: symbol)\n\
                 .decl within(c: node, n: node)\n.input node, text, within\n\
                 .decl fl_later(n: node, c: node)\nfl_later(n, c) :- within(c, n), node(_, c, \"call\", _, _).\n\
@@ -593,28 +611,21 @@ fn exports_are_cut_on_a_version_as_on_the_tree() {
                 .decl demand(n: node, m: node)\ndemand(n, m) :- named(n, s), named(m, s), node(_, n, \"function\", _, _), n != m.\n\
                 .decl later(n: node, c: node)\nlater(n, c) :- demand(n, _), fl_later(n, c), text(c, _).\n\
                 later(n, c) :- demand(n, _), fl_later(n, c), node(_, c, \"call\", 1, _).\n.output later\n";
-    let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
-    let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
     let mut pass = DemandExports::default();
-    let mut p = Pipeline::new("test", v);
+    let mut p = Pipeline::new("test", read(text));
     p.program(&mut pass);
     let (out, _) = p.finish().unwrap();
-    let want = demand_exports(&mut tree);
-    assert!(want[0].starts_with("1 exports cut"), "{want:?}");
-    assert_eq!(pass.lines, want);
-    let (tv, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    assert!(pass.lines[0].starts_with("1 exports cut"), "{:?}", pass.lines);
     let shown = out.show();
     for made in ["xd_fl_later(", "dm_demand_0(", "xk_text_0("] {
         assert!(shown.contains(made), "{made} in\n{shown}");
     }
-    assert_eq!((out.size(), out.digest()), (tv.size(), tv.digest()), "{}\n---\n{}", out.show(), tv.show());
 }
 
-/// An export joining two parts at a key its head projects away is handed on as its parts on a version as the tree
-/// hands it on: the same lines, the same program (the parts, their keys, the readers' copies and fresh names).
+/// An export joining two parts at a key its head projects away is handed on as its parts on a version: one line, the
+/// product gone, and the parts and their keys named from the part's content.
 #[test]
-fn exports_are_factorized_on_a_version_as_on_the_tree() {
-    use crate::code_rule_dsl::logic::program_image::{Builder, manager::Pipeline};
+fn exports_are_factorized_on_a_version() {
     let text = r#"
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
@@ -637,19 +648,13 @@ outer(f, x) :- uses(f, x), fl_outer(f, x).
 .output outer2
 outer2(f) :- uses(f, _), fl_outer(f, y), y != "self".
 "#;
-    let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
-    let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
     let mut pass = FactorizeExports::new(true);
-    let mut p = Pipeline::new("test", v);
+    let mut p = Pipeline::new("test", read(text));
     p.program(&mut pass);
     let (out, _) = p.finish().unwrap();
-    let want = factorize_exports(&mut tree);
-    assert_eq!(want.len(), 1, "{want:?}");
-    assert!(want[0].starts_with("fl_outer: handed on as parts"), "{want:?}");
-    assert_eq!(pass.lines, want);
-    let (tv, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
-    assert_eq!((out.size(), out.digest()), (tv.size(), tv.digest()), "{}\n---\n{}", out.show(), tv.show());
-    assert!(!out.rules().any(|r| out.rel_name(r.head().rel()) == "fl_outer"), "the product is gone:\n{}", out.show());
+    assert_eq!(pass.lines.len(), 1, "{:?}", pass.lines);
+    assert!(pass.lines[0].starts_with("fl_outer: handed on as parts"), "{:?}", pass.lines);
+    assert!(rules_of(&out, "fl_outer").is_empty(), "the product is gone:\n{}", out.show());
     // Each part and its key are named from the part's content: `fz<h>_` and `fzk<h>_`, one hash.
     let shown = out.show();
     let parts: std::collections::BTreeSet<&str> = shown.split(|c: char| !(c.is_alphanumeric() || c == '_')).filter(|w| w.starts_with("fz") && w.ends_with("_fl_outer")).collect();
@@ -660,11 +665,10 @@ outer2(f) :- uses(f, _), fl_outer(f, y), y != "self".
     }
 }
 
-/// The file-local joins of cross-file rules are pushed on a version as the tree pushes them: the same helpers
-/// (`fl<h>_<head>`, named from their content), the same program.
+/// The file-local joins of cross-file rules are pushed on a version: helpers named from their content
+/// (`fl<h>_<head>`), each derived by the chunks and read in place of the join.
 #[test]
-fn local_joins_are_pushed_on_a_version_as_on_the_tree() {
-    use crate::code_rule_dsl::logic::program_image::{Builder, manager::Pipeline};
+fn local_joins_are_pushed_on_a_version() {
     let text = r#"
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl child(p: node, c: node, i: number)
@@ -690,17 +694,41 @@ named(f, s) :- uses(f, _), child(p, f, _), text(p, s), !bound(p, s).
 .output at
 at(f, l) :- uses(f, _), docof(f, d), line(f, l), d > 0.
 "#;
-    let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
-    let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+    let (out, made) = pushed(read(text));
+    assert!(!made.is_empty(), "{made:?}");
+    let local = &split_of(&out).local;
+    for m in &made {
+        assert!(m.starts_with("fl") && local.contains(m), "{m}: a file-local helper, {made:?}");
+        assert!(out.rules().any(|r| reads(&out, r).contains(m)), "{m} is read:\n{}", out.show());
+    }
+}
+
+#[test]
+fn a_local_join_can_export_a_node_bound_by_equality() {
+    use crate::code_rule_dsl::logic::program_image::{Builder, manager::Pipeline};
+    let text = r#"
+        .decl node(d: number, n: node, k: symbol, start: number, end: number)
+        .decl child(p: node, c: node, i: number)
+        .decl text(n: node, x: symbol)
+        .input node, child, text
+        .decl excluded(n: node)
+        excluded(n) :- text(n, x), text(m, x), n != m.
+        .decl observed(n: node)
+        .output observed
+        observed(answer) :- node(_, p, "some-kind", _, _), child(p, g, 0), mid = g, answer = mid, !excluded(g).
+    "#;
+    // The version's pass is the only split (0276 step 6): no tree form to compare it with.
+    let program = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+    let (image, _) = Builder::of_program(&program).unwrap().finish().unwrap();
     let mut pass = PushLocalJoins::default();
-    let mut p = Pipeline::new("test", v);
-    p.program(&mut pass);
-    let (out, _) = p.finish().unwrap();
-    let want = push_local_joins(&mut tree);
-    assert!(!want.is_empty(), "{want:?}");
-    assert_eq!(pass.made, want);
-    let (tv, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
-    assert_eq!((out.size(), out.digest()), (tv.size(), tv.digest()), "{}\n---\n{}", out.show(), tv.show());
+    let mut pipeline = Pipeline::new("test", image);
+    pipeline.program(&mut pass);
+    let (result, _) = pipeline.finish().unwrap();
+    let helpers: Vec<_> = pass.made.iter().filter(|name| name.ends_with("_observed")).collect();
+    assert_eq!(helpers.len(), usize::from(push_equal_columns()), "{}", result.show());
+    if let [helper] = helpers.as_slice() {
+        assert!(result.show().contains(&format!("observed($answer) :- {helper}(")));
+    }
 }
 
 /// A helper is named from its content: an edit of one rule renames its own helper, and no other rule's (a counter
@@ -727,7 +755,7 @@ named(f, s) :- uses(f, _), child(p, f, _), node(_, p, "call", _, _), text(p, s).
 "#
         )
     };
-    let made = |c: i64| push_local_joins(&mut crate::code_rule_dsl::logic::rr::parse(&program(c)).unwrap());
+    let made = |c: i64| pushed(read(&program(c))).1;
     let (before, after) = (made(1), made(2));
     let of = |m: &[String], head: &str| m.iter().find(|r| r.ends_with(&format!("_{head}"))).cloned().unwrap_or_else(|| panic!("{head} in {m:?}"));
     assert_ne!(of(&before, "first"), of(&after, "first"), "the edited rule's helper is renamed");
@@ -735,20 +763,22 @@ named(f, s) :- uses(f, _), child(p, f, _), node(_, p, "call", _, _), text(p, s).
 }
 
 /// A base relation read before it is declared (a tree axis, `rr_inside_<set>`, which lowering declares) has no
-/// location columns of its own, in the version's split as in the tree's: the version's asked for its columns'
-/// types and stopped, on any program with `inside(n, a, "kind")` (ep2's combine).
+/// location columns of its own, so its reader is cross-file for reading it: the version's split asked for its
+/// columns' types and stopped, on any program with `inside(n, a, "kind")` (ep2's combine).
 #[test]
-fn the_split_of_a_version_reads_an_undeclared_axis_as_the_tree_does() {
+fn the_split_of_a_version_reads_an_undeclared_axis() {
     let text = ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.input node\n\
                 .decl out(n: node)\n.output out\nout(n) :- node(_, n, \"call\", _, _), inside(n, a, \"assignment\").\n";
-    let mut program = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+    let v = read(text);
     // The axis as the combine's link hands it on: read, and not declared.
-    let axes: Vec<String> = program.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom())).filter(|a| crate::code_rule_dsl::logic::front::is_axis(&a.rel)).map(|a| a.rel.to_string()).collect();
-    assert!(!axes.is_empty(), "the program reads an axis: {:?}", program.rules);
+    let axes: Vec<String> = v.rules().flat_map(|r| reads(&v, r)).filter(|a| crate::code_rule_dsl::logic::front::is_axis(a)).collect();
+    assert!(!axes.is_empty(), "the program reads an axis:\n{}", v.show());
+    let mut b = Builder::on(&v);
     for a in &axes {
-        program.decls.remove(a.as_str());
+        b.undeclare(a);
     }
-    let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&program).unwrap().finish().unwrap();
-    let split = crate::code_rule_dsl::logic::program_image::manager::analysis::<FileLocal>(&v).unwrap();
-    assert_eq!(split.local, split_located(&program).0, "the version's file-local relations are the tree's");
+    let (v, _) = b.finish().unwrap();
+    let split = split_of(&v);
+    assert!(!split.local.contains("out"), "{:?}", split.local);
+    assert!(axes.iter().any(|a| split.causes.get("out").is_some_and(|why| why.contains(a.as_str()))), "{:?}", split.causes);
 }

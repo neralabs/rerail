@@ -213,8 +213,10 @@
                     let r = report.as_ref().expect("a device report");
                     assert!(r.refused.is_none(), "{r:?}");
                     assert!(r.rounds > 3, "the recursion takes rounds: {r:?}");
-                    // A set head's rows written in place with their rounds (decision 0325 step 4); a lattice's read.
-                    assert_eq!(r.placed > 0, lattice.is_none(), "{r:?}");
+                    // A set head's rows written in place with their rounds (decision 0325 step 4); a lattice's folded
+                    // in place in its one relation (decision 0384 step 5, R3). Every row placed: none read back (R4).
+                    assert!(r.placed > 0, "{r:?}");
+                    assert_eq!(r.placed, r.distinct, "no head row read back: {r:?}");
                 }
                 super::super::close(&db, "dev_lev").unwrap();
                 let held = super::super::held(&db, "h0").expect("the relation held");
@@ -228,6 +230,83 @@
             assert!(got[0].iter().any(|r| r.2 > 3), "rows of later rounds");
             assert_eq!(got[0], got[1], "the device's rows and levels are the CPU's ({lattice:?})");
         }
+    }
+
+    /// Decision 0384 step 5 (R5): the device folds a `min` lattice's rounds into its one relation through its key map
+    /// in its block; the relation takes the rows as they lie and the map as its own, and a CPU fold goes on in that
+    /// map (the device's slots are the host's: one hash, one layout). Its rows and each key's changes are those of a
+    /// fold made on the CPU alone.
+    #[test]
+    fn a_cpu_fold_goes_on_in_the_devices_key_map() {
+        use crate::code_rule_dsl::facts::rows::{BlockVec, Part};
+        use crate::code_rule_dsl::transducer::packed::metal_join as mj;
+        use super::super::keys::{KeyMap, SLOT};
+        if !mj::available() {
+            return;
+        }
+        let lattice = super::super::TestLattice::min;
+        // Round r: keys 0..400 + 300r (new keys each round), each value lower for some keys each round; a key's rows
+        // more than once in a round (the fold groups them).
+        let round = |r: i64| -> Vec<i64> {
+            (0..400 + 300 * r).flat_map(|key| [[key, 1000 - r * (key % 3)], [key, 1001]]).flatten().collect()
+        };
+        let mut cpu = lattice();
+        for r in 0..4 {
+            cpu.fold(&round(r));
+        }
+        let mut rel = lattice();
+        let (code, top, after) = rel.device_lattice();
+        let lat = mj::LatCode { code, top, after };
+        let part = Part::for_writes_with_room(2, 1, 64 << 20).unwrap();
+        let mut map: Option<KeyMap> = None;
+        let mut had = 0usize;
+        for r in 0..3 {
+            let rows = round(r);
+            let n = rows.len() / 2;
+            assert!(part.reserve((had + n) as u64));
+            let need = (2 * (had + n)).next_power_of_two().max(16);
+            let old = match map.take() {
+                Some(m) if m.places() >= need => {
+                    map = Some(m);
+                    None
+                }
+                old => {
+                    // SAFETY: the fold's first pass writes every slot before any read.
+                    map = Some(KeyMap::of(unsafe { BlockVec::unwritten_in(Some(&part.home()), need * SLOT) }, had));
+                    Some(old)
+                }
+            };
+            let m = map.as_ref().unwrap();
+            let first = match &old {
+                None => mj::MapFirst::Ready,
+                Some(None) => mj::MapFirst::Clear,
+                Some(Some(o)) => mj::MapFirst::Grow(super::map_at(o)),
+            };
+            assert!(r == 0 || matches!(first, mj::MapFirst::Grow(_)), "the map grows on the device");
+            let r_rel = mj::DevRel::in_block(&part.in_block(had as u32), 2).unwrap();
+            let u = mj::Table::of_rows(2, &rows).unwrap();
+            let changed = mj::Table::new(2, n).unwrap();
+            let counters = mj::Words::zeroed(2).unwrap();
+            let mut batch = super::direct_batch(None).unwrap();
+            batch.lattice_fold(&u, n, &r_rel, had, 1, lat, super::map_at(m), first, &counters, &changed, None, None).unwrap();
+            batch.finish().unwrap();
+            drop(old);
+            let added = counters.get(1) as usize;
+            // SAFETY: the batch finished; `lat_merge` wrote every new key's row.
+            unsafe { part.written_more(added as u32) };
+            had += added;
+            map.as_mut().unwrap().held(had);
+        }
+        assert_eq!(had, 400 + 300 * 2, "a row a key");
+        let map = map.unwrap();
+        assert!(map.facts().is_some_and(|f| std::sync::Arc::ptr_eq(f, part.home().facts())), "the map in its relation's block");
+        assert!(rel.take_folded(part, map));
+        assert_eq!(rel.len(), had, "the rows taken as they lie");
+        // The CPU's fold goes on in the device's map: held keys found, new keys put, the map grown.
+        rel.fold(&round(3));
+        let (got, want) = (rel.live(), cpu.live());
+        assert_eq!(got.len(), 400 + 300 * 3);
+        assert_eq!(got, want, "the device's fold, then the CPU's, is the CPU's alone");
     }
 
     /// Text tests on the device: each test's verdicts per distinct symbol made by its automaton, the same rows as
@@ -401,6 +480,108 @@
             got.push(rows);
         }
         assert_eq!(got[1], got[0], "the strata's rows after the wave are their own runs'");
+    }
+
+    /// Decision 0386, the queue's bound: a stratum that waits for its wave leaves no command buffer open on its
+    /// thread. The wave keeps its strata's committed work and waits once when flushed; an open one held by a thread
+    /// that then waits (or goes idle, as a pool's thread after its job) holds one of the queue's 64 until a thread
+    /// asking for one more waits for ever (every thread of a 300-file Metal run did, 2026-11-17).
+    #[test]
+    fn a_stratum_waiting_for_its_wave_leaves_no_command_buffer_open() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        use crate::code_rule_dsl::logic::lanes::wave;
+        let db = wave_db(400);
+        let n = format!("t:x:{}:{}:si", hex("temp.n"), hex("c0, c1"));
+        let strata = [("open_a", "h0", format!("pos {n} v0 v1\nlt v1 i:100\nhead v0 v1")), ("open_b", "h1", format!("pos {n} v0 v1\npos {n} v0 v2\nlt v1 v2\nlt v2 i:60\nhead v1 v2"))];
+        for (name, h, rule) in &strata {
+            open_stratum(&db, name, h, rule);
+        }
+        {
+            let _w = wave::suspendable();
+            for (name, _, _) in &strata {
+                let status = super::super::run(&db, name, 0).unwrap();
+                assert!(status.ends_with(" 3"), "{name} waits for its wave: {status}");
+                assert_eq!(rerail_accel::exec::uncommitted_here(), 0, "{name}'s joins are committed: the wave holds no open command buffer");
+            }
+        }
+        wave::flush(strata.len()).unwrap();
+        for (name, h, _) in &strata {
+            let status = super::super::run(&db, name, 0).unwrap();
+            assert!(!status.ends_with(" 3"), "{name} finished: {status}");
+            super::super::close(&db, name).unwrap();
+            assert!(!stratum_rows(&db, h).is_empty(), "{name} made rows");
+        }
+    }
+
+    /// Decision 0386, a job's wave: a job that starts on a thread with a wave open (a wait running the pool's jobs)
+    /// opens one of its own, and the wave it leaves unflushed is finished when it ends, on its thread: its stratum
+    /// resumes with nothing else flushed, and the outer wave holds the outer stratum alone. Before, the job's stratum
+    /// joined the outer wave and was left for a flush on the thread that owned it: a job resumed elsewhere found its
+    /// joins "not submitted" and ran on the CPU (20 strata of the 300-file Metal run).
+    #[test]
+    fn a_jobs_wave_is_its_own_and_ends_with_it() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        use crate::code_rule_dsl::logic::lanes::wave;
+        wave::install_job_scope();
+        let db = wave_db(400);
+        let n = format!("t:x:{}:{}:si", hex("temp.n"), hex("c0, c1"));
+        let outer = format!("pos {n} v0 v1\nlt v1 i:100\nhead v0 v1");
+        let inner = format!("pos {n} v0 v1\npos {n} v0 v2\nlt v1 v2\nlt v2 i:60\nhead v1 v2");
+        // The inner stratum's rows run alone, for the comparison.
+        open_stratum(&db, "inner_alone", "h2", &inner);
+        super::super::run(&db, "inner_alone", 0).unwrap();
+        super::super::close(&db, "inner_alone").unwrap();
+        let want = stratum_rows(&db, "h2");
+        assert!(!want.is_empty());
+        open_stratum(&db, "outer", "h0", &outer);
+        open_stratum(&db, "inner", "h1", &inner);
+        let _w = wave::suspendable();
+        let status = super::super::run(&db, "outer", 0).unwrap();
+        assert!(status.ends_with(" 3"), "the outer stratum waits for its wave: {status}");
+        // A job on this thread, the outer wave open: it waits for a wave and ends without flushing it.
+        let status = rerail_accel::exec::as_job("a test's job", || super::super::run(&db, "inner", 0).unwrap());
+        assert!(status.ends_with(" 3"), "the job's stratum waited for its wave: {status}");
+        assert_eq!(rerail_accel::exec::uncommitted_here(), 0);
+        // Its wave was finished as the job ended: it resumes now, nothing flushed.
+        let status = super::super::run(&db, "inner", 0).unwrap();
+        assert!(!status.ends_with(" 3"), "the job's stratum finished: {status}");
+        super::super::close(&db, "inner").unwrap();
+        assert_eq!(stratum_rows(&db, "h1"), want, "the job's stratum's rows are its own run's");
+        // The outer wave holds the outer stratum's work alone: one deferred submission, its own.
+        assert_eq!(wave::flush(1).unwrap(), 1, "the outer wave: one submission");
+        let status = super::super::run(&db, "outer", 0).unwrap();
+        assert!(!status.ends_with(" 3"), "the outer stratum finished: {status}");
+        super::super::close(&db, "outer").unwrap();
+        assert!(!stratum_rows(&db, "h0").is_empty());
+    }
+
+    /// A store with `temp.n` of `rows` rows (`s<k % 37>`, k), the native module registered: the wave tests' input.
+    fn wave_db(rows: i64) -> Connection {
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::code_rule_dsl::fixtures::open(&store));
+        let db = Connection::open(&store).unwrap();
+        crate::code_rule_dsl::logic::native::register(&db).unwrap();
+        crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
+        db.execute_batch("CREATE TEMP TABLE n (c0, c1);").unwrap();
+        for k in 0..rows {
+            db.execute("INSERT INTO n VALUES (?1, ?2)", rusqlite::params![format!("s{}", k % 37), k]).unwrap();
+        }
+        db
+    }
+
+    fn open_stratum(db: &Connection, name: &str, h: &str, rule: &str) {
+        db.execute_batch(&format!("DROP TABLE IF EXISTS temp.{h}; CREATE TEMP TABLE {h} (c0, c1);")).unwrap();
+        super::super::open(db, &format!("name {name}\ndevice\nrel {h} si empty\nseed 0 {}", hex(rule))).unwrap();
+    }
+
+    fn stratum_rows(db: &Connection, h: &str) -> Vec<(i64, i64)> {
+        let mut r: Vec<(i64, i64)> = db.prepare(&format!("SELECT c0, c1 FROM temp.{h}")).unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
+        r.sort_unstable();
+        r
     }
 
     /// Q48: a stratum run on its own (its driver cannot wait) beside an open wave on its thread. The wave's stratum

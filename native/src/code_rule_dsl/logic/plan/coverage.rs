@@ -25,7 +25,6 @@
 use super::*;
 use crate::content_store::ContentStore;
 use crate::code_rule_dsl::logic::front::AggOp;
-use crate::code_rule_dsl::logic::rr::parse;
 use crate::code_rule_dsl::logic::strings::functions::{Kind, all as functions};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -193,7 +192,7 @@ fn probes() -> Vec<Probe> {
     // without anyone writing its probe.
     let probed: BTreeSet<String> = out.iter().flat_map(|p| p.ops.iter().cloned()).collect();
     let decls = functor_decls();
-    let tree = ["doc", "in", "place", "place_path", "place_line", "flat_bin", "id", "line", "depth", "within", "tree_digest"];
+    let tree = ["doc", "in", "place", "place_path", "place_line", "id", "line", "depth", "within", "tree_digest"];
     for op in census().0.keys() {
         let Some((name, arity)) = op.strip_prefix("arity ").and_then(|r| r.split_once(' ')) else { continue };
         let Ok(arity) = arity.parse::<usize>() else { continue };
@@ -230,6 +229,8 @@ fn probes() -> Vec<Probe> {
     out.push(probe("lattice relation (shortest)", &["lattice"], "a: number, d: min<>| widen 8", "{HEAD}(x, 0) :- n(x), x = 1.\n{HEAD}(y, d + 1) :- {HEAD}(x, d), e(x, y)."));
     // A lattice relation holds one row a key: a key's rows fold by its join, and its readers see the folded value only.
     out.push(probe("lattice relation (flat: a key's values differ)", &["lattice"], "a: symbol, v: flat<>", "{HEAD}(a, x) :- p(a, x)."));
+    // A flat lattice's `top` written by a head (`cv(n, top) :- …`): the integer SQL writes for it.
+    out.push(probe("lattice relation (flat: a head of top)", &["lattice"], "a: symbol, v: flat<>", "{HEAD}(a, top) :- s(a).\n{HEAD}(a, 1) :- s(a), a = \"alpha\"."));
     out.push(probe("lattice relation (max over a key)", &["lattice"], "a: symbol, v: max<>| widen 8", "{HEAD}(a, x) :- p(a, x)."));
     out.push(probe("lattice relation (shortlex_min over symbols)", &["lattice"], "a: number, r: shortlex_min<>| widen 8",
         "{HEAD}(x, \"\") :- n(x), x = 1.\n{HEAD}(y, r) :- {HEAD}(x, r0), e(x, y), r = cat(r0, \"z\")."));
@@ -287,13 +288,13 @@ fn sorted<T: Ord>(mut v: Vec<T>) -> Vec<T> {
 /// Runs `src` (whose probe relation is `rel`) on SQLite, the native engine and the device; the verdict, or why the
 /// probe did not run at all.
 fn run_probe(src: &str, rel: &str) -> std::result::Result<Verdict, String> {
-    let p = parse(src).map_err(|e| format!("unparsed: {e}"))?;
+    let p = crate::code_rule_dsl::logic::rr::parse_version(src).map_err(|e| format!("unparsed: {e}"))?;
     let lower_run = |modes: &str, binding: placement::Binding| -> std::result::Result<(Vec<Vec<String>>, bool, Vec<(String, placement::Ran)>), String> {
         let (_path, store, db) = fresh();
         // `shortlex_min<>` orders the run's symbols by their text: the store's atoms, as a run declares it.
         crate::code_rule_dsl::logic::native::declare("shortlex_min", std::sync::Arc::new(crate::code_rule_dsl::logic::native::ShortlexMin(store.atoms_handle())));
         let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
-        let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).map_err(|e| format!("unlowered: {e}"))?;
+        let lowered = lower::lowered(p.clone(), python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).map_err(|e| format!("unlowered: {e}"))?;
         let was = placement::set_binding(binding);
         let got = run_atoms_native_over(&lowered, &db, "main", Stats::empty_of_lowered(&lowered).map_err(|e| format!("stats: {e}"))?, BTreeSet::new(), modes);
         placement::set_binding(was);

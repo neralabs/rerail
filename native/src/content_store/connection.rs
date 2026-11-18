@@ -639,11 +639,6 @@ thread_local! {
     static BATCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// Whether this thread runs the store writer's batch now.
-pub(super) fn in_batch() -> bool {
-    BATCH.with(std::cell::Cell::get)
-}
-
 /// A store write's transaction: its own, or a savepoint inside the writer's batch, which commits every job it
 /// drained at once.
 pub(super) enum Tx<'c> {

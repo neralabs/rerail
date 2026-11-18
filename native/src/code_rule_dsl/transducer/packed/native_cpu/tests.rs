@@ -51,7 +51,7 @@
                 bytes.extend_from_slice(&column);
                 bytes.resize(bytes.len().next_multiple_of(8), 0);
             }
-            // The source its nodes span, as a tape's header states it: its reads hold spans to it (decision 0403).
+            // The source its nodes span, as a tape's header states it: its reads hold spans to it (decision 0427).
             let source_len = nodes.iter().map(|node| node.source_end).max().unwrap_or(0);
             let view = rerail_clif::view::TapeView { nodes: n as u32, format: 15, widths: 4 | 4 << 4 | 4 << 8 | 1 << 12, columns: at, source_len, ..Default::default() };
             let codes = nodes

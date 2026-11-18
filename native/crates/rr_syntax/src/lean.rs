@@ -621,7 +621,7 @@ pub fn tape(src: &str) -> Vec<u8> {
 }
 
 /// [`tape`], the writer writing to `finish`'s target and finished by it: format 15's image (`tape`), or format 16
-/// written by its ops as the statements are committed (`Writer::finish_16`, decision 0399).
+/// written by its ops as the statements are committed (`Writer::finish_16`, decision 0426).
 pub fn tape_into<F: Finish>(src: &str, finish: &mut F) -> F::Out {
     let lexed = lex(src);
     let mut widths = Widths::guess(src.len());

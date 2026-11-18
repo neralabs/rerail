@@ -1,10 +1,10 @@
-# 0398. A kernel calls its walk once
+# 0410. A kernel calls its walk once
 
 Status: accepted (2026-11-18)
 
 ## Intro
 
-After 0397, format 16's `label_micro` still took about 6 s of the label pipelines' cold compile, against 1 s for
+After 0409, format 16's `label_micro` still took about 6 s of the label pipelines' cold compile, against 1 s for
 format 15 (work queue Q181). The compiler inlines everything, so a kernel's size is its call tree, written out:
 
 - The tape's reads (0310, translated by `rerail_clif::msl`) build on each other. Format 16's `tape_next` is

@@ -543,10 +543,12 @@ pub fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLi
     if !native_cpu_output::lowered(native) {
         return Err(Error::UnsupportedBackend);
     }
-    let mut builder = JITBuilder::new(default_libcall_names()).unwrap_or_else(|e| compile_failed("the JIT builder", e));
-    // One arena, so a call between the module's functions (the cold reads, the scheduler) stays in a `bl`'s reach
-    // (±128 MiB on aarch64) however far apart other allocations put separately allocated code.
-    builder.memory_provider(Box::new(cranelift_jit::ArenaMemoryProvider::new_with_size(64 << 20).unwrap_or_else(|e| compile_failed("the JIT's arena", e))));
+    // Its code in one reservation (`rerail_clif::jit::builder`): the reads' calls are `bl`s. The browser's stand-in
+    // (`wasm/cranelift-jit`) builds no module.
+    #[cfg(not(target_family = "wasm"))]
+    let builder = rerail_clif::jit::builder().unwrap_or_else(|e| compile_failed("the JIT builder", e));
+    #[cfg(target_family = "wasm")]
+    let builder = JITBuilder::new(default_libcall_names()).unwrap_or_else(|e| compile_failed("the JIT builder", e));
     let mut module = JITModule::new(builder);
     // The tape's reads (decision 0310): declared once, the cold ones defined; every function's pass inlines the hot.
     super::native_cpu_codegen::define_reads(&mut module).unwrap_or_else(|e| compile_failed("the tape's reads", e));

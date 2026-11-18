@@ -1,5 +1,5 @@
 //! Format 16 (decision 0156 §1), written and read in place (decision 0293), block-major and written in one pass
-//! (decision 0399). Ported from the lab (`native/lab/tape16`: `f16`, `f16w`, `code8`, `repeat`), which measured it.
+//! (decision 0426). Ported from the lab (`native/lab/tape16`: `f16`, `f16w`, `code8`, `repeat`), which measured it.
 //!
 //! A tape is five arrays over a document's nodes in preorder, at widths fixed for the language, in blocks of `Z`
 //! nodes at a fixed stride (each block its own five columns, the last block at its own rows):
@@ -39,7 +39,7 @@ pub struct Lang {
     /// Slots, gaps, lengths, in bytes.
     widths: [usize; 3],
     revision: u8,
-    /// Each number's kind and field: what a presence's bits are (decision 0399 §4).
+    /// Each number's kind and field: what a presence's bits are (decision 0426 §4).
     kind_field: Vec<(u16, u16)>,
 }
 
@@ -149,7 +149,7 @@ mod tables {
 }
 
 /// A stored format 16 tape's magic (its first 6 bytes are every stored tape's: the store reads the language tag
-/// after them, `LANGUAGE`). Block-major (decision 0399).
+/// after them, `LANGUAGE`). Block-major (decision 0426).
 pub const MAGIC16: &[u8; 8] = b"TMPTAPB6";
 /// A stored 16z tape's magic.
 pub const MAGIC16Z: &[u8; 8] = b"TMPTAPBZ";
@@ -220,7 +220,7 @@ fn stride_of(w: [usize; 3], cw: usize) -> usize {
     Z * before(w, 4) + Z / K * cw
 }
 
-/// One document's format 16 tape, held as stored (`as_bytes`) and read where it lies (decision 0399): the header,
+/// One document's format 16 tape, held as stored (`as_bytes`) and read where it lies (decision 0426): the header,
 /// blocks of `Z` nodes at a fixed stride (each its codes, slots, gaps, lengths and checkpoints, the last block at
 /// its own rows), then the tail: the four side lists (codes' low parts, then escaped slots, gaps, lengths), their
 /// part starts, and the newline index. The last block, each side list and the newline index are followed by 8 bytes
@@ -313,7 +313,7 @@ impl Tape16 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Placement {
     pub n: usize,
-    /// The source's length its header states: a view's spans are held to it (decision 0403).
+    /// The source's length its header states: a view's spans are held to it (decision 0427).
     pub source_len: u64,
     pub cw: usize,
     pub widths: [usize; 3],
@@ -374,7 +374,7 @@ impl Placement {
     /// (0: the tape's own bytes).
     pub fn view(&self, lang: &Lang, base: usize) -> Result<TapeView, String> {
         // Each block's columns at `lang`'s widths: the tape's own, which its stride and blocks were checked against
-        // when it was read in (`header`, `fits`), so a read of a node of the tape lies in its block (decision 0403;
+        // when it was read in (`header`, `fits`), so a read of a node of the tape lies in its block (decision 0427;
         // its walks give only nodes of the tape).
         let (_, _, w) = lang.device();
         if w != self.widths {
@@ -567,14 +567,14 @@ pub enum Written {
     F16Z(Tape16Z),
 }
 
-/// What a writer's `finish` gives: the tape, and its presence beside it (decision 0399 §4).
+/// What a writer's `finish` gives: the tape, and its presence beside it (decision 0426 §4).
 pub struct Finished {
     pub tape: Written,
     pub presence: Presence,
 }
 
 /// The kinds and fields a tape's nodes have, as bitmaps over its language's kinds and fields (`Lang::presence_words`):
-/// the document's, and, where the writer was asked for them, each block's (decision 0399 §4). Not part of the tape:
+/// the document's, and, where the writer was asked for them, each block's (decision 0426 §4). Not part of the tape:
 /// the store keeps it beside the document, to leave out what an anchor cannot touch before the tape is read.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Presence {
@@ -620,7 +620,7 @@ struct Open {
     start: u64,
 }
 
-/// 16z's output as blocks become final (decision 0399 §3): the header's room then the payload, each piece's start
+/// 16z's output as blocks become final (decision 0426 §3): the header's room then the payload, each piece's start
 /// in the payload, its length and its kind (by piece: `PIECES` a block, in block order, whatever order the blocks
 /// finish in), the checkpoints (raw, in node order), and each block's side-list parts' lengths.
 struct ZOut {
@@ -735,7 +735,7 @@ impl ZOut {
     }
 }
 
-/// Format 16 or 16z written in one pass as a parser goes (decision 0399 §2): its ops (`open`, `close`, `leaf`,
+/// Format 16 or 16z written in one pass as a parser goes (decision 0426 §2): its ops (`open`, `close`, `leaf`,
 /// `commit`, `finish`) write each cell once, at its final place in its block. A node's code, gap and checkpoint (a
 /// `K`-th node's) as it opens; its length, and an inner node's slot (`size << 1`), at its close; a leaf's slot as
 /// the node after it opens (the distance to that node's previous sibling, or on a `K`-th sibling to its parent).
@@ -934,7 +934,7 @@ impl<'l> Writer<'l> {
     }
 
     /// Node `i`'s code given again (a kind or field found after it opened): `number` in the language's table. Its
-    /// block is not final (decision 0399 §2: an edit that reaches a node before the window).
+    /// block is not final (decision 0426 §2: an edit that reaches a node before the window).
     pub fn retag(&mut self, i: usize, number: u32) {
         if !self.changeable(i, "code") {
             return;
@@ -1049,7 +1049,7 @@ impl<'l> Writer<'l> {
         i
     }
 
-    /// The nodes so far are final but for the open ones: no edit reaches before them (decision 0399 §2).
+    /// The nodes so far are final but for the open ones: no edit reaches before them (decision 0426 §2).
     pub fn commit(&mut self) {
         let was = self.frontier / Z;
         self.frontier = self.n;
@@ -1491,7 +1491,7 @@ impl Tape16 {
     }
 }
 
-/// One document's format 16 tape stored in fixed blocks of `Z` nodes (0156 §2.1; decision 0399 §3), held as
+/// One document's format 16 tape stored in fixed blocks of `Z` nodes (0156 §2.1; decision 0426 §3), held as
 /// stored (`as_bytes`):
 ///
 /// - the header of the format 16 tape it decodes to, its magic `MAGIC16Z`, and where its own regions lie;
@@ -1597,7 +1597,7 @@ impl Tape16Z {
                 RAW => bytes.len() == want,
                 // Within what LZ4 decodes its bytes to (255 bytes a byte at most): the side lengths the part starts
                 // state size every cache entry, so they are bounded by the bytes stored, not taken on trust
-                // (decision 0403).
+                // (decision 0427).
                 LZ4 => !bytes.is_empty() && want as u64 <= 255 * bytes.len() as u64 + 64,
                 REPEAT => {
                     let other = if bytes.len() == 4 { u32_at(bytes, 0) as usize } else { usize::MAX };
@@ -1993,7 +1993,7 @@ mod tests {
         plain
     }
 
-    /// Block-major (decision 0399, R3): block 0 past the header, the blocks at their stride, the last at its own
+    /// Block-major (decision 0426, R3): block 0 past the header, the blocks at their stride, the last at its own
     /// rows and no padding, the tail right after it.
     fn compact(p: &Placement) {
         assert_eq!((p.blocks, p.stride), (HEAD16, Z * (1 + p.widths[0] + p.widths[1] + p.widths[2]) + Z / K * p.cw));
@@ -2303,7 +2303,7 @@ mod tests {
         same_reads(&reads, &f15, &image, &v);
     }
 
-    /// Decision 0403: a 16z tape's reads stay within it and its cache, whatever its blocks hold. A side length past
+    /// Decision 0427: a 16z tape's reads stay within it and its cache, whatever its blocks hold. A side length past
     /// what its block's bytes decode to is refused when the tape is read in. A block whose literals claim more
     /// bytes than it has is decoded no further than its own: the tape lies against a page no read may touch, and
     /// every node is read. A node past the tape's last reads the cache's dead entry, a failure counted. The cache
@@ -2321,7 +2321,7 @@ mod tests {
         let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), 0, true) else { panic!("16z") };
         let (n, blocks) = (z.len(), z.len().div_ceil(Z));
         // A piece that states more bytes decoded than its stored bytes can give: refused. Its decoded length is
-        // its column's and its side part's, which size every cache entry (decision 0403).
+        // its column's and its side part's, which size every cache entry (decision 0427).
         let packed = (0..PIECES * blocks).rev().find(|&j| z.kind(j) == LZ4).expect("an LZ4 piece");
         let mut stated = z.as_bytes().to_vec();
         let at = z.zat[ZLENS] + 4 * packed;
@@ -2417,7 +2417,7 @@ mod tests {
         }
     }
 
-    /// Decision 0403: a node's span, from the tape's gaps and lengths, is held to the source its header states:
+    /// Decision 0427: a node's span, from the tape's gaps and lengths, is held to the source its header states:
     /// a tape whose spans claim more than its source reads none past it, in format 16 or 16z, and none reversed.
     #[test]
     fn a_tapes_spans_stay_within_its_source() {
@@ -2553,7 +2553,7 @@ mod tests {
         assert!(t.reader(&other).is_err());
     }
 
-    /// A tape of one block is the regions end to end (decision 0399, R2): each column at the node count's offset
+    /// A tape of one block is the regions end to end (decision 0426, R2): each column at the node count's offset
     /// from the header, the tail after.
     #[test]
     fn one_block_is_the_regions() {
@@ -2591,7 +2591,7 @@ mod tests {
         }
     }
 
-    /// The ops write the tape `write` writes from the same nodes, in 16 and 16z (decision 0399, R5); with the nodes
+    /// The ops write the tape `write` writes from the same nodes, in 16 and 16z (decision 0426, R5); with the nodes
     /// hinted, the format 16 tape is the writer's own room, the last block moved down and the tail appended in
     /// place (R4); the presence is the nodes' kinds and fields, each block's and the document's (R10).
     #[test]
@@ -2639,7 +2639,7 @@ mod tests {
         }
     }
 
-    /// The edits that reach a node before the window (decision 0399 §2): each inner node opened with another code
+    /// The edits that reach a node before the window (decision 0426 §2): each inner node opened with another code
     /// and the node before's start, then retagged and its start set once its first child is open, gives the tape of
     /// the nodes written right, in 16 and 16z, escaped codes and gaps among them (R6).
     #[test]
@@ -2692,7 +2692,7 @@ mod tests {
 
     /// A 16z writer's block is final once its nodes are closed, the node after it has opened and the frontier is
     /// past it: the blocks under the open root finish as the parse leaves them, the root's last, and a final block's
-    /// room serves the next (decision 0399, R9).
+    /// room serves the next (decision 0426, R9).
     #[test]
     fn blocks_finish_when_closed() {
         let entries: Vec<Entry> = (0..4u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();

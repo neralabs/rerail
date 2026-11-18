@@ -465,12 +465,12 @@ impl<'a> Board<'a> {
                 let mut times = Vec::new();
                 let mut reserved = Default::default();
                 let before = super::super::lanes::wave::flushed_now();
-                let scope = super::super::lanes::wave::enter();
-                let mark = scope.mark();
+                let mark = super::super::lanes::wave::mark();
                 let mut waiting = Vec::new();
                 let (mut n, mut stop) = strand.run_members(&data, &mut times, &mut reserved, level_wave().then_some(&mut waiting));
-                // A device joins' submission opened here is this thread's: its members' wave is flushed here.
-                if !waiting.is_empty() && super::super::lanes::wave::deferred_since(mark) && let Err(e) = strand.flush_parked(&data, &mut waiting, &mut times) {
+                // A device joins' submission opened here, or a wave flushed here meanwhile, is this thread's: its
+                // members' wave is flushed here (`kept_here`).
+                if !waiting.is_empty() && super::super::lanes::wave::kept_here(mark) && let Err(e) = strand.flush_parked(&data, &mut waiting, &mut times) {
                     waiting.clear();
                     (n, stop) = (0, Some(Err(e)));
                 }
@@ -485,7 +485,7 @@ impl<'a> Board<'a> {
     }
 
     /// Whether `j` may be issued with the relations `held` (its component's earlier members') taken as held: the
-    /// relations its strand holds (`Run::strand_reads`).
+    /// relations its strand holds (`Run::strand_reads_with`).
     #[allow(clippy::too_many_arguments)]
     fn eligible(&self, j: usize, run: &Run<'a, '_>, sccs: &[BTreeSet<String>], rules_of: &dyn Fn(usize) -> Vec<RuleKey>, load: &mut dyn FnMut(usize) -> Result<()>, held: &BTreeSet<String>) -> Result<Option<BTreeSet<String>>> {
         if sccs[j].iter().all(|r| run.views.contains(r)) {
@@ -627,12 +627,12 @@ impl<'a> Board<'a> {
                     let mut w = w;
                     super::super::lanes::wave::put_outputs(outs);
                     let before = super::super::lanes::wave::flushed_now();
-                    let scope = super::super::lanes::wave::enter();
-                    let mark = scope.mark();
+                    let mark = super::super::lanes::wave::mark();
                     let Waiting { strand, waiting, data, times, reserved, .. } = &mut *w;
                     let mut r = strand.reserving(reserved, |s| s.resume_parked(data, waiting, times));
-                    // A device joins' submission opened here is this thread's: its members' wave is flushed here.
-                    if r.is_ok() && !waiting.is_empty() && super::super::lanes::wave::deferred_since(mark) {
+                    // A device joins' submission opened here, or a wave flushed here meanwhile, is this thread's: its
+                    // members' wave is flushed here (`kept_here`).
+                    if r.is_ok() && !waiting.is_empty() && super::super::lanes::wave::kept_here(mark) {
                         r = strand.reserving(reserved, |s| s.flush_parked(data, waiting, times));
                     }
                     let waves = super::super::lanes::wave::since(before);

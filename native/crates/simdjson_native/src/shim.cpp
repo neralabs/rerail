@@ -99,7 +99,7 @@ struct rerail_v9np_sink {
   uint8_t code_value[36];
   // The source's SHA-256.
   uint8_t digest[32];
-  // Format 16 (decision 0399): where `ev` is set, the walk writes no column. Each node is an event of three
+  // Format 16 (decision 0426): where `ev` is set, the walk writes no column. Each node is an event of three
   // words appended to `ev` (`EV_OPEN | id << 8, start, 0`; `EV_LEAF | id << 8, start, end`; `EV_CLOSE, end, 0`,
   // `id` the node's code), and `flush` is called with `ev_len` words when `ev_cap` are full and at the end: the
   // caller gives them to format 16's ops. A walk never edits a node it wrote.

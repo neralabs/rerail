@@ -185,7 +185,7 @@ pub(super) fn logging() -> bool {
     *ON
 }
 
-pub(super) fn log(what: impl FnOnce() -> String) {
+pub(in crate::code_rule_dsl) fn log(what: impl FnOnce() -> String) {
     if logging() {
         eprintln!("joins: {}", what());
     }

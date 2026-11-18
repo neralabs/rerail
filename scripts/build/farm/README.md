@@ -48,6 +48,10 @@ instead, and only that run's output is shown.
 | `farm.py` | all of them |
 | `mirror.py` | the live mirror's daemon here, and the call a compile makes to it |
 | `farm-agent` | the live mirror's end on each host, and (`exec`) a test command there |
+| `cargo-linux` | cargo for the Linux hosts' target, from this Mac ("Building for the Linux hosts here") |
+| `linux-sysroot` | copies a Linux host's headers and libraries for `cargo-linux` |
+| `test-mirror` | a test of the mirror against an agent run here: a file the checkout deleted goes from the host's copy |
+| `test-mac-compiles HOST` | a test of this Mac's compiles on HOST: a small crate's library compiles (proc-macros, `OUT_DIR`, bundled C) go there through the farm, and each output must be this Mac's bytes |
 | `status` | what the farm can use now: each host probed, and why one is not usable |
 | `host-privacy` | keeps the farm's files on the hosts out of Time Machine, and (`--spotlight`, with sudo) Spotlight |
 | `setup` | installs all of it here, the machine's cargo configuration, a configuration to fill in, and the toolchain on each host |
@@ -211,7 +215,11 @@ hosts, and everything compiles and tests here, as without the farm.
 
 | Key | Meaning |
 |---|---|
-| `hosts` | the hosts: `{"name", "cores", "enabled", "tests", "link", "unattended"}` |
+| `hosts` | the hosts: `{"name", "cores", "enabled", "tests", "link", "unattended", "os", "nice", "max_target_gb"}` |
+| `os` | `"macos"` (default) or `"linux"`: a Linux host runs test commands as Linux builds, Relax runs, and this Mac's library compiles in a container (below, "Linux hosts") |
+| `mac_compiles` | `false` keeps a Linux host to tests and Relax runs: no compiles of this Mac's (default `true`) |
+| `nice` | the nice value of `test-remote`'s commands there (default 10; 0 where the farm is an equal of the host's other work) |
+| `fleet` | `true` on a nera-fleet node: while any fleet job runs there (a container labelled `fleet.job`), the farm starts no command there, and asks again each minute. The two are equals: neither preempts the other, and what runs finishes |
 | `name` | what ssh connects to (a `Host` entry of `~/.ssh/config`) |
 | `enabled` | `false` leaves a host out (default `true`) |
 | `tests` | whether `scripts/dev/test-remote` runs there (default `true`) |
@@ -230,6 +238,80 @@ trackpad reports touches on its own (one did, every 0.1–4 s, on 2026-11-15) is
 `"unattended": true`: then its input counts for nothing. Compiles take slots in turn across the hosts (each host's
 first slot, then each one's second), so every host works, not only the first listed. Not its load average: macOS's background analysis (Photos,
 Spotlight) keeps that high on an idle Mac, at a priority every compile preempts.
+
+### Linux hosts
+
+A Linux host (`"os": "linux"`) runs `test-remote` commands, as a Linux build and run of the
+checkout: the engine's Linux build is CI's, on Ubuntu 24.04. It also compiles this Mac's library
+crates, after the Macs' slots (below, "Mac compiles on a Linux host").
+
+`live-test-remote` runs Relax there too, once every Mac is taken (or with `--host`, `--os
+linux`): the installed version's `bin/relax-linux`, which `scripts/dev/relax/build` makes with
+`cargo-linux` once the sysroot below is here (scripts/dev/relax/README.md, fork change 10; a body edit's verdict 2.6 s after the save there). It is
+a Linux run of the tests, as a `test-remote` one is.
+
+`test-remote` gives a command to a Mac first, and to a Linux host when every Mac slot is taken.
+A command that names Metal, or sends a `--tree` (a program built here is a macOS one), runs on a
+Mac only; `--os` chooses (`macos`, `linux`, `any`). The host's line says it is Linux, so a result
+is never taken for a macOS one.
+
+There the farm's directory is `~/.cache/rerail-farm` (XDG's), the mirror's attribute is
+`user.org.rerail.farm.sent`, free disk is statvfs's, and the probe reads the arrival interface
+with `ip`, the load from `/proc`, NFS mounts with `findmnt`. A server has no keyboard: it is never
+attended. `setup` installs the pinned toolchain with the host's rustup; rustup itself and
+`cargo-nextest` (the version here) are installed once by hand, in the host user's home:
+
+    curl --proto =https --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path --default-toolchain none --profile minimal
+    curl -LsSf https://get.nexte.st/<version>/linux-arm | tar zxf - -C ~/.cargo/bin
+
+### Mac compiles on a Linux host
+
+A Linux host compiles this Mac's registry libraries (`remote_eligible`: an rlib, nothing linked),
+and gives the very bytes this Mac would: `test-mac-compiles HOST` compiles a small crate's 21
+library compiles there and compares each output (42, all the same on 2026-11-18). Compiles take
+the Macs' slots first, then the Linux hosts'.
+
+rustc hashes each source file's real path into its output, so the compile must read every file at
+this Mac's path. The host's agent keeps one container (`rerail-farm-xc`, from `ubuntu:24.04`: rustc
+needs only glibc) with the farm's root mounted at this Mac's top directory (`/Users`), so the
+Mac's paths are real inside it, and the host's rustup at `/opt/rustup`, read-only. No network. A
+compile runs there by `docker exec`, with the same toolchain's Linux rustc and
+`--target aarch64-apple-darwin` (the std of that target is installed on the host by `setup`).
+Docker is the only way to do this: AppArmor on Ubuntu 24.04 refuses unprivileged user
+namespaces, so there is no `unshare` or `bwrap`, and the account has no sudo but is in `docker`.
+
+What the compile reads goes there through the mirror, at this Mac's paths: the crate's sources
+(the host's own cargo registry is at another path), what its build script wrote to `OUT_DIR`, its
+`--extern` crates and native libraries. So a crate whose build script wrote `OUT_DIR` compiles
+there too, as it cannot on a Mac host. C compiles stay here: no macOS SDK there.
+
+A proc-macro the compile loads is a macOS library, which rustc on Linux cannot load. The host
+builds it again as a Linux one: the farm's wrapper records how each registry library and
+proc-macro was compiled here (`calls/` in the state, by output; a record unused for a week goes),
+and the host replays the proc-macro's compile and its dependencies', dependencies first, natively
+with its own linker, each in a directory of its own (`xc-pm.noindex`, shared by every proc-macro
+that links it, pruned as the root is). A crate that loads a proc-macro records the proc-macro's SVH
+(the 16 bytes after the target triple in its metadata header), so the agent puts this Mac's SVH
+into the Linux library, and the compile loads that. A proc-macro compiled before farm 32 (no
+record) keeps the compiles that load it here, until it is compiled again.
+
+An output that names the host's home or `/opt/rustup` is not sent (code 71), as one that names the
+root on a Mac host. A compile whose output directory or dependencies are outside this Mac's home
+stays here: the container holds only the home's top directory.
+
+### Building for the Linux hosts here
+
+`cargo-linux` is cargo for `aarch64-unknown-linux-gnu` from this Mac: Rust with the pinned
+toolchain's std for the target, C and C++ with Apple's clang for the target, every link with
+rustup's lld, against a sysroot that `linux-sysroot HOST` copies from a Linux host (its headers,
+glibc's startup objects and libraries, gcc's support directory: about 90 MB, in the farm's cache).
+A binary built here links the very glibc and libstdc++ the hosts run (checked: bundled SQLite, zstd
+and a C++ file, run on a host). It needs Homebrew's `llvm-ar` (macOS's `ar` writes no index lld
+reads). Such compiles stay here: the Macs' toolchains have no std of the target, and ld64's flags
+(`-oso_prefix`, `-install_name`) go on macOS links only.
+
+    scripts/build/farm/linux-sysroot HOST     # once, and after the host's system is upgraded
+    scripts/build/farm/cargo-linux build --release --bin rerail-engine
 
 ### The farm's root on a host
 

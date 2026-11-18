@@ -264,6 +264,67 @@ The model's planning, statistics included, is 5.2 to 5.3 s against the planner's
 4.9% under the planner's in both pairs (earlier pairs were within 3%, so two more pairs would settle it). Findings,
 hogql planned twice by each: the same 660 relations and 100,617 rows.
 
+## Rounds shared across strata, buckets as numbers, the device's threshold measured (2026-11-17)
+
+The planning threads plan strata at once, each asking its own round. Three changes:
+
+1. **Rounds share a dispatch** (`JoinModel::fanouts`). A round queues its rows. If no dispatch is under way, its
+   thread makes one of every round queued. Otherwise it sleeps on its own slot, until a dispatch serves it or hands it
+   the next one (it is first in the queue when one ends). Each round is woken once. A dispatch that fails or panics
+   serves every round an error, so the planner's estimates choose. On the M3, 16 threads asking 800 rounds at once
+   made 62 to 100 dispatches. A round cost 20 µs of process CPU, against 32 µs asked from one thread. A first
+   version, with one condition variable woken for every round served, cost 57 µs.
+2. **Buckets as numbers** (`DeviceForest::predict_columns_timed`, `PredictColumn::Buckets`). The categorical
+   columns (relation, access, source, basis) are bucketed on the host, by a hash table built at training. They reach
+   the device as bucket numbers through identity tables, not as strings bucketed there. The strings' bucketing was
+   most of a call's host side.
+3. **The threshold is measured per forest** (`JoinModel::calibrate`). At training, the thread's CPU for a host walk
+   of up to 64 training steps is set against an armed dispatch of the same steps, the best of four. The tests' small
+   forest walks a step in 1.8 µs against a 15 µs dispatch, so the device takes 9 steps or more. The engine's forest
+   (200,000 steps) walks a step in 7 to 22 µs, so the device takes every round of 1 to 3 steps or more.
+
+**A correction.** The per-call numbers in the sections above, and the first threshold (6 steps), came from the
+tests' build. That build is the dev profile, which compiles workspace crates unoptimized and walked the forest 5
+times slower. Measured in the `profiling` profile on the M3:
+
+| rows | host walk | device (armed) |
+|---|---|---|
+| 1 | 0.6 µs | 46.9 µs |
+| 10 | 13 µs | 50.0 µs |
+| 100 | 185 µs | 56.8 µs |
+| 1,000 | 1,880 µs | 142.5 µs |
+
+These are the small test forest's walks. The run-level numbers in earlier sections were from optimized runs and
+stand.
+
+hogql, on the M3 under load 22 to 92, one store. The first pair has 1 and 2; the second pair adds 3:
+
+| | planner | model | planner | model |
+|---|---|---|---|---|
+| chunks | 39 | 40 | 36 | 40 |
+| a stratum's planning (`spec`) | 3.56 s | 5.66 s | 4.37 s | 5.71 s |
+| exact pair statistics | 2.82 s | 0 | 3.02 s | 0 |
+| prediction span (calls) | | 0.94 s (10,833) | | 0.69 s (11,940) |
+| the model's CPU: bucketing, waiting, dispatching or walking | | 0.026, 0.023, 0.648 s | | 0.026, 0.021, 0.385 s |
+| dispatches / host walks, of 8,192 rounds | | 1,548 / 5,032 | | 5,408 / 1,842 |
+| strata CPU | 141.9 s | 144.7 s | 156.9 s | 153.3 s |
+
+With exact statistics counted, the model's planning is 5.7 s against the planner's 6.4 to 7.4 s. The strata CPU
+moves with the load by more than the planning does. Findings, hogql planned twice by each: the same 660 relations
+and 100,617 rows. The out files' hash in the comparison script differs between two planner runs too (file order),
+so it is not a findings check.
+
+**A stratum planned once per run (item 4, not done).** Each chunk plans every stratum, but its lines' plans are
+already kept. Of the model run's lines, 55,140 were kept at their price, 40,378 kept and re-priced, and about 35,000
+taken under the budget, against 16,151 searched. What a chunk repeats is the check that a kept plan still holds, and
+the spec built from it. Per line, that is a key (1.2 µs), its sizes (1.7 µs), the budget (0.6 µs) and the join
+spec (4 µs). A stratum's own part is about 19 µs. In all it is 3.6 s (planner) to 5.7 s (model), of 140 to 155 s of
+strata CPU. Keeping a stratum's spec whole while its inputs barely change cannot skip those checks: 30% of lines'
+sizes move more than 2× between chunks, and the budget, the mispricing check and pending work read what the last
+chunk's run measured. Only the join specs and the stratum's own part could be kept, about 2 s at most. Planning
+once per run and taking the plans as they are would save all of it, but would stop a chunk's plans from following
+its sizes. That choice is the user's.
+
 ## Not done
 
 - **Samples of orders not kept, made on purpose**: an offline generator running each line's other orders over the

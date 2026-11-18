@@ -988,7 +988,7 @@ pub struct Visit {
     pub kind_alias: Option<(String, bool)>,
 }
 
-/// Where the cursor walk writes a tree's nodes, in preorder (decision 0399 §2): format 15's pending nodes
+/// Where the cursor walk writes a tree's nodes, in preorder (decision 0426 §2): format 15's pending nodes
 /// (`Pendings`), or format 16's ops (`formats::TreeOps`). The walk is the same for both.
 pub trait TreeOut {
     /// Node `v` under `parent` (an index this gave), open, a member of the supertypes `classes`: its index.
@@ -1647,7 +1647,7 @@ impl TapeImage {
         Self::walked(grammar, source, count, budget, |out| rerail_tape_format::with_tape!(self.tape(), |t| Self::kept(&t, segments, out, budget)))
     }
 
-    /// The tape `walk` writes in preorder, in the run's format (decision 0399 §2): by format 16's ops where the run
+    /// The tape `walk` writes in preorder, in the run's format (decision 0426 §2): by format 16's ops where the run
     /// stores 16 or 16z and the language has a table, no format 15 node made; else format 15's nodes, packed at
     /// `finish`. `nodes` is about the nodes `walk` writes. Where format 16 cannot hold the nodes (a code the table
     /// lacks, said once a language), `walk` runs again for format 15.

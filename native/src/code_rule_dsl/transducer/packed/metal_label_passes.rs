@@ -1036,7 +1036,7 @@ static PATTERN_PIPELINES: LazyLock<Mutex<HashMap<(String, u32), ComputePipelineS
 
 /// A pipeline of a source over [`tape_view`] for a batch of tapes in `format` (0: mixed).
 fn pipeline_of(source: &str, name: &str, format: u32) -> Result<ComputePipelineState, Error> {
-    rerail_metal::runtime::pipeline_named_constant(source, name, Some(format))
+    rerail_metal::runtime::pipeline_named_fixed(source, name, Some(format))
 }
 
 /// Releases the compiled label and pattern kernels (the residency's drop).
@@ -1098,6 +1098,25 @@ fn pattern_pipelines(patterns: &[&PackedPattern], facts: bool, format: u32) -> R
         names.extend(group_names);
     }
     Ok(Some((pipelines, names)))
+}
+
+/// The sources of the pattern kernels a plan of `patterns` compiles (`pattern_pipelines`), in its order.
+pub(in crate::code_rule_dsl) fn pattern_sources(patterns: &[&PackedPattern], facts: bool, format: u32) -> Vec<String> {
+    if patterns.is_empty() && !facts {
+        return Vec::new();
+    }
+    let groups = patterns.chunks(patterns::GROUP).collect::<Vec<_>>();
+    let groups = if groups.is_empty() { vec![&[][..]] } else { groups };
+    groups.into_iter().enumerate().map(|(group, members)| patterns::source(members, group * patterns::GROUP, format).0).collect()
+}
+
+/// Whether the pattern kernels of `sources` (`pattern_sources`) are at hand without a compile (decision 0395):
+/// otherwise the wave runs on the CPU, and the kernels are compiled as the mode says
+/// (`rerail_accel::gpu::kernels::Mode`). The label kernels are the interpreter's, fixed (shipped): never pending.
+/// `format` is the batch's tape format, the kernels' function constant (`pattern_pipeline`).
+pub(in crate::code_rule_dsl) fn patterns_ready(sources: &[String], format: u32) -> bool {
+    // Each asked, so every one missing is recorded, not only the first.
+    sources.iter().map(|source| rerail_accel::gpu::kernels::ready(source, patterns::KERNEL, Some(format)).is_some()).fold(true, |all, ready| all && ready)
 }
 
 /// One group's pattern kernel, compiled once per distinct source.
@@ -1701,13 +1720,13 @@ fn encode(
         crate::code_rule_dsl::prof::count("formula.within_down", words[19] as usize);
         crate::code_rule_dsl::prof::count("formula.within_climb", words[20] as usize);
     }
-    // A node past the batch's, which a pass would have marked or counted (decision 0403): not written, and the
+    // A node past the batch's, which a pass would have marked or counted (decision 0427): not written, and the
     // passes again on the interpreter. Said once a run: it is a tape's walk or a capture that left its tape.
     if runner.flag(0) & 256 != 0 {
         crate::code_rule_dsl::prof::count("gpu.node_past_batch", 1);
         static SAID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
         if !SAID.swap(true, std::sync::atomic::Ordering::Relaxed) {
-            eprintln!("rerail: a label pass took a node past its batch's {} (decision 0403, Q186): not written; the passes on the interpreter", runner.nodes);
+            eprintln!("rerail: a label pass took a node past its batch's {} (decision 0427, Q253): not written; the passes on the interpreter", runner.nodes);
         }
     }
     // A micro walk that outgrew its frames: the passes again on the interpreter.

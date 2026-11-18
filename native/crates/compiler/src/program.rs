@@ -283,7 +283,8 @@ pub struct Words {
     /// Checks of a few bytes at each bit of a sparse mask (`localcheck`): tier 1's escape or
     /// error `A & L`, with `A` a mask tier 2 reads and `L` local (byte tests at fixed offsets);
     /// at `ACCEPT`, the file is refused where `L` holds at a bit of `A`. As the lean lexer checks
-    /// a string's `\u` escapes where it notes one.
+    /// a string's `\u` escapes where it notes one. Or a check over a token's own bytes
+    /// (`LocalCheck::token`): a number's syntax, as simdjson's stage 2 parses a number.
     pub local_checks: Vec<LocalCheck>,
     /// The preprocessing words' tables (`pp_words`), when the program has them.
     pub pp: PpTables,
@@ -294,20 +295,33 @@ pub struct Words {
 pub struct PpTables {
     /// The punctuators (`ppop sN`): two punctuators paste into one where their bytes spell one.
     pub ops: Vec<u16>,
-    /// A literal pastes with an identifier after it into one literal, its suffix (`ppsuffix`,
-    /// C++'s user-defined literals).
+    /// The punctuators C++ has and C does not (`ppop sN cpp`): one where the run is C++'s
+    /// (`pp_words::Env::cpp`).
+    pub cpp_ops: Vec<u16>,
+    /// In C++, a literal pastes with an identifier after it into one literal, its suffix
+    /// (`ppsuffix`, user-defined literals).
     pub suffix: bool,
-    /// `#if` reads C++'s alternative tokens as operators and `true` as 1 (`ppcpp`).
+    /// In C++, `#if` reads the alternative tokens as operators and `true` as 1 (`ppcpp`).
     pub cpp: bool,
 }
 
 /// A local check (`Words::local_checks`): at each byte `j` of mask `mask`, `ops`' last value at
 /// stream place `j + delay` (`LocalOp`, each op's operands earlier ones); 1 refuses.
+///
+/// A token's check (`token`, decision 0398): `ops` over the token's own bytes, place 0 its first
+/// byte, as simdjson's stage 2 reads a number (`token_value`); `mask` unused. With a `delay`
+/// (decision 0399), the frame runs that many bytes past the token, and the test at place `i`
+/// is the last op at `i + delay`: 1 at any of places `delay` to `n + delay` refuses. A
+/// `within k` there is a byte of the file: place `i - k` is in the frame and the file. A check
+/// `check KIND = G` compiles to one: its byte machine as a `fill` per self-loop and logic, run
+/// word-parallel, 64 places a word, its carries passed from word to word on a longer token. No
+/// loop over bytes.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct LocalCheck {
     pub mask: u16,
     pub delay: u8,
     pub ops: Vec<LocalOp>,
+    pub token: bool,
 }
 
 /// A local check's operation, at a stream place `i` (tier 1's meaning: `block::BlockOp`): a
@@ -327,6 +341,63 @@ pub enum LocalOp {
     Xor(u16, u16),
     AndNot(u16, u16),
     Prev(u16, u8),
+    /// A token's check only (`LocalCheck::token`): `fill(s, e)`, `block::BlockOp::Fill`'s, from
+    /// the token's first byte: `f[i] = s[i] | (f[i - 1] & !e[i])`, `f[-1] = 0`.
+    Fill(u16, u16),
+    /// A token's check only: 1 at the token's first byte.
+    Start,
+    /// A token's check only: 1 at the token's last byte.
+    Last,
+}
+
+impl LocalOp {
+    /// The ops it reads.
+    pub fn operands(&self) -> Vec<u16> {
+        match *self {
+            LocalOp::Not(a) | LocalOp::Prev(a, _) => vec![a],
+            LocalOp::And(a, b) | LocalOp::Or(a, b) | LocalOp::Xor(a, b) | LocalOp::AndNot(a, b) | LocalOp::Fill(a, b) => vec![a, b],
+            LocalOp::Bytes(_) | LocalOp::Const(_) | LocalOp::Within(_) | LocalOp::Start | LocalOp::Last => vec![],
+        }
+    }
+
+    /// An op of a token's check only.
+    pub fn token_only(&self) -> bool {
+        matches!(self, LocalOp::Fill(..) | LocalOp::Start | LocalOp::Last)
+    }
+}
+
+/// A token's check (`LocalCheck::token`) at the token of `bytes[start..end]`: whether it
+/// refuses. The frame is the token's bytes and `delay` more, a byte past the file 0.
+pub fn token_value(ops: &[LocalOp], bytes: &[u8], start: usize, end: usize, delay: u8) -> bool {
+    let (n, d) = (end - start, usize::from(delay));
+    let m = n + d;
+    let byte = |i: usize| bytes.get(start + i).copied().unwrap_or(0);
+    let mut v: Vec<Vec<bool>> = Vec::with_capacity(ops.len());
+    for op in ops {
+        let at = |a: u16, i: usize| v[usize::from(a)][i];
+        let row: Vec<bool> = match *op {
+            LocalOp::Bytes(s) => (0..m).map(|i| { let b = byte(i); s[usize::from(b) / 64] >> (b % 64) & 1 == 1 }).collect(),
+            LocalOp::Const(p) => (0..m).map(|i| p >> (i % 64) & 1 == 1).collect(),
+            LocalOp::Within(k) => (0..m).map(|i| i >= usize::from(k) && start + i - usize::from(k) < bytes.len()).collect(),
+            LocalOp::Not(a) => (0..m).map(|i| !at(a, i)).collect(),
+            LocalOp::And(a, b) => (0..m).map(|i| at(a, i) && at(b, i)).collect(),
+            LocalOp::Or(a, b) => (0..m).map(|i| at(a, i) || at(b, i)).collect(),
+            LocalOp::Xor(a, b) => (0..m).map(|i| at(a, i) != at(b, i)).collect(),
+            LocalOp::AndNot(a, b) => (0..m).map(|i| at(a, i) && !at(b, i)).collect(),
+            LocalOp::Prev(a, k) => (0..m).map(|i| i >= usize::from(k) && at(a, i - usize::from(k))).collect(),
+            LocalOp::Fill(a, b) => {
+                let mut f = vec![false; m];
+                for i in 0..m {
+                    f[i] = at(a, i) || (i > 0 && f[i - 1] && !at(b, i));
+                }
+                f
+            }
+            LocalOp::Start => (0..m).map(|i| i == 0).collect(),
+            LocalOp::Last => (0..m).map(|i| i + 1 == n).collect(),
+        };
+        v.push(row);
+    }
+    v.last().is_some_and(|r| r[d..].iter().any(|&b| b))
 }
 
 /// A local check's value at stream place `i` over `bytes` (`LocalCheck`), each op's once.
@@ -346,6 +417,8 @@ pub fn local_value(ops: &[LocalOp], bytes: &[u8], i: i64) -> bool {
             LocalOp::Xor(a, b) => at(ops, usize::from(a), bytes, i) != at(ops, usize::from(b), bytes, i),
             LocalOp::AndNot(a, b) => at(ops, usize::from(a), bytes, i) && !at(ops, usize::from(b), bytes, i),
             LocalOp::Prev(a, k) => i >= i64::from(k) && at(ops, usize::from(a), bytes, i - i64::from(k)),
+            // A token's check's alone (`stream::validate_local_checks`).
+            LocalOp::Fill(..) | LocalOp::Start | LocalOp::Last => unreachable!("a token's check's op in a local check"),
         }
     }
     !ops.is_empty() && at(ops, ops.len() - 1, bytes, i)

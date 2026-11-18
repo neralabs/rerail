@@ -93,6 +93,7 @@ function @float_mul/2	native	no computed term	p(v) :- m(x), m(y), v = @float_mul
 function @float_div/2	native	no computed term	p(v) :- m(x), m(y), v = @float_div(x, y).
 function @float_str/1	native	no computed term	p(v) :- m(x), v = @float_str(x).
 function @rx_group/3	native	no computed term	p(v) :- t(a), t(b), t(c), v = @rx_group(a, b, c).
+function @flat_bin/3	native	no computed term	p(v) :- t(a), m(y), m(w), v = @flat_bin(a, y, w).
 function @sql_instr/2	native	no computed term	p(v) :- t(a), t(b), v = @sql_instr(a, b).
 function @sql_substr/3	native	device	p(v) :- t(a), m(y), m(w), v = @sql_substr(a, y, w).
 function @sql_substr2/2	native	no computed term	p(v) :- t(a), m(y), v = @sql_substr2(a, y).
@@ -194,6 +195,7 @@ functor @printf of %d and %s	native	device	p(v) :- p(a, x), v = @printf("%d:%s|%
 membership of a constant set	native	device	p(a) :- s(a), (a = "alpha" ; a = "x_1").
 lattice relation (shortest)	native	device	p(x, 0) :- n(x), x = 1. p(y, d + 1) :- p(x, d), e(x, y).
 lattice relation (flat: a key's values differ)	native	device	p(a, x) :- p(a, x).
+lattice relation (flat: a head of top)	native	device	p(a, top) :- s(a). p(a, 1) :- s(a), a = "alpha".
 lattice relation (max over a key)	native	device	p(a, x) :- p(a, x).
 lattice relation (shortlex_min over symbols)	native	device	p(x, "") :- n(x), x = 1. p(y, r) :- p(x, r0), e(x, y), r = cat(r0, "z").
 lattice relation (shortlex_min: characters, then bytes)	native	device	p(x, "") :- n(x), x = 1. p(y, r) :- p(x, r0), l(x, y, c), r = cat(r0, c).

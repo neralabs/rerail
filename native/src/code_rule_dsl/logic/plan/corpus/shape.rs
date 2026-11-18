@@ -1,7 +1,7 @@
 //! What the run reads of the combined program's rules before it prepares it (decision 0281's path, step 7a): the
 //! relations rules make, the relations they read (positively, or at all, an aggregate's atom included), by head.
 //! The readers before preparation (the bridged programs, the phases, the constants, the repository inputs, the
-//! guests' requests, the world, the components) ask these of the version, and its header (`Version::header`) for
+//! guests' requests, the world, the components) ask these of the version, and its fields (`ProgramFields`) for
 //! everything else, so no rule is decoded.
 
 use crate::code_rule_dsl::logic::program_image::{Lit, Version};
@@ -14,7 +14,7 @@ pub(crate) struct Shape {
     pub(crate) made: BTreeSet<String>,
     /// The relations some rule's body reads (an atom, negated or not, or an aggregate's).
     pub(crate) read: BTreeSet<String>,
-    /// The relations some rule's body reads positively (`Literal::atom` not negated: a plain atom, or an aggregate's).
+    /// The relations some rule's body reads positively (not negated: a plain atom, or an aggregate's).
     pub(crate) positive: BTreeSet<String>,
     /// Each made relation's reads, over its rules.
     pub(crate) reads_of: BTreeMap<String, BTreeSet<String>>,
@@ -52,33 +52,4 @@ impl Shape {
         s
     }
 
-    /// The tree's, for a debug build's check and for programs the run has as trees (a phase's, a bridged one's).
-    pub(crate) fn of_tree(prog: &crate::code_rule_dsl::logic::front::Program) -> Shape {
-        use crate::code_rule_dsl::logic::front::Literal;
-        let mut s = Shape::default();
-        for r in &prog.rules {
-            let mut reads: BTreeSet<String> = BTreeSet::new();
-            for l in r.body.iter() {
-                match l {
-                    Literal::Atom(a) => {
-                        if !a.neg {
-                            s.positive.insert(a.rel.to_string());
-                        }
-                        reads.insert(a.rel.to_string());
-                    }
-                    Literal::Agg { atom, .. } => {
-                        if !atom.neg {
-                            s.positive.insert(atom.rel.to_string());
-                        }
-                        reads.insert(atom.rel.to_string());
-                    }
-                    _ => {}
-                }
-            }
-            s.read.extend(reads.iter().cloned());
-            s.reads_of.entry(r.head.rel.to_string()).or_default().extend(reads);
-            s.made.insert(r.head.rel.to_string());
-        }
-        s
-    }
 }

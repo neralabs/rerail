@@ -55,7 +55,7 @@ pub fn encode_with(route: Option<rerail_simdjson::Kernel>, grammar: &Grammar, so
         return Ok(Err("tree-sitter-json lacks a kind or field simdjson's tape names".into()));
     };
     let src = source.as_bytes();
-    // A run that stores format 16 or 16z: the kernel's walk gives its nodes to format 16's ops (decision 0399).
+    // A run that stores format 16 or 16z: the kernel's walk gives its nodes to format 16's ops (decision 0426).
     if let Some(kernel) = route
         && let Some(image) = encode_16(kernel, kinds, *value, source, budget)?
     {

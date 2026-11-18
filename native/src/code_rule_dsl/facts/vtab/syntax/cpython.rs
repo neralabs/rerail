@@ -22,7 +22,7 @@
 //! exception (a format spec's `UnicodeDecodeError`), a batch reading any of these relations for that document fails,
 //! as W's worker, which catches only `SyntaxError`, fails its batch (`python_syntax::failure`).
 //! `@py_unparse(n)` and `@ast_dump(n)` lower to a variable `cpython_unparse` and `cpython_ast_dump` bind
-//! (`logic::plan::corpus`'s `cpython_functors`). A node is found as W's worker found it (`cpython::printed::of_kind`;
+//! (`preparation::simplify::CpythonFunctors`). A node is found as W's worker found it (`cpython::printed::of_kind`;
 //! a def, a class or an assignment that tree-sitter ends later than CPython by its start). Rows hold string indexes,
 //! as `Batch::build`'s do.
 

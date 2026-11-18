@@ -294,7 +294,7 @@ findings 1,629 in each; 73.5 B instructions (median) against 80.2 B.
 Where spans are made, the nodes' and tokens' place rows are still made beside the spans' (the spans' are derived
 facts; the nodes' are copies of tape answers), and bound in place of the view. The view already covers the whole
 source and its lines (`Locs::positions`, the `ExtraSpan::Line` ids); the other spans (`src_line_lf`, `tape_line`,
-matches, comments, `rx_span`) have their byte ranges only in `Extra`. Q184: those ranges written once into the
+matches, comments, `rx_span`) have their byte ranges only in `Extra`. Q216: those ranges written once into the
 batch's block, and the view reading them past its own positions, so nothing makes a node's place.
 
 **Step 3's other relations of row 7** (2026-11-17), each checked against "Not copies":
@@ -304,7 +304,7 @@ batch's block, and the view reading them past its own positions, so nothing make
 - `intval` and `op_t` are read by no core.rr library rule; in core.rr's shape `NodeRows` runs only where a program
   reads them. In T's shape they come with `NodeRows`' eager `text`, `name` and `str`, deferred with Q121.
 - What row 7 keeps: `core_rr`'s and `NodeRows`' eager derived values (`text`, `name`, `value`'s literals, T's
-  rows), deferred (Q121), and the nodes' place rows beside spans (Q184).
+  rows), deferred (Q121), and the nodes' place rows beside spans (Q216).
 
 Found on the way and fixed:
 - `Locs::token_spans` copied every token's start and end into a `Vec` on a span's first read: unmarked, and missed by
@@ -376,7 +376,7 @@ Each row is marked in the code with `copy (0353 step N)`.
 | 7 | `core.rr`'s and the vtab's per-node rows: tape answers (`line`, `end_line`, `col`, `docof`, `visit_index`, `doc_root`, `host_node`) and eager derived values (`text`, `parts`, `words`, `intval`, `op_t`) | `syntax.rs` `node rows`, `NodeRows`; `core_rr`; `tree.rs`; `guests.rs` | 0.45–0.49 s of CPU a run | Step 3 |
 | 8 | The CPU's head rows, staged in `Fresh`, merged by `extend_from_slice`, then pushed into the relation | `setfix.rs`, `Fresh` | Every row a CPU stratum derives | Step 6 |
 | 9 | A second key's index copies the relation (`DevIndex::moved`); a relation over several blocks merged for the device (`in_block`) | `metal_join.rs`; `facts/rows.rs` | Q85 counts them | Step 6 |
-| 10 | A device fixpoint's total copied into a run's block at its end | `device.rs` (0325 step 4) | Each recursive stratum's rows | Step 6 |
+| 10 | Gone (decision 0384 step 5, the hub, merged 2026-11-18): a device fixpoint's total copied into a run's block at its end, and a lattice or text head read back to the host. A set head's total is placed in the head's own relation (`head_room`); a lattice head is folded in place in its relation, round after round, through its key map, and its texts are made symbols where they lie. | — | — | Done |
 | 11 | The transducer's packed batch: 44 bytes a node, and its child lists | `PackedBatch::nodes` (0293 "Interim") | Each matched batch | Step 7 |
 | 12 | Findings, frames and memo entries copied into rows of their own | The output, frames and memo stores | Not yet measured | Step 8 (0325 step 7) |
 | 13 | The transducer's residency: every tape it reads copied into slabs of its own, and documents copied between slabs | `residency::slabs::admit_docs`, `insert`'s `place`; `rerail_metal::slabs::gather` | Each tape a Metal batch reads | Step 7 |
@@ -491,8 +491,8 @@ Each step ends with:
        - The tape crate's `F16Z` still decodes with `lz4_sys` into its thread's two blocks, then reads them with the
          generated format 16 reads: the same block, decoded by a second decoder. Built once (f9451f0dd: `tape_lz4`,
          the CLIF decoder translated by the Rust backend, its slot's loads bounded by the decoder) and taken out
-         again the same day: decision 0399 (the Oscar worktree) rewrites 16z as four pieces a block, and this
-         branch stays off the 16 and 16z paths until it lands. The one decoder is redone on 0399's form then.
+         again the same day: decision 0426 (the Oscar worktree) rewrites 16z as four pieces a block, and this
+         branch stays off the 16 and 16z paths until it lands. The one decoder is redone on 0426's form then.
        - The device's views read a 16z batch in place (2026-11-18; `views.refused.z_on_device` gone): the join
          kernels include the reads with the 16z case (`metal_tape_reads_z.metal`); a batch whose tapes are 16z
          gets one cache (`device_chunk::zcache_spec`), which every stage that reads its views shares, resident
@@ -561,7 +561,7 @@ Each step ends with:
            its poll advanced the builder, which rang the bell it waited on whether or not anything moved. It
            rings only when a step moved (`corpus::Builder::advance`).
          - hogql cold, the Metal binding, profiling builds, load 8–55: 16z, findings 1,629 in 72 runs (one more
-           run panicked, Q186), 99–117 B instructions, median 105 B; format 15, 1,629 in 32 runs, 65–75 B,
+           run panicked, Q253), 99–117 B instructions, median 105 B; format 15, 1,629 in 32 runs, 65–75 B,
            median 73 B (the runs that compiled the kernels apart: 135 B and 93 B). Statistics on: 2,187 decodes
            for 2,820 blocks, 18.7 M hits, no failure, no duplicate.
        - The kernels' part, decided (user, 2026-11-18): "a generic rolling GPU cache to amortize the cost": an LRU
@@ -600,6 +600,21 @@ Each step ends with:
          - Every loop is bounded, as the device's work queue's are. A read that finds no room (the spare not
            yet cleared, its retries spent) counts a failure in the cache's header; the host refuses that
            dispatch's batch, which runs on the CPU (counted), rather than wait.
+       - Over 0336's 16z (the hub's merge of Native-and-GPU-strata, 2026-11-18). The hub's 16z is not this branch's
+         (one LZ4 block of a block's whole layout, a block index, its side lengths): it keeps format 16's header and
+         part starts, its checkpoints and newline index raw, and stores each block as four pieces, an array's bytes
+         for the block's nodes then its side list's part, each raw, one LZ4 block or a repeat of an earlier piece
+         (0336 §4, §5). The cache, its entries and the reads are this branch's; what knows the layout is ported:
+         `Tape16Z::view` names the piece index's starts, kinds and payload (`columns[0..3]`) and the header's part
+         starts (`parts`), and `z_decode` fills a block's entry as the tape crate's `F16Z` decodes it: each side
+         length from the part starts, each piece copied (raw, or a repeat's earlier piece) or decoded by `z_lz4`
+         into a scratch past the block and copied from there into its array's region and its side list's, the
+         checkpoints copied from the raw run (past the part starts, 8-aligned: `view` refuses a header where they
+         are not), each region's room cleared. The entry holds the scratch (its largest piece) beyond the block.
+         The scratch's two copies are the decode's own (an LZ4 piece decodes to one run, its two parts apart in the
+         block's layout); a decode that writes each part where it lies would take the copies out. The residency's
+         16z stays the hub's: the device decodes the pieces where a document is placed (0336 §8), and this branch's
+         `unblock_into` (row 15, on the host) is not taken.
      - **4c.** The views' reads written once (CLIF, for Rust, the JIT and MSL), over a document's `TapeView` and
        its projection's `Numbering`: each view's scan over 64-node groups (the open subtrees from one descent) and
        its probes (by id; by parent, first child and next numbered sibling). Check: their rows equal `Viewed`'s,
@@ -670,7 +685,7 @@ Each step ends with:
        cut: containment's room 8 rows a node), it filled the budget: refusals rose from 5–38 to 23–52 a run.
      - On the device: `axis_count` and the scan (one submission), the total read, then `axis_write` writes each row's
        two ids (`global_of`) through `view_put`, the writer written once, bounded by the relation's chunks
-       (decision 0403). The starts (node row → first row) stay in the chunk; on the CPU, a vector beside the
+       (decision 0427). The starts (node row → first row) stay in the chunk; on the CPU, a vector beside the
        relation.
      - On the CPU: the climb counts, then writes `batch.id` of each side into the same kind of relation.
      - Every reader reads it in place: `value` and `documents_of` through `Part::get`, the device through

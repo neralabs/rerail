@@ -206,6 +206,15 @@ impl<'p> Encoder<'p> {
         }
         self.atom_base + self.strings.intern(text)
     }
+    /// The atom of `text`, where the parent or this image has one; none is added.
+    pub fn find(&self, text: &str) -> Option<u32> {
+        if let Some(p) = self.parent
+            && let Some(a) = p.find(text)
+        {
+            return Some(a.0);
+        }
+        self.strings.find(text).map(|i| self.atom_base + i)
+    }
     pub fn text(&self, a: u32) -> &str {
         if a >= self.atom_base { self.strings.text(a - self.atom_base) } else { self.parent.expect("an atom below the base has a parent").text(AtomId(a)) }
     }
