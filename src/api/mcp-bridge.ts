@@ -102,44 +102,76 @@ const CALL_TIMEOUT_MS = 30_000;
 const DAEMON_NOT_ANSWERING = `Rerail daemon is running but did not answer within ${CALL_TIMEOUT_MS / 1_000} s; try again, and if it stays silent run rerail daemon stop, then rerail daemon start`;
 
 /**
- * One relayed call's bound, {@link CALL_TIMEOUT_MS}: the checks have it from the moment the bridge takes the call, and
- * from {@link CallBound.sent} the daemon's answer has it whole, so a check that waited for a busy daemon never shortens
- * the time a tool has to answer. Each wait ends on its answer or at the bound, whichever comes first. The bound reads
- * the monotonic clock its timer runs on, so a step of the wall clock moves neither, and its one timer ends with the
- * call, so an idle bridge holds none.
+ * The least time a wait of the call is given, the 2 s each check had before the call had a bound: a check that starts
+ * late, such as the health check after a proof that passed only once the bound had, still gets that long.
+ */
+const WAIT_MIN_MS = 2_000;
+
+/**
+ * One relayed call's bound, {@link CALL_TIMEOUT_MS} for each of its two parts. The checks have it from the moment the
+ * bridge takes the call; from {@link CallBound.sent} the daemon's answer has it whole, on a signal of its own, so no
+ * check, however long it waited, shortens the time a tool has to answer. Each wait ends on its answer or at the end of
+ * its part, and gets at least {@link WAIT_MIN_MS}. The bound reads the monotonic clock its timer runs on, so a step of
+ * the wall clock moves neither, and holds one timer at a time, ended with the call, so an idle bridge holds none.
  */
 class CallBound {
-  readonly #abort = new AbortController();
-  readonly #timer = setTimeout(() => this.#abort.abort(new Error(DAEMON_NOT_ANSWERING)), CALL_TIMEOUT_MS);
+  /** When the part under way ends, on the monotonic clock: first the checks' end, then the answer's. */
   #ends = performance.now() + CALL_TIMEOUT_MS;
+  /** Aborts at `#ends`: made when a wait first carries it, and anew for each part, since an abort is for good. */
+  #abort: AbortController | undefined;
+  #timer: ReturnType<typeof setTimeout> | undefined;
 
-  /** Aborts at the bound, with the call's answer as its reason: the signal each request of the call carries. */
+  /**
+   * The signal a wait that starts now carries: it aborts at the end of the part under way, with the call's answer as
+   * its reason, and no sooner than {@link WAIT_MIN_MS} from now.
+   */
   get signal(): AbortSignal {
+    this.#start();
+    this.#abort ??= this.#armed();
     return this.#abort.signal;
   }
 
-  /** Whether the bound has passed. */
+  /** Whether the last wait that carried {@link CallBound.signal} reached the end of its part unanswered. */
   get passed(): boolean {
-    return this.#abort.signal.aborted;
+    return this.#abort?.signal.aborted === true;
   }
 
   /**
-   * What is left of the bound in ms, for a wait that takes a duration (the engine's proof). Never 0, which a socket's
-   * idle timeout reads as no limit at all.
+   * How long a wait that starts now and takes a duration (the engine's proof) may take, in ms, as long as
+   * {@link CallBound.signal} would give it; never 0, which a socket's idle timeout reads as no limit at all.
    */
   left(): number {
-    return Math.max(1, this.#ends - performance.now());
+    this.#start();
+    return this.#ends - performance.now();
   }
 
-  /** The call goes to the daemon now: its one timer counts the whole bound again from here, whatever checks took. */
+  /** The call goes to the daemon now: its answer has the whole bound from here, whatever the checks took. */
   sent(): void {
-    this.#ends = performance.now() + CALL_TIMEOUT_MS;
-    this.#timer.refresh();
+    this.#part(CALL_TIMEOUT_MS);
   }
 
   /** Ends the bound's timer once the call has its answer. */
   end(): void {
     clearTimeout(this.#timer);
+  }
+
+  /** A wait starts now: when its part has less than {@link WAIT_MIN_MS} left, a part of that length starts for it. */
+  #start(): void {
+    if (this.#ends - performance.now() < WAIT_MIN_MS) this.#part(WAIT_MIN_MS);
+  }
+
+  /** Starts a part that ends `ms` from now; the last part's timer and signal go with it. */
+  #part(ms: number): void {
+    clearTimeout(this.#timer);
+    this.#abort = undefined;
+    this.#ends = performance.now() + ms;
+  }
+
+  /** A signal's controller that aborts at the end of the part under way. */
+  #armed(): AbortController {
+    const abort = new AbortController();
+    this.#timer = setTimeout(() => abort.abort(new Error(DAEMON_NOT_ANSWERING)), this.#ends - performance.now());
+    return abort;
   }
 }
 
