@@ -235,8 +235,7 @@ describe("Rerail API over HTTP", () => {
     expect((await getJson<{ total: number }>("/api/violations?since=2000")).total).toBe(2);
   });
 
-  // 600 appends, each a write of its own: 4 to 9 s on a busy Linux host, past vitest's 5 s.
-  it("counts a session's gaps over its whole transcript, however many events follow them", { timeout: 30_000 }, async () => {
+  it("counts a session's gaps over its whole transcript, however many events follow them", async () => {
     const dropped = { id: "gap-1", count: 7, kinds: { call: 7 }, firstEventId: null, lastEventId: null, firstDroppedAt: 1, lastDroppedAt: 2 };
     sessionStore.recordDroppedEvents(SESSION, dropped);
     sessionStore.recordDroppedEvents(SESSION, { ...dropped, id: "gap-2", count: 2 });
@@ -256,10 +255,12 @@ describe("Rerail API over HTTP", () => {
     const more = { boundary: "turn" as const, reason: "The walks could not check more than 1000 places; the rest are not recorded", more: true as const };
     sessionStore.recordDiscoveryGap(SESSION, { ...more, key: JSON.stringify(["", more.reason]) });
     sessionStore.recordDiscoveryGap(SESSION, { ...more, key: JSON.stringify(["", more.reason]) });
-    // More than a transcript page of later events: the dashboard opens on those and never loads the gaps.
-    for (let index = 0; index < 600; index += 1) {
-      sessionStore.append({ sessionId: SESSION.sessionId, eventId: `later-${index}`, kind: "turn-end", observedAt: 10_000 + index, payload: {} });
-    }
+    // More than a transcript page of later events: the dashboard opens on those and never loads the gaps. One write
+    // for all of them, since a write each waits for the disk 600 times.
+    const later = database.$client.prepare("INSERT INTO events (session_id, event_id, kind, observed_at, payload_json) VALUES (?, ?, 'turn-end', ?, '{}')");
+    database.$client.transaction(() => {
+      for (let index = 0; index < 600; index += 1) later.run(SESSION.sessionId, `later-${index}`, 10_000 + index);
+    })();
 
     const { gaps } = await getJson<{ gaps: Record<string, unknown> }>(`/api/sessions/${SESSION.sessionId}`);
     expect(gaps).toEqual({
