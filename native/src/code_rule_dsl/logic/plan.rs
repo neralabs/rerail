@@ -652,6 +652,12 @@ impl Stats {
     }
 
     /// Whether any column of `rel` has statistics (read or measured).
+    /// The documents and kinds the statistics hold, which a layout's `values` facts are priced by (decision 0361
+    /// item 5).
+    pub fn counts(&self) -> shapes::Counts {
+        shapes::Counts { docs: self.docs.filter(|&d| d > 0).map(|d| d as f64), kinds: (!self.kfreq.is_empty()).then(|| self.kfreq.len() as f64) }
+    }
+
     /// Whether `rel`'s columns are measured now, not lazily.
     fn knows_now(&self, rel: &str) -> bool {
         self.col.has(rel)
@@ -958,11 +964,11 @@ impl Model {
             let Some(deferred) = self.stats.lazy.0.remove(rel) else { continue };
             // Its layout answers it whole: priced from the facts, nothing counted (decision 0361 step 4).
             if let Some(width) = f.arity(rel)
-                && self.stats.shapes.answers(rel)
+                && self.stats.shapes.answers(rel, self.stats.counts())
             {
                 let rows = self.stats.card.get(rel).copied().unwrap_or(1.0).max(1.0);
                 for c in 0..width {
-                    let n = self.stats.shapes.ndv(rel, c, rows).expect("answered");
+                    let n = self.stats.shapes.ndv(rel, c, rows, self.stats.counts()).expect("answered");
                     self.ndv.insert((rel.to_owned(), c), n);
                     self.stats.fan.insert((rel.to_owned(), c), (rows / n).max(1.0));
                 }
@@ -2171,7 +2177,7 @@ impl Model {
         const DEFAULT_NUM_DISTINCT: f64 = 200.0;
         // Unmeasured: its layout's estimate (decision 0361 step 4), else the prior.
         let unseen = || {
-            self.stats.shapes.ndv(rel, c, self.card(rel)).unwrap_or_else(|| if self.stats.solving.contains(rel) { DEFAULT_NUM_DISTINCT.min(self.card(rel)) } else { 1.0 })
+            self.stats.shapes.ndv(rel, c, self.card(rel), self.stats.counts()).unwrap_or_else(|| if self.stats.solving.contains(rel) { DEFAULT_NUM_DISTINCT.min(self.card(rel)) } else { 1.0 })
         };
         let ndv = self.ndv.at(&rel, c).copied().unwrap_or_else(unseen);
         (ndv * skew(rel, c, 0)).max(1.0)
@@ -2393,7 +2399,7 @@ impl Model {
 
     /// Whether `rel`'s layout answers every column's distinct values (decision 0361 step 4).
     fn shaped(&self, rel: &str) -> bool {
-        self.stats.shapes.answers(rel)
+        self.stats.shapes.answers(rel, self.stats.counts())
     }
 
     /// Decision 0123, step 1: the statistics a planning round requests. Of the lines it will plan (a rule and its
@@ -4881,7 +4887,7 @@ pub fn make_plan(p: &body::Placed, db: &Connection, mut inputs: Inputs) -> Resul
         .chain(f.fact_rels().into_iter().map(|r| f.text(r.name())).filter(|rel| !f.is_input(rel)).map(str::to_owned))
         .collect();
     let mut stats = Stats::new(db, p, &mut inputs)?;
-    stats.shapes = Arc::new(shapes::Shapes::of_version(&p.v));
+    stats.shapes = shapes::Shapes::of_version(&p.v);
     let mut ndv = ColMap::default();
     for (rel, (_, rows)) in &inputs.batch {
         let rows = rows.max(1.0);
@@ -4895,7 +4901,7 @@ pub fn make_plan(p: &body::Placed, db: &Connection, mut inputs: Inputs) -> Resul
             // (decision 0361 step 4: `child`'s `c` a key, its `p` a few fan-out, its `i` dense within `p`).
             // Otherwise, by the column's name (the columns no fact answers: a chunk's documents, kinds, fields
             // and depths are far fewer than its rows); other columns are taken as keys.
-            let distinct = stats.shapes.ndv(rel, col, rows).unwrap_or_else(|| match names.and_then(|names| names.get(col)).copied() {
+            let distinct = stats.shapes.ndv(rel, col, rows, stats.counts()).unwrap_or_else(|| match names.and_then(|names| names.get(col)).copied() {
                 Some("d") => rows.min(300.0),
                 Some("kind") => rows.min(200.0),
                 Some("idx") => rows.min(20.0),

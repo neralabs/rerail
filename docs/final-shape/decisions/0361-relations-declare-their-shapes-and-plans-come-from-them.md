@@ -95,6 +95,18 @@ Recursion keeps a fact only when it is declared, or proved by the base case and 
    An explicit override is allowed for rare cases: `.layout r by reach`, `by walk(child)`, `by running(i in p)`.
    Like 0137's directives, a profiled run says when the override is no longer needed.
 
+5. **A column's values, and statistics only where no fact answers** (decided 2026-11-18, after step 4's first
+   measurement found no relation answered whole). Two parts:
+   - A `values(c, …)` fact states how many distinct values column `c` holds: `documents` or `kinds` (the run's
+     exact counts of them), `within document` (numbered in each document: about a document's rows), `many` (about
+     one a row, without a key's guarantee), `~N` (at most about N) or `rows / N` (one every N rows). `core.rr`
+     declares them for its base relations' other columns (`node`'s `d`, `kind`, `start`, `end`; `kind`'s `k`;
+     `field`'s `f`; `text`'s and `name`'s `s`; `docof`'s `d`; `line`'s `l`; `visit_index`'s `i`), so each base
+     relation is answered whole. A bound (`documents`, `kinds`, `~N`) carries to a rule's head column that copies
+     it; a share of the rows does not.
+   - Every other relation's statistics are made for the columns no fact answers alone; an answered column's
+     statistic is the facts' estimate, not counted.
+
 ## Build steps
 
 1. The `.layout` line: parse, check, carry through lowering, `combine`, the image and the plan-choices digest.
@@ -326,3 +338,34 @@ for a relation with a shape"), so it is the user's call.
 **Tests.** `plan::tests::a_layout_prices_the_columns_its_facts_answer` covers `child`'s three columns, a relation
 with a column no fact answers, and inferred facts pricing a derived relation. 429 tests of the planner, the image,
 `rr`, the corpus, sessions, retain and maintain mode pass (M3).
+
+## Step 4, the rest: a column's values, and statistics only where no fact answers (2026-11-18)
+
+Item 5 above, built:
+- **The fact.** `values(c, documents | kinds | within document | many | ~N | rows / N)` (`front::ast::Values`), read
+  and printed as the others are. `core.rr` declares it for every base relation's column no key, fan-out or order
+  answers, so each base relation is answered whole. A bound (`documents`, `kinds`, `~N`) is carried to a rule's
+  head column that copies it (`layouts.rs`); a share of the rows is not.
+- **Priced by the run's exact counts.** `Stats::counts` gives the documents (`stat_docrange`) and the grammar's kinds
+  (`stat_kind`); unknown, a fact of them answers nothing. A batch's `d` and `kind` were priced at 300 and 200 at
+  most; they are now the counts.
+- **Statistics only where no fact answers.** A chunk's base relations (the main run's and the guests') are measured
+  by `corpus::sampled_statistics_unanswered`: the columns no fact answers are sampled and counted as before, an
+  answered one takes its facts' estimate (`Shapes::statistic`: even postings, a document's share within documents),
+  and a relation answered whole reads no rows. The planner's own (lazy, unmeasured) relations already took the facts
+  (the planner's side, above).
+- **Shapes made once a version.** `Shapes` is an analysis of the version (`manager::analysis`), shared by every plan
+  of it. Built per `make_plan`, the planner's side had raised that span's own CPU from 1.5% to 2.3% of a cold run:
+  about 72,000 plans of one program each built it.
+
+**What it saves, measured before building it** (corpus0 x B-now, cold, profiling build, M3 under load 50-120): the
+base relations' sampled measurement ("measure …" and "guest statistics") was 0.37 s of 101 s of own CPU (0.4%).
+The statistics' larger share (2.3%) is `make_plan`'s own work per plan, not a count. So this step's value is the
+shape (no relation's statistics counted where its facts give them, as decided) more than the time. The same four
+cold runs with the values facts in (off, on, off, on) gave the same 463 findings (`d067ec2ebf6f`).
+
+**Tests** (under Relax, the engine's live loop): `a_values_fact_prices_a_column_by_the_runs_counts` (each class,
+unknown counts, the carry, the line read back), `a_base_relations_answered_columns_are_not_counted` (an answered
+column estimated, the others counted as `sampled_statistics` counts them), `a_layout_prices_the_columns_its_facts_answer`
+(now also: the shapes are made once a version), and the layout analysis' five.
+

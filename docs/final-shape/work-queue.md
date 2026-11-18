@@ -3738,3 +3738,15 @@ native join it falls back to the planner's whole-rule order.
   A debug assert at every pipeline step that a request relation's entries match its rules, or the step stated none,
   would find each such pass at once, not one per run.
 - **Done when**: a debug run of corpus0 x B-now passes every stage check.
+
+### Q182. Relax cannot load the engine under `RELAX_SHARE` (a patched `native/vendor` crate)
+
+- **Found** (2026-11-18): `relax test rerail-engine --lib` with `RELAX_SHARE=rerail` stops at "load error
+  cranelift_assembler_x64_meta: …/native/vendor/cranelift-assembler-x64-meta-0.125.4/src/lib.rs: No such file or
+  directory", though the file is on disk and tracked. The crate is a registry crate's build-dependency patched to
+  the vendored copy (0341); the registry crate's build script runs with no mount (`unitgraph.rs`, the `else` of
+  `is_virtual(dir)`), and its loader does not read the patched dependency's files. Without `RELAX_SHARE` the run
+  gets past it (each worktree's first run is then cold).
+- **Next**: in the fork (`scripts/dev/relax/rerail.patch`), hand a registry package's build script the mount table
+  when a build-dependency it reaches lies in the shared workspace, or map that dependency's paths to the disk.
+- **Done when**: the engine's tests run under `RELAX_SHARE=rerail`.

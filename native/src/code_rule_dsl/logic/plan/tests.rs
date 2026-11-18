@@ -3024,13 +3024,70 @@ fn a_layout_prices_the_columns_its_facts_answer() {
                    .decl o(c: node, p: node)\n.output o\no(c, p) :- child2(p, c, _), part(_, c, _).\n").unwrap();
     let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
     let s = shapes::Shapes::of_version(&v);
-    assert_eq!(s.ndv("child2", 1, 900.0), Some(900.0));
-    assert_eq!(s.ndv("child2", 0, 900.0), Some(300.0));
-    assert_eq!(s.ndv("child2", 2, 900.0), Some(16.0));
-    assert_eq!(s.ndv("part", 0, 900.0), None);
-    assert!(s.answers("child2") && !s.answers("part"));
+    // Made once a version (its analysis), shared by every plan of it: not made again per `make_plan`.
+    assert!(std::sync::Arc::ptr_eq(&s, &shapes::Shapes::of_version(&v)));
+    let n = shapes::Counts::default();
+    assert_eq!(s.ndv("child2", 1, 900.0, n), Some(900.0));
+    assert_eq!(s.ndv("child2", 0, 900.0, n), Some(300.0));
+    assert_eq!(s.ndv("child2", 2, 900.0, n), Some(16.0));
+    assert_eq!(s.ndv("part", 0, 900.0, n), None);
+    assert!(s.answers("child2", n) && !s.answers("part", n));
     // Inferred facts price their columns too: `o`'s `c` is `child2`'s key, its `p` the few fan-out.
-    assert_eq!(s.ndv("o", 0, 60.0), Some(60.0));
-    assert_eq!(s.ndv("o", 1, 60.0), Some(20.0));
-    assert!(s.answers("o"));
+    assert_eq!(s.ndv("o", 0, 60.0, n), Some(60.0));
+    assert_eq!(s.ndv("o", 1, 60.0, n), Some(20.0));
+    assert!(s.answers("o", n));
+}
+
+/// A column's values (`values(c, …)`, decision 0361 item 5): the documents and kinds by the run's counts, a share of
+/// the rows, a bound; with them `node` is answered whole, and none of its statistics is made. A value bound is carried
+/// to a column that copies it; a share is not.
+#[test]
+fn a_values_fact_prices_a_column_by_the_runs_counts() {
+    let p = parse(".decl node2(d: number, n: node, kind: symbol, start: number, end: number)\n.input node2\n\
+                   .layout node2 key(n) values(d, documents) values(kind, kinds) values(start, many) values(end, rows / 4)\n\
+                   .decl lines(n: node, l: number)\n.input lines\n.layout lines key(n) values(l, within document)\n\
+                   .decl k2(n: node, k: symbol, s: number)\n.output k2\nk2(n, k, s) :- node2(_, n, k, s, _).\n").unwrap();
+    let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
+    let s = shapes::Shapes::of_version(&v);
+    let n = shapes::Counts { docs: Some(30.0), kinds: Some(200.0) };
+    assert_eq!(s.ndv("node2", 0, 9000.0, n), Some(30.0));
+    assert_eq!(s.ndv("node2", 2, 9000.0, n), Some(200.0));
+    assert_eq!(s.ndv("node2", 2, 50.0, n), Some(50.0));
+    assert_eq!(s.ndv("node2", 3, 9000.0, n), Some(9000.0));
+    assert_eq!(s.ndv("node2", 4, 9000.0, n), Some(2250.0));
+    assert_eq!(s.ndv("lines", 1, 9000.0, n), Some(300.0));
+    assert!(s.answers("node2", n) && s.answers("lines", n));
+    // Unknown counts answer nothing of them.
+    assert_eq!(s.ndv("node2", 0, 9000.0, shapes::Counts::default()), None);
+    assert!(!s.answers("node2", shapes::Counts::default()));
+    // `k2` copies `node2`'s key and kinds, not its start's share.
+    assert_eq!(s.ndv("k2", 1, 900.0, n), Some(200.0));
+    assert_eq!(s.ndv("k2", 2, 900.0, n), None);
+    // The line reads back as written.
+    let f = crate::code_rule_dsl::logic::front::layout_facts("values(d, documents) values(i, within document) values(s, rows / 5) values(f, ~50)", &|w| Ok(["d", "i", "s", "f"].iter().position(|x| *x == w).unwrap())).unwrap();
+    let shown: Vec<String> = f.iter().map(|f| f.show(&|c| ["d", "i", "s", "f"][c].to_owned())).collect();
+    assert_eq!(shown, ["values(d, documents)", "values(i, within document)", "values(s, rows / 5)", "values(f, ~50)"]);
+    assert!(f.iter().all(|f| crate::code_rule_dsl::logic::front::LayoutFact::of_placed(&f.placed()).as_ref() == Ok(f)));
+}
+
+/// A base relation's measurement counts the columns its layout does not answer, as before, and gives an answered one
+/// its facts' estimate (decision 0361 item 5): `d` is priced at the run's 5 documents though the rows hold 2, and
+/// `start` and `end_`, which no fact answers, are counted as `sampled_statistics` counts them.
+#[test]
+fn a_base_relations_answered_columns_are_not_counted() {
+    let p = parse(".decl node2(d: number, n: node, kind: symbol, start: number, end: number)\n.input node2\n\
+                   .layout node2 key(n) values(d, documents) values(kind, kinds)\n").unwrap();
+    let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
+    let s = shapes::Shapes::of_version(&v);
+    let n = shapes::Counts { docs: Some(5.0), kinds: Some(3.0) };
+    let names: Vec<String> = ["d", "n", "kind", "start", "end_"].iter().map(|c| (*c).to_owned()).collect();
+    let values = vec![vec![0, 0, 0, 1, 1, 1], vec![1, 2, 3, 4, 5, 6], vec![7, 8, 9, 7, 8, 9], vec![0, 0, 5, 5, 9, 9], vec![1, 2, 3, 4, 5, 6]];
+    // A source that keeps no statistics of its own (a held one counts every column when asked).
+    let source = crate::code_rule_dsl::logic::plan::corpus::unmeasured_rows(names, values);
+    let got = crate::code_rule_dsl::logic::plan::corpus::sampled_statistics_unanswered("node2", &source, &s, n);
+    let all = crate::code_rule_dsl::logic::plan::corpus::sampled_statistics(&source);
+    assert_eq!(got.iter().map(|g| (g.0.as_str(), g.2)).collect::<Vec<_>>(), [("d", 5), ("n", 6), ("kind", 3), ("start", 3), ("end_", 6)]);
+    assert_eq!((&got[3], &got[4]), (&all[3], &all[4]), "the columns no fact answers, counted as before");
+    // A key's postings are one row each.
+    assert_eq!((got[1].3, got[1].4), (6, 6));
 }
