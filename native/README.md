@@ -49,6 +49,9 @@ They keep the selected Git view and the policy inputs already read.
 If cache publication fails after evaluation, the command keeps its results and reports a cache warning.
 Git read errors remain evaluation errors.
 
+On macOS the mapped block writer checks whether the GPU still holds dirty pages.
+On other Unix systems it waits for the synchronous write.
+
 For a commit, `git_rev("head", sha)` names the selected commit.
 `git_rev("tree", sha)` names its root tree.
 For a raw tree, only the tree row exists. A raw tree has no commit message or ancestry.
