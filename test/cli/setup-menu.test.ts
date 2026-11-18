@@ -39,24 +39,33 @@ describe("the set-up menu's keys", () => {
   });
 });
 
+/** How many turns of the event loop a typed chunk comes after stdin starts reading: more than the two the drop waits. */
+const TURNS_TO_TYPE = 5;
+
 /**
  * A terminal's stdin. `held` is what the terminal holds from before: keys pressed while set-up was busy, handed over
- * as soon as stdin reads. `chunks` are what the person types, one at a time while stdin reads, each after a delay
- * longer than a turn of the event loop; then the end of input when `ends`. Pausing stdin stops the reading.
+ * as soon as stdin reads. `chunks` are what the person types, one at a time while stdin reads, each {@link
+ * TURNS_TO_TYPE} turns of the event loop after the last; then the end of input when `ends`. Pausing stdin stops the
+ * reading.
  */
 function fakeStdin(chunks: readonly string[], { ends = true, held = [] as string[] } = {}): TerminalInputStream & { raw: boolean[]; held: string[] } {
   const left = [...chunks];
   let reading = false;
-  let typing: NodeJS.Timeout | undefined;
-  // A real timer, not a fake clock: the drop waits real turns of the event loop (setImmediate from node:timers), and
-  // what this models is a key that comes after those turns, as a person's does.
-  const type = (): void => {
-    typing = setTimeout(() => {
+  let typing: NodeJS.Immediate | undefined;
+  // Turns of the event loop, not a time: the drop waits turns (setImmediate from node:timers), and what this models is
+  // a key that comes after those turns, as a person's does. A wait of 10 ms put the key inside them whenever the machine
+  // held this process for longer than that while the drop ran.
+  const type = (turns = 1): void => {
+    typing = setImmediate(() => {
+      if (turns < TURNS_TO_TYPE) {
+        type(turns + 1);
+        return;
+      }
       const chunk = left.shift();
       if (chunk !== undefined) stream.emit("data", chunk);
       else if (ends) stream.emit("end");
       if (reading) type();
-    }, 10);
+    });
   };
   const stream = Object.assign(new EventEmitter(), {
     raw: [] as boolean[],
@@ -65,7 +74,7 @@ function fakeStdin(chunks: readonly string[], { ends = true, held = [] as string
     setEncoding() {},
     pause() {
       reading = false;
-      clearTimeout(typing);
+      clearImmediate(typing);
     },
     resume() {
       if (reading) return;
