@@ -22,7 +22,7 @@
 //! defaults instead).
 
 use super::front::{AggOp, Atom, Literal, Program, Rule, Term, Value, cmp_binds, components_of, strata};
-use super::program_image::{AtomRef, CmpOp, Lit, Slot as VarSlot, TermRef};
+use super::program_image::{AtomRef, CmpOp, Lit, Slot as VarSlot, TermRef, Version};
 use body::{Body, RuleKey, VarSet};
 use fields::Fields;
 use super::native::TOP;
@@ -2024,25 +2024,21 @@ fn skew(rel: &str, c: usize, what: u64) -> f64 {
 pub type Plan = (Vec<Step>, f64, f64);
 
 impl Model {
-    /// `prog`'s logical key and scalar analysis (`analysis`), made the first time it is asked for; `prog` is the
-    /// program this model plans.
-    pub fn analysis(&self, prog: &Program) -> std::sync::Arc<super::analysis::ProgramAnalysis> {
+    /// The logical key and scalar analysis (`analysis`) of `v`, the program this model plans, made the first time
+    /// it is asked for.
+    pub fn analysis(&self, v: &Version) -> std::sync::Arc<super::analysis::ProgramAnalysis> {
         std::sync::Arc::clone(self.analysis.get_or_init(|| {
             let _analysis = super::profile::span(|| "logical key and scalar analysis".into());
-            let analysis = program_analysis(prog);
+            let analysis = program_analysis(v);
             let _explain = super::profile::span(|| "explain analysis".into());
             analysis.explain();
             analysis
         }))
     }
 
-    /// `analysis` of program `p`, a version: decoded for it the first time it is asked for (the analysis reads the
-    /// tree).
+    /// `analysis` of program `p`.
     pub fn analysis_of(&self, p: &body::Placed) -> Result<std::sync::Arc<super::analysis::ProgramAnalysis>> {
-        if let Some(a) = self.analysis.get() {
-            return Ok(std::sync::Arc::clone(a));
-        }
-        Ok(self.analysis(&p.program(&Default::default())?))
+        Ok(self.analysis(&p.v))
     }
 
     fn card(&self, rel: &str) -> f64 {
@@ -4457,34 +4453,13 @@ fn first_columns(args: &[TermRef<'_>]) -> HashMap<VarSlot, usize> {
     src
 }
 
-/// A digest of what a program's analysis and its whole-program passes read: each relation's columns and lattice
-/// keys, the inputs, the relations with facts, the natives, and the rules in order.
-fn program_digest(prog: &Program) -> u128 {
+/// A digest of what a program's analysis reads: the version's digest (its declarations, inputs, facts and `.about`
+/// fields, and its rules as a sum), and the rules in order.
+fn program_digest(v: &Version) -> u128 {
     super::derived::digest(|d| {
-        d.u64(prog.decls.len() as u64);
-        for (rel, cols) in &prog.decls {
-            d.str(rel);
-            d.u64(cols.len() as u64);
-            cols.iter().for_each(|(_, t)| d.str(t));
-        }
-        d.u64(prog.lattice.len() as u64);
-        for (rel, l) in &prog.lattice {
-            d.str(rel);
-            d.u64(l.keys as u64);
-        }
-        d.u64(prog.inputs.len() as u64);
-        prog.inputs.iter().for_each(|r| d.str(r));
-        let facts: Vec<&String> = prog.facts.iter().filter(|(_, v)| !v.is_empty()).map(|(r, _)| r).collect();
-        d.u64(facts.len() as u64);
-        facts.iter().for_each(|r| d.str(r));
-        d.u64(prog.natives.len() as u64);
-        prog.natives.keys().for_each(|r| d.str(r));
-        d.u64(prog.rules.len() as u64);
-        for r in &prog.rules {
-            digest_atom(d, &r.head);
-            d.u64(r.body.len() as u64);
-            r.body.iter().for_each(|l| digest_literal(d, l));
-        }
+        d.u64(v.digest());
+        d.u64(v.rules().count() as u64);
+        v.rules().for_each(|r| d.u64(r.hash()));
     })
 }
 
@@ -4492,7 +4467,7 @@ fn program_digest(prog: &Program) -> u128 {
 /// same programs again (its file-local part every run, a maintained part while the same strata change), and the
 /// analysis is a function of what the digest reads (each relation's columns and lattice keys, the inputs, the
 /// relations with facts, the natives, and the rules in order).
-fn program_analysis(prog: &Program) -> std::sync::Arc<super::analysis::ProgramAnalysis> {
+fn program_analysis(prog: &Version) -> std::sync::Arc<super::analysis::ProgramAnalysis> {
     type Kept = Vec<(u128, std::sync::Arc<super::analysis::ProgramAnalysis>)>;
     /// The programs analysed last, newest at the end: a few, as each holds a result per rule.
     const KEEP: usize = 4;

@@ -19,7 +19,7 @@ fn existence_evaluation_proof_does_not_require_summary_combination() {
 
 #[test]
 fn keys_propagate_through_projections_and_joins_without_assuming_injective_calls() {
-    let p = rr::parse(".decl seed(k:number,v:number)\n.input seed\n.decl lattice(k:number,v:min<>) widen 3\nlattice(k,v) :- seed(k,v).\n.decl copy(k:number,v:number)\ncopy(k,v) :- lattice(k,v).\n.decl joined(k:number,v:number,w:number)\njoined(k,v,w) :- copy(k,v),lattice(k,w).\n.decl lossy(v:number)\nlossy(v) :- copy(_,v).\n.decl hidden(k:number,v:number)\nhidden(k,v) :- seed(k,_),lattice(k,v).\n.output joined,lossy,hidden\n").unwrap();
+    let p = rr::parse_version(".decl seed(k:number,v:number)\n.input seed\n.decl lattice(k:number,v:min<>) widen 3\nlattice(k,v) :- seed(k,v).\n.decl copy(k:number,v:number)\ncopy(k,v) :- lattice(k,v).\n.decl joined(k:number,v:number,w:number)\njoined(k,v,w) :- copy(k,v),lattice(k,w).\n.decl lossy(v:number)\nlossy(v) :- copy(_,v).\n.decl hidden(k:number,v:number)\nhidden(k,v) :- seed(k,_),lattice(k,v).\n.output joined,lossy,hidden\n").unwrap();
     let a = ProgramAnalysis::analyze(&p);
     assert_eq!(a.relation_keys["copy"], vec![vec![0]]);
     assert_eq!(a.relation_keys["joined"], vec![vec![0]]);
@@ -144,11 +144,11 @@ fn scalar_compatibility_preserves_filters_keys_values_and_count_does_not_bridge_
 
 #[test]
 fn logical_aggregates_share_only_the_same_bag_and_keep_dependent_lookups_separate() {
-    let p = rr::parse(".decl event(id:number,g:number,v:number,w:number)\n.decl owner(g:number)\n.input event,owner\n.decl out(g:number,n:number,s:number,lo:number,hi:number,different:number)\nout(g,n,s,lo,hi,different) :- owner(g), n=count : {event(_,g,_,_)}, s=sum v : {event(_,g,v,_)}, lo=min x : {event(_,g,x,_)}, hi=max y : {event(_,g,y,_)}, different=sum w : {event(_,g,_,w)}.\n.output out\n").unwrap();
+    let p = rr::parse_version(".decl event(id:number,g:number,v:number,w:number)\n.decl owner(g:number)\n.input event,owner\n.decl out(g:number,n:number,s:number,lo:number,hi:number,different:number)\nout(g,n,s,lo,hi,different) :- owner(g), n=count : {event(_,g,_,_)}, s=sum v : {event(_,g,v,_)}, lo=min x : {event(_,g,x,_)}, hi=max y : {event(_,g,y,_)}, different=sum w : {event(_,g,_,w)}.\n.output out\n").unwrap();
     let a = ProgramAnalysis::analyze(&p);
     assert_eq!(a.rules[0].scalars.families[0].members, vec![0, 1, 2, 3]);
     assert_eq!(a.rules[0].scalars.families[1].members, vec![4]);
-    let p = rr::parse(".decl event(k:number,v:number)\n.decl owner(k:number)\n.input event,owner\n.decl out(k:number,n:number,s:number)\nout(k,n,s) :- owner(k), n=count : {event(k,_)}, s=sum v : {event(n,v)}.\n.output out\n").unwrap();
+    let p = rr::parse_version(".decl event(k:number,v:number)\n.decl owner(k:number)\n.input event,owner\n.decl out(k:number,n:number,s:number)\nout(k,n,s) :- owner(k), n=count : {event(k,_)}, s=sum v : {event(n,v)}.\n.output out\n").unwrap();
     let a = ProgramAnalysis::analyze(&p);
     assert!(a.rules[0].scalars.inputs[1].dependent);
     assert_eq!(a.rules[0].scalars.families.len(), 2);
@@ -157,7 +157,7 @@ fn logical_aggregates_share_only_the_same_bag_and_keep_dependent_lookups_separat
 #[test]
 fn initial_summary_evaluation_requires_pure_outer_expressions_and_independent_sites() {
     use scalars::Expression as E;
-    let p = rr::parse(".decl event(k:number,v:number)\n.decl owner(k:number)\n.input event,owner\n.decl out(k:number,n:number,s:number)\nout(k,n,s) :- owner(k), n=count : {event(k,_)}, s=sum v : {event(k,v)}.\n.output out\n").unwrap();
+    let p = rr::parse_version(".decl event(k:number,v:number)\n.decl owner(k:number)\n.input event,owner\n.decl out(k:number,n:number,s:number)\nout(k,n,s) :- owner(k), n=count : {event(k,_)}, s=sum v : {event(k,v)}.\n.output out\n").unwrap();
     let a = ProgramAnalysis::analyze(&p);
     let scalars = &a.rules[0].scalars;
     assert!(scalars.families[0].lookup.proven);
@@ -175,7 +175,7 @@ fn initial_summary_evaluation_requires_pure_outer_expressions_and_independent_si
 #[test]
 fn bag_storage_ignores_outer_mapping_but_preserves_value_and_effect_barriers() {
     use scalars::{Expression as E,Kind};
-    let p=rr::parse(".decl event(k:number,v:number,w:number)\n.decl owner(a:number,b:number)\n.input event,owner\n.decl x(a:number,n:number,s:number)\nx(a,n,s) :- owner(a,_), n=count : {event(a,_,_)}, s=sum v : {event(a,v,_)}.\n.decl y(b:number,m:number)\ny(b,m) :- owner(_,b), m=max v : {event(b,v,_)}.\n.output x,y\n").unwrap();
+    let p=rr::parse_version(".decl event(k:number,v:number,w:number)\n.decl owner(a:number,b:number)\n.input event,owner\n.decl x(a:number,n:number,s:number)\nx(a,n,s) :- owner(a,_), n=count : {event(a,_,_)}, s=sum v : {event(a,v,_)}.\n.decl y(b:number,m:number)\ny(b,m) :- owner(_,b), m=max v : {event(b,v,_)}.\n.output x,y\n").unwrap();
     let a=ProgramAnalysis::analyze(&p);
     assert_eq!(a.scalar_storage.bags.families.len(),1);
     let mut other=a.scalar_storage.bags.inputs[0].clone();
@@ -195,7 +195,7 @@ fn bag_storage_ignores_outer_mapping_but_preserves_value_and_effect_barriers() {
 
 #[test]
 fn cross_rule_storage_proofs_and_explain_grow_linearly_for_many_sites() {
-    let p=rr::parse(".decl event(g:number,v:number)\n.decl owner(g:number)\n.input event,owner\n.decl out(g:number,n:number)\nout(g,n) :- owner(g), n=count : {event(g,_)}.\n.output out\n").unwrap();
+    let p=rr::parse_version(".decl event(g:number,v:number)\n.decl owner(g:number)\n.input event,owner\n.decl out(g:number,n:number)\nout(g,n) :- owner(g), n=count : {event(g,_)}.\n.output out\n").unwrap();
     let scalar=ProgramAnalysis::analyze(&p).rules[0].scalars.inputs[0].clone();
     let analysis=bags::analyze((0..10000).map(|rule| {
         let mut s=scalar.clone();s.lookup=vec![scalars::Expression::Column(rule)];
@@ -208,7 +208,7 @@ fn cross_rule_storage_proofs_and_explain_grow_linearly_for_many_sites() {
 
 #[test]
 fn cross_rule_counts_keep_local_value_lookups_when_stores_are_shared() {
-    let p=rr::parse(".decl event(g:number,v:number,w:number)\n.decl owner(g:number)\n.input event,owner\n.decl first(g:number,n:number,s:number)\nfirst(g,n,s) :- owner(g), n=count : {event(g,_,_)}, s=sum v : {event(g,v,_)}.\n.decl second(g:number,n:number,s:number)\nsecond(g,n,s) :- owner(g), n=count : {event(g,_,_)}, s=sum w : {event(g,_,w)}.\n.output first,second\n").unwrap();
+    let p=rr::parse_version(".decl event(g:number,v:number,w:number)\n.decl owner(g:number)\n.input event,owner\n.decl first(g:number,n:number,s:number)\nfirst(g,n,s) :- owner(g), n=count : {event(g,_,_)}, s=sum v : {event(g,v,_)}.\n.decl second(g:number,n:number,s:number)\nsecond(g,n,s) :- owner(g), n=count : {event(g,_,_)}, s=sum w : {event(g,_,w)}.\n.output first,second\n").unwrap();
     let a=ProgramAnalysis::analyze(&p);
     assert_eq!(a.scalar_storage.bags.families[0].members,vec![0,1]);
     assert_eq!(a.scalar_storage.bags.families[1].members,vec![2,3]);
@@ -216,11 +216,11 @@ fn cross_rule_counts_keep_local_value_lookups_when_stores_are_shared() {
 
 #[test]
 fn disjoint_literal_tags_prove_unique_union_support_and_overlap_keeps_counts() {
-    let program = rr::parse(".decl a(x:number)\n.input a\n.decl tagged(tag:number,x:number)\ntagged(1,x) :- a(x).\ntagged(2,x) :- a(x).\n.output tagged\n").unwrap();
+    let program = rr::parse_version(".decl a(x:number)\n.input a\n.decl tagged(tag:number,x:number)\ntagged(1,x) :- a(x).\ntagged(2,x) :- a(x).\n.output tagged\n").unwrap();
     let analysis=ProgramAnalysis::analyze(&program);
     assert!(analysis.support_uniqueness["tagged"].proven);
     // Two rules of one tag (not one rule twice: lowering keeps a repeated rule once).
-    let overlap=rr::parse(".decl a(x:number)\n.input a\n.decl tagged(tag:number,x:number)\ntagged(1,x) :- a(x).\ntagged(1,x) :- a(x), x > 0.\n.output tagged\n").unwrap();
+    let overlap=rr::parse_version(".decl a(x:number)\n.input a\n.decl tagged(tag:number,x:number)\ntagged(1,x) :- a(x).\ntagged(1,x) :- a(x), x > 0.\n.output tagged\n").unwrap();
     assert!(!ProgramAnalysis::analyze(&overlap).support_uniqueness["tagged"].proven);
     assert!(!scalars::maintenance_equivalent(true,false).proven);
     assert!(!scalars::maintenance_equivalent(false,true).proven);
