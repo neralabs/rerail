@@ -228,7 +228,11 @@ impl<'v> Body<'v> {
     /// The demand that drives its rule whatever the statistics say: a demand-restricted aggregate's
     /// (`rr_demand_agg_…`, a positive atom), whose witnesses are enumerated from its requested keys.
     pub fn demand_first(&self) -> Option<usize> {
-        (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| !a.neg() && self.rel(a).contains("rr_demand_agg_")))
+        let head = self.rel(self.head());
+        (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| {
+            let rel = self.rel(a);
+            !a.neg() && (rel.contains("rr_demand_agg_") || rel.strip_prefix(super::corpus::product_demand::PREFIX) == Some(head))
+        }))
     }
     /// A demanded relation's own demand (decision 0048's `x :- demand_x, …`), which bounds what its rule reads.
     pub fn own_demand(&self) -> Option<usize> {

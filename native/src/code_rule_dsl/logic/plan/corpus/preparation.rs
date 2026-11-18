@@ -119,7 +119,7 @@ pub struct Front {
 }
 
 /// The stages of `front`, in order, at which a debug build checks the version against the tree's passes.
-pub const STAGES: [&str; 10] = ["inputs", "prune", "simplify", "prune again", "reach", "negated demand", "demand", "undo", "rank", "text"];
+pub const STAGES: [&str; 11] = ["inputs", "prune", "simplify", "prune again", "node products", "reach", "negated demand", "demand", "undo", "rank", "text"];
 
 /// `version` pruned to the rules its outputs read (`front::prune`): what the bridged programs' check reads
 /// (`bridge::wanted`), before the run prepares the program.
@@ -135,6 +135,10 @@ pub fn pruned(version: Arc<Version>) -> Result<Arc<Version>, String> {
 /// it, the reaches in cycles made rows again, the counts below a bound made by rank, then the text passes. Their decisions reach the run's profile, as the
 /// tree's passes made them. `check` is called after each of `STAGES` with the version so far.
 pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, last: Option<Run>, check: &mut dyn FnMut(&'static str, &Arc<Version>)) -> Result<(Arc<Version>, Front, Run), String> {
+    front_of(version, dialect, last, check, true)
+}
+
+fn front_of(version: Arc<Version>, dialect: crate::code_rule_dsl::language::GrammarDialect, last: Option<Run>, check: &mut dyn FnMut(&'static str, &Arc<Version>), whole: bool) -> Result<(Arc<Version>, Front, Run), String> {
     let mut p = kept(FRONT, version, last)?;
     let mut at = |p: &mut Pipeline<'_>, stage: &'static str| -> Result<(), String> {
         let v = p.current()?.clone();
@@ -155,6 +159,10 @@ pub fn front(version: Arc<Version>, dialect: crate::code_rule_dsl::language::Gra
     at(&mut p, "simplify")?;
     p.program(&mut prune::Prune::default());
     at(&mut p, "prune again")?;
+    if whole {
+        p.program(&mut super::product_demand::BoundProducts::Whole);
+        at(&mut p, "node products")?;
+    }
     let mut reach = demand::ReachForm::default();
     p.program(&mut reach);
     at(&mut p, "reach")?;

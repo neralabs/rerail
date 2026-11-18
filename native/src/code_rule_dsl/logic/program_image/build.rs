@@ -254,6 +254,12 @@ impl<'p> Builder<'p> {
         self.enc.tree_rule(rule)?;
         Ok(id)
     }
+    /// Adds a rewritten tree rule and records which input rule it came from.
+    pub fn add_from(&mut self, rule: &Rule, source: RuleId) -> Result<RuleId, String> {
+        let id = self.add(rule)?;
+        self.enc.set_from(id.0 - self.enc.rule_base(), source);
+        Ok(id)
+    }
     /// Adds a copy of `rule`, one of `from`'s rules: its nodes as they are when `from`'s ids are this builder's,
     /// else each name by its text.
     pub fn copy(&mut self, from: &Version, rule: RuleRef<'_>) -> RuleId {
