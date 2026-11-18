@@ -231,7 +231,8 @@ pub(in crate::code_rule_dsl) struct Stage {
     /// (`view_reads::ViewDir`), and the view's number (1 + `device_chunk::VIEW_*`; 0: a relation).
     pub(in crate::code_rule_dsl) v_dir: u64,
     pub(in crate::code_rule_dsl) r_view: u32,
-    pub(in crate::code_rule_dsl) v_pad: u32,
+    /// 1 when the probed view is `child` probed by its parent, off the tape (`DevIndex::by_parent`).
+    pub(in crate::code_rule_dsl) v_parent: u32,
 }
 
 const _: () = assert!(std::mem::size_of::<Stage>() == 2320 && std::mem::size_of::<Stage>() % 16 == 0);
@@ -551,7 +552,7 @@ struct Stage {
     uint passed[16]; uint outputs[16];
     uint noutputs; uint ncols; uint agg[2];
     uint4 arith[8];
-    device const ViewDir* v_dir; uint r_view; uint v_pad;
+    device const ViewDir* v_dir; uint r_view; uint v_parent;
 };
 
 constant uint NONE = 0xffffffffu;
@@ -682,13 +683,74 @@ static inline void group_of(device const long* R, ulong at, uint index, thread c
     hi = lo + uint(g & 0xfffffffful);
 }
 
-// A binding's candidates: [lo, hi) of the relation's index group for its keys (or of the rows, without keys), and its
-// key values.
-static inline void candidates(constant Stage& s, device const long* L, uint t, device const long* R, thread long* kv, thread uint& lo, thread uint& hi) {
-    if (s.mode == 3) { lo = 0; hi = 1; return; }
-    if (s.nkeys == 0) { lo = 0; hi = s.nr; return; }
-    for (uint i = 0; i < s.nkeys && i < 8; i++) kv[i] = s.key_kind[i] == 1 ? L[ulong(s.key_slot[i]) * s.cap_in + t] : s.key_const[i];
+// The `child` view probed by its parent (decision 0353 step 4c, `Stage::v_parent`): the parent's children read off
+// the tape, its first child and each next sibling (`clif_view_child_first`, `clif_view_child_next`), with no index of
+// the view. A walk of a binding's candidates (`how`): 0 the rows [lo, hi), 1 an index group's entries [lo, hi), 2 a
+// parent's children from row lo, each step the next sibling's row (`NONE` ends it).
+static inline device const ViewDoc* vdoc(device const ViewDir* d, uint m) {
+    return (device const ViewDoc*)(d->chunk + d->rows[m].entry);
+}
+
+// A parent `key`'s children: its document by bisection of the directory on its key (the batch's documents are in
+// key order), its numbered node (`clif_view_number`), then its first child. The root's children are also the nodes
+// under unnumbered ones (a narrowed projection): its probe walks its document's rows, which `matches` tests.
+static inline void by_parent(constant Stage& s, long key, thread uint& lo, thread uint& hi, thread uint& how) {
+    device const ViewDir* d = s.v_dir;
+    lo = 0u; hi = 0u; how = 0u;
+    if (key < 0 || d->ndocs == 0u) return;
+    uint k = uint(ulong(key) >> 32);
+    uint a = 0u, b = d->ndocs;
+    while (b - a > 1u) {
+        uint m = (a + b) / 2u;
+        if (vdoc(d, m)->key <= k) a = m; else b = m;
+    }
+    if (vdoc(d, a)->key != k) return;
+    device const ViewRow& e = d->rows[a];
+    uint l = clif_view_number(d->chunk, e.entry, e.tape, e.view, e.lines, uint(ulong(key) & 0xfffffffful));
+    if (l == NONE) return;
+    uint first = e.rows[1];
+    if (l == 0u) { lo = first; hi = a + 1u < d->ndocs ? d->rows[a + 1u].rows[1] : s.nr; return; }
+    uint c = clif_view_child_first(d->chunk, e.entry, e.tape, e.view, e.lines, l);
+    if (c == NONE) return;
+    lo = first + c; hi = NONE; how = 2u;
+}
+
+// The next sibling's row of `child` row `r`, or `NONE`: its document as `vread` finds it, then the read.
+static inline uint child_next(constant Stage& s, uint r) {
+    device const ViewDir* d = s.v_dir;
+    device const ViewRow* rows = d->rows;
+    uint lo = 0u, hi = d->ndocs;
+    while (hi - lo > 1u) {
+        uint m = (lo + hi) / 2u;
+        if (rows[m].rows[1] <= r) lo = m; else hi = m;
+    }
+    device const ViewRow& e = rows[lo];
+    uint n = clif_view_child_next(d->chunk, e.entry, e.tape, e.view, e.lines, r - e.rows[1]);
+    return n == NONE ? NONE : e.rows[1] + n;
+}
+
+// A walk's candidate `q`: its row, and the next candidate.
+static inline uint cand_row(constant Stage& s, device const long* R, uint how, uint q) {
+    return how == 1u ? group_row(s, R, q) : q;
+}
+static inline uint cand_next(constant Stage& s, uint how, uint q) {
+    return how == 2u ? child_next(s, q) : q + 1u;
+}
+
+// The candidates of keys `kv` in relation R (`s`'s): its index group, a parent's children, or every row.
+static inline void probe(constant Stage& s, device const long* R, thread const long* kv, thread uint& lo, thread uint& hi, thread uint& how) {
+    if (s.nkeys == 0) { lo = 0; hi = s.nr; how = 0u; return; }
+    if (s.v_parent != 0u) { by_parent(s, kv[0], lo, hi, how); return; }
+    how = 1u;
     group_of(R, s.r_at, s.r_index, kv, s.nkeys, lo, hi);
+}
+
+// A binding's candidates (`probe`), and its key values.
+static inline void candidates(constant Stage& s, device const long* L, uint t, device const long* R, thread long* kv, thread uint& lo, thread uint& hi, thread uint& how) {
+    how = 0u;
+    if (s.mode == 3) { lo = 0; hi = 1; return; }
+    for (uint i = 0; i < s.nkeys && i < 8; i++) kv[i] = s.key_kind[i] == 1 ? L[ulong(s.key_slot[i]) * s.cap_in + t] : s.key_const[i];
+    probe(s, R, kv, lo, hi, how);
 }
 
 // Whether candidate place q (row r) matches the binding's keys and the relation's column tests.
@@ -708,13 +770,12 @@ static inline bool matches(constant Stage& s, device const long* R, uint r, thre
 // An aggregate's value over the binding's matching rows (mode 4, `Stage::agg`): 0 with `v`, 1 when it has none (a min
 // or max of no rows, or a tested value that differs), 2 when a sum passes 64 bits.
 static inline uint aggregate(constant Stage& s, device const long* L, uint t, device const long* R,
-                             uint lo, uint hi, thread const long* kv, thread long& v) {
-    bool keyed = s.nkeys > 0;
+                             uint lo, uint hi, uint how, thread const long* kv, thread long& v) {
     uint kind = s.agg[0] & 0xff;
     long cnt = 0, sum = 0, mn = 0, mx = 0;
     bool any = false, over = false;
-    for (uint q = lo; q < hi; q++) {
-        uint r = keyed ? group_row(s, R, q) : q;
+    for (uint q = lo; q < hi; q = cand_next(s, how, q)) {
+        uint r = cand_row(s, R, how, q);
         if (!matches(s, R, r, kv)) continue;
         cnt++;
         if (s.agg[1] == NONE) continue;
@@ -913,26 +974,25 @@ kernel void stage_count(device const long* L [[buffer(0)]], device const long* R
     uint n = min(totals[s.in_slot], s.cap_in);
     if (t >= n) { counts[t] = 0; return; }
     long kv[8];
-    uint lo, hi;
+    uint lo, hi, how;
     if (s.mode == 5) { counts[t] = uint(text_pass(s, L, t, R)); return; }
     if (s.mode == 6) { counts[t] = 1; return; }
     if (s.mode == 7) { counts[t] = uint(textop_pass(s, L, t, R, A)); return; }
-    candidates(s, L, t, R, kv, lo, hi);
+    candidates(s, L, t, R, kv, lo, hi, how);
     if (s.mode == 4) {
         long v = 0;
-        uint st = aggregate(s, L, t, R, lo, hi, kv, v);
+        uint st = aggregate(s, L, t, R, lo, hi, how, kv, v);
         if (st == 2 && s.counter != NONE) atomic_store_explicit(&counters[s.counter], 1u, memory_order_relaxed);
         counts[t] = uint(st == 0);
         return;
     }
-    bool keyed = s.mode != 3 && s.nkeys > 0;
     bool exists = s.mode == 1 || s.mode == 2;
     uint c = 0, p0 = 0;
     uint q_counts[16];
     for (uint m = 0; m < 16; m++) q_counts[m] = 0;
     bool found = false;
-    for (uint q = lo; q < hi; q++) {
-        uint r = keyed ? group_row(s, R, q) : q;
+    for (uint q = lo; q < hi; q = cand_next(s, how, q)) {
+        uint r = cand_row(s, R, how, q);
         if (s.mode == 3 ? !row_live(s, R, r) : !matches(s, R, r, kv)) continue;
         if (exists) { found = true; break; }
         p0++;
@@ -972,7 +1032,7 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
     uint at = offsets[t];
     if (at >= s.cap_out) return;
     long kv[8];
-    uint lo, hi;
+    uint lo, hi, how;
     if (s.mode == 5 || s.mode == 7) {
         if (offsets[t + 1] > at) write_row(s, L, t, R, 0, O, at);
         return;
@@ -985,9 +1045,9 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
     }
     if (s.mode == 4) {
         if (offsets[t + 1] <= at) return;
-        candidates(s, L, t, R, kv, lo, hi);
+        candidates(s, L, t, R, kv, lo, hi, how);
         long v = 0;
-        aggregate(s, L, t, R, lo, hi, kv, v);
+        aggregate(s, L, t, R, lo, hi, how, kv, v);
         write_row(s, L, t, R, 0, O, at);
         if ((s.agg[0] >> 8) & 1) O[ulong(s.bind_slot[0]) * s.cap_out + at] = v;
         return;
@@ -997,10 +1057,9 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
         if (offsets[t + 1] > at) write_row(s, L, t, R, 0, O, at);
         return;
     }
-    candidates(s, L, t, R, kv, lo, hi);
-    bool keyed = s.mode != 3 && s.nkeys > 0;
-    for (uint q = lo; q < hi && at < s.cap_out; q++) {
-        uint r = keyed ? group_row(s, R, q) : q;
+    candidates(s, L, t, R, kv, lo, hi, how);
+    for (uint q = lo; q < hi && at < s.cap_out; q = cand_next(s, how, q)) {
+        uint r = cand_row(s, R, how, q);
         if (s.mode == 3 ? !row_live(s, R, r) : !matches(s, R, r, kv)) continue;
         if (!defined(s, L, t, R, r)) continue;
         if (s.last != NONE) {
@@ -1021,11 +1080,11 @@ static inline bool witness_probe(constant Stage& b, device const long* L, uint t
         uint k = b.key_kind[i];
         kv[i] = k == 1 ? L[ulong(b.key_slot[i]) * cap_in + t] : (k == 2 ? rget(a, RA, ra, b.key_slot[i]) : b.key_const[i]);
     }
-    uint lo = 0, hi = b.nr;
-    if (b.nkeys > 0) group_of(R, b.r_at, b.r_index, kv, b.nkeys, lo, hi);
+    uint lo, hi, how;
+    probe(b, R, kv, lo, hi, how);
     bool found = false;
-    for (uint q = lo; q < hi; q++) {
-        uint r = b.nkeys > 0 ? group_row(b, R, q) : q;
+    for (uint q = lo; q < hi; q = cand_next(b, how, q)) {
+        uint r = cand_row(b, R, how, q);
         if (matches(b, R, r, kv)) { found = true; break; }
     }
     return found != (b.mode == 2);
@@ -1041,13 +1100,12 @@ kernel void witness_count(device const long* L [[buffer(0)]], device const long*
     uint n = min(totals[s.in_slot], s.cap_in);
     if (t >= n) { counts[t] = 0; return; }
     long kv[8];
-    uint lo, hi;
-    candidates(s, L, t, R, kv, lo, hi);
-    bool keyed = s.nkeys > 0;
+    uint lo, hi, how;
+    candidates(s, L, t, R, kv, lo, hi, how);
     uint nb = min(s.agg[0], 3u);
     uint found = 0;
-    for (uint q = lo; q < hi; q++) {
-        uint r = keyed ? group_row(s, R, q) : q;
+    for (uint q = lo; q < hi; q = cand_next(s, how, q)) {
+        uint r = cand_row(s, R, how, q);
         if (!matches(s, R, r, kv)) continue;
         bool all = true;
         if (nb > 0) all = witness_probe(bs[0], L, t, s.cap_in, s, R, r, R0);
@@ -2267,6 +2325,8 @@ pub(in crate::code_rule_dsl) struct DevIndex {
     moved: Option<std::rc::Rc<DevRel>>,
     /// Whether this call built it (a sort made), or found it the relation's already.
     pub(in crate::code_rule_dsl) built: bool,
+    /// No index: the `child` view probed by its parent reads the parent's children off the tape (`by_parent`).
+    by_parent: bool,
     /// Its block's buffer, taken once the index has its room: what its builder and its probes bind. A block with no
     /// slab of its own is bound by a wrap of its used extent (`Block::gpu_buffer`), which a buffer taken before the
     /// index was added (its relation's) does not reach.
@@ -2303,8 +2363,10 @@ fn bind_right(stage: &mut Stage, rel: &DevRel, index: Option<&DevIndex>) {
     stage.r_dead = rel.dead;
     // A relation reads none: a stage bound before to a view reads its new relation, not the view.
     (stage.v_dir, stage.r_view) = rel.view.as_ref().map_or((0, 0), |v| (v.dir, v.kind));
+    stage.v_parent = 0;
     if let Some(ix) = index {
         stage.r_index = ix.index;
+        stage.v_parent = u32::from(ix.by_parent);
     }
 }
 
@@ -2683,6 +2745,19 @@ impl Batch {
         Ok(std::mem::take(&mut self.done))
     }
 
+    /// `rel`, the `child` view read in place, probed by its parent (its column 0): no index of it is built, as a
+    /// stage reads the parent's children off the tape (decision 0353 step 4c; the kernels' `by_parent`). `None` for
+    /// any other relation or key.
+    pub(in crate::code_rule_dsl) fn by_parent(&self, rel: &DevRel, cols: &[usize]) -> Result<Option<DevIndex>, Error> {
+        use crate::code_rule_dsl::facts::vtab::syntax::device_chunk::VIEW_CHILD;
+        let Some(v) = &rel.view else { return Ok(None) };
+        if v.kind != 1 + VIEW_CHILD || cols != [0] {
+            return Ok(None);
+        }
+        let home = rel.home.clone().expect("a view's relation of no columns");
+        Ok(Some(DevIndex { index: NONE, rows: rel.rows, moved: None, built: false, by_parent: true, buffer: bound(&home)? }))
+    }
+
     /// `rel`'s index on its columns `cols`, the relation's own (decision 0325 step 5): found where it was built
     /// before (by any batch, kept with the relation), else built by this batch's work into the relation's block
     /// (read by the stages after it), and marked built when the batch is done. A relation whose block has no room for
@@ -2704,10 +2779,10 @@ impl Batch {
         let room = {
             let _g = home.ix.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(i) = r.find_index(&key, rel.rows as u32) {
-                return Ok(DevIndex { index: i as u32, rows: rel.rows, moved: None, built: false, buffer: bound(&home)? });
+                return Ok(DevIndex { index: i as u32, rows: rel.rows, moved: None, built: false, by_parent: false, buffer: bound(&home)? });
             }
             if let Some(b) = self.building.iter().find(|b| std::ptr::eq(b.rel, r) && b.room.key[..b.room.ncols] == *key && b.room.rows_n as usize == rel.rows) {
-                return Ok(DevIndex { index: b.room.index as u32, rows: rel.rows, moved: None, built: false, buffer: bound(&home)? });
+                return Ok(DevIndex { index: b.room.index as u32, rows: rel.rows, moved: None, built: false, by_parent: false, buffer: bound(&home)? });
             }
             // SAFETY: under the block's index lock; the relation's rows are written (or are by this batch's work
             // before the build, which its passes order).
@@ -2767,7 +2842,7 @@ impl Batch {
         let index = room.index as u32;
         let before = Building::descriptor(std::ptr::from_ref(r));
         self.building.push(Building { home, rel: std::ptr::from_ref(r), room, before });
-        Ok(DevIndex { index, rows: n, moved: None, built: true, buffer })
+        Ok(DevIndex { index, rows: n, moved: None, built: true, by_parent: false, buffer })
     }
 
     /// The columns `cols` (its source's) of a view made from a chunk block on the device (decision 0289 §2), into

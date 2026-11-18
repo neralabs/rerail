@@ -1446,6 +1446,12 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
             return Ok((dev, Some(ix.clone()), place));
         }
         let by: Vec<usize> = cols.iter().map(|&c| place[c] as usize).collect();
+        // `child` probed by its parent: its children off the tape, no index of the view (decision 0353 step 4c).
+        if let Some(ix) = batch.by_parent(&dev, &by).map_err(|e| format!("{e:?}: a parent probe"))? {
+            let ix = Rc::new(ix);
+            e.indexes.push((key, ix.clone()));
+            return Ok((dev, Some(ix), place));
+        }
         let ix = Rc::new(batch.index(&dev, &by).map_err(|e| format!("{e:?}: an index of {} rows", dev.rows))?);
         // Built here, or found the relation's own already (decision 0325 step 5).
         if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }

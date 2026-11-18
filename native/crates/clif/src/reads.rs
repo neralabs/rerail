@@ -124,6 +124,10 @@ pub const READS: &[Read] = &[
     // LZ4's block decoder alone (`z_lz4`, which `tape_z_block` decodes with): the tape crate's `F16Z` decodes with
     // it, so every reader of a 16z tape has the one decoder (decision 0353 step 4b).
     Read { family: Family::Tape, name: "tape_lz4", params: &[I32, I32, I64, I64], ret: I64, hot: false, body: lz4_block },
+    // `child` probed by its parent, off the tape (decision 0353 step 4c): no index of the view.
+    Read { family: Family::View, name: "view_child_first", params: &[I32], ret: I32, hot: false, body: crate::view_reads::child_first },
+    Read { family: Family::View, name: "view_child_next", params: &[I32], ret: I32, hot: false, body: crate::view_reads::child_next },
+    Read { family: Family::View, name: "view_number", params: &[I32], ret: I32, hot: false, body: crate::view_reads::number },
 ];
 
 /// The reads the kernels do not include: they decode a 16z block through `tape_z_block`, which inlines the decoder.
