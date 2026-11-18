@@ -1214,7 +1214,7 @@ impl AskedByRule {
                         }
                     }
                 }
-                next.insert(id, readers);
+                next.insert(r.id(), readers);
             }
         }
         self.by = next;

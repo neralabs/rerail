@@ -37,14 +37,10 @@ impl ProgramPass for Prune {
         let native_reads: HashMap<&str, Vec<&str>> = about.natives.iter().map(|n| (v.rel_name(n.rel), n.reads.iter().map(|&r| v.rel_name(r)).collect())).collect();
         let reads = |i: usize| -> Vec<String> { rules[i].body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel()).to_owned()).collect() };
         // A reader the version neither declares nor makes is another program's: a part prepared alone (decision
-        // 0345) whose request another part reads. Whether it is read is not this version's to know, so its ask is
-        // kept. In a whole program every reader is declared or has rules.
+        // 0345) whose request another part reads, or a reader gone from the program (merged, renamed or inlined since
+        // the requests were made, Typing-support's 52e04565d). Whether it is read is not this version's to know, so
+        // its ask is kept, as an ungated rule is. A reader it declares and makes nothing of is unread: its ask goes.
         let outside = |b: &str| v.decl_of(b).is_none() && !body_of.contains_key(b);
-        // A reader the program no longer has (merged into another, renamed, inlined since the requests were made)
-        // cannot be asked whether it is needed: its requests are kept, as an ungated rule is (the tree's `reach`).
-        let d = cx.get::<crate::code_rule_dsl::logic::plan::fields::FieldsData>()?;
-        let f = crate::code_rule_dsl::logic::plan::fields::Fields::over(v, &d);
-        let has = |rel: &str| body_of.contains_key(rel) || f.is_input(rel) || native_reads.contains_key(rel) || f.facts(rel).is_some();
         let mut kept = vec![false; rules.len()];
         let (mut need, mut todo): (BTreeSet<String>, Vec<String>) = (BTreeSet::new(), roots.clone());
         loop {
@@ -66,7 +62,7 @@ impl ProgramPass for Prune {
                 if let Some(by) = by
                     && !kept[i]
                     && need.contains(head(i))
-                    && by.iter().any(|b| need.contains(b) || outside(b) || !has(b))
+                    && by.iter().any(|b| need.contains(b) || outside(b))
                 {
                     kept[i] = true;
                     todo.extend(reads(i));

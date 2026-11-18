@@ -2031,7 +2031,7 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
     // the data-layer pack).
     if parsed.len() > 1 {
         for p in parsed.iter_mut() {
-            p.undo_on_request();
+            p.undo_on_request()?;
         }
     }
     // A run that makes guests bounds each program's rules to the documents it shows (decision 0058 §1); a run that

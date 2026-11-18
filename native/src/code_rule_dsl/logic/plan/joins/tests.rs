@@ -763,7 +763,7 @@ fn a_maintenance_rule_starts_from_its_source_rules_order() {
     b.rule().head("g__ins", &[x.clone(), z.clone()]).atom("a__plus", &[x.clone()]).atom("e", &[x.clone(), y.clone()]).atom("c", &[y.clone(), z.clone()]).source(placed.id(1)).finish().unwrap();
     let (form, _) = b.finish().unwrap();
     let mut vs = Versions::of_placed(placed);
-    let k = vs.push(Placed::derived(form, None));
+    let k = vs.push(Placed::whole(form));
     let del = vs.at(RuleKey::new(k, 0));
     let src = del.origin().expect("the overdelete's source rule");
     assert_eq!(src.rel(src.head()), "h");
