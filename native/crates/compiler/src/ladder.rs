@@ -84,11 +84,24 @@ impl Ids {
     }
 }
 
-pub const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/bitlex_ladder");
+/// The ladder's directory (`bitlex_ladder/` beside this crate's `src/`), found as the program runs: above the program,
+/// `CARGO_MANIFEST_DIR` or the working directory. Not written into the build (decision 0224): with its checkout's path
+/// in, this crate and every crate above it were a different crate in every checkout, for every profile.
+pub fn dir() -> String {
+    let ladder = std::path::Path::new(file!()).parent().and_then(std::path::Path::parent).expect("src/ladder.rs").join("bitlex_ladder");
+    let starts = [std::env::current_exe().ok(), std::env::var_os("CARGO_MANIFEST_DIR").map(Into::into), std::env::current_dir().ok()];
+    starts
+        .into_iter()
+        .flatten()
+        .find_map(|start| start.ancestors().map(|a| a.join(&ladder)).find(|d| d.is_dir()))
+        .unwrap_or_else(|| panic!("no directory above the program, CARGO_MANIFEST_DIR or the working directory holds {}", ladder.display()))
+        .to_string_lossy()
+        .into_owned()
+}
 
 /// The ladder's files, in order.
 pub fn steps() -> Vec<(String, String)> {
-    steps_in(DIR)
+    steps_in(&dir())
 }
 
 /// The steps of a ladder in `dir`, in order: its `.bitlex` files (not those of its

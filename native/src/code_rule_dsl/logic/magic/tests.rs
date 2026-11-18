@@ -3,7 +3,7 @@ use crate::code_rule_dsl::logic::front::prune;
 use crate::code_rule_dsl::logic::rr::parse;
 
 fn root() -> std::path::PathBuf {
-    std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src/code_rule_dsl/logic")
+    rerail_store::source_tree::native().join("src/code_rule_dsl/logic")
 }
 
 fn strings(items: &[String]) -> String {

@@ -50,6 +50,20 @@ impl std::fmt::Display for GrammarDialect {
     }
 }
 
+/// How a dialect's patterns write a metavariable (`GrammarDialect::pattern_syntax`, generated).
+#[derive(Clone, Copy)]
+enum PatternSyntax {
+    /// The syntax of the ast-grep language whose grammar parses the dialect.
+    AstGrep(SupportLang),
+    /// `$` as it stands: an identifier character in the language, as in ast-grep's own JavaScript
+    /// and TypeScript (the vendored ECMAScript grammars).
+    Dollar,
+    /// `$X`, `$_`, `$$X` and `$$$` written with `µ` for `$` (`own_metavariables`), as ast-grep writes
+    /// them for its Python: the vendored grammars but ECMAScript's, the dialects Rerail parses itself
+    /// (Blade's Forte, `.rr`, the format strings, ESLint's directives), and a language left out of the build.
+    Micro,
+}
+
 impl Language for GrammarDialect {
     fn kind_to_id(&self, kind: &str) -> u16 {
         self.kind_id(kind)
@@ -60,16 +74,18 @@ impl Language for GrammarDialect {
     }
 
     fn expando_char(&self) -> char {
-        match self.support() {
-            Some(lang) => lang.expando_char(),
-            None => OWN_EXPANDO,
+        match self.pattern_syntax() {
+            PatternSyntax::AstGrep(language) => language.expando_char(),
+            PatternSyntax::Dollar => '$',
+            PatternSyntax::Micro => OWN_EXPANDO,
         }
     }
 
     fn pre_process_pattern<'q>(&self, query: &'q str) -> Cow<'q, str> {
-        match self.support() {
-            Some(language) => language.pre_process_pattern(query),
-            None => own_metavariables(query),
+        match self.pattern_syntax() {
+            PatternSyntax::AstGrep(language) => language.pre_process_pattern(query),
+            PatternSyntax::Dollar => Cow::Borrowed(query),
+            PatternSyntax::Micro => own_metavariables(query),
         }
     }
 
@@ -102,9 +118,8 @@ impl LanguageExt for GrammarDialect {
     /// The grammar the registry names: one `build.rs` generates from a vendored grammar (Python,
     /// TypeScript, TSX and JavaScript, which carry patches: `grammars/tree-sitter-{python,
     /// typescript,javascript}/PATCHES.md`), else ast-grep's. ast-grep is built without its Python,
-    /// TypeScript and JavaScript parsers, so `SupportLang` only lends these dialects its pattern
-    /// syntax. Test-only dialects are ast-grep's. Blade has none: Rerail's port of Forte parses it
-    /// (`blade::forte`).
+    /// TypeScript and JavaScript parsers, so `PatternSyntax` keeps their pattern syntax. Test-only
+    /// dialects are ast-grep's. Blade has none: Rerail's port of Forte parses it (`blade::forte`).
     fn get_ts_language(&self) -> TSLanguage {
         self.ts_language()
             .unwrap_or_else(|| panic!("{self} is not parsed with tree-sitter"))
@@ -118,7 +133,10 @@ impl GrammarDialect {
         if !self.built() {
             return None;
         }
-        registry_grammar(self).or_else(|| self.support().map(|lang| lang.get_ts_language()))
+        registry_grammar(self).or_else(|| match self.pattern_syntax() {
+            PatternSyntax::AstGrep(language) => Some(language.get_ts_language()),
+            PatternSyntax::Dollar | PatternSyntax::Micro => None,
+        })
     }
 }
 

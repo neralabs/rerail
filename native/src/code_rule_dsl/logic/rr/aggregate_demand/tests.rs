@@ -129,7 +129,7 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
     let file = crate::code_rule_dsl::fixtures::temp();
     let dump = zstd::decode_all(
         std::fs::File::open(
-            std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
+            rerail_store::source_tree::native()
                 .join("src/code_rule_dsl/logic/plan/golden/facts.sql.zst"),
         )
         .unwrap(),
