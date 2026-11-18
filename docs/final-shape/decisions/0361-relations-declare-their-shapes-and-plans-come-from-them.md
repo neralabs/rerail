@@ -1,6 +1,6 @@
 # 0361. Relations declare their shapes, and plans come from them
 
-Status: decided (2026-11-17), being built: steps 1, 2, 3 and 7 built (2026-11-18). The user: "a directive which allows us to add enough data to the
+Status: decided (2026-11-17), being built: steps 1, 2, 3 and 7 built, step 4's planner side built (2026-11-18). The user: "a directive which allows us to add enough data to the
 relations in the .rr files that we can provide good default shapes for them (or at least name an algorithm or
 something) so that we don't need to pay for planning, or only in exceptional circumstances."
 
@@ -269,3 +269,60 @@ was 48 (41 local).
 - `plan::tests::explain_lists_each_relations_layout`: the lines in a planner run's decisions.
 
 With them, 268 tests of the planner, the image, the profile and `rr` pass (M1 Max).
+
+## Step 4: estimates from the facts (2026-11-18), the planner's side
+
+`plan::shapes::Shapes` holds each relation's facts (step 3's `Layouts`) by name, with its declared width, in the
+planner's statistics (`Stats::shapes`), shared by a component's model as the kind sets are. A column's distinct values
+come from the facts where one answers it:
+
+| Fact | The column's distinct values, of `rows` rows |
+|---|---|
+| `key(c)` | `rows` |
+| `size(<= m per c)` | `rows / m` |
+| `fanout(c -> …, one / few / ~N)` | `rows / 1`, `rows / 3`, `rows / N` (`many`: no estimate) |
+| `order(c dense in g)`, `g` a fan-out's source | at most its probe's class bound: 1, or `FEW` (16) |
+
+`few` is priced at 3 rows a probe (`FEW_ROWS`): the class bounds it at 16, and the batch estimate it replaces priced a
+parent column at a third of its rows, so `child`'s `p` plans as before.
+
+Where they are used:
+- **A batch's base relations** (T's SQL waves, `Inputs::batch`): each column from its facts, else by its name as
+  before (`d`, `kind`, `f`, `depth`, `s`: the columns no fact answers).
+- **An unmeasured column** (`Model::ndv_or_default`): the facts' estimate before the prior (a relation of the
+  component being solved: 200 values, else 1).
+- **A relation the facts answer whole** (every column): its lazy statistics are not requested (`Model::deferred` is
+  false) and not made (`Model::resolve` writes the facts' estimates). `RERAIL_PLAN_CACHE_COUNTS` counts them
+  ("answered by layouts").
+
+`RERAIL_LAYOUT_ESTIMATES=off` plans from statistics alone, as before (a measurement aid).
+
+**Measured** (corpus0, 300 files x B-now's 317 rules, cold, a profiling build on the M3 under load 25-70; off, on,
+off, on, each with its own store, costs and images):
+
+| | off | on | off | on |
+|---|---|---|---|---|
+| findings | 463 `d067ec2ebf6f` | 463 `d067ec2ebf6f` | 463 `d067ec2ebf6f` | 463 `d067ec2ebf6f` |
+| instructions | 925 G | 930 G | 955 G | 946 G |
+| statistics: batches, relations | 258, 357 | 257, 353 | 324, 432 | 315, 425 |
+| answered by layouts | 0 | 0 | 0 | 0 |
+| orders searched | 13,850 | 13,734 | 14,585 | 14,143 |
+
+The findings are the same. The work is within the runs' spread, which is wider than any change, so this measures
+nothing of the estimates' effect on plans.
+
+**What it does not yet do.** No relation was answered whole, so no statistics were saved. The facts answer few
+columns:
+- A derived relation takes `local` mostly (step 3: 18 of a Python program's 273 are keyed).
+- Of `core.rr`'s base relations, only `child` is answered whole. `node`'s `d`, `kind`, `start` and `end`, `field`'s
+  `f`, `kind`'s `k` and `text`'s `s` have no fact that gives their distinct values.
+
+In the same run's profile (85.9 s of own CPU), statistics are about 3%: `statistics` (inside `make_plan`) 1.28 s,
+`statistics: relations` 0.71 s, live statistics 0.26 s, the base rows measured 0.24 s, exact pair statistics
+0.15 s. Planning (search, kept plans) is about 1%. Removing the statistics needs facts that answer those columns, or
+statistics made only for the columns no fact answers; either changes what step 4 decided ("no statistics requested
+for a relation with a shape"), so it is the user's call.
+
+**Tests.** `plan::tests::a_layout_prices_the_columns_its_facts_answer` covers `child`'s three columns, a relation
+with a column no fact answers, and inferred facts pricing a derived relation. 429 tests of the planner, the image,
+`rr`, the corpus, sessions, retain and maintain mode pass (M3).

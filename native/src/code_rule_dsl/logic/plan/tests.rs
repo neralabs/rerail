@@ -3013,3 +3013,24 @@ fn explain_lists_each_relations_layout() {
     assert!(lines.iter().any(|l| l == "e: key(c) (declared), tree(p -> c) (declared)"), "{lines:?}");
     assert!(lines.iter().any(|l| l.starts_with("f: key(c) (by rule #0000), tree(p -> c) (by rule #0000)")), "{lines:?}");
 }
+
+/// A layout's estimates (decision 0361 step 4): `child`'s key `c` one value a row, its few fan-out `p` a value per
+/// three rows, its `i` dense within `p` at most a few-probe's 16; a relation of facts on every column needs no
+/// statistics, one with a column no fact answers does.
+#[test]
+fn a_layout_prices_the_columns_its_facts_answer() {
+    let p = parse(".decl child2(p: node, c: node, i: number)\n.input child2\n.layout child2 key(c) fanout(p -> c, few) order(i dense in p)\n\
+                   .decl part(p: node, c: node, s: symbol)\n.input part\n.layout part key(c)\n\
+                   .decl o(c: node, p: node)\n.output o\no(c, p) :- child2(p, c, _), part(_, c, _).\n").unwrap();
+    let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
+    let s = shapes::Shapes::of_version(&v);
+    assert_eq!(s.ndv("child2", 1, 900.0), Some(900.0));
+    assert_eq!(s.ndv("child2", 0, 900.0), Some(300.0));
+    assert_eq!(s.ndv("child2", 2, 900.0), Some(16.0));
+    assert_eq!(s.ndv("part", 0, 900.0), None);
+    assert!(s.answers("child2") && !s.answers("part"));
+    // Inferred facts price their columns too: `o`'s `c` is `child2`'s key, its `p` the few fan-out.
+    assert_eq!(s.ndv("o", 0, 60.0), Some(60.0));
+    assert_eq!(s.ndv("o", 1, 60.0), Some(20.0));
+    assert!(s.answers("o"));
+}
