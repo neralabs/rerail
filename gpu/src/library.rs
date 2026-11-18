@@ -1,5 +1,6 @@
 //! The UKL library's device-wide operations, as calls a host plan makes (decision 0400 §5): the kernels are the
-//! library's (`ukl/scan.h`, `ukl/compact.h`), compiled once a process; the plan of launches is here. Each call
+//! library's (`ukl/scan.h`, `ukl/compact.h`, `ukl/histogram.h`, `ukl/radix.h`), compiled once a process; the plan
+//! of launches is here. Each call
 //! enqueues its work on the caller's queue and returns; the caller flushes and awaits.
 
 use crate::device::{BufferRef, ComputeQueue};
@@ -7,7 +8,7 @@ use crate::kernels::{alloc, launch, program, Program};
 use crate::Pod;
 
 /// The library's kernels, as one program.
-const SOURCE: &str = "#include <ukl/scan.h>\n#include <ukl/compact.h>\n";
+const SOURCE: &str = "#include <ukl/scan.h>\n#include <ukl/compact.h>\n#include <ukl/histogram.h>\n#include <ukl/radix.h>\n";
 
 fn library() -> Result<&'static Program, String> {
     program("ukl_library", SOURCE)
@@ -63,4 +64,105 @@ pub fn compact_u32(queue: &ComputeQueue, values: &BufferRef, flags: &BufferRef, 
         .buffer("offsets", offsets)
         .buffer("out", out)
         .run(&[n.div_ceil(threads) as u64], &[threads as u64])
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct HistogramArgs {
+    width: u32,
+}
+unsafe impl Pod for HistogramArgs {}
+
+/// A code type the histogram counts.
+pub trait Code: Pod {
+    const KERNEL: &'static str;
+}
+impl Code for u16 {
+    const KERNEL: &'static str = "ukl_histogram_u16";
+}
+impl Code for u32 {
+    const KERNEL: &'static str = "ukl_histogram_u32";
+}
+
+/// `H[p * width + c]` = how many of partition `p`'s codes (`codes[offsets[p]..offsets[p + 1]]`) are `c`, for each of
+/// the `parts` partitions and `c` below `width`. A code at or above `width` sets `bad[0]` to 1 (the input is invalid).
+pub fn histogram<C: Code>(queue: &ComputeQueue, codes: &BufferRef, offsets: &BufferRef, parts: u32, width: u32, h: &BufferRef, bad: &BufferRef) -> Result<(), String> {
+    launch(queue, library()?.function(C::KERNEL)?)
+        .value("args", &HistogramArgs { width })
+        .buffer("codes", codes)
+        .buffer("offsets", offsets)
+        .buffer("H", h)
+        .buffer("bad", bad)
+        .run(&[parts as u64], &[256])
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct RadixArgs {
+    n: u32,
+    shift: u32,
+    tiles: u32,
+}
+unsafe impl Pod for RadixArgs {}
+
+/// A key type the radix sort sorts.
+pub trait RadixKey: Pod {
+    const HIST: &'static str;
+    const SCATTER: &'static str;
+}
+impl RadixKey for u32 {
+    const HIST: &'static str = "ukl_radix_u32_hist";
+    const SCATTER: &'static str = "ukl_radix_u32_scatter";
+}
+impl RadixKey for u64 {
+    const HIST: &'static str = "ukl_radix_u64_hist";
+    const SCATTER: &'static str = "ukl_radix_u64_scatter";
+}
+
+/// Rows a radix sort's threadgroup takes, a digit a pass.
+pub const RADIX_TILE: u32 = 1024;
+
+/// Where a sort left its result: a pass reads one pair of buffers and writes the other.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sorted {
+    /// In `keys` and `values`.
+    InPlace,
+    /// In `tmp_keys` and `tmp_values`.
+    InTemp,
+}
+
+/// `keys[..n]` and their `values` sorted by the keys' low `bits` bits, stably (equal keys keep their order): a pass
+/// an 8-bit digit, low digit first, between the two pairs of buffers. Keys' bits above `bits` are not looked at.
+pub fn radix_sort_pairs<K: RadixKey>(
+    queue: &ComputeQueue,
+    keys: &BufferRef,
+    values: &BufferRef,
+    tmp_keys: &BufferRef,
+    tmp_values: &BufferRef,
+    n: u32,
+    bits: u32,
+) -> Result<Sorted, String> {
+    let lib = library()?;
+    let (hist_kernel, scatter_kernel) = (lib.function(K::HIST)?, lib.function(K::SCATTER)?);
+    let tiles = n.div_ceil(RADIX_TILE).max(1);
+    let hist = alloc::<u32>(256 * tiles as usize)?;
+    let offsets = alloc::<u32>(256 * tiles as usize + 1)?;
+    let mut from: (&BufferRef, &BufferRef) = (keys, values);
+    let mut to: (&BufferRef, &BufferRef) = (tmp_keys, tmp_values);
+    let passes = bits.div_ceil(8);
+    for pass in 0..passes {
+        let args = RadixArgs { n, shift: pass * 8, tiles };
+        launch(queue, hist_kernel).value("args", &args).buffer("keys", from.0).buffer("hist", &hist).run(&[tiles as u64], &[256])?;
+        scan_exclusive_u32(queue, &hist, &offsets, 256 * tiles)?;
+        launch(queue, scatter_kernel)
+            .value("args", &args)
+            .buffer("keys", from.0)
+            .buffer("values", from.1)
+            .buffer("offsets", &offsets)
+            .buffer("outKeys", to.0)
+            .buffer("outValues", to.1)
+            .run(&[tiles as u64], &[256])?;
+        std::mem::swap(&mut from, &mut to);
+    }
+    Ok(if passes % 2 == 0 { Sorted::InPlace } else { Sorted::InTemp })
 }

@@ -555,6 +555,61 @@ Progress (2026-11-18):
     - Separately, `rerail-accel` does not build on Linux. This predates this work: it declares `rerail-blocks`
       for macOS only but uses it everywhere.
 
+- **Step 5: the library, most of it done** (2026-11-18). The library is Rerail's UKL headers in
+  `native/crates/ukl/lib/ukl/`. `rerail-ukl` carries them, and every kernel, hand-written or generated, finds them
+  as `<ukl/NAME.h>`.
+  - **Layers.** `backend.h` is the one per-backend file: qualifiers, bit counts, shuffles, ballot, match, barriers
+    and atomics, a section per backend. A new backend is a new section there. Every other header is written once
+    over it:
+
+    | Header | What it holds | Level |
+    |---|---|---|
+    | `bits.h` | masks, fields, rank, select, bitsets (test, atomic set, next set bit) | thread |
+    | `memory.h` | values at any byte address of a block, read in place: plain and coherent loads, coherent stores, bit fields, packed arrays, atomics at byte addresses (the helpers every generated tape-read file carries today, once) | thread |
+    | `simd.h` | sum, min, max, inclusive and exclusive scans, votes, match, broadcast | SIMD group |
+    | `group.h` | sum, exclusive scan with total | threadgroup |
+    | `lz4.h` | an LZ4 block decoded by a SIMD group, output placed by the caller (the 16z piece's two parts); length, literal copy and overlapping match copy are pieces of their own | SIMD group |
+    | `histogram.h` | windowed counting in threadgroup memory; the per-partition histogram kernels (u16 and u32 codes) | threadgroup, device |
+    | `scan.h`, `compact.h` | exclusive scan (output `n + 1`, the total last) and compaction, written for no forward progress between threadgroups | device |
+    | `radix.h` | stable LSD radix sort of u32 and u64 keys with a u32 value, an 8-bit digit a pass | device |
+
+  - **Native and reference forms.** Each operation a backend has natively keeps its reference form beside it:
+    - Metal's `simd_sum`, `simd_prefix_*_sum` and so on;
+    - CUDA's `__reduce_*_sync` from sm 8.0, and `__match_any_sync` from sm 7.0.
+
+    The tests check each native form against its reference on each device.
+  - **Linked by inclusion.** A kernel includes what it uses, and the backend's compiler (the Metal front end,
+    NVRTC) sees one translation unit and inlines across it. A device-code link (NVRTC's relocatable code with
+    nvJitLink, Metal's dynamic libraries) would compile the library once, but it blocks inlining across the call
+    and costs a call per use. That cost lands in the per-element primitives (a load, a rank), which must be inline
+    to match hand-written code. The kernel store (0395) caches the compiled program, so a warm process compiles
+    nothing either way.
+  - **The host's calls** (`rerail_gpu::library`): `scan_exclusive_u32`, `compact_u32`, `histogram`,
+    `radix_sort_pairs`. Each enqueues on the caller's queue. `rerail_gpu::kernels` compiles a UKL program at run time
+    for the process's device and binds a launch's arguments by name.
+  - **Tests** (`gpu/src/library_tests.rs`): each primitive against its Rust reference on random inputs and edge
+    sizes. LZ4 is checked against lz4-sys's blocks (the 16z compressor's) and against malformed blocks. 12 tests,
+    passing on Metal (Mac), on CUDA on a GB10 (sm_121) and on a V100 (sm_70). Every header preprocesses alone as
+    clang does, for Metal, sm_121 and sm_70 (`rerail-ukl`).
+  - **Speed against today's Metal** (`accel`'s `library_speed`, `--ignored`): the same passes on the same input,
+    the command buffers' GPU time, warmed, the median of nine. Measured on the Mac with a load average of 14, which
+    touches GPU time little:
+
+    | Operation | `accel`'s kernels | UKL library | Ratio |
+    |---|---|---|---|
+    | Exclusive scan, 16M u32 | 0.742 ms | 0.701 ms | 0.95× |
+    | Radix sort, 4M u32 keys with rows (4 passes) | 0.928 ms | 0.854 ms | 0.92× |
+
+  - **Still to do in step 5:**
+    - the work queue of a persistent dispatch (`metal_work_queue.metal`, 0027);
+    - a hash table's build and probe (the table above names `table.metal`, which is count tables, so the hash table
+      is new);
+    - the histogram's speed against `accel`'s `hist` (its call is inside the executor's jobs);
+    - the scan of popcounts that `accel`'s `scan_block` also does.
+
+    The kernels already written move onto the library in steps 6 and 7: the generated tape reads call `memory.h`,
+    the 16z decoder calls `lz4.h`, and `accel`'s scan, sort and histogram are the library's calls.
+
 Steps 1, 2 and E1 are small and settle the bets the rest rests on: the preprocessor, the shim, and in-place
 bandwidth. Step 3 can run beside them.
 

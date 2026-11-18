@@ -75,5 +75,22 @@ UKL_INLINE uint32_t ukl_sg_first(bool b)
     return m == 0u ? UKL_NONE : ukl_ctz32(m);
 }
 
+// The lanes whose `v` equals this lane's, as a mask (this lane's bit set). With it, a lane's rank among the equal
+// lanes before it (`ukl_rank32(m, lane)`) and whether it is the last of them (`m >> lane == 1`): a stable order within
+// the group with no atomic deciding it (the radix sort's scatter).
+UKL_INLINE uint32_t ukl_sg_match_ref(uint32_t v)
+{
+    uint32_t m = 0u;
+    for (uint32_t j = 0u; j < UKL_SIMD_WIDTH; j++)
+        if (ukl_sg_shuffle(v, j) == v)
+            m |= 1u << j;
+    return m;
+}
+#if defined(UKL_NATIVE_SG_MATCH)
+UKL_INLINE uint32_t ukl_sg_match(uint32_t v) { return ukl_sg_match_native(v); }
+#else
+UKL_INLINE uint32_t ukl_sg_match(uint32_t v) { return ukl_sg_match_ref(v); }
+#endif
+
 // Lane `from`'s value, in every lane.
 UKL_INLINE uint32_t ukl_sg_broadcast(uint32_t v, uint32_t from) { return ukl_sg_shuffle(v, from); }

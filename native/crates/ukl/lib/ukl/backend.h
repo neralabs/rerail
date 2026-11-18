@@ -61,6 +61,8 @@ UKL_INLINE uint32_t ukl_atomic_cas(UKL_GLOBAL uint32_t* p, uint32_t e, uint32_t 
     return ~e;
 }
 UKL_INLINE void ukl_fence_device() { atomic_thread_fence(mem_flags::mem_device, memory_order_seq_cst, thread_scope_device); }
+// A relaxed add on a threadgroup word.
+UKL_INLINE uint32_t ukl_atomic_add_local(UKL_LOCAL uint32_t* p, uint32_t v) { return atomic_fetch_add_explicit((threadgroup atomic_uint*)p, v, memory_order_relaxed); }
 
 // Native forms.
 #define UKL_NATIVE_SG_REDUCE 1
@@ -105,6 +107,11 @@ UKL_INLINE uint32_t ukl_atomic_min(UKL_GLOBAL uint32_t* p, uint32_t v) { return 
 UKL_INLINE uint32_t ukl_atomic_max(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomicMax(p, v); }
 UKL_INLINE uint32_t ukl_atomic_cas(UKL_GLOBAL uint32_t* p, uint32_t e, uint32_t n) { return atomicCAS(p, e, n); }
 UKL_INLINE void ukl_fence_device() { __threadfence(); }
+UKL_INLINE uint32_t ukl_atomic_add_local(UKL_LOCAL uint32_t* p, uint32_t v) { return atomicAdd(p, v); }
+
+// The lanes holding the same value as this one (Volta and later).
+#define UKL_NATIVE_SG_MATCH 1
+UKL_INLINE uint32_t ukl_sg_match_native(uint32_t v) { return __match_any_sync(0xffffffffu, v); }
 
 #if __CUDA_ARCH__ >= 800
 #define UKL_NATIVE_SG_REDUCE 1

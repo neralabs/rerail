@@ -4,7 +4,7 @@
 
 use crate::device::{ComputeQueue, BACKEND};
 use crate::kernels::{alloc, buffer_of, launch, program, read, Program};
-use crate::library::{compact_u32, scan_exclusive_u32};
+use crate::library::{compact_u32, histogram, radix_sort_pairs, scan_exclusive_u32, RadixKey, Sorted};
 use crate::Pod;
 
 const TESTS: &str = include_str!("library_tests.ukl");
@@ -200,10 +200,10 @@ fn simd_group_operations_and_their_references() {
         })
         .collect();
     let inb = buffer_of(&vals).unwrap();
-    let out = alloc::<u32>(n as usize * 14).unwrap();
+    let out = alloc::<u32>(n as usize * 16).unwrap();
     launch(&q, p.function("t_simd").unwrap()).value("args", &TestArgs { n, w: 0 }).buffer("in", &inb).buffer("out", &out).run(&[(n / 128) as u64], &[128]).unwrap();
     q.flush().await_().unwrap();
-    let got: Vec<u32> = read(&out, n as usize * 14);
+    let got: Vec<u32> = read(&out, n as usize * 16);
     for g in 0..groups as usize {
         let v = &vals[g * 32..g * 32 + 32];
         let sum = v.iter().fold(0u32, |a, &b| a.wrapping_add(b));
@@ -214,9 +214,27 @@ fn simd_group_operations_and_their_references() {
             let below = odd[..lane].iter().filter(|&&b| b).count() as u32;
             let mn = *v.iter().min().unwrap();
             let mx = *v.iter().max().unwrap();
-            let want = [sum, sum, mn, mn, mx, mx, incl, incl, incl.wrapping_sub(v[lane]), incl.wrapping_sub(v[lane]), below, odd.iter().filter(|&&b| b).count() as u32, first, v[g % 32]];
+            let same = (0..32).filter(|&j| v[j] % 4 == v[lane] % 4).fold(0u32, |m, j| m | 1 << j);
+            let want = [
+                sum,
+                sum,
+                mn,
+                mn,
+                mx,
+                mx,
+                incl,
+                incl,
+                incl.wrapping_sub(v[lane]),
+                incl.wrapping_sub(v[lane]),
+                below,
+                odd.iter().filter(|&&b| b).count() as u32,
+                first,
+                v[g % 32],
+                same,
+                same,
+            ];
             let i = g * 32 + lane;
-            assert_eq!(&got[i * 14..i * 14 + 14], &want, "{BACKEND}: group {g}, lane {lane}: sum min max (backend, reference), scans, votes, broadcast");
+            assert_eq!(&got[i * 16..i * 16 + 16], &want, "{BACKEND}: group {g}, lane {lane}: sum min max (backend, reference), scans, votes, broadcast, match");
         }
     }
 }
@@ -400,5 +418,82 @@ fn device_wide_scans_and_compaction() {
         let count = read::<u32>(&offsets, n as usize + 1)[n as usize] as usize;
         assert_eq!(count, want.len(), "{BACKEND}: compaction of {n} kept");
         assert!(read::<u32>(&kept, count) == want, "{BACKEND}: compaction of {n}'s values, in order");
+    }
+}
+
+#[test]
+fn histograms_by_partition() {
+    let Some((_, mut q)) = setup() else { return };
+    let mut rng = Rng(31);
+    // Widths within one table, across windows, and a partition's codes all past the first window.
+    for (width, parts) in [(1u32, 3u32), (100, 7), (2048, 2), (2049, 3), (5000, 4)] {
+        let mut codes: Vec<u16> = Vec::new();
+        let mut offsets = vec![0u32];
+        for p in 0..parts {
+            let len = [0, 1, 300, 5000][(p % 4) as usize];
+            codes.extend((0..len).map(|_| if p == 3 { (width - 1 - rng.below(width.min(10) as u64) as u32) as u16 } else { rng.below(width as u64) as u16 }));
+            offsets.push(codes.len() as u32);
+        }
+        for invalid in [false, true] {
+            let mut codes = codes.clone();
+            if invalid && width < 65535 {
+                codes.push(width as u16);
+                *offsets.last_mut().unwrap() += 1;
+            }
+            let (cb, ob) = (buffer_of(&codes).unwrap(), buffer_of(&offsets).unwrap());
+            let h = alloc::<u32>((parts * width) as usize).unwrap();
+            let bad = buffer_of(&[0u32]).unwrap();
+            histogram::<u16>(&q, &cb, &ob, parts, width, &h, &bad).unwrap();
+            q.flush().await_().unwrap();
+            let mut want = vec![0u32; (parts * width) as usize];
+            for p in 0..parts as usize {
+                for &c in &codes[offsets[p] as usize..offsets[p + 1] as usize] {
+                    if (c as u32) < width {
+                        want[p * width as usize + c as usize] += 1;
+                    }
+                }
+            }
+            assert!(read::<u32>(&h, want.len()) == want, "{BACKEND}: histogram of width {width}, {parts} partitions");
+            assert_eq!(read::<u32>(&bad, 1)[0], invalid as u32, "{BACKEND}: a code past the width is flagged");
+            if invalid {
+                *offsets.last_mut().unwrap() -= 1;
+            }
+        }
+    }
+}
+
+/// Sorted by the low `bits` bits of each key, stably: the values (each row's first place) of equal keys in order.
+fn sort_and_check<K: RadixKey + Ord + std::fmt::Debug + Into<u64> + From<u32>>(q: &mut ComputeQueue, keys: &[K], bits: u32) {
+    let n = keys.len() as u32;
+    let values: Vec<u32> = (0..n).collect();
+    let (kb, vb) = (buffer_of(keys).unwrap(), buffer_of(&values).unwrap());
+    let (tk, tv) = (alloc::<K>(keys.len()).unwrap(), alloc::<u32>(keys.len()).unwrap());
+    let sorted = radix_sort_pairs::<K>(q, &kb, &vb, &tk, &tv, n, bits).unwrap();
+    q.flush().await_().unwrap();
+    assert_eq!(sorted, if bits.div_ceil(8) % 2 == 0 { Sorted::InPlace } else { Sorted::InTemp });
+    let (rk, rv) = if sorted == Sorted::InPlace { (&kb, &vb) } else { (&tk, &tv) };
+    let (got_k, got_v): (Vec<K>, Vec<u32>) = (read(rk, keys.len()), read(rv, keys.len()));
+    let mut want: Vec<u32> = values.clone();
+    let low = |k: K| k.into() & mask(bits);
+    want.sort_by_key(|&i| low(keys[i as usize]));
+    let want_k: Vec<K> = want.iter().map(|&i| keys[i as usize]).collect();
+    assert!(got_v == want, "{BACKEND}: the sort of {n} keys by {bits} bits is stable");
+    assert!(got_k == want_k, "{BACKEND}: the keys go with their values");
+}
+
+#[test]
+fn radix_sorts_are_stable() {
+    let Some((_, mut q)) = setup() else { return };
+    let mut rng = Rng(41);
+    for n in [0usize, 1, 31, 1023, 1024, 1025, 70_000] {
+        // Few distinct keys (long runs: stability), and keys over all their bits.
+        for (bits, distinct) in [(8u32, 5u64), (24, 1 << 24), (32, 1000), (32, 1 << 32)] {
+            let keys: Vec<u32> = (0..n).map(|_| (rng.below(distinct) as u32) & mask(bits) as u32).collect();
+            sort_and_check(&mut q, &keys, bits);
+        }
+        for bits in [40u32, 64] {
+            let keys: Vec<u64> = (0..n).map(|_| if rng.below(2) == 0 { rng.below(7) } else { rng.next() & mask(bits) }).collect();
+            sort_and_check(&mut q, &keys, bits);
+        }
     }
 }

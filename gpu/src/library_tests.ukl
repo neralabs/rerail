@@ -102,12 +102,12 @@ DEFINE_KERNEL2(tests, t_bitset_set,
 DEFINE_KERNEL2(tests, t_simd,
                ARGS,     TestArgs, args, ,
                ROBUFFER, uint32_t, in,   "[n]",
-               RWBUFFER, uint32_t, out,  "[n * 14]",
+               RWBUFFER, uint32_t, out,  "[n * 16]",
                GID0,     uint32_t, i,    ,
                LANE,     uint16_t, lane, )
 {
     uint32_t v = in[i];
-    RWBUFFER(uint32_t) o = out + i * 14u;
+    RWBUFFER(uint32_t) o = out + i * 16u;
     o[0] = ukl_sg_sum(v);
     o[1] = ukl_sg_sum_ref(v);
     o[2] = ukl_sg_min(v);
@@ -122,6 +122,8 @@ DEFINE_KERNEL2(tests, t_simd,
     o[11] = ukl_sg_count((v & 1u) != 0u);
     o[12] = ukl_sg_first(v % 5u == 0u);
     o[13] = ukl_sg_broadcast(v, (i / 32u) % 32u);
+    o[14] = ukl_sg_match(v % 4u);
+    o[15] = ukl_sg_match_ref(v % 4u);
 }
 
 // ukl/group.h: the group's sum, and each thread's exclusive scan and the total.
