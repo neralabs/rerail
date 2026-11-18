@@ -176,6 +176,8 @@ pub(super) fn settle(pp: &mut Pp, tu: &mut Tu, builtins: &[(u32, u64, u32)], sta
         fresh(tu, &mut state, i as u32);
     }
     let pragma = pp.syms.get(b"_Pragma");
+    // By (instance, directive): a test's value and the definitions it looked up.
+    let mut memo: HashMap<(u32, u32), (bool, Vec<(u32, Option<u32>)>)> = HashMap::new();
     let mut reach = (0, HashSet::new());
     for round in 1..=MAX_ROUNDS {
         stats.rounds = round;
@@ -226,7 +228,21 @@ pub(super) fn settle(pp: &mut Pp, tu: &mut Tu, builtins: &[(u32, u64, u32)], sta
                 for &d in arms {
                     let pos = lay.dir_pos(tab, i, d as usize);
                     stats.tests += 1;
-                    if in_context(pp, chain, pos, |pp| test(pp, tab, d as usize))? {
+                    let vis = pp.vis.as_ref().unwrap();
+                    let kept = memo.get(&(i, d)).filter(|(_, looked)| looked.iter().all(|&(s, v)| vis.at(s, pos) == v)).map(|m| m.0);
+                    let v = match kept {
+                        Some(v) => v,
+                        None => {
+                            stats.evaluated += 1;
+                            pp.looked = Some(Default::default());
+                            let v = in_context(pp, chain, pos, |pp| test(pp, tab, d as usize));
+                            let looked = pp.looked.take().unwrap().into_inner();
+                            let v = v?;
+                            memo.insert((i, d), (v, looked));
+                            v
+                        }
+                    };
+                    if v {
                         g[tab.dirs[d as usize].after as usize] = true;
                         break;
                     }

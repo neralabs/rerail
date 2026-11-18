@@ -1020,6 +1020,19 @@ pass.
 - **Waits on the user:** stage M (the pass-through mask, which would also shorten the CPU's
   path), and whether the device keeps expansion at all. Question 3 below.
 
+### Q42. The preprocessor as parallel passes (0421): a spike of the shape
+
+- **Done** (2026-11-18): `rerail_c_pp::stream::parallel`, P0–P4 as passes over arrays, the serial
+  pass's own expansion for each invocation alone. Both corpora under clang's profile: 3,132 of
+  3,135 units read as the serial pass reads them, 0 differ, 3 refused (two `#line`, one call
+  across a directive).
+- **The shape:** rounds = include depth + 0–8 (at most 28); no invocation ever asked past its
+  end; invocations are 4% of the active tokens, 6–23% of them distinct; the longest invocation
+  is at most 8,000 tokens out.
+- **Open:** the example `pp_oracle` (now including `src/oracle_profile.rs`) is compiled by no
+  Relax run; a cargo check on the farm when a host is free.
+- **Waits on the user:** the placement (question 4).
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
@@ -1053,3 +1066,11 @@ pass.
    than 100× slower than one core: a thread's chain of dependent loads, about 9 µs a token.
    Open: (a) stop the device path for expansion here, keeping 0408's code as the measured basis;
    (b) build stage M (the pass-through mask) for the CPU's path only; (c) both.
+4. **Q42: where the parallel preprocessor's passes live.** The spike (0421) shows the shape holds
+   on both corpora. Options: (a) the passes as a transducer side program (column operations:
+   scans, sorts by key, searches, gathers, scatters), the directives' fixpoint in the same ops;
+   (b) the directives' level (definitions by position, tests, activity, the include tree) as
+   `.rr` rules on the engine's device joins and sorts, and the text's passes as side programs;
+   (c) build the device passes first as hand-written Metal kernels over the spike's arrays, and
+   place them after measuring. Recommended: (a), one format with the transducer's executors,
+   as page 12 of `docs/parser-generators` asks.

@@ -219,6 +219,8 @@ pub struct Pp<'a> {
     /// `None` in the serial pass, whose table is `macros`.
     vis: Option<parallel::Vis>,
     vis_pos: u64,
+    /// The parallel reading's record of the definitions a test looked up, while one is kept.
+    looked: Option<std::cell::RefCell<Vec<(u32, Option<u32>)>>>,
     /// The parallel reading's isolated list: its index in `stack`, and whether the reading asked
     /// past its end (a call's `(` or arguments) or met what the parallel shape does not carry.
     par: Option<parallel::Isolated>,
@@ -275,6 +277,7 @@ impl<'a> Pp<'a> {
             unanswered: Vec::new(),
             vis: None,
             vis_pos: 0,
+            looked: None,
             par: None,
         };
         for &(name, b, fnlike) in BUILTINS {
@@ -287,7 +290,11 @@ impl<'a> Pp<'a> {
     /// Symbol `sym`'s definition.
     fn def_of(&self, sym: u32) -> Option<u32> {
         if let Some(v) = &self.vis {
-            return v.at(sym, self.vis_pos);
+            let d = v.at(sym, self.vis_pos);
+            if let Some(l) = &self.looked {
+                l.borrow_mut().push((sym, d));
+            }
+            return d;
         }
         match self.macros.get(sym as usize) {
             Some(&d) if d != 0 => Some(d - 1),

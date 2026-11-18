@@ -85,6 +85,8 @@ fn conditionals_nested_and_chained() {
     // A test that depends on a definition made in a group: two rounds' reading at least.
     let st = same("#ifndef CFG\n#define CFG 1\n#endif\n#if CFG\n#define ON 1\n#endif\n#ifdef ON\non\n#endif\n");
     assert!(st.rounds >= 2, "{st:?}");
+    // Each test evaluated again only where what it looked up changed.
+    assert!(st.evaluated < st.tests, "{st:?}");
 }
 
 #[test]
@@ -215,6 +217,7 @@ fn the_corpus_as_passes() {
                 (&mut sum.directives, st.directives),
                 (&mut sum.active_directives, st.active_directives),
                 (&mut sum.tests, st.tests),
+                (&mut sum.evaluated, st.evaluated),
                 (&mut sum.includes, st.includes),
                 (&mut sum.definitions, st.definitions),
                 (&mut sum.tokens, st.tokens),

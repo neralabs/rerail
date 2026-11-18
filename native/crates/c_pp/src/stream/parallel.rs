@@ -100,9 +100,11 @@ pub struct Stats {
     /// Directives of the instances, and those active.
     pub directives: u64,
     pub active_directives: u64,
-    /// Tests evaluated (a chain's where its parent group is active, its arms to the first
-    /// true) and includes resolved, over every round.
+    /// Tests read (a chain's where its parent group is active, its arms to the first true), and
+    /// of them those evaluated: a test whose looked-up definitions are those of the last
+    /// round it was evaluated in keeps its value. Includes resolved, over every round.
     pub tests: u64,
+    pub evaluated: u64,
     pub includes: u64,
     /// The last round's definitions (rows of the positional table, built-ins left out).
     pub definitions: u64,
