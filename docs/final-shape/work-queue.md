@@ -2377,6 +2377,12 @@ with the default line takes the slow pass.
   load 9, against t48's 65–69 s, 17–18 s at load 30. Neither the chunks' size nor their count before a credible
   measurement is what costs t41's wall: what else the hub changed in the cold run's wall (t48's profile: the wait
   phase 10.2 s wall, others 49.9 s CPU at load 50–69) is the next to read, with a profile at a load under 10.
+  Read so far: t41's 12.8 s was at load 33–45 and t50's 17.1 s at load 9, so the gap is not the load. CPU is t41's
+  (profiled: 82.3 s against 74.6, of which 7.4 s is the 317 programs lowered against a fresh image store, "a
+  program's version in scope: its image, or lowered", in `combine`; cold48's second run reused the images at the
+  same wall). The wall is the `wait` phase (the main thread waiting for chunks evaluated). A low-load profile of t41
+  beside t48 needs t41's library (the hub's `core.rr` no longer lets `load` be extended): rebuild it from t41's
+  commit's `docs/rule-syntax` and profile both at one load.
 
 ### Q184. A warm run waits on the journal's cookies far longer than a `stat` of what it trusts would take
 
