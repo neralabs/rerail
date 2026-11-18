@@ -57,6 +57,17 @@ async function movedFrom(stream: ReturnType<typeof messagesOf>, token: string): 
   return undefined;
 }
 
+/**
+ * The first message of a stream scoped to a Git checkout no stream followed before, then the token its read of the
+ * checkout's files sends: the first message waits for no read, so it holds none of them yet.
+ */
+async function filesRead(stream: ReturnType<typeof messagesOf>): Promise<Message> {
+  const first = await stream.next();
+  const read = await stream.next();
+  expect(read.data).not.toBe(first.data);
+  return read;
+}
+
 describe("the daemon's change stream (GET /api/changes)", () => {
   let root: string;
   let databasePath: string;
@@ -232,7 +243,7 @@ describe("the daemon's change stream (GET /api/changes)", () => {
     const checkout = gitRepository(join(realpathSync(root), "web"));
     recordCheckout(database, checkout);
     const stream = await open(`?${new URLSearchParams({ checkout })}`);
-    const first = await stream.next();
+    const first = await filesRead(stream);
 
     execFileSync("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk"], { cwd: checkout });
     await vi.advanceTimersByTimeAsync(BEAT_MS);
@@ -249,7 +260,7 @@ describe("the daemon's change stream (GET /api/changes)", () => {
     execFileSync("git", ["pack-refs", "--all"], { cwd: checkout });
     recordCheckout(database, checkout);
     const stream = await open(`?${new URLSearchParams({ checkout })}`);
-    const first = await stream.next();
+    const first = await filesRead(stream);
 
     execFileSync("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk"], { cwd: checkout });
     await vi.advanceTimersByTimeAsync(BEAT_MS);
@@ -263,7 +274,7 @@ describe("the daemon's change stream (GET /api/changes)", () => {
     const checkout = gitRepository(join(realpathSync(root), "web"));
     recordCheckout(database, checkout);
     const stream = await open(`?${new URLSearchParams({ checkout })}`);
-    const first = await stream.next();
+    const first = await filesRead(stream);
 
     execFileSync("git", ["update-ref", "refs/remotes/origin/main", "HEAD"], { cwd: checkout });
     await vi.advanceTimersByTimeAsync(BEAT_MS);
@@ -278,7 +289,7 @@ describe("the daemon's change stream (GET /api/changes)", () => {
     execFileSync("git", ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk"], { cwd: checkout });
     recordCheckout(database, checkout);
     const stream = await open(`?${new URLSearchParams({ checkout })}`);
-    const first = await stream.next();
+    const first = await filesRead(stream);
 
     execFileSync("git", ["update-ref", "refs/remotes/origin/trunk", "HEAD"], { cwd: checkout });
     await vi.advanceTimersByTimeAsync(BEAT_MS);
@@ -293,7 +304,7 @@ describe("the daemon's change stream (GET /api/changes)", () => {
     execFileSync("git", ["pack-refs", "--all"], { cwd: checkout });
     recordCheckout(database, checkout);
     const stream = await open(`?${new URLSearchParams({ checkout })}`);
-    const first = await stream.next();
+    const first = await filesRead(stream);
 
     const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: checkout, encoding: "utf8" }).trim();
     appendFileSync(join(checkout, ".git", "packed-refs"), `${head} refs/remotes/origin/main\n`);
@@ -309,7 +320,7 @@ describe("the daemon's change stream (GET /api/changes)", () => {
     mkdirSync(join(checkout, ".rerail", "rules"), { recursive: true });
     recordCheckout(database, checkout);
     const stream = await open(`?${new URLSearchParams({ checkout })}`);
-    const first = await stream.next();
+    const first = await filesRead(stream);
 
     writeFileSync(join(checkout, ".rerail", "rules", "local.json"), "{}\n");
     await vi.advanceTimersByTimeAsync(BEAT_MS);
@@ -323,7 +334,7 @@ describe("the daemon's change stream (GET /api/changes)", () => {
     const checkout = gitRepository(join(realpathSync(root), "web"));
     recordCheckout(database, checkout);
     const stream = await open(`?${new URLSearchParams({ checkout })}`);
-    const first = await stream.next();
+    const first = await filesRead(stream);
 
     execFileSync("git", ["switch", "-q", "-c", "feature"], { cwd: checkout });
     await vi.advanceTimersByTimeAsync(BEAT_MS);
@@ -332,19 +343,15 @@ describe("the daemon's change stream (GET /api/changes)", () => {
     await stream.stop();
   });
 
-  it("never starts listening for a client that leaves before the first message, which waits for the checkout's files", async () => {
+  it("stops listening when the client leaves before reading anything, with the read of the checkout's files still out", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     const checkout = gitRepository(join(realpathSync(root), "web"));
     recordCheckout(database, checkout);
     const response = await app.request(`/api/changes?${new URLSearchParams({ checkout })}`);
 
     await response.body!.cancel();
-    // A second stream's first message comes after its own read of the files, which went out after the first's.
-    const second = await open(`?${new URLSearchParams({ checkout })}`);
-    await second.next();
-    await second.stop();
 
-    // Nothing listens any more, so the beat is gone: the first stream never listened.
+    // Nothing listens any more, so the beat is gone, though the stream's read of the checkout's files may end after.
     expect(vi.getTimerCount()).toBe(0);
   });
 

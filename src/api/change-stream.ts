@@ -38,18 +38,25 @@ interface StreamToken {
 }
 
 /**
+ * What the last read of each scoped checkout's files found (`checkoutFiles`), so a new stream's first token starts
+ * from it and waits for no read; one entry per checkout a page has followed.
+ */
+const lastFiles = new Map<string, string>();
+
+/**
  * The token a page compares, for one stream scoped to `checkout`: it moves when the database commits (`historyVersion`,
  * which creates no database), the installed packs' catalog changes (read again only at a `files` notice: their folders
- * are watched) or the checkout's own files change (`checkoutFiles`, read again by `refresh`, one read at a time, at each
- * beat). `salt` is the daemon's, so a restarted daemon never repeats a token.
+ * are watched) or the checkout's own files change (`checkoutFiles`, read again by `refresh`, one read at a time, at the
+ * stream's start and at each beat). `salt` is the daemon's, so a restarted daemon never repeats a token.
  */
 function streamToken(stores: RerailApiStores, salt: string, checkout: string | undefined): StreamToken {
   let installed: RuleCatalog | undefined;
-  let files = "";
+  let files = checkout === undefined ? "" : lastFiles.get(checkout) ?? "";
   let reading: Promise<boolean> | undefined;
   const read = async (): Promise<boolean> => {
     const before = files;
     files = await checkoutFiles(stores, checkout);
+    if (checkout !== undefined) lastFiles.set(checkout, files);
     return files !== before;
   };
   return {
@@ -80,17 +87,17 @@ function closeQuietly(controller: ReadableStreamDefaultController<Uint8Array>): 
 }
 
 /**
- * The held response of `GET /api/changes`, as server-sent events: the token once the checkout's files are read, then
- * the token again at each commit the change feed tells and at each beat, a `conflicts` message on each Merge Assist
- * conflict event, and the token once more when a beat's read of the checkout's files finds them moved. It ends only
- * when the client leaves (the body is cancelled, and the stream stops listening) or the daemon closes its connections
- * at stop, which the page reads as the daemon gone. A token it cannot read (the database closing) ends it too.
+ * The held response of `GET /api/changes`, as server-sent events: the token at once, then the token again at each
+ * commit the change feed tells and at each beat, a `conflicts` message on each Merge Assist conflict event, and the
+ * token once more when a read of the checkout's files, at the start and at each beat, finds them moved. No message
+ * waits for a file read, which shares Node's few I/O threads with the daemon's other work. It ends only when the client
+ * leaves (the body is cancelled, and the stream stops listening) or the daemon closes its connections at stop, which
+ * the page reads as the daemon gone. A token it cannot read (the database closing) ends it too.
  */
 function changeStream(feed: ChangeFeed, token: StreamToken): Response {
   let stop = (): void => {};
-  let cancelled = false;
   const body = new ReadableStream<Uint8Array>({
-    async start(controller) {
+    start(controller) {
       const send = (text: () => string): void => {
         try {
           controller.enqueue(encoder.encode(text()));
@@ -99,16 +106,17 @@ function changeStream(feed: ChangeFeed, token: StreamToken): Response {
           closeQuietly(controller);
         }
       };
-      await token.refresh();
-      if (cancelled) return;
+      const readFiles = (): void => {
+        void token.refresh().then(moved => { if (moved) send(() => `data: ${token.now("beat")}\n\n`); });
+      };
       send(() => `data: ${token.now("start")}\n\n`);
       stop = feed.listen(notice => {
         send(() => message(notice, token.now(notice)));
-        if (notice === "beat") void token.refresh().then(moved => { if (moved) send(() => `data: ${token.now("beat")}\n\n`); });
+        if (notice === "beat") readFiles();
       });
+      readFiles();
     },
     cancel() {
-      cancelled = true;
       stop();
     },
   });
