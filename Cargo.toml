@@ -174,3 +174,15 @@ opt-level = 3
 
 [profile.test-o1.package.rerail-rr-aot]
 debug = false
+
+# CI's Windows and macOS engines, which only the tests on those systems load (ci.yml's build-windows and build-macos):
+# release code without release's link-time work. The release's single codegen unit leaves rerail-logic and the engine
+# crate compiling on one core for most of a cold build, and thin LTO adds a whole-program pass at the end; neither
+# changes what the tests check. Linux's CI engine and every shipped engine stay `release`.
+[profile.ci-test]
+inherits = "release"
+lto = false
+codegen-units = 16
+
+[profile.ci-test.build-override]
+opt-level = 3
