@@ -1284,6 +1284,12 @@ describe("CodeRuleBridge", () => {
   });
 
   describe("a walk that cannot read part of the folder", () => {
+    /**
+     * A bridge whose boundaries wait for their walk however long this machine takes, unless `options` set another wait:
+     * each answer is its own walk's.
+     */
+    const gapBridge = (...[root, evaluator, options]: ConstructorParameters<typeof CodeRuleBridge>): CodeRuleBridge =>
+      createBridge(root, evaluator, { discoveryWaitMs: Number.POSITIVE_INFINITY, ...options });
     const OVERSIZE = "Source exceeds 1000000 byte policy limit";
     /** A gap as the bridge tells it: keyed by its path and its reason's kind (the error's code, else the reason). */
     const toldGap = (path: string, reason: string, kind: string) => ({ boundary: "turn", path, reason, key: JSON.stringify([path, kind]) });
@@ -1315,7 +1321,7 @@ describe("CodeRuleBridge", () => {
       // An unlisted file too large to read is said once at its stamp; the folder at each turn the walk cannot read it.
       await writeFile(join(root, "dump.raw"), "x\n".repeat(500_001));
       const gaps: unknown[] = [];
-      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), {
+      const bridge = gapBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), {
         onDiscoveryGaps: told => { gaps.push(...told); },
       });
       await bridge.openWorkspace("session-1");
@@ -1338,7 +1344,7 @@ describe("CodeRuleBridge", () => {
         return denyFolder(folder, "EACCES", async call => await released(call, index));
       }));
       const onDiscoveryGaps = vi.fn();
-      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
+      const bridge = gapBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
       await bridge.openWorkspace("session-1");
 
       const said = denials.map((denial, index) => `src/${"abc"[index]}: ${denial}`).join("; ");
@@ -1356,7 +1362,7 @@ describe("CodeRuleBridge", () => {
       await mkdir(locked);
       await writeFile(join(locked, "a.py"), "a = 1\n");
       const onDiscoveryGaps = vi.fn();
-      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
+      const bridge = gapBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
       await bridge.openWorkspace("session-1");
       await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({ failures: [] }));
 
@@ -1370,7 +1376,7 @@ describe("CodeRuleBridge", () => {
       const locked = join(root, "src", "locked");
       await mkdir(locked);
       const onDiscoveryGaps = vi.fn();
-      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
+      const bridge = gapBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
       await bridge.openWorkspace("session-1");
 
       const denial = denyFolder(locked);
@@ -1389,7 +1395,7 @@ describe("CodeRuleBridge", () => {
     it("leaves out a path its folder's listing named that is gone when the walk examines it, as a read does", async () => {
       const root = await workspace();
       const onDiscoveryGaps = vi.fn();
-      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
+      const bridge = gapBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
       await bridge.openWorkspace("session-1");
       await bridge.checkpoint("turn");
       // Listed, then gone by the walk's lstat or opendir: a file, a folder, and a folder that goes between the two.
@@ -1415,7 +1421,7 @@ describe("CodeRuleBridge", () => {
     it("looks again at a path that refused it with EPERM, as Windows refuses one being removed: gone then is absent, refused again is a gap", async () => {
       const root = await workspace();
       const onDiscoveryGaps = vi.fn();
-      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
+      const bridge = gapBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
       await bridge.openWorkspace("session-1");
       await bridge.checkpoint("turn");
       // A file being removed: refused while the delete is pending, gone by the look.
@@ -1445,7 +1451,7 @@ describe("CodeRuleBridge", () => {
       const owner = (path: string): boolean => { physicalPath(resolve(root, path)); return false; };
       const view = { acceptsPath: (path: string) => !owner(dirname(path)), ignoresPath: (path: string) => owner(path) };
       const onDiscoveryGaps = vi.fn();
-      const bridge = createBridge(root, {
+      const bridge = gapBridge(root, {
         ...auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), walkView: () => view,
       }, { onDiscoveryGaps });
       await bridge.openWorkspace("session-1");
@@ -1478,7 +1484,7 @@ describe("CodeRuleBridge", () => {
         denyFolder(folder, code);
       }
       const onDiscoveryGaps = vi.fn();
-      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
+      const bridge = gapBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
       await bridge.openWorkspace("session-1");
       // The first walk whole, however long this machine takes: each checkpoint then says what it met.
       await bridge.settleWalk();
@@ -1503,7 +1509,7 @@ describe("CodeRuleBridge", () => {
       const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
       const pending: string[] = [];
       const onDiscoveryGaps = vi.fn();
-      const bridge = createBridge(root, auditor(auditGeneratedEdits), {
+      const bridge = gapBridge(root, auditor(auditGeneratedEdits), {
         discoveryWaitMs: 50, onDiscoveryPending: boundary => { pending.push(boundary); }, onDiscoveryGaps,
       });
       const baseline = holdDiscovery("directories", root);
@@ -1532,7 +1538,7 @@ describe("CodeRuleBridge", () => {
       await mkdir(locked);
       const pending: string[] = [];
       const onDiscoveryGaps = vi.fn();
-      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), {
+      const bridge = gapBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), {
         discoveryWaitMs: 50, onDiscoveryPending: boundary => { pending.push(boundary); }, onDiscoveryGaps,
       });
       await bridge.openWorkspace("session-1");
@@ -1555,6 +1561,21 @@ describe("CodeRuleBridge", () => {
       expect(onDiscoveryGaps.mock.calls).toEqual([[[toldGap("src/locked", denial, "EACCES")]]]);
     });
 
+    it("sets no timer for a boundary's wait without end, so it waits for its walk and Node warns of no timer cut short", async () => {
+      const root = await workspace();
+      const emitWarning = vi.spyOn(process, "emitWarning");
+      try {
+        const bridge = gapBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))));
+        await bridge.openWorkspace("session-1");
+        await bridge.heldTextsRead();
+        await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({ failures: [] }));
+        // Node fires a timer past 2^31 - 1 ms after 1 ms, and says so.
+        expect(emitWarning.mock.calls.filter(([warning]) => String(warning).includes("32-bit signed integer"))).toEqual([]);
+      } finally {
+        emitWarning.mockRestore();
+      }
+    });
+
     it("answers a turn checkpoint with its gap when recording the gap fails", async () => {
       const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
       const root = await workspace();
@@ -1562,7 +1583,7 @@ describe("CodeRuleBridge", () => {
       await mkdir(locked);
       const denial = denyFolder(locked);
       const onDiscoveryGaps = vi.fn((_gaps: unknown) => { throw new Error("database is locked"); });
-      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
+      const bridge = gapBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
       try {
         await bridge.openWorkspace("session-1");
 
@@ -1590,7 +1611,7 @@ describe("CodeRuleBridge", () => {
         if (refuse) throw new Error("database is locked");
         told.push(...gaps);
       });
-      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
+      const bridge = gapBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
       try {
         await bridge.openWorkspace("session-1");
         await expect(bridge.checkpoint("turn")).resolves.toEqual(failedWith(`big.raw: ${OVERSIZE}; src/locked: ${denial}`));
@@ -1614,7 +1635,7 @@ describe("CodeRuleBridge", () => {
       // After every folder in path order.
       await writeFile(join(root, "zz.raw"), "x\n".repeat(500_001));
       const onDiscoveryGaps = vi.fn();
-      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
+      const bridge = gapBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
       await bridge.openWorkspace("session-1");
 
       for (let turn = 0; turn < 3; turn += 1) await bridge.checkpoint("turn");
@@ -1637,7 +1658,7 @@ describe("CodeRuleBridge", () => {
       ]);
       const onDiscoveryGaps = vi.fn();
       const recordedDiscoveryGaps = vi.fn((sessionId: string, limit: number) => records.get(sessionId)?.slice(0, limit) ?? []);
-      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), {
+      const bridge = gapBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), {
         onDiscoveryGaps, recordedDiscoveryGaps,
       });
 
@@ -1680,7 +1701,7 @@ describe("CodeRuleBridge", () => {
       const onDiscoveryGaps = vi.fn();
       // What the bridge holds of each file after each walk.
       const observations: SourceObservationCache = new Map();
-      const bridge = createBridge(root, {
+      const bridge = gapBridge(root, {
         ...auditor(auditGeneratedEdits), walkView: () => view, sourceRoot: (path: string) => { askedOf(path); return root; },
       }, { onDiscoveryGaps, observations });
       await bridge.openWorkspace("session-1");
@@ -1767,7 +1788,7 @@ describe("CodeRuleBridge", () => {
         },
       };
       const onDiscoveryGaps = vi.fn();
-      const bridge = createBridge(root, { ...auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), walkView: () => view }, { onDiscoveryGaps });
+      const bridge = gapBridge(root, { ...auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), walkView: () => view }, { onDiscoveryGaps });
       await bridge.openWorkspace("session-1");
       await bridge.checkpoint("turn");
       const listings = async (): Promise<number> => {
@@ -1808,7 +1829,7 @@ describe("CodeRuleBridge", () => {
         },
       };
       const onDiscoveryGaps = vi.fn();
-      const bridge = createBridge(root, { ...auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), walkView: () => view }, { onDiscoveryGaps });
+      const bridge = gapBridge(root, { ...auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), walkView: () => view }, { onDiscoveryGaps });
       await bridge.openWorkspace("session-1");
       await bridge.checkpoint("turn");
 
@@ -1836,7 +1857,7 @@ describe("CodeRuleBridge", () => {
       discovery.inNameOrder = true;
       const refusing = refusingView(root);
       const onDiscoveryGaps = vi.fn();
-      const bridge = createBridge(root, { ...auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), walkView: () => refusing.view }, { onDiscoveryGaps });
+      const bridge = gapBridge(root, { ...auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), walkView: () => refusing.view }, { onDiscoveryGaps });
       await bridge.openWorkspace("session-1");
       await bridge.checkpoint("turn");
       await bridge.checkpoint("turn");
@@ -1857,7 +1878,7 @@ describe("CodeRuleBridge", () => {
       await writeFiles(denied, 10_000);
       const refusing = refusingView(root);
       const onDiscoveryGaps = vi.fn();
-      const bridge = createBridge(root, { ...auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), walkView: () => refusing.view }, { onDiscoveryGaps });
+      const bridge = gapBridge(root, { ...auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), walkView: () => refusing.view }, { onDiscoveryGaps });
       await bridge.openWorkspace("session-1");
       await bridge.checkpoint("turn");
       await bridge.checkpoint("turn");
@@ -1889,7 +1910,7 @@ describe("CodeRuleBridge", () => {
       await writeFile(denied, "d = 1\n");
       const observations: SourceObservationCache = new Map();
       const onDiscoveryGaps = vi.fn();
-      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps, observations });
+      const bridge = gapBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps, observations });
       await bridge.openWorkspace("session-1");
       await bridge.checkpoint("turn");
       const observed = (): string[] => [...observations.get(root)?.keys() ?? []].filter(path => path.endsWith(".py")).sort();
@@ -1925,7 +1946,7 @@ describe("CodeRuleBridge", () => {
       await mkdir(locked);
       await writeFile(denied, "d = 1\n");
       const onDiscoveryGaps = vi.fn();
-      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
+      const bridge = gapBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
       await bridge.openWorkspace("session-1");
       await bridge.checkpoint("turn");
 
@@ -1966,7 +1987,7 @@ describe("CodeRuleBridge", () => {
         };
         if (look !== "there") discovery.accesses.set(file, Array.from({ length: 5 }, () => (look === "gone" ? gone("access", file) : deletePending(file))));
         const onDiscoveryGaps = vi.fn();
-        const bridge = createBridge(root, { ...auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), sourceRoot }, { onDiscoveryGaps });
+        const bridge = gapBridge(root, { ...auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), sourceRoot }, { onDiscoveryGaps });
         await bridge.openWorkspace(`session-${look}`);
         const reason = `EPERM: operation not permitted, realpath '${file}'`;
         await expect(bridge.checkpoint("turn")).resolves.toEqual(failedWith(reason));
@@ -1988,7 +2009,7 @@ describe("CodeRuleBridge", () => {
       // looks at them too, so each answers pending for every walk.
       for (const folder of folders.slice(0, 10)) discovery.accesses.set(folder, Array.from({ length: 50 }, () => deletePending(folder)));
       const onDiscoveryGaps = vi.fn();
-      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
+      const bridge = gapBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
       await bridge.openWorkspace("session-1");
 
       await bridge.checkpoint("turn");
@@ -2015,7 +2036,7 @@ describe("CodeRuleBridge", () => {
       for (const folder of folders.slice(0, 10)) discovery.accesses.set(folder, Array.from({ length: 50 }, () => deletePending(folder)));
       const onDiscoveryGaps = vi.fn();
       const audit = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
-      const bridge = createBridge(root, { ...auditor(audit), ...extra }, { worktreeWalkGapMs: 0, onDiscoveryGaps });
+      const bridge = gapBridge(root, { ...auditor(audit), ...extra }, { worktreeWalkGapMs: 0, onDiscoveryGaps });
       await bridge.openWorkspace("session-1");
       for (let turn = 0; turn < 2; turn += 1) {
         await bridge.checkpoint("turn");
@@ -2034,7 +2055,7 @@ describe("CodeRuleBridge", () => {
       await writeFile(join(sub, "b.py"), "b = 1\n");
       const observations: SourceObservationCache = new Map();
       const onDiscoveryGaps = vi.fn();
-      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps, observations });
+      const bridge = gapBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps, observations });
       await bridge.openWorkspace("session-1");
       await bridge.checkpoint("turn");
       const observed = (): string[] => [...observations.get(root)?.keys() ?? []].filter(path => path.endsWith(".py")).sort();
@@ -2051,7 +2072,7 @@ describe("CodeRuleBridge", () => {
       const root = await workspace();
       const elsewhere = await workspace();
       const onDiscoveryGaps = vi.fn();
-      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
+      const bridge = gapBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
       await bridge.openWorkspace("session-1");
       await bridge.checkpoint("turn");
       const file = join(root, "src", "x.py");
@@ -2076,10 +2097,7 @@ describe("CodeRuleBridge", () => {
       await mkdir(denied);
       await writeFile(slow, "s = 1\n");
       const onDiscoveryGaps = vi.fn();
-      const pending: string[] = [];
-      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), {
-        onDiscoveryGaps, onDiscoveryPending: boundary => { pending.push(boundary); },
-      });
+      const bridge = gapBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), { onDiscoveryGaps });
       await bridge.openWorkspace("session-1");
       await bridge.checkpoint("turn");
       const wallClock = Date.now.bind(Date);
@@ -2095,10 +2113,9 @@ describe("CodeRuleBridge", () => {
           throw Object.assign(new Error(message), { code: "EPERM", syscall: "opendir", path: denied });
         }]);
         discovery.lstats.set(slow, [async () => { await refused.promise; }]);
+        // The checkpoint waits for its walk: one the clock's step held would keep it past the test's time limit.
         await expect(bridge.checkpoint("turn")).resolves.toEqual(failedWith(`src/denied: ${message}`));
         expect(stepped).toBe(true);
-        // The walk ended while the checkpoint waited for it: the clock's step held it no longer than its own reads.
-        expect(pending).toEqual([]);
         expect(toldPaths(onDiscoveryGaps)).toEqual(["src/denied"]);
       } finally {
         now.mockRestore();

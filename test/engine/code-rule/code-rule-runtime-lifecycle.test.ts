@@ -465,10 +465,14 @@ describe("source-scoped steers", () => {
 
   describe("what a session's turn ends could not check", () => {
     const session = { host: "claude-code" as const, sessionId: "unread", cwd: "" };
-    /** A runtime over the session's folder `root` whose code rules read every file and find nothing, its home in `store`. */
+    /**
+     * A runtime over the session's folder `root` whose code rules read every file and find nothing, its home in `store`.
+     * Its turn ends wait for their walks however long this machine takes, so each records its own walk's places.
+     */
     function gapRuntime(root: string, store: string): RerailRuntime {
       return new RerailRuntime({
         storageRoot: join(store, "sessions"), databasePath: join(store, "rerail.sqlite"), workspaceRoot: root, autostart: false, embedder: testEmbedder,
+        discoveryWaitMs: Number.POSITIVE_INFINITY,
         createAuditor: () => ({
           openWorkspace: async () => undefined,
           acceptsPath: () => true,

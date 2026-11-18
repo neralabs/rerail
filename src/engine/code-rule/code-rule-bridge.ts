@@ -996,6 +996,13 @@ const FAILED_AGAIN = `Git could not list the checkout's changed files when asked
 function lateListing(discovery: SourceDiscovery, checkout: string, message: string): string {
   return `${sessionPath(discovery.root, checkout) || "."}: ${message}`;
 }
+/**
+ * A timer that calls `resolve` after `ms`, or none when `ms` is not finite: such a wait (`discoveryWaitMs: Infinity`) ends
+ * only with what it waits for, where Node would fire a timer past 2^31 - 1 ms after 1 ms.
+ */
+function waitTimer(ms: number, resolve: () => void): NodeJS.Timeout | undefined {
+  return Number.isFinite(ms) ? setTimeout(resolve, ms) : undefined;
+}
 /** Resolves once `answered` has settled or `ms` have passed, whichever comes first. */
 function settledOrAfter(answered: Promise<unknown>, ms: number): Promise<void> {
   return new Promise(resolve => {
@@ -1542,7 +1549,10 @@ export class CodeRuleBridge {
     options: {
       onRevision?(sessionId: string, revision: number, paths: readonly string[]): void;
       observations?: SourceObservationCache;
-      /** How long a boundary waits for a source walk; `BOUNDARY_DISCOVERY_WAIT_MS` by default. */
+      /**
+       * How long a boundary waits for a source walk; `BOUNDARY_DISCOVERY_WAIT_MS` by default. `Infinity` waits for the
+       * walk however long it takes.
+       */
       discoveryWaitMs?: number;
       /** Told when a boundary answers, or the bridge closes, while a source walk is still running. */
       onDiscoveryPending?(boundary: DiscoveryPendingBoundary): void;
@@ -1702,7 +1712,7 @@ export class CodeRuleBridge {
    */
   async heldTextsRead(): Promise<void> {
     const bound = Promise.withResolvers<void>();
-    const timer = setTimeout(bound.resolve, this.#discoveryWaitMs);
+    const timer = waitTimer(this.#discoveryWaitMs, bound.resolve);
     try {
       await Promise.race([this.#heldTexts.promise, bound.promise]);
     } finally {
@@ -2262,7 +2272,7 @@ export class CodeRuleBridge {
     boundary: Exclude<DiscoveryPendingBoundary, "close">,
   ): Promise<void> {
     const budget = Promise.withResolvers<boolean>();
-    const timer = setTimeout(() => budget.resolve(false), this.#discoveryWaitMs);
+    const timer = waitTimer(this.#discoveryWaitMs, () => budget.resolve(false));
     try {
       const walked = await Promise.race([this.#requestDiscovery(discovery, checkpoint).then(() => true), budget.promise]);
       if (!walked && !discovery.cancelled) {
