@@ -233,8 +233,8 @@ edits, shell commands and turn end wait up to 20 seconds for its rules, so its f
 own result as every later one is; a tool call that writes nothing Rerail checks at its result, such as a read or a
 search, does not wait. A daemon restart or a resumed session reopens the same way. Rules still not open after 20 seconds
 are not waited for further by that tool call or any later one, so the agent is held once, not at every call; those edits
-are checked by the first pass once they open. Each turn's end still waits for them, so the turn's steers reach the agent
-before the turn is over.
+are checked by the first pass once they open, and the dashboard timeline counts each step that went without them. Each
+turn's end still waits for them, so the turn's steers reach the agent before the turn is over.
 
 - A command that rewrites a file the agent edited before the quiet is measured from the text the agent left there, so
   a rule that judges only the agent's lines judges only those.

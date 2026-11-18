@@ -857,6 +857,7 @@ describe("source-scoped steers", () => {
         },
       }));
       let runtime = runtimes[0]!;
+      const reader = new SqliteSessionReader(databasePath);
       const session = { host: "claude-code" as const, sessionId: "reopened", cwd: root };
       // A session a restarted runtime opens builds that runtime's rules first, which takes seconds on a busy machine.
       const reopened = async () => {
@@ -871,6 +872,11 @@ describe("source-scoped steers", () => {
         result: (toolCallId: string, toolName: string) =>
           runtime.ingest({ kind: "result", eventId: `result-${toolCallId}`, ...ids, toolCallId, toolName, output: "done" }),
         write: (toolCallId: string, file: string) => test.call(toolCallId, "Write", { file_path: join(root, file), content: "NEEDLE\n" }),
+        read: async (toolCallId: string, file: string) => [
+          ...await test.call(toolCallId, "Read", { file_path: join(root, file) }), ...await test.result(toolCallId, "Read"),
+        ],
+        /** The boundaries the session's history counts as answered before its code rules were running. */
+        rulesPending: () => reader.events(session.sessionId).filter(event => event.kind === "code-rules-pending").map(event => event.payload),
         turnEnd: (eventId: string) => runtime.ingest({ kind: "turn-end", eventId, sessionId: session.sessionId, text: "done" }),
         /** The person's prompt after the idle close opens the session again. */
         reopen: async () => {
@@ -910,6 +916,7 @@ describe("source-scoped steers", () => {
           for (const workspace of attachments.workspaces) workspace.release();
           attachments.restore();
           for (const each of runtimes) await each.dispose();
+          reader.close();
         },
       };
       fixture = test;
@@ -936,8 +943,7 @@ describe("source-scoped steers", () => {
       await test.reopen();
       // The bound never fires here, so a boundary that waited for the rules would not answer.
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-      expect(await test.call("read", "Read", { file_path: join(test.root, "edited.py") })).toEqual([]);
-      expect(await test.result("read", "Read")).toEqual([]);
+      expect(await test.read("read", "edited.py")).toEqual([]);
       vi.useRealTimers();
       // The read spent nothing: the edit's call still waits, and its steer rides its own result.
       const call = test.write("write", "edited.py");
@@ -945,6 +951,8 @@ describe("source-scoped steers", () => {
       expect(await call).toEqual([]);
       await writeFile(join(test.root, "edited.py"), "NEEDLE\n");
       expect(await test.result("write", "Write")).toEqual([needle("edited.py")]);
+      // The read skipped no check, so the session's history counts no boundary its code rules were not running at.
+      expect(test.rulesPending()).toEqual([]);
     }, 30_000);
 
     it("waits its bound out once: no later tool call or result of the opening waits again, and what they skipped is checked once the rules open", async () => {
@@ -956,10 +964,13 @@ describe("source-scoped steers", () => {
       await writeFile(join(test.root, "first.py"), "NEEDLE\n");
       // Each later tool call and result answers with the bound never firing again.
       expect(await test.result("first", "Write")).toEqual([]);
+      expect(await test.read("read", "first.py")).toEqual([]);
       expect(await test.write("second", "second.py")).toEqual([]);
       await writeFile(join(test.root, "second.py"), "NEEDLE\n");
       expect(await test.result("second", "Write")).toEqual([]);
       vi.useRealTimers();
+      // The edits went without the checks of their results, and the history counts each; the read skipped none.
+      expect(test.rulesPending()).toEqual([{ boundary: "call" }, { boundary: "result" }, { boundary: "call" }, { boundary: "result" }]);
       test.attachments.workspaces[1]!.release();
       await test.runtime.codeRulesOpened("reopened");
       // The first pass once they are open checks both edits, and the turn's end carries their steers.

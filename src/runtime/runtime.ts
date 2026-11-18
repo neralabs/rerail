@@ -104,7 +104,7 @@ function noteCallsAwaitingResult(calls: Set<string>, event: AdapterEvent): void 
 
 /**
  * Which code-rule boundaries of a session whose rules are still opening wait for them, within
- * `REOPENED_RULES_WAIT_MS` (`#codeRuleWorkspaceNow`). `none`: a first start, or a host that does not wait. `needed`: a
+ * `REOPENED_RULES_WAIT_MS` (`whileRulesOpen`). `none`: a first start, or a host that does not wait. `needed`: a
  * reopened session in a hook host, whose boundaries that need the rules wait (`needsRules`). `turn-end`: such a session
  * after one of them waited the bound out: only its turn ends still wait, since a turn's end is the last boundary whose
  * answer reaches the agent in that turn, and holding every tool call for rules that take longer would cost each one the
@@ -157,10 +157,17 @@ function needsRules(event: AdapterEvent, pending: readonly PendingCodeRuleCall[]
   return event.kind === "turn-end";
 }
 
-/** Whether the code-rule boundary `event` of a session whose rules are still opening waits for them (`RulesWait`). */
-function waitsForRules(wait: RulesWait, event: AdapterEvent, pending: readonly PendingCodeRuleCall[]): boolean {
-  if (wait === "none") return false;
-  return wait === "needed" ? needsRules(event, pending) : event.kind === "turn-end";
+/**
+ * What the code-rule boundary `event` of a session whose rules are still opening does (`RulesWait`): `wait` for them
+ * within `REOPENED_RULES_WAIT_MS`; go on without them, counted in the session's history among the boundaries they were
+ * not yet running at (`skip`); or go on with nothing to count (`pass`): a reopened session's call that writes nothing
+ * the evaluator checks at its result, and that call's result, which the rules would not have checked. A first start
+ * skips every boundary, since its first index is never waited for.
+ */
+function whileRulesOpen(wait: RulesWait, event: AdapterEvent, pending: readonly PendingCodeRuleCall[]): "wait" | "skip" | "pass" {
+  if (wait === "none") return "skip";
+  if (!needsRules(event, pending)) return "pass";
+  return wait === "needed" || event.kind === "turn-end" ? "wait" : "skip";
 }
 
 /**
@@ -257,7 +264,11 @@ const MERGE_ASSIST_WAIT_MS = 1_000;
 interface PendingCodeRuleCall {
   id: string;
   toolName: string;
-  /** Whether its result is checked (`checkAtResult`), and so waits for a reopened session's rules (`needsRules`). */
+  /**
+   * Whether its result is checked (`checkAtResult`), and so needs a reopened session's rules (`needsRules`): such a
+   * result waits for them when its call was held in the ledger across a restart, and is counted among the boundaries
+   * they were not yet running at once a tool call waited them out; any other result does neither.
+   */
   checked: boolean;
   /** The subagent that made it (Claude Code's `agent_id`), absent for the session's own agent. */
   agentId?: string | undefined;
@@ -1520,17 +1531,19 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * is not waited for at a session's first start, so the agent is never held up by a first index: such a boundary is
    * answered without code rules and recorded in the session's history. The boundary's own check is skipped, but the file
    * stays checked: the first pass once the evaluator is open finds the edit and checks it, so its steer can arrive a
-   * turn later. A reopened session waits for its rules instead at a boundary that needs them (`RulesWait`), within
+   * turn later. A reopened session waits for its rules instead at a boundary that needs them (`whileRulesOpen`), within
    * `REOPENED_RULES_WAIT_MS`, so its first edit is checked at its own result as every later one is. Once a tool call or
    * result has waited that out, later ones go on without code rules as at a first start, and only turn ends still wait.
+   * A reopened session's boundary that needs no rules goes on at once and is not recorded: it skipped no check.
    */
   async #codeRuleWorkspaceNow(state: RuntimeSessionState, event: AdapterEvent): Promise<CodeRuleBridge | undefined> {
     if (!state.codeRuleOpening) return await state.codeRuleWorkspace;
-    if (waitsForRules(state.rulesWait, event, state.pendingCodeRuleCalls)) {
+    const step = whileRulesOpen(state.rulesWait, event, state.pendingCodeRuleCalls);
+    if (step === "wait") {
       if (await settledWithin(state.codeRuleWorkspace, REOPENED_RULES_WAIT_MS)) return await state.codeRuleWorkspace;
       state.rulesWait = "turn-end";
     }
-    this.#recordRulesPending(state, event);
+    if (step !== "pass") this.#recordRulesPending(state, event);
     return undefined;
   }
 
