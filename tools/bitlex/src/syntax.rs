@@ -902,9 +902,25 @@ struct P {
     classed: Vec<u8>,
     /// The `pairs` read so far, by name, for a token's `pair` (`TokenRule::Pairs`).
     pair_sets: Vec<(String, Vec<[u8; 2]>)>,
+    /// `deprecated back_fill`: the grammar still uses `back_fill`, while it moves to what replaces
+    /// it (`BACK_FILL_REMOVED`).
+    back_fill_ok: bool,
 }
 
 type R<T> = Result<T, String>;
+
+/// Why `back_fill` is refused, and what to write instead (decision 0406).
+pub const BACK_FILL_REMOVED: &str = "`back_fill` is removed from Bitlex (decision 0406). A value at a byte that is made from the \
+bytes after it needs a pass backward over the whole file, and the lean parsers never make one: they look ahead from \
+where they stand, and only where they need to. Write what the back fill asks, at the token:
+  - the next token, or a run of tokens from here: a token mark, `mark K = tokens [after E] A B ...`, \
+which tier 2 tests at the token, as a parser peeks; a run of choices is `(A | B)*`;
+  - a gap mark that the token after the gap decides: `mark K = E, unless at A ...`;
+  - the token's own later bytes: a test of the token, `escape \"WHY\" at KIND when count(E) at least N`, \
+or a mark's `at KIND when ...`;
+  - what the text is inside (a class's header, a declaration's run up to its `(`): the tree's rules, \
+which carry it as a parser carries its state.
+A grammar not yet moved may say `deprecated back_fill` on a line of its own, for the time it takes.";
 
 impl P {
     fn peek(&self) -> Option<&Tok> {
@@ -1286,6 +1302,9 @@ impl P {
             }
         }
         self.want_p(")")?;
+        if last == "back_fill" && !self.back_fill_ok {
+            return Err(BACK_FILL_REMOVED.into());
+        }
         Ok(Expr::Call(last, args))
     }
     /// A number: terms joined by `-`, left to right.
@@ -1306,6 +1325,9 @@ impl P {
             return Ok(NExpr::Position);
         }
         let name = self.ident()?;
+        if name == "back_fill" && !self.back_fill_ok {
+            return Err(BACK_FILL_REMOVED.into());
+        }
         if (name == "fill" || name == "back_fill") && self.eat_p("(") {
             let s = self.expr()?;
             self.want_p(",")?;
@@ -1571,6 +1593,16 @@ impl P {
     fn stmt(&mut self) -> R<Stmt> {
         let kw = self.ident()?;
         let s = match kw.as_str() {
+            // The grammar still uses `back_fill` (`BACK_FILL_REMOVED`): then the next statement.
+            "deprecated" => {
+                let what = self.ident()?;
+                if what != "back_fill" {
+                    return self.err("`deprecated back_fill`");
+                }
+                self.back_fill_ok = true;
+                self.nls();
+                return self.stmt();
+            }
             "lexer" => Stmt::Lexer(self.ident()?),
             "class" => {
                 let n = self.ident()?;
@@ -2183,7 +2215,7 @@ pub fn prefix_of(stmts: &[Stmt]) -> Result<Option<Vec<u8>>, String> {
 }
 
 pub fn parse(src: &str) -> Result<Vec<Stmt>, String> {
-    let mut p = P { t: lex(src)?, i: 0, regions: vec![], before: vec![], after: vec![], classed: vec![], pair_sets: vec![] };
+    let mut p = P { t: lex(src)?, i: 0, regions: vec![], before: vec![], after: vec![], classed: vec![], pair_sets: vec![], back_fill_ok: false };
     p.nls();
     let mut out = vec![];
     while p.peek().is_some() {
@@ -2199,6 +2231,18 @@ pub fn parse(src: &str) -> Result<Vec<Stmt>, String> {
 #[cfg(test)]
 mod tier2_tests {
     use super::*;
+
+    /// `back_fill` is refused, as a mask's and as a number's, with what to write instead
+    /// (decision 0406); `deprecated back_fill` lets a grammar not yet moved use it.
+    #[test]
+    fn back_fill_is_refused() {
+        for body in ["mask m = back_fill(q, sp)\n", "number n = back_fill(q, sp, position)\n"] {
+            let src = format!("lexer t\nclass q = '\"'\nclass sp = ' '\n{body}");
+            assert_eq!(parse(&src).err().as_deref(), Some(BACK_FILL_REMOVED), "{body}");
+            let allowed = format!("lexer t\ndeprecated back_fill\nclass q = '\"'\nclass sp = ' '\n{body}");
+            assert!(parse(&allowed).is_ok(), "{body}");
+        }
+    }
 
     /// The tier-2 forms of decision 0071, as JSON's tree section writes them.
     #[test]
@@ -2239,7 +2283,7 @@ tree json {
     /// that restarts at each of its starts, and the compares, with a constant too.
     #[test]
     fn numbers_evaluate_per_byte() {
-        let src = "lexer t\nclass tick = '`'\nmask last = tick & ~next(tick)\nnumber end = back_fill(last, ~tick, position)\nnumber rem = end - position\nmask long = tick & at_least(rem, 3)\nnumber n = fill(long, long, rem)\nmask close = tick & at_least(rem, n) & ~long\nmask over = above(n, rem)\n";
+        let src = "lexer t\ndeprecated back_fill\nclass tick = '`'\nmask last = tick & ~next(tick)\nnumber end = back_fill(last, ~tick, position)\nnumber rem = end - position\nmask long = tick & at_least(rem, 3)\nnumber n = fill(long, long, rem)\nmask close = tick & at_least(rem, n) & ~long\nmask over = above(n, rem)\n";
         let stmts = parse(src).expect("parses");
         let tables = std::collections::HashMap::new();
         let text = b"a````b``c`````d";
@@ -2261,7 +2305,7 @@ tree json {
         assert_eq!(ones("close"), Vec::<usize>::new(), "no run after a long one as long as it");
         assert!(stmts.iter().any(|s| matches!(s, Stmt::Number(n, NExpr::Sub(..)) if n == "rem")));
         assert_eq!(ones("over"), [2, 3, 4, 6, 7, 11, 12, 13]);
-        let bad = "lexer t\nclass q = '\"'\nrounds until settled {\n  carry h = empty\n  number x = back_fill(q, h, position)\n  next h = prev(at_least(x, 1))\n}\n";
+        let bad = "lexer t\ndeprecated back_fill\nclass q = '\"'\nrounds until settled {\n  carry h = empty\n  number x = back_fill(q, h, position)\n  next h = prev(at_least(x, 1))\n}\n";
         let stmts = parse(bad).expect("parses");
         assert!(strictly_causal(match &stmts[2] {
             Stmt::Rounds { body, .. } => body,

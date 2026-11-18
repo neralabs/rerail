@@ -251,6 +251,7 @@ fn later_masks_equal_the_evaluator_on_every_executor() {
 /// fixed point too; each mask equals the evaluator's, which holds the numbers whole.
 const NUMBERS: &str = r#"
 lexer numbers
+deprecated back_fill
 class tick = '`'
 mask last  = tick & ~next(tick)
 number end = back_fill(last, ~tick, position)
@@ -304,7 +305,7 @@ fn numbers_equal_the_evaluator_on_every_executor() {
 /// Metal's forward carry and backward passes included.
 #[test]
 fn positions_after_a_backward_pass_equal_the_evaluator_on_every_executor() {
-    let aligned = "lexer t\nclass d = '0'..'9'\nclass q = '\"'\nclass sp = ' '\nmask s = back_fill(q, sp)\nmask a = aligned(d, 3)\nmask b = aligned(s, 3)\n";
+    let aligned = "lexer t\ndeprecated back_fill\nclass d = '0'..'9'\nclass q = '\"'\nclass sp = ' '\nmask s = back_fill(q, sp)\nmask a = aligned(d, 3)\nmask b = aligned(s, 3)\n";
     for (text, names) in [(aligned, &["a", "b"][..]), (NUMBERS, &["long", "close", "over", "far", "odd"][..])] {
         let stmts = ::bitlex::syntax::parse(text).expect("parses");
         let compiled = bitlex_compile::compile(&stmts, names, None).unwrap_or_else(|e| panic!("compiles: {e}"));
@@ -346,7 +347,7 @@ fn positions_after_a_backward_pass_equal_the_evaluator_on_every_executor() {
 #[ignore = "a measurement: run by hand"]
 fn positions_after_a_backward_pass_metal_payoff() {
     use metal_program_backend::block_program::serial::{Segments, run_serial_split};
-    let aligned = "lexer t\nclass d = '0'..'9'\nclass q = '\"'\nclass sp = ' '\nmask s = back_fill(q, sp)\nmask a = aligned(d, 3)\nmask b = aligned(s, 3)\n";
+    let aligned = "lexer t\ndeprecated back_fill\nclass d = '0'..'9'\nclass q = '\"'\nclass sp = ' '\nmask s = back_fill(q, sp)\nmask a = aligned(d, 3)\nmask b = aligned(s, 3)\n";
     for (name, text, names, mb) in [("aligned", aligned, &["a", "b"][..], 8), ("numbers", NUMBERS, &["long", "close", "over", "far", "odd"][..], 1)] {
         let file: Vec<u8> = runs().into_iter().flatten().map(|b| [b'1', b'`', b'"', b' '][usize::from(b) % 4]).cycle().take(mb << 20).collect();
         let stmts = ::bitlex::syntax::parse(text).expect("parses");
@@ -551,11 +552,14 @@ fn the_cpu_executors_take_a_batch() {
     let bytes = batch_bytes();
     let files = batch_files(&bytes, blocks.len());
     let want: Vec<_> = files.iter().map(|f| blocks[f.program].run(f.bytes)).collect();
+    // The outputs the CPU's record pass makes instead of a mask (decision 0400): not compared.
+    let made: Vec<Vec<usize>> = programs.iter().map(|p| rerail_compiler::block_native::BlockNative::lower(&p.block_programs[0]).records_made()).collect();
     for (name, got) in [("interpreter", block::run_batch(&blocks, &files)), ("cranelift", native_cpu_block::run_batch(&compiled, &files))] {
         assert_eq!(got.len(), files.len());
         for (k, (got, want)) in got.iter().zip(&want).enumerate() {
             let what = format!("{name}: file {k} ({} bytes, program {})", files[k].bytes.len(), files[k].program);
-            assert_eq!(got.outputs, want.outputs, "{what}");
+            let made: &[usize] = if name == "cranelift" { &made[files[k].program] } else { &[] };
+            assert_eq!(got.without(made).outputs, want.without(made).outputs, "{what}");
             if name == "interpreter" {
                 // Cranelift has no lowering of `extract` rows (docs/parser-generators/20-the-ir.md).
                 assert_eq!(got.positions, want.positions, "{what}");
