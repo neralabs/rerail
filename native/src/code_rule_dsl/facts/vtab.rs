@@ -66,13 +66,31 @@ pub struct DeviceView<'a> {
 
 /// A view a stage reads in place (decision 0353 step 4d): its batch's directory's GPU address, the view's number in
 /// the kernels' reads (1 + `device_chunk::VIEW_*`), the buffers its reads reach by address, and what keeps them.
+/// A 16z batch's views read their blocks through its cache (`cache`, decision 0353 step 4b), which its reads write:
+/// a stage that reads the view is refused when the cache's failures rise past `failed` (no room found).
 #[cfg(target_os = "macos")]
 #[derive(Clone)]
 pub struct ViewInPlace {
     pub dir: u64,
     pub kind: u32,
     pub buffers: Vec<metal::Buffer>,
+    pub cache: Option<metal::Buffer>,
+    pub failed: u32,
     pub keep: Arc<dyn std::any::Any + Send + Sync>,
+}
+
+#[cfg(target_os = "macos")]
+impl ViewInPlace {
+    /// Its batch's cache's counts (`None` without one): for tuning, in the statistics mode (`RERAIL_ZCACHE_STATS`).
+    pub fn cache_counts(&self) -> Option<rerail_clif::view::cache::Counts> {
+        // SAFETY: the cache's header, in a shared buffer this view keeps.
+        self.cache.as_ref().map(|c| unsafe { rerail_clif::view::cache::Counts::read(c.contents().cast::<u8>()) })
+    }
+
+    /// The failures its batch's cache has counted (0 without one).
+    pub fn cache_failed(&self) -> u32 {
+        self.cache_counts().map_or(0, |c| c.failed)
+    }
 }
 
 pub trait Source: Send + Sync {

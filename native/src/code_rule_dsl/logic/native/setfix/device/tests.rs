@@ -870,12 +870,14 @@
                 // Read in place (decision 0353 step 4d): the views' reads over the batch's directory, copied out of
                 // the view by `rows_copy`, are the same rows; nothing made them.
                 if let Some(v) = d.in_place.clone() {
-                    let view = mj::DevRel::view(k, n, v).unwrap();
+                    let view = mj::DevRel::view(k, n, v.clone()).unwrap();
                     let out = mj::DevRel::empty(cols.len(), n).unwrap();
                     let mut batch = mj::Batch::new().expect("the device");
                     let from: Vec<mj::Col> = cols.iter().map(|&c| mj::Col::From(c)).collect();
                     batch.copy_rows(mj::Rows::Rel(&view), n, &from, mj::Rows::Rel(&out), 0).unwrap();
                     batch.finish().unwrap();
+                    // A 16z batch's blocks through its cache (0353 step 4b): every read found room.
+                    assert_eq!(v.cache_failed(), 0, "{name}: the 16z cache had room: {:?}", v.cache_counts());
                     for (j, &c) in cols.iter().enumerate() {
                         let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
                         assert_eq!(out.column(j), &host[..], "{name}: column {c} read in place");

@@ -448,6 +448,12 @@ impl<'a> Pass<'a> {
         }
     }
 
+    /// Makes `buffer` resident for the dispatches after it, to be read and written: a cache a kernel's reads keep
+    /// (a 16z batch's blocks, decision 0353 step 4b), reached by address.
+    pub fn use_read_write(&self, buffer: &BufferRef) {
+        self.encoder.use_resource(buffer, metal::MTLResourceUsage::Read | metal::MTLResourceUsage::Write);
+    }
+
     pub fn end(mut self) {
         self.encoder.end_encoding();
         self.ended = true;

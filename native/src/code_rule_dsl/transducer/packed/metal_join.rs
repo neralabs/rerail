@@ -498,7 +498,8 @@ static SOURCE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
     let reads = format!(
         "using namespace metal;\n#define CLIF_VIEW_SPACE device\n{}{}{}{}{VREAD}",
         rerail_blocks::RELATION_READS,
-        include_str!("metal_tape_reads.metal"),
+        // The reads that read a 16z tape too, through its batch's cache (decision 0353 step 4b).
+        include_str!("metal_tape_reads_z.metal"),
         include_str!("../../facts/vtab/syntax/id_reads.metal"),
         include_str!("../../facts/vtab/syntax/view_reads.metal"),
     );
@@ -2034,6 +2035,9 @@ impl DevRel {
         if let Some(v) = &self.view {
             let buffers: Vec<&BufferRef> = v.buffers.iter().map(|b| &**b).collect();
             pass.use_read(&buffers);
+            if let Some(cache) = &v.cache {
+                pass.use_read_write(cache);
+            }
         }
     }
 

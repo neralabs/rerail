@@ -3833,7 +3833,11 @@ impl Source for Viewed {
             .then(|| device_chunk::views_in_place(&self.batch, chunk))
             .flatten()
             .filter(|v| (view != device_chunk::VIEW_LINE || v.lines) && (!loc || v.locs))
-            .map(|v| crate::code_rule_dsl::facts::vtab::ViewInPlace { dir: v.dir, kind: device_chunk::read_kind(view), buffers: v.buffers.clone(), keep: Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync> });
+            .map(|v| {
+                let mut in_place = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir: v.dir, kind: device_chunk::read_kind(view), buffers: v.buffers.clone(), cache: v.cache.clone(), failed: 0, keep: Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync> };
+                in_place.failed = in_place.cache_failed();
+                in_place
+            });
         #[cfg(not(target_os = "macos"))]
         let in_place: Option<()> = None;
         if matches!(self.view, View::Loc(_)) && in_place.is_none() && !device_chunk::fill_locs(&self.batch, chunk) {

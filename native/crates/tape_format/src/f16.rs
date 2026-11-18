@@ -1372,13 +1372,13 @@ mod tests {
         let bytes = unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr().cast::<u8>(), spec.bytes()) };
         spec.init(bytes).unwrap();
         let rel = (bytes.as_ptr() as i64).wrapping_sub(z.as_bytes().as_ptr() as i64);
-        (view.side[0], view.side[1], view.columns[4]) = (rel as u32, (rel >> 32) as u32, 1);
+        (view.side[0], view.side[1], view.columns[3], view.columns[4]) = (rel as u32, (rel >> 32) as u32, spec.entry_bytes() as u32, 1);
         let cache_at = bytes.as_ptr() as usize;
         let failed = || unsafe { (*((cache_at + cache::FAILED as usize) as *const std::sync::atomic::AtomicU32)).load(std::sync::atomic::Ordering::Relaxed) };
         let f = ["tape_number", "tape_start", "tape_end", "tape_parent"].map(|name| reads.function(name) as usize);
         let (tape, v) = (z.as_bytes().as_ptr() as usize, std::ptr::from_ref(&view) as usize);
         let wrong: usize = std::thread::scope(|scope| {
-            let threads: Vec<_> = (0..std::env::var("CACHE_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(8u64))
+            let threads: Vec<_> = (0..8u64)
                 .map(|seed| {
                     let want = &want;
                     scope.spawn(move || {

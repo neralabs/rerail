@@ -480,9 +480,19 @@ Each step ends with:
          generated format 16 reads: the same block, decoded by a second decoder. The Rust backend checks each load
          against the tape's bytes, and a slot is not the tape's: the generated module reads 16z when its loads of a
          slot are checked against the slot.
-       - Left for the kernels: the device's views refuse a 16z batch (`views.refused.z_on_device`) and are made;
-         the transducer's residency lays a 16z tape out whole in its slab (`unblock_into`, row 13). Both go when
-         the kernels' reads decode a block.
+       - The device's views read a 16z batch in place (2026-11-18; `views.refused.z_on_device` gone): the join
+         kernels include the reads with the 16z case (`metal_tape_reads_z.metal`); a batch whose tapes are 16z
+         gets one cache (`device_chunk::zcache_spec`), which every stage that reads its views shares, resident
+         to be read and written; each 16z row's view names it, its entry size the cache's (a view's loads are
+         masked to it). A generation holds four times the batch's blocks, 64 at least, within an eighth of a
+         chunk's budget (`RERAIL_ZCACHE_MB`, 48 MB): with one entry a block, the device test's batch of five
+         blocks turned 25 times in one pass and 8 reads found no room (the dead entry read: wrong ends); with
+         the room, 5 misses, no turn, no failure. A stage whose cache's failures rose while it ran is refused
+         (`Run::failed`), and the stratum runs on the CPU. The cache's counts go to the profile (`zcache.*`)
+         when the batch's directory goes, the statistics mode's with `RERAIL_ZCACHE_STATS=1`.
+       - Left for the kernels: the transducer's residency lays a 16z tape out whole in its slab
+         (`unblock_into`, row 13). It goes when the label and program kernels read the stored bytes through a
+         cache too.
        - The kernels' part, decided (user, 2026-11-18): "a generic rolling GPU cache to amortize the cost": an LRU
          cache, kept with atomics, of 2–4 generations, each a hash index and an arena. A lookup looks across the
          generations, the head (active) and the frozen ones behind it. A miss computes its value (here a 16z

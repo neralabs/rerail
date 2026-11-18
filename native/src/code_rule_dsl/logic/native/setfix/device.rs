@@ -1904,6 +1904,11 @@ impl<'p> Run<'p> {
         if self.arena_full() {
             return Some(format!("its texts past the device's text arena of {} bytes", arena_max()));
         }
+        // A 16z view's blocks: a read that found no room in its batch's cache read the dead entry (0353 step 4b).
+        #[cfg(target_os = "macos")]
+        if self.rels.iter().flatten().filter_map(|(r, _)| r.view.as_ref()).any(|v| v.cache_failed() > v.failed) {
+            return Some("a 16z block found no room in its batch's cache".to_owned());
+        }
         None
     }
 

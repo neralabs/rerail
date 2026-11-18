@@ -167,12 +167,51 @@ pub struct ViewsInPlace {
     /// Whether every document's `Loc` rows are the views' reads' (`ViewEntry::locs`: a file's own tree, core.rr's
     /// lines in the batch's block), so the `Loc` views are read in place too.
     pub locs: bool,
+    /// The cache a 16z document's reads decode its blocks into (decision 0353 step 4b, `view::cache`), which every
+    /// stage that reads the batch's views shares: none where no tape is 16z.
+    pub cache: Option<metal::Buffer>,
     _entries: Vec<super::view_docs::ViewEntry>,
 }
 
+/// A batch's 16z cache's bytes at most (`RERAIL_ZCACHE_MB`, else 48 MB: an eighth of a chunk's budget).
+#[cfg(target_os = "macos")]
+fn zcache_bytes() -> usize {
+    std::env::var("RERAIL_ZCACHE_MB").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(48) << 20
+}
+
+/// The cache of a batch whose 16z tapes have `blocks` blocks, the largest `entry` bytes decoded: a generation holds
+/// four times every block (64 at least) where the budget allows, so a batch's passes decode each once; else as many
+/// as it allows, and the cache turns. The room past the blocks is the head's: a promoted block takes a second entry,
+/// and an entry given back by a writer that lost its index to the same block is not taken again (with one entry a
+/// block, the view test's batch of five blocks turned 25 times in one pass and 8 reads found no room). In the
+/// statistics mode with `RERAIL_ZCACHE_STATS=1`.
+#[cfg(target_os = "macos")]
+fn zcache_spec(blocks: usize, entry: usize) -> rerail_clif::view::cache::Spec {
+    use rerail_clif::view::cache::Spec;
+    let gens = 3;
+    let want = (4 * blocks).max(64);
+    let whole = Spec::new(gens, u32::try_from(want).unwrap_or(u32::MAX), entry);
+    let fits = (zcache_bytes() / gens as usize).saturating_sub(whole.first_entry()) / whole.entry_bytes();
+    let spec = Spec::new(gens, u32::try_from(want.min(fits).max(1)).unwrap_or(u32::MAX), entry);
+    if std::env::var_os("RERAIL_ZCACHE_STATS").is_some_and(|v| v == "1") { spec.with_stats() } else { spec }
+}
+
+/// The batch's cache's counts in the profile when its directory goes (the statistics mode's too, where it is on).
+#[cfg(target_os = "macos")]
+impl Drop for ViewsInPlace {
+    fn drop(&mut self) {
+        if let Some(cache) = &self.cache {
+            // SAFETY: the cache's header, in its shared buffer; no stage reads the views once the directory goes.
+            let c = unsafe { rerail_clif::view::cache::Counts::read(cache.contents().cast::<u8>()) };
+            for (name, n) in [("zcache.misses", c.misses), ("zcache.promoted", c.promoted), ("zcache.rotated", c.rotated), ("zcache.failed", c.failed), ("zcache.hits", c.hits), ("zcache.waited", c.waited), ("zcache.duplicates", c.duplicates)] {
+                crate::code_rule_dsl::prof::count(name, n as usize);
+            }
+        }
+    }
+}
+
 /// The batch's views' directory (`ViewsInPlace`), made on its first ask: `None` when a document's tape is not in a
-/// slab (a tape held in a vector of its own, a 16z tape laid out apart: decision 0353 step 4b), or the batch has no
-/// device.
+/// slab (a tape held in a vector of its own), or the batch has no device.
 #[cfg(target_os = "macos")]
 pub fn views_in_place<'a>(batch: &Batch, chunk: &'a Chunk) -> Option<&'a ViewsInPlace> {
     chunk.views.get_or_init(|| build_views(batch, chunk)).as_ref()
@@ -191,6 +230,8 @@ fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
     let mut entries = Vec::with_capacity(n);
     let mut lines = true;
     let loc_rows = batch.offsets(View::Loc(Place::Line));
+    // The 16z documents' rows, their blocks and their largest block's entry: their cache made after the rows.
+    let (mut zrows, mut zblocks, mut zentry) = (Vec::new(), 0usize, 0usize);
     let mut locs = batch.docs.iter().all(|p| p.extra.is_some());
     for (i, p) in batch.docs.iter().enumerate() {
         // Each refusal counted by why: what step 4b (16z laid out apart) and the loads not yet placed leave.
@@ -223,10 +264,6 @@ fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
             let tape_on_device = || -> Result<_, &'static str> {
                 let tape = p.facts.tape.as_ref().ok_or("views.refused.no_tape")?;
                 let (bytes, view) = tape.in_place().map_err(|_| "views.refused.not_in_place")?;
-                // A 16z tape's reads decode a block into a reader's slot; the kernels' reads do not yet (0353 step 4b).
-                if view.format == rerail_clif::view::F16Z_FORMAT {
-                    return Err("views.refused.z_on_device");
-                }
                 let room = tape.image().room().ok_or(if tape.image().format() == crate::code_rule_dsl::tape::formats::Format::F16Z { "views.refused.unplaced_16z" } else { "views.refused.unplaced" })?;
                 let (address, slab) = crate::code_rule_dsl::tape::placed::on_device(room, bytes).ok_or("views.refused.not_in_room")?;
                 Ok((address, slab, view))
@@ -267,11 +304,32 @@ fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
             row.entry = b.offset_of(entry.desc()) as u64;
             row.tape = address;
             row.view = view;
+            if view.format == rerail_clif::view::F16Z_FORMAT {
+                zrows.push(i);
+                zblocks += (view.nodes as usize).div_ceil(rerail_clif::view::F16Z_BLOCK as usize);
+                zentry = zentry.max(view.columns[3] as usize);
+            }
             entries.push(entry);
         }
         // SAFETY: row `i` of the rows just allocated in `b`.
         unsafe { rows.add(i).write(row) };
     }
+    // The 16z documents' cache, shared by every thread of every stage that reads the views: each one's view names it
+    // by its address less its tape's, its entry size the cache's, its reads checked (shared).
+    let cache = (!zrows.is_empty()).then(|| {
+        let spec = zcache_spec(zblocks, zentry);
+        let cache = device.new_buffer(spec.bytes() as u64, metal::MTLResourceOptions::StorageModeShared);
+        // SAFETY: the buffer's bytes, shared with the host, read by no stage yet.
+        spec.init(unsafe { std::slice::from_raw_parts_mut(cache.contents().cast::<u8>(), spec.bytes()) }).expect("a cache's buffer of its size");
+        for &i in &zrows {
+            // SAFETY: row `i`, written above in `b`.
+            let row = unsafe { &mut *rows.add(i) };
+            let rel = cache.gpu_address().wrapping_sub(row.tape) as i64;
+            (row.view.side[0], row.view.side[1]) = (rel as u32, (rel >> 32) as u32);
+            (row.view.columns[3], row.view.columns[4]) = (spec.entry_bytes() as u32, 1);
+        }
+        cache
+    });
     // The block's buffer made after the last allocation, so it covers them: the addresses are its.
     let buffer = b.gpu_buffer(device);
     let base = buffer.gpu_address();
@@ -279,7 +337,7 @@ fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
     unsafe { dir.write(ViewDir { chunk: base, ndocs: n as u32, pad: 0, rows: base + b.offset_of(rows) as u64 }) };
     let mut buffers = vec![buffer];
     buffers.extend(slabs);
-    Some(ViewsInPlace { dir: base + b.offset_of(dir) as u64, buffers, lines, locs, _entries: entries })
+    Some(ViewsInPlace { dir: base + b.offset_of(dir) as u64, buffers, lines, locs, cache, _entries: entries })
 }
 
 /// Copies `src` into the block and points `span` at it.
