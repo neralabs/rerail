@@ -108,7 +108,7 @@ type Facts = BTreeMap<Slot, Fact>;
 
 /// Bounds `prog`'s unscoped location variables to its shown documents (`bound`), and names the kinds and fields of
 /// scoped nodes in their grammar.
-/// With `bound` from `combining::bound`.
+/// With `bound` from `hiding::bound`.
 pub(in crate::code_rule_dsl::logic::plan::corpus) struct Hide {
     pub(in crate::code_rule_dsl::logic::plan::corpus) bound: u32,
 }

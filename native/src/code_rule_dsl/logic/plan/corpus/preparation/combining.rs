@@ -356,19 +356,6 @@ pub(in crate::code_rule_dsl::logic::plan::corpus) fn fold_own_guests(v: std::syn
     Ok(p.finish()?.0)
 }
 
-/// `hiding::bound` on the version: the bound of the shown documents, files and the run language's guests unless
-/// `.guests off`.
-pub(in crate::code_rule_dsl::logic::plan::corpus) fn bound(v: &Version, f: Fields<'_>) -> u32 {
-    use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, GUEST_KEYS, GUEST_POLICY};
-    let off = f.facts(GUEST_POLICY).is_some_and(|rows| {
-        rows.rows().any(|row| {
-            let row: Vec<Cell> = row.collect();
-            matches!(row.as_slice(), [Cell::Str(k), Cell::Str(x)] if v.text(*k) == "library" && v.text(*x) == "off")
-        })
-    });
-    if off { GUEST_KEYS } else { ANNOTATION_KEYS }
-}
-
 /// Folds the copies hiding made for guests in the run's own language back into their originals, once the run's
 /// language (`label`) is known (decision 0058). Such a guest's documents are shown (`GUEST_KEYS..HIDDEN_KEYS`, a
 /// guest whose grammar's label is the run's: `guests::key`) and its kinds are the run's (`python:x` resolves as `x`),
@@ -390,7 +377,7 @@ impl ProgramPass for FoldOwn<'_> {
         let d = cx.get::<FieldsData>()?;
         let f = Fields::over(v, &d);
         let label = self.label;
-        if bound(v, f) != ANNOTATION_KEYS || std::env::var("RERAIL_SHOWN_COPIES").is_ok_and(|x| x == "on") {
+        if super::super::hiding::bound(&**v) != ANNOTATION_KEYS || std::env::var("RERAIL_SHOWN_COPIES").is_ok_and(|x| x == "on") {
             return Ok(());
         }
         let dialect = crate::code_rule_dsl::logic::plan::corpus::hiding::dialect_label;
