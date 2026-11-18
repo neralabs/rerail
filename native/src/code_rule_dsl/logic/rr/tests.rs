@@ -3748,7 +3748,7 @@ fn library_modules_link_to_the_lowering_of_them_together() {
         let modules = library_modules(&paths, files).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
         // Each module read back from its image (decision 0246 §6) links to the same program.
         let images: Vec<lower::Module> = modules.iter().map(|m| module_image::decode(&module_image::encode(m).unwrap()).unwrap_or_else(|e| panic!("{}: a module image: {e}", dir.display()))).collect();
-        // And linked on versions from the images (decision 0365): the program the tree's link makes.
+        // And linked on versions from the images (decision 0377): the program the tree's link makes.
         let on_versions = super::link_library_versions(images.clone()).unwrap_or_else(|e| panic!("{}: linked on versions: {e}", dir.display()));
         let linked = lower::link(modules).unwrap();
         let tree = crate::code_rule_dsl::logic::program_image::Builder::of_program_less_maintenance(&linked).unwrap().finish().unwrap().0;
@@ -4201,7 +4201,7 @@ fn a_module_is_linked_and_checked_declared_on_the_version() {
     assert!(v.rules().any(|r| v.rel_name(r.head().rel()) == "hit"), "{}", v.show());
 }
 
-/// A text's rules are written as a version in its walk (decision 0365 step 3): the module linked holds its header
+/// A text's rules are written as a version in its walk (decision 0377 step 3): the module linked holds its header
 /// alone, its rules in the version the walk wrote, and that version is the one the tree's rules encode to.
 #[test]
 fn a_texts_rules_are_written_as_a_version_in_its_walk() {

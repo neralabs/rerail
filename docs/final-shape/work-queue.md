@@ -1863,18 +1863,18 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
 
 ### Q100 (was Q91). A cut of a gated program keeps `node`'s projections: retain's test expects an empty part
 
-- **Found** (2026-11-17, while making 0365's cuts): `retain::tests::unchanged_gated_programs_reuse_only_complete_retained_results`
+- **Found** (2026-11-17, while making 0377's cuts): `retain::tests::unchanged_gated_programs_reuse_only_complete_retained_results`
   fails: the cut of an unchanged gated program (`Cut::program`) holds two rules, `kind($n, $k) :- node(_, $n, $k, _, _)`
   and `docof($n, $d) :- node($d, $n, _, _, _)`, where the test asserts none. Since `6fe55cb12` (Q37, 2026-11-16) a copy
   of an input's columns is a view of it, not a stratum, so `cut` never counts the projections clean, and the part
-  keeps every rule whose head is not clean. Not 0365's: the part is made by the same passes (`Retain`, `PartOf`), now
+  keeps every rule whose head is not clean. Not 0377's: the part is made by the same passes (`Retain`, `PartOf`), now
   through `passes::Parts`, and the rules kept are those `clean` leaves.
 - **Done when**: either the cut counts a view of an input's columns clean with the input (the part then has no rules,
   as the test says), or the test asserts the part holds only such views; the planner's owner of Q37 decides which.
 
 ### Q101. `corpus::tests::the_run_after_a_cold_one_writes_nothing` fails its warm run's strict check
 
-- **Found** (2026-11-17, while linking library modules on versions, decision 0365): the test's second run exits 3:
+- **Found** (2026-11-17, while linking library modules on versions, decision 0377): the test's second run exits 3:
   `RERAIL_WARM: the observer's store not asked inside the waves in a warm run (…/src: its answers unknown, read
   again)`. It fails the same at `caa1bfdb2`, before the change (the change set aside and the test run on HEAD).
 - **Done when**: the warm run asks the observer's store inside the waves (or the guard is right to refuse, and the

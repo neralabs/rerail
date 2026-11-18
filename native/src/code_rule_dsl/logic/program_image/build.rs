@@ -113,7 +113,7 @@ impl Builder<'static> {
     }
 
     /// `prog`'s header but maintenance's parts on a base whose rules are written: its declarations, facts, inputs,
-    /// outputs and `.about` rows. The lowering writes a text's rules in its walk, then this (decision 0365 step 3).
+    /// outputs and `.about` rows. The lowering writes a text's rules in its walk, then this (decision 0377 step 3).
     pub fn set_program_header(&mut self, prog: &Program) {
         for (n, c) in &prog.decls {
             self.declare_names(n, c.as_slice());

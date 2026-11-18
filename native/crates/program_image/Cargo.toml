@@ -3,7 +3,7 @@ name = "rerail-program-image"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "The program image's core (decision 0365): a program's rules and header as one image, its versions and their builder, under the lowering, which writes through it."
+description = "The program image's core (decision 0377): a program's rules and header as one image, its versions and their builder, under the lowering, which writes through it."
 
 [features]
 default = []

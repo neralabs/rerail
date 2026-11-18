@@ -9,7 +9,7 @@ DAG = {
     # tapes are keyed by the store's identities (tape::tape_identity)
     'rerail-lang': ['rerail-prof', 'rerail-rr-syntax', 'rerail-store'],
     'rerail-facts': ['rerail-lang', 'rerail-store'],
-    # the program image's core, under the lowering (decision 0365)
+    # the program image's core, under the lowering (decision 0377)
     'rerail-program-image': ['rerail-prof', 'rerail-rr-syntax'],
     'rerail-rr': ['rerail-facts', 'rerail-rr-syntax', 'rerail-program-image'],
     'rerail-logic': ['rerail-rr', 'rerail-facts', 'rerail-program-image'],

@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 pub fn encode(m: &Module) -> Result<Vec<u8>, String> {
     let p = m.parts();
     let mut b = Builder::of_program_less_maintenance(&p.prog)?;
-    // A module written as a version (decision 0365) holds its rules there, in their order: its `must, may` rules'
+    // A module written as a version (decision 0377) holds its rules there, in their order: its `must, may` rules'
     // places and its helpers' counts are by that order.
     if let Some(v) = &p.version {
         for r in v.rules() {

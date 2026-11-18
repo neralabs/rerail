@@ -1,4 +1,4 @@
-//! The program image's core (decision 0365): `Image`, its versions (`Version`) and the `Builder` that writes them,
+//! The program image's core (decision 0377): `Image`, its versions (`Version`) and the `Builder` that writes them,
 //! with `program_facts`, the rows the image's header is. Under the lowering (`rerail-rr`), so the lowering writes a
 //! module's rules as versions; the pass manager, the passes and the analyses stay in `rerail-logic`, which mounts
 //! this crate's `program_image` with them added.

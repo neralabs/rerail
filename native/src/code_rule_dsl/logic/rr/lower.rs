@@ -181,7 +181,7 @@ fn place_relation(v: &str) -> String {
 
 #[derive(Clone, Default)]
 struct Lowerer {
-    /// Where the walk writes its rules: the tree's `prog.rules`, or a text's version (`Written`, decision 0365 step 3).
+    /// Where the walk writes its rules: the tree's `prog.rules`, or a text's version (`Written`, decision 0377 step 3).
     out: Out,
     prog: Program,
     /// `.lattice` declarations: name → (base type, its `Lub` functor).
@@ -254,7 +254,7 @@ enum Out {
     /// `prog.rules`: a module kept as parts, the unseeded link, `lower`.
     #[default]
     Tree,
-    /// A text's own program, written as a version in the walk (decision 0365 step 3): `prog` holds its header alone.
+    /// A text's own program, written as a version in the walk (decision 0377 step 3): `prog` holds its header alone.
     Version(Box<Written>),
 }
 
@@ -415,7 +415,7 @@ pub struct Module {
     docof: Option<bool>,
     /// The `.violation`s of its includes that its rules give a `@place` (`Lowerer::clause`).
     places: BTreeSet<String>,
-    /// Its rules, where its walk wrote them as a version (decision 0365 step 3), or its image holds them: then
+    /// Its rules, where its walk wrote them as a version (decision 0377 step 3), or its image holds them: then
     /// `l.prog` is its header alone.
     version: Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>,
 }
@@ -460,7 +460,7 @@ pub fn lower_module_seeded(statements: Vec<Statement>, seeds: &Seeds) -> Result<
     lower_module_seeded_as(statements, seeds, false)
 }
 
-/// `lower_module_seeded`, its rules written as a version in the walk (decision 0365 step 3): a text's own program,
+/// `lower_module_seeded`, its rules written as a version in the walk (decision 0377 step 3): a text's own program,
 /// which `link_seeded_parts` links without editing its rules and `rr::link_seeded_version` appends onto its scope.
 pub fn lower_module_seeded_written(statements: Vec<Statement>, seeds: &Seeds) -> Result<Module, Error> {
     lower_module_seeded_as(statements, seeds, true)

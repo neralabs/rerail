@@ -319,7 +319,7 @@ impl Text {
         check_names(&vec![(PathBuf::from("<program>"), checked)], reads_core)?;
         closed_program(&files, &own)?;
         let own: Vec<syntax::Statement> = own.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_))).collect();
-        // Its rules written as a version in the walk (decision 0365 step 3); a debug build lowers the tree too and
+        // Its rules written as a version in the walk (decision 0377 step 3); a debug build lowers the tree too and
         // checks the two are one program.
         #[cfg(debug_assertions)]
         let tree = lower::link_seeded_parts(lower::lower_module_seeded(own.clone(), &scoped.seeds)?, &scoped.seeds)?;
@@ -343,7 +343,7 @@ impl Text {
     }
 
     /// The text's own program as its walk writes it (`lower::lower_module_seeded_written`) and as the tree's rules
-    /// encode, and whether the linked module held its header alone: a test's view of decision 0365 step 3.
+    /// encode, and whether the linked module held its header alone: a test's view of decision 0377 step 3.
     #[cfg(any(test, feature = "test-hooks"))]
     pub fn own_written_and_tree(self, scoped: &Scoped) -> Result<(bool, std::sync::Arc<super::program_image::Version>, std::sync::Arc<super::program_image::Version>), Error> {
         let Read::Modular { own, .. } = self.0 else { return Err(Error::Syntax("not a modular text".to_owned())) };
@@ -555,7 +555,7 @@ pub fn lower_library(paths: &[PathBuf], store: Option<&crate::content_store::Con
         match stored {
             Some(version) => Library::of(modules, members, keys, version, None),
             None => {
-                // Linked on versions (decision 0365): the modules' rules are never a tree.
+                // Linked on versions (decision 0377): the modules' rules are never a tree.
                 let version = link_library_versions(modules.iter().map(lower::Module::clone).collect())?;
                 #[cfg(debug_assertions)]
                 {
@@ -1058,7 +1058,7 @@ fn link_seeded_version(linked: lower::Linked, own_v: std::sync::Arc<super::progr
 }
 
 
-/// A library's modules linked on versions (decision 0365): `lower::link_versions`, then the lowering's tail
+/// A library's modules linked on versions (decision 0377): `lower::link_versions`, then the lowering's tail
 /// (`lowering_tail_on`), folded to a base. The program `lower::link` makes of them as a tree, as a version.
 pub fn link_library_versions(modules: Vec<lower::Module>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     let linked = lower::link_versions(modules)?;

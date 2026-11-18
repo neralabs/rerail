@@ -1,4 +1,6 @@
-# 0365: The program image's core is a crate under the lowering
+# 0377: The program image's core is a crate under the lowering
+
+**Numbered 0365 until 2026-11-17** (0365 is three other branches' records; its commits name it so).
 
 **Status:** building (the user's choice, 2026-11-17).
 

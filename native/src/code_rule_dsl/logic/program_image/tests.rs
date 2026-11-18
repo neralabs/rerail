@@ -1551,7 +1551,7 @@ fn a_new_process_reruns_only_the_passes_after_a_stored_step() {
 }
 
 /// `program_facts`' own tests, which read text through `rr::parse` and the planner: above the image's crate
-/// (decision 0365).
+/// (decision 0377).
 mod program_facts_tests {
     /// The encoding names each string by its first use and puts the table first: the bytes the two-pass writer made
     /// (strings counted, then the rows written), and they decode to the facts.
@@ -1682,7 +1682,7 @@ mod program_facts_tests {
 
 /// `Builder::rewrite` renames an aggregate's result variable through `Rewrite::var`, as it renames the variable's
 /// other occurrences: before, the result kept its name, so a rule whose variables were renamed (a library module's
-/// helpers renumbered at its link, decision 0365) read `$rr_agg17 = count { … }, 0 = $rr_agg21`.
+/// helpers renumbered at its link, decision 0377) read `$rr_agg17 = count { … }, 0 = $rr_agg21`.
 #[test]
 fn a_rewrite_renames_an_aggregates_result_too() {
     use super::{Rewrite, Slot};
