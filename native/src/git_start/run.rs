@@ -337,15 +337,20 @@ mod tests {
         )
     }
 
+    /// The time limit of a run whose script must write the holder's pid, or exit, before it. At 300 ms a script on a
+    /// machine with a load of 18 on 16 cores once had printed nothing by its limit, in 1 of 20 runs. A run that waits
+    /// for its limit takes this long.
+    const READY_LIMIT_MS: Option<u32> = Some(1_000);
+
     #[test]
     fn a_run_past_its_limits_returns_while_a_process_its_child_started_holds_both_outputs() {
         let term = Some(libc::SIGTERM);
         assert_eq!(
-            held("late", "exec sleep 10", Some(100)),
+            held("late", "exec sleep 10", READY_LIMIT_MS),
             (None, term, true, false, true)
         );
         assert_eq!(
-            held("exited", "exit 0", Some(100)),
+            held("exited", "exit 0", READY_LIMIT_MS),
             (Some(0), None, true, false, true)
         );
         assert_eq!(
@@ -432,19 +437,22 @@ mod tests {
             ),
             (true, false, Some(libc::SIGTERM))
         );
-        // The child takes its SIGTERM and then writes 1 MB: with its outputs closed, the write ends at once on EPIPE
-        // (exit status 141); with them open, it would fill the buffers and wait, here until `timeout` ends it (124).
+        // The child sets its TERM trap and only then prints, past an output limit of 1 byte, so the SIGTERM that limit
+        // brings always finds the trap set. The child takes it and writes 1 MB: with its outputs closed, the write ends
+        // at once on EPIPE (exit status 141); with them open, it would fill the buffers and wait, here until `timeout`
+        // ends it (124).
         let file = format!("rerail-git-run-writer-{}", std::process::id());
         let file = std::env::temp_dir().join(file);
         let script = format!(
-            "sleep 10 & s=$!; trap 'timeout 5 head -c 1000000 /dev/zero; echo $? > \"{}\"; kill $s; exit 0' TERM; wait",
+            "sleep 10 & s=$!; trap 'timeout 5 head -c 1000000 /dev/zero; echo $? > \"{}\"; kill $s; exit 0' TERM; \
+             echo trapped; wait",
             file.display()
         );
-        let writer = sh(&script, Some(100), 1 << 20);
+        let writer = sh(&script, None, 1);
         let wrote = std::fs::read_to_string(&file).unwrap_or_default();
         let _ = std::fs::remove_file(&file);
         assert_eq!(
-            (writer.status, writer.timed_out, wrote.trim()),
+            (writer.status, writer.past_max_buffer, wrote.trim()),
             (Some(0), true, "141")
         );
     }
