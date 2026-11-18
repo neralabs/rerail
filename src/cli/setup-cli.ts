@@ -213,9 +213,7 @@ async function backUpRulesAndHistory(home: string, dryRun: boolean): Promise<voi
   const target = join(backupRoot(), "rerail-home");
   const present = () => BACKED_UP_DATABASES.filter(name => existsSync(join(home, name)));
   if (dryRun) {
-    const listed = present();
-    const moves = listed.length === 0 ? "" : " and move " + listed.join(", ") + " to " + target;
-    process.stdout.write(`Would stop the Rerail daemon${moves}.\n`);
+    process.stdout.write(`Would stop the Rerail daemon${plannedMoves(present(), target)}.\n`);
     return;
   }
   process.stdout.write(stopLine(await stopDaemon(home)));
@@ -225,18 +223,27 @@ async function backUpRulesAndHistory(home: string, dryRun: boolean): Promise<voi
     return;
   }
   await mkdir(target, { recursive: true, mode: 0o700 });
-  for (const name of listed) {
-    // Windows keeps a file locked for a moment after the process holding it has exited (and an
-    // antivirus scan can hold it too), so a locked move is retried briefly before giving up.
-    try {
-      await renameWithRetry(join(home, name), join(target, name), { retryMs: LOCKED_MOVE_MS });
-    } catch (error) {
-      const code = error instanceof Error && "code" in error ? error.code : undefined;
-      // A sidecar SQLite removed between the listing and the move holds nothing the main file lacks.
-      if (code !== "ENOENT" || !/-(wal|shm)$/u.test(name)) throw error;
-    }
-  }
+  for (const name of listed) await moveIntoBackup(join(home, name), join(target, name));
   process.stdout.write(`Backup: ${target} holds your rules and history. Install Rerail again and restore this backup to get them back.\n`);
+}
+
+/** What a dry run of the backup says it would move to `target`: the files `listed`, or nothing when there are none. */
+function plannedMoves(listed: readonly string[], target: string): string {
+  return listed.length === 0 ? "" : " and move " + listed.join(", ") + " to " + target;
+}
+
+/**
+ * Moves one file of Rerail's databases from `from` into the backup at `to`. Windows keeps a file locked for a moment
+ * after the process holding it has exited (and an antivirus scan can hold it too), so a locked move is retried briefly
+ * before giving up. A sidecar SQLite removed between the listing and the move holds nothing the main file lacks.
+ */
+async function moveIntoBackup(from: string, to: string): Promise<void> {
+  try {
+    await renameWithRetry(from, to, { retryMs: LOCKED_MOVE_MS });
+  } catch (error) {
+    const code = error instanceof Error && "code" in error ? error.code : undefined;
+    if (code !== "ENOENT" || !/-(wal|shm)$/u.test(from)) throw error;
+  }
 }
 
 /** Rerail's databases in its home, with every file named after them: WAL, shared memory, journal, `.restoring`, copies. */
