@@ -175,12 +175,17 @@ pub struct Words {
 /// `check KIND = G` compiles to one: its byte machine as a `fill` per self-loop and logic, run
 /// word-parallel, 64 places a word, its carries passed from word to word on a longer token. No
 /// loop over bytes.
+///
+/// A token's check may read `back` bytes before the token (decision 0428): the frame then
+/// begins that many bytes earlier, the token's first byte at place `back`. Before the file every
+/// op's operand is 0 (no byte, no token), as tier 1's `prev` reads it.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct LocalCheck {
     pub mask: u16,
     pub delay: u8,
     pub ops: Vec<LocalOp>,
     pub token: bool,
+    pub back: u8,
 }
 
 /// A local check's operation, at a stream place `i` (tier 1's meaning: `block::BlockOp`): a
@@ -207,6 +212,9 @@ pub enum LocalOp {
     Start,
     /// A token's check only: 1 at the token's last byte.
     Last,
+    /// A token's check only (decision 0428): 1 where a token before this one has its last
+    /// byte, as tier 2's records hold them; 0 at the token and after it.
+    Ended,
 }
 
 impl LocalOp {
@@ -215,29 +223,34 @@ impl LocalOp {
         match *self {
             LocalOp::Not(a) | LocalOp::Prev(a, _) => vec![a],
             LocalOp::And(a, b) | LocalOp::Or(a, b) | LocalOp::Xor(a, b) | LocalOp::AndNot(a, b) | LocalOp::Fill(a, b) => vec![a, b],
-            LocalOp::Bytes(_) | LocalOp::Const(_) | LocalOp::Within(_) | LocalOp::Start | LocalOp::Last => vec![],
+            LocalOp::Bytes(_) | LocalOp::Const(_) | LocalOp::Within(_) | LocalOp::Start | LocalOp::Last | LocalOp::Ended => vec![],
         }
     }
 
     /// An op of a token's check only.
     pub fn token_only(&self) -> bool {
-        matches!(self, LocalOp::Fill(..) | LocalOp::Start | LocalOp::Last)
+        matches!(self, LocalOp::Fill(..) | LocalOp::Start | LocalOp::Last | LocalOp::Ended)
     }
 }
 
 /// A token's check (`LocalCheck::token`) at the token of `bytes[start..end]`: whether it
-/// refuses. The frame is the token's bytes and `delay` more, a byte past the file 0.
-pub fn token_value(ops: &[LocalOp], bytes: &[u8], start: usize, end: usize, delay: u8) -> bool {
-    let (n, d) = (end - start, usize::from(delay));
-    let m = n + d;
-    let byte = |i: usize| bytes.get(start + i).copied().unwrap_or(0);
+/// refuses. The frame is `back` bytes before the token, its bytes and `delay` more, a byte past
+/// the file 0. `ended(j)`: whether a token before this one has its last byte at `j`.
+pub fn token_value(c: &LocalCheck, bytes: &[u8], start: usize, end: usize, ended: &dyn Fn(usize) -> bool) -> bool {
+    let (ops, back) = (&c.ops, usize::from(c.back));
+    let (n, d) = (end - start, usize::from(c.delay));
+    let m = back + n + d;
+    // The file's index of place `i`; none before the file.
+    let file = |i: usize| (start + i).checked_sub(back);
+    let byte = |i: usize| file(i).map(|j| bytes.get(j).copied().unwrap_or(0));
     let mut v: Vec<Vec<bool>> = Vec::with_capacity(ops.len());
     for op in ops {
         let at = |a: u16, i: usize| v[usize::from(a)][i];
         let row: Vec<bool> = match *op {
-            LocalOp::Bytes(s) => (0..m).map(|i| { let b = byte(i); s[usize::from(b) / 64] >> (b % 64) & 1 == 1 }).collect(),
+            LocalOp::Bytes(s) => (0..m).map(|i| byte(i).is_some_and(|b| s[usize::from(b) / 64] >> (b % 64) & 1 == 1)).collect(),
             LocalOp::Const(p) => (0..m).map(|i| p >> (i % 64) & 1 == 1).collect(),
-            LocalOp::Within(k) => (0..m).map(|i| i >= usize::from(k) && start + i - usize::from(k) < bytes.len()).collect(),
+            LocalOp::Within(k) => (0..m).map(|i| i >= usize::from(k) && file(i - usize::from(k)).is_some_and(|j| j < bytes.len())).collect(),
+            LocalOp::Ended => (0..m).map(|i| i < back && file(i).is_some_and(ended)).collect(),
             LocalOp::Not(a) => (0..m).map(|i| !at(a, i)).collect(),
             LocalOp::And(a, b) => (0..m).map(|i| at(a, i) && at(b, i)).collect(),
             LocalOp::Or(a, b) => (0..m).map(|i| at(a, i) || at(b, i)).collect(),
@@ -251,12 +264,12 @@ pub fn token_value(ops: &[LocalOp], bytes: &[u8], start: usize, end: usize, dela
                 }
                 f
             }
-            LocalOp::Start => (0..m).map(|i| i == 0).collect(),
-            LocalOp::Last => (0..m).map(|i| i + 1 == n).collect(),
+            LocalOp::Start => (0..m).map(|i| i == back).collect(),
+            LocalOp::Last => (0..m).map(|i| i + 1 == back + n).collect(),
         };
         v.push(row);
     }
-    v.last().is_some_and(|r| r[d..].iter().any(|&b| b))
+    v.last().is_some_and(|r| r[back + d..].iter().any(|&b| b))
 }
 
 /// A local check's value at stream place `i` over `bytes` (`LocalCheck`), each op's once.
@@ -277,7 +290,7 @@ pub fn local_value(ops: &[LocalOp], bytes: &[u8], i: i64) -> bool {
             LocalOp::AndNot(a, b) => at(ops, usize::from(a), bytes, i) && !at(ops, usize::from(b), bytes, i),
             LocalOp::Prev(a, k) => i >= i64::from(k) && at(ops, usize::from(a), bytes, i - i64::from(k)),
             // A token's check's alone (`stream::validate_local_checks`).
-            LocalOp::Fill(..) | LocalOp::Start | LocalOp::Last => unreachable!("a token's check's op in a local check"),
+            LocalOp::Fill(..) | LocalOp::Start | LocalOp::Last | LocalOp::Ended => unreachable!("a token's check's op in a local check"),
         }
     }
     !ops.is_empty() && at(ops, ops.len() - 1, bytes, i)

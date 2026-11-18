@@ -1336,7 +1336,7 @@ fn check(out: &mut String, on_p: &mut String, i: usize, c: &LocalCheck, word: &s
             LocalOp::Xor(a, b) => format!("{} ^ {}", v(a, t), v(b, t)),
             LocalOp::AndNot(a, b) => format!("{} & !{}", v(a, t), v(b, t)),
             LocalOp::Prev(a, s) => format!("({} << {s}) | (if q - {t} >= 1 {{ {} >> {} }} else {{ 0 }})", v(a, t), v(a, t + 1), 64 - u32::from(s)),
-            LocalOp::Fill(..) | LocalOp::Start | LocalOp::Last => return Err(format!("check {i}: a token's check's op in a local check")),
+            LocalOp::Fill(..) | LocalOp::Start | LocalOp::Last | LocalOp::Ended => return Err(format!("check {i}: a token's check's op in a local check")),
         };
         writeln!(body, "        let v{k}_{t}: u64 = {e};").unwrap();
     }
@@ -1701,7 +1701,7 @@ mod tests {
                     LocalOp::Xor(a, b) => v(ops, usize::from(a), bytes, q) ^ v(ops, usize::from(b), bytes, q),
                     LocalOp::AndNot(a, b) => v(ops, usize::from(a), bytes, q) & !v(ops, usize::from(b), bytes, q),
                     LocalOp::Prev(a, s) => (v(ops, usize::from(a), bytes, q) << s) | if q >= 1 { v(ops, usize::from(a), bytes, q - 1) >> (64 - u32::from(s)) } else { 0 },
-                    LocalOp::Fill(..) | LocalOp::Start | LocalOp::Last => unreachable!(),
+                    LocalOp::Fill(..) | LocalOp::Start | LocalOp::Last | LocalOp::Ended => unreachable!(),
                 }
             }
             v(ops, ops.len() - 1, bytes, q)

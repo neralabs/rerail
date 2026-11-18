@@ -267,13 +267,27 @@ fn a_unicode_escapes_checks_run_at_its_u() {
     }
     let source = std::fs::read_to_string(format!("{DIR}/14-json.bitlex")).expect("the ladder's JSON");
     let c = crate::ladder::compile_step("14-json", &source);
-    // One token's check past its token (the hex digits and the lone high, merged), and no mask's.
+    // One token's check past its token (the hex digits and both lone halves, merged), and no
+    // mask's. The lone low reads the six bytes before its escape and the tokens' ends there
+    // (decision 0428): tier 1 has no surrogate test left.
     assert_eq!(c.program.local_checks.iter().filter(|k| k.token && k.delay == 8).count(), 1, "{:?}", c.program.local_checks);
     assert!(c.program.local_checks.iter().all(|k| k.token), "{:?}", c.program.local_checks);
+    assert!(c.program.local_checks.iter().any(|k| k.back == 6 && k.ops.contains(&crate::program::LocalOp::Ended)), "{:?}", c.program.local_checks);
+    // Run only at a `\u` (`token_gate`): its last byte `u`, as simdjson's stage 2 switches on
+    // the escape's byte. The number's check has no such bound.
+    let mut u = [0u64; 4];
+    u[usize::from(b'u') / 64] |= 1 << (b'u' % 64);
+    let gates: Vec<Option<[u64; 4]>> = c.program.local_checks.iter().map(crate::native_cpu_stream::token_gate).collect();
+    assert_eq!(gates.iter().filter(|g| **g == Some(u)).count(), 1, "{gates:?}");
+    assert_eq!(gates.iter().filter(|g| g.is_none()).count(), 1, "{gates:?}");
     let block = &c.program.block_programs[0];
     let texts = [
         r"A", r"éx", r"😀", r"😀", r"\u12", r"\u12G4", r"\uZZZZ", r"\u", r"\uD800", r"\uD800x", r"\uD800A", r"\uDC00",
         r"a\uDE00", r"\uD800\uD800", r"\\u12", r"\\A", r"\\\u12", r"\\\\uD800", r"\uD83D\n\uDE00", r"􏿿", r"\uD800\\uDC00",
+        // The lone low, read back (decision 0428): after a pair, after an escaped backslash's
+        // `uD800` (no escape), after other escapes and text, and pairs after backslash runs.
+        r"\uD800\uDC00", r"\uDBFF\uDFFF", r"\uD800\uDC00\uDC00", r"\\uD800\uDC00", r"\\\uD800\uDC00", r"\\\\uD800\uDC00",
+        r"\n\uDC00", r"uD800\uDC00", r"\uD80\uDC00", r"\u0D80\uDC00", r"\uD800x\uDC00", r"\uDC00\uD800\uDC00", r"\/uD800\uDC00",
     ];
     let (mut accepted, mut refused) = (0, 0);
     for text in texts {
@@ -288,6 +302,16 @@ fn a_unicode_escapes_checks_run_at_its_u() {
                 assert_eq!(pc(c.parser.parse(bytes)), want, "the CPU: {doc:?}");
                 if want.is_ok() { accepted += 1 } else { refused += 1 }
             }
+        }
+    }
+    // A frame that begins before the file: the escape a byte or two in (decision 0428).
+    for text in [r"\uDC00", r"\uD800\uDC00", r"\uDC00\uDC00", r"a\uDC00", r"\uDBFF\uDFFF"] {
+        for doc in [format!("\"{text}\""), format!("[\"{text}\"]"), format!(" \"{text}\"")] {
+            let bytes = doc.as_bytes();
+            let pc = |r: Result<Vec<stream::Node>, stream::Refused>| r.map_err(|e| e.pc);
+            let want = pc(stream::run(&c.program, bytes, &block.run(bytes)));
+            assert_eq!(want.is_ok(), valid(text.as_bytes()), "the interpreter: {doc:?}");
+            assert_eq!(pc(c.parser.parse(bytes)), want, "the CPU: {doc:?}");
         }
     }
     assert!(accepted > 100 && refused > 100, "{accepted} accepted, {refused} refused");

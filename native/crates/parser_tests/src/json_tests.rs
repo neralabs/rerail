@@ -678,7 +678,10 @@ fn json_gated_regions_equal_the_interpreter() {
         let c = form(name);
         // Each region behind its branch in the full body (one: the ASCII test is a branch in it,
         // 0364), none computed in place. A region with a test before its gate's has two.
-        let plan = native_cpu_block::State::of(&c.native.block_programs[0]).plan;
+        // The plan of the program the CPU compiles: its form (`cpu_form`), whose outputs the
+        // record pass makes are zero, so values only they read are a region's (decision 0428:
+        // with the lone low surrogate tier 2's, the forms' plans differ).
+        let plan = native_cpu_block::State::of(&c.native.block_programs[0].cpu_form()).plan;
         assert!(!plan.regions.is_empty(), "{name}: no gated region");
         let tests: usize = plan.regions.iter().map(|r| 1 + usize::from(r.pre.is_some())).sum();
         assert_eq!(c.parser.tier1.gate_branches, tests, "{name}: a region without its branch, or made twice");

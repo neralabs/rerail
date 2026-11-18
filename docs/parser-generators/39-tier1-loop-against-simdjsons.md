@@ -32,15 +32,15 @@ Measured 2026-11-18 on arm64, at d169f605b.
 | JSONC's tier 1 (`15-jsonc.bitlex`) | 1,332 | 58 |
 | `lexers/json.bitlex` (`json_loop_keeps_values_in_registers`) | 673 | 7 |
 
-**Now (2026-11-18, after 0421).** The table above is the page's starting point; the sections
+**Now (2026-11-18, after 0428).** The table above is the page's starting point; the sections
 below take it to these:
 
 | Loop | Instructions | Stack loads or stores |
 |---|---:|---:|
 | simdjson's stage 1, by clang | **344** | 0 |
 | `stage1.rir`, by our compiler | **332** | 1 |
-| JSON's tier 1 (`14-json`) | **470** (a block with no `\u`: about 390 run) | 1 |
-| JSONC's tier 1 (`15-jsonc`) | 632 | 7 |
+| JSON's tier 1 (`14-json`) | **358** (simdjson's five masks, `stage1.rir`'s tables) | 1 |
+| JSONC's tier 1 (`15-jsonc`) | 523 | 6 |
 
 **A correction.** The 673 quoted in 0383 and 0389 as "JSON's hot loop" is the loop of
 `docs/parser-generators/lexers/json.bitlex`, the program `compile_tests` measures. That lexer is
@@ -394,6 +394,25 @@ What is left over stage 1 is the grammar's split of the work. Tier 2 reads the t
 simdjson's stage 2 finds by rescanning. The surrogate check is stage 2's in simdjson, done per
 `\u` when it converts one; moved to tier 2 as 0399 moved the hex digits, it would take the
 region, its table and the `u` mask out of tier 1.
+
+### The surrogate check in tier 2 (0428)
+
+Done. The last `\u` test, "a lone low surrogate" (`low & ~prev(high, 6)`), is now part of the
+escape token's check. It reads six bytes before the escape, and the tokens' ends there
+(`Ended`), from tier 2's records: tier 1's carry, already made.
+- The compiler proves that reading any token's end in place of an escape's refuses the same
+  files.
+- The check runs only at an escape whose last byte is `u` (`token_gate`), as simdjson's stage
+  2 switches on the escaped byte.
+
+| `14-json` | After 0423 | Now | `stage1.rir` |
+|---|---:|---:|---:|
+| Hot loop | 470 | **358** | 332 |
+| Masks a block | 9 | **5** | 5 |
+| Tables (`tbl`) | 28 | **20** | 20 |
+| Tier 1 / both tiers, 17 corpus files | 20.0M / 49.9M | **19.2M / 49.0M** | |
+
+The 26 left over `stage1.rir` are the token kinds' word logic that tier 2 reads.
 
 ## Reproducing
 

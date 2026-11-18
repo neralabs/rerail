@@ -937,13 +937,14 @@ fn local_check(line: &mut Line<'_>) -> Result<crate::program::LocalCheck, String
     }
     let mask: u16 = line.number("m")?;
     let delay: u8 = line.number("d")?;
+    let back: u8 = if line.peek_word().is_some_and(|w| w.len() > 1 && w.starts_with('r')) { line.number("r")? } else { 0 };
     let mut ops = Vec::new();
             while let Some(w) = line.peek_word() {
                 line.word()?;
                 let bad = || format!("a bad local op `{w}`");
                 let (tag, rest) = w.split_at(1);
-                if rest.is_empty() && (tag == "s" || tag == "l") {
-                    ops.push(if tag == "s" { LocalOp::Start } else { LocalOp::Last });
+                if rest.is_empty() && (tag == "s" || tag == "l" || tag == "e") {
+                    ops.push(match tag { "s" => LocalOp::Start, "l" => LocalOp::Last, _ => LocalOp::Ended });
                     continue;
                 }
                 let nums = |r: &str| -> Result<Vec<u64>, String> { r.split('.').map(|x| u64::from_str_radix(x, if tag == "b" || tag == "c" { 16 } else { 10 }).map_err(|_| bad())).collect() };
@@ -963,5 +964,5 @@ fn local_check(line: &mut Line<'_>) -> Result<crate::program::LocalCheck, String
                     _ => return Err(bad()),
                 });
             }
-            Ok(crate::program::LocalCheck { mask, delay, ops, token })
+            Ok(crate::program::LocalCheck { mask, delay, ops, token, back })
 }
