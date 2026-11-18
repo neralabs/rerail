@@ -5,6 +5,7 @@ import { and, asc, eq, inArray, isNull, like, sql } from "drizzle-orm";
 import { z } from "zod/v4";
 import { checkoutRealpath, physicalPath } from "../catalog/checkout-control.js";
 import { openRerailDatabase, type RerailDatabase } from "../storage/database.js";
+import { requireRecordWritesMade } from "../storage/record-writes.js";
 import { runGit } from "../git.js";
 import { processState } from "../process-liveness.js";
 import { checkouts, repositoryAudits, auditRequests, policySessionOwners, auditSettings, sessions, audits, events } from "../storage/schema.js";
@@ -323,6 +324,9 @@ export class SqliteAuditControlStore {
   /** Claims the session for this process, under the lock `lockId` of the engine service it runs in when it has one. */
   registerOwner(sessionId: string, delivery: "background" | "next-event", lockId?: string | undefined): PolicyOwnerClaim {
     const token = ownerToken(lockId);
+    // The session's row, just opened, may still wait in this process's record writer behind a holder of a moment; and the
+    // claim's reopen of the row must not commit ahead of a waiting close of it, so the claim fails as the lock does.
+    requireRecordWritesMade(this.path);
     this.#database.transaction(() => {
       requireSession(this.#database, sessionId);
       const owner = this.#owner(sessionId);

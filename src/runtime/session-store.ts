@@ -9,6 +9,7 @@ import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { isWorktreePack, WORKTREE_PACK_ID, worktreeRuleCatalog } from "../engine/catalog/worktree-pack.js";
 import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { decodeCursor, encodeCursor } from "../engine/storage/page-cursor.js";
+import { flushRecordWrites, openRecordWriter, type RecordWriter } from "../engine/storage/record-writes.js";
 import { listRepositoryRules, ruleConfigurationSignature } from "../engine/catalog/rule-configuration.js";
 import type { RuleCatalog } from "../engine/catalog/repository-model.js";
 import { awaitingApprovalOf } from "../engine/catalog/rule-approval.js";
@@ -228,11 +229,14 @@ export function decodeEventPayload(payload: Uint8Array): unknown {
 /**
  * Append-only, process-safe session and event persistence. Raw event payloads remain local to the
  * configured database. Sessions are attributed to the repository key given when they open, else to the
- * store's own `repositoryId`.
+ * store's own `repositoryId`. Every write goes through the database's record writer (`openRecordWriter`): made at
+ * once, or, while another process holds the write lock, in order once it is given back, never waiting on the caller's
+ * thread. Every read here is of what this process recorded, so it makes the waiting writes first (`#recorded`).
  */
 export class SqliteSessionStore {
   readonly path: string;
   readonly #database: RerailDatabase;
+  readonly #records: RecordWriter;
   readonly #repositoryId: string | null;
   /**
    * Each open session's repository as it opened here, to restore its row after a reset. A session's entry goes when it
@@ -245,11 +249,12 @@ export class SqliteSessionStore {
     this.path = path;
     this.#repositoryId = repositoryId ?? null;
     this.#database = openRerailDatabase(path);
+    this.#records = openRecordWriter(path);
   }
 
   openSession(session: AdapterSession, startedAt = Date.now(), repositoryKey: string | null = this.#repositoryId): void {
     this.#sessionRepositories.set(session.sessionId, repositoryKey);
-    this.#database
+    this.#records.write(database => database
       .insert(sessions)
       .values({ ...session, repositoryId: repositoryKey, startedAt, endedAt: null })
       .onConflictDoUpdate({
@@ -261,7 +266,7 @@ export class SqliteSessionStore {
           ...(repositoryKey === null ? {} : { repositoryId: repositoryKey }),
         },
       })
-      .run();
+      .run());
   }
 
   /** A stable identity makes reopen idempotent; missing history can never become complete later. */
@@ -340,72 +345,117 @@ export class SqliteSessionStore {
   }
 
   recordRuleCoverage(session: AdapterSession, coverage: RuleCoverage): void {
-    const latest = this.#database.select({ payloadJson: events.payloadJson }).from(events)
-      .where(and(eq(events.sessionId, session.sessionId), eq(events.kind, "rule-coverage")))
-      .orderBy(desc(events.sequence)).limit(1).get();
-    // Streaming ingestion checks coverage often; persist transitions, not identical copies.
-    // Looking in SQLite rather than an in-memory cache also recovers after a reset.
-    if (latest?.payloadJson === stableJsonText(coverage)) return;
-    this.append({ sessionId: session.sessionId, kind: "rule-coverage", payload: coverage }, session);
+    // Streaming ingestion checks coverage often; persist transitions, not identical copies, read first so an unchanged
+    // coverage takes no write lock and never waits. Looking in SQLite rather than an in-memory cache also recovers after
+    // a reset. The write reads again, since a coverage still waiting for the lock may be the latest.
+    const payloadJson = stableJsonText(coverage);
+    const unchanged = (database: RerailDatabase): boolean => latestCoverage(database, session.sessionId) === payloadJson;
+    const row = eventRow({ sessionId: session.sessionId, kind: "rule-coverage", payload: coverage });
+    const restore = this.#sessionRestore(session);
+    this.#records.writeUnless(() => unchanged(this.#database), database => {
+      if (!unchanged(database)) insertEvent(database, row, restore);
+    }, rowBytes(row));
   }
 
   append(event: SessionEvent, session?: AdapterSession, attribution?: SessionAttribution): string {
-    const eventId = event.eventId ?? randomUUID();
-    const row = {
-      sessionId: event.sessionId,
-      eventId,
-      kind: event.kind,
-      observedAt: event.observedAt ?? Date.now(),
-      payloadJson: stableJsonText(event.payload) ?? JSON.stringify({ encoding: "node:v8" }),
-      payloadV8: serialize(event.payload),
+    const row = eventRow(event);
+    const restore = session === undefined ? undefined : this.#sessionRestore(session, attribution);
+    this.#records.write(database => insertEvent(database, row, restore), rowBytes(row));
+    return row.eventId;
+  }
+
+  /**
+   * The session row `insertEvent` puts back when a `rerail reset` rebuilt the tables underneath a running session,
+   * its times and repository taken now: a write that waits for the lock is made later.
+   */
+  #sessionRestore(session: AdapterSession, attribution?: SessionAttribution): typeof sessions.$inferInsert {
+    return {
+      ...session,
+      repositoryId: attribution?.repositoryKey ?? this.#sessionRepositories.get(session.sessionId) ?? this.#repositoryId,
+      startedAt: attribution?.startedAt ?? Date.now(),
+      endedAt: attribution?.endedAt ?? null,
     };
-    try {
-      this.#database.insert(events).values(row).onConflictDoNothing().run();
-    } catch (error) {
-      // A `rerail reset` rebuilt the tables underneath a running session: its row is gone, so put
-      // it back and keep going. The events before the reset are gone by design; these are not.
-      if (session === undefined || !isForeignKeyFailure(error)) throw error;
-      this.#database.insert(sessions).values({
-        ...session,
-        repositoryId: attribution?.repositoryKey ?? this.#sessionRepositories.get(session.sessionId) ?? this.#repositoryId,
-        startedAt: attribution?.startedAt ?? Date.now(),
-        endedAt: attribution?.endedAt ?? null,
-      }).onConflictDoNothing().run();
-      this.#database.insert(events).values(row).onConflictDoNothing().run();
-    }
-    return eventId;
   }
 
   closeSession(sessionId: string, endedAt = Date.now()): void {
     this.#sessionRepositories.delete(sessionId);
-    this.#database.update(sessions).set({ endedAt }).where(eq(sessions.sessionId, sessionId)).run();
+    this.#records.write(database => database.update(sessions).set({ endedAt }).where(eq(sessions.sessionId, sessionId)).run());
   }
 
   sessions(): readonly StoredSessionSummary[] {
-    return listSessions(this.#database, { repositoryIds: this.#repositoryId ?? undefined });
+    return listSessions(this.#recorded(), { repositoryIds: this.#repositoryId ?? undefined });
   }
 
   session(sessionId: string): StoredSessionSummary | undefined {
-    return listSessions(this.#database, { sessionId })[0];
+    return listSessions(this.#recorded(), { sessionId })[0];
   }
 
   linkWork(link: WorkLink, createdAt = Date.now()): void {
-    this.#database
+    this.#records.write(database => database
       .insert(workLinks)
       .values({ ...link, url: link.url ?? null, createdAt })
       .onConflictDoUpdate({
         target: [workLinks.sessionId, workLinks.kind, workLinks.reference],
         set: { url: link.url ?? null },
       })
-      .run();
+      .run());
   }
 
   workLinks(sessionId: string): readonly WorkLinkRecord[] {
-    return listWorkLinks(this.#database, sessionId);
+    return listWorkLinks(this.#recorded(), sessionId);
+  }
+
+  /**
+   * The connection for a read of what this process recorded, its waiting writes made first: a link just added, a row
+   * just opened, which a holder of a moment in another process would otherwise hide from the caller acting on it.
+   */
+  #recorded(): RerailDatabase {
+    flushRecordWrites(this.path);
+    return this.#database;
   }
 
   close(): void {
+    this.#records.close();
     this.#database.$client.close();
+  }
+}
+
+type EventRow = typeof events.$inferInsert & { eventId: string; payloadJson: string; payloadV8: Buffer };
+
+/** The row `event` is stored as, its id and time taken now: a write that waits for the lock is made later. */
+function eventRow(event: SessionEvent): EventRow {
+  return {
+    sessionId: event.sessionId,
+    eventId: event.eventId ?? randomUUID(),
+    kind: event.kind,
+    observedAt: event.observedAt ?? Date.now(),
+    payloadJson: stableJsonText(event.payload) ?? JSON.stringify({ encoding: "node:v8" }),
+    payloadV8: serialize(event.payload),
+  };
+}
+
+/** The payload of the session's latest rule coverage event, as stored. */
+function latestCoverage(database: RerailDatabase, sessionId: string): string | undefined {
+  return database.select({ payloadJson: events.payloadJson }).from(events)
+    .where(and(eq(events.sessionId, sessionId), eq(events.kind, "rule-coverage")))
+    .orderBy(desc(events.sequence)).limit(1).get()?.payloadJson;
+}
+
+function rowBytes(row: EventRow): number {
+  return row.payloadJson.length + row.payloadV8.byteLength;
+}
+
+/**
+ * Inserts `row`. A `rerail reset` rebuilt the tables underneath a running session: its row is gone, so `restore` puts
+ * it back and the event goes in after it. The events before the reset are gone by design; these are not.
+ */
+function insertEvent(database: RerailDatabase, row: EventRow, restore: typeof sessions.$inferInsert | undefined): void {
+  try {
+    database.insert(events).values(row).onConflictDoNothing().run();
+  } catch (error) {
+    if (restore === undefined || !isForeignKeyFailure(error)) throw error;
+    database.insert(sessions).values(restore).onConflictDoNothing().run();
+    database.insert(events).values(row).onConflictDoNothing().run();
   }
 }
 

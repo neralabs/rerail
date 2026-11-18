@@ -1924,10 +1924,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     if (existing !== undefined) return { processedEventIds: [...existing.processed] };
     // A session the engine service suspended goes on from where its walks stood (`SessionSuspension`).
     const suspension = this.#suspendedSessions?.get(session.sessionId);
+    // Before the read below, which makes this process's waiting record writes and may wait for the lock to do so.
+    this.#failWhileWriteLockedForScan(session.sessionId);
     const recordedSession = this.#sessionStore.session(session.sessionId);
     const startedAt = recordedSession?.startedAt ?? Date.now();
     const ledger = await this.#openLedger(session, recordedSession === undefined);
-    this.#failWhileWriteLockedForScan(session.sessionId);
     const checkout = this.#startingCheckout(session);
     const restored = await this.#restoreRegistry(session, ledger.entries, checkout);
     const watermarks = await JsonlWatermarkStore.open(join(ledger.directory, "watermarks.jsonl"));

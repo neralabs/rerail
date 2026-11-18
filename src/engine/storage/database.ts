@@ -22,6 +22,14 @@ export interface OpenRerailDatabaseOptions {
 
 export { RERAIL_DATABASE_FILE };
 
+/**
+ * How long a statement on a Rerail connection waits for another connection's write lock before it fails with
+ * `SQLITE_BUSY` (`PRAGMA busy_timeout`, on every connection): so a write is not lost because another Rerail process
+ * holds the lock for a moment. A record write waits in memory instead, its thread waiting no longer than this from
+ * when it was asked (`record-writes.ts`).
+ */
+export const BUSY_TIMEOUT_MS = 5_000;
+
 /** `$RERAIL_HOME/rerail.sqlite`, with the Rerail home defaulting to `~/.rerail`. */
 export function defaultRerailDatabasePath(environment: NodeJS.ProcessEnv = process.env): string {
   return join(defaultRerailHome(environment), RERAIL_DATABASE_FILE);
@@ -41,7 +49,7 @@ function connectSqlite(path: string, readonly: boolean): RerailDatabase {
   const client = new Database(path, { readonly });
   try {
     const database = drizzle(client, { schema });
-    database.run(sql`PRAGMA busy_timeout = 5000`);
+    client.pragma(`busy_timeout = ${String(BUSY_TIMEOUT_MS)}`);
     return database;
   } catch (error) {
     client.close();
