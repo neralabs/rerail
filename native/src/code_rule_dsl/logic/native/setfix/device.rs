@@ -1717,9 +1717,9 @@ impl<'p> Run<'p> {
                 counter.push(None);
             }
         }
-        let totals = mj::Words::zeroed(slot + 2).map_err(|e| format!("{e:?}"))?;
+        let totals = mj::Words::zeroed(slot + 2).map_err(|e| format!("{e:?}: the totals of {} stages", slot + 2))?;
         totals.set(0, 1);
-        let counters = mj::Words::zeroed(ncounters.max(1)).map_err(|e| format!("{e:?}"))?;
+        let counters = mj::Words::zeroed(ncounters.max(1)).map_err(|e| format!("{e:?}: {} counters", ncounters.max(1)))?;
         let mut tables: Vec<Option<mj::Table>> = (0..=slot).map(|_| None).collect();
         tables[0] = Some(mj::Table::one(plan.nslots, &[]).map_err(|e| format!("{e:?}"))?);
         let mut caps = vec![0; slot + 1];
@@ -1857,7 +1857,7 @@ impl<'p> Run<'p> {
         let last = self.io.last().map_or(0, |io| io.1);
         let table = self.tables[last].as_ref().expect("the last table");
         let uniq = mj::Table::new(self.uniq_cols.len(), table.cap).map_err(|e| format!("{e:?}: the head's table of {} rows", table.cap))?;
-        batch.dedup(table, &self.uniq_cols, last, self.totals.len - 1, &self.totals, &uniq).map_err(|e| format!("{e:?}"))?;
+        batch.dedup(table, &self.uniq_cols, last, self.totals.len - 1, &self.totals, &uniq).map_err(|e| format!("{e:?}: the head's dedup over {} rows", table.cap))?;
         self.uniq = Some(uniq);
         Ok(())
     }

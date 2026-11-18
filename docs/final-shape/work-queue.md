@@ -3489,6 +3489,10 @@ Found 2026-11-17 (Q170). At 100 files a cold run with `--metal` peaks at 3.3–3
 300 files at 3.5–4.0 GB against 1.85 GB. The budget is 1 GB, with Metal allowed 0.5 GB on top. Next: a heap profile
 of a Metal run (`RERAIL_HEAP_FRAMES`) and the device leases at its peak.
 
+2026-11-18, after merging the hub (9e72e45ac): at 100 files 2.25 GB (CPU 1.13 GB), at 300 files 2.13–2.27 GB, 23.5 s
+wall. The device's budget is spent within the run: 136–190 strata a 100-file run are refused for a lease of a few
+words (Q173), and run on the CPU.
+
 ### Q172. (Q93 on Two-pass at 00b9bc23d) An export is one relation (decision 0384 step 1)
 
 Built 2026-11-17. The user picked "one relation, written in place" for the merged copy (`Rows::one`) and for the
@@ -3506,7 +3510,7 @@ Test: `an_export_is_one_relation_of_the_chunks_new_rows`, which replaces the tes
 
 Still merged: 157 relations, nearly all of two parts. Steps 2 and 3 of 0384 cover them.
 
-### Q173. (Q94 on Two-pass at 00b9bc23d) Metal runs give wrong findings in some runs (open)
+### Q173. (Q94 on Two-pass at 00b9bc23d) Metal runs give wrong findings in some runs (done)
 
 Found 2026-11-17 (Q172). Cold 300-file runs with `--metal` differed from the reference in 4 of 7 profiled runs, by 3
 to 13 files, and in 0 of 2 unprofiled runs. One run had 18 extra B030 findings in `benchmarks/bench_versioning_git.py`.
@@ -3545,10 +3549,27 @@ rows change with no row added (`setfix::Levels` kills a line's rows, then brings
 of a head's rows (`device.rs`, "less the rows the head holds") could read old dead bits. The delta is now reused only
 while its bits are the ones given. Test: `the_dead_rows_bound_are_those_given_now`.
 
-Next, still open:
-- What the threads share in a device join that one thread does not reach at once: the one command queue; the blocks'
-  buffers (`Block::gpu_buffer`, remade larger as a block grows); and the relations' descriptors in shared blocks.
-- Which strata differ: dump each device stratum's output digest in two runs and diff them.
+**Cause** (found 2026-11-18, after merging the hub at 9e72e45ac): a stratum refused at run time left what its batch
+had encoded (views, texts, verdicts, indexes) in its thread's residency cache as if written. The refused batch was dropped
+uncommitted, so later strata on that thread read relations nothing wrote. The refusals are leases past the Metal budget
+(`shared::lease_within`), so they come with many threads leasing at once. That is why one thread, or no device joins,
+never differed. The hub's ef6c6c386 (0325 step 6, `unrun`) fixed it: `run`, `submit`, `resume` and `fixpoint` drop the
+thread's cache on an error.
+
+The proof, at 100 files with 10 runs an arm on the merged build:
+
+| Arm | Runs that differ |
+|---|---|
+| `--metal` as merged | 0 of 10 |
+| Relations back in the run's shared blocks (Q58's chunk blocks off) | 0 of 10 |
+| `unrun`'s clearing off | 7 of 10 |
+
+At 300 files, 3 of 3 runs give the reference's findings, peaks 2.13–2.27 GB. The hub's test
+`a_view_made_in_a_refused_batch_is_made_again` keeps it.
+
+Left to Q171: a 100-file run still has 136–190 strata refused, most of them a lease of a few words (a stratum's totals)
+with the budget already spent. Those strata run on the CPU, and each refusal drops the thread's cache. The reasons were
+unnamed (`From<String> for Error` drops the message). The totals, counters and dedup now say which lease it was.
 
 ### Q174. A debug run's check "the requests narrowed on the version are the tree's" fails on B-now's rules (open)
 
