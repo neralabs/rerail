@@ -479,6 +479,11 @@ export class LinkedFiles {
     else this.#paths.push(path);
   }
 
+  /** Forgets the files noted: a pass of noticed paths that falls back to a whole walk notes them all again. */
+  restart(): void {
+    this.#paths = [];
+  }
+
   /** The files noted, none once they reached the bound. */
   get paths(): readonly string[] {
     return this.#paths ?? [];

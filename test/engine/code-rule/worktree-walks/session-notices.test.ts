@@ -374,6 +374,19 @@ describe("a shell command's result reads the session folder by its change notice
     expect(audits.at(-1)?.edits).toEqual([expect.objectContaining({ path: "src/pkg_0/linked.py", generatedText: "eval(z)\n" })]);
   });
 
+  it("reads by notices again at the result after one whose pass of noticed paths fell back to a whole walk", async () => {
+    // Twelve linked files of 38 looks: under the bound once, past it if the fallback's walk noted them a second time.
+    const root = await workspace(10);
+    const files = [...["m", ...Array.from({ length: 10 }, (_, index) => `m${index}`)].map(file => join(root, "src", "pkg_0", `${file}.py`)), join(root, "src", "pkg_1", "m.py")];
+    await linkedOutside(root, files);
+    const { bridge } = await opened(root, platformWatch());
+    // On a volume that ignores case, the old spelling still finds the file: only a whole walk reads it.
+    await command(bridge, "shell-1", async () => await rename(join(root, "src", "pkg_2", "m.py"), join(root, "src", "pkg_2", "M.py")));
+    listed.folders.length = 0;
+    await command(bridge, "shell-2", async () => undefined);
+    expect(listed.folders).toEqual([]);
+  });
+
   it("walks the whole folder at a result whose linked files reach half of what the whole walk looked at", async () => {
     // A checkout whose files a copy made by links shares (cp -al): reading each file again would cost more than the walk.
     const root = await workspace(10);

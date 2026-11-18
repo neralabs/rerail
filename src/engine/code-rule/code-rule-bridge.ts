@@ -2166,6 +2166,8 @@ export class CodeRuleBridge {
     if (!reads.whole) {
       const noticed = await this.#scanNoticed(discovery, walk, reads);
       if (noticed !== undefined) return { walk: { ...walk, noticed: reads.paths }, scan: noticed };
+      // The whole walk notes each linked file again: counted twice, they could reach the bound they are under.
+      reads.linked.restart();
     }
     const scan = await this.#scanSources(discovery, walk, worktrees, reads.linked);
     return { walk, scan, seen: scan.seen };
