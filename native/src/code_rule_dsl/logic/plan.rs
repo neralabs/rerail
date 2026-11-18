@@ -2737,10 +2737,12 @@ impl Model {
                 .unwrap_or_else(|| if small_batches(dr) { 0.0 } else { self.card(dr) })
     }
 
-    /// Whether `order` starts from the line's driver: its delta (or a smaller connected change), else the rule's
-    /// demand (`Body::demand_first`), so a kept order that read its demand later is searched again (Q59).
+    /// Whether `order` starts from the line's driver: its delta (or a smaller connected change), else a
+    /// demand-restricted aggregate's demand (`Body::demand_first`); and a demanded relation's rule from a lead its
+    /// demand bounds (`Body::demand_bounds_lead`), so a kept order led by a scan is searched again (Q59).
     pub fn valid_live_driver(&self, order: &[Step], b: &Body<'_>, first: Option<usize>) -> bool {
-        first.or_else(|| b.demand_first()).is_none_or(|f| order.first().is_some_and(|s| s.at == f || self.smaller_change(b, f, s.at)))
+        let driven = first.or_else(|| b.demand_first()).is_none_or(|f| order.first().is_some_and(|s| s.at == f || self.smaller_change(b, f, s.at)));
+        driven && (first.is_some() || order.first().is_none_or(|s| b.demand_bounds_lead(s.at)))
     }
 
     /// Records the work a rule's line did in the engine (`plan_work`, every order it ran in) on its kept plan, for
@@ -3153,7 +3155,17 @@ impl Model {
         // delta, when supplied, remains the driver. The prefix is reserved by RR lowering.
         let first = first.or_else(|| b.demand_first());
         if skew_setting().is_none() {
-            return self.plan_search(pf, b, first, fixed, explain, cx);
+            let got = self.plan_search(pf, b, first, fixed, explain, cx)?;
+            // A demanded relation's rule led by a scan its demand does not bound is searched again from the demand
+            // (Q59; `Body::demand_bounds_lead`).
+            if first.is_none()
+                && fixed.is_none()
+                && let Some(d) = b.own_demand()
+                && got.0.0.first().is_some_and(|s| !b.demand_bounds_lead(s.at))
+            {
+                return self.plan_search(pf, b, Some(d), None, explain, cx);
+            }
+            return Ok(got);
         }
         SKEWING.with(|s| s.set(true));
         let got = self.plan_search(pf, b, first, fixed, explain, cx);

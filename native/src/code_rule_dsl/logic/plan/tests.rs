@@ -2847,6 +2847,34 @@ fn a_computed_value_waits_for_the_atoms_that_narrow_its_arguments() {
     assert_eq!(out.shown()["o"].len(), 1, "{:?}", out.shown()["o"]);
 }
 
+/// A demanded relation's rule may be led by an atom a constant restricts, when it is smaller than the demand: it
+/// reads one kind's nodes, not the corpus (Q59's guard is against a scan). Forced to its demand always, `not_name`
+/// on 50 files of B-now did 66x the work (a 42 k-row demand, a kind of 498 nodes).
+#[test]
+fn a_demanded_rule_may_be_led_by_a_constant_restricted_atom() {
+    let p = parse(
+        ".decl x(v: number)\n.decl demand_x(v: number)\n.decl k(n: number, c: number)\n\
+         demand_x(1). k(1, 7).\n\
+         x(v) :- demand_x(v), k(v, 7).\n.output x\n",
+    )
+    .unwrap();
+    let db = Connection::open_in_memory().unwrap();
+    let mut stats = Stats::empty(&p);
+    stats.card.insert("demand_x", 5_000_000.0);
+    stats.card.insert("k", 10.0);
+    let mut inputs = Inputs::file();
+    inputs.facts.clear();
+    inputs.given = Some(stats);
+    let model = make_plan(&body::Placed::of_program(&p).unwrap(), &db, inputs).unwrap();
+    let r = &p.rules[0];
+    let alone = body::alone(r).unwrap();
+    let b = body::nth(&alone, 0);
+    let (order, _, _) = model.plan_rule(body::Placed::of_program(&p).unwrap().fields().unwrap(), &b, None).unwrap();
+    let rels: Vec<&str> = order.iter().filter_map(|s| r.body[s.at].atom()).map(|a| a.rel.as_str()).collect();
+    assert_eq!(rels[0], "k", "led by the restricted atom: {rels:?}");
+    assert!(model.valid_live_driver(&order, &b, None), "a kept order led by it is kept");
+}
+
 /// A demanded relation's rule (decision 0048's split: `x` computed for `demand_x`'s keys) is driven by its demand,
 /// whatever the statistics say (Q59): the guard is structural. Priced here as the outlier run saw it (the demand
 /// large, a scan of `col` small), the search still starts from `demand_x`, and a kept order that does not is not
