@@ -1,7 +1,7 @@
 //! Code written once in Cranelift's IR, for every backend that runs it (decision 0310).
 //!
 //! - [`view`]: a document's tape as a reader is told where it lies (`TapeView`, the device's
-//!   `ChunkTape` past its `at`): offsets from the tape's base, its format and its widths.
+//!   `DocView`): offsets from the tape's base, its format and its widths.
 //! - [`reads`]: the tape's primitive reads, format 15's and format 16's, as CLIF functions built
 //!   once (a node's code number, its subtree size, its start and end, its parent, hops over its
 //!   children and siblings), each marked hot or cold.

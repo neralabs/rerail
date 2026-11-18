@@ -27,7 +27,8 @@ pub fn policy(need: &Need) -> Result<Block, String> {
         #[cfg(not(target_os = "macos"))]
         Device::Must => Err(format!("a device block of {} bytes with no device", need.bytes)),
         #[cfg(target_os = "macos")]
-        Device::May => match crate::gpu::shared::lease_block_spare(need.kind, need.bytes) {
+        // Half the Metal budget left to the device's own buffers (decision 0325 step 5).
+        Device::May => match crate::gpu::shared::lease_block_spare(need.kind, need.bytes, crate::budget::metal() / 2) {
             Ok(b) => Ok(shaped(b)),
             Err(_) => Ok(host(need)),
         },

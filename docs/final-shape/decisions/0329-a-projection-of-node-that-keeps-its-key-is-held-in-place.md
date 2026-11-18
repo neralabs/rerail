@@ -73,3 +73,16 @@ This decision is one of its two read forms, chosen by the source:
 
 Either way the view's statistics are a copy's: exact counts in place, sketches over the flat rows. `node_projection`
 and the run loop's own dispatch are gone; `RERAIL_COPY_VIEWS` derives every view as a stratum, both forms included.
+
+## A probe of a kind reads the batch's kind index (2026-11-17)
+
+The held `kind` answered a probe by its code (`kind($r, #k)`, `$r` unbound) by asking each document's tape for the
+nodes of each of the code's raw codes (`Facts::of_kind`, a scan of the tape), once per value probed. With exact
+counts, a kind no file holds counts 0, so the planner probes it first: `assign_name`'s delta (27 rows) then probed it
+27 times per chunk. On a 10-file cold run that took 20 s of the strata's CPU per stratum (`assign_name`,
+`p290_name_at`), and the run 53 s against about 5 s before.
+
+Now the batch keeps `node`'s rows grouped by kind (`Batch::kinds`): each node's kind read once, as the column reads it
+(`Dialect::kind`), placed by a counting pass into one array of rows with a sorted key array and offsets. A probe reads
+its kind's run (a document's part of it by its row range), and the column's exact counts (2. above) are the runs'
+lengths, from the same pass. The same strata now take under 0.8 s, and the findings are the same.

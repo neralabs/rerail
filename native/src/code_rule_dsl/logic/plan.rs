@@ -8035,6 +8035,12 @@ impl<'a> Run<'a, '_> {
             }
             rel_lines.push(SpecLine::Lattice { rel: ri[*r], keys: l.keys, name: f.text(l.lattice).to_owned(), widen: l.widen });
         }
+        // The relations the run keeps past it (a chunk's exports): in blocks of their own, so a reader that holds
+        // them where they lie does not keep the run's other relations' blocks.
+        let kept_rows: Vec<usize> = rels.iter().filter(|r| self.model.inputs.kept.contains(r.as_str())).map(|r| ri[*r]).collect();
+        if !kept_rows.is_empty() {
+            rel_lines.push(SpecLine::KeptRows(kept_rows));
+        }
         lines.splice(rel_at..rel_at, rel_lines);
         let nseeds = orders.len();
         for r in &rels {
@@ -9727,8 +9733,8 @@ pub fn run_atoms_native_over(
 #[derive(Default)]
 pub struct Hooks<'a> {
     /// A kept relation no later stratum reads: the caller writes it where it goes, and the run drops it
-    /// (`Outcome::handed`).
-    pub hand_off: Option<&'a mut dyn FnMut(&str) -> Result<()>>,
+    /// (`Outcome::handed`); one the caller does not take (`false`) is held to the run's end as before.
+    pub hand_off: Option<&'a mut dyn FnMut(&str) -> Result<bool>>,
     /// Inputs a stratum is about to read for the first time: the caller binds their rows now.
     pub load: Option<&'a mut dyn FnMut(&[String]) -> Result<()>>,
     /// Inputs no later stratum reads: the caller may drop their rows (the run has dropped its views of them).
@@ -10187,6 +10193,26 @@ impl<'a> Cells<'a> {
             return rows.par_chunks(PART * w).map(|part| self.sum_one(part)).reduce(|| 0, u64::wrapping_add);
         }
         self.sum_one(rows)
+    }
+
+    /// `rows_digest` of `n` rows read a batch at a time where they lie (`batches(lo, hi, f)`: the rows of ids
+    /// `lo..hi` of `ids`, `f` per batch), with no copy of them all: many ids are summed in parts at once.
+    pub fn digest_batches(&self, ids: usize, n: usize, batches: &(dyn Fn(usize, usize, &mut dyn FnMut(&[i64])) + Sync)) -> u64 {
+        const PART: usize = 1 << 15;
+        let part = |lo: usize| {
+            let mut s = 0u64;
+            batches(lo, (lo + PART).min(ids), &mut |rows| s = s.wrapping_add(self.sum_one(rows)));
+            s
+        };
+        let sum = if self.width == 0 {
+            0
+        } else if ids >= 2 * PART {
+            use rayon::prelude::*;
+            (0..ids).into_par_iter().step_by(PART).map(part).reduce(|| 0, u64::wrapping_add)
+        } else {
+            part(0)
+        };
+        sum ^ (n as u64).wrapping_mul(0xff51_afd7_ed55_8ccd)
     }
 
     /// `sum` on this thread.
@@ -11035,12 +11061,16 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
     }
     // What stays, and what the views among it read (through views): SQL reads a view's inputs once the run ends.
     let mut pinned: BTreeSet<String> = stays.clone();
+    // Of them, the relations a view that stays reads (through views), kept ones too: not handed off (`hand_off`), as
+    // the view is read after the run.
+    let mut view_read: BTreeSet<String> = BTreeSet::new();
     loop {
-        let more: Vec<String> = body::Versions::keys(0, p0.len())
+        let reads: Vec<String> = body::Versions::keys(0, p0.len())
             .filter(|&r| pinned.contains(run.versions.head_at(r)) && run.views.contains(run.versions.head_at(r)))
             .flat_map(|r| reads_of(&run.versions, r).map(str::to_owned).collect::<Vec<_>>())
-            .filter(|r| !pinned.contains(r.as_str()))
             .collect();
+        view_read.extend(reads.iter().cloned());
+        let more: Vec<String> = reads.into_iter().filter(|r| !pinned.contains(r.as_str())).collect();
         if more.is_empty() {
             break;
         }
@@ -11284,9 +11314,11 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
             }
         }
         if let Some(hand) = hooks.hand_off.as_deref_mut() {
-            let give: Vec<String> = read_out.iter().filter(|r| run.model.inputs.kept.contains(*r) && !gated.contains(*r)).cloned().collect();
-            for r in &give {
-                hand(r)?;
+            let mut give: Vec<String> = Vec::new();
+            for r in read_out.iter().filter(|r| run.model.inputs.kept.contains(*r) && !gated.contains(*r) && !view_read.contains(*r)) {
+                if hand(r)? {
+                    give.push(r.clone());
+                }
             }
             if !give.is_empty() {
                 super::native::component::release(db, &give);
@@ -11384,8 +11416,18 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                 // What the level's strata read of what is kept, read now in one batch, and held where unread.
                 let need: Vec<String> = need.into_iter().collect();
                 m.need(&need, &mut run.model)?;
-                for r in need.iter().filter(|r| unread.contains(*r)) {
-                    let Some(o) = m.kept(r) else { return Err(Error::Plan(format!("{r}: its kept rows were not read"))) };
+                // A kept relation that is no stratum of this program (an earlier round's, decision 0331) is held too:
+                // a stratum derived again reads it as it was. Only the program's own quiet strata were held (`unread`),
+                // so `chain_below`'s reach, derived again in a later guest round, found `chain_step` and its seed read
+                // but not held, and declined to SQL whenever the round chose to derive it again.
+                let hold: Vec<&String> = need.iter().filter(|r| unread.contains(*r) || (!stratum_of.contains_key(r.as_str()) && !run.native_rels.contains(*r) && !f0.is_input(r))).collect();
+                for r in hold {
+                    let Some(o) = m.kept(r) else {
+                        if unread.contains(r) {
+                            return Err(Error::Plan(format!("{r}: its kept rows were not read")));
+                        }
+                        continue;
+                    };
                     hold_quiet(&mut run, f0, db, r, o);
                 }
                 unread.retain(|r| !need.contains(r));

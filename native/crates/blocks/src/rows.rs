@@ -83,7 +83,7 @@ pub struct ColRead {
 
 impl ColRead {
     /// Row `i`'s value: the read written once (`col_get`, decision 0325), the kernels' and the JIT's too.
-    #[inline]
+    #[inline(always)]
     pub fn get(&self, i: u32) -> i64 {
         // SAFETY: the directory is its relation's, which outlives the reader; row `i` was claimed and reserved.
         unsafe { crate::generated_reads::col_get(self.dir.cast(), self.min_log, i) as i64 }
@@ -280,6 +280,19 @@ impl Rows {
         start
     }
 
+    /// Every chunk made, each column's: where it starts and its bytes (written or not).
+    pub fn chunk_spans(&self) -> impl Iterator<Item = (*mut u8, usize)> + '_ {
+        let nchunks = self.nchunks.load(Acquire) as usize;
+        (0..self.ncols as usize).flat_map(move |c| {
+            let d = self.col(c);
+            (0..nchunks).map(move |k| {
+                // SAFETY: chunk `k` was made (`k < nchunks`), at this offset from its directory.
+                let p = unsafe { (d as *const ColDir as *const u8).offset(d.chunk[k].load(Relaxed) as isize) as *mut u8 };
+                (p, chunk_rows(k, self.min_log) as usize * d.width as usize)
+            })
+        })
+    }
+
     /// Bytes of values written (not counting chunk room unwritten).
     pub fn value_bytes(&self) -> usize {
         (0..self.ncols as usize).map(|c| self.col(c).width as usize).sum::<usize>() * self.len() as usize
@@ -402,6 +415,36 @@ impl Rows {
 mod tests {
     use super::*;
     use crate::block::{Block, kind};
+
+    /// A relation whose last holder went gives its chunks' pages back (Q106), and the relation beside it in the same
+    /// block reads every row it wrote: interleaved chunks of the two never share a page given back.
+    #[test]
+    fn a_dead_relations_pages_go_back_and_its_neighbours_rows_stay() {
+        let block = Block::anon(kind::FACTS, 64 << 20);
+        let spec = crate::relation::Spec { widths: vec![8, 8], order: Vec::new(), indexes: Vec::new(), min_log: MIN_LOG };
+        let dead = crate::relation::Relation::create(&block, &spec, None);
+        let kept = crate::relation::Relation::create(&block, &spec, None);
+        let n = 200_000u32;
+        // Grown in turns, so their chunks interleave in the block.
+        for step in 1..=8u64 {
+            dead.rows.reserve(&block, step * n as u64 / 8);
+            kept.rows.reserve(&block, step * n as u64 / 8);
+        }
+        for r in [dead, kept] {
+            unsafe {
+                r.rows.claim_reserved(n);
+                for i in 0..n {
+                    r.rows.put(i, 0, i64::from(i));
+                    r.rows.put(i, 1, -i64::from(i));
+                }
+            }
+        }
+        let given = unsafe { block.give_back_rows(&dead.rows) };
+        assert!(given > (n as usize * 16) / 2, "{given} bytes given back of {} written", n as usize * 16);
+        for i in 0..n {
+            assert_eq!((kept.rows.get(i, 0), kept.rows.get(i, 1)), (i64::from(i), -i64::from(i)), "row {i}");
+        }
+    }
 
     #[test]
     fn chunks_are_quarter_steps_and_cover_every_row_once() {

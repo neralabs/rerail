@@ -12,6 +12,11 @@
 
     #[test]
     fn an_image_read_in_place_is_the_restored_tape() {
+        // Format 15's columns, which `layout` reads; format 16's arrays are read through the CLIF view (0310).
+        crate::code_rule_dsl::tape::formats::as_run(crate::code_rule_dsl::tape::formats::Format::F15, format_15_images_read_in_place);
+    }
+
+    fn format_15_images_read_in_place() {
         for (source, lang) in [
             ("value = left + right\nclass A:\n    def f(self, x=[]):\n        return (yield x)\n", GrammarDialect::Python),
             ("const f = (a, b) => { return a?.b ?? `t${b}`; };\n// c\n", GrammarDialect::JavaScript),

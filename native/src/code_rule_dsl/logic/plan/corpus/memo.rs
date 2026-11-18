@@ -276,15 +276,36 @@ fn last_key(space: &[u8; 32]) -> [u8; 32] {
     hash.finalize().into()
 }
 
-/// The whole file-local program whose run last wrote the entries of space `space`, if it ended (decision 0225 §2).
-/// What is kept of every file together (the kept statistics) is of that program's entries, and of no other's.
+/// The whole file-local program whose run last wrote the entries of space `space` (decision 0225 §2), if what is kept
+/// of every file together (the kept statistics) is still of its entries: its run ended, or a run of it under way
+/// started from what an ended run of it kept (`set_under_way`). Of no other program's.
 pub(super) fn last_program(store: &ContentStore, space: &[u8; 32]) -> Option<[u8; 32]> {
-    store.stat_blob(last_key(space)).ok().flatten().and_then(|b| b.try_into().ok()).filter(|w: &[u8; 32]| *w != [0; 32])
+    let b = store.stat_blob(last_key(space)).ok().flatten()?;
+    let whole: [u8; 32] = match b.len() {
+        32 => b.try_into().ok()?,
+        33 if b[32] == UNDER_WAY => b[..32].try_into().ok()?,
+        _ => return None,
+    };
+    (whole != [0; 32]).then_some(whole)
 }
 
-/// Records `whole` as `last_program` of `space`, queued behind the run's writes; `None`: a run is under way.
+/// `last_program`'s mark of a run of `whole` under way that started from what an ended run of it kept.
+const UNDER_WAY: u8 = 1;
+
+/// Records `whole` as `last_program` of `space`, queued behind the run's writes; `None`: a run is under way that
+/// did not start from what is kept (another program's, or one after it): a run that stops leaves none of it valid.
 pub(super) fn set_last_program(store: &ContentStore, space: &[u8; 32], whole: Option<[u8; 32]>) {
     store.queue_stat_blob(last_key(space), whole.unwrap_or([0; 32]).to_vec());
+}
+
+/// Records a run of `whole` under way in `space`, one that started from what an ended run of `whole` kept: if it
+/// stops, what is kept stays valid for the next (Q101). Its entries are of `whole` and of the contents it read, and the
+/// contents the kept statistics count are still in the memo (its newest `MEMO_CONTENTS` of a path); a content whose
+/// entry went gives the keeper up, as an entry dropped otherwise does.
+pub(super) fn set_under_way(store: &ContentStore, space: &[u8; 32], whole: [u8; 32]) {
+    let mut b = whole.to_vec();
+    b.push(UNDER_WAY);
+    store.queue_stat_blob(last_key(space), b);
 }
 
 /// The run's plan: the engine build, the grammar version and `program` (a digest of the file-local part as lowered,

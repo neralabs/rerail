@@ -247,6 +247,7 @@ pub fn binding() -> Binding {
 
 /// Sets this thread's binding; the previous one, to restore.
 pub fn set_binding(b: Binding) -> Binding {
+    crate::code_rule_dsl::facts::rows::DEVICE_READS.with(|d| d.set(b != Binding::Cpu));
     DEVICE.with(|d| d.replace(b))
 }
 

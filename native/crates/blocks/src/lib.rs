@@ -128,11 +128,11 @@ macro_rules! structure {
 
 /// The hash every index and every kernel uses for a key: one value at a time, the same arithmetic in MSL.
 pub const SEED: u64 = 0x243F_6A88_85A3_08D3;
-#[inline]
+/// The arithmetic is the read written once (`rel_key_mix`, decision 0325 step 5), which the kernels call too.
+#[inline(always)]
 pub fn mix(h: u64, v: i64) -> u64 {
-    let mut h = h ^ (v as u64);
-    h = h.wrapping_mul(0x9E37_79B9_7F4A_7C15);
-    h ^ (h >> 29)
+    // SAFETY: `rel_key_mix` reads nothing through its descriptor.
+    unsafe { crate::generated_reads::rel_key_mix(std::ptr::null(), h, v as u64) }
 }
 #[inline]
 pub fn key_hash(vals: &[i64]) -> u64 {
