@@ -275,6 +275,14 @@ each numbered node's numbered direct children, consecutive. Now:
 - hogql, 3 interleaved pairs against step 2's end (`s2s`), load 70–77: findings 1,629 in each; 76.3 B instructions
   (median) against 79.2 B, within the noise (72.9–82.5 B against 74.5–81.8 B).
 
+**Step 3: literal rows only where they are read** (2026-11-17). `rr_value_lit` (the eager part of `value` on
+request, 0174) holds the literals of the documents W reads no values of. The skip flags came from the program's
+reads, so a Python batch computed every node's literal and `values_of` dropped them all, and `CoreRows` visited
+every node for them (`Visits::All`). Where no other relation reads a literal, a document whose dialect W values now
+makes none, and the walk visits only the nodes whose text a rule reads. hogql, 3 interleaved pairs at load 43–49:
+nodes visited 2.24 M to 0.84 M of 2.27 M; `node rows` 0.427–0.433 s to 0.277–0.304 s; atoms interned 0.011–0.012 s to
+0.007 s; findings 1,629 in each; instructions within the noise (71.6–82.3 B against 75.0–81.5 B).
+
 `line`, `end_line`, `col` and `docof` were views already (`View::Loc`) except where `Extra` makes spans' rows; those
 and `visit_index` (CPython's visit order, a derived fact computed once for the documents a program reads it of),
 `doc_root` and `host_node` (a guest's) are left for this step.

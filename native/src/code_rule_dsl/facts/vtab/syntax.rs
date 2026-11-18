@@ -3230,6 +3230,11 @@ impl Batch {
             structural: !wants_any(&["structural_before", "structural_after"]),
         };
         let core_nodes = core && (scalar_nodes || !c.skip.structural);
+        // `rr_value_lit` holds the literals of the documents W reads no values of (`unvalued`, `values_of`): where no
+        // other relation reads a literal's value or rows, a document W values makes none, and its walk visits only the
+        // nodes whose text a rule reads. Made for every node and dropped, hogql's literals had `node rows` visit all
+        // 1.3 M nodes.
+        let value_lit_only = wants_any(&["rr_value_lit"]) && !wants_any(&["str", "strprefix", "value", "static_value", "value_type"]);
         let wants_long_text_nodes = projection.wants("rr_long_text_node");
         let mut long_text_nodes = Vec::new();
         c.long_text = projection.long_text.clone();
@@ -3409,6 +3414,10 @@ impl Batch {
                     rows.document(&p, dialect, core, &mut string);
                 }
                 if core_nodes || wants_long_text_nodes {
+                    let kept = (c.skip.literal_rows, c.skip.literal_value);
+                    if value_lit_only && dialect.values {
+                        (c.skip.literal_rows, c.skip.literal_value) = (true, true);
+                    }
                     let visits = c.visits(wants_text, wants_parts, wants_part_starts, wants_words);
                     for (local, id, n) in p.node_ids() {
                         if wants_long_text_nodes && (p.facts.end(id) - p.facts.start(id)) as usize > core_rr::TEXT_INLINE {
@@ -3419,6 +3428,7 @@ impl Batch {
                             c.node(&p, dialect, local, id, n, &mut string, wants_text, wants_parts, wants_part_starts, wants_words);
                         }
                     }
+                    (c.skip.literal_rows, c.skip.literal_value) = kept;
                 }
                 if let Some((line, msg)) = &error {
                     let line = p.extra.as_ref().map_or(*line, |x| x.file_line(*line));
