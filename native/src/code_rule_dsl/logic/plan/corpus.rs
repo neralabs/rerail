@@ -621,31 +621,105 @@ const GUEST_ROUNDS_KEY: [u8; 32] = *b"rerail.guest-rounds/v1\0\0\0\0\0\0\0\0\0\0
 /// program, not its file-local part, and runs over each chunk: a guest or a value is made from its chunk's
 /// documents, so a demand whose context the split would run cross-file (`q(_, x)`, a value's nodes) is still asked
 /// in the chunk.
+fn inputs_of(v: &crate::code_rule_dsl::logic::program_image::Version) -> Vec<&str> {
+    v.inputs().map(|a| v.text(a)).collect()
+}
+
 fn embed_slice(v: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<Option<Arc<crate::code_rule_dsl::logic::program_image::Version>>> {
-    use crate::code_rule_dsl::logic::program_image::PartFields;
+    use crate::code_rule_dsl::logic::program_image::RuleId;
     let derives = |r: &str| v.rel(r).is_some_and(|id| v.heads(id).next().is_some());
     let wanted: Vec<&str> = guests::LIBRARY.iter().copied().chain(guests::DEMANDS).filter(|r| derives(r)).collect();
     if wanted.is_empty() {
         return Ok(None);
     }
-    let mut need: BTreeSet<String> = wanted.iter().map(|r| (*r).to_owned()).collect();
+    // A request rule (an attribute's, `Program::asked_by`, decision 0174) is taken only once one of the relations
+    // whose readers it serves is in the slice, as `front::prune` keeps it. A request relation is one for the whole
+    // program (`rr_value_req`: every reader's request, never inlined since 0291), so the slice, following reads,
+    // took every reader's request and what its body reads: 584 rules where 488 were (decision 0331).
+    let asked = v.asked();
+    // Each rule's gate, by its place among its relation's rules; a relation whose rules do not match the record
+    // keeps them ungated (as `prune`'s does).
+    let mut by_head: BTreeMap<&str, Vec<RuleId>> = BTreeMap::new();
+    for r in v.rules() {
+        by_head.entry(v.rel_name(r.head().rel())).or_default().push(r.id());
+    }
+    let mut gate: HashMap<RuleId, &BTreeSet<String>> = HashMap::new();
+    for (req, readers) in asked.iter().filter(|(req, _)| !wanted.contains(&req.as_str())) {
+        if let Some(ids) = by_head.get(req.as_str()).filter(|ids| ids.len() == readers.len()) {
+            gate.extend(ids.iter().copied().zip(readers));
+        }
+    }
+    let rule_of: HashMap<RuleId, crate::code_rule_dsl::logic::program_image::RuleRef<'_>> = v.rules().map(|r| (r.id(), r)).collect();
+    let inputs = inputs_of(v);
+    let about = crate::code_rule_dsl::logic::program_image::About::of(v);
+    let has = |rel: &str| by_head.contains_key(rel) || inputs.contains(&rel) || v.rel(rel).is_some_and(|id| about.native(id).is_some());
+    // `RERAIL_DUMP_SLICE=<file>`: each relation of the slice, the relation whose rule read it first, and the slice's
+    // rules (`<file>.rules`), to compare one program's slice with another's (a debugging aid).
+    let dump = std::env::var_os("RERAIL_DUMP_SLICE");
+    let mut by: BTreeMap<String, String> = BTreeMap::new();
+    let mut need: BTreeSet<String> = BTreeSet::new();
+    let mut kept: BTreeSet<RuleId> = BTreeSet::new();
+    let mut todo: Vec<String> = wanted.iter().map(|r| (*r).to_owned()).collect();
     loop {
-        let more: BTreeSet<String> = v
-            .rules()
-            .filter(|r| need.contains(v.rel_name(r.head().rel())))
-            .flat_map(|r| r.reads().map(|a| v.rel_name(a.rel()).to_owned()).collect::<Vec<_>>())
-            .filter(|rel| !need.contains(rel.as_str()))
-            .collect();
-        if more.is_empty() {
+        let take = |id: RuleId, kept: &mut BTreeSet<RuleId>, todo: &mut Vec<String>, by: &mut BTreeMap<String, String>| {
+            kept.insert(id);
+            let r = rule_of[&id];
+            let head = v.rel_name(r.head().rel());
+            for a in r.reads() {
+                let rel = v.rel_name(a.rel());
+                if dump.is_some() {
+                    by.entry(rel.to_owned()).or_insert_with(|| head.to_owned());
+                }
+                todo.push(rel.to_owned());
+            }
+        };
+        while let Some(rel) = todo.pop() {
+            if !need.insert(rel.clone()) {
+                continue;
+            }
+            for &id in by_head.get(rel.as_str()).into_iter().flatten() {
+                if !gate.contains_key(&id) {
+                    take(id, &mut kept, &mut todo, &mut by);
+                }
+            }
+        }
+        // The request rules of a needed relation one of whose readers is needed: their bodies are read, which may
+        // need more readers.
+        // A reader the version no longer has (merged, renamed or inlined since the requests were made) keeps them,
+        // as `prune` does.
+        let open: Vec<RuleId> = gate.iter().filter(|(id, readers)| !kept.contains(*id) && need.contains(v.rel_name(rule_of[*id].head().rel())) && readers.iter().any(|b| need.contains(b) || !has(b))).map(|(id, _)| *id).collect();
+        for id in open {
+            take(id, &mut kept, &mut todo, &mut by);
+        }
+        if todo.is_empty() {
             break;
         }
-        need.extend(more);
     }
-    // A part of the program's version (decision 0244): the rules of `need`, every field, the wanted relations its
-    // outputs.
-    let inputs: Vec<&str> = v.inputs().map(|a| v.text(a)).collect();
-    let all = |_: &str| true;
-    v.part(|r| need.contains(r), &inputs, &wanted, PartFields { natives: &all, lattice: &all, gates: &all }).map(Some).map_err(Error::Plan)
+    if let Some(path) = dump {
+        let rules = |rel: &str| by_head.get(rel).map_or(0, |ids| ids.iter().filter(|id| kept.contains(id)).count());
+        let text: String = need.iter().map(|rel| format!("{rel}\t{}\t{}\n", rules(rel), by.get(rel).map_or("(a root)", String::as_str))).collect();
+        let _ = std::fs::write(&path, text);
+        // Each request relation's record against its rules: gated only where they match.
+        let gates: String = asked.iter().map(|(req, readers)| format!("{req}\trecord {}\trules {}\tgated {}\n", readers.len(), by_head.get(req.as_str()).map_or(0, Vec::len), by_head.get(req.as_str()).is_some_and(|ids| ids.iter().any(|id| gate.contains_key(id))))).collect();
+        let mut at = path.clone();
+        at.push(".gates");
+        let _ = std::fs::write(at, gates);
+        // Each reader the record names: whether the version still has it (a gone one keeps its requests) and whether
+        // the slice needs it.
+        let readers: BTreeSet<&String> = asked.values().flatten().flatten().collect();
+        let text: String = readers.iter().map(|b| format!("{b}\thas {}\tneeded {}\n", has(b.as_str()), need.contains(b.as_str()))).collect();
+        let mut at = path.clone();
+        at.push(".readers");
+        let _ = std::fs::write(at, text);
+        let mut rules: Vec<String> = kept.iter().map(|id| format!("{}.\n", v.show_rule(rule_of[id]))).collect();
+        rules.sort();
+        let mut at = path.clone();
+        at.push(".rules");
+        let _ = std::fs::write(at, rules.concat());
+    }
+    // A part of the program's version (decision 0244, 0298's selection): the rules taken, the wanted relations its
+    // outputs, every other field the program's.
+    v.part_rules(|id| kept.contains(&id), &inputs, &wanted).map(Some).map_err(Error::Plan)
 }
 
 pub fn run(program: &str, root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize) -> Result<Report> {
@@ -1712,19 +1786,26 @@ pub fn drop_repeated_rules(prog: &mut front::Program) -> usize {
     use std::hash::{Hash, Hasher};
     let before = prog.rules.len();
     let mut seen: HashMap<u64, Vec<usize>> = HashMap::new();
-    let mut keep: Vec<bool> = Vec::with_capacity(before);
+    // Each rule kept with the rules it stands for: itself and its repeats, whose readers it serves (the request
+    // record, `Program::set_rules_from`).
+    let mut kept: Vec<(usize, Vec<usize>)> = Vec::with_capacity(before);
     for (i, r) in prog.rules.iter().enumerate() {
         let mut h = std::collections::hash_map::DefaultHasher::new();
         r.hash(&mut h);
         let at = seen.entry(h.finish()).or_default();
-        let repeat = at.iter().any(|&j| prog.rules[j] == *r);
-        if !repeat {
-            at.push(i);
+        match at.iter().find(|&&k| prog.rules[kept[k].0] == *r) {
+            Some(&k) => kept[k].1.push(i),
+            None => {
+                at.push(kept.len());
+                kept.push((i, vec![i]));
+            }
         }
-        keep.push(!repeat);
     }
-    let mut k = keep.into_iter();
-    prog.rules.retain(|_| k.next().expect("one flag a rule"));
+    if kept.len() == before {
+        return 0;
+    }
+    let rules: Vec<(front::Rule, Vec<usize>)> = kept.into_iter().map(|(i, from)| (prog.rules[i].clone(), from)).collect();
+    prog.set_rules_from(rules);
     before - prog.rules.len()
 }
 
@@ -3564,6 +3645,12 @@ fn run_observed(
             #[cfg_attr(not(debug_assertions), allow(unused_mut))]
             let mut program: front::Program = std::mem::take(&mut lowered.program);
             bound(&program)?;
+            // Every pass so far stated its rules' sources: the request record is one entry a rule (decision 0331), which
+            // the image's pipelines carry from here.
+            debug_assert!(
+                program.asked_by.iter().all(|(r, by)| program.rules.iter().filter(|x| x.head.rel == r.as_str()).count() == by.len()),
+                "the request record holds an entry for each request rule"
+            );
             drop(_step);
             // The prepared program's one image (decision 0281's path, step 4): made here, after the last pass that edits
             // the tree; the passes after it run on the manager over the version (step 5: the file-local joins pushed,
@@ -3572,6 +3659,11 @@ fn run_observed(
             // it. A program the image cannot hold is an error, not a run read from the tree.
             let _step = crate::code_rule_dsl::logic::profile::span(|| "the prepared program's image and the passes on it".into());
             let (version, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&program).and_then(|b| b.finish()).map_err(Error::Plan)?;
+            // Every pass since lowering carries the request record (`Program::set_rules_from`): a relation whose rules
+            // no longer match it is ungated in `prune` and the embed slice, which then take every reader's request.
+            for (req, readers, rules) in version.asked_against_rules().into_iter().filter(|(_, r, n)| r != n) {
+                crate::code_rule_dsl::logic::profile::decision("the request record (decision 0331)", || format!("{req}: {readers} rules recorded, {rules} rules: ungated"));
+            }
             let (version, found) = preparation::run(version, factorizing).map_err(Error::Plan)?;
             let factorized = found.factorized.clone();
             let pushed = found.pushed.clone();
@@ -8932,7 +9024,7 @@ fn run_observed(
                     step(&format!("kept statistics: {made} of {lazy_made} lazy relations planned with"));
                     drop(s);
                     let s = span("retain");
-                    let mut next = retain::after(cell.take(), ckey, digests.clone(), &cut, rows, &derived_outputs, &cross_inputs, measured_kept, input_stats, input_docs, (run_docs_held.lock().expect("the run's documents").clone(), memo_whole), patched, retain::budget());
+                    let mut next = retain::after(cell.take(), ckey, digests.clone(), &cut, rows, &derived_outputs, &cross_inputs, measured_kept, input_stats, input_docs, (run_docs_held.lock().expect("the run's documents").clone(), memo_whole), patched, retain::budget(), false);
                     if let Some(was) = &was_frames {
                         let written = next.write_frames(store, was, &cross_placed, &cross.domains, &split.locations, &cross_sccs, &cut, &cross_inputs, &digests, &unchanged_rels, &run_deltas, handed, inputs_done, placer)?;
                         crate::code_rule_dsl::logic::profile::decision("the kept part, to the frames (t33 K4)", || format!("{written} rows of what changed queued to the store"));
@@ -9630,6 +9722,10 @@ impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
     fn no_delta(&mut self, rel: &str) {
         self.no_delta.insert(rel.to_owned());
         self.derived_again.borrow_mut().insert(rel.to_owned());
+    }
+
+    fn delta_made(&mut self, rel: &str) {
+        self.has_delta.insert(rel.to_owned());
     }
 
     fn walked(&mut self, reached: usize, quiet: usize, of: usize) {

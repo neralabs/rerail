@@ -318,11 +318,13 @@ pub struct PartOf<'f, S> {
 
 impl<S: AsRef<str>> ProgramPass for PartOf<'_, S> {
     const NAME: &'static str = "part's fields";
-    fn run(&mut self, _: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         let b = w.overlay()?;
         b.set_inputs(self.inputs);
         b.set_outputs(self.outputs);
         b.keep_relation_fields(self.fields.natives, self.fields.lattice, self.fields.gates);
+        // The request record of the relations whose rules the part holds (decision 0331): the record is by rule.
+        b.keep_asked(&|rel| cx.v().rel(rel).is_some_and(|r| cx.v().heads(r).next().is_some()));
         Ok(())
     }
 }

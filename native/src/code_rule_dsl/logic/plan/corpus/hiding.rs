@@ -143,7 +143,8 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
         let mut edits: Vec<(usize, usize, Edit)> = Vec::new();
         // The relations rules derive: a relation of stated facts alone is a kind set when a kind is read through it.
         let ruled = &delta.heads;
-        let mut copies: Vec<(crate::code_rule_dsl::logic::front::Rule, BTreeMap<String, Fact>)> = Vec::new();
+        // Each copy with the rule it was made from (the request record follows it, `Program::push_rule_from`).
+        let mut copies: Vec<(crate::code_rule_dsl::logic::front::Rule, BTreeMap<String, Fact>, usize)> = Vec::new();
         let mut decls: Vec<(crate::code_rule_dsl::logic::front::Name, crate::code_rule_dsl::logic::front::List<(crate::code_rule_dsl::logic::front::Name, crate::code_rule_dsl::logic::front::Name)>)> = Vec::new();
         // The axes over a guest grammar's kind set made this round: inputs the transducer makes, as the run's are.
         let mut axes: Vec<String> = Vec::new();
@@ -180,7 +181,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
             if !maybe.is_empty() && split.insert(i) {
                 let mut seed = seeds[i].clone();
                 seed.extend(maybe);
-                copies.push((rule.clone(), seed));
+                copies.push((rule.clone(), seed, i));
                 changed = true;
             }
             let grammar_of = |v: &str| facts.get(v).filter(|f| f.scoped && f.definite).and_then(|f| f.grammar.clone()).filter(|g| !g.is_empty());
@@ -306,7 +307,7 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
                                 seed.insert(v.to_string(), Fact { scoped: true, grammar: Some(g.clone()), definite: true });
                             }
                         }
-                        copies.push((copy, seed));
+                        copies.push((copy, seed, j));
                     }
                     if let Some(d) = prog.decls.get(orig.as_str()) {
                         decls.push((name.clone().into(), d.clone()));
@@ -339,8 +340,8 @@ pub(super) fn hide(prog: &mut Program, bound: u32) {
             }
         }
         let first_copy = prog.rules.len();
-        for (rule, seed) in copies {
-            prog.rules.push(rule);
+        for (rule, seed, from) in copies {
+            prog.push_rule_from(rule, from);
             seeds.push(seed);
         }
         touched = edited.into_iter().chain(first_copy..prog.rules.len()).collect();
@@ -554,6 +555,7 @@ pub(super) fn fold_own(prog: &mut Program, label: &str, bound: u32) -> usize {
         return 0;
     }
     prog.rules.retain(|r| !folded.contains_key(r.head.rel.as_str()));
+    prog.rename_readers(|b| folded.get(b).cloned());
     // An original holds its copies' rows: its rules' bounds take the annotations in (`ANNOTATION_KEYS` to
     // `HIDDEN_KEYS`), as its copies' seeded columns did. A rule that does not reach an annotation keeps the bound.
     let originals: BTreeSet<&str> = folded.values().map(String::as_str).collect();

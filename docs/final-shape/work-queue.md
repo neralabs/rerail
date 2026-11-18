@@ -171,6 +171,17 @@ into notes once the queue is done).
     listed switch must be read in combining, preparing or what hangs off the prepared key (`run_observed`,
     `facts/vtab/syntax.rs`). Verified live under Relax (9/9) and under cargo.
 
+  - *Review 6* (0d55e852d; by me, 2026-11-17): (1) the module, program and linked-library images (`rr.rs`
+    `module_key`, `program_key`, `linked_key`, decision 0246 §6) were keyed by text, engine and scope alone, yet the
+    lowering they store reads `RERAIL_NODE_SOURCES` (`sources_on_request`), `RERAIL_ORDER_RAW` and
+    `RERAIL_NODE_IDS` (`front::finish`'s `order_nodes`): a run under another value read the image the default had
+    stored, so keying the combined program (`texts_digest`) did not reach it. Fixed: the three keys hold each set
+    `COMBINING` switch (`rr::switched`); an unset switch keeps every key, the engine's shipped bundle (0264) with it.
+    Test `rr::key_tests::an_image_lowered_under_a_lowering_switch_is_keyed_apart` (logic crate). Checked, no
+    finding: `RERAIL_INLINE`/`_ONLY` key the plan choices (`choices.rs` 66); `combined::plan` hashes every
+    `COMBINING` switch (the rule-file entries, 0275, look up under it); the shipped bundle is made per engine build,
+    so its plan follows the switch list; the moved switches still reach every prepared key through the combined
+    program's.
 ### Q3. No duplicate widened copies; the dropping test strict again
 
 - **Keep**: 0174's widened copies where they serve a reader; the user's "Prune knows requests" (gated prune);
@@ -260,6 +271,16 @@ into notes once the queue is done).
     tests (210/211: Q27's), rerail-logic's (50), and strict 10-file cold, warm and edit runs (same rows,
     byte-identical outputs). **Done.**
 
+  - *Review 6* (4dbc395b2, the request's copy merged; by me, 2026-11-17): (1) the version's `congruence`
+    (preparation/merge.rs) had no request guard: `rr_token_req` and the like could merge into any equal relation and
+    be renamed, though the answer reads them by name, and the tree's (`simplify::fixed`, `request`) keeps them apart
+    (the debug build's tree-against-version digest would differ); (2) merging a request's copy into the request
+    dropped the copy's record, so the copy's readers, now reading the request, were in no gate of its rules.
+    Fixed: both sides let a request join only a class with its own widened copies (the rest of the class stays a
+    class); each of the request's rules takes the readers of the copy's equal rule (by `canonical_rule`, the version
+    by its templates), before the copy's rules and rows go; the version's rows are written in the tree's order. Test
+    `a_request_merges_with_its_own_copy_only` (an equal `other` stays apart; the version is the tree's, record and
+    digest).
 ### Q4. The `.rdl` comparison checks the on-request step independently
 
 - **Keep**: the `.rdl` ↔ `.rr` comparison as an independent check of lowering, 0174's requests.
@@ -345,6 +366,22 @@ into notes once the queue is done).
   a_sample_of_the_replay_gives_the_recorded_findings; typing pep_561 and phase_tests; session quiet_stratum.
 - **Record**: in progress. dropping_unreached (8) and rdl_programs_translate pass (Q3). The replay sample: 14 of
   268 events fail after Q2/Q3's fixes, against 57 on the 09:46 run (tmp/remote4.txt); all 14 are among those 57.
+  - *2026-11-17, all pass on the M3*: dropping_unreached (8) and rdl_programs_translate (Q119); pep_561, the three
+    phase_tests and quiet_stratum pass as they are; the replay sample, 268 of 268 events. The replay's failures had
+    two causes, each fixed:
+    1. The debug build's check that the version's program is the tree's after the merges failed on 7 of its 8
+       threads: the version's request record named more readers than the tree's. The pass manager's carry
+       (`AskedByRule::step`, 0331) read a kept rule's `source`, which names a rule of an earlier derivation's input
+       (another id space), and in a derivation took every input rule for removed, so equal rules shared readers.
+       A rule the step kept keeps its own readers; one it made, its source's; the removed are, in a derivation,
+       the input rules no output rule came from. 14 failing events left 4.
+    2. The 4: "`value` is answered on request in the cross-file part". A file scope ruled out by the run's options
+       (`spq_vector_filter_literals_file36`: every rule tests `option_value("entryPoint", …)` against a value the
+       run does not have) lost every rule to `simplify::decided_fact_tests`, and stayed declared, empty and read by
+       a guest's copies (`rr_wide_node_text_…_module_strings`), whose rules the split then took for cross-file, and
+       with them the value request that reads them. `decided_fact_tests` now decides reads of a relation it emptied
+       (one that had rules, so nothing outside fills it): a positive read's rule goes, a negated read is dropped, to
+       a fixpoint. Test `a_relation_its_fact_tests_empty_takes_its_readers`.
 
 ### Q10. The merge audit checks hunks
 
@@ -414,6 +451,10 @@ data-layer-eager-resolve fails (rc 1), on 50 sampled data-layer files.
   - **Done** (2026-11-16): no code warning is left; the jobserver lines are left to age out of the cache (question 3,
     answered (c)). The linker's `__eh_frame` note is the engine test binary's size, not a code warning.
 
+  - *Verified* (2026-11-17, at 4dbc395b2 plus the Q2/Q3 review-6 fixes): `cargo build --profile profiling -p
+    rerail-engine --bin rerail-engine` on the M3 prints no warning and no error. Done when holds. Found beside it:
+    the library built with `test-hooks` alone (`cargo check --lib --features test-hooks`, AGENTS.md's CLI feature
+    set) lists 90 warnings, all in the generated mounts (`native/src/code_rule_dsl/mod.rs`): Q120.
 ### Q14. Plan-time switches and the plan cache
 
 (Found in Q2's review 4.) `keeps::choose` (what each derived relation keeps, stored or inlined) runs in
@@ -1639,6 +1680,58 @@ product runs, 79 of 115 pass, 18 fail on Q49's work limit, and 18 fail in the wa
 
 - **Keep**: the fixtures' CPU results as the oracle.
 - **Done when**: each fixture passes on the packed JIT, or its difference is shown to be the CPU's error.
+
+### Q119. (Q50 on benchmarks-on-integration at 9a9b270ce) `dropping_unreached_clauses_prunes_to_the_same_program` red on this branch: `value` an input of one side only
+
+Seen 2026-11-17 on the M3 (Benchmarks-and-parity after the hub merge fd32d4d27, and the same with the request
+record's carry, 7a356124d, reversed): all seven tests of the family fail. `bandit-b112-try-except-continue.rr`
+(python pack 0): the rules, declarations, natives, outputs and facts are equal; the inputs the rules read are 12
+with the unreached clauses dropped and 11 whole, the extra one `value`. Lowered whole, `value` is answered on
+request (no longer an input); lowered without the unreached clauses it stays an input, though the pruned rules
+are the same.
+
+- **Keep**: the test's property (a program pruned whole is the program pruned without its unreached clauses),
+  strict, and the on-request lowering of `value` (0174, 0291).
+- **Done when**: the seven pass on this branch, with the cause named.
+- **Record**: built, verified (2026-11-17). Not `value` alone, and not the record's carry: the family failed for
+  six causes, each named and fixed.
+  1. The test's input check counted relation names inside string constants (`Str("…")`) as inputs: it strips them.
+  2. Desugared helpers (`rr_d<k>_<n>_f<k>`) and fresh helpers named after them were numbered apart on the two sides:
+     the test's masks cover them.
+  3. 0291's narrowing was all or nothing: one reader site that could not narrow (read in an aggregate, by name,
+     by its own relation, with a non-variable column, or unbound) left the whole request wide, so the two sides
+     differed by which reader was reached. `Widen::demand_of` returns the asks with their askers and the sites
+     that block; the narrowed request serves its askers, and a wide request (`wild_singletons`) is added for the
+     blockers only. `undo_round` removes the narrowing relations with the round.
+  4. A narrowed request was gated by the request's reader, not by its askers: it is recorded with the askers.
+  5. Readers inlined away (`inline_node_tests`, `inline_filters`) left the record naming them:
+     `Program::inlined_readers` and `replace_readers` name their readers instead.
+  6. Q3's copy property: a widened copy of a request relation (`rr_wide_node_text_rr_token_req`) left with the
+     request's own rules was never merged, since `congruence` keeps requests apart. A request now joins a class
+     with its own widened copies only (and names it); the merged copy's record goes with it.
+  Found by the version build's check on the way: four passes that broke the record. `plan::lower`'s
+  `expand_memberships` splits a rule per set member (now states each part's source); `prune` kept readers it had
+  dropped (it removes them from a set that keeps another); the pass manager's steps did not carry it at all
+  (`AskedByRule`: a rule kept, rewritten from a source, or equal to a removed one keeps its readers; restated at a
+  pipeline's end; `PartOf` cuts a part's); the version's merge did not rename readers as the tree's does. A debug
+  build asserts the record holds an entry a request rule where the image is made. Tests: the family (8), the
+  targeted set (548), `the_request_record_follows_the_preparation_steps` (logic crate), the prune case in
+  `a_request_is_kept_for_a_gone_reader_and_for_a_readers_copy`.
+
+### Q120. (Q51 on benchmarks-on-integration at 9a9b270ce) The engine's library built with `test-hooks` alone warns in the generated mounts
+
+Seen 2026-11-17 (`cargo check --lib --features test-hooks`, the CLI's feature set): 90 warnings, every one in
+`native/src/code_rule_dsl/mod.rs` (tools/cratify/mounts.py's mounts). Two kinds: a facade's glob re-export under
+`any(test, feature = "test-hooks")` that only `cfg(test)` code reads (`blade::forte::tree::*` at 9, `calls::python`
+at 84, about 50 more), and a `#[cfg_attr(any(test, feature = "test-hooks"), path = …)]` on an inline module whose one
+file module is `#[cfg(test)] mod tests` (4, 60, 440, about 40 more). 65589d40c made this build clean; the mounts
+regenerated since keep the wider condition. The profiling build has none (Q13).
+
+- **Keep**: every build's mounts (tests, CLI, profiling, wasm) compile; the engine-hosted tests read the facades.
+- **Done when**: the generator gives each re-export and `#[path]` the condition of what reads it (`dir_attr`'s union,
+  apply.py's test-hooks rule), the mounts are regenerated, and the `test-hooks` library and the test build list no
+  warning.
+- **Record**: —
 
 ## Questions for the user
 

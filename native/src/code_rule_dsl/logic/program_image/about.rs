@@ -385,6 +385,38 @@ impl About {
 }
 
 /// The about rows' program name (`program_image::ABOUT`): each row's first cell.
+/// The request record (`Program::asked_by`, decision 0174: the `asked` rows): each request relation's rules, in its
+/// order among the program's, each with the relations whose readers it serves.
+pub type Asked = std::collections::BTreeMap<String, Vec<std::collections::BTreeSet<String>>>;
+
+impl Version {
+    /// The request record, as the `asked` rows state it.
+    pub fn asked(&self) -> Asked {
+        let mut asked = Asked::new();
+        for f in self.about_facts().into_iter().filter(|f| self.text(f.name()) == "asked") {
+            for row in f.rows() {
+                let cells: Vec<Cell> = row.collect();
+                let (Some(Cell::Str(req)), Some(&Cell::Int(k)), Some(Cell::Str(b))) = (cells.get(1), cells.get(2), cells.get(3)) else { continue };
+                let Ok(k) = usize::try_from(k) else { continue };
+                let readers = asked.entry(self.text(*req).to_owned()).or_default();
+                if readers.len() <= k {
+                    readers.resize(k + 1, Default::default());
+                }
+                readers[k].insert(self.text(*b).to_owned());
+            }
+        }
+        asked
+    }
+    /// Each request relation of the record with how many readers' entries it holds and how many rules it has: the
+    /// record holds where the two are equal.
+    pub fn asked_against_rules(&self) -> Vec<(String, usize, usize)> {
+        self.asked().into_iter().map(|(req, readers)| {
+            let rules = self.rel(&req).map_or(0, |id| self.heads(id).count());
+            (req, readers.len(), rules)
+        }).collect()
+    }
+}
+
 fn program_cell(b: &mut Builder<'_>) -> Cell {
     Cell::Str(b.atom(super::ABOUT))
 }
@@ -527,6 +559,30 @@ impl Builder<'_> {
             .map(|(req, i, b)| vec![p, Cell::Str(self.atom(req)), Cell::Int(i as i64), Cell::Str(self.atom(b))])
             .collect();
         self.set_about_rows("answer", rows);
+    }
+    /// States the request record (`Program::asked_by`, `Version::asked`): each request relation's rules, in order, each
+    /// with the relations whose readers it serves. Replaces the program's.
+    pub fn set_asked(&mut self, asked: &Asked) {
+        let p = program_cell(self);
+        let mut rows = Vec::new();
+        for (req, by) in asked {
+            for (k, readers) in by.iter().enumerate() {
+                for b in readers {
+                    rows.push(vec![p, Cell::Str(self.atom(req)), Cell::Int(k as i64), Cell::Str(self.atom(b))]);
+                }
+            }
+        }
+        self.set_about_rows("asked", rows);
+    }
+    /// Keeps the request record (`asked`) of the request relations `keep` takes: a part's, of the relations whose
+    /// rules it holds.
+    pub fn keep_asked(&mut self, keep: &dyn Fn(&str) -> bool) {
+        let rows = self.about_rows("asked");
+        let n = rows.len();
+        let kept: Vec<Vec<Cell>> = rows.into_iter().filter(|r| !matches!(r.get(1), Some(&Cell::Str(a)) if !keep(self.text(a)))).collect();
+        if kept.len() != n {
+            self.set_about_rows("asked", kept);
+        }
     }
     /// Adds gates (`Program::gates`' entries, after the program's): each its key, relation, level, the relations
     /// that must be quiet and the gates it waits on, as `program_facts` writes them.

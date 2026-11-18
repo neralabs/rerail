@@ -342,6 +342,7 @@ fn tree_part(p: &Program, keep: &dyn Fn(&str) -> bool, inputs: &[String], output
     t.natives.retain(|rel, _| keep(rel));
     t.lattice.retain(|rel, _| keep(rel));
     t.gates.retain(|(rel, _)| keep(rel));
+    t.asked_by.retain(|rel, _| keep(rel));
     t.inputs = inputs.to_vec();
     t.outputs = outputs.to_vec();
     t
