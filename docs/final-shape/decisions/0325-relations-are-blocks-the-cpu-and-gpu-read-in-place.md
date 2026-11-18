@@ -325,3 +325,32 @@ part then read that copy. At 300 files the copy took 140 MB at the peak ("hold t
   - after: peak 2.38 GB, 89 s CPU, heap at the peak 1.67 GB against 1.83 GB;
   - findings: the reference's (30,449 rows);
   - strict 10-file outputs: byte-identical.
+
+## Held rows probed by their own indexes (2026-11-17, Q90)
+
+A relation held in memory for the runs that read it (`columns_source`: a base relation's rows, the cross part's `r__old`)
+was a set of heap columns. A column was sorted into a host index on its first probe (`Stored`, `Sorted`), and a key of
+several columns into a lexicographic order. At 300 files those sorted ids took 120–140 MB at the peak, the largest
+host index left.
+
+- **One relation in a block.** The rows are now one relation alone in a `Life::Kept` block (`setfix/held.rs`,
+  `Rows::with_index_room`), with room past its rows for its indexes. Columns no rule reads are not held, and read as 0.
+- **Its own indexes.** A probe of a column, or of a key of several, reads the relation's own hashed index there
+  (`InBlock::own_index_for`). The same index serves the device. Its buckets are sized to the key's distinct values: 4
+  bytes a row and about 4 a value. The sorted index was 4 a row and 12 a value. A whole view of such a source is bound
+  to that index (`Source::own_index`, ahead of the source's lookups). Other sources keep their lookups, and get a block
+  index only where nothing else answers (Q87).
+- **Statistics** are measured a column at a time, by a sort that is dropped once it is measured.
+- **Past the directory.** A source with more probed columns than the directory's 8 entries has its other columns
+  probed by a host sorted index. The profile counts this as "held rows: a column's index on the host".
+- **The carry is gone.** Decision 0101 §5 carried last run's sorted columns into this run's copy. It is removed:
+  nothing is sorted any more, and an index is hashed on its first probe.
+- `Stored` is left for SQL tables, whose columns load as a statement asks for them.
+- **Measured** (cold, 300 files, profiling build, load 47–72):
+  - sorted columns at the peak: 122.9 MB before, 0 after;
+  - the cross part's live heap at the peak: 380 MB before, 248 MB after;
+  - CPU of every head: 34.5 s before, 25.0 s after;
+  - the peak footprint stays 2.29–2.35 GB. The file-local chunks running beside the cross part set it now: 592 MB at
+    the peak before, 702 MB after, because the cross part finishes sooner and overlaps more of them;
+  - findings: the reference's;
+  - strict 10-file outputs: byte-identical.

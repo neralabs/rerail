@@ -2025,3 +2025,23 @@ A red test found, not from this work: `plan::corpus::tests::branded_constants_ha
 fails at HEAD without these changes too. `Own::constants_of` finds no branded `field` or `kind` constant in a
 program that `rr::parse` lowers alone, with left `(0, 0)` against right `(1, 1)`. It runs only in rerail-logic. The
 next step is to trace where that program's kind and field names should become branded atoms.
+
+### Q90. Held rows are probed by their own block indexes, not sorted host columns (0325)
+
+Done 2026-11-17. This is the user's "the stored columns' sorted indexes" item. `columns_source` now builds `Held`
+(`setfix/held.rs`): the rows are one relation alone in a Kept block, and every probe reads the relation's own hashed
+index there, sized to the key's distinct values. Decision 0101 §5's carry of sorted columns between runs is removed.
+`Stored` is left for SQL tables (0325, "Held rows probed by their own indexes").
+
+At 300 files:
+- sorted columns at the peak: 122.9 MB before, 0 after;
+- the cross part's heap at the peak: 380 MB before, 248 MB after;
+- head CPU: 34.5 s before, 25.0 s after;
+- the peak footprint did not move (2.29–2.35 GB). The file-local chunks beside the cross part set it now.
+- Findings are the reference's, and the strict 10-file outputs are byte-identical.
+
+The first try bound every whole source's view to a block index ahead of its lookups. That added 57 MB of source
+blocks, so only held rows go first now.
+
+Test: `held_rows_look_up_what_a_scan_finds` (every column, keys of 2 and 3, an unheld column, and the host fallback
+past the directory).

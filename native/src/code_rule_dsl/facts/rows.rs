@@ -231,11 +231,21 @@ impl Part {
         // A device relation is written once at its size, and lives as the device's buffers did: alone in a block of
         // its size (leased within the device's budget), given back with it. A run's tail grows: its block has room for
         // it to double.
-        let alone = life == Life::Device;
+        // A relation given room past its rows (`extra`: its indexes', `Rows::with_index_room`) is alone in its block
+        // too, so its indexes lie with it.
+        let alone = life == Life::Device || extra > 0;
         let mut open = OPEN[life as usize].lock().unwrap_or_else(|e| e.into_inner());
         for fresh in [false, true] {
             let facts = match &*open {
-                _ if alone => Arc::new(Facts::new(lease_exact(need + extra, life)?)),
+                _ if alone => {
+                    let f = Arc::new(Facts::new(lease_exact(need + extra, life)?));
+                    if life != Life::Device {
+                        let mut live = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+                        live[life as usize].retain(|w| w.strong_count() > 0);
+                        live[life as usize].push(Arc::downgrade(&f));
+                    }
+                    f
+                }
                 Some(f) if !fresh && f.block.reserved().saturating_sub(f.block.used()) >= need + MARGIN => f.clone(),
                 _ => {
                     let f = Arc::new(Facts::new(lease(2 * need + MARGIN, life)?));
@@ -444,6 +454,12 @@ impl InBlock {
     /// before (by the device, or an earlier probe), else built now into its block, by the host, as the device builds
     /// it. `None` for a delta (dead rows) or a key past `MAX_KEY`, or when the block has no room for it.
     pub fn own_index(&self, cols: &[u16]) -> Option<usize> {
+        self.own_index_for(cols, self.rows as usize)
+    }
+
+    /// `own_index`, its buckets sized for `keys` distinct keys (`Relation::try_reserve_index_buckets`), when it is
+    /// built now.
+    pub fn own_index_for(&self, cols: &[u16], keys: usize) -> Option<usize> {
         let r = self.relation();
         if self.dead != 0 || r.base_rows != 0 || cols.is_empty() || cols.len() > rerail_blocks::relation::MAX_KEY {
             return None;
@@ -453,7 +469,7 @@ impl InBlock {
             return Some(i);
         }
         // SAFETY: under the block's index lock; the relation's rows `0..rows` are written.
-        let room = unsafe { r.try_reserve_index(&self.facts.block, cols, self.rows) }?;
+        let room = unsafe { r.try_reserve_index_buckets(&self.facts.block, cols, self.rows, keys) }?;
         // SAFETY: the room was just reserved under the lock, and nothing reads it until it is marked built.
         unsafe {
             r.build_index(&room);
@@ -499,6 +515,18 @@ impl Rows {
             r.extend_from_slice(&rows);
         }
         r.freeze(n)
+    }
+
+    /// No rows yet, of `k` values each, living `life` long, with room for `rows` rows alone in a block, and past them
+    /// for `indexes` indexes of the relation's own over its rows (`InBlock::own_index_for`): a source held so is
+    /// probed by its own indexes, not host tables (decision 0325 step 5). The room is the block's address space: its
+    /// pages are taken as an index is written.
+    pub fn with_index_room(k: usize, life: Life, rows: usize, indexes: usize) -> Rows {
+        let cap = rows.next_power_of_two().max(1);
+        let index = 4 * (cap + 1) + 4 * rows.max(1) + 64;
+        let extra = indexes.max(1) * index + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 64;
+        let part = Part::try_new_with(life, k, rows, extra).unwrap_or_else(|e| panic!("a relation of {k} columns and {rows} rows: {e}"));
+        Rows { k, life, hint: rows, tail: Some(part), ..Rows::default() }
     }
 
     /// The rows held.

@@ -86,7 +86,7 @@ pub trait Source: Send + Sync {
         Err(rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_READONLY),None))
     }
     fn text_column(&self, _column: usize) -> bool { false }
-    /// The source as itself, for a caller that carries state between two of one kind (`carry_sorted`).
+    /// The source as itself, for a caller that reads a kind's own parts (a derived relation's rows).
     fn as_any(&self) -> Option<&dyn std::any::Any> { None }
     fn columns(&self) -> Vec<String>;
     fn len(&self) -> usize;
@@ -163,6 +163,13 @@ pub trait Source: Send + Sync {
     /// device reads where they lie (decision 0325 step 3). `None`: the device copies them (`device_view`, `row_at`).
     #[cfg(target_os = "macos")]
     fn in_block(&self) -> Option<super::rows::InBlock> {
+        None
+    }
+    /// Its own index on `columns` (decision 0325 step 5), where the source holds its rows to be probed so (`held`):
+    /// found or built in its block, its number with the relation it indexes. A probe reads a bucket's rows, candidates
+    /// whose key it checks. `None` by default: a source answers its lookups, and a whole one in a block is given an
+    /// index there only when nothing else answers (`InRel::index`).
+    fn own_index(&self, _columns: &[usize]) -> Option<(super::rows::InBlock, usize)> {
         None
     }
     /// Rows are made per looked-up value, so reading them all (a scan, a hash index of every row)
