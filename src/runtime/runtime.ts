@@ -9,8 +9,10 @@ import {
   type AdapterEvent,
   type AdapterSample,
   type AdapterSession,
+  type HeldSession,
   type RerailEventLoop,
   type RerailHost,
+  type SessionNoteRules,
   type SteerStrategy,
 } from "../engine/adapter-contract.js";
 import { RerailHostRuntime, type HostRuntimePort, type HostRuntimeSessionState } from "./host-runtime.js";
@@ -59,7 +61,7 @@ import { SessionLanes } from "./session-lanes.js";
 import { rewoundSteer, steerBlock, steerRules, steerShell, subagentSteer, type SteerShell } from "../engine/code-rule/rerail-steer.js";
 import { steerOrigin } from "../engine/code-rule/steer-origin.js";
 import { checkoutPathBoundary } from "../engine/path-boundary.js";
-import { SqliteSessionStore, type SessionAttribution } from "./session-store.js";
+import { SqliteSessionStore, type RuleCoverage, type SessionAttribution } from "./session-store.js";
 import { isDefaultStorageRoot } from "./session-paths.js";
 import type {
   ContentItem,
@@ -1918,22 +1920,77 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     // Unpublished sessions have no session row yet; the session-start ingest records coverage once they do.
     if (state === undefined || state.closed || state.ownerClaim === undefined) return;
     try {
-      const { root } = state.checkout;
-      const repositoryId = this.#repositoryKey(state.checkout);
-      if (repositoryId === null) return;
-      const catalog = this.#catalogs.catalog(root);
-      const loaded = catalog.status.sourceSignature;
-      // Current only while the code and conversation rules were loaded from the same configuration.
-      const synchronized = state.ruleSync === undefined || state.ruleSync.sourceSignature === loaded;
-      this.#sessionStore.recordRuleCoverage(state.descriptor, {
-        repositoryId,
-        ownerCheckoutPaths: this.#catalogs.ownerCheckoutPaths(root),
-        activeRuleCount: (state.registry?.count ?? 0) + catalog.status.ruleCount,
-        ruleSignature: (synchronized ? configurationSignatureOf(loaded) : undefined) ?? "",
-      });
+      const coverage = this.#ruleCoverage(state);
+      if (coverage !== undefined) this.#sessionStore.recordRuleCoverage(state.descriptor, coverage);
     } catch (error) {
       console.error("rerail rule coverage:", error);
     }
+  }
+
+  /** The rules `state`'s session runs, as its checkout's catalog loaded them; undefined in a checkout Rerail does not record. */
+  #ruleCoverage(state: RuntimeSessionState): RuleCoverage | undefined {
+    const { root } = state.checkout;
+    const repositoryId = this.#repositoryKey(state.checkout);
+    if (repositoryId === null) return undefined;
+    const catalog = this.#catalogs.catalog(root);
+    const loaded = catalog.status.sourceSignature;
+    // Current only while the code and conversation rules were loaded from the same configuration.
+    const synchronized = state.ruleSync === undefined || state.ruleSync.sourceSignature === loaded;
+    return {
+      repositoryId,
+      ownerCheckoutPaths: this.#catalogs.ownerCheckoutPaths(root),
+      activeRuleCount: (state.registry?.count ?? 0) + catalog.status.ruleCount,
+      ruleSignature: (synchronized ? configurationSignatureOf(loaded) : undefined) ?? "",
+    };
+  }
+
+  /**
+   * What this runtime holds of `event`'s session once it has taken the event, for the facts of its answer: the checkout
+   * the session works in and, at a session's start, what the note says of its rules. Undefined for a session not open
+   * here. Read from memory, but for the checkout's start state, which every event reads, and at a start the
+   * configuration signature, which every tool call reads (`#sessionNoteRules`).
+   */
+  heldSession(event: AdapterEvent): HeldSession | undefined {
+    const state = this.#heldState(event);
+    if (state === undefined) return undefined;
+    const checkout = this.#catalogs.checkout(state.checkout.root);
+    return {
+      checkout: checkout === undefined ? null : { repositoryKey: checkout.repositoryKey, checkoutPath: checkout.checkoutPath },
+      ...(event.kind === "session-start" ? { sessionNote: this.#sessionNoteRules(state) } : {}),
+    };
+  }
+
+  /**
+   * `event`'s session while it is open here in a checkout where Rerail is started; undefined otherwise. A stopped
+   * checkout's runtime takes no event, so what it holds of a session opened before the stop is not read again.
+   */
+  #heldState(event: AdapterEvent): RuntimeSessionState | undefined {
+    const state = this.#sessions.get(event.kind === "session-start" ? event.session.sessionId : event.sessionId);
+    return state === undefined || state.closed || this.#stopped() ? undefined : state;
+  }
+
+  /**
+   * What the session-start note says of `state`'s rules, as the session's footer reads its coverage
+   * (`SqliteSessionReader.hud`): its checkout is not set up; the rules it runs while they are current; or no count where
+   * the checkout is stopped or the rules were loaded before the configuration last changed, which the session's next
+   * tool call loads again. Asked once the session's start is taken, when its coverage is recorded.
+   */
+  #sessionNoteRules(state: RuntimeSessionState): SessionNoteRules {
+    const eligibility = this.#catalogs.eligibility(state.checkout.root);
+    if (eligibility === "not-set-up") return { setUp: false };
+    return { setUp: true, ruleCount: eligibility === "ok" ? this.#currentRuleCount(state) : null };
+  }
+
+  /**
+   * The rules `state`'s session runs while its coverage is current as the footer reads it: the configuration signature
+   * it records is the configuration's now. A session whose code and conversation rules were loaded from different
+   * configurations records none, so it reads no count either. Null otherwise.
+   */
+  #currentRuleCount(state: RuntimeSessionState): number | null {
+    const coverage = this.#ruleCoverage(state);
+    if (coverage === undefined) return null;
+    const now = configurationSignatureOf(this.#catalogs.catalog(state.checkout.root).sourceSignature());
+    return coverage.ruleSignature === now ? coverage.activeRuleCount : null;
   }
 
   #repositoryKey(checkout: StartingCheckout): string | null {

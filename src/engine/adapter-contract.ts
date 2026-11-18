@@ -464,6 +464,39 @@ export function resultWithSteers<Block>(
   return { content: [{ type: "text", text: rewound.join("\n\n") }, ...following], isError: true };
 }
 
+/** What the session-start note says about the repository's rules: how many are on, or that it is not set up yet. */
+export type SessionNoteRules = { setUp: true; ruleCount: number | null } | { setUp: false };
+
+/**
+ * What the daemon's answer to an event says beside its deliveries, so a hook builds the session-start note and links a
+ * steer without asking the daemon again. A field is absent where no answer carried it: the daemon is older than the
+ * field, or the event loop runs in the hook's own process. The hook then reads it from the daemon as before.
+ */
+export interface EventAnswerFacts {
+  /** The checkout's dashboard, scoped to its repository and checkout; null where the daemon has none to open. */
+  readonly dashboard?: string | null;
+  /** At a session's start, what the note says about the session's rules. */
+  readonly sessionNote?: SessionNoteRules;
+}
+
+/**
+ * What the runtime that took an event holds of its session once it has, from which the answer's facts are made
+ * without reading anything again: the checkout the session works in and, at a session's start, what its note says.
+ */
+export interface HeldSession {
+  /** The repository and checkout the session works in; null where Rerail records no checkout there. */
+  readonly checkout: { readonly repositoryKey: string; readonly checkoutPath: string } | null;
+  /** At a session's start, what its note says about its rules. */
+  readonly sessionNote?: SessionNoteRules;
+}
+
 export interface RerailEventLoop {
   ingest(event: AdapterEvent): Promise<readonly AdapterDelivery[]>;
+  /** The {@link EventAnswerFacts} of the answers to the events ingested so far; absent where answers carry none. */
+  answerFacts?(): EventAnswerFacts;
+}
+
+/** What `loop`'s answers so far carried beside their deliveries; nothing from a loop whose answers carry none. */
+export function answeredFacts(loop: RerailEventLoop): EventAnswerFacts {
+  return loop.answerFacts?.() ?? {};
 }

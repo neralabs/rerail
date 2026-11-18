@@ -24,8 +24,12 @@ import {
   SESSION_EVENT_PAGE_LIMIT,
 } from "../../src/runtime/index.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../../src/cli/index.js";
-import { openRerailDatabase, RepositoryWorktreeWalks, SqliteAuditStore, SqliteAuditControlStore } from "../../src/engine/index.js";
+import {
+  type AdapterEvent, openRerailDatabase, RepositoryWorktreeWalks, setRuleSetting, SqliteAuditStore, SqliteAuditControlStore,
+} from "../../src/engine/index.js";
+import { presentedSessionNoteRules, steerDashboard } from "../../src/presentation/index.js";
 import { startTestRepository, stopTestRepository } from "../support/started-repository.js";
+import { setUpTestRepository } from "../support/repository-rules.js";
 import { linkFolder } from "../support/platform/links.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 import { withExperiments } from "../support/environment/experiments.js";
@@ -508,6 +512,88 @@ describe("Rerail daemon", () => {
       status: 404,
       body: { error: "session-not-found" },
     });
+  });
+
+  /** One event sent to the daemon's engine socket as a hook sends it, with `headers`; the answer as JSON. */
+  async function postEvent(daemon: RerailDaemon, event: AdapterEvent, headers: Record<string, string>): Promise<unknown> {
+    const body = JSON.stringify({ event });
+    const { promise, resolve: answered, reject } = Promise.withResolvers<unknown>();
+    const outgoing = httpRequest({
+      socketPath: daemon.kernelSocketPath, method: "POST", path: "/events",
+      headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body), [ACCESS_HEADER]: ACCESS, ...headers },
+    }, (incoming) => {
+      const chunks: Buffer[] = [];
+      incoming.on("data", chunk => chunks.push(chunk));
+      incoming.on("end", () => answered(JSON.parse(Buffer.concat(chunks).toString())));
+      incoming.on("error", reject);
+    });
+    outgoing.on("error", reject);
+    outgoing.end(body);
+    return await promise;
+  }
+
+  /** A session's start in `root`, as Claude Code's hook sends it. */
+  const sessionStart = (root: string, sessionId: string) =>
+    ({ kind: "session-start", eventId: `${sessionId}:start`, session: { host: "claude-code", sessionId, cwd: root } }) as const;
+  /** What a hook that reads the answer's facts sends with its event. */
+  const READS_FACTS = { "x-rerail-event-answer": "2" };
+  const ONE_RULE = "typescript-eslint-consistent-type-definitions";
+  const setUpOneRule = (root: string): string => setUpTestRepository(root, { rerailRules: [ONE_RULE] }, join(root, "rerail.sqlite"));
+
+  /** Turns the repository's one rule off once the daemon's runtime there has loaded its rules for an earlier session. */
+  async function turnRuleOffAfterLoad(daemon: RerailDaemon, root: string, repositoryKey: string): Promise<void> {
+    expect(await postEvent(daemon, sessionStart(root, "earlier-session"), READS_FACTS))
+      .toMatchObject({ sessionNote: { setUp: true, ruleCount: expect.any(Number) } });
+    const database = openRerailDatabase(join(root, "rerail.sqlite"));
+    try {
+      setRuleSetting(database, { owner: { kind: "repository", repositoryKey }, folder: "", targetKind: "rule", targetId: ONE_RULE, on: false, mode: null });
+    } finally {
+      database.$client.close();
+    }
+  }
+
+  interface SessionStartCase {
+    readonly state: string;
+    /** Records `root`'s repository in that state; returns its key. */
+    readonly prepare: (root: string) => string;
+    /** What changes once the daemon runs, before the session starts. */
+    readonly change?: (daemon: RerailDaemon, root: string, repositoryKey: string) => Promise<void>;
+    readonly note: unknown;
+  }
+
+  it.each<SessionStartCase>([
+    { state: "set up", prepare: setUpOneRule, note: { setUp: true, ruleCount: expect.any(Number) } },
+    { state: "not set up", prepare: root => startTestRepository(root, join(root, "rerail.sqlite")), note: { setUp: false } },
+    // The footer reads no count until the session's next tool call loads the rules again, and neither does the note.
+    { state: "whose rule was turned off after its runtime loaded it", prepare: setUpOneRule, change: turnRuleOffAfterLoad, note: { setUp: true, ruleCount: null } },
+  ])("answers a hook's session start in a repository $state with the dashboard and rules its HTTP API gives, and an older hook without them", async ({ prepare, change, note }) => {
+    root = await realpath(await mkdtemp(join(tmpdir(), "rerail-daemon-")));
+    const repositoryKey = prepare(root);
+    await mkdir(join(root, "home"), { recursive: true });
+    const daemon = await start({ stateFile: join(root, "home", "daemon.json") });
+    await change?.(daemon, root, repositoryKey);
+    const event = sessionStart(root, "answered-session");
+    const answer = await postEvent(daemon, event, READS_FACTS);
+    // What the hook reads over HTTP right after the answer when the answer does not carry it.
+    expect(answer).toEqual({
+      eventId: event.eventId, deliveries: [], dashboard: await steerDashboard(root), sessionNote: await presentedSessionNoteRules(event.session),
+    });
+    expect(answer).toMatchObject({ sessionNote: note });
+    // A hook older than these fields refuses an answer that carries them; it does not ask, so it gets the answer it knows.
+    const older = sessionStart(root, "older-session");
+    expect(await postEvent(daemon, older, {})).toEqual({ eventId: older.eventId, deliveries: [] });
+  });
+
+  it("answers a session start in a checkout stopped since the session opened without facts, so the hook reads them as before", async () => {
+    root = await realpath(await mkdtemp(join(tmpdir(), "rerail-daemon-")));
+    setUpOneRule(root);
+    await mkdir(join(root, "home"), { recursive: true });
+    const daemon = await start({ stateFile: join(root, "home", "daemon.json") });
+    const event = sessionStart(root, "stopped-session");
+    expect(await postEvent(daemon, event, READS_FACTS)).toMatchObject({ sessionNote: { setUp: true, ruleCount: expect.any(Number) } });
+    stopTestRepository(root, join(root, "rerail.sqlite"));
+    // Its runtime takes no event once stopped, so what it held of the session before the stop is not told.
+    expect(await postEvent(daemon, event, READS_FACTS)).toEqual({ eventId: event.eventId, deliveries: [] });
   });
 
   it("lists machine-wide history by default and one repository's with a repository filter, and reads any session by id", async () => {

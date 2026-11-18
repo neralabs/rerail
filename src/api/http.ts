@@ -129,7 +129,7 @@ function matchesEtag(header: string | undefined, etag: string): boolean {
  * typed) can. The port is deliberately not part of this: behind a container port mapping or a
  * reverse proxy the page is addressed to a port the daemon never bound.
  */
-const LOOPBACK_HOSTNAMES: ReadonlySet<string> = new Set(["127.0.0.1", "localhost", "[::1]"]);
+export const LOOPBACK_HOSTNAMES: ReadonlySet<string> = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
 /** Hostnames besides loopback that a deployment answers to; empty unless `--public-host` names some. */
 export type PublicHosts = ReadonlySet<string>;

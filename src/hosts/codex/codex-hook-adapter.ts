@@ -1,4 +1,4 @@
-import { hookText, type AdapterDelivery, type RerailEventLoop } from "../../engine/adapter-contract.js";
+import { answeredFacts, hookText, type AdapterDelivery, type RerailEventLoop } from "../../engine/adapter-contract.js";
 import { codexHookEvents } from "./codex-event-adapter.js";
 import {
   deliveryConflicts,
@@ -13,8 +13,8 @@ import {
   type HookOutput,
   type SteerLines,
 } from "../../harness/hook-adapter.js";
-import { conflictLine, headlineText, sessionStartNote, steerHeadlines } from "../../engine/code-rule/rerail-steer.js";
-import { dashboardOrigin, linkDeliveries, presentedSessionNoteRules } from "../../presentation/session-presentation.js";
+import { conflictLine, headlineText, steerHeadlines } from "../../engine/code-rule/rerail-steer.js";
+import { linkDeliveries, presentedSessionStartNote } from "../../presentation/session-presentation.js";
 
 const CODEX_EVENTS: EventTable = {
   SessionStart: true,
@@ -76,8 +76,10 @@ export async function handleCodexEvent(
   }
   // The runtime records no links; the rules point at this checkout's dashboard only here.
   const cwd = requiredText(input, "cwd");
-  const note = hook === "SessionStart" ? sessionStartNote(await dashboardOrigin(cwd), "codex", sessionId, await presentedSessionNoteRules({ host: "codex", sessionId, cwd })) : undefined;
+  // The daemon's answer carries the note's link and rules and the steers' links; an older daemon's is read after it.
+  const answered = answeredFacts(eventLoop);
+  const note = hook === "SessionStart" ? await presentedSessionStartNote({ host: "codex", sessionId, cwd }, answered) : undefined;
   const routed = await routeDeliveries(path, hook, deliveries, CONTEXT_EVENTS);
   // `linkDeliveries` copies each delivery, so a held steer keeps its `late` mark.
-  return codexHookOutput(hook, await linkDeliveries(routed, cwd), note);
+  return codexHookOutput(hook, await linkDeliveries(routed, cwd, answered), note);
 }

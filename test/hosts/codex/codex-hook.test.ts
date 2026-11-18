@@ -6,7 +6,7 @@ import { codexHookOutput, handleCodexEvent } from "../../../src/hosts/codex/code
 import { runCodexHook } from "../../../src/hosts/codex/codex-hook.js";
 import { bindSteerReceipt, type HookInput, type HookOptions } from "../../../src/harness/index.js";
 import { dashboardOrigin, presentedSessionNoteRules } from "../../../src/presentation/index.js";
-import { hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionDatabaseQuery, eventRows } from "../../support/hook-events.js";
+import { answering, countingDaemon, hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionDatabaseQuery, eventRows } from "../../support/hook-events.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 import { editSteer, steeredRules } from "../../support/steers.js";
 
@@ -117,6 +117,31 @@ describe("Codex one-shot hook", () => {
       hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: note },
     });
     expect(note).toContain("End your final message with one line telling the user which branch overlaps and what you did.");
+  });
+
+  it("builds the session note and a steer's link from the daemon's answer, asking it nothing more, and reads an older daemon after it", async () => {
+    const root = await temporaryDirectory();
+    const daemon = await countingDaemon(join(root, "home"));
+    try {
+      const common = { session_id: "codex-session", cwd: root };
+      const dashboard = "http://127.0.0.1:4791/?repository=clone%3Aapp&checkout=%2Fwork%2Fapp";
+      const sessionNote = { setUp: false as const };
+      const start = await handleCodexEvent({ ...common, hook_event_name: "SessionStart", source: "startup" }, answering(scriptedLoop({}), { dashboard, sessionNote }), join(root, "sessions"));
+      expect(start).toEqual({ hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: sessionStartNote(dashboard, "codex", "codex-session", sessionNote) } });
+
+      const steer = [delivery("steer", editSteer("acme:no-print", "Remove print."), ["acme:no-print"])];
+      const result = { ...common, hook_event_name: "PostToolUse", turn_id: "t1", tool_name: "Bash", tool_response: "ok" };
+      const linked = await handleCodexEvent({ ...result, tool_use_id: "call-1" }, answering(scriptedLoop({ result: steer }), { dashboard }), join(root, "sessions"));
+      expect(JSON.stringify(linked)).toContain(`${dashboard}#rule/acme%3Ano-print`);
+      expect(daemon.requests).toEqual([]);
+
+      // A daemon older than these facts answers without them: the hook reads the dashboard from it, as before.
+      const older = await handleCodexEvent({ ...result, tool_use_id: "call-2" }, scriptedLoop({ result: steer }), join(root, "sessions"));
+      expect(JSON.stringify(older)).toContain(`${daemon.origin}#rule/acme%3Ano-print`);
+      expect(daemon.requests).toContain("/api/repository");
+    } finally {
+      await daemon.close();
+    }
   });
 
   it("routes steer and block deliveries through additionalContext or the pending file, never a Stop block", async () => {

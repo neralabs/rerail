@@ -1,5 +1,5 @@
 import { z } from "zod/v4";
-import { RERAIL_HOSTS, STEER_STRATEGIES, type AdapterDelivery, type AdapterEvent } from "../engine/adapter-contract.js";
+import { RERAIL_HOSTS, STEER_STRATEGIES, type AdapterDelivery, type AdapterEvent, type SessionNoteRules } from "../engine/adapter-contract.js";
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
 
 export const RERAIL_EVENT_PROTOCOL_PREFACE = "RERAIL-EVENTS/1";
@@ -66,9 +66,27 @@ const DeliverySchema: z.ZodType<AdapterDelivery> = z.object({
 }).strict();
 
 const EventFrameSchema = z.object({ event: AdapterEventSchema }).strict();
+
+/**
+ * The header a hook sends with an event when it reads the answer's `dashboard` and `sessionNote`, with the answer
+ * version it reads. The answer schema is strict, so a daemon adds those fields only for a hook that asks: a hook
+ * older than them refuses an answer that carries them. A daemon older than them ignores the header and answers without
+ * them, and the hook then reads both from the daemon's HTTP API as before.
+ */
+export const EVENT_ANSWER_HEADER = "x-rerail-event-answer";
+/** The answer version that adds `dashboard` and `sessionNote`. */
+export const EVENT_ANSWER_WITH_FACTS = 2;
+
+const SessionNoteRulesSchema: z.ZodType<SessionNoteRules> = z.discriminatedUnion("setUp", [
+  z.object({ setUp: z.literal(true), ruleCount: z.number().int().nonnegative().nullable() }).strict(),
+  z.object({ setUp: z.literal(false) }).strict(),
+]);
+
 const EventSuccessFrameSchema = z.object({
   eventId: z.string().min(1),
   deliveries: z.array(DeliverySchema),
+  dashboard: z.string().nullable().exactOptional(),
+  sessionNote: SessionNoteRulesSchema.exactOptional(),
 }).strict();
 const EventErrorFrameSchema = z.object({
   eventId: z.string().min(1).nullable(),
