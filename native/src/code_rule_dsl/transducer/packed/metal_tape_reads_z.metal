@@ -55,7 +55,7 @@ inline uint clif_tape_child(device const uchar* t,CLIF_VIEW_SPACE const uint* v,
 inline uint clif_tape_length(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
 inline uint clif_tape_start_next(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2,uint a3);
 inline ulong clif_tape_slot(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
-inline ulong clif_tape_z_block(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
+__attribute__((noinline)) ulong clif_tape_z_block(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
 inline ulong clif_tape_f16_side(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2,uint a3){
  uint v0=0;
  uint v1=0;
@@ -2315,7 +2315,7 @@ inline ulong clif_tape_slot(device const uchar* t,CLIF_VIEW_SPACE const uint* v,
  default:return 0;
  }}
 }
-inline ulong clif_tape_z_block(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2){
+__attribute__((noinline)) ulong clif_tape_z_block(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2){
  ulong v0=0;
  uint v1=0;
  uint v2=0;

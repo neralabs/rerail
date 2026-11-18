@@ -510,7 +510,7 @@ static SOURCE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
 /// first row in the view is at or before it: an empty one starts where the next does), then the view's read written
 /// once, over the document's entry, tape and view where they lie. `kind`: 1 + `device_chunk::VIEW_*`.
 const VREAD: &str = r#"
-static inline long vread(uint kind, device const ViewDir* d, uint r, uint col) {
+__attribute__((noinline)) static long vread(uint kind, device const ViewDir* d, uint r, uint col) {
     device const ViewRow* rows = d->rows;
     uint k = kind - 1u;
     uint lo = 0u, hi = d->ndocs;

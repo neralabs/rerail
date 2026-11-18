@@ -27,6 +27,9 @@ use cranelift_codegen::ir::{self, InstructionData, Opcode, condcodes::IntCC, typ
 use crate::reads::Family;
 use std::fmt::Write;
 
+/// The reads compiled as calls (`__attribute__((noinline))`), by name.
+const COLD: [&str; 1] = ["tape_z_block"];
+
 /// MSL's unsigned type for a Cranelift integer type, and its signed one.
 fn ty(t: ir::Type) -> Result<(&'static str, &'static str), String> {
     Ok(match t {
@@ -193,7 +196,11 @@ fn signature(f: &ir::Function, name: &str, family: Family) -> Result<String, Str
     let params: Vec<String> =
         f.signature.params.iter().enumerate().skip(family.pointers()).map(|(i, p)| Ok(format!("{} a{i}", ty(p.value_type)?.0))).collect::<Result<_, String>>()?;
     let more = if params.is_empty() { String::new() } else { format!(",{}", params.join(",")) };
-    Ok(format!("inline {} {name}({}{more})", ty(ret.value_type)?.0, pointers(family).0))
+    // A cold read (decision 0353 step 4b: a 16z block decoded into its cache, once a block) is a call, not inlined
+    // into every read that may fall on one: inlined, it made each view's kernel carry the decoder once for every
+    // tape read in it.
+    let inline = if COLD.iter().any(|cold| name.ends_with(cold)) { "__attribute__((noinline))" } else { "inline" };
+    Ok(format!("{inline} {} {name}({}{more})", ty(ret.value_type)?.0, pointers(family).0))
 }
 
 fn body(out: &mut String, f: &ir::Function, named: &dyn Fn(u32) -> Result<String, String>, family: Family) -> Result<(), String> {

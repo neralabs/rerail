@@ -95,6 +95,9 @@ pub fn gpu_seconds(command: &CommandBufferRef) -> f64 {
     (end - start).max(0.0)
 }
 
+/// The threads of a join kernel's group: every dispatch's (`Pass::dispatch*`).
+pub const GROUP: u64 = 256;
+
 /// Compiles `name` from `source` on the shared device.
 pub fn compile(source: &str, name: &str) -> Result<ComputePipelineState, String> {
     let device = device()?;
@@ -129,7 +132,14 @@ pub fn pipeline(variant: &str, name: &str, source: impl FnOnce() -> String) -> R
         let device = device()?;
         objc::rc::autoreleasepool(|| {
             let f = library.get_function(name, None).map_err(|e| format!("{name}: {e}"))?;
-            device.new_compute_pipeline_state_with_function(&f).map_err(|e| format!("{name}: {e}"))
+            let pipe = device.new_compute_pipeline_state_with_function(&f).map_err(|e| format!("{name}: {e}"))?;
+            // Every dispatch of a join kernel is of groups of 256 threads: a kernel whose registers allow fewer
+            // cannot run them (a dispatch past its most is undefined), so it is not made.
+            let most = pipe.max_total_threads_per_threadgroup();
+            if most < GROUP {
+                return Err(format!("{name}: at most {most} threads a group, its dispatches' {GROUP}"));
+            }
+            Ok(pipe)
         })
     })
     .inspect_err(|e| eprintln!("rerail: the Metal pipeline {variant} {name} is not made: {e}"))
@@ -398,7 +408,7 @@ impl<'a> Pass<'a> {
             self.encoder.set_buffer(i as u64, Some(b), 0);
         }
         self.encoder.set_bytes(buffers.len() as u64, bytes.len().max(4) as u64, if bytes.is_empty() { [0u32].as_ptr().cast() } else { bytes.as_ptr().cast() });
-        self.encoder.dispatch_thread_groups(MTLSize::new(groups.max(1) as u64, 1, 1), MTLSize::new(256, 1, 1));
+        self.encoder.dispatch_thread_groups(MTLSize::new(groups.max(1) as u64, 1, 1), MTLSize::new(GROUP, 1, 1));
         self.dispatches.set(self.dispatches.get() + 1);
     }
 
@@ -409,7 +419,7 @@ impl<'a> Pass<'a> {
             self.encoder.set_buffer(i as u64, Some(b), 0);
         }
         self.encoder.set_bytes(buffers.len() as u64, bytes.len().max(4) as u64, if bytes.is_empty() { [0u32].as_ptr().cast() } else { bytes.as_ptr().cast() });
-        self.encoder.dispatch_thread_groups_indirect(grid, offset, MTLSize::new(256, 1, 1));
+        self.encoder.dispatch_thread_groups_indirect(grid, offset, MTLSize::new(GROUP, 1, 1));
         self.dispatches.set(self.dispatches.get() + 1);
     }
 
@@ -420,7 +430,7 @@ impl<'a> Pass<'a> {
             self.encoder.set_buffer(i as u64, Some(b), 0);
         }
         self.encoder.set_bytes(buffers.len() as u64, std::mem::size_of_val(params).max(4) as u64, if params.is_empty() { [0u32].as_ptr().cast() } else { params.as_ptr().cast() });
-        self.encoder.dispatch_thread_groups_indirect(grid, offset, MTLSize::new(256, 1, 1));
+        self.encoder.dispatch_thread_groups_indirect(grid, offset, MTLSize::new(GROUP, 1, 1));
         self.dispatches.set(self.dispatches.get() + 1);
     }
 
@@ -436,7 +446,7 @@ impl<'a> Pass<'a> {
         if !longs.is_empty() {
             self.encoder.set_bytes(at + 1, std::mem::size_of_val(longs) as u64, longs.as_ptr().cast());
         }
-        self.encoder.dispatch_thread_groups(MTLSize::new(groups.max(1) as u64, 1, 1), MTLSize::new(256, 1, 1));
+        self.encoder.dispatch_thread_groups(MTLSize::new(groups.max(1) as u64, 1, 1), MTLSize::new(GROUP, 1, 1));
         self.dispatches.set(self.dispatches.get() + 1);
     }
 

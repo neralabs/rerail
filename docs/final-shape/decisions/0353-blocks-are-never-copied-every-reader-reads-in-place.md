@@ -495,7 +495,21 @@ Each step ends with:
          Now the slot is claimed first: an index slot holds the key's tag (16 bits) above its entry's number,
          0 while its writer has not taken one, and a thread that finds its tag pending waits on the slot; only
          the slot's winner takes an entry. Then hogql's 46 batches: 1,880 decodes for 2,769 blocks, 18.9 M hits,
-         1.4 M waits, no duplicate, no turn, no failure. A stage whose cache's failures rose while it ran is refused
+         1.4 M waits, no duplicate, no turn, no failure.
+       - Found on hogql and fixed (2026-11-18): with the join kernels on the reads with the 16z case, a format 15
+         run on Metal lost findings (1,599–1,627 against 1,629, a different set of files each run; none extra),
+         though no 16z tape was in it, the format 15 code of every read was the plain one's line for line, and
+         the device's views over 22 real files were the host's rows on every try. With the plain reads in the
+         join kernels, 1,629 three times; with the view read (`vread`) compiled as a call
+         (`__attribute__((noinline))`) and the reads with the 16z case, 1,629 three times. Inlined, every stage
+         kernel that reads a view carried every view's reads with their 16z paths; what in the Metal compiler
+         or the device made those kernels lose rows is not known. The block's decoder (`tape_z_block`) is a
+         call too (`msl::COLD`), and a join pipeline that cannot run its dispatches' groups of 256 threads is
+         not made (`join::GROUP`; none was refused).
+         hogql cold, 16z on Metal, the commit before this one's engine and this one's, at load 28–41: findings
+         1,629 in every run; 102.7–107.4 B instructions against 119.6 B (the views of 31 batches read in place
+         where they were refused and made); 31 batches, 1,873 decodes for 3,006 blocks, no failure. Format 15:
+         1,629 three times, 73.1–90.1 B instructions against 66.2–74.3 B (noise at that load). A stage whose cache's failures rose while it ran is refused
          (`Run::failed`), and the stratum runs on the CPU. The cache's counts go to the profile (`zcache.*`)
          when the batch's directory goes, the statistics mode's with `RERAIL_ZCACHE_STATS=1`.
        - Left for the kernels: the transducer's residency lays a 16z tape out whole in its slab
