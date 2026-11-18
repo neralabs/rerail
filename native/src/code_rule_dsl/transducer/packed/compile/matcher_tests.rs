@@ -313,9 +313,10 @@ fn a_recursive_utility_inside_another_settles() {
     assert_eq!(program.roots(&tape).unwrap(), expected);
 }
 
-/// The lowerings of t45's plan (decision 0401), each a clause: a bare `$X` is the named-node test, not a pattern
-/// label; a clause that is one `inside … end` copies its label; an `all` that tests a neighbor (`inside` or `has`, by
-/// a field or not) and a lone neighbor walk start at the seed label of the nodes it holds at. Each finds W's roots.
+/// The lowerings of t45's plan (decisions 0401, 0406), each a clause: a bare `$X` is the named-node test, not a
+/// pattern label; a clause that is one `inside … end` copies its label; the labels made inside an `all` that tests a
+/// neighbor (`inside` or `has`, by a field or not) start within the set of the nodes it holds at, a formula, not a
+/// seed label. Each finds W's roots.
 fn seeded_clauses() -> (crate::code_rule_dsl::CompiledCodeRuleDsl, TapeDoc) {
     let clause = |id: &str, rule: &str| {
         format!(
@@ -329,6 +330,12 @@ fn seeded_clauses() -> (crate::code_rule_dsl::CompiledCodeRuleDsl, TapeDoc) {
         clause("named-function", r#"{"kind": "function_definition", "has": {"field": "name", "kind": "identifier", "stopBy": "neighbor"}}"#),
         clause("function-name", r#"{"kind": "identifier", "inside": {"kind": "function_definition", "field": "name", "stopBy": "neighbor"}}"#),
         clause("lone", r#"{"not": {"inside": {"kind": "argument_list", "stopBy": "neighbor"}}}"#),
+        // A neighbor tested by text (ruff F541's shape): its set has no text test, since a text slot is its own
+        // program's (0406).
+        clause(
+            "fstring",
+            r#"{"kind": "string", "has": {"kind": "string_start", "regex": "^[fF]", "stopBy": "neighbor"}, "not": {"has": {"kind": "interpolation", "stopBy": "neighbor"}}}"#,
+        ),
     ];
     let policy = format!(
         r#"{{"format": "rerail.policy/v1", "id": "seeded", "revision": 1, "mode": "steer", "description": "t45's lowerings.",
@@ -336,7 +343,7 @@ fn seeded_clauses() -> (crate::code_rule_dsl::CompiledCodeRuleDsl, TapeDoc) {
         clauses.join(", ")
     );
     let compiled = CodeRuleDslRuntime::compile(policy, "json".to_owned(), CAPABILITIES.to_owned()).expect("the policy compiles");
-    let tape = python_tape("import os\nx = 1\nprint(x)\n\ndef f(a, b=2, *c):\n    g(a, b)\n    return a\n\nclass K:\n    def m(self):\n        x\n");
+    let tape = python_tape("import os\nx = 1\nprint(x)\n\ndef f(a, b=2, *c):\n    g(a, b)\n    return a\n\nclass K:\n    def m(self):\n        x\n\ns = f\"plain\"\nt = f\"{x}\"\nu = \"{x}\"\nv = f\"{1:>10}\"\n");
     (compiled, tape)
 }
 
@@ -353,21 +360,21 @@ fn seeded_and_copied_labels_find_ws_roots() {
             .collect::<BTreeSet<_>>();
         assert!(!expected.is_empty(), "{clause}: W's matcher finds a root");
         assert_eq!(program.roots(&tape).unwrap(), expected, "{clause}");
-        let seeded = matches!(program.domain, super::compile_matcher::Domain::Label(_));
-        let patterns = program.census().iter().filter(|(kind, _)| *kind == "pattern").count();
+        let census = program.census();
+        let patterns = census.iter().filter(|(kind, _)| *kind == "pattern").count();
+        // A neighbor's set is a formula a pass's anchor reads (0406), not a targets label of its own (0401's seed).
+        assert!(!census.iter().any(|(kind, _)| *kind == "targets"), "{clause}: no seed label");
+        let within = program.labels.defs.iter().any(|label| matches!(label, Label::Roots(_, super::compile_matcher::Domain::Within(..))));
         match clause {
-            "named" => {
-                assert!(seeded, "named: starts at the parameters' children");
-                assert_eq!(patterns, 0, "named: `$X` is a node test, not a pattern pass");
-            }
+            "named" => assert_eq!(patterns, 0, "named: `$X` is a node test, not a pattern pass"),
             "in-function" => assert!(program.label_copy().is_some(), "in-function: its roots copy the descendant label"),
-            "top" | "named-function" | "function-name" => assert!(seeded, "{clause}: starts at its seed"),
-            "lone" => {}
+            "top" => assert!(within, "top: the `not has` label starts within the module's children"),
+            "named-function" | "function-name" | "lone" | "fstring" => {}
             other => panic!("an unexpected clause {other}"),
         }
         seen.insert(clause.to_owned());
     }
-    assert_eq!(seen.len(), 6);
+    assert_eq!(seen.len(), 7);
 }
 
 /// The same clauses on Metal: a label-domain pass starts only at the label's members, read from its row on the

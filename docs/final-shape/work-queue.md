@@ -1917,7 +1917,7 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
   @qualname($f)` has no native step; function @qualname". Without strict it would fall back to SQLite.
 - **Done when**: `@qualname` has a native step, and the program runs strict at s1000.
 
-### Q187. The label kernels' time follows dispatches and group scans, not steps
+### Q218. (Q187 where written; the hub's Q187 is `parser_tests`) The label kernels' time follows `label_formula`'s (file, formula) pairs
 
 - **Found** (2026-11-18, 0401): the label passes' walk steps fell from 65.8 M to 19.8 M (internal_dead_code)
   and 19.3 M to 7.4 M (public_api_triples). `label_micro_8` + `label_micro` went from 80.9 to 66.7 ms and from
@@ -1925,6 +1925,24 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
   dispatches 96 → 144), and a pass still visits every 64-node group to read its root mask.
 - **Done when**: a pass launches over only the groups its domain has members in, and the levels seeds add are
   merged where their readers allow, with the kernels' time measured pinned before and after.
+- **Done** (2026-11-18, decision 0406), in part:
+  - The levels seeds added are gone. Demand is a formula a pass's anchor reads (`Domain::Within`), not a seed
+    label. Formula groups fell 28,622 → 20,786–22,520 (internal_dead_code) and 16,874–17,616 → 12,109
+    (public_api_triples). Formula images fell 584–624 → 280–320 and 244–376 → 96–136. Rows are the same.
+    `label_formula`'s time did not fall (95–98 → 91–95 ms, 94–99 → 94–98 ms, load 74–91).
+  - Launching over the groups with members is not built. On this line the micro walks take 8–13 ms (`label_micro`
+    no longer runs), so that would save at most those 8–13 ms.
+- **Now**: `label_formula` takes 90–130 ms, about 5 µs per (file, formula) pair, and evaluates each pair apart. Formulas
+  of one level share tests.
+- **Done when**: a level's formulas over a file are evaluated together, sharing their common subsets, with
+  `label_formula` measured pinned before and after.
+
+### Q219. A level's fact constraints are uploaded rows
+
+- **Found** (2026-11-18, Q218's measurements): `Runner::level` uploaded the facts' `(node, label)` pairs once per
+  pattern kernel group, the same buffer each time: 32 MB (8.1 M words) on 15 fixtures. Fixed: once a level (0406).
+- **Left**: the upload itself is a copy of the facts' rows (AGENTS.md, 0353).
+- **Done when**: `Pass::Fact` reads the fact's relation in its block, and the upload is gone.
 
 ### Q50. A device run's matcher launches: the host's part and the GPU's in series, and prices 3× high
 

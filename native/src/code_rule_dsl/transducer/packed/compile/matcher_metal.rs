@@ -8,10 +8,9 @@ use crate::code_rule_dsl::transducer::packed::device::{ClauseRoots, Outcome, Roo
 /// (`metal_program_backend::label_passes`), pattern leaves included (`MatcherDevice::matcher_roots`).
 pub(in crate::code_rule_dsl) fn matcher_roots(this: &LoweredMatcher, tapes: &[TapeDoc]) -> Result<(Vec<BTreeSet<u32>>, Outcome), Error> {
     let no_labels = empty_sets(tapes, this.labels.defs.len());
-    // A seeded clause's domain is a label not yet known: its kinds' nodes, which its program's first test, the seed,
-    // narrows (0401).
+    // A label domain is not known before the passes run: its kinds' nodes.
     let listed = match &this.domain {
-        Domain::Label(_) => this.labels.bound(&this.domain, &mut Vec::new()).map_or(Domain::All, |kinds| Domain::Kinds(kinds.into_iter().collect())),
+        Domain::Label(_) | Domain::Within(..) => this.labels.bound(&this.domain, &mut Vec::new()).map_or(Domain::All, |kinds| Domain::Kinds(kinds.into_iter().collect())),
         other => other.clone(),
     };
     let roots = tapes.iter().zip(&no_labels).map(|(tape, sets)| domain(&listed, tape, sets).collect()).collect();
@@ -108,28 +107,28 @@ fn metal<'a>(
     // codes (`Roots::Codes`, decision 0033), not a list: the device reads each root in place.
     // Shared by (domain, entry, the tapes the clause is active on), so passes of one domain have
     // one rule (06 S7: 605 passes, 70 M roots as lists, of 264 such keys).
+    // A demand's set (`Domain::Within`, decision 0406) is not a rule over codes: the rule names its kinds, and the
+    // pass's anchor holds the set (`demands`, by the roots it keys, read below).
     let mut shared = HashMap::<(Domain, Option<Vec<(u8, u16)>>, Vec<bool>), Arc<Roots>>::new();
+    let mut demands = HashMap::<usize, compile_sets::Set>::new();
     let index = |label: u16| u32::from(label - LABEL_BASE);
     let mut roots = |clause: &LoweredMatcher, starts: &Domain, program: Option<&'a Program>| -> Arc<Roots> {
         let entry = program.map(Entry::of);
-        let bound = match starts {
-            Domain::Label(_) => {
-                Some(clause.labels.bound(starts, &mut Vec::new()).map_or(Domain::All, |kinds| Domain::Kinds(kinds.into_iter().collect())))
-            }
-            _ => None,
-        };
         let at = clauses.iter().position(|c| std::ptr::eq(*c, clause)).expect("a clause of the batch");
         let active = (0..tapes.len()).map(|tape| active.is_none_or(|active| active[at][tape])).collect::<Vec<_>>();
-        let starts = bound.unwrap_or_else(|| starts.clone());
         let key = (starts.clone(), entry.as_ref().map(|entry| entry.0.clone()), active.clone());
-        Arc::clone(shared.entry(key).or_insert_with(|| {
+        let roots = Arc::clone(shared.entry(key).or_insert_with(|| {
             let kinds = match starts {
                 Domain::All => None,
-                Domain::Kinds(kinds) => Some(kinds),
-                Domain::Label(_) => unreachable!("a label domain is bounded by its kinds"),
+                Domain::Kinds(kinds) => Some(kinds.clone()),
+                Domain::Label(_) | Domain::Within(..) => clause.labels.bound(starts, &mut Vec::new()).map(|kinds| kinds.into_iter().collect()),
             };
             Arc::new(Roots::Codes { kinds, entry: entry.map(|entry| entry.0).unwrap_or_default(), active, anchor: None })
-        }))
+        }));
+        if let Some(set) = starts.demand() {
+            demands.insert(Arc::as_ptr(&roots) as usize, set.clone());
+        }
+        roots
     };
     // The facts' rows, before any pass: made on the host, tested on the device (`Pass::Fact`).
     let facts = fact_rows(clauses.iter().flat_map(|clause| clause.labels.facts()), tapes);
@@ -211,8 +210,8 @@ fn metal<'a>(
             ClauseRoots::Listed(listed) => Roots::Listed(listed[at].clone(), None),
             ClauseRoots::Rule(active) => Roots::Codes {
                 kinds: match &clause.domain {
-                    Domain::Kinds(kinds) => Some(kinds.clone()),
-                    Domain::All | Domain::Label(_) => None,
+                    Domain::Kinds(kinds) | Domain::Within(Some(kinds), _) => Some(kinds.clone()),
+                    Domain::All | Domain::Label(_) | Domain::Within(None, _) => None,
                 },
                 entry: Vec::new(),
                 active: active[at].clone(),
@@ -274,7 +273,8 @@ fn metal<'a>(
             };
             for pass in levels.iter_mut().flatten() {
                 let (Pass::Program { program, roots, .. } | Pass::Count { program, roots, .. }) = pass else { continue };
-                let Some(formula) = device_anchor(program, &|label| own.contains(&u32::from(label))) else { continue };
+                let demand = demands.get(&(Arc::as_ptr(roots) as usize));
+                let Some(formula) = device_anchor(program, demand, &|label| own.contains(&u32::from(label))) else { continue };
                 let key = (Arc::as_ptr(roots) as usize, formula);
                 let with = anchored.entry(key.clone()).or_insert_with(|| {
                     let anchor = Some(key.1.clone());
@@ -327,7 +327,7 @@ fn metal<'a>(
                             bits &= bits - 1;
                             if (from..to).contains(&global) {
                                 let local = (global - from) as u32;
-                                if copied.is_none() || !matches!(&clause.domain, Domain::Kinds(kinds) if kinds.binary_search(&tape.transducer_kind(local)).is_err()) {
+                                if copied.is_none() || clause.domain.admits_kind(tape.transducer_kind(local)) {
                                     set.insert(local);
                                 }
                             }

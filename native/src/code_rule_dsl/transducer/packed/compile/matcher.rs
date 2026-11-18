@@ -58,10 +58,7 @@ pub struct Labels {
 impl Label {
     /// The label with every label it reads renamed by `map`.
     fn relabelled(&self, map: &dyn Fn(u16) -> u16) -> Self {
-        let domain = |domain: &Domain| match domain {
-            Domain::Label(label) => Domain::Label(map(*label)),
-            other => other.clone(),
-        };
+        let domain = |domain: &Domain| domain.relabelled(map);
         match self {
             Label::Pattern(program, starts) => Label::Pattern(program.relabelled(map), domain(starts)),
             Label::Constrained(program, starts, constraints) => Label::Constrained(
@@ -124,12 +121,63 @@ pub enum Domain {
     All,
     Kinds(Vec<u16>),
     Label(u16),
+    /// The nodes of these kinds (any kind, `None`) within a node set: where a label made inside an `all` is read, the
+    /// `all`'s demand (decision 0406). The set is read where the pass's anchor is (`anchor_bits`, `device_anchor`),
+    /// within it; elsewhere the kinds alone, a superset.
+    Within(Option<Vec<u16>>, super::compile_sets::Set),
 }
 
 impl Domain {
     pub fn of(tree: &MatchTree) -> Self {
         tree.kinds()
             .map_or(Self::All, |kinds| Self::Kinds(kinds.into_iter().collect()))
+    }
+
+    /// The domain as a node set.
+    pub fn set(&self) -> super::compile_sets::Set {
+        use super::compile_sets::Set;
+        let kinds = |kinds: &[u16]| Set::Or(kinds.iter().map(|&kind| Set::Kind(kind)).collect());
+        match self {
+            Domain::All => Set::All,
+            Domain::Kinds(list) => kinds(list),
+            Domain::Label(label) => Set::Class(*label),
+            Domain::Within(list, set) => Set::all_of(vec![list.as_deref().map_or(Set::All, kinds), set.clone()]),
+        }
+    }
+
+    /// Whether a node of `kind` may be in the domain, read by its kinds alone (a label's or a demand's set is read
+    /// elsewhere).
+    pub fn admits_kind(&self, kind: u16) -> bool {
+        match self {
+            Domain::All | Domain::Label(_) | Domain::Within(None, _) => true,
+            Domain::Kinds(kinds) | Domain::Within(Some(kinds), _) => kinds.binary_search(&kind).is_ok(),
+        }
+    }
+
+    /// A demand's set (`Within`), which a pass's anchor holds its starts to.
+    pub fn demand(&self) -> Option<&super::compile_sets::Set> {
+        match self {
+            Domain::Within(_, set) => Some(set),
+            _ => None,
+        }
+    }
+
+    /// The domain with every label it reads renamed by `map`.
+    pub fn relabelled(&self, map: &dyn Fn(u16) -> u16) -> Self {
+        match self {
+            Domain::Label(label) => Domain::Label(map(*label)),
+            Domain::Within(kinds, set) => Domain::Within(kinds.clone(), set.clone().relabelled(map)),
+            other => other.clone(),
+        }
+    }
+
+    /// The labels the domain reads: a label's, or those a demand's set reads.
+    pub fn labels(&self) -> Vec<u16> {
+        match self {
+            Domain::Label(label) => vec![*label],
+            Domain::Within(_, set) => set.labels(),
+            Domain::All | Domain::Kinds(_) => Vec::new(),
+        }
     }
 }
 
@@ -267,7 +315,8 @@ impl Labels {
     pub fn bound(&self, domain: &Domain, seen: &mut Vec<u16>) -> Option<BTreeSet<u16>> {
         match domain {
             Domain::All => None,
-            Domain::Kinds(kinds) => Some(kinds.iter().copied().collect()),
+            Domain::Kinds(kinds) | Domain::Within(Some(kinds), _) => Some(kinds.iter().copied().collect()),
+            Domain::Within(None, _) => None,
             Domain::Label(id) if seen.contains(id) => None,
             Domain::Label(id) => {
                 seen.push(*id);
@@ -291,10 +340,7 @@ impl Labels {
     /// The same labels with every id `by` higher.
     fn shifted(&self, by: u16) -> Self {
         let up = |label: u16| label + by;
-        let domain = |domain: &Domain| match domain {
-            Domain::Label(label) => Domain::Label(up(*label)),
-            other => other.clone(),
-        };
+        let domain = |domain: &Domain| domain.relabelled(&up);
         let defs = self
             .defs
             .iter()
@@ -341,13 +387,10 @@ impl Labels {
                 })
                 .collect::<Vec<_>>()
         };
-        let starts = |domain: &Domain| match domain {
-            Domain::Label(label) => Some(*label),
-            Domain::All | Domain::Kinds(_) => None,
-        };
+        let starts = |domain: &Domain| domain.labels();
         match self.def(id) {
-            // A pattern's starts are a label where it is made inside a seeded `all` (0401): it waits for the seed.
-            Label::Pattern(_, domain) => starts(domain).into_iter().collect(),
+            // A pattern's starts read labels where it is made inside an `all` that demands them (0406): it waits for them.
+            Label::Pattern(_, domain) => starts(domain),
             Label::Empty => Vec::new(),
             Label::Constrained(_, domain, constraints) => constraints.iter().map(|(_, label)| *label).chain(starts(domain)).collect(),
             Label::Roots(program, domain)
@@ -383,7 +426,7 @@ impl LoweredMatcher {
         let mut labels = Labels::default();
         // Set mode (list step 14): the clause's matches are its roots, read as keys (the wave's
         // `match(c, d, n)` and spans), so the root program stops at its first emit per start.
-        let (program, seed) = Builder::new(&mut labels).roots(tree)?;
+        let program = Builder::new(&mut labels).roots(tree)?;
         let program = program.in_set_mode();
         if labels.defs.len() > usize::from(u16::MAX - LABEL_BASE) {
             return Err(Error::InvalidOperand(0));
@@ -391,8 +434,7 @@ impl LoweredMatcher {
         Ok(Self {
             labels,
             program,
-            // An `all` that tests a neighbor holds only at its seed's members (0401).
-            domain: seed.map_or_else(|| Domain::of(tree), Domain::Label),
+            domain: Domain::of(tree),
         })
     }
 
@@ -565,7 +607,7 @@ impl LoweredMatcher {
             .map(crate::code_rule_dsl::logic::profile::carried("root programs (pool)", |(at, (view, sets)): (usize, (&TapeDoc, &Arc<Vec<Vec<u64>>>))| {
                 let texts = walk.as_ref().and_then(|walk| walk.texts(program, view));
                 let anchor = anchors.map(|(anchors, tapes)| {
-                    let anchor = anchors.bits(tapes[at], program, walk.as_ref(), texts.as_deref(), view, sets);
+                    let anchor = anchors.bits(tapes[at], program, starts, walk.as_ref(), texts.as_deref(), view, sets);
                     count_anchored(domain(starts, view, sets).filter(|&node| entry.admits(view, node)), &anchor);
                     anchor
                 });
@@ -600,10 +642,7 @@ impl LoweredMatcher {
     fn unlabelled_candidates<'a>(&'a self, view: &'a TapeDoc) -> impl Iterator<Item = u32> + 'a {
         let entry = Entry::of(&self.program);
         (0..view.transducer_len() as u32)
-            .filter(move |&node| match &self.domain {
-                Domain::All | Domain::Label(_) => true,
-                Domain::Kinds(kinds) => kinds.binary_search(&view.transducer_kind(node)).is_ok(),
-            })
+            .filter(move |&node| self.domain.admits_kind(view.transducer_kind(node)))
             .filter(move |&node| entry.admits(view, node))
     }
 
@@ -876,10 +915,7 @@ impl LoweredWave {
             // The labels this clause reads that an earlier clause owns, with what they read.
             let mut wanted = (0..own.defs.len())
                 .flat_map(|local| own.reads(LABEL_BASE + offset + local as u16))
-                .chain(match &clause.domain {
-                    Domain::Label(label) => Some(rename(*label)),
-                    _ => None,
-                })
+                .chain(clause.domain.labels().into_iter().map(&rename))
                 .chain(clause.program.relabelled(&rename).words.iter().filter_map(|&word| match split(word) {
                     (SUPERTYPE, _, class) if class >= LABEL_BASE => Some(class),
                     _ => None,
@@ -903,10 +939,7 @@ impl LoweredWave {
             combined.push(LoweredMatcher {
                 labels: own,
                 program: clause.program.relabelled(&rename),
-                domain: match &clause.domain {
-                    Domain::Label(label) => Domain::Label(rename(*label)),
-                    other => other.clone(),
-                },
+                domain: clause.domain.relabelled(&rename),
             });
         }
         // Each clause's root label on Metal follows every pass's.
@@ -954,6 +987,9 @@ impl LoweredWave {
             Domain::All => "all".to_owned(),
             Domain::Kinds(kinds) => format!("kinds{}", super::rir::kinds(grammar, kinds)),
             Domain::Label(label) => format!("L{label}"),
+            Domain::Within(kinds, set) => {
+                format!("{} within {set:?}", kinds.as_deref().map_or("all".to_owned(), |kinds| format!("kinds{}", super::rir::kinds(grammar, kinds))))
+            }
         };
         let mut programs = BTreeMap::<String, &Program>::new();
         let mut program = |program: &'_ Program| -> String { format!("sha256:{}", program.plain_digest()) };
@@ -1199,7 +1235,7 @@ impl LoweredWave {
                 // The root walk starts within its anchor (decision 0365): every label it reads is finished.
                 let anchor = anchors.then(|| {
                     // The root walk runs on the interpreter, which tests text at each node it reaches: no rows of its own.
-                    let anchor = anchor_bits(&clause.program, walk.as_ref(), None, view, sets, indexes[t].get_or_init(Default::default), &|_| false);
+                    let anchor = anchor_bits(&clause.program, walk.as_ref(), None, view, sets, indexes[t].get_or_init(Default::default), clause.domain.demand(), &|_| false);
                     count_anchored(domain(&clause.domain, view, sets).filter(|&node| entry.admits(view, node)), &anchor);
                     anchor
                 });
@@ -1385,10 +1421,7 @@ impl LoweredWave {
 
     /// Whether clause `clause`'s root program starts at `node` of `tape`: its root's kinds.
     pub fn starts(&self, clause: usize, tape: &TapeDoc, node: u32) -> bool {
-        match &self.clauses[clause].domain {
-            Domain::All | Domain::Label(_) => true,
-            Domain::Kinds(kinds) => kinds.binary_search(&tape.transducer_kind(node)).is_ok(),
-        }
+        self.clauses[clause].domain.admits_kind(tape.transducer_kind(node))
     }
 }
 
@@ -1461,7 +1494,7 @@ fn members(sets: &[Vec<u64>], label: u16) -> impl Iterator<Item = u32> + '_ {
 fn in_domain(domain: &Domain, view: &TapeDoc, sets: &[Vec<u64>], node: u32) -> bool {
     match domain {
         Domain::All => true,
-        Domain::Kinds(kinds) => kinds.binary_search(&view.transducer_kind(node)).is_ok(),
+        Domain::Kinds(_) | Domain::Within(..) => domain.admits_kind(view.transducer_kind(node)),
         Domain::Label(label) => has(sets, *label, node),
     }
 }
@@ -1922,10 +1955,10 @@ impl Packs {
                         let mut union = vec![0_u64; view.transducer_len().div_ceil(64)];
                         for &at in &members {
                             let (clause, id) = level[at];
-                            let Some(program) = clause.labels.def(id).program() else { continue };
+                            let (Label::Roots(program, starts) | Label::Targets(program, starts)) = clause.labels.def(id) else { continue };
                             // The fused walk's rows are by its own slots: a member's anchor reads the term index's.
                             let member = Micro::of(program);
-                            for (word, bits) in union.iter_mut().zip(anchors.bits(tape, program, member.as_ref(), None, view, sets).iter()) {
+                            for (word, bits) in union.iter_mut().zip(anchors.bits(tape, program, starts, member.as_ref(), None, view, sets).iter()) {
                                 *word |= bits;
                             }
                         }
@@ -2037,11 +2070,7 @@ fn formulas(
             let (Label::Roots(program, domain) | Label::Targets(program, domain)) = label else { return None };
             let walk = Micro::of(program)?;
             // The starts: the domain's nodes.
-            let starts = match domain {
-                Domain::All => Set::All,
-                Domain::Kinds(kinds) => Set::Or(kinds.iter().map(|&kind| Set::Kind(kind)).collect()),
-                Domain::Label(label) => Set::Class(*label),
-            };
+            let starts = domain.set();
             let set = match label {
                 Label::Targets(..) => Set::targets(&walk.words, starts)?,
                 _ => Set::And(vec![starts, Set::of(&walk.words)?]),
@@ -2067,11 +2096,9 @@ fn formulas(
                         Plan::Set { walk, program, domain, set } => walk.texts(program, view).map(|texts| {
                             let bits = Reader { tape: view, index, labels: &sets[tape], texts: &texts }.eval(set);
                             if *CHECK {
-                                let starts = (0..view.transducer_len() as u32).filter(|&node| match domain {
-                                    Domain::All => true,
-                                    Domain::Kinds(kinds) => kinds.binary_search(&view.transducer_kind(node)).is_ok(),
-                                    Domain::Label(label) => has(&sets[tape], *label, node),
-                                });
+                                // The domain read exactly, as the formula reads it (a demand's set too).
+                                let within = Reader { tape: view, index, labels: &sets[tape], texts: &[] }.eval(&domain.set());
+                                let starts = (0..view.transducer_len() as u32).filter(|&node| within[node as usize / 64] >> (node % 64) & 1 != 0);
                                 let (clause, id) = level[at];
                                 if let Some(walked) = walked(clause.labels.def(id), walk, program, view, &sets[tape], starts)
                                     && walked != bits
@@ -2205,7 +2232,7 @@ fn write_census(file: &std::sync::Mutex<std::fs::File>, level: &[(&LoweredMatche
             let tape = &tapes[*at];
             starts += match domain {
                 None | Some(Domain::All) => tape.transducer_len(),
-                Some(Domain::Kinds(kinds)) => (0..tape.transducer_len() as u32).filter(|&node| kinds.binary_search(&tape.transducer_kind(node)).is_ok()).count(),
+                Some(domain @ (Domain::Kinds(_) | Domain::Within(..))) => (0..tape.transducer_len() as u32).filter(|&node| domain.admits_kind(tape.transducer_kind(node))).count(),
                 Some(Domain::Label(of)) => sets[*at].get(usize::from(of - LABEL_BASE)).map_or(0, |bits| bits.iter().map(|word| word.count_ones() as usize).sum()),
             };
         }
@@ -2214,6 +2241,7 @@ fn write_census(file: &std::sync::Mutex<std::fs::File>, level: &[(&LoweredMatche
             Some(Domain::All) => "all".to_owned(),
             Some(Domain::Kinds(kinds)) => format!("kinds{kinds:?}"),
             Some(Domain::Label(of)) => format!("label {of}"),
+            Some(Domain::Within(kinds, set)) => format!("kinds{kinds:?} within {set:?}"),
         };
         let words = program.and_then(Micro::of).map_or("-".to_owned(), |walk| super::compile_micro::describe(&walk.words));
         let source = usize::from(id - LABEL_BASE).checked_sub(usize::from(clause.labels.offset)).and_then(|at| clause.labels.sources.get(at)).map_or("", String::as_str);
@@ -2301,10 +2329,7 @@ fn sweep_programs<'a>(levels: &[Vec<(&'a LoweredMatcher, u16)>], tape: &TapeDoc)
             Label::Roots(program, starts) | Label::Targets(program, starts) if Micro::of(program).is_none() => {
                 let entry = Entry::of(program);
                 let size = (0..tape.transducer_len() as u32)
-                    .filter(|&node| match starts {
-                        Domain::Kinds(kinds) => kinds.binary_search(&tape.transducer_kind(node)).is_ok(),
-                        _ => true,
-                    })
+                    .filter(|&node| starts.admits_kind(tape.transducer_kind(node)))
                     .filter(|&node| entry.admits(tape, node))
                     .map(|node| {
                         let span = tape.transducer_span(node);
@@ -2413,9 +2438,9 @@ fn sweep_steps(
             .iter()
             .enumerate()
             .map(|(pass, &(_, clause, id))| {
-                let (Label::Roots(program, _) | Label::Targets(program, _)) = clause.labels.def(id) else { return None };
+                let (Label::Roots(program, starts) | Label::Targets(program, starts)) = clause.labels.def(id) else { return None };
                 let (walk, rows) = pass_walks[pass].map_or((None, None), |(walk, rows)| (Some(walk), Some(rows.as_slice())));
-                Some(anchor_bits(program, walk, rows, tape, sets.as_slice(), index, &|label| own.contains(&label)))
+                Some(anchor_bits(program, walk, rows, tape, sets.as_slice(), index, starts.demand(), &|label| own.contains(&label)))
             })
             .collect::<Vec<_>>()
     } else {
@@ -2434,7 +2459,8 @@ fn sweep_steps(
                 _ => None,
             };
             let kinds = match clause.labels.def(id) {
-                Label::Roots(_, Domain::Kinds(kinds)) | Label::Targets(_, Domain::Kinds(kinds)) => Some(Some(kinds)),
+                Label::Roots(_, Domain::Kinds(kinds) | Domain::Within(Some(kinds), _))
+                | Label::Targets(_, Domain::Kinds(kinds) | Domain::Within(Some(kinds), _)) => Some(Some(kinds)),
                 Label::Empty => None,
                 _ => Some(None),
             };
@@ -2480,9 +2506,7 @@ fn sweep_steps(
                         (op == SUPERTYPE && arg >= LABEL_BASE).then(|| usize::from(arg - LABEL_BASE))
                     })
                     .collect::<Vec<_>>();
-                if let Domain::Label(label) = starts {
-                    reads.push(usize::from(*label - LABEL_BASE));
-                }
+                reads.extend(starts.labels().into_iter().map(|label| usize::from(label - LABEL_BASE)));
                 reads.sort_unstable();
                 reads.dedup();
                 reads
@@ -2673,6 +2697,9 @@ fn from_outputs(label: &Label, views: &[TapeDoc], outputs: Vec<Vec<Found>>) -> V
 ///
 /// A label `unknown` names (a recursive group's own, Q133) is read as every node: the anchor holds whatever the label
 /// settles to, and in every round before.
+///
+/// A pass that starts within a demand's set (`Domain::demand`, decision 0406) has it in its anchor.
+#[allow(clippy::too_many_arguments)]
 pub(in crate::code_rule_dsl) fn anchor_bits(
     program: &Program,
     walk: Option<&Micro>,
@@ -2680,12 +2707,17 @@ pub(in crate::code_rule_dsl) fn anchor_bits(
     tape: &TapeDoc,
     sets: &[Vec<u64>],
     index: &super::compile_sets::Index,
+    demand: Option<&super::compile_sets::Set>,
     unknown: &dyn Fn(u16) -> bool,
 ) -> Vec<u64> {
     use super::compile_sets::{Reader, Set};
     let _stage = crate::code_rule_dsl::prof::Stage::start("anchor.eval");
+    let within = |anchor: Set| match demand {
+        Some(demand) => Set::all_of(vec![anchor, demand.clone()]),
+        None => anchor,
+    };
     let Some(walk) = walk else {
-        return Reader { tape, index, labels: sets, texts: &[] }.eval(&Set::anchor(&program.words, &|_| false).labels_unknown(unknown));
+        return Reader { tape, index, labels: sets, texts: &[] }.eval(&within(Set::anchor(&program.words, &|_| false)).labels_unknown(unknown));
     };
     let indexed: Vec<Vec<u64>>;
     let (rows, has): (&[Vec<u64>], Vec<bool>) = match texts {
@@ -2697,7 +2729,7 @@ pub(in crate::code_rule_dsl) fn anchor_bits(
             (&indexed, has)
         }
     };
-    let set = Set::anchor(&walk.words, &|slot| has.get(usize::from(slot)).copied().unwrap_or(false)).labels_unknown(unknown);
+    let set = within(Set::anchor(&walk.words, &|slot| has.get(usize::from(slot)).copied().unwrap_or(false))).labels_unknown(unknown);
     Reader { tape, index, labels: sets, texts: rows }.eval(&set)
 }
 
@@ -2716,17 +2748,19 @@ impl<'a> Anchoring<'a> {
         Self { indexes, group, kept: std::sync::Mutex::default() }
     }
 
-    /// `program`'s anchor on tape `tape` (`view`, with labels `sets`): `anchor_bits`, a group's once per tape.
-    fn bits(&self, tape: usize, program: &Program, walk: Option<&Micro>, texts: Option<&[Vec<u64>]>, view: &TapeDoc, sets: &[Vec<u64>]) -> Arc<Vec<u64>> {
+    /// `program`'s anchor on tape `tape` (`view`, with labels `sets`) within its domain's demand: `anchor_bits`, a
+    /// group's once per tape.
+    #[allow(clippy::too_many_arguments)]
+    fn bits(&self, tape: usize, program: &Program, domain: &Domain, walk: Option<&Micro>, texts: Option<&[Vec<u64>]>, view: &TapeDoc, sets: &[Vec<u64>]) -> Arc<Vec<u64>> {
         let index = self.indexes[tape].get_or_init(Default::default);
         let Some(group) = self.group else {
-            return Arc::new(anchor_bits(program, walk, texts, view, sets, index, &|_| false));
+            return Arc::new(anchor_bits(program, walk, texts, view, sets, index, domain.demand(), &|_| false));
         };
         let key = (std::ptr::from_ref(program) as usize, tape);
         if let Some(bits) = self.kept.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&key) {
             return Arc::clone(bits);
         }
-        let bits = Arc::new(anchor_bits(program, walk, texts, view, sets, index, group));
+        let bits = Arc::new(anchor_bits(program, walk, texts, view, sets, index, domain.demand(), group));
         self.kept.lock().unwrap_or_else(std::sync::PoisonError::into_inner).insert(key, Arc::clone(&bits));
         bits
     }
@@ -2798,7 +2832,7 @@ fn walked_with(label: &Label, walk: &Micro, texts: &[Vec<u64>], tape: &TapeDoc, 
 pub fn domain<'a>(domain: &'a Domain, tape: &'a TapeDoc, sets: &'a [Vec<u64>]) -> impl Iterator<Item = u32> + 'a {
     (0..tape.transducer_len() as u32).filter(move |&node| match domain {
         Domain::All => true,
-        Domain::Kinds(kinds) => kinds.binary_search(&tape.transducer_kind(node)).is_ok(),
+        Domain::Kinds(_) | Domain::Within(..) => domain.admits_kind(tape.transducer_kind(node)),
         Domain::Label(label) => has(sets, *label, node),
     })
 }
@@ -2823,10 +2857,18 @@ struct Builder<'a> {
 struct Demand {
     /// The kinds the node can have (`None`: any).
     kinds: Option<BTreeSet<u16>>,
-    /// A label the node is a member of wherever it matters: an `all` with a conjunct that tests a neighbor
-    /// (`inside X` or `has X` by `neighbor`) holds only at X's children or parents, a label made by walking once
-    /// from each X (`Builder::seed`, decision 0401). A label made here starts at its members.
-    seed: Option<u16>,
+    /// A node set the node is in wherever it matters (decision 0406): an `all` with a conjunct that tests a
+    /// neighbor (`inside X` or `has X` by `neighbor`) holds only at X's children or parents, the image of X's set by
+    /// one step (`Builder::neighbor`). A label made here starts within it: a formula its pass's anchor holds, not a
+    /// label of its own, so its readers wait for no more than X.
+    set: Option<super::compile_sets::Set>,
+}
+
+/// Whether an `all`'s labels start where the kinds allow alone (`RERAIL_DEMAND_SETS=off`, a measurement switch: as
+/// before decision 0401).
+fn demand_sets_off() -> bool {
+    static OFF: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_DEMAND_SETS").is_ok_and(|mode| mode == "off"));
+    *OFF
 }
 
 /// Where the label census goes (`RERAIL_LABEL_CENSUS=<file>`): a line per label pass a host level evaluates, its
@@ -2883,16 +2925,17 @@ impl<'a> Builder<'a> {
         }
     }
 
-    /// `domain` within the kinds the node under test can have where it matters (`demand`).
-    /// Where a seed is demanded, its members (a program read there tests the seed anyway); else
-    /// within the demanded kinds.
+    /// `domain` within the kinds the node under test can have where it matters (`demand`), and
+    /// within the demand's set where it has one.
     fn narrowed(&self, domain: Domain) -> Domain {
-        match (domain, &self.demand) {
-            (Domain::All | Domain::Kinds(_), Demand { seed: Some(seed), .. }) => Domain::Label(*seed),
-            (Domain::All, Demand { kinds: Some(demand), .. }) => Domain::Kinds(demand.iter().copied().collect()),
-            (Domain::Kinds(kinds), Demand { kinds: Some(demand), .. }) => {
-                Domain::Kinds(kinds.into_iter().filter(|kind| demand.contains(kind)).collect())
-            }
+        let kinds = match (domain, &self.demand.kinds) {
+            (Domain::All, Some(demand)) => Domain::Kinds(demand.iter().copied().collect()),
+            (Domain::Kinds(kinds), Some(demand)) => Domain::Kinds(kinds.into_iter().filter(|kind| demand.contains(kind)).collect()),
+            (domain, _) => domain,
+        };
+        match (kinds, &self.demand.set) {
+            (Domain::All, Some(set)) => Domain::Within(None, set.clone()),
+            (Domain::Kinds(kinds), Some(set)) => Domain::Within(Some(kinds), set.clone()),
             (domain, _) => domain,
         }
     }
@@ -2905,41 +2948,37 @@ impl<'a> Builder<'a> {
         result
     }
 
-    /// The demand where `tree` holds too: the kinds both allow, and the seed.
+    /// The demand where `tree` holds too: the kinds both allow, and the set.
     fn within(&self, tree: &MatchTree) -> Demand {
         let kinds = match (self.demand.kinds.as_ref(), tree.kinds()) {
             (Some(demand), Some(kinds)) => Some(demand.intersection(&kinds).copied().collect()),
             (Some(demand), None) => Some(demand.clone()),
             (None, kinds) => kinds,
         };
-        Demand { kinds, seed: self.demand.seed }
+        Demand { kinds, set: self.demand.set.clone() }
     }
 
-    /// A program emitting each root `tree` matches, and the label its roots lie in where `tree`
-    /// is an `all` that tests a neighbor (`seed`).
-    fn roots(mut self, tree: &MatchTree) -> Result<(Program, Option<u16>), Error> {
-        let seed = match tree {
-            MatchTree::All(all) => {
-                let seed = self.seed(all)?;
-                self.all(tree, all, seed)?;
-                seed.map(|(_, label)| label)
-            }
-            _ => {
-                self.test(tree)?;
-                None
-            }
-        };
-        Ok((self.finish(&[word(CAPTURE, 0, 0), word(EMIT, 0, 1)])?, seed))
+    /// A program emitting each root `tree` matches.
+    fn roots(mut self, tree: &MatchTree) -> Result<Program, Error> {
+        match tree {
+            MatchTree::All(all) => self.all(tree, all)?,
+            _ => self.test(tree)?,
+        }
+        self.finish(&[word(CAPTURE, 0, 0), word(EMIT, 0, 1)])
     }
 
     /// An `all`'s first conjunct that tests a neighbor, `inside X` or `has X` by `neighbor`, and the
-    /// label of the nodes where it holds: X's children (through the field, where one is named) or
-    /// X's parents, a walk of one step from each node X matches. The `all` holds only there, so
-    /// its labels start there (`Demand::seed`) and the conjunct is the label's bit. A pass that
-    /// started at every node for `inside module` (877,007 at s1000) starts at 10,274 (t45 §1).
-    fn seed(&mut self, all: &[MatchTree]) -> Result<Option<(usize, u16)>, Error> {
+    /// set of the nodes where it holds: X's children (through the field, where one is named) or
+    /// X's parents, the image of X's set by one step. The `all` holds only there, so its labels
+    /// start there (`Demand::set`). A pass that started at every node for `inside module` (877,007
+    /// at s1000) starts at 10,274 (t45 §1). Decision 0401 made the set a label of its own (a seed),
+    /// one more level its readers waited for; here it is the formula that label's pass evaluated.
+    fn neighbor(&mut self, all: &[MatchTree]) -> Result<Option<(usize, super::compile_sets::Set)>, Error> {
+        if demand_sets_off() {
+            return Ok(None);
+        }
         let Some((at, axis, field, rule)) = all.iter().enumerate().find_map(|(at, tree)| match tree {
-            // Only from a selective X: from every node the seed is one more pass, not fewer starts.
+            // Only from a selective X: from every node the set narrows nothing.
             MatchTree::Walk { axis: axis @ (Axis::Inside | Axis::Has), field, rule, stop: Stop::Neighbor }
                 if rule.walks() || rule.kinds().is_some() =>
             {
@@ -2966,20 +3005,24 @@ impl<'a> Builder<'a> {
             }
         }
         let program = builder.finish(&[word(CAPTURE, 0, 0), word(EMIT, 0, 1)])?;
-        let id = self.label(Label::Targets(program, starts));
-        self.note(id, || format!("seed {axis:?}{} of {}", field.map_or(String::new(), |f| format!(" field {f}")), sketch(rule)));
-        Ok(Some((at, id)))
+        // Its text tests are by this program's slots: dropped (a superset), as no other pass reads them so.
+        Ok(super::compile_sets::Set::targets(&program.words, starts.set()).map(|set| (at, set.texts_dropped())))
     }
 
-    /// `all`'s conjuncts at the node, the one `seed` names first, as its label's bit.
-    fn all(&mut self, tree: &MatchTree, all: &[MatchTree], seed: Option<(usize, u16)>) -> Result<(), Error> {
+    /// `all`'s conjuncts at the node, the one that tests a neighbor (`neighbor`) first: it is the selective one,
+    /// and so in the program's anchor (decision 0365). The labels made for the others start within its set.
+    fn all(&mut self, tree: &MatchTree, all: &[MatchTree]) -> Result<(), Error> {
         let mut demand = self.within(tree);
-        if let Some((_, label)) = seed {
-            self.push(SUPERTYPE, 0, label);
-            demand.seed = Some(label);
+        let neighbor = self.neighbor(all)?;
+        if let Some((at, set)) = &neighbor {
+            self.test(&all[*at])?;
+            demand.set = Some(match demand.set.take() {
+                Some(outer) => super::compile_sets::Set::all_of(vec![outer, set.clone()]),
+                None => set.clone(),
+            });
         }
         self.demanding(demand, |b| {
-            all.iter().enumerate().filter(|(at, _)| seed.is_none_or(|(seed, _)| seed != *at)).try_for_each(|(_, tree)| b.test(tree))
+            all.iter().enumerate().filter(|(at, _)| neighbor.as_ref().is_none_or(|(first, _)| first != at)).try_for_each(|(_, tree)| b.test(tree))
         })
     }
 
@@ -3046,12 +3089,6 @@ impl<'a> Builder<'a> {
             MatchTree::Recur(id) => {
                 return self.labels.recursive.get(id).copied().ok_or(Error::InvalidOperand(0));
             }
-            // A neighbor walk alone is its seed: the nodes it holds at.
-            MatchTree::Walk { stop: Stop::Neighbor, .. } => {
-                if let Some((_, seed)) = self.seed(std::slice::from_ref(tree))? {
-                    return Ok(seed);
-                }
-            }
             MatchTree::Fact(fact) => {
                 // A slot is tested at its target's node, not this one.
                 let slots = self.demanding(Demand::default(), |b| fact.slots.iter().map(|slot| b.label_of(slot)).collect::<Result<Vec<_>, Error>>())?;
@@ -3060,10 +3097,8 @@ impl<'a> Builder<'a> {
             _ => {}
         }
         // A roots label is the starts that emit: set mode.
-        let narrowed = self.narrowed(Domain::of(tree));
-        let (program, seed) = Builder::new(self.labels).roots(tree)?;
-        // Its own seed where it has one: the label holds only there.
-        let starts = seed.map_or(narrowed, Domain::Label);
+        let starts = self.narrowed(Domain::of(tree));
+        let program = Builder::new(self.labels).roots(tree)?;
         Ok(self.label(Label::Roots(program.in_set_mode(), starts)))
     }
 
@@ -3077,7 +3112,7 @@ impl<'a> Builder<'a> {
         let label = self.labels.reserve(Label::Empty);
         self.labels.recursive.insert(id, label);
         let start = self.labels.steps.len();
-        let program = Builder::new(self.labels).roots(tree)?.0.in_set_mode();
+        let program = Builder::new(self.labels).roots(tree)?.in_set_mode();
         self.labels.defs[usize::from(label - LABEL_BASE)] = Label::Roots(program, Domain::of(tree));
         // Only the labels that read the utility's, directly or through each other, are evaluated
         // round after round; the others are passes of their own ahead of the group. A recursive
@@ -3145,10 +3180,7 @@ impl<'a> Builder<'a> {
                 };
                 self.push(SUPERTYPE, 0, label);
             }
-            MatchTree::All(all) => {
-                let seed = self.seed(all)?;
-                self.all(tree, all, seed)?;
-            }
+            MatchTree::All(all) => self.all(tree, all)?,
             MatchTree::Any(trees) => {
                 let Some((last, alternatives)) = trees.split_last() else {
                     let label = self.label(Label::Empty);
