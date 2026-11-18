@@ -3032,17 +3032,19 @@ export class CodeRuleBridge {
   }
 
   async #observePath(walk: SourceWalk, absolute: string): Promise<void> {
-    let info: Stats;
+    let info: Stats | undefined;
     try {
       info = await lstat(absolute);
+      await this.#observeEntry(walk, absolute, info);
     } catch (error) {
-      if (!walk.discovery.cancelled) this.#recordObservationFailure(walk, absolute, error, false);
-      return;
+      if (!walk.discovery.cancelled) this.#recordObservationFailure(walk, absolute, error, info?.isFile() === true);
     }
-    await this.#observeFound(walk, absolute, info);
   }
 
-  /** Observes what the walk found at `absolute` as `info`; a failure to read it is the walk's to record. */
+  /**
+   * Observes what a pass of noticed paths found at `absolute` by its own look (`noticedEntry`), as `#observePath` does
+   * what the walk finds; a failure to read it is the walk's to record.
+   */
   async #observeFound(walk: SourceWalk, absolute: string, info: Stats): Promise<void> {
     try {
       await this.#observeEntry(walk, absolute, info);
@@ -3093,18 +3095,13 @@ export class CodeRuleBridge {
    */
   async #observeRegularFile(walk: SourceWalk, absolute: string, info: Stats): Promise<void> {
     const path = sessionPath(walk.discovery.root, absolute);
-    if (basename(path) === GITIGNORE || !walk.view.ignoresPath?.(path, false)) await this.#observeLinkedFile(walk, sourceLocation(absolute, path), info);
+    if (basename(path) === GITIGNORE || !walk.view.ignoresPath?.(path, false)) await this.#observeFile(walk, sourceLocation(absolute, path), info);
     else walk.scan.seen?.leftOut.add(path);
   }
 
   /** Observes a file, noting it when it has another name (`SourceScan.linked`). */
-  async #observeLinkedFile(walk: SourceWalk, location: SourceLocation, info: Stats): Promise<void> {
-    const linked = walk.scan.linked;
-    if (linked !== undefined && info.nlink > 1) linked.add(location.path);
-    await this.#observeFile(walk, location, info);
-  }
-
   async #observeFile(walk: SourceWalk, location: SourceLocation, info: Stats): Promise<void> {
+    if (info.nlink > 1) walk.scan.linked?.add(location.path);
     const observed = await this.#observedFile(walk, location, info);
     if (observed !== undefined) walk.scan.sources.set(location.path, observed);
   }
