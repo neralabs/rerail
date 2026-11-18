@@ -208,7 +208,9 @@ describe("the Git a process keeps, gone under it", () => {
       clock.move(10_000);
       vi.advanceTimersByTime(1_000);
       const result = await call;
-      expect([result.status, result.error?.message, started(spawn)]).toEqual([null, "Git was ended: it ran past its time limit of 4000 ms", [kept, now]]);
+      // The Gits started, not the taskkill.exe that ends the second one on Windows.
+      const gits = started(spawn).filter(program => String(program).startsWith(root));
+      expect([result.status, result.error?.message, gits]).toEqual([null, "Git was ended: it ran past its time limit of 4000 ms", [kept, now]]);
     } finally {
       vi.useRealTimers();
       clock.release();
