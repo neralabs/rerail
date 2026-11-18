@@ -3364,6 +3364,584 @@
    "machine_said": "not alone by its machine record: other runs of ours started on the machine while it ran",
    "command": "our load harness, 10 minutes, the hook started directly by node, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 9cad73564",
    "at": "2026-11-17T23:20:16.842Z"
+  },
+  {
+   "id": "load6/win/B/cpu-mean",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "B",
+   "commit": "58a435201",
+   "question": "cpu",
+   "part": "load",
+   "pass": 6,
+   "role": "cost",
+   "alone": false,
+   "what": "daemon CPU, mean after warm-up",
+   "state": "under the same load",
+   "metric": "daemon CPU, mean after warm-up",
+   "unit": "% of one core",
+   "n": 1,
+   "median": 60,
+   "worst": 60,
+   "values": [
+    60
+   ],
+   "load": "20 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 50% of a core in 1 of 21 one-minute samples",
+   "command": "our load harness, 20 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 58a435201",
+   "at": "2026-11-17T22:59:56.680Z",
+   "series": [
+    [
+     60,
+     59
+    ],
+    [
+     120,
+     55
+    ],
+    [
+     180,
+     68
+    ],
+    [
+     240,
+     70
+    ],
+    [
+     300,
+     67
+    ],
+    [
+     360,
+     66
+    ],
+    [
+     420,
+     70
+    ],
+    [
+     480,
+     112
+    ],
+    [
+     540,
+     69
+    ],
+    [
+     600,
+     55
+    ],
+    [
+     660,
+     49
+    ],
+    [
+     720,
+     46
+    ],
+    [
+     780,
+     42
+    ],
+    [
+     840,
+     46
+    ],
+    [
+     900,
+     49
+    ],
+    [
+     960,
+     53
+    ],
+    [
+     1020,
+     53
+    ],
+    [
+     1080,
+     77
+    ],
+    [
+     1140,
+     44
+    ],
+    [
+     1200,
+     46
+    ],
+    [
+     1260,
+     54
+    ]
+   ],
+   "series_unit": "% of one core"
+  },
+  {
+   "id": "load6/win/B/cpu-busiest",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "B",
+   "commit": "58a435201",
+   "question": "cpu",
+   "part": "load",
+   "pass": 6,
+   "role": "cost",
+   "alone": false,
+   "what": "daemon CPU in the busiest minute after warm-up",
+   "state": "under the same load",
+   "metric": "daemon CPU in the busiest minute after warm-up",
+   "unit": "% of one core",
+   "n": 1,
+   "median": 112,
+   "worst": 112,
+   "values": [
+    112
+   ],
+   "load": "20 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 50% of a core in 1 of 21 one-minute samples",
+   "command": "our load harness, 20 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 58a435201",
+   "at": "2026-11-17T22:59:56.680Z"
+  },
+  {
+   "id": "load6/win/B/rss-peak",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "B",
+   "commit": "58a435201",
+   "question": "memory",
+   "part": "load",
+   "pass": 6,
+   "role": "cost",
+   "alone": false,
+   "what": "daemon resident memory at its peak",
+   "state": "under the same load",
+   "metric": "daemon resident memory at its peak",
+   "unit": "MB",
+   "n": 1,
+   "median": 4064,
+   "worst": 4064,
+   "values": [
+    4064
+   ],
+   "load": "20 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 50% of a core in 1 of 21 one-minute samples",
+   "command": "our load harness, 20 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 58a435201",
+   "at": "2026-11-17T22:59:56.680Z",
+   "series": [
+    [
+     60,
+     633
+    ],
+    [
+     120,
+     795
+    ],
+    [
+     180,
+     1068
+    ],
+    [
+     240,
+     1327
+    ],
+    [
+     300,
+     1630
+    ],
+    [
+     360,
+     1870
+    ],
+    [
+     420,
+     2129
+    ],
+    [
+     480,
+     3365
+    ],
+    [
+     540,
+     3968
+    ],
+    [
+     600,
+     3993
+    ],
+    [
+     660,
+     4010
+    ],
+    [
+     720,
+     4012
+    ],
+    [
+     780,
+     4033
+    ],
+    [
+     840,
+     4049
+    ],
+    [
+     900,
+     4055
+    ],
+    [
+     960,
+     4053
+    ],
+    [
+     1020,
+     4061
+    ],
+    [
+     1080,
+     4063
+    ],
+    [
+     1140,
+     4062
+    ],
+    [
+     1200,
+     4064
+    ],
+    [
+     1260,
+     3942
+    ]
+   ],
+   "series_unit": "MB"
+  },
+  {
+   "id": "load6/win/B/heap-growth",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "B",
+   "commit": "58a435201",
+   "question": "memory",
+   "part": "load",
+   "pass": 6,
+   "role": "rate",
+   "alone": false,
+   "what": "heap growth after forced collections, after warm-up",
+   "state": "under the same load",
+   "metric": "heap growth after forced collections, after warm-up",
+   "unit": "MB a minute",
+   "n": 1,
+   "median": 10.7,
+   "worst": 10.7,
+   "values": [
+    10.7
+   ],
+   "load": "20 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 50% of a core in 1 of 21 one-minute samples",
+   "command": "our load harness, 20 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 58a435201",
+   "at": "2026-11-17T22:59:56.680Z",
+   "series": [
+    [
+     60,
+     77
+    ],
+    [
+     120,
+     109
+    ],
+    [
+     180,
+     150
+    ],
+    [
+     240,
+     189
+    ],
+    [
+     300,
+     230
+    ],
+    [
+     360,
+     268
+    ],
+    [
+     420,
+     310
+    ],
+    [
+     480,
+     365
+    ],
+    [
+     540,
+     368
+    ],
+    [
+     600,
+     369
+    ],
+    [
+     660,
+     370
+    ],
+    [
+     720,
+     369
+    ],
+    [
+     780,
+     371
+    ],
+    [
+     840,
+     372
+    ],
+    [
+     900,
+     374
+    ],
+    [
+     960,
+     374
+    ],
+    [
+     1020,
+     374
+    ],
+    [
+     1080,
+     376
+    ],
+    [
+     1140,
+     376
+    ],
+    [
+     1200,
+     376
+    ]
+   ],
+   "series_unit": "MB after a forced collection"
+  },
+  {
+   "id": "load6/win/B/hook-p95",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "B",
+   "commit": "58a435201",
+   "question": "hook",
+   "part": "load",
+   "pass": 6,
+   "role": "cost",
+   "alone": false,
+   "what": "hook p95 after warm-up",
+   "state": "under the same load",
+   "metric": "hook p95 after warm-up",
+   "unit": "ms",
+   "n": 1,
+   "median": 597,
+   "worst": 597,
+   "values": [
+    597
+   ],
+   "load": "20 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 50% of a core in 1 of 21 one-minute samples",
+   "command": "our load harness, 20 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 58a435201",
+   "at": "2026-11-17T22:59:56.680Z",
+   "series": [
+    [
+     60,
+     3601
+    ],
+    [
+     120,
+     568
+    ],
+    [
+     180,
+     568
+    ],
+    [
+     240,
+     618
+    ],
+    [
+     300,
+     627
+    ],
+    [
+     360,
+     607
+    ],
+    [
+     420,
+     667
+    ],
+    [
+     480,
+     4683
+    ],
+    [
+     540,
+     469
+    ],
+    [
+     600,
+     548
+    ],
+    [
+     660,
+     544
+    ],
+    [
+     720,
+     608
+    ],
+    [
+     780,
+     577
+    ],
+    [
+     840,
+     594
+    ],
+    [
+     900,
+     529
+    ],
+    [
+     960,
+     533
+    ],
+    [
+     1020,
+     699
+    ],
+    [
+     1080,
+     510
+    ],
+    [
+     1140,
+     478
+    ],
+    [
+     1200,
+     537
+    ],
+    [
+     1260,
+     2568
+    ]
+   ],
+   "series_unit": "ms"
+  },
+  {
+   "id": "load6/win/B/hook-slowest",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "B",
+   "commit": "58a435201",
+   "question": "hook",
+   "part": "load",
+   "pass": 6,
+   "role": "cost",
+   "alone": false,
+   "what": "slowest hook after warm-up",
+   "state": "under the same load",
+   "metric": "slowest hook after warm-up",
+   "unit": "ms",
+   "n": 1,
+   "median": 14028,
+   "worst": 14028,
+   "values": [
+    14028
+   ],
+   "load": "20 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 50% of a core in 1 of 21 one-minute samples",
+   "command": "our load harness, 20 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 58a435201",
+   "at": "2026-11-17T22:59:56.680Z"
+  },
+  {
+   "id": "load6/win/B/hook-floor",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "B",
+   "commit": "58a435201",
+   "question": "hook",
+   "part": "load",
+   "pass": 6,
+   "role": "ref",
+   "alone": false,
+   "what": "hook floor: a hook's own start, with no daemon in it",
+   "state": "under the same load",
+   "metric": "hook floor: a hook's own start, with no daemon in it",
+   "unit": "ms",
+   "n": 1,
+   "median": 120,
+   "worst": 120,
+   "values": [
+    120
+   ],
+   "load": "20 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 50% of a core in 1 of 21 one-minute samples",
+   "command": "our load harness, 20 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 58a435201",
+   "at": "2026-11-17T22:59:56.680Z"
+  },
+  {
+   "id": "load6/win/B/hook-failed",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "B",
+   "commit": "58a435201",
+   "question": "hook",
+   "part": "load",
+   "pass": 6,
+   "role": "count",
+   "alone": false,
+   "what": "failed, timed-out or lost hooks",
+   "state": "under the same load",
+   "metric": "failed, timed-out or lost hooks",
+   "unit": "hooks",
+   "n": 1,
+   "median": 2,
+   "worst": 2,
+   "values": [
+    2
+   ],
+   "load": "20 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 50% of a core in 1 of 21 one-minute samples",
+   "command": "our load harness, 20 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 58a435201",
+   "at": "2026-11-17T22:59:56.680Z"
+  },
+  {
+   "id": "load6/win/B/hooks-answered",
+   "system": "Windows 11",
+   "machine": "win-measure",
+   "subject": "B",
+   "commit": "58a435201",
+   "question": "hook",
+   "part": "load",
+   "pass": 6,
+   "role": "count",
+   "alone": false,
+   "what": "hooks answered in the run",
+   "state": "under the same load",
+   "metric": "hooks answered in the run",
+   "unit": "hooks",
+   "n": 1,
+   "median": 5508,
+   "worst": 5508,
+   "values": [
+    5508
+   ],
+   "load": "20 minutes: one repository of 2,500 files with 190 worktrees, 17 repositories in all, 8 coding-agent sessions with 26 tool-call streams; four pinned rule packs (typescript 0.1.7, python 0.1.9, complexity 0.1.7, javascript 0.1.8)",
+   "machine_said": "not alone by its machine record: a monitoring process not ours used 50% of a core in 1 of 21 one-minute samples",
+   "command": "our load harness, 20 minutes, the hook started through its launcher, packs typescript@0.1.7,python@0.1.9,complexity@0.1.7,javascript@0.1.8, at 58a435201",
+   "at": "2026-11-17T22:59:56.680Z"
   }
  ],
  "findings": [],
