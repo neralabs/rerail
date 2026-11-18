@@ -176,6 +176,39 @@ impl Named {
     }
 }
 
+/// An `#include` being read (`INCLUDE`): how (0 `#include`, 1 `#include_next`, 2 `#import`),
+/// and the file it names (`NONE`: none).
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub(crate) struct Inc {
+    pub(crate) how: u32,
+    pub(crate) to: u32,
+}
+
+/// A file wanted and not found (`Expanded::wanted`'s row): the file that names it, its name's
+/// bytes (`wanted_bytes[lo..hi]`), and how it is named.
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub(crate) struct Want {
+    pub(crate) file: u32,
+    pub(crate) lo: u32,
+    pub(crate) hi: u32,
+    pub(crate) angle: bool,
+    pub(crate) next: bool,
+    pub(crate) embed: bool,
+}
+
+/// A file's named target as the compiled words read it (`Named`).
+#[repr(C)]
+pub(crate) struct NamedC {
+    pub(crate) name: *const u8,
+    pub(crate) len: u64,
+    pub(crate) to: u32,
+    pub(crate) angle: bool,
+    pub(crate) next: bool,
+    pub(crate) embed: bool,
+}
+
 /// The file includes nest to at most (clang's bound).
 pub const MAX_INCLUDE_DEPTH: usize = 200;
 
@@ -512,8 +545,11 @@ struct Machine<'a> {
     /// `push_macro`'s stack: the slot and its definition then.
     pushed: Vec<(u32, u32)>,
     /// The include read last: its word (0 `include`, 1 `include_next`, 2 `import`) and file.
-    inc: (u8, u32),
-    wanted: Vec<(u32, Named)>,
+    inc: Inc,
+    /// The files wanted and not found: rows, their names' bytes in `wanted_bytes` (scratch is
+    /// cut back after each lookup).
+    wanted: Vec<Want>,
+    wanted_bytes: Vec<u8>,
     env: &'a Env<'a>,
     exps: Vec<(Tok, Tok)>,
     unanswered: Vec<(Vec<u8>, Vec<u8>)>,
@@ -769,8 +805,9 @@ impl<'a> Machine<'a> {
         collecting: 0,
         once: vec![false; files.len()],
         pushed: Vec::new(),
-        inc: (0, NONE),
+        inc: Inc { how: 0, to: NONE },
         wanted: Vec::new(),
+        wanted_bytes: Vec::new(),
         env,
         exps: Vec::new(),
         unanswered: Vec::new(),
@@ -790,7 +827,9 @@ impl<'a> Machine<'a> {
     }
 
     fn finish(self) -> Expanded {
-        Expanded { toks: self.out, scratch: self.scratch, wanted: self.wanted, exps: self.exps, unanswered: self.unanswered }
+        let bytes = &self.wanted_bytes;
+        let wanted = self.wanted.iter().map(|w| (w.file, Named { name: bytes[w.lo as usize..w.hi as usize].to_vec(), angle: w.angle, next: w.next, embed: w.embed, to: NONE })).collect();
+        Expanded { toks: self.out, scratch: self.scratch, wanted, exps: self.exps, unanswered: self.unanswered }
     }
 }
 
@@ -860,6 +899,16 @@ pub(crate) struct Ctx {
     pub room_exps: u64,
     /// The substitution being made (`Machine::sub`).
     pub sub: *mut Sub,
+    /// The `#include` being read, and the files read once (`#pragma once`, `#import`).
+    pub inc: *mut Inc,
+    pub once: *mut u8,
+    /// The files wanted and not found, and their names' bytes.
+    pub wanted: *mut Want,
+    pub nwanted: u64,
+    pub room_wanted: u64,
+    pub wanted_bytes: *mut u8,
+    pub nwanted_bytes: u64,
+    pub room_wanted_bytes: u64,
     /// `#if`'s expression (`Machine::ex`), and its stacks: `Value`s, `OPS` indices, least
     /// precedences, and whether an operand is evaluated.
     pub ex: *mut Ex,
@@ -895,6 +944,17 @@ pub(crate) struct FileC {
     /// Its `#` chains (`File::chains`): `(u32, u32)`s (`PAIR`), sorted by the first.
     pub chains: *const u8,
     pub nchains: u64,
+    /// Its includes mode (a) resolved (`File::includes`): `(u32, u32)`s (`PAIR`), rising.
+    pub includes: *const u8,
+    pub nincludes: u64,
+    /// Its includes named by expanding their line (`File::named`).
+    pub named: *const NamedC,
+    pub nnamed: u64,
+    /// Its newlines' offsets, and its path (`File::lines`, `File::path`).
+    pub lines: *const u32,
+    pub nlines: u64,
+    pub path: *const u8,
+    pub npath: u64,
 }
 
 /// A conditional's layout (`Machine::conds`): its size and its file source's offset.
@@ -919,7 +979,27 @@ pub(crate) const LEVEL: (usize, usize, usize) = (std::mem::size_of::<(u16, u32)>
 /// `code` reads and writes only within the `Ctx` it is given: each buffer below its room.
 pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, bounds: &Bounds, code: unsafe extern "C" fn(*mut Ctx) -> u64, reasons: &[&'static str]) -> Result<Expanded, Refused> {
     let mut m = Machine::new(program, files, env, bounds)?;
-    let filesc: Vec<FileC> = files.iter().map(|f| FileC { toks: f.toks.as_ptr(), ntoks: f.toks.len() as u64, bytes: f.bytes.as_ptr(), nbytes: f.bytes.len() as u64, chains: f.chains.as_ptr().cast(), nchains: f.chains.len() as u64 }).collect();
+    let named: Vec<Vec<NamedC>> = files.iter().map(|f| f.named.iter().map(|n| NamedC { name: n.name.as_ptr(), len: n.name.len() as u64, to: n.to, angle: n.angle, next: n.next, embed: n.embed }).collect()).collect();
+    let filesc: Vec<FileC> = files
+        .iter()
+        .zip(&named)
+        .map(|(f, n)| FileC {
+            toks: f.toks.as_ptr(),
+            ntoks: f.toks.len() as u64,
+            bytes: f.bytes.as_ptr(),
+            nbytes: f.bytes.len() as u64,
+            chains: f.chains.as_ptr().cast(),
+            nchains: f.chains.len() as u64,
+            includes: f.includes.as_ptr().cast(),
+            nincludes: f.includes.len() as u64,
+            named: n.as_ptr(),
+            nnamed: n.len() as u64,
+            lines: f.lines.as_ptr(),
+            nlines: f.lines.len() as u64,
+            path: f.path.as_ptr(),
+            npath: f.path.len() as u64,
+        })
+        .collect();
     fn room<T>(v: &mut Vec<T>, n: usize) -> u64 {
         v.reserve_exact(n.saturating_sub(v.len()));
         n as u64
@@ -980,6 +1060,14 @@ pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, boun
         exps: m.exps.as_mut_ptr().cast(),
         nexps: m.exps.len() as u64,
         sub: &mut m.sub,
+        inc: &mut m.inc,
+        once: m.once.as_mut_ptr().cast(),
+        room_wanted: room(&mut m.wanted, bounds.output),
+        wanted: m.wanted.as_mut_ptr(),
+        nwanted: m.wanted.len() as u64,
+        room_wanted_bytes: room(&mut m.wanted_bytes, bounds.scratch),
+        wanted_bytes: m.wanted_bytes.as_mut_ptr(),
+        nwanted_bytes: m.wanted_bytes.len() as u64,
         room_vals: room(&mut m.ex.vals, bounds.depth * 4),
         vals: m.ex.vals.as_mut_ptr(),
         nvals: m.ex.vals.len() as u64,
@@ -1021,6 +1109,8 @@ pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, boun
         m.uses.set_len(c.nuses as usize);
         m.levels.set_len(c.nlevels as usize);
         m.exps.set_len(c.nexps as usize);
+        m.wanted.set_len(c.nwanted as usize);
+        m.wanted_bytes.set_len(c.nwanted_bytes as usize);
         m.ex.vals.set_len(c.nvals as usize);
         m.ex.ops.set_len(c.nops as usize);
         m.ex.mins.set_len(c.nmins as usize);
@@ -2191,14 +2281,14 @@ impl<'a> Machine<'a> {
         let s = self.sources[i];
         match mode {
             0 => {
-                self.inc.0 = match self.text(&self.t) {
+                self.inc.how = match self.text(&self.t) {
                     b"include_next" => 1,
                     b"import" => 2,
                     _ => 0,
                 };
                 let incs = self.files[s.file as usize].includes;
                 let Ok(k) = incs.binary_search_by_key(&s.hash, |x| x.0) else { return Ok(Some(false)) };
-                self.inc.1 = incs[k].1;
+                self.inc.to = incs[k].1;
                 self.skip_line()?;
                 Ok(Some(true))
             }
@@ -2208,17 +2298,16 @@ impl<'a> Machine<'a> {
                 self.kept.truncate(line.0 as usize);
                 let Some((name, angle)) = hn else { return Ok(Some(false)) };
                 // `#include_next` in the main file is `#include` (clang's reading).
-                let next = self.inc.0 == 1 && s.file != 0;
+                let next = self.inc.how == 1 && s.file != 0;
                 let named = self.files[s.file as usize].named;
                 let found = named.iter().find(|n| n.is(self.spell(name), angle, next, false)).map(|n| n.to);
                 let held = match found {
                     Some(to) => {
-                        self.inc.1 = to;
+                        self.inc.to = to;
                         true
                     }
                     None => {
-                        let name = self.spell(name).to_vec();
-                        self.wanted.push((s.file, Named { name, angle, next, embed: false, to: NONE }));
+                        self.want(s.file, name, angle, next, false)?;
                         false
                     }
                 };
@@ -2226,12 +2315,12 @@ impl<'a> Machine<'a> {
                 Ok(Some(held))
             }
             _ => {
-                let f = self.inc.1;
+                let f = self.inc.to;
                 let depth = self.sources.iter().filter(|s| s.file != NONE).count();
                 if f == NONE || self.once[f as usize] || depth > MAX_INCLUDE_DEPTH {
                     return Ok(None);
                 }
-                if self.inc.0 == 2 {
+                if self.inc.how == 2 {
                     self.once[f as usize] = true;
                 }
                 if self.sources.len() >= self.bounds.depth {
@@ -2246,6 +2335,21 @@ impl<'a> Machine<'a> {
 
     /// The header name tokens make: a string literal's inside (in place), or `<` … `>` spelled
     /// with their blanks, in scratch (the lean pass's `header_of`).
+    /// A file wanted and not found, recorded: its name's bytes copied to `wanted_bytes`.
+    fn want(&mut self, file: u32, name: Spell<'a>, angle: bool, next: bool, embed: bool) -> R<()> {
+        let n = self.spell(name).len();
+        if self.wanted.len() >= self.bounds.output || self.wanted_bytes.len() + n > self.bounds.scratch {
+            return Err("past the wanted files' bound");
+        }
+        let lo = self.wanted_bytes.len() as u32;
+        match name {
+            Spell::Scratch(a, b) => self.wanted_bytes.extend_from_slice(&self.scratch[a as usize..b as usize]),
+            Spell::Bytes(b) => self.wanted_bytes.extend_from_slice(b),
+        }
+        self.wanted.push(Want { file, lo, hi: self.wanted_bytes.len() as u32, angle, next, embed });
+        Ok(())
+    }
+
     fn header_name(&mut self, ts: Toks) -> R<Option<(Spell<'a>, bool)>> {
         let (Toks::Kept(lo, hi) | Toks::Arena(lo, hi)) = ts;
         if lo >= hi {
@@ -2531,8 +2635,7 @@ impl<'a> Machine<'a> {
                             Some(n) if b == B_HAS_EMBED && self.files[n.to as usize].bytes.is_empty() => 2,
                             Some(_) => 1,
                             None => {
-                                let name = self.spell(name).to_vec();
-                                self.wanted.push((file, Named { name, angle, next, embed, to: NONE }));
+                                self.want(file, name, angle, next, embed)?;
                                 0
                             }
                         }
@@ -2724,8 +2827,7 @@ impl<'a> Machine<'a> {
                     None => match self.files[file as usize].named.iter().find(|n| n.is(self.spell(name), angle, false, true)) {
                         Some(n) => n.to,
                         None => {
-                            let name = self.spell(name).to_vec();
-                            self.wanted.push((file, Named { name, angle, next: false, embed: true, to: NONE }));
+                            self.want(file, name, angle, false, true)?;
                             NONE
                         }
                     },

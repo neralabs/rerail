@@ -15,8 +15,8 @@
 use crate::Error;
 use crate::native_cpu_shape::Step;
 use crate::pp_expr::Value as Val;
-use crate::pp_words::{self, BOL, Bounds, COND_ELSE, COND_SIZE, COND_SRC, COND_TAKEN, Ctx, Ex, OPS, op_index, DIGRAPH, Def, DefState, EOF, EXP, Env, Expanded, File, FileC, Frame, HASH, HASHHASH, IDENT, LEVEL, LITERAL, NO_PARAM, NOEXP, NONE, NUMBER, PAIR, PASTE, PASTE_MARK, PLACEMARKER, PUNCT, Refused, SPACE, Slot, Src, Sub, Tok, USE, VA_ARGS, VA_OPT, VA_OPT_MARK};
-use crate::program::{ACCEPT, ARG, COND, DEFINE, DEFINED, EXPR, FRAME, GLUE, GOTO, IF, IS, SKIP, KEEP, LINE, LOOKUP, MACRO, PAINT, PEEK, PRE, PUSH, PUT, PpTables, READ, RETURN, SKIPLINE, STOP, STR, SUB, UNDEF, Words, split};
+use crate::pp_words::{self, BOL, Bounds, COND_ELSE, COND_SIZE, COND_SRC, COND_TAKEN, Ctx, Ex, Inc, MAX_INCLUDE_DEPTH, NamedC, OPS, Want, op_index, DIGRAPH, Def, DefState, EOF, EXP, Env, Expanded, File, FileC, Frame, HASH, HASHHASH, IDENT, LEVEL, LITERAL, NO_PARAM, NOEXP, NONE, NUMBER, PAIR, PASTE, PASTE_MARK, PLACEMARKER, PUNCT, Refused, SPACE, Slot, Src, Sub, Tok, USE, VA_ARGS, VA_OPT, VA_OPT_MARK};
+use crate::program::{ACCEPT, ARG, COND, DEFINE, DEFINED, EXPR, FRAME, GLUE, GOTO, IF, INCLUDE, IS, SKIP, KEEP, LINE, LOOKUP, MACRO, PAINT, PEEK, PRE, PUSH, PUT, PpTables, READ, RETURN, SKIPLINE, STOP, STR, SUB, UNDEF, Words, split};
 use cranelift_codegen::ir::{AbiParam, Block, BlockArg, BlockCall, InstBuilder, JumpTableData, MemFlags, Value, condcodes::IntCC, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Switch};
 use cranelift_jit::{JITBuilder, JITModule};
@@ -64,6 +64,7 @@ const REASONS: &[&str] = &[
     "no value",
     "no operator",
     "no precedence",
+    "past the wanted files' bound",
 ];
 const R_STOPPED: u64 = 1;
 const R_CALLS: u64 = 2;
@@ -97,6 +98,7 @@ const R_EX: u64 = 27;
 const R_NO_VALUE: u64 = 28;
 const R_NO_OP: u64 = 29;
 const R_NO_PREC: u64 = 30;
+const R_WANTED: u64 = 31;
 
 /// One of the machine's buffers in `Ctx`: its start's, length's and room's fields, its
 /// element's size, and why a push past its room refuses.
@@ -132,6 +134,8 @@ const VALS: V = v!(vals, nvals, room_vals, size_of::<Val>(), R_EX);
 const OPSV: V = v!(ops, nops, room_ops, 1, R_EX);
 const MINS: V = v!(mins, nmins, room_mins, 1, R_EX);
 const LIVE: V = v!(live, nlive, room_live, 1, R_EX);
+const WANTED: V = v!(wanted, nwanted, room_wanted, size_of::<Want>(), R_WANTED);
+const NAMED: i64 = size_of::<NamedC>() as i64;
 const V_BITS: i32 = offset_of!(Val, bits) as i32;
 const V_UNS: i32 = offset_of!(Val, unsigned) as i32;
 
@@ -1705,14 +1709,19 @@ impl Lower<'_, '_> {
     /// where `escape`: eight bytes a step, or the bytes before an escaped one and it
     /// (`Step::Word`); the worst case checked against the bound first.
     fn scratch_append(&mut self, pc: usize, p: Value, n: Value, escape: bool) {
+        self.append_bytes(pc, (at!(scratch), at!(nscratch), at!(room_scratch)), R_SCRATCH, p, n, escape);
+    }
+
+    /// `scratch_append` to the byte buffer whose start's, length's and room's fields are `buf`.
+    fn append_bytes(&mut self, pc: usize, (bp, bn, br): (i32, i32, i32), why: u64, p: Value, n: Value, escape: bool) {
         let ctx = self.ctx;
-        let n0 = ld(self.f, types::I64, ctx, at!(nscratch));
-        let room = ld(self.f, types::I64, ctx, at!(room_scratch));
+        let n0 = ld(self.f, types::I64, ctx, bn);
+        let room = ld(self.f, types::I64, ctx, br);
         let worst = if escape { self.f.ins().ishl_imm(n, 1) } else { n };
         let end = self.f.ins().iadd(n0, worst);
         let ok = self.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, end, room);
-        self.check(ok, pc, R_SCRATCH);
-        let base = ld(self.f, types::I64, ctx, at!(scratch));
+        self.check(ok, pc, why);
+        let base = ld(self.f, types::I64, ctx, bp);
         let head = self.f.create_block();
         self.f.append_block_param(head, types::I64);
         self.f.append_block_param(head, types::I64);
@@ -1774,7 +1783,7 @@ impl Lower<'_, '_> {
         self.f.ins().jump(head, &[at1.into(), d1.into()]);
         self.f.switch_to_block(done);
         let d = self.f.block_params(done)[0];
-        st(self.f, types::I64, d, ctx, at!(nscratch));
+        st(self.f, types::I64, d, ctx, bn);
     }
 
     /// The token at `tok + off`'s spelling appended to scratch (`Machine::scratch_copy`).
@@ -2580,7 +2589,18 @@ impl Lower<'_, '_> {
         let fp = elem(self.f, files, file, FILE);
         let chains = ld(self.f, types::I64, fp, offset_of!(FileC, chains) as i32);
         let n = ld(self.f, types::I64, fp, offset_of!(FileC, nchains) as i32);
-        // [lo, hi): the first chain at or past `hash` is in it.
+        let (found, next) = self.pair_lookup(chains, n, hash);
+        let later = self.f.ins().icmp(IntCC::UnsignedGreaterThan, next, hash);
+        let ok = self.f.ins().band(found, later);
+        let pos = self.f.ins().select(ok, next, end);
+        st(self.f, types::I32, pos, s, offset_of!(Src, pos) as i32);
+        self.next(pc);
+    }
+
+    /// The `(key, value)` pairs (`PAIR`'s layout, `n` of them at `p`, rising by key) searched for
+    /// `key` (`binary_search_by_key`), by halves (`Step::Halve`): whether it is there, and its
+    /// value (0 where not).
+    fn pair_lookup(&mut self, p: Value, n: Value, key: Value) -> (Value, Value) {
         let head = self.f.create_block();
         self.f.append_block_param(head, types::I64);
         self.f.append_block_param(head, types::I64);
@@ -2597,35 +2617,359 @@ impl Lower<'_, '_> {
         let span = self.f.ins().isub(hi, lo);
         let half = self.f.ins().ushr_imm(span, 1);
         let mid = self.f.ins().iadd(lo, half);
-        let c = elem(self.f, chains, mid, PAIR.0 as i64);
+        let c = elem(self.f, p, mid, PAIR.0 as i64);
         let k = ldu(self.f, types::I32, c, PAIR.1 as i32);
-        let below = self.f.ins().icmp(IntCC::UnsignedLessThan, k, hash);
+        let below = self.f.ins().icmp(IntCC::UnsignedLessThan, k, key);
         let m1 = self.f.ins().iadd_imm(mid, 1);
         let lo1 = self.f.ins().select(below, m1, lo);
         let hi1 = self.f.ins().select(below, hi, mid);
         self.f.ins().jump(head, &[lo1.into(), hi1.into()]);
         self.f.switch_to_block(found);
-        let set = self.f.create_block();
-        self.f.append_block_param(set, types::I64);
+        let join = self.f.create_block();
+        self.f.append_block_param(join, types::I8);
+        self.f.append_block_param(join, types::I64);
         let within = self.f.ins().icmp(IntCC::UnsignedLessThan, lo, n);
         let look = self.f.create_block();
-        self.f.ins().brif(within, look, &[], set, &[end.into()]);
+        let no = self.f.ins().iconst(types::I8, 0);
+        self.f.ins().brif(within, look, &[], join, &[no.into(), z.into()]);
         self.f.switch_to_block(look);
-        let c = elem(self.f, chains, lo, PAIR.0 as i64);
+        let c = elem(self.f, p, lo, PAIR.0 as i64);
         let k = ldu(self.f, types::I32, c, PAIR.1 as i32);
-        let next = ldu(self.f, types::I32, c, PAIR.2 as i32);
-        let is = self.f.ins().icmp(IntCC::Equal, k, hash);
-        let later = self.f.ins().icmp(IntCC::UnsignedGreaterThan, next, hash);
-        let ok = self.f.ins().band(is, later);
-        let pos = self.f.ins().select(ok, next, end);
-        self.f.ins().jump(set, &[pos.into()]);
-        self.f.switch_to_block(set);
-        let pos = self.f.block_params(set)[0];
-        st(self.f, types::I32, pos, s, offset_of!(Src, pos) as i32);
-        self.next(pc);
+        let v = ldu(self.f, types::I32, c, PAIR.2 as i32);
+        let is = self.f.ins().icmp(IntCC::Equal, k, key);
+        self.f.ins().jump(join, &[is.into(), v.into()]);
+        self.f.switch_to_block(join);
+        let r = self.f.block_params(join);
+        (r[0], r[1])
     }
 
-    /// `COND` (`Machine::cond`), its modes, on the conditionals of the file on top.
+    /// The file `file`'s `FileC`.
+    fn file_c(&mut self, file: Value) -> Value {
+        let files = ld(self.f, types::I64, self.ctx, at!(files));
+        elem(self.f, files, file, FILE)
+    }
+
+    /// `Machine::header_name` of the tokens `v[lo..hi]` (`kept` or the arena): whether they make
+    /// a header name, its bytes (`"…"`'s inside, or `<…>`'s spelled in scratch, a token a step,
+    /// `Step::Item`), and whether it is `<…>`.
+    fn header_name(&mut self, pc: usize, v: V, lo: Value, hi: Value) -> (Value, Value, Value, Value) {
+        let join = self.f.create_block();
+        self.f.append_block_param(join, types::I8);
+        self.f.append_block_param(join, types::I64);
+        self.f.append_block_param(join, types::I64);
+        self.f.append_block_param(join, types::I8);
+        let z = self.f.ins().iconst(types::I64, 0);
+        let f8 = self.f.ins().iconst(types::I8, 0);
+        let some = self.f.ins().icmp(IntCC::UnsignedLessThan, lo, hi);
+        let look = self.f.create_block();
+        self.f.ins().brif(some, look, &[], join, &[f8.into(), z.into(), z.into(), f8.into()]);
+        self.f.switch_to_block(look);
+        let first = self.vat(v, lo);
+        let kind = ldu(self.f, types::I8, first, T_KIND);
+        let (p, n) = self.spelling(first, 0);
+        let lit = self.f.ins().icmp_imm(IntCC::Equal, kind, i64::from(LITERAL));
+        let two = self.f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, n, 2);
+        let go = self.f.ins().band(lit, two);
+        let quoted = self.f.create_block();
+        let not_quoted = self.f.create_block();
+        self.f.ins().brif(go, quoted, &[], not_quoted, &[]);
+        self.f.switch_to_block(quoted);
+        let c0 = ldu(self.f, types::I8, p, 0);
+        let dq = self.f.ins().icmp_imm(IntCC::Equal, c0, i64::from(b'"'));
+        let inner = self.f.create_block();
+        self.f.ins().brif(dq, inner, &[], not_quoted, &[]);
+        self.f.switch_to_block(inner);
+        let p1 = self.f.ins().iadd_imm(p, 1);
+        let n2 = self.f.ins().iadd_imm(n, -2);
+        let yes = self.f.ins().iconst(types::I8, 1);
+        let f8 = self.f.ins().iconst(types::I8, 0);
+        self.f.ins().jump(join, &[yes.into(), p1.into(), n2.into(), f8.into()]);
+        self.f.switch_to_block(not_quoted);
+        let lt = self.spelled_at(p, n, b"<");
+        let angle = self.f.create_block();
+        let z = self.f.ins().iconst(types::I64, 0);
+        let f8 = self.f.ins().iconst(types::I8, 0);
+        self.f.ins().brif(lt, angle, &[], join, &[f8.into(), z.into(), z.into(), f8.into()]);
+        self.f.switch_to_block(angle);
+        let start = ld(self.f, types::I64, self.ctx, at!(nscratch));
+        let lo1 = self.f.ins().iadd_imm(lo, 1);
+        let head = self.f.create_block();
+        self.f.append_block_param(head, types::I64);
+        self.heads.push((head, Step::Item));
+        self.f.ins().jump(head, &[lo1.into()]);
+        self.f.switch_to_block(head);
+        let k = self.f.block_params(head)[0];
+        let more = self.f.ins().icmp(IntCC::UnsignedLessThan, k, hi);
+        let step = self.f.create_block();
+        let unclosed = self.f.create_block();
+        self.f.ins().brif(more, step, &[], unclosed, &[]);
+        self.f.switch_to_block(step);
+        let t = self.vat(v, k);
+        let tk = ldu(self.f, types::I8, t, T_KIND);
+        let (tp, tn) = self.spelling(t, 0);
+        let gt = self.spelled_at(tp, tn, b">");
+        let punct = self.f.ins().icmp_imm(IntCC::Equal, tk, i64::from(PUNCT));
+        let close = self.f.ins().band(gt, punct);
+        let closed = self.f.create_block();
+        let part = self.f.create_block();
+        self.f.ins().brif(close, closed, &[], part, &[]);
+        self.f.switch_to_block(closed);
+        let base = ld(self.f, types::I64, self.ctx, at!(scratch));
+        let sp = self.f.ins().iadd(base, start);
+        let end = ld(self.f, types::I64, self.ctx, at!(nscratch));
+        let sn = self.f.ins().isub(end, start);
+        let yes = self.f.ins().iconst(types::I8, 1);
+        self.f.ins().jump(join, &[yes.into(), sp.into(), sn.into(), yes.into()]);
+        self.f.switch_to_block(part);
+        let later = self.f.ins().icmp(IntCC::UnsignedGreaterThan, k, lo1);
+        let fl = ldu(self.f, types::I8, t, T_FLAGS);
+        let sp = self.f.ins().band_imm(fl, i64::from(SPACE));
+        let spaced = self.f.ins().icmp_imm(IntCC::NotEqual, sp, 0);
+        let gap = self.f.ins().band(later, spaced);
+        let space = self.f.create_block();
+        let copy = self.f.create_block();
+        self.f.ins().brif(gap, space, &[], copy, &[]);
+        self.f.switch_to_block(space);
+        self.scratch_push(pc, b" ");
+        self.f.ins().jump(copy, &[]);
+        self.f.switch_to_block(copy);
+        let t = self.vat(v, k);
+        self.scratch_copy(pc, t, 0, false);
+        let k1 = self.f.ins().iadd_imm(k, 1);
+        self.f.ins().jump(head, &[k1.into()]);
+        self.f.switch_to_block(unclosed);
+        st(self.f, types::I64, start, self.ctx, at!(nscratch));
+        let z = self.f.ins().iconst(types::I64, 0);
+        let f8 = self.f.ins().iconst(types::I8, 0);
+        self.f.ins().jump(join, &[f8.into(), z.into(), z.into(), f8.into()]);
+        self.f.switch_to_block(join);
+        let r = self.f.block_params(join);
+        (r[0], r[1], r[2], r[3])
+    }
+
+    /// The file `file`'s named target `(p, n)`, `<…>` where `angle`, `#include_next` where
+    /// `next`, an `#embed`'s where `embed`: whether it has one, and its file; an entry a step
+    /// (`Step::Item`).
+    #[allow(clippy::too_many_arguments)]
+    fn find_named(&mut self, file: Value, p: Value, n: Value, angle: Value, next: Value, embed: Value) -> (Value, Value) {
+        let fc = self.file_c(file);
+        let named = ld(self.f, types::I64, fc, offset_of!(FileC, named) as i32);
+        let count = ld(self.f, types::I64, fc, offset_of!(FileC, nnamed) as i32);
+        let join = self.f.create_block();
+        self.f.append_block_param(join, types::I8);
+        self.f.append_block_param(join, types::I64);
+        let head = self.f.create_block();
+        self.f.append_block_param(head, types::I64);
+        self.heads.push((head, Step::Item));
+        let z = self.f.ins().iconst(types::I64, 0);
+        self.f.ins().jump(head, &[z.into()]);
+        self.f.switch_to_block(head);
+        let i = self.f.block_params(head)[0];
+        let more = self.f.ins().icmp(IntCC::UnsignedLessThan, i, count);
+        let step = self.f.create_block();
+        let no = self.f.ins().iconst(types::I8, 0);
+        self.f.ins().brif(more, step, &[], join, &[no.into(), z.into()]);
+        self.f.switch_to_block(step);
+        let e = elem(self.f, named, i, NAMED);
+        let len = ld(self.f, types::I64, e, offset_of!(NamedC, len) as i32);
+        let mut same = self.f.ins().icmp(IntCC::Equal, len, n);
+        for (o, want) in [(offset_of!(NamedC, angle), angle), (offset_of!(NamedC, next), next), (offset_of!(NamedC, embed), embed)] {
+            let x = ldu(self.f, types::I8, e, o as i32);
+            let w = self.f.ins().uextend(types::I64, want);
+            let eq = self.f.ins().icmp(IntCC::Equal, x, w);
+            same = self.f.ins().band(same, eq);
+        }
+        let i1 = self.f.ins().iadd_imm(i, 1);
+        let bytes = self.f.create_block();
+        let on = self.f.create_block();
+        self.f.ins().brif(same, bytes, &[], on, &[]);
+        self.f.switch_to_block(bytes);
+        let q = ld(self.f, types::I64, e, offset_of!(NamedC, name) as i32);
+        let eq = self.same_bytes(p, q, n);
+        let hit = self.f.create_block();
+        self.f.ins().brif(eq, hit, &[], on, &[]);
+        self.f.switch_to_block(hit);
+        let to = ldu(self.f, types::I32, e, offset_of!(NamedC, to) as i32);
+        let yes = self.f.ins().iconst(types::I8, 1);
+        self.f.ins().jump(join, &[yes.into(), to.into()]);
+        self.f.switch_to_block(on);
+        self.f.ins().jump(head, &[i1.into()]);
+        self.f.switch_to_block(join);
+        let r = self.f.block_params(join);
+        (r[0], r[1])
+    }
+
+    /// `Machine::want`: a file wanted and not found, recorded; its name's bytes copied.
+    #[allow(clippy::too_many_arguments)]
+    fn want(&mut self, pc: usize, file: Value, p: Value, n: Value, angle: Value, next: Value, embed: Value) {
+        let ctx = self.ctx;
+        let nw = self.vlen(WANTED);
+        let room = ld(self.f, types::I64, ctx, at!(room_wanted));
+        let ok = self.f.ins().icmp(IntCC::UnsignedLessThan, nw, room);
+        let lo = ld(self.f, types::I64, ctx, at!(nwanted_bytes));
+        let broom = ld(self.f, types::I64, ctx, at!(room_wanted_bytes));
+        let end = self.f.ins().iadd(lo, n);
+        let fits = self.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, end, broom);
+        let ok = self.f.ins().band(ok, fits);
+        self.check(ok, pc, R_WANTED);
+        self.append_bytes(pc, (at!(wanted_bytes), at!(nwanted_bytes), at!(room_wanted_bytes)), R_WANTED, p, n, false);
+        let w = self.vpush(WANTED, pc);
+        st(self.f, types::I32, file, w, offset_of!(Want, file) as i32);
+        st(self.f, types::I32, lo, w, offset_of!(Want, lo) as i32);
+        st(self.f, types::I32, end, w, offset_of!(Want, hi) as i32);
+        st(self.f, types::I8, angle, w, offset_of!(Want, angle) as i32);
+        st(self.f, types::I8, next, w, offset_of!(Want, next) as i32);
+        st(self.f, types::I8, embed, w, offset_of!(Want, embed) as i32);
+    }
+
+    /// `Src::file(f, end)` pushed (refusing past the sources' bound).
+    fn push_file_src(&mut self, pc: usize, file: Value, end: Value) {
+        let s = self.vpush(SOURCES, pc);
+        let f = &mut *self.f;
+        let none = f.ins().iconst(types::I32, i64::from(NONE));
+        let z = f.ins().iconst(types::I32, 0);
+        let z8 = f.ins().iconst(types::I8, 0);
+        st(f, types::I32, file, s, offset_of!(Src, file) as i32);
+        f.ins().store(flags(), z, s, offset_of!(Src, pos) as i32);
+        st(f, types::I32, end, s, offset_of!(Src, end) as i32);
+        f.ins().store(flags(), none, s, offset_of!(Src, def) as i32);
+        f.ins().store(flags(), z8, s, offset_of!(Src, stop) as i32);
+        f.ins().store(flags(), none, s, offset_of!(Src, hash) as i32);
+        f.ins().store(flags(), z, s, offset_of!(Src, delta) as i32);
+        let p = offset_of!(Src, presumed);
+        f.ins().store(flags(), none, s, (p + offset_of!((u32, u32), 0)) as i32);
+        f.ins().store(flags(), none, s, (p + offset_of!((u32, u32), 1)) as i32);
+    }
+
+    /// The count of sources that are files (`#include`'s depth), a source a step
+    /// (`Step::Item`).
+    fn file_sources(&mut self) -> Value {
+        let n = self.vlen(SOURCES);
+        let head = self.f.create_block();
+        self.f.append_block_param(head, types::I64);
+        self.f.append_block_param(head, types::I64);
+        self.heads.push((head, Step::Item));
+        let done = self.f.create_block();
+        self.f.append_block_param(done, types::I64);
+        let z = self.f.ins().iconst(types::I64, 0);
+        self.f.ins().jump(head, &[z.into(), z.into()]);
+        self.f.switch_to_block(head);
+        let (i, c) = (self.f.block_params(head)[0], self.f.block_params(head)[1]);
+        let more = self.f.ins().icmp(IntCC::UnsignedLessThan, i, n);
+        let step = self.f.create_block();
+        self.f.ins().brif(more, step, &[], done, &[c.into()]);
+        self.f.switch_to_block(step);
+        let s = self.vat(SOURCES, i);
+        let file = ldu(self.f, types::I32, s, offset_of!(Src, file) as i32);
+        let is = self.f.ins().icmp_imm(IntCC::NotEqual, file, i64::from(NONE));
+        let x = self.f.ins().uextend(types::I64, is);
+        let c1 = self.f.ins().iadd(c, x);
+        let i1 = self.f.ins().iadd_imm(i, 1);
+        self.f.ins().jump(head, &[i1.into(), c1.into()]);
+        self.f.switch_to_block(done);
+        self.f.block_params(done)[0]
+    }
+
+    fn inc_state(&mut self) -> Value {
+        ld(self.f, types::I64, self.ctx, at!(inc))
+    }
+
+    /// `INCLUDE` (`Machine::include`), its modes.
+    fn include(&mut self, pc: usize, mode: u8) {
+        let ctx = self.ctx;
+        let next = self.blocks[pc + 1];
+        let line = if mode == 1 { Some(self.line_end(pc)) } else { None };
+        let s = self.file_src(pc);
+        let file = ldu(self.f, types::I32, s, offset_of!(Src, file) as i32);
+        match mode {
+            0 => {
+                // How: `#include_next`, `#import`, else `#include`; the file mode (a) resolved.
+                let skip = self.blocks[pc + 2];
+                let a = self.spelled(b"include_next");
+                let b = self.spelled(b"import");
+                let one = self.f.ins().iconst(types::I32, 1);
+                let two = self.f.ins().iconst(types::I32, 2);
+                let z = self.f.ins().iconst(types::I32, 0);
+                let how = self.f.ins().select(b, two, z);
+                let how = self.f.ins().select(a, one, how);
+                let inc = self.inc_state();
+                self.f.ins().store(flags(), how, inc, offset_of!(Inc, how) as i32);
+                let hash = ldu(self.f, types::I32, s, offset_of!(Src, hash) as i32);
+                let fc = self.file_c(file);
+                let incs = ld(self.f, types::I64, fc, offset_of!(FileC, includes) as i32);
+                let n = ld(self.f, types::I64, fc, offset_of!(FileC, nincludes) as i32);
+                let (found, to) = self.pair_lookup(incs, n, hash);
+                let yes = self.f.create_block();
+                self.f.ins().brif(found, yes, &[], skip, &[]);
+                self.f.switch_to_block(yes);
+                let inc = self.inc_state();
+                st(self.f, types::I32, to, inc, offset_of!(Inc, to) as i32);
+                self.skip_line_then(pc, next);
+            }
+            1 => {
+                // The expanded line's header name, looked up among the file's named targets.
+                let skip = self.blocks[pc + 2];
+                let (lo, hi) = line.unwrap();
+                let s0 = ld(self.f, types::I64, ctx, at!(nscratch));
+                let (some, p, n, angle) = self.header_name(pc, KEPT, lo, hi);
+                self.vset_len(KEPT, lo);
+                let named = self.f.create_block();
+                self.f.ins().brif(some, named, &[], skip, &[]);
+                self.f.switch_to_block(named);
+                let inc = self.inc_state();
+                let how = ldu(self.f, types::I32, inc, offset_of!(Inc, how) as i32);
+                let is_next = self.f.ins().icmp_imm(IntCC::Equal, how, 1);
+                let not_main = self.f.ins().icmp_imm(IntCC::NotEqual, file, 0);
+                let nx = self.f.ins().band(is_next, not_main);
+                let f8 = self.f.ins().iconst(types::I8, 0);
+                let (found, to) = self.find_named(file, p, n, angle, nx, f8);
+                let hit = self.f.create_block();
+                let miss = self.f.create_block();
+                self.f.ins().brif(found, hit, &[], miss, &[]);
+                self.f.switch_to_block(hit);
+                let inc = self.inc_state();
+                st(self.f, types::I32, to, inc, offset_of!(Inc, to) as i32);
+                st(self.f, types::I64, s0, ctx, at!(nscratch));
+                self.f.ins().jump(next, &[]);
+                self.f.switch_to_block(miss);
+                let f8 = self.f.ins().iconst(types::I8, 0);
+                self.want(pc, file, p, n, angle, nx, f8);
+                st(self.f, types::I64, s0, ctx, at!(nscratch));
+                self.f.ins().jump(skip, &[]);
+            }
+            _ => {
+                // The file read: not read once already, within the include depth.
+                let inc = self.inc_state();
+                let f = ldu(self.f, types::I32, inc, offset_of!(Inc, to) as i32);
+                let how = ldu(self.f, types::I32, inc, offset_of!(Inc, how) as i32);
+                let some = self.f.ins().icmp_imm(IntCC::NotEqual, f, i64::from(NONE));
+                let look = self.f.create_block();
+                self.f.ins().brif(some, look, &[], next, &[]);
+                self.f.switch_to_block(look);
+                let once = ld(self.f, types::I64, ctx, at!(once));
+                let op = self.f.ins().iadd(once, f);
+                let done = ldu(self.f, types::I8, op, 0);
+                let fresh = self.f.create_block();
+                self.f.ins().brif(done, next, &[], fresh, &[]);
+                self.f.switch_to_block(fresh);
+                let depth = self.file_sources();
+                let deep = self.f.ins().icmp_imm(IntCC::UnsignedGreaterThan, depth, MAX_INCLUDE_DEPTH as i64);
+                let read = self.f.create_block();
+                self.f.ins().brif(deep, next, &[], read, &[]);
+                self.f.switch_to_block(read);
+                let import = self.f.ins().icmp_imm(IntCC::Equal, how, 2);
+                let old = ldu(self.f, types::I8, op, 0);
+                let one = self.f.ins().iconst(types::I64, 1);
+                let x = self.f.ins().select(import, one, old);
+                st(self.f, types::I8, x, op, 0);
+                let fc = self.file_c(f);
+                let end = ld(self.f, types::I64, fc, offset_of!(FileC, ntoks) as i32);
+                self.push_file_src(pc, f, end);
+                self.f.ins().jump(next, &[]);
+            }
+        }
+    }
+
     fn cond(&mut self, pc: usize, mode: u8) {
         self.file_src(pc);
         let ns = self.vlen(SOURCES);
@@ -3972,6 +4316,7 @@ impl Lower<'_, '_> {
             DEFINE => self.define(pc, mode),
             SUB => self.sub(pc, mode),
             SKIP => self.skip(pc),
+            INCLUDE => self.include(pc, mode),
             COND => self.cond(pc, mode),
             IF if mode != 1 => self.if_open(pc, mode == 0),
             IF => self.expr_begin(pc),
