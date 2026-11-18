@@ -39,7 +39,7 @@ export class DatabaseApiStores implements RerailApiStores {
   #preferences: SqlitePresentationPreferenceStore | undefined;
   #auditControls: SqliteAuditControlStore | undefined;
   #database: RerailDatabase | undefined;
-  #startStates: ((workspace: string) => RepositoryStartState) | undefined;
+  #startStates: ((workspace: string, spelling?: string) => RepositoryStartState) | undefined;
   #checkouts: ((workspace: string) => CheckoutContext | undefined) | undefined;
   #mergeAssist: MergeAssistService | undefined;
   /** The Merge Assist this instance made itself (none was given), which {@link close} stops. */
@@ -136,11 +136,11 @@ export class DatabaseApiStores implements RerailApiStores {
     this.#localRevision += 1;
   }
 
-  repositoryState(workspace: string): RepositoryStartState {
+  repositoryState(workspace: string, spelling?: string): RepositoryStartState {
     // A daemon with no sessions yet must not create the database to answer that nothing is started.
     if (!existsSync(this.#path)) return workspaceStartState(workspace, this.#path);
     this.#startStates ??= startStateReader(this.database());
-    return this.#startStates(workspace);
+    return this.#startStates(workspace, spelling);
   }
 
   close(): void {

@@ -2,9 +2,9 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { parsePacksFile, readPacksFile, repositoryPackDirectory } from "../../../src/engine/catalog/packs-file/packs-file.js";
-import { linkFolder, symlinkOrSkip } from "../../support/platform/links.js";
-import { removeFolderSync } from "../../support/platform/remove-folder.js";
+import { parsePacksFile, readPacksFile, repositoryPackDirectory } from "../../../../src/engine/catalog/packs-file/packs-file.js";
+import { linkFolder, symlinkOrSkip } from "../../../support/platform/links.js";
+import { removeFolderSync } from "../../../support/platform/remove-folder.js";
 
 const roots: string[] = [];
 afterEach(() => {

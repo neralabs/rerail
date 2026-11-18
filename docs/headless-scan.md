@@ -75,8 +75,13 @@ Worktree, `--rules-ref`, repository-pack and non-npm pack rules run in **Log** u
 <summary>Exact conditions and approval policy</summary>
 
 Home applies when Rerail is started and set up in this checkout on this machine and the repository lists no packs. It
-runs the rules as a session there would. `rulesSource` is `{"kind":"home"}`; listed packs and a throwaway
-configuration give `{"kind":"worktree"}`, or `{"kind":"ref","ref":…}` with `--rules-ref`.
+runs the rules as a session there would, in a worktree or a copy of the checkout that no session has recorded too: the
+scan records the checkout in its own copy of the configuration, as a session started there records it. `rulesSource`
+is `{"kind":"home"}`; listed packs and a throwaway configuration give `{"kind":"worktree"}`, or
+`{"kind":"ref","ref":…}` with `--rules-ref`. It is `null` when the scan had files to scan and audited none, so no rules
+ran: the scan fails, and a `checkout-not-audited` failure for each checkout it meant to audit says why (for example,
+the only paths asked for are in a submodule Rerail has no record of). A scan given an empty `paths` list has nothing to
+scan: it completes with no rules and keeps its `rulesSource`.
 
 Session [rule approvals](writing-rules.md) apply. These run in **Log** until a person approves that exact content in
 the Rerail home with `rerail rules approve`:
@@ -180,7 +185,7 @@ rerail scan --repo ./head --scope git-diff --base origin/main --rules-ref origin
   "scope": "repository" | "git-diff",
   "base": null | { "ref": "origin/main", "mergeBase": "<sha>" },
   "paths": null | ["src/a.ts"],          // the files scanned, when not the whole checkout
-  "rulesSource": { "kind": "home" } | { "kind": "worktree" } | { "kind": "ref", "ref": "origin/main" },
+  "rulesSource": { "kind": "home" } | { "kind": "worktree" } | { "kind": "ref", "ref": "origin/main" } | null,
   "packs": [                             // the rule packs it ran, besides the tree's own rules
     { "id": "complexity", "packageName": "@neralabs/rerail-pack-complexity", "version": "0.1.8", "from": "npm" | "home" },
     { "id": "acme", "packageName": "@acme/rerail-pack-acme", "version": "1.0.0", "from": "repository", "path": "packs/acme" }
@@ -207,6 +212,8 @@ rerail scan --repo ./head --scope git-diff --base origin/main --rules-ref origin
 - **`packs`**: `npm` and `repository` for packs `.rerail/packs.json` lists, `home` for the home's installed packs that
   ran (its configuration, or `--pack`). Each rule's `source.packId` names its pack.
 - **`failures`**: execution failures and coverage gaps, as an audit records them ([reference](reference.md#scan-and-settings-controls)).
+  The scan adds its own: `rule-left-out` for a rule file at `--rules-ref` that does not load, and
+  `checkout-not-audited` for each checkout it meant to audit, when it had files to scan and no audit ran.
 
 <details>
 <summary>Exact field semantics</summary>

@@ -1471,6 +1471,9 @@ describe("Claude Code commands", () => {
     const manage = await read("rerail-manage");
     expect(manage).toContain(`allowed-tools: Bash(${command} manage --print), Bash(${command} manage)\n`);
     expect(manage).toContain(`Under Orca (\`ORCA_TAB_ID\` set): run \`${command} manage\`.`);
+    // The URL the agent reads carries no access capability: it is never handed on as the link to the dashboard.
+    expect(manage).toContain("Say where it opened, without the URL");
+    expect(manage).toContain("For another browser, run `rerail manage` in a terminal.");
     const create = await read("rerail-create");
     expect(create).toContain(
       `allowed-tools: Bash(${command} rules evidence *), Bash(${command} rules show *), Bash(${command} rules test *), Bash(${command} rules add *)\n`,
@@ -1586,6 +1589,7 @@ describe("Claude Code commands", () => {
     const cursorStart = await readFile(join(home, ".cursor", "commands", "rerail-start.md"), "utf8");
     const claudeStart = await readFile(join(home, ".claude", "commands", "rerail-start.md"), "utf8");
     expect(codexManage).toContain(`${powershell} manage`);
+    expect(codexManage).toContain("After its output, add: The URL shows the dashboard only in a browser already connected to Rerail.");
     expect(cursorStart).toContain(`${powershell} start --relay --powershell`);
     expect(claudeStart).toContain(`'${nodePath}' '${cli}' start --relay\n`);
     expect(claudeStart).not.toContain("--powershell");

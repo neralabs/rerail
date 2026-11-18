@@ -21,7 +21,7 @@ daemon's `/api` operations and `/healthz` (`api.js`).
   switch, a pack's Add and Remove, the time range); `sheet.js` the sheet's own and what a poll loads while it is open.
 - `views/` holds one module per view (`overview`, `pack` for a pack page and Created by you, `packs` for the catalog
   and the review, `create`, `history`, `sessions`, `settings`, `merge` for Merge Assist) and the pages shown in their
-  place (`no-repo`, `missing`, `not-set-up`); `views/index.js` lists them and says what each module exports.
+  place (`access`, `no-repo`, `missing`, `not-set-up`); `views/index.js` lists them and says what each module exports.
   Merge Assist's page shows, while it is on, its status strip, its Settings (the conflict hook command) and the
   conflicts with work in flight: open ones as cards, those not quiet first and then the newest, a quiet one saying it
   is quiet, with Dismiss (not a conflict) as the one action, then the dismissed ones folded with who dismissed each
@@ -30,7 +30,7 @@ daemon's `/api` operations and `/healthz` (`api.js`).
 - `render/` holds what several views or the sheet share: a pack page's rule table and its controls (`rules.js`,
   `rule-controls.js`), the range control, the repository choices (`repos.js`), the rule sheet (`panel.js`, its
   state and clicks in `rule-sheet-actions.js`, its pure text and prompts in `rule-sheet-model.js`), a rule pack in the
-  sheet (`pack-panel.js`), and the session timeline (`timeline.js`).
+  sheet (`pack-panel.js`), the session timeline (`timeline.js`), and a command to copy (`command.js`).
 - `state.js` holds the state; `poll.js` refreshes it with what the page needs (`setNeeds`);
   `repo-rule-counts.js` reads each repository's rule counts; `attachments.js` writes
   rule pack changes in click order, `rule-remove.js` deletes a rule created by you from the repository (with Undo),
