@@ -165,6 +165,9 @@ describe("the Git a process keeps, gone under it", () => {
     });
     await expect(gitHead(repository, { signal: stop.signal })).resolves.toBeUndefined();
     expect(started(spawn)).toEqual([kept]);
+    // The stopped read answered without waiting for the look, which goes on: the next read takes the Git it finds.
+    await expect(gitHead(repository)).resolves.toBe(head);
+    expect(started(spawn).at(-1)).toBe(now);
     await expect(gitHead(repository)).resolves.toBe(head);
     expect(started(spawn)).toEqual([now]);
   });
@@ -173,15 +176,19 @@ describe("the Git a process keeps, gone under it", () => {
     const [kept] = await moveKeptGit();
     started(spawn);
     const stop = new AbortController();
-    // The look's first question about the disk is held, as a share off the network holds it, and the read is stopped.
+    // The look's first question about whether a candidate runs is held, as a share off the network holds it, and the
+    // read is stopped there.
     const { promise: held, resolve: answer } = Promise.withResolvers<void>();
+    const { promise: asked, resolve: reached } = Promise.withResolvers<void>();
     vi.mocked(stat).mockImplementationOnce(async (...args) => {
       stop.abort();
+      reached();
       await held;
       return await actualFiles.stat(...args);
     });
     const read = gitHead(repository, { signal: stop.signal });
     try {
+      await asked;
       const answered = await Promise.race([read.then(value => ({ value })), new Promise(done => setImmediate(done, "waiting"))]);
       expect([answered, started(spawn)]).toEqual([{ value: undefined }, [kept]]);
     } finally {

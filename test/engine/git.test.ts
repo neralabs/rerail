@@ -1381,6 +1381,8 @@ describe("ProcessGit", () => {
       await expect(answered(limited)).resolves.toBe("waiting");
       await vi.advanceTimersByTimeAsync(50);
       await expect(answered(limited)).resolves.toEqual({ value: undefined });
+      // A signal aborted before the start began to wait ends it as one aborted while it waits.
+      await expect(answered(git.afterMissing("/opt/a/bin/git", { timeoutMs: 10_000, signal: AbortSignal.abort() }))).resolves.toEqual({ value: undefined });
     } finally {
       vi.useRealTimers();
       answerShare();
@@ -1427,7 +1429,9 @@ describe("ProcessGit", () => {
     const folder = async (path: string) => (asked.push(path), await answer.promise);
     const git = new ProcessGit(() => () => ({ path: ucrt, looked: [win32.join(install, "cmd", "git.exe")] }), { ...disk, folder });
     expect(git.path()).toBe(ucrt);
-    const env = { Path: String.raw`C:\WINDOWS`, HOMEDRIVE: String.raw`\\server\homes`, HOMEPATH: String.raw`\me`, USERPROFILE: String.raw`C:\Users\me` };
+    // The first look reads Git's install in the thread; no start reads anything after it.
+    disk.reads.now.length = 0;
+    const env ={ Path: String.raw`C:\WINDOWS`, HOMEDRIVE: String.raw`\\server\homes`, HOMEPATH: String.raw`\me`, USERPROFILE: String.raw`C:\Users\me` };
     const share = win32.join(env.HOMEDRIVE, env.HOMEPATH);
     /** The home folders whose bin a start puts on PATH, between Git's folders and the person's PATH. */
     const homes = (started: NodeJS.ProcessEnv) => (started.Path ?? "").split(";").slice(2, -1).map(bin => win32.dirname(bin));
