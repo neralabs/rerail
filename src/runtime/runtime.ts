@@ -25,6 +25,7 @@ import {
   type SourceObservationCache,
 } from "../engine/code-rule/code-rule-bridge.js";
 import type { IgnoreRulesChange } from "../engine/code-rule/ignore-rule-files.js";
+import { claudeCodeReportedPreimage } from "../engine/code-rule/tool-result/reported-preimage.js";
 import { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
 import {
   buildSteer, type AuditorCloseOptions, type CodeRuleAuditor, type AuditSettings, type CodeRuleViolation, type RuleSteerDelivery,
@@ -1333,7 +1334,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       try {
         // From the finish on, which may check the edit before it returns, to the end of the wait.
         await this.#waitingForEditChecks(state, false, async () => {
-          await this.#finishCall(state, bridge, call!.id, event.failed === true);
+          await this.#finishCall(state, bridge, event);
           await this.#append(state, { type: "policy-result", toolCallId: call!.id });
           await this.#awaitEditChecks(state, bridge, ADAPTER_CAPABILITIES[state.descriptor.host].toolSurface === "native" ? NATIVE_EDIT_CHECK_MS : HOOK_EDIT_CHECK_MS);
         });
@@ -1449,12 +1450,18 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * Finishes a tool call on the open evaluator; one answered while it opened ends its window (`unwatchedResult`), and is
-   * checked once it is open when the ledger held it open (`#checkWhenOpen`).
+   * Finishes a tool call on the open evaluator, with what the tool's result says the file it wrote held: only Claude
+   * Code's Write and Edit results say it, so no other agent's result is read as theirs. One answered while the evaluator
+   * opened ends its window (`unwatchedResult`), and is checked once it is open when the ledger held it open
+   * (`#checkWhenOpen`).
    */
-  async #finishCall(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, toolCallId: string, failed: boolean): Promise<void> {
-    if (bridge !== undefined) await bridge.finish(toolCallId, failed, { rewindable: true });
-    else await this.#finishUnwatched(state, toolCallId, failed);
+  async #finishCall(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, result: Extract<AdapterEvent, { kind: "result" }>): Promise<void> {
+    if (bridge === undefined) {
+      await this.#finishUnwatched(state, result.toolCallId, result.failed === true);
+      return;
+    }
+    const reported = state.descriptor.host === "claude-code" ? claudeCodeReportedPreimage(result.output) : undefined;
+    await bridge.finish(result.toolCallId, result.failed === true, { rewindable: true, reported });
   }
 
   async #finishUnwatched(state: RuntimeSessionState, toolCallId: string, failed: boolean): Promise<void> {
