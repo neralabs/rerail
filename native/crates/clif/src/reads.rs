@@ -918,6 +918,10 @@ fn f16_side_of(b: &mut B<'_, '_>, k: Value, i: Value) -> Value {
     let p = b.f.ins().ushr_imm(i, i64::from(F16_PART.trailing_zeros()));
     let p4 = b.f.ins().imul_imm(p, 4);
     let start = b.u32(parts, p4);
+    // The part's end (the next one's start, the last the list's length: both checked where the tape is placed):
+    // every offset into the part is held to it, whatever its bytes state (decision 0403).
+    let next4 = b.f.ins().iadd_imm(p4, 4);
+    let limit = b.u32(parts, next4);
     let nodes = b.view(at::NODES);
     let blocks = b.f.ins().iadd_imm(nodes, i64::from(F16_BLOCK - 1));
     let blocks = b.f.ins().ushr_imm(blocks, i64::from(F16_BLOCK.trailing_zeros()));
@@ -934,10 +938,12 @@ fn f16_side_of(b: &mut B<'_, '_>, k: Value, i: Value) -> Value {
     let before = b.f.ins().select(first_block, zero, before);
     let before = b.f.ins().imul_imm(before, 2);
     let before = b.f.ins().iadd(start, before);
+    let before = b.f.ins().umin(before, limit);
     let lo = b.u16(side, before);
     let lo = b.f.ins().select(first_block, zero, lo);
     let own = b.f.ins().imul_imm(j, 2);
     let own = b.f.ins().iadd(start, own);
+    let own = b.f.ins().umin(own, limit);
     let hi = b.u16(side, own);
     let offsets = b.f.ins().imul_imm(nsub, 2);
     let offsets = b.f.ins().iadd(start, offsets);
@@ -956,6 +962,7 @@ fn f16_side_of(b: &mut B<'_, '_>, k: Value, i: Value) -> Value {
     let sum = b.f.ins().iadd(lo, hi);
     let middle = b.f.ins().ushr_imm(sum, 1);
     let at = b.f.ins().iadd(offsets, middle);
+    let at = b.f.ins().umin(at, limit);
     let byte = b.u8(side, at);
     let below = b.f.ins().icmp(IntCC::UnsignedLessThan, byte, low);
     let next = b.f.ins().iadd_imm(middle, 1);
@@ -973,10 +980,12 @@ fn f16_side_of(b: &mut B<'_, '_>, k: Value, i: Value) -> Value {
     let last = b.f.ins().iadd_imm(nsub, -1);
     let last = b.f.ins().imul_imm(last, 2);
     let last = b.f.ins().iadd(start, last);
+    let last = b.f.ins().umin(last, limit);
     let count = b.u16(side, last);
     let values = b.f.ins().iadd(offsets, count);
     let at = b.f.ins().imul(found, vw);
     let at = b.f.ins().iadd(values, at);
+    let at = b.f.ins().umin(at, limit);
     let word = b.word(side, at);
     let mask = b.mask(vw);
     b.f.ins().band(word, mask)
@@ -994,6 +1003,8 @@ fn size(b: &mut B<'_, '_>) -> Value {
             let inner = b.f.ins().ushr_imm(v, 1);
             let inner = b.f.ins().ireduce(I32, inner);
             let one = b.c32(1);
+            // At least 1 (a subtree holds its root), whatever the slot holds: every hop by sizes moves on (0403).
+            let inner = b.f.ins().umax(inner, one);
             b.f.ins().select(leaf, one, inner)
         },
         |b| {
@@ -1192,6 +1203,12 @@ fn parent16(b: &mut B<'_, '_>, i: Value, z: bool) -> Value {
     b.f.switch_to_block(sibling);
     let step = b.f.ins().ushr_imm(v, 2);
     let step = b.f.ins().ireduce(I32, step);
+    // A step of 1 to `j` back: else the slot is no tape's, and the walk ends (each step moves back, decision 0403).
+    let less = b.f.ins().iadd_imm(step, -1);
+    let moves = b.f.ins().icmp(IntCC::UnsignedLessThan, less, j);
+    let stepped = b.f.create_block();
+    b.f.ins().brif(moves, stepped, &[], done, &[none.into()]);
+    b.f.switch_to_block(stepped);
     let back = b.f.ins().isub(j, step);
     let to_parent = b.f.ins().band_imm(v, 2);
     let next = b.f.create_block();
@@ -1220,7 +1237,7 @@ fn parent15(b: &mut B<'_, '_>, i: Value) -> Value {
     b.f.switch_to_block(body);
     let before = b.f.ins().iadd_imm(j, -1);
     let size = b.call("tape_size", &[before]);
-    let end = b.f.ins().iadd(before, size);
+    let end = hop(b, before, size);
     let holds = b.f.ins().icmp(IntCC::UnsignedGreaterThan, end, i);
     let next = b.f.create_block();
     b.f.ins().brif(holds, done, &[before.into()], next, &[]);
@@ -1229,7 +1246,7 @@ fn parent15(b: &mut B<'_, '_>, i: Value) -> Value {
     b.f.ins().jump(head, &[before.into(), k.into()]);
     // A descent from the root: at each level, the child whose subtree holds the node.
     b.f.switch_to_block(descend);
-    let (level, scan, hop, found) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
+    let (level, scan, hop_to, found) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
     b.f.append_block_param(level, I32);
     b.f.append_block_param(scan, I32);
     b.f.append_block_param(scan, I32);
@@ -1242,10 +1259,10 @@ fn parent15(b: &mut B<'_, '_>, i: Value) -> Value {
     b.f.switch_to_block(scan);
     let (at, c) = (b.f.block_params(scan)[0], b.f.block_params(scan)[1]);
     let size = b.call("tape_size", &[c]);
-    let after = b.f.ins().iadd(c, size);
+    let after = hop(b, c, size);
     let past = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, after, i);
-    b.f.ins().brif(past, hop, &[], found, &[]);
-    b.f.switch_to_block(hop);
+    b.f.ins().brif(past, hop_to, &[], found, &[]);
+    b.f.switch_to_block(hop_to);
     b.f.ins().jump(scan, &[at.into(), after.into()]);
     b.f.switch_to_block(found);
     let is = b.f.ins().icmp(IntCC::Equal, c, i);
@@ -1320,7 +1337,26 @@ fn z_block(b: &mut B<'_, '_>) -> Value {
     let key = b.f.ins().bor(id, block64);
     let size = b.column(3);
     let size = b.f.ins().uextend(I64, size);
-    cache_get(b, cache, key, &|b, entry| z_decode(b, block, entry, size))
+    // A block past the tape's last (a node read that is no node of it): the dead entry, a failure counted, so the
+    // read stays in the cache and its run is refused (decision 0403). The block index is read only below its end.
+    let nodes = b.view(at::NODES);
+    let blocks = b.f.ins().iadd_imm(nodes, i64::from(F16Z_BLOCK - 1));
+    let blocks = b.f.ins().ushr_imm(blocks, i64::from(F16Z_BLOCK.trailing_zeros()));
+    let inside = b.f.ins().icmp(IntCC::UnsignedLessThan, block, blocks);
+    let (look, outside, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(done, I64);
+    b.f.ins().brif(inside, look, &[], outside, &[]);
+    b.f.switch_to_block(outside);
+    cache_count(b, cache, crate::view::cache::FAILED);
+    let dead = cache_load(b, cache, crate::view::cache::DEAD);
+    let dead = b.f.ins().uextend(I64, dead);
+    let dead = b.f.ins().iadd(cache, dead);
+    b.f.ins().jump(done, &[dead.into()]);
+    b.f.switch_to_block(look);
+    let entry = cache_get(b, cache, key, &|b, entry| z_decode(b, block, entry, size));
+    b.f.ins().jump(done, &[entry.into()]);
+    b.f.switch_to_block(done);
+    b.f.block_params(done)[0]
 }
 
 /// The u64 of two u32s, `lo` first.
@@ -1852,12 +1888,19 @@ fn z_lz4(b: &mut B<'_, '_>, src: Value, src_end: Value, dst: Value, dst_end: Val
     let (lit, s) = z_length(b, lit, s, src_end);
     let lit = b.f.ins().uextend(I64, lit);
     let d_lit = b.f.ins().iadd(d, lit);
+    // The literals within the destination and the source both: a length the block states past its own bytes
+    // reads nothing after them (decision 0403).
     let fits = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, d_lit, dst_end);
+    let s_lit = b.f.ins().iadd(s, lit);
+    let held = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, s_lit, src_end);
+    let fits = b.f.ins().band(fits, held);
     b.f.ins().brif(fits, literals, &[], done, &[]);
     b.f.switch_to_block(literals);
     z_copy_exact(b, s, d, lit);
     let s = b.f.ins().iadd(s, lit);
-    let more = b.f.ins().icmp(IntCC::UnsignedLessThan, s, src_end);
+    // A match's two offset bytes within the source, else the block's last literals ended it.
+    let s2 = b.f.ins().iadd_imm(s, 2);
+    let more = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, s2, src_end);
     b.f.ins().brif(more, after, &[], done, &[]);
     // The match: its offset back, its length (4 more than its own).
     b.f.switch_to_block(after);
@@ -1994,7 +2037,17 @@ fn z_copy_exact(b: &mut B<'_, '_>, s: Value, d: Value, n: Value) {
 fn end_of(b: &mut B<'_, '_>) -> Value {
     let i = b.arg(0);
     let size = b.call("tape_size", &[i]);
-    b.f.ins().iadd(i, size)
+    hop(b, i, size)
+}
+
+/// `c + size`, past `c` however `size` wraps, and no further than the tape's nodes: a walk by sizes ends whatever
+/// the tape holds, and every node it gives is one of the tape's (decision 0403).
+fn hop(b: &mut B<'_, '_>, c: Value, size: Value) -> Value {
+    let to = b.f.ins().iadd(c, size);
+    let past = b.f.ins().iadd_imm(c, 1);
+    let to = b.f.ins().umax(to, past);
+    let nodes = b.view(at::NODES);
+    b.f.ins().umin(to, nodes)
 }
 
 /// The node after the node's subtree while it is before `end` (its parent's subtree's end), else `NONE`.
@@ -2049,7 +2102,7 @@ fn child_count(b: &mut B<'_, '_>) -> Value {
     b.f.ins().brif(more, body, &[], done, &[n.into()]);
     b.f.switch_to_block(body);
     let size = b.call("tape_size", &[c]);
-    let c = b.f.ins().iadd(c, size);
+    let c = hop(b, c, size);
     let n = b.f.ins().iadd_imm(n, 1);
     b.f.ins().jump(head, &[c.into(), n.into()]);
     b.f.switch_to_block(done);
@@ -2061,7 +2114,7 @@ fn child(b: &mut B<'_, '_>) -> Value {
     let (i, k) = (b.arg(0), b.arg(1));
     let end = b.call("tape_end_of", &[i]);
     let first = b.f.ins().iadd_imm(i, 1);
-    let (head, body, hop, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
+    let (head, body, hop_to, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
     b.f.append_block_param(head, I32);
     b.f.append_block_param(head, I32);
     b.f.append_block_param(done, I32);
@@ -2072,10 +2125,10 @@ fn child(b: &mut B<'_, '_>) -> Value {
     let none = b.c32(NONE);
     b.f.ins().brif(more, body, &[], done, &[none.into()]);
     b.f.switch_to_block(body);
-    b.f.ins().brif(k, hop, &[], done, &[c.into()]);
-    b.f.switch_to_block(hop);
+    b.f.ins().brif(k, hop_to, &[], done, &[c.into()]);
+    b.f.switch_to_block(hop_to);
     let size = b.call("tape_size", &[c]);
-    let c = b.f.ins().iadd(c, size);
+    let c = hop(b, c, size);
     let k = b.f.ins().iadd_imm(k, -1);
     b.f.ins().jump(head, &[c.into(), k.into()]);
     b.f.switch_to_block(done);

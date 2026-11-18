@@ -241,8 +241,7 @@ pub fn zcache_for(views: &mut [DocView], base: impl Fn(&DocView) -> u64) -> Opti
 
 /// A cache's counts in the profile (`zcache.*`; the statistics mode's too, where it is on): when its batch is done.
 pub fn zcache_report(cache: &metal::Buffer) {
-    // SAFETY: the cache's header, in its shared buffer; its batch's kernels are done.
-    let c = unsafe { rerail_clif::view::cache::Counts::read(cache.contents().cast::<u8>()) };
+    let c = zcache_counts(cache);
     for (name, n) in c.named() {
         rerail_prof::count(name, n as usize);
     }
@@ -250,8 +249,13 @@ pub fn zcache_report(cache: &metal::Buffer) {
 
 /// The failures a cache has counted (no room: a read of its dead entry).
 pub fn zcache_failed(cache: &metal::Buffer) -> u32 {
-    // SAFETY: as `zcache_report`'s.
-    unsafe { rerail_clif::view::cache::Counts::read(cache.contents().cast::<u8>()) }.failed
+    zcache_counts(cache).failed
+}
+
+/// A cache's counts once its batch's kernels are done, the cache checked (`Spec::check`, decision 0403).
+fn zcache_counts(cache: &metal::Buffer) -> rerail_clif::view::cache::Counts {
+    // SAFETY: the cache's shared buffer, all of it; its batch's kernels are done.
+    rerail_clif::view::cache::Counts::checked(unsafe { std::slice::from_raw_parts(cache.contents().cast::<u8>(), cache.length() as usize) })
 }
 
 /// The slabs a batch of sources binds (PIAT §20.4.5, Q-R3): block programs take this many slab

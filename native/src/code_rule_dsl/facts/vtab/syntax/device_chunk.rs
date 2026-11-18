@@ -179,8 +179,8 @@ pub struct ViewsInPlace {
 impl Drop for ViewsInPlace {
     fn drop(&mut self) {
         if let Some(cache) = &self.cache {
-            // SAFETY: the cache's header, in its shared buffer; no stage reads the views once the directory goes.
-            let c = unsafe { rerail_clif::view::cache::Counts::read(cache.contents().cast::<u8>()) };
+            // SAFETY: the cache's shared buffer, all of it; no stage reads the views once the directory goes.
+            let c = rerail_clif::view::cache::Counts::checked(unsafe { std::slice::from_raw_parts(cache.contents().cast::<u8>(), cache.length() as usize) });
             for (name, n) in c.named() {
                 crate::code_rule_dsl::prof::count(name, n as usize);
             }

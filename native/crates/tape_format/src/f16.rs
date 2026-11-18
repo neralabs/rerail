@@ -312,6 +312,13 @@ impl Placement {
     /// The view a tape's reads take (decision 0310), the tape at byte `base` of what the view's offsets count from
     /// (0: the tape's own bytes).
     pub fn view(&self, lang: &Lang, base: usize) -> Result<TapeView, String> {
+        // Each node's region as long as its nodes at `lang`'s widths: a read of a node of the tape lies in its region
+        // (decision 0403; its walks give only nodes of the tape).
+        let (_, _, w) = lang.device();
+        let want = [self.n, self.n * w[0], self.n * w[1], self.n * w[2], self.n.div_ceil(K) * self.cw];
+        if let Some(r) = (0..want.len()).find(|&r| self.at[r + 1] - self.at[r] - 8 < want[r]) {
+            return Err(format!("a format 16 tape's region {r} is shorter than its {} nodes", self.n));
+        }
         bind(self.frame(base)?, lang)
     }
 
@@ -870,12 +877,27 @@ impl Tape16Z {
         let sides: Vec<[u32; 4]> = u32s(&buf, HEAD16Z + 4 * (blocks + 1), 4 * blocks)?.as_chunks::<4>().0.to_vec();
         let comp = HEAD16Z + 4 * (blocks + 1) + 16 * blocks;
         let len = u64_at(&buf, head::LENGTHS)?;
-        if (buf.len() - comp.min(buf.len())) as u64 != len || at.first() != Some(&0) || at.last().map(|&e| u64::from(e)) != Some(len) || at.windows(2).any(|w| w[0] > w[1]) {
+        // The block index sorted, from 0 to the compressed bytes' end, which is the tape's: every block's bytes lie
+        // in the tape (a reader reads `at[b]..at[b + 1]` and nothing else of it; decision 0403).
+        if comp > buf.len() || (buf.len() - comp) as u64 != len || at.first() != Some(&0) || at.last().map(|&e| u64::from(e)) != Some(len) || at.windows(2).any(|w| w[0] > w[1]) {
             return Err("a 16z tape's block index does not fit it".into());
         }
-        let widths = std::array::from_fn(|k| usize::from(buf[head::WIDTHS + k]));
+        // Its nodes numbered in a u32 (the device's), its blocks within a cache key's 22 bits (`(id << 22) | block`).
+        if u32::try_from(n).is_err() || blocks >= 1 << 22 {
+            return Err("a 16z tape too long for its reads".into());
+        }
+        let widths: [usize; 3] = std::array::from_fn(|k| usize::from(buf[head::WIDTHS + k]));
+        let cw = usize::from(buf[head::CW]);
+        // Each block's decoded size within what LZ4 decodes its bytes to (255 bytes a byte at most): the side lengths
+        // the index states size every cache entry, so they are bounded by the bytes stored, not taken on trust.
+        for (b, side) in sides.iter().enumerate() {
+            let decoded = layout(Z, widths, cw, *side)[REGIONS] as u64;
+            if decoded > 255 * u64::from(at[b + 1] - at[b]) + 4096 {
+                return Err(format!("a 16z tape's block {b} states {decoded} bytes decoded, past its compressed bytes' bound"));
+            }
+        }
         let vw = std::array::from_fn(|k| usize::from(buf[head::VW + k]));
-        Ok(Tape16Z { id: next_id(), mark: buf[head::MARK], n, cw: usize::from(buf[head::CW]), source_len: u64_at(&buf, head::SOURCE_LEN)?, widths, vw, buf, comp, at, sides })
+        Ok(Tape16Z { id: next_id(), mark: buf[head::MARK], n, cw, source_len: u64_at(&buf, head::SOURCE_LEN)?, widths, vw, buf, comp, at, sides })
     }
 
     /// The view the reads written once take of this tape as stored (decision 0353 step 4b,
@@ -890,7 +912,9 @@ impl Tape16Z {
             return Err(format!("a tape of revision {}, read with revision {}", self.mark, lang.revision));
         }
         let blocks = self.n.div_ceil(Z);
-        let largest = (0..blocks).map(|b| layout(Z.min(self.n - b * Z), self.widths, self.cw, self.sides[b])[REGIONS]).max().unwrap_or(0);
+        // An entry holds any block decoded as a full one (`Z` nodes): a read of a node of the block, past its last
+        // too, lies in its entry (decision 0403).
+        let largest = (0..blocks).map(|b| layout(Z, self.widths, self.cw, self.sides[b])[REGIONS]).max().unwrap_or(0);
         let entry = (z::SLOT_BYTES as usize + largest + z::SLACK).next_power_of_two();
         let frame = Placement { n: self.n, cw: self.cw, at: [0; REGIONS + 1], parts: [0; 4], vw: self.vw }.frame(0)?;
         let mut view = bind(frame, lang)?;
@@ -1277,6 +1301,95 @@ mod tests {
         let f15 = crate::tape::F15::new(&image, columns, &table).unwrap();
         let v = crate::tape::f15_view(&image, 0).unwrap();
         same_reads(&reads, &f15, &image, &v);
+    }
+
+    /// Decision 0403: a 16z tape's reads stay within it and its cache, whatever its blocks hold. A side length past
+    /// what its block's bytes decode to is refused when the tape is read in. A block whose literals claim more
+    /// bytes than it has is decoded no further than its own: the tape lies against a page no read may touch, and
+    /// every node is read. A node past the tape's last reads the cache's dead entry, a failure counted. The cache
+    /// is found as it was made (`Spec::check`), and its guard overwritten is found.
+    #[cfg(unix)]
+    #[test]
+    fn a_16z_tapes_reads_stay_within_its_bytes() {
+        use rerail_clif::view::cache;
+        let reads = rerail_clif::jit::Reads::new();
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let plain = Plain(&nodes, &table);
+        let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), pos + 2, 0, true) else { panic!("16z") };
+        let (n, blocks) = (z.len(), z.len().div_ceil(Z));
+        // A side length past its block's bound: refused.
+        let mut stated = z.as_bytes().to_vec();
+        let at = HEAD16Z + 4 * (blocks + 1) + 12;
+        stated[at..at + 4].copy_from_slice(&(64u32 << 20).to_le_bytes());
+        let refused = Tape16Z::from_bytes(stated).err().expect("refused");
+        assert!(refused.contains("past its compressed bytes' bound"), "{refused}");
+        // The last block's literals made to claim more bytes than the block has, within its decoded room.
+        let mut bytes = z.as_bytes().to_vec();
+        let (from, to) = (z.comp + z.at[blocks - 1] as usize, z.comp + z.at[blocks] as usize);
+        let room = layout(n - (blocks - 1) * Z, z.widths, z.cw, z.sides[blocks - 1])[REGIONS];
+        let claim = (to - from + 64).min(room - 16);
+        assert!(claim > to - from, "a block that compresses: {} bytes for {room}", to - from);
+        let extra = claim - 15;
+        let mut block = vec![0xF0u8];
+        block.extend(std::iter::repeat_n(255u8, extra / 255));
+        block.push((extra % 255) as u8);
+        assert!(block.len() < to - from, "the claim fits the block's bytes");
+        bytes[from..from + block.len()].copy_from_slice(&block);
+        // The tape's last byte against a page no read may touch (64 KiB: a page or several, on every host).
+        unsafe extern "C" {
+            fn mmap(addr: *mut u8, len: usize, prot: i32, flags: i32, fd: i32, offset: i64) -> *mut u8;
+            fn mprotect(addr: *mut u8, len: usize, prot: i32) -> i32;
+            fn munmap(addr: *mut u8, len: usize) -> i32;
+        }
+        const GUARD: usize = 1 << 16;
+        #[cfg(target_os = "macos")]
+        const ANON: i32 = 0x1000;
+        #[cfg(not(target_os = "macos"))]
+        const ANON: i32 = 0x20;
+        let span = bytes.len().next_multiple_of(GUARD) + GUARD;
+        // SAFETY: a fresh private mapping of `span` bytes; its last `GUARD` bytes made unreadable.
+        let map = unsafe { mmap(std::ptr::null_mut(), span, 3, 2 | ANON, -1, 0) };
+        assert!(!map.is_null() && map as isize != -1, "a mapping");
+        assert_eq!(unsafe { mprotect(map.add(span - GUARD), GUARD, 0) }, 0, "a page no read may touch");
+        // SAFETY: the readable part of the mapping holds the tape, ending at the unreadable page.
+        let tape = unsafe { map.add(span - GUARD - bytes.len()) };
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), tape, bytes.len()) };
+        let reader = rerail_clif::view::Reader::new(&z.view(&lang).unwrap(), tape);
+        let f = ["tape_number", "tape_start", "tape_end", "tape_parent", "tape_size", "tape_next", "tape_child_count", "tape_first_child", "tape_length"].map(|name| reads.function(name));
+        let read = |i: u32| {
+            for &g in &f {
+                // SAFETY: a read's signature: the tape's base, its view, a node.
+                let g: extern "C" fn(*const u8, *const TapeView, u32) -> u32 = unsafe { std::mem::transmute(g) };
+                std::hint::black_box(g(tape, reader.view(), i));
+            }
+        };
+        for i in 0..n as u32 {
+            read(i);
+        }
+        assert_eq!(reader.counts().expect("a 16z cache").failed, 0, "every node of the tape found its block");
+        // Nodes past the last: the dead entry, each a failure.
+        for i in n as u32..(blocks + 3) as u32 * Z as u32 {
+            read(i);
+        }
+        read(u32::MAX);
+        assert!(reader.counts().expect("a 16z cache").failed > 0, "a node past the tape counted");
+        drop(reader);
+        // SAFETY: the mapping made above, no read of it left.
+        unsafe { munmap(map, span) };
+        // A cache overwritten past its slack, or in its shape, is found.
+        let spec = cache::Spec::new(3, 4, 4096);
+        let mut buf = vec![0u8; spec.bytes()];
+        spec.init(&mut buf).unwrap();
+        assert_eq!(cache::Spec::check(&buf), Ok(spec));
+        let end = buf.len() - 1;
+        buf[end] ^= 1;
+        assert!(cache::Spec::check(&buf).unwrap_err().contains("guard"));
+        buf[end] ^= 1;
+        buf[cache::DEAD as usize] ^= 8;
+        assert!(cache::Spec::check(&buf).unwrap_err().contains("overwritten"));
     }
 
     /// Decision 0353 step 4b: a rolling cache shared by threads (`view::cache`, its stamps checked after each read)
