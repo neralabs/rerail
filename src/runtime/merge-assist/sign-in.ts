@@ -139,6 +139,17 @@ export class SignInReads {
     return reading;
   }
 
+  /**
+   * What `shown` compares to tell that `gh`'s sign-in changed, as one string: this environment and its hosts file's
+   * stamp, read with one stat and no process, so a login, logout, switch or refresh made with `gh` moves it; empty for
+   * a repository not on GitHub, for which no status runs `gh`.
+   */
+  async stamp(repositoryKey: string): Promise<string> {
+    if (githubRepositoryOf(repositoryKey) === null) return "";
+    const stamp = this.#options.github().signInStamp();
+    return `${stamp.environment}\u0000${await stamp.file}`;
+  }
+
   /** Resolves once the reads of `gh` running now have answered and kept what they said. */
   async settled(): Promise<void> {
     await Promise.allSettled([...this.#reads.values()]);

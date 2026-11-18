@@ -278,6 +278,28 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     expect(github.readinessReads).toBe(reads + 2);
   });
 
+  it("says the stamp of gh's sign-in a status compares, with no gh run, only while Merge Assist is on for a GitHub repository", async () => {
+    const ws = await workspace({ remote: "https://github.com/acme/app.git" });
+    const github = new FakeGithub();
+    const service = ws.service({ github });
+    expect(await service.signInStamp(ws.repo)).toBe("");
+    await service.setEnabled(ws.repo, true);
+    const reads = github.readinessReads;
+
+    const before = await service.signInStamp(ws.repo);
+    github.options.signInStamp = "after gh auth logout";
+    const after = await service.signInStamp(ws.repo);
+
+    expect([before, after === before, github.readinessReads]).toEqual([expect.stringContaining("hosts.yml as first written"), false, reads]);
+    expect(await service.signInStamp(ws.folder)).toBe("");
+    await service.setEnabled(ws.repo, false);
+    expect(await service.signInStamp(ws.repo)).toBe("");
+    const local = await workspace();
+    const localService = local.service({ github });
+    await localService.setEnabled(local.repo, true);
+    expect(await localService.signInStamp(local.repo)).toBe("");
+  });
+
   it("reads gh's sign-in afresh at a scan, and for a listing whose stat of gh's hosts file has not answered when its listing did", async () => {
     const ws = await workspace({ remote: "https://github.com/acme/app.git" });
     let now = Date.parse("2026-11-03T14:00:00Z");

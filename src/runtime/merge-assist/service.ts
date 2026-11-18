@@ -64,6 +64,13 @@ export interface MergeAssistService {
   settings(checkoutPath: string): Promise<MergeAssistSettings>;
   /** Change the person's settings for the checkout's repository; a field left out stays, `hook: null` removes the command. */
   updateSettings(checkoutPath: string, change: MergeAssistSettingsChange): Promise<MergeAssistStatus>;
+  /**
+   * What a status of the checkout compares to tell that `gh`'s sign-in changed: this process's `gh` environment and its
+   * hosts file's stamp, read with one stat and no process, so a login, logout, switch or refresh made with `gh` moves
+   * it. Empty where a status runs no `gh`: Merge Assist off for the checkout's repository, a repository not on GitHub,
+   * a checkout not recorded. The dashboard's change stream reads it at each beat, so an open page reads the status then.
+   */
+  signInStamp(checkoutPath: string): Promise<string>;
 }
 
 /** A change to the person's Merge Assist settings for a repository. */
@@ -414,6 +421,11 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
       lastScan: readState(db, STATE_KEYS.scan(root), lastScanSchema) ?? null,
       conflicts: orderConflicts(readConflicts(db, root).map(entry => entry.conflict)),
     };
+  }
+
+  async signInStamp(checkoutPath: string): Promise<string> {
+    const checkout = this.#activeCheckout(checkoutPath);
+    return checkout === undefined ? "" : await this.#signIn.stamp(checkout.repositoryKey);
   }
 
   /**

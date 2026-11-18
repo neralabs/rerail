@@ -104,4 +104,9 @@ export class RecordingMergeAssistService implements MergeAssistService {
   dismissConflict(checkout: string, conflictId: string): Promise<MergeAssistStatus> {
     return this.#answer({ method: "dismissConflict", checkout, conflictId });
   }
+
+  /** No `gh` stands behind these statuses, so nothing moves its sign-in. */
+  signInStamp(): Promise<string> {
+    return Promise.resolve("");
+  }
 }

@@ -9,7 +9,8 @@ import { createRerailApi } from "../../src/api/http.js";
 import { operations } from "../../src/api/operations.js";
 import { DatabaseApiStores, type DatabaseApiStoresOptions } from "../../src/api/stores.js";
 import { openRerailDatabase, recordCheckout, type RerailDatabase } from "../../src/engine/index.js";
-import { SqliteSessionStore, type MergeAssistService } from "../../src/runtime/index.js";
+import { createMergeAssistService, SqliteSessionStore, type MergeAssistService } from "../../src/runtime/index.js";
+import { FakeGithub } from "../support/merge-assist/workspace.js";
 import { installPack, uninstallPack } from "../support/installed-packs.js";
 import { gitRepository } from "../support/repository-setup.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
@@ -66,6 +67,20 @@ async function filesRead(stream: ReturnType<typeof messagesOf>): Promise<Message
   const read = await stream.next();
   expect(read.data).not.toBe(first.data);
   return read;
+}
+
+/**
+ * The first message of a stream scoped to a checkout no stream followed before, then the tokens its `reads` reads of
+ * the checkout's parts send, each moving the token; the last of them.
+ */
+async function partsRead(stream: ReturnType<typeof messagesOf>, reads: number): Promise<Message> {
+  let last = await stream.next();
+  for (let read = 0; read < reads; read += 1) {
+    const next = await stream.next();
+    expect(next.data).not.toBe(last.data);
+    last = next;
+  }
+  return last;
 }
 
 describe("the daemon's change stream (GET /api/changes)", () => {
@@ -341,6 +356,53 @@ describe("the daemon's change stream (GET /api/changes)", () => {
 
     expect(await movedFrom(stream, first.data)).toBeDefined();
     await stream.stop();
+  });
+
+  it("sends a new token at the beat after gh's hosts file moved, while Merge Assist is on for the checkout's GitHub repository", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const checkout = gitRepository(join(realpathSync(root), "web"));
+    execFileSync("git", ["remote", "add", "origin", "https://github.com/acme/web.git"], { cwd: checkout });
+    const github = new FakeGithub();
+    const mergeAssist = createMergeAssistService({ database, github });
+    await mergeAssist.setEnabled(checkout, true);
+    const signedIn = storesFor({ changeFeed: { beatMs: BEAT_MS }, mergeAssist });
+    const stream = messagesOf(await createRerailApi(signedIn, operations, { version: "0.0.0-test" }).request(`/api/changes?${new URLSearchParams({ checkout })}`));
+    try {
+      // The checkout's files and gh's sign-in, each read once at the start.
+      const read = await partsRead(stream, 2);
+
+      // `gh auth logout` rewrites the hosts file, so its stamp moves.
+      github.options.signInStamp = "after gh auth logout";
+      await vi.advanceTimersByTimeAsync(BEAT_MS);
+
+      expect(await movedFrom(stream, read.data)).toBeDefined();
+    } finally {
+      await stream.stop();
+      signedIn.close();
+      await mergeAssist.stop();
+    }
+  });
+
+  it("reads the checkout's files at each beat while a stat of gh's hosts file never answers", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const checkout = gitRepository(join(realpathSync(root), "web"));
+    mkdirSync(join(checkout, ".rerail", "rules"), { recursive: true });
+    recordCheckout(database, checkout);
+    // Only the sign-in stamp is read here, and it never answers, as on a home folder whose share dropped.
+    const mergeAssist = { signInStamp: () => new Promise<never>(() => undefined) } as unknown as MergeAssistService;
+    const stalled = storesFor({ changeFeed: { beatMs: BEAT_MS }, mergeAssist });
+    const stream = messagesOf(await createRerailApi(stalled, operations, { version: "0.0.0-test" }).request(`/api/changes?${new URLSearchParams({ checkout })}`));
+    try {
+      const first = await filesRead(stream);
+
+      writeFileSync(join(checkout, ".rerail", "rules", "local.json"), "{}\n");
+      await vi.advanceTimersByTimeAsync(BEAT_MS);
+
+      expect(await movedFrom(stream, first.data)).toBeDefined();
+    } finally {
+      await stream.stop();
+      stalled.close();
+    }
   });
 
   it("stops listening when the client leaves before reading anything, with the read of the checkout's files still out", async () => {

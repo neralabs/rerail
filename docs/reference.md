@@ -437,7 +437,9 @@ The daemon writes rules and work links; the shared runtime records harness event
 - `/api/changes[?checkout=<path>]` stays open while the dashboard tab shows. Each message's data is a change token: it
   is sent at once, again when any process's commit to the database becomes readable or a pack is installed or
   removed, and every 5 s, so the page can tell a daemon that stopped answering from one with nothing to say; the
-  checkout's own rules and branches are read at that 5 s message, and a token that moved is sent once read. A message
+  checkout's own rules and branches, and while Merge Assist is on for its GitHub repository the daemon's gh hosts file,
+  are read at that 5 s message, and a token that moved is sent once read, so a login, logout or switch made with gh
+  shows on an open Merge Assist page within about 5 s. A message
   named `conflicts` comes at each Merge Assist conflict event. The page reads again when the token moves: a single
   commit at once, several in a row at most 5 s after the first. It also reads at a 5 s message once its activity
   window has moved on, or while its Merge Assist page shows a scan running or gh signed out, missing or unavailable,
