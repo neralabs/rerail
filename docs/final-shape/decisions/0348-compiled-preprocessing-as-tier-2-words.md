@@ -172,8 +172,8 @@ directives' ladder, so mode (a) keeps its lean tape.
 ## Stage 2, built: the words, on the interpreter
 
 The words are `rerail-compiler`'s `pp_words` (opcodes `0x67`–`0x76` in `program.rs`), and the
-program is `rerail-c-directives`' `expand/expand.rir` (84 words; C's leaves out its `C++ only`
-lines).
+program is `rerail-c-directives`' `expand/expand.rir` (84 words, one program for C and C++:
+the dialect is the run's, `Env::cpp`; see "Built since").
 - **The words.** Each acts on one store, and a test runs the next word or skips it, as tier 2's
   tests do:
   - `READ` and `LINE` read: the next token unexpanded, the directive line's next token;
@@ -346,23 +346,20 @@ returns the same `Expanded` the interpreter does, and the host takes either as i
 - The records handed to the host on a miss are rows now: wanted files and unanswered features
   (`asked`) are each a row plus a range of bytes.
 
-**`#if` flattened to a depth K (4c).** This follows the user's steer: a stack is fine, but the
-first levels are flattened, and the file decides how many.
+**`#if` flattened to a depth K (4c): built, measured, and removed.** This followed the user's
+steer that a stack is fine but the first levels are flattened, the file deciding how many.
 
-- The evaluator's region is the words reached from `#if`'s `PUSH` of `EXPR m=14` (`evaluator`). It
-  holds only `EXPR`, `PUSH`, `GOTO` and `RETURN`, and is lowered once per static depth `d` in
-  `0..=K`.
-- Return points at depths below K are SSA variables. A `PUSH` at `d < K` sets one and goes on at
-  `d + 1`. At K it spills them all to the return stack and goes on at depth 0. A `RETURN` at
-  `d > 0` branches on its variable to the copy at `d - 1`; at depth 0 it is the dynamic `RETURN`.
-- Each `EXPR` word in the region is a function of its own, called from every depth, so the
-  copies stay small.
-- K comes from the files. `expand::if_depth` counts, on each `#if` and `#elif` line's tokens
-  (mode (a)'s condition spans), the calls the evaluator makes: a primary 3, a prefix 1, `(` 4,
-  `?:` 2 and 1, a binary operator 2, at most 10 a level. The TU's K is the largest count rounded
-  up to a power of two, at most 16 (`Compiled::depth`).
-- `Compiled`, owned by the caller, compiles each K once. Over the corpus, 2,272 TUs ran at K 0,
-  182 at 4, 313 at 8 and 297 at 16.
+- The evaluator's words were lowered once per static depth `d` in `0..=K`, the return points
+  below K in SSA variables, past K on the return stack. Each `EXPR` word was a function of its
+  own, called from every depth.
+- K came from the files: `expand::if_depth` counted the evaluator's calls on each `#if` line's
+  tokens, rounded up to a power of two, at most 16, and `Compiled` compiled each K once.
+- **Removed.** A build at depth K serves every TU, since a TU goes only as deep as its `#if`s
+  do, so compiling per depth bought nothing that one build did not. And one build at depth 16
+  was slower than one at 0 on both compilers, every corpus TU on each (M1 Max, quiet run):
+  Cranelift 1,388 M cycles against 1,249 M (1.11×), rustc 861 M against 515 M (1.67×). The
+  copies cost more in code size than the return stack's loads and tables saved. So the words
+  are compiled once, the evaluator's calls on the return stack (`native_cpu_pp::compile`).
 
 **Large words outlined (4d).** The run's function was 198–248 KB of machine code, larger than an
 M1 core's instruction cache. `BUILTIN`'s three modes each held the whole of `builtin_value`: 19k
@@ -372,17 +369,16 @@ of its 47k CLIF instructions. `GLUE`, `PRAGMA`, `LINEDIR`, `DEFINED` and `EXPR`'
 - Each word is now lowered alone first. One over 512 CLIF instructions (`OUTLINE`) becomes a
   function of its own, called by `call_word`. Its result is 0 for the next word, 1 for the one
   after, or a refusal.
-- The run's function is now 56–68 KB at K 0–1 and 97 KB at K 16. The shape test refuses any
-  function over 128 KB, and reports each function's bytes and each word's instructions.
+- The run's function is now 56–68 KB. The shape test refuses any function over 128 KB, and
+  reports each function's bytes and each word's instructions.
 
 **Tests.**
 
 - `the_compiled_words_are_the_interpreters`: the standard's examples and the TUs, in C and C++,
-  at K 0, 1, 4 and 16, each token's kind, flags and spelling and the expansions. All 60 runs
-  equal.
-- `the_compiled_ifs_have_the_interpreters_values`: deep `#if`s past K and at exactly K.
+  each token's kind, flags and spelling and the expansions.
+- `the_compiled_ifs_have_the_interpreters_values`: `#if`'s primaries and operators value by
+  value, and deep `#if`s.
 - `the_compiled_words_have_their_shape`.
-- `an_ifs_depth_is_estimated_from_above`.
 - The corpus, ignored and run on the farm: 3,060 TUs the same, 75 refused by both (the token
   grammar's refusals, Q35), 0 differ.
 
@@ -424,6 +420,17 @@ need a profiler run, which is open.
   own. The text is a named entry of the file on top, of a kind of its own (`Named::pragma`).
   Where the host has not lexed it yet, it is wanted, and the TU runs again. `#pragma` and
   `_Pragma` share `pragma_of`, and the byte scan (`pragma_words`) is gone.
+- **One program for C and C++.** C's program had been the text with its five `; C++ only` lines
+  left out, so every build was made twice. Those lines were table data, not words: three
+  punctuators, the literal suffix paste, and `#if`'s alternative tokens and `true`. Now
+  `ppop sN cpp` marks C++'s punctuators (`PpTables::cpp_ops`), `Env::cpp` gives the run's
+  dialect, and the compiled words test it (`Ctx::cpp`) where the tables are C++'s. The example
+  "pastes by dialect" and `the_dialects_examples_differ` check that the lean pass tells the
+  dialects apart there, so words equal to it in both read the flag.
+- **One build.** With the dialect a run's and no depth (4c, above), the words compile once:
+  one JIT compile a process, one ahead-of-time build (`rerail_pp_aot::BUILD`, 3.4 MB of Rust).
+  On the corpus (3,060 TUs, 0 differ): the interpreter 1,098 M cycles, Cranelift 1,235 M,
+  rustc 487 M, the lean pass 1,876 M.
 
 **Left:** Q36's plan (t44).
 

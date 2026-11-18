@@ -158,10 +158,6 @@ pub struct File<'a> {
     pub chains: &'a [(u32, u32)],
     pub includes: &'a [(u32, u32)],
     pub named: &'a [Named],
-    /// The most calls an `#if` or `#elif` of it takes `#if`'s evaluator to, as the host
-    /// estimates it on the line's tokens: what the compiled words' depth is chosen by
-    /// (`native_cpu_pp::compile_k`). The interpreter does not read it.
-    pub if_depth: u32,
 }
 
 /// An include whose header name is made by expanding its line: the name (its quotes or brackets

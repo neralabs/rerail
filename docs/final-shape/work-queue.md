@@ -879,6 +879,10 @@ pass.
   blocks marked cold: −1.4%, not kept. The plan: `docs/final-shape/notes/t44-pp-words-codegen-plan.md`
   (cycles by word, the two compilers' code side by side, fixes one at a time, K judged on both,
   and a decision for the user on which code the CPU path runs).
+- **Record** (2026-11-17, later): t44's step 4 done. `#if` flattening measured slower on both
+  compilers (depth 16 against 0: Cranelift 1.11×, rustc 1.67×) and removed; C and C++ made one
+  program, the dialect `Env::cpp`. One build each: Cranelift 1,235 M cycles, rustc 487 M, the
+  interpreter 1,098 M. Steps 1–3 and the user's choice (step 5) are open.
 
 ### Q37. The pp words' ahead-of-time Rust (`clif_rust`), checked once
 

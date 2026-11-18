@@ -19,7 +19,7 @@ use crate::pp_words::{self, DIGITS, EmC, Asked, B_BASE_FILE, B_COUNTER, B_DATE, 
 use crate::program::{ACCEPT, ARG, BUILTIN, COND, EMBED, DEFINE, DEFINED, EXPR, FRAME, GLUE, GOTO, IF, INCLUDE, IS, LINEDIR, PRAGMA, SKIP, KEEP, LINE, LOOKUP, MACRO, PAINT, PEEK, PRE, PUSH, PUT, PpTables, READ, RETURN, SKIPLINE, STOP, STR, SUB, UNDEF, Words, split};
 use cranelift_codegen::ir::{AbiParam, Block, BlockArg, BlockCall, InstBuilder, JumpTableData, MemFlags, Value, condcodes::IntCC, types};
 use cranelift_codegen::ir::{ExtFuncData, ExternalName, FuncRef, UserExternalName};
-use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Switch, Variable};
+use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Switch};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module, default_libcall_names};
 use std::mem::{offset_of, size_of};
@@ -200,7 +200,7 @@ pub struct CompiledPp {
     pub heads: Vec<Step>,
     /// Its machine code's bytes, each function's: the run's (`pp_run`) first.
     pub code_bytes: Vec<usize>,
-    /// Each word's CLIF instructions in the run's function (its copies' at every depth).
+    /// Each word's CLIF instructions in the run's function.
     pub word_insts: Vec<usize>,
     /// Each function's IR as Cranelift was given it, by its id, where asked for (`rust_source`).
     pub ir: Vec<(u32, cranelift_codegen::ir::Function)>,
@@ -289,19 +289,17 @@ struct Lower<'a, 'b> {
 }
 
 impl Lower<'_, '_> {
-    /// `rs` pushed on the return stack, the first lowest (refusing past its bound).
-    fn push_returns(&mut self, pc: usize, rs: &[Value]) {
+    /// Return point `v` (a rank) pushed on the return stack (refusing past its bound).
+    fn push_return(&mut self, pc: usize, v: Value) {
         let ctx = self.ctx;
         let n = ld(self.f, types::I64, ctx, at!(nreturns));
         let room = ld(self.f, types::I64, ctx, at!(room_returns));
-        let end = self.f.ins().iadd_imm(n, rs.len() as i64);
+        let end = self.f.ins().iadd_imm(n, 1);
         let ok = self.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, end, room);
         self.check(ok, pc, R_CALLS);
         let r = ld(self.f, types::I64, ctx, at!(returns));
         let slot = elem(self.f, r, n, 4);
-        for (i, &v) in rs.iter().enumerate() {
-            self.f.ins().store(flags(), v, slot, 4 * i as i32);
-        }
+        self.f.ins().store(flags(), v, slot, 0);
         st(self.f, types::I64, end, ctx, at!(nreturns));
     }
 
@@ -321,54 +319,7 @@ impl Lower<'_, '_> {
         self.refuse(pc, R_NO_CALL);
     }
 
-    /// Word `pc` of `#if`'s evaluator at static depth `d` (`Spec`): `d` calls' return points
-    /// in SSA variables, not on the return stack. A `PUSH` below the depth `K` keeps its return
-    /// point in a variable and goes on at depth `d + 1`; at `K`, the `K` kept are moved to the
-    /// return stack with it, and it goes on at depth 0. A `RETURN` returns to its variable's
-    /// return point at depth `d - 1`, at depth 0 to the return stack's. An `EXPR` word calls its
-    /// outlined function (one for every depth).
-    fn spec_word(&mut self, sp: &Spec, pc: usize, d: usize) {
-        let (op, mode, operand) = split(self.words[pc]);
-        let at = |sp: &Spec, l: &Self, p: usize, d: usize| if d == 0 { l.blocks[p] } else { sp.copies[d - 1][p] };
-        match op {
-            GOTO => {
-                let b = at(sp, self, usize::from(operand), d);
-                self.f.ins().jump(b, &[]);
-            }
-            PUSH => {
-                let r = self.f.ins().iconst(types::I32, i64::from(self.ranks[usize::from(operand)]));
-                if d < sp.k {
-                    self.f.def_var(sp.vars[d], r);
-                    let b = at(sp, self, pc + 1, d + 1);
-                    self.f.ins().jump(b, &[]);
-                } else {
-                    let mut rs: Vec<Value> = sp.vars.iter().map(|&v| self.f.use_var(v)).collect();
-                    rs.push(r);
-                    self.push_returns(pc, &rs);
-                    let b = self.blocks[pc + 1];
-                    self.f.ins().jump(b, &[]);
-                }
-            }
-            RETURN if d > 0 => {
-                let to = self.f.use_var(sp.vars[d - 1]);
-                let bad = self.f.create_block();
-                let targets: Vec<Block> = self.rets.iter().map(|&p| if sp.region[p] { at(sp, self, p, d - 1) } else { bad }).collect();
-                self.dispatch(pc, to, &targets);
-                self.f.switch_to_block(bad);
-                self.refuse(pc, R_NO_CALL);
-            }
-            RETURN => {
-                let _ = self.word(pc);
-            }
-            _ => {
-                let next = at(sp, self, pc + 1, d);
-                let skip = if pp_words::is_test(op, mode) { at(sp, self, pc + 2, d) } else { next };
-                self.call_word(sp.calls[pc].expect("an outlined word"), op, mode, next, skip);
-            }
-        }
-    }
-
-    /// An outlined word called (`compile_k`): its result 0 to `next`, 1 to `skip`, else the
+    /// An outlined word called (`compile`): its result 0 to `next`, 1 to `skip`, else the
     /// refusal; the held branch through a step of its own where the word steps where it holds.
     fn call_word(&mut self, fref: FuncRef, op: u8, mode: u8, next: Block, skip: Block) {
         let ctx = self.ctx;
@@ -6001,7 +5952,7 @@ impl Lower<'_, '_> {
             STOP => self.refuse(pc, R_STOPPED),
             PUSH => {
                 let r = self.f.ins().iconst(types::I32, i64::from(self.ranks[usize::from(operand)]));
-                self.push_returns(pc, &[r]);
+                self.push_return(pc, r);
                 self.next(pc);
             }
             RETURN => {
@@ -6616,27 +6567,10 @@ impl Lower<'_, '_> {
     }
 }
 
-/// `#if`'s evaluator lowered at each static depth (`Lower::spec_word`).
-struct Spec {
-    /// The depth `K`: the calls whose return points are kept in variables.
-    k: usize,
-    /// Whether each word is the evaluator's.
-    region: Vec<bool>,
-    /// The evaluator's words' blocks at depths 1 to `K` (depth 0's are the program's).
-    copies: Vec<Vec<Block>>,
-    /// The return points of the calls at depths 0 to `K - 1`, as ranks.
-    vars: Vec<Variable>,
-    /// Each outlined word's function.
-    calls: Vec<Option<FuncRef>>,
-}
-
 /// A word whose code is over this many CLIF instructions is a function of its own, called
-/// (`compile_k`): the run's function keeps the words a token passes through, not the rare large
+/// (`compile`): the run's function keeps the words a token passes through, not the rare large
 /// ones (each of `BUILTIN`'s modes made the whole of `builtin_value` again).
 pub const OUTLINE: usize = 512;
-
-/// The largest depth `compile_k` takes.
-pub const MAX_K: usize = 16;
 
 /// Each word's rank among the return points, and the return points by rank.
 fn return_points(words: &[u32]) -> (Vec<u32>, Vec<usize>) {
@@ -6652,57 +6586,17 @@ fn return_points(words: &[u32]) -> (Vec<u32>, Vec<usize>) {
     (ranks, rets)
 }
 
-/// `#if`'s evaluator: the words a call made for `EXPR m=14` (`PUSH` to it, then the callee's
-/// `GOTO`) reaches before its `RETURN`s. `None` unless they are all `EXPR`, `PUSH`, `GOTO` and
-/// `RETURN`, so they can be lowered at each depth.
-fn evaluator(words: &[u32]) -> Option<Vec<bool>> {
-    let mut region = vec![false; words.len()];
-    let mut work = Vec::new();
-    for pc in 0..words.len().saturating_sub(1) {
-        let (op, _, operand) = split(words[pc]);
-        let (rop, rmode, _) = split(words[usize::from(operand)]);
-        let (gop, _, callee) = split(words[pc + 1]);
-        if op == PUSH && rop == EXPR && rmode == 14 && gop == GOTO {
-            work.push(usize::from(callee));
-        }
-    }
-    while let Some(pc) = work.pop() {
-        if std::mem::replace(&mut region[pc], true) {
-            continue;
-        }
-        let (op, mode, operand) = split(words[pc]);
-        match op {
-            GOTO => work.push(usize::from(operand)),
-            PUSH => work.extend([pc + 1, usize::from(operand)]),
-            RETURN => {}
-            EXPR if mode != 14 => work.extend(if pp_words::is_test(op, mode) { vec![pc + 1, pc + 2] } else { vec![pc + 1] }),
-            _ => return None,
-        }
-    }
-    region.iter().any(|&r| r).then_some(region)
-}
-
 /// Compile `program`'s words (validated first).
 pub fn compile(program: &Words) -> Result<CompiledPp, Error> {
-    compile_k(program, 0)
+    compile_kept(program, false)
 }
 
-/// `compile`, `#if`'s evaluator flattened to depth `k` (at most `MAX_K`): its first `k` calls'
-/// return points are SSA variables, its words lowered once at each depth, so a `RETURN` there
-/// is a jump by a variable's value; past `k` the return stack holds them, as at depth 0. Its
-/// `EXPR` words are functions of their own, called from every depth, so the depths repeat only
-/// the calls' small words. `k` 0: no depth, no function of its own.
-pub fn compile_k(program: &Words, k: usize) -> Result<CompiledPp, Error> {
-    compile_kept(program, k, false)
-}
-
-/// The compiled words' IR at depth `k` as Rust (`clif_rust`): the same functions, compiled by
+/// The compiled words' IR as Rust (`clif_rust`): the same functions, compiled by
 /// rustc and LLVM ahead of time. Its entry is `pp_run`, run by `run_aot`; it ends with its
 /// fingerprint, `SOURCE`, so a build runs it only where the words translate to it again.
-pub fn rust_source(program: &Words, k: usize) -> Result<String, String> {
-    let c = compile_kept(program, k, true).map_err(|e| format!("{e:?}"))?;
-    let mut one = crate::clif_rust::translate(&c.ir, &[(c.run_id, "pp_run")], &[])?;
-    one.push_str(&format!("/// The depth it was compiled at.\npub const K: usize = {k};\n"));
+pub fn rust_source(program: &Words) -> Result<String, String> {
+    let c = compile_kept(program, true).map_err(|e| format!("{e:?}"))?;
+    let one = crate::clif_rust::translate(&c.ir, &[(c.run_id, "pp_run")], &[])?;
     let h = crate::clif_rust::fingerprint(&one);
     Ok(format!("{one}\n/// This source's fingerprint (`clif_rust::fingerprint` of what comes before).\npub const SOURCE: u64 = {h:#x};\n"))
 }
@@ -6710,7 +6604,7 @@ pub fn rust_source(program: &Words, k: usize) -> Result<String, String> {
 /// `pp_words::run`'s work, by an ahead-of-time build of the words (`rust_source`'s `pp_run`).
 ///
 /// # Safety
-/// `entry` must be `rust_source`'s `pp_run` for `program`, at any depth.
+/// `entry` must be `rust_source`'s `pp_run` for `program`.
 pub unsafe fn run_aot(entry: unsafe extern "C" fn(u64) -> u64, program: &Words, files: &[File], env: &Env, bounds: &Bounds) -> Result<Expanded, Refused> {
     // SAFETY: the same ABI: one pointer-sized argument, a 64-bit result.
     let code = unsafe { std::mem::transmute::<unsafe extern "C" fn(u64) -> u64, unsafe extern "C" fn(*mut Ctx) -> u64>(entry) };
@@ -6718,20 +6612,17 @@ pub unsafe fn run_aot(entry: unsafe extern "C" fn(u64) -> u64, program: &Words, 
     unsafe { pp_words::run_native(program, files, env, bounds, code, REASONS) }
 }
 
-/// The compiled words at depth `k`, their IR and machine code kept (`ir`, `disasm`): to read
+/// The compiled words, their IR and machine code kept (`ir`, `disasm`): to read
 /// Cranelift's code beside rustc's of the same IR (`rust_source`).
-pub fn disassemble(program: &Words, k: usize) -> Result<CompiledPp, Error> {
-    compile_kept(program, k, true)
+pub fn disassemble(program: &Words) -> Result<CompiledPp, Error> {
+    compile_kept(program, true)
 }
 
-fn compile_kept(program: &Words, k: usize, keep: bool) -> Result<CompiledPp, Error> {
+fn compile_kept(program: &Words, keep: bool) -> Result<CompiledPp, Error> {
     let mut ir = Vec::new();
     let mut disasm = Vec::new();
     let mut code_kept = Vec::new();
     pp_words::validate(program)?;
-    if k > MAX_K {
-        return Err(Error::RefusedShape(format!("#if's depth {k} is past {MAX_K}")));
-    }
     let mut builder = JITBuilder::with_flags(&[("opt_level", "speed")], default_libcall_names()).map_err(|_| Error::BackendFailure)?;
     // One arena for the module's code, so a call of an outlined word is a direct branch (its
     // `colocated`): JIT mappings apart can be past a branch's reach.
@@ -6743,16 +6634,13 @@ fn compile_kept(program: &Words, k: usize, keep: bool) -> Result<CompiledPp, Err
     signature.returns.push(AbiParam::new(types::I64));
     let id = module.declare_function("pp_run", Linkage::Local, &signature).map_err(|_| Error::BackendFailure)?;
     let (ranks, rets) = return_points(&program.words);
-    let region = if k > 0 { evaluator(&program.words) } else { None };
     let mut fctx = FunctionBuilderContext::new();
     let mut clif = String::new();
     let mut all_heads = Vec::new();
-    // The evaluator's `EXPR` words, a function each: 0 its next word, 1 the one after, else the
-    // refusal.
+    // The outlined words, a function each: 0 its next word, 1 the one after, else the refusal.
     let mut outlined = Vec::new();
     let mut sizes = Vec::new();
-    // Each word lowered alone, and kept so where it is large (or one of the evaluator's `EXPR`s
-    // at a depth): the words that go elsewhere than their next two stay in the run's function.
+    // Each word lowered alone, and kept so where it is large: the words that go elsewhere than their next two stay in the run's function.
     for pc in (0..program.words.len()).filter(|&pc| !matches!(split(program.words[pc]).0, GOTO | PUSH | RETURN | ACCEPT | STOP)) {
         let mut context = module.make_context();
         context.func.signature = signature.clone();
@@ -6783,8 +6671,7 @@ fn compile_kept(program: &Words, k: usize, keep: bool) -> Result<CompiledPp, Err
             f.seal_all_blocks();
             f.finalize();
         }
-        let evaluator = region.as_ref().is_some_and(|r| r[pc]) && split(program.words[pc]).0 == EXPR;
-        if !evaluator && context.func.dfg.num_insts() <= OUTLINE {
+        if context.func.dfg.num_insts() <= OUTLINE {
             module.clear_context(&mut context);
             continue;
         }
@@ -6825,29 +6712,12 @@ fn compile_kept(program: &Words, k: usize, keep: bool) -> Result<CompiledPp, Err
             let name = f.func.declare_imported_user_function(name.clone());
             calls[pc] = Some(f.import_function(ExtFuncData { name: ExternalName::user(name), signature: sig, colocated: true }));
         }
-        let spec = region.map(|region| {
-            // Blocks for the evaluator's words only (another's entry is never reached).
-            let copies = (0..k).map(|_| (0..program.words.len()).map(|p| if region[p] { f.create_block() } else { blocks[p] }).collect()).collect();
-            let vars = (0..k).map(|_| f.declare_var(types::I32)).collect();
-            Spec { k, region, copies, vars, calls: calls.clone() }
-        });
         f.ins().jump(blocks[0], &[]);
         let mut l = Lower { f: &mut f, ctx, words: &program.words, strings: &program.strings, blocks, exit, heads: Vec::new(), pp: &program.pp, ranks: &ranks, rets: &rets };
         for pc in 0..program.words.len() {
             let before = l.f.func.dfg.num_insts();
             let b = l.blocks[pc];
             l.f.switch_to_block(b);
-            if let Some(sp) = spec.as_ref().filter(|sp| sp.region[pc]) {
-                for d in 0..=k {
-                    if d > 0 {
-                        let b = sp.copies[d - 1][pc];
-                        l.f.switch_to_block(b);
-                    }
-                    l.spec_word(sp, pc, d);
-                }
-                word_insts[pc] = l.f.func.dfg.num_insts() - before;
-                continue;
-            }
             // A token read is a stated step: a cycle through `READ`'s block.
             let (op, mode, _) = split(l.words[pc]);
             if op == READ {
@@ -6914,7 +6784,7 @@ mod tests {
 
     /// A file of tokens over `text`: each a word, its kind and flags.
     fn file<'a>(text: &'a [u8], toks: &'a [Tok]) -> File<'a> {
-        File { path: b"main.c", bytes: text, lines: &[], toks, chains: &[], includes: &[], named: &[], if_depth: 0 }
+        File { path: b"main.c", bytes: text, lines: &[], toks, chains: &[], includes: &[], named: &[] }
     }
 
     fn tok(kind: u8, flags: u8, start: u32, end: u32) -> Tok {

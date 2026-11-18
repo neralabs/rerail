@@ -387,21 +387,16 @@ fn the_corpus_expands_as_the_lean_pass_does() {
     assert!(differ.is_empty());
 }
 
-/// The depths `#if`'s evaluator is compiled at in the tests (`compile_k`): none, one, and past
-/// and within the examples' nesting.
-const DEPTHS: [usize; 4] = [0, 1, 4, 16];
-
 /// The compiled words (`native_cpu_pp`, decision 0348's stage 4b) give the interpreter's tokens
-/// on every example and TU, in C and C++, `#if`'s evaluator at each of `DEPTHS`.
+/// on every example and TU, in C and C++.
 #[test]
 fn the_compiled_words_are_the_interpreters() {
-    use rerail_compiler::native_cpu_pp::compile_k;
     let dirs = [("inc", rerail_c_pp::files::DirKind::Angle), ("sys", rerail_c_pp::files::DirKind::System), ("sys2", rerail_c_pp::files::DirKind::System)];
     let mut tus: Vec<(String, Vec<(&str, &[u8])>)> = EXAMPLES.iter().map(|(n, s)| ((*n).to_owned(), vec![("main.c", s.as_bytes())])).collect();
     tus.extend(TUS.iter().map(|(n, f)| ((*n).to_owned(), f.iter().map(|f| (f.0, f.1.as_bytes())).collect())));
     let (mut same, mut differ) = (0, Vec::new());
-    for k in DEPTHS {
-        let c = compile_k(program().unwrap(), k).unwrap_or_else(|e| panic!("k {k}: {e:?}"));
+    {
+        let c = rerail_compiler::native_cpu_pp::compile(program().unwrap()).unwrap();
         let jit = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| c.run(w, f, e, b);
         // One compiled program; the dialect is the run's.
         for (cpp, (name, files)) in [false, true].into_iter().flat_map(|cpp| tus.iter().map(move |t| (cpp, t))) {
@@ -409,7 +404,7 @@ fn the_compiled_words_are_the_interpreters() {
             let got = expand_tu_with(files[0].0, &mut search(files, &dirs), cpp, &INTERPRETED, &jit);
             match got {
                 got if got == want => same += 1,
-                got => differ.push(format!("{name} (cpp {cpp}, k {k}): JIT {got:?}\n interpreter {want:?}")),
+                got => differ.push(format!("{name} (cpp {cpp}): JIT {got:?}\n interpreter {want:?}")),
             }
         }
     }
@@ -420,8 +415,8 @@ fn the_compiled_words_are_the_interpreters() {
 /// function's nesting shallow enough for rustc. `RERAIL_PP_AOT_DIR` set: written there.
 #[test]
 fn the_words_translate_to_rust() {
-    for k in [0, 16] {
-        let src = rerail_compiler::native_cpu_pp::rust_source(program().unwrap(), k).unwrap_or_else(|e| panic!("k {k}: {e}"));
+    {
+        let src = rerail_compiler::native_cpu_pp::rust_source(program().unwrap()).unwrap();
         let (mut depth, mut deepest) = (0usize, 0usize);
         for c in src.bytes() {
             match c {
@@ -433,14 +428,14 @@ fn the_words_translate_to_rust() {
                 _ => {}
             }
         }
-        eprintln!("k {k}: {} KB, {} lines, nesting {deepest}", src.len() >> 10, src.lines().count());
+        eprintln!("{} KB, {} lines, nesting {deepest}", src.len() >> 10, src.lines().count());
         if let Ok(dir) = std::env::var("RERAIL_PP_AOT_DIR") {
-            std::fs::write(std::path::Path::new(&dir).join(format!("pp_k{k}.rs")), &src).unwrap();
+            std::fs::write(std::path::Path::new(&dir).join("pp.rs"), &src).unwrap();
         }
     }
 }
 
-/// The run's function as Cranelift compiles it, C at depth 0: its instructions, its accesses
+/// The run's function as Cranelift compiles it: its instructions, its accesses
 /// relative to the stack pointer (the register allocator's spills and reloads, and the frame's),
 /// its branches by kind (before emission: a jump to the next block still there); its text and
 /// its emitted bytes written to `RERAIL_PP_DISASM` (and `.bin`) where set (Q36: beside rustc's code of the
@@ -448,7 +443,7 @@ fn the_words_translate_to_rust() {
 #[test]
 #[ignore = "a report (Q36)"]
 fn the_compiled_words_code_counted() {
-    let c = rerail_compiler::native_cpu_pp::disassemble(program().unwrap(), 0).unwrap();
+    let c = rerail_compiler::native_cpu_pp::disassemble(program().unwrap()).unwrap();
     let text = &c.disasm[0];
     let insts: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.ends_with(':') && !l.starts_with(';')).collect();
     let count = |f: &dyn Fn(&str) -> bool| insts.iter().filter(|l| f(l)).count();
@@ -476,12 +471,12 @@ fn the_aot_words_are_the_interpreters() {
     let mut tus: Vec<(String, Vec<(&str, &[u8])>)> = EXAMPLES.iter().map(|(n, s)| ((*n).to_owned(), vec![("main.c", s.as_bytes())])).collect();
     tus.extend(TUS.iter().map(|(n, f)| ((*n).to_owned(), f.iter().map(|f| (f.0, f.1.as_bytes())).collect())));
     let (mut same, mut differ) = (0, Vec::new());
-    for &(entry, k, source, (structured, functions)) in rerail_pp_aot::BUILDS {
+    if let Some(&(entry, source, (structured, functions))) = rerail_pp_aot::BUILD.as_ref() {
         // Each function structured control, as rustc compiles it best (not a loop over a `match`).
-        assert_eq!(structured, functions, "k {k}");
-        let now = rerail_compiler::native_cpu_pp::rust_source(program().unwrap(), k).unwrap();
+        assert_eq!(structured, functions);
+        let now = rerail_compiler::native_cpu_pp::rust_source(program().unwrap()).unwrap();
         let fp = now.lines().find_map(|l| l.strip_prefix("pub const SOURCE: u64 = ")).unwrap();
-        assert_eq!(fp.trim_end_matches(';'), format!("{source:#x}"), "k {k}: the build is not the words' code now; rebuild with the feature");
+        assert_eq!(fp.trim_end_matches(';'), format!("{source:#x}"), "the build is not the words' code now; rebuild with the feature");
         // SAFETY: `entry` is `rust_source`'s `pp_run` for this program (the fingerprint).
         let aot = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| unsafe { rerail_compiler::native_cpu_pp::run_aot(entry, w, f, e, b) };
         for (cpp, (name, files)) in [false, true].into_iter().flat_map(|cpp| tus.iter().map(move |t| (cpp, t))) {
@@ -489,7 +484,7 @@ fn the_aot_words_are_the_interpreters() {
             let got = expand_tu_with(files[0].0, &mut search(files, &dirs), cpp, &INTERPRETED, &aot);
             match got {
                 got if got == want => same += 1,
-                got => differ.push(format!("{name} (cpp {cpp}, k {k}): AOT {got:?}\n interpreter {want:?}")),
+                got => differ.push(format!("{name} (cpp {cpp}): AOT {got:?}\n interpreter {want:?}")),
             }
         }
     }
@@ -505,17 +500,12 @@ fn the_corpus_compiled_is_the_interpreters() {
     let root = std::env::var("RERAIL_C_CORPUS").map(std::path::PathBuf::from).unwrap_or_else(|_| std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("orca/rerail-shared/lean-corpus"));
     let (mut same, mut out, mut differ) = (0, std::collections::BTreeMap::<String, usize>::new(), Vec::new());
     let (mut t_words, mut t_jit) = (std::time::Duration::ZERO, std::time::Duration::ZERO);
-    let depths = std::cell::RefCell::new(std::collections::BTreeMap::<usize, usize>::new());
     for (dir, cpp) in [("c", false), ("cpp", true)] {
         let Ok(entries) = std::fs::read_dir(root.join(dir)) else { continue };
         let mut paths: Vec<_> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
         paths.sort();
-        // Each TU at its files' depth (`Compiled::depth`).
-        let c = Compiled::new();
-        let jit = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| {
-            *depths.borrow_mut().entry(Compiled::depth(f)).or_default() += 1;
-            c.run(w, f, e, b)
-        };
+        let c = rerail_compiler::native_cpu_pp::compile(program().unwrap()).unwrap();
+        let jit = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| c.run(w, f, e, b);
         for p in paths {
             let src = std::fs::read(&p).unwrap();
             let files = [("main.c", src.as_slice())];
@@ -534,7 +524,6 @@ fn the_corpus_compiled_is_the_interpreters() {
             }
         }
     }
-    eprintln!("the runs by depth: {:?}", depths.borrow());
     eprintln!("the same {same}, refused by both {}, differ {}; the expanded TUs: interpreter {t_words:?}, JIT {t_jit:?} (the grammars' reads included)", out.values().sum::<usize>(), differ.len());
     for (why, n) in &out {
         eprintln!("  {n:5} {why}");
@@ -545,59 +534,49 @@ fn the_corpus_compiled_is_the_interpreters() {
     assert!(differ.is_empty());
 }
 
-/// The compiled words' shape (decision 0348, stage 4d), at every depth: no call but of their
-/// own functions (the large words', `OUTLINE`, and past depth 0 every one of `#if`'s `EXPR`
-/// words), no indirect or tail call, no function over 128 KB, and each depth's returns their own
-/// stated dispatches (`Step::Return`).
+/// The compiled words' shape (decision 0348, stage 4d): no call but of their own functions (the
+/// large words', `OUTLINE`), no indirect or tail call, no function over 128 KB, and the returns
+/// their stated dispatches (`Step::Return`).
 #[test]
 fn the_compiled_words_have_their_shape() {
-    use rerail_compiler::native_cpu_pp::{MAX_K, compile_k};
     use rerail_compiler::native_cpu_shape::Step;
-    {
-        let p = program().unwrap();
-        let returns = |k: usize| compile_k(p, k).unwrap().heads.iter().filter(|&&h| h == Step::Return).count();
-        let (r0, r1) = (returns(0), returns(1));
-        let at0 = compile_k(p, 0).unwrap().code_bytes.len();
-        for k in [0, 1, 2, 4, 8, MAX_K] {
-            let c = compile_k(p, k).unwrap_or_else(|e| panic!("k {k}: {e:?}"));
-            eprintln!("k {k}: code {:?} bytes, {} CLIF instructions", c.code_bytes, c.clif.lines().filter(|l| l.starts_with("    ") && !l.trim_end().ends_with(':')).count());
-            if k == 0 {
-                let mut by: Vec<(usize, usize)> = c.word_insts.iter().copied().enumerate().map(|(pc, n)| (n, pc)).collect();
-                by.sort_unstable_by(|a, b| b.cmp(a));
-                let named = |pc: usize| {
-                    let (op, mode, _) = rerail_compiler::program::split(p.words[pc]);
-                    format!("{pc} {op:#04x} m={mode}")
-                };
-                let top: Vec<String> = by.iter().take(25).map(|&(n, pc)| format!("{}: {n}", named(pc))).collect();
-                eprintln!("  the words with the most: {}", top.join(", "));
-                let mut per_op = std::collections::BTreeMap::<String, (usize, usize)>::new();
-                for (pc, &n) in c.word_insts.iter().enumerate() {
-                    let (op, mode, _) = rerail_compiler::program::split(p.words[pc]);
-                    let e = per_op.entry(format!("{op:#04x} m={mode}")).or_default();
-                    (e.0, e.1) = (e.0 + n, e.1 + 1);
-                }
-                let mut ops: Vec<_> = per_op.into_iter().collect();
-                ops.sort_by_key(|o| std::cmp::Reverse(o.1.0));
-                eprintln!("  by word: {}", ops.iter().take(25).map(|(k, (n, c))| format!("{k} {n}/{c}")).collect::<Vec<_>>().join(", "));
-            }
-            let functions = c.clif.matches("function ").count();
-            assert!(!c.clif.contains("call_indirect") && !c.clif.contains("return_call"), "k {k}");
-            let calls = c.clif.lines().filter(|l| l.contains(" = call ") || l.trim_start().starts_with("call ")).count();
-            assert_eq!(functions, c.code_bytes.len(), "k {k}");
-            assert!(calls > 0 && (k == 0 || functions > at0), "k {k}");
-            assert!(c.code_bytes.iter().all(|&b| b <= 128 << 10), "k {k}: {:?}", c.code_bytes);
-            // Each depth past 0 adds the evaluator's `RETURN`s' dispatches once more.
-            assert_eq!(c.heads.iter().filter(|&&h| h == Step::Return).count(), r0 + k * (r1 - r0), "k {k}");
-        }
+    let p = program().unwrap();
+    let c = rerail_compiler::native_cpu_pp::compile(p).unwrap();
+    eprintln!("code {:?} bytes, {} CLIF instructions", c.code_bytes, c.clif.lines().filter(|l| l.starts_with("    ") && !l.trim_end().ends_with(':')).count());
+    let mut by: Vec<(usize, usize)> = c.word_insts.iter().copied().enumerate().map(|(pc, n)| (n, pc)).collect();
+    by.sort_unstable_by(|a, b| b.cmp(a));
+    let named = |pc: usize| {
+        let (op, mode, _) = rerail_compiler::program::split(p.words[pc]);
+        format!("{pc} {op:#04x} m={mode}")
+    };
+    let top: Vec<String> = by.iter().take(25).map(|&(n, pc)| format!("{}: {n}", named(pc))).collect();
+    eprintln!("  the words with the most: {}", top.join(", "));
+    let mut per_op = std::collections::BTreeMap::<String, (usize, usize)>::new();
+    for (pc, &n) in c.word_insts.iter().enumerate() {
+        let (op, mode, _) = rerail_compiler::program::split(p.words[pc]);
+        let e = per_op.entry(format!("{op:#04x} m={mode}")).or_default();
+        (e.0, e.1) = (e.0 + n, e.1 + 1);
     }
+    let mut ops: Vec<_> = per_op.into_iter().collect();
+    ops.sort_by_key(|o| std::cmp::Reverse(o.1.0));
+    eprintln!("  by word: {}", ops.iter().take(25).map(|(k, (n, c))| format!("{k} {n}/{c}")).collect::<Vec<_>>().join(", "));
+    let functions = c.clif.matches("function ").count();
+    assert!(!c.clif.contains("call_indirect") && !c.clif.contains("return_call"));
+    let calls = c.clif.lines().filter(|l| l.contains(" = call ") || l.trim_start().starts_with("call ")).count();
+    assert_eq!(functions, c.code_bytes.len());
+    assert!(calls > 0);
+    assert!(c.code_bytes.iter().all(|&b| b <= 128 << 10), "{:?}", c.code_bytes);
+    // One dispatch for each `RETURN`.
+    let returns = p.words.iter().filter(|&&w| rerail_compiler::program::split(w).0 == rerail_compiler::program::RETURN).count();
+    assert_eq!(c.heads.iter().filter(|&&h| h == Step::Return).count(), returns);
 }
 
-/// The corpus's TUs expanded by the words' interpreter, by the compiled words (each TU at its
-/// depth), by the compiled words at depth 0 as Cranelift compiles them and as rustc does (the
-/// `generated` feature: `rerail-pp-aot`, the same IR), and by the lean pass: each's instructions retired, cycles and wall time on this
-/// thread, the runs warmed first (every depth compiled). The words' runs are their runs alone
-/// (the grammars' reads are tier 1's and mode (a)'s); the lean pass's lexes too. A benchmark:
-/// through `scripts/dev/quiet-run`, at `--profile profiling`.
+/// The corpus's TUs expanded by the words' interpreter, by the compiled words as Cranelift
+/// compiles them and as rustc does (the `generated` feature: `rerail-pp-aot`, the same IR), and
+/// by the lean pass: each's instructions retired, cycles and wall time on this thread, the runs
+/// warmed first. The words' runs are their runs alone (the grammars' reads are tier 1's and mode
+/// (a)'s); the lean pass's lexes too. A benchmark: through `scripts/dev/quiet-run`, at
+/// `--profile profiling`.
 #[test]
 #[ignore = "a benchmark of the corpus (~/orca/rerail-shared/lean-corpus, or RERAIL_C_CORPUS)"]
 fn the_corpus_timed() {
@@ -618,21 +597,18 @@ fn the_corpus_timed() {
         cost.set(Cost { instructions: c.instructions + (i1 - i0), cycles: c.cycles + (c1 - c0), wall: c.wall + (t1 - t0) });
     };
     let (words, jit, lean_pass) = (Cell::new(Cost::default()), Cell::new(Cost::default()), Cell::new(Cost::default()));
-    let (jit0, aot0) = (Cell::new(Cost::default()), Cell::new(Cost::default()));
-    // Each timed run: its cycles, the interpreter's and the compiled words', and what it did
-    // (tokens in, `#` at a line's start, tokens out, expansions); then the cycles at depth 0 of
-    // Cranelift's code and of rustc's.
-    let runs: std::cell::RefCell<Vec<[u64; 8]>> = Default::default();
-    let last = Cell::new([0u64; 8]);
+    let aot = Cell::new(Cost::default());
+    // Each timed run: its cycles, the interpreter's and Cranelift's, what it did (tokens in, `#`
+    // at a line's start, tokens out, expansions), and rustc's cycles.
+    let runs: std::cell::RefCell<Vec<[u64; 7]>> = Default::default();
+    let last = Cell::new([0u64; 7]);
     let mut tus = 0;
     for (dir, cpp) in [("c", false), ("cpp", true)] {
         let Ok(entries) = std::fs::read_dir(root.join(dir)) else { continue };
         let mut paths: Vec<_> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
         paths.sort();
         let srcs: Vec<Vec<u8>> = paths.iter().map(|p| std::fs::read(p).unwrap()).collect();
-        let c = Compiled::new();
-        let k0 = rerail_compiler::native_cpu_pp::compile_k(program().unwrap(), 0).unwrap();
-        let aot = rerail_pp_aot::BUILDS.iter().find(|b| b.1 == 0).map(|b| b.0);
+        let c = rerail_compiler::native_cpu_pp::compile(program().unwrap()).unwrap();
         for pass in 0..2 {
             let on = Cell::new(pass == 1);
             let run_words = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| {
@@ -667,14 +643,14 @@ fn the_corpus_timed() {
             };
             for src in &srcs {
                 let files = [("main.c", src.as_slice())];
-                last.set([0; 8]);
+                last.set([0; 7]);
                 let want = expand_tu_with("main.c", &mut search(&files, &[]), cpp, &INTERPRETED, &run_words);
                 if want.is_err() {
                     continue;
                 }
                 let got = expand_tu_with("main.c", &mut search(&files, &[]), cpp, &INTERPRETED, &run_jit);
                 assert_eq!(got, want);
-                // Depth 0, by Cranelift and by rustc (where built).
+                // By rustc (where built).
                 let at0 = |cost: &Cell<Cost>, slot: usize, run: &dyn Fn(&Words, &[File], &pp_words::Env, &Bounds) -> Result<pp_words::Expanded, pp_words::Refused>| {
                     let g = expand_tu_with("main.c", &mut search(&files, &[]), cpp, &INTERPRETED, &|w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| {
                         let mut r = None;
@@ -687,10 +663,9 @@ fn the_corpus_timed() {
                     });
                     assert_eq!(g, want);
                 };
-                at0(&jit0, 6, &|w, f, e, b| k0.run(w, f, e, b));
-                if let Some(entry) = aot {
-                    // SAFETY: `entry` is `rust_source`'s `pp_run` for this dialect's words.
-                    at0(&aot0, 7, &|w, f, e, b| unsafe { rerail_compiler::native_cpu_pp::run_aot(entry, w, f, e, b) });
+                if let Some(&(entry, _, _)) = rerail_pp_aot::BUILD.as_ref() {
+                    // SAFETY: `entry` is `rust_source`'s `pp_run` for the words (`BUILD`).
+                    at0(&aot, 6, &|w, f, e, b| unsafe { rerail_compiler::native_cpu_pp::run_aot(entry, w, f, e, b) });
                 }
                 if pass == 1 {
                     runs.borrow_mut().push(last.get());
@@ -704,9 +679,9 @@ fn the_corpus_timed() {
             }
         }
     }
-    let mut rows = vec![("the words' interpreter", words.get()), ("the compiled words", jit.get()), ("depth 0, Cranelift", jit0.get())];
-    if aot0.get().cycles > 0 {
-        rows.push(("depth 0, rustc (same IR)", aot0.get()));
+    let mut rows = vec![("the words' interpreter", words.get()), ("Cranelift", jit.get())];
+    if aot.get().cycles > 0 {
+        rows.push(("rustc (same IR)", aot.get()));
     }
     rows.push(("the lean pass (lexing too)", lean_pass.get()));
     for (name, c) in rows {
@@ -715,10 +690,10 @@ fn the_corpus_timed() {
     eprintln!("over {tus} TUs");
     // The compiled words' cycles over the interpreter's, by what the runs do: a bucket's sums.
     let runs = runs.borrow();
-    let ratio = |rs: &[&[u64; 8]], i: usize| rs.iter().map(|r| r[i]).sum::<u64>() as f64 / rs.iter().map(|r| r[0]).sum::<u64>().max(1) as f64;
-    let share = |rs: &[&[u64; 8]]| rs.iter().map(|r| r[0]).sum::<u64>() as f64 / runs.iter().map(|r| r[0]).sum::<u64>().max(1) as f64;
+    let ratio = |rs: &[&[u64; 7]], i: usize| rs.iter().map(|r| r[i]).sum::<u64>() as f64 / rs.iter().map(|r| r[0]).sum::<u64>().max(1) as f64;
+    let share = |rs: &[&[u64; 7]]| rs.iter().map(|r| r[0]).sum::<u64>() as f64 / runs.iter().map(|r| r[0]).sum::<u64>().max(1) as f64;
     for (name, key) in [("tokens out a token in", 0usize), ("expansions a token in", 1), ("directives a token in", 2), ("tokens in", 3)] {
-        let v = |r: &[u64; 8]| -> f64 {
+        let v = |r: &[u64; 7]| -> f64 {
             let toks = r[2].max(1) as f64;
             match key {
                 0 => r[4] as f64 / toks,
@@ -727,26 +702,14 @@ fn the_corpus_timed() {
                 _ => r[2] as f64,
             }
         };
-        let mut sorted: Vec<&[u64; 8]> = runs.iter().collect();
+        let mut sorted: Vec<&[u64; 7]> = runs.iter().collect();
         sorted.sort_by(|a, b| v(a).total_cmp(&v(b)));
         let q = sorted.len() / 4;
         let parts: Vec<String> = (0..4).map(|i| {
             let part = &sorted[i * q..if i == 3 { sorted.len() } else { (i + 1) * q }];
-            format!("{:.3}..{:.3}: x{:.2}, K 0 x{:.2}, rustc x{:.2} ({:.0}% of the interpreter's)", v(part[0]), v(part[part.len() - 1]), ratio(part, 1), ratio(part, 6), ratio(part, 7), 100.0 * share(part))
+            format!("{:.3}..{:.3}: Cranelift x{:.2}, rustc x{:.2} ({:.0}% of the interpreter's)", v(part[0]), v(part[part.len() - 1]), ratio(part, 1), ratio(part, 6), 100.0 * share(part))
         }).collect();
         eprintln!("by {name}, quarters: {}", parts.join("; "));
-    }
-}
-
-/// `if_depth` on lines whose calls are counted by hand on `expand.lab`'s `cond`.
-#[test]
-fn an_ifs_depth_is_estimated_from_above() {
-    for (line, want) in [("1", 3), ("-1", 4), ("(1)", 7), ("1 + 2", 5), ("1 + 2 * 3", 7), ("a && (b || c)", 11), ("1 ? 2 : 3", 5), ("((1))", 11), ("!defined X", 4), ("1 ? 2 : 3 ? 4 : 5", 6), ("(1, 2)", 7), ("1 * 2 + 3", 7)] {
-        let src = format!("#if {line}\n#endif\n");
-        let toks = tokens::interpreted(src.as_bytes(), false).unwrap();
-        let read = crate::interpreted_read(src.as_bytes()).unwrap();
-        let tape = tape(src.as_bytes(), &toks, 0, &mut Vec::new(), u32::MAX - 1);
-        assert_eq!(if_depth(&read, src.as_bytes(), &tape), want, "{line}");
     }
 }
 
@@ -754,7 +717,6 @@ fn an_ifs_depth_is_estimated_from_above() {
 /// case's 64 bits, whether it is unsigned, and whether it is an error, each an `#if` of its own.
 #[test]
 fn the_compiled_ifs_have_the_interpreters_values() {
-    use rerail_compiler::native_cpu_pp::compile_k;
     const CASES: &[&str] = &[
         // Numbers.
         "0", "7", "010", "0x1F", "0X1f", "0b101", "0B11", "1'000'000", "0'7", "0x'1", "18446744073709551615", "18446744073709551616", "9223372036854775808",
@@ -773,7 +735,7 @@ fn the_compiled_ifs_have_the_interpreters_values() {
     ];
     let words = |v: &[Out]| v.iter().map(|t| String::from_utf8_lossy(&t.2).into_owned()).collect::<String>();
     let mut unlexed = Vec::new();
-    let compiled: Vec<_> = DEPTHS.iter().map(|&k| compile_k(program().unwrap(), k).unwrap_or_else(|e| panic!("k {k}: {e:?}"))).collect();
+    let c = rerail_compiler::native_cpu_pp::compile(program().unwrap()).unwrap();
     for cpp in [false, true] {
         let mut differ = Vec::new();
         for case in CASES {
@@ -790,12 +752,10 @@ fn the_compiled_ifs_have_the_interpreters_values() {
                 }
                 Err(e) => panic!("{case} (cpp {cpp}): {e}"),
             };
-            for (c, k) in compiled.iter().zip(DEPTHS) {
-                let jit = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| c.run(w, f, e, b);
-                let got = expand_tu_with("main.c", &mut search(&files, &[]), cpp, &INTERPRETED, &jit).unwrap_or_else(|e| panic!("{case} (cpp {cpp}, k {k}): {e}"));
-                if got != want {
-                    differ.push(format!("{case} (k {k}): interpreter {} JIT {}", words(&want), words(&got)));
-                }
+            let jit = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| c.run(w, f, e, b);
+            let got = expand_tu_with("main.c", &mut search(&files, &[]), cpp, &INTERPRETED, &jit).unwrap_or_else(|e| panic!("{case} (cpp {cpp}): {e}"));
+            if got != want {
+                differ.push(format!("{case}: interpreter {} JIT {}", words(&want), words(&got)));
             }
         }
         assert!(differ.is_empty(), "cpp {cpp}:\n{}", differ.join("\n"));

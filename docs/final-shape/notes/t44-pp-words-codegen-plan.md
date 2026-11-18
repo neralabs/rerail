@@ -21,10 +21,12 @@ profiling build. Only the words' runs are timed. The lean pass's row includes it
 | Run | Instructions | Cycles | Instructions a cycle |
 |---|---|---|---|
 | The words' interpreter | 5,122 M | 1,115–1,200 M | 4.4 |
-| Cranelift, each TU at its `#if` depth K | 2,292 M | 1,287 M | 1.8 |
 | Cranelift, depth 0 | 2,302 M | 1,240–1,258 M | 1.8 |
 | rustc (LLVM), depth 0, the same IR | 1,699–1,712 M | 533–556 M | 3.1–3.2 |
 | The lean pass (lexing too) | 8,050 M | 2,005 M | 4.0 |
+
+A later run, after the words became one program for C and C++ and one build (below), gave the
+interpreter 1,098 M cycles, Cranelift 1,235 M and rustc 487 M.
 
 Two things follow.
 
@@ -108,12 +110,14 @@ and writing a spelling's tail bytes as one word (to 1,290 M).
 - **Done when:** Cranelift's depth 0 is within 1.3× of rustc's cycles, or every remaining
   difference is named as one Cranelift's backend makes whatever IR it is given.
 
-### 4. The depth K, judged on both compilers
+### 4. The depth K, judged on both compilers: done, flattening removed
 
-- On Cranelift, running each TU at its depth costs 4–5% over depth 0 on the corpus. The
-  flattening was meant to save the return stack's loads and jump tables.
-- Build rustc's code at depth 4, 8 and 16 too, and time each TU at its depth.
-- **Done when:** the flattening is kept only for a compiler and depth where it measurably saves.
+- One build at depth 16 serves every TU (a TU goes only as deep as its `#if`s do), so the
+  per-depth builds were never needed. Timed against one build at depth 0, every corpus TU on
+  each: Cranelift 1,388 M cycles against 1,249 M (1.11×), rustc 861 M against 515 M (1.67×).
+- So the flattening is gone (0348, 4c), and with it `Compiled`'s per-depth cache and the
+  `#if` depth estimate. C and C++ became one program at the same time, the dialect a flag of
+  the run (`Env::cpp`).
 
 ### 5. A decision for the user: which code the CPU path runs
 
@@ -122,9 +126,9 @@ is the same program the JIT would compile when the engine runs, at 0.43× of Cra
 `rerail-rr-aot` already ships the `.rr` parser this way, and a fingerprint stops a stale build.
 
 - **Option A, keep the JIT as the CPU path** and close the gap with steps 1–3.
-- **Option B, run rustc's build on the CPU:** one build per dialect and depth the files use
-  (C and C++ at 0, 4, 8 and 16: about 27 MB of generated Rust and about a minute of rustc at
-  opt-level 3). Cranelift stays the checked reference and the path where no build is present.
+- **Option B, run rustc's build on the CPU:** one build, for both dialects (3.4 MB of generated
+  Rust, compiled at opt-level 3 without debug info). Cranelift stays the checked reference and
+  the path where no build is present.
   Steps 1–3 still matter for any code Cranelift compiles for real when the engine runs.
 
 The recommendation is B, with steps 1–2 done first so the record says why Cranelift's code is
