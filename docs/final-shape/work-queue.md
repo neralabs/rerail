@@ -2233,6 +2233,18 @@ where the rest goes (a sample of the run), before reading the wave's CPU totals 
   Where both meet, one mechanism stays: this scratch's shape (by node id, the `Earlier`/`Later` bounds) inside
   whichever scope the merge keeps.
 
+### Q183. Every parser writes format 16 and 16z in one pass, block-major, with a presence structure beside it
+
+Asked 2026-11-18 (the user): every parser writes 15, 16 and 16z incrementally on the CPU and the GPU, with no
+intermediate node format, as a switch over common abstractions; then "go ahead with block major; we output both the
+tape and a separate kinds/fields structure; for each block, optionally, a kinds/fields structure". Decision 0399
+holds the design, its requirements (R1–R12) and its steps.
+
+- **Keep**: tapes read in place (no decoding but 16z's per-block placement); one compile and one entry point for
+  16 and 16z; every read written once in CLIF; format 15 untouched until dropped.
+- **Done when**: 0399's requirement tests pass and no format 16 run makes a format 15 column, image or tape.
+- **Steps**: 0399 §Steps 1–6.
+
 ### Q181. (Q136 on oscar until 2026-11-18; Q25 on sync-integration-hub-tape) The label pipelines compile cold for 110 s
 
 Found 2026-11-17 (the merge of the hub at 3206e1736, M3 Max, debug): `lowered_clauses_find_the_same_roots_on_metal`
