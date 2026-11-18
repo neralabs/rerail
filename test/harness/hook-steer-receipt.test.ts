@@ -19,6 +19,8 @@ interface FakeDaemon {
   socketPath: string;
   /** The receipts it read, as posted. */
   receipts: unknown[];
+  /** Settles once it has read its first receipt. */
+  receiptRead: Promise<void>;
   /** How many connections hooks opened to it. */
   connections: number;
   close(): Promise<void>;
@@ -39,7 +41,8 @@ async function body(request: IncomingMessage): Promise<Record<string, unknown>> 
 /** An engine socket that answers every event with one steer crediting `rule:a`, and receipts as `receiptAnswer` says. */
 async function fakeDaemon(root: string, receiptAnswer: ReceiptAnswer): Promise<FakeDaemon> {
   const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-receipt-engine-${randomUUID()}` : join(root, "engine.sock");
-  const daemon: FakeDaemon = { socketPath, receipts: [], connections: 0, close: async () => undefined };
+  const read = Promise.withResolvers<void>();
+  const daemon: FakeDaemon = { socketPath, receipts: [], receiptRead: read.promise, connections: 0, close: async () => undefined };
   const held: ServerResponse[] = [];
   const server = createServer(async (request, response) => {
     const posted = await body(request);
@@ -50,6 +53,7 @@ async function fakeDaemon(root: string, receiptAnswer: ReceiptAnswer): Promise<F
       return;
     }
     daemon.receipts.push(posted);
+    read.resolve();
     if (receiptAnswer === "take") response.end("{}");
     else if (receiptAnswer === "refuse") response.writeHead(404).end();
     else if (receiptAnswer === "drop") request.socket.destroy();
@@ -121,7 +125,7 @@ describe("a steered hook's receipt", () => {
     const output = await steeredAnswer(root, daemon);
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const emitted = emitHookOutput(output, sink());
-    await vi.waitFor(() => expect(daemon.receipts).toHaveLength(1));
+    await daemon.receiptRead;
     expect(receiptRows(root)).toEqual([]);
     // The bound a running daemon has to read the receipt runs out.
     await vi.runOnlyPendingTimersAsync();

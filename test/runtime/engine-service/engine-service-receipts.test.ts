@@ -43,9 +43,12 @@ async function serviceOverCheckout(accessToken?: string) {
 }
 
 /**
- * The service answers a receipt and then records it in the same turn of its event loop, so by the time the client here,
- * in the same process, reads the answer, the record is made. A record on connections of its own (a session no runtime
- * holds) can outlast the client's bound on a slow machine, so the client may call it untaken: the record is what counts.
+ * The steer receipts recorded in the database at `databasePath`. The service answers a receipt and then records it in
+ * the same turn of its event loop, so by the time the client here, in the same process, reads the answer, the record is
+ * made. A record that outlasts the client's bound on a slow machine (a disk that stalls, a session no runtime holds,
+ * recorded on connections of its own) makes the client call it untaken, so these cases check the record, not the
+ * client's answer: the record is what counts, and the hook's answer to a daemon that takes a receipt is checked against
+ * an engine socket of the test's own (`test/harness/hook-steer-receipt.test.ts`).
  */
 function receipts(databasePath: string): Array<{ sessionId: string; eventId: string; payloadJson: string; repositoryId: string | null }> {
   const database = new Database(databasePath, { readonly: true });
@@ -65,8 +68,8 @@ describe("the engine service's receipts", () => {
     const link = engineLink({ socketPath });
     await link.ingest({ kind: "session-start", eventId: "a:start", session: session("a") });
     const receipt = { session: session("a"), receiptId: "receipt-1", ruleIds: ["rule:a", "rule:b"] };
-    await expect(link.handReceipt(receipt)).resolves.toBe(true);
-    await expect(link.handReceipt(receipt)).resolves.toBe(true);
+    await link.handReceipt(receipt);
+    await link.handReceipt(receipt);
     expect(receipts(databasePath)).toEqual([
       { sessionId: "a", eventId: "steering-delivered:receipt-1", payloadJson: JSON.stringify({ ruleIds: ["rule:a", "rule:b"] }), repositoryId: repositoryKey },
     ]);
