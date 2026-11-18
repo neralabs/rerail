@@ -98,12 +98,25 @@ function versionTracker(version: () => string | undefined): { moved(): boolean; 
   };
 }
 
-/** The database's main and `-wal` files by size and time: every write to either moves it. */
-function filesWritten(databasePath: string): string {
-  return [databasePath, `${databasePath}-wal`].map(path => {
+/**
+ * The database's main and `-wal` files by size and time: every write to either moves it. Files it cannot read (their
+ * folder's rights changed, a `-wal` pending delete on Windows, a link loop) give a value never given before, so the
+ * looks run as for a new write; it is read in timer callbacks, where a throw would end the daemon.
+ */
+function filesWritten(databasePath: string): () => string {
+  let unreadable = 0;
+  const stamp = (path: string): string => {
     const info = statSync(path, { throwIfNoEntry: false });
     return info === undefined ? "" : `${info.mtimeMs}:${info.size}`;
-  }).join("|");
+  };
+  return () => {
+    try {
+      return `${stamp(databasePath)}|${stamp(`${databasePath}-wal`)}`;
+    } catch {
+      unreadable += 1;
+      return `unreadable:${unreadable}`;
+    }
+  };
 }
 
 /**
@@ -143,6 +156,7 @@ export function databaseChangeFeed(databasePath: string, version: () => string |
   const listeners = new Set<(notice: ChangeNotice) => void>();
   const pending = new Set<ChangeNotice>();
   const committed = versionTracker(version);
+  const written = filesWritten(databasePath);
   let beat: NodeJS.Timeout | undefined;
   let flushing = false;
 
@@ -153,7 +167,7 @@ export function databaseChangeFeed(databasePath: string, version: () => string |
   };
   /** Whether a commit shows since the last look, and the files as they were just before it looked. */
   const look = (): { shows: boolean; files: string } => {
-    const files = filesWritten(databasePath);
+    const files = written();
     const shows = committed.moved();
     if (shows) told = files;
     return { shows, files };

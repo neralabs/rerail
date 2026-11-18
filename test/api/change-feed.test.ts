@@ -1,11 +1,29 @@
 import { EventEmitter } from "node:events";
 import type { FSWatcher, watch as watchFolder } from "node:fs";
-import { appendFileSync, mkdtempSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, closeSync, constants, mkdtempSync, openSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { databaseChangeFeed, LOOK_AGAIN_MS, type ChangeNotice } from "../../src/api/change-feed.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
+
+/** libuv's `UV_FS_O_TEMPORARY` on Windows (`_O_TEMPORARY`): the handle deletes the file when it closes. */
+const WINDOWS_O_TEMPORARY = 0x40;
+
+/**
+ * Makes `wal` in `folder` a file `stat` cannot read, as a person's machine can: on Windows a file pending delete (a
+ * handle still open on it after another deleted it), elsewhere its folder's rights taken away. Returns the call that
+ * undoes it.
+ */
+function makeUnreadable(folder: string, wal: string): () => void {
+  if (process.platform !== "win32") {
+    chmodSync(folder, 0o000);
+    return () => chmodSync(folder, 0o700);
+  }
+  const held = openSync(wal, "r");
+  closeSync(openSync(wal, constants.O_RDWR | WINDOWS_O_TEMPORARY));
+  return () => closeSync(held);
+}
 
 const DATABASE = join("/rerail-home", "rerail.sqlite");
 
@@ -198,6 +216,33 @@ describe("the database's change feed", () => {
 
       expect([heard, afterEcho, reads - afterEcho]).toEqual([["data"], 3, LOOK_AGAIN_MS.length + 1]);
     } finally {
+      await removeFolder(home);
+    }
+  });
+
+  // Root reads a folder whatever its rights say.
+  it.skipIf(process.getuid?.() === 0)("looks again, and throws nowhere, when the database's files cannot be read: a -wal pending delete on Windows, its folder's rights taken away elsewhere", async () => {
+    const folder = fakeWatch();
+    const home = mkdtempSync(join(tmpdir(), "rerail-feed-"));
+    const database = join(home, "rerail.sqlite");
+    writeFileSync(database, "");
+    writeFileSync(`${database}-wal`, "commit 1");
+    let version = "1";
+    const feed = databaseChangeFeed(database, () => version, { watch: folder.watch, beatMs: 60_000 });
+    const heard: ChangeNotice[] = [];
+    feed.listen(notice => heard.push(notice));
+    const restore = makeUnreadable(home, `${database}-wal`);
+    try {
+      expect(() => statSync(`${database}-wal`)).toThrow(/EACCES|EPERM/u);
+      folder.report("rerail.sqlite-wal");
+      await vi.advanceTimersByTimeAsync(LOOK_AGAIN_MS[2]);
+      version = "2";
+      await vi.advanceTimersByTimeAsync(LOOK_AGAIN_MS.at(-1)!);
+
+      expect(heard).toEqual(["data"]);
+    } finally {
+      restore();
+      feed.close();
       await removeFolder(home);
     }
   });
