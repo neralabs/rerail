@@ -311,6 +311,12 @@ impl Within {
         matches!(self.mode, Mode::Axis(Axis::Nearest | Axis::Inside) | Mode::Tree)
     }
 
+    /// Tests: whether the batch's solve has been made.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn is_solved(&self) -> bool {
+        self.solved.get().is_some()
+    }
+
     /// The first id of the rows made per looked-up `n`.
     fn looked_up(&self) -> usize {
         if self.solvable() { LOOKED_UP } else { 0 }
@@ -749,10 +755,15 @@ impl Source for Within {
     fn columns(&self) -> Vec<String> {
         self.names().iter().map(|&c| c.to_owned()).collect()
     }
-    /// Every pair once: a scan makes each node's containers, ids `0..len`.
+    /// Every pair once: a scan makes each node's containers, ids `0..len`. A solvable axis's are its solve's pairs,
+    /// counted exactly from the tree (`shape`) until something reads them: a guest round digests each input by its
+    /// length, and the solve made for that count alone held 780 MB of a PostHog run's 2.5 GB peak.
     fn len(&self) -> usize {
         if self.solvable() {
-            return self.pairs().len();
+            if self.solved.get().is_some() {
+                return self.pairs().len();
+            }
+            return self.shape().rows as usize;
         }
         *self.all.get_or_init(|| {
             for row in 0..self.batch.nodes.last().copied().unwrap_or(0) as u32 {
@@ -795,6 +806,23 @@ impl Source for Within {
             crate::code_rule_dsl::logic::profile::decision("kind-set axes (decision 0143)", || "solved for the batch: a stratum on the device reads the axis whole (decision 0277)".into());
         }
         true
+    }
+    /// By `n`, a document's nodes looked up: a node's pairs are its own document's (none crosses documents), so
+    /// the rows of the documents `owned` names are found without the batch's solve or a scan.
+    fn rows_owned(&self, g: usize, owned: &dyn Fn(i64) -> bool) -> Option<Vec<usize>> {
+        if g != 0 {
+            return None;
+        }
+        let mut out = Vec::new();
+        for doc in 0..self.batch.docs.len() {
+            let (from, to) = (self.batch.nodes[doc], *self.batch.nodes.get(doc + 1)?);
+            if from == to || !owned(self.batch.id(from)) {
+                continue;
+            }
+            let ids: Vec<i64> = (from..to).map(|r| self.batch.id(r)).collect();
+            out.extend(self.lookup(0, &ids)?);
+        }
+        Some(out)
     }
     fn expect_lookups(&self, column: usize, keys: f64) {
         if column == 0 {

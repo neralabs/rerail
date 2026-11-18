@@ -1697,3 +1697,95 @@ inventory of today's copies (12 sites, marked `copy (0353 step N)`) and the plan
    6 (in-place writes and indexes), 7 (the transducer's packed batch, its owners'), 8 (0325 step 7), 9 (prices).
 
 Q86 (step 6's prices) waits for step 4: most of what it prices goes.
+
+### Q58. 0325's FACTS blocks raise a CPU run's footprint, and the memory line cuts a third more chunks
+
+- **Status** (2026-11-17): done, both parts (decision 0325, "A chunk's blocks, and a CPU run's"): chunks
+  2,797 and 2,982, user CPU 205.5 and 217.8 s, median footprint 1,189 and 1,194 MB; about 35 MB left (bump-allocated
+  blocks keep a dropped relation's pages until the chunk ends).
+
+- **Found** (2026-11-17, after merging Native-and-GPU-strata a3f9c49f2 at 49dad1939): PostHog cold on the M3, CPU
+  binding, profiled, alternated with the engine just before the merge (ec3a74a87): user CPU 210.8 and 204.1 s before,
+  224.6 and 224.6 s after, at the same instructions (2,810 and 2,691 G against 2,837 and 2,648 G). Findings the same.
+- **Cause**: the run evaluates 3,409 chunks against 2,563, every stratum and guest round once a chunk. Both builds
+  cut nearly every chunk to `MIN_CHUNK_NODES` once the footprint passes `RUN_MB` (1 GB), but the merged build gets
+  there sooner: its median footprint is 1,306–1,382 MB against 1,155–1,161. Its jemalloc heap is ~80 MB smaller;
+  the rise is the relations' FACTS blocks (`setfix::rows::lease`, 64 MB each, leased from the GPU pool's spare room as
+  pinned no-copy buffers): Metal driver memory 256–320 MB median (512 at most), relational leases 192–256 MB median
+  (688 at most), 64 MB idle. A block lives while any relation in it does, so a chunk's survivors keep blocks that
+  later chunks' rows left mostly empty, and the run's footprint counts them whole.
+- **Checked**: with the memory line lifted (`RERAIL_RUN_MB=8000`) both builds cut ~170 chunks, and the merged one is
+  cheaper: 196.7 s and 2,382 G against 208.6 s and 2,696 G (0325's in-place reads), at a peak of 2,917 MB against
+  2,297.
+- **Done when**: a CPU run's footprint is no higher than before 0325 at the same chunking, and the cold run's chunk
+  count is back to about 2,560. The shape the decisions already name: a chunk is a block (0289), so a chunk's
+  relations go in its own block, released with the chunk, and only what outlives it (exports, kept rows) is frozen
+  into a long-lived block; and a CPU-only run takes anonymous blocks, not pinned device buffers, which the memory
+  line can then count by what is touched.
+
+### Q59. A demanded relation's rule sometimes keeps a plan that reads its demand last: +600 G a run
+
+- **Found** (2026-11-17, M3, PostHog cold, the memory line lifted, alternated runs): the 0325 engine retired
+  2,407–2,552 G in five runs; the current one 2,428–2,620 G in five, and 3,115 and 3,156 G in two. In the outlier
+  (against a normal run of the same build) all the extra is in the chunks' evaluation (+635 G, +60 s CPU), in three
+  strata: `xk_fz2220395310_fl3512803032_violation_3` 0.16 → 19.0 s, `xk_fz3398261162_…_rr_diagnostic_…_2` 0.12 →
+  16.2 s, `fzk2220395310_fl3512803032_violation` 1.3 → 15.6 s, at the same calls.
+- **Cause**: the demand split (decision 0048) is the same in both runs, and the demanded rule's body starts from its
+  demand (`overlaid`), but nothing keeps it there: the planner reordered it. Normal: `demand_xk…($v), node, line,
+  col, fzk…` (170 rows in, 33,629 between steps, summed over the chunks). Outlier: `col, node, fzk…, line,
+  demand_xk…($v)` (29.2M rows between steps). The plan cache (decision 0038) re-prices a kept order per chunk and
+  searches again only when its work per node grows over 4x; a bad first order costs the same per node in every
+  chunk, so it is kept the whole run.
+- **Not yet known**: why the first chunk's search chose it (which sizes it saw for the demand relation).
+- **Fixed** (2026-11-17): the demand atom is the driver of a demanded relation's rule (`Body::demand_first`), and
+  a kept plan not led by it is searched again (`valid_live_driver`); decision 0048's last section. Test
+  `a_demanded_rule_is_driven_by_its_demand`. Two PostHog runs: every demanded plan led by its demand (the outlier
+  run: 19 of 24 not), 2,531 and 2,509 G, findings the same.
+
+### Q88. (Q60 at django-bugs 36f3475c0) A run's plans depend on which concurrent chunk planned first
+
+- **Found** (2026-11-17, from Q59): the run's kept plans (`PLANS`, decision 0301) are shared by the chunks that run at
+  once (15 on PostHog). A job plans with its own chunk's statistics, keeps the order in its own map
+  (`OWN_PLANS`) and publishes it as it ends; a job that finds a published order re-prices it and keeps it unless its
+  work per node grew over 4x. Which job publishes first is thread timing, so the orders a run uses, and its cost,
+  differ run to run (Q59: +600 G in 2 of 7 runs). Findings do not. `plans_learnt` (a kept plan's price and work) is
+  last writer wins as well.
+- **Wanted**: what a chunk plans with is a function of the run's inputs, never of timing.
+
+### Q89. (Q61 at django-bugs 36f3475c0) The fast path's peak, by holder (PostHog cold, the memory line lifted)
+
+- **Done** (5920ecb84): a kind-set axis's batch solve (every node's chain of member ancestors, as pairs) was made
+  only for the guest rounds' input digest (`len`) and their new documents' rows (`owners_delta`): 780 MB, then 348
+  MB of the live heap at the peak. The chunks' peak 2,330–2,518 MB → 2,075 MB; page faults 2.42 M → 1.67 M.
+- **Now the peak** (2,263–2,304 MB in every run, before and after): the cross part's last second, while
+  `retain`'s "the kept part's changes, to the frames" encodes each kept relation's frame (two jobs at once): the
+  footprint 1,816 → 2,304 MB, and 800 MB freed but still resident half a second after. Live as the cross part
+  starts: 1,140 MB, of which at the peak `export to cross/hold the export` 288 MB, the store writer's atoms held 138
+  MB, `an input's frames` 109 MB, `cross` 105 MB, `text tests` (a chunk's projection) 57 MB, `record stats` 42 MB.
+  Host blocks 287 MB.
+- **Done** (1a54c6354, 4dd9bba9e): every frame `write_frames` makes is read from its relation or input a window at a
+  time and encoded straight into the write's segments (`FramePlacer`); an input's granules are grouped by row id;
+  `columns_source` trims its columns. The cross part's peak 2,263–2,304 → 1,830 MB; the frame jobs raise the
+  high-water mark by 0 MB; a warm run reads the frames back, findings the same.
+- **Left in the cross part** (`RERAIL_HEAP_AT=cross/session`, 1,329 MB live at 1,830 MB footprint): the exports
+  198 MB (its input, trimmed); the store writer's atoms held as stored 138 MB (+35 MB SQLite); the cross part's
+  statistics from the chunks' totals 118 MB (per-value frequency maps, held for the whole part: a cap to the most
+  common values is a statistics decision); `cross` 106 MB; the text tests' memo 50 MB (a `HashMap<u32, Box<[u64]>>`,
+  one box per distinct string, most passing no test); `record stats` 44 MB; atoms interned 36 MB.
+- **The run's peak** is the chunks' again: 2,159–2,227 MB (was 2,330–2,518).
+- Scripts: `working-data/m3/{peak,phases,timeline}.py`.
+- **Done: the totals keep per value only what the planner reads** (2026-11-17). The 118 MB of per-value counts and
+  `cross`'s 106 MB were one thing: every distinct value of every export column, counted (`Totals::vals`), applied into
+  `Stats::memo` (about 80 B a value in its `HashMap<(String, Constant), i64>`), and copied again into each input's
+  kept statistics (`input_stats`, by `of_relation`/`of_columns`). The planner reads per-value counts only by a
+  program's constant (`binding_domains`, `memo.get(&(col, k))`) and whole value sets of columns of 64 values or
+  fewer (`small_values`): `Totals::apply` now keeps those two and no others (`SMALL_NDV`); each column's moments are
+  still of all its values. Test: `the_totals_keep_per_value_counts_only_for_what_the_planner_reads`.
+  M3, PostHog cold, the memory line lifted, at load 32–44 (others' builds; CPU and instructions not comparable): the
+  cross part's live heap 1,344 → 1,138 MB, its most footprint 1,826 → 1,658 MB; both holders gone from the list.
+  Findings 29,747, the same hash. The cross strata's plans: the same steps and scanned rows; their planned and done
+  work differ from the run before exactly as two runs of the old code differ (Q88's timing: `P__sup0` 32/33, a few
+  rows of work).
+- **Found, not mine:** `corpus::tests::a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test` (4 files
+  held open after it) and `the_run_after_a_cold_one_writes_nothing` (a warm run records a manifest and commits a
+  write) fail at 2fd15f524 too, on the M3 farm host.

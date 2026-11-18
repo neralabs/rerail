@@ -44,7 +44,7 @@ pub mod ordered;
 pub mod runs;
 use runs::{Index, RowData};
 mod rows;
-pub use rows::{Facts, InBlock, Row};
+pub use rows::{Facts, InBlock, Row, in_chunk};
 use rows::Rows;
 /// A column's statistics in a fixed size (decision 0112): no index is kept for them.
 pub mod sketch;
@@ -4615,6 +4615,28 @@ impl InRel {
     pub fn posts_all(&self) -> bool {
         self.view.is_none() && (0..self.k).all(|c| self.chains.iter().any(|ix| ix.cols.first() == Some(&c) && ix.rows() >= self.n))
     }
+    /// Its live rows a window at a time, row-major (`f` called with up to 4,096 rows): read where they lie, with no
+    /// copy of them all (a frame digested and encoded from them, Q89). `false` for a view.
+    pub fn each_live_window(&self, f: &mut dyn FnMut(&[i64])) -> bool {
+        if self.view.is_some() {
+            return false;
+        }
+        const WINDOW: usize = 4096;
+        let mut buf: Vec<i64> = Vec::with_capacity(WINDOW.min(self.n) * self.k);
+        for id in 0..self.n {
+            if self.ndead == 0 || !is_dead(&self.dead, id as u32) {
+                buf.extend_from_slice(&self.row(id));
+                if buf.len() == WINDOW * self.k {
+                    f(&buf);
+                    buf.clear();
+                }
+            }
+        }
+        if !buf.is_empty() {
+            f(&buf);
+        }
+        true
+    }
     /// Its live rows, row-major.
     pub fn live_rows(&self) -> Option<Vec<i64>> {
         if self.view.is_some() {
@@ -5272,7 +5294,9 @@ impl crate::code_rule_dsl::facts::vtab::Source for Stored {
 /// probe on a column is a slice of its sorted index, built on first use.
 pub fn columns_source(columns: Vec<String>, values: Vec<Option<Vec<i64>>>) -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {
     let n = values.iter().flatten().map(Vec::len).max().unwrap_or(0);
-    let mut t = Stored::new(columns, values.into_iter().map(|v| { let l = std::sync::OnceLock::new(); if let Some(v) = v { let _ = l.set(v); } l }).collect());
+    // Columns grown a row at a time (an export the chunks added to) carry up to their length again in capacity,
+    // held as long as the source: trimmed here, in place for a large block, and nothing for one made to its size.
+    let mut t = Stored::new(columns, values.into_iter().map(|v| { let l = std::sync::OnceLock::new(); if let Some(mut v) = v { v.shrink_to_fit(); let _ = l.set(v); } l }).collect());
     t.statistics = Some(std::sync::OnceLock::new());
     let _ = t.n.set(n);
     Arc::new(t)
@@ -5631,6 +5655,7 @@ pub fn walks_whole<R>(f: impl FnOnce() -> R) -> R {
 
 pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
     c.copy(&["WALKS_WHOLE"], &WALKS_WHOLE);
+    c.cloned(&["CHUNK"], &crate::code_rule_dsl::facts::rows::CHUNK);
 }
 
 /// Rows a cut left that a walk going on from it read in their order, unsorted (`scan_order`, decision 0294).

@@ -128,12 +128,13 @@ pub(super) struct Sample {
     pub(super) open: Vec<String>,
     pub(super) threads: usize,
     /// What else holds memory then, beside the heap (MB): the Metal driver's allocations, the device buffer pool's
-    /// reservations, relational work's leases (live, idle), SQLite's heap.
-    pub(super) holders: [usize; 5],
+    /// reservations, relational work's leases (live, idle), SQLite's heap, the host blocks (used, and of it free
+    /// on their lists; decision 0342).
+    pub(super) holders: [usize; 7],
 }
 
 /// The holders a sample reads (`Sample::holders`), in MB.
-fn holders() -> [usize; 5] {
+fn holders() -> [usize; 7] {
     let (reserved, driver) = crate::code_rule_dsl::prof::device_memory();
     // Relational work's device leases exist only where the device does (macOS).
     #[cfg(target_os = "macos")]
@@ -141,7 +142,8 @@ fn holders() -> [usize; 5] {
     #[cfg(not(target_os = "macos"))]
     let (live, idle) = (0, 0);
     let sqlite = unsafe { rusqlite::ffi::sqlite3_memory_used() }.max(0) as usize;
-    [driver, reserved, live >> 20, idle >> 20, sqlite >> 20]
+    let (host, host_free) = rerail_accel::blocks::host_held();
+    [driver, reserved, live >> 20, idle >> 20, sqlite >> 20, host >> 20, host_free >> 20]
 }
 
 #[derive(Default)]
@@ -157,6 +159,16 @@ pub(super) struct Sampled {
     /// footprint it was taken at.
     pub(super) heap: Vec<(u32, u64)>,
     pub(super) heap_at: u64,
+    /// `RERAIL_HEAP_AT=<text>`: the live heap by allocating span at the most footprint seen while a thread had a
+    /// span open whose path holds the text (a phase that is not the peak's), and that footprint.
+    pub(super) heap_in: Vec<(u32, u64)>,
+    pub(super) heap_in_at: u64,
+}
+
+/// `RERAIL_HEAP_AT`'s text, read once.
+fn heap_at_text() -> Option<&'static str> {
+    static AT: std::sync::LazyLock<Option<String>> = std::sync::LazyLock::new(|| std::env::var("RERAIL_HEAP_AT").ok().filter(|t| !t.is_empty()));
+    AT.as_deref()
 }
 
 pub(super) static SAMPLED: std::sync::LazyLock<std::sync::Mutex<Sampled>> = std::sync::LazyLock::new(Default::default);
@@ -219,6 +231,17 @@ pub(super) fn sample() {
                         s.heap = heap;
                     }
                 }
+                if let Some(text) = heap_at_text()
+                    && rerail_prof::heap::on()
+                    && now >= s.heap_in_at + (16 << 20)
+                    && sample.open.iter().any(|p| p.contains(text))
+                {
+                    s.heap_in_at = now;
+                    drop(s);
+                    let heap = rerail_prof::heap::snapshot();
+                    s = SAMPLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    s.heap_in = heap;
+                }
                 if keep {
                     s.rows.push(sample);
                 }
@@ -279,16 +302,28 @@ pub(super) fn sampled_report(r: &mut String) {
     // The footprint then, by holder: the heap's live bytes and what it keeps resident beyond them, the device's
     // buffers (the driver's count; of them the pool's reservations and relational work's leases), SQLite's heap
     // (inside jemalloc's when it allocates there), and the rest (stacks, code, maps, other allocators).
-    let [driver, reserved, leased, idle, sqlite] = t.holders;
+    let [driver, reserved, leased, idle, sqlite, host, host_free] = t.holders;
     let heap_mb = |b: u64| (b >> 20) as usize;
     let accounted = heap_mb(t.resident) + driver;
-    let _ = writeln!(r, "  by holder then (MB): heap live {}, heap resident beyond live {}; Metal driver {} (device pool {}, relational leases {} + {} idle); SQLite heap {}; the rest {}",
-        heap_mb(t.live), heap_mb(t.resident.saturating_sub(t.live)), driver, reserved, leased, idle, sqlite, heap_mb(t.footprint).saturating_sub(accounted));
+    let _ = writeln!(r, "  by holder then (MB): heap live {}, heap resident beyond live {}; Metal driver {} (device pool {}, relational leases {} + {} idle); SQLite heap {}; host blocks {} ({} free on their lists); the rest {}",
+        heap_mb(t.live), heap_mb(t.resident.saturating_sub(t.live)), driver, reserved, leased, idle, sqlite, host, host_free, heap_mb(t.footprint).saturating_sub(accounted + host));
+    // Blocks' memory handed out again and zeroed for it (decision 0342): a free list's chunk asked zeroed (a
+    // descriptor), a recycled slab's allocation; a relation's rows are written before read and never zeroed.
+    let _ = writeln!(r, "  blocks: {} MB zeroed as their memory was handed out again", rerail_accel::blocks::zeroed_bytes() >> 20);
     if !s.heap.is_empty() {
         let total: u64 = s.heap.iter().map(|h| h.1).sum();
         let _ = writeln!(r, "Live heap (and device leases) by the span that allocated it, near the peak (at {} MB footprint; sampled 1 in {} KB, all of 64 KB and more; {} MB in all, {} samples dropped):",
             mb(s.heap_at as f64), rerail_prof::heap::INTERVAL >> 10, mb(total as f64), rerail_prof::heap::DROPPED.load(std::sync::atomic::Ordering::Relaxed));
         for (id, bytes) in s.heap.iter().take(30) {
+            let _ = writeln!(r, "{:>10} MB  {}", mb(*bytes as f64), super::short(&rerail_prof::heap::name(*id), 150));
+        }
+    }
+    if let Some(text) = heap_at_text()
+        && !s.heap_in.is_empty()
+    {
+        let total: u64 = s.heap_in.iter().map(|h| h.1).sum();
+        let _ = writeln!(r, "Live heap by the span that allocated it, at the most footprint while \"{text}\" was open (at {} MB footprint; {} MB in all):", mb(s.heap_in_at as f64), mb(total as f64));
+        for (id, bytes) in s.heap_in.iter().take(30) {
             let _ = writeln!(r, "{:>10} MB  {}", mb(*bytes as f64), super::short(&rerail_prof::heap::name(*id), 150));
         }
     }
@@ -304,10 +339,10 @@ pub(super) fn sampled_report(r: &mut String) {
 pub fn sampled_tsv() -> String {
     use std::fmt::Write as _;
     let s = SAMPLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut t = String::from("at_s\tunix_s\tfootprint_bytes\tmax_bytes\tjemalloc_live_bytes\tjemalloc_resident_bytes\tmetal_driver_mb\tdevice_pool_mb\trelational_leased_mb\trelational_idle_mb\tsqlite_mb\tthreads\topen\n");
+    let mut t = String::from("at_s\tunix_s\tfootprint_bytes\tmax_bytes\tjemalloc_live_bytes\tjemalloc_resident_bytes\tmetal_driver_mb\tdevice_pool_mb\trelational_leased_mb\trelational_idle_mb\tsqlite_mb\thost_blocks_mb\thost_free_mb\tthreads\topen\n");
     for r in &s.rows {
-        let [d, p, l, i, q] = r.holders;
-        let _ = writeln!(t, "{:.3}\t{:.3}\t{}\t{}\t{}\t{}\t{d}\t{p}\t{l}\t{i}\t{q}\t{}\t{}", r.at, r.unix, r.footprint, r.max, r.live, r.resident, r.threads, r.open.join(" | "));
+        let [d, p, l, i, q, h, f] = r.holders;
+        let _ = writeln!(t, "{:.3}\t{:.3}\t{}\t{}\t{}\t{}\t{d}\t{p}\t{l}\t{i}\t{q}\t{h}\t{f}\t{}\t{}", r.at, r.unix, r.footprint, r.max, r.live, r.resident, r.threads, r.open.join(" | "));
     }
     t
 }

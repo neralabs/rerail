@@ -109,8 +109,17 @@ impl Rows {
     /// # Safety
     /// As `init`.
     pub unsafe fn try_init(this: *mut Rows, block: &Block, widths: &[u32], min_log: u32) -> bool {
-        assert!(min_log >= MIN_LOG, "min_log {min_log} under {MIN_LOG}");
         let Some(cols) = block.try_alloc_t::<ColDir>(widths.len()) else { return false };
+        unsafe { Rows::init_in(this, cols, widths, min_log) };
+        true
+    }
+
+    /// `init` with the columns' directories at `cols` (zeroed, `widths.len()` of them, in the same block).
+    ///
+    /// # Safety
+    /// As `init`, and `cols` as said.
+    pub unsafe fn init_in(this: *mut Rows, cols: *mut ColDir, widths: &[u32], min_log: u32) {
+        assert!(min_log >= MIN_LOG, "min_log {min_log} under {MIN_LOG}");
         unsafe {
             for (c, &w) in widths.iter().enumerate() {
                 assert!(w == 4 || w == 8);
@@ -120,7 +129,6 @@ impl Rows {
             (*this).ncols = widths.len() as u32;
             Span::set(&raw mut (*this).cols, cols, widths.len());
         }
-        true
     }
 
     #[inline]
@@ -198,14 +206,24 @@ impl Rows {
             let rows = chunk_rows(k, self.min_log) as usize;
             let align = |bytes: usize| if bytes >= PAGE { PAGE } else { 64 };
             let need: usize = (0..self.ncols as usize).map(|c| rows * self.col(c).width as usize).map(|b| b + align(b)).sum();
-            if block.reserved().saturating_sub(block.used()) < need {
+            // Room at the front, or on the free list (decision 0342), for every column's chunk.
+            if block.reserved().saturating_sub(block.used()) < need && block.free_bytes() < need {
                 return false;
             }
+            let mut taken: [usize; 8] = [0; 8];
             for c in 0..self.ncols as usize {
                 let d = self.col(c);
                 let bytes = rows * d.width as usize;
-                // Not zeroed: a value is read only below `len`, written before its row is claimed.
-                let Some(off) = block.try_alloc_raw(bytes, align(bytes)) else { return false };
+                let Some(off) = block.try_alloc_chunk_any(bytes, align(bytes)) else {
+                    // The chunks this round took go back (to the free list, when the block keeps one).
+                    for (c2, &at) in taken.iter().enumerate().take(c.min(8)) {
+                        block.free_chunk(at, rows * self.col(c2).width as usize);
+                    }
+                    return false;
+                };
+                if c < 8 {
+                    taken[c] = off;
+                }
                 d.chunk[k].store(block.ptr::<u8>(off) as isize as i64 - d as *const ColDir as isize as i64, Relaxed);
             }
             nchunks += 1;
@@ -213,6 +231,28 @@ impl Rows {
             self.reserved.store(capacity(nchunks, self.min_log).min(u32::MAX as u64) as u32, Release);
         }
         true
+    }
+
+    /// Gives every column's chunks back to `block`'s free list (decision 0342), when it keeps one; the rows are
+    /// then none.
+    ///
+    /// # Safety
+    /// These rows lie in `block`, and no one reads or writes them after.
+    pub unsafe fn release(&self, block: &Block) {
+        if !block.has_free_list() {
+            return;
+        }
+        let n = self.nchunks.load(Relaxed) as usize;
+        for c in 0..self.ncols as usize {
+            let d = self.col(c);
+            for k in 0..n {
+                let p = unsafe { (d as *const ColDir as *const u8).offset(d.chunk[k].load(Relaxed) as isize) };
+                block.free_chunk(block.offset_of(p), chunk_rows(k, self.min_log) as usize * d.width as usize);
+            }
+        }
+        self.nchunks.store(0, Relaxed);
+        self.reserved.store(0, Release);
+        self.len.store(0, Release);
     }
 
     /// Claims `n` rows: one atomic add, and chunks made under `lock` only when the claim passes what is reserved.

@@ -279,7 +279,8 @@ Step by step, each leaving the engine working (see the commits that name this de
   through `rel_get` and `rows_at`. `rget` and `rel_hash` read only through `clif_rel_get`. A text's names and a
   test's verdict bits are words (`DevRel::words`), not relations.
   - A relation's chunks are not zeroed (`Block::try_alloc_raw`): a value is read only below `len`, and a dirty
-    pooled block would otherwise pay a memset for every view.
+    pooled block would otherwise pay a memset for every view. Since the merge of django-bugs (36f3475c0) this is
+    0342's `Block::try_alloc_chunk_any`, which also takes a chunk from the block's free list.
   - On hogql (load 38–41, interleaved): Metal 67.5–72.0 B instructions against 68.2–68.7 B, peak 724–785 MB
     against 739–783 MB, findings 1,629. Budget refusals 0–4 a run against 2–5.
 - **Step 5, the device's probes read the relation's own index** (2026-11-17): `Batch::index` finds the relation's
@@ -327,3 +328,28 @@ Step by step, each leaving the engine working (see the commits that name this de
     views it encoded cached as made, so later strata read relations nothing wrote. Fixed in ef6c6c386 (`unrun`,
     `a_view_made_in_a_refused_batch_is_made_again`), with two buffers that went back to the pool while an open
     command buffer still wrote them.
+
+## A chunk's blocks, and a CPU run's (2026-11-17, Q58)
+
+- **Found**: on PostHog cold (CPU binding) the shared FACTS blocks raised the median footprint from about 1,160 MB
+  to 1,306–1,382 MB. Every chunk evaluating at once wrote into the one open block, so a few rows of each kept every
+  block whole; and the blocks were the device pool's pinned buffers even with no device bound. The memory line
+  (`RUN_MB`) then cut 3,409 chunks against 2,563, and user CPU rose 14–20 s at the same instructions.
+- **Decided**:
+  - A chunk's relations go in blocks of its own (`setfix::in_chunk`, around the chunk's `evaluate`; decision
+    0289, a chunk is a block). The scope is the run's context (`rows::CHUNK`, carried), so the jobs a chunk starts
+    write in its blocks too. Its blocks go back with the last of its rows. Outside a chunk the run's open block is
+    used as before. The profile counts the blocks still held when a chunk's evaluation ends (`a chunk's blocks
+    outlived it`): on PostHog those are the rows each hands on until it is filed, almost all under 1 MB.
+  - A block is the pool's only in a run bound to the device (`placement::device()`); a CPU run's is anonymous,
+    resident only where written. The device can still read an anonymous block in place (a no-copy buffer).
+- **Pinned by**: `a_chunks_relations_go_in_its_own_blocks_and_go_with_it`,
+  `a_job_of_the_chunk_puts_its_relations_in_the_chunks_block`, `a_cpu_run_takes_anonymous_blocks` (setfix::rows;
+  `facts::rows` since the merge into Final-shape-quality, where the rows' storage lives, step 3 above). There a
+  chunk's open blocks are one a `Life`.
+- **Measured** (M3, PostHog cold, profiled, two runs, load 26–35): user CPU 205.5 and 217.8 s (before 0325:
+  204.1–210.8; with it: 224.6 twice); chunks 2,797 and 2,982 (2,563; 3,409); median footprint 1,189 and 1,194 MB
+  (1,155–1,161; 1,306–1,382); Metal driver and leased MB 0 (256–320 and 192–256). Findings 29,747, the same hash.
+- **Left**: about 35 MB of median footprint above the run before 0325, and with it a few hundred more chunks: a
+  block is bump-allocated, so a relation a chunk drops (or a tail moved to a bigger place) keeps its written pages
+  until the chunk ends, where a vector's memory went back at once.

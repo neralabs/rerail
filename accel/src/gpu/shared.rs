@@ -101,6 +101,8 @@ pub fn get() -> Option<&'static Shared> {
     static SHARED: OnceLock<Option<Shared>> = OnceLock::new();
     SHARED
         .get_or_init(|| {
+            // The pool's blocks are handed out by the one policy (decision 0342).
+            crate::blocks::install();
             objc::rc::autoreleasepool(|| {
                 // The forest's (the lowest crate that uses Metal): one device and one queue for the process.
                 let one = rerail_forest::gpu::shared::get()?;

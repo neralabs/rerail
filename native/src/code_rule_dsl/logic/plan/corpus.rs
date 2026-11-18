@@ -5629,7 +5629,7 @@ fn run_observed(
     type Hand<'h> = &'h mut dyn FnMut(&str, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>) -> Result<()>;
     let guest_postings_once = parking_lot::Mutex::new(guest_postings_once);
     let measured_once = parking_lot::Mutex::new(measured_once);
-    let evaluate = |task: Task, db: &Connection, modules: &Modules, hand: Option<Hand<'_>>| -> Result<Evaluated> {
+    let evaluate_in = |task: Task, db: &Connection, modules: &Modules, hand: Option<Hand<'_>>| -> Result<Evaluated> {
         let Task { chunk_nodes_built, sources, documents, mut stats, mix, cone, replay } = task;
         let chunk_docs_n = documents.len();
         // The slice's request lines of each round, for the entries (`memo::GUESTS`).
@@ -5881,6 +5881,11 @@ fn run_observed(
         }
         crate::code_rule_dsl::logic::native::forget_inputs(db);
         Ok(Evaluated { got, host_of, askers, text_sources, stored_bound, totals_add, export_rows, mentioned, slice_rounds })
+    };
+    // A chunk's relations go in blocks of its own, given back with it (Q58): not in blocks every chunk at once
+    // shares, which a few rows of each kept whole and the memory line counted whole.
+    let evaluate = |task: Task, db: &Connection, modules: &Modules, hand: Option<Hand<'_>>| -> Result<Evaluated> {
+        crate::code_rule_dsl::logic::native::setfix::in_chunk(|| evaluate_in(task, db, modules, hand))
     };
     // The connections chunks evaluate on beside the main thread's, each opened as the run's is (its atoms, the
     // engine's functions, `x` attached when SQL first runs) and given the run's inputs bound before the chunks.
@@ -7773,6 +7778,8 @@ fn run_observed(
     });
     // The cross-file part's statistics: T's for the base relations, the chunks' totals for the rest.
     let applying = crate::code_rule_dsl::logic::profile::span(|| "apply the chunks' totals".into());
+    // The values the program tests, of any relation and column: per value, the totals keep only those (`apply`).
+    let tested_values: rustc_hash::FxHashSet<i64> = constants_tested_in(&prepared_placed.v).into_values().flatten().map(|(_, v)| v).collect();
     let mut cross_stats = t_stats;
     if own {
         if memo_tree_stats {
@@ -7782,7 +7789,7 @@ fn run_observed(
             cross_stats.docs = Some(own_totals.docs);
         }
     }
-    totals.apply(&mut cross_stats);
+    totals.apply(&mut cross_stats, &tested_values);
     // Applied: the chunks' per-value counts are not read again.
     totals.vals = BTreeMap::new();
     repository_stats(&mut cross_stats);
@@ -8006,7 +8013,7 @@ fn run_observed(
             replayed.add_rows(&rel, source.len(), source.as_ref(), &types.iter().map(String::as_str).collect::<Vec<_>>());
             modules.bind(&db, &rel, source)?;
         }
-        replayed.apply(&mut cross_stats);
+        replayed.apply(&mut cross_stats, &tested_values);
         // Held for storing, unless an output (written to its table, read from there): only when a component missed or
         // the run verifies. Every component found is replayed, and nothing is stored.
         if !found.misses.is_empty() || cross_mode == cross_memo::Mode::Verify {
@@ -10062,8 +10069,11 @@ impl Totals {
             });
         }
     }
-    /// The totals as the planner's statistics (T's `stats.py` definitions), over `stats`.
-    fn apply(&self, stats: &mut super::Stats) {
+    /// The totals as the planner's statistics (T's `stats.py` definitions), over `stats`. Per value, only what the
+    /// planner reads (Q89): the values the program tests (`tested`, `tested_values`), and every value of a column of
+    /// `SMALL_NDV` or fewer (`small_values`); each column's moments are of all its values. Every distinct value of
+    /// every export column, kept, was 118 MB of a cold PostHog run's cross part that nothing read.
+    fn apply(&self, stats: &mut super::Stats, tested: &rustc_hash::FxHashSet<i64>) {
         for (rel, (rows, measured)) in &self.rels {
             stats.measured(rel, measured.iter().map(|(col, [_, ndv, sq, sqd])| (col.clone(), [*rows as i64, (*ndv).max(1), *sq, *sqd])), []);
         }
@@ -10077,7 +10087,8 @@ impl Totals {
                 }
                 super::sketch::shadow(&format!("totals {rel}"), col, rows, ndv, sq, &sketch);
             }
-            stats.measured(rel, [(col.clone(), [rows, ndv.max(1), sq, sqd])], per.iter().map(|(v, [n, _, _])| (col.clone(), *v, *n)));
+            let all = ndv <= super::SMALL_NDV;
+            stats.measured(rel, [(col.clone(), [rows, ndv.max(1), sq, sqd])], per.iter().filter(|(v, _)| all || tested.contains(*v)).map(|(v, [n, _, _])| (col.clone(), *v, *n)));
         }
         for (rel, col, v, n) in &self.consts {
             stats.measured(rel, [], [(col.clone(), *v, *n)]);
@@ -10824,6 +10835,29 @@ impl Own {
 
 #[cfg(test)]
 pub mod tests {
+    /// The chunks' totals give the planner every column's moments, but per value only what it reads (Q89): the
+    /// values the program tests (`binding_domains`' lookups by constant), and every value of a column of few
+    /// (`small_values`). Held whole, every distinct value of every export column was 118 MB of the cross part's
+    /// statistics, which nothing read.
+    #[test]
+    fn the_totals_keep_per_value_counts_only_for_what_the_planner_reads() {
+        use crate::code_rule_dsl::logic::plan::{Constant, Stats};
+        let p = crate::code_rule_dsl::logic::rr::parse(".decl e(a: number, b: number)\n.output e\n").unwrap();
+        let many: Vec<i64> = (0..1000).map(|i| 100 + i % 500).collect();
+        let few: Vec<i64> = (0..1000).map(|i| i % 3).collect();
+        let source = crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into(), "c1".into()], vec![Some(many), Some(few)]);
+        let mut totals = super::Totals::default();
+        totals.add_rows("e", 1000, source.as_ref(), &["number", "number"]);
+        let mut stats = Stats::empty(&p);
+        totals.apply(&mut stats, &[107].into_iter().collect());
+        let memo = &stats.memo["e"];
+        let of = |col: &str| memo.keys().filter(|(c, _)| c == col).count();
+        assert_eq!(of("c0"), 1, "a column of many values keeps the tested one alone");
+        assert_eq!(memo.get(&("c0".to_owned(), Constant::Int(107))), Some(&2));
+        assert_eq!(of("c1"), 3, "a column of few keeps them all");
+        assert_eq!(stats.col.get(&("e".to_owned(), "c0".to_owned())).unwrap()[1], 500, "its distinct values counted whole");
+    }
+
     /// A corpus in a directory Git ignores has no file Git sees, and that answer is kept too (`git_files`'s record):
     /// unkept, every run read the work tree's whole status again to find none. In a process of its own, whose store
     /// is named (`RERAIL_TAPE_CACHE`), so the observer asks the journal, as a run's does.

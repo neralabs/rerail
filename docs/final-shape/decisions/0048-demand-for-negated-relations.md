@@ -146,3 +146,13 @@ There were 252 findings each time. The replay is unchanged (3988 273 266 0).
 
 Open: a relation keyed by a document (`exists_10`'s readers bind a document) still reads every node of each
 demanded document. Its demand saves only the documents not asked about.
+
+## The demand drives its rule, enforced (2026-11-17, Q59)
+
+A demanded relation's rule, `x :- demand_x, …`, is planned with `demand_x` as its driver (`Body::demand_first`,
+as a demand-restricted aggregate's already was): the search starts from it, and a kept plan that does not is
+searched again (`valid_live_driver`). A recursive delta, when given, still drives. Before this the order was the
+search's, and a first chunk that priced the demand large kept a plan led by a scan for the whole run: on PostHog
+cold, in 2 of 7 runs, 19 of 24 demanded plans led by another atom, three strata 0.1–1.3 s → 15–19 s, +600 G
+instructions. After, in two runs: every demanded plan (33, 21) led by its demand; 2,531 and 2,509 G; findings the
+same (29,747).

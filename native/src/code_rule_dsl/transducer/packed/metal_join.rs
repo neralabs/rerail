@@ -2002,7 +2002,8 @@ impl DevRel {
     pub(in crate::code_rule_dsl) fn in_block(b: &crate::code_rule_dsl::facts::rows::InBlock, cols: usize) -> Result<DevRel, Error> {
         assert!(b.at > 0, "a descriptor past the block's header");
         let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
-        let buffer = Held::kept(b.facts.block.gpu_buffer(device), Box::new(b.facts.clone()));
+        // The block, and the relation: its chunks are not given back while the device reads them (decision 0342).
+        let buffer = Held::kept(b.facts.block.gpu_buffer(device), Box::new((b.facts.clone(), b.part.clone())));
         Ok(DevRel { buffer, rows: b.rows as usize, cols, at: b.at as u64, dead: b.dead as u64, part: None, home: Some(b.facts.clone()) })
     }
 

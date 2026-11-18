@@ -1580,3 +1580,43 @@ fn node_ids_in_place_equal_the_numbered_ones() {
         }
     }
 }
+
+/// An axis's row count is counted from the tree, without its batch's solve: a guest round digests each input by its
+/// length, and the solve, every node's chain of member ancestors as pairs, was made for that count alone (780 MB of
+/// a PostHog run's 2.5 GB peak). A scan over `0..len` still reads every pair, solved then.
+#[test]
+fn an_axis_counts_its_rows_without_its_solve() {
+    use crate::code_rule_dsl::facts::core::kind_atom;
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let store = ContentStore::open(&temp("axes-len")).unwrap();
+    let docs: Vec<Document> = documents().into_iter().take(4).collect();
+    let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
+    let nodes = *batch.nodes.last().unwrap();
+    let kind = |r: usize| {
+        let (p, local) = batch.locate(View::Node, r);
+        let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(p.core[local]));
+        i64::from(kind_atom(p.tag, batch.dialects[p.tag].canonical.get(usize::from(code)).copied().unwrap_or(code)))
+    };
+    let set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();
+    let sources = [
+        ("containment", within::Within::new(Arc::clone(&batch), within::Mode::Tree)),
+        ("nearest", within::Within::axis(Arc::clone(&batch), within::Axis::Nearest, &set, Binding::Cpu)),
+        ("inside", within::Within::axis(Arc::clone(&batch), within::Axis::Inside, &set, Binding::Cpu)),
+    ];
+    // The last two documents' nodes, as a guest round's new documents (`retain::owners_delta`).
+    let new_from = batch.nodes[2];
+    let new_ids: BTreeSet<i64> = (new_from..nodes).map(|r| batch.id(r)).collect();
+    for (name, source) in sources {
+        let len = source.len();
+        assert!(len > 0, "{name}");
+        assert!(!source.is_solved(), "{name}: counted without its solve");
+        let owned: BTreeSet<(i64, i64)> = source.rows_owned(0, &|n| new_ids.contains(&n)).expect("a batch's view finds a document's rows").into_iter().map(|r| (source.value(r, 0), source.value(r, 1))).collect();
+        assert!(!source.is_solved(), "{name}: the new documents' rows found without its solve");
+        let scanned: BTreeSet<(i64, i64)> = (0..len).map(|r| (source.value(r, 0), source.value(r, 1))).collect();
+        assert!(!owned.is_empty(), "{name}");
+        assert_eq!(owned, scanned.iter().filter(|(n, _)| new_ids.contains(n)).copied().collect(), "{name}: exactly the new documents' rows");
+        assert_eq!(scanned.len(), len, "{name}: a scan reads every pair once");
+        assert!(source.is_solved(), "{name}: solved by the scan");
+        assert_eq!(source.len(), len, "{name}");
+    }
+}

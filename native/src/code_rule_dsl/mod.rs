@@ -4788,6 +4788,8 @@ pub(crate) fn install_languages() {
     compile::resolve::install_flow_resolves(compile::resolve::php::compile_php_resolves);
     // The containment relations' `nearest` solve (the file-local FIX's).
     facts::nearest::install_nearest(typing::file_local::nearest);
+    // What a block of relations asks about the device: the run's binding's (decision 0342, Q58).
+    facts::rows::install_block_device(logic::plan::placement::block_device);
     // `core.rr`'s names, as the rule language reads them.
     facts::core::install_core_names(logic::rr::core_shape);
     // What the evaluator keeps per connection, dropped with it.

@@ -2179,7 +2179,7 @@ impl Model {
         if self.stats.solving.contains(rel) { return None; }
         let col = self.col(rel, c);
         let [rows, ndv, _, _] = *self.stats.col.get(&(rel.to_owned(), col.clone()))?;
-        if ndv > 64 { return None; }
+        if ndv > SMALL_NDV { return None; }
         let values: Vec<_> = self.stats.memo.get(rel)?.iter().filter(|((name, _), n)| *name == col && **n > 0).collect();
         if values.len() as i64 != ndv || values.iter().map(|(_, n)| **n).sum::<i64>() != rows { return None; }
         Some(values.into_iter().map(|((_, v), _)| v).collect())
@@ -2737,8 +2737,10 @@ impl Model {
                 .unwrap_or_else(|| if small_batches(dr) { 0.0 } else { self.card(dr) })
     }
 
-    fn valid_live_driver(&self, order: &[Step], b: &Body<'_>, first: Option<usize>) -> bool {
-        first.is_none_or(|f| order.first().is_some_and(|s| s.at == f || self.smaller_change(b, f, s.at)))
+    /// Whether `order` starts from the line's driver: its delta (or a smaller connected change), else the rule's
+    /// demand (`Body::demand_first`), so a kept order that read its demand later is searched again (Q59).
+    pub fn valid_live_driver(&self, order: &[Step], b: &Body<'_>, first: Option<usize>) -> bool {
+        first.or_else(|| b.demand_first()).is_none_or(|f| order.first().is_some_and(|s| s.at == f || self.smaller_change(b, f, s.at)))
     }
 
     /// Records the work a rule's line did in the engine (`plan_work`, every order it ran in) on its kept plan, for
@@ -10087,10 +10089,22 @@ impl<'a> Cells<'a> {
     }
 }
 
+/// The most distinct values a column may have for its whole value set to be read from the statistics
+/// (`Model::small_values`): the corpus's totals keep every value of such a column, and of others only those tested.
+pub const SMALL_NDV: i64 = 64;
+
 /// An order-independent digest of rows (a set) of their content (`Cells`), as `corpus::retain::digest` takes a
 /// source's.
 pub fn rows_digest(cells: &Cells, rows: &[i64], n: usize) -> u64 {
     cells.sum(rows) ^ (n as u64).wrapping_mul(0xff51_afd7_ed55_8ccd)
+}
+
+/// `rows_digest` of `n` rows given a window at a time (`each`): the sum is the same in any order, so no copy of them
+/// all is made.
+pub fn rows_digest_windows(cells: &Cells, n: usize, each: &dyn Fn(&mut dyn FnMut(&[i64]))) -> u64 {
+    let mut sum = 0u64;
+    each(&mut |rows: &[i64]| sum = sum.wrapping_add(cells.sum(rows)));
+    sum ^ (n as u64).wrapping_mul(0xff51_afd7_ed55_8ccd)
 }
 
 /// One row's part of `rows_digest`, a sum of them: a relation's digest is patched by its rows gone and added.
