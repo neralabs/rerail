@@ -507,7 +507,9 @@ Validation failures return `400 { error: "invalid-request", issues }`. Handler e
 
 The bridge relays to the daemon recorded in `daemon.json`, following port changes and restarts, so the entry never needs editing. It first waits for that daemon's `/healthz` to answer with the recorded pid. A stale file therefore yields "Rerail daemon is not running" rather than reaching whatever holds the port.
 
-The bridge relays one request at a time, in the order they come. Before it sends one, it gives the daemon 30 s from the moment it takes the request to pass its checks: on Windows the daemon's engine proving it holds the access capability, then the `/healthz` check of a newly recorded daemon. The daemon then has 30 s from the send to answer. A daemon busy in an audit is waited for and answers; one still silent at either bound gives "Rerail daemon is running but did not answer within 30 s".
+The bridge relays one request at a time, in the order they come. Before it sends one, it gives the daemon 30 s from the moment it takes the request to pass its checks: on Windows the daemon's engine proving it holds the access capability, then the `/healthz` check of a newly recorded daemon. A check that starts with less than 2 s of that left still gets 2 s. The daemon then has 30 s from the send to answer. A daemon busy in an audit is waited for and answers; one still silent at either bound gives "Rerail daemon is running but did not answer within 30 s".
+
+On Windows, while other clients hold every instance of the engine's pipe, as hooks waiting on a busy daemon do, the proof first waits up to 30 s for a free instance, and its own time starts only once it connects. A daemon that frees one in that time is waited for as above, so the checks can take up to about 60 s; one that frees none gives "Rerail daemon is not running" after about 30 s.
 
 After that check a request costs one file read, and the bridge re-checks only on connection failure. Suppose a checked daemon is killed with SIGKILL, its pid is reused, and another daemon takes its port before the next request: that request reaches the other daemon.
 
