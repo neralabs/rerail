@@ -36,6 +36,8 @@ async function checkout() {
   await mkdir(join(home, "config", "git"), { recursive: true });
   vi.stubEnv("HOME", home);
   vi.stubEnv("XDG_CONFIG_HOME", join(home, "config"));
+  // Git and the engine both read the global configuration from here, whatever the host sets up for its own runs.
+  vi.stubEnv("GIT_CONFIG_GLOBAL", join(home, ".gitconfig"));
   return { root, main, home, linked: await realpath(join(root, "linked")), excludes: join(home, "config", "git", "ignore") };
 }
 
