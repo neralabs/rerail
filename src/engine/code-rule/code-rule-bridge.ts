@@ -363,10 +363,24 @@ function nonText(location: SourceLocation, source: Buffer): Pick<Source, "readEr
   if (location.unlisted && source.includes(0)) return {};
   return source.length > MAX_SOURCE_BYTES || source.includes(0) ? { readError: NOT_TEXT_ERROR } : undefined;
 }
-/** The latest stamp of a file a baseline walk read, which a shell may have written while it read. */
+/** The latest stamp of a file a walk read, which a shell may have written while it read. */
 async function modifiedSince(absolute: string, modifiedAt: number): Promise<number> {
   const after = await lstat(absolute);
   return Math.max(modifiedAt, after.mtimeMs, after.ctimeMs);
+}
+/**
+ * The stamp a walk gives what it read: what the file was stamped when the walk looked at it, or, where a shell may have
+ * written it while the read was pending, its stamp after the read. A baseline walk takes the later one, so it does not
+ * take bytes written meanwhile as the baseline. So does a walk that finds a command of the session it holds sources back
+ * for as its read ends (`#toolChanges`): the command may have begun after the walk looked, and be part way through what
+ * the walk read. With none, none the walk holds sources back for began before the bytes were read. The original `stamp`
+ * is kept either way, so the next walk reads the file again. A file such a walk cannot stamp after its read (gone, as
+ * when the command emptied and then removed it) is stamped now, so the command holds it back too.
+ */
+async function stampOfRead(walk: SourceWalk, absolute: string, modifiedAt: number): Promise<number> {
+  if (!walk.captureChanges) return await modifiedSince(absolute, modifiedAt);
+  if (walk.commandRuns?.() !== true) return modifiedAt;
+  return await modifiedSince(absolute, modifiedAt).catch(async () => Math.max(modifiedAt, await filesystemClock()));
 }
 /**
  * A text file as a walk observes it, with its text only when it may be an edit (`#discoveredEdit`): its digest is not
@@ -828,6 +842,11 @@ interface SourceWalk {
   readonly observedAt: number;
   readonly previousSources: ReadonlyMap<string, ObservedSource>;
   readonly captureChanges: boolean;
+  /**
+   * Whether a shell command of the session runs, or ended since the walk began (`ToolCallWindows.commandSince`); the
+   * other worktrees' walks ask nothing.
+   */
+  readonly commandRuns?: () => boolean;
   /**
    * Where a source the walk has no observation of is a baseline, as the walk began: the subtrees the last walk could not
    * read (`firstSightIsBaseline`). What a walk keeps no text of under them is what `#discoveredEdit` then takes as one.
@@ -2214,6 +2233,7 @@ export class CodeRuleBridge {
       discovery, checkoutOf: path => this.#owningCheckout(discovery.root, path), observedAt: walk.observedAt,
       previousSources: seed === undefined ? walk.previous : new Map([...seed, ...walk.previous]),
       captureChanges: !walk.baseline,
+      commandRuns: () => discovery.toolCalls.commandSince(walk.callsEnded) !== undefined,
       baselineRoots: discovery.baselineRoots,
       buffers: new WalkReadBuffers(MAX_SOURCE_BYTES + 1),
       scan: emptyScan(),
@@ -3108,9 +3128,7 @@ export class CodeRuleBridge {
     read: LentBytes,
   ): Promise<Source | undefined> {
     if (walk.discovery.cancelled) return undefined;
-    // A shell may mutate the file while the read is pending. Keep the original stamp
-    // so the next reconciliation re-reads it, but do not silently baseline those bytes.
-    const modifiedAt = walk.captureChanges ? stamped.modifiedAt : await modifiedSince(location.absolute, stamped.modifiedAt);
+    const modifiedAt = await stampOfRead(walk, location.absolute, stamped.modifiedAt);
     if (walk.discovery.cancelled) return undefined;
     const content = nonText(location, read.bytes);
     return content === undefined ? observedText(walk, { ...stamped, modifiedAt }, previous, read) : { ...stamped, modifiedAt, ...content };

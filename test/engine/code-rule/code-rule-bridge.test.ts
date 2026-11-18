@@ -30,6 +30,8 @@ import { removeFolder, runningIn } from "../../support/platform/remove-folder.js
 const discovery = vi.hoisted(() => ({
   reads: new Map<string, Array<() => Promise<void>>>(),
   directories: new Map<string, Array<() => Promise<void>>>(),
+  /** A file handle about to open there, before any byte is read. */
+  opens: new Map<string, Array<() => Promise<void>>>(),
 }));
 /**
  * The arguments of every Git process Rerail started without blocking, for the tests that pin what a pass costs, a Git
@@ -99,6 +101,7 @@ vi.mock("node:fs/promises", async importOriginal => {
       return contents;
     },
     open: async (...args: Parameters<typeof actual.open>) => {
+      await discovery.opens.get(String(args[0]))?.shift()?.();
       const handle = await actual.open(...args);
       const closed = closedReads.get(String(args[0]))?.shift();
       if (closed !== undefined) {
@@ -181,7 +184,7 @@ interface DiscoveryGate {
 }
 const bridges: CodeRuleBridge[] = [];
 const releases: Array<() => void> = [];
-function holdDiscovery(kind: "reads" | "directories", path: string): DiscoveryGate {
+function holdDiscovery(kind: "reads" | "directories" | "opens", path: string): DiscoveryGate {
   const entered = Promise.withResolvers<void>();
   const released = Promise.withResolvers<void>();
   const gate = { entered: entered.promise, release: released.resolve, started: false };
@@ -298,6 +301,7 @@ afterEach(async () => {
   releases.splice(0).forEach(release => release());
   discovery.reads.clear();
   discovery.directories.clear();
+  discovery.opens.clear();
   heldGit.reads = 0;
   readBuffers.watching = false;
   readBuffers.seen.clear();
@@ -1354,6 +1358,48 @@ describe("CodeRuleBridge", () => {
     expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits).map(({ generatedText, previousText }) => ({ generatedText, previousText }))).toEqual([
       { generatedText: "x = 2\n", previousText: "x = 1\n" },
       { generatedText: "x = 2\ny = 3\n", previousText: "x = 2\n" },
+    ]);
+  });
+
+  // A walk looked at a file one command had written, and read it only after a second command, begun meanwhile, emptied
+  // it: its text was the emptied file, while the stamp it looked at said the change came before the second command. So
+  // too when the command then removed the file before the walk could stamp it again.
+  it.each([
+    ["empties", false],
+    ["empties and then removes", true],
+  ] as const)("leaves a file a command %s while a walk reads it to the walk after that command ends", async (_kind, removed) => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, "x = 1\n");
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, auditor(auditGeneratedEdits));
+    await bridge.openWorkspace("session-1");
+    await bridge.begin("write-1", "write", { path: ["src/a.py"] });
+    await writeFile(path, "x = 2\n");
+    await bridge.finish("write-1");
+    // No walk runs from here until the first command's result.
+    await bridge.checkpoint("turn");
+
+    await bridge.begin("shell-1", "Bash", { command: "./first.sh" });
+    await writeFile(path, "x = 3\n");
+    await awaitClockAfter(path);
+    // The walk at the first command's result has looked at the file, and waits to open it.
+    const opening = holdDiscovery("opens", path);
+    const reading = holdDiscovery("reads", path);
+    const firstResult = bridge.finish("shell-1");
+    await opening.entered;
+    await bridge.begin("shell-2", "Bash", { command: "python3 generate.py" });
+    await writeFile(path, "");
+    opening.release();
+    await reading.entered;
+    if (removed) await rm(path);
+    reading.release();
+    await firstResult;
+    await writeFile(path, "x = 3\ny = 4\n");
+    await bridge.finish("shell-2");
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits).map(({ generatedText, previousText }) => ({ generatedText, previousText }))).toEqual([
+      { generatedText: "x = 2\n", previousText: "x = 1\n" },
+      { generatedText: "x = 3\ny = 4\n", previousText: "x = 2\n" },
     ]);
   });
 
