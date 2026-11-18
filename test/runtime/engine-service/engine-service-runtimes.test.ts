@@ -1114,6 +1114,42 @@ describe("the engine service's idle close", () => {
     }
   });
 
+  // The end of a quiet session whose runtime was kept, as the daemon had room at the idle close, comes once the daemon is
+  // short of room. The end notes no use of the runtime: only its claim keeps the heap watch's relief from closing the
+  // runtime under it, and without it the end was lost ("The database connection is not open").
+  it("writes the end of a quiet session whose runtime was kept, and closes nothing under it once the daemon is short of room", async () => {
+    const hold = { on: false, entered: Promise.withResolvers<void>(), released: Promise.withResolvers<void>() };
+    const room = { short: false };
+    const { clock, service, session, send, start, ended } = await idleService({
+      needsRoom: () => room.short,
+      beforeSessionPublish: async () => {
+        if (!hold.on) return;
+        hold.on = false;
+        hold.entered.resolve();
+        await hold.released.promise;
+      },
+    });
+    await start("a");
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    expect(service.openRuntimes()).toBe(1);
+    room.short = true;
+    const disposed = vi.spyOn(RerailRuntime.prototype, "dispose");
+    try {
+      hold.on = true;
+      const ending = send({ kind: "session-end", eventId: "a:end", sessionId: "a", session: session("a") });
+      await hold.entered.promise;
+      const relief = service.closeUnusedRuntimes();
+      const disposedDuringEnd = disposed.mock.calls.length;
+      hold.released.resolve();
+      await Promise.all([ending, relief]);
+      expect({ disposedDuringEnd, ended: ended("a") !== null }).toEqual({ disposedDuringEnd: 0, ended: true });
+    } finally {
+      hold.released.resolve();
+      disposed.mockRestore();
+    }
+  });
+
   // A suspension whose close failed was kept by nobody: its next event could not open it, its owner still active, and
   // its record stayed open and owned after the daemon stopped.
   it("keeps a quiet session suspended when its close fails, so its next event opens it again", async () => {
