@@ -158,6 +158,31 @@ describe("the Git a process keeps, gone under it", () => {
     }
   });
 
+  it("waits for a blocking call's look only for what its first start left of the call's time limit", async () => {
+    const [kept, now] = await moveKeptGit();
+    started(spawnSync);
+    const clock = holdClock();
+    // The first start takes 7 s of the call's 10 s.
+    vi.mocked(spawnSync).mockImplementationOnce((file, args, options) => {
+      clock.move(7_000);
+      return actual.spawnSync(program(file), args, options);
+    });
+    const waits: number[] = [];
+    const wait = Atomics.wait.bind(Atomics);
+    vi.spyOn(Atomics, "wait").mockImplementation((...args) => {
+      waits.push(args[3] ?? Infinity);
+      return wait(...args);
+    });
+    try {
+      const result = runGit(repository, ["rev-parse", "HEAD"]);
+      // Before the fix the look's first wait could last the call's whole 10 s again.
+      expect([result.status, Math.max(...waits) <= 3_000, limits(spawnSync), started(spawnSync)]).toEqual([0, true, [10_000, 3_000], [kept, now]]);
+    } finally {
+      vi.mocked(Atomics.wait).mockRestore();
+      clock.release();
+    }
+  });
+
   it("gives the look and the second start of a call that does not block only what is left of the call's time limit", async () => {
     const [kept, now] = await moveKeptGit();
     started(spawn);
