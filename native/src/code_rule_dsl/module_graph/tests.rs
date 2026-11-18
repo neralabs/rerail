@@ -785,8 +785,9 @@ fn the_walk_stops_past_its_entry_bound() {
 }
 
 /// A rewrite that keeps a source's length and modification time (`'use server'` for
-/// `'use client'`) is read again: a file modified a moment ago is not cached, and on unix a
-/// settled one's status-change time or inode moves.
+/// `'use client'`) is read again: a file modified a moment ago is not cached, and a settled one's
+/// change time or file id moves (on unix its status-change time or inode, on Windows NTFS's change
+/// time or file id).
 #[test]
 fn a_rewrite_restoring_length_and_modification_time_is_read_again() {
     let root = temp_root("restamped");
@@ -809,7 +810,6 @@ fn a_rewrite_restoring_length_and_modification_time_is_read_again() {
     assert_eq!(disk_graph(&root, "").unwrap(), server);
     rewrite("use client", tick);
     assert_eq!(disk_graph(&root, "").unwrap(), ["app/page.tsx"]);
-    #[cfg(unix)]
     {
         let settled = SystemTime::now() - Duration::from_secs(3600);
         rewrite("use server", settled);
@@ -818,7 +818,7 @@ fn a_rewrite_restoring_length_and_modification_time_is_read_again() {
         std::thread::sleep(Duration::from_millis(50));
         rewrite("use client", settled);
         assert_eq!(disk_graph(&root, "").unwrap(), ["app/page.tsx"]);
-        // A file renamed over the source (as `rsync -t` writes one) is another inode.
+        // A file renamed over the source (as `rsync -t` writes one) is another file.
         write_file(&root, "app/a.tmp", "'use server';\nimport './b';\n");
         std::fs::File::options()
             .write(true)
