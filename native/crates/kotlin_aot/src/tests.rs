@@ -142,3 +142,38 @@ fn jit_against_aot() {
     row("tier 1 + 2 (JIT)", sum(0, 2));
     row("tier 1 + 2 (AOT)", sum(1, 3));
 }
+
+/// The compiled parser's broad structure, as text: tier 1's passes and their shapes, the block
+/// program's operations by kind, and tier 2's size. A tool for comparing with the lean parser's
+/// (`block.rs`'s stage 1, `lex.rs`'s token loop, `parse/` a function a rule).
+#[test]
+#[ignore = "a tool: run by name"]
+fn structure() {
+    let jit = rerail_kotlin_parser::compiled().expect("compiles");
+    let b = &jit.program.block_programs[0];
+    let mut kinds = std::collections::BTreeMap::<String, usize>::new();
+    for op in &b.ops {
+        let name = format!("{op:?}");
+        let name = name.split(['(', ' ', '{']).next().unwrap_or("").to_string();
+        *kinds.entry(name).or_default() += 1;
+    }
+    eprintln!("tier 1: {} operations, {} fixed points, {} outputs", b.ops.len(), b.rounds.len(), b.outputs.len());
+    eprintln!("  by kind: {kinds:?}");
+    for (k, p) in jit.parser.tier1.passes.iter().enumerate() {
+        eprintln!(
+            "  pass {k}: back {}, block loop {}, general {}, extracts {}, outlined {}, rare branches {}, gate branches {}, round branches {}, region calls {}, reads back {}",
+            p.back, p.block_loop, p.general, p.extracts, p.outlined.len(), p.rare_branches, p.gate_branches, p.round_branches, p.region_calls.len(), p.reads_back
+        );
+    }
+    eprintln!("tier 1 passes in all: {}", jit.parser.tier1.pass_count());
+    let native = rerail_compiler::block_native::BlockNative::lower(b);
+    let passes = native.passes();
+    for (k, p) in passes.passes.iter().enumerate() {
+        match p {
+            rerail_compiler::block_native::Pass::Forward { body, stores } => eprintln!("  native pass {k}: forward, {} instructions, {} stored for later passes", body.insts.len(), stores.len()),
+            rerail_compiler::block_native::Pass::Back(fills) => eprintln!("  native pass {k}: back, {} back_fills", fills.len()),
+        }
+    }
+    eprintln!("  slots a block: {}", passes.slots);
+    eprintln!("tier 2: {} words, {} lines of machine", jit.words.lines().count(), jit.machine.lines().count());
+}
