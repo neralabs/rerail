@@ -141,10 +141,12 @@ describe("audit controls", () => {
       expect(controls.getWorkspaceSettings(spelled)?.mode).toBe("log");
     }));
 
-    it("reads it for a session 0.1.4 recorded, before this build recorded the folder", () => inSpelledFolder(({ controls, saveAsEarlier }) => {
-      saveAsEarlier({ scope: "ai-output", mode: "log" });
-      expect(controls.getSettings("spelled").settings).toEqual(LOG);
+    it("reads it for a session 0.1.4 recorded, before this build recorded the folder, and a change starts from it", () => inSpelledFolder(({ stored, controls, rows, saveAsEarlier }) => {
+      saveAsEarlier({ scope: "repository", mode: "log" });
+      expect(controls.getSettings("spelled").settings).toEqual({ ...LOG, scope: "repository" });
       expect(controls.hasUserSettings("spelled")).toBe(true);
+      controls.updateSettings("spelled", { steerStrategy: "rewind" });
+      expect(rows()[stored]).toEqual({ scope: "repository", mode: "log", steerStrategy: "rewind" });
     }, { recordedHere: false }));
 
     it("reads a row saved under the stored spelling before the one 0.1.4 saved", () => inSpelledFolder(({ stored, controls, saveAsEarlier }) => {
