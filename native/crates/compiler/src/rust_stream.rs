@@ -77,9 +77,6 @@ pub fn rust_source_at(native: &Structure, widths: rerail_tape_format::Widths, ta
     if !crate::native_cpu_stream::calls_on_stack(native) {
         return Err("calls are not on the machine's stack (`calls_on_stack`)".into());
     }
-    if native.extras.len() > 1 {
-        return Err("more than one kind of extra".into());
-    }
     if native.block_programs.iter().filter_map(|b| b.records.as_ref()).any(|r| r.readers.iter().any(|rd| !rd.parts.is_empty() && rd.split == crate::records::Split::Tier2)) {
         return Err("a region tier 2 splits (decision 0323): not yet ahead of time".into());
     }

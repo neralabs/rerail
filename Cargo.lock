@@ -3562,6 +3562,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-kotlin-aot"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "rerail-compiler",
+ "rerail-kotlin-aot",
+ "rerail-kotlin-lean",
+ "rerail-kotlin-parser",
+]
+
+[[package]]
 name = "rerail-kotlin-lean"
 version = "0.1.0"
 dependencies = [
