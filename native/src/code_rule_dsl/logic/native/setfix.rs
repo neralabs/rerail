@@ -6276,7 +6276,10 @@ pub struct JoinRule { pub steps: Vec<Step>, pub out: Vec<Term>, pub nslots: usiz
                       pub step_ns: Vec<Count>,
                       /// Per step, the plan step it was made for (`JoinSpec::from`; `plan_steps` for a step of the
                       /// head's computed terms), and the plan's steps: what the engine reports by step is by plan step.
-                      pub from: Vec<usize>, pub plan_steps: usize }
+                      pub from: Vec<usize>, pub plan_steps: usize,
+                      /// The rows the planner expects after each plan step, every row walked (`JoinSpec::est`); empty
+                      /// where it did not price the rule.
+                      pub est: Vec<f64> }
 
 impl JoinRule {
     /// Its steps' (in, out) counts by plan step (`plan_counts`).
@@ -6782,7 +6785,7 @@ fn join_rule_bound(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, inde
     } else {
         ((0..steps.len()).collect(), steps.len())
     };
-    Ok(JoinRule { steps, out, nslots: bound.len(), multi, counts, fused, forms, probes, spec: level::digest(spec), passed_over: Default::default(), step_ns, from, plan_steps })
+    Ok(JoinRule { steps, out, nslots: bound.len(), multi, counts, fused, forms, probes, spec: level::digest(spec), passed_over: Default::default(), step_ns, from, plan_steps, est: spec.est.0.clone() })
 }
 
 /// Runs a join probe over the store; its new head tuples go to `fresh`. Returns the tuples it derived.

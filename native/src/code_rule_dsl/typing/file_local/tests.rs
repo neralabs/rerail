@@ -717,16 +717,17 @@ fn a_local_join_can_export_a_node_bound_by_equality() {
         .output observed
         observed(answer) :- node(_, p, "some-kind", _, _), child(p, g, 0), mid = g, answer = mid, !excluded(g).
     "#;
-    let mut program = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+    // The version pass alone (0276 step 6: the tree twin it was compared with is gone): what it made is read.
+    let program = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
     let (image, _) = Builder::of_program(&program).unwrap().finish().unwrap();
     let mut pass = PushLocalJoins::default();
     let mut pipeline = Pipeline::new("test", image);
     pipeline.program(&mut pass);
     let (result, _) = pipeline.finish().unwrap();
-    let made = push_local_joins(&mut program);
-    assert_eq!(pass.made, made);
-    let (tree, _) = Builder::of_program(&program).unwrap().finish().unwrap();
-    assert_eq!(result.digest(), tree.digest(), "{}\n---\n{}", result.show(), tree.show());
+    let made = pass.made;
+    for m in &made {
+        assert!(result.rules().any(|r| reads(&result, r).contains(m)), "{m} is read:\n{}", result.show());
+    }
     let helpers: Vec<_> = made.iter().filter(|name| name.ends_with("_observed")).collect();
     assert_eq!(helpers.len(), usize::from(push_equal_columns()), "{}", result.show());
     if let [helper] = helpers.as_slice() {

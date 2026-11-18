@@ -132,7 +132,7 @@ fn with_sources(join: &JoinSpec, f: &mut dyn FnMut(&Source) -> Source) -> JoinSp
             item
         })
         .collect();
-    JoinSpec { items, from: join.from.clone(), plan_steps: join.plan_steps }
+    JoinSpec { items, from: join.from.clone(), plan_steps: join.plan_steps, est: join.est.clone() }
 }
 
 fn capture_(conn: &Connection, name: &str, spec: &ComponentSpec, path: &Path) -> Result<Capture, String> {

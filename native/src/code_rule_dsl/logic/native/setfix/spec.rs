@@ -114,6 +114,27 @@ pub struct JoinSpec {
     /// (`JoinRule::from`). Empty (a spec read from text): each item is its own step.
     pub from: Vec<u32>,
     pub plan_steps: u32,
+    /// The rows the planner expects after each plan step, every row walked (`StepPlan::all`, decision 0277), where it
+    /// priced the rule: what the device sizes a stage's table by before the stage has run (`Est`).
+    pub est: Est,
+}
+
+/// A spec's estimates (`JoinSpec::est`): not the rule. Every two are equal and they hash as nothing, so a spec's
+/// identity (`level::digest`), and what is kept by it (the stages' growth seen, compiled forms), stay a chunk's to the
+/// next while its estimates change.
+#[derive(Clone, Debug, Default)]
+pub struct Est(pub Vec<f64>);
+
+impl PartialEq for Est {
+    fn eq(&self, _: &Est) -> bool {
+        true
+    }
+}
+
+impl Eq for Est {}
+
+impl std::hash::Hash for Est {
+    fn hash<H: std::hash::Hasher>(&self, _: &mut H) {}
 }
 
 /// How a relation starts: its table's rows, none, a query's rows, or a kept native relation less another's
