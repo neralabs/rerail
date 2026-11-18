@@ -12,6 +12,7 @@ import { SqliteSessionReader, SqliteSessionStore } from "../runtime/session-stor
 import type { CodingAgentState } from "../engine/adapter-contract.js";
 import { createMergeAssistService, type MergeAssistRuntime, type MergeAssistService } from "../runtime/merge-assist/service.js";
 import type { RerailApiStores } from "./operation.js";
+import { databaseChangeFeed, type ChangeFeed, type ChangeFeedOptions } from "./change-feed.js";
 import type { presentationDaemonSchema } from "./session-contracts.js";
 
 export interface DatabaseApiStoresOptions {
@@ -24,6 +25,8 @@ export interface DatabaseApiStoresOptions {
   readonly resumeSession?: (sessionId: string) => void;
   /** The Merge Assist service sessions share (the runtime's); without one, a service over this database. */
   readonly mergeAssist?: MergeAssistService;
+  /** How {@link DatabaseApiStores.changes} watches and beats; tests set the beat. */
+  readonly changeFeed?: ChangeFeedOptions;
 }
 
 /**
@@ -48,6 +51,8 @@ export class DatabaseApiStores implements RerailApiStores {
   #localRevision = 0;
   /** {@link installedAt} once known; it never changes. */
   #installedAt: number | null = null;
+  /** {@link changes} once asked for; closed with the stores. */
+  #changes: ChangeFeed | undefined;
 
   constructor(path: string, options: DatabaseApiStoresOptions) {
     this.#path = path;
@@ -134,6 +139,13 @@ export class DatabaseApiStores implements RerailApiStores {
 
   markChanged(): void {
     this.#localRevision += 1;
+    // Its commit's own notice can be heard before this count moves, when the handler awaited after it wrote.
+    this.#changes?.notify("data");
+  }
+
+  changes(): ChangeFeed {
+    this.#changes ??= databaseChangeFeed(this.#path, this.#options.changeFeed);
+    return this.#changes;
   }
 
   repositoryState(workspace: string): RepositoryStartState {
@@ -146,6 +158,7 @@ export class DatabaseApiStores implements RerailApiStores {
   close(): void {
     // Its hook commands get SIGTERM and its late answers record nothing, before the database closes under them.
     void this.#ownMergeAssist?.stop(0);
+    this.#changes?.close();
     this.reader.close();
     this.#sessionStore?.close();
     this.#auditControls?.close();
