@@ -163,7 +163,9 @@ fn wait_for_release(env: &Env, file: File, wait_ms: u32, path: String) -> Result
 fn wait_for_release(env: &Env, file: File, wait_ms: u32, path: String) -> Result<Taking<'_>> {
     let wait = Duration::from_millis(wait_ms.into());
     match request_lock(file).map_err(|error| lock_failure("lock", &path, error))? {
-        Requested::Granted(file) => PromiseRaw::resolve(env, Some(ExclusiveFileLock::holding(file))),
+        Requested::Granted(file) => {
+            PromiseRaw::resolve(env, Some(ExclusiveFileLock::holding(file)))
+        }
         Requested::Pending(pending) => {
             wait_on_its_thread(env, path, move || pending.granted_within(wait))
         }
