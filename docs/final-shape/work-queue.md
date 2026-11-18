@@ -2416,6 +2416,12 @@ Also left (from this branch's list): the views (source views over a batch, 88 MB
   tree; the other four are small.
 - **Done when**: each check reads the version (an analysis, or a check over its rules and header), a debug build
   checks it refuses what the tree's refuses, and `link_seeded_version` decodes no tree.
+- **Done** (2026-11-18): `front::finish_checks_on` reads the version: the computed terms, lattices and inputs by the
+  fields API, `cycles::check` over the rules' handles (its algorithm unchanged, its strata by name from
+  `front::graph`, moved down from `program_image::analyses`, which re-exports it), `caches::caches` likewise. The
+  tree's form ran beside it on the front, rr, image, cache, pack, cycle and corpus tests (770 tests, every program
+  each reaches `finish` with), agreeing on each, and is deleted. The tree's `finish` encodes its tree for the
+  checks until the tree lowering goes (0276 step 5).
 
 ### Q85. (Q67 on phased-facts at 77a9d64fc) Come back to step 5's performance (0325, s5f at 8f8334e3d)
 
@@ -2564,3 +2570,14 @@ and the input relations' hash indexes and sorted orders. Then `rr_agg56` (Q82, 0
   Nothing runs the parts path in the test suite otherwise.
 - **Done when**: a part's link keeps the declaration the test reads, the test passes under the switch, and a test
   runs the parts path without the switch set by hand.
+
+### Q105. Five `rerail-logic` tests fail that read nothing of 0276 §3's port
+
+- **Found** (2026-11-18, running `rerail-logic`'s tests for Q83): `facts_only::every_table_is_facts_or_listed`
+  (`content_store/schema.rs`'s `frame_segments`, `guest_keys`, `object_segments` in no list),
+  `facts_only::every_kept_map_is_state_or_listed` (nine maps, `version.rs`'s `DECODED` among them),
+  `run_state::tests::every_thread_local_is_listed_with_its_class` (`f16.rs`'s `BLOCKS` listed twice), and
+  `strings::tests::tests_on_text_relations_become_relations` and
+  `logical_line_predicates_and_aliases_use_the_vocabulary_batch` (the strings' relations numbered in another order
+  than the tests expect, after 0281 step 6c named them by content). None reads `finish` or a version's fields.
+- **Done when**: each list names what it lists once, and the strings tests assert by content, not number.

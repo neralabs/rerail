@@ -1062,9 +1062,8 @@ fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, append
             p.program(&mut SourcesOnRequest { round });
         }
         p.program(&mut lowering_tail::OrderNodes).program(&mut lowering_tail::DeclareAxes);
-        // `finish`'s checks, through the tree (work queue Q83): `cycles::check` reads a tree.
-        let finished = p.current().map_err(Error::Syntax)?.program(&Default::default()).map_err(Error::Syntax)?;
-        super::front::finish_checks(&finished)?;
+        // `finish`'s checks, on the version.
+        super::front::finish_checks_on(p.current().map_err(Error::Syntax)?)?;
     }
     {
         use super::plan::corpus::preparation::{DropRepeated, lowering_tail};

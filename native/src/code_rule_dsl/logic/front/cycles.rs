@@ -63,7 +63,11 @@
 //! 2026-11-03 (open-items O11); the counters, sibling order, strings and recursive summaries 2026-11-06 (O77);
 //! comparisons, functions and counts alone with decision 0046.
 
-use super::{Error, Literal, Program, Rule, Term, is_axis};
+use super::{Error, LatticeDecl, is_axis};
+use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
+use crate::code_rule_dsl::logic::program_image::handles::{AtomRef, CmpOp, Lit, LitRef, RuleRef, TermRef};
+use super::graph;
+use crate::code_rule_dsl::logic::program_image::{About, AtomId, Slot, Version};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 /// A move from one value to another along an order.
@@ -108,11 +112,131 @@ impl Move {
     }
 }
 
+/// A rule of the version, read in place: its variables, relations and strings by the names the version gives them.
+#[derive(Clone, Copy)]
+struct Rule<'v> {
+    v: &'v Version,
+    r: RuleRef<'v>,
+}
+
+impl<'v> Rule<'v> {
+    fn head_rel(self) -> &'v str {
+        self.v.rel_name(self.r.head().rel())
+    }
+    fn head_args(self) -> Vec<TermRef<'v>> {
+        self.r.head().args().collect()
+    }
+    fn head_arg(self, j: usize) -> Option<TermRef<'v>> {
+        self.r.head().args().nth(j)
+    }
+    fn arity(self) -> usize {
+        self.r.head().arity()
+    }
+    fn body(self) -> impl Iterator<Item = LitRef<'v>> {
+        self.r.body()
+    }
+    fn lits(self) -> impl Iterator<Item = Lit<'v>> {
+        self.r.body().map(LitRef::view)
+    }
+    fn rel(self, a: AtomRef<'v>) -> &'v str {
+        self.v.rel_name(a.rel())
+    }
+    fn text(self, a: AtomId) -> &'v str {
+        self.v.text(a)
+    }
+    fn name(self, s: Slot) -> &'v str {
+        self.v.text(self.r.var(s))
+    }
+    /// The variable a term is, by name.
+    fn var(self, t: TermRef<'v>) -> Option<&'v str> {
+        t.var().map(|s| self.name(s))
+    }
+    fn is_var(self, t: TermRef<'v>, x: &str) -> bool {
+        self.var(t) == Some(x)
+    }
+    /// A call's builtin and its arguments.
+    fn call(self, t: TermRef<'v>) -> Option<(&'v str, Vec<TermRef<'v>>)> {
+        if let TermRef::Call(f, args) = t { Some((self.text(f), args.collect())) } else { None }
+    }
+    /// The variables a term reads, a call's arguments' too.
+    fn vars(self, t: TermRef<'v>, out: &mut BTreeSet<String>) {
+        match t {
+            TermRef::Var(s) => {
+                out.insert(self.name(s).to_owned());
+            }
+            TermRef::Call(_, args) => args.for_each(|a| self.vars(a, out)),
+            _ => {}
+        }
+    }
+    fn atom_vars(self, a: AtomRef<'v>) -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        a.args().for_each(|t| self.vars(t, &mut out));
+        out
+    }
+    /// The variables a literal names.
+    fn lit_vars(self, l: Lit<'v>) -> BTreeSet<String> {
+        let mut out = BTreeSet::new();
+        match l {
+            Lit::Atom(a) => out = self.atom_vars(a),
+            Lit::Cmp { l, r, .. } => {
+                self.vars(l, &mut out);
+                self.vars(r, &mut out);
+            }
+            Lit::Agg { var, over, atom, .. } => {
+                out = self.atom_vars(atom);
+                out.insert(self.name(var).to_owned());
+                out.extend(over.map(|o| self.name(o).to_owned()));
+            }
+            Lit::Nearest { n, a, .. } => out.extend([self.name(n).to_owned(), self.name(a).to_owned()]),
+            Lit::Ast { document, node, captures, .. } => {
+                out.extend([self.name(document).to_owned(), self.name(node).to_owned()]);
+                out.extend(captures.map(|(_, s)| self.name(s).to_owned()));
+            }
+        }
+        out
+    }
+    /// Whether two of the rule's terms are the same term.
+    fn same(self, a: TermRef<'v>, b: TermRef<'v>) -> bool {
+        match (a, b) {
+            (TermRef::Var(x), TermRef::Var(y)) => x == y,
+            (TermRef::Wild, TermRef::Wild) | (TermRef::Top, TermRef::Top) => true,
+            (TermRef::Int(x), TermRef::Int(y)) => x == y,
+            (TermRef::Str(x), TermRef::Str(y)) => self.text(x) == self.text(y),
+            (TermRef::Branded(x), TermRef::Branded(y)) => x == y,
+            (TermRef::Call(f, xs), TermRef::Call(g, ys)) => {
+                self.text(f) == self.text(g) && xs.count() == ys.count() && xs.zip(ys).all(|(x, y)| self.same(x, y))
+            }
+            _ => false,
+        }
+    }
+    /// The rule as its program's text writes it, for an error.
+    fn shown(self) -> String {
+        self.v.show_rule(self.r)
+    }
+}
+
+/// What the check reads of the program besides its rules.
+struct Prog<'v> {
+    v: &'v Version,
+    lattice: BTreeMap<String, LatticeDecl>,
+}
+
+impl Prog<'_> {
+    /// The columns of `rel` of type `ty`, as declared.
+    fn columns(&self, rel: &str, ty: &str) -> Vec<usize> {
+        self.v.columns_of(rel).map_or_else(Vec::new, |cols| cols.iter().enumerate().filter(|(_, (_, t))| t == ty).map(|(i, _)| i).collect())
+    }
+    /// Whether `rel`'s rows are given, not derived: an input, or a relation with facts.
+    fn given(&self, rel: &str) -> bool {
+        self.v.has_input(rel) || ProgramFields::states_facts(self.v, rel)
+    }
+}
+
 /// Per relation, the moves between its columns that hold in every row: `(from, to) → (move → strictly)`.
 type Moves = BTreeMap<String, BTreeMap<(usize, usize), BTreeMap<Move, bool>>>;
 
 /// The base relations' moves (`edges` adds each one's way back).
-fn base(prog: &Program) -> Moves {
+fn base(p: &Prog<'_>) -> Moves {
     let mut moves = Moves::new();
     let mut add = |rel: &str, from: usize, to: usize| {
         moves.entry(rel.to_owned()).or_default().entry((from, to)).or_default().insert(Move::Later, true);
@@ -121,7 +245,7 @@ fn base(prog: &Program) -> Moves {
         add(rel, from, to);
     }
     // The tree axes, `rr_inside_<set>(n, a)` and `rr_has_<set>(n, a)`: a is an ancestor of n.
-    for rel in prog.inputs.iter().filter(|r| is_axis(r)) {
+    for rel in p.v.input_names().iter().filter(|r| is_axis(r)) {
         add(rel, 1, 0);
     }
     moves
@@ -150,60 +274,73 @@ fn head(j: usize) -> String {
     format!("#{j}")
 }
 
+/// The variable at an atom's column `i`, if it is one.
+fn arg_var<'v>(rule: Rule<'v>, args: &[TermRef<'v>], i: usize) -> Option<&'v str> {
+    args.get(i).and_then(|&t| rule.var(t))
+}
+
 /// A term as a variable's value or a part of it: `(variable, None)` for the variable itself.
-fn part(t: &Term) -> Option<(&str, Option<(Move, bool)>)> {
+fn part<'v>(rule: Rule<'v>, t: TermRef<'v>) -> Option<(&'v str, Option<(Move, bool)>)> {
     match t {
-        Term::Var(x) => Some((x, None)),
-        Term::Call(_, args) => {
-            let strict = shrinks(t)?;
-            let Some(Term::Var(x)) = args.first() else { return None };
+        TermRef::Var(s) => Some((rule.name(s), None)),
+        TermRef::Call(..) => {
+            let strict = shrinks(rule, t)?;
+            let x = rule.call(t)?.1.first().and_then(|&a| rule.var(a))?;
             Some((x, Some((Move::Shorter, strict))))
         }
         _ => None,
     }
 }
 
-fn edges(rule: &Rule, moves: &Moves) -> Edges {
+fn edges(rule: Rule<'_>, moves: &Moves) -> Edges {
     let mut out = Edges::new();
     let mut add = |a: &str, b: &str, m: Option<(Move, bool)>| {
         out.entry(a.to_owned()).or_default().push((b.to_owned(), m));
         out.entry(b.to_owned()).or_default().push((a.to_owned(), m.map(|(m, s)| (m.back(), s))));
     };
     // A term and the variable it is (a part of): `part` gives the way from the variable to the term.
-    for (j, t) in rule.head.args.iter().enumerate() {
-        if let Some((x, m)) = part(t) {
+    for (j, t) in rule.head_args().into_iter().enumerate() {
+        if let Some((x, m)) = part(rule, t) {
             add(x, &head(j), m);
         }
     }
     let mut children = Vec::new();
-    for literal in &rule.body {
+    for literal in rule.lits() {
         match literal {
-            Literal::Atom(a) if !a.neg => {
-                for (&(i, j), ms) in moves.get(a.rel.as_str()).into_iter().flatten() {
-                    if let (Some(Term::Var(x)), Some(Term::Var(y))) = (a.args.get(i), a.args.get(j)) {
+            Lit::Atom(a) if !a.neg() => {
+                let args: Vec<TermRef<'_>> = a.args().collect();
+                for (&(i, j), ms) in moves.get(rule.rel(a)).into_iter().flatten() {
+                    if let (Some(x), Some(y)) = (arg_var(rule, &args, i), arg_var(rule, &args, j)) {
                         ms.iter().for_each(|(&m, &s)| add(x, y, Some((m, s))));
                     }
                 }
-                if a.rel == "child"
-                    && let [Term::Var(p), Term::Var(c), i] = a.args.as_slice()
+                if rule.rel(a) == "child"
+                    && let [p, c, i] = args.as_slice()
+                    && let (Some(p), Some(c)) = (rule.var(*p), rule.var(*c))
                 {
-                    children.push((p, c, i));
+                    children.push((p, c, *i));
                 }
             }
-            Literal::Nearest { n, a, .. } => add(n, a, Some((Move::Earlier, true))),
-            Literal::Cmp { l: Term::Var(v), op: "=", r: t } | Literal::Cmp { l: t, op: "=", r: Term::Var(v) } => {
-                if let Some((x, m)) = part(t) {
+            Lit::Nearest { n, a, .. } => add(rule.name(n), rule.name(a), Some((Move::Earlier, true))),
+            Lit::Cmp { l, op: CmpOp::Eq, r } => {
+                let (v, t) = match (rule.var(l), rule.var(r)) {
+                    (Some(v), _) => (v, r),
+                    (None, Some(v)) => (v, l),
+                    _ => continue,
+                };
+                if let Some((x, m)) = part(rule, t) {
                     add(x, v, m);
                 }
             }
-            Literal::Cmp { l: Term::Var(x), op, r: Term::Var(y) } => {
+            Lit::Cmp { l, op, r } => {
+                let (Some(x), Some(y)) = (rule.var(l), rule.var(r)) else { continue };
                 // A node is its preorder index, so `<` moves later, unless ids are per definition (`Move::Greater`).
                 let (later, earlier) = if by_value() { (Move::Greater, Move::Smaller) } else { (Move::Later, Move::Earlier) };
-                match *op {
-                    "<" => add(x, y, Some((later, true))),
-                    "<=" => add(x, y, Some((later, false))),
-                    ">" => add(x, y, Some((earlier, true))),
-                    ">=" => add(x, y, Some((earlier, false))),
+                match op {
+                    CmpOp::Lt => add(x, y, Some((later, true))),
+                    CmpOp::Le => add(x, y, Some((later, false))),
+                    CmpOp::Gt => add(x, y, Some((earlier, true))),
+                    CmpOp::Ge => add(x, y, Some((earlier, false))),
                     _ => {}
                 }
             }
@@ -222,16 +359,17 @@ fn edges(rule: &Rule, moves: &Moves) -> Edges {
 }
 
 /// Whether the rule gives `i < j` for two child indexes: integers, `i < j`, or `j = i + c` with c positive.
-fn before(rule: &Rule, i: &Term, j: &Term) -> bool {
-    if let (Term::Int(a), Term::Int(b)) = (i, j) {
+fn before<'v>(rule: Rule<'v>, i: TermRef<'v>, j: TermRef<'v>) -> bool {
+    if let (TermRef::Int(a), TermRef::Int(b)) = (i, j) {
         return a < b;
     }
-    rule.body.iter().any(|l| match l {
-        Literal::Cmp { l, op: "<", r } => l == i && r == j,
-        Literal::Cmp { l, op: ">", r } => l == j && r == i,
-        Literal::Cmp { l, op: "=", r: Term::Call(f, args) } if f == "add" && l == j => {
-            matches!(args.as_slice(), [x, Term::Int(c)] | [Term::Int(c), x] if x == i && *c > 0)
-        }
+    rule.lits().any(|lit| match lit {
+        Lit::Cmp { l, op: CmpOp::Lt, r } => rule.same(l, i) && rule.same(r, j),
+        Lit::Cmp { l, op: CmpOp::Gt, r } => rule.same(l, j) && rule.same(r, i),
+        Lit::Cmp { l, op: CmpOp::Eq, r } if rule.same(l, j) => match rule.call(r) {
+            Some(("add", args)) => matches!(args.as_slice(), [x, TermRef::Int(c)] | [TermRef::Int(c), x] if rule.same(*x, i) && *c > 0),
+            _ => false,
+        },
         _ => false,
     })
 }
@@ -296,23 +434,28 @@ fn depth_base() -> Depths {
 }
 
 /// A rule's variables' depth edges: `var → [(var, span)]`.
-fn depth_edges(rule: &Rule, depths: &Depths) -> BTreeMap<String, Vec<(String, Span)>> {
+fn depth_edges(rule: Rule<'_>, depths: &Depths) -> BTreeMap<String, Vec<(String, Span)>> {
     let mut out = BTreeMap::<String, Vec<(String, Span)>>::new();
     let mut add = |a: &str, b: &str, d: Span| {
         out.entry(a.to_owned()).or_default().push((b.to_owned(), d));
         out.entry(b.to_owned()).or_default().push((a.to_owned(), back_span(d)));
     };
-    for literal in &rule.body {
+    for literal in rule.lits() {
         match literal {
-            Literal::Atom(a) if !a.neg => {
-                for (&(i, j), &d) in depths.get(a.rel.as_str()).into_iter().flatten() {
-                    if let (Some(Term::Var(x)), Some(Term::Var(y))) = (a.args.get(i), a.args.get(j)) {
+            Lit::Atom(a) if !a.neg() => {
+                let args: Vec<TermRef<'_>> = a.args().collect();
+                for (&(i, j), &d) in depths.get(rule.rel(a)).into_iter().flatten() {
+                    if let (Some(x), Some(y)) = (arg_var(rule, &args, i), arg_var(rule, &args, j)) {
                         add(x, y, d);
                     }
                 }
             }
-            Literal::Nearest { n, a, .. } => add(n, a, (-INF, -1)),
-            Literal::Cmp { l: Term::Var(x), op: "=", r: Term::Var(y) } => add(x, y, (0, 0)),
+            Lit::Nearest { n, a, .. } => add(rule.name(n), rule.name(a), (-INF, -1)),
+            Lit::Cmp { l, op: CmpOp::Eq, r } => {
+                if let (Some(x), Some(y)) = (rule.var(l), rule.var(r)) {
+                    add(x, y, (0, 0));
+                }
+            }
             _ => {}
         }
     }
@@ -345,13 +488,14 @@ fn depth_reach(edges: &BTreeMap<String, Vec<(String, Span)>>, from: &str) -> BTr
 
 /// What `rules` (one relation) guarantee in depth between its node columns, given `depths`: per pair the
 /// widest of its rules' spans; a pair some rule does not connect has none.
-fn depth_summary(prog: &Program, rules: &[&Rule], depths: &Depths) -> BTreeMap<(usize, usize), Span> {
-    let nodes = columns(prog, &rules[0].head.rel, "node");
+fn depth_summary(p: &Prog<'_>, rules: &[Rule<'_>], depths: &Depths) -> BTreeMap<(usize, usize), Span> {
+    let nodes = p.columns(rules[0].head_rel(), "node");
     let reached: Vec<BTreeMap<usize, BTreeMap<String, Span>>> = rules
         .iter()
-        .map(|rule| {
+        .map(|&rule| {
             let edges = depth_edges(rule, depths);
-            nodes.iter().filter_map(|&i| match rule.head.args.get(i) { Some(Term::Var(x)) => Some((i, depth_reach(&edges, x))), _ => None }).collect()
+            let args = rule.head_args();
+            nodes.iter().filter_map(|&i| arg_var(rule, &args, i).map(|x| (i, depth_reach(&edges, x)))).collect()
         })
         .collect();
     let mut out = BTreeMap::new();
@@ -360,8 +504,8 @@ fn depth_summary(prog: &Program, rules: &[&Rule], depths: &Depths) -> BTreeMap<(
             let mut span = EMPTY;
             let mut all = true;
             for (rule, reached) in rules.iter().zip(&reached) {
-                let d = match (reached.get(&i), rule.head.args.get(j)) {
-                    (Some(r), Some(Term::Var(y))) => r.get(y.as_str()).copied(),
+                let d = match (reached.get(&i), rule.head_arg(j).and_then(|t| rule.var(t))) {
+                    (Some(r), Some(y)) => r.get(y).copied(),
                     _ => None,
                 };
                 let Some(d) = d.filter(|d| d.0 > -INF || d.1 < INF) else {
@@ -383,23 +527,21 @@ fn depth_summary(prog: &Program, rules: &[&Rule], depths: &Depths) -> BTreeMap<(
 /// input, or a relation with facts, guarantees nothing.
 /// A component that reads no member of itself (not `recursive`) is settled by its first round: its rules read only
 /// relations below it, so a second round gives the first's spans again.
-fn depth_summaries(prog: &Program, component: &BTreeSet<String>, by_head: &BTreeMap<&str, Vec<&Rule>>, depths: &mut Depths, recursive: bool) {
-    let (rels, none): (Vec<&String>, Vec<&String>) = component
-        .iter()
-        .filter(|rel| columns(prog, rel, "node").len() > 1)
-        .partition(|rel| !prog.inputs.contains(rel) && !prog.facts.contains_key(*rel) && by_head.contains_key(rel.as_str()));
+fn depth_summaries(p: &Prog<'_>, component: &BTreeSet<String>, by_head: &BTreeMap<&str, Vec<Rule<'_>>>, depths: &mut Depths, recursive: bool) {
+    let (rels, none): (Vec<&String>, Vec<&String>) =
+        component.iter().filter(|rel| p.columns(rel, "node").len() > 1).partition(|rel| !p.given(rel) && by_head.contains_key(rel.as_str()));
     for rel in none {
         depths.remove(rel.as_str());
     }
     for rel in &rels {
-        let nodes = columns(prog, rel, "node");
+        let nodes = p.columns(rel, "node");
         let empty = nodes.iter().flat_map(|&i| nodes.iter().filter(move |&&j| j != i).map(move |&j| ((i, j), EMPTY))).collect();
         depths.insert((*rel).clone(), empty);
     }
     for round in 0..64 {
         let mut changed = false;
         for rel in &rels {
-            let next = depth_summary(prog, &by_head[rel.as_str()], depths);
+            let next = depth_summary(p, &by_head[rel.as_str()], depths);
             let old = &depths[rel.as_str()];
             // Joined with what held (a pair either lacks is unbounded), and widened past round 8.
             let joined: BTreeMap<(usize, usize), Span> = next
@@ -433,35 +575,34 @@ fn depth_summaries(prog: &Program, component: &BTreeSet<String>, by_head: &BTree
 }
 
 /// `reach`, with a move to an unequal value (`$e != $n` in the rule) strict.
-fn step(rule: &Rule, edges: &Edges, from: &str, to: &str, way: Move) -> Option<bool> {
+fn step(rule: Rule<'_>, edges: &Edges, from: &str, to: &str, way: Move) -> Option<bool> {
     let got = reach(edges, from, to, way)?;
-    let var = |t: &Term, v: &str| matches!(t, Term::Var(x) if x == v);
     // The head's column `#j` is its variable there (a part of a variable is tested by nothing).
     let named = |v: &str| -> Option<String> {
-        match v.strip_prefix('#').and_then(|j| j.parse::<usize>().ok()).and_then(|j| rule.head.args.get(j)) {
-            Some(Term::Var(x)) => Some(x.to_string()),
-            Some(_) => None,
+        match v.strip_prefix('#').and_then(|j| j.parse::<usize>().ok()).and_then(|j| rule.head_arg(j)) {
+            Some(t) => rule.var(t).map(str::to_owned),
             None => Some(v.to_owned()),
         }
     };
     let unequal = named(from).zip(named(to)).is_some_and(|(f, t)| {
-        rule.body.iter().any(|l| matches!(l, Literal::Cmp { l, op: "!=", r } if (var(l, &f) && var(r, &t)) || (var(l, &t) && var(r, &f))))
+        rule.lits().any(|lit| {
+            matches!(lit, Lit::Cmp { l, op: CmpOp::Ne, r } if (rule.is_var(l, &f) && rule.is_var(r, &t)) || (rule.is_var(l, &t) && rule.is_var(r, &f)))
+        })
     });
     Some(got || unequal)
 }
 
 /// Whether a term is a part of its first argument, and whether always a strictly shorter one: `Some(strictly)`.
 /// `@replace_all(s, re, "")` deletes from s; its values are parts of s too (as a subsequence).
-fn shrinks(t: &Term) -> Option<bool> {
-    let Term::Call(f, args) = t else { return None };
-    match (f.as_str(), args.as_slice()) {
-        ("rx_group", [_, Term::Str(re), Term::Str(g)]) => Some(gap(re, g).is_some_and(|n| n > 0)),
+fn shrinks<'v>(rule: Rule<'v>, t: TermRef<'v>) -> Option<bool> {
+    let (f, args) = rule.call(t)?;
+    match (f, args.as_slice()) {
+        ("rx_group", [_, TermRef::Str(re), TermRef::Str(g)]) => Some(gap(rule.text(*re), rule.text(*g)).is_some_and(|n| n > 0)),
         ("rx_group", [_, _, _]) | ("pkg_up" | "substr" | "slice" | "dir" | "head", [_, ..]) => Some(false),
-        ("replace_all", [_, _, Term::Str(r)]) if r.is_empty() => Some(false),
+        ("replace_all", [_, _, TermRef::Str(r)]) if rule.text(*r).is_empty() => Some(false),
         _ => None,
     }
 }
-
 /// The fewest bytes a match of `re` has outside its group `g` when g takes part (its capture is that much
 /// shorter than the text matched); `None` when `re` does not parse or has no group g.
 pub fn gap(re: &str, g: &str) -> Option<usize> {
@@ -488,105 +629,122 @@ pub fn gap(re: &str, g: &str) -> Option<usize> {
 }
 
 /// What bounds a rule's made values (rule 1 of the module's).
-struct Bounds<'a> {
-    rule: &'a Rule,
+struct Bounds<'v> {
+    rule: Rule<'v>,
     /// The variables bound outside the component, and those the rule bounds above and below by integers (`$t >= 0,
     /// $t <= 100000`: a whole number between two, as a table of them would bind it): finitely many values each,
     /// fixed while it runs.
     outside: BTreeSet<String>,
 }
 
-impl<'a> Bounds<'a> {
-    fn new(rule: &'a Rule, component: &BTreeSet<String>) -> Self {
+impl<'v> Bounds<'v> {
+    fn new(rule: Rule<'v>, component: &BTreeSet<String>) -> Self {
         let mut outside = BTreeSet::new();
-        for l in &rule.body {
+        for l in rule.lits() {
             match l {
-                Literal::Atom(a) if !a.neg && !component.contains(a.rel.as_str()) => outside.extend(a.vars()),
-                Literal::Agg { var, atom, .. } if !component.contains(atom.rel.as_str()) => {
-                    outside.insert(var.clone());
+                Lit::Atom(a) if !a.neg() && !component.contains(rule.rel(a)) => outside.extend(rule.atom_vars(a)),
+                Lit::Agg { var, atom, .. } if !component.contains(rule.rel(atom)) => {
+                    outside.insert(rule.name(var).to_owned());
                 }
-                Literal::Nearest { .. } | Literal::Ast { .. } => outside.extend(l.vars()),
+                Lit::Nearest { .. } | Lit::Ast { .. } => outside.extend(rule.lit_vars(l)),
                 _ => {}
             }
         }
         let bound = |v: &str, below: bool| {
-            rule.body.iter().any(|l| match l {
-                Literal::Cmp { l: Term::Var(x), op, r: Term::Int(_) } if x == v => if below { matches!(*op, ">" | ">=") } else { matches!(*op, "<" | "<=") },
-                Literal::Cmp { l: Term::Int(_), op, r: Term::Var(x) } if x == v => if below { matches!(*op, "<" | "<=") } else { matches!(*op, ">" | ">=") },
+            rule.lits().any(|lit| match lit {
+                Lit::Cmp { l, op, r: TermRef::Int(_) } if rule.is_var(l, v) => {
+                    if below { matches!(op, CmpOp::Gt | CmpOp::Ge) } else { matches!(op, CmpOp::Lt | CmpOp::Le) }
+                }
+                Lit::Cmp { l: TermRef::Int(_), op, r } if rule.is_var(r, v) => {
+                    if below { matches!(op, CmpOp::Lt | CmpOp::Le) } else { matches!(op, CmpOp::Gt | CmpOp::Ge) }
+                }
                 _ => false,
             })
         };
-        for l in &rule.body {
-            if let Literal::Cmp { l: Term::Var(v), r: Term::Int(_), .. } | Literal::Cmp { l: Term::Int(_), r: Term::Var(v), .. } = l
+        for lit in rule.lits() {
+            let Lit::Cmp { l, r, .. } = lit else { continue };
+            let v = match (l, r) {
+                (TermRef::Var(_), TermRef::Int(_)) => rule.var(l),
+                (TermRef::Int(_), TermRef::Var(_)) => rule.var(r),
+                _ => None,
+            };
+            if let Some(v) = v
                 && bound(v, true)
                 && bound(v, false)
             {
-                outside.insert(v.to_string());
+                outside.insert(v.to_owned());
             }
         }
         Bounds { rule, outside }
     }
 
     /// Whether `t` makes a new value; `alias` is the variable it is assigned to, if any.
-    fn makes(&self, t: &Term, alias: Option<&str>) -> bool {
-        let Term::Call(_, args) = t else { return false };
-        if shrinks(t).is_some() {
-            return args.first().is_some_and(|a| self.makes(a, None));
+    fn makes(&self, t: TermRef<'v>, alias: Option<&str>) -> bool {
+        let Some((_, args)) = self.rule.call(t) else { return false };
+        if shrinks(self.rule, t).is_some() {
+            return args.first().is_some_and(|&a| self.makes(a, None));
         }
         let mut vars = BTreeSet::new();
-        t.vars(&mut vars);
+        self.rule.vars(t, &mut vars);
         !vars.is_subset(&self.outside) && !self.counter(t, alias)
     }
 
     /// `x + c` or `x - c` (c a positive integer) with x or `alias` bounded the way it moves.
-    fn counter(&self, t: &Term, alias: Option<&str>) -> bool {
-        let (x, by) = match t {
-            Term::Call(f, args) if f == "add" => match args.as_slice() {
-                [Term::Var(x), Term::Int(c)] | [Term::Int(c), Term::Var(x)] => (x, *c),
-                _ => return false,
+    fn counter(&self, t: TermRef<'v>, alias: Option<&str>) -> bool {
+        let rule = self.rule;
+        let Some((f, args)) = rule.call(t) else { return false };
+        let var_int = |a: TermRef<'v>, b: TermRef<'v>| match (rule.var(a), b) {
+            (Some(x), TermRef::Int(c)) => Some((x, c)),
+            _ => None,
+        };
+        let (x, by) = match (f, args.as_slice()) {
+            ("add", &[a, b]) => match var_int(a, b).or_else(|| var_int(b, a)) {
+                Some(got) => got,
+                None => return false,
             },
-            Term::Call(f, args) if f == "sub" => match args.as_slice() {
-                [Term::Var(x), Term::Int(c)] => match c.checked_neg() {
-                    Some(by) => (x, by),
-                    None => return false,
-                },
-                _ => return false,
+            ("sub", &[a, b]) => match var_int(a, b).and_then(|(x, c)| c.checked_neg().map(|by| (x, by))) {
+                Some(got) => got,
+                None => return false,
             },
             _ => return false,
         };
-        let bound = |k: &Term| matches!(k, Term::Int(_)) || matches!(k, Term::Var(v) if self.outside.contains(v.as_str()));
-        let this = |t: &Term| matches!(t, Term::Var(v) if v == x || Some(v.as_str()) == alias);
-        let (below, above): (&[&str], &[&str]) = if by > 0 { (&["<", "<="], &[">", ">="]) } else { (&[">", ">="], &["<", "<="]) };
+        let bound = |k: TermRef<'v>| matches!(k, TermRef::Int(_)) || rule.var(k).is_some_and(|v| self.outside.contains(v));
+        let this = |t: TermRef<'v>| rule.var(t).is_some_and(|v| v == x || Some(v) == alias);
+        let (below, above): (&[CmpOp], &[CmpOp]) = if by > 0 { (&[CmpOp::Lt, CmpOp::Le], &[CmpOp::Gt, CmpOp::Ge]) } else { (&[CmpOp::Gt, CmpOp::Ge], &[CmpOp::Lt, CmpOp::Le]) };
         by == 0
-            || self.rule.body.iter().any(|l| match l {
-                Literal::Cmp { l, op, r } => (this(l) && below.contains(op) && bound(r)) || (this(r) && above.contains(op) && bound(l)),
+            || rule.lits().any(|lit| match lit {
+                Lit::Cmp { l, op, r } => (this(l) && below.contains(&op) && bound(r)) || (this(r) && above.contains(&op) && bound(l)),
                 _ => false,
             })
     }
 
     /// The variables bound by positive atoms (any relation's).
     fn atoms(&self) -> BTreeSet<String> {
-        self.rule.body.iter().filter_map(|l| l.atom().filter(|a| !a.neg)).flat_map(|a| a.vars()).collect()
+        self.rule.body().filter_map(|l| l.atom().filter(|a| !a.neg())).flat_map(|a| self.rule.atom_vars(a)).collect()
     }
 
     /// The assignments `$v = t` (either way round), in order.
-    fn assignments(&self) -> impl Iterator<Item = (&'a str, &'a Term)> {
-        self.rule.body.iter().filter_map(|l| match l {
-            Literal::Cmp { l: Term::Var(v), op: "=", r } => Some((v.as_str(), r)),
-            Literal::Cmp { l, op: "=", r: Term::Var(v) } if !matches!(l, Term::Var(_)) => Some((v.as_str(), l)),
+    fn assignments(&self) -> impl Iterator<Item = (&'v str, TermRef<'v>)> + use<'v> {
+        let rule = self.rule;
+        rule.lits().filter_map(move |lit| match lit {
+            Lit::Cmp { l, op: CmpOp::Eq, r } => match (rule.var(l), rule.var(r)) {
+                (Some(v), _) => Some((v, r)),
+                (None, Some(v)) => Some((v, l)),
+                _ => None,
+            },
             _ => None,
         })
     }
 }
 
 /// Whether a rule makes a value into its head: a head term that makes one, or reads a variable assigned one.
-fn creates(rule: &Rule, component: &BTreeSet<String>) -> bool {
+fn creates(rule: Rule<'_>, component: &BTreeSet<String>) -> bool {
     let b = Bounds::new(rule, component);
     let bound = b.atoms();
     let mut made = BTreeSet::<&str>::new();
-    let reads_made = |t: &Term, made: &BTreeSet<&str>| {
+    let reads_made = |t: TermRef<'_>, made: &BTreeSet<&str>| {
         let mut vars = BTreeSet::new();
-        t.vars(&mut vars);
+        rule.vars(t, &mut vars);
         vars.iter().any(|v| made.contains(v.as_str()))
     };
     loop {
@@ -596,25 +754,37 @@ fn creates(rule: &Rule, component: &BTreeSet<String>) -> bool {
                 made.insert(v);
             }
             // A split of a made value (`m2 = @cat(p, x)`, m2 made): a part may be all of it (`"" . m2`).
-            if made.contains(v) && t.is_cat() && let Term::Call(_, parts) = t {
-                made.extend(parts.iter().filter_map(|p| if let Term::Var(p) = p { Some(p.as_str()) } else { None }).filter(|p| !bound.contains(*p)));
+            if made.contains(v)
+                && let Some(("cat", parts)) = rule.call(t)
+                && parts.iter().all(|&p| rule.var(p).is_some())
+            {
+                made.extend(parts.iter().filter_map(|&p| rule.var(p)).filter(|p| !bound.contains(*p)));
             }
         }
         if made.len() == before {
             break;
         }
     }
-    rule.head.args.iter().any(|t| b.makes(t, None) || reads_made(t, &made))
+    rule.head_args().into_iter().any(|t| b.makes(t, None) || reads_made(t, &made))
 }
 
 /// A column of a relation.
 type Column = (String, usize);
 
+/// Where a term's values come from in a rule (`flow`): the columns its variables are read from, each with whether a
+/// value was made on the way (the term's own call, when it makes one).
+fn sources<'v>(b: &Bounds<'v>, t: TermRef<'v>, alias: Option<&str>, from: &BTreeMap<String, BTreeSet<(Column, bool)>>) -> BTreeSet<(Column, bool)> {
+    let mut vars = BTreeSet::new();
+    b.rule.vars(t, &mut vars);
+    let made = b.makes(t, alias);
+    vars.iter().flat_map(|v| from.get(v).into_iter().flatten().map(move |(c, m)| (c.clone(), *m || made))).collect()
+}
+
 /// The flow of values in `rules` between the columns of `component`: `(from, to, made)`, where `made` is a
 /// builtin's new value from its arguments.
-fn flow(rules: &[&Rule], component: &BTreeSet<String>) -> Vec<(Column, Column, bool)> {
+fn flow(rules: &[Rule<'_>], component: &BTreeSet<String>) -> Vec<(Column, Column, bool)> {
     let mut out = Vec::new();
-    for rule in rules {
+    for &rule in rules {
         let b = Bounds::new(rule, component);
         // Where each variable's values come from: the component's columns it is read from, and through which
         // assignments (`$v = term`, made when the term makes a value). A variable bound outside the component
@@ -622,23 +792,17 @@ fn flow(rules: &[&Rule], component: &BTreeSet<String>) -> Vec<(Column, Column, b
         let mut from = BTreeMap::<String, BTreeSet<(Column, bool)>>::new();
         let bound = b.atoms();
         let fixed = |v: &str| bound.contains(v) || b.outside.contains(v);
-        for literal in &rule.body {
-            if let Some(a) = literal.atom().filter(|a| !a.neg && component.contains(a.rel.as_str())) {
-                for (i, t) in a.args.iter().enumerate() {
-                    if let Term::Var(v) = t
-                        && !b.outside.contains(v.as_str())
+        for literal in rule.body() {
+            if let Some(a) = literal.atom().filter(|a| !a.neg() && component.contains(rule.rel(*a))) {
+                for (i, t) in a.args().enumerate() {
+                    if let Some(v) = rule.var(t)
+                        && !b.outside.contains(v)
                     {
-                        from.entry(v.to_string()).or_default().insert(((a.rel.to_string(), i), false));
+                        from.entry(v.to_owned()).or_default().insert(((rule.rel(a).to_owned(), i), false));
                     }
                 }
             }
         }
-        let sources = |t: &Term, alias: Option<&str>, from: &BTreeMap<String, BTreeSet<(Column, bool)>>| -> BTreeSet<(Column, bool)> {
-            let mut vars = BTreeSet::new();
-            t.vars(&mut vars);
-            let made = b.makes(t, alias);
-            vars.iter().flat_map(|v| from.get(v).into_iter().flatten().map(move |(c, m)| (c.clone(), *m || made))).collect()
-        };
         // A variable no atom binds and no assignment gives is a part of a bound value it is split from
         // (`$m = @cat($q, $x)` with `$m` bound).
         let assigned: BTreeSet<&str> = b.assignments().map(|(v, _)| v).filter(|v| !bound.contains(*v)).collect();
@@ -647,11 +811,11 @@ fn flow(rules: &[&Rule], component: &BTreeSet<String>) -> Vec<(Column, Column, b
             let before = from.values().map(BTreeSet::len).sum::<usize>();
             for (v, t) in b.assignments() {
                 if !fixed(v) {
-                    let s = sources(t, Some(v), &from);
+                    let s = sources(&b, t, Some(v), &from);
                     from.entry(v.to_owned()).or_default().extend(s);
                 }
                 let mut parts = BTreeSet::new();
-                t.vars(&mut parts);
+                rule.vars(t, &mut parts);
                 let whole = from.get(v).cloned().unwrap_or_default();
                 for p in parts.iter().filter(|p| !fixed(p.as_str()) && !assigned.contains(p.as_str())) {
                     from.entry(p.clone()).or_default().extend(whole.iter().cloned());
@@ -664,20 +828,19 @@ fn flow(rules: &[&Rule], component: &BTreeSet<String>) -> Vec<(Column, Column, b
         // A head term that a variable bound outside the component is assigned (`$t = @add($l, 1), lines(d, $t, _)`
         // and the head's `@add($l, 1)`, as `.rr` lowers a call it binds and also writes) takes that variable's
         // finitely many values (O111: `era001`'s `era_run`).
-        let finite_terms: Vec<&Term> = rule
-            .body
-            .iter()
-            .filter_map(|l| match l {
-                Literal::Cmp { l: Term::Var(v), op: "=", r } if b.outside.contains(v.as_str()) => Some(r),
+        let finite_terms: Vec<TermRef<'_>> = rule
+            .lits()
+            .filter_map(|lit| match lit {
+                Lit::Cmp { l, op: CmpOp::Eq, r } if rule.var(l).is_some_and(|v| b.outside.contains(v)) => Some(r),
                 _ => None,
             })
             .collect();
-        for (j, t) in rule.head.args.iter().enumerate() {
-            if finite_terms.contains(&t) {
+        for (j, t) in rule.head_args().into_iter().enumerate() {
+            if finite_terms.iter().any(|&f| rule.same(f, t)) {
                 continue;
             }
-            for (c, made) in sources(t, None, &from) {
-                out.push((c, (rule.head.rel.to_string(), j), made));
+            for (c, made) in sources(&b, t, None, &from) {
+                out.push((c, (rule.head_rel().to_owned(), j), made));
             }
         }
     }
@@ -685,12 +848,15 @@ fn flow(rules: &[&Rule], component: &BTreeSet<String>) -> Vec<(Column, Column, b
 }
 
 /// Whether a value made in `rules` flows back to the builtin that made it.
-fn value_cycle(prog: &Program, rules: &[&Rule], component: &BTreeSet<String>) -> bool {
-    let lattice_value = |(rel, col): &Column| prog.lattice.get(rel).is_some_and(|d| d.keys == *col);
-    let flow: Vec<_> = flow(rules, component).into_iter().map(|(a, b, made)| {
-        let made = made && !lattice_value(&b);
-        (a, b, made)
-    }).collect();
+fn value_cycle(p: &Prog<'_>, rules: &[Rule<'_>], component: &BTreeSet<String>) -> bool {
+    let lattice_value = |(rel, col): &Column| p.lattice.get(rel).is_some_and(|d| d.keys == *col);
+    let flow: Vec<_> = flow(rules, component)
+        .into_iter()
+        .map(|(a, b, made)| {
+            let made = made && !lattice_value(&b);
+            (a, b, made)
+        })
+        .collect();
     let mut next = BTreeMap::<&Column, Vec<&Column>>::new();
     for (a, b, _) in &flow {
         next.entry(a).or_default().push(b);
@@ -712,17 +878,12 @@ fn value_cycle(prog: &Program, rules: &[&Rule], component: &BTreeSet<String>) ->
     })
 }
 
-/// The columns of `rel` of type `ty`, as declared.
-fn columns(prog: &Program, rel: &str, ty: &str) -> Vec<usize> {
-    prog.decls.get(rel).map_or_else(Vec::new, |cols| cols.iter().enumerate().filter(|(_, (_, t))| t == ty).map(|(i, _)| i).collect())
-}
-
 /// What the relations of `component` guarantee between their columns in every row, added to `moves`: the
 /// greatest set of moves each rule gives, its recursive atoms assumed to give them (an input, or a relation
 /// with facts, guarantees nothing).
 /// As `depth_summaries`, a component that is not `recursive` is settled by its first round.
-fn summarize(prog: &Program, component: &BTreeSet<String>, by_head: &BTreeMap<&str, Vec<&Rule>>, moves: &mut Moves, recursive: bool) {
-    let (rels, none): (Vec<&String>, Vec<&String>) = component.iter().partition(|r| !prog.inputs.contains(r) && !prog.facts.contains_key(*r) && by_head.contains_key(r.as_str()));
+fn summarize(p: &Prog<'_>, component: &BTreeSet<String>, by_head: &BTreeMap<&str, Vec<Rule<'_>>>, moves: &mut Moves, recursive: bool) {
+    let (rels, none): (Vec<&String>, Vec<&String>) = component.iter().partition(|r| !p.given(r) && by_head.contains_key(r.as_str()));
     for rel in none {
         moves.remove(rel);
     }
@@ -732,7 +893,7 @@ fn summarize(prog: &Program, component: &BTreeSet<String>, by_head: &BTreeMap<&s
     for rel in &rels {
         let entry = assumed.entry((*rel).clone()).or_default();
         for way in ways().into_iter().chain([Move::Longer, Move::Shorter]) {
-            let cols = columns(prog, rel, way.ty());
+            let cols = p.columns(rel, way.ty());
             for &i in &cols {
                 for &j in cols.iter().filter(|&&j| j != i) {
                     entry.entry((i, j)).or_default().insert(way, true);
@@ -747,10 +908,10 @@ fn summarize(prog: &Program, component: &BTreeSet<String>, by_head: &BTreeMap<&s
         let mut next = assumed.clone();
         for rel in &rels {
             let rules = &by_head[rel.as_str()];
-            let all: Vec<Edges> = rules.iter().map(|r| edges(r, moves)).collect();
+            let all: Vec<Edges> = rules.iter().map(|&r| edges(r, moves)).collect();
             let held = next.get_mut(rel.as_str()).expect("assumed");
             for (&(i, j), ways) in held.iter_mut() {
-                ways.retain(|&way, strict| match rules.iter().zip(&all).map(|(r, e)| step(r, e, &head(i), &head(j), way)).collect::<Option<Vec<bool>>>() {
+                ways.retain(|&way, strict| match rules.iter().zip(&all).map(|(&r, e)| step(r, e, &head(i), &head(j), way)).collect::<Option<Vec<bool>>>() {
                     Some(got) => {
                         *strict = *strict && got.iter().all(|&s| s);
                         true
@@ -784,69 +945,78 @@ type Key = (Option<usize>, Option<usize>);
 /// child's index: `j(c, i + 1, …) :- j(c, i, …), child(c, p, i + 1)`), or under a bound as a counter is
 /// (`Bounds::counter`), or to a value bound outside the component that a comparison puts above it (`$k > $i`), so
 /// through finitely many values; `Some(false)` the same; a relation with no count is above every count.
-fn count_step(rule: &Rule, bounds: &Bounds<'_>, edges: &Edges, head: Option<usize>, body: Option<&Term>) -> Option<bool> {
+fn count_step<'v>(rule: Rule<'v>, bounds: &Bounds<'v>, edges: &Edges, head: Option<usize>, body: Option<TermRef<'v>>) -> Option<bool> {
     let outside = &bounds.outside;
     let (j, b) = match (head, body) {
         (None, None) => return Some(false),
         (None, Some(_)) => return Some(true),
-        (Some(j), Some(Term::Var(b))) => (j, b),
+        (Some(j), Some(t)) => (j, rule.var(t)?),
         _ => return None,
     };
-    let up = |t: &Term| matches!(t, Term::Call(f, args) if f == "add" && matches!(args.as_slice(), [Term::Var(x), Term::Int(c)] | [Term::Int(c), Term::Var(x)] if x == b && *c > 0));
+    let up = |t: TermRef<'v>| {
+        matches!(rule.call(t), Some(("add", args)) if matches!(args.as_slice(), [x, TermRef::Int(c)] | [TermRef::Int(c), x] if rule.is_var(*x, b) && *c > 0))
+    };
     // `t` is the value of a variable bound outside the component (`$k = t`, either way round).
-    let outside_value = |t: &Term| {
-        rule.body.iter().any(|l| matches!(l, Literal::Cmp { l: Term::Var(v), op: "=", r } | Literal::Cmp { l: r, op: "=", r: Term::Var(v) } if outside.contains(v.as_str()) && r == t))
+    let outside_value = |t: TermRef<'v>| {
+        rule.lits().any(|lit| {
+            matches!(lit, Lit::Cmp { l, op: CmpOp::Eq, r } if [(l, r), (r, l)].into_iter().any(|(v, o)| rule.var(v).is_some_and(|v| outside.contains(v)) && rule.same(o, t)))
+        })
     };
     // A comparison is a move in values' order: document order's under preorder ids (`by_value`).
     let smaller = if by_value() { Move::Smaller } else { Move::Earlier };
     let above = |x: &str| outside.contains(x) && reach(edges, x, b, smaller) == Some(true);
-    match rule.head.args.get(j)? {
-        Term::Var(x) if x == b => Some(false),
-        Term::Var(x) => rule
-            .body
-            .iter()
-            .find_map(|l| match l {
-                Literal::Cmp { l: Term::Var(v), op: "=", r: Term::Var(y) } | Literal::Cmp { l: Term::Var(y), op: "=", r: Term::Var(v) } if v == x && y == b => Some(false),
-                Literal::Cmp { l: Term::Var(v), op: "=", r } if v == x && up(r) && (outside.contains(b.as_str()) || outside.contains(x.as_str()) || bounds.counter(r, Some(x.as_str()))) => Some(true),
-                _ => None,
+    let h = rule.head_arg(j)?;
+    match rule.var(h) {
+        Some(x) if x == b => Some(false),
+        Some(x) => rule
+            .lits()
+            .find_map(|lit| {
+                let Lit::Cmp { l, op: CmpOp::Eq, r } = lit else { return None };
+                if [(l, r), (r, l)].into_iter().any(|(p, q)| rule.is_var(p, x) && rule.is_var(q, b)) {
+                    return Some(false);
+                }
+                (rule.is_var(l, x) && up(r) && (outside.contains(b) || outside.contains(x) || bounds.counter(r, Some(x)))).then_some(true)
             })
             .or_else(|| above(x).then_some(true)),
-        t if up(t) && (outside.contains(b.as_str()) || outside_value(t) || bounds.counter(t, None)) => Some(true),
-        _ => None,
+        None if up(h) && (outside.contains(b) || outside_value(h) || bounds.counter(h, None)) => Some(true),
+        None => None,
     }
 }
 
 /// For a relation of `component` with no node column, its input columns when it is a function of them (rule 2's
 /// functions): an input is a column every rule binds by a positive atom or to a constant; no rule reads a
 /// relation of `keyless`, and each other column is made from the inputs and values bound outside the component.
-fn function(rules: &[&Rule], component: &BTreeSet<String>, keyless: &BTreeSet<&str>) -> Option<BTreeSet<usize>> {
-    let arity = rules.first()?.head.args.len();
-    let bound_by_atom = |rule: &Rule, v: &str| rule.body.iter().any(|l| matches!(l, Literal::Atom(a) if !a.neg && a.args.iter().any(|t| matches!(t, Term::Var(x) if x == v))));
+fn function(rules: &[Rule<'_>], component: &BTreeSet<String>, keyless: &BTreeSet<&str>) -> Option<BTreeSet<usize>> {
+    let arity = rules.first()?.arity();
+    let bound_by_atom = |rule: Rule<'_>, v: &str| rule.lits().any(|l| matches!(l, Lit::Atom(a) if !a.neg() && a.args().any(|t| rule.is_var(t, v))));
     let inputs: BTreeSet<usize> = (0..arity)
         .filter(|&j| {
-            rules.iter().all(|rule| match rule.head.args.get(j) {
-                Some(Term::Int(_) | Term::Str(_)) => true,
-                Some(Term::Var(v)) => bound_by_atom(rule, v.as_str()),
-                _ => false,
+            rules.iter().all(|&rule| match rule.head_arg(j) {
+                Some(TermRef::Int(_) | TermRef::Str(_)) => true,
+                Some(t) => rule.var(t).is_some_and(|v| bound_by_atom(rule, v)),
+                None => false,
             })
         })
         .collect();
-    for rule in rules {
-        if rule.body.iter().any(|l| l.atom().is_some_and(|a| keyless.contains(a.rel.as_str()))) {
+    for &rule in rules {
+        if rule.body().any(|l| l.atom().is_some_and(|a| keyless.contains(rule.rel(a)))) {
             return None;
         }
         let mut known = Bounds::new(rule, component).outside;
+        let args = rule.head_args();
         for &j in &inputs {
-            rule.head.args[j].vars(&mut known);
+            rule.vars(args[j], &mut known);
         }
         loop {
             let before = known.len();
-            for l in &rule.body {
-                if let Literal::Cmp { l: Term::Var(v), op: "=", r } = l {
+            for lit in rule.lits() {
+                if let Lit::Cmp { l, op: CmpOp::Eq, r } = lit
+                    && let Some(v) = rule.var(l)
+                {
                     let mut vars = BTreeSet::new();
-                    r.vars(&mut vars);
+                    rule.vars(r, &mut vars);
                     if vars.is_subset(&known) {
-                        known.insert(v.to_string());
+                        known.insert(v.to_owned());
                     }
                 }
             }
@@ -854,9 +1024,9 @@ fn function(rules: &[&Rule], component: &BTreeSet<String>, keyless: &BTreeSet<&s
                 break;
             }
         }
-        for (_, t) in rule.head.args.iter().enumerate().filter(|(j, _)| !inputs.contains(j)) {
+        for (_, &t) in args.iter().enumerate().filter(|(j, _)| !inputs.contains(j)) {
             let mut vars = BTreeSet::new();
-            t.vars(&mut vars);
+            rule.vars(t, &mut vars);
             if !vars.is_subset(&known) {
                 return None;
             }
@@ -874,7 +1044,7 @@ fn function(rules: &[&Rule], component: &BTreeSet<String>, keyless: &BTreeSet<&s
 /// the key. Along depth (`Shallower`, `Deeper`) a key moves strictly or not at all (`depth_reach` over `depths`).
 #[allow(clippy::too_many_arguments)]
 fn bounded(
-    rules: &[&Rule],
+    rules: &[Rule<'_>],
     creating: &[bool],
     component: &BTreeSet<String>,
     key: &BTreeMap<&str, Key>,
@@ -886,31 +1056,33 @@ fn bounded(
     // The moves that are not strict, head → atom, and those of rules making a value.
     let mut same = super::Edges::new();
     let mut made = Vec::new();
-    for (rule, &creates) in rules.iter().zip(creating) {
-        if functions.contains_key(rule.head.rel.as_str()) {
+    for (&rule, &creates) in rules.iter().zip(creating) {
+        let hrel = rule.head_rel();
+        if functions.contains_key(hrel) {
             continue;
         }
-        let (k, count) = key[rule.head.rel.as_str()];
+        let (k, count) = key[hrel];
         let edges = edges(rule, moves);
         let bounds = Bounds::new(rule, component);
-        let creates = creates || rule.body.iter().any(|l| l.atom().is_some_and(|a| functions.contains_key(a.rel.as_str())));
+        let creates = creates || rule.body().any(|l| l.atom().is_some_and(|a| functions.contains_key(rule.rel(a))));
         // Along depth, a key moves strictly or not at all: the depth of each variable from the head's node.
-        let depth_from = match (matches!(way, Move::Shallower | Move::Deeper), k.and_then(|k| rule.head.args.get(k))) {
-            (true, Some(Term::Var(h))) => Some(depth_reach(&depth_edges(rule, depths), h)),
-            (true, _) => Some(BTreeMap::new()),
+        let depth_from = match (matches!(way, Move::Shallower | Move::Deeper), k.and_then(|k| rule.head_arg(k)).and_then(|t| rule.var(t))) {
+            (true, Some(h)) => Some(depth_reach(&depth_edges(rule, depths), h)),
+            (true, None) => Some(BTreeMap::new()),
             (false, _) => None,
         };
         // The variables an atom strictly along the key binds, for the functions' inputs.
         let mut before = BTreeSet::<&str>::new();
-        for literal in &rule.body {
-            let Some(a) = literal.atom().filter(|a| component.contains(a.rel.as_str()) && !functions.contains_key(a.rel.as_str())) else { continue };
-            let (ak, acount) = key[a.rel.as_str()];
+        for literal in rule.body() {
+            let Some(a) = literal.atom().filter(|a| component.contains(rule.rel(*a)) && !functions.contains_key(rule.rel(*a))) else { continue };
+            let (ak, acount) = key[rule.rel(a)];
+            let args: Vec<TermRef<'_>> = a.args().collect();
             let placed = match (k, ak) {
                 (Some(k), Some(ak)) => {
-                    let Some(Term::Var(b)) = a.args.get(ak) else { return Err(rule.to_string()) };
+                    let Some(b) = arg_var(rule, &args, ak) else { return Err(rule.shown()) };
                     match &depth_from {
                         Some(from) => {
-                            let &(lo, hi) = from.get(b.as_str()).ok_or_else(|| rule.to_string())?;
+                            let &(lo, hi) = from.get(b).ok_or_else(|| rule.shown())?;
                             (if way == Move::Shallower { hi <= -1 } else { lo >= 1 }).then_some(true)
                         }
                         None => step(rule, &edges, &head(k), b, way),
@@ -921,38 +1093,39 @@ fn bounded(
                 _ => None,
             };
             let moved = match placed {
-                Some(false) => count_step(rule, &bounds, &edges, count, acount.and_then(|c| a.args.get(c)).or(acount.map(|_| &Term::Wild))),
+                Some(false) => count_step(rule, &bounds, &edges, count, acount.map(|c| args.get(c).copied().unwrap_or(TermRef::Wild))),
                 other => other,
             };
             match moved {
                 Some(true) => {
-                    if matches!(literal, Literal::Atom(x) if !x.neg) {
-                        before.extend(a.args.iter().filter_map(|t| if let Term::Var(v) = t { Some(v.as_str()) } else { None }));
+                    if matches!(literal.view(), Lit::Atom(x) if !x.neg()) {
+                        before.extend(args.iter().filter_map(|&t| rule.var(t)));
                     }
                 }
                 Some(false) => {
-                    same.entry(rule.head.rel.to_string()).or_default().insert((a.rel.to_string(), false));
+                    same.entry(hrel.to_owned()).or_default().insert((rule.rel(a).to_owned(), false));
                     if creates {
-                        made.push((&rule.head.rel, &a.rel, rule));
+                        made.push((hrel, rule.rel(a), rule));
                     }
                 }
-                None => return Err(rule.to_string()),
+                None => return Err(rule.shown()),
             }
         }
-        for literal in &rule.body {
-            let Some(a) = literal.atom().filter(|a| functions.contains_key(a.rel.as_str())) else { continue };
-            for &j in &functions[a.rel.as_str()] {
-                match a.args.get(j) {
-                    Some(Term::Var(v)) if before.contains(v.as_str()) || bounds.outside.contains(v.as_str()) => {}
-                    Some(Term::Int(_) | Term::Str(_)) => {}
-                    _ => return Err(rule.to_string()),
+        for literal in rule.body() {
+            let Some(a) = literal.atom().filter(|a| functions.contains_key(rule.rel(*a))) else { continue };
+            let args: Vec<TermRef<'_>> = a.args().collect();
+            for &j in &functions[rule.rel(a)] {
+                match args.get(j) {
+                    Some(&t) if rule.var(t).is_some_and(|v| before.contains(v) || bounds.outside.contains(v)) => {}
+                    Some(TermRef::Int(_) | TermRef::Str(_)) => {}
+                    _ => return Err(rule.shown()),
                 }
             }
         }
     }
     let cycles = super::tarjan(component, &same);
-    match made.into_iter().find(|(h, a, _)| cycles.iter().any(|c| c.contains((*h).as_str()) && c.contains((*a).as_str()))) {
-        Some((_, _, rule)) => Err(rule.to_string()),
+    match made.into_iter().find(|(h, a, _)| cycles.iter().any(|c| c.contains(*h) && c.contains(*a))) {
+        Some((_, _, rule)) => Err(rule.shown()),
         None => Ok(()),
     }
 }
@@ -961,11 +1134,17 @@ fn bounded(
 fn keys<'a, T: Copy>(choices: &[(&'a str, Vec<T>)], limit: usize) -> Vec<BTreeMap<&'a str, T>> {
     let mut out = vec![BTreeMap::new()];
     for (rel, columns) in choices {
-        out = out.into_iter().flat_map(|key| columns.iter().map(move |&c| {
-            let mut key = key.clone();
-            key.insert(*rel, c);
-            key
-        })).take(limit).collect();
+        out = out
+            .into_iter()
+            .flat_map(|key| {
+                columns.iter().map(move |&c| {
+                    let mut key = key.clone();
+                    key.insert(*rel, c);
+                    key
+                })
+            })
+            .take(limit)
+            .collect();
     }
     out
 }
@@ -974,37 +1153,40 @@ fn keys<'a, T: Copy>(choices: &[(&'a str, Vec<T>)], limit: usize) -> Vec<BTreeMa
 /// column that is a constant in every rule's head and in every atom of the component read, and the graph from a head's
 /// `(relation, constant)` to its atoms' is acyclic. Every derivation is then at most as deep as that graph, and makes
 /// finitely many values: `era001`'s `era_re` builds its statement grammar from `N` up to `STMT` this way.
-fn constant_keyed(rules: &[&Rule], component: &BTreeSet<String>) -> bool {
-    let key = |t: &Term| match t {
-        Term::Str(s) => Some(format!("s{s}")),
-        Term::Int(n) => Some(format!("i{n}")),
+fn constant_keyed(rules: &[Rule<'_>], component: &BTreeSet<String>) -> bool {
+    let key = |rule: Rule<'_>, t: TermRef<'_>| match t {
+        TermRef::Str(s) => Some(format!("s{}", rule.text(s))),
+        TermRef::Int(n) => Some(format!("i{n}")),
         _ => None,
     };
-    let arity = |rel: &str| rules.iter().find(|r| r.head.rel == rel).map_or(0, |r| r.head.args.len());
+    let arity = |rel: &str| rules.iter().find(|r| r.head_rel() == rel).map_or(0, |r| r.arity());
     // Each relation's key column: the first that every head and every read in the component holds a constant at.
     let mut columns = BTreeMap::<&str, usize>::new();
     for rel in component {
-        let reads = rules.iter().flat_map(|r| {
-            r.body.iter().filter_map(|l| match l {
-                Literal::Atom(a) | Literal::Agg { atom: a, .. } if a.rel == *rel => Some(a),
+        let heads = rules.iter().filter(|r| r.head_rel() == rel.as_str()).map(|&r| (r, r.r.head()));
+        let reads = rules.iter().flat_map(|&r| {
+            r.lits().filter_map(move |l| match l {
+                Lit::Atom(a) | Lit::Agg { atom: a, .. } if r.rel(a) == rel.as_str() => Some((r, a)),
                 _ => None,
             })
         });
-        let heads = rules.iter().filter(|r| r.head.rel == *rel).map(|r| &r.head);
         let atoms: Vec<_> = heads.chain(reads).collect();
-        let Some(c) = (0..arity(rel)).find(|&c| atoms.iter().all(|a| a.args.get(c).and_then(key).is_some())) else { return false };
+        let Some(c) = (0..arity(rel)).find(|&c| atoms.iter().all(|&(r, a)| a.args().nth(c).and_then(|t| key(r, t)).is_some())) else { return false };
         columns.insert(rel.as_str(), c);
     }
-    let node = |a: &super::Atom| key(&a.args[columns[a.rel.as_str()]]).map(|k| (a.rel.to_string(), k));
+    let node = |r: Rule<'_>, a: AtomRef<'_>| {
+        let rel = r.rel(a);
+        key(r, a.args().nth(*columns.get(rel)?)?).map(|k| (rel.to_owned(), k))
+    };
     let mut graph = BTreeMap::<(String, String), BTreeSet<(String, String)>>::new();
-    for rule in rules {
-        let Some(head) = node(&rule.head) else { return false };
+    for &rule in rules {
+        let Some(head) = node(rule, rule.r.head()) else { return false };
         let to = graph.entry(head).or_default();
-        for l in &rule.body {
-            if let Literal::Atom(a) | Literal::Agg { atom: a, .. } = l
-                && component.contains(a.rel.as_str())
+        for l in rule.lits() {
+            if let Lit::Atom(a) | Lit::Agg { atom: a, .. } = l
+                && component.contains(rule.rel(a))
             {
-                let Some(n) = node(a) else { return false };
+                let Some(n) = node(rule, a) else { return false };
                 to.insert(n);
             }
         }
@@ -1023,16 +1205,21 @@ fn constant_keyed(rules: &[&Rule], component: &BTreeSet<String>) -> bool {
 }
 
 /// The components with a value cycle, each bounded by its keys; fails on one that is not
-/// (`Error::UnboundedValueCycle`).
-pub fn check(prog: &Program) -> Result<Vec<BTreeSet<String>>, Error> {
+/// (`Error::UnboundedValueCycle`). It reads the version's rules in place, its components as the tree's strata made
+/// them (`graph::components_by_name`).
+pub fn check(v: &Version) -> Result<Vec<BTreeSet<String>>, Error> {
+    let about = About::of(v);
     // A program that does not stratify fails there, by name.
-    let Ok((sccs, edges_by)) = super::strata(prog) else { return Ok(Vec::new()) };
+    let Ok(sccs) = graph::components_by_name(v, &about, &[]) else { return Ok(Vec::new()) };
+    let edges_by = graph::edges_by_name(v, &about);
+    let p = Prog { v, lattice: ProgramFields::lattice(v) };
     let mut treed = Vec::new();
-    let mut moves = base(prog);
+    let mut moves = base(&p);
     let mut depths = depth_base();
-    let mut by_head = BTreeMap::<&str, Vec<&Rule>>::new();
-    for rule in &prog.rules {
-        by_head.entry(rule.head.rel.as_str()).or_default().push(rule);
+    let mut by_head = BTreeMap::<&str, Vec<Rule<'_>>>::new();
+    for r in v.rules() {
+        let rule = Rule { v, r };
+        by_head.entry(rule.head_rel()).or_default().push(rule);
     }
     // Each component: whether it recurses, and whether its value cycle needs a bound (neither reads the summaries).
     // A recursion through constants only (`era_re("EXPR", …) :- era_re("OPD", …)`): finitely many rules, so finitely
@@ -1044,8 +1231,8 @@ pub fn check(prog: &Program) -> Result<Vec<BTreeSet<String>>, Error> {
             if !recursive {
                 return (false, None);
             }
-            let rules: Vec<&Rule> = component.iter().flat_map(|rel| by_head.get(rel.as_str()).into_iter().flatten().copied()).collect();
-            (true, value_cycle(prog, &rules, component).then(|| !constant_keyed(&rules, component)))
+            let rules: Vec<Rule<'_>> = component.iter().flat_map(|rel| by_head.get(rel.as_str()).into_iter().flatten().copied()).collect();
+            (true, value_cycle(&p, &rules, component).then(|| !constant_keyed(&rules, component)))
         })
         .collect();
     // The guarantees are read by the components that need a bound, of those below them: none are made past the last.
@@ -1054,8 +1241,8 @@ pub fn check(prog: &Program) -> Result<Vec<BTreeSet<String>>, Error> {
         let (recursive, bound) = kinds[i];
         if last.is_some_and(|last| i <= last) {
             // A component's guarantees, for its own rules and the components above it.
-            summarize(prog, component, &by_head, &mut moves, recursive);
-            depth_summaries(prog, component, &by_head, &mut depths, recursive);
+            summarize(&p, component, &by_head, &mut moves, recursive);
+            depth_summaries(&p, component, &by_head, &mut depths, recursive);
         }
         match bound {
             None => continue,
@@ -1065,10 +1252,10 @@ pub fn check(prog: &Program) -> Result<Vec<BTreeSet<String>>, Error> {
             }
             Some(true) => {}
         }
-        let rules: Vec<&Rule> = component.iter().flat_map(|rel| by_head.get(rel.as_str()).into_iter().flatten().copied()).collect();
-        let creating: Vec<bool> = rules.iter().map(|r| creates(r, component)).collect();
+        let rules: Vec<Rule<'_>> = component.iter().flat_map(|rel| by_head.get(rel.as_str()).into_iter().flatten().copied()).collect();
+        let creating: Vec<bool> = rules.iter().map(|&r| creates(r, component)).collect();
         // The relations with no node column that are functions of their inputs, which need no key.
-        let keyless: BTreeSet<&str> = component.iter().map(String::as_str).filter(|rel| columns(prog, rel, "node").is_empty()).collect();
+        let keyless: BTreeSet<&str> = component.iter().map(String::as_str).filter(|rel| p.columns(rel, "node").is_empty()).collect();
         let functions: BTreeMap<&str, BTreeSet<usize>> = keyless
             .iter()
             .filter_map(|&rel| function(by_head.get(rel).map_or(&[][..], Vec::as_slice), component, &keyless).map(|inputs| (rel, inputs)))
@@ -1081,9 +1268,9 @@ pub fn check(prog: &Program) -> Result<Vec<BTreeSet<String>>, Error> {
                     .iter()
                     .filter(|rel| !functions.contains_key(rel.as_str()))
                     .map(|rel| {
-                        let ints = columns(prog, rel, "int");
+                        let ints = p.columns(rel, "int");
                         let counts: Vec<Option<usize>> = if counted { ints.iter().copied().map(Some).chain([None]).collect() } else { vec![None] };
-                        let mut ks: Vec<Key> = columns(prog, rel, way.ty()).into_iter().flat_map(|c| counts.iter().map(move |&n| (Some(c), n))).collect();
+                        let mut ks: Vec<Key> = p.columns(rel, way.ty()).into_iter().flat_map(|c| counts.iter().map(move |&n| (Some(c), n))).collect();
                         // A count alone moves the same whatever the way: tried once, and only for a relation with no
                         // node to place it (one with a node keeps its count at a place: a position whose node
                         // changes is no bound).
@@ -1106,7 +1293,7 @@ pub fn check(prog: &Program) -> Result<Vec<BTreeSet<String>>, Error> {
             })
         });
         if !ok {
-            let rule = first.unwrap_or_else(|| rules.iter().zip(&creating).find(|(_, c)| **c).map(|(r, _)| r.to_string()).unwrap_or_default());
+            let rule = first.unwrap_or_else(|| rules.iter().zip(&creating).find(|(_, c)| **c).map(|(r, _)| r.shown()).unwrap_or_default());
             return Err(Error::UnboundedValueCycle { component: component.clone(), rule });
         }
         treed.push(component.clone());
