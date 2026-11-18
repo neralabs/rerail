@@ -735,10 +735,14 @@ jobs:
     if: needs.changes.outputs.release-pr != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    # actions: write deletes this ref's superseded cargo target from the cache (the step after its save).
+    # actions: write deletes main's superseded cargo target from the cache (the step after its save).
     permissions:
       actions: write
       contents: read
+    # Only main saves its cargo target, one entry, so the whole cache (10 GB for the repository) holds one target per
+    # engine build; every other ref restores main's.
+    env:
+      SAVE_TARGET: ${{ github.ref == 'refs/heads/main' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -776,11 +780,11 @@ jobs:
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
 
-      # On a miss, the cargo target of this job's last build (the newest under this lockfile, else under any), so the
+      # On a miss, the cargo target of main's last engine build (the newest under this lockfile, else under any), so the
       # build is incremental: target-sources.mjs gives the files that build saw unchanged an older time than its
       # outputs, and cargo rebuilds only the crates a change reaches. Without it a fresh checkout's times made every
       # workspace crate stale. The registry's sources are left out: cargo unpacks them again from its cache, and judges
-      # crates.io crates by version, not by time.
+      # crates.io crates by version, not by time. A miss here builds cold.
       - id: target-cache
         name: Restore the cargo target
         if: steps.native-cache.outputs.cache-hit != 'true'
@@ -811,11 +815,11 @@ jobs:
 
       # Saved straight after the build, so a later step's failure or the job's cancellation keeps it.
       - name: Record the target's sources
-        if: steps.native-cache.outputs.cache-hit != 'true'
+        if: steps.native-cache.outputs.cache-hit != 'true' && env.SAVE_TARGET == 'true'
         run: node scripts/build/target-sources.mjs record target
 
       - name: Save the cargo target
-        if: steps.native-cache.outputs.cache-hit != 'true'
+        if: steps.native-cache.outputs.cache-hit != 'true' && env.SAVE_TARGET == 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -825,8 +829,8 @@ jobs:
             target
           key: ${{ steps.target-cache.outputs.cache-primary-key }}
 
-      - name: Drop this ref's superseded cargo targets
-        if: steps.native-cache.outputs.cache-hit != 'true'
+      - name: Drop main's superseded cargo targets
+        if: steps.native-cache.outputs.cache-hit != 'true' && env.SAVE_TARGET == 'true'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -920,10 +924,13 @@ jobs:
       }}
     runs-on: windows-2025
     timeout-minutes: 60
-    # actions: write deletes this ref's superseded cargo target from the cache (the step after its save).
+    # actions: write deletes main's superseded cargo target from the cache (the step after its save).
     permissions:
       actions: write
       contents: read
+    # As in the build job, only main saves its cargo target.
+    env:
+      SAVE_TARGET: ${{ github.ref == 'refs/heads/main' }}
     defaults:
       run:
         shell: bash
@@ -1017,11 +1024,11 @@ jobs:
           retention-days: 1
 
       - name: Record the target's sources
-        if: steps.native-cache.outputs.cache-hit != 'true'
+        if: steps.native-cache.outputs.cache-hit != 'true' && env.SAVE_TARGET == 'true'
         run: node scripts/build/target-sources.mjs record target
 
       - name: Save the cargo target
-        if: steps.native-cache.outputs.cache-hit != 'true'
+        if: steps.native-cache.outputs.cache-hit != 'true' && env.SAVE_TARGET == 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -1031,8 +1038,8 @@ jobs:
             target
           key: ${{ steps.target-cache.outputs.cache-primary-key }}
 
-      - name: Drop this ref's superseded cargo targets
-        if: steps.native-cache.outputs.cache-hit != 'true'
+      - name: Drop main's superseded cargo targets
+        if: steps.native-cache.outputs.cache-hit != 'true' && env.SAVE_TARGET == 'true'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -1044,8 +1051,11 @@ jobs:
   # compiled out on Linux, where the rust job runs every other test; these filters select them and the Windows-neutral
   # tests beside them: the process and tree watch tests are the engine's, the import roots' rerail-lang-ecma's, which
   # mounts `import_target`. The `.rerail` library's canonical path is joined with `/` by `bootstrap.rerail`, which only
-  # Windows' verbatim paths broke: its test runs here too. A debug build, as in the rust job, from the cargo target of
-  # this job's last run, as the build jobs restore theirs. Gated as the rust job is.
+  # Windows' verbatim paths broke: its test runs here too. A debug build, as in the rust job. They ran on unit shard 2
+  # when the engine's inputs changed; here they run once per set of inputs too: a pass saves an empty marker under the
+  # inputs' hash (build-windows' engine key), and a run that finds it does nothing. No cargo cache: the target is about
+  # 0.9 GB compressed and the repository's whole cache holds 10 GB, and the job (about 22 minutes cold) runs beside
+  # build-windows and the shards rather than in front of them. Gated as the rust job is.
   rust-windows:
     name: Rust engine (Windows)
     needs: changes
@@ -1058,10 +1068,9 @@ jobs:
         )
       }}
     runs-on: windows-2025
-    timeout-minutes: 45
-    # actions: write deletes this ref's superseded cargo target from the cache (the step after its save).
+    # A cold build of the two crates' tests took 20 minutes on windows-2025 (44351818975), the tests seconds.
+    timeout-minutes: 30
     permissions:
-      actions: write
       contents: read
     defaults:
       run:
@@ -1085,66 +1094,34 @@ jobs:
         name: Read pinned Rust toolchain
         run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
 
+      - id: passed
+        name: Look for a pass on these inputs
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .rerail-windows-tests-passed
+          key: rerail-windows-tests-passed-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('native/**', '!native/*.node', '!native/index.js', '!native/index.d.ts', 'accel/**', 'tools/bitlex/**', 'languages/**', 'Cargo.lock', 'Cargo.toml', '.cargo/config.toml', 'rust-toolchain.toml') }}
+          lookup-only: true
+
       - name: Install pinned Rust toolchain
+        if: steps.passed.outputs.cache-hit != 'true'
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
 
-      - id: target-cache
-        name: Restore the cargo target
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          key: rerail-target-test-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock') }}-${{ github.run_id }}
-          restore-keys: |
-            rerail-target-test-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock') }}-
-            rerail-target-test-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-
+      - name: Engine Windows tests
+        if: steps.passed.outputs.cache-hit != 'true'
+        run: "cargo test --manifest-path Cargo.toml -p rerail-engine -p rerail-lang-ecma --lib -- process:: code_rule_dsl::import_target:: tree_watch:: code_rule_dsl::logic::rr::tests::the_canonical_library_joins_with_a_slash_as_bootstrap_joins_it"
 
-      - name: Date the restored target's unchanged sources before it
-        run: node scripts/build/target-sources.mjs apply target
+      - name: Record the pass
+        if: steps.passed.outputs.cache-hit != 'true'
+        run: echo "${{ github.sha }}" > .rerail-windows-tests-passed
 
-      # `rebuilt` when cargo wrote anything to the target (its lock file aside): a run whose sources reach nothing
-      # compiled saves no copy of the target it restored.
-      - id: build
-        name: Build the tests
-        run: |
-          touch "$RUNNER_TEMP/build-start"
-          cargo test --manifest-path Cargo.toml -p rerail-engine -p rerail-lang-ecma --lib --no-run
-          if [ -n "$(find target -type f -newer "$RUNNER_TEMP/build-start" ! -name .cargo-lock -print -quit)" ]; then
-            echo "rebuilt=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      # Saved before the tests run, so a failing test keeps it.
-      - name: Record the target's sources
-        if: steps.build.outputs.rebuilt == 'true'
-        run: node scripts/build/target-sources.mjs record target
-
-      - name: Save the cargo target
-        if: steps.build.outputs.rebuilt == 'true'
+      - name: Save the pass
+        if: steps.passed.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          key: ${{ steps.target-cache.outputs.cache-primary-key }}
-
-      - name: Drop this ref's superseded cargo targets
-        if: steps.build.outputs.rebuilt == 'true'
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PREFIX: rerail-target-test-${{ runner.os }}-${{ runner.arch }}-
-          KEEP: ${{ steps.target-cache.outputs.cache-primary-key }}
-        run: bash scripts/build/drop-superseded-caches.sh
-
-      - name: Engine Windows tests
-        run: "cargo test --manifest-path Cargo.toml -p rerail-engine -p rerail-lang-ecma --lib -- process:: code_rule_dsl::import_target:: tree_watch:: code_rule_dsl::logic::rr::tests::the_canonical_library_joins_with_a_slash_as_bootstrap_joins_it"
+          path: .rerail-windows-tests-passed
+          key: ${{ steps.passed.outputs.cache-primary-key }}
 
   # The unit suite on Windows, the one job that runs it there: paths, shells, process starts and file locks behave
   # differently on Windows, and every other test job runs on Linux or macOS. Five shards where Linux has two: the suite
@@ -1630,10 +1607,13 @@ jobs:
       }}
     runs-on: macos-15
     timeout-minutes: 60
-    # actions: write deletes this ref's superseded cargo target from the cache (the step after its save).
+    # actions: write deletes main's superseded cargo target from the cache (the step after its save).
     permissions:
       actions: write
       contents: read
+    # As in the build job, only main saves its cargo target.
+    env:
+      SAVE_TARGET: ${{ github.ref == 'refs/heads/main' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1719,11 +1699,11 @@ jobs:
           retention-days: 1
 
       - name: Record the target's sources
-        if: steps.native-cache.outputs.cache-hit != 'true'
+        if: steps.native-cache.outputs.cache-hit != 'true' && env.SAVE_TARGET == 'true'
         run: node scripts/build/target-sources.mjs record target
 
       - name: Save the cargo target
-        if: steps.native-cache.outputs.cache-hit != 'true'
+        if: steps.native-cache.outputs.cache-hit != 'true' && env.SAVE_TARGET == 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -1733,8 +1713,8 @@ jobs:
             target
           key: ${{ steps.target-cache.outputs.cache-primary-key }}
 
-      - name: Drop this ref's superseded cargo targets
-        if: steps.native-cache.outputs.cache-hit != 'true'
+      - name: Drop main's superseded cargo targets
+        if: steps.native-cache.outputs.cache-hit != 'true' && env.SAVE_TARGET == 'true'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
