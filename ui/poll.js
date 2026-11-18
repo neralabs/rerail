@@ -831,8 +831,11 @@ const asksRead = (event, next) => next !== token || event === "conflicts" || mer
  */
 const windowMoved = () => windowRead !== null && sinceFor() !== windowRead;
 
-/** gh's states a person changes outside Rerail, by signing in or installing it. */
-const GITHUB_WAITING = new Set(["signed-out", "missing", "unavailable", "unchecked"]);
+/**
+ * gh's states a person changes outside Rerail, by signing in or installing it. Not `unchecked`: Merge Assist is off
+ * there and runs no gh, and turning it on is a commit.
+ */
+const GITHUB_WAITING = new Set(["signed-out", "missing", "unavailable"]);
 
 /**
  * Whether the Merge Assist page shows what moves with no commit and no notice: a scan running (its process can end,

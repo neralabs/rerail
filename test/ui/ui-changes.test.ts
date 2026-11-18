@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setNeeds, startPolling } from "../../ui/poll.js";
 import { data, setScope, ui } from "../../ui/state.js";
 import { currentNeeds } from "../../ui/views/index.js";
+import type { MergeAssistStatus } from "../../src/engine/index.js";
 import { sampleStatus } from "../support/merge-assist/status.js";
 
 /** The daemon's change stream as the test writes it: `send` one message, `end` it as a stopping daemon does. */
@@ -16,8 +17,9 @@ let up = true;
 let streams404 = false;
 /** Reads the daemon answers with an error (500), by path, while the daemon itself stays up. */
 let failing = new Set<string>();
-/** Whether the Merge Assist status the daemon answers says a scan runs. */
+/** Whether the Merge Assist status the daemon answers says a scan runs, and gh's state in it. */
 let scanning = false;
+let githubState: MergeAssistStatus["readiness"]["github"]["state"] = "signed-in";
 let renders: boolean[] = [];
 let visibility: (() => void)[] = [];
 const encoder = new TextEncoder();
@@ -32,7 +34,7 @@ function answer(url: URL): Response {
     "/api/repository": { repository: { setUp: true, repositoryKey: "A" }, checkout: null },
     "/api/repository/rules": { rules: [], unavailable: [] },
     "/api/rule-packs": { packs: [] },
-    "/api/merge-assist": sampleStatus("/work/a", { scanning }),
+    "/api/merge-assist": sampleStatus("/work/a", { scanning, readiness: { github: { state: githubState, login: null, repository: "acme/app" } } }),
   };
   const body = bodies[url.pathname];
   if (body === undefined) throw new Error(`unexpected ${url.pathname}`);
@@ -80,6 +82,7 @@ beforeEach(async () => {
   streams404 = false;
   failing = new Set();
   scanning = false;
+  githubState = "signed-in";
   renders = [];
   vi.stubGlobal("location", { origin: "http://127.0.0.1:4000" });
   vi.stubGlobal("fetch", async (input: URL, init: { signal?: AbortSignal } = {}) => {
@@ -405,5 +408,26 @@ describe("the dashboard following the daemon's change stream", () => {
     stream().send("t1");
     await settle();
     expect(readsOf("/api/merge-assist")).toBe(2);
+  });
+
+  it("reads at each beat while the Merge Assist page shows gh signed out, and nothing while Merge Assist is off and runs no gh", async () => {
+    ui.view = "merge";
+    githubState = "signed-out";
+    stream().send("t1");
+    await settle();
+    await after(5_000);
+    stream().send("t1");
+    await settle();
+    expect(readsOf("/api/merge-assist")).toBe(2);
+
+    githubState = "unchecked";
+    await after(5_000);
+    stream().send("t1");
+    await settle();
+    await after(5_000);
+    stream().send("t1");
+    await settle();
+
+    expect(readsOf("/api/merge-assist")).toBe(3);
   });
 });
