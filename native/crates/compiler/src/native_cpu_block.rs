@@ -742,6 +742,28 @@ fn delayed_store(f: &mut FunctionBuilder<'_>, dst: Value, stride: i64, k: usize,
 }
 
 /// One block's body: every instruction as straight-line bit operations. Gives each output's
+/// A full body's classes packed by where each is made (0375): the body's own part (place 0), a
+/// gated region (1 + its index), the ASCII split's inside (past the regions).
+pub fn full_pack(native: &BlockNative, state: &State) -> crate::native_cpu_lanes::BodyPack {
+    let (live_at, _) = live(native, state, true);
+    places_pack(native, state, &live_at)
+}
+
+fn places_pack(native: &BlockNative, state: &State, live_at: &[bool]) -> crate::native_cpu_lanes::BodyPack {
+    let plan = &state.plan;
+    let inside = 1 + plan.regions.len();
+    let places: Vec<Option<usize>> = (0..native.insts.len())
+        .map(|x| {
+            (live_at[x] && plan.lanes[x]).then(|| match plan.region_of[x].or_else(|| plan.regions.iter().position(|r| r.vectors.contains(&x))) {
+                Some(r) => 1 + r,
+                None if plan.ascii_branch && plan.ascii[x].is_some() => inside,
+                None => 0,
+            })
+        })
+        .collect();
+    crate::native_cpu_lanes::placed_pack(native, &places, 0)
+}
+
 /// value (the value itself, at its delay, not yet cut to the stream) and the carried state out.
 ///
 /// In a full block the plan's gated regions (`native_cpu_lanes::Region`) each run behind one
@@ -755,7 +777,11 @@ fn delayed_store(f: &mut FunctionBuilder<'_>, dst: Value, stride: i64, k: usize,
 pub fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &State, c: &Consts, at: At<'_>) -> (Vec<Value>, Vec<Value>, usize, Vec<cranelift_codegen::ir::Block>, Vec<Option<Value>>) {
     let plan = &state.plan;
     let n = native.insts.len();
-    let lanes = Lanes::new(&mut *f, native, plan, at.base, at.i, at.len, !at.full, at.bytes, c.nibble);
+    let (live_at, masked_at) = live(native, state, at.full);
+    let mut lanes = Lanes::new(&mut *f, native, plan, at.base, at.i, at.len, !at.full, at.bytes, c.nibble);
+    if at.full {
+        lanes = lanes.packed(Some(std::rc::Rc::new(places_pack(native, state, &live_at))));
+    }
     // The block's row of slots, a loop parameter: each `Load` is one load at its slot's offset.
     let row = at.scratch;
     let mut e = Emit {
@@ -785,7 +811,7 @@ pub fn body(f: &mut FunctionBuilder<'_>, native: &BlockNative, state: &State, c:
         rare: at.rare,
         stored_words: vec![None; native.outputs.len() + at.sinks.map_or(0, |sk| sk.extra.len())],
     };
-    (e.live, e.masked) = live(native, state, at.full);
+    (e.live, e.masked) = (live_at, masked_at);
     let mut grouped: Vec<Option<usize>> = vec![None; n];
     for (g, group) in native.groups.iter().enumerate() {
         for &m in &group.members {
@@ -6212,7 +6238,7 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
                 _ if from_rows.is_some() => {
                     let (_, rare_slot) = from_rows.expect("rows");
                     let rare_slot = *rare_slot;
-                    // Where the body stores no rows (0373), a block not handed has its bytes
+                    // Where the body stores no rows (0374), a block not handed has its bytes
                     // classified again, as the refill's own classes (`words_with`).
                     let stored = rd.bytes.is_none_or(|(b, _)| b.rows_stored);
                     let load = |f: &mut FunctionBuilder<'_>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>| -> Vec<Value> {
@@ -7736,7 +7762,7 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         _ => None,
     };
     let mut extra: Vec<(usize, i32)> = Vec::new();
-    // The refill's words with no row (0373): every block hands them to the token loop (`Hand`),
+    // The refill's words with no row (0374): every block hands them to the token loop (`Hand`),
     // and its cold way classifies the bytes again. Only where nothing else reads those rows (no
     // output's is stored but for the refill), and every block's row is final once made, so the
     // token loop takes each block in its own iteration (`at_once`); with the bytes to classify.

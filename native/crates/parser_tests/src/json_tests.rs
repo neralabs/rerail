@@ -565,6 +565,24 @@ fn json_tier1_vectors_equal_the_interpreter() {
     }
 }
 
+/// The full body's classes as simdjson's (0375): each place they are made in (the body's own
+/// part, a gated region, the ASCII split's inside) has at most one pair of nibble tables, its
+/// classes all in it, and none looked up again in a place inside the own part.
+#[test]
+fn json_classes_are_one_pair_a_place() {
+    for name in ["14-json", "15-jsonc"] {
+        let c = form(name);
+        let native = &c.native.block_programs[0];
+        let state = native_cpu_block::State::of(native);
+        let pack = native_cpu_block::full_pack(native, &state);
+        println!("{name}: tables by place {:?}", pack.places);
+        assert!(pack.places.first().is_some_and(|&(p, t)| p == 0 && t == 1), "{name}: the body's own part has not one pair: {:?}", pack.places);
+        assert!(pack.places.iter().all(|&(_, t)| t <= 1), "{name}: a place with more than one pair: {:?}", pack.places);
+        let total: usize = pack.places.iter().map(|p| p.1).sum();
+        assert_eq!(total, pack.packing.tables.len());
+    }
+}
+
 /// The gated regions (`native_cpu_lanes::Region`): skipped on a block without their gate's bytes
 /// and without their carried bits, so a number, an escape or a keyword must come out the same
 /// wherever it falls, a block edge inside it, or spanning a block, or ending one.

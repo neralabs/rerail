@@ -57,7 +57,7 @@ pub struct Bytewise<'a> {
     /// refill loads them where its block is made, as simdjson's stage 2 reads stage 1's index.
     pub rows: Option<(Vec<u16>, Option<i32>)>,
     /// Whether the body stores those words in its rows. Not where it hands every block's to the
-    /// token loop (0373): the refill's cold way classifies the block's bytes again.
+    /// token loop (0374): the refill's cold way classifies the block's bytes again.
     pub rows_stored: bool,
 }
 

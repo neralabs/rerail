@@ -1,4 +1,6 @@
-# 0373: The refill's words have no row
+# 0374: The refill's words have no row
+
+Renumbered from 0373, which two other worktrees took.
 
 Status: decided (the user, 2026-11-17: "please do it", on 0372's "still unlike lean"). Follows
 0372. Amends 0362.

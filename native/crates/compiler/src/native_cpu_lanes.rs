@@ -142,6 +142,8 @@ pub struct BodyPack {
     pub packing: crate::class_pack::Packing,
     pub of: HashMap<(u16, u8), usize>,
     pub extra: usize,
+    /// Each place's tables (`placed_pack`): `(place, tables)`, the body's own part first.
+    pub places: Vec<(usize, usize)>,
 }
 
 /// The pack of the classes the values `roots` read, with `extras` (sets the body tests besides
@@ -182,10 +184,151 @@ pub fn body_pack(native: &BlockNative, roots: &[usize], extras: &[crate::class_p
     own.dedup();
     let extra_alone = pack(extras);
     if packing.tables.len() > own.len() + extra_alone.tables.len() {
-        return BodyPack { packing: extra_alone, of: HashMap::new(), extra: 0 };
+        return BodyPack { packing: extra_alone, of: HashMap::new(), extra: 0, places: Vec::new() };
     }
     let of = classes.iter().enumerate().map(|(k, &c)| (c, k)).collect();
-    BodyPack { packing, of, extra: classes.len() }
+    BodyPack { packing, of, extra: classes.len(), places: Vec::new() }
+}
+
+/// The full body's classes packed by where they are made (0375): `places[x]` is the place of
+/// class value `x` (the body's own part, a gated region, the ASCII split's inside), and each
+/// place's classes are packed together, as simdjson's one lookup answers the classes of its
+/// one body. A place's lookups then serve its own classes only: a region needing one class
+/// does not look up a table of others it never reads. A class the body's own part has is not
+/// packed again in a place inside it (its lookup dominates there). A class whose table a
+/// `pair` reads keeps that table (its lookup is the pair's); a place whose packing would take
+/// more lookups than its classes' own tables keeps those.
+pub fn placed_pack(native: &BlockNative, places: &[Option<usize>], own_place: usize) -> BodyPack {
+    use crate::class_pack::{Need, Packing, Test, pack};
+    let paired: Vec<u16> = native.insts.iter().filter_map(|i| match *i {
+        BlockInst::Pair { before, table, .. } => Some([before, table]),
+        _ => None,
+    }).flatten().collect();
+    let set_of = |(t, bits): (u16, u8)| -> crate::class_pack::ByteSet {
+        let mut s = [0u64; 4];
+        for b in 0..=255u8 {
+            if native.tables[usize::from(t)].member(b, bits) {
+                s[usize::from(b >> 6)] |= 1 << (b & 63);
+            }
+        }
+        s
+    };
+    let n_places = places.iter().flatten().max().map_or(0, |m| m + 1).max(own_place + 1);
+    let mut by_place: Vec<Vec<(u16, u8)>> = vec![Vec::new(); n_places];
+    for (x, p) in places.iter().enumerate() {
+        if let (Some(p), BlockInst::Class { table, bits }) = (*p, &native.insts[x]) {
+            if !paired.contains(table) && !by_place[p].contains(&(*table, *bits)) {
+                by_place[p].push((*table, *bits));
+            }
+        }
+    }
+    // A class is its bytes: two classes of one set (of two of the program's tables) are one
+    // test, and a place inside the body's part tests none its part has.
+    let own: Vec<crate::class_pack::ByteSet> = by_place[own_place].iter().map(|&c| set_of(c)).collect();
+    let mut later: Vec<((u16, u8), crate::class_pack::ByteSet)> = Vec::new();
+    for (p, cs) in by_place.iter_mut().enumerate() {
+        if p != own_place {
+            cs.retain(|&c| {
+                let keep = !own.contains(&set_of(c));
+                if !keep {
+                    later.push((c, set_of(c)));
+                }
+                keep
+            });
+        }
+        let mut sets: Vec<crate::class_pack::ByteSet> = Vec::new();
+        cs.retain(|&c| {
+            let set = set_of(c);
+            let first = !sets.contains(&set);
+            if first {
+                sets.push(set);
+            } else {
+                later.push((c, set));
+            }
+            first
+        });
+    }
+    let mut out = BodyPack::default();
+    // The body's own part first: its tables are looked up before any place inside it.
+    let order: Vec<usize> = std::iter::once(own_place).chain((0..n_places).filter(|&p| p != own_place)).collect();
+    // The body's own part's tables, looked up before any place inside it (`own_tables`).
+    let mut own_tables = 0;
+    for p in order {
+        // A class the own part's products make, its set theirs or its complement's: tested by
+        // those bits, its place looks up nothing for it (a region's union of the structural
+        // characters, whose products the own part's whitespace and structurals are).
+        let mut classes = by_place[p].clone();
+        if p != own_place {
+            classes.retain(|&c| match by_products(&out.packing.tables[..own_tables], set_of(c)) {
+                Some(t) => {
+                    out.of.insert(c, out.packing.tests.len());
+                    out.packing.tests.push(t);
+                    false
+                }
+                None => true,
+            });
+        }
+        if classes.is_empty() {
+            continue;
+        }
+        let needs: Vec<Need> = classes.iter().map(|&c| Need::exact(set_of(c))).collect();
+        let packing: Packing = pack(&needs);
+        let mut tables: Vec<u16> = classes.iter().filter(|&&(t, bits)| byte_range(&native.tables[usize::from(t)], bits).is_none()).map(|c| c.0).collect();
+        tables.sort_unstable();
+        tables.dedup();
+        if packing.tables.len() > tables.len() {
+            continue;
+        }
+        let base = out.packing.tables.len() as u16;
+        for (&c, t) in classes.iter().zip(packing.tests) {
+            out.of.insert(c, out.packing.tests.len());
+            out.packing.tests.push(Test { tables: t.tables.iter().map(|&(tb, bits)| (tb + base, bits)).collect(), ..t });
+        }
+        out.places.push((p, packing.tables.len()));
+        out.packing.tables.extend(packing.tables);
+        if p == own_place {
+            own_tables = out.packing.tables.len();
+        }
+    }
+    // Each class of a set already tested: that set's test.
+    for (c, set) in later {
+        let found = out.of.iter().find(|&(&d, _)| set_of(d) == set).map(|(_, &k)| k);
+        if let Some(k) = found {
+            out.of.insert(c, k);
+        }
+    }
+    out.extra = out.packing.tests.len();
+    out
+}
+
+/// The test of `set` by the products of `tables` (each bit's bytes), where the bits inside it
+/// make all of it, or the bits outside it all of its complement.
+fn by_products(tables: &[crate::block::ClassTable], set: crate::class_pack::ByteSet) -> Option<crate::class_pack::Test> {
+    let has = |s: &crate::class_pack::ByteSet, b: u8| s[usize::from(b >> 6)] >> (b & 63) & 1 == 1;
+    for negated in [false, true] {
+        let want = |b: u8| has(&set, b) != negated;
+        let mut got = [0u64; 4];
+        let mut parts: Vec<(u16, u8)> = Vec::new();
+        for (t, table) in tables.iter().enumerate() {
+            let mut bits = 0u8;
+            for j in 0..8 {
+                let of: Vec<u8> = (0..=255u8).filter(|&b| table.member(b, 1 << j)).collect();
+                if !of.is_empty() && of.iter().all(|&b| want(b)) {
+                    bits |= 1 << j;
+                    for b in of {
+                        got[usize::from(b >> 6)] |= 1 << (b & 63);
+                    }
+                }
+            }
+            if bits != 0 {
+                parts.push((t as u16, bits));
+            }
+        }
+        if (0..=255u8).all(|b| has(&got, b) == want(b)) && !parts.is_empty() {
+            return Some(crate::class_pack::Test { range: None, tables: parts, negated });
+        }
+    }
+    None
 }
 
 /// The bytes at which value `x` holds, where it is a function of its own byte alone (classes,
