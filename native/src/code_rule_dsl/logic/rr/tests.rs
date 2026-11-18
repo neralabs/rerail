@@ -2995,7 +2995,6 @@ def_at(f, s) :- kind(f, "function_definition"), field(f, "name", n), text(n, s).
 /// over every document read; each policy's rules still see only its scope. Policy B's cross-file rule (two calls of
 /// one name) would join a call only A's scope reads if the library's rows reached it unguarded.
 #[test]
-#[ignore = "work queue Q166: the debug check after `prune` finds the tree keeps the input `value` the version drops (red at the hub's e382227aa); ignored for the roll-up (2026-11-18)"]
 fn a_library_held_once_is_read_by_each_policy_in_its_own_scope() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("held-once");
     for (p, text) in [("a/x.py", "f()\n"), ("b/y.py", "f()\n"), ("b/z.py", "g()\n")] {

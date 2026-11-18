@@ -20,10 +20,12 @@
 //!   end among matches starting at `s` or after is at most `e` (`Placement`): one binary search per
 //!   node.
 //! - **Position assertions** (`\b`, a multi-line `^`, `\A` in a branch) read one byte either side
-//!   of their position. A match strictly inside a node reads the same bytes in the file as in the
-//!   node's text, so the file's matches decide it; a match touching the node's start or end may
-//!   read differently, and is the node-local `Start` or `End` plan of the same core (gated as
-//!   above). The node matches iff any of the three does.
+//!   of their position. Only an assertion at a match's own edge (before its first byte or after its
+//!   last, `looks_at`) reads outside the match. So a match touching the node's start reads
+//!   differently only where the core can assert at its start, and likewise at its end. On such a
+//!   side the file's matches count only strictly inside the node, and the node-local `Start` or
+//!   `End` plan of the same core (gated as above) decides the matches touching it; a side with no
+//!   such assertion needs neither. The node matches iff any of them does.
 //! - Anything else (`How::Each`: a backtracking pattern, an automaton with no finite edge
 //!   literals) is tested on each candidate's text.
 
@@ -41,7 +43,8 @@ pub struct Nodes<'a> {
     pub text: &'a [u8],
     /// Nodes in the file (bits are over `0..len`).
     pub len: usize,
-    /// The nodes to decide, ascending.
+    /// The nodes to decide, ascending: a tape's preorder, so their starts never decrease (a
+    /// match's nodes at a start are found by a search over them, with no index).
     pub candidates: &'a [u32],
     pub span: &'a (dyn Fn(u32) -> Range<usize> + Sync),
 }
@@ -82,9 +85,10 @@ enum How {
     Exact(Anchor),
     /// Its literals' occurrences at the anchor pick the candidates its automaton tests.
     Gate(Anchor),
-    /// Matches placed from the file's forward and backward passes; with `strict`, only those inside
-    /// a node count, and the units `edges` (its core at the node's start and end) decide the rest.
-    Contains { strict: bool, edges: Vec<usize> },
+    /// Matches placed from the file's forward and backward passes; `strict` per side (start, end),
+    /// a match touching the node's edge on that side does not count, and the units `edges` (its core
+    /// at those edges) decide the rest.
+    Contains { strict: [bool; 2], edges: Vec<usize> },
     /// A literal set with an empty literal: each candidate's edge.
     Edges,
     /// Each candidate's text.
@@ -103,19 +107,21 @@ impl Batch {
             shared.push(literals);
         }
         for (at, lowered) in plans.iter().enumerate() {
-            // A "contains" core with assertions: its node-local start and end plans, as parts.
+            // A "contains" core that asserts at a match's edge: its node-local plan at that edge of
+            // the node, as a part.
             if let Plan::Automaton { anchor: Anchor::Within, core } = &lowered.plan
-                && looks(core)
+                && (looks_at(core, false) || looks_at(core, true))
             {
+                let strict = [looks_at(core, false), looks_at(core, true)];
                 let mut edges = Vec::new();
-                for anchor in [Anchor::Start, Anchor::End] {
+                for (anchor, _) in [Anchor::Start, Anchor::End].into_iter().zip(strict).filter(|(_, on)| *on) {
                     let part = super::Lowered::of_plan(Plan::Automaton { anchor, core: core.clone() }, "edge");
                     let (how, literals) = how(&part.plan);
                     edges.push(units.len());
                     units.push(Unit { lowered: part, how });
                     shared.push(literals);
                 }
-                units[at].how = How::Contains { strict: true, edges };
+                units[at].how = How::Contains { strict, edges };
             }
         }
         // Every shared literal once, with the units holding it.
@@ -245,7 +251,7 @@ fn how(plan: &Plan) -> (How, Option<Vec<Vec<u8>>>) {
         Plan::Never => (How::Constant(false), None),
         Plan::Literals { literals, .. } if literals.iter().any(Vec::is_empty) => (How::Edges, None),
         Plan::Literals { anchor, literals } => (How::Exact(*anchor), Some(literals.clone())),
-        Plan::Automaton { anchor: Anchor::Within, .. } => (How::Contains { strict: false, edges: Vec::new() }, None),
+        Plan::Automaton { anchor: Anchor::Within, .. } => (How::Contains { strict: [false, false], edges: Vec::new() }, None),
         Plan::Automaton { anchor, core } => {
             let prefix = matches!(anchor, Anchor::Whole | Anchor::Start).then(|| edge_literals(core, ExtractKind::Prefix)).flatten();
             let suffix = matches!(anchor, Anchor::Whole | Anchor::End).then(|| edge_literals(core, ExtractKind::Suffix)).flatten();
@@ -262,9 +268,34 @@ fn how(plan: &Plan) -> (How, Option<Vec<Vec<u8>>>) {
     }
 }
 
-fn looks(core: &Hir) -> bool {
-    !core.properties().look_set().is_empty()
+/// Whether `hir` can assert (`\b`, `^`, ...) at a match's start (`end` false) or end: before it
+/// reads its first byte, or after its last. Conservative: a repetition with any assertion does.
+fn looks_at(hir: &Hir, end: bool) -> bool {
+    use regex_syntax::hir::HirKind;
+    if hir.properties().look_set().is_empty() {
+        return false;
+    }
+    match hir.kind() {
+        HirKind::Concat(parts) => {
+            // Its parts from that edge, up to the first that must read a byte.
+            let ordered: Vec<&Hir> = if end { parts.iter().rev().collect() } else { parts.iter().collect() };
+            for part in ordered {
+                if looks_at(part, end) {
+                    return true;
+                }
+                if part.properties().minimum_len() != Some(0) {
+                    return false;
+                }
+            }
+            false
+        }
+        HirKind::Capture(capture) => looks_at(&capture.sub, end),
+        HirKind::Alternation(branches) => branches.iter().any(|branch| looks_at(branch, end)),
+        // A look itself, a repetition holding one, or anything else that has one.
+        _ => true,
+    }
 }
+
 
 /// `core`'s prefix or suffix literals, where it has a finite set of them, none empty: every match
 /// begins (ends) with one.
@@ -299,21 +330,33 @@ fn mark(anchor: Anchor, hits: &[(u32, u32)], nodes: &Nodes<'_>, index: &mut Opti
         return;
     }
     if anchor == Anchor::Within {
-        Placement::of(hits.iter().map(|&(start, end)| (end, start)).collect()).mark(nodes, false, set);
+        Placement::of(hits.iter().map(|&(start, end)| (end, start)).collect()).mark(nodes, [false, false], set);
         return;
     }
-    let index = index.get_or_insert_with(|| Index::of(nodes));
     for &(s, e) in hits {
         match anchor {
+            // The candidates starting at `s`: a run of them, found by searching their starts read
+            // in place (they never decrease).
             Anchor::Whole | Anchor::Start => {
-                let from = index.by_start.partition_point(|&(start, _, _)| start < s);
-                for &(_, end, node) in index.by_start[from..].iter().take_while(|&&(start, _, _)| start == s) {
+                let from = nodes.candidates.partition_point(|&node| ((nodes.span)(node).start as u32) < s);
+                for &node in &nodes.candidates[from..] {
+                    let span = (nodes.span)(node);
+                    if span.start as u32 != s {
+                        break;
+                    }
+                    let end = span.end as u32;
                     if end == e || (anchor == Anchor::Start && end > e) {
                         set(node);
                     }
                 }
             }
+            // Ends do not follow the order: the candidates by end, made once per file where an
+            // end-anchored plan has a hit.
             Anchor::End => {
+                let index = index.get_or_insert_with(|| {
+                    let _stage = crate::code_rule_dsl::prof::Stage::start("text.scan.index");
+                    Index::of(nodes)
+                });
                 let from = index.by_end.partition_point(|&(end, _, _)| end < e);
                 for &(_, start, node) in index.by_end[from..].iter().take_while(|&&(end, _, _)| end == e) {
                     if start <= s {
@@ -328,26 +371,22 @@ fn mark(anchor: Anchor, hits: &[(u32, u32)], nodes: &Nodes<'_>, index: &mut Opti
 
 /// The candidates by start and by end, built once per file for the units that need it.
 struct Index {
-    /// (start, end, node), ascending.
-    by_start: Vec<(u32, u32, u32)>,
     /// (end, start, node), ascending.
     by_end: Vec<(u32, u32, u32)>,
 }
 
 impl Index {
     fn of(nodes: &Nodes<'_>) -> Self {
-        let mut by_start = nodes
+        let mut by_end = nodes
             .candidates
             .iter()
             .map(|&node| {
                 let span = (nodes.span)(node);
-                (span.start as u32, span.end as u32, node)
+                (span.end as u32, span.start as u32, node)
             })
             .collect::<Vec<_>>();
-        let mut by_end = by_start.iter().map(|&(start, end, node)| (end, start, node)).collect::<Vec<_>>();
-        by_start.sort_unstable();
         by_end.sort_unstable();
-        Self { by_start, by_end }
+        Self { by_end }
     }
 }
 
@@ -498,15 +537,19 @@ impl Placement {
         Self { starts, earliest }
     }
 
-    fn mark(&self, nodes: &Nodes<'_>, strict: bool, set: &mut impl FnMut(u32)) {
+    fn mark(&self, nodes: &Nodes<'_>, strict: [bool; 2], set: &mut impl FnMut(u32)) {
         if self.starts.is_empty() {
             return;
         }
-        for &node in nodes.candidates {
+        let _stage = crate::code_rule_dsl::prof::Stage::start("text.scan.place");
+        // A candidate starting past the last match's start holds none (starts never decrease).
+        let last = *self.starts.last().expect("a match");
+        let upto = nodes.candidates.partition_point(|&node| (nodes.span)(node).start as u32 <= last);
+        for &node in &nodes.candidates[..upto] {
             let span = (nodes.span)(node);
             let (s, e) = (span.start as u32, span.end as u32);
-            let first = if strict { self.starts.partition_point(|&start| start <= s) } else { self.starts.partition_point(|&start| start < s) };
-            if self.earliest.get(first).is_some_and(|&end| if strict { end < e } else { end <= e }) {
+            let first = if strict[0] { self.starts.partition_point(|&start| start <= s) } else { self.starts.partition_point(|&start| start < s) };
+            if self.earliest.get(first).is_some_and(|&end| if strict[1] { end < e } else { end <= e }) {
                 set(node);
             }
         }

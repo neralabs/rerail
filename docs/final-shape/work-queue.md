@@ -1725,13 +1725,28 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
   candidates for what stopped reading the root first.
 - **Done when**: the warm child run exits 0. Either the root's part is read before the waves wherever the requests'
   world will watch it, or the world watches it before they start.
-### Q51. (Q47 at 8bfa12af6) W's reference graph parses every file a second time (39% of internal_dead_code's CPU)
+### Q51. (Q47 at 8bfa12af6) W's reference graph parses every file a second time (39% of internal_dead_code's CPU) — done
 
 - **Found** (2026-11-16, t41 §2): `references::add_file` parses again with tree-sitter and runs W's
   `calls::summarize`: 39.7 s over 3,110 files, 12.6 ms a file. The hot frames are `ts_node_child_with_descendant`
   (tree-sitter's `parent()`, a walk from the root at every call).
 - **Done when**: the reference graph is built from the tape and facts the run already has (a rule program or the
   transducer), with no second parse and no parent climbs; internal_dead_code's CPU drops by about that much.
+- **Done** (2026-11-17). The chunk builder hands each file's own tape to the graph, and `calls::summarize` reads it in
+  place through `TapeDoc`, as W's workspace reads a restored tape. Its error flag is `SyntaxErrors::of_doc`. A tape
+  kept only for the graph is dropped after it. The walk had two wastes of its own:
+  - every `child_by_field_id` counted all the node's children before searching them (`Children`'s exact size). The
+    count is now taken only when asked;
+  - every `field(name)` compared the name with each of the grammar's fields (tree-sitter's lookup). The grammar now
+    holds its field names sorted.
+
+  s1000 internal_dead_code with Metal, at load 57–112:
+  - the reference graph's CPU went from 4.0–4.2 s to 0.68–0.76 s;
+  - the run's CPU from 12.3–13.1 s to 8.6–8.9 s (121–126 G instructions to 86–93 G);
+  - the findings are the same, and `reference_edge_is_ws_reference_graph_*` pass.
+
+  What is left is the summarizer's own walk: tape reads through `AnyTape`'s dispatch on each step. Its parent reads
+  are the descent's (`up`), not climbs.
 
 ### Q52. (Q48 at 8bfa12af6) The memory line starves chunks without lowering the peak
 
@@ -1750,6 +1765,12 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
 - **Done when**: a `desc kind=K` is a scan of the root's subtree range, 64 codes at a time, its groups spread over
   threads (nothing posted, 0293 §6), and a `child` loop a segmented pass, so a walk costs its output, not its
   length; the longest walk at s1000 is under 100 steps.
+- **Progress** (2026-11-17, 0380): a `child` loop is one move (`CLOSURE`), a preorder scan of the start's subtree.
+  A long scan's spill halves its range at a node both halves reach. A `desc` or closure followed by
+  `capture; emit` marks its range in place, 32 nodes a word op. At s1000, the time was one closure pass's single
+  136,902-node scan, whose spills ran one after another. `label_micro_8` + `label_micro` went from 265–340 ms to
+  93–120 ms, with the same findings. Open: the longest walk is 4,106 counted steps in the loop tier and 2,149 in
+  t0, not under 100, and a spilled piece walks a frame at a time.
 
 ### Q50. A device run's matcher launches: the host's part and the GPU's in series, and prices 3× high
 
@@ -1781,7 +1802,41 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
     against 2.9–3.3 s. The lane's wall now equals the wave's own (`== Device`), about 315 ms of GPU, 320 ms of host
     CPU and 150 ms off a core. `RERAIL_GPU_KERNEL_TIMES` (a command buffer a kernel) was not it: without it the
     waiting was the same.
-- **Two blockers to the overlap, found**:
+  - **The overlap, the lock, the sizing and the price** (2026-11-17, the user: "do we really need a process-wide
+    Metal execution lock? Shouldn't we take leases on the resources instead?"):
+    - The lock is gone (0344): runs hold leases on the memory they write. The GPU backend's `start` runs a batch of
+      programs on a slot pool of its own, so the worker begins the next wave beside it. On s1000, 6 to 8 of 19 wave
+      batches began while another ran.
+    - `gpu.size` was 173 of its 217 ms in the profile's own count, which walked every root node of every file for
+      each pass. It now counts the groups each walk launches; the real sizing is about 45–60 ms, most of it text rows
+      (`size.texts`).
+    - **The text rows** (2026-11-17): they are not rebuilt between waves. Each (test, file) pair is scanned once
+      (`texts.scanned` 744 at s1000; none came from the term index). The cost was per-node host work in each scan:
+      - every scan read every node's span and sorted all the nodes twice, to find the nodes at a literal's
+        occurrence (`Index`, 51 ms CPU);
+      - a "contains" regex with `\b` at its start also tested every node's text for a match touching the node's
+        end (40 ms), though only an assertion at that end reads differently there.
+      Now a start-anchored hit searches the candidates' starts read in place (preorder: they never decrease), an
+      edge plan exists only on a side where the core asserts (`looks_at`), and placement stops at the last match's
+      start. Scans 135 → 45 ms CPU, `size.texts` 24–56 → 8 ms, with no verdict different under
+      `RERAIL_SCAN_CHECK` at s1000. The rows are still the host's on the Metal path: a text test on the device is
+      the remaining port.
+    - A program's price learns from the run's own launches (`price::observe`, from 4 samples). Wall and host CPU are
+      each a robust line: a launch's fixed cost plus a unit's. The wave on the GPU: about 6 ms + 1.1–2.0e-8 s a unit of
+      wall, 4.3 ms + 4e-9 s of host CPU. The cores' samples are fitted net of their load, and the lane's host ratio
+      no longer scales a learned host price. The wave's priors are today's measurements.
+    - **The price of overlapped waves** (0392, 2026-11-17). With two waves in flight, a launch's wall included the
+      time it shared the device, so the estimates summed past the lane's span (2.36 s against 1.00 s pinned). A
+      device job is now charged its share of the lane (`share_clock`). Also, a line from the first small waves was
+      stretched to waves 400× larger; it now prices only within 2× of its largest sample, and past that takes the
+      prior's slope (`SPREAD`).
+      - Unpinned s1000: the large waves stayed on the GPU in 3 of 3 runs, at 11.0–12.2 s CPU and 3.1–3.7 s wall.
+        Before, 2 of 4 runs sent them to the cores (2.7–3.2 s of wall there).
+      - The overlap's timing (0344's Measured section). On an M3 Max at load 67–72 with no quiet host to be had,
+        `RERAIL_GPU_OVERLAP=off` against on, 4 runs each: the wave executor's wall went 1.90 → 1.70 s and the GPU
+        lane's queueing 0.60–0.85 → 0.28–0.47 s. The run's wall is the same within the noise (6.03 → 5.91 s).
+- **Two blockers to the overlap, found** (both resolved by 0344: no lock, and no begin/finish split of the label
+  passes; a program's whole run is the spawned submission):
   - `rerail_metal::metal_execution_guard` (a process-wide lock from the grid's launch budget, copied from Tempo)
     is held for a whole label run, encode through readback. A launch begun on the worker (encode and commit in
     `start`, wait and decode in `finish`) would hold it while the worker begins the next, which then waits on the
@@ -1848,6 +1903,35 @@ Their siblings, found later the same day (0310 steps 4 and 5):
     control flow"). That took the label passes from 710 to 349 ms, and `label_micro` from 355 to 159 ms, under the
     hand-written reads' 211.
   - Left: `label_micro_8`'s parent climbs (171 against the hub's 91), and the walk test.
+  - **The parent climb, read** (2026-11-17): format 16's parent (`reads.rs`, `parent16`) is at most `K - 1 = 7`
+    sibling steps back, each a slot read whose address depends on the one before: a memory latency a step.
+    Every language's slots are one byte (`tables/*.tsv`, `widths 1 1 1`), so a step back over a sibling of 64
+    nodes or more escapes to the side list (`tape_f16_side`): a binary search of up to 8 dependent byte loads, then
+    the value. The view is a thread copy (`thread const uint* v`), so its loads are not the cost. The hub's 91 ms
+    read a parent column, a decoded structure the tape-in-place rule refuses.
+  - **Next, in shape**: a walk's thread runs one window of 64 consecutive nodes (0293 §10). The window's parents
+    come from one forward pass over its slots (8 slots a word load, a stack of open ancestors in thread memory),
+    and `parent` of a node in the window is a read of that, not a climb. That is the walk kernel's change Q60
+    asks for too (a group's roots as a SIMD group's), so it goes with Q60. The side lookup's search can be a word
+    compare (SWAR, the offsets 8 a load) for every escaped read, sizes and gaps included; worth it only if the
+    escapes are a large share, which the device does not count yet (a `walk_escapes` counter beside
+    `walk_steps`).
+  - **The spike** (2026-11-17, decision 0359): the parent climb is not the cost.
+    - An oracle parent column (every parent made by a kernel before the walks) gained nothing (220 ms against
+      172–217 ms), and neither did the window pass (170 ms).
+    - Counted: 4.0 M climbs in 97 M steps, 1.8 hops each, 92% inside the start's window.
+    - The cost was the dispatch's shape: a thread a 64-node group gave `label_micro_8` about 8,800 threads a launch.
+      A group's nodes are now a SIMD group's in the short tiers: `label_micro_8` 88–134 ms, the hub engine's
+      75–107 ms, with the same walks.
+    - `clause_patterns`: a pass's group takes 4 threads and a fact's root one, so no lane idles for a fact. 6.8 →
+      2.1–2.5 ms, under the hub engine's 3.0–3.2.
+    - Nothing is precomputed, parents included (the user): the oracle column was a measurement bound only.
+  - **Left:**
+    - the walk test (a device test that fails on a walk whose steps change);
+    - the reads' widths;
+    - `lowered_clauses_find_the_same_roots_on_the_resident_interpreter` fails on
+      `ruff-d416-missing-section-name-colon/missing-colon-underlined` (`BackendFailure`) without this change too.
+      It was hidden while the engine's `metal-tests` build did not compile (`crate::test_languages`, fixed).
 
 ### Q61. (Q54 at 8e2b232ad) Oscar's engine stops on the data-layer corpus in `step_histograms` (to check on the merged tree)
 
@@ -3192,7 +3276,7 @@ blocks, so only held rows go first now.
 Test: `held_rows_look_up_what_a_scan_finds` (every column, keys of 2 and 3, an unheld column, and the host fallback
 past the directory).
 
-### Q166. `a_library_held_once_is_read_by_each_policy_in_its_own_scope` fails the version's check after `prune`
+### Q166. `a_library_held_once_is_read_by_each_policy_in_its_own_scope` fails the version's check after `prune` (done)
 
 - **Found** (2026-11-18, the hub's roll-up, merging Two-pass): a debug build's check of the passes before
   lowering (`the version after \`prune\` is the tree's`) differs in the inputs alone: the tree's prune keeps
@@ -3201,3 +3285,6 @@ past the directory).
 - **Next**: which reader keeps `value` in the tree (a request, a native's reads, an option) that the version's
   `Prune` does not count; make the two agree.
 - **Done when**: both prunes keep the same inputs, and the test passes.
+- **Done** (2026-11-18, at the merge of wolfeel): Typing-support's tree prune makes an attribute answered on request
+  an input again when its readers are pruned (decision 0174); the version's `Prune` did not. It does now, in the
+  tree's order. Both tests pass (`a_session_derives_again_only_the_strata_priced_cheaper_so` failed the same).

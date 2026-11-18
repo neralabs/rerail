@@ -2043,7 +2043,7 @@
             assert_eq!(matches, expected_matches);
             registry.remove_batch(batch);
         }
-        let anchor_scan = metal_backend::prepare_anchor_scan(&programs, &files).unwrap();
+        let mut anchor_scan = metal_backend::prepare_anchor_scan(&programs, &files).unwrap();
         // This thread's compilations: the cache is the process's, and other tests fill it at the same time.
         let anchor_pipeline_count = metal_backend::pipelines_compiled_here();
         let gpu_anchors = anchor_scan.run().unwrap();
@@ -2063,7 +2063,7 @@
             semantic(materialize_literal_anchors(&programs, &files, &gpu_anchors).unwrap()),
             semantic(expected)
         );
-        let filtered_scan = metal_backend::prepare_anchor_scan_with_eligibility(
+        let mut filtered_scan = metal_backend::prepare_anchor_scan_with_eligibility(
             &programs,
             &files,
             Some(&[vec![0b01], vec![0b10]]),
@@ -3084,7 +3084,7 @@
             let masks = eligibility_masks(eligibility, programs.len());
             let sql_and_masks = started.elapsed();
             let started = Instant::now();
-            let scan = metal_backend::prepare_anchor_scan_with_eligibility(
+            let mut scan = metal_backend::prepare_anchor_scan_with_eligibility(
                 &programs,
                 &tapes,
                 Some(&masks),
@@ -3192,7 +3192,7 @@
             .collect::<Vec<_>>();
         let cpu_compile = started.elapsed();
         let started = Instant::now();
-        let gpu_anchor_scan = metal_backend::prepare_anchor_scan(&programs, &tapes).unwrap();
+        let mut gpu_anchor_scan = metal_backend::prepare_anchor_scan(&programs, &tapes).unwrap();
         let gpu_anchor_prepare = started.elapsed();
         let gpu_anchors = gpu_anchor_scan.run().unwrap();
         assert_eq!(

@@ -1265,6 +1265,10 @@ fn micro_walks_are_the_interpreters_label_outputs() {
         }
     }
     let eligible = micro.iter().filter(|m| m.is_some()).count();
+    // A loop of child steps through a test is one move (`compile_micro::CLOSURE`, Q56): some fixtures' walks hold one.
+    let closures = micro.iter().flatten().filter(|(m, _)| m.words.iter().any(|&w| split(w).0 == compile_micro::CLOSURE)).count();
+    eprintln!("micro: {closures} of the walks read a closure");
+    assert!(closures > 0, "a walk reads a closure");
     let texts = micro.iter().flatten().filter(|(m, _)| !m.texts.is_empty()).count();
     eprintln!("micro: {texts} of the walks test text; {counted} of the programs count");
     eprintln!("micro: {eligible} of {} label programs; {compared} starts compared, {marked} marks, {overflowed} overflowed", programs.len());

@@ -621,6 +621,15 @@ fn stages(r: &mut String) {
         walks.sort_by(|a, b| b.1.cmp(&a.1));
         let total: usize = walks.iter().map(|w| w.1).sum();
         let _ = writeln!(r, "\n  micro walks by steps ({total} steps in all; t0 = 8 frames, t2 = the loop tier):");
+        // Each tier's walks and steps over every pass, not the 30 listed: two runs walked the same starts where these
+        // match (a deep rerun walks the loop tier's again).
+        for tier in ["t0:", "t1:", "t2:"] {
+            let of = walks.iter().filter(|(w, _)| w.starts_with(tier));
+            let (steps, items) = of.fold((0usize, 0usize), |(s, i), (w, n)| (s + n, i + stages.get(&format!("walk_items.{w}")).map_or(0, |e| e.1)));
+            if items > 0 {
+                let _ = writeln!(r, "  {tier} {items} walks, {steps} steps");
+            }
+        }
         let _ = writeln!(r, "{:>14} {:>10} {:>10} {:>10}  walk words", "steps", "walks", "per walk", "longest");
         for (w, steps) in walks.iter().take(30) {
             let items = stages.get(&format!("walk_items.{w}")).map_or(0, |e| e.1);
@@ -717,6 +726,13 @@ fn metal_summary(r: &mut String, state: &State) {
         let _ = writeln!(r, "  {form:<26} {:<4} {n:>6} launches {wall:>9.2} s wall {cpu:>9.2} s job CPU ({:.2} ms wall a launch)", lane.name(), wall * 1e3 / *n as f64);
     }
     let _ = writeln!(r, "  matcher label passes: {label_gpu:.1} ms on the GPU (command buffers); the GPU lane's wall less it is the host's part and the waits");
+    #[cfg(target_os = "macos")]
+    let (begun, beside) = rerail_accel::gpu::programs_begun();
+    #[cfg(not(target_os = "macos"))]
+    let (begun, beside) = (0, 0);
+    if begun > 0 {
+        let _ = writeln!(r, "  GPU lane programs: {begun} batches begun, {beside} of them while another ran (decision 0344: one's host part beside another's command buffers)");
+    }
     if walks > 0 {
         let _ = writeln!(r, "  micro walks: {walks} steps, the longest {longest} (== Stages: a long walk is a dispatch's critical path)");
     } else {

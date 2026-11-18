@@ -103,12 +103,15 @@ struct MatcherWave {
 /// What a wave's launch returns: per matcher, per tape, the matched roots; how it ran; its wall seconds on the lane.
 type WaveFound = Result<(Vec<Vec<BTreeSet<u32>>>, crate::code_rule_dsl::transducer::packed::WaveRun, f64), String>;
 
-/// The cores' interpreter: seconds a tape node and pass (one thread), and the GPU's. Priors, replaced by the
-/// executor's learned rates once it has measured the form. Measured over the data layer (M5, under load): the cores
-/// 1.1e-8 to 2.4e-8, the GPU's interpreter 2.5e-8 to 2.5e-7 (one wave of large files 5.6e-5 a node): no faster a
-/// unit than one core, on one lane against the cores' many.
-const WAVE_CPU_PER_NODE_PASS: f64 = 2e-8;
-const WAVE_GPU_PER_NODE_PASS: f64 = 2.5e-8;
+/// The cores' interpreter: seconds a tape node and pass (one thread), and the GPU's: priors, until a run has measured
+/// its own launches (`price::observe`: a line of a launch's fixed cost and a unit's). Measured 2026-11-17 on s1000
+/// (M5, format 16, the structured MSL, the machine's load 40 to 110): the GPU 6.2 ms a launch + 1.5e-8 s a unit of
+/// wall, 4.3 ms + 3.7e-9 s of host CPU; the cores 7 launches of 7.1e6 units in 0.77 s, 1.1e-7 s a unit under a load
+/// of about 50 on 18 threads, so about 4e-8 unloaded (the price scales the cores by their load itself). The
+/// GPU's was 2.5e-8 and its host CPU nothing; the cores' 2e-8 (2026-11-16, before format 16 and the structured MSL).
+const WAVE_CPU_PER_NODE_PASS: f64 = 4e-8;
+const WAVE_GPU_PER_NODE_PASS: f64 = 1.5e-8;
+const WAVE_GPU_HOST_PER_NODE_PASS: f64 = 4e-9;
 
 /// The profile's topic for a wave the GPU lane ran on the CPU, its Metal run having failed (`MatcherWave::run`).
 #[cfg(target_os = "macos")]
@@ -137,6 +140,13 @@ impl rerail_accel::kernel::Program for MatcherWave {
             rerail_accel::Lane::Cpu => Some(WAVE_CPU_PER_NODE_PASS),
             rerail_accel::Lane::Gpu if self.gpu => Some(WAVE_GPU_PER_NODE_PASS),
             _ => None,
+        }
+    }
+
+    fn host_per_unit(&self, lane: rerail_accel::Lane) -> Option<f64> {
+        match lane {
+            rerail_accel::Lane::Gpu => self.per_unit(lane).map(|_| WAVE_GPU_HOST_PER_NODE_PASS),
+            _ => self.per_unit(lane),
         }
     }
 
