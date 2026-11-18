@@ -151,12 +151,16 @@ impl Relation {
         }
     }
 
-    /// A relation that continues `base`'s first `base_rows` rows (decision 0384 step 7): its ids below them are
-    /// `base`'s rows, read there, and its own rows come after (a second relation started from rows whose writer
-    /// another took, `Rows::shared`). It lies in `base`'s block, which every reader binding it binds. `None` when the
-    /// block has no room, or `base` is not a full relation of it (a continuation's base is not one).
+    /// A relation that continues the first `base_rows` rows `base` reads (decision 0384 step 7): its ids below them
+    /// are `base`'s, read there, and its own rows come after (a second relation started from rows whose writer
+    /// another took, `Rows::shared`). `base` is a full relation, or a continuation itself (a fork of a fork, step 8),
+    /// whose own rows it then reads past its base's: ids are read down the chain (`rel_get`). It lies in `base`'s
+    /// block, which every reader binding it binds. `None` when the block has no room, or `base` is neither (a delta of
+    /// kills), or `base_rows` is not within the rows `base` reads past its own base's.
     pub fn try_continue<'b>(block: &'b Block, spec: &Spec, base: &Relation, base_rows: u32) -> Option<&'b Relation> {
-        if base.base_rows != 0 || base.is_delta() || base_rows > base.rows.len() || !block.holds(std::ptr::from_ref(base)) {
+        let full = base.base_rows == 0 && !base.is_delta();
+        let from = if base.continues() { base.base_rows } else { 0 };
+        if !(full || base.continues()) || base_rows < from || base_rows > base.len_all() || !block.holds(std::ptr::from_ref(base)) {
             return None;
         }
         let rel = Relation::try_create(block, spec, None)?;
@@ -1193,8 +1197,30 @@ mod tests {
         // Kills of any of its ids.
         let kills = Relation::try_kills(&block, &spec, fork, &[1 << 3, 0, 1 << 4]).expect("a delta");
         assert!(kills.dead_bit(3) && kills.dead_bit(132) && !kills.dead_bit(4));
-        // A continuation of a continuation is refused: one base, read in one step.
+        // A continuation of a continuation (a fork of a fork, step 8): ids read down the chain. Below its base's base
+        // rows, or past what its base reads, it is refused; a kills delta is no base.
         assert!(Relation::try_continue(&block, &spec, fork, 10).is_none());
+        assert!(Relation::try_continue(&block, &spec, fork, 151).is_none());
+        assert!(Relation::try_continue(&block, &spec, kills, 0).is_none());
+        let fork2 = Relation::try_continue(&block, &spec, fork, 120).expect("a continuation of a continuation");
+        put(fork2, 120, 40, 3000);
+        // The first fork's writer goes on past 120: rows the second does not read.
+        put(fork, 150, 5, 8000);
+        assert_eq!(fork2.len_all(), 160);
+        for id in 0..160 {
+            let want = if id < 100 { 1000 } else if id < 120 { 2000 } else { 3000 } + i64::from(id);
+            assert_eq!(fork2.get(id, 1), want, "row {id} down the chain");
+        }
+        let n = fork2.len_all();
+        let room = unsafe { fork2.try_reserve_index(&block, &[0], n) }.expect("room");
+        unsafe {
+            fork2.build_index(&room);
+            fork2.index_built(&room);
+        }
+        let i = fork2.find_index(&[0], n).expect("built");
+        let mut threes: Vec<u32> = fork2.group(i, key(3)).iter().copied().filter(|&id| fork2.get(id, 0) == 3).collect();
+        threes.sort_unstable();
+        assert_eq!(threes, (0..160).filter(|id| id % 10 == 3).collect::<Vec<u32>>(), "every id down the chain");
     }
 
     /// Decision 0384 step 5: an added index's buckets and rows are chunks of a free-listed block, which forgetting it

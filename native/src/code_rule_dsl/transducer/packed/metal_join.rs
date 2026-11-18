@@ -3147,9 +3147,9 @@ pub mod tests {
         }
     }
 
-    /// Decision 0384 step 7: a fork (a second relation started from frozen rows whose writer another took) is bound
-    /// as one relation, nothing merged: the kernels read its base's rows through it (`rel_get`), and the device's
-    /// index of it is the host's, over every id.
+    /// Decision 0384 steps 7 and 8: a fork (a second relation started from frozen rows whose writer another took), and
+    /// a fork of it, is bound as one relation, nothing merged: the kernels read its bases' rows down its chain
+    /// (`rel_get`), and the device's index of it is the host's, over every id.
     #[test]
     fn the_device_reads_a_fork_through_its_base() {
         use crate::code_rule_dsl::facts::rows::Rows as FactRows;
@@ -3168,9 +3168,18 @@ pub mod tests {
         // copy: not block data: a test's rows
         first.extend_from_slice(&vals(3_000, 3_100));
         // copy: not block data: a test's rows
-        fork.extend_from_slice(&vals(3_000, n));
+        fork.extend_from_slice(&vals(3_000, 4_000));
+        // A fork of the fork (step 8): frozen, its writer taken, forked again.
+        let kept = fork.freeze(4_000);
+        let mut again = kept.shared(4_000);
+        let mut fork = kept.shared(4_000);
+        // copy: not block data: a test's rows
+        again.extend_from_slice(&vals(0, 10));
+        // copy: not block data: a test's rows
+        fork.extend_from_slice(&vals(4_000, n));
         let b = fork.in_block().expect("bound");
-        assert!(b.relation().continues() && b.rows == n as u32, "a continuation bound whole");
+        assert!(b.relation().continues() && b.relation().base().is_some_and(|r| r.continues()), "a continuation of a continuation");
+        assert!(b.rows == n as u32, "a continuation bound whole");
         let dev = DevRel::in_block(&b, 2).unwrap();
         let mut host = FactRows::new(2);
         // copy: not block data: a test's rows

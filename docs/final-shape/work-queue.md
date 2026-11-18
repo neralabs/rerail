@@ -3510,6 +3510,23 @@ Test: `an_export_is_one_relation_of_the_chunks_new_rows`, which replaces the tes
 
 Still merged: 157 relations, nearly all of two parts. Steps 2 and 3 of 0384 cover them.
 
+### Q180. Every fork stays one relation, a chain of continuations: step 8 of decision 0384 (done)
+
+Done 2026-11-18. The user asked to address all of the forking, including a fork of a fork (Q179's leftover).
+- `rel_get` walks a chain of bases: a loop in CLIF, a `while` in MSL. A relation that continues none takes the
+  straight read first. The first form, with only the loop, cost 1.3% more instructions on a cold 300-file CPU run;
+  this form is below step 6's.
+- `Relation::try_continue` takes a continuation as a base.
+- `Rows` keeps one relation or a chain: `Rows::opened` makes every tail past segments a continuation. That covers
+  forks, a clone's first row past the rows it shares, and the device's rows past a fork (`tail_room` past segments,
+  adopted by `claim_tail`). A full block moves the chain's rows (`Part::moved_all`, `copy_reads`).
+- `freeze` past `MAX_SEGMENTS` writes the newest two segments into one continuation, so the chain stays a chain.
+- `append_part` after rows counts the merge it causes. The device no longer makes it.
+
+Tests: `forks_of_forks_stay_one_relation`; `a_continuation_reads_its_bases_rows_where_they_lie`, extended to a
+chain; `the_device_reads_a_fork_through_its_base`, extended to a fork of a fork. Cold 300-file CPU and Metal runs
+equal the reference. A one-line edit's run equals a run from scratch on the edited corpus.
+
 ### Q179. A fork goes on in a continuation of its rows' relation: step 7 of decision 0384 (done)
 
 Done 2026-11-18. The user asked to complete 0384, and picked writing the missing read over serializing forks or
@@ -3526,8 +3543,7 @@ Tests: `a_continuation_reads_its_bases_rows_where_they_lie` (blocks), `a_fork_go
 (facts), `the_device_reads_a_fork_through_its_base` (device), and step 2's test updated. Cold 300-file CPU and Metal
 runs: no forks, outputs the reference's.
 
-Left: a fork of a fork (a continuation's base must be a full relation) is still merged by `Rows::one`, counted
-under "rows of many parts merged into one".
+Left: a fork of a fork was still merged. Done in Q180.
 
 ### Q178. What a relation's block holds goes back to it: step 6 of decision 0384 (done)
 
