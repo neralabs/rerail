@@ -3499,10 +3499,10 @@ describe("CodeRuleBridge and Git's own writes", () => {
     expect(auditGeneratedEdits).toHaveBeenCalledTimes(2);
   });
 
-  // A checkout inside the session's folder stopped on a conflict before the session opens, whose unmerged entries Git
-  // cannot list until the first walk that finds a change there reads its Git verdicts. The reading that stands keeps
-  // those entries as the checkout's first snapshot, so the next walk knows the conflict was there before it: the agent's
-  // edit of the conflicted file is its own, not a conflict Git just wrote.
+  // A checkout inside the session's folder stopped on a conflict before the session opens, its file put back to our
+  // side, whose unmerged entries Git cannot list until the first walk that finds a change there reads its Git verdicts.
+  // The reading that stands keeps those entries as the checkout's first snapshot, so the next walk knows the conflict
+  // was there before it: the agent's edit of the conflicted file is its own, not a conflict Git just wrote over our side.
   it("audits the agent's edit of a file in conflict since before the session, in a checkout inside the session's folder whose entries Git first listed for a walk's verdicts", async () => {
     const root = await twoBranches();
     git(root, "switch", "--quiet", "-c", "ours");
@@ -3512,8 +3512,8 @@ describe("CodeRuleBridge and Git's own writes", () => {
     const worktree = join(root, "wt");
     git(root, "worktree", "add", "--quiet", "wt", "ours");
     try { git(worktree, "merge", "--quiet", "other"); } catch { /* The conflict is the point. */ }
-    const conflicted = await readFile(join(worktree, "src", "a.py"), "utf8");
-    await awaitClockAfter(join(worktree, "src", "a.py"));
+    git(worktree, "checkout", "--ours", "src/a.py");
+    await awaitClockAfter(join(worktree, "src", "a.py"), join(worktree, "src", "new.py"));
     asyncGitCalls.failing = "--unmerged";
     try {
       const { bridge, auditGeneratedEdits } = await opened(root, {
@@ -3527,8 +3527,8 @@ describe("CodeRuleBridge and Git's own writes", () => {
       expect(asyncGitCalls.failing).toBeUndefined();
       await shell(bridge, () => writeFile(join(worktree, "src", "a.py"), "old\nours\nmine\n"));
       expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
-        [{ path: "wt/src/new.py", language: "python", generatedText: "mine\n" }],
-        [{ path: "wt/src/a.py", language: "python", previousText: conflicted, generatedText: "old\nours\nmine\n" }],
+        [{ path: "wt/src/new.py", language: "python", previousText: "violation\n", generatedText: "mine\n" }],
+        [{ path: "wt/src/a.py", language: "python", previousText: "old\nours\n", generatedText: "old\nours\nmine\n" }],
       ]);
     } finally {
       asyncGitCalls.failing = undefined;
