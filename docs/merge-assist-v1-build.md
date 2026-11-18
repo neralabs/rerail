@@ -55,7 +55,8 @@ so the daemon keeps answering sessions while it runs. It never runs while Merge 
   another listing starts from the kept reading while a status would show it without reading `gh` (same environment,
   `hosts.yml` unmoved, under five minutes old, one while `gh` could not tell), and reads `gh` first otherwise, or when
   that file's stat has not answered by the time the listing has, or when the kept reading lists nothing (not signed
-  in). `gh` is signed out only when `gh auth status` says it holds no login for the host; any other failure of it (a
+  in). So while `gh` is not signed in, each listing runs `gh auth status`: a listing that lists nothing ends before
+  the stat can show `hosts.yml` unmoved. `gh` is signed out only when `gh auth status` says it holds no login for the host; any other failure of it (a
   token it could not check, offline) is `unavailable`. A status shows the sign-in as `gh` last said it, with when
   (`readAt`). A reading is kept per `gh` environment, `hosts.yml`'s path and which of `GH_TOKEN` and `GITHUB_TOKEN`
   are set (a CLI and the daemon may differ, and so hold two sign-ins), for the last four environments that read it. A
@@ -65,7 +66,9 @@ so the daemon keeps answering sessions while it runs. It never runs while Merge 
   file's identity, size and times, read with one stat off the daemon's thread, with the ones kept beside the reading.
   It waits for that stat no longer than its own Git reads take; one that has not answered by then leaves the kept
   reading shown with its time, and the CLI's process ends once its answer is written, whether the stat has answered
-  or not. A reading five minutes old, or one minute old while `gh` could not tell, is read again
+  or not. Tests show the process waiting for a long answer's last bytes on Linux only, where they reach a pipe after
+  the write call returns; on Windows Node writes to a pipe before the call returns, and later only to a terminal,
+  which no test opens. A reading five minutes old, or one minute old while `gh` could not tell, is read again
   when a status asks for it, which covers what no file tells (a token GitHub refuses, the network back, `gh`
   installed): in the background, so that status shows the kept one and the next shows the new one; the CLI, which
   answers once, shows it in that answer. No timer runs for it.
