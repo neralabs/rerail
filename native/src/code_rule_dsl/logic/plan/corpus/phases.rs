@@ -230,7 +230,7 @@ pub(super) fn wanted_in(prog: &(impl ProgramFields + ?Sized), shape: &super::sha
 
 /// Whether `rel` names an earlier phase's export (`<phase>__<export>`): shared by every program of a run, as bridged
 /// relations are (`corpus::combine` does not prefix it).
-pub(crate) fn is_phased(rel: &str) -> bool {
+pub fn is_phased(rel: &str) -> bool {
     rel.split_once(SEP).is_some_and(|(p, e)| !p.is_empty() && !e.is_empty() && !p.starts_with("typing_") && !p.starts_with("rr_") && !e.contains(SEP))
 }
 

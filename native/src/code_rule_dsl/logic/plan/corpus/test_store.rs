@@ -344,13 +344,17 @@ fn beside(path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(name)
 }
 
-/// The files of folder `from` cloned into `to` (made), where there is one.
+/// The files of folder `from`, and of its folders, cloned into `to` (made), where there is one: a space's kept facts
+/// are a folder of their own under `.facts` (decision 0401).
 fn clone_dir(from: &Path, to: &Path) -> std::io::Result<()> {
     let Ok(entries) = std::fs::read_dir(from) else { return Ok(()) };
     std::fs::create_dir_all(to)?;
     for e in entries.flatten() {
-        if e.file_type()?.is_file() {
+        let kind = e.file_type()?;
+        if kind.is_file() {
             clone_file(&e.path(), &to.join(e.file_name()))?;
+        } else if kind.is_dir() {
+            clone_dir(&e.path(), &to.join(e.file_name()))?;
         }
     }
     Ok(())

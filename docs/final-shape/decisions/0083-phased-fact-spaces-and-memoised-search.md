@@ -1,6 +1,7 @@
 # 0083: Typing and libraries run as phases of one engine in separate fact spaces; searches are a memoised program kind
 
-Status: proposed (2026-11-08). Draft for review. Numbered 0083: final-rerail-shape holds 0081, More-ergonomic-rule-syntax holds 0081 and 0082.
+Status: proposed (2026-11-08). Draft for review. Its phases are on the run path since 2026-11-18 ("Built: the phases
+on the run path", step 1 of 3). Numbered 0083: final-rerail-shape holds 0081, More-ergonomic-rule-syntax holds 0081 and 0082.
 It supersedes, for typing, the cross-file keys of 0065 §2 (one key per import component) and 0076. It keeps
 0065 §1 (no rounds), §2a (requests answered inside a fixpoint) and §3 (terms, instantiation by value).
 
@@ -449,6 +450,36 @@ Each step is measured on the 84 files (Jedi agreement, CPU, RSS) before the next
 6. The inferred-interface phase, if §8 shows it is needed.
 7. Cranelift, then Metal, for searches.
 8. The data layer's 9,010 files.
+
+## Built: the phases on the run path (2026-11-18)
+
+The user: "Put the phases on the run path (P0 → P1 → P2 → P3 → findings)." Before this, P0 (phase 0, the rule files)
+and P1 (`sources.rr`, the source files and the libraries their imports reach) ran on every run, and P2 (`struct.rr`,
+`types.rr`) ran whenever a program read an export. But no shipped rule read one: the rules' call targets and types
+came from the bridge (`corpus::bridge`), which ran `typing/programs/calls.rr` as a program of its own, beside the
+rules, in its own cross-file rounds over every library document it loaded, and handed its answers in as facts keyed
+by span (`typing_calls__*`). So the shipped run was P0, P1, then a second typing beside the analysis.
+
+The steps:
+
+1. **P3's typing is the analysis program's own** (done). `calls_p3.rr`'s rules are the library module
+   `lib/python/points-to.rr`: `core.rr`'s shape, its own relations named `pt_…`, its interface `call_target`,
+   `call_open`, `type_of`, `type_open`, `proven_type`, `possible_type`, `possible_open`. `python/calls.rr` and
+   `python/types.rr` include it in place of the bridged relations. A rule that reads them has P3's rules in its own
+   fixpoint, and the run runs `struct` and `types` first because the program reads their exports; a rule that reads
+   only the syntax helpers prunes them, and no phase runs. `typing/programs/calls_p3.rr` is now the module and its
+   outputs, for the oracle tests and the Jedi benchmark.
+   - One difference of shape: `core.rr`'s guest of grammar `annotation` is rooted at the expression, where T's
+     shape rooted it at a module of one statement `(…)`; `pt_qann` reads the root as the expression.
+   - The converter's check of an authored rule takes a phase's export, `env` and the file system's answers as the
+     runner's to give, as it took the bridged relations.
+   - Checked: `rules_read_the_python_program_through_lib_calls` (a rule through the library gives exactly
+     `calls_p3`'s edges, proven types and open calls, and no typing program runs), `leg_083_typed_…` and
+     `quoted_annotations_…` (their wanted rows, which the bridge gave), the analysis phase's oracle tests, the
+     phase tests, and the converter's.
+2. **The bridge goes**: no rule reads `typing_<program>__<output>` now.
+3. **The library's import resolution reads P1 and P2**: `python/imports.rr` resolves imports and re-exports across
+   files itself (`exports`, `resolve_export`, the module graph), which `sources.rr` and `types.rr` do once.
 
 ## Prior work consulted
 
