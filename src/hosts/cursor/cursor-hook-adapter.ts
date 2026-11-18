@@ -1,7 +1,9 @@
 import { rm } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { z } from "zod/v4";
-import { hookText, type AdapterDelivery, type AdapterEvent, type AdapterSession, type RerailEventLoop, type SteerRule } from "../../engine/adapter-contract.js";
+import {
+  answeredFacts, hookText, type AdapterDelivery, type AdapterEvent, type AdapterSession, type EventAnswerFacts, type RerailEventLoop, type SteerRule,
+} from "../../engine/adapter-contract.js";
 import { missedSteerDigestEnabled } from "../../engine/experimental-features.js";
 import { ingestCursorTranscript } from "./cursor-transcript.js";
 import {
@@ -16,8 +18,8 @@ import {
   type HookOutput,
   type SessionLock,
 } from "../../harness/hook-adapter.js";
-import { headlineText, sessionStartNote, steerHeadlines } from "../../engine/code-rule/rerail-steer.js";
-import { dashboardOrigin, linkDeliveries, presentedSessionNoteRules } from "../../presentation/session-presentation.js";
+import { headlineText, steerHeadlines } from "../../engine/code-rule/rerail-steer.js";
+import { linkDeliveries, presentedSessionStartNote } from "../../presentation/session-presentation.js";
 import { steers } from "../../engine/catalog/rule-mode.js";
 
 export type CursorHookInput = HookInput;
@@ -229,7 +231,7 @@ export async function handleCursorEvent(
       await rm(path, { force: true });
       return {};
     default:
-      return cursorAnswer(input, { hook, descriptor, path }, deliveries);
+      return cursorAnswer(input, { hook, descriptor, path, answered: answeredFacts(eventLoop) }, deliveries);
   }
 }
 
@@ -240,10 +242,12 @@ async function keptBy<T>(lock: SessionLock | undefined, work: () => Promise<T>):
 
 /**
  * What a hook answers Cursor with: the steers waiting for an event that can carry them, each linked to this checkout's
- * dashboard, and at a session's start the note only the model reads.
+ * dashboard, and at a session's start the note only the model reads. The daemon's answer (`answered`) carries the
+ * note's link and rules and the steers' links; an older daemon's is read after it.
  */
 async function cursorAnswer(
-  input: CursorHookInput, { hook, descriptor, path }: { hook: string; descriptor: AdapterSession; path: string },
+  input: CursorHookInput,
+  { hook, descriptor, path, answered }: { hook: string; descriptor: AdapterSession; path: string; answered: EventAnswerFacts },
   deliveries: readonly AdapterDelivery[],
 ): Promise<CursorHookOutput> {
   const available = await routeDeliveries(path, hook, deliveries, {
@@ -256,6 +260,6 @@ async function cursorAnswer(
     ...(missedSteerDigestEnabled() && loopCountSchema.parse(input.loop_count) < CURSOR_FOLLOWUP_LOOP_LIMIT ? { stop: true } : {}),
   });
   // The runtime records no links; the rules point at this checkout's dashboard only here.
-  const note = hook === "sessionStart" ? sessionStartNote(await dashboardOrigin(descriptor.cwd), "cursor", descriptor.sessionId, await presentedSessionNoteRules(descriptor)) : undefined;
-  return cursorHookOutput(hook, await linkDeliveries(available, descriptor.cwd), note);
+  const note = hook === "sessionStart" ? await presentedSessionStartNote(descriptor, answered) : undefined;
+  return cursorHookOutput(hook, await linkDeliveries(available, descriptor.cwd, answered), note);
 }

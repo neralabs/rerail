@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type { Readable, Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
-import type { RerailEventLoop, RerailHost } from "../engine/adapter-contract.js";
+import { answeredFacts, type EventAnswerFacts, type RerailEventLoop, type RerailHost } from "../engine/adapter-contract.js";
 import { hookRerailStarted } from "./hook-host.js";
 import { resolveSessionPaths } from "../runtime/session-paths.js";
 import {
@@ -17,7 +17,7 @@ import {
 import { RerailRuntime } from "../runtime/runtime.js";
 import { defaultRerailDatabasePath } from "../engine/storage/database.js";
 import { daemonEngineEndpoint, engineEndpointAt, HOOK_DAEMON_WAIT_MS } from "../runtime/daemon-control.js";
-import { ingestEngineEvent } from "../runtime/engine-service.js";
+import { ingestEngineEventAnswer } from "../runtime/engine-service.js";
 import { isMainRerailBuild } from "../engine/native/rerail-build.js";
 import { linkDeliveries } from "../presentation/session-presentation.js";
 
@@ -69,7 +69,7 @@ async function frameResult(line: string, eventLoop: RerailEventLoop, sessionCwds
     const sessionId = event.kind === "session-start" ? event.session.sessionId : event.sessionId;
     if (event.session !== undefined) sessionCwds.set(sessionId, event.session.cwd);
     const deliveries = await eventLoop.ingest(event);
-    const linked = await linkDeliveries(deliveries, sessionCwds.get(sessionId) ?? workspaceRoot);
+    const linked = await linkDeliveries(deliveries, sessionCwds.get(sessionId) ?? workspaceRoot, answeredFacts(eventLoop));
     if (event.kind === "session-end") sessionCwds.delete(sessionId);
     return encodeRerailEventResult({ eventId: event.eventId, deliveries: linked });
   } catch (error) {
@@ -123,8 +123,12 @@ export async function runRerailEventStream(options: RunRerailEventStreamOptions 
     let replaceOtherPackage = true;
     let host: RerailHost = "claude-code";
     const explicitDatabase = options.databasePath === undefined ? undefined : configuration.databasePath;
+    // The facts of the last event's answer alone: the next event may be another session's, in another checkout.
+    let answered: EventAnswerFacts = {};
     const eventLoop: RerailEventLoop = {
+      answerFacts: () => answered,
       ingest: async (event) => {
+        answered = {};
         // As a hook waits: a busy daemon gets HOOK_DAEMON_WAIT_MS from the event's arrival, the start check's read of
         // it included, and no more.
         const deadline = Date.now() + HOOK_DAEMON_WAIT_MS;
@@ -134,7 +138,9 @@ export async function runRerailEventStream(options: RunRerailEventStreamOptions 
         const named = process.env.RERAIL_ENGINE_SOCKET;
         const endpoint = named !== undefined ? await engineEndpointAt(named) : await daemonEngineEndpoint(replaceOtherPackage, deadline);
         replaceOtherPackage = false;
-        return await ingestEngineEvent(endpoint, event, configuration);
+        const { eventId: _eventId, deliveries, ...facts } = await ingestEngineEventAnswer(endpoint, event, configuration);
+        answered = facts;
+        return deliveries;
       },
     };
     await serveRerailEventStream({ eventLoop, input, output, workspaceRoot });

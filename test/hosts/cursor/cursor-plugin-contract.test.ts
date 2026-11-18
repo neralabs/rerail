@@ -3,10 +3,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
-import { steerBlock, type AdapterDelivery, type AdapterEvent, type RerailEventLoop } from "../../../src/engine/index.js";
+import { sessionStartNote, steerBlock, type AdapterDelivery, type AdapterEvent, type RerailEventLoop } from "../../../src/engine/index.js";
 import { CURSOR_FOLLOWUP_LOOP_LIMIT, cursorHookEvent, cursorHookOutput, handleCursorEvent } from "../../../src/hosts/cursor/cursor-hook.js";
 import { cursorWorkspace } from "../../../src/hosts/cursor/cursor-hook-adapter.js";
 import { steeredRules } from "../../support/steers.js";
+import { answering, countingDaemon } from "../../support/hook-events.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
 async function json(path: string): Promise<unknown> {
@@ -161,6 +162,31 @@ describe("Cursor plugin contract", () => {
       kind: "session-end",
       eventId: "cursor-session:session-end:generation-1",
     });
+  });
+
+  it("builds the session note and links a steer from the daemon's answer, asking it nothing more, and reads an older daemon after it", async () => {
+    const root = await temporaryDirectory();
+    const home = join(root, "home");
+    vi.stubEnv("RERAIL_HOME", home);
+    const daemon = await countingDaemon(home);
+    try {
+      const common = { conversation_id: "cursor-session", cwd: root, workspace_roots: [root] };
+      const dashboard = "http://127.0.0.1:4791/?repository=clone%3Aapp&checkout=%2Fwork%2Fapp";
+      const sessionNote = { setUp: true as const, ruleCount: 3 };
+      expect(await handleCursorEvent({ ...common, hook_event_name: "sessionStart" }, answering(scriptedLoop({}), { dashboard, sessionNote }), join(root, "sessions")))
+        .toMatchObject({ additional_context: sessionStartNote(dashboard, "cursor", "cursor-session", sessionNote) });
+
+      const steer = [delivery("steer", "Remove print.", ["acme:no-print"])];
+      const result = { ...common, hook_event_name: "postToolUse", tool_name: "Write", tool_input: {}, tool_output: "written" };
+      await handleCursorEvent({ ...result, tool_use_id: "write-1" }, answering(scriptedLoop({ result: steer }), { dashboard }), join(root, "sessions"));
+      expect(daemon.requests).toEqual([]);
+
+      // A daemon older than these facts answers without them: the hook reads the dashboard from it, as before.
+      await handleCursorEvent({ ...result, tool_use_id: "write-2" }, scriptedLoop({ result: steer }), join(root, "sessions"));
+      expect(daemon.requests).toContain("/api/repository");
+    } finally {
+      await daemon.close();
+    }
   });
 
   it("preserves pre-tool code rule violations until Cursor can expose them after the tool", async () => {

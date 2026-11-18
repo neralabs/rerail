@@ -2,19 +2,21 @@ import { existsSync } from "node:fs";
 import { lstat, mkdir, unlink } from "node:fs/promises";
 import { createServer, request, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { connect, type Socket } from "node:net";
-import { AsyncLocalStorage } from "node:async_hooks";
 import { dirname, resolve as resolvePath } from "node:path";
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
 import { z } from "zod/v4";
-import type { AdapterDelivery, AdapterEvent } from "../engine/adapter-contract.js";
+import type { AdapterDelivery, AdapterEvent, EventAnswerFacts, HeldSession } from "../engine/adapter-contract.js";
 import { SqliteAuditControlStore } from "../engine/audit/audit-control.js";
 import { forgetFreedOwnerLocks, holdOwnerLock, someOwnerLockFreed } from "../engine/audit/owner-lock.js";
 import {
   AdapterEventSchema,
   decodeRerailEventResult,
   encodeRerailEventResult,
+  EVENT_ANSWER_HEADER,
+  EVENT_ANSWER_WITH_FACTS,
   RERAIL_EVENT_MAX_FRAME_BYTES,
+  type RerailEventSuccessFrame,
 } from "./event-protocol.js";
 import { defaultRerailDatabasePath, failWhileWriteLocked, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { isBusy } from "../engine/storage/sqlite-wal.js";
@@ -218,7 +220,56 @@ type EngineServiceOptions = Omit<RerailRuntimeOptions, "workspaceRoot"> & {
   now?: () => number;
   /** How long a checkout's runtime stays open once no session uses it; {@link IDLE_RUNTIME_MS} by default. */
   idleRuntimeMs?: number;
+  /**
+   * What the answer to `event` tells a hook that asks (`EVENT_ANSWER_HEADER`) beside `deliveries`, from what the runtime
+   * that took the event holds of its session (`held`, asked only when needed; undefined where no runtime holds it): the
+   * daemon's, which adds its dashboard's origin. Undefined where it cannot say; the hook then asks over HTTP. A
+   * standalone service (tests, benchmarks) has none. Synchronous, from facts already held, so the answer waits for no read.
+   */
+  answerFacts?: (event: AdapterEvent, deliveries: readonly AdapterDelivery[], held: () => HeldSession | undefined) => EventAnswerFacts | undefined;
 };
+
+/** How the facts of an answer are read from the runtime that took its event, in the session's lane right after it. */
+type AnswerFactsReader = (runtime: RerailRuntime, deliveries: readonly AdapterDelivery[]) => EventAnswerFacts | undefined;
+
+/**
+ * How the answer to `event` reads its facts, for a hook that says it reads them (`EVENT_ANSWER_WITH_FACTS` or later),
+ * since an older hook refuses an answer that carries them; undefined for another hook, or a service without them.
+ */
+function answerFactsReader(incoming: IncomingMessage, event: AdapterEvent, options: EngineServiceOptions): AnswerFactsReader | undefined {
+  const version = Number(incoming.headers[EVENT_ANSWER_HEADER]);
+  const { answerFacts } = options;
+  if (!Number.isInteger(version) || version < EVENT_ANSWER_WITH_FACTS || answerFacts === undefined) return undefined;
+  return (runtime, deliveries) => answerFacts(event, deliveries, () => runtime.heldSession(event));
+}
+
+/**
+ * What `read` says beside an event's deliveries, or nothing where it throws: a fact the daemon cannot tell never costs
+ * the event its answer, and the hook reads it after the answer as from a daemon older than these facts.
+ */
+function guardedFacts(read: () => EventAnswerFacts | undefined): EventAnswerFacts | undefined {
+  try {
+    return read();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * What the caller that sent an event reads of its answer: `signal` aborts once it stops waiting for it (a hook's request,
+ * `hookRequestSignal`; none for a caller that always reads the answer), and `readFacts` reads the facts of the answer
+ * for a caller that reads them.
+ */
+interface EventCaller {
+  readonly signal?: AbortSignal | undefined;
+  readonly readFacts?: AnswerFactsReader | undefined;
+}
+
+/** An event's deliveries, and the facts of its answer where its caller reads them. */
+interface RoutedEvent {
+  readonly deliveries: readonly AdapterDelivery[];
+  readonly facts: EventAnswerFacts | undefined;
+}
 
 /**
  * How long a checkout's runtime stays open after its last session ends. A session that starts there again within it
@@ -363,22 +414,22 @@ function resolveRuntimeRoute(
 }
 
 async function routeEngineEvent(
-  event: AdapterEvent,
-  configuration: EngineRuntimeConfiguration | undefined,
+  { event, configuration }: EngineRequest,
   options: EngineServiceOptions,
   state: EngineRoutingState,
-): Promise<readonly AdapterDelivery[]> {
+  { signal, readFacts }: EventCaller = {},
+): Promise<RoutedEvent> {
   const sessionId = event.kind === "session-start" ? event.session.sessionId : event.sessionId;
   const { runtimeKey, runtimeOptions } = resolveRuntimeRoute(event, configuration, options, state);
-  // Aborts once the hook that sent the event stops waiting for its answer (`watchHookRequests`); none outside a request.
-  const signal = handledHookRequest.getStore();
   const lane = laneOf(runtimeKey, sessionId);
   keepRuntime(state, runtimeKey);
-  const execution = state.lanes.run(lane, () => {
+  const execution = state.lanes.run(lane, async () => {
     const runtime = runtimeFor(state, runtimeKey, runtimeOptions, sessionId);
     // Every event, not only a start: a session whose start was lost still uses this runtime until it ends.
     if (event.kind !== "session-end") noteSessionUse(state, sessionId, runtimeKey, (options.now ?? Date.now)());
-    return runtime.ingest(event, { signal });
+    const deliveries = await runtime.ingest(event, { signal });
+    // Read in the session's lane, so the facts are this event's and not those of the session's next one.
+    return { deliveries, facts: readFacts === undefined ? undefined : guardedFacts(() => readFacts(runtime, deliveries)) };
   });
   track(state, execution);
   try {
@@ -891,6 +942,38 @@ async function ownEngineAnswers(socketPath: string, accessToken: string | undefi
   return accessToken === undefined || await engineHoldsCapability(socketPath, accessToken);
 }
 
+/**
+ * The capability a request for the engine's proof (`POST ENGINE_PROOF_PATH`) is answered with: the service's own;
+ * undefined for any other request, and for a service that holds none.
+ */
+function proofToken(incoming: IncomingMessage, accessToken: string | undefined): string | undefined {
+  return incoming.method === "POST" && incoming.url === ENGINE_PROOF_PATH ? accessToken : undefined;
+}
+
+/** Whether `incoming` is a hook's event: `POST /events`. */
+function isEventRequest(incoming: IncomingMessage): boolean {
+  return incoming.method === "POST" && incoming.url === "/events";
+}
+
+/** Whether `incoming` lacks the capability `accessToken` the service requires; a service that requires none refuses nothing. */
+function refusesAccess(incoming: IncomingMessage, accessToken: string | undefined): boolean {
+  const presented = incoming.headers[DAEMON_ACCESS_HEADER];
+  return accessToken !== undefined && !sameSecret(typeof presented === "string" ? presented : undefined, accessToken);
+}
+
+/** The event and configuration `incoming` carries, read whole; a body past the frame limit throws as it arrives. */
+async function readEngineRequest(incoming: IncomingMessage): Promise<EngineRequest> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of incoming) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += bytes.length;
+    if (size > RERAIL_EVENT_MAX_FRAME_BYTES) throw new RangeError("Kernel event exceeds frame limit");
+    chunks.push(bytes);
+  }
+  return parseEngineRequest(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+}
+
 /** Answers a challenge sent to {@link ENGINE_PROOF_PATH} with the proof that this engine holds `accessToken`. */
 function answerEngineChallenge(challenge: unknown, accessToken: string, response: ServerResponse): void {
   if (!isEngineChallenge(challenge)) {
@@ -910,24 +993,6 @@ function hookRequestSignal(response: ServerResponse): AbortSignal {
     if (!response.writableEnded) request.abort();
   });
   return request.signal;
-}
-
-/**
- * The hook request the engine socket is handling (`watchHookRequests`), through the awaits of its handling; none for an
- * event ingested outside a request (`EngineService.ingest` called directly).
- */
-const handledHookRequest = new AsyncLocalStorage<AbortSignal>();
-
-/**
- * Gives each request `server` handles its `hookRequestSignal`, watched from before its body is read, so a close at any
- * point before the answer is written counts. The listener runs just ahead of the server's handler, in the same
- * synchronous emit, so the handling and every await of it see that request's signal, which `routeEngineEvent` passes
- * to the runtime with the event (`IngestOptions.signal`).
- */
-function watchHookRequests(server: Server): void {
-  server.prependListener("request", (_incoming: IncomingMessage, response: ServerResponse) => {
-    handledHookRequest.enterWith(hookRequestSignal(response));
-  });
 }
 
 /** What listening beside a held pipe needs; tests pass their own. */
@@ -1037,45 +1102,40 @@ export async function startEngineService(options: EngineServiceOptions): Promise
   const sweepIdleSessions = (): Promise<void> => sweepIdle(routing, options, databasePath);
   const server = createServer(async (incoming, response) => {
     response.setHeader("Content-Type", "application/json");
-    if (incoming.method === "POST" && incoming.url === ENGINE_PROOF_PATH && options.accessToken !== undefined) {
-      answerEngineChallenge(incoming.headers[ENGINE_CHALLENGE_HEADER], options.accessToken, response);
+    const token = proofToken(incoming, options.accessToken);
+    if (token !== undefined) {
+      answerEngineChallenge(incoming.headers[ENGINE_CHALLENGE_HEADER], token, response);
       incoming.resume();
       return;
     }
-    if (incoming.method !== "POST" || incoming.url !== "/events") {
+    if (!isEventRequest(incoming)) {
       response.writeHead(404).end();
       return;
     }
-    const presented = incoming.headers[DAEMON_ACCESS_HEADER];
-    if (options.accessToken !== undefined && !sameSecret(typeof presented === "string" ? presented : undefined, options.accessToken)) {
+    if (refusesAccess(incoming, options.accessToken)) {
       // Refused before the body is read: nothing of the request reaches a runtime.
       response.writeHead(401).end(JSON.stringify({ error: "engine-access-required" }));
       return;
     }
     try {
-      const chunks: Buffer[] = [];
-      let size = 0;
-      for await (const chunk of incoming) {
-        const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        size += bytes.length;
-        if (size > RERAIL_EVENT_MAX_FRAME_BYTES) throw new RangeError("Kernel event exceeds frame limit");
-        chunks.push(bytes);
-      }
-      const { event, configuration } = parseEngineRequest(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-      const deliveries = await engineService.ingest(event, configuration);
-      response.end(encodeRerailEventResult({ eventId: event.eventId, deliveries: [...deliveries] }));
+      // Watched from before the body is read, so the hook giving up at any point before its answer is written counts; the
+      // runtime takes it with the event (`IngestOptions.signal`).
+      const signal = hookRequestSignal(response);
+      const request = await readEngineRequest(incoming);
+      const readFacts = answerFactsReader(incoming, request.event, options);
+      const { deliveries, facts } = await routeEngineEvent(request, options, routing, { signal, readFacts });
+      response.end(encodeRerailEventResult({ eventId: request.event.eventId, deliveries: [...deliveries], ...facts }));
     } catch (error) {
       response.writeHead(400).end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
     }
   });
   let socketPath = options.socketPath;
   const connections = trackConnections(server);
-  watchHookRequests(server);
   const engineService: EngineService = {
     get socketPath() {
       return socketPath;
     },
-    ingest: (event, configuration) => routeEngineEvent(event, configuration, options, routing),
+    ingest: async (event, configuration) => (await routeEngineEvent({ event, configuration }, options, routing)).deliveries,
     openRuntimes: () => routing.runtimes.size,
     closeIdleSessions: sweepIdleSessions,
     resumeSession: sessionId => resumeSuspended(routing, sessionId, options.now ?? Date.now),
@@ -1167,9 +1227,30 @@ export async function ingestEngineEvent(
   event: AdapterEvent,
   configuration?: EngineRuntimeConfiguration,
 ): Promise<readonly AdapterDelivery[]> {
+  return (await postEngineEvent(endpoint, event, configuration, {})).deliveries;
+}
+
+/**
+ * The daemon's whole answer to `event`: its deliveries and, from a daemon that has them, the facts a hook builds the
+ * session-start note and a steer's link from (`EVENT_ANSWER_HEADER`).
+ */
+export async function ingestEngineEventAnswer(
+  endpoint: EngineEndpoint,
+  event: AdapterEvent,
+  configuration?: EngineRuntimeConfiguration,
+): Promise<RerailEventSuccessFrame> {
+  return await postEngineEvent(endpoint, event, configuration, { [EVENT_ANSWER_HEADER]: String(EVENT_ANSWER_WITH_FACTS) });
+}
+
+async function postEngineEvent(
+  endpoint: EngineEndpoint,
+  event: AdapterEvent,
+  configuration: EngineRuntimeConfiguration | undefined,
+  answerHeaders: Record<string, string>,
+): Promise<RerailEventSuccessFrame> {
   const body = JSON.stringify(RequestSchema.parse({ event, configuration }));
   if (Buffer.byteLength(body) > RERAIL_EVENT_MAX_FRAME_BYTES) throw new RangeError("Kernel event exceeds frame limit");
-  const { promise, resolve, reject } = Promise.withResolvers<readonly AdapterDelivery[]>();
+  const { promise, resolve, reject } = Promise.withResolvers<RerailEventSuccessFrame>();
   const outgoing = request(
     {
       socketPath: endpoint.socketPath,
@@ -1179,6 +1260,7 @@ export async function ingestEngineEvent(
       headers: {
         "content-type": "application/json",
         "content-length": Buffer.byteLength(body),
+        ...answerHeaders,
         ...(endpoint.accessToken === undefined ? {} : { [DAEMON_ACCESS_HEADER]: endpoint.accessToken }),
       },
     },
@@ -1192,7 +1274,7 @@ export async function ingestEngineEvent(
           if (response.statusCode !== 200) throw new Error(`Kernel request failed (${response.statusCode}): ${text}`);
           const result = decodeRerailEventResult(text);
           if (result.eventId !== event.eventId) throw new Error("Kernel response event identity mismatch");
-          resolve(result.deliveries);
+          resolve(result);
         } catch (error) {
           reject(error);
         }
