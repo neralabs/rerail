@@ -5255,13 +5255,6 @@ impl<'a> Run<'a, '_> {
     fn fields(&self) -> Fields<'_> {
         self.versions.whole(self.version)
     }
-    /// The tree of rule `k`, a rule of one of the run's versions, decoded: for the readers that still read the tree
-    /// (the fixpoints' made rules, the profile's rule text).
-    fn tree(&self, k: RuleKey) -> Rule {
-        let p = self.versions.placed(k.version());
-        let lists = super::front::Lists::default();
-        super::program_image::Tree::new(&p.v, &lists).rule(p.rule(k.index()))
-    }
     /// Adds maintained form `form` (a derivation of the run's version, decision 0241) to the run's versions, and its
     /// inputs to the run's: its version's place.
     fn add_form(&mut self, form: body::Placed) -> Result<usize> {
@@ -6614,11 +6607,50 @@ fn recursive<'v>(b: &Body<'v>, scc: &BTreeSet<String>) -> Vec<(usize, &'v str)> 
         .collect()
 }
 
-fn atom_of(rel: String, args: Vec<Term>) -> Atom {
-    Atom { rel: rel.into(), args: args.into(), neg: false, gated: false }
+/// Term `t` of `v`'s rule `r`, to write into a builder of another version: its names by their text.
+fn term_text<'v>(v: &'v Version, r: super::program_image::RuleRef<'v>, t: TermRef<'v>) -> super::program_image::T<'v> {
+    use super::program_image::T;
+    match t {
+        TermRef::Var(s) => T::Var(v.text(r.var(s))),
+        TermRef::Wild => T::Wild,
+        TermRef::Top => T::Top,
+        TermRef::Int(i) => T::Int(i),
+        TermRef::Branded(b) => T::Branded(b),
+        TermRef::Str(a) => T::Str(v.text(a)),
+        TermRef::Call(f, args) => T::Call(v.text(f), args.map(|a| term_text(v, r, a)).collect()),
+    }
 }
 
-/// A native spec's token for a constant.
+/// A rule a fixpoint makes of a part of one of the program's (`native_fixpoint`'s parts, an edge table's rest): its
+/// head, the atoms written before its body (`pre`), and its body, literals of `from`'s rule by place.
+struct Part<'v> {
+    rel: String,
+    head: Vec<super::program_image::T<'v>>,
+    pre: Vec<(&'static str, Vec<super::program_image::T<'v>>)>,
+    from: (&'v Version, super::program_image::RuleRef<'v>),
+    lits: Vec<usize>,
+}
+
+/// `parts`, rules of a version of their own (their literals copied by their names), in order: each planned alone.
+fn made_parts<'a, 'v: 'a>(parts: impl IntoIterator<Item = &'a Part<'v>>) -> Result<Arc<Version>> {
+    let mut b = super::program_image::Builder::base();
+    for p in parts {
+        let rel = b.rel(&p.rel);
+        let mut rule = b.rule().head(rel, &p.head);
+        for (pre, args) in &p.pre {
+            let pre = rule.builder().rel(pre);
+            rule = rule.atom(pre, args);
+        }
+        let (v, r) = p.from;
+        let lits: Vec<_> = r.body().collect();
+        for &i in &p.lits {
+            rule = rule.lit(v, r, lits[i]);
+        }
+        rule.finish().map_err(Error::Plan)?;
+    }
+    b.finish().map(|(v, _)| v).map_err(Error::Plan)
+}
+
 /// A term, atom or literal written into a derived value's inputs (`logic::derived`), field by field: the same
 /// pieces in the same order as its text, without making the text.
 fn digest_term(d: &mut super::derived::Inputs, t: &Term) {
@@ -6710,11 +6742,12 @@ fn digest_literal(d: &mut super::derived::Inputs, l: &Literal) {
     }
 }
 
-fn const_tok(t: &Term) -> Option<Tok> {
+/// A native spec's token for a constant term of `v`.
+fn const_tok(v: &Version, t: TermRef<'_>) -> Option<Tok> {
     match t {
-        Term::Int(i) => Some(Tok::Int(*i)),
-        Term::Branded(a) => Some(Tok::Int(a.value())),
-        Term::Str(s) => Some(Tok::Sym(s.to_string())),
+        TermRef::Int(i) => Some(Tok::Int(i)),
+        TermRef::Branded(a) => Some(Tok::Int(a.value())),
+        TermRef::Str(s) => Some(Tok::Sym(v.text(s).to_owned())),
         _ => None,
     }
 }
@@ -8066,7 +8099,7 @@ impl<'a> Run<'a, '_> {
         if let Some(dir) = std::env::var_os("RERAIL_SPIKE_SPECS") {
             let cpu = { let (u, s) = corpus::thread_usage(); u + s };
             eprintln!("O125 stratum {name} ({} relations, {} rules) at {:.1} s CPU", rels.len(), rules.len(), cpu);
-            let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.spec")), format!("{}\n\n{}", rules.iter().map(|&r| self.tree(r).to_string()).collect::<Vec<_>>().join("\n"), spec.to_text()));
+            let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.spec")), format!("{}\n\n{}", rules.iter().map(|&r| { let (v, rule) = self.versions.rule_at(r); v.show_rule(rule) }).collect::<Vec<_>>().join("\n"), spec.to_text()));
         }
         let started = std::time::Instant::now();
         // Where it runs (decision 0095 §7, §8). A stratum the placement puts on the device says so in its spec
@@ -9142,66 +9175,69 @@ impl<'a> Run<'a, '_> {
         if !fields.lattice(rel) || fields.width(rel) != 2 {
             return Ok(false);
         }
-        let mut parts: Vec<(&str, Atom, Vec<Literal>)> = Vec::new();
+        let mut parts: Vec<(&str, Part<'_>)> = Vec::new();
         for &k in rules {
-            // The parts are made rules, trees (`Literal`s cloned from the rule's).
-            let r = self.tree(k);
-            let (h, body) = (&r.head, &r.body);
-            let rec: Vec<&Atom> = body.iter().filter_map(|l| if let Literal::Atom(a) = l && a.rel == *rel { Some(a) } else { None }).collect();
-            let rest: Vec<Literal> = body.iter().filter(|l| !matches!(l, Literal::Atom(a) if a.rel == *rel)).cloned().collect();
-            if rec.iter().any(|a| a.neg) {
+            let (v, r) = vs.rule_at(k);
+            let lits: Vec<super::program_image::LitRef<'_>> = r.body().collect();
+            let rec: Vec<AtomRef<'_>> = lits.iter().filter_map(|l| match l.view() {
+                Lit::Atom(a) if v.rel_name(a.rel()) == rel.as_str() => Some(a),
+                _ => None,
+            }).collect();
+            let rest: Vec<usize> = (0..lits.len()).filter(|&i| !matches!(lits[i].view(), Lit::Atom(a) if v.rel_name(a.rel()) == rel.as_str())).collect();
+            if rec.iter().any(|a| a.neg()) {
                 return Ok(false);
             }
-            let rvals: BTreeSet<&crate::code_rule_dsl::logic::front::Name> = rec.iter().filter_map(|a| if let Term::Var(v) = &a.args[1] { Some(v) } else { None }).collect();
-            if rvals.len() != rec.len() || rest.iter().any(|l| l.vars().iter().any(|v| rvals.iter().any(|r| r.as_str() == v.as_str()))) {
+            fn arg(a: AtomRef<'_>, c: usize) -> TermRef<'_> {
+                a.args().nth(c).expect("a column")
+            }
+            let rvals: BTreeSet<VarSlot> = rec.iter().filter_map(|&a| arg(a, 1).var()).collect();
+            if rvals.len() != rec.len() || rest.iter().any(|&i| rvals.iter().any(|&s| body::lit_vars(lits[i]).contains(s))) {
                 return Ok(false);
             }
-            let (key, val) = (&h.args[0], &h.args[1]);
-            let kinds: Vec<usize> = body
-                .iter()
-                .enumerate()
-                .filter(|(_, l)| {
-                    matches!(l, Literal::Atom(a) if !a.neg && a.rel == "kind" && matches!((key, &a.args[0]), (Term::Var(k), Term::Var(x)) if k == x))
-                })
-                .map(|(i, _)| i)
+            let mut head = r.head().args();
+            let (key, val) = (head.next().expect("a key"), head.next().expect("a value"));
+            let kinds: Vec<usize> = (0..lits.len())
+                .filter(|&i| matches!(lits[i].view(), Lit::Atom(a) if !a.neg() && v.rel_name(a.rel()) == "kind" && key.var().is_some() && arg(a, 0).var() == key.var()))
                 .collect();
-            let mut val_vars = BTreeSet::new();
-            val.vars(&mut val_vars);
-            let kseed = match (key, kinds.as_slice()) {
-                (Term::Var(kn), [ki]) if rec.is_empty() && native.contains("kseed") => {
-                    let Literal::Atom(ka) = &body[*ki] else { unreachable!() };
-                    matches!(&ka.args[1], Term::Var(_))
-                        && body.iter().enumerate().all(|(i, l)| i == *ki || !l.vars().contains(kn.as_str()))
-                        && !val_vars.contains(kn.as_str())
+            let mut val_vars = VarSet::new();
+            body::term_vars(val, &mut val_vars);
+            let kseed = match (key.var(), kinds.as_slice()) {
+                (Some(kn), [ki]) if rec.is_empty() && native.contains("kseed") => {
+                    let Lit::Atom(ka) = lits[*ki].view() else { unreachable!() };
+                    arg(ka, 1).var().is_some() && (0..lits.len()).all(|i| i == *ki || !body::lit_vars(lits[i]).contains(kn)) && !val_vars.contains(kn)
                 }
                 _ => false,
             };
+            let t = |t| term_text(v, r, t);
+            let part = |rel: String, head, lits: Vec<usize>| Part { rel, head, pre: Vec::new(), from: (v, r), lits };
             if kseed {
                 // A per-kind default (`R($n, v) :- kind($n, $k), <tests of $k>`): evaluated over the distinct kinds,
                 // and the native side seeds every node of those kinds from the tape. No row per node.
-                let Literal::Atom(ka) = &body[kinds[0]] else { unreachable!() };
-                let k = ka.args[1].clone();
-                let mut b = vec![Literal::Atom(atom_of("rdl_kinds".to_owned(), vec![k.clone()]))];
-                b.extend(body.iter().enumerate().filter(|(i, _)| *i != kinds[0]).map(|(_, l)| l.clone()));
-                parts.push(("kseed", atom_of(format!("lfx_{rel}_kseed"), vec![k, val.clone()]), b));
+                let Lit::Atom(ka) = lits[kinds[0]].view() else { unreachable!() };
+                let k = t(arg(ka, 1));
+                let mut seed = part(format!("lfx_{rel}_kseed"), vec![k.clone(), t(val)], (0..lits.len()).filter(|&i| i != kinds[0]).collect());
+                seed.pre.push(("rdl_kinds", vec![k]));
+                parts.push(("kseed", seed));
             } else if rec.is_empty() {
-                parts.push(("seed", atom_of(format!("lfx_{rel}_seed"), vec![key.clone(), val.clone()]), body.to_vec()));
-            } else if rec.len() == 1 && matches!((val, &rec[0].args[1]), (Term::Var(v), Term::Var(x)) if v == x) {
-                parts.push(("copy", atom_of(format!("lfx_{rel}_copy"), vec![key.clone(), rec[0].args[0].clone()]), rest));
-            } else if let Term::Call(f, a) = val
+                parts.push(("seed", part(format!("lfx_{rel}_seed"), vec![t(key), t(val)], (0..lits.len()).collect())));
+            } else if rec.len() == 1 && val.var().is_some() && val.var() == arg(rec[0], 1).var() {
+                parts.push(("copy", part(format!("lfx_{rel}_copy"), vec![t(key), t(arg(rec[0], 0))], rest)));
+            } else if let TermRef::Call(f, a) = val
                 && rec.len() == 2
-                && f == "flat_bin"
-                && matches!((&a[1], &rec[0].args[1]), (Term::Var(v), Term::Var(x)) if v == x)
-                && matches!((&a[2], &rec[1].args[1]), (Term::Var(v), Term::Var(x)) if v == x)
+                && v.text(f) == "flat_bin"
+                && let [op, l, right, ..] = a.collect::<Vec<_>>()[..]
+                && l.var().is_some()
+                && l.var() == arg(rec[0], 1).var()
+                && right.var().is_some()
+                && right.var() == arg(rec[1], 1).var()
             {
-                let head = atom_of(format!("lfx_{rel}_bin"), vec![key.clone(), a[0].clone(), rec[0].args[0].clone(), rec[1].args[0].clone()]);
-                parts.push(("bin", head, rest));
+                parts.push(("bin", part(format!("lfx_{rel}_bin"), vec![t(key), t(op), t(arg(rec[0], 0)), t(arg(rec[1], 0))], rest)));
             } else {
                 return Ok(false);
             }
         }
         let schema = self.model.inputs.facts.trim_end_matches('.').to_owned();
-        let has_kseed = parts.iter().any(|(k, _, _)| *k == "kseed");
+        let has_kseed = parts.iter().any(|(k, _)| *k == "kseed");
         if has_kseed && !self.views.contains("rdl_kinds") {
             self.db.execute(&format!("CREATE TEMP VIEW rdl_kinds AS SELECT kind AS c0 FROM {}stat_kind", self.model.inputs.stats), [])?;
             Arc::make_mut(&mut self.views).insert("rdl_kinds".to_owned());
@@ -9220,14 +9256,13 @@ impl<'a> Run<'a, '_> {
             }
         }
         // Each part a rule of its own, planned as any rule is.
-        let part_rules: Vec<Rule> = parts.iter().map(|(_, head, body)| Rule { head: head.clone(), body: body.clone().into() }).collect();
-        let made = body::made(&part_rules)?;
-        for (k, (_, head, _)) in parts.iter().enumerate() {
-            let part = body::nth(&made, k);
-            let (order, _, _) = self.model.plan_rule(pf, &part, None)?;
-            self.ensure_indexes(Order::new(&part, &order))?;
-            let select = self.model.sql_select(pf, &part, &order, None, None)?;
-            self.db.execute(&format!("INSERT INTO {} {select}", crate::code_rule_dsl::logic::sql::ident(&head.rel)), [])?;
+        let made = made_parts(parts.iter().map(|(_, p)| p))?;
+        for (k, (_, part)) in parts.iter().enumerate() {
+            let b = body::nth(&made, k);
+            let (order, _, _) = self.model.plan_rule(pf, &b, None)?;
+            self.ensure_indexes(Order::new(&b, &order))?;
+            let select = self.model.sql_select(pf, &b, &order, None, None)?;
+            self.db.execute(&format!("INSERT INTO {} {select}", crate::code_rule_dsl::logic::sql::ident(&part.rel)), [])?;
         }
         // Over atoms a transfer's operator is its name atom; `lattice_fixpoint` reads the operator's text.
         if let Some([plus, minus, times]) = self.model.inputs.atoms {
@@ -9282,40 +9317,44 @@ impl<'a> Run<'a, '_> {
             let card = prior_stats(&mut self.model, pf, r).map_or(rows.max(1.0), |n| n.max(rows.max(1.0)));
             self.model.stats.card.insert((*r).clone(), card);
         }
-        let var_type = |v: &str, body: &[Literal]| -> Option<char> {
-            body.iter().find_map(|l| match l {
-                Literal::Atom(a) if !a.neg => a
-                    .args
-                    .iter()
-                    .position(|t| matches!(t, Term::Var(x) if x == v))
-                    .map(|c| sym_char(&self.model.inputs, fields.types(a.rel.as_str())[c])),
+        // The type the first positive atom of literals `rest` of `v`'s rule `r` that names variable `x` gives it.
+        let var_type = |v: &Version, r: super::program_image::RuleRef<'_>, x: &str, rest: &[usize]| -> Option<char> {
+            let lits: Vec<_> = r.body().collect();
+            rest.iter().find_map(|&i| match lits[i].view() {
+                Lit::Atom(a) if !a.neg() => a
+                    .args()
+                    .position(|t| t.var().is_some_and(|s| v.text(r.var(s)) == x))
+                    .map(|c| sym_char(&self.model.inputs, fields.types(v.rel_name(a.rel()))[c])),
                 _ => None,
             })
         };
         let tables: HashMap<String, (String, String)> = rels.iter().map(|r| ((*r).clone(), (format!("sfx_f_{r}"), format!("sfx_d_{r}")))).collect();
         let types = |r: &str| fields.types(r).iter().map(|t| sym_char(&self.model.inputs, t)).collect::<String>();
         let mut lines: Vec<SpecLine> = rels.iter().map(|r| SpecLine::Rel { name: (*r).clone(), types: types(r), start: Start::Rows }).collect();
-        let mut edges: Vec<(Atom, Vec<Literal>, Vec<Step>, Arc<super::program_image::Version>)> = Vec::new();
+        // Each edge table: its name, its width, the plan of the rest that fills it, and the rest as a version.
+        let mut edges: Vec<(String, usize, Vec<Step>, Arc<Version>)> = Vec::new();
         let mut probes: Vec<(RuleKey, Vec<Step>, usize, usize)> = Vec::new();
         for (j, &k) in rules.iter().enumerate() {
-            // The edge's parts are made rules, trees (`Literal`s cloned from the rule's).
-            let r = self.tree(k);
-            let (h, body) = (&r.head, &r.body);
             let rec = recursive(&vs.at(k), scc);
             if rec.is_empty() {
                 continue;
             }
-            // The rule's recursive atom, as the tree (the edge's parts are trees, t36 item 7, step 5).
+            let (v, r) = vs.rule_at(k);
+            let lits: Vec<super::program_image::LitRef<'_>> = r.body().collect();
             if let [(ai, _)] = rec[..]
-                && let Literal::Atom(a) = &body[ai]
+                && let Lit::Atom(a) = lits[ai].view()
             {
-                let rest: Vec<Literal> = body.iter().enumerate().filter(|(i, _)| *i != ai).map(|(_, l)| l.clone()).collect();
+                let rest: Vec<usize> = (0..lits.len()).filter(|&i| i != ai).collect();
+                let name = |s: VarSlot| v.text(r.var(s));
+                let names = |vars: &VarSet| vars.iter().map(name).map(str::to_owned).collect::<BTreeSet<String>>();
                 // The spec line and edge plan of a linear rule, or the reason it is a probe.
-                let edge_rule = || -> Result<std::result::Result<(SpecLine, Option<(Atom, Vec<Literal>, Vec<Step>, Arc<super::program_image::Version>)>), String>> {
-                    let restvars: BTreeSet<String> = rest.iter().flat_map(|l| l.vars()).collect();
-                    let mut hvars = BTreeSet::new();
-                    h.args.iter().for_each(|t| t.vars(&mut hvars));
-                    let avars = a.vars();
+                let edge_rule = || -> Result<std::result::Result<(SpecLine, Option<(String, usize, Vec<Step>, Arc<Version>)>), String>> {
+                    let mut rv = VarSet::new();
+                    rest.iter().for_each(|&i| rv.extend(&body::lit_vars(lits[i])));
+                    let (mut hv, mut av) = (VarSet::new(), VarSet::new());
+                    r.head().args().for_each(|t| body::term_vars(t, &mut hv));
+                    a.args().for_each(|t| body::term_vars(t, &mut av));
+                    let (restvars, hvars, avars) = (names(&rv), names(&hv), names(&av));
                     let key: Vec<String> = avars.intersection(&restvars).cloned().collect();
                     let ecols: Vec<String> = hvars.intersection(&restvars).filter(|v| !avars.contains(*v)).cloned().collect();
                     if hvars.iter().any(|v| !avars.contains(v) && !restvars.contains(v)) {
@@ -9323,38 +9362,39 @@ impl<'a> Run<'a, '_> {
                     }
                     let slot: HashMap<&str, usize> = avars.iter().chain(&ecols).enumerate().map(|(i, v)| (v.as_str(), i)).collect();
                     let mut pat = Vec::new();
-                    for t in &a.args {
+                    for t in a.args() {
                         pat.push(match t {
-                            Term::Wild => Tok::Wild,
-                            Term::Var(v) => Tok::Slot(slot[v.as_str()]),
-                            Term::Int(_) | Term::Branded(_) | Term::Str(_) => const_tok(t).expect("a constant"),
+                            TermRef::Wild => Tok::Wild,
+                            TermRef::Var(s) => Tok::Slot(slot[name(s)]),
+                            TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_) => const_tok(v, t).expect("a constant"),
                             _ => return Ok(Err("pattern term".to_owned())),
                         });
                     }
                     let mut head = Vec::new();
-                    for t in &h.args {
+                    for t in r.head().args() {
                         head.push(match t {
-                            Term::Var(v) => HeadTok::Tok(Tok::Slot(slot[v.as_str()])),
-                            Term::Int(_) | Term::Branded(_) | Term::Str(_) => HeadTok::Tok(const_tok(t).expect("a constant")),
-                            Term::Call(f, xs) if f == "cat" && xs.iter().all(|x| matches!(x, Term::Var(_))) => {
-                                let (Term::Var(x0), Term::Var(x1)) = (&xs[0], &xs[1]) else { unreachable!() };
-                                HeadTok::Cat(slot[x0.as_str()], slot[x1.as_str()])
-                            }
+                            TermRef::Var(s) => HeadTok::Tok(Tok::Slot(slot[name(s)])),
+                            TermRef::Int(_) | TermRef::Branded(_) | TermRef::Str(_) => HeadTok::Tok(const_tok(v, t).expect("a constant")),
+                            TermRef::Call(f, xs) if v.text(f) == "cat" => match xs.collect::<Vec<_>>()[..] {
+                                [TermRef::Var(x0), TermRef::Var(x1), ..] => HeadTok::Cat(slot[name(x0)], slot[name(x1)]),
+                                _ => return Ok(Err("head term".to_owned())),
+                            },
                             _ => return Ok(Err("head term".to_owned())),
                         });
                     }
                     let mut edge = None;
                     let src = if !rest.is_empty() {
-                        if !rest.iter().any(|l| matches!(l, Literal::Atom(x) if !x.neg)) {
+                        if !rest.iter().any(|&i| matches!(lits[i].view(), Lit::Atom(x) if !x.neg())) {
                             return Ok(Err("rest has no atom".to_owned()));
                         }
                         // A rest sharing no variable (a constant test) has no edge table to keep.
                         if key.is_empty() && ecols.is_empty() {
                             return Ok(Err("rest binds no variable".to_owned()));
                         }
-                        let ehead = atom_of(format!("sfx_{}_{j}", h.rel), key.iter().chain(&ecols).map(|v| Term::Var(v.clone().into())).collect());
+                        let ehead = format!("sfx_{}_{j}", v.rel_name(r.head().rel()));
+                        let cols: Vec<&str> = key.iter().chain(&ecols).map(String::as_str).collect();
                         // The rest, a rule of its own under the edge table's head.
-                        let made = body::made(&[Rule { head: ehead.clone(), body: rest.clone().into() }])?;
+                        let made = made_parts([&Part { rel: ehead.clone(), head: cols.iter().map(|c| super::program_image::T::Var(c)).collect(), pre: Vec::new(), from: (v, r), lits: rest.clone() }])?;
                         let Ok((order, work, _)) = self.model.plan_rule(pf, &body::nth(&made, 0), None) else {
                             return Ok(Err("rest cannot be planned alone".to_owned()));
                         };
@@ -9365,15 +9405,15 @@ impl<'a> Run<'a, '_> {
                         if work > delta {
                             return Ok(Err(format!("edges cost {work:.0} > one delta pass {delta:.0}")));
                         }
-                        let t: String = key.iter().chain(&ecols).map(|v| var_type(v, &rest).unwrap_or('i')).collect();
-                        let src = Some((ehead.rel.to_string(), t));
-                        edge = Some((ehead, rest.clone(), order, made));
+                        let t: String = cols.iter().map(|x| var_type(v, r, x, &rest).unwrap_or('i')).collect();
+                        let src = Some((ehead.clone(), t));
+                        edge = Some((ehead, cols.len(), order, made));
                         src
                     } else {
                         None
                     };
                     let vs = |vs: &[String]| vs.iter().map(|v| slot[v.as_str()]).collect::<Vec<_>>();
-                    let line = SpecLine::Edge(EdgeSpec { head: ri[h.rel.as_str()], src: ri[a.rel.as_str()], edge: src, key: vs(&key), ecols: vs(&ecols), pat, out: head });
+                    let line = SpecLine::Edge(EdgeSpec { head: ri[v.rel_name(r.head().rel())], src: ri[v.rel_name(a.rel())], edge: src, key: vs(&key), ecols: vs(&ecols), pat, out: head });
                     Ok(Ok((line, edge)))
                 };
                 if let Ok((line, edge)) = edge_rule()? {
@@ -9394,14 +9434,14 @@ impl<'a> Run<'a, '_> {
             let select = self.model.sql_select(pf, b, order, None, None)?;
             self.insert_rows(h, &select)?;
         }
-        for (ehead, _, order, made) in &edges {
+        for (ehead, width, order, made) in &edges {
             let b = body::nth(made, 0);
             self.ensure_indexes(Order::new(&b, order))?;
-            let cols = (0..ehead.args.len()).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
-            self.db.execute_batch(&format!("DROP TABLE IF EXISTS {0}; CREATE TEMP TABLE {0}({cols});", crate::code_rule_dsl::logic::sql::ident(&ehead.rel)))?;
-            if !ehead.args.is_empty() {
+            let cols = (0..*width).map(|i| format!("c{i}")).collect::<Vec<_>>().join(", ");
+            self.db.execute_batch(&format!("DROP TABLE IF EXISTS {0}; CREATE TEMP TABLE {0}({cols});", crate::code_rule_dsl::logic::sql::ident(ehead)))?;
+            if *width > 0 {
                 let select = self.model.sql_select(pf, &body::nth(made, 0), order, None, None)?;
-                self.db.execute(&format!("INSERT INTO {} {select}", crate::code_rule_dsl::logic::sql::ident(&ehead.rel)), [])?;
+                self.db.execute(&format!("INSERT INTO {} {select}", crate::code_rule_dsl::logic::sql::ident(ehead)), [])?;
             }
         }
         let join = self.model.inputs.native.contains("join");
@@ -11784,8 +11824,8 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
         let mut why = if native.contains("program") { String::new() } else { format!("the native engine is off (modes: {native:?})") };
         if super::profile::on() {
             for &r in &rules {
-                // The rule's text is the tree's (`Display`).
-                super::profile::note(format!("rule #{:04}", rule_no(r)), || run.tree(r).to_string());
+                // The rule's text, as its version shows it.
+                super::profile::note(format!("rule #{:04}", rule_no(r)), || { let (v, rule) = run.versions.rule_at(r); v.show_rule(rule) });
             }
         }
         // Python operators consume completed demands, not their synthetic locality-proof rules. Keep native
