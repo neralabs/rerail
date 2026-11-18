@@ -2553,6 +2553,68 @@ regenerated since keep the wider condition. The profiling build has none (Q13).
          `line` never held: a setting ran past its line. Without clusters, it is tested in place,
          as a token mark's test already was. The production parser (clusters by rules) was not
          affected.
+### Q201. (Q177 on benchmarks-on-integration, Q52 before) Metal runs with every thread deadlock on the one queue's 64 command buffers
+
+Seen 2026-11-17 (the M3, `logic --metal`, 300 files x 317 rules, cold): the run stopped after 4.6 min of CPU in 29 min
+of wall, every thread waiting. Six were in `metal_join::Batch::pass`, in `-[MTLCommandBuffer initWithQueue:…]`: the
+process has one queue (decision 0100 §2; `forest::gpu::shared::get`, `new_command_queue()`), and Metal allows it 64
+uncompleted command buffers by default. Each thread holds its level's wave open (`setfix::device::WAVE`, one
+uncommitted buffer until the wave flushes), and its direct batches open more; with the pool's threads and the jobs a
+waiting thread runs, the 64 are all held, and a thread asking for one more waits for buffers that only waiting threads
+can commit. With `RERAIL_THREADS=4` the run finishes (55.1 s CPU, 463 findings), and with a build whose queue allows
+4,096 (`new_command_queue_with_max_command_buffer_count`, not committed) every step finishes with every thread
+(77.5 s CPU cold; findings equal the CPU run's). One-file and one-rule shapes pass as they are.
+
+- **Keep**: one queue for the process (0100 §2: the wave's work, committed first, runs first); Q48's order (a direct
+  batch commits the thread's wave first).
+- **Done when**: no thread holds an uncommitted buffer where it can wait for another (a buffer is committed before
+  its thread waits, or the buffers a thread may hold open are bounded and counted against the queue's limit, made
+  from the pool's width at the queue's creation); a test with more threads than the limit allows open buffers; the
+  full shape on Metal with every thread finishes.
+- **Record**: done (af32e3c4c, decision 0386). `submit` commits the wave's buffer before it returns, and the wave's
+  per-thread state is a job scope (`exec::set_job_scope`, `lanes::wave::Scope`); the waits assert no uncommitted
+  buffer in debug. On the M3 with every thread and the default queue (t43, load 42–99), the full shape finishes
+  every step: cold 52.5 s CPU / 20.0 s wall, append 5.2 / 4.9, body 7.2 / 10.7, rule 1.2 / 2.4, findings 463/464
+  as on the CPU. The profiled run has no "not submitted" fallback (20 before) and 2 BackendFailure (9 before). Left:
+  the first launch's pipeline compiles on a shader-cache miss (26 s wall of the profiled cold run), Q202.
+
+### Q202. (Q178 on benchmarks-on-integration, Q53 before) A device stratum waits on its pipeline's compile on the critical path
+
+Seen 2026-11-17 (t42, t43 profiles): on a miss in the system's shader cache, Metal compiles the joins' and the AST
+matcher's pipelines when a stratum first runs, 26–33 s wall, while the stratum's GPU work is 1.5 ms. The main
+thread waited on it (and spun, fixed in af32e3c4c). There is no binary archive of our own.
+
+- **Done when**: a stratum whose pipeline is not ready runs on the CPU while it compiles (compiled off the run's
+  path), or the pipelines come from an archive the build makes; a cold Metal run's wall is not over the CPU run's.
+- **Record**: built (7eb45c680, decision 0395): the machine's store of compiled kernels, `ready` and the modes,
+  maintenance after a run and in upkeep, `rerail-engine kernels`, shipped kernels for the interpreters. Measured
+  in 0395 § Measured.
+
+### Q189. (Q179 on benchmarks-on-integration, Q54 before; the item rr-align's Q189 joins with bend's Q117) An edit made right after a run is sometimes missed by the next run (the journal)
+
+Seen 2026-11-18 (the M3, t44, `bench-shapes.sh full` on Metal, three runs A/B/C): in each run one edit step read
+0 components and the step after it read both edits (A: `comment` 0, then `import`; B: `body` 0, then `comment`;
+C: `import` 0, then `rule` 3875 components where a rule edit reads 1). The bench edits the file within
+milliseconds of the previous step's end, and every edit changes the file's size, so a stat would see it: the run
+trusted the journal (decision 0105, `observe.rs` `trusted`), which named no change. Not seen in the t43 runs of
+2026-11-17 (every step read its edit). The findings came out right in the end (464 at every later step), but a
+missed edit is a wrong answer for the step that missed it.
+
+- **Done when**: a test edits a file at once after a run (no sleep) and the next run reads it, many times over;
+  the bench's full shape shows every edit step's components.
+- **Record**: —
+
+### Q203. (Q180 on benchmarks-on-integration, Q55 before) Device-budget refusals are reported as `BackendFailure`
+
+Seen 2026-11-18 (t45, with `From<String> for Error` now saying its message): every bare `BackendFailure` refusal of
+the 300-file Metal run, 13–15 strata, is the device budget ("a lease of N MB past the Metal budget of 512 MB"),
+with or without the nonce. They are 0334's agreed replanning, run on the CPU, but the conversion drops the reason.
+They rose after 0386 (2 in t43's profile, 15–32 since): plausibly the strata that 0386 stopped refusing as "not
+submitted" now hold device memory at once.
+
+- **Done when**: a budget refusal says so, with its numbers, in the profile's refusals (an error kind of its own);
+  the 512 MB budget's refusals measured against the strata a wave holds at once.
+- **Record**: —
 
 ## Questions for the user
 

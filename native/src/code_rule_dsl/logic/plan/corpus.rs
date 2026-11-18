@@ -6190,15 +6190,23 @@ fn run_observed(
             self.dirty.store(true, SeqCst);
             while self.dirty.load(SeqCst) {
                 let Some(mut c) = self.cut.try_lock() else { return };
+                let mut moved = false;
                 while self.dirty.swap(false, SeqCst) {
                     let from = thread_usage();
-                    while self.step(&mut c, jobs) {}
+                    while self.step(&mut c, jobs) {
+                        moved = true;
+                    }
                     let now = thread_usage();
                     c.parse.0 += now.0 - from.0;
                     c.parse.1 += now.1 - from.1;
                 }
                 drop(c);
-                self.bell.ring();
+                // Rung only when a step changed something: the main thread's wait polls by `advance`, and a ring for
+                // nothing woke it at once, every time (Bell::wait_as sleeps only when nothing rang): a wait of 33 s on
+                // the device's first pipeline spun on its core for 17 s of CPU (2026-11-17).
+                if moved {
+                    self.bell.ring();
+                }
             }
         }
 

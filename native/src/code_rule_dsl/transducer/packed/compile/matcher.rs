@@ -749,6 +749,8 @@ pub struct LoweredWave {
     feeds: Vec<BTreeSet<usize>>,
     /// The level passes fused into one walk, built at their first batch (`Packs`).
     packs: Packs,
+    /// The sources of its pattern kernels on Metal, made at the first ask (`metal_ready`).
+    metal_sources: std::sync::OnceLock<Result<Vec<String>, Error>>,
 }
 
 impl LoweredWave {
@@ -898,7 +900,7 @@ impl LoweredWave {
         crate::code_rule_dsl::prof::count("wave.labels", total);
         crate::code_rule_dsl::prof::count("wave.distinct_labels", distinct);
         crate::code_rule_dsl::prof::count("wave.shared_groups", shared_groups);
-        Ok(Self { clauses: combined, labels: next, feeds, packs: Packs::default() })
+        Ok(Self { clauses: combined, labels: next, feeds, packs: Packs::default(), metal_sources: Default::default() })
     }
 
     /// The wave's plan identity (list step 16; t1 spec-fusion §4.9, the fused plan's cache key):
@@ -1107,6 +1109,18 @@ impl LoweredWave {
             return Err(Error::WorkLimit);
         }
         Ok(views.into_iter().map(|(view, _)| view).collect())
+    }
+
+    /// Whether the wave's generated kernels on Metal (its patterns') are compiled, or at hand in the store
+    /// (decision 0395), for a batch of tapes of `format` (0: mixed), the kernels' function constant. A wave whose
+    /// kernels are not runs on the CPU meanwhile; they are compiled as the mode says.
+    pub fn metal_ready(&self, format: u32) -> bool {
+        let Some(device) = super::device::matcher() else { return true };
+        match self.metal_sources.get_or_init(|| device.wave_pattern_sources(self)) {
+            Ok(sources) => device.patterns_ready(sources, format),
+            // No Metal form of its patterns: the Metal run says why (`roots_batch`).
+            Err(_) => true,
+        }
     }
 
     /// Every clause's matches of the batch (per clause, per tape: the matched roots, tape preorder ids), the whole

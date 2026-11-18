@@ -202,7 +202,17 @@ fn matched(
     let (found, limited) = if docs.is_empty() || active.iter().all(|a| !a.iter().any(|&on| on)) {
         (vec![vec![BTreeSet::new(); docs.len()]; matchers.len()], Vec::new())
     } else {
-        let program = MatcherWave { wave: Arc::clone(wave), tapes: docs, active, gpu: cfg!(target_os = "macos") && metal && crate::code_rule_dsl::transducer::packed::device::matcher().is_some() };
+        // The GPU's form only once its generated kernels are at hand (decision 0395): till then, the cores'.
+        // The batch's one tape format, the label kernels' constant (`DocTable::format`: 15, or 16 for 16 and 16z),
+        // 0 for a mixed batch.
+        let format = || {
+            use crate::code_rule_dsl::tape::formats::Format;
+            let of = |d: &crate::code_rule_dsl::tape::TapeDoc| if d.image.format() == Format::F15 { 15 } else { 16 };
+            let first = docs.first().map_or(0, of);
+            if docs.iter().all(|d| of(d) == first) { first } else { 0 }
+        };
+        let gpu = cfg!(target_os = "macos") && metal && wave.metal_ready(format());
+        let program = MatcherWave { wave: Arc::clone(wave), tapes: docs, active, gpu };
         let kernel = rerail_accel::Kernel::Program(rerail_accel::kernel::ProgramKernel(Arc::new(program)));
         let ex = crate::code_rule_dsl::logic::lanes::executor_for(metal);
         let (mut done, _) = crate::code_rule_dsl::logic::lanes::prof::run_on(ex, "ast matcher wave", rerail_accel::Batch(vec![rerail_accel::Launch::new(kernel)])).map_err(StoreError::Invalid)?;

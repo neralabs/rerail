@@ -40,6 +40,23 @@ pub(in crate::code_rule_dsl) fn wave_labelled(
     Ok((views, outcome))
 }
 
+/// The sources of the wave's pattern kernels on Metal, in the plan's order (`metal`'s passes: the patterns as
+/// `levels` visits them, and the fact case when a clause has facts).
+pub(in crate::code_rule_dsl) fn wave_pattern_sources(this: &LoweredWave) -> Result<Vec<String>, Error> {
+    let clauses = this.clauses.iter().collect::<Vec<_>>();
+    let mut patterns = Vec::new();
+    let mut facts = false;
+    levels(&clauses, |clause, id| {
+        match clause.labels.def(id) {
+            Label::Fact(..) => facts = true,
+            Label::Pattern(pattern, _) | Label::Constrained(pattern, _, _) => patterns.push(pattern.ast_pattern.as_ref().ok_or(Error::UnsupportedPattern)?),
+            _ => {}
+        }
+        Ok(())
+    })?;
+    Ok(metal_program_backend::label_passes::pattern_sources(&patterns, facts))
+}
+
 /// Each clause's matches of the batch from `roots` (the candidates its root program starts from: listed, or its
 /// domain's nodes where it runs), every clause's passes and roots in one command buffer.
 ///

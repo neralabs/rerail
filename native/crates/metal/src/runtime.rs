@@ -2,14 +2,12 @@ use crate::Error;
 #[allow(unused_imports)]
 use crate::launch::{CheckedComputeEncoder, commit_checked, wait_checked};
 use metal::{
-    Buffer, CompileOptions, ComputePipelineState, Device, MTLResourceOptions,
+    Buffer, ComputePipelineState, Device, MTLResourceOptions,
 };
-use sha2::{Digest, Sha256};
-use std::collections::HashMap;
 use std::mem::size_of_val;
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, Mutex};
 
 use crate::launch;
 
@@ -697,19 +695,10 @@ pub fn evaluation_scope() -> launch::LaunchScope {
     launch::LaunchScope::enter()
 }
 
-// Process-wide, so the residency's drop (`residency::slabs`, two minutes after a full execution)
-// releases every compiled pipeline with the slabs.
-static PIPELINES: LazyLock<Mutex<HashMap<[u8; 32], ComputePipelineState>>> = LazyLock::new(Default::default);
-static LIBRARIES: LazyLock<Mutex<HashMap<[u8; 32], metal::Library>>> = LazyLock::new(Default::default);
-
-/// Releases the compiled pipelines and libraries (the residency's drop).
+/// Releases the compiled pipelines and libraries (the residency's drop): the process's; the store keeps them
+/// (`rerail_accel::gpu::kernels`, decision 0395).
 pub fn drop_pipelines() {
-    if let Ok(mut pipelines) = PIPELINES.lock() {
-        pipelines.clear();
-    }
-    if let Ok(mut libraries) = LIBRARIES.lock() {
-        libraries.clear();
-    }
+    rerail_accel::gpu::kernels::release();
     if let Ok(mut kernels) = crate::block_program::serial::KERNELS.lock() {
         kernels.clear();
     }
@@ -719,142 +708,35 @@ pub fn pipeline_named(source: &str, name: &str) -> Result<ComputePipelineState, 
     pipeline_named_constant(source, name, None)
 }
 
-/// The pipeline cache's key of `source`'s function `name` (with `constant`) on `device`.
-fn pipeline_key(device: &metal::Device, source: &str, name: &str, constant: Option<u32>) -> [u8; 32] {
-    let mut digest = Sha256::new();
-    digest.update(device.registry_id().to_le_bytes());
-    digest.update(name.as_bytes());
-    digest.update([0]);
-    if let Some(value) = constant {
-        digest.update([1]);
-        digest.update(value.to_le_bytes());
-    } else {
-        digest.update([0]);
-    }
-    digest.update(source.as_bytes());
-    digest.finalize().into()
+/// [`pipeline_named`] of an interpreter's fixed source (the same for every rule set): recorded for the kernels the
+/// engine ships compiled (`rerail_accel::gpu::kernels::pipeline_fixed`, decision 0395).
+pub fn pipeline_named_fixed(source: &str, name: &str, constant: Option<u32>) -> Result<ComputePipelineState, Error> {
+    crate::device()?;
+    Ok(rerail_accel::gpu::kernels::pipeline_fixed(source, name, constant))
 }
 
-/// The keys of pipelines a background thread is compiling (`pipeline_ready`): `None` while it compiles, the message
-/// where it failed, raised in the next caller (fatal there as in the foreground, decision 0382; never a reason to keep
-/// running the other form).
-static COMPILING: LazyLock<Mutex<HashMap<[u8; 32], Option<String>>>> = LazyLock::new(Default::default);
-
-/// A Metal library, function or pipeline that does not compile is fatal (decision 0382): the run stops, naming the
-/// kernel and the compiler's message. It is never an error a caller could answer by running another path (the CPU,
-/// an interpreter, an older form).
-#[track_caller]
-fn compile_failed(name: &str, what: &str, error: impl std::fmt::Display) -> ! {
-    panic!("Metal: the {what} of `{name}` does not compile (decision 0382: fatal): {error}")
-}
-
-/// `source`'s pipeline `name` when it is compiled; otherwise `None` at once, its compile started on a thread of its
-/// own (once per source, however often asked), so a caller with another form of the work (a pipeline compiled
-/// before) runs that meanwhile instead of waiting on the compiler.
+/// `source`'s pipeline `name` when a form of it is at hand (made by this process, or archived); otherwise `None`
+/// at once, and its compile behind the caller or left to maintenance (`rerail_accel::gpu::kernels::ready_behind`):
+/// a caller with another form of the work (a pipeline compiled before, the interpreter) runs that meanwhile instead
+/// of waiting on the compiler (decision 0012).
 pub fn pipeline_ready(source: &str, name: &str) -> Option<ComputePipelineState> {
-    let device = crate::device().ok()?;
-    let key = pipeline_key(&device, source, name, None);
-    if let Some(cached) = PIPELINES.lock().ok()?.get(&key).cloned() {
-        return Some(cached);
-    }
-    if let Some(Some(error)) = COMPILING.lock().ok()?.get(&key) {
-        panic!("{error}");
-    }
-    let hex: String = key.iter().map(|b| format!("{b:02x}")).collect();
-    rerail_accel::forms::interpreted("msl-pipeline", &hex, name, 1);
-    let started_here = {
-        let mut compiling = COMPILING.lock().ok()?;
-        let new = !compiling.contains_key(&key);
-        compiling.entry(key).or_insert(None);
-        new
-    };
-    if started_here {
-        let (source, name) = (source.to_owned(), name.to_owned());
-        let spawned = rerail_accel::exec::service("rerail-msl-compile", None, move || {
-            let started = std::time::Instant::now();
-            // A compile that fails panics (`compile_failed`); its message waits for the next caller, who stops.
-            let compiled = std::panic::catch_unwind(|| pipeline_named(&source, &name));
-            let ok = matches!(compiled, Ok(Ok(_)));
-            rerail_accel::forms::compiled("msl-pipeline", &hex, &name, started.elapsed().as_secs_f64(), ok);
-            if let Ok(mut compiling) = COMPILING.lock() {
-                match compiled {
-                    Err(panic) => {
-                        let message = panic.downcast_ref::<String>().cloned().unwrap_or_else(|| format!("Metal: `{name}` does not compile"));
-                        eprintln!("{message}");
-                        compiling.insert(key, Some(message));
-                    }
-                    Ok(_) => drop(compiling.remove(&key)),
-                }
-            }
-        });
-        if spawned.is_err()
-            && let Ok(mut compiling) = COMPILING.lock()
-        {
-            compiling.remove(&key);
-        }
-    }
-    None
+    crate::device().ok()?;
+    rerail_accel::gpu::kernels::ready_behind(source, name, None)
 }
 
+/// `source`'s pipeline `name` (with `constant` at function constant 0), compiled on this thread unless this
+/// process or the store has it (decision 0395). A kernel that does not compile is fatal.
 pub fn pipeline_named_constant(
     source: &str,
     name: &str,
     constant: Option<u32>,
 ) -> Result<ComputePipelineState, Error> {
-    let device = crate::device()?;
-    let key = pipeline_key(&device, source, name, constant);
-    if let Some(cached) = PIPELINES.lock().map_err(|_| Error::BackendFailure)?.get(&key).cloned() {
-        return Ok(cached);
-    }
-    let mut library_digest = Sha256::new();
-    library_digest.update(device.registry_id().to_le_bytes());
-    library_digest.update(source.as_bytes());
-    let library_key: [u8; 32] = library_digest.finalize().into();
-    let cached = LIBRARIES.lock().map_err(|_| Error::BackendFailure)?.get(&library_key).cloned();
-    let library = if let Some(library) = cached {
-        library
-    } else {
-        let library = device
-            .new_library_with_source(source, &CompileOptions::new())
-            .unwrap_or_else(|error| compile_failed(name, "library", error));
-        if let Ok(mut libraries) = LIBRARIES.lock() {
-            if libraries.len() >= 16
-                && let Some(oldest) = libraries.keys().next().copied()
-            {
-                libraries.remove(&oldest);
-            }
-            libraries.insert(library_key, library.clone());
-        }
-        library
-    };
-    let constants = constant.map(|value| {
-        let constants = metal::FunctionConstantValues::new();
-        constants.set_constant_value_at_index(
-            (&value as *const u32).cast(),
-            metal::MTLDataType::UInt,
-            0,
-        );
-        constants
-    });
-    let function = library
-        .get_function(name, constants)
-        .unwrap_or_else(|error| compile_failed(name, "function", error));
-    let descriptor = metal::ComputePipelineDescriptor::new();
-    descriptor.set_label(name);
-    descriptor.set_compute_function(Some(&function));
-    let pipeline = device
-        .new_compute_pipeline_state(&descriptor)
-        .unwrap_or_else(|error| compile_failed(name, "pipeline", error));
-    if let Ok(mut pipelines) = PIPELINES.lock() {
-        if pipelines.len() >= 512
-            && let Some(oldest) = pipelines.keys().next().copied()
-        {
-            pipelines.remove(&oldest);
-        }
-        pipelines.insert(key, pipeline.clone());
-    }
+    crate::device()?;
     #[cfg(any(test, feature = "test-hooks"))]
-    COMPILED_HERE.set(COMPILED_HERE.get() + 1);
+    let before = rerail_accel::gpu::kernels::made_here();
+    let pipeline = rerail_accel::gpu::kernels::pipeline(source, name, constant);
+    #[cfg(any(test, feature = "test-hooks"))]
+    COMPILED_HERE.set(COMPILED_HERE.get() + (rerail_accel::gpu::kernels::made_here() - before) as usize);
     Ok(pipeline)
 }
 
@@ -866,7 +748,7 @@ thread_local! {
 
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn pipeline_cache_len() -> usize {
-    PIPELINES.lock().map_or(0, |pipelines| pipelines.len())
+    rerail_accel::gpu::kernels::held()
 }
 
 /// The pipelines this thread has compiled, not found in the cache: a test's own, whatever other tests compile.
