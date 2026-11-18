@@ -124,7 +124,11 @@ fn waiting_writer(
         BUSY_WAIT_HOOK.set(None);
         let _ = done.send(result);
     });
-    assert_eq!(waits.recv().unwrap(), IN_THE_LINE, "the writer {name} waits");
+    assert_eq!(
+        waits.recv().unwrap(),
+        IN_THE_LINE,
+        "the writer {name} waits"
+    );
     Waiter(written)
 }
 
