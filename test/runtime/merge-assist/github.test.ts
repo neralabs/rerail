@@ -319,7 +319,7 @@ describe("the stamp of gh's sign-in", () => {
     }
   });
 
-  it("stamps a hosts file it may not read apart from an absent one and the readable one, and moves back once it can", async () => {
+  it("stamps a hosts file it may not read apart from an absent one and the readable one, and moves again once it can", async () => {
     const folder = mkdtempSync(join(tmpdir(), "rerail-gh-config-"));
     // The folder closed to this user: no rights on Linux, a deny entry on Windows, which the person's account obeys.
     const user = WINDOWS ? execFileSync("whoami", { encoding: "utf8" }).trim() : "";
@@ -338,7 +338,9 @@ describe("the stamp of gh's sign-in", () => {
         open();
       }
       expect(new Set([absent, readable, unreadable]).size).toBe(3);
-      expect(await file()).toBe(readable);
+      // Readable again: the file's own stamp (on Windows with the change time the deny entry's removal set on it).
+      const reopened = await file();
+      expect([reopened === absent, reopened === unreadable]).toEqual([false, false]);
     } finally {
       removeFolderSync(folder);
     }
