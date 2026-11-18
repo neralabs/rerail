@@ -3,8 +3,6 @@
 #ifndef CLIF_VIEW_SPACE
 #define CLIF_VIEW_SPACE thread
 #endif
-#ifndef CLIF_HELPERS
-#define CLIF_HELPERS 1
 #ifndef clif_view
 #define clif_view(v,a) (v)[(a)/4u]
 #endif

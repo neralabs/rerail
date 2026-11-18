@@ -50,11 +50,10 @@ static_assert(__builtin_offsetof(Numbering, runs) == 272, "Numbering.runs");
 static_assert(__builtin_offsetof(Numbering, run_at) == 288, "Numbering.run_at");
 static_assert(__builtin_offsetof(Numbering, rank_starts) == 304, "Numbering.rank_starts");
 static_assert(__builtin_offsetof(Numbering, rank_ends) == 336, "Numbering.rank_ends");
+static_assert(__builtin_offsetof(Numbering, jumps) == 368, "Numbering.jumps");
 #ifndef CLIF_VIEW_SPACE
 #define CLIF_VIEW_SPACE thread
 #endif
-#ifndef CLIF_HELPERS
-#define CLIF_HELPERS 1
 #ifndef clif_view
 #define clif_view(v,a) (v)[(a)/4u]
 #endif

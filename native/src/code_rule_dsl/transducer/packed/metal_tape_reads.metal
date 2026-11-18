@@ -3,8 +3,6 @@
 #ifndef CLIF_VIEW_SPACE
 #define CLIF_VIEW_SPACE thread
 #endif
-#ifndef CLIF_HELPERS
-#define CLIF_HELPERS 1
 #ifndef clif_view
 #define clif_view(v,a) (v)[(a)/4u]
 #endif
@@ -57,6 +55,9 @@ inline uint clif_tape_child(device const uchar* t,CLIF_VIEW_SPACE const uint* v,
 inline uint clif_tape_length(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
 inline uint clif_tape_start_next(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2,uint a3);
 inline ulong clif_tape_slot(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
+inline uint clif_tape_line_select(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2,uint a3);
+inline uint clif_tape_line(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
+inline uint clif_tape_line_start(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2);
 inline ulong clif_tape_f16_side(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2,uint a3){
  uint v0=0;
  uint v1=0;
@@ -1038,7 +1039,7 @@ inline ulong clif_tape_slot(device const uchar* t,CLIF_VIEW_SPACE const uint* v,
  }
  return v23;
 }
-inline uint clif_tape_line_select(device const uchar* t,thread const uint* v,uint a2,uint a3){
+inline uint clif_tape_line_select(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2,uint a3){
  uint v0=0;
  uint v1=0;
  uint v2=0;
@@ -1181,7 +1182,7 @@ inline uint clif_tape_line_select(device const uchar* t,thread const uint* v,uin
  {uint t0=v122;v45=t0;}
  return v45;
 }
-inline uint clif_tape_line(device const uchar* t,thread const uint* v,uint a2){
+inline uint clif_tape_line(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2){
  uint v0=0;
  uint v1=0;
  uint v2=0;
@@ -1338,7 +1339,7 @@ inline uint clif_tape_line(device const uchar* t,thread const uint* v,uint a2){
  }
  return v5;
 }
-inline uint clif_tape_line_start(device const uchar* t,thread const uint* v,uint a2){
+inline uint clif_tape_line_start(device const uchar* t,CLIF_VIEW_SPACE const uint* v,uint a2){
  uint v0=0;
  uint v1=0;
  uint v2=0;
