@@ -407,6 +407,25 @@ describe("CodeRuleBridge", () => {
     });
   });
 
+  it("reads a call begun with nothing captured, as from a ledger, against what the session last saw of the file", async () => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, "before\n");
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, auditor(auditGeneratedEdits));
+    await bridge.openWorkspace("session-1");
+    await bridge.begin("edit-1", "write", { path: "src/a.py" });
+    await writeFile(path, "middle\n");
+    await bridge.finish("edit-1");
+    // Its start was seen, and no time says otherwise: the session's last sight of the file is its "before".
+    await expect(bridge.begin("edit-2", "write", { path: "src/a.py" }, {})).resolves.toEqual({});
+    await writeFile(path, "after\n");
+    await bridge.finish("edit-2");
+    expect(auditGeneratedEdits.mock.calls.at(-1)?.[1].edits).toEqual([
+      { path: "src/a.py", language: "python", previousText: "middle\n", generatedText: "after\n" },
+    ]);
+  });
+
   it("opens and checks tool edits while a stale baseline read is stalled", async () => {
     const root = await workspace();
     const path = join(root, "src", "a.py");
