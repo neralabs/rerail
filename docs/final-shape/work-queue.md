@@ -1633,6 +1633,12 @@ whose offset word was data. Both runs saw a relation's descriptor overwritten wi
   crashes stopped with the walk bounds and the dead entry: 533 clean since, against 2 in about 245 before. The
   garbage words look like ORed bits more than row values. So the label marks are the likely writer; both chains are
   bounded now, which no run can tell apart from here (0403, "Open").
+- **The torn read alone does not do it**: an engine with the dead entry undone (the exhausted read back on the entry
+  as found, everything else at `e949b985b`) ran 12 runs with a 1 MB cache (10 to 16 million failed reads each) and
+  180 at the usual size: no node past a batch, no row refused, no crash, every run 1629 findings. So a torn value
+  reached a write only through a read `4289c4f60` bounded (a walk's hop, a side's offset). Those reads hold now, and
+  the writes they fed are bounded where they are made; the guards count (`gpu.node_past_batch`, the refusal), so a
+  run that still reaches one names it. 600 runs on `engine-q125d` (the guards) since: none reached one.
 
 ### Q126. Source reads at a node's span, held to the source (0403's open part) — done 2026-11-18
 
@@ -1643,13 +1649,24 @@ The header's length is checked against the held source when a document is made r
 (`tape_start_stated`, `tape_end_stated`) are for the tape's check and the CPU's bounds-checked scans only.
 `a_tapes_spans_stay_within_its_source` reads every span of an overstated tape against a guarded source.
 
-### Q127. A hogql 16z run that hangs: 1 in 180, no output
+### Q127. A hogql 16z run that hangs: 2 in about 1,500, no output
 
 Of 180 hogql 16z cold runs on Metal (2026-11-18, three at a time, load about 50), one ran to the 300 s cap with
 nothing in its log, between two warm runs of 4 s. Two cold runs before had waited about 3 minutes on the Metal
 compiler service (`xpc_connection_send_message_with_reply_sync`), then finished. This one was not cold. It was not
 sampled. `tmp/gpu/q36/hang127.sh` samples any run still going at 90 s, beside the loops (its first run read no
 elapsed time: macOS's `ps` has no `etimes`; it reads `etime` now). 180 more runs had no hang.
+
+The second (`r-ql-31`, `engine-q125d`, 2026-11-18 13:44) came while a profiling build recompiled every crate above
+`rerail-clif`, at a load of 153: again an empty log, the cap at 300 s. The sampler missed it: `pgrep -f` matched the
+loops' `zsh` wrappers, so it sampled those. It matches the engine's process name now (`pgrep -x`), with a heartbeat
+each minute, and the loops set `RERAIL_DEADLINE=120` so a run still going dumps its profile. What the samples it
+took show: runs over 90 s are cold first runs, waiting on the Metal compiler (`MTLCompiler`, the GPU's shader
+factory) while other runs compile too. 600 runs since, three at a time, with the device tests three times and two
+builds (one recompiling everything above `rerail-clif`) beside them: none past 60 s once warm, no hang.
+
+- **Likely**: a compile at very high load, not a deadlock: both hangs had empty logs (the first kernels not yet
+  made) and the second came under a build's load. Not proven until a sample catches one.
 
 - **Do**: from a sample, name where it waits (a GPU hang, a compile, or a lock), then fix it at its cause.
 - **Done when**: 180 runs, three at a time, have none past 60 s.

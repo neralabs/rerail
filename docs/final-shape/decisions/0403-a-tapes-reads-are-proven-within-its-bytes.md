@@ -171,6 +171,9 @@ The same descriptor words were written over in both: a row writer that missed it
   the garbage seen (`base_rows` 0x91346E83, an offset 0x0101463c52c300cd) more than row values do. And `rows_put`
   has refused no row in 540 runs. Every write in both chains is now bounded where it is made (above). Naming it
   for certain would take the old engine's runs again, with these guards counting instead of preventing.
+  The torn read alone does not reach one: with the dead entry undone, 192 runs (12 with a 1 MB cache, 10 to 16
+  million failed reads each) had no node past a batch and no row refused. A torn value reached a write only through
+  a read `4289c4f60` bounded, so those bounds are what ended the crashes; the write guards stay as the proof.
 
 ## What it replaces
 
