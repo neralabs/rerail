@@ -1,16 +1,16 @@
 # On Windows: one git.exe per Git call, Git found again after upgrades
 
-For [pull request #801](https://github.com/neralabs/rerail/pull/801), head 014cbd380. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #801](https://github.com/neralabs/rerail/pull/801), head ba1a8a2a1. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
 **Can a Git call whose Git is gone now wait longer, or answer differently, than the same call at `main`?**
 
-**We recommend:** approve it: such a call waits for the look for another Git only within its own time limit, and a session that starts just after an upgrade is checked again.
+**We recommend:** approve it: in the daemon a call waits for its look for another Git and its second start only within its time limit, and a session that starts just after an upgrade is checked again.
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 1,879 lines in 9 files: 807 ship, 1,072 are tests and text | Careful. A code owner approves: it changes which Git runs. | Nothing. No other pull request needs to merge first. | 4 |
+| 2,296 lines in 10 files: 877 ship, 1,419 are tests and text | Careful. A code owner approves: it changes which Git runs. | Nothing. No other pull request needs to merge first. | 4 |
 
 ## 2. Intent, and the gap
 
@@ -32,10 +32,10 @@ Found in November 2026 on Windows 11 with Git for Windows 2.56.0, in a real daem
 
 ## 3. Where to look
 
-1. **Read first**, 15 min: `git.ts`: `ProcessGit` (with `followHomeShare`), `askedInThread`, `withinLimits`, `gitStartEnvironment`, `launcherHomes`, `HomeShare`, `prepareDaemonGit`. Can a call whose Git is gone wait past its time limit, or start a Git the first look refused?
+1. **Read first**, 15 min: `git.ts`: `ProcessGit` (with `livesOn`), `askedInThread`, `startedWithin`, `withinLimits`, `gitStartEnvironment`, `launcherHomes`, `HomeShare`, `prepareDaemonGit`. Can a call whose Git is gone wait past its limit, start a refused Git, or keep a hook alive?
 2. 2 min: `daemon.ts`: the call to `prepareDaemonGit` at the daemon's start.
 
-**Then skim**, 10 min: Four test files: `git.test.ts` (ProcessGit with a disk the test holds), `git-moved.test.ts`, `git-second-look.test.ts` and the Windows-only `git-launcher-environment.test.ts`.
+**Then skim**, 10 min: Five test files: `git.test.ts` (ProcessGit with a disk the test holds), `git-disk-thread.test.ts` (the blocking look's handshake), `git-moved.test.ts`, `git-second-look.test.ts` and the Windows-only `git-launcher-environment.test.ts`.
 
 ## 4. Risk against verification
 
@@ -57,16 +57,16 @@ Start at the second look in `git.ts`: it decides which program runs while a proc
 
 <details><summary><b>6. The decisions</b></summary>
 
-**How does a call wait for the look for another Git?**
+**Who looks for another Git, and how long may a call wait?**
 
-**We chose** each call within its time limit; a blocking call asks the disk in a worker thread. **Would change our mind:** a host where a worker thread cannot start.
+**We chose** the daemon alone; the call waits for the look within its time limit. **Would change our mind:** a host where a worker thread cannot start.
 
 | Option | What a user gets | Cost | What it breaks |
 |---|---|---|---|
-| A worker thread for blocking calls, the thread pool for the others **(chosen)** | The session that starts just after the kept Git is gone is checked: 3 of 3 writes steered on Windows 11. | The daemon's thread waits for the worker thread: 60 to 330 ms on Windows 11, 20 to 30 ms on Linux, once per blocking call while no Git is found. A blocking call waits at most its own time limit. | With a share that does not answer on `PATH` before the Git found, each blocking call holds the daemon's thread up to its 10 s limit (10,052 and 10,206 ms) and fails, where `main` fails at once. |
+| The daemon alone: a worker thread for blocking calls, the thread pool for others **(chosen)** | The session that starts just after the kept Git is gone is checked: 3 of 3 writes steered on Windows 11. | The daemon's thread sleeps while the worker thread looks: 60 to 330 ms on Windows 11, 20 to 30 ms on Linux, once per blocking call while no Git is found. | With a share that does not answer on `PATH` before the Git found, each blocking call holds the daemon's thread up to its 10 s limit (10,052 and 10,206 ms) and fails, where `main` fails at once. |
+| Every process looks the same way | As chosen, in hooks and commands too. | None. | A process cannot end while a question to a silent share is pending: a hook whose Git is removed lives 18 s after its answer, where `main` ends in 9 ms. |
 | A blocking call fails as its start did; the look runs for later calls | Later calls run the Git found. | None. | The session's first call finds its repository: it is taken as a folder outside Git, and 0 of 3 writes are steered. |
-| The look in Rerail's thread | Every call runs the Git found. | None. | A `PATH` entry on a share that does not answer freezes the daemon about 21 s per look. |
-| A child process for the look | As chosen. | The look's code is bundled into each entry point, so a child cannot load it alone. | Nothing, but it needs a new entry point in every bundle. |
+| A child process for the look in a hook or a command | As chosen. | A process start per look; the look's code is bundled into each entry point, so a child cannot load it alone. | Nothing, but it needs a new entry point in every bundle. |
 
 Before: At main the call starts the kept git.exe, the start finds no program, and that call and every later one fail until the daemon restarts: 0 of 3 writes steered after an upgrade. After: With this change the look runs again by the first look's inputs. Found within the call's time limit, the call runs once more and the Git is kept: 3 of 3 writes steered. Past the limit or once stopped, the call fails as its start did; the look goes on.
 
@@ -128,7 +128,7 @@ Nothing has to merge first: it holds `main` at 9abe89233. No pull request needs 
 
 ## 9. What we ask of you
 
-1. **May a running Rerail look for Git again, which threat model T11 says it does not?** We recommend yes, by the first look's inputs and checks.
+1. **May the running daemon look for Git again, as T11 now says?** We recommend yes, by the first look's inputs and checks.
 
 <details><summary><b>10. Evidence</b></summary>
 
@@ -141,8 +141,8 @@ The description on GitHub is the record. "How you tested it" holds the failing t
 | Windows 11 | `HOME` unset and a home share that does not answer; then the kept Git removed with such a share on `PATH` after it; 5 runs a side against `main` | Home share: each first call ends at the 10 s limit at both, later calls answer at both. Git removed: each call that does not block ends at its 10 s limit here (10,005 to 10,378 ms), `main` fails at once. Loop gaps on a quiet machine: 24 to 89 ms at `main`, 21 to 71 ms here. |
 | Windows 11 | 19 calls, Git for Windows 2.56 and MinGit 2.55, `MSYSTEM` unset and `MINGW64`, each against the launcher | on 2.56, 17 of 19 answer as through the launcher with `MSYSTEM` unset and with `MINGW64` (`main` 17 and 19; the others differ in a commit's time); on MinGit 2.55, 15 and 16 (`main` 5 and 6) |
 | Windows 11 | 200 calls of `main`'s Git module and this one's, alternating, four times | Git for Windows 2.56: 2.00 `git.exe` per call at `main`, 1.00 here; medians 59 to 76 ms against 47 to 61 ms. MinGit 2.55 first: 1.00 at both; 28 to 74 ms against 30 to 99 ms, slower in each run by 1 to 25 ms. |
-| Windows 11 and Linux x64 | The new cases over the merge of `main` with the old source, then at the head, then 20 times in a row; and mutations of each new line | Over the merge with the old source: 9 cases fail on Windows 11, 8 on Linux x64. At the head the changed files pass on both; 0 of 20 runs failed on each. 22 one-line changes each fail a case on both. Five more for the home share each fail a case. The case of `prepareDaemonGit` fails 20 of 20 without the follow, and without the look from the checkout. |
-| Linux x64 | The rules scan as the automated reviewer runs it, against `main` at 9abe89233 | No new finding with the published 0.1.5 or with Rerail built from `main`, and none in code this change edits. The highest complexity of a function added or edited is 6, `behindLauncher` (6 at `main`) and `gitForWindowsBuild`; `runRerailDaemon` stays at 4. |
+| Windows 11 and Linux x64 | The new cases over the merge of `main` with the old source, then at the head, then 20 times in a row; and mutations of each new line | Over the merge with the old source: 9 cases fail on Windows 11, 8 on Linux x64. At the head the changed files pass on both; 0 of 20 runs failed. Of 39 one-line changes, 38 fail a case on both. Five more for the home share each fail a case. The case of `prepareDaemonGit` fails 20 of 20 without the follow, and without the look from the checkout. |
+| Linux x64 | The rules scan as the automated reviewer runs it, against `main` at f41b8fe6c | No new finding with the published 0.1.5 or with Rerail built from `main`, and none in code this change edits. The highest complexity of a function added or edited is 6, `behindLauncher` (6 at `main`) and `gitForWindowsBuild`; `runRerailDaemon` stays at 4. |
 
 **Sources.** Issue #662. Rerail at `main` (9abe89233) for each quoted intent. Each count names the run it comes from; the trial merges were made on 18 November 2026 with our open pull requests' local heads.
 
