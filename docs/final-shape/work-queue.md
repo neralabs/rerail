@@ -2244,6 +2244,13 @@ holds the design, its requirements (R1–R12) and its steps.
   16 and 16z; every read written once in CLIF; format 15 untouched until dropped.
 - **Done when**: 0399's requirement tests pass and no format 16 run makes a format 15 column, image or tape.
 - **Steps**: 0399 §Steps 1–6.
+- **Done** (2026-11-18, step 1, b5fbb9ed5): block-major format 16, the reads in CLIF on every backend, the writer's
+  ops with the 16z sink and the presence.
+- **Done** (2026-11-18, step 2, first part): `retag` and `set_start` in the ops; every lean parser takes a `Sink`, and
+  its writer passes committed nodes to the ops in a format 16 run. Python, ECMAScript and `.rr` commit at their
+  statements; the others pass everything at the end.
+- **Next**: the lean writer's columns shrink to the window (no column for nodes passed on), and the other lean
+  parsers commit at their statements; then step 3 (tree-sitter's cursor walk on the ops).
 
 ### Q181. (Q136 on oscar until 2026-11-18; Q25 on sync-integration-hub-tape) The label pipelines compile cold for 110 s
 

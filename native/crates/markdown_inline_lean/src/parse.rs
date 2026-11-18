@@ -24,7 +24,7 @@ use crate::kinds::{self, K};
 use crate::scan::{D, Ext, Sc, scan, x};
 use crate::{Refusal, Tape, key};
 use rerail_simd8::swar::{Class, class_end, class_of, run_end};
-use rerail_tape_format::{Redo, Widths, Writer};
+use rerail_tape_format::{Redo, Sink, Widths, Writer};
 
 type R<T> = Result<T, Refusal>;
 
@@ -379,7 +379,7 @@ pub fn parse(src: &[u8]) -> R<Tape> {
 }
 
 /// [`parse`], the writer finished by `finish`: format 15's columns, or format 16 (decision 0293).
-pub fn parse_into<Out>(src: &[u8], finish: &mut dyn FnMut(Writer) -> Result<Out, Redo>) -> R<Out> {
+pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
     if src.is_empty() {
         return Err(Refusal::Parse(0));
     }
@@ -1272,7 +1272,7 @@ impl<'a> P<'a> {
     }
 
     /// [`write`](Self::write), the writer finished by `finish`.
-    fn write_into<Out>(&self, v: &V, finish: &mut dyn FnMut(Writer) -> Result<Out, Redo>) -> R<Out> {
+    fn write_into<Out>(&self, v: &V, finish: &mut dyn Sink<Out>) -> R<Out> {
         let mut evs = Vec::new();
         let mut at = v.ev;
         while at != 0 {
@@ -1329,7 +1329,7 @@ impl<'a> P<'a> {
         }
         let mut widths = Widths::guess(self.src.len());
         loop {
-            let mut w = Writer::new(0, widths, nodes.len() + 1);
+            let mut w = Writer::new(0, widths, nodes.len() + 1).to(finish.target(), self.src);
             let mut stack: Vec<(usize, u32, usize)> = Vec::new();
             for (i, &(k, s, e, size)) in nodes.iter().enumerate() {
                 while stack.last().is_some_and(|&(_, _, end)| end <= i) {
@@ -1345,7 +1345,7 @@ impl<'a> P<'a> {
             while let Some((n, e, _)) = stack.pop() {
                 w.close(n, e);
             }
-            match finish(w) {
+            match finish.finish(w) {
                 Ok(done) => return Ok(done),
                 Err(Redo(nw)) => {
                     if nw == widths {

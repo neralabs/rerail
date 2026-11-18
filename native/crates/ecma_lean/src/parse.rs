@@ -16,7 +16,7 @@
 use crate::kinds::{K, f};
 use crate::lex::{Extra, Lexer, Piece, R, Refusal, T, Tok, w};
 use crate::{Dialect, Tape, key, unkey};
-use rerail_tape_format::{Checkpoint, Redo, Widths, Writer};
+use rerail_tape_format::{Checkpoint, Redo, Sink, Widths, Writer};
 
 // Supertype sets (`crate::CLASSES`).
 const C_NONE: u8 = 0;
@@ -303,7 +303,7 @@ pub fn parse(src: &[u8], dialect: Dialect) -> R<Tape> {
 }
 
 /// [`parse`], the writer finished by `finish`: format 15's columns, or format 16 (decision 0293).
-pub fn parse_into<Out>(src: &[u8], dialect: Dialect, finish: &mut dyn FnMut(Writer) -> Result<Out, Redo>) -> R<Out> {
+pub fn parse_into<Out>(src: &[u8], dialect: Dialect, finish: &mut dyn Sink<Out>) -> R<Out> {
     let lx = Lexer::new(src);
     if let Some(at) = lx.first_nul() {
         return Err(Refusal::Lex(at as u32));
@@ -322,7 +322,7 @@ pub fn parse_into<Out>(src: &[u8], dialect: Dialect, finish: &mut dyn FnMut(Writ
             cover: u32::MAX,
             extras: Vec::new(),
             e: 0,
-            w: Writer::new(0, widths, src.len() / 3 + 16),
+            w: Writer::new(0, widths, src.len() / 3 + 16).to(finish.target(), src),
             last_end: 0,
             depth: 0,
             after: 0,
@@ -339,7 +339,7 @@ pub fn parse_into<Out>(src: &[u8], dialect: Dialect, finish: &mut dyn FnMut(Writ
                 r => r,
             });
         }
-        match finish(p.w) {
+        match finish.finish(p.w) {
             Ok(done) => return Ok(done),
             Err(Redo(w)) => {
                 if w == widths {

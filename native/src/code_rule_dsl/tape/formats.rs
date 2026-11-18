@@ -171,44 +171,57 @@ impl Code {
     }
 }
 
-/// The finish a lean parser's writer is given (`rerail_*_lean::tape_into`; decision 0293): the tape in the run's
-/// format, in one pass over the writer. Where the run stores format 16 or 16z, each code the parser's keys name
-/// (`code_of`) is numbered in the language's table and the tape written from the writer's nodes
-/// (`Writer::finish_16`): no format 15 column is made. Format 15's columns (`TapeImage::written`) where the run
-/// stores 15, the language has no format 16 table, a code is not in it, or a node breaks format 16's bounds (said
-/// once a language).
-pub fn lean<'a>(
+/// The run's format 16 target for `language`, each of the parser's keys numbered in the language's table through
+/// its code (`number`): `None` where the run stores format 15, or the language has no format 16 table (said once).
+fn sixteen(language: GrammarDialect, number: impl Fn(&'static Lang, u32) -> Option<u32> + Send + Sync + 'static) -> Option<rerail_tape_format::Sixteen> {
+    let format = Format::of_run();
+    if format == Format::F15 {
+        return None;
+    }
+    let tag = crate::code_rule_dsl::language::tape_tag(language)?;
+    let Some(lang) = f16::lang(tag) else {
+        keeps_15(language, tag, "its language has no format 16 table");
+        return None;
+    };
+    Some(rerail_tape_format::Sixteen { lang, tag, z: format == Format::F16Z, blocks: false, number: Arc::new(move |key| number(lang, key)) })
+}
+
+/// The sink a lean parser's writer is given (`rerail_*_lean::tape_into`; decisions 0293, 0399): the tape in the run's
+/// format. Where the run stores format 16 or 16z, the writer passes its nodes to format 16's ops as the parse commits
+/// them, each key numbered in the language's table through its code (`code_of`): no format 15 column is made. Format
+/// 15's columns (`TapeImage::written`) where the run stores 15, the language has no format 16 table, a code is not in
+/// it, or the nodes break format 16's bounds (said once a language).
+pub struct Lean<'a> {
     grammar: &'a Grammar,
     source: &'a str,
     budget: &'a dyn Fn() -> bool,
-    code_of: &'a dyn Fn(&u32) -> Result<Code, String>,
-) -> impl FnMut(Writer) -> Result<Result<TapeImage, String>, Redo> + 'a {
-    move |mut w| {
-        let format = Format::of_run();
-        let language = grammar.lang;
-        if format != Format::F15
-            && let Some(tag) = crate::code_rule_dsl::language::tape_tag(language)
-        {
-            match f16::lang(tag) {
-                None => keeps_15(language, tag, "its language has no format 16 table"),
-                Some(lang) => {
-                    let codes: Vec<Code> = match w.code_keys().iter().map(code_of).collect() {
-                        Ok(codes) => codes,
-                        Err(e) => return Ok(Err(e)),
-                    };
-                    match codes.iter().map(|c| lang.number(&c.entry())).collect::<Option<Vec<u32>>>() {
-                        None => keeps_15(language, tag, "a code its format 16 table lacks"),
-                        Some(numbers) => match w.finish_16(lang, &numbers, source.as_bytes(), tag, format == Format::F16Z)? {
-                            Ok(written) => return Ok(TapeImage::written_16(written, language, source, budget)),
-                            Err(e) => keeps_15(language, tag, &e),
-                        },
-                    }
-                }
+    code_of: Arc<dyn Fn(&u32) -> Result<Code, String> + Send + Sync>,
+    target: Option<rerail_tape_format::Sixteen>,
+}
+
+pub fn lean<'a>(grammar: &'a Grammar, source: &'a str, budget: &'a dyn Fn() -> bool, code_of: impl Fn(&u32) -> Result<Code, String> + Send + Sync + 'static) -> Lean<'a> {
+    let code_of: Arc<dyn Fn(&u32) -> Result<Code, String> + Send + Sync> = Arc::new(code_of);
+    let codes = code_of.clone();
+    let target = sixteen(grammar.lang, move |lang, key| codes(&key).ok().and_then(|c| lang.number(&c.entry())));
+    Lean { grammar, source, budget, code_of, target }
+}
+
+impl rerail_tape_format::Sink<Result<TapeImage, String>> for Lean<'_> {
+    fn target(&self) -> rerail_tape_format::Target {
+        self.target.clone().map_or(rerail_tape_format::Target::F15, rerail_tape_format::Target::F16)
+    }
+
+    fn finish(&mut self, mut w: Writer) -> Result<Result<TapeImage, String>, Redo> {
+        let language = self.grammar.lang;
+        if let Some(t) = &self.target {
+            match w.finish_16()? {
+                Ok(f) => return Ok(TapeImage::written_16(f.tape, language, self.source, self.budget)),
+                Err(e) => keeps_15(language, t.tag, &e),
             }
         }
         let columns = w.finish_columns()?;
-        let codes: Result<Vec<Code>, String> = columns.keys.iter().map(code_of).collect();
-        Ok(codes.and_then(|codes| TapeImage::written(columns.code, columns.size, columns.base, columns.off, columns.tail, columns.widths, codes, None, grammar, source, budget)))
+        let codes: Result<Vec<Code>, String> = columns.keys.iter().map(|k| (self.code_of)(k)).collect();
+        Ok(codes.and_then(|codes| TapeImage::written(columns.code, columns.size, columns.base, columns.off, columns.tail, columns.widths, codes, None, self.grammar, self.source, self.budget)))
     }
 }
 
@@ -282,26 +295,20 @@ struct Rr<'s>(&'s str);
 
 impl rerail_tape_format::Finish for Rr<'_> {
     type Out = RrTape;
+    fn target(&self) -> rerail_tape_format::Target {
+        let kind_mask = (1u16 << rerail_tape_format::KIND_BITS) - 1;
+        let entry = move |key: u32| {
+            let kf = (key & 0xffff) as u16;
+            Entry { kind: kf & kind_mask, field: kf >> rerail_tape_format::KIND_BITS, flags: (key >> 16 & 7) as u8, alias: None, classes: Vec::new() }
+        };
+        sixteen(GrammarDialect::Rr, move |lang, key| lang.number(&entry(key))).map_or(rerail_tape_format::Target::F15, rerail_tape_format::Target::F16)
+    }
+
     fn finish<L: rerail_tape_format::Layout>(&mut self, mut w: Writer<L>) -> Result<RrTape, Redo> {
-        let format = Format::of_run();
-        let tag = rerail_tape_format::RR_TAG;
-        if format != Format::F15 {
-            match f16::lang(tag) {
-                None => keeps_15(GrammarDialect::Rr, tag, "its language has no format 16 table"),
-                Some(lang) => {
-                    let kind_mask = (1u16 << rerail_tape_format::KIND_BITS) - 1;
-                    let entry = |key: u32| {
-                        let kf = (key & 0xffff) as u16;
-                        Entry { kind: kf & kind_mask, field: kf >> rerail_tape_format::KIND_BITS, flags: (key >> 16 & 7) as u8, alias: None, classes: Vec::new() }
-                    };
-                    match w.code_keys().iter().map(|&k| lang.number(&entry(k))).collect::<Option<Vec<u32>>>() {
-                        None => keeps_15(GrammarDialect::Rr, tag, "a code its format 16 table lacks"),
-                        Some(numbers) => match w.finish_16(lang, &numbers, self.0.as_bytes(), tag, format == Format::F16Z)? {
-                            Ok(written) => return Ok(RrTape::Written(written)),
-                            Err(e) => keeps_15(GrammarDialect::Rr, tag, &e),
-                        },
-                    }
-                }
+        if w.writes_16() {
+            match w.finish_16()? {
+                Ok(f) => return Ok(RrTape::Written(f.tape)),
+                Err(e) => keeps_15(GrammarDialect::Rr, rerail_tape_format::RR_TAG, &e),
             }
         }
         w.finish(self.0.as_bytes()).map(RrTape::Image)

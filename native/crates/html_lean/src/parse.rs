@@ -16,7 +16,7 @@ use crate::block::{Blocks, is_blank};
 use crate::kinds::K;
 use crate::tags;
 use crate::{Refusal, Tape, key};
-use rerail_tape_format::{Redo, Widths, Writer};
+use rerail_tape_format::{Redo, Sink, Widths, Writer};
 
 type R<T> = Result<T, Refusal>;
 
@@ -46,7 +46,7 @@ pub fn parse(src: &[u8]) -> R<Tape> {
 }
 
 /// [`parse`], the writer finished by `finish`: format 15's columns, or format 16 (decision 0293).
-pub fn parse_into<Out>(src: &[u8], finish: &mut dyn FnMut(Writer) -> Result<Out, Redo>) -> R<Out> {
+pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
     // The scanner reads a NUL as the text's end.
     if src.contains(&0) {
         return Err(Refusal::Lex(src.iter().position(|&c| c == 0).unwrap_or(0) as u32));
@@ -54,9 +54,9 @@ pub fn parse_into<Out>(src: &[u8], finish: &mut dyn FnMut(Writer) -> Result<Out,
     let b = Blocks::of(src);
     let mut widths = Widths::guess(src.len());
     loop {
-        let mut p = P { src, b: &b, w: Writer::new(0, widths, src.len() / 4 + 16), open: Vec::new(), serialized: tags::SERIALIZED_EMPTY, at: 0 };
+        let mut p = P { src, b: &b, w: Writer::new(0, widths, src.len() / 4 + 16).to(finish.target(), src), open: Vec::new(), serialized: tags::SERIALIZED_EMPTY, at: 0 };
         p.document()?;
-        match finish(p.w) {
+        match finish.finish(p.w) {
             Ok(done) => return Ok(done),
             Err(Redo(w)) => {
                 if w == widths {

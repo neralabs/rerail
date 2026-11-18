@@ -397,13 +397,7 @@ impl Placement {
         self.frame(0).ok().filter(|_| u32::try_from(source_len).is_ok())
     }
 
-    /// The header of a tape placed so (`magic` its kind), its 16z fields 0.
-    fn head(&self, magic: &[u8; 8], tag: u8, mark: u8, source_len: u64) -> Result<Vec<u8>, String> {
-        let mut buf = vec![0u8; HEAD16];
-        self.head_into(&mut buf, magic, tag, mark, source_len)?;
-        Ok(buf)
-    }
-
+    /// The header of a tape placed so (`magic` its kind), its 16z fields 0, into `buf`'s first `HEAD16` bytes.
     fn head_into(&self, buf: &mut [u8], magic: &[u8; 8], tag: u8, mark: u8, source_len: u64) -> Result<(), String> {
         buf[..HEAD16].fill(0);
         buf[..8].copy_from_slice(magic);
@@ -859,18 +853,119 @@ impl<'l> Writer<'l> {
     #[inline(always)]
     fn put(&mut self, a: usize, i: usize, v: u64) {
         let (b, j) = (i / Z, i % Z);
+        let list = &mut self.side[b][a + 1];
         let v = if v >= self.esc[a] {
-            let list = &mut self.side[b][a + 1];
             // Entries come in row order but for an ancestor's late close.
             let at = list.partition_point(|e| usize::from(e.0) < j);
-            list.insert(at, (j as u16, v));
+            if list.get(at).is_some_and(|e| usize::from(e.0) == j) {
+                list[at].1 = v;
+            } else {
+                list.insert(at, (j as u16, v));
+            }
             self.esc[a]
         } else {
+            // A cell written again (`set_start`) drops the entry it had.
+            if list.last().is_some_and(|e| usize::from(e.0) >= j) {
+                let at = list.partition_point(|e| usize::from(e.0) < j);
+                if list.get(at).is_some_and(|e| usize::from(e.0) == j) {
+                    list.remove(at);
+                }
+            }
             v
         };
         let w = self.w[a];
         let at = self.base[b] + self.at[1 + a] + j * w;
         self.buf[at..at + w].copy_from_slice(&v.to_le_bytes()[..w]);
+    }
+
+    /// Node `i`'s value in array `a` as written: its cell, or its side-list entry where the cell is the escape.
+    fn value(&self, a: usize, i: usize) -> u64 {
+        let (b, j) = (i / Z, i % Z);
+        let w = self.w[a];
+        let at = self.base[b] + self.at[1 + a] + j * w;
+        let mut v = [0u8; 8];
+        v[..w].copy_from_slice(&self.buf[at..at + w]);
+        let v = u64::from_le_bytes(v);
+        if v < self.esc[a] {
+            return v;
+        }
+        let list = &self.side[b][a + 1];
+        list.get(list.partition_point(|e| usize::from(e.0) < j)).map_or(v, |e| e.1)
+    }
+
+    /// Node `i`'s code byte and its side-list entry, for `number`.
+    fn put_code(&mut self, i: usize, number: u32) {
+        let (b, j) = (i / Z, i % Z);
+        let lang = self.lang;
+        let list = &mut self.side[b][0];
+        self.buf[self.base[b] + j] = if number < lang.cut {
+            number as u8
+        } else {
+            let t = number - lang.cut;
+            // Entries come in row order but for a retag.
+            let at = list.partition_point(|e| usize::from(e.0) < j);
+            list.insert(at, (j as u16, u64::from(t % lang.per)));
+            (lang.cut + t / lang.per) as u8
+        };
+    }
+
+    /// Whether node `i` may still change: it is written, and its block not final.
+    fn changeable(&mut self, i: usize, what: &str) -> bool {
+        let ok = i < self.n && !self.done[i / Z];
+        if !ok {
+            self.fail(format!("node {i}'s {what} changed after its block was final"));
+        }
+        ok
+    }
+
+    /// Node `i`'s code given again (a kind or field found after it opened): `number` in the language's table. Its
+    /// block is not final (decision 0399 §2: an edit that reaches a node before the window).
+    pub fn retag(&mut self, i: usize, number: u32) {
+        if !self.changeable(i, "code") {
+            return;
+        }
+        let (b, j) = (i / Z, i % Z);
+        let list = &mut self.side[b][0];
+        let at = list.partition_point(|e| usize::from(e.0) < j);
+        if list.get(at).is_some_and(|e| usize::from(e.0) == j) {
+            list.remove(at);
+        }
+        self.put_code(i, number);
+    }
+
+    /// Open node `i`'s start given again (a node opened before the child whose start it takes): its gap, its
+    /// checkpoint and the next node's gap written again. It stays between its neighbours' starts, and its block and
+    /// the next node's are not final.
+    pub fn set_start(&mut self, i: usize, start: u64) {
+        let Some(k) = self.open.iter().rposition(|o| o.node as usize == i) else {
+            self.fail(format!("node {i}'s start set when it is not open"));
+            return;
+        };
+        if !self.changeable(i, "start") || (i + 1 < self.n && !self.changeable(i + 1, "start")) {
+            return;
+        }
+        let old = self.open[k].start;
+        let prev = if i == 0 { 0 } else { old - self.value(1, i) };
+        let next = if i + 1 < self.n { old + self.value(1, i + 1) } else { self.source_len };
+        if start < prev || start > next {
+            self.fail(format!("node {i}'s start {start} breaks the tape's bounds"));
+            return;
+        }
+        if i > 0 {
+            self.put(1, i, start - prev);
+        }
+        if i + 1 < self.n {
+            self.put(1, i + 1, next - start);
+        } else {
+            self.prev_start = start;
+        }
+        let (b, j) = (i / Z, i % Z);
+        if j.is_multiple_of(K) {
+            let at = self.base[b] + self.at[4] + j / K * self.cw;
+            let cw = self.cw;
+            self.buf[at..at + cw].copy_from_slice(&start.to_le_bytes()[..cw]);
+        }
+        self.open[k].start = start;
     }
 
     /// A node at the end, in preorder, open: its code's number in the language's table, and its start.
@@ -897,15 +992,7 @@ impl<'l> Writer<'l> {
             }
         }
         let base = self.base[b];
-        let lang = self.lang;
-        self.buf[base + j] = if number < lang.cut {
-            number as u8
-        } else {
-            let t = number - lang.cut;
-            let list = &mut self.side[b][0];
-            list.push((j as u16, u64::from(t % lang.per)));
-            (lang.cut + t / lang.per) as u8
-        };
+        self.put_code(i, number);
         self.put(1, i, if i == 0 { 0 } else { start.wrapping_sub(self.prev_start) });
         if j.is_multiple_of(K) {
             let at = base + self.at[4] + j / K * self.cw;
@@ -2286,6 +2373,57 @@ mod tests {
             }
             assert_eq!(p.doc, doc, "the document's presence");
             assert!(p.has_kind(299) && !p.has_kind(300) && p.has_field(6), "its bits");
+        }
+    }
+
+    /// The edits that reach a node before the window (decision 0399 §2): each inner node opened with another code
+    /// and the node before's start, then retagged and its start set once its first child is open, gives the tape of
+    /// the nodes written right, in 16 and 16z, escaped codes and gaps among them (R6).
+    #[test]
+    fn retag_and_set_start() {
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k % 300, field: k % 7, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let source = source_of(pos + 2);
+        let number: Vec<u32> = (0..600).collect();
+        let Ok(Written::F16(want)) = write_from(&lang, &Plain(&nodes, &table), &number, &source, 0, false) else { panic!("format 16") };
+        for z in [false, true] {
+            let mut w = Writer::new(&lang, &source, 0, z, false, nodes.len());
+            let mut ends: Vec<(usize, u64)> = Vec::new();
+            // The inner node whose first child is next: its code and start, given late.
+            let mut late: Option<(usize, u32, u64)> = None;
+            for (i, &(code, start, end, size)) in nodes.iter().enumerate() {
+                while ends.last().is_some_and(|e| e.0 <= i) {
+                    w.close(ends.pop().unwrap().1);
+                }
+                if size == 1 {
+                    w.leaf(code, start, end);
+                } else {
+                    let early = if i == 0 { start } else { nodes[i - 1].1 };
+                    w.open((code + 301) % 600, early);
+                    ends.push((i + size, end));
+                }
+                if let Some((p, code, start)) = late.take() {
+                    w.retag(p, code);
+                    w.set_start(p, start);
+                }
+                if size > 1 {
+                    late = Some((i, code, start));
+                }
+                w.commit();
+            }
+            while let Some((_, end)) = ends.pop() {
+                w.close(end);
+            }
+            match w.finish().unwrap().tape {
+                Written::F16(t) => assert_eq!(t.as_bytes(), want.as_bytes(), "16 retagged"),
+                Written::F16Z(t) => {
+                    let mut d = vec![0u8; t.decoded_len()];
+                    t.decode_into(&mut d).unwrap();
+                    assert_eq!(d, want.as_bytes(), "16z retagged");
+                }
+            }
         }
     }
 

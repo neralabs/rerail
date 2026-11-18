@@ -23,7 +23,7 @@ use crate::block::Blocks;
 use crate::kinds::{self, K, f};
 use crate::{Refusal, Tape, key};
 use rerail_simd8::swar::{first_of2, load8};
-use rerail_tape_format::{Redo, Widths, Writer};
+use rerail_tape_format::{Redo, Sink, Widths, Writer};
 
 mod expr;
 mod stmt;
@@ -39,7 +39,7 @@ pub fn parse(src: &[u8]) -> R<Tape> {
 }
 
 /// [`parse`], the writer finished by `finish`: format 15's columns, or format 16 (decision 0293).
-pub fn parse_into<Out>(src: &[u8], finish: &mut dyn FnMut(Writer) -> Result<Out, Redo>) -> R<Out> {
+pub fn parse_into<Out>(src: &[u8], finish: &mut dyn Sink<Out>) -> R<Out> {
     // Stage 1 once, for every width tried.
     let mut blocks = Blocks::of(src);
     if let Some(at) = blocks.first_nul() {
@@ -58,7 +58,7 @@ pub fn parse_into<Out>(src: &[u8], finish: &mut dyn FnMut(Writer) -> Result<Out,
             at: start,
             last_end: start,
             look: None,
-            w: Writer::new(0, widths, src.len() / 3 + 16),
+            w: Writer::new(0, widths, src.len() / 3 + 16).to(finish.target(), src),
             frames: Vec::with_capacity(64),
             held: Vec::with_capacity(64),
             extras: Vec::with_capacity(16),
@@ -71,7 +71,7 @@ pub fn parse_into<Out>(src: &[u8], finish: &mut dyn FnMut(Writer) -> Result<Out,
             memo: (usize::MAX, Tok { t: T::Eof, s: 0, e: 0, w: 0 }),
         };
         p.program()?;
-        match finish(p.w) {
+        match finish.finish(p.w) {
             Ok(done) => return Ok(done),
             // A value past the guessed widths: read again at the wider ones.
             Err(Redo(nw)) => {

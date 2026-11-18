@@ -79,8 +79,7 @@ tail        the four side lists (each block's part, as today), their part starts
   - `leaf(number, start, end)`;
   - `wrap(at, number, start)`: an open node before the nodes from `at` on;
   - `retag(node, number)`;
-  - `set_start(node, start)`;
-  - `truncate(len)`, `checkpoint` and `rewind`;
+  - `set_start(node, start)` (an open node);
   - `commit()`;
   - `finish() → (tape, presence)`.
 - **The state:** the output's address, the open stack (each open node: its index, its children so far, its last
@@ -89,12 +88,17 @@ tail        the four side lists (each block's part, as today), their part starts
   - a node's code, gap, its checkpoint (every K-th node) and its length (a leaf's) when it is opened or closed;
   - an inner node's slot (`size << 1`) at its close;
   - a leaf's slot when the node after it is opened, or at the end.
-- **The commit frontier.**
-  - `commit()` says no edit reaches before the nodes so far (a statement parsed: what `Writer::commit` means today).
-  - Edits (`wrap`, `retag`, `set_start` and `truncate`) touch only the window: the nodes from the frontier on, and
-    the open nodes.
-  - A wrap moves the window's cells up one row, across a block edge where it falls. It re-encodes the slots that
-    describe its new node's children (their sibling counts and their parent change) and the checkpoints after it.
+- **The commit frontier and the window** (amended at step 2, below).
+  - `commit()` says no edit reaches before the nodes so far but for the open ones (a statement parsed: what
+    `Writer::commit` means today).
+  - The window is the nodes since the last commit. The caller holds it in its own working state (the lean `Writer`'s
+    columns), where its edits are made: a wrap (`insert`, a chain's wraps), `insert_leaf(s)`, `truncate` and `rewind`.
+    The commit passes the window's nodes to the ops in preorder: `open`, `leaf`, and `close` where a subtree ends.
+  - Only two edits reach a node the ops already have: `retag` (a kind found at a node's close) and `set_start` of an
+    open node. Both write the node's cells again in its block, which is not final while the node is open. An open
+    node passed on is closed in the ops once its subtree is.
+  - An edit before the last commit (anything but those two) makes the tape format 15's, said once a language
+    (`keeps_15`), as a code the table lacks does.
 - **When a block is final:** every node in it is closed, the node after its last is open, and the frontier is past
   it. A block that holds an open ancestor stays pending; the root's block finishes last.
 - **One compile, one entry point.** The parse calls the same ops whatever the format. The format is a field of
@@ -102,7 +106,10 @@ tail        the four side lists (each block's part, as today), their part starts
 - **Written once, three backends.** The ops are written in CLIF, as the reads are (0310), and translated to Rust,
   Cranelift and MSL. Until then, the Rust reference in `tape_format::f16` is what the CLIF ops are tested against.
 - **The callers:**
-  - lean parsers call the ops through their `Writer`, which keeps only the window's working state;
+  - lean parsers call the ops through their `Writer`. Its target is given where it is made: each parser takes a
+    `Sink` (its `target()`, and its `finish`) where it took a finish closure, and makes its writer
+    `Writer::new(…).to(sink.target(), src)`. A closure is a sink for format 15. Each key's number is the language's
+    number of its code (`Sixteen::number`), resolved once a code id;
   - tier 2's tape words (LEAF, OPEN, CLOSE, MERGE, WRAP, RETAG, drop, ACCEPT) become calls of them;
   - tree-sitter's cursor walk calls `open`, `leaf` and `close` directly.
 - **Format 15 keeps its writer until it is dropped.**
@@ -148,8 +155,8 @@ tail        the four side lists (each block's part, as today), their part starts
 | R3 | A tape of n nodes is `header + (B−1)·S + last block + 8 + tail` bytes: no padding in the last block | `the_last_block_is_compact` |
 | R4 | The writer writes each cell at its final place: at `finish` it moves the last block's columns down and appends the tail, and nothing else is copied | `finish_moves_only_the_last_block` |
 | R5 | The ops (`open`, `close`, `leaf`) give the tape `write` gives from the same nodes, in 16 and 16z | `ops_write_the_tape` |
-| R6 | A wrap, across a block edge too, gives the tape of the same nodes written in order | `a_wrap_across_a_block_edge` |
-| R7 | `truncate` and `rewind` give the tape of the nodes kept | `truncate_and_rewind` |
+| R6 | `retag` and `set_start` of a node the ops have, escaped values and block edges among them, give the tape of the nodes written right | `retag_and_set_start` |
+| R7 | A lean writer's edits (a rewind, a wrap, a retag after a commit, a close of a node passed on open) give the tape format 15 gives | `a_parsers_writer_finishes_in_format_16_as_in_format_15`, `the_lean_parsers_write_each_format_directly` |
 | R8 | 16z written by the ops is the 16 tape's blocks, each decoded in place alone | `sixteen` (the existing check), `a_block_decodes_alone` |
 | R9 | A 16z block is compressed only when final: the root's block last; the pending blocks are those holding open ancestors | `blocks_finish_when_closed` |
 | R10 | The presence is the kinds and fields the tape's nodes have, per document and (optionally) per block | `presence_is_the_tapes_kinds` |
@@ -160,8 +167,9 @@ tail        the four side lists (each block's part, as today), their part starts
 
 1. The layout, the reads in CLIF, the Rust reference writer's ops (`open`, `close`, `leaf`, `commit`, `finish`),
    the 16z sink and the presence (R1–R5, R8–R10). `write` becomes a caller of the ops.
-2. The edits (`wrap`, `retag`, `set_start`, `truncate`, `rewind`) (R6, R7). The lean `Writer` writes format 16
-   through the ops, keeping only the window's working state.
+2. The edits that reach the ops (`retag`, `set_start`) (R6); the lean `Writer` passes its committed nodes to the
+   ops through its target (R7). Then its columns shrink to the window, and the parsers that do not commit yet
+   commit at their statements.
 3. Tree-sitter's cursor walk and derived documents call the ops (R12); then tier 2's words.
 4. The ops in CLIF, three backends; tier 2's GPU path writes its tape on the device.
 5. Node-range LZ4 for 16z (§5), after the lab measures it.
@@ -169,4 +177,11 @@ tail        the four side lists (each block's part, as today), their part starts
 
 ## Measured
 
-(Filled in as the steps land.)
+- **Step 1** (b5fbb9ed5). The engine's format tests and the device's read the block-major layout as before
+  (R1, R11). The GPU's time on the label kernels, M3 Max, under load (28–60): 265k–282k µs, against 388k µs for the
+  same run with the reads off and 480k–830k µs recorded earlier that day. That spread is the machine's sharing, so
+  the new addressing costs nothing measurable.
+- **Step 2.** The edits are made in the caller's window, not in the tape (amended §2). The decision first had the
+  ops move a block's cells for a wrap, re-encoding the siblings' slots and the checkpoints after it. But the lean
+  parsers already make every edit in their own columns, and their commits mark where edits stop, so only a retag
+  and an open node's start can reach a node the ops have.

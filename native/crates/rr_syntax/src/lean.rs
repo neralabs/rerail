@@ -620,8 +620,8 @@ pub fn tape(src: &str) -> Vec<u8> {
     tape_into(src, &mut Image(src))
 }
 
-/// [`tape`], the writer finished by `finish`: format 15's image (`tape`), or format 16 written in one pass over it
-/// (`Writer::finish_16`, decision 0293).
+/// [`tape`], the writer writing to `finish`'s target and finished by it: format 15's image (`tape`), or format 16
+/// written by its ops as the statements are committed (`Writer::finish_16`, decision 0399).
 pub fn tape_into<F: Finish>(src: &str, finish: &mut F) -> F::Out {
     let lexed = lex(src);
     let mut widths = Widths::guess(src.len());
@@ -638,7 +638,7 @@ pub fn tape_into<F: Finish>(src: &str, finish: &mut F) -> F::Out {
 /// `tape` at `layout`'s widths, the lexer's tokens given.
 fn tape_at<L: Layout, F: Finish>(src: &str, lexed: &Lexed, layout: L, finish: &mut F) -> Result<F::Out, Redo> {
     let Lexed { toks, n, comments } = lexed;
-    let mut out = Writer::new(rerail_tape_format::RR_TAG, layout, n + n / 2 + comments.len() + 8);
+    let mut out = Writer::new(rerail_tape_format::RR_TAG, layout, n + n / 2 + comments.len() + 8).to(finish.target(), src.as_bytes());
     out.push(code(Kind::SourceFile as u16, 0, false), 0);
     let next_comment = comments.first().map_or(u32::MAX, |c| c.0);
     let mut p = Parser { b: src.as_bytes(), t: toks, n: *n, i: 0, no_named: false, out, open: vec![(0, 0)], kids: Vec::with_capacity(64), comments, comment: 0, next_comment };
