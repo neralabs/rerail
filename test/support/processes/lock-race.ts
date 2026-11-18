@@ -137,7 +137,7 @@ async function startRacer(program: string, env: NodeJS.ProcessEnv): Promise<Race
 }
 
 async function kill(racer: Racer): Promise<void> {
-  if (racer.child.exitCode !== null || racer.child.signalCode !== null) return;
+  if (endOf(racer) !== undefined) return;
   const exited = once(racer.child, "exit");
   racer.child.kill("SIGKILL");
   await exited;
