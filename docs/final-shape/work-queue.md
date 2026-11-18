@@ -3510,6 +3510,37 @@ Test: `an_export_is_one_relation_of_the_chunks_new_rows`, which replaces the tes
 
 Still merged: 157 relations, nearly all of two parts. Steps 2 and 3 of 0384 cover them.
 
+### Q178. What a relation's block holds goes back to it: step 6 of decision 0384 (done)
+
+Done 2026-11-18. The user asked for Q177's leftover (a forgotten index's room was not given back) and for 0384 to
+be completed.
+- An index's buckets, rows and directory are chunks of the block's, given back when forgotten or released, pages
+  resident. Freeing them with their pages given back cost 2–13 s more sys time at 300 files: changed.
+- A relation rewritten in place (a lattice head) takes whole chunks of their class, reused by the next index of its
+  size. Fitted chunks' pieces cannot be taken by a chunk of their own size: a first form that used them grew the
+  block 8x over 21 rebuilds.
+- The lone block of a lattice head kept no free list (`lease_exact`'s `Block::anon`): nothing freed in it was ever
+  reused. Its block keeps one now.
+- `Rel::pending` (the dedup table) is a `keys::RowSet` in the relation's block.
+- A head whose tail's block is full is moved into a relation with room for the device's rows, which the claim makes
+  the tail: no appended part.
+
+Measured: cold 300-file CPU runs level with step 5 (instructions, sys, peak); the outputs the reference's, CPU and
+Metal. Tests: `a_forgotten_index_gives_its_room_back`, `a_relations_pending_rows_lie_in_its_block`,
+`a_tail_moved_for_another_writers_rows_stays_one_relation`.
+
+Found on the way:
+- `deferrable.rs` did not compile off macOS (Linux's `mincore` reports no dirty pages): its wait is macOS's, one
+  `msync` elsewhere. Fixed.
+- `rerail-accel` does not compile on the Linux farm hosts (7 errors), so the engine's and the device's tests run
+  on Macs only. Not looked into.
+- A kills delta made again when a relation's dead rows change (`Rows::in_block_dead`, Q173) leaves the old delta's
+  descriptor and dead words in the block. A reader may still bind the old one, so it needs a holder before it can
+  go.
+
+Left in 0384: a fork (two relations started from one kept relation's rows at once) is still two parts that the
+device's binding merges (`Rows::one`).
+
 ### Q177. A lattice's key map is an index in its relation's block: step 5 of decision 0384 (done)
 
 Done 2026-11-18. The user asked how the GPU would run with the lattice maps still on the heap. Three structures held

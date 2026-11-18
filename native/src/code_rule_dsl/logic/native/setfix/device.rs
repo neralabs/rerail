@@ -2330,10 +2330,13 @@ impl PlacedHeads {
 /// relation of their own (`Part::for_writes`) that becomes its tail. The rows' place, and the relation bound for the
 /// writes.
 fn head_room(rel: &super::Rel, fresh: &super::Fresh, k: usize, n: usize) -> Result<(super::Placed, mj::DevRel, usize), String> {
+    // A block with no room for them: the relation's rows moved into one with room (`Part::moved_room`), which the
+    // claim makes its tail, so it stays one relation.
+    let moved = |l: Option<crate::code_rule_dsl::facts::rows::Lent>, why: &'static str| l.inspect(|_| crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", why, 1));
     let room = match fresh.last_placed() {
-        Some(super::Placed::Part(p)) => p.room(n),
-        Some(super::Placed::Tail { lent, n: written }) => lent.after(*written, n),
-        None => rel.tail_room(n),
+        Some(super::Placed::Part(p)) => p.room(n).or_else(|| moved(Some(p.moved_room(p.len(), n)), "heads' relations moved to room for a next lot")),
+        Some(super::Placed::Tail { lent, n: written }) => lent.after(*written, n).or_else(|| moved(Some(lent.moved(*written, n)), "heads' relations moved to room for a next lot")),
+        None => rel.tail_room(n).or_else(|| moved(rel.tail_moved(n), "heads' tails moved to room for the device's rows")),
     };
     if let Some(lent) = room {
         let at = lent.at;
@@ -2341,7 +2344,7 @@ fn head_room(rel: &super::Rel, fresh: &super::Fresh, k: usize, n: usize) -> Resu
         crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "heads' rows written into their own tail", 1);
         return Ok((super::Placed::Tail { lent: std::sync::Arc::new(lent), n: 0 }, dst, at as usize));
     }
-    crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "heads' rows written into a relation of their own (no tail, or no room in its block)", 1);
+    crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "heads' rows written into a relation of their own (no tail with rows)", 1);
     let part = Part::for_writes(k, n);
     let dst = mj::DevRel::in_block(&part.in_block(n as u32), k).map_err(|e| format!("{e:?}: a head's rows in their block"))?;
     Ok((super::Placed::Part(part), dst, 0))

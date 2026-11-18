@@ -262,12 +262,44 @@ impl Block {
             return Some((at, bytes));
         }
         let (_, size) = crate::free::class_of(bytes);
-        let step = (size / 8).max(1 << crate::free::MIN_LOG);
-        let keep = bytes.next_multiple_of(step).min(size);
+        let keep = self.fit_kept(bytes);
         // Never written: their pages are not resident (fresh from the front, or given back when last freed), so none
         // is given back again (a call to the OS each).
         self.free_pieces(at + keep, size - keep, false);
         Some((at, keep))
+    }
+
+    /// The bytes `try_alloc_chunk_fit` keeps of a chunk of `bytes`: what `free_chunk_fit` takes back, found again from
+    /// the bytes asked by a holder that keeps no more (an index's spans).
+    pub fn fit_kept(&self, bytes: usize) -> usize {
+        if self.free == 0 {
+            return bytes;
+        }
+        let (_, size) = crate::free::class_of(bytes);
+        let step = (size / 8).max(1 << crate::free::MIN_LOG);
+        bytes.next_multiple_of(step).min(size)
+    }
+
+    /// `try_alloc_chunk_fit`, zeroed: what `try_alloc` gives, in a chunk the free list takes back.
+    pub fn try_alloc_chunk_fit_zeroed(&self, bytes: usize, align: usize) -> Option<(usize, usize)> {
+        let (at, kept) = self.try_alloc_chunk_fit(bytes, align)?;
+        // SAFETY: the chunk is the caller's, `kept` bytes at `at` in the block.
+        unsafe { zero(self.base.add(at), bytes) };
+        Some((at, kept))
+    }
+
+    /// `free_chunk`, its pages left resident: for a chunk the next of its size takes soon (an index built again), or
+    /// whose bytes are few beside its relation's (an index's 4 a row), where giving its pages to the OS costs calls
+    /// and buys little.
+    pub fn free_chunk_resident(&self, at: usize, bytes: usize) {
+        self.push_free(at, bytes);
+    }
+
+    /// `free_chunk_fit`, its pages left resident (`free_chunk_resident`).
+    pub fn free_chunk_fit_resident(&self, at: usize, kept: usize) {
+        if self.free != 0 {
+            self.free_pieces(at, kept, false);
+        }
     }
 
     /// Gives back a chunk `try_alloc_chunk_fit` gave (`kept` bytes at `at`): its pieces, each a class's chunk.

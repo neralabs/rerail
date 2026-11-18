@@ -530,6 +530,9 @@ pub struct Held {
 pub struct Lent {
     tail: Part,
     pub at: u32,
+    /// The relation `tail`'s rows `0..at` were moved from (`Lent::moved`), when its block had no room for the rows
+    /// lent: the claim takes `tail` in its place, so the relation stays one (as a push past a full block moves it).
+    from: Option<Part>,
 }
 
 impl Lent {
@@ -547,8 +550,14 @@ impl Lent {
             return None;
         }
         self.tail.lent.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-        let lent = Lent { tail: self.tail.clone(), at };
+        let lent = Lent { tail: self.tail.clone(), at, from: None };
         self.tail.rel().rows.try_reserve(&self.tail.facts.block, end).then_some(lent)
+    }
+
+    /// `after`, when its block has no room: the relation's rows so far (this loan's first `written` too) moved into
+    /// a relation with room for `n` more (`Part::moved_room`), lent past them.
+    pub fn moved(&self, written: u32, n: usize) -> Lent {
+        self.tail.moved_room(self.at + written, n)
     }
 }
 
@@ -606,11 +615,13 @@ impl Part {
 
     /// `new`, or why no block could be had (a device block past the device's budget).
     fn try_new(life: Life, k: usize, rows: usize) -> Result<Part, String> {
-        Part::try_new_with(life, k, rows, 0)
+        Part::try_new_with(life, k, rows, 0, false)
     }
 
     /// `try_new`, a block of its own (a device relation's) with `extra` bytes past the relation's room.
-    fn try_new_with(life: Life, k: usize, rows: usize, extra: usize) -> Result<Part, String> {
+    /// `rewritten`: its rows' values change in place (`for_writes_with_room`): its block alone keeps a free list, and
+    /// its indexes are whole chunks the next takes again (`Relation::rewritten`).
+    fn try_new_with(life: Life, k: usize, rows: usize, extra: usize, rewritten: bool) -> Result<Part, String> {
         let spec = spec(k);
         let need = room_for(k, rows);
         // A device relation is written once at its size, and lives as the device's buffers did: alone in a block of
@@ -624,7 +635,8 @@ impl Part {
         for fresh in [false, true] {
             let facts = match &*open {
                 _ if alone => {
-                    let f = Arc::new(Facts::new(lease_exact(need + extra, life)?));
+                    let block = lease_exact(need + extra, life)?;
+                    let f = Arc::new(Facts::new(if rewritten { block.with_free_list() } else { block }));
                     if let Some(c) = &chunk {
                         c.made.lock().unwrap_or_else(|e| e.into_inner()).push(Arc::downgrade(&f));
                     }
@@ -645,6 +657,9 @@ impl Part {
             if let Some(rel) = Relation::try_create(&facts.block, &spec, None)
                 && rel.rows.try_reserve(&facts.block, rows as u64)
             {
+                if rewritten {
+                    rel.rewritten();
+                }
                 let cols = (0..k).map(|c| rel.rows.reader(c)).collect();
                 let rel = std::ptr::from_ref(rel);
                 return Ok(Part { held: Arc::new(Held { facts, life, rel, cols, lent: std::sync::atomic::AtomicU32::new(0), free_at: std::sync::atomic::AtomicU32::new(u32::MAX) }), cap: u32::MAX });
@@ -663,7 +678,7 @@ impl Part {
     pub fn for_device(k: usize, rows: usize) -> Result<Part, String> {
         let cap = rows.next_power_of_two().max(1);
         let index = 4 * (cap + 1) + 4 * rows.max(1) + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 3 * 64;
-        let part = Part::try_new_with(Life::Device, k, rows, index)?;
+        let part = Part::try_new_with(Life::Device, k, rows, index, false)?;
         // SAFETY: rows `0..rows` are reserved; the caller's device work writes every one before a read.
         unsafe { part.rel().rows.claim_reserved(rows as u32) };
         Ok(part)
@@ -723,7 +738,7 @@ impl Part {
     /// them), its rows' chunks and its key map growing in the block (`reserve`), never moved. Its block reserves
     /// address space: the room is memory only as it is written. `Err` when no block can be had.
     pub fn for_writes_with_room(k: usize, rows: usize, room: usize) -> Result<Part, String> {
-        Part::try_new_with(Life::Run, k, rows, room.max(1))
+        Part::try_new_with(Life::Run, k, rows, room.max(1), true)
     }
 
     /// Room for `rows` rows in all (its rows' chunks in its block), not moved: for a writer other than the host
@@ -762,7 +777,7 @@ impl Part {
     pub unsafe fn forget_indexes(&self) {
         let _g = self.facts.ix.lock().unwrap_or_else(|e| e.into_inner());
         // SAFETY: under the block's index lock; the caller's.
-        unsafe { self.rel().forget_indexes() };
+        unsafe { self.rel().forget_indexes(&self.facts.block) };
     }
 
     /// Where structures derived from its rows go (`BlockVec`): its block.
@@ -792,8 +807,24 @@ impl Part {
         }
         self.lent.compare_exchange(0, 1, std::sync::atomic::Ordering::AcqRel, std::sync::atomic::Ordering::Acquire).ok()?;
         // Made now, so a refusal below gives the loan back.
-        let lent = Lent { tail: self.clone(), at };
+        let lent = Lent { tail: self.clone(), at, from: None };
         self.rel().rows.try_reserve(&self.facts.block, end).then_some(lent)
+    }
+
+    /// Its first `rows` rows (claimed, or written into room lent and finished) moved into a relation of its life with
+    /// room for `n` more, lent past them to another writer (the device): where its block has no room for them. A
+    /// relation never moves for another writer in place; it moves for its own when the claim takes the moved relation
+    /// (`Rows::claim_tail`), as a push past a full block moves it (`grow`). The rows are written once more, as a
+    /// vector's growth writes them.
+    pub fn moved_room(&self, rows: u32, n: usize) -> Lent {
+        let k = self.rel().rows.ncols as usize;
+        let need = rows as usize + n;
+        let mut moved = Part::new(self.life, k, need.max(2 * rows as usize));
+        // copy: growth: a relation moved out of a full block, once, as a vector's growth moves it.
+        moved.copy_from(self, 0, rows);
+        assert!(moved.rel().rows.try_reserve(&moved.facts.block, need as u64), "a new relation's room for its rows");
+        moved.lent.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        Lent { tail: moved, at: rows, from: Some(self.clone()) }
     }
 
     /// Rows `0..n` written by the writer it was made for (`for_writes`), now its rows.
@@ -1000,7 +1031,7 @@ impl Rows {
         let cap = rows.next_power_of_two().max(1);
         let index = 4 * (cap + 1) + 4 * rows.max(1) + 64;
         let extra = indexes.max(1) * index + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 64;
-        let part = Part::try_new_with(life, k, rows, extra).unwrap_or_else(|e| panic!("a relation of {k} columns and {rows} rows: {e}"));
+        let part = Part::try_new_with(life, k, rows, extra, false).unwrap_or_else(|e| panic!("a relation of {k} columns and {rows} rows: {e}"));
         Rows { k, life, hint: rows, tail: Some(part), ..Rows::default() }
     }
 
@@ -1207,11 +1238,26 @@ impl Rows {
         self.tail.as_ref()?.room(n)
     }
 
+    /// `tail_room`, when the tail's block has no room: the tail moved into a relation with room for them
+    /// (`Part::moved_room`), which the claim makes the tail. `None` with no tail that has rows, or one lent already.
+    pub fn tail_moved(&self, n: usize) -> Option<Lent> {
+        let t = self.tail.as_ref().filter(|t| t.len() > 0 && t.lent.load(std::sync::atomic::Ordering::Acquire) == 0)?;
+        Some(t.moved_room(t.len(), n))
+    }
+
     /// Rows `at..at + n` of `tail`, written by the writer `tail_room` gave its room to: now its rows.
     ///
     /// # Safety
     /// The writer has finished, and wrote every value of those rows.
     pub unsafe fn claim_tail(&mut self, lent: &Lent, n: u32) {
+        let t = self.tail.as_ref().expect("the tail written in place");
+        // Rows lent in a relation the tail was moved into (its block had no room): that relation is the tail now, its
+        // rows the tail's (moved when the room was lent, none pushed since: asserted below).
+        if let Some(from) = &lent.from && !Arc::ptr_eq(&t.held, &lent.tail.held) {
+            assert!(Arc::ptr_eq(&t.held, &from.held), "rows written into a relation moved from another tail");
+            assert_eq!(t.len(), lent.at, "rows pushed into a tail after it was moved for another writer");
+            self.tail = Some(lent.tail.clone());
+        }
         let t = self.tail.as_ref().expect("the tail written in place");
         let at = lent.at;
         assert!(Arc::ptr_eq(&t.held, &lent.tail.held), "rows written into a tail the relation no longer has");
@@ -1519,6 +1565,55 @@ mod tests {
         let lone = BlockVec::from_iter_in(None, [7i64, 8]);
         assert_eq!(*lone, [7, 8]);
         assert!(BlockVec::<u8>::new().facts().is_none(), "empty holds no chunk");
+    }
+
+    /// Decision 0384: a tail whose block has no room for the device's rows is moved into a relation with room
+    /// (`tail_moved`, and `Lent::moved` for a next lot), and the claims make that its tail: one relation, nothing
+    /// merged, every row by its id.
+    #[test]
+    fn a_tail_moved_for_another_writers_rows_stays_one_relation() {
+        let k = 2;
+        let mut rows = Rows::new(k);
+        // copy: not block data: a test's rows
+        rows.extend_from_slice(&[1, 2, 3, 4]);
+        let write = |lent: &Lent, vals: &[[i64; 2]]| {
+            for (i, v) in vals.iter().enumerate() {
+                // SAFETY: rows `at..at + n` are the loan's, reserved, and nothing else writes them.
+                unsafe {
+                    lent.tail().rel().rows.put(lent.at + i as u32, 0, v[0]);
+                    lent.tail().rel().rows.put(lent.at + i as u32, 1, v[1]);
+                }
+            }
+        };
+        let merged = MERGED[0].load(std::sync::atomic::Ordering::Relaxed);
+        let old = rows.tail.as_ref().expect("a tail").clone();
+        // As if its block were full: moved.
+        let lent = rows.tail_moved(2).expect("a tail with rows");
+        assert_eq!(lent.at, 2);
+        assert!(!Arc::ptr_eq(&lent.tail().held, &old.held), "another relation");
+        write(&lent, &[[10, 20], [11, 21]]);
+        // A next lot past a full block: the rows so far, the first lot's too, moved again.
+        let next = lent.moved(2, 1);
+        assert_eq!(next.at, 4);
+        write(&next, &[[12, 22]]);
+        // SAFETY: the rows are written.
+        unsafe {
+            rows.claim_tail(&lent, 2);
+            rows.claim_tail(&next, 1);
+        }
+        assert!(Arc::ptr_eq(&rows.tail.as_ref().expect("a tail").held, &next.tail().held), "the last moved relation is the tail");
+        drop((lent, next, old));
+        assert_eq!(rows.parts().count(), 1, "one relation");
+        assert_eq!(rows.in_block().expect("bound whole").rows, 5);
+        assert_eq!(MERGED[0].load(std::sync::atomic::Ordering::Relaxed), merged, "nothing merged");
+        // copy: not block data: a test's rows
+        let all: Vec<Vec<i64>> = (0..5).map(|i| rows.row(i, k).to_vec()).collect();
+        assert_eq!(all, [[1, 2], [3, 4], [10, 20], [11, 21], [12, 22]].map(|r| r.to_vec()));
+        // Pushes go on in it.
+        // copy: not block data: a test's rows
+        rows.extend_from_slice(&[5, 6]);
+        assert_eq!(rows.parts().count(), 1);
+        assert_eq!(*rows.row(5, k), [5, 6]);
     }
 
     /// A part another writer filled, after rows pushed and before rows pushed again: every row read by its id, the

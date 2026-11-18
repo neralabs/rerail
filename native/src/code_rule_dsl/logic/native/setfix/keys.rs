@@ -154,6 +154,99 @@ impl KeyMap {
     }
 }
 
+/// A relation's rows pushed since its orders last took them (`Rel::pending`, the dedup test's table until the next
+/// wave sorts them in): an open-addressed table of their ids in the relation's block (decision 0384), not on the heap.
+/// A slot is two words: the row's id (`EMPTY`: none) and a tag of its hash, so a probe reads a row only on a tag's
+/// match. A row is hashed as a key map hashes its keys (`key_hash`), its values read where they lie. It grows (every
+/// row placed again) past half full.
+#[derive(Default)]
+pub struct RowSet {
+    slots: BlockVec<u32>,
+    rows: usize,
+}
+
+/// Words a row set's slot: the row's id, its hash's tag.
+const ROW_SLOT: usize = 2;
+
+impl RowSet {
+    /// Its slots.
+    fn places(&self) -> usize {
+        self.slots.len() / ROW_SLOT
+    }
+
+    /// Rows held.
+    pub fn len(&self) -> usize {
+        self.rows
+    }
+
+    /// Whether it holds none.
+    pub fn is_empty(&self) -> bool {
+        self.rows == 0
+    }
+
+    /// The block it lies in.
+    pub fn facts(&self) -> Option<&Arc<Facts>> {
+        self.slots.facts()
+    }
+
+    #[inline]
+    fn tag(h: u64) -> u32 {
+        // Never `EMPTY`'s value: a tag is any but one.
+        (h >> 32) as u32 & !1
+    }
+
+    /// A held row equal to `row` and not `skip`'s (rows of `data`, `k` columns a row).
+    pub(super) fn find<D: RowData + ?Sized>(&self, data: &D, k: usize, row: &[i64], skip: impl Fn(u32) -> bool) -> Option<u32> {
+        if self.rows == 0 {
+            return None;
+        }
+        let h = rerail_blocks::key_hash(row);
+        let (mask, tag) = (self.places() - 1, RowSet::tag(h));
+        let mut s = (h as usize) & mask;
+        loop {
+            let id = self.slots[s * ROW_SLOT];
+            if id == EMPTY {
+                return None;
+            }
+            if self.slots[s * ROW_SLOT + 1] == tag && !skip(id) && *data.row(id, k) == *row {
+                return Some(id);
+            }
+            s = (s + 1) & mask;
+        }
+    }
+
+    /// Row `id` of `data` put in: a row it does not hold.
+    pub(super) fn insert<D: RowData + ?Sized>(&mut self, data: &D, k: usize, id: u32) {
+        self.reserve(data, k, 1);
+        self.place(rerail_blocks::key_hash(&data.row(id, k)), id);
+        self.rows += 1;
+    }
+
+    fn place(&mut self, h: u64, id: u32) {
+        let mask = self.places() - 1;
+        let mut s = (h as usize) & mask;
+        while self.slots[s * ROW_SLOT] != EMPTY {
+            s = (s + 1) & mask;
+        }
+        // copy: derived: a row's slot written where it lies.
+        self.slots[s * ROW_SLOT..s * ROW_SLOT + ROW_SLOT].copy_from_slice(&[id, RowSet::tag(h)]);
+    }
+
+    /// Room for `extra` more rows of `data`: past half full, every row placed again in a table of room for them, in
+    /// their relation's block (`RowData::home`).
+    pub(super) fn reserve<D: RowData + ?Sized>(&mut self, data: &D, k: usize, extra: usize) {
+        let need = self.rows + extra;
+        if 2 * need <= self.places() {
+            return;
+        }
+        let places = (2 * need).next_power_of_two().max(LEAST);
+        let old = std::mem::replace(&mut self.slots, BlockVec::from_iter_in(data.home().as_ref(), std::iter::repeat_n(EMPTY, places * ROW_SLOT)));
+        for w in old.chunks_exact(ROW_SLOT).filter(|w| w[0] != EMPTY) {
+            self.place(rerail_blocks::key_hash(&data.row(w[0], k)), w[0]);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::{is_dead, Rel};
@@ -191,5 +284,24 @@ mod tests {
             assert_eq!((rel.data.value(row, 2, 1), map.changes(s)), want[&key], "key {key}");
         }
         assert_eq!(rel.n - rel.ndead, 3000, "one live row a key");
+    }
+
+    /// Decision 0384: the rows a relation holds past its orders (`pending`, the dedup test's until the next wave) are
+    /// a table in its block, grown there: each found, a row not pushed not found, a dead one skipped.
+    #[test]
+    fn a_relations_pending_rows_lie_in_its_block() {
+        let mut rel = Rel::new("t", b"ii");
+        for i in 0..5000i64 {
+            assert!(rel.push(&[i, i * 7]));
+        }
+        assert!(!rel.push(&[42, 294]), "held: not pushed again");
+        assert_eq!(rel.pending.len(), 5000);
+        let home = rel.data.home().expect("a home");
+        assert!(rel.pending.facts().is_some_and(|f| Arc::ptr_eq(f, home.facts())), "in the relation's block");
+        for i in (0..5000i64).step_by(97) {
+            assert_eq!(rel.pending.find(&rel.data, 2, &[i, i * 7], |_| false), Some(i as u32));
+        }
+        assert_eq!(rel.pending.find(&rel.data, 2, &[3, 22], |_| false), None);
+        assert_eq!(rel.pending.find(&rel.data, 2, &[3, 21], |id| id == 3), None, "skipped");
     }
 }

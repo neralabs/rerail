@@ -405,7 +405,7 @@ fn kill(dead: &mut Vec<u64>, id: u32) -> bool {
 /// first derived from, as they were pushed in earlier waves; `lbase` is above every kept row's level in the
 /// component, so a maintained run's new rows are above the rows they read.
 pub struct Rel { table: String, types: Vec<u8>, pub k: usize, pub n: usize, data: Rows, stored: usize, lo: usize, hi: usize,
-             wave: u32, idx: Vec<Index>, serves: Vec<Vec<Vec<usize>>>, indexed: usize, pending: HashTable<u32>, sketches: Vec<Sketch>,
+             wave: u32, idx: Vec<Index>, serves: Vec<Vec<Vec<usize>>>, indexed: usize, pending: keys::RowSet, sketches: Vec<Sketch>,
              dead: Vec<u64>, ndead: usize, summaries: scalars::Pool,
              /// Its row ranges known to be in an order already (decision 0180), recorded as its waves write them.
              sorted: runs::Sorted,
@@ -504,7 +504,7 @@ impl Rel {
         let k = types.len();
         assert!(k <= MAX_KEY, "{table}: {k} columns, past the {MAX_KEY} an order is probed with");
         Rel { table: table.to_string(), types: types.to_vec(), k, n: 0, data: Rows::new(k), stored: 0, lo: 0, hi: 0, wave: 0,
-              idx: vec![Index::new((0..k).collect())], serves: vec![Vec::new()], indexed: 0, pending: HashTable::new(),
+              idx: vec![Index::new((0..k).collect())], serves: vec![Vec::new()], indexed: 0, pending: keys::RowSet::default(),
               sketches: vec![Sketch::default(); k], dead: Vec::new(), ndead: 0, summaries: Default::default(), sorted: Default::default(), from: None,
               level: Vec::new(), lbase: 0, leveled: true, stats: None, stats_dead: Vec::new(), lat: None }
     }
@@ -532,6 +532,10 @@ impl Rel {
     /// 3): the tail, and the place in it of the first. `push_fresh` then claims them (`Placed::Tail`).
     pub fn tail_room(&self, n: usize) -> Option<crate::code_rule_dsl::facts::rows::Lent> {
         self.data.tail_room(n)
+    }
+    /// `tail_room`, when its tail's block has no room: the tail moved into a relation with room (`Rows::tail_moved`).
+    pub fn tail_moved(&self, n: usize) -> Option<crate::code_rule_dsl::facts::rows::Lent> {
+        self.data.tail_moved(n)
     }
     /// Whether it folds rows into a lattice (decision 0124) rather than adding them.
     pub fn folds(&self) -> bool {
@@ -664,7 +668,7 @@ impl Rel {
         let level = if old.has_levels() { old.level.clone() } else { Vec::new() };
         let from = Some(Origin::Based { at: old as *const InRel as usize, n: old.n });
         Some(Rel { table: table.to_string(), types: types.to_vec(), k, n: old.n, data: old.rows.shared(old.n), stored: 0, lo: 0, hi: 0, wave: 0, idx, serves,
-                   indexed: old.n, pending: HashTable::new(), sketches, dead, ndead, summaries: Default::default(), sorted: old.sorted.clone(), from, level,
+                   indexed: old.n, pending: keys::RowSet::default(), sketches, dead, ndead, summaries: Default::default(), sorted: old.sorted.clone(), from, level,
                    lbase: 0, leveled: true, stats: old.stats.clone(), stats_dead: old.dead.clone(), lat: None })
     }
     /// `based`'s relation, made from `old`'s rows less those of `gone` rather than in place (compacted).
@@ -702,7 +706,7 @@ impl Rel {
     /// A live row equal to `row`, not one of `skip`: in the first order, or pushed since the last wave (`pending`).
     fn find(&self, row: &[i64], skip: impl Fn(u32) -> bool) -> Option<u32> {
         let (data, k) = (&self.data, self.k);
-        if let Some(&id) = self.pending.find(hash_vals(row.iter().copied()), |&id| !skip(id) && data.row(id, k) == row) {
+        if let Some(id) = self.pending.find(data, k, row, &skip) {
             return Some(id);
         }
         find_row(&self.idx, data, k, row, skip)
@@ -755,8 +759,7 @@ impl Rel {
         }
         let k = self.k;
         self.data.reserve(n * k);
-        let data = &self.data;
-        self.pending.reserve(n, |&i| hash_vals(data.row(i, k).iter().copied()));
+        self.pending.reserve(&self.data, k, n);
     }
     /// A row of the device's fixpoint (decision 0311): pushed, or folded into its lattice, a new row's level
     /// `lbase + round + 1`, as the CPU's `lbase + wave + 1` (its seeds' wave is 1, the device's first round).
@@ -780,8 +783,7 @@ impl Rel {
             self.level.push(self.lbase + self.wave + 1);
         }
         self.n += 1;
-        let data = &self.data;
-        self.pending.insert_unique(hash_vals(row.iter().copied()), id, |&i| hash_vals(data.row(i, k).iter().copied()));
+        self.pending.insert(&self.data, k, id);
         true
     }
     /// A wave's derived rows added as the next wave's, each once, unless held: checked as one sorted batch
@@ -854,9 +856,9 @@ impl Rel {
                 }
             }
             if pend {
-                let data = &self.data;
+                self.pending.reserve(&self.data, k, self.n - from);
                 for id in from..self.n {
-                    self.pending.insert_unique(hash_vals(data.row(id as u32, k).iter().copied()), id as u32, |&i| hash_vals(data.row(i, k).iter().copied()));
+                    self.pending.insert(&self.data, k, id as u32);
                 }
             }
             return self.n > from;
@@ -881,9 +883,9 @@ impl Rel {
             self.n += 1;
         }
         if pend {
-            let data = &self.data;
+            self.pending.reserve(&self.data, k, self.n - from);
             for id in from..self.n {
-                self.pending.insert_unique(hash_vals(data.row(id as u32, k).iter().copied()), id as u32, |&i| hash_vals(data.row(i, k).iter().copied()));
+                self.pending.insert(&self.data, k, id as u32);
             }
         }
         true
@@ -911,7 +913,7 @@ impl Rel {
             count(&mut self.stats);
         }
         self.indexed = self.n;
-        self.pending = HashTable::new();
+        self.pending = keys::RowSet::default();
     }
     /// The rows dead now and not when the statistics last counted them out taken out of them, and those revived
     /// (a level's rows dead while checked, `Levels`) put back: a word of the dead marks at a time, so a relation with
