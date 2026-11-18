@@ -86,7 +86,7 @@ pub(super) fn foldable_of(v: &std::sync::Arc<Version>) -> Result<BTreeSet<String
     };
     let fact = |rel: &str| !heads.contains_key(rel) && v.find(rel).is_some_and(|a| v.facts(a).is_some()) && !inputs.contains(rel);
     let mut fold = fixpoint(&|rel| !heads.contains_key(rel) && (option_input(rel) || world(rel) || fact(rel)), true);
-    // Only those that read the world: the split's constants (`file_local::constant_relations`: facts, the run's
+    // Only those that read the world: the split's constants (`file_local::FileLocal::constants`: facts, the run's
     // options and phases' exports, no request) are derived in both parts already.
     let constant = fixpoint(&|rel| option_input(rel) || (super::phases::is_phased(rel) && inputs.contains(rel)) || fact(rel), false);
     fold.retain(|r| !constant.contains(r));
@@ -126,7 +126,7 @@ fn copy(rel: &str) -> String {
 pub(super) fn fold(
     v: &mut std::sync::Arc<Version>,
     programs: &[&str],
-    read: Option<&Program>,
+    read: Option<&std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>,
     added: &super::added::Added,
     root: &Path,
     scratch: &Path,
@@ -202,7 +202,7 @@ type Derived = (Vec<u8>, Vec<(String, String, String)>);
 #[allow(clippy::too_many_arguments)]
 fn derive(
     programs: &[&str],
-    read: Option<&Program>,
+    read: Option<&std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>,
     root: &Path,
     scratch: &Path,
     modes: &str,

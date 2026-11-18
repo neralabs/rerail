@@ -1,7 +1,6 @@
-//! `file_local::push_local_joins` on the version (0281's path, step 5): the tree pass one for one, reading the split
-//! from the version (`FileLocal`). Variables are read by name, as the tree reads them, so each component, interface
-//! and helper name (`fl<h>_<head>`, from its content: `helper_name`) is the tree's; each round's program is a
-//! version of its own, split again to check the helpers stay file-local.
+//! `PushLocalJoins` (0281's path, step 5), reading the split from the version (`FileLocal`). Variables are read by
+//! name, so each component, interface and helper name (`fl<h>_<head>`, from its content: `helper_name`) is fixed by
+//! the program; each round's program is a version of its own, split again to check the helpers stay file-local.
 
 use super::super::{FileLocal, close_under, push_equal_columns, var_equalities_in};
 use super::{BodyItem, Made, NOwned, Round, lit_vars, name, term_vars, write};
@@ -11,7 +10,24 @@ use crate::code_rule_dsl::logic::program_image::{AtomRef, Builder, CmpOp, Lit as
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::sync::Arc;
 
-/// The file-local part of each cross-file rule pushed into the chunks (`push_local_joins`): the relations made.
+/// Pushes the file-local part of each cross-file rule into the chunks: the rule's positive reads of base relations
+/// and file-local relations, joined by their variables, with the comparisons over only their variables, become a
+/// file-local relation of the variables the rest of the rule uses (`fl<h>_<head>`), and the rule reads that. So do
+/// its negated reads of those relations whose variables the component binds.
+///
+/// Without this, a cross-file rule (one that negates or joins a cross-file relation) reads its base relations
+/// whole: every chunk's `within`, `node`, `child` rows are kept for the cross part, memory that grows with the
+/// corpus and with the rules run at once. With it, the chunk joins them and exports the few rows that pass.
+///
+/// A component that is one atom of only variables filters nothing and is left; so is one atom of a file-local
+/// relation alone. A made relation the split does not find file-local is undone. `made`: the relations made.
+///
+/// A component that narrows no node, only lookups of a node's attributes (`docof(n, d), doc(d, p, _), line(n, l)`,
+/// a finding's location) or relations of documents (`p9_path_module(d, m)`), is a row per node of the chunk: on 200
+/// files, 611,865 rows for each such rule, every one held by the cross part. It is pushed only when that keeps the
+/// cross part off the base relations (so the per-file memo works); when the cross part reads them anyway, it reads
+/// these lookups there too. So is a component that enumerates subtrees (`descends`): `within(n, a)` with `n`
+/// narrowed only by its attributes.
 #[derive(Default)]
 pub struct PushLocalJoins {
     pub made: Vec<String>,
@@ -32,7 +48,8 @@ fn has_var(v: &Version, rule: RuleRef<'_>, a: AtomRef<'_>, x: &str) -> bool {
     a.args().any(|t| matches!(t, TermRef::Var(s) if name(v, rule, s) == x))
 }
 
-/// `file_local::unrestricted`.
+/// Whether nothing in `atoms` narrows a node: each is a plain lookup of a node's attributes (no constant, no repeated
+/// variable) or has no node column, and some node is read.
 fn unrestricted(v: &Version, f: Fields<'_>, rule: RuleRef<'_>, atoms: &[AtomRef<'_>]) -> bool {
     let rel = |a: &AtomRef<'_>| v.rel_name(a.rel());
     atoms.iter().any(|a| matches!(rel(a), "docof" | "line" | "end_line" | "col" | "visit_index" | "node_order" | "node"))
@@ -42,7 +59,10 @@ fn unrestricted(v: &Version, f: Fields<'_>, rule: RuleRef<'_>, atoms: &[AtomRef<
         })
 }
 
-/// `file_local::descends`.
+/// Whether a component enumerates subtrees: `within(n, a)` with `n` read by no other atom of it but a node's
+/// attributes (`docof`, `visit_index`, `line`, …). Its rows are every node under each `a` it narrows, whatever reads
+/// it: `c4_shadow`'s `binding(s, x, site, _), within(n, s), earlier(site, n)` made 922,044 rows on the Python pack's
+/// fixtures for a cross-file reader that binds `n` from a few hundred asks (`c4_builtin_ask(n, x)`).
 fn descends(v: &Version, rule: RuleRef<'_>, atoms: &[AtomRef<'_>]) -> bool {
     let attribute = |rel: &str| matches!(rel, "docof" | "line" | "end_line" | "col" | "visit_index" | "node_order" | "ast_depth");
     atoms.iter().enumerate().any(|(wi, w)| {
@@ -125,7 +145,8 @@ fn node_read(v: &Version, rule: RuleRef<'_>, l: LitRef<'_>) -> Option<(String, S
     read(l, r).or_else(|| read(r, l))
 }
 
-/// `file_local::push_with` on the version: `None` where it makes nothing.
+/// A round of `PushLocalJoins`: the relations made, and the split of the program as it is left; `None` where it makes
+/// nothing.
 fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, keep_unrestricted: bool) -> Result<Option<Pushed<'v>>, String> {
     let equal_columns = push_equal_columns();
     let rules: Vec<RuleRef<'v>> = v.rules().collect();
@@ -171,7 +192,7 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                 // A node's text or value read of a node this component binds (`t = @rr_node_text(v)`, a long-text
                 // twin's, decision 0109) goes with it: only the chunk's batch holds the node's text, so the read is
                 // answered there and its value handed on. Such a component is pushed whatever else would leave it
-                // (decision 0292 §3, as the tree's `push_with`).
+                // (decision 0292 §3).
                 let node_reads: Vec<String> = body.iter().filter_map(|l| node_read(v, rule, *l)).filter(|(_, n)| vars.contains(n)).map(|(x, _)| x).collect();
                 vars.extend(node_reads.iter().cloned());
                 let must = !node_reads.is_empty();
@@ -314,7 +335,7 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
     }
 }
 
-/// `file_local::cross_reads_base`: whether a rule outside the chunks (`local`) reads a base relation.
+/// Whether a rule outside the chunks (`local`) reads a base relation.
 fn cross_reads_base(v: &Version, inputs: &BTreeSet<&str>, local: &BTreeSet<String>) -> bool {
     v.rules().filter(|r| !local.contains(v.rel_name(r.head().rel()))).any(|r| r.body().any(|l| l.atom().is_some_and(|a| inputs.contains(v.rel_name(a.rel())))))
 }

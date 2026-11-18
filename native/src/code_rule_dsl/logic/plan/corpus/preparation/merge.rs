@@ -940,31 +940,37 @@ fn refine<'v>(v: &'v Version, f: Fields<'v>, abstract_constants: bool) -> Refine
 #[cfg(test)]
 mod tests {
     use crate::code_rule_dsl::logic::program_image::manager::Pipeline;
-    use crate::code_rule_dsl::logic::program_image::Builder;
+    use crate::code_rule_dsl::logic::program_image::{Builder, T, Version};
+    use std::sync::Arc;
 
-    /// The merges on the version are the tree's (`corpus::merge_and_drop_repeats`): two programs' copies of a relation
-    /// go to the shared namespace (`s_q`) and their readers read it; an output merged keeps its name as a copy of its
-    /// class; relations of equal facts merge; a repeated rule is dropped. The same program, the same counts.
+    fn read(text: &str) -> Arc<Version> {
+        crate::code_rule_dsl::logic::rr::parse_version(text).unwrap()
+    }
+
+    fn heads(v: &Version) -> Vec<String> {
+        v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect()
+    }
+
+    /// Two programs' copies of a relation go to the shared namespace (`s_q`) and their readers read it; an output
+    /// merged keeps its name as a copy of its class; relations of equal facts merge; a repeated rule is dropped
+    /// (`DropRepeated` around `MergeIdentical`, as the preparation runs them).
     #[test]
-    fn the_merges_on_a_version_are_the_trees() {
+    fn the_merges_on_a_version() {
         let text = ".decl e(x: number, y: number)\n.input e\n\
                     .decl p0_q(x: number)\n.decl p1_q(x: number)\np0_q(x) :- e(x, _).\np1_q(x) :- e(x, _).\np1_q(x) :- e(x, _).\n\
                     .decl p0_r(x: number)\n.decl p1_r(x: number)\np0_r(x) :- p0_q(x), e(_, x).\np1_r(x) :- p1_q(x), e(_, x).\n\
                     .decl f1(k: symbol)\n.decl f2(k: symbol)\nf1(\"a\").\nf2(\"a\").\n\
                     .decl uses(x: number, k: symbol)\nuses(x, k) :- p0_r(x), f1(k).\nuses(x, k) :- p1_r(x), f2(k).\n\
                     .output uses, p0_r\n";
-        let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
-        let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
-        let mut p = Pipeline::new("test", v);
+        let mut p = Pipeline::new("test", read(text));
         let (mut merge, mut repeats) = (super::MergeIdentical::default(), super::DropRepeated::default());
         p.program(&mut repeats).program(&mut merge).program(&mut repeats);
         let (out, _) = p.finish().unwrap();
-        let (m, s, r) = crate::code_rule_dsl::logic::plan::corpus::merge_and_drop_repeats(&mut tree);
-        assert!(m > 0 && s > 0 && r > 0, "the program merges, shares and repeats: {m} {s} {r}");
-        assert_eq!((merge.merged, merge.shared, repeats.0), (m, s, r));
-        let (want, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
-        assert_eq!((out.size(), out.digest()), (want.size(), want.digest()), "{}\n---\n{}", out.show(), want.show());
-        assert!(out.rules().any(|r| out.rel_name(r.head().rel()) == "s_q"), "{}", out.show());
+        assert!(merge.merged > 0 && merge.shared > 0 && repeats.0 > 0, "the program merges, shares and repeats: {} {} {}", merge.merged, merge.shared, repeats.0);
+        let heads = heads(&out);
+        assert!(heads.iter().any(|h| h == "s_q"), "{}", out.show());
+        assert!(heads.iter().any(|h| h == "p0_r"), "the output keeps its name:\n{}", out.show());
+        assert_eq!(heads.iter().filter(|h| *h == "uses").count(), 1, "uses' two rules are one once their reads merge:\n{}", out.show());
     }
 
     /// A request relation's repeated rule dropped: the rule kept serves both copies' readers, stated by rule as the
@@ -990,88 +996,69 @@ mod tests {
     }
 
     /// A library's facts may go undeclared (`param_slot("datetime.datetime", "tzinfo", 7).`): such relations merge by
-    /// their facts as the tree's do, and the merge does not ask for a declaration they lack.
+    /// their facts, and the merge does not ask for a declaration they lack.
     #[test]
-    fn undeclared_fact_relations_merge_as_the_trees() {
+    fn undeclared_fact_relations_merge() {
         let text = ".decl e(x: number)\n.input e\nf1(\"a\", 1).\nf2(\"a\", 1).\n\
                     .decl uses(x: number, k: symbol)\nuses(x, k) :- e(x), f1(k, _).\nuses(x, k) :- e(x), f2(k, _).\n\
                     .output uses\n";
-        let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
-        let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
-        let mut p = Pipeline::new("test", v);
+        let mut p = Pipeline::new("test", read(text));
         let mut merge = super::MergeIdentical::default();
         p.program(&mut merge);
         p.finish().unwrap();
-        let (m, _, _) = crate::code_rule_dsl::logic::plan::corpus::merge_and_drop_repeats(&mut tree);
-        assert_eq!(merge.merged, m);
+        assert_eq!(merge.merged, 1);
     }
 
     /// A request and its widened copy left with the request's own rules merge into the request (decision 0174's copy,
-    /// Q3): the request's rules serve the copy's readers too (decision 0331), and the version is the tree's. Another
-    /// relation equal to the request stays apart.
+    /// Q3): the request's rules serve the copy's readers too (decision 0331). Another relation equal to the request
+    /// stays apart.
     #[test]
     fn a_request_merges_with_its_own_copy_only() {
         let text = ".decl k(x: number)\n.input k\n.decl rr_token_req(x: number)\n.decl rr_wide_node_text_rr_token_req(x: number)\n\
                     .decl other(x: number)\n.decl a(x: number)\n.decl b(x: number)\n\
                     rr_token_req(x) :- k(x), x < 3.\nrr_wide_node_text_rr_token_req(x) :- k(x), x < 3.\nother(x) :- k(x), x < 3.\n\
                     a(x) :- rr_token_req(x).\nb(x) :- rr_wide_node_text_rr_token_req(x), other(x).\n.output a, b\n";
-        let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
         let by = |r: &[&str]| r.iter().map(|s| (*s).to_owned()).collect::<std::collections::BTreeSet<String>>();
-        tree.asked_by.insert("rr_token_req".into(), vec![by(&["a"])]);
-        tree.asked_by.insert("rr_wide_node_text_rr_token_req".into(), vec![by(&["b"])]);
-        let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+        let read = read(text);
+        let mut b = Builder::on(&read);
+        let asked = std::collections::BTreeMap::from([("rr_token_req".to_owned(), vec![by(&["a"])]), ("rr_wide_node_text_rr_token_req".to_owned(), vec![by(&["b"])])]);
+        b.set_asked(&asked);
+        let (v, _) = b.finish().unwrap();
         let mut p = Pipeline::new("test", v);
         let mut merge = super::MergeIdentical::default();
         p.program(&mut merge);
         let (out, _) = p.finish().unwrap();
-        let (m, _) = crate::code_rule_dsl::logic::simplify::merge_identical(&mut tree);
-        assert_eq!(m, 1, "the copy merges into the request, `other` stays apart");
-        assert!(tree.rules.iter().any(|r| r.head.rel == "other"));
-        assert_eq!(tree.asked_by.get("rr_token_req"), Some(&vec![by(&["a", "b"])]));
-        assert!(!tree.asked_by.contains_key("rr_wide_node_text_rr_token_req"));
-        assert_eq!(merge.merged, m);
-        let (want, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
-        assert_eq!(out.asked(), want.asked());
-        assert_eq!((out.size(), out.digest()), (want.size(), want.digest()), "{}\n---\n{}", out.show(), want.show());
+        assert_eq!(merge.merged, 1, "the copy merges into the request, `other` stays apart");
+        assert!(heads(&out).iter().any(|h| h == "other"), "{}", out.show());
+        assert_eq!(out.asked(), std::collections::BTreeMap::from([("rr_token_req".to_owned(), vec![by(&["a", "b"])])]));
     }
 
     /// A rule's branded atoms (decision 0270, a lowered program's names) compare as `canonical` writes them, the atom
     /// itself: `a1` and `a2` read the same branded atom and merge, `b` reads another and stays apart, though the three
-    /// rules differ in nothing else. The same program, the same counts as the tree's.
+    /// rules differ in nothing else.
     #[test]
     fn rules_merge_only_on_the_same_branded_atom() {
-        use crate::code_rule_dsl::logic::front::{Branded, Literal, Term};
-        let text = ".decl e(x: number, k: symbol)\n.input e\n\
-                    .decl a1(x: number)\n.decl a2(x: number)\n.decl b(x: number)\n\
-                    a1(x) :- e(x, \"p\").\na2(x) :- e(x, \"p\").\nb(x) :- e(x, \"q\").\n\
-                    .decl uses(x: number)\nuses(x) :- a1(x), a2(x), b(x).\n.output uses\n";
-        let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
-        // As lowering brands them: each string constant the name atom it became.
-        let brand = |t: &mut Term| {
-            if let Term::Str(s) = t {
-                *t = Term::Branded(Branded::name(if s.as_str() == "p" { 1 } else { 2 }));
-            }
-        };
-        for r in &mut tree.rules {
-            for l in &mut r.body {
-                if let Literal::Atom(a) = l {
-                    a.args.iter_mut().for_each(brand);
-                }
-            }
+        use crate::code_rule_dsl::logic::front::Branded;
+        let mut b = Builder::base();
+        b.declare("e", &[("x", "number"), ("k", "symbol")]);
+        for rel in ["a1", "a2", "b", "uses"] {
+            b.declare(rel, &[("x", "number")]);
         }
-        let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+        b.set_inputs(&["e"]);
+        b.set_outputs(&["uses"]);
+        for (rel, atom) in [("a1", 1), ("a2", 1), ("b", 2)] {
+            b.rule().head(rel, &[T::Var("x")]).atom("e", &[T::Var("x"), T::Branded(Branded::name(atom))]).finish().unwrap();
+        }
+        b.rule().head("uses", &[T::Var("x")]).atom("a1", &[T::Var("x")]).atom("a2", &[T::Var("x")]).atom("b", &[T::Var("x")]).finish().unwrap();
+        let (v, _) = b.finish().unwrap();
         assert!(v.show().matches("e($x, ").count() == 3 && !v.show().contains("\"p\""), "branded: {}", v.show());
         let mut p = Pipeline::new("test", v);
         let mut merge = super::MergeIdentical::default();
         p.program(&mut merge);
         let (out, _) = p.finish().unwrap();
-        let (m, s, _) = crate::code_rule_dsl::logic::plan::corpus::merge_and_drop_repeats(&mut tree);
-        assert_eq!((merge.merged, merge.shared), (m, s));
-        assert_eq!(m, 1, "a1 and a2 alone: {}", out.show());
-        let heads: std::collections::BTreeSet<&str> = out.rules().map(|r| out.rel_name(r.head().rel())).collect();
-        assert!(heads.contains("b") && !(heads.contains("a1") && heads.contains("a2")), "{}", out.show());
-        let (want, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
-        assert_eq!((out.size(), out.digest()), (want.size(), want.digest()), "{}\n---\n{}", out.show(), want.show());
+        assert_eq!(merge.merged, 1, "a1 and a2 alone: {}", out.show());
+        let heads = heads(&out);
+        assert!(heads.iter().any(|h| h == "b") && !(heads.iter().any(|h| h == "a1") && heads.iter().any(|h| h == "a2")), "{}", out.show());
     }
 }
 

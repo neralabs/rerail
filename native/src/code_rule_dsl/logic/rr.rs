@@ -135,7 +135,7 @@ pub use translate::translate;
 pub fn core_names() -> &'static std::collections::BTreeSet<String> {
     static CORE: std::sync::OnceLock<std::collections::BTreeSet<String>> = std::sync::OnceLock::new();
     CORE.get_or_init(|| {
-        std::fs::read_to_string(library().join("core.rr")).ok().and_then(|src| parse(&src).ok()).map(|p| p.decls.into_keys().map(String::from).collect()).unwrap_or_default()
+        std::fs::read_to_string(library().join("core.rr")).ok().and_then(|src| parse_version(&src).ok()).map(|v| v.declared_names().into_iter().collect()).unwrap_or_default()
     })
 }
 
@@ -168,6 +168,16 @@ pub fn parse(src: &str) -> Result<Program, Error> {
 /// rules are lowered against the library's names; the library's rules are the run's, lowered once.
 pub fn parse_own(src: &str) -> Result<Program, Error> {
     parse_with(src, false)
+}
+
+/// `parse`'s program as a version, nothing decoded.
+pub fn parse_version(src: &str) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
+    read_text(src)?.lower_version(true)
+}
+
+/// `parse_own`'s program as a version, nothing decoded.
+pub fn parse_own_version(src: &str) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
+    read_text(src)?.lower_version(false)
 }
 
 // A run handed a program it read is handed the program itself (`corpus::run_read`), not its print to lower again.
@@ -257,16 +267,16 @@ impl Text {
     /// directives, its findings' declarations), for what a batch reads of a policy before its run (decision 0168):
     /// its settings, `.policy`, `.language` and outputs, as its whole program has them, less `.global library` (which
     /// `read_file` writes) and the settings a clause makes. Lowering only that is a fraction of lowering its rules.
-    pub fn header(self) -> Result<Program, Error> {
+    pub fn header(self) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
         let header = |statements: Vec<syntax::Statement>| -> Vec<syntax::Statement> {
             statements.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Clause { .. } | syntax::Item::Include(_))).collect()
         };
         match self.0 {
-            Read::Plain(statements) => lower::lower(header(statements)),
+            Read::Plain(statements) => lower_statements_version(header(statements)),
             Read::Modular { files, own } => {
                 let mut statements: Vec<syntax::Statement> = files.iter().flat_map(|(_, _, s)| s.iter().filter(|(item, _)| !matches!(item, syntax::Item::Clause { .. } | syntax::Item::Include(_))).cloned()).collect();
                 statements.extend(header(own));
-                lower::lower(statements)
+                lower_statements_version(statements)
             }
         }
     }
@@ -305,8 +315,8 @@ impl Text {
         closed_program(&files, &own)?;
         let own: Vec<syntax::Statement> = own.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_))).collect();
         // Its rules written as a version in the walk (decision 0377 step 3).
-        let mut linked = lower::link_seeded_parts(lower::lower_module_seeded_written(own, &scoped.seeds)?, &scoped.seeds)?;
-        let written = own_version(&linked.own, linked.version.take())?;
+        let linked = lower::link_seeded_parts(lower::lower_module_seeded_written(own, &scoped.seeds)?, &scoped.seeds)?;
+        let written = std::sync::Arc::clone(&linked.own);
         let version = link_seeded_version(linked, written, scoped, core_names())?;
         // A text that adds to library relations asks of the library (decision 0089 §3): its request's cone, the library
         // relations that read what it adds, and the helpers they read, are copied from the linked library, made once
@@ -319,16 +329,13 @@ impl Text {
         Ok(Some(Own { version, asked, declared }))
     }
 
-    /// The text's own program as its walk writes it (`lower::lower_module_seeded_written`) and as the tree's rules
-    /// encode, and whether the linked module held its header alone: a test's view of decision 0377 step 3.
+    /// The text's own program as its walk writes it (`lower::lower_module_seeded_written`) and its link leaves it: a
+    /// test's view of decision 0377 step 3.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub fn own_written_and_tree(self, scoped: &Scoped) -> Result<(bool, std::sync::Arc<super::program_image::Version>, std::sync::Arc<super::program_image::Version>), Error> {
+    pub fn own_written(self, scoped: &Scoped) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
         let Read::Modular { own, .. } = self.0 else { return Err(Error::Syntax("not a modular text".to_owned())) };
         let own: Vec<syntax::Statement> = own.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_))).collect();
-        let tree = lower::link_seeded_parts(lower::lower_module_seeded(own.clone(), &scoped.seeds)?, &scoped.seeds)?;
-        let mut w = lower::link_seeded_parts(lower::lower_module_seeded_written(own, &scoped.seeds)?, &scoped.seeds)?;
-        let header_alone = w.own.rules.is_empty() && w.version.is_some();
-        Ok((header_alone, own_version(&w.own, w.version.take())?, version_of(&tree.own)?))
+        Ok(lower::link_seeded_parts(lower::lower_module_seeded_written(own, &scoped.seeds)?, &scoped.seeds)?.own)
     }
 
     /// `lower_in` as a version: the stored image handed on unread (decision 0281's path, step 7a-2); else the text
@@ -368,10 +375,15 @@ impl Text {
         Ok(Some(version))
     }
 
-    /// The text's program, as `parse` (`clauses`) or `parse_own` reads it.
+    /// The text's program, as `parse` (`clauses`) or `parse_own` reads it: its version (`lower_version`), decoded.
     pub fn lower(self, clauses: bool) -> Result<Program, Error> {
+        self.lower_version(clauses)?.program(&Default::default()).map_err(Error::Syntax)
+    }
+
+    /// The text's program as a version, as `parse_version` (`clauses`) or `parse_own_version` reads it.
+    pub fn lower_version(self, clauses: bool) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
         let (files, own) = match self.0 {
-            Read::Plain(statements) => return lower::lower(statements),
+            Read::Plain(statements) => return lower_statements_version(statements),
             Read::Modular { files, own } => (files, own),
         };
         // The text's own rules and declarations; its facts may be the runner's (`env`, decision 0089 §1).
@@ -401,7 +413,7 @@ impl Text {
         };
         let mut statements: Vec<syntax::Statement> = files.iter().flat_map(|(_, _, statements)| statements.iter().filter(|(item, _)| kept(item)).cloned()).collect();
         statements.extend(own);
-        lower::lower(statements)
+        lower_statements_version(statements)
     }
 }
 
@@ -460,7 +472,7 @@ impl Scoped {
         if let Some(v) = self.version.get() {
             return Ok(std::sync::Arc::clone(v));
         }
-        let v = version_of(self.seeds.program())?;
+        let v = self.seeds.version()?;
         Ok(std::sync::Arc::clone(self.version.get_or_init(|| v)))
     }
 
@@ -525,7 +537,7 @@ pub fn lower_library(paths: &[PathBuf], store: Option<&crate::content_store::Con
     }
     check_names(&files, false)?;
     let library = if std::env::var("RERAIL_LIBRARY_LOWERING").is_ok_and(|v| v == "whole") {
-        let program = lower::lower(files.into_iter().flat_map(|(_, statements): (PathBuf, Vec<syntax::Statement>)| statements).collect())?;
+        let program = lower_statements(files.into_iter().flat_map(|(_, statements): (PathBuf, Vec<syntax::Statement>)| statements).collect())?;
         let version = version_of(&program)?;
         Library::of(Vec::new(), Vec::new(), Vec::new(), version, Some(program))
     } else {
@@ -569,7 +581,7 @@ pub fn lower_library(paths: &[PathBuf], store: Option<&crate::content_store::Con
 /// other file's scope, as `parse` reads a file with it first. `RERAIL_LIBRARY_LOWERING=whole` lowers them as one, as
 /// before, to compare.
 pub fn lower_modules(paths: &[PathBuf], files: Vec<(PathBuf, Vec<syntax::Statement>)>) -> Result<Program, Error> {
-    lower::link(library_modules(paths, files)?)
+    link_modules(library_modules(paths, files)?)
 }
 
 /// The library files' modules (`lower_modules`), includes first, each lowered against the modules it reaches.
@@ -735,7 +747,7 @@ pub(in crate::code_rule_dsl) fn image_store() -> Option<std::sync::Arc<crate::co
 
 /// How long a module's or program's image stays in the store after the last run that read or wrote it
 /// (`keep_image`): collection keeps a source while a pin's lease runs, as it keeps the combined program's entry before
-/// a run names it (`combined::record`). Naming the images in the run's record is decision 0246 §6's.
+/// a run names it (`combined::record_version`). Naming the images in the run's record is decision 0246 §6's.
 const IMAGE_LEASE_SECS: i64 = 7 * 24 * 3600;
 
 /// The owner of the images' pins.
@@ -999,35 +1011,35 @@ pub fn with_cone(program: &mut Program, library: &Program, asked: &BTreeSet<Stri
     }
 }
 
-/// A lowered program's image (decision 0173): its rules, declarations, facts and `.about` rows.
-/// `program` as a version, opened from the image the store keeps of it (`encode_program`).
-/// `lower::link_seeded` as a version (decision 0281's path, step 7b): the module's program appended onto the scope's
-/// version (made once, `Scoped`), then its three-valued relations, findings, core.rr's declarations, its span patterns, grammar names, `builtins_out`, `kind_sets`,
-/// `unit`, `whole_back`,
-/// `front::finish` and `whole()`'s tail (`lower::link_seeded_front`), the tail run on it as program passes (`preparation::lowering_tail` and
-/// `DropRepeated`: aggregate demand, `unit`, the sets, then the widened contexts), then the
-/// scope's declarations taken out of its header (`lower::unseed`).
-/// A module's own program as a version: the one its walk wrote, as the link left it (`version`), or `own` encoded.
-fn own_version(own: &Program, version: Option<std::sync::Arc<super::program_image::Version>>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
-    match version {
-        Some(v) => Ok(v),
-        None => version_of(own),
-    }
-}
-
-/// The module linked in `scoped` (`lower::link_seeded_parts`), its own program `own_v` (`own_version`), appended onto
+/// The module linked in `scoped` (`lower::link_seeded_parts`), its own program `own_v`, appended onto
 /// the scope's version and through the lowering's tail.
 fn link_seeded_version(linked: lower::Linked, own_v: std::sync::Arc<super::program_image::Version>, scoped: &Scoped, core: &BTreeSet<String>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     use super::program_image::Builder;
     let seeds = &scoped.seeds;
-    let lower::Linked { lowered, own, stated, own_stated, .. } = linked;
-    drop(own);
+    let lower::Linked { lowered, stated, own_stated, .. } = linked;
     let v = lowering_tail_on(scoped.version()?, vec![(own_v, stated, own_stated)], true, lowered)?;
     let mut b = Builder::on(&v);
     lower::unseed(&mut b, seeds, core);
     b.finish().map(|(v, _)| v).map_err(Error::Syntax)
 }
 
+
+/// `statements` lowered as one module, its rules written in the walk, and linked alone on versions
+/// (`link_library_versions`): the program the tree's `lower::lower` made. Decoded for the callers that read a tree,
+/// until they read the version (decision 0276 step 6).
+fn lower_statements(statements: Vec<syntax::Statement>) -> Result<Program, Error> {
+    lower_statements_version(statements)?.program(&Default::default()).map_err(Error::Syntax)
+}
+
+/// `lower_statements`' version.
+pub fn lower_statements_version(statements: Vec<syntax::Statement>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
+    link_library_versions(vec![lower::lower_module_in_written(statements, &[])?])
+}
+
+/// `modules` linked on versions (`link_library_versions`), decoded for a caller that reads a tree (0276 step 6).
+fn link_modules(modules: Vec<lower::Module>) -> Result<Program, Error> {
+    link_library_versions(modules)?.program(&Default::default()).map_err(Error::Syntax)
+}
 
 /// A library's modules linked on versions (decision 0377): `lower::link_versions`, then the lowering's tail
 /// (`lowering_tail_on`), folded to a base. The program `lower::link` makes of them as a tree, as a version.
@@ -1062,9 +1074,8 @@ fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, append
             p.program(&mut SourcesOnRequest { round });
         }
         p.program(&mut lowering_tail::OrderNodes).program(&mut lowering_tail::DeclareAxes);
-        // `finish`'s checks, through the tree (work queue Q83): `cycles::check` reads a tree.
-        let finished = p.current().map_err(Error::Syntax)?.program(&Default::default()).map_err(Error::Syntax)?;
-        super::front::finish_checks(&finished)?;
+        // `finish`'s checks, on the version.
+        super::front::finish_checks_on(p.current().map_err(Error::Syntax)?)?;
     }
     {
         use super::plan::corpus::preparation::{DropRepeated, lowering_tail};
@@ -1083,11 +1094,13 @@ fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, append
     Ok(v)
 }
 
+/// `program` as a version, opened from the image the store keeps of it (`encode_program`).
 fn version_of(program: &Program) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     let bytes = encode_program(program).map_err(Error::Syntax)?;
     super::program_image::Version::open(&bytes).map_err(Error::Syntax)
 }
 
+/// A lowered program's image (decision 0173): its rules, declarations, facts and `.about` rows.
 fn encode_program(program: &Program) -> Result<Vec<u8>, String> {
     let mut b = super::program_image::Builder::of_program(program)?;
     b.set_about(&super::program_image::about_of(program));
@@ -1207,11 +1220,9 @@ impl TextRead {
 impl TextNames {
     /// A program already read: the relations it declares and the phase it names, and the engine's library programs
     /// (it includes nothing of its own: its libraries are in it), as a print of it reads (decision 0249).
-    pub fn of_program(prog: &Program) -> TextNames {
-        let mut names: Vec<String> = prog.decls.keys().map(|n| n.to_string()).collect();
-        names.sort();
-        names.dedup();
-        let phase = prog.settings.iter().find(|(k, _)| k == "phase").map(|(_, v)| v.trim().to_owned());
+    pub fn of_program(prog: &(impl super::program_image::fields::ProgramFields + ?Sized)) -> TextNames {
+        let names = prog.declared_names();
+        let phase = prog.setting_values("phase").into_iter().next();
         let included = ENGINE_FILES.iter().filter_map(|f| library().join(f).canonicalize().ok()).collect();
         TextNames { included, names, phase }
     }
@@ -1411,10 +1422,11 @@ pub(in crate::code_rule_dsl) fn code_body(text: &str) -> &str {
 }
 
 /// The compiler's named policy headers and settings, without reparsing rule source in a host adapter.
-pub fn metadata(program: &Program) -> Result<serde_json::Value, Error> {
+pub fn metadata(program: &(impl super::program_image::fields::ProgramFields + ?Sized)) -> Result<serde_json::Value, Error> {
     use syntax::Tok;
-    let mut policies = program.policies.clone();
-    for (_, text) in program.settings.iter().filter(|(key, _)| key == "policy") {
+    let mut policies = program.policies();
+    let settings = program.settings();
+    for (_, text) in settings.iter().filter(|(key, _)| key == "policy") {
         let tokens = syntax::tokens(text)?;
         let Some((Tok::Str(id), _, _)) = tokens.first() else {
             return Err(Error::Syntax("policy metadata requires a quoted identifier".to_owned()));
@@ -1425,7 +1437,7 @@ pub fn metadata(program: &Program) -> Result<serde_json::Value, Error> {
         });
         policies.push(serde_json::json!({"id": id, "revision": revision}));
     }
-    Ok(serde_json::json!({"policies": policies, "settings": program.settings}))
+    Ok(serde_json::json!({"policies": policies, "settings": settings}))
 }
 
 /// A lowered program run over files a caller gives (a test's), not found by walking a repository: its
@@ -1444,8 +1456,13 @@ pub fn files_given(program: &mut Program) {
 }
 
 /// A program's `.rr` file, with what it includes.
-pub fn parse_file(path: &Path) -> Result<Program, Error> {
+pub fn parse_file_version(path: &Path) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     read_file(path).map(|(program, _)| program)
+}
+
+/// `parse_file_version`'s program decoded, for the tests that read a tree until they read the version (0276 step 6).
+pub fn parse_file(path: &Path) -> Result<Program, Error> {
+    parse_file_version(path)?.program(&Default::default()).map_err(Error::Syntax)
 }
 
 /// A library file a program read: decision 0044's seeded fact `library_file(path, hash)`. `sha256`
@@ -1485,10 +1502,10 @@ pub const LIBRARY_DERIVED: [&str; 3] = ["embed", "embed_value", "load"];
 /// The library's programs the engine adds to a run itself (decision 0076's import components).
 const ENGINE_FILES: [&str; 1] = ["components.rr"];
 
-pub fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
+pub fn read_file(path: &Path) -> Result<(std::sync::Arc<super::program_image::Version>, Vec<LibraryFile>), Error> {
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
-    static PROGRAMS: OnceLock<Mutex<HashMap<PathBuf, (Vec<LibraryFile>, Program)>>> = OnceLock::new();
+    static PROGRAMS: OnceLock<Mutex<HashMap<PathBuf, (Vec<LibraryFile>, std::sync::Arc<super::program_image::Version>)>>> = OnceLock::new();
     let key = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     let cache = PROGRAMS.get_or_init(Default::default);
     if let Some((files, program)) = cache.lock().expect("the program cache").get(&key)
@@ -1514,7 +1531,7 @@ pub fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
     let program = lower_files_dropping(path, statements, false)?;
     // Kept behind the run (the store's writer), with what it read: the next run's check above.
     if let Some((entry, Some(store), None)) = kept {
-        super::plan::corpus::combined::record(&store, "a rule file's program", &entry, &files, &program, &[]);
+        super::plan::corpus::combined::record_version(&store, "a rule file's program", &entry, &files, &program, &[]);
         super::plan::corpus::combined::read_before_the_run(entry);
     }
     cache.lock().expect("the program cache").insert(key, (files.clone(), program.clone()));
@@ -1525,7 +1542,7 @@ pub fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
 /// taken while every library file its includes read still reads as recorded (by `stat`, then sha). A batch reads
 /// each policy's header before its run (`tools::policy_groups`): 44 policies parsed, checked and lowered again each
 /// run, over the same libraries.
-pub fn text_header(src: &str) -> Result<Program, Error> {
+pub fn text_header(src: &str) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     use super::plan::corpus::combined;
     let (key, store, found) = kept_header(src);
     if let Some((program, files)) = found {
@@ -1541,7 +1558,7 @@ pub fn text_header(src: &str) -> Result<Program, Error> {
     };
     let program = text.header()?;
     if let Some(store) = store {
-        combined::record(&store, "a text's header", &key, &read, &program, &[]);
+        combined::record_version(&store, "a text's header", &key, &read, &program, &[]);
         combined::read_before_the_run(key);
     }
     Ok(program)
@@ -1550,7 +1567,7 @@ pub fn text_header(src: &str) -> Result<Program, Error> {
 /// The entry of text `src`'s header: its key, the store it is kept in, and the header with its read record when the
 /// store keeps one that still holds.
 #[allow(clippy::type_complexity)]
-fn kept_header(src: &str) -> ([u8; 32], Option<std::sync::Arc<crate::content_store::ContentStore>>, Option<(Program, Vec<LibraryFile>)>) {
+fn kept_header(src: &str) -> ([u8; 32], Option<std::sync::Arc<crate::content_store::ContentStore>>, Option<(std::sync::Arc<super::program_image::Version>, Vec<LibraryFile>)>) {
     use super::plan::corpus::{combined, phases};
     let key = combined::text_header_key(src);
     let store = (cfg!(feature = "tape-cache") && !super::plan::corpus::phase0::active()).then(phases::reading_store).flatten();
@@ -1564,14 +1581,14 @@ fn kept_header(src: &str) -> ([u8; 32], Option<std::sync::Arc<crate::content_sto
 
 /// The header the store keeps for text `src`, when it still holds (`kept_header`): for the tests of decision 0275.
 #[cfg(any(test, feature = "test-hooks"))]
-pub fn kept_header_found(src: &str) -> Option<Program> {
+pub fn kept_header_found(src: &str) -> Option<std::sync::Arc<super::program_image::Version>> {
     kept_header(src).2.map(|(program, _)| program)
 }
 
 /// The program and read record the store keeps for the rule file at `path` (canonical), when they still hold
 /// (`kept_program`): for the tests of decision 0275.
 #[cfg(any(test, feature = "test-hooks"))]
-pub fn kept_program_found(path: &Path) -> Option<(Program, Vec<LibraryFile>)> {
+pub fn kept_program_found(path: &Path) -> Option<(std::sync::Arc<super::program_image::Version>, Vec<LibraryFile>)> {
     kept_program(path).and_then(|(_, _, found)| found)
 }
 
@@ -1579,7 +1596,7 @@ pub fn kept_program_found(path: &Path) -> Option<(Program, Vec<LibraryFile>)> {
 /// record when the store keeps one that still holds (`combined::lookup_read`). `None` where there is no file to key
 /// by, or the program is phase 0's own (its builtin reader).
 #[allow(clippy::type_complexity)]
-fn kept_program(path: &Path) -> Option<([u8; 32], Option<std::sync::Arc<crate::content_store::ContentStore>>, Option<(Program, Vec<LibraryFile>)>)> {
+fn kept_program(path: &Path) -> Option<([u8; 32], Option<std::sync::Arc<crate::content_store::ContentStore>>, Option<(std::sync::Arc<super::program_image::Version>, Vec<LibraryFile>)>)> {
     use super::plan::corpus::{combined, phases};
     if !cfg!(feature = "tape-cache") || super::plan::corpus::phase0::active() {
         return None;
@@ -1602,12 +1619,12 @@ fn kept_program(path: &Path) -> Option<([u8; 32], Option<std::sync::Arc<crate::c
 /// A file's program from its modules' statements (`program`): its names checked, its own rules grounded, and lowered,
 /// as `read_file` reads it. Testing mode (`rr::testing`, decision 0130) gives the file's statements with a test's
 /// spliced in.
-pub fn lower_files(path: &Path, statements: Files) -> Result<Program, Error> {
+pub fn lower_files(path: &Path, statements: Files) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     lower_files_dropping(path, statements, true)
 }
 
 /// `lower_files`, with the unreached clauses of included files dropped first (`drop`) or lowered too.
-pub fn lower_files_dropping(path: &Path, statements: Files, drop: bool) -> Result<Program, Error> {
+pub fn lower_files_dropping(path: &Path, statements: Files, drop: bool) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     let key = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     check_names(&statements, false)?;
     // The file's own rules grounded (`refuse_ungrounded`), its includes' `fix` relations given.
@@ -1628,11 +1645,13 @@ pub fn lower_files_dropping(path: &Path, statements: Files, drop: bool) -> Resul
         .flat_map(|(_, statements)| statements)
         .filter_map(|(item, _)| if let syntax::Item::Decl { name, .. } = item { Some(name.clone()) } else { None })
         .collect();
-    let mut program = lower::lower(statements.into_iter().flat_map(|(_, statements)| statements).collect())?;
-    if !library.is_empty() {
-        program.settings.push((super::front::GLOBAL.to_owned(), format!("{} {}", super::front::LIBRARY, library.join(", "))));
+    let program = lower_statements_version(statements.into_iter().flat_map(|(_, statements)| statements).collect())?;
+    if library.is_empty() {
+        return Ok(program);
     }
-    Ok(program)
+    let mut b = super::program_image::Builder::on(&program);
+    b.add_setting(super::front::GLOBAL, &format!("{} {}", super::front::LIBRARY, library.join(", ")));
+    b.finish().map(|(v, _)| v).map_err(Error::Syntax)
 }
 
 /// `statements` less the included files' clauses that nothing in the program reaches. Of the 44 data-layer
@@ -1911,7 +1930,7 @@ fn read_shared(path: &Path) -> Result<(std::sync::Arc<Vec<syntax::Statement>>, L
 /// `src` (a document named `name`) as a program, read off its tape as a rule file's is (`stored_statements`): a
 /// prepared program's document (decision 0074).
 pub(in crate::code_rule_dsl) fn parse_stored(name: &str, src: String) -> Result<Program, Error> {
-    lower::lower(stored_statements(Path::new(name), src)?)
+    lower_statements(stored_statements(Path::new(name), src)?)
 }
 
 fn stored_statements(_path: &Path, src: String) -> Result<Vec<syntax::Statement>, Error> {

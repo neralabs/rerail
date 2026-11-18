@@ -340,14 +340,7 @@ pub(in crate::code_rule_dsl) fn program_digest(v: &crate::code_rule_dsl::logic::
     // `RERAIL_MEMO_PROGRAM_DUMP=dir`: what the digest is of, a file a digest (to find what moved a memo's key).
     if let Some(dir) = std::env::var_os("RERAIL_MEMO_PROGRAM_DUMP") {
         let name: String = digest[..6].iter().map(|b| format!("{b:02x}")).collect();
-        let text = match v.program(&crate::code_rule_dsl::logic::front::Lists::default()) {
-            Ok(p) => format!(
-                "rules {:#?}\ndecls {:#?}\nfacts {:#?}\ninputs {:#?}\noutputs {:#?}\nrx_spans {:#?}\nast_patterns {:#?}\n",
-                p.rules, p.decls, p.facts, p.inputs, p.outputs, p.rx_spans, p.ast_patterns
-            ),
-            Err(e) => format!("no program: {e}\n"),
-        };
-        let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.txt")), text);
+        let _ = std::fs::write(std::path::Path::new(&dir).join(format!("{name}.txt")), v.show());
     }
     digest
 }
@@ -1150,14 +1143,15 @@ pub mod tests {
     /// same. Without it, the first run after a rebuild and the second keyed the memo apart.
     #[test]
     fn an_empty_relation_of_facts_reads_back_as_present() {
-        let mut prog = crate::code_rule_dsl::logic::rr::parse(".decl a(s: symbol)\n.decl b(s: symbol)\nb(\"x\").\n.output a\n").unwrap();
-        prog.facts.insert("a".to_owned(), Vec::new());
-        let mut facts = crate::code_rule_dsl::logic::program_facts::Facts::new();
-        crate::code_rule_dsl::logic::program_facts::write(&mut facts, "p", &prog);
-        let back = crate::code_rule_dsl::logic::program_facts::program(&facts, "p").unwrap();
-        assert_eq!(back.facts, prog.facts);
-        let key = |p: &crate::code_rule_dsl::logic::front::Program| super::program_digest(&crate::code_rule_dsl::logic::plan::body::Placed::of_program(p).unwrap().v);
-        assert_eq!(key(&back), key(&prog));
+        use crate::code_rule_dsl::logic::program_image::{Builder, Version, fields::ProgramFields};
+        let read = crate::code_rule_dsl::logic::rr::parse_version(".decl a(s: symbol)\n.decl b(s: symbol)\nb(\"x\").\n.output a\n").unwrap();
+        let mut b = Builder::on(&read);
+        b.set_facts("a", &[]);
+        let (v, _) = b.finish().unwrap();
+        // Stored as an image, and opened again.
+        let back = Version::open(v.fold().unwrap().base_bytes().unwrap()).unwrap();
+        assert!(back.states_facts("a") && back.fact_rows("a").is_empty(), "a's empty facts read back:\n{}", back.show());
+        assert_eq!(super::program_digest(&back), super::program_digest(&v));
     }
 
     use super::*;

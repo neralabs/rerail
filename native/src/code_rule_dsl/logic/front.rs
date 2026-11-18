@@ -23,6 +23,7 @@ pub mod caches;
 pub use rerail_rr_syntax::code_rule_dsl::logic::front::name;
 pub use name::{List, Lists, Name, Stacks};
 pub mod cycles;
+pub mod graph;
 pub mod template;
 pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
 pub use ast::{AXIS, AggOp, Atom, Branded, Class, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, Literal, NEAREST, Native, carried_record, readers_of_heads, record_copy, OPTION_GLOB, Program, QUALIFIERS, RESERVED, Rule, SCOPE_NOT, Shape, ShapeWait, shape_base, Algo, FEW, Fan, Values as LayoutValues, LayoutFact, Size as LayoutSize, add_layout, layout_facts, SpanIn, Term, Value, axis, cmp_binds, globals, is_axis, is_transduced, join};
@@ -693,33 +694,41 @@ pub fn declare_axes(prog: &mut Program) {
     }
 }
 
-/// `finish`'s checks, of the program its rewrites made: no computed term in a body atom, bounded lattices, every
-/// input declared, bounded value cycles, the caches' form.
+/// `finish`'s checks of a tree, on its version (`finish_checks_on`): the tree is encoded for them, until the tree's
+/// lowering goes (decision 0276 step 5).
 pub fn finish_checks(prog: &Program) -> Result<(), Error> {
-    for rule in &prog.rules {
+    let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program_less_maintenance(prog).and_then(|b| b.finish()).map_err(Error::Syntax)?;
+    finish_checks_on(&v)
+}
+
+/// `finish`'s checks, of the program its rewrites made, read on its version: no computed term in a body atom, bounded
+/// lattices, every input declared, bounded value cycles, the caches' form.
+pub fn finish_checks_on(v: &crate::code_rule_dsl::logic::program_image::Version) -> Result<(), Error> {
+    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
+    use crate::code_rule_dsl::logic::program_image::handles::{Lit, TermRef};
+    for rule in v.rules() {
         // A computed term is a value, not a pattern: an atom never matches on one (the backends would drop it).
-        if let Some(a) = rule.body.iter().filter_map(|l| if let Literal::Atom(a) = l { Some(a) } else { None })
-            .find(|a| a.args.iter().any(|t| matches!(t, Term::Call(..))))
-        {
+        if let Some(a) = rule.body().filter_map(|l| if let Lit::Atom(a) = l.view() { Some(a) } else { None }).find(|a| a.args().any(|t| matches!(t, TermRef::Call(..)))) {
             return Err(Error::Syntax(format!(
                 "computed term in body atom {} of the rule for {}: bind it with `v = @f(...)`",
-                a.rel, rule.head.rel
+                v.rel_name(a.rel()),
+                v.rel_name(rule.head().rel())
             )));
         }
     }
-    for (relation, decl) in &prog.lattice {
+    for (relation, decl) in ProgramFields::lattice(v) {
         if !decl.bounded() {
-            return Err(Error::UnboundedLattice { relation: relation.clone() });
+            return Err(Error::UnboundedLattice { relation });
         }
     }
     // An input's columns are its declaration's: the planner reads them.
-    if let Some(relation) = prog.inputs.iter().find(|rel| !prog.decls.contains_key(rel.as_str())) {
-        return Err(Error::UndeclaredInput { relation: relation.clone() });
+    if let Some(relation) = v.input_names().into_iter().find(|rel| !v.declares(rel)) {
+        return Err(Error::UndeclaredInput { relation });
     }
     let checking = crate::code_rule_dsl::logic::profile::span(|| "check the program's cycles and caches".to_owned());
-    cycles::check(prog)?;
+    cycles::check(v)?;
     // A cache is two rules (decision 0103): a broken form refuses the program.
-    caches::caches(prog)?;
+    caches::caches(v)?;
     drop(checking);
     Ok(())
 }
@@ -729,6 +738,27 @@ pub fn finish_checks(prog: &Program) -> Result<(), Error> {
 /// `match_group` over a span are built-ins: the text columns make each regex's relation (`strings`).
 pub fn declared(prog: &Program) -> Result<(), Error> {
     prog.rules.iter().try_for_each(|rule| rule_declared(prog, rule))
+}
+
+/// `declared`, of a version: each rule's reads declared, and each atom with its relation's columns.
+pub fn declared_on(v: &crate::code_rule_dsl::logic::program_image::Version) -> Result<(), Error> {
+    use crate::code_rule_dsl::logic::program_image::handles::Lit;
+    for rule in v.rules() {
+        let head = v.rel_name(rule.head().rel());
+        let atoms = || {
+            rule.body().filter_map(|l| match l.view() {
+                Lit::Atom(a) | Lit::Agg { atom: a, .. } => Some(a),
+                _ => None,
+            })
+        };
+        for a in atoms() {
+            read_declared(v, v.rel_name(a.rel()), head)?;
+        }
+        for a in std::iter::once(rule.head()).chain(atoms()) {
+            columns_declared(v, v.rel_name(a.rel()), a.arity(), head)?;
+        }
+    }
+    Ok(())
 }
 
 /// `declared` for one rule: every relation it reads is declared in `prog` (`read_declared`), and each atom of it has
