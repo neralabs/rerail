@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BOUNDARY_DISCOVERY_WAIT_MS, CodeRuleBridge } from "../../../../src/engine/code-rule/code-rule-bridge.js";
 import type { CodeRuleAuditor, CodeRuleEditBatch } from "../../../../src/engine/code-rule/code-rule.js";
-import { SharedTreeWatch, WorktreeNotices } from "../../../../src/engine/code-rule/worktree-notices.js";
+import { LinkedFiles, SessionNotices, SharedTreeWatch, WorktreeNotices } from "../../../../src/engine/code-rule/worktree-notices.js";
 import { RepositoryWorktreeWalks, WorktreeWalks } from "../../../../src/engine/code-rule/worktree-walks.js";
 import { removeFolder } from "../../../support/platform/remove-folder.js";
 import { StampTreeWatch } from "./support/stamp-tree-watch.js";
@@ -358,6 +358,22 @@ describe("a shell command's result reads the session folder by its change notice
     expect(audits).toEqual([]);
   });
 
+  it("checks at a later result a write through the other name of a file a command linked into the folder", async () => {
+    const root = await workspace();
+    const outside = await realpath(await mkdtemp(join(tmpdir(), "rerail-session-notices-link-")));
+    folders.push(outside);
+    await writeFile(join(outside, "linked.py"), "def linked():\n    return 1\n");
+    const watch = platformWatch();
+    const { bridge, audits } = await opened(root, watch);
+    await command(bridge, "shell-1", async () => await link(join(outside, "linked.py"), join(root, "src", "pkg_0", "linked.py")));
+    await command(bridge, "shell-2", async () => {
+      await writeFile(join(outside, "linked.py"), "eval(z)\n");
+      watch.silence(root);
+    });
+    expect(listed.folders).toEqual([]);
+    expect(audits.at(-1)?.edits).toEqual([expect.objectContaining({ path: "src/pkg_0/linked.py", generatedText: "eval(z)\n" })]);
+  });
+
   it("walks the whole folder at a result whose linked files reach half of what the whole walk looked at", async () => {
     // A checkout whose files a copy made by links shares (cp -al): reading each file again would cost more than the walk.
     const root = await workspace(10);
@@ -438,6 +454,51 @@ describe("a shell command's result reads the session folder by its change notice
     await bridge.checkpoint("turn");
     expect(asked).toBe(1);
     expect(watch.asked.get(root)).toBe(asked);
+  });
+
+  it("notes the files with another name while they stay under half of what the last whole walk looked at", () => {
+    const linked = new LinkedFiles(7);
+    for (const path of ["a", "b", "c"]) linked.note(path);
+    // Three of seven looks: a pass of noticed paths reads each.
+    expect(linked.paths).toEqual(["a", "b", "c"]);
+    expect(linked.keep(7)).toEqual(new Set(["a", "b", "c"]));
+    // A fourth reaches the bound: no more are noted, and none is kept.
+    linked.note("d");
+    linked.note("e");
+    expect(linked.paths).toEqual([]);
+    expect(linked.keep(100)).toBeUndefined();
+    // Before a whole walk set the bound, every one is noted, and kept only under half of what the walk looked at.
+    const first = new LinkedFiles(Number.POSITIVE_INFINITY);
+    for (const path of ["a", "b", "c"]) first.note(path);
+    expect(first.paths).toEqual(["a", "b", "c"]);
+    expect(first.keep(6)).toBeUndefined();
+    expect(first.keep(7)).toEqual(new Set(["a", "b", "c"]));
+  });
+
+  it("hands each whole walk the bound the last one set, and reads by notices again once a walk finds fewer linked files", async () => {
+    const root = await workspace();
+    const notices = new SessionNotices(root, "win32");
+    notices.use(new StampTreeWatch());
+    const seen = { folders: new Set(["", "src", "src/pkg_0"]), leftOut: new Set<string>() };
+    // The first whole walk: three linked files of six looks (three files, three folders).
+    const first = notices.begin(false);
+    for (const path of ["a", "b", "c"]) first.linked.note(path);
+    expect(first.linked.paths).toEqual(["a", "b", "c"]);
+    notices.ended(seen, { linked: first.linked, files: 3 });
+    // At the bound: the next pass reads the whole folder, and its walk notes the linked files only under the bound.
+    const second = notices.begin(false);
+    expect(second.whole).toBe(true);
+    for (const path of ["a", "b", "c"]) second.linked.note(path);
+    expect(second.linked.paths).toEqual([]);
+    notices.ended(seen, { linked: second.linked, files: 3 });
+    // Only the fact was kept: the pass after reads the whole folder again; it finds one, which the next pass reads by its
+    // stamp alone.
+    const third = notices.begin(false);
+    expect(third.whole).toBe(true);
+    third.linked.note("a");
+    notices.ended(seen, { linked: third.linked, files: 3 });
+    expect(notices.begin(false)).toEqual({ whole: false, paths: new Map([["a", "stamp"]]), linked: expect.any(LinkedFiles) });
+    notices.close();
   });
 
   it("walks the whole folder at a result after a command changed Git's ignore rules", async () => {
