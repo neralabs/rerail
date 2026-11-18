@@ -103,6 +103,18 @@ async function editTurn(sessionId: string, file: string, content: (name: string)
   return { pre, post, stop };
 }
 
+/**
+ * Edit turns that break the rule until one is steered, at most five: a session's first boundaries are answered while
+ * its rules still compile (by design), so the timed turns start only once the session checks edits.
+ */
+async function untilRulesCheck(sessionId: string): Promise<void> {
+  for (let turn = 0; turn < 5; turn += 1) {
+    const answers = await editTurn(sessionId, join(repo, "src", "app", `warm_${String(turn)}.py`));
+    if (Object.values(answers).some(answer => contextOf(answer).includes(`[${RULE}]`))) return;
+  }
+  throw new Error("no edit was steered in five turns");
+}
+
 /** A process of its own holding the database's write lock (`BEGIN IMMEDIATE`) until released. */
 async function holdWriteLock(path: string): Promise<{ release(): Promise<void> }> {
   const script = join(root, "hold-write-lock.cjs");
@@ -154,6 +166,7 @@ describe("the Claude Code hook while another process holds the database's write 
     const start = await hook({ session_id: sessionId, cwd: repo, hook_event_name: "SessionStart", source: "startup" }, repo);
     expect(contextOf(start)).toMatch(/Rerail is on in this repo/u);
     await hook({ session_id: sessionId, cwd: repo, hook_event_name: "UserPromptSubmit", prompt_id: "prompt-1", prompt: "Add it." }, repo);
+    await untilRulesCheck(sessionId);
     const free = await editTurn(sessionId, join(repo, "src", "app", "free_edit.py"));
     const lock = await holdWriteLock(join(process.env.RERAIL_HOME!, "rerail.sqlite"));
     let held;
@@ -181,6 +194,6 @@ describe("the Claude Code hook while another process holds the database's write 
     await rerail(["support-bundle", "--session", sessionId, "--output", bundleFile]);
     const bundle = JSON.parse(await readFile(bundleFile, "utf8")) as { session: { audits: Array<{ violations: Array<{ ruleId: string; path: string }> }> } };
     const logged = bundle.session.audits.flatMap(audit => audit.violations).filter(violation => violation.ruleId === RULE).map(violation => basename(violation.path));
-    expect(new Set(logged), report).toEqual(new Set(["free_edit.py", "held_edit.py"]));
+    expect(new Set(logged.filter(file => !file.startsWith("warm_"))), report).toEqual(new Set(["free_edit.py", "held_edit.py"]));
   }, 180_000);
 });
