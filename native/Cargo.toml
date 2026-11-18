@@ -104,6 +104,11 @@ cranelift-codegen = "=0.125.4"
 rerail-compiler = { path = "crates/compiler" }
 rerail-rr-syntax = { path = "crates/rr_syntax" }
 rerail-tape-format = { path = "crates/tape_format" }
+# The C and C++ preprocessor (0327): directives as facts, translation units applied (`language::adapter::c_pp`,
+# the answerers the engine installs at load).
+rerail-c-pp = { path = "crates/c_pp" }
+# Its directives compiled (Bitlex, 0327 mode (a)): the engine's answer where they read a file.
+rerail-c-directives = { path = "crates/c_directives" }
 # The tape's reads written once in CLIF, and the JIT's inlining pass over them (decision 0310).
 rerail-clif = { path = "crates/clif" }
 # The .rr parser: its grammar compiled, the engine's tape from it (`packed::rr_parser`).
@@ -233,10 +238,6 @@ rerail-java-lean = { path = "crates/java_lean" }
 rerail-go-lean = { path = "crates/go_lean" }
 # The lean C and C++ parser, measured directly (`tape::tests::cpp_parse_costs`).
 rerail-c-lean = { path = "crates/c_lean" }
-# The C and C++ preprocessor (0327): directives as facts, translation units applied.
-rerail-c-pp = { path = "crates/c_pp" }
-# Its directives compiled (Bitlex, 0327 mode (a)): the engine's answer where they read a file.
-rerail-c-directives = { path = "crates/c_directives" }
 # The lean C# parser, measured directly (`tape::tests::csharp_parse_costs`).
 rerail-csharp-lean = { path = "crates/csharp_lean" }
 # The lean Kotlin, Swift and Scala parsers, measured directly (`tape::tests::kotlin_parse_costs`, …).

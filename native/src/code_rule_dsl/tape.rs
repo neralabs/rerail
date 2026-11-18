@@ -1611,12 +1611,16 @@ impl TapeImage {
     /// `kind_aliases`): a kind whose symbol's own name or namedness is not the node's, as
     /// `encode_node` finds it. The aliases numbered by first use, as `pack` numbers them.
     pub fn with_kind_aliases(mut self, kind_aliases: Vec<(String, bool)>) -> Result<Self, String> {
+        // A parser writes format 15's columns (`written`); a tape held in another format came from a store.
+        let Held::F15(c) = &mut self.held else { return Err("a written tape is held in format 15".into()) };
         if kind_aliases.len() >= usize::from(SENTINEL)
-            || self.codes.iter().any(|code| code.alias != SENTINEL && usize::from(code.alias) >= kind_aliases.len())
+            || c.codes.iter().any(|code| code.alias != SENTINEL && usize::from(code.alias) >= kind_aliases.len())
         {
             return Err("a written tape's aliases do not agree with its codes".into());
         }
-        self.kind_aliases = kind_aliases;
+        c.kind_aliases = kind_aliases;
+        // The table as the tape API reads it names the aliases: made again from them.
+        c.table = Default::default();
         Ok(self)
     }
 
