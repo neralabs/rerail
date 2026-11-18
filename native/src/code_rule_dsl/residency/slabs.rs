@@ -47,8 +47,9 @@ fn invalid(message: impl std::fmt::Display) -> Error {
     Error::BackendFailure
 }
 
-/// Sizes of a document's parts, from its frames' raw lengths, the image's header and the source's
-/// newlines (read by one streamed decode that keeps nothing). A 16z tape is laid out as format 16
+/// Sizes of a document's parts, from its frames' raw lengths, the image's header and (format 15) the
+/// source's newlines, read by one streamed decode that keeps nothing. Format 16 holds its newline index
+/// (decision 0336 §6): no line is counted for it. A 16z tape is laid out as format 16
 /// where it is placed (`Tape16Z::decode_into`): `tape` is that length, and `z` its stored bytes,
 /// read once (a store's frame) to plan and place it.
 struct Plan {
@@ -66,7 +67,7 @@ impl Plan {
         aligned(self.tape) + aligned(self.source) + self.derived()
     }
 
-    /// The reader's state: the codes at a fixed width and the line starts. Nothing per node.
+    /// The reader's state: the codes at a fixed width and (format 15) the line starts. Nothing per node.
     fn derived(&self) -> usize {
         aligned(24 * self.codes) + aligned(4 * self.lines)
     }
@@ -97,13 +98,17 @@ fn planned(head: &[u8], tape: usize, source: usize, lines: usize, z: Option<Vec<
 fn plan(frames: &crate::content_store::ResidentFrames) -> Result<Plan, Error> {
     let head = frames.tape_frame.head(resident::HEADER_LEN.min(frames.tape_length))
         .map_err(|error| invalid(format!("tape frame header: {error}")))?;
-    let mut lines = 1usize;
-    frames.source_frame.chunks(|chunk| {
-        lines += chunk.iter().filter(|&&byte| byte == b'\n').count();
-    })
-    .map_err(|error| invalid(format!("source frame: {error}")))?;
+    let stored = resident::stored(&head).map_err(invalid)?;
+    let mut lines = 0usize;
+    if stored == resident::Stored::F15 {
+        lines = 1;
+        frames.source_frame.chunks(|chunk| {
+            lines += chunk.iter().filter(|&&byte| byte == b'\n').count();
+        })
+        .map_err(|error| invalid(format!("source frame: {error}")))?;
+    }
     // A 16z tape is read whole: its block index sizes its format 16 layout, and its blocks are laid out from it.
-    let z = if resident::stored(&head).map_err(invalid)? == resident::Stored::F16Z {
+    let z = if stored == resident::Stored::F16Z {
         let mut whole = vec![0u8; frames.tape_length];
         frames.tape_frame.copy_into(&mut whole).map_err(|error| invalid(format!("tape frame: {error}")))?;
         Some(whole)
@@ -145,8 +150,9 @@ pub fn admit_docs(docs: &[crate::code_rule_dsl::tape::TapeDoc]) -> Result<Vec<Ar
         for digest in &missing {
             let at = digests.iter().position(|candidate| candidate == digest).expect("a miss is one of the digests");
             let (image, source, grammar) = docs[at].resident_parts(images[at].take()).map_err(invalid)?;
-            let lines = 1 + source.bytes().filter(|&byte| byte == b'\n').count();
-            let z = matches!(resident::stored(&image), Ok(resident::Stored::F16Z)).then(|| image.clone());
+            let stored = resident::stored(&image).map_err(invalid)?;
+            let lines = if stored == resident::Stored::F15 { 1 + source.bytes().filter(|&byte| byte == b'\n').count() } else { 0 };
+            let z = (stored == resident::Stored::F16Z).then(|| image.clone());
             let plan = planned(&image, image.len(), source.len(), lines, z)?;
             owned.push((*digest, plan, Arc::clone(grammar), image, source));
         }
@@ -260,6 +266,9 @@ fn place(
             view.side = [at(tape_at + p.at[5])?, at(tape_at + p.at[6])?, at(tape_at + p.at[7])?, at(tape_at + p.at[8])?];
             view.parts = [at(tape_at + p.parts[0])?, at(tape_at + p.parts[1])?, at(tape_at + p.parts[2])?, at(tape_at + p.parts[3])?];
             (view.cut, view.per) = (cut, per);
+            // The tape's newline index answers lines (`tape_line`, `tape_line_start`): nothing is counted here.
+            view.lines = at(tape_at + p.at[9])?;
+            view.line_count = p.newlines.checked_add(1).ok_or_else(|| invalid("a source past 4 G lines"))?;
             resident::device_codes_of(lang.table(), grammar).map_err(invalid)?
         }
     };
@@ -268,19 +277,22 @@ fn place(
     }
     // SAFETY: `24 * codes` bytes at a 16-byte offset of the mapping, and `DeviceCode` is 24 bytes, 2-aligned.
     unsafe { std::ptr::copy_nonoverlapping(codes.as_ptr(), base.add(codes_at).cast::<DeviceCode>(), codes.len()) };
-    // SAFETY: as the codes', `4 * lines` bytes.
-    let lines = unsafe { std::slice::from_raw_parts_mut(base.add(lines_at).cast::<u32>(), plan.lines) };
-    lines[0] = 0;
-    let mut line = 1;
-    for (at, _) in source.iter().enumerate().filter(|(_, byte)| **byte == b'\n') {
-        lines[line] = at as u32 + 1;
-        line += 1;
+    // Format 15's line starts, placed beside it (format 16's are its tape's).
+    if plan.stored == resident::Stored::F15 {
+        // SAFETY: as the codes', `4 * lines` bytes.
+        let lines = unsafe { std::slice::from_raw_parts_mut(base.add(lines_at).cast::<u32>(), plan.lines) };
+        lines[0] = 0;
+        let mut line = 1;
+        for (at, _) in source.iter().enumerate().filter(|(_, byte)| **byte == b'\n') {
+            lines[line] = at as u32 + 1;
+            line += 1;
+        }
+        view.lines = at(lines_at)?;
+        view.line_count = count(plan.lines)?;
     }
     view.codes = at(codes_at)?;
     view.source = at(source_at)?;
     view.source_len = count(plan.source)?;
-    view.lines = at(lines_at)?;
-    view.line_count = count(plan.lines)?;
     view.code_count = count(plan.codes)?;
     let view = ChunkTape::new(u32::try_from(offset).map_err(|_| invalid("a slab offset past 4 GiB"))?, &view);
     crate::code_rule_dsl::prof::count("residency.decompressed_kb", (plan.tape + plan.source) >> 10);

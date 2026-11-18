@@ -383,7 +383,10 @@ impl Rows {
     #[inline]
     fn part_of(&self, id: u32) -> (&Part, u32) {
         if id >= self.from {
-            return (self.tail.as_ref().expect("a row of the tail"), id - self.from);
+            let Some(t) = self.tail.as_ref() else {
+                panic!("row {id} of the tail, but none: {} rows in {} segments from {}, k {}", self.rows(), self.segs.len(), self.from, self.k)
+            };
+            return (t, id - self.from);
         }
         let (first, p) = match &self.segs[..] {
             [only] => only,

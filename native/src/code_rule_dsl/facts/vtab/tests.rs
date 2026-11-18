@@ -205,3 +205,17 @@ fn a_column_pushed_in_order_answers_as_its_sorted_index_does() {
     assert!(!late.ordered(0));
     assert_eq!(late.lookup(0, &[1]).unwrap(), vec![0, 3]);
 }
+
+/// A column pushed in order with each value once is a key (`Source::keys_rows`): `key_row` finds what `lookup` does,
+/// absent values none. One with repeats, or out of order, is not a key.
+#[test]
+fn a_column_pushed_in_order_once_a_value_is_a_key() {
+    // `n` ascending once each, `d` ascending with repeats, `l` out of order.
+    let mut r = Relation::new(&["n", "d", "l"]);
+    (0..300i64).for_each(|i| r.push(&[i * 2 + 5, i / 3, (i * 37) % 101]));
+    assert!(r.keys_rows(0) && !r.keys_rows(1) && !r.keys_rows(2));
+    for v in [-1, 4, 5, 6, 7, 299, 603, 604, 605, i64::MAX] {
+        assert_eq!(r.key_row(0, v), r.lookup(0, &[v]).unwrap().first().copied(), "{v}");
+    }
+    assert!(Relation::new(&["n"]).keys_rows(0), "no rows: every value once");
+}

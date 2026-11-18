@@ -42,7 +42,10 @@ inline uint tape_child_count(device const uchar* s,ChunkTape d,uint i){return cl
 inline uint tape_child(device const uchar* s,ChunkTape d,uint i,uint k){return clif_tape_child(TAPE_READ(s,d),i,k);}
 inline uchar tape_byte(device const uchar* s,ChunkTape d,uint at){return (tape_doc(s,d)+d.source)[at];}
 inline device const uchar* tape_source(device const uchar* s,ChunkTape d){return tape_doc(s,d)+d.source;}
-inline uint tape_line_start(device const uchar* s,ChunkTape d,uint line){return ((device const uint*)(tape_doc(s,d)+d.lines))[line];}
+// Lines (decision 0336 §6): format 16's newline index, format 15's line starts. A byte's line (from 0), and a
+// line's first byte, document-local.
+inline uint tape_line(device const uchar* s,ChunkTape d,uint at){return clif_tape_line(TAPE_READ(s,d),at);}
+inline uint tape_line_start(device const uchar* s,ChunkTape d,uint line){return clif_tape_line_start(TAPE_READ(s,d),line);}
 // A pass's roots (`label_passes::Roots`; decisions 0033, 0293 §10), with no list of them. In
 // `roots`: word 0 the batch's file count F, words 1..=F+1 each file's first group of 64 nodes
 // (groups start at each document's first node) and the total. A rule at word `at`: its kind (0

@@ -2537,6 +2537,35 @@ fn a_kind_after_a_field_is_priced_by_the_fields_children() {
     assert_eq!(f.child_share("5", "9"), None, "an unmeasured field says nothing");
 }
 
+/// Q44: a relation of the component being solved has no measured distinct values yet. A lookup of it by a column
+/// is priced at PostgreSQL's prior (200 values a column, `ndv_or_default`), not one value: as one, every key was the
+/// whole relation, and a transitive closure's self-join was planned at its relation's rows a binding. A relation not
+/// being solved keeps one value, and is read whole, then probed back.
+#[test]
+fn a_lookup_of_a_relation_being_solved_is_priced_by_the_distinct_prior() {
+    let p = parse(".decl d(x: number)\n.decl w(x: number, s: number)\n.decl r(s: number)\nr(s) :- d(x), w(x, s).\n.output r\n").unwrap();
+    let model = |solving: bool| {
+        let mut model = bare_model(&p);
+        model.stats.nodes = 4_000.0;
+        model.stats.card.insert("d", 10.0);
+        model.ndv.insert(("d", 0), 10.0);
+        model.stats.fan.insert(("d", 0), 1.0);
+        model.stats.card.insert("w", 4_000.0);
+        if solving {
+            model.stats.solving.insert("w".to_owned());
+        }
+        model
+    };
+    // `d`'s 10 rows, each probing `w` by `x`: 4,000 rows / 200 values, 20 a key.
+    let (order, work) = priced_first_rule(&model(true), &p);
+    assert_eq!(order[0], "d($x)");
+    assert!((work - 210.0).abs() < 1.0, "work {work}");
+    // Not being solved, `w`'s column is one value: a probe by it reads all 4,000 rows, so `w` is read first.
+    let (order, work) = priced_first_rule(&model(false), &p);
+    assert_eq!(order[0], "w($x, $s)", "work {work}");
+    assert!(work >= 8_000.0, "work {work}");
+}
+
 /// Decision 0299: a probe on several bound columns reads at least the rows of one combination the relation holds.
 /// Independence divided `w`'s two rows a node by its 400 names, though a node has one name.
 #[test]

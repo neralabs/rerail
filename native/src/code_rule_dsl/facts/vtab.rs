@@ -209,6 +209,15 @@ pub trait Source: Send + Sync {
     }
     /// The rows whose `column` is one of `values`; `None` scans.
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>>;
+    /// Whether each value of `column` is at most one row, which `key_row` finds without allocating (a node's own
+    /// column): a reader of the source's rows in its row order probes by it (`setfix::hold_view`).
+    fn keys_rows(&self, _column: usize) -> bool {
+        false
+    }
+    /// The row whose `column` (a `keys_rows` column) is `value`, if there is one: `lookup`'s answer, not allocated.
+    fn key_row(&self, _column: usize, _value: i64) -> Option<usize> {
+        None
+    }
     /// The rows whose `column` is `value` and whose columns hold every `(column, value)` of `eqs`, in `lookup`'s
     /// order, where the source tests `eqs` as it finds them (a view's children by parent and field, off the tape)
     /// rather than each row's values read back; `None`: looked up, then filtered.
@@ -1396,6 +1405,16 @@ impl Source for Relation {
     }
     fn sorts_rows(&self, _column: usize) -> bool {
         true
+    }
+    /// A column pushed in order whose values are each one row (`ordered`: as many distinct values as rows) is a key:
+    /// a view of the relation's rows probes it here (`setfix::hold_view`), with no index of its own.
+    fn keys_rows(&self, column: usize) -> bool {
+        self.ordered[column] == Some(self.len())
+    }
+    /// The row of `value` in a key column (`keys_rows`): a search of the cells, as `lookup`'s.
+    fn key_row(&self, column: usize, value: i64) -> Option<usize> {
+        debug_assert!(self.keys_rows(column));
+        self.ordered_between(column, value, value).next()
     }
     fn value(&self, row: usize, column: usize) -> i64 {
         self.cells[row * self.columns.len() + column]

@@ -92,6 +92,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/native/setfix.rs", "IN_MORSELS", Thread, "the walks this thread ran in morsels, read by tests"),
     ("src/code_rule_dsl/logic/native/setfix.rs", "VARIANTS", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
     ("src/code_rule_dsl/logic/native/setfix/closure.rs", "SEMI_NAIVE_HERE", Thread, "this thread's fixpoint statistics, read by the profile and tests"),
+    ("src/code_rule_dsl/logic/native/setfix/runs.rs", "INLINE", Call, "a lazy order's build under way on this thread (`runs::inline`): its sorts stay on the thread, never handed to the pool"),
     ("src/code_rule_dsl/logic/native/setfix/device.rs", "ARENA", Thread, "this thread's device waves and launches"),
     ("src/code_rule_dsl/logic/native/setfix/device.rs", "AUTOMATA", Thread, "device automata by pattern: any thread's gives the same"),
     ("src/code_rule_dsl/logic/native/setfix/device.rs", "BINDER", Thread, "this thread's device waves and launches"),
