@@ -346,8 +346,9 @@ describe("the dashboard following the daemon's change stream", () => {
     stream().end();
     await settle();
     await after(20_000);
-    // Back; from then the proxy holds every stream again. The pause doubled to 20 s at the second failed read, as the
-    // poll's did, so the first retry after it is 10 s on.
+    // Back; from then the proxy holds every stream again. The reads at the handed-on token and at the end failed within
+    // one pause, which doubled once (10 s); the retry's failed read doubled it to 20 s, as the poll's did, so the first
+    // retry after the daemon is back is 10 s on.
     up = true;
     const back = readsOf("/api/repositories");
 
@@ -361,31 +362,7 @@ describe("the dashboard following the daemon's change stream", () => {
     expect(readsOf("/api/repositories")).toBe(steady + 6);
   });
 
-  it("reads no second time when the stream ends while a read is out, whose answer says whether the daemon answers", async () => {
-    stream().send("t1");
-    await settle();
-    const unanswered: (() => void)[] = [];
-    vi.stubGlobal("fetch", async (input: URL, init: { signal?: AbortSignal } = {}) => {
-      const url = new URL(input);
-      if (url.pathname === "/api/changes") return openStream(init.signal!);
-      reads.push(url.pathname);
-      return new Promise<Response>(resolve => unanswered.push(() => resolve(answer(url))));
-    });
-    const before = readsOf("/api/repositories");
-    void refreshNow();
-    await settle();
-
-    stream().end();
-    await settle();
-    for (let round = 0; round < 2; round += 1) {
-      for (const reply of unanswered.splice(0)) reply();
-      await settle();
-    }
-
-    expect(readsOf("/api/repositories")).toBe(before + 1);
-  });
-
-  it("reads nothing when the stream ends after a read failed, and tries again once that failure's pause ends, as the poll did", async () => {
+  it("reads when the stream ends after a read failed, and doubles the pause once for both failures, as the poll did", async () => {
     stream().send("t1");
     await settle();
     failing.add("/api/repositories");
@@ -396,12 +373,13 @@ describe("the dashboard following the daemon's change stream", () => {
 
     stream().end();
     await settle();
-    expect(readsOf("/api/repositories")).toBe(before);
+    expect(readsOf("/api/repositories")).toBe(before + 1);
     failing.clear();
 
-    // The pace doubled at the failure, from 5 s to 10 s: the retry reads, and its answer opens a new stream.
+    // The pause doubled once, from 5 s to 10 s, though two reads failed within it: the retry reads, and its answer
+    // opens a new stream.
     await after(10_000);
-    expect(readsOf("/api/repositories")).toBe(before + 1);
+    expect(readsOf("/api/repositories")).toBe(before + 2);
     expect(data.disconnected).toBe(false);
     expect(streams).toHaveLength(2);
   });

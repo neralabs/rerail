@@ -59,6 +59,8 @@ const EVENTS_PAGE = 500;
 const etags = new Map();
 let onChange = () => {};
 let backoff = INTERVAL;
+/** When (`performance.now()`) a failed read last doubled `backoff`. */
+let doubledAt = -Infinity;
 /**
  * When the last read a change asked for began (`performance.now()`, which a changed wall clock does not move), for
  * the pace; a new stream starts it over, and the person's own reads do not count.
@@ -779,7 +781,7 @@ async function poll() {
     data.missing = !data.accessRequired && /^\/api\/repository(\/rules)?\?.* answered 404$/u.test(error.message);
     data.disconnected = !data.missing && !data.accessRequired;
     data.loaded = data.missing;
-    backoff = data.missing ? INTERVAL : Math.min(MAX_BACKOFF, backoff * 2);
+    backoff = data.missing ? INTERVAL : failedPause();
     if (!data.missing) console.warn("poll failed", error);
     onChange(data.missing);
   }
@@ -969,6 +971,17 @@ function followChanges() {
   keepPace();
 }
 
+/**
+ * The pause after a failed read: doubled, to at most 30 s, once per pause, as the poll's was once per failed poll. Reads
+ * that fail within one pause (a stream's first message and its end, read at one moment when the daemon stops) count once.
+ */
+function failedPause() {
+  const now = performance.now();
+  if (now - doubledAt < backoff) return backoff;
+  doubledAt = now;
+  return Math.min(MAX_BACKOFF, backoff * 2);
+}
+
 /** A page reading at the pace (`atPace`) starts its reads again when none is out or due, as after the tab was hidden. */
 function keepPace() {
   if (atPace && retryTimer === null && inFlight === null) void refresh();
@@ -976,16 +989,15 @@ function keepPace() {
 
 /**
  * The stream ended, or found no slot: read once, which says whether the daemon answers, and try again after `backoff`,
- * which that read's outcome moves for the next time. No read when one is out, whose answer says it as well, or when
- * the last one failed, whose retry is due: the poll doubled its pause once per failed poll, and two failed reads at one
- * moment would double it twice. The retry waits for no read, so a read that never answers cannot keep the stream closed.
+ * which that read's outcome moves for the next time. The retry waits for no read, so a read that never answers cannot
+ * keep the stream closed.
  */
 function changesEnded(controller) {
   if (stream !== controller) return; // ended from here: the tab hid, the scope changed, or two beats were missed
   stream = null;
   clearTimeout(stallTimer);
   retryLater();
-  if (inFlight === null && !data.disconnected) void refresh();
+  void refresh();
 }
 
 /**
