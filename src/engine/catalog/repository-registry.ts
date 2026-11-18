@@ -292,6 +292,14 @@ export function lookupCheckout(db: Reader, workspace: string): CheckoutContext |
   return lookupAt(db, repositoryIdentityLocation(workspace), new Map());
 }
 
+/**
+ * {@link lookupCheckout} at a location the caller read ({@link repositoryIdentityLocationAsync}, which runs its Git off
+ * the thread): a recorded checkout is found with no Git process.
+ */
+export function lookupCheckoutAt(db: Reader, location: RepositoryIdentityLocation): CheckoutContext | undefined {
+  return lookupAt(db, location, new Map());
+}
+
 function lookupAt(db: Reader, location: RepositoryIdentityLocation, remoteKeys: Map<string, RepositoryKey | undefined>): CheckoutContext | undefined {
   const cloneId = readCloneIdAt(location.identityPath) ?? null;
   const checkoutPath = physicalPath(location.workspaceRoot);

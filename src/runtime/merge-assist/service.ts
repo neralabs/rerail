@@ -6,8 +6,8 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { ADAPTER_CAPABILITIES, type ConflictNotice, type RerailHost } from "../../engine/adapter-contract.js";
 import type { CheckoutContext } from "../../engine/catalog/repository-model.js";
-import { repositoryIdentityLocation } from "../../engine/catalog/repository-identity.js";
-import { lookupCheckout, mergeAssistEnabled, recordCheckout } from "../../engine/catalog/repository-registry.js";
+import { repositoryIdentityLocationAsync } from "../../engine/catalog/repository-identity.js";
+import { lookupCheckoutAt, mergeAssistEnabled, recordCheckout } from "../../engine/catalog/repository-registry.js";
 import { baseBranchAsync, currentBranchAsync, githubRepositoryOf } from "../../engine/merge-assist/branch-git.js";
 import { orderConflicts } from "../../engine/merge-assist/conflicts.js";
 import {
@@ -202,18 +202,15 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   }
 
   /**
-   * The Git checkout at `checkoutPath`. A change records it, as a session start does, so its settings and conflicts
-   * have a recorded owner; a read only looks it up.
+   * The Git checkout at `checkoutPath`, located with one Git process off the thread, so the daemon answers hooks while
+   * it runs. A change records it, as a session start does, so its settings and conflicts have a recorded owner; a read
+   * only looks it up.
    */
-  #checkout(checkoutPath: string, write: boolean): CheckoutContext {
-    let git = false;
-    try {
-      git = repositoryIdentityLocation(checkoutPath).git;
-    } catch {
-      // A folder that is gone is no checkout.
-    }
-    if (!git) throw new MergeAssistError("not-a-checkout", `Merge Assist works in a Git checkout, and ${checkoutPath} is not one.`);
-    const checkout = write ? recordCheckout(this.#db, checkoutPath, this.#now()) : lookupCheckout(this.#db, checkoutPath);
+  async #checkout(checkoutPath: string, write: boolean): Promise<CheckoutContext> {
+    // A folder that is gone is no checkout.
+    const location = await repositoryIdentityLocationAsync(checkoutPath).catch(() => undefined);
+    if (location?.git !== true) throw new MergeAssistError("not-a-checkout", `Merge Assist works in a Git checkout, and ${checkoutPath} is not one.`);
+    const checkout = write ? recordCheckout(this.#db, checkoutPath, this.#now()) : lookupCheckoutAt(this.#db, location);
     if (checkout === undefined) {
       throw new MergeAssistError(
         "not-a-checkout",
@@ -223,17 +220,18 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     return checkout;
   }
 
-  #enabledCheckout(checkoutPath: string): CheckoutContext {
-    const checkout = this.#checkout(checkoutPath, true);
+  async #enabledCheckout(checkoutPath: string): Promise<CheckoutContext> {
+    const checkout = await this.#checkout(checkoutPath, true);
     if (!mergeAssistEnabled(this.#db, checkout.repositoryKey)) {
       throw new MergeAssistError("disabled", "Merge Assist is off for this repository; a person turns it on on the Merge Assist page or with rerail merge-assist on.");
     }
     return checkout;
   }
 
-  /** The recorded checkout at `checkoutPath` when Merge Assist is on for its repository. */
-  #activeCheckout(checkoutPath: string): CheckoutContext | undefined {
-    const checkout = lookupCheckout(this.#db, checkoutPath);
+  /** The recorded Git checkout at `checkoutPath` when Merge Assist is on for its repository; Git runs off the thread. */
+  async #activeCheckout(checkoutPath: string): Promise<CheckoutContext | undefined> {
+    const location = await repositoryIdentityLocationAsync(checkoutPath);
+    const checkout = location.git ? lookupCheckoutAt(this.#db, location) : undefined;
     return checkout === undefined || !mergeAssistEnabled(this.#db, checkout.repositoryKey) ? undefined : checkout;
   }
 
@@ -419,7 +417,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   }
 
   async status(checkoutPath: string): Promise<MergeAssistStatus> {
-    const checkout = this.#checkout(checkoutPath, false);
+    const checkout = await this.#checkout(checkoutPath, false);
     const db = this.#db;
     const root = checkout.checkoutPath;
     const enabled = mergeAssistEnabled(db, checkout.repositoryKey);
@@ -458,7 +456,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   }
 
   async setEnabled(checkoutPath: string, enabled: boolean): Promise<MergeAssistStatus> {
-    const checkout = this.#checkout(checkoutPath, true);
+    const checkout = await this.#checkout(checkoutPath, true);
     const { repositoryKey } = checkout;
     const cleared = this.#db.transaction(tx => {
       tx.update(repositories).set({ mergeAssist: enabled, updatedAt: this.#now() })
@@ -475,13 +473,13 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   }
 
   async scan(checkoutPath: string): Promise<MergeAssistStatus> {
-    const checkout = this.#enabledCheckout(checkoutPath);
+    const checkout = await this.#enabledCheckout(checkoutPath);
     await this.#scanOnce(checkout);
     return await this.status(checkout.checkoutPath);
   }
 
   async dismissConflict(checkoutPath: string, conflictId: string): Promise<MergeAssistStatus> {
-    const checkout = this.#enabledCheckout(checkoutPath);
+    const checkout = await this.#enabledCheckout(checkoutPath);
     const root = checkout.checkoutPath;
     const [name, branches] = await Promise.all([personName(root), this.#branches(root)]);
     // Found, checked and replaced in one transaction: of two dismissals at once, one changes the conflict and fires
@@ -499,11 +497,11 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   }
 
   async settings(checkoutPath: string): Promise<MergeAssistSettings> {
-    return readSettings(this.#db, this.#checkout(checkoutPath, false).repositoryKey);
+    return readSettings(this.#db, (await this.#checkout(checkoutPath, false)).repositoryKey);
   }
 
   async updateSettings(checkoutPath: string, change: MergeAssistSettingsChange): Promise<MergeAssistStatus> {
-    const checkout = this.#checkout(checkoutPath, true);
+    const checkout = await this.#checkout(checkoutPath, true);
     this.#db.transaction(tx => {
       const settings = readSettings(tx, checkout.repositoryKey);
       writeSettings(tx, checkout.repositoryKey, { hook: change.hook === undefined ? settings.hook : change.hook }, this.#now());
@@ -512,7 +510,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   }
 
   async detectAfterEdit(checkoutPath: string, sessionId: string | null = null, host?: RerailHost): Promise<boolean> {
-    const checkout = this.#activeCheckout(checkoutPath);
+    const checkout = await this.#activeCheckout(checkoutPath);
     if (checkout === undefined) return false;
     const last = this.#detectedAt.get(checkout.checkoutPath);
     if (last !== undefined && this.#now() - last < CONFLICT_DETECT_INTERVAL_MS) return false;
@@ -522,7 +520,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   }
 
   async openSession(checkoutPath: string, host: RerailHost, sessionId: string): Promise<void> {
-    const checkout = this.#activeCheckout(checkoutPath);
+    const checkout = await this.#activeCheckout(checkoutPath);
     if (checkout === undefined) return;
     await this.#scanOnce(checkout, { id: sessionId, host });
   }
