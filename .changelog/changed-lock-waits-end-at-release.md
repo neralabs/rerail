@@ -1,0 +1,1 @@
+A `rerail daemon start`, a hook's daemon start, a rule pack change or a profile activation that finds another one holding its lock now goes on the moment that one ends, instead of up to 50 ms later, and no longer tries the lock 20 times a second while it waits.
