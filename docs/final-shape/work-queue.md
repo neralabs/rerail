@@ -3304,6 +3304,10 @@ where the tree names `num_text`, `num_source`, `rr_agg75` and the annotation cop
 - **Done when**: a new build's first edit counts every file in, and the test passes.
 - **At the hub's roll-up** (2026-11-18, merging rr-align 869cde576): fails the same; ignored (`#[ignore]`, this item)
   until the roll-up's end.
+- **Done** (2026-11-18, the roll-up's end): the kept statistics' blob (`Keeper::encode`, now version 6) records the
+  engine build that counted them, and another build's blob decodes as none. A new build's memo entries are its own
+  (0077 §4), so its first run counts every file in. The test passes (m3, with 57 partial, keeper, session and edit
+  tests); the ignore is removed.
 
 ### Q159. (Q84 on Two-pass at 5f615621d) Base rows for the cross part: no flattened copy, rows moved into entries
 

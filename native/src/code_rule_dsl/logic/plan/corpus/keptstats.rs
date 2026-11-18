@@ -432,8 +432,13 @@ impl Keeper {
     /// The keeper as a run of the tape cache keeps it (decision 0096 §2): one blob, the files' contents it counts
     /// and each relation's statistics. Only stored contents are kept (a session's are its memory's).
     pub(super) fn encode(&self) -> Vec<u8> {
-        let mut out = vec![5u8];
+        let mut out = vec![6u8];
         let int = |out: &mut Vec<u8>, v: i64| out.extend_from_slice(&v.to_le_bytes());
+        // The engine build that counted them (Q102): its memo entries are of the build (decision 0077 §4), so another
+        // build's statistics name rows its memo does not hold, and its next run counts every file in.
+        let build = crate::code_rule_dsl::build_ids::engine();
+        int(&mut out, build.len() as i64);
+        out.extend_from_slice(build.as_bytes());
         // A content the store does not hold yet is kept by its digest: the next run finds its source (`resolve`).
         let mut docs: Vec<(&String, memo::Content, i64)> = self.docs.iter().filter(|(_, (c, _))| !matches!(c, memo::Content::Held(_))).map(|(p, (c, k))| (p, *c, *k)).collect();
         // In path order: the same keeper is the same blob.
@@ -593,7 +598,7 @@ impl Keeper {
             let n = usize::try_from(int(at)?).ok()?;
             String::from_utf8(take(at, n)?.to_vec()).ok()
         };
-        if bytes.first() != Some(&5) {
+        if bytes.first() != Some(&6) || text(&mut at)? != crate::code_rule_dsl::build_ids::engine() {
             return None;
         }
         let mut k = Keeper::default();
