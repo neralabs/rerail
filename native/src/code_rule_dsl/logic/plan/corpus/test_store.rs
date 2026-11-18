@@ -6,7 +6,7 @@
 //! (O146).
 //!
 //! The template holds what every test would otherwise make first: the rule library's phase 0 (each module's tape and
-//! its loads, `bootstrap.rr`'s plan) and the core program's plan. It is made once per build (keyed by the build's
+//! its loads, `bootstrap.rerail`'s plan) and the core program's plan. It is made once per build (keyed by the build's
 //! identities, `build_ids`), by the first test process that wants it, under a file lock; the processes after it find
 //! it ready (`<key>.ready`). It is written to a staging store, drained (atoms, queued writes), and published with
 //! `VACUUM INTO`, its memo packs beside it (decision 0240 §4), and a rename, so a reader never sees half of one. A
@@ -125,18 +125,18 @@ fn publish(store: &Path, path: &Path) {
 /// Phase 0 over every library module and the core program, then a run of the core program over an empty corpus:
 /// what a test's first run would do before it reads its own files. Then collected, as a run's collection would leave
 /// it: a process whose include graphs were already in memory (the template is made by a test, mid-suite) writes
-/// `core.rr`'s tape with no manifest naming it, and a copy's first collection, due ten minutes after the template's
+/// `core.rerail`'s tape with no manifest naming it, and a copy's first collection, due ten minutes after the template's
 /// decision, took it out from under the test (`a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test`).
 fn fill(store: &Path) -> std::result::Result<(), String> {
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store.to_owned()));
     let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).map_err(|e| e.to_string())?;
-    let mut seeds = vec![super::phase0::Seed::Text { t_shape: false, includes: vec![(0, "core.rr".to_owned())], phases: Vec::new() }];
+    let mut seeds = vec![super::phase0::Seed::Text { t_shape: false, includes: vec![(0, "core.rerail".to_owned())], phases: Vec::new() }];
     let mut modules = Vec::new();
     rule_files(&lib, &mut modules);
     modules.sort();
     seeds.extend(modules.into_iter().map(super::phase0::Seed::File));
     super::phase0::graphs(&seeds).map_err(|e| e.to_string())?;
-    let program = "#include \"core.rr\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n";
+    let program = "#include \"core.rerail\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n";
     let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(program).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     let corpus = templates().join("corpus");
     std::fs::create_dir_all(&corpus).map_err(|e| e.to_string())?;
@@ -166,7 +166,7 @@ fn rule_files(dir: &Path, out: &mut Vec<PathBuf>) {
         let path = entry.path();
         if path.is_dir() {
             rule_files(&path, out);
-        } else if path.extension().is_some_and(|e| e == "rr") {
+        } else if path.extension().is_some_and(|e| e == "rerail") {
             out.push(path);
         }
     }

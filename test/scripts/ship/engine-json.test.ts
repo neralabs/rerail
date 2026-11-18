@@ -11,7 +11,7 @@ describe("the engine's JSON output", () => {
   });
 
   it("reads an array document, as check-rr writes", () => {
-    expect(engineJson('[{"path":"a.rr","status":"reader-passed"}]\n  after the run 0.10 s wall\n')).toEqual([{ path: "a.rr", status: "reader-passed" }]);
+    expect(engineJson('[{"path":"a.rerail","status":"reader-passed"}]\n  after the run 0.10 s wall\n')).toEqual([{ path: "a.rerail", status: "reader-passed" }]);
   });
 
   it("fails on output that holds no document", () => {

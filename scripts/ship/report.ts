@@ -69,7 +69,7 @@ function findingsText(cell: CellItem): string {
 }
 
 /**
- * How the cell ran, beside its completion: how far a failed `.rr` whole-pack run got, the chunked run standing in for
+ * How the cell ran, beside its completion: how far a failed `.rerail` whole-pack run got, the chunked run standing in for
  * it, whether run-policies ran the policies combined or alone, what the engine printed about it, and the cell's caps
  * when packs ran under different ones (`--pack-cap`).
  */

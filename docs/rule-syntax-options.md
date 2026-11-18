@@ -236,7 +236,7 @@ Notes on B2:
 
 ### C. Recommendation: Rerail logic files with a YAML header
 
-Use one file type, `*.rr`: a YAML front-matter header, then a Datalog body. Keep `rerail.policy/v1` JSON as the compiled, canonical form that the catalog stores and agents can emit.
+Use one file type, `*.rerail`: a YAML front-matter header, then a Datalog body. Keep `rerail.policy/v1` JSON as the compiled, canonical form that the catalog stores and agents can emit.
 
 - **The header** holds what tools edit:
   - id and revision;
@@ -260,7 +260,7 @@ Use one file type, `*.rr`: a YAML front-matter header, then a Datalog body. Keep
   | `!( a, b )` | negated conjunction | new; desugars to a helper relation |
   | `ast($n, { yaml matcher })` and `` tsx`<$T $$$>` `` atoms | the matcher atom from §12 | the YAML form is A2's syntax |
 
-- **Matcher-only rules can stay pure YAML**, using A2's sugar. Both forms compile to the same AST. A2 `utils` are unary relations, and `inside` + `stopBy` is `nearest` over a relation, so a rule can start in YAML and graduate to `.rr` without changing meaning.
+- **Matcher-only rules can stay pure YAML**, using A2's sugar. Both forms compile to the same AST. A2 `utils` are unary relations, and `inside` + `stopBy` is `nearest` over a relation, so a rule can start in YAML and graduate to `.rerail` without changing meaning.
 
 YAML alone doesn't work here: PR 2539 shows that relations, classification and budgets turn YAML into a carrier for expression strings. Plain Datalog alone doesn't either: metadata that tools edit, and long pattern lists, read badly as facts. A bespoke language (QL-style classes, Semgrep-style pattern YAML) adds a third syntax to an architecture that already fixed one AST and two surfaces.
 
@@ -285,7 +285,7 @@ classifiers:
 # … then relations: (where.expr), rules: (one per code, each re-emitting 7 fields), final_query:, policy.ratchets:
 ```
 
-The `.rr` versions are in `rule-syntax/`. B1 matches the original Python linter; B2 is the more accurate version.
+The `.rerail` versions are in `rule-syntax/`. B1 matches the original Python linter; B2 is the more accurate version.
 
 **The YAML port drifted from the Python.** `scripts/lint_function_level_imports.py` checks exact name membership, `enclosing.startswith("test_")` and `^l\d{3,4}_[a-z][a-z0-9_]*$`. The PR 2539 YAML writes these as SQL `LIKE` strings instead, and SQLite's `LIKE` changes their meaning:
 - It is case-insensitive, so `'%Any%'` matches an imported `get_company`.
@@ -293,7 +293,7 @@ The `.rr` versions are in `rule-syntax/`. B1 matches the original Python linter;
 - It tests `Class.method` instead of the def name.
 - It adds `%level > 0`.
 
-Writing rules as expression strings hid these differences. With set literals and regexes in the language, `function-level-imports.b1.rr` states the original exactly.
+Writing rules as expression strings hid these differences. With set literals and regexes in the language, `function-level-imports.b1.rerail` states the original exactly.
 
 **What B2 changes.** B2 replaces the name heuristics with evidence:
 - **Cycles are proven.** `circular-avoidance` means there is an import-time path from the target module back to the importer. It is a recursive `reaches` relation, demand-driven on (target, importer) pairs.
@@ -306,7 +306,7 @@ Because B2 changes the codes, its budgets have to be re-baselined.
 
 The harder data-layer rules (public-symbol queries, general relations, signed allowlists) need three things: `.use` libraries, cross-file joins on interned keys, and inputs from policy artifacts. The logic body can express all three; A2 cannot.
 
-### Constructs the four `.rr` files use beyond today's `.rdl`
+### Constructs the four `.rerail` files use beyond today's `.rdl`
 
 | Construct | Use |
 |---|---|
@@ -323,6 +323,6 @@ The harder data-layer rules (public-symbol queries, general relations, signed al
 
 ## Open questions
 
-1. Is `*.rr` (header + Datalog) the primary authoring form, with JSON as the compiled form? Or does Datalog stay internal, with authors writing only A2 YAML?
+1. Is `*.rerail` (header + Datalog) the primary authoring form, with JSON as the compiled form? Or does Datalog stay internal, with authors writing only A2 YAML?
 2. Should `tsx/names` cross-file resolution land before the router rule moves to B2? Without it, B2 is B1 plus namespace imports and children transparency.
 3. Should `possible` findings default to `log` regardless of the rule's mode?

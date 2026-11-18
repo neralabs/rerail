@@ -1,4 +1,4 @@
-"""Lower a .rr rule (and everything it includes) to plain Soufflé.
+"""Lower a .rerail rule (and everything it includes) to plain Soufflé.
 
 What changes (README, "Lowering"):
   .violation V(…) …        .decl V(…) and .output V; code, message and suppressions are kept as metadata
@@ -503,7 +503,7 @@ class Program:
         self.dfs = {}              # k -> (edge, target, roots or None): dfs_first(_memo), served between rounds
         self.pattern_report = []
         self.files = []
-        self.load(os.path.join(LIB, "core.rr"))      # every rule's implicit base, as check_rr.py reads it
+        self.load(os.path.join(LIB, "core.rerail"))      # every rule's implicit base, as check_rr.py reads it
         self.load(self.path)
         self.lowered = self.lower()
 
@@ -1104,7 +1104,7 @@ class Ctx:
         if name in ("dfs_first", "dfs_first_memo") and len(args) == (5 if name == "dfs_first" else 6) and \
                 all(a[0] == "var" for a in args[3:]):
             # served between rounds: souffle writes the edge, target and roots relations, rrlab searches them
-            # (core.rr's order) and answers rr_dfs{k}(r, hit, first)
+            # (core.rerail's order) and answers rr_dfs{k}(r, hit, first)
             rels = [a[1] for a in args[3:]]
             key = (name, *rels)
             k = next((i for i, v in p.dfs.items() if v == key), len(p.dfs))

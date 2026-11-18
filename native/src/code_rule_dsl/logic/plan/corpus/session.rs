@@ -185,7 +185,7 @@ impl Held {
 }
 
 // Its tests run in the engine's test binary (its facade of this module mounts `session/tests.rs`): they read what the
-// engine registers as it loads (the languages, their `.rr` libraries).
+// engine registers as it loads (the languages, their `.rerail` libraries).
 
 /// An output stack as a run left it: its file's length and modification time, its images, the rows its overlays
 /// added or took away since its base, and each relation's rows' hashes as it reads them (`output::Rel::hash`).

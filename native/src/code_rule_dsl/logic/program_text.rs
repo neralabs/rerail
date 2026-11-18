@@ -1,4 +1,4 @@
-//! A `front::Program` as `.rr` text, and that text read back as the same program (decisions 0155, 0162).
+//! A `front::Program` as `.rerail` text, and that text read back as the same program (decisions 0155, 0162).
 //!
 //! This is how a run keeps what it compiled (a prepared program, a plan choice, a combined program): the program's
 //! own rules as text, read back into the program's parts by one walk over the lean parser's tape image

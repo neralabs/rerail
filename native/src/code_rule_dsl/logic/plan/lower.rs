@@ -35,7 +35,7 @@ impl Domain {
 
 /// The domains of a functor's arguments and of its value, where it fixes them: `@cat`'s parts and whole are names,
 /// `flat_bin`'s operator is one; arithmetic is over integers; `concat`, `substr` and `to_string` make names,
-/// `strlen` an integer, `rx_group` a regex's named group, `pkg_up` a package (`.rr`'s `+ - * /`, `cat`, `substr`, `to_string`, `strlen`).
+/// `strlen` an integer, `rx_group` a regex's named group, `pkg_up` a package (`.rerail`'s `+ - * /`, `cat`, `substr`, `to_string`, `strlen`).
 /// A text test's string is a name, but for `equals`, a membership (`(k = "a" ; k = "b")`), whose string may be a kind
 /// or a field (`expand_memberships`).
 pub(in crate::code_rule_dsl) fn functor_domains(f: &str, arity: usize) -> (Vec<Option<Domain>>, Option<Domain>) {
@@ -775,7 +775,7 @@ pub fn lower_tree(
         }
     }
     for members in out.kindsets.values_mut() {
-        // `EVERY_KIND`: the set of every kind (core.rr's `within`).
+        // `EVERY_KIND`: the set of every kind (core.rerail's `within`).
         if members.iter().any(|m| m == super::super::front::EVERY_KIND) {
             *members = (1..k.kinds.kind_count() as u16).map(|code| i64::from(kind_atom(tag, code)).to_string()).collect();
             continue;

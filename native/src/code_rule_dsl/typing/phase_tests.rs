@@ -1,4 +1,4 @@
-//! Typing as phases (decision 0083 §1, note t28): P1 `struct.rr`, then P2 `types.rr` over its exports, read by a
+//! Typing as phases (decision 0083 §1, note t28): P1 `struct.rerail`, then P2 `types.rerail` over its exports, read by a
 //! later program by symbol.
 
 use crate::code_rule_dsl::logic::plan::corpus;
@@ -21,7 +21,7 @@ fn types_resolves_names_bases_members_and_annotations_by_symbol() {
     let out = dir.join("out");
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let reader = r#"
-#include "core.rr"
+#include "core.rerail"
 .decl types__binds(m: symbol, x: symbol, d: symbol)
 .decl types__bases(c: symbol, i: number, b: symbol)
 .decl types__attr(c: symbol, x: symbol, d: symbol, k: symbol)
@@ -97,7 +97,7 @@ fn struct_marks_async_and_overloads_with_their_positional_shapes() {
     let out = dir.join("out");
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let reader = r#"
-#include "core.rr"
+#include "core.rerail"
 .decl struct__flag(f: symbol, k: symbol)
 .decl struct__shape(f: symbol, need: number, cap: number, kw: number)
 .decl fl(f: symbol, k: symbol)
@@ -133,7 +133,7 @@ fn types_gives_type_parameters_their_map_through_bases_and_the_returns_naming_th
     let out = dir.join("out");
     corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let reader = r#"
-#include "core.rr"
+#include "core.rerail"
 .decl types__tparam(c: symbol, i: number, y: symbol)
 .decl types__tmap(k: symbol, i: number, a: symbol, y: symbol)
 .decl types__rvar(f: symbol, y: symbol)
@@ -177,7 +177,7 @@ fn spike_types_over_the_corpus() {
     let settings: Vec<String> = std::env::var("RERAIL_PYTHON_TYPESHED").map(|t| vec![format!("python.typeshed={t}")]).unwrap_or_default();
     let out = std::env::temp_dir().join(format!("rerail-types-{}", std::process::id()));
     let reader = r#"
-#include "core.rr"
+#include "core.rerail"
 .decl struct__module_file(m: symbol, p: symbol)
 .decl struct__binds(m: symbol, x: symbol, how: symbol, t: symbol)
 .decl types__binds(m: symbol, x: symbol, d: symbol)

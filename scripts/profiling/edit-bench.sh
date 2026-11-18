@@ -15,7 +15,7 @@
 # MODE=oneshot (default): each run is its own process, over the store at <out>/store.sqlite.
 # MODE=session: every run in one process (`rerail-engine repeat`), in a session (decision 0063) at <out>/session.
 # RERAIL_RR_LIB is passed through. Optional:
-#   RULE_EDIT="<rule file> <sed expression>"   e.g. "bandit-b101-assert-used.rr s/assert/assert statement/"
+#   RULE_EDIT="<rule file> <sed expression>"   e.g. "bandit-b101-assert-used.rerail s/assert/assert statement/"
 #   PROFILE=1   each run writes RERAIL_PROFILE to <out>/prof-<run> and the top spans are printed
 #   VERIFY=1    a cold run of the final corpus in a new store, whose findings must equal the last run's
 #

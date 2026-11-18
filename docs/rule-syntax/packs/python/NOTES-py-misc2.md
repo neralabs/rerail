@@ -22,11 +22,11 @@ rows (D-A2). ANN002 and ANN003 have no default-settings snapshot case (checked a
 
 Libraries:
 
-- `lib/python/annotations.rr` (about 190 lines): which defs ANN checks (overload implementations skipped),
+- `lib/python/annotations.rerail` (about 190 lines): which defs ANN checks (overload implementations skipped),
   methods and their decorators, Ruff's visibility, the checked parameters, the return code per def, and
   `ann_any_type` (Ruff's type_hint_resolves_to_any).
-- `lib/python/misc2-args.rr` (about 120 lines): Ruff's function_type classification, stubs (is_stub and
-  is_not_implemented_stub_with_variable), `locals()`, dummy names, and `arg_unused`. It includes annotations.rr.
+- `lib/python/misc2-args.rerail` (about 120 lines): Ruff's function_type classification, stubs (is_stub and
+  is_not_implemented_stub_with_variable), `locals()`, dummy names, and `arg_unused`. It includes annotations.rerail.
 
 Scores are TP/FP/FN at (file, line) against Ruff 0.16.9's snapshots. Only tests run at default settings are
 used, plus the ignore/enforce-variadic-names tests for ARG002 with their option. Ad hoc: every ANN and ARG
@@ -62,10 +62,10 @@ left alone, as Ruff does.
 - **D-A1: flake8-annotations options.** The JSON has no options, so the rules do what Ruff does at its
   defaults. Ruff's `suppress-dummy-args`, `suppress-none-returning`, `mypy-init-return`, `allow-star-arg-any`
   and `ignore-fully-untyped` (all false by default) are not offered. Adding them would be one guard each in
-  annotations.rr. ARG keeps both of its JSON options (`dummy-variable-rgx`,
+  annotations.rerail. ARG keeps both of its JSON options (`dummy-variable-rgx`,
   `flake8-unused-arguments.ignore-variadic-names`), and both were checked.
 - **D-A2: quoted annotations (harness gap).** rrlab has no `parsed` rows, so a string annotation never parses
-  there. annotations.rr follows Ruff:
+  there. annotations.rerail follows Ruff:
   - a top-level string that does not parse is not reported;
   - a string member of a Union that does not parse counts as Any.
   
@@ -94,34 +94,34 @@ None needed.
 
 ### Duplicates to merge
 
-- `annt_typing(e, x)` (annotations.rr) means the same as typing.rr's `typing_sym(e, x)` and upgrade.rr's
-  `typing_ref`, but resolves through ruff.rr's `ruff_qual` instead of `sym_of`.
-- `argt_abstract` (misc2-args.rr) overlaps typing.rr's `abstract(f)`, which has the same four abc decorators.
-- `ann_method(f)` is typing.rr's `pyi_method(_, f, _)`.
-- `argt_method`/`argt_dec` is Ruff's function_type, as typing.rr's `method_kind` is. method_kind matches a
+- `annt_typing(e, x)` (annotations.rerail) means the same as typing.rerail's `typing_sym(e, x)` and upgrade.rerail's
+  `typing_ref`, but resolves through ruff.rerail's `ruff_qual` instead of `sym_of`.
+- `argt_abstract` (misc2-args.rerail) overlaps typing.rerail's `abstract(f)`, which has the same four abc decorators.
+- `ann_method(f)` is typing.rerail's `pyi_method(_, f, _)`.
+- `argt_method`/`argt_dec` is Ruff's function_type, as typing.rerail's `method_kind` is. method_kind matches a
   decorator by its name text (`decorated`); this one resolves it and also counts abc.abstractstaticmethod and
   abc.abstractclassmethod, as Ruff does.
 
 ### Note for the coordinator
 
-While I was scoring, an in-progress edit to `lib/python/ruff.rr` (another batch) briefly declared
-`ann_head(ann, h)`. That clashes with ast.rr's `ann_head(a: node, s: symbol)` and stopped every rule that
-includes ruff.rr from compiling. It was gone on the next run. If it comes back, the clash is in ruff.rr.
+While I was scoring, an in-progress edit to `lib/python/ruff.rerail` (another batch) briefly declared
+`ann_head(ann, h)`. That clashes with ast.rerail's `ann_head(a: node, s: symbol)` and stopped every rule that
+includes ruff.rerail from compiling. It was gone on the next run. If it comes back, the clash is in ruff.rerail.
 
 ## Group B: perflint (PERF), NumPy (NPY), FastAPI (FAST), flake8-type-checking (TC), import conventions (ICN)
 
 Libraries (all new; no file outside this group's list was edited):
 
-- `lib/python/misc2-perf.rr` (123 lines): for-loop shapes, Ruff's only_binding and the binding in force
+- `lib/python/misc2-perf.rerail` (123 lines): for-loop shapes, Ruff's only_binding and the binding in force
   (resolve_name during the walk), what a binding stores (through a chain `a = b = v`) and its annotation head, is_list / is_dict, and reads
   of a loop target after the loop (is_unused). FAST uses its binding helpers too.
-- `lib/python/misc2-numpy.rr` (51 lines): references to `numpy.*` by qualified name (Name, Attribute, and
+- `lib/python/misc2-numpy.rerail` (51 lines): references to `numpy.*` by qualified name (Name, Attribute, and
   dotted case patterns through misc2-case) and NPY201's fallback guards (Ruff's is_guarded_by_try_except).
-- `lib/python/misc2-fastapi.rr` (129 lines): route defs (Ruff's is_fastapi_route), their parameters, FastAPI
+- `lib/python/misc2-fastapi.rerail` (129 lines): route defs (Ruff's is_fastapi_route), their parameters, FastAPI
   markers, `Annotated` arguments, and FAST003's dependency resolution (Dependency::from_parameter).
-- `lib/python/misc2-typecheck.rr` (138 lines): TYPE_CHECKING blocks, runtime type definitions (Ruff's
+- `lib/python/misc2-typecheck.rerail` (138 lines): TYPE_CHECKING blocks, runtime type definitions (Ruff's
   in_type_definition outside a TYPE_CHECKING block) and `|` unions.
-- `lib/python/misc2-case.rr` (19 lines): `case_value_name(e, q)`, a dotted name used as a value in a case
+- `lib/python/misc2-case.rerail` (19 lines): `case_value_name(e, q)`, a dotted name used as a value in a case
   pattern (`case six.PY3:`), with its qualified name. Used by NPY (npy_ref) and YTT202.
 
 Scores are TP/FP/FN at (file, line) against Ruff 0.16.9's snapshots at their own settings. Those snapshots
@@ -151,9 +151,9 @@ run on the same fixtures, by line.
 
 Generated tables, each with `gen-` and `check-` scripts that round-trip against the JSON with 0 differences:
 
-- ICN001 `.aliases.rr`: 16 conventional aliases.
-- NPY002 `.methods.rr`: `npy002_method(q, g)` and `npy002_advice(g, m)`, 50 functions in 8 groups.
-- NPY201 `.members.rr`: `npy201_member(q, g)`, `npy201_advice(g, m)` and `npy_replacement(q, new)`, 70
+- ICN001 `.aliases.rerail`: 16 conventional aliases.
+- NPY002 `.methods.rerail`: `npy002_method(q, g)` and `npy002_advice(g, m)`, 50 functions in 8 groups.
+- NPY201 `.members.rerail`: `npy201_member(q, g)`, `npy201_advice(g, m)` and `npy_replacement(q, new)`, 70
   members in 56 groups.
 
 ### Deviations
@@ -207,42 +207,42 @@ Generated tables, each with `gen-` and `check-` scripts that round-trip against 
     py313).
   - YTT202 also reports `case six.PY3:` (through misc2-case).
 
-### misc2-typecheck.rr exports (stable interface for other batches)
+### misc2-typecheck.rerail exports (stable interface for other batches)
 
 `tc_block(i, b)`, `tc_test(t)`, `tc_in_block(n)`, `tc_typing_call(c, x)`, `tc_cast_type(c, t)`,
 `tc_runtime_typedef(e)`, `tc_typedef_root(e)`, `tc_ann_owner(r, o)`, `tc_bitor(u)`, `tc_union(u)`,
 `tc_nested(u)`, `tc_union_member(u, m)`, `tc_side(u, m)`, `tc_strip(c, m)`. It includes
-`python/upgrade-typing.rr` and `python/ruff.rr`. Internal helpers (not for other batches): `tc_items`,
+`python/upgrade-typing.rerail` and `python/ruff.rerail`. Internal helpers (not for other batches): `tc_items`,
 `tc_lazy`, `tc_generic_sub`, `tc_generic`, `tc_up_wrap`.
 
 `tc_runtime_typedef(e)` now means "e is a type expression Python evaluates at run time": a `tc_typedef_root`
-outside a TYPE_CHECKING block. See request 5 below for typing-context.rr's `deferred_ann`.
+outside a TYPE_CHECKING block. See request 5 below for typing-context.rerail's `deferred_ann`.
 
 Other exports:
 
-- misc2-case.rr: `case_value_name(e, q)`.
-- misc2-perf.rr: `perf_for`, `perf_body`, `perf_call_stmt`, `perf_method_call`, `perf_mentions`,
+- misc2-case.rerail: `case_value_name(e, q)`.
+- misc2-perf.rerail: `perf_for`, `perf_body`, `perf_call_stmt`, `perf_method_call`, `perf_mentions`,
   `perf_only_binding`, `perf_latest_site`, `perf_site_value`, `perf_chain_right`, `perf_site_ann`, `perf_ann_head`,
   `perf_typed_site`, `perf_list_site`, `perf_dict_site`, `perf_target_name`, `perf_used_after`,
   `perf_unused`.
-- misc2-numpy.rr: `npy_ref`, `npy_callee`, `npy_replacement` (declared there, rows from NPY201's table),
+- misc2-numpy.rerail: `npy_ref`, `npy_callee`, `npy_replacement` (declared there, rows from NPY201's table),
   `npy_guarded`, `npy_in_handler`, `npy_catches`.
-- misc2-fastapi.rr: `fast_route`, `fast_param`, `fast_strip`, `fast_dependency`, `fast_annotated`,
+- misc2-fastapi.rerail: `fast_route`, `fast_param`, `fast_strip`, `fast_dependency`, `fast_annotated`,
   `fast_dep_param`, `fast_dep_unknown`.
 
 ### Library and core change requests
 
 1. **rrlab: model `match_all`.** It lowers to `rr_never` today, so every rule that uses it scores 0. FAST003
    works around it with a recursive `match` over the rest of the string.
-2. **rrlab: `match` captures on a node should be spans.** core.rr says "On a node or span, X is a span", but
+2. **rrlab: `match` captures on a node should be spans.** core.rerail says "On a node or span, X is a span", but
    rrlab binds the capture as a symbol, so a finding cannot be placed at the `{…}` (D-B7).
 3. **rrlab: support the `(?s)` inline flag in `match`.** `match("(?s).*\\{(?<k>…)…", s)` gives no rows, while
    `[\\s\\S]*` works. Either support the flag or have check_rr reject it.
-4. **core.rr: a perf-independent "binding in force" helper.** `perf_latest_site` and `perf_only_binding` are
-   Ruff's resolve_name and only_binding, which FAST also needs. Suggested text for `python/names.rr`:
+4. **core.rerail: a perf-independent "binding in force" helper.** `perf_latest_site` and `perf_only_binding` are
+   Ruff's resolve_name and only_binding, which FAST also needs. Suggested text for `python/names.rerail`:
    `// ruff_latest_site(n, site): the binding of n's name in force at n (Ruff's resolve_name during the walk).`
    Then misc2-perf would re-export it.
-5. **typing-context.rr (another batch's file): `deferred_ann` applies the scope test to defs.** It uses
+5. **typing-context.rerail (another batch's file): `deferred_ann` applies the scope test to defs.** It uses
    `tc_ann_owner` with a "not in a function scope" test for def annotations too, but Ruff evaluates a def's
    parameter and return annotations at run time in any scope (TC010's defect 2). Only variable annotations
    depend on the scope. Suggested: keep the scope test only on the assignment-annotation branch.
@@ -250,16 +250,16 @@ Other exports:
 ### Duplicates to merge
 
 - `fast_strip` (misc2-fastapi) and `tc_strip` (misc2-typecheck) both remove parentheses and the `type`
-  wrapper. fast_strip also lets an unset value through. They could be merged into one helper in ruff.rr.
-- `perf_ann_head` (misc2-perf) overlaps with ast.rr's annotation-head helpers. The earlier `ann_head` clash
+  wrapper. fast_strip also lets an unset value through. They could be merged into one helper in ruff.rerail.
+- `perf_ann_head` (misc2-perf) overlaps with ast.rerail's annotation-head helpers. The earlier `ann_head` clash
   was renamed to avoid it, so it was not merged.
 
 ## Group C: flake8-async (ASYNC) and flake8-2020 (YTT)
 
 Libraries:
 
-- `lib/python/misc2-async.rr` (90 lines): the async context, blocking calls, the trio, anyio and asyncio API tables, and checkpoints in a body. It also has `async_name_value`, the value of the binding a name reads, built on pathlib.rr's `pth_seen` and `site_init`.
-- `lib/python/misc2-version.rr` (47 lines): `sys.version` and `sys.version_info` subscripts, and single comparisons.
+- `lib/python/misc2-async.rerail` (90 lines): the async context, blocking calls, the trio, anyio and asyncio API tables, and checkpoints in a body. It also has `async_name_value`, the value of the binding a name reads, built on pathlib.rerail's `pth_seen` and `site_init`.
+- `lib/python/misc2-version.rerail` (47 lines): `sys.version` and `sys.version_info` subscripts, and single comparisons.
 
 How the rules were scored:
 
@@ -300,35 +300,35 @@ All 20 rules are perfect on both oracles. They total 397 lines, plus 137 lines o
   - An exponent like `e-100` is not reported, which is correct.
   - An int over 86400 is tested by its digits. Ruff also reports an int too large for a u64; so does the rule, through six or more digits.
 - **C3 (YTT103 and YTT302 string length):** they split at a string length of 1. Ruff measures that length in UTF-8 bytes (`str::len`), and Soufflé's `strlen` also counts bytes, so `sys.version > "é"` is YTT103 in both.
-- **Review fixes (Ruff 0.16.9 binary):** ASYNC100 treats a `yield` as a checkpoint but not `yield from` (Ruff's is_yield_expr), so `with trio.fail_after(1): yield from foo()` is reported; ASYNC230 takes the receiver without parentheses, so `(p).open()` is reported; ASYNC116 reads `1e010`; YTT's subscripts take their value without parentheses (`(sys.version)[:1]`). The review's ASYNC and YTT case files now match 0.16.9 line for line, including YTT202's `case six.PY3:` (through `case_value_name` in misc2-case.rr), except ASYNC220 (not in this batch).
+- **Review fixes (Ruff 0.16.9 binary):** ASYNC100 treats a `yield` as a checkpoint but not `yield from` (Ruff's is_yield_expr), so `with trio.fail_after(1): yield from foo()` is reported; ASYNC230 takes the receiver without parentheses, so `(p).open()` is reported; ASYNC116 reads `1e010`; YTT's subscripts take their value without parentheses (`(sys.version)[:1]`). The review's ASYNC and YTT case files now match 0.16.9 line for line, including YTT202's `case six.PY3:` (through `case_value_name` in misc2-case.rerail), except ASYNC220 (not in this batch).
 - **Seen modules:** YTT202, ASYNC105, ASYNC115 and ASYNC116 test `seen_module(six | trio | anyio)` in Ruff. They need no separate test here, because each one already requires the callee or name to resolve, through an import, to a `six.`, `trio.` or `anyio.` qualified name.
 - **No fixes, except ASYNC105:** the JSON has no fixes. ASYNC105 offers Ruff's unsafe "Add `await`" fix as a suggestion, only inside an async def. Ruff's fixes for ASYNC115 (`lowlevel.checkpoint()`) and ASYNC116 (`sleep_forever()`) are not offered: they need an import edit (`get_or_import_symbol`), and the libraries have no generic form of that edit.
 
 ### Library and core change requests (group C)
 
 - **The `value` relation has no float rows in rrlab:** core says `value` normalises numbers. A float row, such as a canonical decimal or Python's `repr(float)`, plus a numeric comparison on it would replace ASYNC116's `to_float` text workaround. That is a harness gap, not a core change.
-- **Soufflé raises an error on a bad `to_number` or `to_float` instead of failing the row:** this happened on `to_number("18446744073709551616")` and `to_float("1e999")`. Soufflé's join order does not respect a guard written before the conversion in the same body, so rules filter through a relation first (`async_float`). Proposal for core.rr's value-functions section: "to_number and to_float on text they cannot represent give no row (the atom is false), never an evaluation error."
+- **Soufflé raises an error on a bad `to_number` or `to_float` instead of failing the row:** this happened on `to_number("18446744073709551616")` and `to_float("1e999")`. Soufflé's join order does not respect a guard written before the conversion in the same body, so rules filter through a relation first (`async_float`). Proposal for core.rerail's value-functions section: "to_number and to_float on text they cannot represent give no row (the atom is false), never an evaluation error."
 
 ### Duplicates to merge (group C)
 
 - `ytt_sys(e, x)` is `ruff_qual(e, q), split_dot(q, "sys", x)`. Fold it into a general `sys_attr` if another batch adds one.
-- `async_name_value(n, v)`: the value of the binding in effect at a name, as Ruff's find_binding_value gives it. pathlib.rr has the same thing only for "only binding" (`only_site`). If another library has a "latest binding value" relation, merge the two.
+- `async_name_value(n, v)`: the value of the binding in effect at a name, as Ruff's find_binding_value gives it. pathlib.rerail has the same thing only for "only binding" (`only_site`). If another library has a "latest binding value" relation, merge the two.
 - `async_ctx(n)` is Ruff's `in_async_context`. It looks like what bugbear and the other async-aware libraries would want, so move it to a shared library if any of them has the same relation.
 
 ## Group D: flake8-errmsg (EM), flake8-gettext (INT), flake8-todos (TD), pygrep-hooks (PGH), flake8-self (SLF), flake8-slots (SLOT)
 
 Libraries:
 
-- `lib/python/misc2-messages.rr` (86 lines): a call's first argument and what it builds (str, bytes, f-string,
+- `lib/python/misc2-messages.rerail` (86 lines): a call's first argument and what it builds (str, bytes, f-string,
   `.format`, printf), Ruff's literal expressions, the raised call, typing.cast, and translation calls.
-- `lib/python/misc2-todo.rr` (72 lines): Ruff's TodoDirective parse (tag, author, colon, description) and
+- `lib/python/misc2-todo.rerail` (72 lines): Ruff's TodoDirective parse (tag, author, colon, description) and
   issue links in the comment block.
-- `lib/python/misc2-noqa.rr` (51 lines): Ruff's noqa lexer (inline and file-wide blankets, file exemptions),
+- `lib/python/misc2-noqa.rerail` (51 lines): Ruff's noqa lexer (inline and file-wide blankets, file exemptions),
   own-line comments, and blanket `type: ignore`.
-- `lib/python/misc2-self.rr` (103 lines): the receiver tests of SLF001.
-- `lib/python/misc2-slots.rr` (41 lines): classes without `__slots__` (a parenthesized `(__slots__) = …`
+- `lib/python/misc2-self.rerail` (103 lines): the receiver tests of SLF001.
+- `lib/python/misc2-slots.rerail` (41 lines): classes without `__slots__` (a parenthesized `(__slots__) = …`
   counts), positional bases (not `metaclass=` or `**kw`), enums.
-- `lib/python/misc2-todo-span.rr`: **to delete**, unused. It held the span-anchored TD version (D-D4), which
+- `lib/python/misc2-todo-span.rerail`: **to delete**, unused. It held the span-anchored TD version (D-D4), which
   rrlab cannot lower; `rm` is blocked here.
 
 Scores are TP/FP/FN at (file, line) against Ruff 0.16.9's default-settings snapshots (plus the option tests
@@ -379,7 +379,7 @@ All 20 are perfect.
   whitespace. Here the tag must be followed by nothing, a space or tab, or ASCII punctuation, so `# TODOé: x` and
   `# TODO2` are not directives, as in Ruff. The one remaining difference is a non-ASCII punctuation mark right
   after the tag (`# TODO：x`): Ruff takes it as a tag and these rules do not. The tag regex is the whole of
-  Ruff's section loop: the leftmost `#`, then `#`s and whitespace, then the tag (misc2-todo.rr explains why that
+  Ruff's section loop: the leftmost `#`, then `#`s and whitespace, then the tag (misc2-todo.rerail explains why that
   is the same).
 - **D-D4 (TD anchors and TD006 fix):** the TD findings sit on the comment node, so their column is the
   comment's start where Ruff's is the tag's; the line is the same, which is what the findings contract compares.
@@ -405,15 +405,15 @@ All 20 are perfect.
 
 1. **Reporting on part of a node (future).** Ruff reports TD001–TD007 at the tag inside the comment, and
    TD006's fix replaces only the tag. That needs a finding and an edit anchored on a span taken from a node's
-   text: a `match` capture bound as a span (core.rr says so; rrlab binds text). With it, the TD rules would
-   use `todo_at(c, D)` (the deleted misc2-todo-span.rr: the same tag regex, `D` a span) as their anchor and
+   text: a `match` capture bound as a span (core.rerail says so; rrlab binds text). With it, the TD rules would
+   use `todo_at(c, D)` (the deleted misc2-todo-span.rerail: the same tag regex, `D` a span) as their anchor and
    fix `replace(D, `TODO`)`.
 
 ### Duplicates to merge (group D)
 
-- `msg_str_lit` (misc2-messages.rr) is a str literal, adjacent ones joined, as pyflakes' `plain_str` without
+- `msg_str_lit` (misc2-messages.rerail) is a str literal, adjacent ones joined, as pyflakes' `plain_str` without
   the value; `msg_literal` is Ruff's is_literal_expr, close to pyflakes' `py_literal` (which also takes
   f-strings and `-1`).
-- `own_line_comment` (misc2-noqa.rr) may exist in another batch's comment library (misc-comments.rr).
-- `slots_enum` (misc2-slots.rr) is typing.rr's `class_ancestor` test behind `in_enum`, for a class node.
+- `own_line_comment` (misc2-noqa.rerail) may exist in another batch's comment library (misc-comments.rerail).
+- `slots_enum` (misc2-slots.rerail) is typing.rerail's `class_ancestor` test behind `in_enum`, for a class node.
 

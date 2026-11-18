@@ -1,4 +1,4 @@
-"""Writes ../data-layer-serverplan-quality.rr from template.rr.
+"""Writes ../data-layer-serverplan-quality.rerail from template.rerail.
 
 The template is the authored program with each long matcher left as `{{NAME}}`; this fills them in as
 JSON. The anchors' matchers come from the relational clauses' inputs in the PIAT port
@@ -130,8 +130,8 @@ POLICY = {
 }
 
 values = {"POLICY": POLICY, **{name: matcher for name, (_, _, matcher) in ANCHORS.items()}, **HELPERS}
-text = (HERE / "template.rr").read_text()
+text = (HERE / "template.rerail").read_text()
 for name, value in values.items():
     text = text.replace("{{" + name + "}}", json.dumps(value))
 assert "{{" not in text, "a placeholder the generator does not fill"
-(HERE.parent / "data-layer-serverplan-quality.rr").write_text(text)
+(HERE.parent / "data-layer-serverplan-quality.rerail").write_text(text)

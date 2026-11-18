@@ -1,4 +1,4 @@
-# `.rr`, step 11: the other directives; all of `.rr`.
+# `.rerail`, step 11: the other directives; all of `.rerail`.
 #
 #   .input r(IO=json, filename="r.json"), s
 #   .output t

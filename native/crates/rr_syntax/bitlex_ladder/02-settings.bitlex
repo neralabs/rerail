@@ -1,4 +1,4 @@
-# `.rr`, step 2: settings, `.mode x`, `.scope dirs "a", "b"`: a word and the rest of its line.
+# `.rerail`, step 2: settings, `.mode x`, `.scope dirs "a", "b"`: a word and the rest of its line.
 #
 # The engine's parser (logic/rr/syntax.rs) is the reference. What this step adds:
 #   - A setting is `.`, its name, and every token after it on its line, each one argument:

@@ -6,7 +6,7 @@
 // rule or expected findings; their size follows the upstream rule set.
 // Exemption `fixture-data`: `fixtures/**` is recorded data laid out per engine feature (#10).
 // Exemption `vendored`: `native/grammars/**` is third-party code kept byte-identical.
-// Exemption `kept-records` (the `.rr` workbench and the design notes, kept in git as they are:
+// Exemption `kept-records` (the `.rerail` workbench and the design notes, kept in git as they are:
 // docs/repository-structure.md, "Kept as they are"): each directory KEPT_FLAT lists, exactly (never its
 // subdirectories), with its reason.
 // Exemption `engine-layout`: each directory of the engine line ENGINE_LAYOUT lists, exactly, until the line's layout
@@ -24,13 +24,13 @@ export const LIMIT = 25;
 const KEPT_FLAT = new Map([
   ["docs/final-shape/notes/", "the design notes, one file per numbered note, with the scripts a note ran"],
   ["docs/rule-engine-direction/experiments/m2m7/", "an experiment record, kept as it ran"],
-  ["docs/rule-syntax/data-layer/", "the workbench's data-layer rules, one `.rr` per rule with the script that generates or checks it"],
-  ["docs/rule-syntax/packs/javascript/", "the workbench's JavaScript rules, one `.rr` per pack rule with its generator and check scripts"],
-  ["docs/rule-syntax/packs/node/", "the workbench's Node rules, one `.rr` per pack rule with its generator and check scripts"],
-  ["docs/rule-syntax/packs/python/", "the workbench's Python rules, one `.rr` per pack rule with its generator and check scripts"],
-  ["docs/rule-syntax/packs/react/", "the workbench's React rules, one `.rr` per pack rule with its generator and check scripts"],
-  ["docs/rule-syntax/packs/sql/", "the workbench's SQL rules, one `.rr` per pack rule with its generator and check scripts"],
-  ["docs/rule-syntax/packs/vue/", "the workbench's Vue rules, one `.rr` per pack rule with its generator and check scripts"],
+  ["docs/rule-syntax/data-layer/", "the workbench's data-layer rules, one `.rerail` per rule with the script that generates or checks it"],
+  ["docs/rule-syntax/packs/javascript/", "the workbench's JavaScript rules, one `.rerail` per pack rule with its generator and check scripts"],
+  ["docs/rule-syntax/packs/node/", "the workbench's Node rules, one `.rerail` per pack rule with its generator and check scripts"],
+  ["docs/rule-syntax/packs/python/", "the workbench's Python rules, one `.rerail` per pack rule with its generator and check scripts"],
+  ["docs/rule-syntax/packs/react/", "the workbench's React rules, one `.rerail` per pack rule with its generator and check scripts"],
+  ["docs/rule-syntax/packs/sql/", "the workbench's SQL rules, one `.rerail` per pack rule with its generator and check scripts"],
+  ["docs/rule-syntax/packs/vue/", "the workbench's Vue rules, one `.rerail` per pack rule with its generator and check scripts"],
 ]);
 
 /** Exemption `engine-layout`: the engine line's directories, each exactly ("" is the repository root), and why. */

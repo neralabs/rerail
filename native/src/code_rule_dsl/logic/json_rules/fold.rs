@@ -26,7 +26,7 @@ pub fn reserved(lib: &std::path::Path) -> Set {
             let p = e.path();
             if p.is_dir() {
                 stack.push(p);
-            } else if p.extension().is_some_and(|x| x == "rr")
+            } else if p.extension().is_some_and(|x| x == "rerail")
                 && let Ok(text) = std::fs::read_to_string(&p)
             {
                 names.extend(findall(&decl, &text));

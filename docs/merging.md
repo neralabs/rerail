@@ -125,7 +125,7 @@ This list is not complete. The decision records are the full set.
   0140 for the writer).
 - One tape format, defined in `native/crates/tape_format` (`FORMAT_VERSION`, `header`), with no
   stored digest. Other crates re-export it.
-- A cache is two ordinary rules in `.rr`, a key rule and an output rule (0103). Nothing kept
+- A cache is two ordinary rules in `.rerail`, a key rule and an output rule (0103). Nothing kept
   outside facts, and no wave waits for SQL (0104). `scripts/check/check_no_new_caches.py` refuses
   new cache stores.
 - A relation carries its delta, and an edit runs the strata its deltas reach (0117, 0120).

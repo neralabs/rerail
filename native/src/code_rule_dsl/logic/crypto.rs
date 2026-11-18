@@ -1,4 +1,4 @@
-//! `.rr`'s `@ed25519_ok(key_hex, message, sig_b64)`: the detached Ed25519 check W's `verify_ed25519` SQL function
+//! `.rerail`'s `@ed25519_ok(key_hex, message, sig_b64)`: the detached Ed25519 check W's `verify_ed25519` SQL function
 //! made over signed allowlists (d627273f6 `code_rule_dsl/crypto.rs`, its `verifies`, kept as it was): a 64-digit hex
 //! public key, the message's UTF-8 bytes, a standard (padded) base64 signature of at most 128 characters, and
 //! `verify_strict`. Anything malformed is a failed check, never an error.

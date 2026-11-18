@@ -5,7 +5,7 @@
 // specs of the dashboard; kept out of `test/` because vitest runs every spec file under it).
 // Exemption `data-roots`: `fixtures/**` and `packs/<id>/upstream/**` hold upstream projects' copied tests
 // as recorded data; they are never run as Rerail's tests.
-// Exemption `workbench-samples` (the `.rr` workbench, kept in git as it is: docs/repository-structure.md, "Kept as they
+// Exemption `workbench-samples` (the `.rerail` workbench, kept in git as it is: docs/repository-structure.md, "Kept as they
 // are"): a scenario of the workbench's explorer (`docs/rule-syntax/site/explorer/scenarios/`) holds the sample source
 // a rule is shown on, named as the code it stands for (`test_parse.py` for a pytest rule); it is never run as a test.
 // Rust tests are not files of their own kind: `#[cfg(test)]` modules (`tests.rs`, `*_tests.rs`) are part of

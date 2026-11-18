@@ -101,7 +101,7 @@ def corpus_session_request(workload):
     files = [{"path": path, "language": "python", "source": source} for path, source in corpus]
     original = next(f for f in files if f["path"] == "json/decoder.py")
     edited = {**original, "source": original["source"] + "\n\ndef debug_extra(text):\n    return eval(text)\n"}
-    program = (ROOT / f"native/src/code_rule_dsl/logic/plan/golden/programs/{workload}.rr").read_text()
+    program = (ROOT / f"native/src/code_rule_dsl/logic/plan/golden/programs/{workload}.rerail").read_text()
     outputs = [name.strip() for line in program.splitlines() if line.startswith(".output ")
                for name in line.removeprefix(".output ").split(",")]
     return {"program": program, "snapshot": {"files": files}, "steps": [
@@ -265,7 +265,7 @@ hit(i) :- target(o), picked(i,o).
     retry = dict(result[-1][1], max_waves=4096, queries=["SELECT count(*) FROM reached"])
     result.append(("wave-budget-raised", retry))
     for name in ["workload", "calls"]:
-        src = (ROOT/f"native/src/code_rule_dsl/logic/plan/golden/programs/{name}.rr").read_text()
+        src = (ROOT/f"native/src/code_rule_dsl/logic/plan/golden/programs/{name}.rerail").read_text()
         result.append((f"wave-{name}-cpython", {"snapshot": {"files": [{"path":p,"source":s,"language":"python"} for p,s in corpus]}, "program":src, "queries":["SELECT count(*) FROM finding"]}))
         # Diagnostic workaround only: avoid the projection names already bound by the session.
         # Explicit rules retain the same node projections; the original case remains above.
@@ -444,7 +444,7 @@ def main():
             if "timeout" in result: break
     if not args.only or args.only == "corpus":
         for workload in ["workload", "workload_demand", "calls"]:
-            program = ROOT/f"native/src/code_rule_dsl/logic/plan/golden/programs/{workload}.rr"
+            program = ROOT/f"native/src/code_rule_dsl/logic/plan/golden/programs/{workload}.rerail"
             for trial in range(args.repeats):
                 modes = ["sql","native"] if trial%2==0 else ["native","sql"]
                 for mode in modes:

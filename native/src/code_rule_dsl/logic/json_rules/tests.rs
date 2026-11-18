@@ -9,7 +9,7 @@ fn repo() -> &'static Path {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/.."))
 }
 
-/// Every JSON rule of main's pinned pack translates to the pack's `<id>.rr`, byte for byte: the generated pack is
+/// Every JSON rule of main's pinned pack translates to the pack's `<id>.rerail`, byte for byte: the generated pack is
 /// what the engine reads from the JSON, so a translator change regenerates it (`site/regen_main_pack.sh`).
 #[test]
 fn json_rules_pack_is_current() {
@@ -21,7 +21,7 @@ fn json_rules_pack_is_current() {
     let mut differ = Vec::new();
     for json in &jsons {
         let id = json.file_stem().expect("a stem").to_string_lossy().into_owned();
-        let golden = pack.join(format!("{id}.rr"));
+        let golden = pack.join(format!("{id}.rerail"));
         let want = std::fs::read_to_string(&golden).unwrap_or_else(|e| panic!("{}: {e}", golden.display()));
         match translator.translate_file(json) {
             Ok(got) if got == want => {}

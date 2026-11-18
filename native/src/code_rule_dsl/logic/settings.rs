@@ -1,12 +1,12 @@
 //! A program file's text with its includes read in, and the run's settings (`rerail.env`, `--env`) as facts of a
 //! program: what a run of the logic reads before it plans (the command line's tools re-export them).
 
-/// A program file's `.rr` text, with what it `#include`s from the library (`docs/rule-syntax/lib`) read in.
+/// A program file's `.rerail` text, with what it `#include`s from the library (`docs/rule-syntax/lib`) read in.
 pub fn program_text(path: &std::path::Path) -> Result<String, String> {
     program_texts(&[path]).map(|mut texts| texts.remove(0))
 }
 
-/// [`program_text`] for each of `paths`: phase 0 resolves all their `#include`s in one run of `bootstrap.rr`
+/// [`program_text`] for each of `paths`: phase 0 resolves all their `#include`s in one run of `bootstrap.rerail`
 /// (`plan::corpus::phase0`), not one run each.
 pub fn program_texts(paths: &[&std::path::Path]) -> Result<Vec<String>, String> {
     use crate::code_rule_dsl::logic::plan::corpus::{observe, phase0};
@@ -48,16 +48,16 @@ pub fn program_texts(paths: &[&std::path::Path]) -> Result<Vec<String>, String> 
     let mut out = Vec::with_capacity(texts.len());
     for ((path, text), j) in paths.iter().zip(texts).zip(json) {
         if j || !includes(&text) {
-            out.push(if policy(&text) && !includes(&text) { format!("#include \"core.rr\"\n{text}") } else { text });
+            out.push(if policy(&text) && !includes(&text) { format!("#include \"core.rerail\"\n{text}") } else { text });
             continue;
         }
         let graph = graphs.next().expect("a graph per seed");
         // The program as modules (decision 0089): the library files it includes stay `#include`s, read once by a
-        // run however many of its programs include them; a file beside it is written in. A policy reads `core.rr`.
+        // run however many of its programs include them; a file beside it is written in. A policy reads `core.rerail`.
         let canonical = dunce::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let library = dirs.as_ref().map(|d| d.lib.as_path()).ok_or_else(|| "the rule library does not canonicalize".to_owned())?;
         let own = module_text(&canonical, &text, &graph, library, &mut Vec::new(), &read)?;
-        let own = if policy(&text) && !includes(&own) { format!("#include \"core.rr\"\n{own}") } else { own };
+        let own = if policy(&text) && !includes(&own) { format!("#include \"core.rerail\"\n{own}") } else { own };
         // The text's own graph is the file's, cut to what the text includes: kept, so no second run derives it.
         if let (Ok(Some(seed)), Some(dirs)) = (crate::code_rule_dsl::logic::rr::text_seed(&own), &dirs) {
             phase0::keep_text(&seed, &graph, dirs);

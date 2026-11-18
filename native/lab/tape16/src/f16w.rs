@@ -233,7 +233,7 @@ pub struct Report {
     pub nodes: u64,
     pub source: u64,
     /// Instructions and ns: format 15's writer from the node list; format 16's writer driven as a parser
-    /// drives it; and, with the `lean` feature on `.rr`, the lean parse with its format-15 write.
+    /// drives it; and, with the `lean` feature on `.rerail`, the lean parse with its format-15 write.
     pub f15: crate::measure::Cost,
     pub f16: crate::measure::Cost,
     /// Of `f16`: `finish` alone (the side lists laid in parts).

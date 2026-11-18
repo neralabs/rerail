@@ -1,4 +1,4 @@
-# `.rr`, step 18: `min (…) : { … }`, an aggregate whose value is in parentheses.
+# `.rerail`, step 18: `min (…) : { … }`, an aggregate whose value is in parentheses.
 #
 #   r(n) :- n = min (a + b) : { s(a, b) }.
 #

@@ -35,7 +35,7 @@ HOOKS = 'any(test, feature = "test-hooks")'
 DESCRIPTIONS = {
     'rerail-lang': 'The language registry and what every crate reads of a language: tapes, trees, lines, JSON, budgets.',
     'rerail-facts': "The engine's facts: the virtual tables, text, strings, producers, SQL profiles.",
-    'rerail-rr': 'The .rr front end: parsing to programs, magic sets, lowering, printing, checking.',
+    'rerail-rr': 'The .rerail front end: parsing to programs, magic sets, lowering, printing, checking.',
     'rerail-logic': 'The Datalog engine: plans, the native executor, SQL, typing, the waves core, the solver device interface.',
     'rerail-sessions': "The SQL executor's sessions.",
     'rerail-w': "W: the matcher, scopes, values, suppressions, demand and the workspace's model.",

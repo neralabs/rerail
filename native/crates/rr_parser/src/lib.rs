@@ -1,8 +1,8 @@
-//! The `.rr` parser: the Bitlex grammar of `.rr` (the last step of `rr_syntax/bitlex_ladder/`), compiled
+//! The `.rerail` parser: the Bitlex grammar of `.rerail` (the last step of `rr_syntax/bitlex_ladder/`), compiled
 //! once per process through the Bitlex compiler to tier 1 and tier 2 on Cranelift, and shared by
 //! every thread.
 //!
-//! A crate of its own, on the compiler crate, the Metal crate and the engine's `.rr` syntax
+//! A crate of its own, on the compiler crate, the Metal crate and the engine's `.rerail` syntax
 //! (`rerail_rr_syntax`), so the parser and its measurements rebuild without the engine.
 //!
 //! `tape` gives the engine's own tape (`rerail_rr_syntax::tape`): the same kinds, fields, spans and
@@ -22,25 +22,25 @@ use std::collections::HashMap;
 const GRAMMAR: &str = include_str!("../../rr_syntax/bitlex_ladder/22-test-blocks.bitlex");
 
 /// Sample documents, for the profile tier 2 is cut by when the grammar compiles
-/// (docs/parser-generators/28-tier-2-in-clusters.md): 12 of the repository's `.rr`
+/// (docs/parser-generators/28-tier-2-in-clusters.md): 12 of the repository's `.rerail`
 /// files, spread over its folders. A profile of about ten files gives a cut as good as the
 /// whole corpus's.
 const SAMPLES: [&str; 12] = [
-    include_str!("../samples/data-layer-graph-lazy-sql-plan.rr.sample"),
-    include_str!("../samples/eslint-no-sequences.rr.sample"),
-    include_str!("../samples/node.rr.sample"),
-    include_str!("../samples/phpcs-generic-php-forbidden-functions.rr.sample"),
-    include_str!("../samples/plan-scope-side-effects.rr.sample"),
-    include_str!("../samples/react-hooks-rules-of-hooks.rr.sample"),
-    include_str!("../samples/ruff-b029-except-with-empty-tuple.rr.sample"),
-    include_str!("../samples/ruff-fbt001-boolean-type-hint-positional-argument.rr.sample"),
-    include_str!("../samples/ruff-pth115-os-readlink.rr.sample"),
-    include_str!("../samples/ruff-ruf043-pytest-raises-ambiguous-pattern.rr.sample"),
-    include_str!("../samples/swallowed-exceptions.rr.sample"),
-    include_str!("../samples/typescript-eslint-no-dynamic-delete.rr.sample"),
+    include_str!("../samples/data-layer-graph-lazy-sql-plan.rerail.sample"),
+    include_str!("../samples/eslint-no-sequences.rerail.sample"),
+    include_str!("../samples/node.rerail.sample"),
+    include_str!("../samples/phpcs-generic-php-forbidden-functions.rerail.sample"),
+    include_str!("../samples/plan-scope-side-effects.rerail.sample"),
+    include_str!("../samples/react-hooks-rules-of-hooks.rerail.sample"),
+    include_str!("../samples/ruff-b029-except-with-empty-tuple.rerail.sample"),
+    include_str!("../samples/ruff-fbt001-boolean-type-hint-positional-argument.rerail.sample"),
+    include_str!("../samples/ruff-pth115-os-readlink.rerail.sample"),
+    include_str!("../samples/ruff-ruf043-pytest-raises-ambiguous-pattern.rerail.sample"),
+    include_str!("../samples/swallowed-exceptions.rerail.sample"),
+    include_str!("../samples/typescript-eslint-no-dynamic-delete.rerail.sample"),
 ];
 
-/// The cap of tier 2's clusters, in words (doc 28: 2,500 runs fastest on `.rr`).
+/// The cap of tier 2's clusters, in words (doc 28: 2,500 runs fastest on `.rerail`).
 const CLUSTER_CAP: usize = 2500;
 
 /// Ids above the engine's, for the grammar's own names (supertypes, marks) that never reach a
@@ -97,7 +97,7 @@ pub fn compile_with(shape: bitlex_compile::Shape) -> Result<Compiled, String> {
     compile_text(GRAMMAR, shape)
 }
 
-/// `compile_with` of a grammar's text (a test's variant of the `.rr` grammar).
+/// `compile_with` of a grammar's text (a test's variant of the `.rerail` grammar).
 pub fn compile_text(grammar: &str, shape: bitlex_compile::Shape) -> Result<Compiled, String> {
     compile_padded(grammar, shape, rerail_compiler::native_cpu_block::BACK as u16)
 }
@@ -315,7 +315,7 @@ pub mod tests {
             "r(n) :- n = sum min x : { s(x) } : { t(n) }, m = count : { u(_) }.",
             ".policy {\"a\": [1, {\"b\": null}]}\n/* d */ r(x) :- x ~ `a`, y = \"s\".",
             // A rule file's tests (decision 0130): a fixture set, and a test that uses it.
-            ".fixtures app\n    .fixture \"a.py\" ```\n        x = 1\n        ```\n.end\n.test t exactly uses app, b\n    #include \"c.rr\"\n    seen(1).\n    r(x) :- seen(x).\n    .given seen\n    .expect B101 at \"a.py\":1\n    .expect no r(_)\n.end\nr(x) :- s(x).\n",
+            ".fixtures app\n    .fixture \"a.py\" ```\n        x = 1\n        ```\n.end\n.test t exactly uses app, b\n    #include \"c.rerail\"\n    seen(1).\n    r(x) :- seen(x).\n    .given seen\n    .expect B101 at \"a.py\":1\n    .expect no r(_)\n.end\nr(x) :- s(x).\n",
             // `exactly` and `uses` as names; a block's statements end at `. end`.
             ".test exactly\n.end\n.test uses uses a\n. // c\n end\n.fixtures f exactly(1).\n.end",
         ];
@@ -351,8 +351,8 @@ pub mod tests {
     fn rule_files_with_tests_are_the_engines() {
         let machine = crate::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles as one machine");
         for src in [
-            include_str!("../../../../docs/rule-syntax/packs/python/bandit-b101-assert-used.rr"),
-            include_str!("../../../../docs/rule-syntax/spikes/rr-tests/print-calls.rr"),
+            include_str!("../../../../docs/rule-syntax/packs/python/bandit-b101-assert-used.rerail"),
+            include_str!("../../../../docs/rule-syntax/spikes/rr-tests/print-calls.rerail"),
         ] {
             assert!(src.contains(".test "));
             let engine = super::engine_tape(src);
@@ -388,7 +388,7 @@ pub mod tests {
 
     /// Tier 2's state machine is built once per rule, not once per place a rule is used: rules
     /// whose calls save states are calls (`grammar::shared`). With every rule inlined into each
-    /// place, `.rr` had 858 states and 8,370 arms; shared, 438 and 4,014. A ratchet: lower it as
+    /// place, `.rerail` had 858 states and 8,370 arms; shared, 438 and 4,014. A ratchet: lower it as
     /// the compiler improves. Named-only tapes (step 21) raised it from 234 and 2,225 (to 266 and 2,590): a group's
     /// body and an aggregate word's arguments are rules of their own, which drop their `,`.
     /// A rule file's tests (step 22, decision 0130) raised it to 271 and 2,621: a block's statements are a level of
@@ -1088,7 +1088,7 @@ pub mod tests {
         }
     }
 
-    /// Tier 1 of `.rr` on Metal, its kernels made first: `prewarm` over a sample (`RR_SAMPLE`)
+    /// Tier 1 of `.rerail` on Metal, its kernels made first: `prewarm` over a sample (`RR_SAMPLE`)
     /// runs the program, learns, and compiles the learned program's kernels, as a
     /// process would off the parse's path. The timed runs then must compile nothing
     /// (`compiles`). Each run: the corpus (`RR_REPEAT` times) as batches under the device's
@@ -1148,7 +1148,7 @@ pub mod tests {
         eprintln!("load: {}", String::from_utf8_lossy(&std::process::Command::new("uptime").output().map(|o| o.stdout).unwrap_or_default()).trim());
     }
 
-    /// Tier 2 in clusters (`native_cpu_clusters`, doc 28) on `.rr`: the traffic from every
+    /// Tier 2 in clusters (`native_cpu_clusters`, doc 28) on `.rerail`: the traffic from every
     /// fourth file of the corpus, a cut at each cap, and for each the compile (CPU, Cranelift's
     /// register allocation), the code (instructions, stack loads and stores), the share of steps
     /// that cross, and tier 2's time over the whole corpus with tier 1's buffers made before.
@@ -1381,7 +1381,7 @@ pub mod tests {
             (format!("{head}.input\n.decl b(x: number)\n"), true),
             (format!("{head}.input\n"), false),
             (format!("{head}.output /* c */\n"), false),
-            (format!("{head}.input\n#include \"x.rr\"\n"), false),
+            (format!("{head}.input\n#include \"x.rerail\"\n"), false),
         ];
         for (src, taken) in &cases {
             let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
@@ -1644,7 +1644,7 @@ pub mod tests {
 
     /// The pair rule's table as the lean lexer's nibble tables (`native_cpu_block::pair_nibbles`):
     /// the token loop reads a pair's second byte from a block's word, a bit a byte, not the
-    /// table at each token. Each first byte of `.rr`'s pairs is its own bit.
+    /// table at each token. Each first byte of `.rerail`'s pairs is its own bit.
     #[test]
     fn the_pairs_are_a_blocks_word() {
         let c = crate::compiled().expect("compiles");
@@ -2467,7 +2467,7 @@ pub mod tests {
         eprintln!("{form}: {rounds} rounds, {:.1}M instructions and {:.1}M cycles a round, {:?} CPU", (i1 - i0) as f64 / rounds as f64 / 1e6, (c1 - c0) as f64 / rounds as f64 / 1e6, (t1 - t0) / rounds as u32);
     }
 
-    /// Cranelift's optimizer on `.rr`'s tier 1 (doc 28): tier 1 compiled with it and without, in
+    /// Cranelift's optimizer on `.rerail`'s tier 1 (doc 28): tier 1 compiled with it and without, in
     /// one process, timed in turns over the corpus, each its best round.
     #[test]
     #[ignore = "a benchmark: run by hand"]
@@ -2681,7 +2681,7 @@ pub mod tests {
         eprintln!("load: {}", String::from_utf8_lossy(&std::process::Command::new("uptime").output().map(|o| o.stdout).unwrap_or_default()).trim());
     }
 
-    /// Throughput over the repository's `.rr` files, a pass's mean of `REPEAT`, CPU (this thread)
+    /// Throughput over the repository's `.rerail` files, a pass's mean of `REPEAT`, CPU (this thread)
     /// and wall: the hand-written Rust reader (`rr::tape`), the compiled grammar file by file,
     /// the corpus as one batch with tier 1 on the CPU, and as one batch with tier 1 on Metal
     /// (tier 2 on the CPU over the buffers where the device left them). Each pass's results are
@@ -2821,7 +2821,7 @@ pub mod tests {
         eprintln!("  load: {load}");
     }
 
-    /// CPU time over the repository's `.rr` files: the compiled grammar against the engine's
+    /// CPU time over the repository's `.rerail` files: the compiled grammar against the engine's
     /// parser, each over every file `REPEAT` times, the grammar compiled before. Run alone
     /// (`--test-threads 1`) and at nice 19; the machine's load is printed.
     #[test]
@@ -2837,7 +2837,7 @@ pub mod tests {
                 let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
                 if p.is_dir() && !skip {
                     work.push(p);
-                } else if p.extension().is_some_and(|x| x == "rr") {
+                } else if p.extension().is_some_and(|x| x == "rerail") {
                     files.extend(std::fs::read_to_string(&p).ok());
                 }
             }
@@ -2873,7 +2873,7 @@ pub mod tests {
         rerail_prof::thread_cpu()
     }
 
-    /// The repository's `.rr` files.
+    /// The repository's `.rerail` files.
     pub fn corpus() -> Vec<String> {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let (mut files, mut work) = (Vec::new(), vec![root]);
@@ -2884,7 +2884,7 @@ pub mod tests {
                 let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
                 if p.is_dir() && !skip {
                     work.push(p);
-                } else if p.extension().is_some_and(|x| x == "rr") {
+                } else if p.extension().is_some_and(|x| x == "rerail") {
                     files.extend(std::fs::read_to_string(&p).ok());
                 }
             }

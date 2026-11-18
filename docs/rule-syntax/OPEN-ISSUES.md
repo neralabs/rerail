@@ -1,9 +1,9 @@
-# Open issues in the .rr drafts
+# Open issues in the .rerail drafts
 
 Found by reading the code while commenting it (2026-11-03). Nothing here has been run; each item is a likely bug to
 confirm once a parser and engine exist. None is fixed yet.
 
-## lib/tsx/names.rr, lib/tsx/jsx.rr
+## lib/tsx/names.rerail, lib/tsx/jsx.rerail
 1. `ref` excludes identifiers in a `name` field, which is where JSX tag identifiers sit: tags get no `ref_site`/`sym_of`.
    This breaks `fragment`, `provider_el` and the router example.
 2. `decl_site` "pattern" needs a declarator that already has a `decl_site`; the var/let rules accept identifiers only,
@@ -77,20 +77,20 @@ confirm once a parser and engine exist. None is fixed yet.
    - the cost of the extra evaluation that finds Unknown places, on a run with artifacts missing;
    - whether withholding whole unparsable documents loses findings that the engine's error-tolerant clauses find
      today (`source-partial`).
-2. Signature verification is Datalog over `@ed25519_ok`; the two layouts in lib/data-layer/signing.rr were checked
+2. Signature verification is Datalog over `@ed25519_ok`; the two layouts in lib/data-layer/signing.rerail were checked
    against real signatures at the pinned revision, the rules themselves were not run.
 3. file-length follows the CLI's line count (splitlines); the suite plugin counts `\n`. They differ only on files
    with other line separators.
 4. PEP 696 type-parameter defaults: Rerail's vendored tree-sitter-python already parses them (`type_default`,
-   PATCHES.md patch 1). python/ast.rr's `type_param` was written from its grammar.json, not checked on a parse:
+   PATCHES.md patch 1). python/ast.rerail's `type_param` was written from its grammar.json, not checked on a parse:
    confirm the shapes (`type` around the name, `constrained_type`, `splat_type`) with a tree dump once the
-   engine runs .rr files.
+   engine runs .rerail files.
 5. Run artifacts are designed (data-layer/RUN-FACTS.md), not built: `.artifact`, `artifact=`, `rerail facts
    stamp`, `--facts`, `--require-facts`. The five producers are sketches over the data layer's existing
    functions. Only linter_runtime's is new logic, a loop over `DL_SUITE`; it belongs in the data-layer
-   repository. test-budget.rr is the worked port; the other four checks are not ported yet.
+   repository. test-budget.rerail is the worked port; the other four checks are not ported yet.
 6. `.budget M by k from base` over a metric relation was dropped: a metric ratchet is a rule
-   (noqa-sec-ratchet.rr, test-budget.rr). The coverage table's 16 `.budget … from` uses include metric ratchets.
+   (noqa-sec-ratchet.rerail, test-budget.rerail). The coverage table's 16 `.budget … from` uses include metric ratchets.
 7. LEG-083 is wrong upstream (data-layer/upstream/LEG-083.md, with LEG-083.patch, not applied):
    - any method named `resolve` counts as eager: all 18 findings at 2b1504 are pathlib or `resolve(arg)`
      calls;

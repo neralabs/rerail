@@ -14,10 +14,10 @@ JSON, except where noted below. A fix is `fix safe` only where ESLint autofixes.
 
 The rules use three new libraries:
 
-- `lib/tsx/ts-b.rr` holds declaration files, namespaces and modules, type references and enum members.
-- `lib/tsx/ts-b-scope.rr` models typescript-eslint's scope manager: scopes, variables (by declaration kind and
+- `lib/tsx/ts-b.rerail` holds declaration files, namespaces and modules, type references and enum members.
+- `lib/tsx/ts-b-scope.rerail` models typescript-eslint's scope manager: scopes, variables (by declaration kind and
   value/type space), references and their resolution, and reads, writes and init writes.
-- `lib/tsx/ts-b-vitest.rr` recognises Vitest calls as the plugin's parseVitestFnCall does: heads, chains, mode
+- `lib/tsx/ts-b-vitest.rerail` recognises Vitest calls as the plugin's parseVitestFnCall does: heads, chains, mode
   options and test functions.
 
 | rule | lines | score (TP/FP/FN) | deviations |
@@ -102,7 +102,7 @@ Other choices, all matching the references:
 
 No existing library or core file was edited. These are requests:
 
-- **Why ts-b-scope and not names.rr.** names.rr now looks names up along one scope chain, so an inner
+- **Why ts-b-scope and not names.rerail.** names.rerail now looks names up along one scope chain, so an inner
   declaration shadows an outer one. ts-b-scope stays for another reason: these rules compare scopes and
   declaration kinds, so they need typescript-eslint's scope manager's own tree and its definition kinds. That
   means a class-field-initializer scope, enum and namespace scopes, `signature-param` and `enum-member` kinds,
@@ -136,6 +136,6 @@ ts-b was written beside ts-1's ts-a. These overlap and should become one relatio
 - Constructors: ts-a `ts_ctor(m)` and eslint-a-functions `ctor(m)`, which ts-b rules use.
 - no-non-null-asserted-optional-chain already includes ts-a (`non_null`, `in_chain`).
 - First definition: ts-b-scope `first_decl(s, x, id, k)` serves no-shadow, no-use-before-define and
-  no-unused-vars. Declaring statements: ts-b-scope `declaring_stmt(id, n)` and statements.rr `decl_stmt`.
-- Variable scope: ts-b-scope `variable_scope(s, f)` and statements.rr `var_scope`. They model different scope
+  no-unused-vars. Declaring statements: ts-b-scope `declaring_stmt(id, n)` and statements.rerail `decl_stmt`.
+- Variable scope: ts-b-scope `variable_scope(s, f)` and statements.rerail `var_scope`. They model different scope
   trees: the scope manager's scopes, and eslint-scope's.

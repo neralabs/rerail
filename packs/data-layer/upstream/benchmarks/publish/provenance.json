@@ -660,7 +660,7 @@
       "source": "rerail",
       "how": "authored"
     },
-    "authored/async-family-integration/demand-repair/collision/rule.rr": {
+    "authored/async-family-integration/demand-repair/collision/rule.rerail": {
       "source": "rerail",
       "how": "authored"
     },

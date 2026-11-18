@@ -13,7 +13,7 @@
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.py"), "f(1)\ng()\nh(f(2))\n").unwrap();
         // The rule with the core declarations it reads (`kind`, `text`), as `rerail-engine` reads a rule file.
-        let path = dir.join("calls.rr");
+        let path = dir.join("calls.rerail");
         std::fs::write(&path, &rule).unwrap();
         let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&path).unwrap()).unwrap();
         std::fs::remove_file(&path).unwrap();
@@ -44,7 +44,7 @@
     /// atom rows name this store's atoms, and read so, the program is this store's (nothing to move).
     #[test]
     fn a_prepared_program_of_another_store_moves_to_this_stores_atoms() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python/ruff-up006-non-pep585-annotation.rr");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python/ruff-up006-non-pep585-annotation.rerail");
         let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&path).unwrap()).unwrap();
         let dir = crate::code_rule_dsl::fixtures::temp().with_extension("prepared-moved");
         std::fs::create_dir_all(&dir).unwrap();
@@ -75,7 +75,7 @@
     /// facts (decision 0155). A pack rule, prepared.
     #[test]
     fn a_prepared_program_reads_back_from_its_text_and_facts() {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python/ruff-up006-non-pep585-annotation.rr");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python/ruff-up006-non-pep585-annotation.rerail");
         let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&path).unwrap()).unwrap();
         let dir = crate::code_rule_dsl::fixtures::temp().with_extension("prepared-facts");
         std::fs::create_dir_all(&dir).unwrap();
@@ -130,7 +130,7 @@
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.py"), "f()\n").unwrap();
         // The rule read as facts, with the core declarations it reads (`kind`, `text`).
-        let rule = dir.join("rule.rr");
+        let rule = dir.join("rule.rerail");
         std::fs::write(&rule, ".decl calls(c: node, x: symbol)\ncalls(c, x) :- kind(c, \"call\"), text(c, x).\n.decl seen(x: symbol)\nseen(x) :- calls(c, x), !kind(c, \"exec\").\n.output seen\n").unwrap();
         let program = crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap();
         std::fs::remove_file(&rule).unwrap();
@@ -141,7 +141,7 @@
             "{document}\n.decl negated(rel: symbol)\nnegated(rel) :- body(\"rule\", _, _, l), lit_atom(\"rule\", l, a), atom(\"rule\", a, rel, 1, _).\n.output negated\n"
         );
         // Run as any rule is, over a corpus of one file: the program's facts are the query's own.
-        let path = dir.join("query.rr");
+        let path = dir.join("query.rerail");
         std::fs::write(&path, &query).unwrap();
         let query = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&path).unwrap()).unwrap();
         let out = dir.join("out");

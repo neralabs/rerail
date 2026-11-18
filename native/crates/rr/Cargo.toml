@@ -5,7 +5,7 @@ name = "rerail-rr"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "The .rr front end: parsing to programs, magic sets, lowering, printing, checking."
+description = "The .rerail front end: parsing to programs, magic sets, lowering, printing, checking."
 
 [features]
 default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache", "rerail-facts/default", "rerail-lang/default"]

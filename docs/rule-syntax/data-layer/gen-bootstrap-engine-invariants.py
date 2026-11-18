@@ -1,4 +1,4 @@
-"""Writes bootstrap-engine-invariants.tables.rr, the linter's name sets as bei_set(SET, name) rows.
+"""Writes bootstrap-engine-invariants.tables.rerail, the linter's name sets as bei_set(SET, name) rows.
     python3 docs/rule-syntax/data-layer/gen-bootstrap-engine-invariants.py [--check]
 The source is scripts/lint_bootstrap_engine_invariants.py at the pinned commit of the data-layer repository. Every
 module-level frozenset of strings becomes rows under its own name; `*OTHER` inside a set is expanded. --check
@@ -9,7 +9,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = "/Users/jeremy/orca/workspaces/data-layer-base-audit"
 COMMIT = "2b1504adc4291daaf080b2e932962b134da1a69a"
 LINTER = "scripts/lint_bootstrap_engine_invariants.py"
-OUT = os.path.join(HERE, "bootstrap-engine-invariants.tables.rr")
+OUT = os.path.join(HERE, "bootstrap-engine-invariants.tables.rerail")
 
 
 def sets():

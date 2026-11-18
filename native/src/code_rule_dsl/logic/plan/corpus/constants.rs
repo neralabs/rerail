@@ -12,7 +12,7 @@
 //!
 //! Such a relation has one value for the whole run. Left in the program, a rule that reads it reads a relation the
 //! file-local part cannot make (a file read is a request, answered in the cross-file part), so the rule, and every
-//! rule after it, runs in the cross-file part over every document's base rows: `struct.rr`'s definitions were all
+//! rule after it, runs in the cross-file part over every document's base rows: `struct.rerail`'s definitions were all
 //! cross-file for `py_version` alone, and a warm run measured 2.3 M base rows to plan them.
 //!
 //! So these relations are derived first, by a run of the same engine over no documents with the requests answered

@@ -75,7 +75,7 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   consumers give in Python (`pack_fixtures.py`).
 - `ship/`: the shippability bar (`shipbar.ts`, `npm run bench:ship -- prepare|run|verdict …`): whether a candidate
   engine is no worse than main's on every rule pack main ships, as two verdicts, the candidate's packs as they ship
-  through the product's path (`product-run.ts`) and the hand-written `.rr` rewrites through `rerail-engine
+  through the product's path (`product-run.ts`) and the hand-written `.rerail` rewrites through `rerail-engine
   run-policies`. Per pack, on its fixtures and on the real-code corpus `corpora.json` pins, each side runs N times
   interleaved on pinned cores under the same memory and time caps, and the verdict (`verdict.ts`) fails a metric (wall,
   CPU and peak RSS, cold and warm) above 1.10 times main's median, a lost true positive or a new false positive against
@@ -83,8 +83,8 @@ Repository scripts, grouped by what they are for. Their tests live in `test/scri
   cannot run. A cell failing at the median runs `--confirm` more repetitions (a metric passing them is noisy: reported,
   not counted), and a confirmed slowdown is attributed to rules by timing each rule alone (`--drill`). By default a run
   is quick: one run per side, a failing cell run once more, the shipped packs only. A pack's caps can be raised for
-  both sides (`--pack-cap python=56G,14400`); a `.rr` pack run that does not complete records how far it got and then
-  runs in fixed chunks (`--rr-chunk`), whose summed figures the report labels chunked; each `.rr` run records whether
+  both sides (`--pack-cap python=56G,14400`); a `.rerail` pack run that does not complete records how far it got and then
+  runs in fixed chunks (`--rr-chunk`), whose summed figures the report labels chunked; each `.rerail` run records whether
   its policies ran combined or alone. `prepare` exports the baseline (a
   checkout, a git ref, or `release:<version>`: the source at its tag with the published package's prebuilt engines, so
   the baseline is never built) and the corpora anywhere; `run` measures on Linux (taskset, GNU time, a cgroup), macOS

@@ -1,4 +1,4 @@
-//! `dfs_first` and `dfs_first_memo` (`core.rr`, data-layer/DESIGN.md addition 7): the first target a depth-first
+//! `dfs_first` and `dfs_first_memo` (`core.rerail`, data-layer/DESIGN.md addition 7): the first target a depth-first
 //! search from each root reaches, set-based until a cycle.
 //!
 //! From the spike `docs/rule-syntax/spikes/dfs-first/native` (checked there against a port of the Data-layer

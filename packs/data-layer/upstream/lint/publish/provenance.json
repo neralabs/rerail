@@ -740,383 +740,383 @@
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-admin-async-purity.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-admin-async-purity.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-async-executor.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-async-executor.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-async-patterns.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-async-patterns.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-async-sync-delegation.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-async-sync-delegation.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-authentication-plan-purity.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-authentication-plan-purity.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-backend-coupling.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-backend-coupling.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-backend-type-strings.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-backend-type-strings.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-bootstrap-cache-health.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-bootstrap-cache-health.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-bootstrap-eager-resolve.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-bootstrap-eager-resolve.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-bootstrap-engine-invariants.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-bootstrap-engine-invariants.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-bootstrap-lazy-sql.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-bootstrap-lazy-sql.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-bounded-composed-graph-paths.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-bounded-composed-graph-paths.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-cached-pure-lazy-allowlist.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-cached-pure-lazy-allowlist.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-classvar-check.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-classvar-check.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-conditional-architecture.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-conditional-architecture.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-conn-or-txn-union.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-conn-or-txn-union.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-connection-caches.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-connection-caches.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-connection-mode-split.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-connection-mode-split.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-connection-service-architecture.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-connection-service-architecture.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-connection-structural-boundaries.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-connection-structural-boundaries.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-data-layer-compat-aliases.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-data-layer-compat-aliases.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-data-layer-facade-purity.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-data-layer-facade-purity.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-declared-fact-interrogation.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-declared-fact-interrogation.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-dynamic-module-loading.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-dynamic-module-loading.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-eager-resolve.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-eager-resolve.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-embedding-vector-orchestration.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-embedding-vector-orchestration.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-error-handling.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-error-handling.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-execution-authority-bypass.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-execution-authority-bypass.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-executor-publication-repairs.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-executor-publication-repairs.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-forwardref.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-forwardref.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-generated-index-sources.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-generated-index-sources.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-grammar-allowlist-burndown.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-grammar-allowlist-burndown.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-grammar-callable-constructors.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-grammar-callable-constructors.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-grammar-fragment-usage.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-grammar-fragment-usage.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-grammar-mutation-invalidation.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-grammar-mutation-invalidation.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-grammar-render-methods.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-grammar-render-methods.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-grammar-str-params.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-grammar-str-params.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-graph-lazy-sql-plan.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-graph-lazy-sql-plan.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-graphql-plan-ownership.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-graphql-plan-ownership.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-hasattr-async.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-hasattr-async.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-history-serverplan-projection.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-history-serverplan-projection.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-hnsw-architecture.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-hnsw-architecture.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-imperative-private-functions.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-imperative-private-functions.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-impl-direct-execution.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-impl-direct-execution.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-internal-dead-code.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-internal-dead-code.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-layer-violations.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-layer-violations.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-lazy-adapter-ownership.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-lazy-adapter-ownership.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-lazy-architecture.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-lazy-architecture.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-lazy-result-usage.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-lazy-result-usage.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-lazy-sql-surface.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-lazy-sql-surface.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-legacy-callback-quarantine.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-legacy-callback-quarantine.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-legacy-execution-surfaces.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-legacy-execution-surfaces.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-matching-architecture.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-matching-architecture.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-missing-async-pairs.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-missing-async-pairs.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-module-level-caches.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-module-level-caches.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-no-api-root-imports.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-no-api-root-imports.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-no-blanket-grammar-bypass.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-no-blanket-grammar-bypass.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-no-source-inspection.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-no-source-inspection.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-permission-error.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-permission-error.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-plan-composition-architecture.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-plan-composition-architecture.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-plan-helpers-allowlist.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-plan-helpers-allowlist.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-plan-optimizer-v2.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-plan-optimizer-v2.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-plan-scope-ownership.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-plan-scope-ownership.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-plan-scope-side-effects.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-plan-scope-side-effects.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-post-op-no-internal-dispatch.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-post-op-no-internal-dispatch.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-post-op-side-effects.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-post-op-side-effects.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-public-api-triples.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-public-api-triples.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-pure-lazy-runtime-purity.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-pure-lazy-runtime-purity.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-raw-execute-regression.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-raw-execute-regression.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-readthrough-authority-architecture.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-readthrough-authority-architecture.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-regex-sql-parsing.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-regex-sql-parsing.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-render-fstrings.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-render-fstrings.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-render-raw-strings.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-render-raw-strings.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-revision-ancestry-invariants.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-revision-ancestry-invariants.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-rust-sql-grammar-boundary.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-rust-sql-grammar-boundary.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-schema-architecture.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-schema-architecture.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-schema-bootstrap-contracts.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-schema-bootstrap-contracts.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-schema-introspection-data-paths.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-schema-introspection-data-paths.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-serverplan-bypass.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-serverplan-bypass.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-serverplan-dispatch-architecture.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-serverplan-dispatch-architecture.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-serverplan-name-inference.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-serverplan-name-inference.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-serverplan-quality.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-serverplan-quality.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-serverplan-state-tripwires.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-serverplan-state-tripwires.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-serverplan-steps.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-serverplan-steps.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-serverplan-target-architecture.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-serverplan-target-architecture.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-sql-grammar-escape-hatches.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-sql-grammar-escape-hatches.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-swallowed-exceptions.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-swallowed-exceptions.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-sync-async-signatures.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-sync-async-signatures.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-transaction-callback-wrappers.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-transaction-callback-wrappers.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-transaction-closures.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-transaction-closures.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-transaction-patterns.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-transaction-patterns.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-type-safety-patterns.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-type-safety-patterns.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-unknown-contract-defaults.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-unknown-contract-defaults.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-unresolved-forward-refs.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-unresolved-forward-refs.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/authored/data-layer-versioned-merged-identity.rr": {
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-versioned-merged-identity.rerail": {
       "source": "rerail",
       "how": "authored"
     },
@@ -1124,403 +1124,403 @@
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-admin-async-purity.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-admin-async-purity.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-async-executor.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-async-executor.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-async-patterns.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-async-patterns.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-async-sync-boundary.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-async-sync-boundary.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-async-sync-delegation.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-async-sync-delegation.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-authentication-plan-purity.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-authentication-plan-purity.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-backend-coupling.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-backend-coupling.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-backend-type-strings.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-backend-type-strings.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-bootstrap-cache-health.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-bootstrap-cache-health.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-bootstrap-eager-resolve.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-bootstrap-eager-resolve.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-bootstrap-engine-invariants.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-bootstrap-engine-invariants.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-bootstrap-lazy-sql.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-bootstrap-lazy-sql.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-bounded-composed-graph-paths.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-bounded-composed-graph-paths.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-cached-pure-lazy-allowlist.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-cached-pure-lazy-allowlist.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-classvar-check.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-classvar-check.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-conditional-architecture.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-conditional-architecture.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-conn-or-txn-union.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-conn-or-txn-union.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-connection-caches.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-connection-caches.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-connection-mode-split.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-connection-mode-split.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-connection-service-architecture.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-connection-service-architecture.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-connection-structural-boundaries.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-connection-structural-boundaries.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-data-layer-compat-aliases.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-data-layer-compat-aliases.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-data-layer-facade-purity.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-data-layer-facade-purity.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-declared-fact-interrogation.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-declared-fact-interrogation.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-dynamic-module-loading.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-dynamic-module-loading.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-eager-resolve.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-eager-resolve.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-embedding-vector-orchestration.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-embedding-vector-orchestration.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-error-handling.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-error-handling.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-execution-authority-bypass.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-execution-authority-bypass.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-executor-publication-repairs.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-executor-publication-repairs.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-forwardref.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-forwardref.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-generated-index-sources.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-generated-index-sources.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-grammar-allowlist-burndown.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-grammar-allowlist-burndown.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-grammar-callable-constructors.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-grammar-callable-constructors.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-grammar-fragment-usage.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-grammar-fragment-usage.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-grammar-mutation-invalidation.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-grammar-mutation-invalidation.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-grammar-render-methods.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-grammar-render-methods.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-grammar-str-params.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-grammar-str-params.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-graph-lazy-sql-plan.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-graph-lazy-sql-plan.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-graphql-plan-ownership.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-graphql-plan-ownership.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-hasattr-async.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-hasattr-async.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-history-serverplan-projection.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-history-serverplan-projection.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-hnsw-architecture.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-hnsw-architecture.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-imperative-private-functions.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-imperative-private-functions.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-impl-direct-execution.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-impl-direct-execution.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-internal-dead-code.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-internal-dead-code.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-layer-violations.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-layer-violations.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-lazy-adapter-ownership.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-lazy-adapter-ownership.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-lazy-architecture.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-lazy-architecture.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-lazy-result-usage.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-lazy-result-usage.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-lazy-sql-surface.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-lazy-sql-surface.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-legacy-callback-quarantine.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-legacy-callback-quarantine.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-legacy-execution-surfaces.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-legacy-execution-surfaces.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-matching-architecture.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-matching-architecture.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-missing-async-pairs.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-missing-async-pairs.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-module-level-caches.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-module-level-caches.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-no-api-root-imports.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-no-api-root-imports.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-no-blanket-grammar-bypass.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-no-blanket-grammar-bypass.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-no-source-inspection.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-no-source-inspection.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-permission-error.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-permission-error.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-plan-composition-architecture.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-plan-composition-architecture.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-plan-helpers-allowlist.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-plan-helpers-allowlist.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-plan-optimizer-v2.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-plan-optimizer-v2.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-plan-scope-ownership.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-plan-scope-ownership.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-plan-scope-side-effects.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-plan-scope-side-effects.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-post-op-no-internal-dispatch.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-post-op-no-internal-dispatch.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-post-op-side-effects.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-post-op-side-effects.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-public-api-triples.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-public-api-triples.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-publication-registry-writes.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-publication-registry-writes.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-pure-lazy-runtime-purity.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-pure-lazy-runtime-purity.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-raw-execute-regression.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-raw-execute-regression.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-readthrough-authority-architecture.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-readthrough-authority-architecture.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-regex-sql-parsing.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-regex-sql-parsing.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-removed-compat-surfaces.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-removed-compat-surfaces.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-render-fstrings.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-render-fstrings.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-render-raw-strings.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-render-raw-strings.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-revision-ancestry-invariants.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-revision-ancestry-invariants.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-rust-sql-grammar-boundary.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-rust-sql-grammar-boundary.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-schema-architecture.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-schema-architecture.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-schema-bootstrap-contracts.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-schema-bootstrap-contracts.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-schema-introspection-data-paths.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-schema-introspection-data-paths.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-serverplan-bypass.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-serverplan-bypass.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-serverplan-dispatch-architecture.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-serverplan-dispatch-architecture.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-serverplan-grammar-surface.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-serverplan-grammar-surface.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-serverplan-name-inference.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-serverplan-name-inference.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-serverplan-quality.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-serverplan-quality.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-serverplan-state-tripwires.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-serverplan-state-tripwires.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-serverplan-steps.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-serverplan-steps.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-serverplan-target-architecture.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-serverplan-target-architecture.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-sql-grammar-escape-hatches.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-sql-grammar-escape-hatches.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-swallowed-exceptions.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-swallowed-exceptions.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-sync-async-signatures.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-sync-async-signatures.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-transaction-callback-wrappers.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-transaction-callback-wrappers.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-transaction-closures.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-transaction-closures.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-transaction-patterns.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-transaction-patterns.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-type-safety-patterns.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-type-safety-patterns.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-unknown-contract-defaults.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-unknown-contract-defaults.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-unresolved-forward-refs.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-unresolved-forward-refs.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-versioned-lifecycle-legacy-surfaces.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-versioned-lifecycle-legacy-surfaces.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/datalog/data-layer-versioned-merged-identity.rr": {
+    "authored/packs/data-layer/candidates/datalog/data-layer-versioned-merged-identity.rerail": {
       "source": "rerail",
       "how": "authored"
     },
@@ -1536,171 +1536,171 @@
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/admin-async-purity.rr": {
+    "authored/packs/data-layer/candidates/rr/admin-async-purity.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/async-executor.rr": {
+    "authored/packs/data-layer/candidates/rr/async-executor.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/authentication-plan-purity.rr": {
+    "authored/packs/data-layer/candidates/rr/authentication-plan-purity.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/backend-coupling.rr": {
+    "authored/packs/data-layer/candidates/rr/backend-coupling.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/bootstrap-cache-health.rr": {
+    "authored/packs/data-layer/candidates/rr/bootstrap-cache-health.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/bootstrap-eager-resolve.rr": {
+    "authored/packs/data-layer/candidates/rr/bootstrap-eager-resolve.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/bootstrap-engine-invariants.rr": {
+    "authored/packs/data-layer/candidates/rr/bootstrap-engine-invariants.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/bootstrap-engine-invariants.tables.rr": {
+    "authored/packs/data-layer/candidates/rr/bootstrap-engine-invariants.tables.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/bootstrap-lazy-sql.rr": {
+    "authored/packs/data-layer/candidates/rr/bootstrap-lazy-sql.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/bounded-composed-graph-paths.rr": {
+    "authored/packs/data-layer/candidates/rr/bounded-composed-graph-paths.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/cached-pure-lazy-allowlist.rr": {
+    "authored/packs/data-layer/candidates/rr/cached-pure-lazy-allowlist.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/cached-pure-lazy-allowlist.symbols.rr": {
+    "authored/packs/data-layer/candidates/rr/cached-pure-lazy-allowlist.symbols.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/classvar-check.rr": {
+    "authored/packs/data-layer/candidates/rr/classvar-check.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/conditional-architecture.rr": {
+    "authored/packs/data-layer/candidates/rr/conditional-architecture.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/connection-caches.rr": {
+    "authored/packs/data-layer/candidates/rr/connection-caches.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/connection-mode-split.rr": {
+    "authored/packs/data-layer/candidates/rr/connection-mode-split.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/connection-service-architecture.rr": {
+    "authored/packs/data-layer/candidates/rr/connection-service-architecture.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/connection-structural-boundaries.rr": {
+    "authored/packs/data-layer/candidates/rr/connection-structural-boundaries.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/data-layer-compat-aliases.rr": {
+    "authored/packs/data-layer/candidates/rr/data-layer-compat-aliases.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/data-layer-facade-purity.rr": {
+    "authored/packs/data-layer/candidates/rr/data-layer-facade-purity.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/declared-fact-interrogation.rr": {
+    "authored/packs/data-layer/candidates/rr/declared-fact-interrogation.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/dynamic-module-loading.rr": {
+    "authored/packs/data-layer/candidates/rr/dynamic-module-loading.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/eager-resolve.rr": {
+    "authored/packs/data-layer/candidates/rr/eager-resolve.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/eager-resolve.tables.rr": {
+    "authored/packs/data-layer/candidates/rr/eager-resolve.tables.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/embedding-vector-orchestration.rr": {
+    "authored/packs/data-layer/candidates/rr/embedding-vector-orchestration.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/executor-publication-repairs.rr": {
+    "authored/packs/data-layer/candidates/rr/executor-publication-repairs.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/file-length.rr": {
+    "authored/packs/data-layer/candidates/rr/file-length.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/forwardref.rr": {
+    "authored/packs/data-layer/candidates/rr/forwardref.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/generated-index-sources.rr": {
+    "authored/packs/data-layer/candidates/rr/generated-index-sources.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/grammar-mutation-invalidation.rr": {
+    "authored/packs/data-layer/candidates/rr/grammar-mutation-invalidation.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/graph-lazy-sql-plan.rr": {
+    "authored/packs/data-layer/candidates/rr/graph-lazy-sql-plan.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/graphql-plan-ownership.rr": {
+    "authored/packs/data-layer/candidates/rr/graphql-plan-ownership.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/hasattr-async.rr": {
+    "authored/packs/data-layer/candidates/rr/hasattr-async.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/history-serverplan-projection.rr": {
+    "authored/packs/data-layer/candidates/rr/history-serverplan-projection.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/hnsw-architecture.rr": {
+    "authored/packs/data-layer/candidates/rr/hnsw-architecture.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/layer-violations.rr": {
+    "authored/packs/data-layer/candidates/rr/layer-violations.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/lazy-adapter-ownership.rr": {
+    "authored/packs/data-layer/candidates/rr/lazy-adapter-ownership.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/lazy-architecture.rr": {
+    "authored/packs/data-layer/candidates/rr/lazy-architecture.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/lazy-architecture.tables.rr": {
+    "authored/packs/data-layer/candidates/rr/lazy-architecture.tables.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/lazy-sql-surface.rr": {
+    "authored/packs/data-layer/candidates/rr/lazy-sql-surface.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/legacy-callback-quarantine.rr": {
+    "authored/packs/data-layer/candidates/rr/legacy-callback-quarantine.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/matching-architecture.rr": {
+    "authored/packs/data-layer/candidates/rr/matching-architecture.rerail": {
       "source": "rerail",
       "how": "authored"
     },
@@ -1708,135 +1708,135 @@
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/missing-async-pairs.rr": {
+    "authored/packs/data-layer/candidates/rr/missing-async-pairs.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/no-blanket-grammar-bypass.rr": {
+    "authored/packs/data-layer/candidates/rr/no-blanket-grammar-bypass.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/no-source-inspection.rr": {
+    "authored/packs/data-layer/candidates/rr/no-source-inspection.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/noqa-sec-ratchet.rr": {
+    "authored/packs/data-layer/candidates/rr/noqa-sec-ratchet.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/permission-error.rr": {
+    "authored/packs/data-layer/candidates/rr/permission-error.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/plan-composition-architecture.rr": {
+    "authored/packs/data-layer/candidates/rr/plan-composition-architecture.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/plan-helpers-allowlist.rr": {
+    "authored/packs/data-layer/candidates/rr/plan-helpers-allowlist.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/plan-helpers-allowlist.tables.rr": {
+    "authored/packs/data-layer/candidates/rr/plan-helpers-allowlist.tables.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/plan-optimizer-v2.rr": {
+    "authored/packs/data-layer/candidates/rr/plan-optimizer-v2.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/plan-scope-side-effects.rr": {
+    "authored/packs/data-layer/candidates/rr/plan-scope-side-effects.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/post-op-no-internal-dispatch.rr": {
+    "authored/packs/data-layer/candidates/rr/post-op-no-internal-dispatch.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/post-op-side-effects.rr": {
+    "authored/packs/data-layer/candidates/rr/post-op-side-effects.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/public-api-triples.rr": {
+    "authored/packs/data-layer/candidates/rr/public-api-triples.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/publication-registry-writes.rr": {
+    "authored/packs/data-layer/candidates/rr/publication-registry-writes.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/pure-lazy-runtime-purity.rr": {
+    "authored/packs/data-layer/candidates/rr/pure-lazy-runtime-purity.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/pure-lazy-runtime-purity.tables.rr": {
+    "authored/packs/data-layer/candidates/rr/pure-lazy-runtime-purity.tables.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/readthrough-authority-architecture.rr": {
+    "authored/packs/data-layer/candidates/rr/readthrough-authority-architecture.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/removed-compat-surfaces.rr": {
+    "authored/packs/data-layer/candidates/rr/removed-compat-surfaces.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/revision-ancestry-invariants.rr": {
+    "authored/packs/data-layer/candidates/rr/revision-ancestry-invariants.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/rust-sql-grammar-boundary.rr": {
+    "authored/packs/data-layer/candidates/rr/rust-sql-grammar-boundary.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/schema-architecture.rr": {
+    "authored/packs/data-layer/candidates/rr/schema-architecture.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/schema-bootstrap-contracts.rr": {
+    "authored/packs/data-layer/candidates/rr/schema-bootstrap-contracts.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/schema-introspection-data-paths.rr": {
+    "authored/packs/data-layer/candidates/rr/schema-introspection-data-paths.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/schema-introspection-data-paths.tables.rr": {
+    "authored/packs/data-layer/candidates/rr/schema-introspection-data-paths.tables.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/serverplan-name-inference.rr": {
+    "authored/packs/data-layer/candidates/rr/serverplan-name-inference.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/swallowed-exceptions.rr": {
+    "authored/packs/data-layer/candidates/rr/swallowed-exceptions.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/sync-async-signatures.rr": {
+    "authored/packs/data-layer/candidates/rr/sync-async-signatures.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/test-budget.rr": {
+    "authored/packs/data-layer/candidates/rr/test-budget.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/type-safety-patterns.rr": {
+    "authored/packs/data-layer/candidates/rr/type-safety-patterns.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/unknown-contract-defaults.rr": {
+    "authored/packs/data-layer/candidates/rr/unknown-contract-defaults.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/versioned-lifecycle-legacy-surfaces.rr": {
+    "authored/packs/data-layer/candidates/rr/versioned-lifecycle-legacy-surfaces.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/versioned-merged-identity.rr": {
+    "authored/packs/data-layer/candidates/rr/versioned-merged-identity.rerail": {
       "source": "rerail",
       "how": "authored"
     },
-    "authored/packs/data-layer/candidates/rr/versioned-table-names.rr": {
+    "authored/packs/data-layer/candidates/rr/versioned-table-names.rerail": {
       "source": "rerail",
       "how": "authored"
     },

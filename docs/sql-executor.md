@@ -2,7 +2,7 @@
 
 The SQL executor exposes facts, derived relations, and the content store through a session-owned SQLite connection.
 Read-only work groups use separate worker connections over pinned native inputs.
-It lowers `.rr` fact and rule programs through the existing typed SQL planner.
+It lowers `.rerail` fact and rule programs through the existing typed SQL planner.
 The existing wave scheduler runs those statements until their relations stop changing.
 Planning reads bound row estimates and recorded wave counts. An SQL input without a recorded count uses a default estimate.
 AST matching stays in the native matcher. Its output can enter SQL as another fact relation.
@@ -62,7 +62,7 @@ RERAIL_EXPERIMENTAL_ENGINE_TOOLS=1 rerail engine sql /tmp/rerail-extension.sqlit
 For a corpus audit through the existing logic command, select SQL rule execution with `--sql`:
 
 ```sh
-target/debug/rerail-engine logic rules.rr /path/to/corpus /tmp/sql-results --sql
+target/debug/rerail-engine logic rules.rerail /path/to/corpus /tmp/sql-results --sql
 ```
 
 This disables native rule components. Native fact producers and tree matching keep their existing execution path.
@@ -105,8 +105,8 @@ const result = JSON.parse(session.query(
 | `bindRelation(relationJson)` | Adds or replaces facts with integer values or string symbols. Duplicate rows collapse. |
 | `lower(program, dialect)` | Returns the setup SQL and wave program without executing its rules. |
 | `explain()` | Returns logical proofs and retained execution choices without evaluating facts or executing SQL. |
-| `run(program, dialect, maxWaves?)` | Runs an inline `.rr` program through the SQL wave scheduler. |
-| `runFile(path, dialect, maxWaves?)` | Reads a `.rr` file, its includes, and `core.rr`, then runs it. |
+| `run(program, dialect, maxWaves?)` | Runs an inline `.rerail` program through the SQL wave scheduler. |
+| `runFile(path, dialect, maxWaves?)` | Reads a `.rerail` file, its includes, and `core.rerail`, then runs it. |
 | `applyChanges(changesJson, maxWaves?)` | Applies an atomic fact batch and maintains retained results and dependent programs. |
 | `query(sql, parametersJson?, maxRows?)` | Returns columns, row arrays, and a `truncated` flag. |
 | `queryPlan(planJson)` | Fuses a read-only SQL graph and schedules independent groups on the shared worker pool. |
@@ -444,7 +444,7 @@ const documents = JSON.parse(session.query(
 ));
 ```
 
-The snapshot binds the `core.rr` projection, including `node`, `child`, `field`, `tape`, `name`, and source-location relations.
+The snapshot binds the `core.rerail` projection, including `node`, `child`, `field`, `tape`, `name`, and source-location relations.
 These relations read native columns through virtual tables. Core input relations remain virtual.
 Retained rule maintenance can materialize positive contexts from these columns.
 Incomplete parses fail the binding instead of supplying partial facts.

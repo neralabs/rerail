@@ -1,11 +1,11 @@
-//! Phase 0: the loading of rule files, as a run of `bootstrap.rr` (t25).
+//! Phase 0: the loading of rule files, as a run of `bootstrap.rerail` (t25).
 //!
-//! The engine knows one rule file by itself, `bootstrap.rr`, and a few builtin facts:
+//! The engine knows one rule file by itself, `bootstrap.rerail`, and a few builtin facts:
 //! - the library directory, as `env("rerail.lib", dir)`;
 //! - each program text (`p0_text`), whether it is in T's shape (`p0_t_shape`), and the names it includes (`p0_ask`);
 //! - each program file it was given (`p0_file`).
 //!
-//! From these, `bootstrap.rr` asks for each rule file by `load(path, name, "rr")`. This run's loader answers that like
+//! From these, `bootstrap.rerail` asks for each rule file by `load(path, name, "rr")`. This run's loader answers that like
 //! any document's load: the file is parsed into its tape, kept in the content store, and memoised per file. Each
 //! loaded file's `#include`s are facts of its tree, and they ask for further loads, until none is new. The run's
 //! outputs are the include graph: which file each `#include` names, which names have no file, and which candidates
@@ -56,7 +56,7 @@ pub struct Graph {
     /// whole-run cutoff names them (`reuse::rule_files`); the program's text is not made of them, so the graph's
     /// digest, which keys the program, leaves them out.
     pub(in crate::code_rule_dsl) rules: BTreeMap<PathBuf, [u8; 32]>,
-    /// The plans the run of `bootstrap.rr` that derived it used (`Report::plans`): the run that reads the graph
+    /// The plans the run of `bootstrap.rerail` that derived it used (`Report::plans`): the run that reads the graph
     /// names them in its record, so they stay live; none for a graph kept as an image, which later runs read instead
     /// (`graphs`). Not part of the graph's digest.
     pub(in crate::code_rule_dsl) plans: Vec<[u8; 32]>,
@@ -147,13 +147,13 @@ impl Graph {
 /// A text's key in the graph a seed is given.
 pub(in crate::code_rule_dsl) const TEXT: &str = "text";
 
-/// The include graph for `seed`: kept in this process while it holds, else derived by running `bootstrap.rr`.
+/// The include graph for `seed`: kept in this process while it holds, else derived by running `bootstrap.rerail`.
 pub fn graph(seed: &Seed) -> std::result::Result<Arc<Graph>, Error> {
     Ok(graphs(std::slice::from_ref(seed))?.remove(0))
 }
 
 /// The include graphs for `seeds`, each kept in this process while it holds; those not kept are derived by one run
-/// of `bootstrap.rr` over all of them (a pack's programs are one run, not one each).
+/// of `bootstrap.rerail` over all of them (a pack's programs are one run, not one each).
 static KEPT: OnceLock<Mutex<HashMap<Seed, Arc<Graph>>>> = OnceLock::new();
 
 pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
@@ -175,7 +175,7 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
     };
     crate::code_rule_dsl::prof::count("phase0.graph_kept", seeds.len() - found.iter().filter(|g| g.is_none()).count());
     // A seed's graph kept as an image (the shipped bundle, or an earlier process of this build) is taken where it
-    // holds: a digest of each file and a look at each absent candidate, not a run of `bootstrap.rr`.
+    // holds: a digest of each file and a look at each absent candidate, not a run of `bootstrap.rerail`.
     let mut wanted = wanted;
     if !wanted.is_empty() && let Some(images) = Images::here() {
         let mut map = kept.lock().expect("phase 0's graphs");
@@ -266,7 +266,7 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
     Ok(found.into_iter().map(|g| g.expect("each seed's graph")).collect())
 }
 
-/// The include graphs of program files `paths`, derived by one run of `bootstrap.rr` and kept: files read one by one
+/// The include graphs of program files `paths`, derived by one run of `bootstrap.rerail` and kept: files read one by one
 /// after it find theirs (`rr::read_file`, `parse_file`), as a pack's programs do in a run (`settings::program_texts`).
 /// Read one by one with none kept, each file is a run of its own: a test over a pack's programs was hundreds of corpus
 /// runs, most of its time spent waiting on the pool. A file that does not canonicalize, or a run that fails, is left
@@ -277,8 +277,8 @@ pub fn keep_files<'p>(paths: impl IntoIterator<Item = &'p std::path::PathBuf>) {
 }
 
 /// Keeps the graph of a text made from a program file (`tools::program_texts`), taken from the file's graph rather
-/// than from another run of `bootstrap.rr`: each name the text includes is a library module the file's graph holds,
-/// found as `bootstrap.rr` finds a text's names (the library alone). The graph is the one that run would give, so
+/// than from another run of `bootstrap.rerail`: each name the text includes is a library module the file's graph holds,
+/// found as `bootstrap.rerail` finds a text's names (the library alone). The graph is the one that run would give, so
 /// its digest is too. False when a name is not such a module (the text then gets its own run when asked).
 pub(in crate::code_rule_dsl) fn keep_text(seed: &Seed, file: &Graph, dirs: &Dirs) -> bool {
     let Seed::Text { t_shape, includes, phases } = seed else {
@@ -286,9 +286,9 @@ pub(in crate::code_rule_dsl) fn keep_text(seed: &Seed, file: &Graph, dirs: &Dirs
     };
     let lib = &dirs.lib;
     let mut asks: Vec<(i64, String, PathBuf)> = Vec::with_capacity(includes.len() + 1);
-    let names = includes.iter().cloned().chain((!t_shape).then(|| (-1, "core.rr".to_owned())));
+    let names = includes.iter().cloned().chain((!t_shape).then(|| (-1, "core.rerail".to_owned())));
     for (at, name) in names {
-        // `bootstrap.rr`'s candidate, `cat(lib, "/", name)`, named as its module is (`module_path`).
+        // `bootstrap.rerail`'s candidate, `cat(lib, "/", name)`, named as its module is (`module_path`).
         let path = module_path(&format!("{}/{name}", lib.display()));
         if !file.digests.contains_key(&path) {
             return false;
@@ -297,11 +297,11 @@ pub(in crate::code_rule_dsl) fn keep_text(seed: &Seed, file: &Graph, dirs: &Dirs
     }
     asks.sort();
     // The phases the text names are the file's (its declarations are the text's): their candidates, as
-    // `bootstrap.rr` makes them, each one the file's graph holds an answer for.
+    // `bootstrap.rerail` makes them, each one the file's graph holds an answer for.
     let phase_lib = &dirs.phases;
     let mut named: Vec<(String, PathBuf)> = Vec::with_capacity(phases.len());
     for p in phases {
-        let path = PathBuf::from(format!("{}/{p}.rr", phase_lib.display()));
+        let path = PathBuf::from(format!("{}/{p}.rerail", phase_lib.display()));
         if !file.digests.contains_key(&path) && !file.absent.contains(&path) {
             return false;
         }
@@ -317,11 +317,11 @@ pub(in crate::code_rule_dsl) fn keep_text(seed: &Seed, file: &Graph, dirs: &Dirs
     true
 }
 
-/// The file `bootstrap.rr` found for an include, by the path its module is loaded as. Its candidate is written
+/// The file `bootstrap.rerail` found for an include, by the path its module is loaded as. Its candidate is written
 /// `cat(lib, "/", name)`, while a loaded document is named by its canonical path (`world::load`), and each module's
 /// own includes are keyed by that name (`p0_names` reads it off the document): on Windows `\` separates the
 /// canonical path and `/` the candidate, so an include's includes were looked up under the other spelling and lost
-/// (an included module's `#include "python/env.rr"`, read as missing). The canonical path where the file is there,
+/// (an included module's `#include "python/env.rerail"`, read as missing). The canonical path where the file is there,
 /// else the candidate in the platform's separators.
 pub fn module_path(candidate: &str) -> PathBuf {
     dunce::canonicalize(candidate).unwrap_or_else(|_| PathBuf::from(in_separators(candidate, std::path::MAIN_SEPARATOR)))
@@ -332,7 +332,7 @@ pub fn in_separators(path: &str, separator: char) -> String {
     if separator == '/' { path.to_owned() } else { path.replace('/', &separator.to_string()) }
 }
 
-/// The rule library and the engine's phase programs' directory, canonical, as `bootstrap.rr` is handed them: found
+/// The rule library and the engine's phase programs' directory, canonical, as `bootstrap.rerail` is handed them: found
 /// once by a caller that keeps many texts (`keep_text`).
 pub(in crate::code_rule_dsl) struct Dirs {
     pub(in crate::code_rule_dsl) lib: PathBuf,
@@ -345,7 +345,7 @@ impl Dirs {
     }
 }
 
-/// The engine's phase programs' directory (`phases::locate`'s builtin), canonical, as `bootstrap.rr` is handed it.
+/// The engine's phase programs' directory (`phases::locate`'s builtin), canonical, as `bootstrap.rerail` is handed it.
 pub(in crate::code_rule_dsl) fn phase_lib() -> Option<PathBuf> {
     dunce::canonicalize(super::phases::builtin_dir()).ok()
 }
@@ -458,8 +458,8 @@ fn quote(s: &str) -> String {
 
 impl Graph {
     /// The part of a run's graph one seed reaches (its `k`, its place among the run's seeds), a text's key named
-    /// [`TEXT`]: the graph a run of `bootstrap.rr` over that seed alone gives, whatever seeds shared the run. A module
-    /// names `core.rr` only as a file seed (`p0_from(f, -1, "core.rr") :- p0_file(f), …`), so another seed's module
+    /// [`TEXT`]: the graph a run of `bootstrap.rerail` over that seed alone gives, whatever seeds shared the run. A module
+    /// names `core.rerail` only as a file seed (`p0_from(f, -1, "core.rerail") :- p0_file(f), …`), so another seed's module
     /// does not here; and `p0_absent` names no includer, so the seed's absent candidates are those of the names its
     /// modules ask (`p0_cand`). Taken whole, a text's graph held every seed's absent files and the implicit includes
     /// of the modules that were seeds too, and its digest depended on the run it was derived in.
@@ -478,7 +478,7 @@ impl Graph {
                 candidates.insert(PathBuf::from(format!("{dir}/{name}")));
             }
         };
-        let own = |from: &str, at: i64, name: &str| from == start || !(at == -1 && name == "core.rr");
+        let own = |from: &str, at: i64, name: &str| from == start || !(at == -1 && name == "core.rerail");
         let mut g = Graph { plans: self.plans.clone(), ..Graph::default() };
         let mut pending = vec![start.clone(), "engine".to_owned()];
         let mut seen = std::collections::BTreeSet::new();
@@ -554,18 +554,18 @@ impl Graph {
     }
 }
 
-/// Runs `bootstrap.rr` over the seeds' facts, as a corpus run with no corpus: every document it reads it loads.
+/// Runs `bootstrap.rerail` over the seeds' facts, as a corpus run with no corpus: every document it reads it loads.
 pub fn derive(seeds: &[Seed]) -> Result<Graph> {
     let lib = crate::code_rule_dsl::logic::rr::library();
     let lib = dunce::canonicalize(&lib).map_err(|e| PlanError::Plan(format!("{}: {e}", lib.display())))?;
-    let bootstrap = lib.join("bootstrap.rr");
+    let bootstrap = lib.join("bootstrap.rerail");
     // The builtin read: the one rule file the engine knows by itself.
     let (bytes, _) = super::observe(|o| o.read(&bootstrap)).ok_or_else(|| PlanError::Plan(format!("{}: cannot read the file", bootstrap.display())))?;
     let mut text = String::from_utf8(bytes).map_err(|e| PlanError::Plan(format!("{}: {e}", bootstrap.display())))?;
     text.push_str("\n// The engine's builtin facts.\n");
     text.push_str(&format!("env(\"rerail.lib\", {}).\n", quote(&lib.to_string_lossy())));
     // The library's parent is a root too: packs include their tables beside the library (`#include
-    // "../packs/python/….names.rr"`), which the resolver before phase 0 read, and the loader confines reads to roots.
+    // "../packs/python/….names.rerail"`), which the resolver before phase 0 read, and the loader confines reads to roots.
     if let Some(parent) = lib.parent() {
         text.push_str(&format!("env(\"rerail.library_parent\", {}).\n", quote(&parent.to_string_lossy())));
     }
@@ -677,18 +677,18 @@ pub fn derive(seeds: &[Seed]) -> Result<Graph> {
 }
 
 // Its tests run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the
-// engine registers as it loads (the languages, their `.rr` libraries).
+// engine registers as it loads (the languages, their `.rerail` libraries).
 
 
 #[cfg(test)]
 pub mod benchmarks {
-    /// Phase 0 over every `.rr` file of `RERAIL_P0_RULES` (a pack's directory), as a pack's run reads them
-    /// (`tools::program_texts`): one run of `bootstrap.rr` for all. Run it twice for the warm figure.
+    /// Phase 0 over every `.rerail` file of `RERAIL_P0_RULES` (a pack's directory), as a pack's run reads them
+    /// (`tools::program_texts`): one run of `bootstrap.rerail` for all. Run it twice for the warm figure.
     #[test]
     #[ignore = "a benchmark: RERAIL_P0_RULES=<a pack's directory>"]
     fn benchmark_phase_0_rules() {
         let dir = std::path::PathBuf::from(std::env::var("RERAIL_P0_RULES").expect("RERAIL_P0_RULES"));
-        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "rr")).collect();
+        let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "rerail")).collect();
         files.sort();
         let before = super::super::observe(|o| {
             o.begin();

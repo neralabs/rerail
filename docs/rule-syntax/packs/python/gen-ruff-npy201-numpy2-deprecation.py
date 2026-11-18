@@ -1,4 +1,4 @@
-"""Writes ruff-npy201-numpy2-deprecation.members.rr: the NumPy members NumPy 2.0 removes (NPY201), each with its
+"""Writes ruff-npy201-numpy2-deprecation.members.rerail: the NumPy members NumPy 2.0 removes (NPY201), each with its
 advice group and, where Ruff knows one, the replacement member a compatibility fallback may read, from the JSON's
 clauses (one per group).
     python3 docs/rule-syntax/packs/python/gen-ruff-npy201-numpy2-deprecation.py
@@ -6,7 +6,7 @@ clauses (one per group).
 import json, os, re
 HERE = os.path.dirname(os.path.abspath(__file__))
 JSON = os.path.join(HERE, "..", "..", "..", "..", "packs", "python", "rules", "ruff-npy201-numpy2-deprecation.json")
-OUT = os.path.join(HERE, "ruff-npy201-numpy2-deprecation.members.rr")
+OUT = os.path.join(HERE, "ruff-npy201-numpy2-deprecation.members.rerail")
 SKIP = ("shared", "string-annotation-or-pattern")
 
 

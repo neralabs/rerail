@@ -22,7 +22,7 @@
 //! 2); `doc`, `pkg`, `text`, `intval` and `op` are small and kept as [`Relation`]s.
 //!
 //! That is T's projection ([`Shape::T`]), which T's programs and the programs that declare the base relations
-//! themselves read. A program that includes `core.rr` reads `core.rr`'s ([`Shape::Core`], decision 0046, `core_rr`):
+//! themselves read. A program that includes `core.rerail` reads `core.rerail`'s ([`Shape::Core`], decision 0046, `core_rr`):
 //! comments are nodes, `text` is every node's, `op` every anonymous token's, and the source-text, token and literal
 //! relations are made. T's `op` is `op_t` in both.
 
@@ -64,7 +64,7 @@ pub enum Shape {
     /// T's: named nodes without comments, `text` of identifiers, `op` of operator fields.
     #[default]
     T,
-    /// `core.rr`'s (decision 0046).
+    /// `core.rerail`'s (decision 0046).
     Core,
 }
 
@@ -100,8 +100,8 @@ pub struct Projection {
     /// The grammars whose guests keep their partial tree when they do not parse (`.on guest_error partial`,
     /// decision 0055 §6); `"*"` is every grammar. Any other broken guest is withheld.
     pub partial: BTreeSet<String>,
-    /// In T's shape, `syntax_error` is core.rr's `syntax_error(d, l, msg)`, CPython's verdict, not T's
-    /// `syntax_error(d)`: the program declares that one (a program of core.rr's base relations, not T's).
+    /// In T's shape, `syntax_error` is core.rerail's `syntax_error(d, l, msg)`, CPython's verdict, not T's
+    /// `syntax_error(d)`: the program declares that one (a program of core.rerail's base relations, not T's).
     pub verdict: bool,
     /// The relations the program's rules derive: the batch binds none of them, made or viewed (T's programs derive
     /// `docof` from `node`, `rr::lower::projections`; a program may name an output as a base relation is named). A
@@ -184,7 +184,7 @@ impl Projection {
     fn keeps_partial(&self, grammar: &str) -> bool {
         self.partial.contains("*") || self.partial.contains(grammar)
     }
-    /// `core.rr`'s shape for a program that includes `core.rr` (declares every relation it declares as an input),
+    /// `core.rerail`'s shape for a program that includes `core.rerail` (declares every relation it declares as an input),
     /// T's for one that declares its base relations itself (T's programs, the converter's, O74).
     pub fn of(program: &crate::code_rule_dsl::logic::front::ast::Program, reads: BTreeSet<String>) -> Self {
         let (spans, token_text) = span_text_demand(program);
@@ -231,7 +231,7 @@ impl Projection {
     }
 
     /// The columns the batch binds base relation `rel` with (`select::input_columns`'), but T's `syntax_error(d)`
-    /// where the program declares that one and not core.rr's verdict (`verdict`): the cross-file part binds a base
+    /// where the program declares that one and not core.rerail's verdict (`verdict`): the cross-file part binds a base
     /// relation with the chunks' columns, on the same connection.
     pub fn columns(&self, rel: &str) -> Option<&'static [&'static str]> {
         if rel == "syntax_error" && self.shape == Shape::T && !self.verdict {
@@ -860,7 +860,7 @@ pub fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::ast::Progr
 /// matcher's root or capture (`rr_ast_*`, a matcher with no `inside`, `follows` or `precedes`), or by a column of a
 /// relation whose every rule proves it. Of a proven node a rule may read only what the node itself holds (its kind,
 /// text, literals, place in the source, document), and its children: no parent, ancestor, sibling or neighbouring
-/// token, which a narrowed projection would not have, or would have otherwise. In `sources.rr` (phase 1): import
+/// token, which a narrowed projection would not have, or would have otherwise. In `sources.rerail` (phase 1): import
 /// statements' subtrees.
 pub fn node_anchors(program: &crate::code_rule_dsl::logic::front::ast::Program, matchers: &[(String, String, Vec<String>)]) -> Result<BTreeSet<String>, String> {
     use crate::code_rule_dsl::logic::front::ast::{Literal, Term};
@@ -1356,7 +1356,7 @@ fn producers() -> &'static [&'static dyn Producer] {
     PRODUCERS.get().map_or(&[], Vec::as_slice)
 }
 
-/// A comment's text without its marker (core.rr's `comment`): `#`, `--`, `//` (and a doc comment's `/` or `!`),
+/// A comment's text without its marker (core.rerail's `comment`): `#`, `--`, `//` (and a doc comment's `/` or `!`),
 /// `/*` to `*/` (and a doc comment's `*` or `!`) or `<!--` to `-->` taken off, then the whitespace around the rest.
 pub fn comment_body(text: &str) -> &str {
     let body = if let Some(rest) = text.strip_prefix("/*") {
@@ -1403,7 +1403,7 @@ pub fn numbering(doc: &Document, shape: Shape) -> StoreResult<Numbering> {
     }
     let tag = crate::code_rule_dsl::facts::core::facts_tag(&doc.facts);
     let dialect = Dialect::kept(tag)?;
-    // In `core.rr`'s shape a guest's nodes are its root's subtree; in T's, its whole tree (`Batch::build`).
+    // In `core.rerail`'s shape a guest's nodes are its root's subtree; in T's, its whole tree (`Batch::build`).
     let guest = doc.guest.as_deref().filter(|_| shape == Shape::Core).map(|g| (g, Arc::new(core_rr::Lines::new("", false))));
     let p = Projected::new(doc.key, Arc::clone(&doc.facts), Some(&*dialect), shape, false, guest);
     let nodes = p.core.iter().map(|&id| (id, dialect.name(&doc.facts, id))).collect();
@@ -1533,7 +1533,7 @@ pub struct Dialect {
     pub canonical: Vec<u16>,
     codes: HashMap<u16, Vec<u16>>,
     /// Whether W reads values of the dialect's nodes (its family's `ValueRules::SUPPORTED`): `Extra`'s `value` and
-    /// `value_type` are W's for its documents, `core_rr`'s literal values for the others (an `.rr` file's).
+    /// `value_type` are W's for its documents, `core_rr`'s literal values for the others (an `.rerail` file's).
     values: bool,
     /// The grammar's token automata: the tokens a named-only tape leaves out, in the gaps between a
     /// parent's stored children (`tree::Tree`'s `token`, `prev_token`; t31).
@@ -1632,7 +1632,7 @@ impl Dialect {
 }
 
 /// A document's nodes, numbered in preorder: its named nodes other than comments (T's), or every named node
-/// (`core.rr`'s).
+/// (`core.rerail`'s).
 pub struct Projected {
     pub module: Option<crate::code_rule_dsl::module_path::ModulePath>,
     pub key: u32,
@@ -1651,7 +1651,7 @@ pub struct Projected {
     pub depth: OnceLock<Vec<u32>>,
     /// The nodes hanging from their parent under a field, ascending.
     pub fielded: OnceLock<Cells<u32>>,
-    /// `core.rr`'s lines and spans; `None` in T's shape.
+    /// `core.rerail`'s lines and spans; `None` in T's shape.
     pub extra: Option<Box<Locs>>,
     /// Node ids numbered per definition (`DefIds`), when the run asks for them; else a node's id is its preorder.
     defs: Option<DefIds>,
@@ -1727,7 +1727,7 @@ impl DefIds {
 
 /// A document's lines, and its spans past its nodes (`Shape::Core`'s): from local id `len()`, its anonymous tokens
 /// (`tokens` of them, in preorder), then its whole text, then each line. Not `Extra`'s spans (`SPAN`), which the
-/// relations core.rr's programs read beyond T's are made over.
+/// relations core.rerail's programs read beyond T's are made over.
 pub struct Locs {
     lines: Arc<core_rr::Lines>,
     pub token_spans: OnceLock<Vec<[u32; 2]>>,
@@ -1768,7 +1768,7 @@ impl Locs {
 
 impl Projected {
     /// Document `key`'s projection in `shape`; `dialect` is its facts' (`None` for a text-only document, which has no
-    /// node). A `withheld` document (`core.rr`: one that does not parse) has no nodes and no spans: no facts. A guest's
+    /// node). A `withheld` document (`core.rerail`: one that does not parse) has no nodes and no spans: no facts. A guest's
     /// nodes are its root's subtree, placed in its host's lines (`host`).
     /// Its arrays are in a block of its own; a batch's documents' are in the batch's (`narrowed`).
     pub fn new(key: u32, facts: Arc<Facts>, dialect: Option<&Dialect>, shape: Shape, withheld: bool, guest: Option<(&Guest, Arc<core_rr::Lines>)>) -> Self {
@@ -2097,7 +2097,7 @@ pub struct Batch {
     chunk: OnceLock<device_chunk::Chunk>,
 }
 
-/// A span's id (core.rr's `span`: a piece of a document's text): `d << 32 | granules::extra_low(kind, i)`, in slots of
+/// A span's id (core.rerail's `span`: a piece of a document's text): `d << 32 | granules::extra_low(kind, i)`, in slots of
 /// its kind's past every node of its document, so no node view has a row of it (`Batch::node`). `ExtraSpan::Line` `0`
 /// is the whole source (`source`), `Line` `l` physical line `l` (`src_line`), `Lf` `l` the `\n`-line `l`
 /// (`src_line_lf`), `Tape` `l` the tape's line `l` (`tape_line`), `Comment` `k` the document's `k`-th comment from 1,
@@ -2106,7 +2106,7 @@ pub struct Batch {
 /// a `match_all`, `match_group` or `rx_span` regex. A document with more of a kind than its capacity fails, named.
 fn extra_span(key: i64, kind: granules::ExtraSpan, i: u32) -> StoreResult<i64> {
     granules::extra_low(kind, i).map(|low| key << 32 | i64::from(low)).ok_or_else(|| {
-        StoreError::Invalid(format!("document {key} has more than {} {kind:?} spans (core.rr's span ids)", kind.capacity()))
+        StoreError::Invalid(format!("document {key} has more than {} {kind:?} spans (core.rerail's span ids)", kind.capacity()))
     })
 }
 
@@ -2279,7 +2279,7 @@ pub enum View {
     /// run's rank and its index in the granule (`granules::order`, which an edit elsewhere leaves alone); under
     /// `RERAIL_NODE_IDS=preorder`, its preorder index. Rules that order nodes read it (`front::order_nodes`).
     Order,
-    /// `core.rr`'s place of a node or span (`loc`): `line(n, l)`, `end_line(n, l)`, `col(n, c)`, `docof(n, d)`,
+    /// `core.rerail`'s place of a node or span (`loc`): `line(n, l)`, `end_line(n, l)`, `col(n, c)`, `docof(n, d)`,
     /// read from the document's lines (`core_rr::Lines`), rows laid out over `Projected::locs`. A batch that makes
     /// one of them as rows (`Extra`, whose spans have places too) binds those rows instead (`Batch::made`).
     Loc(Place),
@@ -2293,7 +2293,7 @@ pub enum Place {
     Docof,
 }
 
-/// The relations of core.rr a batch makes only for a program that reads them (its `reads`), T's exporter having
+/// The relations of core.rerail a batch makes only for a program that reads them (its `reads`), T's exporter having
 /// had none of them, so a program that reads none does no work and interns no text:
 ///
 /// ```text
@@ -2321,18 +2321,18 @@ pub enum Place {
 /// `line`, `end_line` and `col` as a node's. `docof` has every node and every span (comments and matches included),
 /// each with its document (a span's `sp >> 32`, as a node's). Rows hold string indexes, as `Batch::build`'s do.
 ///
-/// In `core.rr`'s shape (`Shape::Core`) a relation made here is the batch's, in place of `core_rr`'s rows or the `Loc`
+/// In `core.rerail`'s shape (`Shape::Core`) a relation made here is the batch's, in place of `core_rr`'s rows or the `Loc`
 /// view of that name (`Batch::build`), and its node rows cover that shape's anonymous tokens too (`Locs`); `comment`
 /// is `core_rr`'s there (comments are nodes), so it is not made here.
 ///
 ///
-/// And each `matchall_<k>(sp, m)` read (`logic::strings::as_relations`, core.rr's `match_all`): `m` each match of
+/// And each `matchall_<k>(sp, m)` read (`logic::strings::as_relations`, core.rerail's `match_all`): `m` each match of
 /// regex `k` in span `sp`'s text, leftmost-first and non-overlapping (Rust's `find_iter`, as W's `regex` reads a
 /// file), over every span above. A match is a span (`MATCH`) with rows in `text` (what it matched), `line`,
 /// `end_line` and `col`, as W's finding of that regex is placed: in a line span, that line and the byte column in it
 /// (W's `lines` regexes); in the source, the lines and column of the tape's line table (W's content regex).
 ///
-/// And in `core.rr`'s shape, `rx_span(p, c, j, g, m)` where read (`rr::lower`'s `match_all` and `match` over a span):
+/// And in `core.rerail`'s shape, `rx_span(p, c, j, g, m)` where read (`rr::lower`'s `match_all` and `match` over a span):
 /// group `g` of match `j` (from 0) of regex `p` in span `c` is span `m` (`MATCH`, numbered with `match_all`'s), placed
 /// as `match_all`'s. A span `c` is a document's `source` span, one of its `src_line` spans, a comment node, a node of a
 /// kind, or a span an earlier pattern's group captured (`SpanIn`, decision 0081). Group "" is the whole match; a group
@@ -2345,7 +2345,7 @@ struct Extra {
     tape_line: bool,
     line_count: bool,
     text: bool,
-    /// `text` of the `source` and `src_line` spans: core.rr's programs make it where a rule reads a copy of such a
+    /// `text` of the `source` and `src_line` spans: core.rerail's programs make it where a rule reads a copy of such a
     /// span's text (`Projection::wants_span_text`), T's wherever `text` is read.
     source_text: bool,
     line_text: bool,
@@ -2476,7 +2476,7 @@ impl Extra {
     }
 
     /// Document `p`'s node rows: `line`, `end_line`, `col`, `node_text` and `docof`; and `line`, `end_line`, `col` and
-    /// `docof` of `core.rr`'s anonymous tokens (`Locs`), which follow the nodes. A guest's nodes are placed in its file
+    /// `docof` of `core.rerail`'s anonymous tokens (`Locs`), which follow the nodes. A guest's nodes are placed in its file
     /// (`Locs::place`, decision 0055).
     fn nodes(&mut self, p: &Projected, string: &mut dyn FnMut(&str) -> usize) {
         let f = &*p.facts;
@@ -2941,7 +2941,7 @@ impl Extra {
 /// The small relations of a document's nodes, with string indexes: `text(n, s)`, `intval(n, v)`, `op(n, s)` (T's,
 /// also bound as `op_t`), and the text relations (decision 0037) `name(n, s)` (an identifier's text, an attribute's
 /// dotted text), `str(n, s)` (a string literal's content, between its quotes) and `strprefix(n, p)` (its prefix,
-/// lowercased). In `core.rr`'s shape only `intval` and T's `op`: `core_rr` makes the others as `core.rr` states them.
+/// lowercased). In `core.rerail`'s shape only `intval` and T's `op`: `core_rr` makes the others as `core.rerail` states them.
 #[derive(Default)]
 struct NodeRows {
     text: Vec<[i64; 2]>,
@@ -2953,7 +2953,7 @@ struct NodeRows {
 }
 
 impl NodeRows {
-    /// Document `p`'s rows (`dialect` its grammar's kinds; `core`: in `core.rr`'s shape).
+    /// Document `p`'s rows (`dialect` its grammar's kinds; `core`: in `core.rerail`'s shape).
     fn document(&mut self, p: &Projected, dialect: &Dialect, core: bool, string: &mut dyn FnMut(&str) -> usize) {
         let f = &*p.facts;
         for (local, &id) in p.core.iter().enumerate() {
@@ -3017,7 +3017,7 @@ pub static BATCHES: parking_lot::Mutex<Vec<(Vec<u32>, std::sync::Weak<Batch>)>> 
 impl Batch {
     /// Projects each document and interns the batch's strings; the documents' keys are distinct.
     /// Returns the batch and its small relations (`doc`, `pkg`, `syntax_error`, `text`, `intval`, `op`), and those
-    /// of core.rr's the program `reads` that T had not (`Extra`), the `match_all` relations among them (of `matches`)
+    /// of core.rerail's the program `reads` that T had not (`Extra`), the `match_all` relations among them (of `matches`)
     /// apart. A text-only document (`core::TEXT`) has the document's relations and its text's, and no node.
     /// Also returns the batch's distinct strings and their symbols: its vocabulary, which text tests read
     /// (`logic::strings::Vocabulary`, decision 0037).
@@ -3060,7 +3060,7 @@ impl Batch {
         let (mut path_part, mut file_name): (Vec<[i64; 2]>, Vec<[i64; 2]>) = (Vec::new(), Vec::new());
         // `text`, `intval`, T's `op` and the text relations (`NodeRows`).
         let mut rows = NodeRows::default();
-        // `syntax_error(d)`: the documents whose parse has an error (`Facts::syntax_errors`); `core.rr`'s
+        // `syntax_error(d)`: the documents whose parse has an error (`Facts::syntax_errors`); `core.rerail`'s
         // `syntax_error(d, l, msg)` (`core_rr`): the first error's line and message.
         let mut errors = Vec::new();
         // The nodes visited for their scalar rows (`NodeRows::document`'s, `core_rr::CoreRows::node`'s).
@@ -3071,7 +3071,7 @@ impl Batch {
         let mut produced: Vec<(Option<u8>, Box<dyn ProducerRun>)> =
             producers().iter().map(|producer| (crate::code_rule_dsl::language::tape_tag(producer.dialect()), producer.start(reads, markers))).collect();
         let python = crate::code_rule_dsl::language::tape_tag(crate::code_rule_dsl::language::GrammarDialect::Python);
-        // `core.rr`'s (decision 0046).
+        // `core.rerail`'s (decision 0046).
         let mut c = core_rr::CoreRows::default();
         // Node identity/ancestry and line views do not require scalar rows or text interning.
         let scalar_nodes=!core || ["text","name","str","strprefix","value","value_type","static_value","comment","spread","op","op_at","op_t","intval","next_sibling","str_part","str_part_start","str_part_word"]
@@ -3149,7 +3149,7 @@ impl Batch {
         };
         let mut docs: Vec<Projected> = Vec::with_capacity(documents.len());
         // The batch's block: what the projections can take, the chunk's copies of the facts' arrays (4 bytes a node for
-        // each of `parent`, `start`, `end`, `kind`, `core.rr`'s places; `field`'s 2), its tables, and the axes' pairs
+        // each of `parent`, `start`, `end`, `kind`, `core.rerail`'s places; `field`'s 2), its tables, and the axes' pairs
         // read whole (`put_pairs`, up to 1 GB). The block reserves address space, not memory.
         let block = cells::block((documents.iter().map(|d| Projected::bytes(&d.facts) + 22 * d.facts.len() + 4096).sum::<usize>() + (1 << 20) + (1 << 30)).next_power_of_two());
         // Decision 0055: each document's role, root and tape; each guest's place, and its nodes' host nodes. A guest's
@@ -3179,7 +3179,7 @@ impl Batch {
             } else {
                 Some(dialects.get_or_new(tag)?)
             };
-            // `core.rr`: a document that does not parse is withheld from the policy (no facts) but its `doc`, path
+            // `core.rerail`: a document that does not parse is withheld from the policy (no facts) but its `doc`, path
             // and `syntax_error` rows; its outcome is Unknown(parse). T's shape keeps every document.
             // A guest that does not parse is withheld too, unless the policy keeps its partial tree (decision 0055 §6).
             let guest = d.guest.as_deref().filter(|_| core);
@@ -3204,7 +3204,7 @@ impl Batch {
             p.module = crate::code_rule_dsl::module_path::ModulePath::dotted(d.module.as_deref().unwrap_or(&module(&d.path)));
             // Its positions (tokens, text, lines) in the top slots (`granules::span_low`): past them ids would clash.
             if p.defs.is_some() && u64::from(p.locs() - p.len()) > granules::POSITIONS {
-                return Err(StoreError::Invalid(format!("{} has more than {} positions (tokens and lines: core.rr's span ids)", d.path, granules::POSITIONS)));
+                return Err(StoreError::Invalid(format!("{} has more than {} positions (tokens and lines: core.rerail's span ids)", d.path, granules::POSITIONS)));
             }
             if core && !projection.ast_patterns.is_empty() && guest.is_none() && !withheld
                 && let Some(dialect) = dialect
@@ -3227,7 +3227,7 @@ impl Batch {
                 unvalued.insert(d.key);
             }
             let key = i64::from(d.key);
-            // core.rr: a module for Python and Rust files, "" for the others; `pkg` for Python only. T's has both
+            // core.rerail: a module for Python and Rust files, "" for the others; `pkg` for Python only. T's has both
             // for every file.
             let py_file = d.path.ends_with(".py") || d.path.ends_with(".pyi");
             let dotted = py_file || d.path.ends_with(".rs");
@@ -3260,7 +3260,7 @@ impl Batch {
             }
             let nodes_span = crate::code_rule_dsl::logic::profile::span(|| "node rows".into());
             if let Some(dialect) = dialect {
-                // In core.rr's shape `NodeRows` makes only `intval` and T's `op` (`op_t`).
+                // In core.rerail's shape `NodeRows` makes only `intval` and T's `op` (`op_t`).
                 if scalar_nodes && (!core || projection.wants("intval") || projection.wants("op_t")) {
                     visited += p.len() as usize;
                     rows.document(&p, dialect, core, &mut string);
@@ -3287,7 +3287,7 @@ impl Batch {
             }
             drop(nodes_span);
             let document_span = crate::code_rule_dsl::logic::profile::span(|| "document rows".into());
-            // A text-only document has core.rr's text rows too (its lines, `split_line`), and no tokens.
+            // A text-only document has core.rerail's text rows too (its lines, `split_line`), and no tokens.
             if core && (!withheld || guest.is_none()) {
                 c.document(&p, dialect, &mut string, wants_text, wants_tokens && !withheld, wants_split_lines, wants_lf_lines, wants_source_text, wants_line_text, guest.is_none(), projection);
                 if let Some(dialect) = dialect
@@ -3324,7 +3324,7 @@ impl Batch {
             docs.push(p);
         }
         // The guests' rows, once every document is projected: a guest's host may be a guest after it. Either shape:
-        // a program that declares its base relations itself (T's) reads guests as core.rr's do.
+        // a program that declares its base relations itself (T's) reads guests as core.rerail's do.
         for ((p, d), &withheld) in docs.iter().zip(&documents).zip(&withheld_at) {
             g.document(p, d, d.guest.as_deref(), withheld, &docs, [projection.wants("host_node"), projection.wants("unparse_of")], &mut string);
         }
@@ -3380,7 +3380,7 @@ impl Batch {
         for (_, run) in produced {
             read.extend(run.relations(&atom));
         }
-        // The relations made for what the program reads are the batch's: in `core.rr`'s shape they stand in for
+        // The relations made for what the program reads are the batch's: in `core.rerail`'s shape they stand in for
         // `core_rr`'s rows and the views of the same name (W's values, the spans and places `match_all` reads,
         // `op_at`'s operators, `visit_index`'s CPython order).
         let made: BTreeSet<&'static str> = read.iter().map(|(name, _)| *name).collect();
@@ -3389,7 +3389,7 @@ impl Batch {
             c.extend_text(&rows.text);
             relations.extend(c.relations(&atom).into_iter().filter(|(name, _)| !made.contains(name)));
         } else {
-            // T's `syntax_error(d)`, or core.rr's `syntax_error(d, l, msg)` (CPython's verdict) where the program
+            // T's `syntax_error(d)`, or core.rerail's `syntax_error(d, l, msg)` (CPython's verdict) where the program
             // declares that one (`Projection::verdict`).
             let syntax_error = if projection.verdict {
                 c.relations(&atom).into_iter().find(|(name, _)| *name == "syntax_error").map(|(_, r)| r).expect("core_rr makes syntax_error")
@@ -3777,7 +3777,7 @@ impl Viewed {
                 return p.global(local);
             }
             if matches!(place, Place::Docof) { return i64::from(p.key); }
-            let (line, last, col) = p.extra.as_ref().expect("core.rr's lines").place(p.span(local));
+            let (line, last, col) = p.extra.as_ref().expect("core.rerail's lines").place(p.span(local));
             return match place {
                 Place::Line => i64::from(line),
                 Place::EndLine => i64::from(last),
@@ -3857,7 +3857,7 @@ fn views(batch: &Arc<Batch>) -> Vec<(&'static str, Arc<dyn Source>)> {
             ("line", View::Loc(Place::Line)),
             ("end_line", View::Loc(Place::EndLine)),
             ("col", View::Loc(Place::Col)),
-            // `core.rr`'s `docof(x: loc, d)` is an input (`rr::lower`): nodes' and spans' documents.
+            // `core.rerail`'s `docof(x: loc, d)` is an input (`rr::lower`): nodes' and spans' documents.
             ("docof", View::Loc(Place::Docof)),
             ("ast_depth", View::Depth),
         ]),
@@ -3885,7 +3885,7 @@ impl Batch {
     }
 }
 
-/// T's base relations over `documents` (`sources`) in `projection`'s shape and those of core.rr's the program reads
+/// T's base relations over `documents` (`sources`) in `projection`'s shape and those of core.rerail's the program reads
 /// that T had not (`Extra`), each of `tests`' relations, and each of `sets` (a relation and its set's kind atoms):
 /// `rr_nearest_<set>(n, a)`, the nearest ancestor in the set, `rr_inside_<set>(n, a)`, every one (decision 0036), or
 /// `rr_has_<set>(n, a)`, n in the set and a each of its strict ancestors. Each is made per looked-up node on the host

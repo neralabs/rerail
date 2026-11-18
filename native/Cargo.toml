@@ -30,7 +30,7 @@ lang-json = ["ast-grep-language/tree-sitter-json", "rerail-device-metal/lang-jso
 lang-markdown = ["rerail-device-metal/lang-markdown", "rerail-facts/lang-markdown", "rerail-lang/lang-markdown", "rerail-lang-ecma/lang-markdown", "rerail-lang-json/lang-markdown", "rerail-lang-php/lang-markdown", "rerail-lang-python/lang-markdown", "rerail-lang-rust/lang-markdown", "rerail-lang-sql/lang-markdown", "rerail-logic/lang-markdown", "rerail-rr/lang-markdown", "rerail-sessions/lang-markdown", "rerail-transducer/lang-markdown", "rerail-w/lang-markdown"]
 lang-php = ["ast-grep-language/tree-sitter-php", "rerail-device-metal/lang-php", "rerail-facts/lang-php", "rerail-lang/lang-php", "rerail-lang-ecma/lang-php", "rerail-lang-json/lang-php", "rerail-lang-php/lang-php", "rerail-lang-python/lang-php", "rerail-lang-rust/lang-php", "rerail-lang-sql/lang-php", "rerail-logic/lang-php", "rerail-rr/lang-php", "rerail-sessions/lang-php", "rerail-transducer/lang-php", "rerail-w/lang-php"]
 lang-python = ["rerail-device-metal/lang-python", "rerail-facts/lang-python", "rerail-lang/lang-python", "rerail-lang-ecma/lang-python", "rerail-lang-json/lang-python", "rerail-lang-php/lang-python", "rerail-lang-python/lang-python", "rerail-lang-rust/lang-python", "rerail-lang-sql/lang-python", "rerail-logic/lang-python", "rerail-rr/lang-python", "rerail-sessions/lang-python", "rerail-transducer/lang-python", "rerail-w/lang-python"]
-# `.rr` rule files, parsed by the rule engine's own parser (`logic::rr::syntax`, decision 0061).
+# `.rerail` rule files, parsed by the rule engine's own parser (`logic::rr::syntax`, decision 0061).
 lang-rr = ["rerail-device-metal/lang-rr", "rerail-facts/lang-rr", "rerail-lang/lang-rr", "rerail-lang-ecma/lang-rr", "rerail-lang-json/lang-rr", "rerail-lang-php/lang-rr", "rerail-lang-python/lang-rr", "rerail-lang-rust/lang-rr", "rerail-lang-sql/lang-rr", "rerail-logic/lang-rr", "rerail-rr/lang-rr", "rerail-sessions/lang-rr", "rerail-transducer/lang-rr", "rerail-w/lang-rr"]
 lang-rust = ["ast-grep-language/tree-sitter-rust", "rerail-device-metal/lang-rust", "rerail-facts/lang-rust", "rerail-lang/lang-rust", "rerail-lang-ecma/lang-rust", "rerail-lang-json/lang-rust", "rerail-lang-php/lang-rust", "rerail-lang-python/lang-rust", "rerail-lang-rust/lang-rust", "rerail-lang-sql/lang-rust", "rerail-logic/lang-rust", "rerail-rr/lang-rust", "rerail-sessions/lang-rust", "rerail-transducer/lang-rust", "rerail-w/lang-rust"]
 lang-sql = ["rerail-device-metal/lang-sql", "rerail-facts/lang-sql", "rerail-lang/lang-sql", "rerail-lang-ecma/lang-sql", "rerail-lang-json/lang-sql", "rerail-lang-php/lang-sql", "rerail-lang-python/lang-sql", "rerail-lang-rust/lang-sql", "rerail-lang-sql/lang-sql", "rerail-logic/lang-sql", "rerail-rr/lang-sql", "rerail-sessions/lang-sql", "rerail-transducer/lang-sql", "rerail-w/lang-sql"]
@@ -83,7 +83,7 @@ test-hooks = ["dep:tempfile", "rusqlite/array",
 dunce = "=1.0.5"
 # Only under `test-hooks` (above); the tests have it as a dev-dependency.
 tempfile = { version = "=3.27.0", optional = true }
-# `.rr`'s @ed25519_ok (code_rule_dsl/logic/crypto.rs): W's verify_ed25519, with the crates and versions it used.
+# `.rerail`'s @ed25519_ok (code_rule_dsl/logic/crypto.rs): W's verify_ed25519, with the crates and versions it used.
 base64 = "=0.22.1"
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
 # Relational kernels on every lane and the executor that batches their launches (decision 0098).
@@ -106,7 +106,7 @@ rerail-rr-syntax = { path = "crates/rr_syntax" }
 rerail-tape-format = { path = "crates/tape_format" }
 # The tape's reads written once in CLIF, and the JIT's inlining pass over them (decision 0310).
 rerail-clif = { path = "crates/clif" }
-# The .rr parser: its grammar compiled, the engine's tape from it (`packed::rr_parser`).
+# The .rerail parser: its grammar compiled, the engine's tape from it (`packed::rr_parser`).
 rerail-rr-parser = { path = "crates/rr_parser" }
 rerail-prof = { path = "crates/prof" }
 cranelift-frontend = "=0.125.4"
@@ -141,7 +141,7 @@ regex-syntax = "=0.8.11"
 rusqlite = { version = "=0.41.1", features = ["bundled", "column_decltype", "functions", "hooks", "limits", "modern_sqlite", "series", "vtab"] }
 fallible-iterator = "0.3"
 # Native Python grammar validation, pinned to the source oracle version (3.13).
-# `core.rr`'s `syntax_error` for Python: a parser that follows CPython's grammar (Ruff's), since tree-sitter
+# `core.rerail`'s `syntax_error` for Python: a parser that follows CPython's grammar (Ruff's), since tree-sitter
 # recovers from errors. 0.0.10 is the last release that builds on the pinned toolchain (1.95).
 # The same crates give CPython's other verdicts on Python source (code_rule_dsl/cpython: ast.unparse, ast.dump,
 # literal_eval, string annotations); 0.0.10 is Ruff's tag 0.16.4 (11c76bf48) as published by Astral.
