@@ -8567,7 +8567,7 @@ fn run_observed(
     let mut cross_derived_again = 0;
     let mut cross_quiet = (0, 0);
     let (mut cross_changed, mut cross_again) = (Vec::new(), BTreeMap::new());
-    let mut cross_delta_counts = [0usize; 6];
+    let cross_delta_counts = [0usize; 6];
     let mut cross_recursive = 0;
     // `returns`, held for the typing outputs (`corpus::typing`), when the cross-file part derives it: a program that
     // declares it and derives it per file (`python/typing.rr` in a rule's program) has no table of it here.
@@ -8895,7 +8895,7 @@ fn run_observed(
                         // No kept part, or a part with gates (which the level driver does not walk): the strata the cut
                         // runs are derived again from their reads, the clean ones bound as kept (decision 0364: no
                         // maintained forms).
-                        maintain::Maintained { program: cut.program(cross)?, sources: Vec::new(), maintained: 0, derived_again: cut.strata.0, recursive: 0, again: Vec::new(), views: BTreeSet::new() }
+                        maintain::Maintained::again(cut.program(cross)?, cut.strata.0)
                     };
                     if maintain::levels_wanted() && !driven {
                         qualify(&mut maintained.program, |heads, qualifiers| {
@@ -8948,7 +8948,7 @@ fn run_observed(
                     // The part's fields, read from its version: no reader below decodes its tree.
                     let placed = part.placed()?;
                     let fields = placed.fields()?;
-                    step(&format!("rewrite: {} maintained ({} recursive), {} derived again, {} rules, {} old sources", maintained.maintained, maintained.recursive, maintained.derived_again, placed.v.rules().count(), maintained.sources.len()));
+                    step(&format!("rewrite: {} maintained ({} recursive), {} derived again, {} rules", maintained.maintained, maintained.recursive, maintained.derived_again, placed.v.rules().count()));
                     let mut stats = cross_stats;
                     let s = span("bind and measure kept");
                     let clean = cell.as_ref().map(|kept| cut.sources(kept, &|r| fields.is_input(r))).unwrap_or_default();
@@ -8978,9 +8978,9 @@ fn run_observed(
                             copies
                         },
                     };
+                    // The clean relations, and the changed inputs' deltas.
                     for (rel, source, held) in clean.into_iter().chain(maintained.sources.iter().cloned()) {
-                        let maintains = rel.strip_suffix("__old").is_some_and(|of| fields.declared(&format!("{of}__del")));
-                        bind_kept(&mut binder, &modules, &db, &mut stats, rel, source, held, maintains)?;
+                        bind_kept(&mut binder, &modules, &db, &mut stats, rel, source, held, false)?;
                     }
                     drop(s);
                     // Each input's statistics as this run plans with them: next run's `__old`'s (`retain::InputStats`).
@@ -9076,8 +9076,6 @@ fn run_observed(
                                 stats.lazily(rel, rows, Arc::new(crate::code_rule_dsl::logic::plan::Unbound { rel: rel.clone(), width, rows }));
                             }
                             let mut driver = Driver {
-                                general: maintain::StoredForms::new(store),
-                                cross,
                                 cross_placed: &cross_placed,
                                 kept,
                                 store: Some(store),
@@ -9086,9 +9084,7 @@ fn run_observed(
                                 binder: &mut binder,
                                 modules: &modules,
                                 db: &db,
-                                inputs: fields.inputs().map(str::to_owned).collect(),
                                 has_delta: given_rels,
-                                bound_olds: BTreeSet::new(),
                                 no_delta: BTreeSet::new(),
                                 derived_again: &derived_again,
                                 maintains: BTreeSet::new(),
@@ -9096,7 +9092,6 @@ fn run_observed(
                                 counts: (0, 0, 0),
                                 again: Vec::new(),
                                 walked: (0, 0, 0),
-                                atoms: None,
                             };
                             let hooks = crate::code_rule_dsl::logic::plan::Hooks { maintain: Some(&mut driver), hand_off: hand_off.then_some(&mut hand as &mut dyn FnMut(&str) -> Result<bool>), unload: let_go_inputs.then_some(&mut unload as &mut dyn FnMut(&[String]) -> Result<()>), texts: Some(Arc::clone(&vocabulary)), ..Default::default() };
                             let got = super::run_atoms_native_hooked(part, &db, "main", stats, keep, modes, hooks)?;
@@ -9203,7 +9198,7 @@ fn run_observed(
                     // A view of one input is not kept (decision 0090): the next run reads it over the input's rows.
                     let rows = derived
                         .iter()
-                        .filter(|rel| !got.inlined.contains(rel.as_str()) && !maintained.views.contains(rel.as_str()) && !got.unread.contains(rel.as_str()) && !handed.contains_key(rel.as_str()))
+                        .filter(|rel| !got.inlined.contains(rel.as_str()) && !got.unread.contains(rel.as_str()) && !handed.contains_key(rel.as_str()))
                         .map(|rel| (rel, fields.width(rel)))
                         .filter(|(_, width)| *width > 0)
                         .map(|(rel, width)| {
@@ -9246,58 +9241,6 @@ fn run_observed(
                             }
                         }
                     }
-                    // `RERAIL_CROSS_DELTA_COUNTS`: the rows the maintained strata overdeleted (`__del`), inserted (`__ins`),
-                    // and hold after the run, for measuring delete-and-rederive (spike O125).
-                    if std::env::var_os("RERAIL_CROSS_DELTA_COUNTS").is_some() {
-                        // [over-deleted, inserted by the insert rules, held after, input and derived-again deltas
-                        // (`__minus` + `__plus`), truly deleted, truly inserted].
-                        let mut counts = [0usize; 6];
-                        let olds: HashMap<&str, usize> = maintained.sources.iter().map(|(rel, s, _)| (rel.as_str(), s.len())).collect();
-                        let derived_here: BTreeSet<&str> = placed.v.rules().map(|r| placed.v.rel_name(r.head().rel())).collect();
-                        let rows_of = |rel: &str| held_rows(&db, &got, rel, fields.width(rel)).unwrap_or_default();
-                        for (rel, cols) in fields.decls_by_name() {
-                            if !derived_here.contains(rel) || cols.is_empty() {
-                                continue;
-                            }
-                            if rel.ends_with("__minus") || rel.ends_with("__plus") {
-                                counts[3] += rows_of(rel).len();
-                            } else if rel.ends_with("__ins") {
-                                counts[1] += rows_of(rel).len();
-                            } else if fields.declared(&format!("{rel}__gone")) && fields.declared(&format!("{rel}__cand")) {
-                                // Levels (decision 0090): candidates, those checked, gone, rederived and inserted.
-                                let n = |s: &str| rows_of(&format!("{rel}__{s}")).len();
-                                if std::env::var("RERAIL_CROSS_DELTA_COUNTS").is_ok_and(|v| v == "each") {
-                                    eprintln!("O125 levels rows {rel}: old {}, candidates {}, checked {}, gone {}, rederived {}, inserted {}", olds.get(format!("{rel}__old").as_str()).copied().unwrap_or(0), n("cand"), n("chk"), n("gone"), n("redo"), n("ins"));
-                                }
-                                counts[0] += n("gone");
-                            } else if !rel.ends_with("__del") && fields.declared(&format!("{rel}__del")) {
-                                let after: std::collections::HashSet<Vec<i64>> = rows_of(rel).into_iter().collect();
-                                let del = rows_of(&format!("{rel}__del"));
-                                let gone = del.iter().filter(|r| !after.contains(*r)).count();
-                                let old = olds.get(format!("{rel}__old").as_str()).copied().unwrap_or(0);
-                                if std::env::var("RERAIL_CROSS_DELTA_COUNTS").is_ok_and(|v| v == "each") {
-                                    let ins = fields.declared(&format!("{rel}__ins")).then(|| rows_of(&format!("{rel}__ins")).len()).unwrap_or(0);
-                                    eprintln!("O125 delta rows {rel}: old {old}, overdeleted {}, gone {gone}, inserted {ins}, after {}", del.len(), after.len());
-                                }
-                                counts[0] += del.len();
-                                counts[2] += after.len();
-                                counts[4] += gone;
-                                counts[5] += (after.len() + gone).saturating_sub(old);
-                            }
-                        }
-                        cross_delta_counts = counts;
-                    }
-                    let verify_deltas: HashMap<String, std::collections::HashSet<Vec<i64>>> = if std::env::var_os("RERAIL_CROSS_VERIFY").is_some() {
-                        let derived_here: BTreeSet<&str> = placed.v.rules().map(|r| placed.v.rel_name(r.head().rel())).collect();
-                        fields
-                            .decls_by_name()
-                            .into_iter()
-                            .filter(|(r, c)| (r.ends_with("__del") || r.ends_with("__ins")) && !c.is_empty() && derived_here.contains(r))
-                            .map(|(r, c)| (r.to_string(), held_rows(&db, &got, r, c.len()).unwrap_or_default().into_iter().collect()))
-                            .collect()
-                    } else {
-                        HashMap::new()
-                    };
                     let derived_outputs: BTreeMap<String, (Arc<output::Rows>, Vec<usize>)> = got.outputs.iter().map(|(rel, rows)| (rel.clone(), (Arc::clone(rows), got.nodes[rel].clone()))).collect();
                     // An output whose file stands is not read back (`unchanged_outputs`).
                     let read_back: Vec<String> = cross_f.outputs().filter(|o| !unchanged_outputs.contains_key(*o)).map(str::to_owned).collect();
@@ -9355,17 +9298,6 @@ fn run_observed(
                             let have: std::collections::HashSet<Vec<i64>> = kept_rows.iter().cloned().collect();
                             if want != have && shown < 6 {
                                 shown += 1;
-                                let delta = |name: String| -> std::collections::HashSet<Vec<i64>> { verify_deltas.get(&name).cloned().unwrap_or_default() };
-                                let old_rows: std::collections::HashSet<Vec<i64>> = maintained
-                                    .sources
-                                    .iter()
-                                    .find(|(r, _, _)| *r == format!("{rel}__old"))
-                                    .map(|(_, src, _)| (0..src.len()).map(|i| (0..*width).map(|c| src.value(i, c)).collect()).collect())
-                                    .unwrap_or_default();
-                                let (del, ins) = (delta(format!("{rel}__del")), delta(format!("{rel}__ins")));
-                                for row in have.difference(&want).take(3) {
-                                    eprintln!("O125_VERIFY   {rel}{row:?}: in old {}, in del {}, in ins {}", old_rows.contains(row), del.contains(row), ins.contains(row));
-                                }
                                 eprintln!(
                                     "O125_VERIFY {rel}: {} extra, {} missing; e.g. extra {:?}, missing {:?}",
                                     have.difference(&want).count(),
@@ -9380,19 +9312,16 @@ fn run_observed(
                             let hit = |row: &Vec<i64>| vs.iter().all(|v| row.contains(v));
                             for (rel, width, kept_rows) in &rows {
                                 let fresh = held_rows(&db, &again, rel, *width)?;
-                                let olds = maintained.sources.iter().find(|(r, _, _)| *r == format!("{rel}__old")).map(|(_, src, _)| (0..src.len()).map(|i| (0..*width).map(|c| src.value(i, c)).collect::<Vec<i64>>()).filter(|r| hit(r)).collect::<Vec<_>>()).unwrap_or_default();
                                 let (a, b): (Vec<_>, Vec<_>) = (kept_rows.iter().filter(|r| hit(r)).collect(), fresh.iter().filter(|r| hit(r)).collect());
-                                let del: Vec<_> = verify_deltas.get(&format!("{rel}__del")).map(|d| d.iter().filter(|r| hit(r)).cloned().collect()).unwrap_or_default();
-                                if !a.is_empty() || !b.is_empty() || !olds.is_empty() {
-                                    eprintln!("O125_TRACE {rel}: old {:?} del {:?} maintained {:?} fresh {:?}", &olds[..olds.len().min(4)], &del[..del.len().min(4)], &a[..a.len().min(4)], &b[..b.len().min(4)]);
+                                if !a.is_empty() || !b.is_empty() {
+                                    eprintln!("O125_TRACE {rel}: maintained {:?} fresh {:?}", &a[..a.len().min(4)], &b[..b.len().min(4)]);
                                 }
                             }
                             for (rel, src) in &cross_inputs {
                                 let w = src.columns().len();
                                 let now: Vec<Vec<i64>> = (0..src.len()).map(|i| (0..w).map(|c| src.value(i, c)).collect::<Vec<i64>>()).filter(|r| hit(r)).take(4).collect();
-                                let olds = maintained.sources.iter().find(|(r, _, _)| *r == format!("{rel}__old")).map(|(_, src, _)| (0..src.len()).map(|i| (0..w).map(|c| src.value(i, c)).collect::<Vec<i64>>()).filter(|r| hit(r)).take(4).collect::<Vec<_>>());
-                                if !now.is_empty() || olds.as_ref().is_some_and(|o| !o.is_empty()) {
-                                    eprintln!("O125_TRACE input {rel}: now {now:?} old {olds:?}");
+                                if !now.is_empty() {
+                                    eprintln!("O125_TRACE input {rel}: now {now:?}");
                                 }
                             }
                         }
@@ -9908,13 +9837,10 @@ pub(in crate::code_rule_dsl) struct Binder<'k> {
     copies: HashMap<String, (String, Vec<String>, Vec<usize>)>,
 }
 
-/// The driver's side of a session's maintained run (decision 0117 step 3, `plan::Maintain`): a reached stratum's
-/// form is `maintain::rewrite` over a program of that stratum alone, its reads bound as inputs, and the old rows it
-/// reads bound here with their statistics, as the whole program's rewrite bound every one before the run.
+/// The driver's side of a session's maintained run (decision 0117 step 3, `plan::Maintain`): the kept rows a
+/// reached stratum reads, read and bound here with their statistics, and what each stratum's run left of its delta
+/// (decision 0364: the maintain mode, or derived again).
 struct Driver<'d, 'k> {
-    cross: &'d lower::Lowered,
-    /// Where a reached stratum's general form is (decision 0298): the store's steps.
-    general: maintain::StoredForms<'d>,
     /// `cross`'s version: what the run reads of it.
     cross_placed: &'d super::body::Placed,
     kept: &'k retain::Retained,
@@ -9928,12 +9854,8 @@ struct Driver<'d, 'k> {
     binder: &'d mut Binder<'k>,
     modules: &'d Modules,
     db: &'d rusqlite::Connection,
-    /// The run's inputs: the program's, the clean relations' and the given deltas.
-    inputs: std::collections::HashSet<String>,
-    /// Relations whose deltas are relations of the run: given, or made by their stratum's form.
+    /// Relations whose deltas are relations of the run: given, or made by their stratum's run.
     has_delta: BTreeSet<String>,
-    /// Relations whose old rows are bound (`r__old`).
-    bound_olds: BTreeSet<String>,
     /// Relations that changed with no delta: derived again, their old rows not kept.
     no_delta: BTreeSet<String>,
     /// The same, shared with the run's hand-off (Q104): a relation derived again is written whole, so it can be
@@ -9946,57 +9868,8 @@ struct Driver<'d, 'k> {
     counts: (usize, usize, usize),
     again: Vec<(String, &'static str)>,
     walked: (usize, usize, usize),
-    /// The run's version's atoms and relations alone (`Builder::under`, made at the first form): each form is an
-    /// overlay of it (decision 0241), so a form costs its own size, not the run's names.
-    atoms: Option<Arc<crate::code_rule_dsl::logic::program_image::Version>>,
 }
 
-/// A stratum's form for the reads `moved` changed, selected from its general form `g` (decision 0298): its rules those
-/// moved reads drive and those every selection keeps, a view of the general form's version with the run's own fields
-/// over it (its inputs: those the run binds, `run_input`, and the old rows). `None` where `g` does not stand for the
-/// form written for `moved`: a moved read is not among its reads or has no delta (an earlier stratum derived again),
-/// or an old row it reads is not kept. The caller picks a recursive stratum's general form by its kept rows' levels.
-fn general_selection(g: &maintain::General, moved: &BTreeSet<String>, kept: &retain::Retained, has_delta: &dyn Fn(&str) -> bool, bound_old: &dyn Fn(&str) -> bool, run_input: &dyn Fn(&str) -> bool) -> Result<Option<maintain::Form>> {
-    use crate::code_rule_dsl::logic::plan::body::Placed;
-    if g.form.maintained == 0 || g.form.derived_again > 0 || moved.iter().any(|r| !has_delta(r)) {
-        return Ok(None);
-    }
-    let Some(at) = maintain::selected(g, moved) else { return Ok(None) };
-    // The inputs the selected rules read.
-    let mut read = vec![false; g.inputs.len()];
-    for &k in &at {
-        for &i in &g.rule_inputs[k] {
-            read[i as usize] = true;
-        }
-    }
-    let reads = |name: &str| g.inputs.iter().position(|r| r == name).is_some_and(|i| read[i]);
-    let mut old_reads = Vec::new();
-    for r in g.form.old_reads.iter().filter(|r| !bound_old(r) && reads(&format!("{r}__old"))) {
-        if !kept.has_old(r) {
-            return Ok(None);
-        }
-        old_reads.push(r.clone());
-    }
-    let pv = &g.form.placed;
-    let mut ids: Vec<crate::code_rule_dsl::logic::program_image::RuleId> = at.iter().map(|&k| pv.id(k)).collect();
-    ids.sort_unstable();
-    // The inputs the form for `moved` would state: those the run binds and the old rows, less the deltas and old rows
-    // of the reads that did not move (no rule selected reads them).
-    let piece = |r: &str| r.ends_with("__old") || r.ends_with("__minus") || r.ends_with("__plus");
-    let inputs: Vec<&str> = g.inputs.iter().zip(&read).filter(|&(r, &read)| (run_input(r) || r.ends_with("__old")) && (read || !piece(r))).map(|(r, _)| r.as_str()).collect();
-    let part = pv.v.part_rules(|id| ids.binary_search(&id).is_ok(), &inputs, &g.outputs).map_err(Error::Plan)?;
-    let mut placed = Placed::whole(part);
-    // Its maintenance: the general form's, each group derived again reading the deltas of the moved reads alone, as
-    // the form written for `moved` reads; the others' deltas are not the run's (each would be looked up, and priced
-    // at a default size).
-    placed.maint = pv.maint.as_ref().map(|fm| {
-        let of_moved = |r: &str| r.strip_suffix("__plus").or_else(|| r.strip_suffix("__minus")).is_none_or(|of| moved.contains(of));
-        let again = fm.again.iter().map(|a| crate::code_rule_dsl::logic::plan::body::AgainRef { reads: a.reads.iter().copied().filter(|&r| of_moved(fm.v.rel_name(r))).collect(), ..a.clone() }).collect();
-        Arc::new(crate::code_rule_dsl::logic::plan::body::Maint { v: Arc::clone(&fm.v), again, together: fm.together.clone() })
-    });
-    let m = &g.form;
-    Ok(Some(maintain::Form { placed, sources: Vec::new(), old_reads, maintained: m.maintained, derived_again: m.derived_again, recursive: m.recursive, by_levels: m.by_levels, again: m.again.clone() }))
-}
 
 impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
     fn kept(&mut self, rel: &str) -> Option<Arc<crate::code_rule_dsl::logic::native::component::InRel>> {
@@ -10033,73 +9906,6 @@ impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
         self.at_end.contains(rel)
     }
 
-    fn form(&mut self, v0: &crate::code_rule_dsl::logic::plan::body::Placed, rules: &[crate::code_rule_dsl::logic::plan::body::RuleKey], scc: &BTreeSet<String>, moved: &BTreeSet<String>, model: &mut crate::code_rule_dsl::logic::plan::Model) -> Result<(crate::code_rule_dsl::logic::plan::body::Placed, Vec<String>)> {
-        let _span = crate::code_rule_dsl::logic::profile::span(|| "form".into());
-        let places: Vec<usize> = rules.iter().map(|k| k.index()).collect();
-        let (has_delta, bound_olds, inputs) = (&self.has_delta, &self.bound_olds, &self.inputs);
-        let one = maintain::One { has_delta: &|r| has_delta.contains(r), has_old: &|r| bound_olds.contains(r) };
-        let atoms = match &self.atoms {
-            Some(a) => Arc::clone(a),
-            None => Arc::clone(self.atoms.insert(crate::code_rule_dsl::logic::program_image::Builder::under(&v0.v).finish().map_err(Error::Plan)?.0)),
-        };
-        // A recursive stratum whose kept rows all have levels is maintained by them, where its form can be (its
-        // general form by levels); else as every other stratum.
-        let by_levels = scc.iter().all(|r| maintain::Olds::levels(self.kept, r).is_some_and(|(has, _)| has));
-        let steps = &self.general;
-        let identity = steps.over(v0, &atoms);
-        let levels = by_levels && maintain::levels_wanted() && maintain::recursive(v0, &places, scc);
-        let mut general = maintain::general_of(&atoms, v0, identity, steps, &places, scc, &self.cross.domains, self.kept, levels)?;
-        // A form that cannot be by levels (a rule not a join) is the one without.
-        if levels && general.as_ref().is_some_and(|g| g.form.by_levels == 0) {
-            general = maintain::general_of(&atoms, v0, identity, steps, &places, scc, &self.cross.domains, self.kept, false)?;
-        }
-        let selection = match &general {
-            Some(g) => general_selection(g, moved, self.kept, &|r| has_delta.contains(r), &|r| bound_olds.contains(r), &|r| inputs.contains(r))?,
-            None => None,
-        };
-        let mut m = match selection {
-            Some(m) => m,
-            None => maintain::form(&atoms, v0, &places, scc, moved, &self.cross.domains, self.kept, &one, &|r| inputs.contains(r))?,
-        };
-        maintain::bind_old_rows(&mut m.sources, std::mem::take(&mut m.old_reads), self.kept);
-        let form = m.placed;
-        let f = crate::code_rule_dsl::logic::plan::fields::Fields::of(&form).ok_or_else(|| Error::Plan("a maintained form holds its rules alone".into()))?;
-        let mut adopted = Vec::new();
-        for (name, source, held) in m.sources {
-            let Some(of) = name.strip_suffix("__old").map(str::to_owned) else { continue };
-            let maintains = (m.maintained > 0 && scc.contains(&of)) || self.maintains.contains(&of);
-            if held.is_some() {
-                adopted.push(name.clone());
-            }
-            bind_kept(self.binder, self.modules, self.db, &mut model.stats, name.clone(), source, held, maintains)?;
-            if !model.stats.lazy.0.contains_key(&name) {
-                let _ = super::input_stats(&mut model.stats, &mut model.ndv, f.arity(&name), &name);
-            }
-            self.bound_olds.insert(of);
-        }
-        // The inputs' deltas this form reads (`r__plus`, `r__minus`): bound with the run, measured then, but the run's
-        // model was made from the base program, which reads none, so none had a size (each was priced as the
-        // default's 1,000 rows, and `pv__ins` crossed `pv` with `retparam` before its 15-row `posarg__plus`).
-        let v = &form.v;
-        for r in v.rules().flat_map(|r| r.body()).filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel())) {
-            if (r.ends_with("__plus") || r.ends_with("__minus")) && f.is_input(r) && !model.stats.card.contains_key(r) && !model.stats.lazy.0.contains_key(r) {
-                let _ = super::input_stats(&mut model.stats, &mut model.ndv, f.arity(r), r);
-            }
-        }
-        if m.maintained > 0 {
-            self.maintains.extend(scc.iter().cloned());
-        }
-        self.counts.0 += m.maintained;
-        self.counts.1 += m.derived_again;
-        self.counts.2 += m.recursive;
-        self.again.extend(m.again);
-        for r in v.rules() {
-            if let Some(of) = v.rel_name(r.head().rel()).strip_suffix("__minus") {
-                self.has_delta.insert(of.to_owned());
-            }
-        }
-        Ok((form, adopted))
-    }
 
     fn has_delta(&self, rel: &str) -> bool {
         self.has_delta.contains(rel)
@@ -10250,7 +10056,7 @@ pub(in crate::code_rule_dsl) fn driven_part(cut: &retain::Cut, cross: &lower::Lo
     b.add_nullary(&nullary);
     b.set_inputs(&inputs);
     part.version = b.finish_overlay().map_err(Error::Plan)?;
-    Ok((maintain::Maintained { program: part, sources, maintained: 0, derived_again: 0, recursive: 0, again: Vec::new(), views: BTreeSet::new() }, seeds, given_rels))
+    Ok((maintain::Maintained { program: part, sources, maintained: 0, derived_again: 0, recursive: 0, again: Vec::new() }, seeds, given_rels))
 }
 
 /// The constants the rules test `rel` by: a relation's own, or for its old rows (`r__old`) its relation's.

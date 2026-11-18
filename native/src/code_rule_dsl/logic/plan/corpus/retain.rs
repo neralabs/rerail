@@ -420,11 +420,7 @@ pub(in crate::code_rule_dsl) fn cut(kept: Option<&Retained>, key: [u8; 32], prog
     let mut dirty: BTreeSet<String> = changed.iter().cloned().collect();
     let mut clean = BTreeSet::new();
     // Gates decide on the whole program. Reuse it only when every input and derived relation survived unchanged.
-    // A view of one input (`input_views`, only with `RERAIL_SESSION_VIEWS=on`) is never kept: its rule stays.
-    let mut views: BTreeMap<String, ()> = match super::maintain::views_on() {
-        true => super::maintain::input_views(prog)?.into_keys().map(|r| (r, ())).collect(),
-        false => BTreeMap::new(),
-    };
+    let mut views: BTreeMap<String, ()> = BTreeMap::new();
     // A copy of an input's columns is held as a view of it in every run (Q37, `input_view_shape`): not kept either.
     {
         let f = prog.fields()?;

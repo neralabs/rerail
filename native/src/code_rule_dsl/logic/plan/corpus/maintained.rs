@@ -128,7 +128,8 @@ pub(in crate::code_rule_dsl) fn run_with(
         if driven {
             super::driven_part(&cut, prog, &mut given)?
         } else {
-            (maintain::rewrite(&cut, kept.as_ref(), prog, &sccs, &mut given)?, Vec::new(), BTreeSet::new())
+            // No kept part, or gates: the cut's strata derived again from their reads (decision 0364: no forms).
+            (maintain::Maintained::again(cut.program(prog)?, cut.strata.0), Vec::new(), BTreeSet::new())
         }
     };
     let derived = {
@@ -184,10 +185,10 @@ pub(in crate::code_rule_dsl) fn run_with(
     };
     let clean = kept.as_ref().map(|k| cut.sources(k, &|r| part_f.is_input(r))).unwrap_or_default();
     let mut bound: Vec<String> = Vec::new();
+    // The clean relations, and the changed inputs' deltas.
     for (rel, source, held) in clean.into_iter().chain(maintained.sources.iter().cloned()) {
         bound.push(rel.clone());
-        let maintains = rel.strip_suffix("__old").is_some_and(|of| part_f.declared(&format!("{of}__del")));
-        super::bind_kept(&mut binder, modules, db, stats, rel, source, held, maintains)?;
+        super::bind_kept(&mut binder, modules, db, stats, rel, source, held, false)?;
     }
     let mut wanted = keep.clone();
     wanted.extend(derived.iter().filter(|rel| !part_f.is_output(rel)).cloned());
@@ -198,7 +199,6 @@ pub(in crate::code_rule_dsl) fn run_with(
             // Nothing is handed off in a chunk's guest rounds: the relations derived again are noted for none.
             let derived_again = std::cell::RefCell::new(BTreeSet::new());
             let mut driver = super::Driver {
-                cross: prog,
                 cross_placed: &placed,
                 kept: k,
                 store: None,
@@ -207,9 +207,7 @@ pub(in crate::code_rule_dsl) fn run_with(
                 binder: &mut binder,
                 modules,
                 db,
-                inputs: part_f.inputs().map(str::to_owned).collect(),
                 has_delta: given_rels,
-                bound_olds: BTreeSet::new(),
                 no_delta: BTreeSet::new(),
                 derived_again: &derived_again,
                 maintains: BTreeSet::new(),
@@ -217,16 +215,11 @@ pub(in crate::code_rule_dsl) fn run_with(
                 counts: (0, 0, 0),
                 again: Vec::new(),
                 walked: (0, 0, 0),
-                atoms: None,
-                // The slice's general forms are not stored (decision 0298 §4): each reached stratum's form is made for it.
-                general: super::maintain::StoredForms::unstored(),
             };
             let hooks = super::super::Hooks { maintain: Some(&mut driver), texts: Some(Arc::clone(texts)), ..Default::default() };
             let got = super::super::run_atoms_native_hooked(part, db, "main", stats.clone(), wanted, modes, hooks)?;
             (maintained.maintained, maintained.derived_again, maintained.recursive) = driver.counts;
             maintained.again = std::mem::take(&mut driver.again);
-            // The old rows the forms bound, cleared by the caller with the rest.
-            bound.extend(driver.bound_olds.iter().map(|of| format!("{of}__old")));
             let (reached, quiet, of) = driver.walked;
             let mut why: BTreeMap<&str, usize> = BTreeMap::new();
             for (_, w) in &maintained.again {
@@ -245,7 +238,7 @@ pub(in crate::code_rule_dsl) fn run_with(
     let ran_native: BTreeSet<&str> = got.native.iter().flat_map(|k| k.split('/')).collect();
     let rows = derived
         .iter()
-        .filter(|rel| !got.inlined.contains(rel.as_str()) && !maintained.views.contains(rel.as_str()))
+        .filter(|rel| !got.inlined.contains(rel.as_str()))
         .map(|rel| (rel, part_f.width(rel)))
         .filter(|(_, width)| *width > 0)
         .map(|(rel, width)| {
