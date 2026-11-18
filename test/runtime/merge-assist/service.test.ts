@@ -6,8 +6,8 @@ import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { removeFolder } from "../../support/platform/remove-folder.js";
-import { mergeAssistState, openRerailDatabase } from "../../../src/engine/index.js";
-import { PULL_REQUEST_LIMIT, type PullRequestListing, type PullRequestSummary } from "../../../src/runtime/merge-assist/github.js";
+import { mergeAssistState, openRerailDatabase, type GithubReadiness } from "../../../src/engine/index.js";
+import { PULL_REQUEST_LIMIT, type GithubRepository, type PullRequestListing, type PullRequestSummary } from "../../../src/runtime/merge-assist/github.js";
 import { createMergeAssistService, type MergeAssistRuntime } from "../../../src/runtime/merge-assist/service.js";
 import { commit, git } from "../../support/merge-assist/git.js";
 import { FakeGithub, mergeAssistWorkspaces, type Workspace } from "../../support/merge-assist/workspace.js";
@@ -33,6 +33,30 @@ class HeldGithub extends FakeGithub {
 
   release(): void {
     this.#release.resolve();
+  }
+}
+
+/** `gh` whose sign-in reads, once held, wait until released. */
+class HeldReadiness extends FakeGithub {
+  #release: PromiseWithResolvers<void> | undefined;
+  readonly asked = Promise.withResolvers<void>();
+
+  hold(): void {
+    this.#release = Promise.withResolvers<void>();
+  }
+
+  override async readiness(repository: GithubRepository | null): Promise<GithubReadiness> {
+    const held = this.#release;
+    if (held !== undefined) {
+      this.asked.resolve();
+      await held.promise;
+    }
+    return await super.readiness(repository);
+  }
+
+  release(): void {
+    this.#release?.resolve();
+    this.#release = undefined;
   }
 }
 
@@ -168,6 +192,24 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     expect(statuses.map(status => status.readiness.github.state)).toEqual(["signed-in", "signed-in"]);
     expect(github.readinessReads).toBe(reads + 1);
     await service.status(ws.repo);
+    expect(github.readinessReads).toBe(reads + 1);
+  });
+
+  it("keeps nothing gh says after Merge Assist went off, so turning it on again reads gh afresh", async () => {
+    const ws = await workspace({ remote: "https://github.com/acme/app.git" });
+    const github = new HeldReadiness();
+    const service = ws.service({ github });
+    await service.setEnabled(ws.repo, true);
+    ws.database.delete(mergeAssistState).where(eq(mergeAssistState.key, `github:${ws.repositoryKey}`)).run();
+    github.hold();
+    const reading = service.status(ws.repo);
+    await github.asked.promise;
+
+    await ws.service({ github: new FakeGithub() }).setEnabled(ws.repo, false);
+    github.release();
+    await reading;
+    const reads = github.readinessReads;
+    await service.setEnabled(ws.repo, true);
     expect(github.readinessReads).toBe(reads + 1);
   });
 
