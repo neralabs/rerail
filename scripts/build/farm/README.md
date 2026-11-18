@@ -53,6 +53,7 @@ instead, and only that run's output is shown.
 | `test-mirror` | a test of the mirror against an agent run here: a file the checkout deleted goes from the host's copy |
 | `test-mac-compiles HOST` | a test of this Mac's compiles on HOST: a small crate's library compiles (proc-macros, `OUT_DIR`, bundled C) go there through the farm, and each output must be this Mac's bytes |
 | `status` | what the farm can use now: each host probed, and why one is not usable |
+| `free-local` | this Mac's disk floor: Rerail's least recently built builds go under `local_min_free_gb` |
 | `host-privacy` | keeps the farm's files on the hosts out of Time Machine, and (`--spotlight`, with sudo) Spotlight |
 | `setup` | installs all of it here, the machine's cargo configuration, a configuration to fill in, and the toolchain on each host |
 | `cargo-config` | writes the farm's part of `~/.cargo/config.toml` (`--check` reports) |
@@ -226,6 +227,7 @@ hosts, and everything compiles and tests here, as without the farm.
 | `test_slots` | how many `test-remote` commands the host runs at once (default: a third of its cores). One at a time left a 16-core host mostly idle while commands queued for 25 minutes; a command waits only when every slot of every host is taken, and goes to whichever frees first. A checkout's second command goes to another host when one has a slot (its commands on one host share a target directory, which cargo builds in one at a time) |
 | `link` | the host's network interface the farm's traffic must arrive on (its fast link); unset: any |
 | `min_free_gb` | under this much free disk, the farm frees its own data on the host and says so (default 40) |
+| `local_min_free_gb` | this Mac's floor: under it, `free-local` removes Rerail's least recently built builds here (default 200) |
 | `floor_free_gb` | the free disk left to the host's own work: under it the host is not used (default 20) |
 | `max_target_gb` | the most a host's test target directories hold together (default 150 GB; per host too) |
 | `max_rtt_ms` | the slowest round trip a host may have (default 150), for a host without `link` |
@@ -432,6 +434,27 @@ on a Mac). The load average is shown but means little on a Mac: it counts thread
 and macOS's background work, and an M3 about a third idle showed a load 31 over its cores. Until
 farm 33 `status` printed "cores to spare" (cores less the load average), and an agent read a
 negative figure as a full machine and waited 9 minutes before giving up on a run (2026-11-18).
+
+## This Mac's disk floor
+
+`clean-target` removes what no current build uses (about 540 GB a day here on 2026-11-18), but
+keeps every worktree's current builds with no cap: 30 worktrees' targets of 15 to 90 GB each.
+With the rest of the disk holding all but about 120 GB, agents' builds filled it that day. The
+hosts had a floor already (their agent's `free`); this Mac has one since farm 35:
+
+- Every Rerail build records its target directory (`farm.record`, in the farm's `targets/`) and,
+  at most every 2 minutes across all builds, looks at the free disk (`guard_disk`).
+- Under `local_min_free_gb` (default 200 GB) it starts `free-local`, which removes Rerail's
+  builds until 100 GB more is free, the least recently built targets first, in stages:
+  incremental state of targets not built for 30 minutes; profiles but `debug` (`profiling`,
+  `release`, other triples) not built for 2 hours; whole targets not built for 12 hours.
+- Never a profile a cargo build runs in (its `.cargo-lock`), and only directories of Rerail
+  checkouts' targets the farm saw a build in: no other project's data, no scratch, no store.
+- Each removal is logged (`free-local.log` in the farm's state) and a notification says what
+  went. When Rerail's builds are not what fills the disk, the notification says so.
+
+`scripts/build/farm/free-local --dry-run --floor GB` shows what it would remove at a floor.
+`status` prints this Mac's free disk and the floor.
 
 ## No benchmark leases
 

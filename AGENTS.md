@@ -47,7 +47,9 @@ crates below it.
 
 The farm's wrapper runs `scripts/dev/clean-target` on each target directory every 15 minutes: it removes the
 builds no current build was made from, debug objects no binary names, and stale incremental state.
-Never run a full `cargo clean`.
+Never run a full `cargo clean`. Under 200 GB of free disk on this Mac, the farm removes the least recently built
+worktrees' build outputs on its own (`scripts/build/farm/free-local`; the farm's README, "This Mac's disk floor"): a
+build of an idle worktree may then start from incremental state lost, or from nothing.
 
 ### Test tiers (cargo-nextest)
 

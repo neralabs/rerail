@@ -22,7 +22,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 34
+VERSION = 35
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -485,6 +485,52 @@ def target_of(out_dir):
     return None
 
 
+def record(target):
+    """Notes that a build ran in `target` now: the targets `free-local` may free, and when each was
+    last built. Written once, then touched (at most a minute apart)."""
+    path = state("targets", key(target))
+    try:
+        if time.time() - os.path.getmtime(path) < 60:
+            return
+        os.utime(path)
+    except OSError:
+        try:
+            with open(path, "w") as f:
+                f.write(target)
+        except OSError:
+            pass
+
+
+# How often a build looks at this Mac's free disk (statvfs: a few microseconds).
+DISK_SECONDS = 120
+
+
+def guard_disk():
+    """Starts `free-local` (detached, at nice 19) when this Mac's free disk is under its floor
+    (`local_min_free_gb`). Looked at by one build at most every DISK_SECONDS. statvfs is the first
+    look; free-local then asks what macOS would give an important write, which also counts what it
+    purges."""
+    claim = state("disk", str(int(time.time() // DISK_SECONDS)))
+    try:
+        os.close(os.open(claim, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+    except OSError:
+        return
+    for old in os.listdir(os.path.dirname(claim)):
+        if old != os.path.basename(claim):
+            try:
+                os.unlink(os.path.join(os.path.dirname(claim), old))
+            except OSError:
+                pass
+    st = os.statvfs(HOME)
+    if st.f_bavail * st.f_frsize / 1e9 >= config().get("local_min_free_gb", 200):
+        return
+    script = os.path.join(SHARE, "free-local")
+    if os.path.exists(script):
+        with open(state("free-local.out"), "a") as out:
+            subprocess.Popen(["nice", "-n", "19", sys.executable, script], stdin=subprocess.DEVNULL, stdout=out, stderr=out,
+                             start_new_session=True, close_fds=True)
+
+
 def tidy(target, checkout):
     """Starts `clean-target --wait` on `target`, at most once every 15 minutes per target directory:
     Rerail's worktrees together write terabytes of builds a day, and what the next build cannot use
@@ -492,6 +538,8 @@ def tidy(target, checkout):
     the checkout, whose findings `advise` prints at the next builds. Detached, at nice 19."""
     if os.environ.get("RERAIL_FARM_NO_TIDY"):
         return
+    record(target)
+    guard_disk()
     script = os.path.join(SHARE, "clean-target")
     if target is None or not os.path.exists(script):
         return
@@ -910,6 +958,8 @@ DEFAULTS = {
     # this much: a host that dropped to WiFi or a busy network is no faster than here.
     "min_free_gb": 40,
     "floor_free_gb": 20,
+    # This Mac's floor: under it, Rerail's builds here go, least recently built first (free-local).
+    "local_min_free_gb": 200,
     # The most a host's test targets hold together (GB): over it, the least recently used that no
     # command holds go (farm-agent, `keep_to_budget`).
     "max_target_gb": 150,
