@@ -201,6 +201,46 @@ simdjson's UTF-8 check is 72. What is left of it:
   never start a sequence, are tests of the class bits apart, where simdjson's lookup folds
   them into one table.
 
+### Spike: simdjson's carried previous block (2026-11-18)
+
+The user: "spike on it; in general, anything that SIMDJSON does we need to be able to do when
+it's profitable". The spike ran in two steps:
+
+1. **The bytes before the block as a chunk of their own.** Chunk 1 made each `prev(a, k)` again
+   from its own load at −k, with its own lookups. Made over the 16 bytes before the block
+   instead, `a` is made once, and every `prev` of chunk 1 is an `ext`, as in chunks 2 to 4. No
+   carry, so the gated regions are untouched.
+
+   | | `14-json` | `15-jsonc` |
+   |---|---:|---:|
+   | Chunk 1 by lags (as is) | 574 / 1 | 784 / 11 |
+   | Chunk 0, every `prev` | 568 / 1 | 792 / 13 |
+   | Chunk 0, a `prev` of a lookup only | 568 / 1 | 790 / 12 |
+
+   (Hot loop instructions / stack accesses.) It is a gain only where the `prev`s share a
+   table's lookup. For a `prev` of one byte's compare, a load and a compare at −k cost what an
+   `ext` does, and hold no register.
+2. **simdjson's carry.** Chunk 4's vectors handed to the next block would leave out what step 1
+   makes over the bytes before the block: one load and one lookup (6 instructions), and its
+   three tests (3). That is 9 instructions a block at most, about 1.5%. The price is a vector
+   carried between blocks, kept right on the ASCII path, the edge part, the general body and
+   the regions, and 1 to 3 registers held across the loop.
+
+Neither is profitable here, so neither is kept. Step 1 is a patch outside the tree
+(`tmp/spike-chunk0-prevs.patch`).
+
+**Where the profit is.** A steady chunk of the check is 29 instructions against simdjson's
+17, about 48 a block:
+
+- simdjson's one lookup holds all of its two-byte rules. Ours, since 0402, holds the four
+  overlong and surrogate rules, while "a continuation is needed, by lag 1" and "never a lead
+  byte" are separate class tests, each with its `ext`.
+- The current byte is looked up in two tables, since its classes need more than 8 bits.
+- The lags 2 and 3 are tests of class bits, where simdjson's are two saturating subtracts of the
+  raw bytes.
+
+Folding the lag-1 rules into the pair's table is the next simdjson step that pays.
+
 ## Reproducing
 
 ```
