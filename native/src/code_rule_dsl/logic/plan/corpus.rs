@@ -9224,9 +9224,10 @@ fn run_observed(
                     // does: the outcome's net deltas, and the delta relations the engine holds. A delta relation a SQL
                     // stratum left in a table is not read (a statement inside the waves, which the strict mode refuses).
                     if crate::code_rule_dsl::logic::profile::warm() {
-                        for (rel, (gone, added)) in &got.deltas {
-                            if !gone.is_empty() || !added.is_empty() {
-                                crate::code_rule_dsl::logic::profile::warm_fault("a non-empty delta", || format!("{rel}: {} values gone, {} added", gone.len(), added.len()));
+                        for (rel, d) in &got.deltas {
+                            let (gone, added) = d.counts(1);
+                            if gone + added > 0 {
+                                crate::code_rule_dsl::logic::profile::warm_fault("a non-empty delta", || format!("{rel}: {gone} gone, {added} added"));
                             }
                         }
                         let derived_here: BTreeSet<&str> = placed.v.rules().map(|r| placed.v.rel_name(r.head().rel())).collect();

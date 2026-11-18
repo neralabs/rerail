@@ -107,16 +107,19 @@ impl Patched {
     /// The statistics of `new`, derived from `old` (whose these are) by `delta_since`: these patched by its rows
     /// gone and added. `None` if `new` did not start as `old`.
     pub(in crate::code_rule_dsl) fn after(&self, old: &InRel, new: &Arc<InRel>, width: usize) -> Option<Patched> {
-        let (added, removed) = new.delta_since(old)?;
+        // Its change read where its rows lie, none copied (0364 R2).
+        let d = new.delta_ids_since(old)?;
         let mut p = self.clone();
         p.at = Arc::as_ptr(new) as *const u8 as usize;
-        p.stats.delta(&added, &removed, width);
+        let (gone, added) = d.counts();
+        p.stats.delta_each((added, gone), width, &|sign, f| d.each(sign, f));
         // Each constant's count, by the rows of its column holding it.
         let index: HashMap<&str, usize> = p.stats.columns().iter().enumerate().map(|(c, n)| (n.as_str(), c)).collect();
         for (name, v, n) in &mut p.counts {
             let Some(&c) = index.get(name.as_str()).filter(|c| **c < width) else { continue };
-            let count = |flat: &[i64]| flat.chunks_exact(width).filter(|r| r[c] == *v).count() as i64;
-            *n += count(&added) - count(&removed);
+            for sign in [1i64, -1] {
+                d.each(sign, &mut |r| if r[c] == *v { *n += sign });
+            }
         }
         Some(p)
     }
@@ -2426,7 +2429,7 @@ impl Retained {
     /// rows changed, with the input's digests by document. The relations kept as they were stay as stored.
     /// `sccs`: `prog`'s strata, computed once by the caller.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::code_rule_dsl) fn write_frames(&self, store: &ContentStore, was: &InFrames, prog: &Placed, domains: &lower::Domains, locations: &Locations, sccs: &[BTreeSet<String>], cut: &Cut, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, unchanged: &BTreeSet<String>, deltas: &HashMap<String, (Vec<i64>, Vec<i64>)>, mut handed: HashMap<String, Handed>, inputs_done: Option<InputsWritten>) -> Result<usize> {
+    pub(in crate::code_rule_dsl) fn write_frames(&self, store: &ContentStore, was: &InFrames, prog: &Placed, domains: &lower::Domains, locations: &Locations, sccs: &[BTreeSet<String>], cut: &Cut, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, unchanged: &BTreeSet<String>, deltas: &HashMap<String, crate::code_rule_dsl::logic::plan::Delta>, mut handed: HashMap<String, Handed>, inputs_done: Option<InputsWritten>) -> Result<usize> {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "the kept part's changes, to the frames".into());
         let leaves = crate::code_rule_dsl::logic::plan::Leaves::of_placed(prog.clone());
         // Literal-only leaves are part of the derived relation's identity (leaf_identity), not runtime
@@ -2532,20 +2535,21 @@ impl Retained {
                 // patched by it, while its frame's deltas are few against its rows; else it is written whole. A
                 // relation with levels (decision 0090) is written whole: its levels part is one row each in its rows'
                 // order under its rows' digest, which a delta moves, and without it the next process has no levels.
-                if let (Some((gone, added)), Some(stored), Some(rd)) = (deltas.get(rel), was.derived.get(rel), read_digests.as_ref())
+                if let (Some(delta), Some(stored), Some(rd)) = (deltas.get(rel), was.derived.get(rel), read_digests.as_ref())
                     && let Some(k) = self.framed(rel)
                     && self.by_delta(store, was, rel, deltas)
+                    && let Some((gone, added)) = delta.rows(&k.rel)
                 {
                     let (ng, na) = (gone.len() / k.width, added.len() / k.width);
                     let n_now = k.rel.rows();
                     {
                         let n_was = (n_now + ng).saturating_sub(na);
                         let cells = Cells::new(&atoms, &frame_types(prog, domains, rel, k.rel.types()));
-                        let d = crate::code_rule_dsl::logic::plan::rows_digest_patched(&cells, stored.digest, n_was, gone, added);
+                        let d = crate::code_rule_dsl::logic::plan::rows_digest_patched(&cells, stored.digest, n_was, &gone, &added);
                         now.insert(rel.clone(), d);
                         written += ng + na;
                         delta_rows += ng + na;
-                        delta_out.push(crate::content_store::FrameDelta { rel: name.clone(), digest: d, reads: rd.clone(), types: frame_types(prog, domains, rel, k.rel.types()), gone: gone.clone(), added: added.clone() });
+                        delta_out.push(crate::content_store::FrameDelta { rel: name.clone(), digest: d, reads: rd.clone(), types: frame_types(prog, domains, rel, k.rel.types()), gone, added });
                         continue;
                     }
                 }
@@ -2844,12 +2848,12 @@ impl Handed {
 impl Retained {
     /// Whether `rel`'s change is written as a delta after its frame (decision 0117 step 4), given its reads are
     /// known: its frame's deltas few against its rows, and no levels (written whole: decision 0090).
-    fn by_delta(&self, store: &ContentStore, was: &InFrames, rel: &str, deltas: &HashMap<String, (Vec<i64>, Vec<i64>)>) -> bool {
-        let (Some((gone, added)), Some(_), Some(name), Some(k)) = (deltas.get(rel), was.derived.get(rel), was.names.get(rel), self.framed(rel)) else { return false };
+    fn by_delta(&self, store: &ContentStore, was: &InFrames, rel: &str, deltas: &HashMap<String, crate::code_rule_dsl::logic::plan::Delta>) -> bool {
+        let (Some(delta), Some(_), Some(name), Some(k)) = (deltas.get(rel), was.derived.get(rel), was.names.get(rel), self.framed(rel)) else { return false };
         if k.width == 0 || k.rel.has_levels() {
             return false;
         }
-        let (ng, na) = (gone.len() / k.width, added.len() / k.width);
+        let (ng, na) = delta.counts(k.width);
         let (chain, chain_rows) = store.frame_chain(&was.space, name);
         chain < max_deltas() && (chain_rows + ng + na) * 4 <= k.rel.rows().max(4096)
     }

@@ -4855,7 +4855,7 @@ pub struct Outcome {
     /// take them.
     pub again: BTreeMap<&'static str, usize>,
     /// A maintained run's relations whose rows changed by a delta (decision 0117 step 4): the rows gone and added.
-    pub deltas: HashMap<String, (Vec<i64>, Vec<i64>)>,
+    pub deltas: HashMap<String, Delta>,
     /// A maintained run's relations whose rows are as stored and were never read (decision 0117 step 4): no reached
     /// stratum read them. They are not held; their frames stand.
     pub unread: BTreeSet<String>,
@@ -6481,6 +6481,32 @@ fn stratum_label(scc: &BTreeSet<String>) -> String {
 /// derived again. Returns whether it changed.
 /// The delta of `rel`, derived again (a reach index made again, or a stratum the maintain mode does not take), against
 /// its kept rows `old`: held as `rel__minus` and `rel__plus`, its readers' versions. Whether any row moved.
+/// A relation's change in a run, which its frame's delta is written from (decision 0117 step 4): its version marks,
+/// read when the delta is written (0364 R2: no row is copied to state a change), or the rows a stratum derived again
+/// made against its kept rows (`kept_delta`).
+#[derive(Clone, Debug)]
+pub enum Delta {
+    Marks { gone: usize, added: usize },
+    Rows { gone: Vec<i64>, added: Vec<i64> },
+}
+
+impl Delta {
+    /// Its rows gone and added, counted.
+    pub fn counts(&self, width: usize) -> (usize, usize) {
+        match self {
+            Delta::Marks { gone, added } => (*gone, *added),
+            Delta::Rows { gone, added } => (gone.len() / width.max(1), added.len() / width.max(1)),
+        }
+    }
+    /// Its rows gone and added, row-major: a mark's read from `rel` now. `None` where `rel` no longer has its version.
+    pub fn rows(&self, rel: &super::native::component::InRel) -> Option<(Vec<i64>, Vec<i64>)> {
+        match self {
+            Delta::Marks { .. } => rel.version_delta().map(|(added, gone)| (gone, added)),
+            Delta::Rows { gone, added } => Some((gone.clone(), added.clone())),
+        }
+    }
+}
+
 fn kept_delta(db: &Connection, rel: &str, old: &Arc<super::native::component::InRel>, native_rels: &mut BTreeSet<String>) -> Result<bool> {
     let _span = super::profile::span(|| format!("{rel}: its delta against its kept rows"));
     let types = old.types().to_vec();
@@ -7059,20 +7085,22 @@ impl<'a> Run<'a, '_> {
             let now = engine::held(self.db, &rel);
             let change = now.as_ref().zip(self.model.stats.heavy_mark.get(&rel))
                 .filter(|_| cols.iter().all(|&c| self.model.stats.heavy.at(&rel, c).is_some()))
-                .and_then(|(now, mark)| now.delta_since_mark(mark));
-            let (Some(now), Some((added, removed))) = (now, change) else { full.push((rel, cols)); continue };
-            let k = now.k;
+                .and_then(|(now, mark)| now.delta_ids_since_mark(mark).map(|_| ()));
+            let (Some(now), Some(())) = (now, change) else { full.push((rel, cols)); continue };
+            // Its change read where its rows lie, none copied (0364 R2).
+            let mark = self.model.stats.heavy_mark.get(&rel).expect("checked");
+            let delta = now.delta_ids_since_mark(mark).expect("checked");
             for &c in &cols {
-                let count = |rows: &[i64]| -> rustc_hash::FxHashMap<i64, u64> {
+                let count = |sign: i64| -> rustc_hash::FxHashMap<i64, u64> {
                     let mut m = rustc_hash::FxHashMap::default();
-                    for row in rows.chunks_exact(k) { *m.entry(row[c]).or_default() += 1; }
+                    delta.each(sign, &mut |row| *m.entry(row[c]).or_default() += 1);
                     m
                 };
                 let old = self.model.stats.heavy.at(&rel, c).cloned().expect("checked");
                 let ndv = self.model.ndv.at(&rel, c).copied().unwrap_or(old.ndv);
-                let h = old.merge(&count(&added), &count(&removed), ndv);
+                let h = old.merge(&count(1), &count(-1), ndv);
                 if raise { joins::raise(key, &rel, c); }
-                joins::log(|| format!("heavy values {rel}.{c}, merged: {} rows added, {} removed; {} rows, {} values", added.len() / k.max(1), removed.len() / k.max(1), h.rows, h.ndv));
+                joins::log(|| format!("heavy values {rel}.{c}, merged: {} rows added, {} removed; {} rows, {} values", delta.counts().1, delta.counts().0, h.rows, h.ndv));
                 self.model.stats.heavy.insert((rel.as_str(), c), std::sync::Arc::new(h));
                 n += 1;
             }
@@ -7100,7 +7128,7 @@ impl<'a> Run<'a, '_> {
             return false;
         }
         match (super::native::component::held(self.db, rel), self.model.stats.heavy_mark.get(rel)) {
-            (Some(now), Some(mark)) => now.delta_since_mark(mark).is_some_and(|(a, r)| a.is_empty() && r.is_empty()),
+            (Some(now), Some(mark)) => now.delta_ids_since_mark(mark).is_some_and(|d| d.counts() == (0, 0)),
             (Some(_), None) => false,
             (None, _) => self.model.heavy_of(rel, c).is_some(),
         }
@@ -7760,7 +7788,7 @@ impl<'a> Run<'a, '_> {
         super::native::component::release(&self.db, &input_held);
         self.native_rels.extend(scc.iter().cloned());
         // Nothing deleted, nothing derived: quiet, as a stratum whose joins all read empty deltas is.
-        if scc.iter().all(|r| super::native::component::held(self.db, r).and_then(|x| x.version_delta()).is_some_and(|(a, g)| a.is_empty() && g.is_empty())) {
+        if scc.iter().all(|r| super::native::component::held(self.db, r).and_then(|x| x.version_counts()) == Some((0, 0))) {
             self.quiet.strata.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
         MODE_STRATA.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -11456,7 +11484,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                         m.delta_made(&r);
                         let rows = |s: &str| super::native::component::held(db, &format!("{r}__{s}")).and_then(|h| h.live_rows());
                         if let (Some(gone), Some(added)) = (rows("minus"), rows("plus")) {
-                            outcome.deltas.insert(r.clone(), (gone, added));
+                            outcome.deltas.insert(r.clone(), Delta::Rows { gone, added });
                         }
                     } else {
                         moved_rels.remove(&r);
@@ -11670,7 +11698,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                     m.mode_ran(scc, recursive);
                     for r in scc {
                         let rel = super::native::component::held(db, r).ok_or_else(|| Error::Plan(format!("{r}: not held after its maintain mode")))?;
-                        let (added, gone) = rel.version_delta().ok_or_else(|| Error::Plan(format!("{r}: no version after its maintain mode")))?;
+                        let (gone, added) = rel.version_counts().ok_or_else(|| Error::Plan(format!("{r}: no version after its maintain mode")))?;
                         for (suffix, ver) in [("minus", super::native::component::Ver::Minus), ("plus", super::native::component::Ver::Plus)] {
                             if let Some(v) = rel.version_view(ver) {
                                 // Sized, as a form's delta relation was by its run: its readers plan by it.
@@ -11679,11 +11707,12 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                                 run.native_rels.insert(format!("{r}__{suffix}"));
                             }
                         }
-                        if added.is_empty() && gone.is_empty() {
+                        if added == 0 && gone == 0 {
                             outcome.unchanged.insert(r.clone());
                         } else {
                             moved_rels.insert(r.clone());
-                            outcome.deltas.insert(r.clone(), (gone, added));
+                            // Read from its marks when its frame's delta is written (`Delta::rows`), not copied now.
+                            outcome.deltas.insert(r.clone(), Delta::Marks { gone, added });
                         }
                     }
                     outcome.native.insert(key);
