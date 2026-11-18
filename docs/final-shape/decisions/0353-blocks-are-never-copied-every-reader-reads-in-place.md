@@ -475,6 +475,24 @@ Each step ends with:
        - Left for the kernels: the device's views refuse a 16z batch (`views.refused.z_on_device`) and are made;
          the transducer's residency lays a 16z tape out whole in its slab (`unblock_into`, row 13). Both go when
          the kernels' reads decode a block.
+       - The kernels' part, decided (user, 2026-11-18): "a generic rolling GPU cache to amortize the cost": an LRU
+         cache, kept with atomics, of 2–4 generations, each a hash index and an arena. A lookup looks across the
+         generations, the head (active) and the frozen ones behind it. A miss computes its value (here a 16z
+         block decoded) into the head. When the head fills, the oldest generation is dropped and becomes the new
+         head. A hit in the oldest generation is copied into the head, so the cache keeps what is read (LRU). It
+         makes 16z viable for large runs on small amounts of GPU memory. Its shape, as built:
+         - Generic: a key (a u64; for a 16z block, its compressed bytes' address, unique across tapes) to an
+           entry of fixed size (a power of two), written once in CLIF for the JIT and the kernels. The CPU's
+           reader is the same cache, small and of one thread.
+         - A spare generation, cleared ahead: of G, G − 1 are live; a rotation is one compare-and-swap of the
+           epoch, and the thread that wins clears the next spare. A miss never waits for another thread: two
+           threads that miss one key both compute it, and the later index entry is never found.
+         - A read from a frozen generation that is dropped while it reads is caught: the read checks its
+           generation's stamp after it, and reads again. An entry's loads are masked to the entry, so a read of
+           one being rewritten reads nothing outside the cache.
+         - Every loop is bounded (decision 0103's device work queue). A read that finds no room (the spare not
+           yet cleared, its retries spent) counts a failure in the cache's header; the host refuses that
+           dispatch's batch, which runs on the CPU (counted), rather than wait.
      - **4c.** The views' reads written once (CLIF, for Rust, the JIT and MSL), over a document's `TapeView` and
        its projection's `Numbering`: each view's scan over 64-node groups (the open subtrees from one descent) and
        its probes (by id; by parent, first child and next numbered sibling). Check: their rows equal `Viewed`'s,
