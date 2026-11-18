@@ -21,6 +21,7 @@ import {
   type EngineStartedGit,
   type GitProcess,
   type GitRunLimits,
+  type GitRunResult,
 } from "../../src/engine/git-start.js";
 import { loadNativeBinding } from "../../src/engine/native/native.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
@@ -367,15 +368,44 @@ describe.runIf(LINUX)("Git started through the engine in the states where it and
     expect([errors, readFileSync(runs, "utf8"), vi.mocked(spawn).mock.calls.length]).toEqual([[{ code: undefined }, { code: "ERR_INVALID_FD_TYPE" }], "ran\nran\n", 0]);
   }, 30_000);
 
-  it("runs a blocking Git with a maxBuffer or a timeout past the engine's 32 bits as spawnSync runs it", () => {
+  it("runs a blocking Git with a maxBuffer or a timeout past the engine's 32 bits as spawnSync runs it", async () => {
+    // The one run its output limit ends reads a FIFO this process holds open, so it runs until that limit's SIGTERM
+    // whichever start ran it; its time limit only bounds it should the output limit fail. Every other run prints and
+    // exits.
+    const fifo = join(await folder("limits"), "held");
+    execFileSync("mkfifo", [fifo]);
+    const held = openSync(fifo, fsConstants.O_RDWR);
+    const waits: GitRunLimits = { maxBuffer: 1.5, timeout: 20_000 };
     // 0 and a fraction too: spawnSync reads each limit's 0 in its own way, and refuses a time limit with a fraction.
-    const limits: GitRunLimits[] = [Infinity, 2 ** 32, 2 ** 32 + 1, -1, Number.NaN, 0, 1.5].flatMap(limit => [{ maxBuffer: limit }, { timeout: limit }]);
-    // The script runs on after it prints, so a run its output limit ends takes the SIGTERM whichever start ran it.
-    const answers = (): unknown[] => limits.map(limit => thrown(() => runGitSync("/bin/sh", ["-c", "echo ran; exec sleep 0.3"], process.env, limit)));
-    const throughNode = answers();
-    expect(startGitWithoutCopying(loadNativeBinding)).toBe(true);
-    expect(answers()).toEqual(throughNode);
-  });
+    const limits = [Infinity, 2 ** 32, 2 ** 32 + 1, -1, Number.NaN, 0, 1.5].flatMap(limit => [limit === 1.5 ? waits : { maxBuffer: limit }, { timeout: limit }]);
+    const run = (limit: GitRunLimits): unknown => thrown(() => runGitSync("/bin/sh", ["-c", limit === waits ? 'echo ran; exec cat "$1"' : "echo ran", "sh", fifo], process.env, limit));
+    const starts = engineStarts();
+    let asked: unknown;
+    const recording: Required<EngineGitStarts>["runGit"] = (program, args, env, timeoutMs, maxBuffer) => {
+      const ran = starts.runGit(program, args, env, timeoutMs, maxBuffer);
+      asked = { timeoutMs, maxBuffer, timedOut: ran.timedOut, pastMaxBuffer: ran.pastMaxBuffer };
+      return ran;
+    };
+    try {
+      const throughNode = limits.map(run);
+      expect(startGitWithoutCopying(() => ({ ...starts, runGit: recording }))).toBe(true);
+      const throughEngine = limits.map(limit => {
+        asked = "spawnSync";
+        return [run(limit), asked];
+      });
+      expect(throughEngine.map(([answer]) => answer)).toEqual(throughNode);
+      // What the engine was asked, and what it did: only the two runs whose limits it holds reached it.
+      const taken = (limit: GitRunLimits): unknown => {
+        if (limit === waits) return { timeoutMs: 20_000, maxBuffer: 1.5, timedOut: false, pastMaxBuffer: true };
+        return limit.timeout === 0 ? { timeoutMs: undefined, maxBuffer: 1024 * 1024, timedOut: false, pastMaxBuffer: false } : "spawnSync";
+      };
+      expect(throughEngine.map(([, engine]) => engine)).toEqual(limits.map(taken));
+      const { returned: cut } = throughNode[limits.indexOf(waits)] as { returned: GitRunResult };
+      expect([cut.status, cut.signal, cut.stdout, (cut.error as NodeJS.ErrnoException | undefined)?.code]).toEqual([null, "SIGTERM", "ran\n", "ENOBUFS"]);
+    } finally {
+      closeSync(held);
+    }
+  }, 60_000);
 
   it("ends a blocking Git and says why when the engine's wait on its output fails, as spawnSync ends a run whose read fails", () => {
     const throughEngine = blockingRunsThroughEngine("poll-fails", tmpdir());
