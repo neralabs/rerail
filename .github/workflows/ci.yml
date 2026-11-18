@@ -719,10 +719,6 @@ jobs:
       - name: Allow long paths in Git on Windows
         run: git config --system core.longpaths true
 
-      - name: Report Microsoft Defender's state (temporary measurement)
-        shell: pwsh
-        run: Get-MpComputerStatus | Select-Object AMRunningMode, AntivirusEnabled, RealTimeProtectionEnabled, IsTamperProtected, OnAccessProtectionEnabled, IoavProtectionEnabled, BehaviorMonitorEnabled | Format-List; (Get-MpPreference).ExclusionPath
-
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
