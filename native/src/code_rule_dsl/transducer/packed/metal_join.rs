@@ -2794,12 +2794,12 @@ impl Batch {
     }
 
     /// A head's rows written in place (decision 0325 step 4): `src`'s first rows (as many as slot `count` of `totals`
-    /// holds, at most `cap`; `cap` of them with no slot) into rows `0..` of `dst`, a relation in its block whose
-    /// chunks hold `cap` rows. Each column of the head is a column of `src` or a constant (`cols`). The batch keeps
-    /// `dst`'s block until its work completes.
+    /// holds, at most `cap`; `cap` of them with no slot) into rows `at..` of `dst`, a relation in its block whose
+    /// chunks hold `at + cap` rows (the head's own tail past its rows, decision 0384 step 3). Each column of the head
+    /// is a column of `src` or a constant (`cols`). The batch keeps `dst`'s block until its work completes.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::code_rule_dsl) fn place_rows(&mut self, src: Rows<'_>, cap: usize, count: Option<usize>, totals: &Words, cols: &[Col], dst: DevRel) -> Result<(), Error> {
-        self.copy(src, cap, count.map(|c| (c, totals)), cols, Rows::Rel(&dst), 0)?;
+    pub(in crate::code_rule_dsl) fn place_rows(&mut self, src: Rows<'_>, cap: usize, count: Option<usize>, totals: &Words, cols: &[Col], dst: DevRel, at: usize) -> Result<(), Error> {
+        self.copy(src, cap, count.map(|c| (c, totals)), cols, Rows::Rel(&dst), at)?;
         self.keep.push(dst.buffer);
         Ok(())
     }

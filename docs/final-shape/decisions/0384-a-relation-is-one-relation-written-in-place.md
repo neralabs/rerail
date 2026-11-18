@@ -1,6 +1,6 @@
 # 0384. A relation is one relation, written in place
 
-Status: decided (2026-11-17), step 1 built. The user picked it over two other forms: relations of many parts with
+Status: decided (2026-11-17), steps 1–3 built (2026-11-18). The user picked it over two other forms: relations of many parts with
 an index per part, and nesting only the fixpoint's runs in blocks.
 
 ## Intro
@@ -38,15 +38,49 @@ whole. A relation is never a list of parts that a reader must merge.
    - Metal: merges went from 262 (56 MB) to 157 (32 MB), and the profiled peak from 3.8 GB to 3.0 GB.
    - CPU: the findings are the reference's, in 18.3 s against 19.5 s. The peak is 1.79 GB against 1.85 GB.
      Filing costs 0.69 s against 0.62 s (`hold the export`).
-2. **A relation started from another's rows is a delta of it.** Its tail is a blocks delta whose ids continue
-   after its base's (`Relation::base_rows`), and the device reads base and delta as one relation, as it already
-   reads a kills delta. Most of the 157 merges left are of two parts: the shared rows plus a tail.
-3. **The device writes a head into its relation.** It claims rows in the head relation's own tail, with one atomic
-   add (`rerail_blocks::rows::Rows::claim`), and writes them there, not into a part of its own appended after the
-   rows (decision 0325 step 4).
+2. **A relation started from another's rows goes on in their relation** (built, Q175). This amends the form first
+   written here, a blocks delta of the base: a delta needs kernels that read a base and a delta as one relation
+   (two descriptors, two indexes), and a continuation needs none.
+   - Freezing a relation holds its tail as a prefix (`Part::cap`): the frozen rows read only their own. Its
+     relation's writer is marked free at those rows (`Held::free_at`).
+   - The first relation started from the frozen rows (`Rows::shared`) takes the writer, by one compare and swap, as
+     its tail, and goes on writing in the same `rerail_blocks` relation. A reader binds it whole.
+   - One writer at a time: a second relation started from the same rows while the writer is taken, or after rows
+     were written past the prefix, starts a tail of its own. A taker dropped with nothing written gives the writer
+     back (`Took`), and so does one frozen unchanged.
+   - A prefix alone is bound as its relation: every reader of a bound relation reads the rows it is bound with, and
+     its indexes are of those rows (`find_index`).
+3. **The device writes a head into its relation** (built, Q175). The device writes a head's new rows past its rows,
+   in room it reserves in the relation's block (`Part::room`), not into a part of its own appended after the rows.
+   - The room is a loan (`Lent`): `push_fresh` claims the rows (`Rows::claim_tail`), or, beside rows derived on the
+     host or into a lattice, reads them out and lets the next pushes reuse the room (`Rows::unclaimed`).
+   - The next group of a stratum's rules writing the same head goes on after the last lot (`Lent::after`). A head with
+     no rows yet gets a relation of its own (`Part::for_writes`), which becomes its tail (`Rows::append_part`), and
+     the next lot goes on in it.
+   - A loan is given back when dropped (a refusal), and claims are checked to come in order.
 
-After step 3, `Rows::one` merges nothing and goes. The profile lists any merge it makes until then, under "rows of
-many parts merged into one".
+Measured on cold 300-file Metal runs over e2's corpus:
+
+| | Merged copies | Copied |
+|---|---|---|
+| After step 1 | 147 | 28 MB |
+| Step 2, the writer handed to the first only | 147 | 28 MB |
+| Step 2, the writer free again when frozen unchanged | 99 | 16 MB |
+| Step 3 too, a stratum's groups chained | 0 | 0 MB |
+
+At 100 files the merges went from 88 (29 MB) to 0. The findings are the reference's: 5 of 5 Metal runs at 100
+files, 3 of 3 at 300, and the CPU at 300. The strict 10-file outputs are byte-identical.
+
+The instructions retired by a 300-file Metal run went from 797–823 G to 761–779 G, two alternating runs each, at load
+16–22. The peaks are 2.2–2.9 GB on both binaries.
+
+`Rows::one` still merges where a relation is of many parts. That happens when:
+- a second relation is started from rows whose writer is taken;
+- a tail's block has no room;
+- `freeze` merges segments past `MAX_SEGMENTS`.
+
+None happened in these runs. The profile lists each merge under "rows of many parts merged into one", and counts the
+heads written into their own tail and the heads given a relation of their own.
 
 ## What it does not change
 

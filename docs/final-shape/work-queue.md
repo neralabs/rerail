@@ -3510,6 +3510,26 @@ Test: `an_export_is_one_relation_of_the_chunks_new_rows`, which replaces the tes
 
 Still merged: 157 relations, nearly all of two parts. Steps 2 and 3 of 0384 cover them.
 
+### Q175. A relation is one relation: steps 2 and 3 of decision 0384 (done)
+
+Done 2026-11-18. At 100 files the Metal merges (`Rows::one`) were 88, 29 MB. Nearly all were relations of parts the
+device wrote, one part per run, or a relation started from frozen rows plus a tail of its own.
+
+- **Step 2.** A relation started from frozen rows takes their relation's writer (`Held::free_at`, `Rows::shared`).
+  The writer is free again when a taker is dropped or frozen unchanged (`Took`).
+- **Step 3.** The device writes a head's rows into room lent past its rows (`Part::room`, `Lent`, `head_room`).
+  `push_fresh` claims them. A stratum's next group writing the same head goes on after the last lot (`Lent::after`).
+
+Cold 300-file Metal: 147 merges (28 MB) to 0. The findings are the reference's: Metal 5 of 5 at 100 files and 3 of 3
+at 300, and the CPU at 300. The strict 10-file outputs are byte-identical. Instructions retired went from 797–823 G
+to 761–779 G.
+
+Tests: `rows_written_into_the_tails_room_keep_one_relation`, `a_relation_started_from_frozen_rows_goes_on_in_their_relation`,
+`a_part_written_elsewhere_becomes_the_tail`.
+
+Left: the merge stays for a second start while the writer is taken, a tail's block with no room, and segments past
+`MAX_SEGMENTS`. None happened in these runs, and the profile lists any that do.
+
 ### Q173. (Q94 on Two-pass at 00b9bc23d) Metal runs give wrong findings in some runs (done)
 
 Found 2026-11-17 (Q172). Cold 300-file runs with `--metal` differed from the reference in 4 of 7 profiled runs, by 3

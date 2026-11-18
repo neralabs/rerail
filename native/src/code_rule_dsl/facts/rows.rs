@@ -226,6 +226,46 @@ pub struct Held {
     /// Each column resolved once (its directory, which never moves while the relation is in its block): a read pays
     /// the chunk arithmetic and two loads, not the descriptor's walk too.
     cols: Arc<[ColRead]>,
+    /// The loans of room past its rows to another writer outstanding (`Part::room`, `Lent::after`): a first from its
+    /// rows' end, the next ones each after the one before.
+    lent: std::sync::atomic::AtomicU32,
+    /// Its rows' count while its writer is free for a relation started from its frozen rows to take (`Rows::freeze`,
+    /// `Rows::shared`, decision 0384 step 2); `u32::MAX` while it has a writer (or none may write past its rows).
+    free_at: std::sync::atomic::AtomicU32,
+}
+
+/// Room past a relation's rows lent to another writer (the device, `Part::room`): rows `at..` of it, which the writer
+/// fills and the relation's rows then claim (`Rows::claim_tail`) or read (`Rows::unclaimed`). The first loan starts at
+/// its rows' end, a next one after the rows of the one before (`after`); given back when dropped.
+pub struct Lent {
+    tail: Part,
+    pub at: u32,
+}
+
+impl Lent {
+    /// The relation lent.
+    pub fn tail(&self) -> &Part {
+        &self.tail
+    }
+
+    /// Room for `n` more rows after this loan's first `written`, on the same relation: a next writer's (the next of a
+    /// stratum's groups, writing the same head, decision 0384 step 3). `None` when its block has no room for them.
+    pub fn after(&self, written: u32, n: usize) -> Option<Lent> {
+        let at = self.at.checked_add(written)?;
+        let end = u64::from(at) + n as u64;
+        if end > u64::from(u32::MAX) {
+            return None;
+        }
+        self.tail.lent.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        let lent = Lent { tail: self.tail.clone(), at };
+        self.tail.rel().rows.try_reserve(&self.tail.facts.block, end).then_some(lent)
+    }
+}
+
+impl Drop for Lent {
+    fn drop(&mut self) {
+        self.tail.lent.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
 }
 
 /// The relations of many parts merged into one for a reader that binds one (`Rows::one`), and their bytes: copies the
@@ -323,7 +363,7 @@ impl Part {
             {
                 let cols = (0..k).map(|c| rel.rows.reader(c)).collect();
                 let rel = std::ptr::from_ref(rel);
-                return Ok(Part { held: Arc::new(Held { facts, life, rel, cols }), cap: u32::MAX });
+                return Ok(Part { held: Arc::new(Held { facts, life, rel, cols, lent: std::sync::atomic::AtomicU32::new(0), free_at: std::sync::atomic::AtomicU32::new(u32::MAX) }), cap: u32::MAX });
             }
         }
         unreachable!("a new block of {} bytes holds a relation of {need}", 2 * need + MARGIN)
@@ -405,6 +445,21 @@ impl Part {
         self.facts.block.offset_of(&raw const self.rel().rows)
     }
 
+    /// Room for `n` rows past its rows, for a writer other than its own (the device, decision 0384 step 3): the first
+    /// loan of it (`Lent`; a next one is `Lent::after`). `None` when its room is lent already, or its block has no room
+    /// for them (it is never moved for a writer that is not its own).
+    pub fn room(&self, n: usize) -> Option<Lent> {
+        let at = self.len();
+        let end = u64::from(at) + n as u64;
+        if self.capped() || end > u64::from(u32::MAX) {
+            return None;
+        }
+        self.lent.compare_exchange(0, 1, std::sync::atomic::Ordering::AcqRel, std::sync::atomic::Ordering::Acquire).ok()?;
+        // Made now, so a refusal below gives the loan back.
+        let lent = Lent { tail: self.clone(), at };
+        self.rel().rows.try_reserve(&self.facts.block, end).then_some(lent)
+    }
+
     /// Rows `0..n` written by the writer it was made for (`for_writes`), now its rows.
     ///
     /// # Safety
@@ -420,6 +475,7 @@ impl Part {
     #[inline]
     fn push(&mut self, row: &[i64]) {
         debug_assert!(!self.capped(), "a write to a shared prefix");
+        debug_assert_eq!(self.lent.load(std::sync::atomic::Ordering::Relaxed), 0, "a push into room lent to another writer");
         let i = self.len();
         if self.rel().rows.reserved() <= i {
             self.grow(u64::from(i) + 1);
@@ -491,6 +547,25 @@ pub struct Rows {
     /// The dead rows' delta of that one relation (`in_block_dead`), its descriptor's offset: kept while its dead bits
     /// are the relation's.
     kills: Mutex<Option<usize>>,
+    /// The rows its tail held when it was taken as the writer of a frozen relation's (`shared`): given back free at
+    /// them when these rows are dropped with none written past them (a run abandoned, its relation not kept).
+    took: Option<Took>,
+}
+
+/// A frozen relation's writer taken (`Rows::shared`), and the rows its relation held then: given back free at them
+/// when dropped with none written past them (a run abandoned, or its rows frozen unchanged).
+struct Took {
+    writer: Part,
+    at: u32,
+}
+
+impl Drop for Took {
+    fn drop(&mut self) {
+        let w = &self.writer;
+        if w.rel().rows.len() == self.at && w.lent.load(std::sync::atomic::Ordering::Acquire) == 0 {
+            w.free_at.store(self.at, std::sync::atomic::Ordering::Release);
+        }
+    }
 }
 
 /// Where a relation's rows lie for a reader that binds its block (the device, decision 0325): the block, kept while
@@ -553,7 +628,7 @@ impl Clone for Rows {
             segs.push((from, t.prefix()));
             from += t.len();
         }
-        Rows { segs, from, tail: None, k: self.k, hint: self.hint, life: self.life, merged: Default::default(), kills: Default::default() }
+        Rows { segs, from, tail: None, k: self.k, hint: self.hint, life: self.life, ..Rows::default() }
     }
 }
 
@@ -655,9 +730,14 @@ impl Rows {
 
     /// These `n` rows with the tail frozen into a segment of its own (moved, not copied): as a closed relation holds
     /// them, for a later run to share (`shared`).
+    ///
+    /// The tail is held as a prefix of its relation, its rows as they are now, and the relation's writer is free at
+    /// them for a relation started from these rows to take (`shared`): that one goes on in the same relation, which a
+    /// reader binds whole (decision 0384 step 2).
     pub fn freeze(mut self, n: usize) -> Rows {
+        self.took = None;
         if let Some(tail) = self.tail.take().filter(|t| t.len() > 0) {
-            self.segs.push((self.from, tail));
+            self.segs.push((self.from, tail.prefix()));
         }
         self.from = n as u32;
         while self.segs.len() > MAX_SEGMENTS {
@@ -669,18 +749,42 @@ impl Rows {
             both.copy_from(&b, 0, b.len());
             self.segs.push((first, both));
         }
+        // The last segment's writer, free for a relation started from these rows, at its rows: a prefix of its relation,
+        // which a writer goes on past.
+        if let Some((first, p)) = self.segs.last() && p.capped() && first + p.len() == self.from && p.rel().rows.len() == p.len() {
+            p.free_at.store(p.len(), std::sync::atomic::Ordering::Release);
+        }
         self
     }
 
     /// The `n` rows of a frozen relation, shared: its segments taken (and its tail, if it has one, as the rows it holds
     /// now: `Part::prefix`, not copied), with an empty tail from `n` on, for a relation that starts as them.
+    ///
+    /// The first relation started so from frozen rows takes their last segment's writer as its tail (decision 0384 step
+    /// 2): its rows go on in the same relation, past the segment's (a prefix, which these rows read), so it is one
+    /// relation, not shared rows and a tail of its own that a reader binding it must merge. A later one (or one
+    /// started while rows were written past the prefix) starts a tail of its own.
     pub fn shared(&self, n: usize) -> Rows {
         let mut segs = self.segs.clone();
         // The tail shared as it is now, not copied (`Part::prefix`).
         if let Some(t) = self.tail.as_ref().filter(|t| t.len() > 0) {
             segs.push((self.from, t.prefix()));
         }
-        Rows { segs, from: n as u32, tail: None, k: self.k, hint: 0, life: self.life, merged: Default::default(), kills: Default::default() }
+        // Taken by one at a time: free at the segment's rows, and none written past them since.
+        let take = |first: u32, p: &Part| {
+            (first + p.len()) as usize == n
+                && p.free_at.compare_exchange(p.len(), u32::MAX, std::sync::atomic::Ordering::AcqRel, std::sync::atomic::Ordering::Acquire).is_ok()
+        };
+        match segs.last() {
+            Some(&(first, ref p)) if take(first, p) => {
+                debug_assert_eq!(p.rel().rows.len(), p.len(), "a free writer's relation holds its prefix's rows");
+                let (first, p) = segs.pop().expect("the writer's segment");
+                let writer = Part { held: p.held.clone(), cap: u32::MAX };
+                let took = Some(Took { writer: writer.clone(), at: writer.len() });
+                Rows { segs, from: first, tail: Some(writer), k: self.k, hint: 0, life: self.life, took, ..Rows::default() }
+            }
+            _ => Rows { segs, from: n as u32, tail: None, k: self.k, hint: 0, life: self.life, ..Rows::default() },
+        }
     }
 
     /// The rows as one relation in one block, ids from 0: the one part, or every part merged into one (made once,
@@ -718,8 +822,9 @@ impl Rows {
         Some(match (&self.segs[..], &self.tail) {
             ([], None) => return None,
             ([], Some(t)) if self.from == 0 => t,
-            // A shared prefix is not its relation: a reader that binds the relation would read past it.
-            ([(0, p)], None) if !p.capped() => p,
+            // A prefix too (a frozen relation's rows, its writer handed on): every reader of a bound relation reads
+            // the rows it is bound with (`InBlock::rows`), and its indexes are of them (`find_index`'s rows).
+            ([(0, p)], None) => p,
             (segs, tail) => self.merged.get_or_init(|| {
                 let parts: Vec<&Part> = segs.iter().map(|(_, p)| p).chain(tail.iter()).collect();
                 let rows: usize = parts.iter().map(|p| p.len() as usize).sum();
@@ -735,8 +840,9 @@ impl Rows {
         })
     }
 
-    /// `part`'s rows after these, as a segment of their own: not copied (decision 0325 step 4, a head's rows the
-    /// device wrote in place). The tail, if it has rows, becomes a segment first; the next row pushed starts a new one.
+    /// `part`'s rows after these, not copied (decision 0325 step 4, a head's rows the device wrote in place): it
+    /// becomes the tail, so the rows pushed after it, and the next rows the device writes (`tail_room`), go on in the
+    /// same relation (decision 0384 step 3). The tail, if it has rows, becomes a segment first.
     pub fn append_part(&mut self, part: Part) {
         let n = part.len();
         if n == 0 {
@@ -744,19 +850,53 @@ impl Rows {
         }
         let k = part.rel().rows.ncols as usize;
         debug_assert!(self.k == 0 || self.k == k, "a part of {k} columns after rows of {}", self.k);
+        debug_assert!(!part.capped(), "a shared prefix appended as a tail");
         self.k = k;
         self.merged.take();
         *self.kills.get_mut().unwrap_or_else(|e| e.into_inner()) = None;
-        let at = match self.tail.take() {
-            Some(t) if t.len() > 0 => {
-                let next = self.from + t.len();
-                self.segs.push((self.from, t));
-                next
-            }
-            _ => self.from,
-        };
-        self.segs.push((at, part));
-        self.from = at + n;
+        if let Some(t) = self.tail.take().filter(|t| t.len() > 0) {
+            let next = self.from + t.len();
+            self.segs.push((self.from, t));
+            self.from = next;
+        }
+        self.tail = Some(part);
+    }
+
+    /// Room for `n` rows past the tail's, for a writer other than the host (the device, decision 0384 step 3): the
+    /// tail as it lies with those rows reserved, and the place of the first. The writer writes rows `at..at + n` of
+    /// it; `claim_tail` then makes them rows, or `unclaimed` reads them. `None` when there is no tail, or its block
+    /// has no room for them (the tail is never moved for a writer that is not its own), or its room is lent already
+    /// (it would be the same rows).
+    pub fn tail_room(&self, n: usize) -> Option<Lent> {
+        self.tail.as_ref()?.room(n)
+    }
+
+    /// Rows `at..at + n` of `tail`, written by the writer `tail_room` gave its room to: now its rows.
+    ///
+    /// # Safety
+    /// The writer has finished, and wrote every value of those rows.
+    pub unsafe fn claim_tail(&mut self, lent: &Lent, n: u32) {
+        let t = self.tail.as_ref().expect("the tail written in place");
+        let at = lent.at;
+        assert!(Arc::ptr_eq(&t.held, &lent.tail.held), "rows written into a tail the relation no longer has");
+        assert_eq!(t.len(), at, "rows pushed into a tail while another writer wrote past them");
+        assert!(at + n <= t.rel().rows.reserved(), "{n} rows written at {at} into room for {}", t.rel().rows.reserved());
+        self.merged.take();
+        *self.kills.get_mut().unwrap_or_else(|e| e.into_inner()) = None;
+        // SAFETY: within the rows reserved (asserted); the caller says they are written.
+        unsafe { t.rel().rows.claim_reserved(n) };
+    }
+
+    /// Row `at + i`'s values of `tail`, written past its rows by the writer `tail_room` gave its room to, not claimed:
+    /// rows a reader takes into its own batch (a wave's derived rows beside them, `push_fresh`), whose room the
+    /// relation's next pushes reuse.
+    ///
+    /// # Safety
+    /// The writer has finished, and wrote every value of the row, which lies in the room reserved.
+    pub unsafe fn unclaimed(lent: &Lent, i: u32, k: usize) -> Row {
+        let (tail, at) = (&lent.tail, lent.at);
+        debug_assert!(at + i < tail.rel().rows.reserved(), "a row past the room reserved");
+        Row::from_fn(k, |c| tail.cols[c].get(at + i))
     }
 
     /// Its relations, oldest first: the frozen segments, then the tail if it has rows. A reader that keeps them
@@ -794,9 +934,9 @@ impl Rows {
         self
     }
 
-    /// Whether these rows share a frozen segment with `other` (a relation started from it).
+    /// Whether these rows share a relation with `other` (a relation started from it: its segments, or its writer).
     pub fn shares(&self, other: &Rows) -> bool {
-        self.segs.iter().any(|(_, a)| other.segs.iter().any(|(_, b)| std::ptr::eq(a.rel, b.rel)))
+        self.parts().any(|a| other.parts().any(|b| std::ptr::eq(a.rel, b.rel)))
     }
 
     /// Row `id`'s `k` values.
@@ -1013,7 +1153,7 @@ mod tests {
     /// A part another writer filled, after rows pushed and before rows pushed again: every row read by its id, the
     /// part's not copied.
     #[test]
-    fn a_part_written_elsewhere_is_appended_as_a_segment() {
+    fn a_part_written_elsewhere_becomes_the_tail() {
         let k = 2;
         let mut rows = Rows::new(k);
         rows.extend_from_slice(&[1, 2, 3, 4]);
@@ -1032,9 +1172,93 @@ mod tests {
         assert_eq!(rows.rows(), 6);
         let all: Vec<Vec<i64>> = (0..6).map(|i| rows.row(i, k).to_vec()).collect();
         assert_eq!(all, [[1, 2], [3, 4], [10, 20], [11, 21], [12, 22], [5, 6]].map(|r| r.to_vec()));
-        assert!(rows.segs.iter().any(|(_, p)| std::ptr::eq(p.rel, place)), "the part itself is a segment");
+        // Decision 0384 step 3: the part is the tail, and the rows pushed after it go on in it.
+        assert!(rows.tail.as_ref().is_some_and(|t| std::ptr::eq(t.rel, place)), "the part itself is the tail");
+        assert_eq!(rows.segs.len(), 1, "the rows before it, one segment");
         let frozen = rows.freeze(6);
         assert_eq!(*frozen.row(4, k), [12, 22]);
+    }
+
+    /// Decision 0384 step 3: rows another writer writes into the tail's room are the relation's own, claimed in
+    /// place: it stays one relation, bound whole with nothing merged. One loan a tail at a time, given back when
+    /// dropped; rows written and not claimed read as written, and the room is the next pushes'.
+    #[test]
+    fn rows_written_into_the_tails_room_keep_one_relation() {
+        let k = 2;
+        let mut rows = Rows::new(k);
+        rows.extend_from_slice(&[1, 2, 3, 4]);
+        let write = |lent: &Lent, vals: &[[i64; 2]]| {
+            for (i, v) in vals.iter().enumerate() {
+                // SAFETY: rows `at..at + n` are the loan's, reserved, and nothing else writes them.
+                unsafe {
+                    lent.tail().rel().rows.put(lent.at + i as u32, 0, v[0]);
+                    lent.tail().rel().rows.put(lent.at + i as u32, 1, v[1]);
+                }
+            }
+        };
+        let merged = MERGED[0].load(std::sync::atomic::Ordering::Relaxed);
+        let lent = rows.tail_room(3).expect("room in the tail's block");
+        assert_eq!(lent.at, 2);
+        assert!(rows.tail_room(1).is_none(), "one loan a tail at a time");
+        write(&lent, &[[10, 20], [11, 21]]);
+        // A next writer's room goes on after the first's rows; both claimed in order.
+        let next = lent.after(2, 1).expect("room after the first loan");
+        assert_eq!(next.at, 4);
+        write(&next, &[[12, 22]]);
+        // SAFETY: the rows are written.
+        unsafe {
+            rows.claim_tail(&lent, 2);
+            rows.claim_tail(&next, 1);
+        }
+        drop((lent, next));
+        assert_eq!(rows.parts().count(), 1, "one relation");
+        let b = rows.in_block().expect("bound whole");
+        assert_eq!(b.rows, 5);
+        assert_eq!(MERGED[0].load(std::sync::atomic::Ordering::Relaxed), merged, "nothing merged");
+        let all: Vec<Vec<i64>> = (0..5).map(|i| rows.row(i, k).to_vec()).collect();
+        assert_eq!(all, [[1, 2], [3, 4], [10, 20], [11, 21], [12, 22]].map(|r| r.to_vec()));
+        // Lent again once given back; read, not claimed, and the room the next push's.
+        let lent = rows.tail_room(1).expect("the loan given back");
+        write(&lent, &[[7, 8]]);
+        // SAFETY: the row is written.
+        assert_eq!(*unsafe { Rows::unclaimed(&lent, 0, k) }, [7, 8]);
+        drop(lent);
+        rows.extend_from_slice(&[5, 6]);
+        assert_eq!((rows.rows(), &*rows.row(5, k)), (6, &[5, 6][..]));
+    }
+
+    /// Decision 0384 step 2: a relation started from frozen rows takes their relation's writer and goes on in it, one
+    /// relation (bound with nothing merged), while the frozen rows read only their own. A second started from them while
+    /// the first holds the writer starts a tail of its own; a taker dropped with nothing written gives the writer back.
+    #[test]
+    fn a_relation_started_from_frozen_rows_goes_on_in_their_relation() {
+        let k = 1;
+        let mut first = Rows::new(k);
+        first.extend_from_slice(&[1, 2, 3]);
+        let kept = first.freeze(3);
+        let mut next = kept.shared(3);
+        assert!(next.segs.is_empty() && next.from == 0, "the writer taken as the tail, from row 0");
+        next.extend_from_slice(&[4]);
+        assert_eq!((kept.rows(), next.rows()), (3, 4), "the frozen rows read their own");
+        assert!(next.shares(&kept));
+        let merged = MERGED[0].load(std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(next.in_block().expect("bound").rows, 4);
+        assert_eq!(kept.in_block().expect("bound").rows, 3, "a prefix bound as its rows");
+        assert_eq!(MERGED[0].load(std::sync::atomic::Ordering::Relaxed), merged, "nothing merged");
+        // The writer is the first's: a second goes on in a tail of its own.
+        let other = kept.shared(3);
+        assert!(other.tail.is_none() && other.segs.len() == 1);
+        drop(other);
+        // Frozen with a row written, its relation's writer is free at its 4 rows, not the kept 3.
+        let kept2 = next.freeze(4);
+        assert!(kept.shared(3).tail.is_none(), "rows were written past the first prefix");
+        let taker = kept2.shared(4);
+        assert!(taker.tail.is_some());
+        // Dropped with nothing written: given back.
+        drop(taker);
+        let again = kept2.shared(4);
+        assert_eq!(again.tail.as_ref().map(Part::len), Some(4), "the writer given back");
+        assert_eq!((0..4).map(|i| again.get(i, 0)).collect::<Vec<_>>(), [1, 2, 3, 4]);
     }
 
     /// The block a relation's rows lie in.

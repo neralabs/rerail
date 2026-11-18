@@ -2242,7 +2242,7 @@ fn complete(mut runs: Vec<Run<'static>>, rules: &[(&Plan, &JoinRule, usize)], st
     }
     // Each head's rows written in place, in a relation of a block, which the store takes as they lie (decision 0325
     // step 4); the heads `place` cannot take read back below.
-    let placed = place(&runs, rules, store, rep)?;
+    let placed = place(&runs, rules, store, fresh, rep)?;
     // The rows into the store, and each step's counts.
     let d0 = thread_cpu();
     let _h = crate::code_rule_dsl::logic::lanes::prof::host("device join (decision 0095)", "decode: rows into the store");
@@ -2307,19 +2307,58 @@ fn complete(mut runs: Vec<Run<'static>>, rules: &[(&Plan, &JoinRule, usize)], st
     Ok(out)
 }
 
-/// The heads whose rows `place` wrote in place, and their parts.
+/// The heads whose rows `place` wrote in place, and where it wrote them.
 #[derive(Default)]
-struct Placed {
-    parts: Vec<(usize, crate::code_rule_dsl::facts::rows::Part)>,
+struct PlacedHeads {
+    parts: Vec<(usize, super::Placed)>,
     heads: Vec<usize>,
 }
 
-impl Placed {
+impl PlacedHeads {
     fn contains(&self, head: &usize) -> bool {
         self.heads.contains(head)
     }
-    fn into_parts(self) -> Vec<(usize, crate::code_rule_dsl::facts::rows::Part)> {
+    fn into_parts(self) -> Vec<(usize, super::Placed)> {
         self.parts
+    }
+}
+
+/// Where the device writes `n` new rows of `rel` (`k` columns), whose rows written so far and not yet taken are
+/// `fresh`'s: after the last of those (a stratum's earlier group's, for the same head), else past its tail's rows, in
+/// room reserved in their block (decision 0384 step 3: the relation stays one, and a reader binds it whole), else a
+/// relation of their own (`Part::for_writes`) that becomes its tail. The rows' place, and the relation bound for the
+/// writes.
+fn head_room(rel: &super::Rel, fresh: &super::Fresh, k: usize, n: usize) -> Result<(super::Placed, mj::DevRel, usize), String> {
+    use crate::code_rule_dsl::facts::rows::Part;
+    let room = match fresh.last_placed() {
+        Some(super::Placed::Part(p)) => p.room(n),
+        Some(super::Placed::Tail { lent, n: written }) => lent.after(*written, n),
+        None => rel.tail_room(n),
+    };
+    if let Some(lent) = room {
+        let at = lent.at;
+        let dst = mj::DevRel::in_block(&lent.tail().in_block(at + n as u32), k).map_err(|e| format!("{e:?}: a head's tail in its block"))?;
+        crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "heads' rows written into their own tail", 1);
+        return Ok((super::Placed::Tail { lent: std::sync::Arc::new(lent), n: 0 }, dst, at as usize));
+    }
+    crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "heads' rows written into a relation of their own (no tail, or no room in its block)", 1);
+    let part = Part::for_writes(k, n);
+    let dst = mj::DevRel::in_block(&part.in_block(n as u32), k).map_err(|e| format!("{e:?}: a head's rows in their block"))?;
+    Ok((super::Placed::Part(part), dst, 0))
+}
+
+/// `room` (`head_room`'s) with its `n` rows written: the rows the store takes.
+///
+/// # Safety
+/// The batch that wrote them is finished, and wrote every value of rows `0..n` of the room (`n` within it).
+unsafe fn written(room: super::Placed, n: usize) -> super::Placed {
+    match room {
+        // SAFETY: the caller's.
+        super::Placed::Part(part) => {
+            unsafe { part.written(n as u32) };
+            super::Placed::Part(part)
+        }
+        super::Placed::Tail { lent, .. } => super::Placed::Tail { lent, n: n as u32 },
     }
 }
 
@@ -2332,14 +2371,14 @@ impl Placed {
 /// A head is left to the rows read back (not in the result) when a rule of it makes texts (arena values, symbols only
 /// once the host names them), when it folds (a lattice), or when the rows it holds have more columns than a probe's
 /// keys.
-fn place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], store: &Store, rep: &mut Report) -> Result<Placed, String> {
-    let mut placed = Placed::default();
+fn place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], store: &Store, fresh: &[Fresh], rep: &mut Report) -> Result<PlacedHeads, String> {
+    let mut placed = PlacedHeads::default();
     let mut heads: Vec<usize> = rules.iter().map(|r| r.2).collect();
     heads.sort_unstable();
     heads.dedup();
     let mut batch: Option<mj::Batch> = None;
     // Per head: its part, the slot its count is in (`None`: the union's, known), the words, and what the work reads.
-    let mut pending: Vec<(usize, crate::code_rule_dsl::facts::rows::Part, Option<usize>, usize, mj::Words)> = Vec::new();
+    let mut pending: Vec<(usize, super::Placed, Option<usize>, usize, mj::Words)> = Vec::new();
     let mut hold: Vec<mj::Table> = Vec::new();
     let mut hold_rels: Vec<(mj::DevRel, mj::DevIndex)> = Vec::new();
     for h in heads {
@@ -2405,22 +2444,21 @@ fn place(runs: &[Run<'static>], rules: &[(&Plan, &JoinRule, usize)], store: &Sto
             }
             _ => (rows, slot),
         };
-        let part = crate::code_rule_dsl::facts::rows::Part::for_writes(k, cap);
+        let (room, dst, at) = head_room(rel, &fresh[h], k, cap)?;
         let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
-        let dst = mj::DevRel::in_block(&part.in_block(cap as u32), k).map_err(|e| format!("{e:?}"))?;
-        b.place_rows(mj::Rows::Table(&rows), cap, slot, &words, &ident, dst).map_err(|e| format!("{e:?}"))?;
+        b.place_rows(mj::Rows::Table(&rows), cap, slot, &words, &ident, dst, at).map_err(|e| format!("{e:?}: a head's rows placed"))?;
         hold.push(rows);
-        pending.push((h, part, slot, cap, words));
+        pending.push((h, room, slot, cap, words));
     }
     if let Some(mut b) = batch {
         finish_timed(&mut b, rep)?;
     }
     drop((hold, hold_rels));
-    for (h, part, slot, cap, words) in pending {
+    for (h, room, slot, cap, words) in pending {
         let n = slot.map_or(cap, |s| words.get(s) as usize).min(cap);
-        // SAFETY: the batch is finished, and `rows_place` wrote every column of rows `0..n` (`n` within `cap`, the
-        // rows `for_writes` reserved).
-        unsafe { part.written(n as u32) };
+        // SAFETY: the batch is finished, and `rows_place` wrote every column of rows `0..n` of the room (`n` within
+        // `cap`, the rows `head_room` reserved).
+        let part = unsafe { written(room, n) };
         rep.distinct += n as u64;
         rep.placed += n as u64;
         placed.parts.push((h, part));
@@ -2784,7 +2822,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
     // A set head's rows written in place (decision 0325 step 4): its total, every row new (its relation had none
     // before the run), into a relation of a block the store takes as it lies, each row with its round where the
     // head keeps levels. One submission for the component's set heads.
-    let mut parts: Vec<(usize, crate::code_rule_dsl::facts::rows::Part, usize)> = Vec::new();
+    let mut parts: Vec<(usize, super::Placed, usize)> = Vec::new();
     let mut batch: Option<mj::Batch> = None;
     // No count slot: each total's rows are known. Held until the batch completes.
     let no_counts = mj::Words::zeroed(1).map_err(|e| format!("{e:?}"))?;
@@ -2800,20 +2838,19 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         };
 // copy (0353 step 6): the fixpoint's total copied into a run's block. It goes: the total lives in a block
 // of the run's life from its start (decision 0353).
-        let part = crate::code_rule_dsl::facts::rows::Part::for_writes(k, total.rows);
+        let (room, dst, at) = head_room(&store.rels[h], &fresh[h], k, total.rows)?;
         let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
-        let dst = mj::DevRel::in_block(&part.in_block(total.rows as u32), k).map_err(|e| format!("{e:?}"))?;
-        b.place_rows(mj::Rows::Rel(total), total.rows, None, &no_counts, &ident, dst).map_err(|e| format!("{e:?}"))?;
-        parts.push((h, part, total.rows));
+        b.place_rows(mj::Rows::Rel(total), total.rows, None, &no_counts, &ident, dst, at).map_err(|e| format!("{e:?}: a component's rows placed"))?;
+        parts.push((h, room, total.rows));
     }
     if let Some(mut b) = batch {
         finish_timed(&mut b, &mut rep)?;
     }
     drop(no_counts);
     let placed_heads: Vec<usize> = parts.iter().map(|p| p.0).collect();
-    for (h, part, n) in parts {
-        // SAFETY: the batch is finished, and `rows_place` wrote every column of the `n` rows reserved.
-        unsafe { part.written(n as u32) };
+    for (h, room, n) in parts {
+        // SAFETY: the batch is finished, and `rows_place` wrote every column of the `n` rows of the room.
+        let part = unsafe { written(room, n) };
         let rounds = set_levels.get(&h).filter(|_| leveled(h)).map(|r| (0..n).map(|x| r.get(x).copied().unwrap_or(0)).collect());
         fresh[h].place(part, rounds);
         rep.distinct += n as u64;

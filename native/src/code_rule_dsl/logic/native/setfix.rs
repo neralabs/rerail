@@ -528,6 +528,11 @@ impl Rel {
         let b = if self.ndead > 0 { self.data.in_block_dead(&self.dead) } else { self.data.in_block() };
         b.filter(|b| b.rows as usize == self.n)
     }
+    /// Room for `n` rows past its rows in its tail's block, for the device to write them there (decision 0384 step
+    /// 3): the tail, and the place in it of the first. `push_fresh` then claims them (`Placed::Tail`).
+    pub fn tail_room(&self, n: usize) -> Option<crate::code_rule_dsl::facts::rows::Lent> {
+        self.data.tail_room(n)
+    }
     /// Whether it folds rows into a lattice (decision 0124) rather than adding them.
     pub fn folds(&self) -> bool {
         self.lat.is_some()
@@ -783,16 +788,17 @@ impl Rel {
     /// (decision 0112). `pend`: the rows stay in no order past this wave's end (a gate's relation, its delta set
     /// later), so they are also put in `pending` for the dedup tests until then. Whether any was new.
     fn push_fresh(&mut self, mut f: Fresh, pend: bool) -> bool {
-        // Rows placed by the device (decision 0325 step 4) are taken as they lie, as segments of this relation's
-        // rows. Beside rows derived here (which may repeat them) or into a lattice (which folds each), they are read
-        // with those instead.
+        // Rows placed by the device (decision 0325 step 4) are taken as they lie: claimed in this relation's tail,
+        // where the device wrote them past its rows (decision 0384 step 3), or their relation made its tail. Beside
+        // rows derived here (which may repeat them) or into a lattice (which folds each), they are read with those
+        // instead.
         let placed = std::mem::take(&mut f.placed);
         if !placed.is_empty() && (f.n > 0 || self.lat.is_some()) {
             let k = self.k;
             for (p, rounds) in placed {
-                let rows = { let mut r = Rows::new(k); r.append_part(p); r };
-                for id in 0..rows.rows() {
-                    let row = rows.row(id as u32, k);
+                // Read where the writer put them; a tail's room is reused by the pushes that settle them.
+                for id in 0..p.len() as usize {
+                    let row = p.row(id as u32, k);
                     // A fixpoint's row at its round (decision 0311), as its rows were added before step 4.
                     match &rounds {
                         Some(r) if f.levels.len() == f.n => f.add_leveled(&row, r[id]),
@@ -809,7 +815,11 @@ impl Rel {
             let from = self.n;
             for (p, rounds) in placed {
                 let m = p.len() as usize;
-                self.data.append_part(p);
+                match p {
+                    Placed::Part(p) => self.data.append_part(p),
+                    // SAFETY: the writer finished, and wrote every value of the rows `n` counts.
+                    Placed::Tail { lent, n } => unsafe { self.data.claim_tail(&lent, n) },
+                }
                 for x in 0..m {
                     if self.leveled && self.level.len() == self.n {
                         let round = rounds.as_ref().map_or(self.wave, |r| r[x]);
@@ -1011,10 +1021,40 @@ impl Cands<'_> {
 /// `levels`: per row, the device fixpoint's round that made it (decision 0311), where its relation keeps levels; else
 /// empty.
 pub struct Fresh { data: Vec<i64>, n: usize, emitted: u64, settled: usize, breaks: Vec<u32>, lost: bool, levels: Vec<u32>,
-                   /// Rows written in place by another writer (the device, decision 0325 step 4), each part distinct,
+                   /// Rows written in place by another writer (the device, decision 0325 step 4), each lot distinct,
                    /// not held by the relation, and in no order: the relation takes them as they lie (`push_fresh`).
-                   /// With each part, its rows' rounds when the device's fixpoint made them (decision 0311's levels).
-                   placed: Vec<(crate::code_rule_dsl::facts::rows::Part, Option<Vec<u32>>)> }
+                   /// With each lot, its rows' rounds when the device's fixpoint made them (decision 0311's levels).
+                   placed: Vec<(Placed, Option<Vec<u32>>)> }
+
+/// Where another writer (the device) wrote rows of a relation (decision 0325 step 4).
+#[derive(Clone)]
+pub enum Placed {
+    /// Into a relation of their own, which the relation takes as its tail (`Rows::append_part`): where its tail
+    /// had no room for them.
+    Part(crate::code_rule_dsl::facts::rows::Part),
+    /// Into the relation's own tail, rows `at..at + n` of the room it gave (`Rows::tail_room`, decision 0384 step 3):
+    /// the relation claims them (`Rows::claim_tail`), and stays one relation.
+    Tail { lent: Arc<crate::code_rule_dsl::facts::rows::Lent>, n: u32 },
+}
+
+impl Placed {
+    /// Its rows.
+    pub fn len(&self) -> u32 {
+        match self {
+            Placed::Part(p) => p.len(),
+            Placed::Tail { n, .. } => *n,
+        }
+    }
+
+    /// Its row `i`'s `k` values, where the writer put them.
+    fn row(&self, i: u32, k: usize) -> crate::code_rule_dsl::facts::rows::Row {
+        match self {
+            Placed::Part(p) => crate::code_rule_dsl::facts::rows::Row::from_fn(k, |c| p.get(i, c)),
+            // SAFETY: the writer finished (the lot is placed after its batch), and wrote every row of its room.
+            Placed::Tail { lent, .. } => unsafe { Rows::unclaimed(lent, i, k) },
+        }
+    }
+}
 
 /// The shortest stretch of a wave's batch taken as in order (`Fresh::settle`): shorter ones are sorted with their
 /// neighbours, as merging them costs about what sorting them does.
@@ -1029,11 +1069,15 @@ pub static DERIVATIONS: std::sync::Mutex<std::collections::BTreeMap<String, (u64
 impl Fresh {
     /// Rows another writer wrote in place (`placed`): distinct, none held by the relation; with `rounds`, each row's
     /// round of the device's fixpoint (its level, as `add_leveled`'s).
-    pub fn place(&mut self, part: crate::code_rule_dsl::facts::rows::Part, rounds: Option<Vec<u32>>) {
-        debug_assert!(rounds.as_ref().is_none_or(|r| r.len() == part.len() as usize), "a round per row");
-        if part.len() > 0 {
-            self.placed.push((part, rounds));
+    pub fn place(&mut self, placed: Placed, rounds: Option<Vec<u32>>) {
+        debug_assert!(rounds.as_ref().is_none_or(|r| r.len() == placed.len() as usize), "a round per row");
+        if placed.len() > 0 {
+            self.placed.push((placed, rounds));
         }
+    }
+    /// The last lot another writer wrote (`place`): where a next one for the same relation goes on (decision 0384 step 3).
+    pub fn last_placed(&self) -> Option<&Placed> {
+        self.placed.last().map(|(p, _)| p)
     }
     /// A row in no known order (its batch is sorted whole).
     pub fn add(&mut self, row: &[i64]) { self.data.extend_from_slice(row); self.n += 1; self.lost = true; }
