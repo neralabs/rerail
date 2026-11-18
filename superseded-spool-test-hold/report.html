@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pull request 747 report</title>
+<style>
+/* Base: the team page's tokens, type, layout, figures and tables. */
+/* Layout: a contents rail beside one reading column; every idea is a figure with a caption that says what to notice. */
+:root { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: 0 1px 2px rgba(0,0,0,.05), 0 2px 8px rgba(0,0,0,.04); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; } }
+:root[data-theme="dark"] { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: none; color-scheme: light; } }
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.layout { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 40px; max-width: 1200px; margin: 0 auto;
+  padding-block: 32px 80px; padding-left: max(24px, env(safe-area-inset-left, 0px)); padding-right: max(24px, env(safe-area-inset-right, 0px)); }
+nav.toc { position: sticky; top: 24px; align-self: start; font-size: 14px; max-height: calc(100vh - 48px); overflow-y: auto; }
+nav.toc .brand { font-weight: 700; font-size: 15px; margin-bottom: 12px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; counter-reset: s; }
+nav.toc li { counter-increment: s; }
+nav.toc a { display: block; padding: 5px 10px; border-radius: 6px; color: var(--muted); text-decoration: none; }
+nav.toc a::before { content: counter(s) ". "; opacity: .7; }
+nav.toc a:hover { background: var(--surface2); color: var(--text); }
+nav.toc .theme { margin-top: 16px; }
+nav.toc button { font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+main { min-width: 0; }
+header.hero { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 28px 32px; box-shadow: var(--shadow); }
+.eyebrow { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+h1 { font-size: 34px; line-height: 1.2; margin: 6px 0 10px; text-wrap: balance; }
+h2 { font-size: 26px; line-height: 1.25; margin: 0 0 6px; text-wrap: balance; }
+h3 { font-size: 19px; margin: 34px 0 8px; text-wrap: balance; }
+h4 { font-size: 17px; margin: 0 0 6px; line-height: 1.35; text-wrap: balance; }
+.lede { font-size: 18px; color: var(--muted); margin: 0; max-width: 64ch; }
+section { margin-top: 52px; scroll-margin-top: 20px; }
+.sub { color: var(--muted); margin: 0 0 18px; max-width: 72ch; }
+p { max-width: 72ch; margin: 10px 0; }
+.muted { color: var(--muted); } .small { font-size: 14px; }
+.state { font-size: 14px; color: var(--muted); margin: 10px 0 0; max-width: none; }
+.callout { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 14px 18px; border-radius: 0 10px 10px 0; margin: 16px 0; max-width: 78ch; }
+.callout strong:first-child { display: block; margin-bottom: 2px; }
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+th { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; background: var(--surface2); }
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); margin: 14px 0; }
+.table-wrap table tr:last-child td { border-bottom: 0; }
+.numc { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.k { font-weight: 700; min-width: 8.5em; }
+td.n { white-space: nowrap; }
+.tag { margin-left: 6px; font-weight: 600; font-size: 12px; padding: 1px 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); white-space: nowrap; vertical-align: 1px; }
+.tag.new { background: var(--accentsoft); border-color: var(--accent); color: var(--accent); }
+
+/* The words a section needs, defined once */
+.words { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.word { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.word b { display: block; } .word span { font-size: 14.5px; color: var(--muted); }
+
+/* Figures */
+figure.fg { margin: 16px 0 0; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+figure.fg figcaption { font-size: 14px; color: var(--muted); margin-top: 10px; max-width: 86ch; }
+.pns { display: grid; gap: 12px; } .pns.c2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pn { border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: var(--bg); min-width: 0; }
+.pt { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; color: var(--muted); margin-bottom: 6px; }
+.pn.before .pt { color: var(--bad); } .pn.after .pt { color: var(--good); } .pn.mid .pt { color: var(--accent); }
+svg.dg { display: block; width: 100%; height: auto; max-width: 440px; margin: 0 auto; }
+svg.dg.wide { max-width: 840px; }
+svg.dg.narrow { display: none; max-width: 380px; }
+svg.dg.mock { max-width: 420px; margin: 0; }
+svg.defs { position: absolute; }
+.t { font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; fill: var(--text); }
+.t.b { font-weight: 700; } .t.s { font-size: 11px; fill: var(--muted); }
+.t.inv { fill: var(--surface); } .t.acc { fill: var(--accent); }
+.bx { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+.bx.good { fill: var(--goodsoft); stroke: var(--good); } .bx.warn { fill: var(--warnsoft); stroke: var(--warn); }
+.bx.acc { fill: var(--accentsoft); stroke: var(--accent); } .bx.info { fill: var(--infosoft); stroke: var(--info); }
+.bx.ghost { fill: none; stroke: var(--muted); stroke-dasharray: 5 4; } .bx.mono { fill: var(--surface2); }
+.bx.accf { fill: var(--accent); stroke: none; }
+.bx.zone { fill: var(--surface2); stroke: none; } .bx.zoneacc { fill: var(--accentsoft); stroke: none; }
+.sq { fill: var(--surface2); stroke: var(--line); stroke-width: .8; }
+.sq.acc { fill: var(--accent); stroke: var(--accent); } .sq.good { fill: var(--good); stroke: var(--good); }
+.sq.draft { fill: none; stroke: var(--muted); stroke-dasharray: 3 2; } .sq.hollow { fill: var(--surface); stroke: var(--line); stroke-width: 1; }
+.ar { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.ar.good { stroke: var(--good); } .ar.acc { stroke: var(--accent); }
+.ar.thin { stroke-width: .7; } .ar.dash { stroke-dasharray: 5 4; }
+line.ar.thin:not(.acc) { stroke: var(--border); stroke-width: 1; }
+.mk { fill: var(--muted); } .mk.bad { fill: var(--bad); } .mk.good { fill: var(--good); } .mk.acc { fill: var(--accent); }
+.nc { fill: var(--accent); }
+.cm { stroke: var(--muted); stroke-width: 1.5; fill: var(--surface); }
+.cm.on { fill: var(--accent); stroke: var(--accent); } .cm.off { stroke-dasharray: 3 2; }
+.bar { fill: var(--accent); } .barrm { fill: var(--before); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13.5px; color: var(--muted); margin: 10px 0 0; align-items: center; }
+.legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.legend .sw { width: 16px; height: 10px; border-radius: 3px; display: inline-block; border: 1px solid var(--line); background: var(--surface); }
+.legend .sw.f { background: var(--good); border-color: var(--good); } .legend .sw.a { background: var(--accent); border-color: var(--accent); }
+.legend .sw.r { background: var(--before); border-color: var(--before); } .legend .sw.d { border: 1px dashed var(--muted); background: none; }
+.legend .sw.l { width: 0; height: 12px; border: 0; border-left: 1.5px dashed var(--accent); border-radius: 0; background: none; }
+
+/* Numbers, lists, rules, questions */
+.big { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 18px 0 0; }
+.big div { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--bg); }
+.big b { display: block; font-size: 28px; line-height: 1.15; font-variant-numeric: tabular-nums; } .big span { font-size: 14px; color: var(--muted); }
+.three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 14px 0; }
+.lesson { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.lesson b { display: block; margin-bottom: 4px; } .lesson span { font-size: 14.5px; color: var(--muted); }
+.facts { margin: 12px 0; padding-left: 20px; } .facts li { margin: 5px 0; max-width: 76ch; }
+.rules { counter-reset: r; list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 8px; }
+.rules li { counter-increment: r; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; max-width: 80ch; }
+.rules li::before { content: counter(r); width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.rl { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 8px; }
+.rl li { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 12px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 11px 14px; }
+.rl .rn { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); padding-top: 4px; white-space: nowrap; }
+.rl .x { display: block; color: var(--muted); font-size: 15px; max-width: 78ch; }
+.asks { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 12px; counter-reset: q; }
+.asks li { counter-increment: q; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; box-shadow: var(--shadow); }
+.asks li::before { content: counter(q); width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 14px; display: grid; place-items: center; }
+.asks h4 { margin: 2px 0 4px; } .asks p { margin: 4px 0; }
+.asks .now { font-size: 14.5px; color: var(--muted); }
+.anat { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 22px; align-items: start; }
+.anat .rules { margin: 0; font-size: 15px; }
+.dec { display: grid; gap: 18px; }
+.dp { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; }
+.dp > .dn { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.dp h4 { margin: 2px 0 4px; } .dp p { margin: 4px 0; }
+.dp ul { margin: 4px 0; padding-left: 20px; } .dp li { margin: 5px 0; max-width: 76ch; }
+.dp .table-wrap { margin: 8px 0 2px; box-shadow: none; }
+.t.n { font-size: 11px; font-weight: 600; }
+.opn { fill: none; stroke: var(--accent); stroke-width: 2; }
+.legend .sw.gs { background: var(--goodsoft); border-color: var(--good); } .legend .sw.ws { background: var(--warnsoft); border-color: var(--warn); }
+.legend .sw.o { border: 2px solid var(--accent); }
+.legend .sw.as { background: var(--accentsoft); border-color: var(--accent); }
+/* The mock-up is drawn narrow, so its small lines are one unit larger than elsewhere. */
+svg.dg.anat .t.s { font-size: 12px; }
+.big a { color: inherit; }
+.ord { display: inline-block; min-width: 26px; padding: 0 6px; margin-right: 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); font-size: 13px; font-variant-numeric: tabular-nums; text-align: center; }
+.sm { display: block; font-size: 13px; color: var(--muted); font-weight: 400; overflow-wrap: anywhere; }
+table.tight { font-size: 14px; } table.tight th, table.tight td { padding: 8px 10px; } table.tight td.k { min-width: 0; }
+dl.gloss { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 8px 16px; margin: 0; }
+dl.gloss dt { font-weight: 600; } dl.gloss dd { margin: 0; color: var(--muted); }
+footer { margin-top: 56px; font-size: 14px; color: var(--muted); }
+footer p { max-width: 86ch; }
+
+@media (max-width: 980px) {
+  .layout { grid-template-columns: 1fr; gap: 16px; padding-block: 16px 60px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  nav.toc { position: static; max-height: none; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+  nav.toc ol { columns: 2; }
+  .layout { display: flex; flex-direction: column; } main { display: contents; }
+  main > header.hero { order: 0; } nav.toc { order: 1; } main > section, main > footer { order: 2; }
+  .pns.c3 { grid-template-columns: 1fr; }
+  .anat { grid-template-columns: 1fr; } svg.dg.mock { margin: 0 auto; }
+}
+@media (max-width: 760px) {
+  svg.dg.wide { display: none; }
+  svg.dg.narrow { display: block; }
+}
+@media (max-width: 680px) {
+  h1 { font-size: 27px; } h2 { font-size: 22px; }
+  header.hero { padding: 20px; }
+  nav.toc ol { columns: 1; }
+  .pns.c2, .three, .words { grid-template-columns: 1fr; }
+  dl.gloss { grid-template-columns: 1fr; gap: 2px; } dl.gloss dd { margin-bottom: 8px; }
+  .rl li { grid-template-columns: 1fr; gap: 2px; }
+  .dp { grid-template-columns: 1fr; gap: 4px; }
+  figure.fg { padding: 10px; }
+  /* Tables become one card per row, each cell named by its column */
+  table.tc, table.tc tbody, table.tc tr, table.tc td { display: block; }
+  table.tc thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  table.tc tr { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  table.tc tr:last-child { border-bottom: 0; }
+  table.tc td { padding: 2px 0; border-bottom: 0; white-space: normal; }
+  table.tc td[data-l]::before { content: attr(data-l) ": "; font-size: 13px; font-weight: 600; color: var(--muted); }
+  table.tc td:first-child { font-weight: 700; font-size: 16px; }
+  table.tc td:first-child::before { content: none; }
+}
+@media print {
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  nav.toc { display: none; } .layout { grid-template-columns: 1fr; max-width: none; padding: 0; }
+  @page { size: Letter; margin: 12mm; }
+  /* A drawing, a card or a table row never splits across two pages; a long table may, between rows. */
+  figure.fg, .lesson, .callout, .rl li, .asks li, svg, .pn, .dp, .word, .big > div, tr, .rules li, .facts li { break-inside: avoid; }
+  .table-wrap { overflow: visible; } thead { display: table-header-group; }
+  /* Print keeps the wide drawings, and the mock-up at a width whose height fits one page. */
+  svg.dg.wide { display: block; } svg.dg.narrow { display: none; }
+  .anat { grid-template-columns: 1fr; } svg.dg.anat { max-width: 400px; margin: 0 auto; }
+  /* Print is denser than the screen: the whole page at 82%, full-width text, no page tint. */
+  body { zoom: 0.82; background: #fff; }
+  p, .sub, .lede, figure.fg figcaption, .facts li, .rules li, .callout, footer p, .rl .x { max-width: none; }
+  .big { grid-template-columns: repeat(4, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  h2, h3, h4, .sub { break-after: avoid; } .sub { break-inside: avoid; }
+  section { margin-top: 26px; }
+  header.hero, .asks li { box-shadow: none; }
+  a { color: inherit; text-decoration: none; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+/* The report's own parts. Risk is an ordered scale, so it is one hue from light to dark, and every use carries its word. */
+:root { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; } }
+:root[data-theme="dark"] { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; } }
+.rk { stroke: none; } .rk.high { fill: var(--r-high); } .rk.med { fill: var(--r-med); }
+.rk.low { fill: var(--r-low); stroke: var(--r-med); stroke-width: 1; } .rk.skim, .rk.was { fill: var(--before); } .rk.now { fill: var(--accent); } .rk.tick { fill: var(--text); }
+.bx.hib { fill: var(--surface2); stroke: var(--r-high); stroke-width: 1.5; }
+.lt { fill: var(--surface); stroke: var(--text); stroke-width: 1.3; }
+.mh { fill: var(--good); } .mt { fill: none; stroke: var(--surface); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ml { fill: var(--surface); stroke: var(--warn); stroke-width: 1.6; } .mlf { fill: var(--warn); }
+/* A check that does not hold yet: an empty dashed ring. */
+.mo { fill: var(--surface); stroke: var(--muted); stroke-width: 1.6; stroke-dasharray: 3 2; }
+.rule { stroke: var(--line); stroke-width: 1; }
+svg.dg.grid { max-width: 470px; } svg.dg.pic { max-width: 380px; margin: 0; }
+/* The flag of an answer changed on purpose: filled for the change of intent, hollow for the others. */
+svg.fl { width: 13px; height: 15px; flex: none; vertical-align: -2px; margin-right: 5px; fill: var(--surface); stroke: var(--warn); stroke-width: 1.7; stroke-linejoin: round; }
+svg.fl.full { fill: var(--warn); }
+.q { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 12px 18px; border-radius: 0 10px 10px 0; margin: 12px 0 10px; }
+.q .ql { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; font-weight: 700; color: var(--accent); }
+.q p { font-size: 18px; line-height: 1.4; margin: 3px 0 6px; max-width: 80ch; }
+.q ol { margin: 0; padding-left: 22px; font-size: 15px; } .q li { margin: 1px 0; }
+.rec { margin: 10px 0 0; max-width: 100ch; font-size: 16px; }
+.hero .big { margin-top: 12px; } .hero .big div { padding: 10px 14px; }
+.big b.w { font-size: 21px; } .hero .big span { font-size: 13.5px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface2); white-space: nowrap; }
+.chip i { width: 13px; height: 9px; border-radius: 2px; display: inline-block; }
+.chip svg.fl { margin-right: 0; }
+.chip.high i { background: var(--r-high); } .chip.medium i { background: var(--r-med); } .chip.low i { background: var(--r-low); outline: 1px solid var(--r-med); }
+.chip.intent { border-color: var(--warn); background: var(--warnsoft); } .chip.answer { border-color: var(--warn); }
+.lb { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; border: 1.5px solid var(--text); font-weight: 700; font-size: 13.5px; background: var(--surface); flex: none; }
+/* Part 2: a row per change, three cells joined by arrows. A table, so a screen reader reads it by row and a phone stacks it. */
+table.it { border-collapse: separate; border-spacing: 14px 9px; font-size: 14.5px; line-height: 1.45; }
+table.it th { background: none; padding: 0 2px; border: 0; }
+table.it td { border: 1.2px solid var(--line); border-radius: 9px; padding: 9px 11px; position: relative; }
+table.it td.k { border: 0; padding: 9px 0 0; min-width: 0; font-weight: 400; }
+table.it td.k b { display: block; margin: 5px 0 4px; }
+table.it td.in { background: var(--surface2); }
+table.it td.now { background: var(--goodsoft); border-color: var(--good); }
+table.it tr.intent td.now { background: var(--warnsoft); border-color: var(--warn); }
+table.it tr.intent td:not(.k) { border-width: 2.4px; border-color: var(--warn); }
+table.it td.fo::after, table.it td.now::after { content: ""; position: absolute; left: -12px; top: 50%; margin-top: -5px; border: 5px solid transparent; border-left: 7px solid var(--muted); border-right: 0; }
+.tagx { display: inline-block; font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 0 6px; background: var(--surface); white-space: nowrap; }
+figure.fg.flat { padding: 4px; } figure.fg.flat figcaption { margin: 6px 12px 10px; }
+/* A drawing beside its text: side by side on a desktop and on paper, stacked on a phone. */
+.duo { display: grid; grid-template-columns: minmax(0, 430px) minmax(0, 1fr); gap: 22px; align-items: start; margin-top: 14px; }
+.duo figure.fg { margin: 0; } .duo > div > :first-child { margin-top: 0; }
+.steps { counter-reset: st; list-style: none; padding: 0; margin: 0 0 8px; display: grid; gap: 7px; }
+.steps li, .skim { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; font-size: 14.5px; line-height: 1.45; }
+.steps li { counter-increment: st; }
+.steps li::before { content: counter(st); width: 24px; height: 24px; border-radius: 50%; background: var(--surface2); border: 1px solid var(--line); font-weight: 700; font-size: 13px; display: grid; place-items: center; }
+.steps li.first::before { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.steps .min, .skim .min { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); white-space: nowrap; margin-left: 6px; }
+.steps .x, .skim .x { display: block; color: var(--muted); } .steps b code { white-space: nowrap; }
+#grid figure.fg { max-width: 560px; }
+.steps .rf, .skim .rf { font-size: 11.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); margin-right: 6px; }
+/* What can be skimmed is set apart from the steps: a dashed frame, a grey bar where a step has its number. */
+.skim { border-style: dashed; background: var(--surface2); } .skim .rf { color: var(--muted); }
+.skim i { width: 22px; height: 10px; border-radius: 3px; background: var(--before); margin-top: 7px; }
+.dblock { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; box-shadow: var(--shadow); margin: 12px 0; }
+.dblock h3 { margin: 0 0 4px; font-size: 17.5px; } .dblock p { margin: 4px 0; max-width: none; }
+.dblock .table-wrap { box-shadow: none; } .dblock .pns { margin: 12px 0; }
+.lines { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 7px; }
+.lines > li { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 14px; }
+ol.lines { counter-reset: q; } ol.lines > li { counter-increment: q; display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; }
+ol.lines > li::before { content: counter(q); width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+/* Folded parts. A card's summary is its one line in view. */
+details.ev, details.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin: 8px 0; }
+details.ev { padding: 2px 14px; } details.ev > summary { cursor: pointer; font-weight: 600; font-size: 14.5px; padding: 7px 0; color: var(--muted); }
+details.ev[open] > summary { border-bottom: 1px solid var(--border); margin-bottom: 8px; color: var(--text); }
+details.ev .table-wrap { box-shadow: none; }
+details.card > summary { list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; gap: 5px 9px; align-items: center; padding: 9px 14px; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary .sx { flex: 1 1 320px; font-size: 15px; }
+details.card > summary::after { content: "+"; font-weight: 700; font-size: 18px; line-height: 1; color: var(--accent); }
+details.card[open] > summary { border-bottom: 1px solid var(--border); } details.card[open] > summary::after { content: "\2212"; }
+.card .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); gap: 20px; align-items: start; padding: 12px 14px 14px; }
+.kv { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 6px 12px; margin: 0; }
+.kv dt { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; padding-top: 3px; }
+.kv dd { margin: 0; font-size: 14.5px; }
+.card figure { margin: 0; } .card figcaption { font-size: 13px; color: var(--muted); margin-top: 6px; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; background: var(--surface2); padding: 1px 4px; border-radius: 4px; overflow-wrap: anywhere; }
+td .src { display: block; font-size: 13px; color: var(--muted); margin-top: 3px; overflow-wrap: anywhere; }
+@media (max-width: 840px) { .duo { grid-template-columns: 1fr; } .card .two { grid-template-columns: 1fr; } }
+@media (max-width: 680px) {
+  .kv { grid-template-columns: 1fr; gap: 2px; } .kv dd { margin-bottom: 8px; }
+  .dblock { padding: 12px 14px; } .q p { font-size: 17px; }
+  figure.fg.flat { padding: 0; }
+  table.it { border-spacing: 0; } table.it tr { padding: 12px; }
+  table.it td:not(.k) { padding: 8px 10px; margin-top: 6px; }
+  table.it td.k { padding: 0; } table.it td.k b { display: inline; margin: 0 6px; }
+  table.it td.fo::after, table.it td.now::after { content: none; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" class="defs" aria-hidden="true"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk "/></marker><marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk bad"/></marker><marker id="ah-good" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk good"/></marker><marker id="ah-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk acc"/></marker></defs></svg>
+<div class="layout">
+<nav class="toc" aria-label="Contents">
+  <div class="brand">Decision report</div>
+  <ol><li><a href="#decision">The decision</a></li>
+<li><a href="#intent">Intent and the gap</a></li>
+<li><a href="#look">Where to look</a></li>
+<li><a href="#grid">Risk and verification</a></li>
+<li><a href="#changes">The changes</a></li>
+<li><a href="#decisions">The decisions</a></li>
+<li><a href="#fits">How it fits</a></li>
+<li><a href="#gaps">Not covered</a></li>
+<li><a href="#asks">Our asks</a></li>
+<li><a href="#evidence">Evidence</a></li>
+</ol>
+  <div class="theme"><button type="button" id="theme-toggle">Light or dark</button></div>
+</nav>
+<main>
+<header class="hero" id="decision">
+  <div class="eyebrow">Decision report &middot; Rerail pull request #747</div>
+  <h1>Tests: the superseded spooled edit case can no longer hang</h1>
+  <div class="q"><div class="ql">1. The one question</div>
+  <p>Do the case&#x27;s two new waits each end on an event that always comes, so the case can no longer hang?</p>
+  </div>
+  <p class="rec"><b>We recommend:</b> approve it: one test file and no product line; with the slow spool write #700 describes, <code>main</code> timed out in every run and this change in none.</p>
+  <div class="big">
+    <div><b class="w">54 lines</b><span>in 1 file. 0 ship, 54 are the tests it changes, 0 are other tests and text.</span></div><div><b class="w">Fast review</b><span>Tests only, a fast lane: the automated reviewer can approve.</span></div><div><b class="w">Waits on Nothing</b><span>CI passed at this head; no pull request needs it.</span></div><div><b class="w">3 not verified</b><span><a href="#gaps">Part 8</a> lists each.</span></div>
+  </div>
+  <p class="state">Read from <a href="https://github.com/neralabs/rerail/pull/747">GitHub</a> on 17 November 2026, at head d755a29b5.</p>
+</header>
+<section id="intent"><h2>2. Intent, and the gap</h2>
+<figure class="fg flat"><table class="tc it"><colgroup><col style="width:15%"><col style="width:25%"><col style="width:29%"><col style="width:31%"></colgroup><thead><tr><th>Change</th><th>Intended</th><th>Found</th><th>Now</th></tr></thead><tbody><tr><td class="k"><b>The superseded edit case</b></td><td class="in" data-l="Intended">The enforcer &quot;never evaluates a spooled edit a newer edit of its file superseded while the pump was running&quot;. <span class="tagx">a test&#x27;s name</span></td><td class="fo" data-l="Found">It timed out at 60 s in one CI job, on a pull request that touches neither it nor the enforcer: it held the pump it waited for. <span class="tagx">one CI job</span></td><td class="now" data-l="Now"><b>Closes the gap.</b> The case stops the pump at a spooled edit queued ahead, until the newer edit has looked for the older one. Each wait ends on an event.</td></tr></tbody></table>
+<figcaption>Found on 16 November 2026 (UTC), in one <code>Unit tests (1/2)</code> job of the repository&#x27;s CI on GitHub, on Linux x64.</figcaption></figure>
+<details class="ev"><summary>Sources at main, and causes</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:42%"><col style="width:42%"></colgroup><thead><tr><th>Change</th><th>Where main states the intent</th><th>The cause, and what was measured</th></tr></thead><tbody><tr><td class="k">The superseded edit case</td><td data-l="Where main states the intent"><code>test/engine/code-rule/code-rule-enforcer-mechanical.test.ts</code> line 1012 at <code>main</code> (e8a6b0b5a), the case&#x27;s name. <code>src/engine/code-rule/code-rule-enforcer.ts</code> line 915, a code comment in <code>#queueGeneratedEdit</code>, gives the rule the case checks: &quot;Out of the queue before any await, so the pump never evaluates an edit whose audit ends here.&quot;</td><td data-l="The cause, and what was measured">The spy holds the first spool read while <code>snapshotStatus().pending</code> is true (line 1022), taking it for the queue&#x27;s read-back of the older edit (enforcer line 922). The newer edit awaits its spool write first (line 2220). When that write outlasts the pump&#x27;s eight 1 MB evaluations, 12 to 38 ms on two Linux x64 machines, the first spool read is the pump&#x27;s own (line 1188). The pump is held, so <code>pending</code> stays true, and <code>close()</code> awaits it (line 1017).</td></tr></tbody></table></div></details>
+</section><section id="look"><h2>3. Where to look</h2>
+<p class="sub">Minutes are our estimate.</p>
+<ol class="steps"><li class="first"><div><span class="rf">Read first</span><b><code>code-rule-enforcer-mechanical.test.ts</code>: <code>hold</code>, <code>lookedForOlder</code></b><span class="min">5 min</span><span class="x">Can either wait outlast the event that ends it: the pump&#x27;s at <code>api/ahead.py</code>, or the queue&#x27;s on the older edit?</span></div></li></ol>
+<div class="skim"><i></i><div><span class="rf">Then skim</span><b>Tests and text</b><span class="min">2 min</span><span class="x">The eight 1 MB edits now run first, as revision 1, so the asserted revisions are 2 and 3. The statuses and violation counts are <code>main</code>&#x27;s.</span></div></div>
+</section><section id="grid"><h2>4. Risk against verification</h2>
+<figure class="fg"><svg viewBox="0 0 340 159" role="img" aria-label="The changes by risk, high on top, against six checks. Event waits, low risk: fails without the fix holds with a limit. CI at this head holds for every change." class="dg grid"><text x="150" y="13" text-anchor="middle" class="t b">1</text><text x="184" y="13" text-anchor="middle" class="t b">2</text><text x="218" y="13" text-anchor="middle" class="t b">3</text><text x="252" y="13" text-anchor="middle" class="t b">4</text><text x="286" y="13" text-anchor="middle" class="t b">5</text><text x="320" y="13" text-anchor="middle" class="t b">6</text><rect x="1" y="20" width="338" height="50" rx="8" class="bx zone"/><rect x="9" y="25" width="14" height="10" rx="2" class="rk low"/><text x="28" y="34" class="t s b">Low risk</text><text x="12" y="56" class="t b">Event waits</text><g><title>Event waits, fails without the fix: With the newer edit&#x27;s spool write 1 s later, `main` e8a6b0b5a timed out at 60 s in 3 of 3 runs on Linux x64 and this change failed 0 of 3. On Windows 11, on `main` cb5040824 with the same file: 5 of 5 timed out, 0 of 5 here. The limit: with no delay `main` never failed either.</title><circle cx="150" cy="52" r="7.4" class="ml"/><path d="M150 44.6A7.4 7.4 0 0 0 150 59.4Z" class="mlf"/></g><g><title>Event waits, independent review: A second reader traced the cause with a separate instrument: in 20 of 20 traced runs the held read was the pump&#x27;s own. No defect in the test was found; its three findings were on the issue&#x27;s wording, corrected before #700 was filed.</title><circle cx="184" cy="52" r="8" class="mh"/><path d="M180 52l3 3l5 -6" class="mt"/></g><g><title>Event waits, users lose nothing: No file under `src/` changes, and the published package carries no tests. The case keeps its name, its 60 s limit and what it asserts. Two source changes that break that rule each failed it in 30 of 30 runs.</title><circle cx="218" cy="52" r="8" class="mh"/><path d="M214 52l3 3l5 -6" class="mt"/></g><g><title>Event waits, rules scan: nothing new: The automated reviewer&#x27;s rules over the diff against `main` e8a6b0b5a, with published 0.1.1 and with `main`&#x27;s build: no new finding, none existing in the file, and no difference with `main`&#x27;s build.</title><circle cx="252" cy="52" r="8" class="mh"/><path d="M248 52l3 3l5 -6" class="mt"/></g><g><title>Event waits, Windows 11: no new failure: Windows 11, Node 24.21.0, at d755a29b5: the whole file 20 of 20 runs in a row passed, 58 tests passed and 1 skipped in each. The case alone, earlier: 200 of 200.</title><circle cx="286" cy="52" r="8" class="mh"/><path d="M282 52l3 3l5 -6" class="mt"/></g><g><title>Event waits, CI at this head: The run at d755a29b5 on GitHub, read on 18 November 2026 at 00:11 UTC: `CI result` passed. 18 checks passed, both Linux unit test jobs and the five Windows unit test jobs among them. 9 were skipped, since only a test file changes. None failed.</title><circle cx="320" cy="52" r="8" class="mh"/><path d="M316 52l3 3l5 -6" class="mt"/></g><text x="8" y="89" class="t s">1  fails without the fix</text><text x="168" y="89" class="t s">2  independent review</text><text x="8" y="105" class="t s">3  users lose nothing</text><text x="168" y="105" class="t s">4  rules scan: nothing new</text><text x="8" y="121" class="t s">5  Windows 11: no new failure</text><text x="168" y="121" class="t s">6  CI at this head</text><g><title>holds</title><circle cx="14" cy="145" r="8" class="mh"/><path d="M10 145l3 3l5 -6" class="mt"/></g><text x="28" y="149" class="t s">holds</text><g><title>holds with a limit</title><circle cx="92" cy="145" r="7.4" class="ml"/><path d="M92 137.6A7.4 7.4 0 0 0 92 152.4Z" class="mlf"/></g><text x="106" y="149" class="t s">holds with a limit</text></svg>
+<figcaption>One half mark: with no slowed spool write, <code>main</code>&#x27;s case passed every run.</figcaption></figure>
+<details class="ev"><summary>Each half mark's limit</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:18%"><col style="width:22%"><col style="width:60%"></colgroup><thead><tr><th>Change</th><th>Check</th><th>It holds with this limit</th></tr></thead><tbody><tr><td class="k">Event waits</td><td data-l="Check">fails without the fix</td><td data-l="It holds with this limit">With the newer edit&#x27;s spool write 1 s later, <code>main</code> e8a6b0b5a timed out at 60 s in 3 of 3 runs on Linux x64 and this change failed 0 of 3. On Windows 11, on <code>main</code> cb5040824 with the same file: 5 of 5 timed out, 0 of 5 here. The limit: with no delay <code>main</code> never failed either.</td></tr></tbody></table></div></details>
+</section><section id="changes"><h2>5. The changes</h2>
+<ul class="lines"><li><span class="chip low"><i></i>Low risk</span> <b>The case waits on events</b>: With a slow spool write, the case timed out in every run at <code>main</code>, none here.</li></ul>
+</section><section id="decisions"><h2>6. The decisions</h2>
+<div class="dblock"><h3>Stop the pump at an edit queued ahead, or bound the old hold by time?</h3>
+<p><b>We chose</b> the pump stop: the case sets up the order it checks, and no wait rests on timing.</p>
+<p><b>Would change our mind:</b> A maintainer who wants this case to keep the other order too, where the pump takes the older edit before the newer one arrives.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">Stop the pump at a spooled edit queued ahead <span class='tag new'>chosen</span></td><td data-l="What a user gets">The pump cannot take the older edit before the newer one has looked for it, so every run checks the order the case names. A slow write, a slow pump and a slow queue read each passed 30 of 30.</td><td data-l="Cost">40 lines added and 14 removed in one case: one more spooled edit, <code>api/ahead.py</code>, and a parse of each spool file in the spy.</td><td data-l="What it breaks">Nothing the case asserts. The order where the pump takes the older edit first no longer happens in this case.</td></tr><tr><td class="k">Bound the old hold with a timer</td><td data-l="What a user gets">No hang: the hold gives up at the bound.</td><td data-l="Cost">A few lines.</td><td data-l="What it breaks">A slow write still fails the case, on its assertion: the pump evaluated an edit not yet superseded, so its audit reads <code>completed</code>. All 80 such runs with a 10 s bound ended that way.</td></tr><tr><td class="k">Hold only a read whose call stack names <code>#preimageOf</code></td><td data-l="What a user gets">The spy holds the queue&#x27;s read and never the pump&#x27;s.</td><td data-l="Cost">A stack read in the spy.</td><td data-l="What it breaks">It rests on private method names in a stack&#x27;s text, and the order the case checks is still left to timing.</td></tr></tbody></table></div><p><b>Evidence.</b> At this change&#x27;s lines with the write 1 s later, 0 of 10 runs failed on Linux x64 and 0 of 5 on Windows 11. With the line that stops the pump taken out, 5 of 5 failed at 16 s, on the case&#x27;s 15 s settle wait: the <code>finally</code> lets both holds go, so none reaches 60 s. A queue that evaluates the superseded edit failed 30 of 30 runs.</p></details></div>
+</section><section id="fits"><h2>7. How it fits</h2>
+<p>Nothing has to merge first: it stands on <code>main</code> e8a6b0b5a, merged in with no conflict.</p>
+<p>#508, a draft, also edits this test file in other cases. The file merges with it.</p>
+<details class="ev"><summary>The shared file and the trial merges</summary><p>#508 edits this test file away from the case; <code>git merge-tree</code> of its head 0e2cdfec2 with this branch gives no conflict. #665 edited the file until 17 November and no longer does at its head 5904369c2. <code>main</code> at c1a7904d6 adds #742, which touches neither this file nor the enforcer, and merges with no conflict. Any order works.</p></details>
+</section><section id="gaps"><h2>8. What is not covered</h2>
+<ul class="lines">
+<li><b>How often CI meets it</b> is not known: one timeout seen, in run 43811372438. With no delay, <code>main</code>&#x27;s case passed 500 of 500 runs alone and 500 of 500 on four busy cores.</li>
+<li><b>The other order</b> has no case of its own: the pump takes the older edit before the newer one arrives. In 80 such runs the enforcer settled and the newer edit reported both edits&#x27; lines.</li>
+<li><b>macOS</b> never ran.</li>
+</ul>
+<details class="ev"><summary>Two smaller gaps, one limit that stays</summary><ul class="facts">
+<li><b>Runs made before <code>main</code> was merged in.</b> The runs under load, with other delays and against changed source ran on <code>main</code> at c89f068ed and cb5040824, with the same added and removed lines. <code>main</code> has not changed the enforcer or this file since cb5040824.</li>
+<li><b>Windows 11 engine.</b> The Windows runs at d755a29b5 used the engine already built on that machine, not one built from this tree&#x27;s native code, which <code>main</code> changed since cb5040824 only in the TypeScript grammar. The case under test edits Python files.</li>
+</ul>
+<p><b>Limits that stay.</b></p>
+<ul class="facts">
+<li>The case keeps its 60 s limit. A native apply that hangs still times the case out, and a spool file that cannot be read still fails it, here as at <code>main</code>.</li>
+</ul></details>
+</section><section id="asks"><h2>9. What we ask of you</h2>
+<p>We ask no ruling.</p>
+</section><section id="evidence"><h2>10. Evidence</h2>
+<p>The description on GitHub is the record: &quot;How you tested it&quot; holds the slow-write runs at <code>main</code> and here, the whole-file runs and the runs against changed source; &quot;Where it lands&quot; holds the cause with its order of events.</p>
+<details class="ev"><summary>Runs at this head</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:40%"><col style="width:44%"></colgroup><thead><tr><th>Where</th><th>What ran</th><th>Result</th></tr></thead><tbody><tr><td class="k">CI on GitHub</td><td data-l="What ran">Passed at d755a29b5: 18 checks, 9 skipped, none failed</td><td data-l="Result"><code>CI result</code> passed.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">The whole test file at d755a29b5, 20 runs in a row, one vitest process each</td><td data-l="Result">20 of 20 runs passed.</td></tr><tr><td class="k">Windows 11</td><td data-l="What ran">The whole test file at d755a29b5, 20 runs in a row</td><td data-l="Result">20 of 20 runs passed: 58 passed and 1 skipped in each.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">The case with the newer edit&#x27;s spool write 1 s later, as #700&#x27;s steps give it, at <code>main</code> e8a6b0b5a and at d755a29b5</td><td data-l="Result"><code>main</code>: 3 of 3 timed out at 60 s. This change: 0 of 3 failed, 2 to 3 s a run.</td></tr><tr><td class="k">Windows 11</td><td data-l="What ran">The same slow write at <code>main</code> cb5040824 and at the same lines on it</td><td data-l="Result"><code>main</code>: 5 of 5 timed out at 60 s. This change: 0 of 5 failed, 6 to 7 s a run.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">This change&#x27;s lines without the line that stops the pump, the write 1 s later</td><td data-l="Result">5 of 5 runs failed at 16 s on the settle wait&#x27;s assertion, <code>expected true to be false</code>. None reached 60 s.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">The same lines against source changed to break the rule the case checks</td><td data-l="Result">A queue that leaves the superseded edit queued until after its read-back: 30 of 30 runs failed. One that drops the lines the older edit never reported: 30 of 30 failed.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">The automated reviewer&#x27;s rules over the diff against <code>main</code> e8a6b0b5a, with published 0.1.1 and with <code>main</code>&#x27;s build</td><td data-l="Result">No new finding, none existing in the file, and no difference with <code>main</code>&#x27;s build.</td></tr></tbody></table></div></details>
+<details class="ev"><summary>What this report adds</summary><ul class="facts">
+<li><b>Our answer to the read-first question.</b> A read of the case at d755a29b5: the pump&#x27;s wait at <code>api/ahead.py</code> ends when the queue reads the older edit back, when the newer edit&#x27;s batch ends (<code>.finally(lookedForOlder)</code>), or in the case&#x27;s <code>finally</code>. The queue&#x27;s wait ends when the pump reads the older edit or when <code>settleGeneratedEdits()</code> resolves. The description&#x27;s row under &quot;The changes&quot; names both waits, not each end.</li>
+</ul></details>
+<details class="ev"><summary>Sources</summary><p>The branch at d755a29b5 and its diff against <code>main</code> e8a6b0b5a, read on 17 November 2026; GitHub&#x27;s checks on #747, read on 18 November at 00:11 UTC. Rerail at <code>main</code> e8a6b0b5a for the quoted intent and the cause&#x27;s line numbers. Issue #700 for the reproduction. The heads of #508, #665 and <code>main</code> on GitHub for the trial merges. The description for the runs.</p></details>
+</section>
+<footer><p>A figure we could not source is left out.</p></footer>
+</main>
+</div>
+<script>
+(function () {
+  var root = document.documentElement, key = "pr-report-theme";
+  try { var saved = localStorage.getItem(key); if (saved) root.setAttribute("data-theme", saved); } catch (e) {}
+  document.getElementById("theme-toggle").addEventListener("click", function () {
+    var dark = root.getAttribute("data-theme") === "dark" || (!root.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    var next = dark ? "light" : "dark"; root.setAttribute("data-theme", next);
+    try { localStorage.setItem(key, next); } catch (e) {}
+  });
+})();
+</script>
+</body>
+</html>
