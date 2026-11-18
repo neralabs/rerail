@@ -15,5 +15,11 @@ pub mod sink;
 pub mod stream;
 pub mod tokens;
 
+// The oracle's profile reads the crate by its name, as the example that includes it does.
+#[cfg(test)]
+extern crate self as rerail_c_pp;
+#[cfg(test)]
+mod oracle_profile;
+
 pub use rerail_c_lean::pp::Options;
 pub use stream::{Config, Pp};

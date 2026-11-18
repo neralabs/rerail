@@ -19,13 +19,14 @@ pub(super) struct Tab {
     pub groups: Vec<Group>,
     /// Each chain's arms: their directives (`#if…`, `#elif…`, `#else`), in order.
     pub chains: Vec<Vec<u32>>,
+    /// The include guard: where the file is one `#ifndef X` … `#endif` and nothing outside it,
+    /// `X`. An include where `X` is defined enters nothing (clang's multiple-include reading).
+    pub guard: Option<u32>,
 }
 
-/// A group: the group its chain opened in, its chain, and its arm's index in it.
+/// A group: the group its chain opened in.
 pub(super) struct Group {
     pub parent: u32,
-    pub chain: u32,
-    pub arm: u32,
 }
 
 /// A directive.
@@ -53,15 +54,17 @@ pub(super) enum Act {
     /// An arm's test.
     Test,
     Include,
-    /// `#pragma once`.
+    /// `#pragma once`, `push_macro`, `pop_macro` (with its name's symbol).
     Once,
+    Push(u32),
+    Pop(u32),
     Unsupported(&'static str),
 }
 
 /// File `file`'s tables.
 pub(super) fn tabulate(pp: &mut Pp, file: u32) -> Tab {
     let Src::File { mut lx, .. } = pp.file_src(file) else { unreachable!("a file's source") };
-    let mut tab = Tab { text: Vec::new(), dirs: Vec::new(), groups: vec![Group { parent: 0, chain: u32::MAX, arm: 0 }], chains: Vec::new() };
+    let mut tab = Tab { text: Vec::new(), dirs: Vec::new(), groups: vec![Group { parent: 0 }], chains: Vec::new(), guard: None };
     // The open chains, and the group read now.
     let mut open: Vec<u32> = Vec::new();
     let mut cur = 0u32;
@@ -103,7 +106,8 @@ pub(super) fn tabulate(pp: &mut Pp, file: u32) -> Tab {
             }
             Kind::Pragma => {
                 let (s, e) = lx.rest_of_line();
-                act = pragma(pp, &pp.files[file as usize].text()[s..e].to_vec());
+                let text = pp.files[file as usize].text()[s..e].to_vec();
+                act = pragma(pp, &text);
             }
             _ => {
                 line = rest_of(&mut lx, pp, file);
@@ -118,7 +122,7 @@ pub(super) fn tabulate(pp: &mut Pp, file: u32) -> Tab {
                 open.push(c);
                 act = Act::Test;
                 let g = tab.groups.len() as u32;
-                tab.groups.push(Group { parent: cur, chain: c, arm: 0 });
+                tab.groups.push(Group { parent: cur });
                 let at = cur;
                 cur = g;
                 (at, g)
@@ -126,11 +130,10 @@ pub(super) fn tabulate(pp: &mut Pp, file: u32) -> Tab {
             Kind::Elif | Kind::Elifdef | Kind::Elifndef | Kind::Else if !open.is_empty() => {
                 let c = *open.last().unwrap();
                 let parent = tab.groups[cur as usize].parent;
-                let arm = tab.chains[c as usize].len() as u32;
                 tab.chains[c as usize].push(d);
                 act = Act::Test;
                 let g = tab.groups.len() as u32;
-                tab.groups.push(Group { parent, chain: c, arm });
+                tab.groups.push(Group { parent });
                 cur = g;
                 (parent, g)
             }
@@ -160,7 +163,22 @@ pub(super) fn tabulate(pp: &mut Pp, file: u32) -> Tab {
         };
         tab.dirs.push(Dir { kind, hash: t, text_before: tab.text.len() as u32, line, group, after, act });
     }
+    tab.guard = guard(&tab);
     tab
+}
+
+/// The file's guard: its first directive an `#ifndef X` with no text before it, of one arm, its
+/// `#endif` the last directive with no text after it, every directive between inside it.
+fn guard(tab: &Tab) -> Option<u32> {
+    if tab.dirs.len() < 2 {
+        return None;
+    }
+    let (first, last) = (&tab.dirs[0], &tab.dirs[tab.dirs.len() - 1]);
+    let one = first.kind == Kind::Ifndef && first.text_before == 0 && tab.chains.first().is_some_and(|c| c.len() == 1);
+    let closed = last.kind == Kind::Endif && last.after == 0 && last.text_before as usize == tab.text.len();
+    let inside = tab.dirs[1..tab.dirs.len() - 1].iter().all(|d| d.group != 0 && d.after != 0);
+    let name = first.line.first().filter(|n| n.kind == P::Ident)?;
+    (one && closed && inside).then_some(name.sym)
 }
 
 /// The rest of the directive's line.
@@ -172,16 +190,25 @@ fn rest_of(lx: &mut PpLexer<'static>, pp: &mut Pp, file: u32) -> Vec<Tk> {
     v
 }
 
-/// A `#pragma`'s act, by its first word (`Pp::pragma_text`'s).
-fn pragma(pp: &Pp, text: &[u8]) -> Act {
+/// A `#pragma`'s act, by its first word, and a push's or pop's `( "name" )` (`Pp::pragma_text`'s).
+fn pragma(pp: &mut Pp, text: &[u8]) -> Act {
     let mut lx = PpLexer::new(text, pp.cfg.opts);
     let t = lx.next();
     if t.kind != P::Ident {
         return Act::Nothing;
     }
-    match &text[t.start as usize..t.end as usize] {
-        b"once" => Act::Once,
-        b"push_macro" | b"pop_macro" => Act::Unsupported("push_macro or pop_macro"),
-        _ => Act::Nothing,
+    let word = &text[t.start as usize..t.end as usize];
+    if word == b"once" {
+        return Act::Once;
     }
+    if word != b"push_macro" && word != b"pop_macro" {
+        return Act::Nothing;
+    }
+    let (lp, st) = (lx.next(), lx.next());
+    if lp.kind != P::Punct || lp.punct != rerail_c_lean::T::LParen || st.kind != P::Str {
+        return Act::Nothing;
+    }
+    let name = super::super::destringize(&text[st.start as usize..st.end as usize]);
+    let sym = pp.syms.get(&name);
+    if word == b"push_macro" { Act::Push(sym) } else { Act::Pop(sym) }
 }

@@ -1580,8 +1580,21 @@ impl<'a> Pp<'a> {
         let (w0, w1) = (word(0), word(1));
         let s = Syms4 { once: self.s.once, push: self.s.push_macro, pop: self.s.pop_macro, gcc: self.s.gcc, clang: self.s.clang, poison: self.s.poison };
         let string_arg = |toks: &[Tk], k: usize| toks.get(k + 1).filter(|t| t.is(T::LParen)).and(toks.get(k + 2)).filter(|t| t.kind == P::Str).copied();
-        if let Some(p) = self.par.as_mut().filter(|_| w0 == s.once || w0 == s.push || w0 == s.pop) {
-            p.unsupported.get_or_insert("_Pragma once, push_macro or pop_macro");
+        if self.par.is_some() {
+            // The parallel reading places these by position (`parallel`): noted, as carried out.
+            let ev = if w0 == s.once {
+                Some((parallel::Ev::Once, NO_SYM))
+            } else if w0 == s.push || w0 == s.pop {
+                string_arg(&toks, 0).map(|st| {
+                    let name = destringize(self.text(&st));
+                    (if w0 == s.push { parallel::Ev::Push } else { parallel::Ev::Pop }, self.syms.get(&name))
+                })
+            } else {
+                None
+            };
+            if let Some(ev) = ev {
+                self.par.as_mut().unwrap().events.push(ev);
+            }
         }
         if w0 == s.once {
             self.once[file as usize] = true;

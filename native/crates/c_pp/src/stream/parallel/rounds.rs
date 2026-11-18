@@ -13,7 +13,8 @@
 //! The rounds stop when one leaves the state it read.
 
 use super::files::{Act, Tab, tabulate};
-use super::{Isolated, Stats, Vis, in_context};
+use super::{Ev, Isolated, SUB, Stats, Vis, in_context};
+use std::collections::HashSet;
 use super::super::Pp;
 use crate::directives::Kind;
 use rerail_c_lean::pp::P;
@@ -38,13 +39,16 @@ pub(super) struct Tu {
     key: HashMap<(u32, u32, u32), u32>,
     /// By file: its tables, made when it is first entered.
     pub tabs: Vec<Option<Tab>>,
+    /// By (file, directive): the file an include with a literal name finds (none: `NONE`), the
+    /// same from every instance.
+    found: HashMap<(u32, u32), u32>,
     /// The predefines' instance, then the main file's: the unit's order.
     pub roots: [u32; 2],
 }
 
 impl Tu {
     pub fn new(pp: &mut Pp, builtin: u32, main: u32) -> Tu {
-        let mut tu = Tu { insts: Vec::new(), key: HashMap::new(), tabs: Vec::new(), roots: [0, 1] };
+        let mut tu = Tu { insts: Vec::new(), key: HashMap::new(), tabs: Vec::new(), found: HashMap::new(), roots: [0, 1] };
         // The predefines are read with the main file below them (`Pp::run`).
         tu.insts.push(Inst { file: builtin, chain: vec![main, builtin] });
         tu.insts.push(Inst { file: main, chain: vec![main] });
@@ -68,11 +72,13 @@ impl Tu {
 }
 
 /// What a round reads and leaves: by instance (empty where it is not in the tree), its groups'
-/// activity and the instance each of its directives entered.
+/// activity, the instance each of its directives entered, and the pragmas its text's `_Pragma`s
+/// made (the invocation's first token, the pragma, its name's symbol).
 #[derive(Clone, PartialEq, Eq, Default)]
 pub(super) struct State {
     pub groups: Vec<Vec<bool>>,
     pub child: Vec<Vec<u32>>,
+    pub events: Vec<Vec<(u32, Ev, u32)>>,
 }
 
 impl State {
@@ -90,15 +96,27 @@ pub(super) struct Layout {
 }
 
 impl Layout {
-    /// Directive `d`'s position in instance `i`.
-    pub fn dir_pos(&self, tab: &Tab, i: u32, d: usize) -> u64 {
+    /// Directive `d`'s slot in instance `i`: a slot a directive or token, in the unit's order.
+    fn dir_slot(&self, tab: &Tab, i: u32, d: usize) -> u64 {
         self.base[i as usize] + d as u64 + tab.dirs[d].text_before as u64 + self.shift[i as usize][d]
+    }
+
+    /// Directive `d`'s position in instance `i`: its slot, `SUB` bits up.
+    pub fn dir_pos(&self, tab: &Tab, i: u32, d: usize) -> u64 {
+        self.dir_slot(tab, i, d) << SUB
     }
 
     /// The position of the first text token after `k` directives in instance `i`.
     pub fn text_pos(&self, tab: &Tab, i: u32, k: usize) -> u64 {
         let first = if k == 0 { 0 } else { tab.dirs[k - 1].text_before };
-        self.base[i as usize] + first as u64 + k as u64 + self.shift[i as usize][k]
+        (self.base[i as usize] + first as u64 + k as u64 + self.shift[i as usize][k]) << SUB
+    }
+
+    /// Text token `t`'s position in instance `i`.
+    pub fn token_pos(&self, tab: &Tab, i: u32, t: u32) -> u64 {
+        let k = tab.dirs.partition_point(|d| d.text_before <= t);
+        let first = if k == 0 { 0 } else { tab.dirs[k - 1].text_before };
+        self.text_pos(tab, i, k) + (((t - first) as u64) << SUB)
     }
 }
 
@@ -144,7 +162,7 @@ fn layout(tu: &Tu, state: &State) -> Layout {
         let tab = tu.tab_of(i);
         for (d, &c) in state.child[i as usize].iter().enumerate() {
             if c != NONE {
-                lay.base[c as usize] = lay.dir_pos(tab, i, d) + 1;
+                lay.base[c as usize] = lay.dir_slot(tab, i, d) + 1;
             }
         }
     }
@@ -157,65 +175,102 @@ pub(super) fn settle(pp: &mut Pp, tu: &mut Tu, builtins: &[(u32, u64, u32)], sta
     for i in 0..tu.insts.len() {
         fresh(tu, &mut state, i as u32);
     }
+    let pragma = pp.syms.get(b"_Pragma");
+    let mut reach = (0, HashSet::new());
     for round in 1..=MAX_ROUNDS {
         stats.rounds = round;
         let lay = layout(tu, &state);
-        // The active definitions by (name, position).
-        let mut rows = builtins.to_vec();
+        // The active definitions, pushes and pops by (name, position).
+        let mut raw: Vec<(u32, u64, Row)> = builtins.iter().map(|&(s, p, d)| (s, p, Row::Set(d))).collect();
         for &i in &lay.order {
             let tab = tu.tab_of(i);
             for (d, dir) in tab.dirs.iter().enumerate() {
                 if !state.active(tab, i, d) {
                     continue;
                 }
+                let pos = lay.dir_pos(tab, i, d);
                 match dir.act {
-                    Act::Define(k) => rows.push((pp.defs[k as usize].name, lay.dir_pos(tab, i, d), k + 1)),
-                    Act::Undef(s) => rows.push((s, lay.dir_pos(tab, i, d), 0)),
+                    Act::Define(k) => raw.push((pp.defs[k as usize].name, pos, Row::Set(k + 1))),
+                    Act::Undef(s) => raw.push((s, pos, Row::Set(0))),
+                    Act::Push(s) => raw.push((s, pos, Row::Push)),
+                    Act::Pop(s) => raw.push((s, pos, Row::Pop)),
                     _ => {}
                 }
             }
+            for (k, &(t, ev, sym)) in state.events[i as usize].iter().enumerate() {
+                let pos = lay.token_pos(tab, i, t) + 1 + k as u64;
+                match ev {
+                    Ev::Push => raw.push((sym, pos, Row::Push)),
+                    Ev::Pop => raw.push((sym, pos, Row::Pop)),
+                    Ev::Once => {}
+                }
+            }
         }
-        rows.sort_unstable();
+        let rows = resolve_rows(raw);
         stats.definitions = (rows.len() - builtins.len()) as u64;
         pp.vis = Some(Vis { rows });
-        let mut next = State { groups: vec![Vec::new(); tu.insts.len()], child: vec![Vec::new(); tu.insts.len()] };
+        let mut next = State { groups: vec![Vec::new(); tu.insts.len()], child: vec![Vec::new(); tu.insts.len()], events: vec![Vec::new(); tu.insts.len()] };
         // Each test at its position, then each group's activity.
         for &i in &lay.order {
             let tab = tu.tab_of(i);
             let chain = &tu.insts[i as usize].chain;
-            let mut value = vec![false; tab.dirs.len()];
-            for (d, dir) in tab.dirs.iter().enumerate() {
-                if dir.act == Act::Test {
-                    let pos = lay.dir_pos(tab, i, d);
-                    value[d] = in_context(pp, chain, pos, |pp| test(pp, tab, d))?;
-                    stats.tests += 1;
-                }
-            }
-            let taken: Vec<Option<u32>> = tab.chains.iter().map(|arms| arms.iter().position(|&d| value[d as usize]).map(|k| k as u32)).collect();
             let mut g = vec![false; tab.groups.len()];
             g[0] = true;
-            for (k, grp) in tab.groups.iter().enumerate().skip(1) {
-                g[k] = g[grp.parent as usize] && taken[grp.chain as usize] == Some(grp.arm);
+            // The chains in their openings' order, so that a chain's parent group is read before
+            // it: a chain is read where its parent group is active, its arms to the first true.
+            for arms in &tab.chains {
+                let parent = tab.groups[tab.dirs[arms[0] as usize].after as usize].parent;
+                if !g[parent as usize] {
+                    continue;
+                }
+                for &d in arms {
+                    let pos = lay.dir_pos(tab, i, d as usize);
+                    stats.tests += 1;
+                    if in_context(pp, chain, pos, |pp| test(pp, tab, d as usize))? {
+                        g[tab.dirs[d as usize].after as usize] = true;
+                        break;
+                    }
+                }
             }
             next.groups[i as usize] = g;
             next.child[i as usize] = vec![NONE; tab.dirs.len()];
         }
-        // Each active include resolved at its position.
+        // Each active include resolved at its position; one with a literal name, once a file.
         let mut found: Vec<(u32, u32, u32, u64, Kind)> = Vec::new();
+        let mut learnt = Vec::new();
         for &i in &lay.order {
             let tab = tu.tab_of(i);
-            let chain = &tu.insts[i as usize].chain;
+            let (file, chain) = (tu.insts[i as usize].file, &tu.insts[i as usize].chain);
             for (d, dir) in tab.dirs.iter().enumerate() {
                 if dir.act != Act::Include || !next.active(tab, i, d) {
                     continue;
                 }
                 let pos = lay.dir_pos(tab, i, d);
-                stats.includes += 1;
-                if let Some(f) = in_context(pp, chain, pos, |pp| resolve(pp, tab, d))? {
+                let literal = dir.line.first().is_some_and(|t| matches!(t.kind, P::Header | P::Str) || t.is(rerail_c_lean::T::Lt));
+                let f = match tu.found.get(&(file, d as u32)) {
+                    Some(&f) if literal => (f != NONE).then_some(f),
+                    _ => {
+                        stats.includes += 1;
+                        let f = in_context(pp, chain, pos, |pp| resolve(pp, tab, d))?;
+                        if literal && chain.len() as u32 <= pp.cfg.max_depth {
+                            learnt.push(((file, d as u32), f.unwrap_or(NONE)));
+                        }
+                        f
+                    }
+                };
+                // Past the depth's bound, nothing is entered (`Pp::include`).
+                if let Some(f) = f.filter(|_| chain.len() as u32 <= pp.cfg.max_depth) {
                     found.push((i, d as u32, f, pos, dir.kind));
                 }
             }
         }
+        tu.found.extend(learnt);
+        // The pragmas the text's `_Pragma`s make: the invocations that can reach `_Pragma`,
+        // expanded under this round's table where this round's groups are active.
+        if reach.0 != pp.defs.len() {
+            reach = (pp.defs.len(), reaching(pp, pragma));
+        }
+        let events = super::text::pragma_events(pp, tu, &next.groups, &lay, &reach.1);
         // `#pragma once` and `#import`: from their position on, their file is not entered again.
         let mut once: Vec<(u32, u64)> = Vec::new();
         for &i in &lay.order {
@@ -223,6 +278,11 @@ pub(super) fn settle(pp: &mut Pp, tu: &mut Tu, builtins: &[(u32, u64, u32)], sta
             for (d, dir) in tab.dirs.iter().enumerate() {
                 if dir.act == Act::Once && next.active(tab, i, d) {
                     once.push((tu.insts[i as usize].file, lay.dir_pos(tab, i, d)));
+                }
+            }
+            for (k, &(t, ev, _)) in events[i as usize].iter().enumerate() {
+                if ev == Ev::Once {
+                    once.push((tu.insts[i as usize].file, lay.token_pos(tab, i, t) + 1 + k as u64));
                 }
             }
         }
@@ -234,6 +294,10 @@ pub(super) fn settle(pp: &mut Pp, tu: &mut Tu, builtins: &[(u32, u64, u32)], sta
                 continue;
             }
             tu.tab(pp, f);
+            let guard = tu.tabs[f as usize].as_ref().unwrap().guard;
+            if guard.is_some_and(|g| pp.vis.as_ref().unwrap().at(g, pos).is_some()) {
+                continue;
+            }
             let c = match tu.key.get(&(i, d, f)) {
                 Some(&c) => c,
                 None => {
@@ -247,10 +311,14 @@ pub(super) fn settle(pp: &mut Pp, tu: &mut Tu, builtins: &[(u32, u64, u32)], sta
             };
             next.child[i as usize][d as usize] = c;
         }
+        for &i in &lay.order {
+            next.events[i as usize] = events[i as usize].clone();
+        }
         // An instance entered for the first time: its groups as yet unread.
         let entered: Vec<u32> = next.child.iter().flatten().copied().filter(|&c| c != NONE && next.groups.get(c as usize).is_none_or(|g| g.is_empty())).collect();
         next.groups.resize(tu.insts.len(), Vec::new());
         next.child.resize(tu.insts.len(), Vec::new());
+        next.events.resize(tu.insts.len(), Vec::new());
         for c in entered {
             fresh(tu, &mut next, c);
         }
@@ -269,6 +337,7 @@ pub(super) fn settle(pp: &mut Pp, tu: &mut Tu, builtins: &[(u32, u64, u32)], sta
                 }
             }
             stats.instances = lay.order.len() as u32;
+            stats.depth = lay.order.iter().map(|&i| tu.insts[i as usize].chain.len() as u32).max().unwrap_or(0);
             return Ok((state, lay));
         }
         state = next;
@@ -282,22 +351,77 @@ fn fresh(tu: &Tu, state: &mut State, i: u32) {
     if state.groups.len() <= i as usize {
         state.groups.resize(i as usize + 1, Vec::new());
         state.child.resize(i as usize + 1, Vec::new());
+        state.events.resize(i as usize + 1, Vec::new());
     }
+    state.events[i as usize].clear();
     let mut g = vec![false; tab.groups.len()];
     g[0] = true;
     state.groups[i as usize] = g;
     state.child[i as usize] = vec![NONE; tab.dirs.len()];
 }
 
-/// A directive read where `pp` stands, with what it meets checked: `_Pragma`'s pragmas the shape
-/// does not carry, and `__COUNTER__`, which counts in the unit's order.
+/// A row of the table before pushes and pops are resolved: a definition (+1; 0 an `#undef`),
+/// a push, a pop.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Row {
+    Set(u32),
+    Push,
+    Pop,
+}
+
+/// The table: rows sorted by (name, position), each pop the value at its push (pushes and pops
+/// matched per name by depth; a pop with no push changes nothing), pushes no rows.
+fn resolve_rows(mut raw: Vec<(u32, u64, Row)>) -> Vec<(u32, u64, u32)> {
+    raw.sort_unstable();
+    let mut rows = Vec::with_capacity(raw.len());
+    let (mut sym, mut cur, mut pushed) = (NONE, 0, Vec::new());
+    for (s, p, r) in raw {
+        if s != sym {
+            (sym, cur) = (s, 0);
+            pushed.clear();
+        }
+        match r {
+            Row::Set(v) => cur = v,
+            Row::Push => {
+                pushed.push(cur);
+                continue;
+            }
+            Row::Pop => match pushed.pop() {
+                Some(v) => cur = v,
+                None => continue,
+            },
+        }
+        rows.push((s, p, cur));
+    }
+    rows
+}
+
+/// The names whose invocations can reach `_Pragma`: `_Pragma`, and any whose definition (any
+/// of them) names one.
+fn reaching(pp: &Pp, pragma: u32) -> HashSet<u32> {
+    let mut r = HashSet::from([pragma]);
+    loop {
+        let n = r.len();
+        for d in &pp.defs {
+            if d.builtin.is_none() && !r.contains(&d.name) && d.body.iter().any(|t| r.contains(&t.sym)) {
+                r.insert(d.name);
+            }
+        }
+        if r.len() == n {
+            return r;
+        }
+    }
+}
+
+/// A directive read where `pp` stands, with what it meets checked: `_Pragma`s (the shape places
+/// them in text alone), and `__COUNTER__`, which counts in the unit's order.
 fn checked<R>(pp: &mut Pp, f: impl FnOnce(&mut Pp) -> R) -> Result<R, &'static str> {
     let counter = pp.counter;
-    pp.par = Some(Isolated { outer: usize::MAX, peeked: false, cut: false, unsupported: None });
+    pp.par = Some(Isolated { outer: usize::MAX, peeked: false, cut: false, events: Vec::new() });
     let r = f(pp);
     let par = pp.par.take().expect("the reading's state");
-    if let Some(why) = par.unsupported {
-        return Err(why);
+    if !par.events.is_empty() {
+        return Err("_Pragma in a directive");
     }
     if pp.counter != counter {
         return Err("__COUNTER__ in a directive");

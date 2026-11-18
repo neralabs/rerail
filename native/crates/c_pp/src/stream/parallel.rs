@@ -23,9 +23,13 @@
 //!   is merged with them and expanded again.
 //! - **P4, assembly** (`text`): each piece's count of tokens, a prefix sum, and a scatter.
 //!
+//! `#pragma push_macro` and `pop_macro` are rows of the same table: a pop's value is the value
+//! at its push, matched per name by depth. Pragmas made in text by `_Pragma` (libc++'s
+//! `_LIBCPP_PUSH_MACROS`) are found in the rounds, by expanding the invocations that can reach
+//! `_Pragma`, and placed between the positions of their invocation and the next token.
+//!
 //! What the shape does not carry yet sends the unit to the serial pass, with its reason:
-//! `#embed`, `#line`, `push_macro` and `pop_macro`, a call across a directive, and
-//! `__COUNTER__` in a directive.
+//! `#embed`, `#line`, a call across a directive, and `__COUNTER__` or `_Pragma` in a directive.
 //!
 //! It is a spike: no product path calls it. The serial loops left are the rounds, one
 //! invocation's expansion, and the host's reading of files.
@@ -58,6 +62,18 @@ impl Vis {
     }
 }
 
+/// Positions have this many bits below a token's: room for the pragmas an invocation makes,
+/// after it and before the next token.
+pub(super) const SUB: u32 = 8;
+
+/// A pragma that changes the reading: `once`, `push_macro`, `pop_macro`.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub enum Ev {
+    Once,
+    Push,
+    Pop,
+}
+
 /// An isolated reading: its list's index in the stack (`usize::MAX`: no list, a directive's
 /// line), and what the reading met.
 pub(super) struct Isolated {
@@ -66,7 +82,8 @@ pub(super) struct Isolated {
     pub peeked: bool,
     /// A call's arguments ran to the list's end.
     pub cut: bool,
-    pub unsupported: Option<&'static str>,
+    /// The pragmas `_Pragma` made, and their names' symbols (`NO_SYM` for `once`).
+    pub events: Vec<(Ev, u32)>,
 }
 
 /// The shape of a unit's reading.
@@ -77,10 +94,13 @@ pub struct Stats {
     /// The files read, and the files' instances in the include tree at the end.
     pub files: u32,
     pub instances: u32,
+    /// The include tree's depth (the main file's instance is 1).
+    pub depth: u32,
     /// Directives of the instances, and those active.
     pub directives: u64,
     pub active_directives: u64,
-    /// Tests evaluated and includes resolved, over every round.
+    /// Tests evaluated (a chain's where its parent group is active, its arms to the first
+    /// true) and includes resolved, over every round.
     pub tests: u64,
     pub includes: u64,
     /// The last round's definitions (rows of the positional table, built-ins left out).
@@ -138,9 +158,11 @@ pub fn run(cfg: Config, io: &mut dyn Files, path: &str) -> (Outcome, Stats) {
 /// every reading), its definitions those of `pos`.
 fn in_context<R>(pp: &mut Pp, chain: &[u32], pos: u64, f: impl FnOnce(&mut Pp) -> R) -> R {
     debug_assert!(pp.stack.is_empty());
+    // Their lexers are over no text: nothing reads them, and a lexer over a file's text would
+    // classify all of it first.
     for &file in chain {
-        let s = pp.file_src(file);
-        pp.stack.push(s);
+        let lx = rerail_c_lean::pp::PpLexer::new(&[], pp.cfg.opts);
+        pp.stack.push(Src::File { file, lx, conds: Vec::new(), delta: 0, presumed: None });
     }
     pp.vis_pos = pos;
     let r = f(pp);

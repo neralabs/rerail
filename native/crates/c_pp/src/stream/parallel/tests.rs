@@ -96,9 +96,9 @@ fn includes_guards_and_once() {
         ("sys/s.h", "#define S from_s\n#include \"a.h\"\n"),
     ];
     let st = same_in(&files);
-    // The predefines, main.c, a.h twice (the second's group not taken), o.h once, sys/s.h (its
-    // "a.h" is no file next to it nor in the search path).
-    assert_eq!(st.instances, 6, "{st:?}");
+    // The predefines, main.c, a.h once (the second include's guard is defined), o.h once,
+    // sys/s.h (its "a.h" is no file next to it nor in the search path).
+    assert_eq!(st.instances, 5, "{st:?}");
 }
 
 #[test]
@@ -141,13 +141,101 @@ fn counter_line_and_file() {
     same_in(&files);
 }
 
+/// `push_macro` and `pop_macro`, by directive and by `_Pragma` in text (libc++'s
+/// `_LIBCPP_PUSH_MACROS`), and `_Pragma("once")`.
+#[test]
+fn pushes_and_pops() {
+    same("#define A 1\n#pragma push_macro(\"A\")\n#undef A\nA\n#define A 2\nA\n#pragma pop_macro(\"A\")\nA\n#pragma pop_macro(\"A\")\nA\n");
+    same("#define min(a, b) m\n#define PUSH _Pragma(\"push_macro(\\\"min\\\")\") _Pragma(\"push_macro(\\\"B\\\")\")\n#define POP _Pragma(\"pop_macro(\\\"min\\\")\") _Pragma(\"pop_macro(\\\"B\\\")\")\nPUSH\n#undef min\nmin(1, 2)\n#if defined(min)\nbad\n#endif\nPOP\nmin(1, 2)\n#ifdef min\nback\n#endif\n");
+    let files = [("main.c", "#include \"o.h\"\n#include \"o.h\"\nO\n"), ("o.h", "_Pragma(\"once\")\n#define O o\nbody\n")];
+    let st = same_in(&files);
+    assert_eq!(st.instances, 3, "{st:?}");
+}
+
 /// What the shape does not carry goes to the serial pass, with its reason.
 #[test]
 fn what_goes_to_the_serial_pass() {
     let refused = |src: &str| both(&[("main.c", src)], c()).0.err();
-    assert_eq!(refused("#define A 1\n#pragma push_macro(\"A\")\n#undef A\n#pragma pop_macro(\"A\")\nA\n"), Some("push_macro or pop_macro"));
     assert_eq!(refused("#line 10\n__LINE__\n"), Some("#line"));
     assert_eq!(refused("#define f(a, b) a b\nf(1,\n#ifdef X\n2\n#else\n3\n#endif\n)\n"), Some("a call past its stretch of text"));
     // An unsupported directive in a group not taken is nothing.
     assert_eq!(refused("#if 0\n#line 10\n#endif\nok\n"), None);
+}
+
+/// Both corpora: each file read as passes against the serial pass, under clang's profile (the
+/// oracle's: its predefines, its search path, its answers, stubs for a project's headers), and
+/// the shape's numbers. `RERAIL_PP_LANGS` (`c,cpp`), `RERAIL_PP_FIRST` and `RERAIL_PP_COUNT`
+/// choose the files; `RERAIL_PP_EACH` prints each file's numbers.
+#[test]
+#[ignore = "the corpus (~/orca/rerail-shared/lean-corpus, or RERAIL_C_CORPUS) and clang"]
+fn the_corpus_as_passes() {
+    use crate::oracle_profile::{Lang, Profile, read_fs};
+    let env = |k: &str| std::env::var(k).ok();
+    let root = env("RERAIL_C_CORPUS").map(std::path::PathBuf::from).unwrap_or_else(|| std::path::PathBuf::from(env("HOME").unwrap()).join("orca/rerail-shared/lean-corpus"));
+    let first: usize = env("RERAIL_PP_FIRST").and_then(|s| s.parse().ok()).unwrap_or(0);
+    let count: usize = env("RERAIL_PP_COUNT").and_then(|s| s.parse().ok()).unwrap_or(usize::MAX);
+    let each = env("RERAIL_PP_EACH").is_some();
+    let mut wrong = 0;
+    for lang in env("RERAIL_PP_LANGS").unwrap_or("c,cpp".into()).split(',') {
+        let mut prof = Profile::new(if lang == "cpp" { Lang::cpp() } else { Lang::c() });
+        let mut names: Vec<_> = std::fs::read_dir(root.join(lang)).unwrap().flatten().map(|e| e.path()).collect();
+        names.sort();
+        let (mut same, mut differ) = (0, 0);
+        let mut refused: HashMap<&str, usize> = HashMap::new();
+        let mut sum = Stats::default();
+        let mut rounds = Vec::new();
+        for path in names.iter().skip(first).take(count) {
+            let p = path.to_string_lossy().into_owned();
+            let settled = prof.settle(&p);
+            let mut io = Search::new(settled.dirs.clone(), read_fs);
+            let (out, st) = run(settled.cfg.clone(), &mut io, &p);
+            if each {
+                println!("{p}: {}; {st:?}", out.as_ref().map_or_else(|w| w.to_string(), |o| if *o == settled.tokens { "same".into() } else { "DIFFERS".into() }));
+            }
+            match out {
+                Ok(o) if o == settled.tokens => same += 1,
+                Ok(o) => {
+                    differ += 1;
+                    let k = o.iter().zip(&settled.tokens).position(|(a, b)| a != b).unwrap_or(o.len().min(settled.tokens.len()));
+                    let near = |v: &[Vec<u8>]| show(&v[k.saturating_sub(6)..(k + 6).min(v.len())]);
+                    println!("DIFF {p}: token {k} (serial {}, passes {})\n  serial: {}\n  passes: {}", settled.tokens.len(), o.len(), near(&settled.tokens), near(&o));
+                }
+                Err(why) => *refused.entry(why).or_default() += 1,
+            }
+            rounds.push(st.rounds);
+            for (a, b) in [
+                (&mut sum.files, st.files),
+                (&mut sum.instances, st.instances),
+            ] {
+                *a += b;
+            }
+            for (a, b) in [
+                (&mut sum.directives, st.directives),
+                (&mut sum.active_directives, st.active_directives),
+                (&mut sum.tests, st.tests),
+                (&mut sum.includes, st.includes),
+                (&mut sum.definitions, st.definitions),
+                (&mut sum.tokens, st.tokens),
+                (&mut sum.active_tokens, st.active_tokens),
+                (&mut sum.candidates, st.candidates),
+                (&mut sum.invocations, st.invocations),
+                (&mut sum.distinct, st.distinct),
+                (&mut sum.merges, st.merges),
+                (&mut sum.expanded, st.expanded),
+                (&mut sum.output, st.output),
+            ] {
+                *a += b;
+            }
+            sum.depth = sum.depth.max(st.depth);
+            sum.longest_in = sum.longest_in.max(st.longest_in);
+            sum.longest_out = sum.longest_out.max(st.longest_out);
+        }
+        rounds.sort_unstable();
+        let at = |q: f64| rounds.get(((rounds.len() as f64 - 1.0) * q) as usize).copied().unwrap_or(0);
+        println!("{lang}: {} files: {same} the same, {differ} differ, refused {refused:?}", rounds.len());
+        println!("  rounds: median {}, p90 {}, max {}", at(0.5), at(0.9), at(1.0));
+        println!("  sums (depth and the longest: their maximum): {sum:?}");
+        wrong += differ;
+    }
+    assert_eq!(wrong, 0, "units the passes read otherwise than the serial pass");
 }
