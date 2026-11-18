@@ -652,6 +652,8 @@ describe("stopping the daemon", () => {
             if (!running) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
             return true;
           },
+          // It started no later than its record says, which proves it the home's daemon, as a stop asks before a signal.
+          processStartedAt: () => state.startedAt,
         });
         await stopFoundDaemon(home, { status: "unresponsive", state }, machine);
         expect(signals.filter(signal => signal !== 0)).toEqual(endsAt === "SIGTERM" ? ["SIGTERM"] : ["SIGTERM", "SIGKILL"]);
