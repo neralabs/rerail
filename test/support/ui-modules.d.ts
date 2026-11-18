@@ -151,6 +151,8 @@ declare module "*/ui/state.js" {
     sessionDetail: Map<string, SessionDetail>;
     missing: boolean;
     disconnected: boolean;
+    /** The daemon answered 401: this browser holds no access capability. */
+    accessRequired: boolean;
     /** Whether a poll has answered for the scope: the sidebar's Merge Assist count waits for it. */
     loaded: boolean;
     /** `GET /api/merge-assist` for the scoped checkout (`MergeAssistStatus`). */
@@ -246,6 +248,8 @@ declare module "*/ui/routes.js" {
 declare module "*/ui/views/index.js" {
   /** The need names a poll loads for the page now: the sidebar's, the open view's and an open sheet's. */
   export function currentNeeds(): string[];
+  /** What `#content` shows: a view's name, or the page in its place ("access", "no-repo", "missing", "not-set-up"). */
+  export function pageKey(): string;
 }
 
 declare module "*/ui/history-model.js" {

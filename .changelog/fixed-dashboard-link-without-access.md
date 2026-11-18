@@ -1,0 +1,1 @@
+A dashboard link opened in a browser with no access yet, such as one copied from a coding agent's session, now shows one page asking to connect the browser with `rerail manage`, then continues where the link pointed. It used to look like a repository with no rules or sessions. `/rerail-manage` no longer hands on that link.

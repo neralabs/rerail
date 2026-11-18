@@ -192,7 +192,7 @@ Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- Every request to the daemon needs its access capability, so other users and sandboxed processes on your machine get nothing. Open the dashboard with `rerail manage`, and have scripts send `x-rerail-access` from `daemon.json` ([troubleshooting](docs/troubleshooting.md#the-dashboard-says-needs-the-dashboard-link)).
+- Every request to the daemon needs its access capability, so other users and sandboxed processes on your machine get nothing. Open the dashboard with `rerail manage`, and have scripts send `x-rerail-access` from `daemon.json` ([troubleshooting](docs/troubleshooting.md#the-dashboard-asks-to-connect-this-browser)).
 - A coding agent's Rerail tools reach only its own repository, and the transcripts they read leave out tool output and secret-like paths.
 - A daemon reachable from other machines needs `--tls-cert` and `--tls-key`, or `--insecure-http` to stay on plain HTTP.
 - The daemon limits request size and time, Rerail's files and sockets are private to you, more file names count as secret-like and stay out of `rerail rules test` and stored transcripts, and steers drop control and invisible characters.

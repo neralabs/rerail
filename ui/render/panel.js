@@ -268,11 +268,14 @@ export function renderPanel(root) {
   const panel = ui.panel;
   const stored = panel?.kind === "rule" ? data.rules.get(panel.id) : undefined;
   const pack = panel?.kind === "pack" ? data.packs.find(x => x.id === panel.id) : undefined;
-  const open = stored !== undefined || pack !== undefined;
+  // A browser that lost the daemon's capability still holds what it read before: the page asking to connect it shows
+  // alone. `ui.panel` stays, so the sheet opens again once the browser is connected.
+  const open = !data.accessRequired && (stored !== undefined || pack !== undefined);
   const state = open ? "open" : "";
   if (document.body.dataset.panel !== state) document.body.dataset.panel = state;
+  if (!open) return;
   if (stored) renderRule(root, stored);
-  else if (pack) renderPackPanel(root, pack);
+  else renderPackPanel(root, pack);
 }
 
 /** Scroll the body back to the top when a different rule opens. */
