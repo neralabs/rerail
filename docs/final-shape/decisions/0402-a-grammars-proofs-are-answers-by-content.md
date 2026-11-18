@@ -88,3 +88,23 @@ The prover's speedups, each with the same program:
 - `row_modes` asking a row's toggle only where its `x` is fixed.
 
 Retired instructions: 2.50 T to 0.80 T, with lemmas kept.
+
+## Tried, not kept
+
+Each measured on Kotlin's cold and warm compile together (`compile_time`), in retired instructions:
+
+- **CaDiCaL** (the `cadical` crate, 1.9.5), incremental. Each question's window was a live solver.
+  Its definitions and the question's lemmas stayed in it for good. Each solve's own clauses (the
+  bounded start, the bytes left out, the hypothesis) went under an assumption, retired after.
+  Result: 566 G, against 473 G for our solver, the same with the `plain` configuration. The
+  queries are small, so a solver instance costs more than it saves. That is why rIC3 has its own
+  solver (GipSAT) for IC3's queries. The program was the same.
+- **A memo of the plain search's values** (`Proof::eval` per operation and lag, under the
+  choices made). No measurable change: 6.0 s to 5.4 s under varying load.
+- **A real stream before the plain search** (a bounded solve, as `Induction`'s first step). No
+  change. Of the 588 plain questions on tier 2's rows that cost 6–7 s, 216 are proved, and the
+  rest fail by the search's budget, not on a real stream within the window.
+
+What is left of a cold compile: `row_modes`' questions (974, 11–12 s under load), the rows' pair
+questions (588, 6–7 s), and the rest about 4 s.
+
