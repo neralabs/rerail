@@ -454,10 +454,13 @@ capability, refused every start as "alive but not answering", and `rerail daemon
   uses: Windows soon reuses a pid, often for another of this user's processes, and anyone can create the pipe's name.
   Nothing goes to the recorded URL before that. An engine that does not answer the proof in time is taken for a busy
   daemon: its state file is kept and the lookup reports it unresponsive, unless a fact proves the pid is another
-  process (`recordedProcess`): another daemon holds `locks/daemon.lock` as its recorded holder, or the process started
-  more than 10 s after the `startedAt` that `daemon.json` records. Where the lock does not decide, as for a daemon of
-  Rerail 0.1.4 or earlier, which holds none, the process's creation time is read through Windows PowerShell, which
-  loads no Rerail engine. The proof's limit counts from the ask and
+  process (`recordedProcess`): it started more than 10 s after the `startedAt` that `daemon.json` records, or another
+  process holds `locks/daemon.lock` as its recorded holder and started no later than that record was written. A start
+  no later than `startedAt` makes the pid this home's daemon whatever the holder record says. Where the lock does not
+  decide, as for a daemon of Rerail 0.1.4 or earlier, which holds none, the process's creation time is read through
+  Windows PowerShell, which loads no Rerail engine, and is ended at what is left of the lookup's limit (the stop's
+  10 s wait for a stop); one ended there, or one that cannot run, reads nothing, and the record is kept. The proof's
+  limit counts from the ask and
   covers the connect (`engineCapabilityProof`, `src/runtime/engine-proof.ts`). It connects to the pipe spelled
   `\\?\pipe\<name>`: Node's wait for a free instance (`WaitNamedPipe`, up to 30 s, in a thread that keeps the asking
   process alive) takes only `\\.\pipe\` names, so while a busy engine's pipe instances are all taken that connect fails
