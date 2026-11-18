@@ -334,6 +334,21 @@ rules must equal the old pass's, compared by digest, as 0246 §1 does for loweri
    `rr/tests.rs`, the tape tests, dl1.
 6. **Delete `front::Program`,** its statements and its encoding. Add §6's guard.
 
+Progress (2026-11-18):
+
+- **Step 3's fields.** Every pass reads and edits a program's fields through `program_image::fields`
+  (`ProgramFields`, `FieldsMut`) on the version, a builder or an edit; `Builder::set_header` is gone, and so is
+  every header a pass decoded. Preparing by parts selects a part's fields over the version (`parts::Own`).
+- **`finish`'s checks** (work queue Q83) read the version: `front::finish_checks_on`, with `cycles::check` over
+  the rules' handles and its strata from `front::graph`. The tree's check ran beside it on every test program
+  bringing a program to `finish`, agreeing, and is deleted.
+- **Step 5, first part.** Every text lowers on versions: one module written in the walk, linked through the
+  lowering's tail (`rr::link_library_versions`); the tree's `lower`, `link`, `link_in`, `link_seeded` and `whole`
+  are gone. The run reads its programs as versions (`rr::parse_version`), and a program handed to it is one. Left
+  of step 5: each clause still builds a `front::Rule` that the walk encodes (`lower::Written`), the walk reads
+  `rr/from_tape.rs`'s statements, the lowerer's header is a `front::Program`, which the module images store and
+  decode, and the tail's passes keep tree twins for their tests.
+
 ## 9. Retired, not ported (the user's questions, answered 2026-11-15)
 
 **The bounded cross-file rounds** (`typing::cross_rounds`, `.pragma "cross-rounds"`).
