@@ -248,31 +248,53 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     expect(stalled.map(status => status.readiness.github)).toEqual([on.readiness.github, on.readiness.github]);
   });
 
-  it("reads gh's sign-in afresh for every listing of open pull requests, and the status shows what it said", async () => {
+  it("starts a listing from the kept reading while it is under five minutes old and gh's hosts file holds, else reads gh's sign-in first", async () => {
     const ws = await workspace({ remote: "https://github.com/acme/app.git" });
     let now = Date.parse("2026-11-03T14:00:00Z");
     const github = new FakeGithub();
-    const service = ws.service({ github, now: () => now });
-    await service.setEnabled(ws.repo, true);
+    // Each listing from a service of its own, as the listing of the last five minutes would serve one service again.
+    const listing = async (): Promise<boolean> => await ws.service({ github, now: () => now }).detectAfterEdit(ws.repo);
+    await ws.service({ github, now: () => now }).setEnabled(ws.repo, true);
     const reads = github.readinessReads;
 
-    // The person signs gh out; a minute later the agent's edit lists the pull requests, the first listing since on.
-    github.options.readiness = { state: "signed-out", login: null, repository: "acme/app" };
+    // A minute later the agent's edit lists the pull requests: gh's sign-in is as kept, and no gh reads it.
     now += 60_000;
-    expect(await service.detectAfterEdit(ws.repo)).toBe(true);
+    expect(await listing()).toBe(true);
+    expect(github.readinessReads).toBe(reads);
+
+    // The person signs gh out, which rewrites its hosts file: the next listing reads gh first, and a status shows it.
+    github.options.readiness = { state: "signed-out", login: null, repository: "acme/app" };
+    github.options.signInStamp = "after gh auth logout";
+    now += 60_000;
+    expect(await listing()).toBe(true);
     expect(github.readinessReads).toBe(reads + 1);
-    expect((await service.status(ws.repo)).readiness.github).toEqual({ state: "signed-out", login: null, repository: "acme/app", readAt: "2026-11-03T14:01:00Z" });
+    const service = ws.service({ github, now: () => now });
+    expect((await service.status(ws.repo)).readiness.github).toEqual({ state: "signed-out", login: null, repository: "acme/app", readAt: "2026-11-03T14:02:00Z" });
 
     // Signed in again: a scan reads it afresh.
     delete github.options.readiness;
+    github.options.signInStamp = "after gh auth login";
     now += 60_000;
-    expect((await service.scan(ws.repo)).readiness.github).toEqual({ state: "signed-in", login: "tbelanger", repository: "acme/app", readAt: "2026-11-03T14:02:00Z" });
+    expect((await service.scan(ws.repo)).readiness.github).toEqual({ state: "signed-in", login: "tbelanger", repository: "acme/app", readAt: "2026-11-03T14:03:00Z" });
+    expect(github.readinessReads).toBe(reads + 2);
+    now += 4 * 60_000 + 59_000;
+    expect(await listing()).toBe(true);
     expect(github.readinessReads).toBe(reads + 2);
 
+    // Five minutes after that reading, the next listing reads gh first; so does one whose stat of the hosts file has
+    // not answered when its listing did.
+    now += 1_000;
+    expect(await listing()).toBe(true);
+    expect(github.readinessReads).toBe(reads + 3);
+    github.options.signInStatStalls = true;
+    expect(await listing()).toBe(true);
+    expect(github.readinessReads).toBe(reads + 4);
+
     // Turned off and on again: what gh said before is not kept.
+    github.options.signInStatStalls = false;
     expect((await service.setEnabled(ws.repo, false)).readiness.github).toEqual({ state: "unchecked", login: null, repository: "acme/app", readAt: null });
     await service.setEnabled(ws.repo, true);
-    expect(github.readinessReads).toBe(reads + 3);
+    expect(github.readinessReads).toBe(reads + 5);
   });
 
   it("says when gh could not tell, makes it a problem of the scan, and asks gh again past a minute without waiting for it", async () => {

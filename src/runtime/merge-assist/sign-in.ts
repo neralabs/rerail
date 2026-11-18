@@ -1,18 +1,19 @@
 /**
  * `gh`'s sign-in for each repository as `gh` last said it, kept in `merge_assist_state` (`github:<repository>`) with
  * when, one reading per `gh` environment (gh-config.ts: a CLI and the daemon may run with different token variables or
- * configuration folders, and so hold different sign-ins), each with the state of `gh`'s hosts file at the time. Every
- * listing of open pull requests reads it afresh. A status shows the kept reading of its own environment and reads `gh`
- * in its answer only when none is kept or `gh`'s hosts file changed since (a login, logout, switch or refresh), so a
- * person sees that change at the next status read. A reading as old as `gh`'s reuse below is read again when a status
- * asks for it, off the answer's wait: that status shows the kept one and the new one serves the next, or, in a process
- * that answers once (the CLI), that status waits for it, as every status did before. No timer runs: the age is read
- * only when a status asks. Nothing is kept while Merge Assist is off.
+ * configuration folders, and so hold different sign-ins), each with the state of `gh`'s hosts file at the time. A
+ * status shows the kept reading of its own environment and reads `gh` in its answer only when none is kept or `gh`'s
+ * hosts file changed since (a login, logout, switch or refresh), so a person sees that change at the next status read.
+ * A reading as old as `gh`'s reuse below is read again when a status asks for it, off the answer's wait: that status
+ * shows the kept one and the new one serves the next, or, in a process that answers once (the CLI), that status waits
+ * for it, as every status did before. A listing of open pull requests starts from the kept reading under that age
+ * while the hosts file has not moved, else reads `gh` first; a scan always reads it afresh. No timer runs: the age is
+ * read only when a status or a listing asks. Nothing is kept while Merge Assist is off.
  */
 import { z } from "zod";
 import { mergeAssistEnabled } from "../../engine/catalog/repository-registry.js";
 import { githubRepositoryOf } from "../../engine/merge-assist/branch-git.js";
-import { githubReadinessSchema, type ShownReadiness } from "../../engine/merge-assist/model.js";
+import { githubReadinessSchema, type GithubReadiness, type ShownReadiness } from "../../engine/merge-assist/model.js";
 import type { RerailDatabase } from "../../engine/storage/database.js";
 import type { GithubClient, GithubRepository } from "./github.js";
 import { STATE_KEYS, isoSeconds, readState, writeState } from "./state.js";
@@ -73,7 +74,7 @@ function answeredLate(row: Kept | undefined, readings: readonly Reading[], readi
   return { ...row, readings: withReading(readings, { ...kept, file }) };
 }
 
-/** `gh`'s sign-in per repository: read when a listing needs it or it changed, shown as last read. */
+/** `gh`'s sign-in per repository: read when none is kept, it changed or it is due, shown as last read. */
 export class SignInReads {
   readonly #options: SignInReadsOptions;
   /** Reads running in this process, by repository: every caller meanwhile shares one, so at most one `gh` runs. */
@@ -102,6 +103,22 @@ export class SignInReads {
     return await this.#rereadIfDue(repositoryKey, kept);
   }
 
+  /**
+   * A listing of open pull requests with the sign-in it starts from. Unless `fresh` (a scan), that is this
+   * environment's kept reading while it is younger than its reuse age and `gh`'s hosts file has not moved since, as a
+   * listing reused one before; else `gh`'s sign-in read now. The listing with the kept reading starts at once and the
+   * stat is waited for no longer than it: a stat that has not answered by then, or a hosts file that moved, reads `gh`
+   * and lists again. A reading that lists nothing (not signed in) is therefore read again at each listing.
+   */
+  async listed<T>(repositoryKey: string, fresh: boolean, list: (readiness: GithubReadiness) => Promise<T>): Promise<T> {
+    const stamp = this.#options.github().signInStamp();
+    const kept = this.#kept(repositoryKey, stamp.environment);
+    if (fresh || kept === undefined || this.#due(kept)) return await list(await this.read(repositoryKey));
+    const listing = list(kept.readiness);
+    if ((await answered(stamp.file, listing)) === kept.file) return await listing;
+    return await list(await this.read(repositoryKey));
+  }
+
   /** `gh`'s sign-in read now, or the read already running in this process; kept while Merge Assist is on. */
   read(repositoryKey: string): Promise<ShownReadiness> {
     const repository = githubRepositoryOf(repositoryKey);
@@ -125,13 +142,18 @@ export class SignInReads {
     return row?.readings?.find(reading => reading.environment === environment);
   }
 
+  /** Whether the kept reading is as old as `gh`'s reuse: five minutes, or one while `gh` could not tell. */
+  #due(kept: Reading): boolean {
+    const reuse = kept.readiness.state === "unavailable" ? GITHUB_UNAVAILABLE_MS : GITHUB_READINESS_MS;
+    return this.#options.now() - kept.at >= reuse;
+  }
+
   /**
    * The kept reading, and when it is as old as `gh`'s reuse, a read of `gh` started for the next status read; one that
    * answers once waits for it.
    */
   async #rereadIfDue(repositoryKey: string, kept: Reading): Promise<ShownReadiness> {
-    const reuse = kept.readiness.state === "unavailable" ? GITHUB_UNAVAILABLE_MS : GITHUB_READINESS_MS;
-    if (this.#options.now() - kept.at < reuse) return shownOf(kept);
+    if (!this.#due(kept)) return shownOf(kept);
     const reading = this.read(repositoryKey);
     if (this.#options.answersOnce === true) return await reading;
     void reading.catch((error: unknown) => {

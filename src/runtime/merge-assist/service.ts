@@ -350,16 +350,16 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
 
   /**
    * The open pull requests for detecting conflicts: the listing of the last five minutes unless `fresh`, else read now,
-   * each listing with `gh`'s sign-in read afresh. Unread (null) for a repository not on GitHub, which is no problem, or
-   * when `gh` could not list them, which is.
+   * from `gh`'s sign-in as kept unless it is due or moved, or `fresh` (sign-in.ts). Unread (null) for a repository not
+   * on GitHub, which is no problem, or when `gh` could not list them, which is.
    */
   #openPulls(checkout: CheckoutContext, fresh: boolean): Promise<PullListing> {
     const repository = githubRepositoryOf(checkout.repositoryKey);
     if (repository === null) return Promise.resolve({ pulls: null, problems: [] });
     const cached = this.#pulls.get(checkout.repositoryKey);
     if (!fresh && cached !== undefined && this.#now() - cached.at < PULLS_REUSE_MS) return cached.listing;
-    const listing = this.#signIn.read(checkout.repositoryKey)
-      .then(readiness => this.#listPulls(repository, readiness))
+    const list = async (readiness: GithubReadiness): Promise<PullListing> => await this.#listPulls(repository, readiness);
+    const listing = this.#signIn.listed(checkout.repositoryKey, fresh, list)
       .catch((error: unknown): PullListing => ({
         pulls: null,
         problems: [`Rerail could not list open pull requests (${error instanceof Error ? error.message : String(error)}), ${INSTEAD}`],
@@ -561,10 +561,11 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
 }
 
 /**
- * Merge Assist over one database. It runs `gh` only to list open pull requests, each listing with its sign-in read
- * afresh, and the person's hook command on conflict events; a status read runs neither, apart from reading `gh`'s
- * sign-in while Merge Assist is on when none is kept or it changed, or once the kept one is five minutes old (a minute
- * while `gh` could not tell), off the answer where a later status will show it (sign-in.ts), and nothing while it is off.
+ * Merge Assist over one database. It runs `gh` only to list open pull requests, reading its sign-in first under the
+ * same rules as a status (a scan always), and the person's hook command on conflict events; a status read runs
+ * neither, apart from reading `gh`'s sign-in while Merge Assist is on when none is kept or it changed, or once the kept
+ * one is five minutes old (a minute while `gh` could not tell), off the answer where a later status will show it
+ * (sign-in.ts), and nothing while it is off.
  */
 export function createMergeAssistService(options: MergeAssistServiceOptions): MergeAssistRuntime {
   return new DatabaseMergeAssist(options);
