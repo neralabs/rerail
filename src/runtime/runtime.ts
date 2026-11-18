@@ -1414,7 +1414,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     event: Extract<AdapterEvent, { kind: "call" }>,
   ): Promise<Readonly<Record<string, Preimage>> | undefined> {
     if (bridge !== undefined) return await bridge.begin(event.toolCallId, event.toolName, event.input);
-    await state.codeRuleBridge?.unwatchedCall(event.toolCallId);
+    await state.codeRuleBridge?.unwatchedCall(event.toolCallId, event.toolName);
     return undefined;
   }
 

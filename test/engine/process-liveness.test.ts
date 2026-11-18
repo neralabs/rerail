@@ -22,4 +22,15 @@ describe("processState", () => {
     expect(processState(process.pid)).toBe("running");
     expect(processState(DEAD_PID)).toBe("gone");
   });
+
+  it.runIf(process.platform === "linux")("reads a process reaped between its signal and the read of its /proc entry as gone", () => {
+    // Signal 0 finds it, a zombie not yet reaped; its parent reaps it, and the /proc entry and the pid go with it.
+    let signals = 0;
+    const reapedAfterFirst: ProcessSignal = () => {
+      signals += 1;
+      if (signals === 1) return true;
+      throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+    };
+    expect(processState(DEAD_PID, reapedAfterFirst)).toBe("gone");
+  });
 });
