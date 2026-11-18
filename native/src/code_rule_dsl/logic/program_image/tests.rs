@@ -1759,3 +1759,93 @@ fn a_record_by_place_is_compared_by_rule() {
     assert_eq!(first.digest(), wrong.digest());
     assert!(!super::same_program(&first, &wrong), "a reader on the other rule");
 }
+
+/// Each relation's layout, declared or inferred (`layouts`, decision 0361 step 3).
+mod layouts {
+    use crate::code_rule_dsl::logic::program_image::layouts::{Layouts, Origin};
+    use crate::code_rule_dsl::logic::program_image::{RelId, Version};
+    use std::collections::BTreeSet;
+    use crate::code_rule_dsl::logic::front::{Fan, LayoutFact as F};
+    use std::sync::Arc;
+
+    const BASE: &str = ".decl e(p: node, c: node, i: number)\n.input e\n\
+                        .layout e key(c) key(p, i) fanout(p -> c, few) order(i dense in p) tree(p -> c) local\n\
+                        .decl k(n: node, s: symbol)\n.input k\n.layout k key(n) local\n";
+
+    /// The facts of each relation `rules` derive over `BASE`.
+    fn of(rules: &str) -> (Arc<Version>, Layouts) {
+        let p = crate::code_rule_dsl::logic::rr::parse(&format!("{BASE}{rules}")).unwrap();
+        let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
+        let l = crate::code_rule_dsl::logic::program_image::manager::analysis::<Layouts>(&v).unwrap();
+        (v.clone(), (*l).clone())
+    }
+    fn facts(v: &Version, l: &Layouts, rel: &str) -> Vec<F> {
+        l.of(v.rel(rel).unwrap()).cloned().collect()
+    }
+
+    /// A projection keeps the key its columns hold, the fan-out and the tree; a filter keeps them too, and the order
+    /// but not its density; the relation renamed keeps the order dense (decision 0361 step 3).
+    #[test]
+    fn a_projection_or_a_filter_keeps_the_facts_its_columns_hold() {
+        let (v, l) = of(".decl f(c: node, p: node)\n.output f\nf(c, p) :- e(p, c, _).\n\
+                         .decl g(p: node, c: node, i: number)\n.output g\ng(p, c, i) :- e(p, c, i), i > 0.\n\
+                         .decl h(p: node, c: node, i: number)\n.output h\nh(p, c, i) :- e(p, c, i).\n");
+        assert_eq!(facts(&v, &l, "f"), [F::Key(vec![0]), F::Fanout { from: vec![1], to: vec![0], fan: Fan::Few }, F::Tree { from: 1, to: 0 }, F::Local]);
+        let g = facts(&v, &l, "g");
+        assert!(g.contains(&F::Key(vec![1])) && g.contains(&F::Key(vec![0, 2])) && g.contains(&F::Local), "{g:?}");
+        assert!(g.contains(&F::Order { col: 2, within: vec![0], dense: false }), "{g:?}");
+        assert!(facts(&v, &l, "h").contains(&F::Order { col: 2, within: vec![0], dense: true }));
+    }
+
+    /// A join along a key keeps the other side's key: `c` fixes `e`'s row and, by `k`'s key, `s`. Two atoms that
+    /// share no node are neither keyed by one side nor local.
+    #[test]
+    fn a_join_along_a_key_keeps_the_key_and_a_cross_product_neither() {
+        let (v, l) = of(".decl j(c: node, s: symbol)\n.output j\nj(c, s) :- e(_, c, _), k(c, s).\n\
+                         .decl x(a: node, b: node)\n.output x\nx(a, b) :- e(_, a, _), e(_, b, _).\n");
+        assert_eq!(facts(&v, &l, "j"), [F::Key(vec![0]), F::Local]);
+        assert_eq!(facts(&v, &l, "x"), []);
+    }
+
+    /// A relation of two rules, or a recursive one, keeps `local` where every rule gives it, and its declared facts
+    /// alone besides.
+    #[test]
+    fn a_union_or_a_recursion_keeps_local_alone() {
+        let (v, l) = of(".decl u(c: node)\n.output u\nu(c) :- e(_, c, _).\nu(n) :- k(n, _).\n\
+                         .decl t(a: node, b: node)\n.output t\nt(a, b) :- e(a, b, _).\nt(a, c) :- t(a, b), e(b, c, _).\n\
+                         .decl d(a: node, b: node)\n.layout d key(b)\n.output d\nd(a, b) :- d(a, c), e(c, b, _).\nd(a, b) :- e(a, b, _).\n");
+        assert_eq!(facts(&v, &l, "u"), [F::Local]);
+        assert_eq!(facts(&v, &l, "t"), [F::Local]);
+        assert_eq!(facts(&v, &l, "d"), [F::Key(vec![1]), F::Local]);
+        // A branch that joins two documents' nodes unjoined is not local, nor is the union.
+        let (v, l) = of(".decl w(a: node, b: node)\n.output w\nw(a, b) :- e(a, b, _).\nw(a, b) :- e(_, a, _), e(_, b, _).\n");
+        assert_eq!(facts(&v, &l, "w"), []);
+    }
+
+    /// Over a Python policy's program (python/ast.rr's library and core.rr): the library's derived relations take
+    /// facts from core.rr's base ones. The counts are printed for decision 0361's record.
+    #[test]
+    fn the_python_library_infers_facts_of_its_derived_relations() {
+        let text = ".policy \"t:a\" revision 1\n.language python\n#include \"python/ast.rr\"\n.violation Fn(at: node) \"a call\"\nFn(c) :- call_name(c, _).\n";
+        let p = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+        let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
+        let l = crate::code_rule_dsl::logic::program_image::manager::analysis::<Layouts>(&v).unwrap();
+        let by = |o: fn(&Origin) -> bool| l.0.values().filter(|fs| fs.iter().any(|(_, x)| o(x))).count();
+        let (declared, inferred) = (by(|o| *o == Origin::Declared), by(|o| matches!(o, Origin::Rule(_))));
+        let keyed = l.0.values().filter(|fs| fs.iter().any(|(f, o)| matches!(o, Origin::Rule(_)) && matches!(f, F::Key(_)))).count();
+        let local = l.0.values().filter(|fs| fs.iter().any(|(f, o)| matches!(o, Origin::Rule(_)) && *f == F::Local)).count();
+        let derived: BTreeSet<RelId> = v.rules().map(|r| r.head().rel()).collect();
+        eprintln!("layouts: {} relations derived; {declared} declared, {inferred} with inferred facts ({keyed} keyed, {local} local)", derived.len());
+        assert!(declared >= 9 && inferred > 0 && keyed > 0, "{}", l.show(&v));
+    }
+
+    /// EXPLAIN's lines: each relation's facts, their columns named, each with where it came from.
+    #[test]
+    fn explain_names_each_facts_columns_and_origin() {
+        let (v, l) = of(".decl f(c: node, p: node)\n.output f\nf(c, p) :- e(p, c, _).\n");
+        let shown = l.show(&v);
+        assert!(shown.contains("e: key(c) (declared), key(p, i) (declared)"), "{shown}");
+        assert!(shown.contains("f: key(c) (by rule #"), "{shown}");
+        assert!(shown.contains("tree(p -> c) (by rule #"), "{shown}");
+    }
+}

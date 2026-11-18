@@ -4827,6 +4827,15 @@ fn input_stats(stats: &mut Stats, ndv: &mut table::ColMap<f64>, width: Option<us
 pub fn make_plan(p: &body::Placed, db: &Connection, mut inputs: Inputs) -> Result<Model> {
     let analysis = std::sync::OnceLock::new();
     let f = p.fields()?;
+    // Each relation's layout, declared or inferred (decision 0361 step 3), for EXPLAIN: a report, so a program the
+    // analysis refuses (its strata) plans as it would unprofiled.
+    if super::profile::on()
+        && let Ok(layouts) = super::program_image::manager::analysis::<super::program_image::layouts::Layouts>(&p.v)
+    {
+        for line in layouts.show(&p.v).lines() {
+            super::profile::decision("relation layouts (decision 0361)", || line.to_owned());
+        }
+    }
     let rules = || (0..p.len()).map(|k| p.body(k));
     // A relation of the program's facts is its table too (`run`: `c0`, `c1`, …), though an input of that name has
     // named columns (the converter's `option_item`, core.rr's `option_item(name, i, v)`).

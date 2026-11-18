@@ -2994,3 +2994,22 @@ fn the_searchs_own_steps_are_the_records_features() {
     explaining(was);
     joins::set_pricer(None);
 }
+
+/// EXPLAIN lists each relation's layout, declared or inferred, among the decisions of the run that plans the program
+/// (`make_plan`, decision 0361 step 3).
+#[test]
+fn explain_lists_each_relations_layout() {
+    // `e` the program's facts, which the planner sizes itself.
+    let p = parse(".decl e(p: node, c: node, i: number)\ne(1, 2, 0).\ne(1, 3, 1).\n.layout e key(c) tree(p -> c)\n.decl f(c: node, p: node)\n.output f\nf(c, p) :- e(p, c, _).\n").unwrap();
+    let db = Connection::open_in_memory().unwrap();
+    let mut inputs = Inputs::file();
+    inputs.facts.clear();
+    inputs.given = Some(Stats::empty(&p));
+    crate::code_rule_dsl::logic::profile::set(true);
+    crate::code_rule_dsl::logic::profile::reset();
+    let _model = make_plan(&body::Placed::of_program(&p).unwrap(), &db, inputs).unwrap();
+    let lines: Vec<String> = crate::code_rule_dsl::logic::profile::decisions().into_keys().filter(|(t, _)| t == "relation layouts (decision 0361)").map(|(_, x)| x).collect();
+    crate::code_rule_dsl::logic::profile::set(false);
+    assert!(lines.iter().any(|l| l == "e: key(c) (declared), tree(p -> c) (declared)"), "{lines:?}");
+    assert!(lines.iter().any(|l| l.starts_with("f: key(c) (by rule #0000), tree(p -> c) (by rule #0000)")), "{lines:?}");
+}

@@ -1,6 +1,6 @@
 # 0361. Relations declare their shapes, and plans come from them
 
-Status: decided (2026-11-17), being built: steps 1, 2 and 7 built (2026-11-18). The user: "a directive which allows us to add enough data to the
+Status: decided (2026-11-17), being built: steps 1, 2, 3 and 7 built (2026-11-18). The user: "a directive which allows us to add enough data to the
 relations in the .rr files that we can provide good default shapes for them (or at least name an algorithm or
 something) so that we don't need to pay for planning, or only in exceptional circumstances."
 
@@ -225,3 +225,47 @@ and back, in `About::layouts`, and through `combine`). With them, 189 tests of t
 `program_image`, `program_facts`, `link`, `parts`, `program_text`) and the slow tier's lowering checks over every
 pack pass (M1 Max). The slow tier's `rule_syntax_files_pass_check_rr` fails on `c/includes.rr`, as it does without
 these steps (Q176).
+
+## Step 3: facts inferred over the rules (2026-11-18)
+
+`program_image::layouts::Layouts` is an analysis of the version (decision 0281's pass manager), so it is computed
+once a version and kept with it. Each relation has its declared facts and, in dependency order, what its rules give
+from the facts of what they read. Each fact carries its origin: declared, inferred from the relation's one rule, or
+inferred from all its rules.
+
+**What a rule gives its head.** Inference works over the body's dependencies:
+- each positive atom's keys (the key's variables determine the atom's);
+- each equality (`x = f(y)`: `y` determines `x`);
+- each `nearest` (a node determines its nearest ancestor).
+
+From them:
+
+| Fact | Holds of the head where |
+|---|---|
+| key | one atom's key variables are in the head and determine every head variable (a projection keeping the key, a join along a key, a filter) |
+| fan-out, tree | their columns are in the head and determine its row (so its rows are at most the atom's; a forest's edges kept are a forest) |
+| order | the same; dense only where the rule is the atom renamed (a filter leaves gaps) |
+| local | every atom is local, every node the head holds is an atom's (or `nearest`'s), and the atoms holding nodes are joined by them |
+
+A relation of one node column at most is local by its shape.
+
+**Where it stops.** The decision's rule is "a union keeps a fact only if every branch has it". That is sound for
+`local`, which the analysis keeps across a union and, supposing its component local, across a recursion (by
+induction on the rounds). It is not sound for a key: two branches may give one key two rows. So a union or a recursion
+keeps its declared facts and `local` alone. An aggregate's head, a matcher's, a native's, a request's answer and the
+program's facts take their declared facts alone.
+
+**EXPLAIN.** A profiled run lists every relation's facts among its decisions (`relation layouts (decision 0361)`),
+one line a relation, each fact with its columns named and its origin. For example
+`f: key(c) (by rule #0000), tree(p -> c) (by rule #0000)`.
+
+**Measured** on a Python policy's program (`python/ast.rr` and `core.rr`): 273 derived relations, of which 109 take
+facts. 18 are keyed, and 108 are local. Before unions, recursions and the one-node shape were counted for `local`, it
+was 48 (41 local).
+
+**Tests.**
+- `program_image::tests::layouts::`, five tests: a projection, a filter and a rename; a join along a key and a cross
+  product; unions and recursions, and a union with one non-local branch; EXPLAIN's text; the Python program's counts.
+- `plan::tests::explain_lists_each_relations_layout`: the lines in a planner run's decisions.
+
+With them, 268 tests of the planner, the image, the profile and `rr` pass (M1 Max).
