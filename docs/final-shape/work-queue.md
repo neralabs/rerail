@@ -1936,6 +1936,15 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
   of one level share tests.
 - **Done when**: a level's formulas over a file are evaluated together, sharing their common subsets, with
   `label_formula` measured pinned before and after.
+- **Done** (2026-11-18, decision 0419): measured, and not the default. Evaluating a file's formulas together
+  (`RERAIL_FORMULA_FUSED=1`) took internal_dead_code's label GPU time from 83–95 to 165–175 ms, and public_api_triples'
+  from 71–79 to 105–112 ms. The groups of one file's formulas overlap their latency, and the shared tests are shared
+  already (`label_leaves`, identical formulas once). The time was latency: the step formulas, with a chain's reach as
+  the long pole (now read by blocks: 96.8 → 54.6 ms), and every level once per chunk (now a chunk below the credible
+  growth makes the next 4×: 82–98 → 77–84 ms, 89–94 → 67–82 ms). 0406's times were taken under the default memory
+  line (14–17 chunks).
+- **Left**: with the line lifted, the memory sizing sets 6–8 chunks (about 275,000 nodes each, from the most bytes per
+  node a chunk added). Gathering the label runs of chunks that run at once into one Runner is not built.
 
 ### Q219. A level's fact constraints are uploaded rows
 

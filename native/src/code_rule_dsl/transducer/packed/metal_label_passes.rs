@@ -918,8 +918,34 @@ const KERNELS: [&str; 16] = [
 /// `label_formula` and `label_leaves` in `KERNELS` (decision 0365).
 const FORMULA_KERNEL: usize = 14;
 const LEAVES_KERNEL: usize = 15;
+/// Where `label_formula`'s dispatches are noted (`RERAIL_FORMULA_TRACE=<file>`, with `RERAIL_GPU_KERNEL_TIMES`): a
+/// measurement switch, a line a dispatch.
+fn formula_trace() -> Option<&'static std::sync::Mutex<std::fs::File>> {
+    static FILE: std::sync::LazyLock<Option<std::sync::Mutex<std::fs::File>>> = std::sync::LazyLock::new(|| {
+        let path = std::env::var_os("RERAIL_FORMULA_TRACE")?;
+        std::fs::OpenOptions::new().create(true).append(true).open(path).ok().map(std::sync::Mutex::new)
+    });
+    FILE.as_ref()
+}
+
+/// `label_formula`'s threads a (file, formula): `FORMULA_WIDTH`, or `RERAIL_FORMULA_WIDTH` (a measurement switch, at most
+/// 1024: the kernel's `partials`).
+fn formula_width() -> u64 {
+    static WIDTH: std::sync::LazyLock<u64> = std::sync::LazyLock::new(|| {
+        std::env::var("RERAIL_FORMULA_WIDTH").ok().and_then(|width| width.parse().ok()).map_or(FORMULA_WIDTH, |width: u64| width.clamp(32, 1024))
+    });
+    *WIDTH
+}
+
 /// `label_formula`'s threads a (file, formula).
 const FORMULA_WIDTH: u64 = 128;
+/// `RERAIL_FORMULA_FUSED=N` (a measurement switch, Q218): `label_formula` dispatches a level's formulas at once, as many as
+/// its scratch allows, with N groups a file (1: one group evaluates every formula of the file in turn), not one a (file,
+/// formula).
+fn formula_fused() -> Option<usize> {
+    static FUSED: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
+    *FUSED.get_or_init(|| std::env::var("RERAIL_FORMULA_FUSED").ok().and_then(|rows| rows.parse().ok()).filter(|&rows: &usize| rows > 0))
+}
 /// `label_formula`'s profile words: a step kind's members by its op (to `REACH_CHAIN`), and its reads and groups (16–20).
 const FORMULA_STATS: usize = compile_sets::device_ops::REACH_CHAIN as usize + 1;
 /// `label_formula`'s scratch: the formulas of a dispatch each have their own, so a level's formulas take as many
@@ -1919,14 +1945,15 @@ impl Runner<'_> {
     /// Profiling (`RERAIL_GPU_KERNEL_TIMES`): the command buffer so far committed and waited on,
     /// its GPU time added to `kernel_us.<label>` and `kernel_n.<label>`, and a new one begun.
     /// Kernels then run one buffer each, in the same order on the same queue.
-    fn split(&mut self, label: &str) {
+    /// The dispatch's GPU time in µs where it is timed.
+    fn split(&mut self, label: &str) -> Option<f64> {
         static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_GPU_KERNEL_TIMES").is_some());
         if !*ON {
-            return;
+            return None;
         }
         // Refused (the launch ledger is spent): the flush reports it.
         if commit_checked(&self.command).is_err() || wait_checked(&self.command).is_err() {
-            return;
+            return None;
         }
         unsafe extern "C" {
             fn sel_registerName(name: *const std::ffi::c_char) -> *mut std::ffi::c_void;
@@ -1946,6 +1973,7 @@ impl Runner<'_> {
         self.outcome.command_buffers += 1;
         self.command = self.queue.new_command_buffer().to_owned();
         self.command.set_label("Rerail label passes");
+        Some((end - start) * 1e6)
     }
 
     fn upload<T: Copy>(&mut self, values: &[T]) -> Result<Buffer, Error> {
@@ -2588,10 +2616,15 @@ impl Runner<'_> {
         };
         let leaves = leaves.cloned().unwrap_or_else(|| own.as_ref().expect("the group's leaves").buffer.clone());
         let stride = depth as usize * region;
-        let per = (FORMULA_SCRATCH_BYTES / 4 / stride).clamp(1, count);
-        if self.formula_scratch.as_ref().is_none_or(|scratch| (scratch.buffer.length() as usize) < 4 * stride * per) {
+        // A dispatch's formulas, and its groups a file (`rows`): one a formula, or `formula_fused()`, each evaluating
+        // its share in turn in its own slots (Q218).
+        let fused = formula_fused();
+        let rows_most = (FORMULA_SCRATCH_BYTES / 4 / stride).clamp(1, count);
+        let per = if formula_trace().is_some() && std::env::var_os("RERAIL_FORMULA_ONE").is_some() { 1 } else if fused.is_some() { count } else { rows_most };
+        let rows_a_file = fused.map_or(per, |fused| fused.min(rows_most));
+        if self.formula_scratch.as_ref().is_none_or(|scratch| (scratch.buffer.length() as usize) < 4 * stride * rows_a_file.min(per)) {
             // Not an upload: one buffer for the run, at most `FORMULA_SCRATCH_BYTES`, as the stacks are.
-            let grown = MappedBuffer::untouched::<u32>(self.device, stride * per)?;
+            let grown = MappedBuffer::untouched::<u32>(self.device, stride * rows_a_file.min(per))?;
             // The smaller one may still be read by the levels encoded before: it is kept with the command buffer.
             if let Some(old) = self.formula_scratch.replace(grown) {
                 self.retained.push(old);
@@ -2625,10 +2658,24 @@ impl Runner<'_> {
             encoder.set_buffer(11, Some(&rules), 0);
             encoder.set_buffer(12, Some(texts.unwrap_or(&rules)), 0);
             self.bind_slabs(encoder);
-            encoder.checked_dispatch_thread_groups(&self.command, MTLSize::new(self.files.len().max(1) as u64, formulas as u64, 1), MTLSize::new(FORMULA_WIDTH, 1, 1));
+            let width = formula_width().min(state.max_total_threads_per_threadgroup());
+            encoder.checked_dispatch_thread_groups(&self.command, MTLSize::new(self.files.len().max(1) as u64, formulas.min(rows_a_file) as u64, 1), MTLSize::new(width, 1, 1));
             encoder.end_encoding();
             self.outcome.dispatches += 1;
-            self.split(KERNELS[FORMULA_KERNEL]);
+            let us = self.split(KERNELS[FORMULA_KERNEL]);
+            if let (Some(us), Some(trace)) = (us, formula_trace()) {
+                // One line a dispatch: its formulas, their words (sum, most), their stack depth, the files, its µs.
+                let own = &unique[first..first + formulas];
+                let line = format!(
+                    "formulas {formulas} words {} most {} depth {depth} files {} us {us:.0} ops {}\n",
+                    own.iter().map(|(words, ..)| words.len()).sum::<usize>(),
+                    own.iter().map(|(words, ..)| words.len()).max().unwrap_or(0),
+                    self.files.len(),
+                    own.iter().map(|(words, ..)| words.iter().map(|word| (word & 255).to_string()).collect::<Vec<_>>().join(".")).collect::<Vec<_>>().join(" "),
+                );
+                use std::io::Write as _;
+                let _ = trace.lock().unwrap_or_else(std::sync::PoisonError::into_inner).write_all(line.as_bytes());
+            }
         }
         if let Some(own) = own {
             self.segment_bytes += own.buffer.length() as usize;

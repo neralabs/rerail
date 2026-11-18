@@ -831,17 +831,29 @@ kernel void label_leaves(device const DocView* docs [[buffer(0)]],device const u
   }
 }
 
-kernel void label_formula(device const DocView* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const Formula* formulas [[buffer(2)]],device const uint* words [[buffer(3)]],device atomic_uint* roots [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],constant Shape& shape [[buffer(6)]],device const uint* leaves [[buffer(7)]],device atomic_uint* stats [[buffer(8)]],device const FormulaTarget* targets [[buffer(9)]],device atomic_uint* labelScratch [[buffer(10)]],device const uint* rules [[buffer(11)]],device const uint* texts [[buffer(12)]],device const uchar* chunk [[buffer(27)]],uint2 group [[threadgroup_position_in_grid]],uint2 lanes [[thread_position_in_threadgroup]],uint2 widths [[threads_per_threadgroup]]){
+kernel void label_formula(device const DocView* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const Formula* formulas [[buffer(2)]],device const uint* words [[buffer(3)]],device atomic_uint* roots [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],constant Shape& shape [[buffer(6)]],device const uint* leaves [[buffer(7)]],device atomic_uint* stats [[buffer(8)]],device const FormulaTarget* targets [[buffer(9)]],device atomic_uint* labelScratch [[buffer(10)]],device const uint* rules [[buffer(11)]],device const uint* texts [[buffer(12)]],device const uchar* chunk [[buffer(27)]],uint2 group [[threadgroup_position_in_grid]],uint2 grid [[threadgroups_per_grid]],uint2 lanes [[thread_position_in_threadgroup]],uint2 widths [[threads_per_threadgroup]]){
   uint file=group.x,lane=lanes.x,width=widths.x;
   // A descendant step's prefix of its members' counts (a block of words a thread, `FORMULA_WIDTH` threads), and the
   // member counts a step within a conjunction is priced by.
-  threadgroup uint partials[128];
+  threadgroup uint partials[1024];
   threadgroup atomic_uint tally[2];
   DocView d=docs[file];
   Tree t={chunk,d};
   uint nodes=d.nodes,fw=(nodes+31u)/32u,region=FORMULA_REGION(d,file);
   if(nodes==0u)return;
-  Formula formula=formulas[shape.itemCount+group.y];
+  // Profiling (`shape.profile`): per step kind its members (`stats[op]`), then parent and child reads (16, 17), the
+  // (file, formula)s (18), and the steps within a conjunction read down or climbed (19, 20).
+  bool profile=shape.profile!=0u;
+  uint parents=0u,childs=0u;
+  #define FORMULA_COUNT(I,N) if(profile)atomic_fetch_add_explicit(&stats[I],N,memory_order_relaxed)
+  // A group evaluates the formulas `group.y`, `group.y + grid.y`, …: one each when the grid has a row a formula, all of
+  // the dispatch's in turn when it has one (`RERAIL_FORMULA_FUSED`, Q218), in the same scratch slots.
+  device atomic_uint* base=scratch+group.y*shape.queue+shape.round*region;
+  #define SLOT(i) (base+(i)*fw)
+  // The bits of local word `w` that are nodes of the file.
+  #define VALID(w) ((w)*32u+32u<=nodes?0xffffffffu:((1u<<(nodes-(w)*32u))-1u))
+  for(uint y=group.y;y<shape.targetCount;y+=grid.y){
+  Formula formula=formulas[shape.itemCount+y];
   // A rule over codes that does not run in this file: its row is never read here; none runs here, nothing to do.
   bool wanted=false;
   // A rule over codes runs in a file where its bit is set (an anchored rule's after its row, `Roots::table`).
@@ -851,16 +863,7 @@ kernel void label_formula(device const DocView* docs [[buffer(0)]],device const 
     uint codes=rules[target.rule]==2u?target.rule+rules[target.rule+1u]:target.rule;
     wanted=rules[codes]!=0u||((rules[codes+1u+file/32u]>>(file%32u))&1u)!=0u;
   }
-  if(!wanted)return;
-  device atomic_uint* base=scratch+group.y*shape.queue+shape.round*region;
-  #define SLOT(i) (base+(i)*fw)
-  // The bits of local word `w` that are nodes of the file.
-  #define VALID(w) ((w)*32u+32u<=nodes?0xffffffffu:((1u<<(nodes-(w)*32u))-1u))
-  // Profiling (`shape.profile`): per step kind its members (`stats[op]`), then parent and child reads (16, 17), the
-  // (file, formula)s (18), and the steps within a conjunction read down or climbed (19, 20).
-  bool profile=shape.profile!=0u;
-  uint parents=0u,childs=0u;
-  #define FORMULA_COUNT(I,N) if(profile)atomic_fetch_add_explicit(&stats[I],N,memory_order_relaxed)
+  if(!wanted)continue;
   if(lane==0u)FORMULA_COUNT(18u,1u);
   uint top=0u;
   for(uint pc=0u;pc<formula.wordCount;pc++){
@@ -1018,17 +1021,33 @@ kernel void label_formula(device const DocView* docs [[buffer(0)]],device const 
         // The members' later siblings: each member's next siblings, until one another member's run has set.
         FORMULA_EACH(from,fw,lane,width,n)for(uint c=tape_next(chunk,d,n);c!=TAPE_NONE;c=tape_next(chunk,d,c)){childs++;if(formula_set(out,c))break;}
       }else if(op==25u){
-        // A chain's reach: from each member, its children, and on down from those in `through`, in preorder by
-        // subtree sizes (a node not gone into is skipped with its subtree). A node another member's walk set is that
-        // walk's to go on from.
+        // A chain's reach, as the CPU's `Reader` reads it: a node is reached where its parent is a member, or is in
+        // `through` and reached. In preorder a parent comes first, so each thread takes a block of words, as a
+        // descendant image does, and decides its nodes in order: a parent in the block is decided already (this
+        // word's bits, or an earlier word's row), and a node whose parent is before the block climbs while its
+        // ancestors are in `through` and not members. (Walking each member's subtree on its thread left a member's
+        // whole reach to one thread, a read of device memory a node: 2-3 ms a dispatch, 0406.)
         device atomic_uint* through=SLOT(src+1u);
-        FORMULA_EACH(from,fw,lane,width,m){
-          uint end=min(m+tape_size(chunk,d,m),nodes);
-          for(uint n=m+1u;n<end;){
-            childs++;
-            bool known=formula_set(out,n);
-            n=!known&&formula_get(through,n)?n+1u:n+tape_size(chunk,d,n);
+        uint block=(fw+width-1u)/width,low=min(lane*block,fw),high=min(low+block,fw),first=low*32u;
+        for(uint w=low;w<high;w++){
+          uint bits=0u,b=w*32u;
+          for(uint k=0u;k<32u&&b+k<nodes;k++){
+            uint n=b+k,p=tape_parent(chunk,d,n);
+            if(p==TAPE_NONE)continue;
+            bool reached=false;
+            if(p>=first){
+              bool decided=p>=b?((bits>>(p-b))&1u)!=0u:formula_get(out,p);
+              reached=formula_get(from,p)||(decided&&formula_get(through,p));
+            }else{
+              for(;p!=TAPE_NONE;p=tape_parent(chunk,d,p)){
+                childs++;
+                if(formula_get(from,p)){reached=true;break;}
+                if(!formula_get(through,p))break;
+              }
+            }
+            if(reached)bits|=1u<<k;
           }
+          atomic_store_explicit(&out[w],bits,memory_order_relaxed);
         }
       }else{
         // A chain: the parents of `to`'s members, and on up through `through`'s.
@@ -1048,9 +1067,6 @@ kernel void label_formula(device const DocView* docs [[buffer(0)]],device const 
     }
     threadgroup_barrier(mem_flags::mem_device);
   }
-  FORMULA_COUNT(16u,parents);
-  FORMULA_COUNT(17u,childs);
-  #undef FORMULA_COUNT
   // The anchor into its rule's row, in the batch's numbering: a file's word spans two of the row's.
   device atomic_uint* anchor=SLOT(0u);
   uint sh=d.node_base%32u;
@@ -1072,6 +1088,12 @@ kernel void label_formula(device const DocView* docs [[buffer(0)]],device const 
       }
     }
   }
+  // The next formula reuses the slots.
+  threadgroup_barrier(mem_flags::mem_device);
+  }
+  FORMULA_COUNT(16u,parents);
+  FORMULA_COUNT(17u,childs);
+  #undef FORMULA_COUNT
   #undef SLOT
   #undef VALID
 }

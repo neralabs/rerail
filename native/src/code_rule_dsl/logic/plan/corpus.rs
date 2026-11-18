@@ -3040,6 +3040,11 @@ const DENSE_TEXT_DOCS: usize = 64;
 
 /// The first chunk's nodes, at most: what it adds per node sizes the rest.
 const PROBE_NODES: usize = 65_536;
+/// `PROBE_NODES`, or `RERAIL_PROBE_NODES` (a measurement switch: the chunks' size until one measures its footprint).
+fn probe_nodes() -> usize {
+    std::env::var("RERAIL_PROBE_NODES").ok().and_then(|v| v.parse().ok()).unwrap_or(PROBE_NODES)
+}
+
 /// What a chunk's file-local run may add to the footprint (`RERAIL_CHUNK_MB`).
 const CHUNK_MB: f64 = 384.0;
 /// The run's whole footprint budget (`RERAIL_RUN_MB`): a chunk adds at most three quarters of what is left of it
@@ -3051,6 +3056,9 @@ const MIN_CHUNK_NODES: usize = 8_192;
 /// The least a chunk evaluating beside others is sized to (`RERAIL_CHUNK_FLOOR_MB`): fewer chunks at once, not
 /// smaller ones, below it (Q74).
 const CHUNK_FLOOR_MB: f64 = 64.0;
+/// How much larger the next chunk is than one whose growth was under `CHUNK_CREDIBLE_MB` (0419): no measure yet, so a
+/// bounded step, measured again.
+const UNCREDIBLE_GROWTH: usize = 4;
 /// A chunk's growth that sizes the next (Q74): a smaller one is within the pages freed before it, which it reused.
 const CHUNK_CREDIBLE_MB: usize = 16;
 
@@ -5243,7 +5251,7 @@ fn run_observed(
     // The chunks' size: the caller's, at most, but sized to what a chunk's run holds (`CHUNK_MB`): the first chunk is
     // `PROBE_NODES` nodes, and each run measures the footprint it adds per node. 64 data-layer rules hold about
     // 5 KB a node at their peak, so the caller's 262,144 nodes took 1.3 GB; the converted rules hold much less.
-    let chunk_target = Arc::new(std::sync::atomic::AtomicUsize::new(chunk_nodes.min(PROBE_NODES)));
+    let chunk_target = Arc::new(std::sync::atomic::AtomicUsize::new(chunk_nodes.min(probe_nodes())));
     let worker_target = Arc::clone(&chunk_target);
     // The documents the builder reads, in batches, each ended by `None` on the chunks' channel: the corpus's, then
     // each load's (decision 0065 §2a). A run that loads nothing closes the channel after the corpus's, so the
@@ -7191,7 +7199,14 @@ fn run_observed(
             let chunk = env("RERAIL_CHUNK_MB", CHUNK_MB);
             let allowed = if per_node > 0.0 { ((headroom / env("RERAIL_CHUNK_FLOOR_MB", CHUNK_FLOOR_MB)).floor() as usize).clamp(1, chunks_at_once) } else { 1 };
             let budget = chunk.min(headroom / allowed as f64).round();
-            let next = if per_node > 0.0 { ((budget * 1048576.0 / per_node) as usize).clamp(MIN_CHUNK_NODES.min(chunk_nodes), chunk_nodes) } else { chunk_nodes.min(PROBE_NODES) };
+            // Until a chunk is credible, each grows the next fourfold, one at a time, so a larger one measures again: every
+            // stratum and matcher wave runs once a chunk, and the device's launches are a chunk's levels (s1000 at the
+            // probe's size was 17 chunks of 1-14 MB each; 4 chunks halved the label passes' GPU time, 0419).
+            let next = if per_node > 0.0 {
+                ((budget * 1048576.0 / per_node) as usize).clamp(MIN_CHUNK_NODES.min(chunk_nodes), chunk_nodes)
+            } else {
+                chunk_nodes.min(chunk_nodes_built.saturating_mul(UNCREDIBLE_GROWTH).max(probe_nodes()))
+            };
             chunk_target.store(next, std::sync::atomic::Ordering::Relaxed);
             at_once_allowed.store(allowed, std::sync::atomic::Ordering::Relaxed);
             // The device pool's share of the footprint the chunk was sized under: its blocks leased and idle.
@@ -7214,7 +7229,7 @@ fn run_observed(
             crate::code_rule_dsl::logic::profile::decision("chunk size", || if credible {
                 format!("a chunk of {chunk_nodes_built} nodes added {added} MB ({measured:.0} bytes a node, {per_node:.0} the most this run); the next are about {next} nodes, {allowed} at once ({budget} MB a chunk: the least of {chunk} MB and three quarters of the run's headroom above {start_mb} MB shared by the chunks at once; at most {chunk_nodes})")
             } else {
-                format!("a chunk of {chunk_nodes_built} nodes added {added} MB, under {CHUNK_CREDIBLE_MB} MB (pages freed before it reused): it sizes nothing; the next are about {next} nodes, {allowed} at once")
+                format!("a chunk of {chunk_nodes_built} nodes added {added} MB, under {CHUNK_CREDIBLE_MB} MB (pages freed before it reused): it sizes nothing but a step; the next are about {next} nodes ({UNCREDIBLE_GROWTH}x at most), {allowed} at once")
             });
             // The memory line, not the chunk's own size, set it: every stratum and matcher launch runs per chunk, so
             // a cut chunk is a smaller grain for the device and more runs for the same work (the profile's warnings).
