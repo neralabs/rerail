@@ -5,10 +5,11 @@
  */
 import { h, setText, setAttr, setClass, setContent, syncChildren, icon } from "../dom.js";
 import { ago, clock, fmt, plural, shortSessionId, whenLabel, HOST_NAME } from "../format.js";
-import { awaitingApproval, isFromPack, isRunning, worktreeLeftOut } from "../derive.js";
-import { data, ui, ALL_TIME, activityAllOf, fires, packOfRule, rangeLabel, repoName, rulesArray, ruleSections, stateHere, titleOf } from "../state.js";
+import { awaitingApproval, awaitingYourApproval, isFromPack, isRunning, messageText, worktreeLeftOut } from "../derive.js";
+import { data, ui, ALL_TIME, activityAllOf, allFires, fires, packOfRule, rangeLabel, repoName, rulesArray, ruleSections, stateHere, titleOf } from "../state.js";
 import { ensureTitle } from "../poll.js";
 import { invalidate } from "../shell.js";
+import { approveMany } from "../actions.js";
 import { rangeControl, syncRange } from "../render/range.js";
 import { loggedTip } from "../render/rules.js";
 import { bannerFor, firstOpenState, liveState, overviewBody, rulesOnSource, steeredTally, topRules } from "../first-open.js";
@@ -88,14 +89,49 @@ function renderLeftOut(root) {
     h("p", null, "Fix the file and this updates on its own. ", h("span.mono", null, "rerail packs list"), " in the worktree says the same.")))));
 }
 
+/** The rules created by you that wait for your approval, by title: the ones `/rerail-create` added in Log. */
+export const yourRulesToApprove = () => (data.loaded ? rulesArray().filter(awaitingYourApproval) : [])
+  .sort((a, b) => titleOf(a).localeCompare(titleOf(b), undefined, { sensitivity: "base" }) || a.rule.id.localeCompare(b.rule.id));
+
+/** Everything a rule can tell the coding agent: each clause's message, once each, or a conversation rule's action. */
+const allMessages = stored => (stored.kind === "conversation" ? [messageText(stored)]
+  : [...new Set((stored.rule.clauses ?? []).map(clause => clause.violation?.message ?? ""))]).filter(text => text !== "");
+
+/** What a rule in Log caught since install: what it would have steered, had it been approved. */
+const caughtLine = n => (n === 0 ? "Nothing caught in Log yet." : `Caught ${fmt(n)} ${plural(n, "violation")} in Log so far.`);
+
 /**
- * The rules here whose content, or whose pack's, waits for a person's approval: each runs in Log until then. Each item
- * opens the sheet where it is approved. Not dismissible.
+ * The rules created by you that wait for your approval (`/rerail-create` adds the rules it finds this way): each with
+ * what it tells the coding agent and what it caught in Log, approved from here one by one or all at once. Each Approve
+ * approves the content this page read. Not dismissible: a rule left here keeps running in Log.
+ */
+function renderYours(root) {
+  const list = yourRulesToApprove().map(stored => ({
+    id: stored.rule.id, title: titleOf(stored), says: allMessages(stored), caught: allFires(stored.rule.id), digest: stored.approval.subject.digest,
+  }));
+  const n = list.length;
+  setContent(root, JSON.stringify(list), () => (n === 0 ? null : h("div.welcome.yours", { role: "status" }, icon("done", 22), h("div", null,
+    h("b", null, `${fmt(n)} ${plural(n, "rule")} you created ${n === 1 ? "waits" : "wait"} for your approval. Until approved, ${n === 1 ? "it runs" : "they run"} in Log and steer${n === 1 ? "s" : ""} no one; then each runs in the mode it is set to.`),
+    h("p", null, `Read what ${n === 1 ? "it tells" : "each tells"} the coding agent, then approve ${n === 1 ? "it" : "the ones you want"}.`),
+    h("ul.approvelist", null, list.map(item => h("li", { "data-rule": item.id },
+      h("b", null, item.title),
+      ...item.says.map(text => h("p", null, "Tells the agent: ", h("q", null, text))),
+      h("p", null, caughtLine(item.caught)),
+      h("p.acts", null,
+        h("button.btn.sm.solid", { "data-act": "approve", "data-i": item.id, "data-kind": "rule", "data-digest": item.digest }, "Approve"),
+        h("button.btn.sm", { "data-act": "detail", "data-i": item.id }, "Open"))))),
+    n < 2 ? null : h("p.acts", null, h("button.btn.sm.solid", { "data-act": "approveall" }, `Approve all ${fmt(n)}`))))));
+}
+
+/**
+ * The rules here whose content, or whose pack's, waits for a person's approval and that someone else wrote (a
+ * worktree's own rules, packs Rerail did not publish): each runs in Log until then. Each item opens the sheet where it
+ * is approved, after it is read. Not dismissible.
  */
 function renderApprovals(root) {
   const items = new Map();
   for (const stored of data.loaded ? rulesArray() : []) {
-    if (!awaitingApproval(stored)) continue;
+    if (!awaitingApproval(stored) || awaitingYourApproval(stored)) continue;
     const { kind, id } = stored.approval.subject;
     if (items.has(`${kind}\0${id}`)) continue;
     const packId = stored.source.kind === "pack" ? stored.source.id : packOfRule(stored)?.id;
@@ -268,6 +304,7 @@ let page = null;
 function build() {
   const banner = h("div.banners");
   const leftOut = h("div.banners");
+  const yours = h("div.banners");
   const approvals = h("div.banners");
   const range = rangeControl();
   const tiles = TILES.map(tile);
@@ -286,10 +323,10 @@ function build() {
     h("div.colhead.srhead", { "aria-hidden": "true" }, h("span", null, "Session"), h("span", null, "Violations")),
     recentList);
   const lists = h("div.ovlists", null, top, recent);
-  const root = h("div.ov", null, banner, leftOut, approvals,
+  const root = h("div.ov", null, banner, leftOut, yours, approvals,
     h("div.rollup", null, h("div.rollhead", null, h("h2", null, "Overview"), range), h("div.tiles", null, tiles)),
     empty, lists);
-  page = { root, banner, leftOut, approvals, range, tiles, empty, lists, topList, topNote, recent, recentNote, recentAll, recentList };
+  page = { root, banner, leftOut, yours, approvals, range, tiles, empty, lists, topList, topNote, recent, recentNote, recentAll, recentList };
 }
 
 function renderLists(top, repo) {
@@ -314,6 +351,7 @@ export function render(root) {
   const repo = repoName();
   renderBanner(page.banner, state);
   renderLeftOut(page.leftOut);
+  renderYours(page.yours);
   renderApprovals(page.approvals);
   syncRange(page.range);
   renderTiles(page.tiles, sources, ruleCount, sessionsEver);
@@ -331,4 +369,6 @@ export function render(root) {
 
 export const actions = {
   dismisswelcome: () => { dismissWelcome(); invalidate(); },
+  /** Approve all: every rule created by you that waits for approval, at the content this page read. */
+  approveall: () => approveMany(yourRulesToApprove().map(stored => ({ kind: "rule", id: stored.rule.id, digest: stored.approval.subject.digest }))),
 };

@@ -178,6 +178,24 @@ const NO_RAW_FETCH = regexRule(
   "Call the API through the generated client in src/api/generated.",
 );
 
+const NO_INNER_HTML = regexRule(
+  "storefront-no-inner-html",
+  "steer",
+  "Storefront renders text through React, never by writing HTML strings into the page.",
+  "\\.innerHTML\\s*=",
+  "STOREFRONT-HTML",
+  "Render the text through React instead of assigning innerHTML.",
+);
+
+const NO_DEFAULT_EXPORT = regexRule(
+  "storefront-no-default-export",
+  "log",
+  "Storefront modules use named exports, so renames show up in every import.",
+  "export\\s+default\\b",
+  "STOREFRONT-EXPORT",
+  "Export it by name instead of as the default.",
+);
+
 /** A rule in the storefront checkout's own `.rerail/rules`: the pack `worktree`, there and nowhere else. */
 const NO_LEGACY_CLIENT = regexRule(
   "storefront-no-legacy-client",
@@ -525,13 +543,16 @@ function plansFor(scenario: ScenarioName, catalog: () => RuleCatalog, now: numbe
         ...noSessions,
       }];
     case "awaiting-approval":
-      // A rule a coding agent wrote into the library, and one in the checkout's own .rerail/rules: neither approved.
+      // Three rules a coding agent wrote into the library (as /rerail-create adds the rules it finds), and one in the
+      // checkout's own .rerail/rules: none approved.
       return [{
         checkout: { ...STOREFRONT, files: { ...STOREFRONT_FILES, ".rerail/rules/no-legacy-client.json": JSON.stringify(NO_LEGACY_CLIENT) } },
         recordedAt: now - HOUR,
         changes: [
           { at: now - HOUR, apply: setUpAndStart(["typescript"]) },
           { at: now - 30 * MINUTE, apply: addLibraryRule(NO_RAW_FETCH, catalog, false) },
+          { at: now - 29 * MINUTE, apply: addLibraryRule(NO_INNER_HTML, catalog, false) },
+          { at: now - 28 * MINUTE, apply: addLibraryRule(NO_DEFAULT_EXPORT, catalog, false) },
         ],
         ...noSessions,
       }];

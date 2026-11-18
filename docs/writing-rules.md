@@ -7,11 +7,11 @@ Start with `/rerail-create` in your coding agent (`$rerail-create` in Codex):
 
 | You type | What happens |
 |---|---|
-| `/rerail-create` | The agent suggests rules from this repo's sessions and written standards, and writes the ones you pick |
+| `/rerail-create` | The agent suggests rules from this repo's sessions and written standards, tests them, and adds the ones that pass in Log until you approve them |
 | `/rerail-create use our logger, not console.log` | The agent writes that rule |
 | `/rerail-create the no-sync rule keeps telling you to use fs/promises in our CLI` | The agent tunes that rule, or offers to switch it to Log |
 
-The agent tests each draft, reads it back, and adds it only after you say yes.
+The agent tests each draft. A rule you asked for is read back and added only after you say yes. Rules it suggests are added in Log, steering no one, and the agent asks once whether to approve them so they steer; the ones you leave wait on the dashboard's Overview, where you approve them one by one or all at once.
 
 <details>
 <summary>Where the agent's method comes from</summary>

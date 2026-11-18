@@ -257,6 +257,9 @@ body[data-panel="open"] .panel{display:flex}
 .welcome .x:hover{background:var(--subtle)}
 .welcome.warn{background:var(--warning-subtle);color:var(--warning-foreground)}
 .welcome.warn p{color:var(--warning-foreground)}
+.welcome .approvelist{list-style:none;margin:10px 0 0;padding:0;display:grid;gap:8px}
+.welcome .approvelist li{padding:10px 12px;background:var(--card);border-radius:var(--radius-lg)}
+.welcome .approvelist q{font-style:italic}
 
 /* ---- sections and lists ---- */
 section.group{margin-bottom:24px}

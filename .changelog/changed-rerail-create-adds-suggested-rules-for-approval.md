@@ -1,0 +1,1 @@
+`/rerail-create` now adds the rules it suggests once they pass their tests, in Log so they steer no one, and asks once whether to approve them so they steer. The dashboard's Overview lists the rules you created that wait for approval, with what each tells the agent, to approve one by one or all at once.
