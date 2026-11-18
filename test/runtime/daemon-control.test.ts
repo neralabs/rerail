@@ -1241,6 +1241,25 @@ describe("a record whose live pid is not the home's daemon", () => {
     expect(signals).toEqual([]);
   });
 
+  // The stop waits its 10 s for the pid to end, as for any daemon that does not end at its SIGTERM.
+  it.each(["linux", "win32"] as const)("sends no SIGKILL once a process started after the record has the pid of a daemon its start proved, after the SIGTERM (%s)", async platform => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const signals: Array<string | number | undefined> = [];
+    await writeFile(stateFile, JSON.stringify(state(platform)));
+    // No lock decides; the daemon ends at its SIGTERM, and a process started since takes its pid at once.
+    const machine: DaemonMachine = {
+      ...machineWith(platform, signals, () => false, () => (signals.includes("SIGTERM") ? anHourLater() : STARTED_AT - 500)),
+      kill: (_pid, signal) => {
+        if (signal !== 0) signals.push(signal);
+        return true;
+      },
+    };
+    const found = await lookupDaemon(home, machine);
+    if (found.status === "absent") throw new Error("the daemon its start proves was not found");
+    expect(await stopFoundDaemon(home, found, machine)).toBe("stopped");
+    expect(signals).toEqual(["SIGTERM"]);
+  }, 20_000);
+
   // A PowerShell that never answers stands in for the start's read on Windows, and the proof is silent at once, so the
   // read has every millisecond of each lookup's limit.
   it("answers a hook within its wait for a busy daemon, the record kept, while the start's read never answers", async () => {
