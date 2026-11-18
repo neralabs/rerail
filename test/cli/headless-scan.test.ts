@@ -1105,12 +1105,13 @@ Referenced(src) :- reference_edge(src, _, _).
         env: { ...process.env, RERAIL_PROFILE: profile, RERAIL_CONTENT_STORE_PATH: join(home, "content.sqlite") },
       })) as ScanReport;
       expect(report.status, JSON.stringify(report.failures)).toBe("completed");
-      expect(report.violations.map(finding => finding.code).sort()).toEqual(state === "changed" ? ["Seen", "Seen"] : ["Referenced", "Seen", "Seen"]);
+      expect(report.violations.map(finding => finding.code).sort()).toEqual(state === "removed" ? ["Seen", "Seen"] : ["Referenced", "Seen", "Seen"]);
       const counters = new Map([...readFileSync(join(profile, "profile.txt"), "utf8").matchAll(/^\s*count\s+(\d+)\s+([a-z._]+)$/gmu)]
         .map(([, count, name]) => [name, Number(count)]));
       expect(counters.get("git.tree_decodes") ?? 0).toBe(state === "warm" ? 0 : 2);
-      expect(counters.get("reference.tape_summaries") ?? 0).toBe(state === "warm" ? 0 : state === "changed" ? 1 : 3);
+      expect(counters.get("reference.tape_summaries") ?? 0).toBe(state === "warm" ? 0 : state === "cold" ? 3 : 1);
       expect(counters.get("source_ast.parses") ?? 0).toBe(0);
+      if (state === "cold") expect(counters.get("reference.name_links") ?? 0).toBeGreaterThan(0);
     };
     evaluate("walk-first", [walk, references], "cold");
     evaluate("references-first", [references, walk], "cold");
@@ -1118,7 +1119,11 @@ Referenced(src) :- reference_edge(src, _, _).
     writeFileSync(join(root, "src/b.py"), "def replacement():\n    pass\n");
     git(root, "add", "src/b.py");
     git(root, "commit", "-qm", "change the target file");
-    evaluate("references-first", [references, walk], "changed");
+    evaluate("references-first", [references, walk], "removed");
+    writeFileSync(join(root, "src/b.py"), "def helper():\n    return 42\n");
+    git(root, "add", "src/b.py");
+    git(root, "commit", "-qm", "bind the name again");
+    evaluate("references-first", [references, walk], "restored");
   }, 90_000);
 
   it.each(["loose", "packed"])("rechecks a %s tree after corruption and restoration with the same cache", (representation) => {

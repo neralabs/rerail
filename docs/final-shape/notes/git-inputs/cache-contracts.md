@@ -263,6 +263,20 @@ Use file-local definition ranges to join the summary to each placement's current
 The link step reads the current placements, import names, and rule settings.
 A change in another file can change those links without rebuilding this file's summary.
 
+Count a name link when the resolver follows the name and its bindings.
+The count measures lookup work separately from tape summaries and joins to current nodes.
+Retain link results by the name and its relevant binding facts.
+A lookup depends on missing bindings where a new definition could change the answer.
+Use package, import, and class facts to derive those dependencies.
+Use paths and definition ranges for the saved targets. Join them to node IDs after restoring the link.
+The scope or revision does not enter a link key in place of these facts.
+Test an unchanged run, removal and addition of an export, and an edit in an unrelated module.
+An unchanged run should link zero names. A changed binding should only relink its dependents.
+In a two-package probe, each package had a caller and its imported target.
+The unchanged run restored all six summaries and linked both names again.
+Removing and then restoring the target in one package rebuilt one summary and linked both names on each run.
+Only the affected caller's finding changed.
+
 ## 7. Mutable observations and failure retry
 
 Ref and revision resolution are observed inputs.

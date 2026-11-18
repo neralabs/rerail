@@ -1502,6 +1502,9 @@ impl Graph {
 
     /// What `name` links to, and the names linking it followed.
     fn link_followed(&self, name: &Name) -> (Link, Vec<Name>) {
+        if self.references {
+            rerail_prof::count("reference.name_links", 1);
+        }
         let mut followed = Vec::new();
         let link = self.link_name(name, 0, &mut followed);
         followed.sort_unstable();
