@@ -444,7 +444,7 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
         // Its kept entry (decision 0402): the same rows, flat, packed by the writer.
         let mut flat = Vec::with_capacity(n * w);
         each(&mut |b| flat.extend_from_slice(b));
-        kept.push(KeptPut { rel: f.name.clone(), ident: f.ident, part: 0, digest, reads: Vec::new(), types: types.clone(), what: KeptWhat::Flat { widths: vec![8; w], rows: flat, n } });
+        kept.push(KeptPut { rel: f.name.clone(), ident: f.ident, part: 0, digest, reads: Vec::new(), types: types.clone(), what: KeptWhat::Flat { widths: vec![8; w], rows: flat, n, levels: None } });
         written += n;
         puts.push(FramePut::encoded_as(f.clone(), 0, digest, Vec::new(), types, n, bytes));
     }
@@ -462,7 +462,7 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
         }
         written += n;
         let bytes = super::retain::held_bytes(held);
-        kept.extend(super::retain::kept_rows(f, digest, reads.clone(), types.clone(), held));
+        kept.push(super::retain::kept_rows(f, digest, reads.clone(), types.clone(), held));
         puts.push(FramePut::encoded_as(f.clone(), 0, digest, reads, types, n, bytes));
     }
     crate::code_rule_dsl::logic::profile::decision("cross-file part kept across processes (t32 4.1)", || format!("{} frames, {written} rows, written to the store", puts.len()));

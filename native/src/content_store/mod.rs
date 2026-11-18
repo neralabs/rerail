@@ -75,7 +75,7 @@ pub use compression::compress;
 pub use frames::forget_snapshot as forget_frames_snapshot;
 pub use segments::{SealedSegments, SegmentBytes, SegmentWriter};
 pub use object_segments::{ObjectBytes, ObjectFrame, ObjectMaps, QueuedTape};
-pub use frames::{CrossSpace as FramesCrossSpace, Unreachable as UnreachableFrames, Admitted as AdmittedFrame, Encoded as EncodedFrame, FramePlacer, Placed as PlacedFrame, Put as FramePut, Rel as FrameRel, Retag as FrameRetag, Delta as FrameDelta, Rows as FrameRows, Stored as FrameStored, local_space, MemoBlob, MemoPut, MemoRow, confirm_key as frame_confirm_key, reads_hash as frame_reads_hash};
+pub use frames::{CrossSpace as FramesCrossSpace, Unreachable as UnreachableFrames, Admitted as AdmittedFrame, Encoded as EncodedFrame, FramePlacer, Placed as PlacedFrame, Put as FramePut, Rel as FrameRel, Retag as FrameRetag, Delta as FrameDelta, Rows as FrameRows, Stored as FrameStored, local_space, MemoBlob, MemoPut, MemoRow, confirm_key as frame_confirm_key, reads_hash as frame_reads_hash, LEVELS_PART as FRAME_LEVELS_PART};
 pub use connection::BusyRetries;
 pub use connection::OperationDeadline;
 pub use atoms::{ProcessIds, StoreIds, Sym};

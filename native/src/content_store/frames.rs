@@ -164,7 +164,48 @@ enum Data {
     /// step 4): a run that changed a few rows of a large relation writes those, not the relation. `n`: the rows after
     /// the last; `delta_rows`: the deltas' rows.
     Chain { base: Box<Data>, deltas: Vec<Arc<Admitted>>, n: usize, delta_rows: usize },
+    /// A kept relation read where it lies in its space's chain of mapped files (decision 0402 step 5): its packed
+    /// columns, their symbols the store's ids, mapped to this process's as they are read.
+    Kept(Arc<KeptAt>),
 }
+
+/// A kept entry: the space's chain (mapped; held while a frame names it) and the entry's key in it.
+pub(super) struct KeptAt {
+    space: Arc<super::kept_facts::KeptSpace>,
+    rel: Rel,
+    part: i64,
+    /// The entry's levels (decision 0090), one column, in place of its rows.
+    levels: bool,
+    types: Vec<u8>,
+    n: usize,
+    bytes: usize,
+    store: Arc<super::atoms::Atoms>,
+}
+
+impl KeptAt {
+    /// Each column's values, the store's ids as they lie.
+    fn columns(&self) -> StoreResult<Vec<Vec<i64>>> {
+        use rerail_blocks::kept::{FactKey, KeptRead};
+        let view = self.space.view();
+        let k = view
+            .get(&FactKey { rel: &self.rel.name, ident: &self.rel.ident, part: self.part })
+            .ok_or_else(|| super::StoreError::Corrupt(format!("a kept entry its chain no longer holds: {} part {}", self.rel.name, self.part)))?;
+        let read = |c: &rerail_blocks::col::IntCol| {
+            let mut col = Vec::with_capacity(self.n);
+            c.for_each(|v| col.push(v));
+            col
+        };
+        if self.levels {
+            let levels = k.rows.levels().ok_or_else(|| super::StoreError::Corrupt(format!("a kept entry's levels gone: {}", self.rel.name)))?;
+            return Ok(vec![read(levels)]);
+        }
+        Ok((0..self.types.len()).map(|c| read(k.rows.col(c))).collect())
+    }
+}
+
+/// The part of a derived relation's frames that holds its rows' levels (decision 0090), one row each in its rows'
+/// order, with their frame's digest. Not -1: parts -1 to -k are a relation's delta frames (decision 0117 step 4).
+pub const LEVELS_PART: i64 = i64::MIN + 1;
 
 /// The first type of a delta frame's (decision 0117 step 4): its first column is each row's sign (-1 gone, 1 added),
 /// its others the relation's.
@@ -223,6 +264,16 @@ fn rows_of(data: &Data) -> StoreResult<Rows> {
         }
         Data::Metadata => Err(super::StoreError::Invalid("frame payload was not admitted".into())),
         Data::Chain { base, deltas, .. } => apply_deltas(rows_of(base)?, deltas),
+        Data::Kept(k) => {
+            let width = k.types.len();
+            let cols = k.columns()?;
+            let mut rows = Vec::with_capacity(width * k.n);
+            for r in 0..if width == 0 { 0 } else { k.n } {
+                rows.extend(cols.iter().map(|c| c[r]));
+            }
+            super::atoms::map_columns(&k.types, &mut rows, |v| k.store.to_local(super::StoreIds::as_stored(v)).map(drop))?;
+            Ok(Rows { types: k.types.clone(), rows, n: k.n })
+        }
     }
 }
 
@@ -245,9 +296,15 @@ impl Admitted {
         Admitted { stored, data: Data::Chain { base, deltas, n: (n + added).saturating_sub(gone), delta_rows: delta_rows + gone + added } }
     }
 
+    /// Whether its rows are read where they lie in a chain of kept facts (decision 0402 step 5).
+    #[cfg(test)]
+    pub(super) fn from_chain(&self) -> bool {
+        matches!(self.data, Data::Kept(_))
+    }
+
     pub fn rows(&self) -> StoreResult<Rows> {
         match &self.data {
-            Data::Chain { .. } | Data::Encoded { .. } => rows_of(&self.data),
+            Data::Chain { .. } | Data::Encoded { .. } | Data::Kept(_) => rows_of(&self.data),
             Data::Metadata => Err(super::StoreError::Invalid("frame payload was not admitted".into())),
         }
     }
@@ -273,6 +330,16 @@ impl Admitted {
                     of(base, out)?;
                     deltas.iter().try_for_each(|d| of(&d.data, out))
                 }
+                Data::Kept(k) => {
+                    if k.types.contains(&b's') {
+                        for (c, col) in k.columns()?.into_iter().enumerate() {
+                            if k.types[c] == b's' {
+                                out.extend(col);
+                            }
+                        }
+                    }
+                    Ok(())
+                }
                 Data::Encoded { store: None, .. } | Data::Metadata => Ok(()),
             }
         }
@@ -285,6 +352,7 @@ impl Admitted {
         fn of(data: &Data) -> Option<Arc<super::atoms::Atoms>> {
             match data {
                 Data::Encoded { store, .. } => store.clone(),
+                Data::Kept(k) => Some(Arc::clone(&k.store)),
                 Data::Chain { base, deltas, .. } => of(base).or_else(|| deltas.iter().find_map(|d| of(&d.data))),
                 Data::Metadata => None,
             }
@@ -297,6 +365,7 @@ impl Admitted {
         fn of(data: &Data) -> Option<&[u8]> {
             match data {
                 Data::Encoded { types, .. } => Some(types),
+                Data::Kept(k) => Some(&k.types),
                 Data::Chain { base, .. } => of(base),
                 Data::Metadata => None,
             }
@@ -309,6 +378,7 @@ impl Admitted {
         fn of(data: &Data) -> Option<usize> {
             match data {
                 Data::Encoded { types, .. } => Some(types.len()),
+                Data::Kept(k) => Some(k.types.len()),
                 Data::Chain { base, .. } => of(base),
                 Data::Metadata => None,
             }
@@ -320,6 +390,7 @@ impl Admitted {
     pub fn len(&self) -> Option<usize> {
         match &self.data {
             Data::Encoded { n, .. } => Some(*n),
+            Data::Kept(k) => Some(k.n),
             Data::Chain { n, .. } => Some(*n),
             Data::Metadata => None,
         }
@@ -328,6 +399,7 @@ impl Admitted {
     pub fn encoded_bytes(&self) -> usize {
         match &self.data {
             Data::Encoded { bytes, .. } => bytes.len(),
+            Data::Kept(k) => k.bytes,
             Data::Chain { base, deltas, .. } => {
                 let b = Admitted { stored: self.stored.clone(), data: (**base).clone() };
                 b.encoded_bytes() + deltas.iter().map(|d| d.encoded_bytes()).sum::<usize>()
@@ -515,6 +587,47 @@ impl ContentStore {
         Ok((frames, bytes))
     }
 
+    /// Binds each relation of `held` (a space's frames as read) whose frame its space's chain of kept facts keeps
+    /// (decision 0402 step 5): the entry's digest and types the frame's. Its rows are then read where they lie in the
+    /// chain, not decoded; its deltas are not composed (the entry holds the rows after them, `chains` forgets them);
+    /// its levels (`LEVELS_PART`) are the entry's, in the entry's row order. Others stay frames until the frames are
+    /// retired (step 6). Returns how many were bound.
+    fn bind_kept(&self, connection: &Connection, space: &[u8; 32], held: &mut HashMap<(Rel, i64), Arc<Admitted>>, chains: &mut HashMap<Rel, u32>) -> StoreResult<usize> {
+        use rerail_blocks::kept::{FactKey, KeptRead as _};
+        let rows = super::kept_facts::chain_rows(connection, space)?;
+        if rows.is_empty() {
+            return Ok(0);
+        }
+        let chain = Arc::new(super::kept_facts::KeptSpace::open(&self.database_path, space, &rows)?);
+        let view = chain.view();
+        let atoms = self.atoms_handle();
+        let keys: Vec<(Rel, i64)> = held.iter().filter(|((_, p), f)| *p >= 0 && f.types().is_some()).map(|(k, _)| k.clone()).collect();
+        let mut bound = 0;
+        for (rel, part) in keys {
+            let frame = Arc::clone(&held[&(rel.clone(), part)]);
+            let Some(k) = view.get(&FactKey { rel: &rel.name, ident: &rel.ident, part }) else { continue };
+            if k.digest != frame.stored.digest || frame.types() != Some(k.types) {
+                continue;
+            }
+            let at = |levels: bool| KeptAt { space: Arc::clone(&chain), rel: rel.clone(), part, levels, types: if levels { vec![b'i'] } else { k.types.to_vec() }, n: k.rows.len(), bytes: k.bytes(), store: Arc::clone(&atoms) };
+            held.insert((rel.clone(), part), Arc::new(Admitted { stored: frame.stored.clone(), data: Data::Kept(Arc::new(at(false))) }));
+            if part == 0 {
+                chains.remove(&rel);
+                let levels = (rel.clone(), LEVELS_PART);
+                match k.rows.levels() {
+                    Some(_) => {
+                        held.insert(levels, Arc::new(Admitted { stored: Stored { digest: frame.stored.digest, reads: Vec::new() }, data: Data::Kept(Arc::new(at(true))) }));
+                    }
+                    None => {
+                        held.remove(&levels);
+                    }
+                }
+            }
+            bound += 1;
+        }
+        Ok(bound)
+    }
+
     /// The snapshot, read: every frame but the memo's of before decision 0240 (`MEMO_RELS`), which nothing reads,
     /// and, with `cross`, every recorded root's cross space (`CrossSpace::cross_of`) and the run's own.
     fn install_snapshot(&self, cross: Option<&CrossSpace<'_>>) -> StoreResult<(usize, usize)> {
@@ -556,6 +669,14 @@ impl ContentStore {
                 snapshot.entry(space).or_default().insert(key, frame);
             }
             drop(st);
+            // Each relation its space's chain keeps as its frame is (decision 0402 step 5): read there, not decoded.
+            let mut bound = 0;
+            for (space, held) in snapshot.iter_mut() {
+                bound += self.bind_kept(&connection, space, held, chains.entry(*space).or_default())?;
+            }
+            if std::env::var_os("RERAIL_FRAMES_TRACE").is_some() {
+                eprintln!("RERAIL_FRAMES_TRACE kept relations bound from their chains: {bound} of {frames} frames read");
+            }
             let mut confirmed = Confirms::new();
             {
                 let mut st = connection.prepare("SELECT space, data FROM frame_confirmed")?;
@@ -645,6 +766,10 @@ impl ContentStore {
             }
             None => None,
         };
+        let bound = self.bind_kept(&connection, &space, &mut got, &mut chains)?;
+        if std::env::var_os("RERAIL_FRAMES_TRACE").is_some() {
+            eprintln!("RERAIL_FRAMES_TRACE kept relations of the cross space bound from its chain: {bound} of {}", got.len());
+        }
         drop(connection);
         let _held = rerail_prof::code_rule_dsl::logic::profile::span(|| "their symbols held".into());
         hold_symbols(&self.atoms, got.values())?;
@@ -1547,7 +1672,7 @@ impl Encoded {
     fn framed(&self) -> Option<Framed<'_>> {
         match &self.frame.data {
             Data::Encoded { types, n, bytes, .. } => Some(Framed { rel: &self.rel, part: self.part, stored: &self.frame.stored, types, n: *n, bytes, place: self.place }),
-            Data::Metadata | Data::Chain { .. } => None,
+            Data::Metadata | Data::Chain { .. } | Data::Kept(_) => None,
         }
     }
 }

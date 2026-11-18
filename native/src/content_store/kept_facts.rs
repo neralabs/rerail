@@ -40,8 +40,9 @@ pub trait KeptRows: Send + Sync {
 pub enum KeptWhat {
     /// A relation the run derived: its live rows, packed.
     Rows(Box<dyn KeptRows>),
-    /// Rows not held as a relation (an input's granule): `n` rows of `widths.len()` columns, flat.
-    Flat { widths: Vec<u32>, rows: Vec<i64>, n: usize },
+    /// Rows not held as a relation (an input's granule): `n` rows of `widths.len()` columns, flat; each row's level
+    /// (decision 0090) where its relation has them.
+    Flat { widths: Vec<u32>, rows: Vec<i64>, n: usize, levels: Option<Vec<u32>> },
     /// The kept entry's rows as they are, with these reads (a frame's retag).
     Reads,
     /// No longer kept.
@@ -154,7 +155,7 @@ fn columns(what: &KeptWhat, types: &[u8], map: Option<MapIds>) -> StoreResult<Co
                 (cols, n, a, levels.map(|l| ids.iter().map(|&id| l[id]).collect()))
             }
         }
-        KeptWhat::Flat { widths, rows, n } => {
+        KeptWhat::Flat { widths, rows, n, levels } => {
             let a = widths.len();
             let mut cols = vec![0i64; n * a];
             for (r, row) in rows.chunks_exact(a.max(1)).take(*n).enumerate() {
@@ -162,7 +163,7 @@ fn columns(what: &KeptWhat, types: &[u8], map: Option<MapIds>) -> StoreResult<Co
                     cols[c * n + r] = v;
                 }
             }
-            (cols, *n, a, None)
+            (cols, *n, a, levels.clone().filter(|l| l.len() == *n))
         }
         KeptWhat::Reads | KeptWhat::Gone => unreachable!("a put with rows"),
     };

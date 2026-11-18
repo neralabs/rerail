@@ -49,7 +49,7 @@ fn put(rel: &str, part: i64, digest: u64, what: KeptWhat) -> KeptPut {
 }
 
 fn flat(rows: &[i64]) -> KeptWhat {
-    KeptWhat::Flat { widths: vec![8, 8], rows: rows.to_vec(), n: rows.len() / 2 }
+    KeptWhat::Flat { widths: vec![8, 8], rows: rows.to_vec(), n: rows.len() / 2, levels: None }
 }
 
 /// A store's file with its schema, and a connection to it.
@@ -157,6 +157,42 @@ fn a_rolled_back_write_is_not_the_spaces() {
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
+/// K-R8a (decision 0402 step 5): a run binds a relation whose frame its space's chain keeps (the same digest and
+/// types) from the chain: its rows in canonical order, its frame's digest and reads, and its levels as the entry has
+/// them, in its rows' order (not the frame's levels part, in the frame's order); a relation whose entry is stale or
+/// missing (a store from before the chain) from its frame.
+#[test]
+fn a_kept_relation_is_bound_from_its_chain() {
+    use crate::content_store::{FRAME_LEVELS_PART, FramePut, FrameRel, FrameRows, FrameStored};
+    let (path, c) = store("bind");
+    let rel = |n: &str| FrameRel { name: n.into(), ident: ID };
+    let (p, q, s) = (rel("p"), rel("q"), rel("s"));
+    let frame = |rel: &FrameRel, part: i64, types: &[u8], v: &[i64]| FramePut { rel: rel.clone(), part, digest: 1, reads: vec![("r".into(), 1)], rows: FrameRows { types: types.to_vec(), rows: v.to_vec(), n: v.len() / types.len() } };
+    {
+        let cs = crate::content_store::ContentStore::open(&path).unwrap();
+        let puts = [frame(&p, 0, b"ii", &[3, 30, 1, 10]), frame(&p, FRAME_LEVELS_PART, b"i", &[5, 6]), frame(&q, 0, b"ii", &[5, 50]), frame(&s, 0, b"ii", &[7, 70])];
+        cs.keep_frames(&SPACE, &puts, &[], None).unwrap();
+    }
+    // p's entry is its frame's, with its levels; q's is stale (another digest); s has none.
+    let mut with_levels = put("p", 0, 1, flat(&[3, 30, 1, 10]));
+    if let KeptWhat::Flat { levels, .. } = &mut with_levels.what {
+        *levels = Some(vec![5, 6]);
+    }
+    write(&path, &c, vec![with_levels, put("q", 0, 2, flat(&[5, 50]))]);
+    let cs = crate::content_store::ContentStore::open(&path).unwrap();
+    cs.preload_frames().unwrap();
+    let got = cs.admit_frame_parts(&SPACE, &[(p.clone(), 0), (p.clone(), FRAME_LEVELS_PART), (q.clone(), 0), (s.clone(), 0)]).unwrap();
+    let (rows, levels) = (&got[&(p.clone(), 0)], &got[&(p.clone(), FRAME_LEVELS_PART)]);
+    assert!(rows.from_chain() && levels.from_chain(), "a kept relation and its levels are read from the chain");
+    assert_eq!(rows.stored, FrameStored { digest: 1, reads: vec![("r".into(), 1)] });
+    assert_eq!((rows.rows().unwrap().rows, rows.len()), (vec![1, 10, 3, 30], Some(2)));
+    assert_eq!(levels.rows().unwrap().rows, vec![6, 5], "the levels follow the entry's rows");
+    assert!(!got[&(q.clone(), 0)].from_chain() && !got[&(s.clone(), 0)].from_chain(), "a stale or missing entry: the frame");
+    assert_eq!(got[&(q.clone(), 0)].rows().unwrap().rows, vec![5, 50]);
+    crate::content_store::forget_frames_snapshot(path.to_str().unwrap());
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
 /// K-R7 (decision 0402 step 4), over a real store (`RERAIL_KEPT_STORE`, a copy no run is writing): every kept entry's
 /// rows equal its frame's as sets, and the chain's bytes against the frames' segments, with what each encoding holds.
 /// Run with `--ignored`; prints its report.
@@ -190,14 +226,34 @@ fn kept_entries_equal_their_frames() {
                 continue;
             };
             let w = frame.types.len();
-            let mut want: Vec<Vec<i64>> = if w == 0 { Vec::new() } else { frame.rows.chunks_exact(w).map(<[i64]>::to_vec).collect() };
+            // A nullary relation's rows are its count: one row (true) or none.
+            let mut want: Vec<Vec<i64>> = if w == 0 { vec![Vec::new(); frame.n.min(1)] } else { frame.rows.chunks_exact(w).map(<[i64]>::to_vec).collect() };
             want.sort();
             want.dedup();
-            let got: Vec<Vec<i64>> = (0..k.rows.len()).map(|i| k.row(i)).collect();
-            if got != want && !(w == 0 && got.is_empty()) {
+            let mut got: Vec<Vec<i64>> = (0..k.rows.len()).map(|i| k.row(i)).collect();
+            got.sort();
+            if got != want {
                 differ += 1;
                 if differ <= 5 {
                     eprintln!("differs: {} part {}: kept {} rows, frame {}", k.key.rel, k.key.part, got.len(), want.len());
+                }
+            }
+        }
+    }
+    // Every frame of a space with a chain has its kept entry (a delta frame, part < 0, is its relation's part 0's).
+    let mut no_kept = 0usize;
+    for s in &spaces {
+        let space: [u8; 32] = s.as_slice().try_into().unwrap();
+        let kept = KeptSpace::open(&path, &space, &chain_rows(&c, &space).unwrap()).unwrap();
+        let view = kept.view();
+        let mut st = c.prepare("SELECT rel, ident, part FROM frames WHERE space = ?1 AND part >= 0 AND rel NOT IN ('local', 'local_out')").unwrap();
+        let keys: Vec<(String, Vec<u8>, i64)> = st.query_map([&space[..]], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().collect::<Result<_, _>>().unwrap();
+        for (rel, ident, part) in keys {
+            let ident: [u8; 32] = ident.as_slice().try_into().unwrap();
+            if view.get(&FactKey { rel: &rel, ident: &ident, part }).is_none() {
+                no_kept += 1;
+                if no_kept <= 5 {
+                    eprintln!("no kept entry: space {:02x}{:02x}{:02x}{:02x} {rel} part {part}", space[0], space[1], space[2], space[3]);
                 }
             }
         }
@@ -209,6 +265,6 @@ fn kept_entries_equal_their_frames() {
         eprintln!("  {tag:6} {cols:7} columns {values:11} values {bytes:11} bytes  {:.2} bits a value", *bytes as f64 * 8.0 / (*values).max(1) as f64);
     }
     eprintln!("  levels {levels_bytes} bytes");
-    eprintln!("differ {differ}  with no frame {no_frame}");
-    assert_eq!(differ, 0);
+    eprintln!("differ {differ}  with no frame {no_frame}  frames with no kept entry {no_kept}");
+    assert_eq!((differ, no_kept), (0, 0));
 }

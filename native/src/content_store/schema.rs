@@ -464,8 +464,8 @@ CREATE TABLE IF NOT EXISTS atom_blocks (
 
 -- A space's kept facts (decisions 0401, 0402 K4-K5): a chain of frozen files in `<store>.facts/<space>/`,
 -- oldest first, each with its maker's tag (a file not its row's is refused). A run's write appends a
--- row; a roll-up replaces them with one. Metadata only: the rows are in the files. Additive: an older
--- binary reads the frames.
+-- row; a merge replaces the newest rows with one. Metadata only: the rows are in the files. Additive:
+-- an older binary reads the frames.
 CREATE TABLE IF NOT EXISTS facts_chain (
     space BLOB NOT NULL CHECK(length(space) = 32),
     seq INTEGER NOT NULL CHECK(seq >= 1),
