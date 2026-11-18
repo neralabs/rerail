@@ -5359,13 +5359,7 @@ fn printf_pieces(format: &str, args: &[Term]) -> Option<Term> {
 }
 
 /// `prog` reading the base relation `rel` (`child`, `node`): declared as the engine declares it, and an input unless a
-/// rule makes it. For rules added to a program already read (`corpus::bridge`), as lowering adds them for its own.
-pub fn base_relation(prog: &mut Program, rel: &str) {
-    let derived = prog.rules.iter().any(|r| r.head.rel == rel);
-    base_relation_derived(prog, rel, derived);
-}
-
-/// `base_relation`, told whether a rule derives `rel` (`derived`): `prog` may be a header alone.
+/// rule derives it (`derived`). `prog` may be a header alone.
 pub fn base_relation_derived(prog: &mut (impl crate::code_rule_dsl::logic::program_image::fields::FieldsMut + ?Sized), rel: &str, derived: bool) {
     let cols: &[(&str, &str)] = match rel {
         "child" => &[("p", "node"), ("c", "node"), ("i", "int")],

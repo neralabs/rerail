@@ -1,7 +1,7 @@
 # 0083: Typing and libraries run as phases of one engine in separate fact spaces; searches are a memoised program kind
 
 Status: proposed (2026-11-08). Draft for review. Its phases are on the run path since 2026-11-18 ("Built: the phases
-on the run path", step 1 of 3). Numbered 0083: final-rerail-shape holds 0081, More-ergonomic-rule-syntax holds 0081 and 0082.
+on the run path", steps 1 and 2 of 3). Numbered 0083: final-rerail-shape holds 0081, More-ergonomic-rule-syntax holds 0081 and 0082.
 It supersedes, for typing, the cross-file keys of 0065 §2 (one key per import component) and 0076. It keeps
 0065 §1 (no rounds), §2a (requests answered inside a fixpoint) and §3 (terms, instantiation by value).
 
@@ -477,7 +477,10 @@ The steps:
      `calls_p3`'s edges, proven types and open calls, and no typing program runs), `leg_083_typed_…` and
      `quoted_annotations_…` (their wanted rows, which the bridge gave), the analysis phase's oracle tests, the
      phase tests, and the converter's.
-2. **The bridge goes**: no rule reads `typing_<program>__<output>` now.
+2. **The bridge goes** (done): no rule read `typing_<program>__<output>` any more. `corpus::bridge`, the run's
+   "typing programs" job beside phase 1, `Report::typing_runs` and the converter's and the combine's exceptions for
+   bridged names are gone; a run's report names the phases it ran (`phase_runs`). `typing/programs/calls.rr` and
+   `calls_rust.rr` stay as programs of their own (the oracle and Jedi tests, the golden plans), read by no rule.
 3. **The library's import resolution reads P1 and P2**: `python/imports.rr` resolves imports and re-exports across
    files itself (`exports`, `resolve_export`, the module graph), which `sources.rr` and `types.rr` do once.
 

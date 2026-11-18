@@ -69,7 +69,6 @@ pub mod maintain;
 pub mod retain;
 pub mod keptstats;
 pub mod input_delta;
-pub mod bridge;
 pub mod phases;
 pub mod constants;
 pub mod inputs;
@@ -283,8 +282,6 @@ pub struct Report {
     pub typing: TypingReport,
     /// Text tests (decision 0037): relations, distinct strings tested, and the CPU testing them (seconds).
     pub text: (usize, usize, f64),
-    /// The typing programs run for the rule's bridged relations (`bridge`), with their reports.
-    pub typing_runs: bridge::Runs,
     /// The earlier phases this run read (decision 0083 §1), each its own run.
     pub phase_runs: Vec<phases::PhaseRun>,
     /// The plans this run and the runs nested in it used (its memo plan, its prepared programs, its phases', its
@@ -2341,8 +2338,8 @@ fn drop_relations<P: link::Part>(part: &mut P, relations: &BTreeSet<String>) -> 
 }
 
 /// A program's relations that take its prefix (`p<i>_`) when programs are combined: what it declares, holds facts of
-/// or derives, other than the base inputs, the shared outputs, `core.rr`'s (decision 0141), the bridged and the
-/// guests' shared relations. A repository file a policy reads (`.input r(IO=…)`) is its own.
+/// or derives, other than the base inputs, the shared outputs, `core.rr`'s (decision 0141), the earlier phases'
+/// exports and the guests' shared relations. A repository file a policy reads (`.input r(IO=…)`) is its own.
 fn own_names<P: link::Part>(part: &P, core: &BTreeSet<String>) -> BTreeSet<String> {
     let prog = part.head();
     let heads: Vec<String> = part.rules().into_iter().map(|(head, _)| head).collect();
@@ -2356,7 +2353,7 @@ fn own_names<P: link::Part>(part: &P, core: &BTreeSet<String>) -> BTreeSet<Strin
         .map(String::as_str)
         .chain(facts.iter().map(String::as_str))
         .chain(heads.iter().map(String::as_str))
-        .filter(|r| (!inputs.iter().any(|i| i == r) || file_inputs.contains(*r)) && !shared_outputs(r) && !core.contains(*r) && !bridge::is_bridged(r) && !phases::is_phased(r) && !guests::SHARED.contains(r))
+        .filter(|r| (!inputs.iter().any(|i| i == r) || file_inputs.contains(*r)) && !shared_outputs(r) && !core.contains(*r) && !phases::is_phased(r) && !guests::SHARED.contains(r))
         .map(str::to_owned)
         .collect()
 }
@@ -3367,7 +3364,7 @@ fn run_observed(
     };
     // A profiled run holds the profile (`profile::one_run`), and asks again once it does: a test that turned
     // profiling on may have turned it off meanwhile.
-    // A run nested in another on this thread (phase 0's, a phase's, the constants', a bridged program's) and phase
+    // A run nested in another on this thread (phase 0's, a phase's, the constants') and phase
     // 0's own run hold it only when no run does: nested, the profile is the outer run's, and such a run neither
     // resets nor writes it. Waiting for it would wait for the outer run, which waits for this one. So does a run
     // behind the run on another thread (`profile::behind`: the test store's template, filled while a profiled test
@@ -3402,10 +3399,6 @@ fn run_observed(
     let (mut v, mut texts) = combine_version(programs, masked, &given.graphs, &added, read, &lists)?;
     let mut shape = shape::Shape::of(&v);
     drop(combining);
-    // Typing programs' answers the rule reads (`bridge`): each program runs first, and its rows are the rule's facts.
-    // They run as a job on the pool beside phase 1 (decision 0192): neither reads the other's results, each writes in
-    // its own directory, and the job runs in this run's context (`run_state`), so its runs are nested in this one.
-    let bridged_slot = parking_lot::Mutex::new(None);
     // Earlier phases' exports it reads (`phases`, decision 0083 §1): each phase runs first, in its own fact space.
     // The constants' own run runs no phase: a constant reads no input (`constants::foldable`), and a phase export is
     // one. Run here, a phase took the constants' option for its own, and wrote none of its exports.
@@ -3420,12 +3413,8 @@ fn run_observed(
     // borrows them.
     let own_sources = texts::Sources::default();
     let source_texts = texts::Given { own: &own_sources, handed: given.sources };
-    let phase_one = crate::threads::scope(|jobs| {
-        let v = &v;
-        let prog: &crate::code_rule_dsl::logic::program_image::Version = v;
-        let bridged_slot = &bridged_slot;
-        let pruned = move || preparation::pruned(Arc::clone(v)).map(|p| shape::Shape::of(&p)).map_err(Error::Plan);
-        jobs.spawn("typing programs", move |_| *bridged_slot.lock() = Some(bridge::facts(prog, &pruned, root, out, modes, binding, chunk_nodes, typing)));
+    let phase_one = (|| {
+        let prog: &crate::code_rule_dsl::logic::program_image::Version = &v;
         Ok::<_, Error>(if t_facts.is_none()
             && options.get("inputFiles").is_none()
             && phases::declared(prog).is_none()
@@ -3469,8 +3458,7 @@ fn run_observed(
         } else {
             None
         })
-    });
-    let (bridged, typing_runs) = bridged_slot.into_inner().expect("the typing programs' job ran")?;
+    })();
     let _phase_one = phase_one?;
     let (phased, mut phase_runs) = if options.get(constants::OWN).is_some() {
         (Default::default(), Vec::new())
@@ -3481,15 +3469,12 @@ fn run_observed(
     // A phase's exports are the run's inputs, not its facts: their rows are bound as relations once the program is
     // prepared, so an edit that changes them leaves the program, its prepared plans and its keys as they were.
     // The split takes them as constants of the run (`file_local::run_constant`).
-    let add_bridged = |prog: &mut Edit<'_>| {
-        for (rel, rows) in &bridged {
-            prog.b.add_facts(rel, &rows.iter().map(crate::code_rule_dsl::logic::front::List::from).collect::<Vec<_>>());
-        }
+    let add_phased = |prog: &mut Edit<'_>| {
         for rel in phased.keys() {
             prog.b.add_input(rel);
         }
     };
-    edit_fields(&mut v, |p| Ok(add_bridged(p)))?;
+    edit_fields(&mut v, |p| Ok(add_phased(p)))?;
     // The Git functors answer from the repository holding this run's root (`strings::git`), for this run only.
     let _git = crate::code_rule_dsl::logic::strings::git::scope(root);
     // The run's constants (`constants`): derived first, over no documents, and given as facts. In the constants' own
@@ -3621,7 +3606,7 @@ fn run_observed(
         if !facts.is_empty() {
             added = added.with("declared_ret", facts.into_iter().map(|(q, t)| vec![front::Value::Str(q.into()), front::Value::Str(t.into())]));
             (v, texts) = combine_version(programs, masked, &given.graphs, &added, read, &lists)?;
-            edit_fields(&mut v, |p| Ok(add_bridged(p)))?;
+            edit_fields(&mut v, |p| Ok(add_phased(p)))?;
             (folded, constants_plans) = fold_constants(&mut v, &added)?;
             shape = shape::Shape::of(&v);
         }
@@ -4639,7 +4624,7 @@ fn run_observed(
             })
             .collect()
     };
-    // The phases' exports the program reads, as relations of atoms (`add_bridged`).
+    // The phases' exports the program reads, as relations of atoms (`add_phased`).
     let repository = {
         let mut repository = repository;
         let phased_read: BTreeSet<&String> = phased.keys().filter(|rel| read.contains(*rel)).collect();
@@ -10006,7 +9991,7 @@ fn run_observed(
     if !nested && !phase0::active() {
         crate::code_rule_dsl::logic::profile::run_ends(crate::code_rule_dsl::logic::profile::snapshot());
     }
-    let report = Report { phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), memo_kept, stats_kept: stats_kept.into_inner(), cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, guests_unseen: guests_unseen.load(std::sync::atomic::Ordering::Relaxed), file_tapes: (file_tapes.0.load(std::sync::atomic::Ordering::Relaxed), file_tapes.1.load(std::sync::atomic::Ordering::Relaxed)), cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, language_asked, cross_handed, cross_unloaded, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
+    let report = Report { phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), memo_kept, stats_kept: stats_kept.into_inner(), cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, guests_unseen: guests_unseen.load(std::sync::atomic::Ordering::Relaxed), file_tapes: (file_tapes.0.load(std::sync::atomic::Ordering::Relaxed), file_tapes.1.load(std::sync::atomic::Ordering::Relaxed)), cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, language_asked, cross_handed, cross_unloaded, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
     handed.succeeded();
     Ok(report)
 }

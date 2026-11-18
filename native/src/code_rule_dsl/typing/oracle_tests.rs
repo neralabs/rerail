@@ -474,7 +474,6 @@ unknown(cp, cs) :- call_open(c), node(d, c, _, cs, _), doc(d, cp, _).
     let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
     let through = rule_dir.join("out");
     let report = corpus::run(&text, &project, None, &through, "program", Binding::Cpu, 1 << 18).unwrap();
-    assert!(report.typing_runs.is_empty(), "no typing program runs beside the rule");
     let phases: Vec<&str> = report.phase_runs.iter().map(|r| r.name.as_str()).collect();
     assert!(phases.contains(&"struct") && phases.contains(&"types"), "the earlier phases ran: {phases:?}");
     for rel in ["edge", "proven", "unknown"] {
@@ -1265,7 +1264,6 @@ at(p, s, \"finding\") :- LEG_083_TYPED(f), node(d, f, _, s, _), doc(d, p, _).
     let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
     let out = rule_dir.join("out");
     let report = corpus::run(&text, &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-    assert!(report.typing_runs.is_empty(), "no typing program runs beside the rule");
     assert!(report.phase_runs.iter().any(|r| r.name == "types"), "the typing phase ran");
     let mut got: BTreeSet<(String, u64, String)> = BTreeSet::new();
     for r in Outputs::open(&out).unwrap().rows("at") {
