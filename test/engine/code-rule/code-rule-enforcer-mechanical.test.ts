@@ -640,9 +640,12 @@ describe("mechanical code rule regressions", () => {
       });
       await settled(enforcer);
       // The order each edit's audit began in: the own edit's at most behind the one log edit already under way.
-      const order = [...audits.values()].filter(audit => audit.paths.length === 1).map(audit => audit.paths[0]);
+      const edits = [...audits.values()].filter(audit => audit.paths.length === 1);
+      const order = edits.map(audit => audit.paths[0]);
       expect(order.toSorted()).toEqual([...logged, "api/own.py"].toSorted());
       expect(order.indexOf("api/own.py")).toBeLessThan(2);
+      // Each one checked, the log ones too.
+      expect(edits.map(audit => audit.result?.status)).toEqual(order.map(() => "completed"));
     } finally { await enforcer.close(); }
   });
 
