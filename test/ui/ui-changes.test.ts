@@ -265,6 +265,38 @@ describe("the dashboard following the daemon's change stream", () => {
     expect(streams[0]!.signal.aborted).toBe(true);
   });
 
+  it("reads at the pace once a stream that never brought a message misses two beats, as through a proxy that buffers it, until one comes", async () => {
+    await after(12_000);
+    expect(streams).toHaveLength(2);
+    expect(readsOf("/api/repositories")).toBe(1);
+
+    // Main's pace from then, while a new stream is tried every two beats: 10 reads in the first minute.
+    for (let second = 12; second < 57; second += 5) await after(5_000);
+    expect(readsOf("/api/repositories")).toBe(10);
+    expect(streams).toHaveLength(5);
+
+    stream().send("t1");
+    await settle();
+    const followed = readsOf("/api/repositories");
+    for (let beat = 0; beat < 4; beat += 1) {
+      await after(5_000);
+      stream().send("t1");
+      await settle();
+    }
+    expect(readsOf("/api/repositories")).toBe(followed);
+  });
+
+  it("reads nothing at the pace when a stream that already brought a message misses two beats", async () => {
+    stream().send("t1");
+    await settle();
+
+    await after(12_000);
+    await after(12_000);
+
+    expect(streams).toHaveLength(3);
+    expect(readsOf("/api/repositories")).toBe(1);
+  });
+
   it("reads every 5 s as before when the daemon serves no stream, as an older Rerail does", async () => {
     setHidden(true);
     streams404 = true;
