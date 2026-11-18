@@ -4,7 +4,6 @@ use crate::code_rule_dsl::{
     tape::TAPE_FORMAT_VERSION,
 };
 use crate::content_store::prefilter::TOO_BIG;
-use std::path::Path;
 
 pub(in crate::code_rule_dsl) use crate::code_rule_dsl::fixtures::{document, open, temp};
 

@@ -10,7 +10,7 @@
 //! Anything else that makes a device, a queue, a thread or a pool fails here, by file and line, unless it is one of
 //! `EXCEPTIONS`, each with its reason. Test code (a `#[cfg(test)]` module, a `*tests.rs` file) is not read.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// What may not be made outside its owner, and the owner.
 const MADE: [(&str, &str); 7] = [

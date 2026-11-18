@@ -3,9 +3,8 @@
 
 use super::{patterns, pyre, souffle, textglob, value};
 use std::collections::BTreeSet;
-use std::path::Path;
 
-fn repo() -> &'static Path {
+fn repo() -> std::path::PathBuf {
     std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("..")
 }
 

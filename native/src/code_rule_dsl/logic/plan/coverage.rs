@@ -28,7 +28,7 @@ use crate::code_rule_dsl::logic::front::AggOp;
 use crate::code_rule_dsl::logic::rr::parse;
 use crate::code_rule_dsl::logic::strings::functions::{Kind, all as functions};
 use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// The facts every probe reads: symbols, numbers, pairs, edges (with a cycle) and labelled edges (`l`: routes of one
 /// length that differ in their bytes, and a route of fewer characters but more bytes).

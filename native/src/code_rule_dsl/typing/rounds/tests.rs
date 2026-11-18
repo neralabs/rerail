@@ -1,4 +1,3 @@
-use std::path::Path;
 
 /// T's facts for the planner fixture (`logic/plan/golden/facts.sql.zst`) as the exporter's
 /// `.facts` files, and every strategy checked against T's `workload` goldens.

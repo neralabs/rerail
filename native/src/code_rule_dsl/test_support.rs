@@ -5,7 +5,7 @@ use super::model::{ClauseKind, Query};
 use super::{CodeRuleDslRuntime, CompiledCodeRuleDsl};
 use napi::Result;
 use serde_json::{Map, Value, json};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub(super) const CAPABILITIES: &str = include_str!("capabilities.json");
 
