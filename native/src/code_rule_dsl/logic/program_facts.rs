@@ -613,6 +613,131 @@ pub fn write(facts: &mut Facts, p: &str, prog: &Program) {
     Writer { facts, p: p.to_owned(), terms: 0, atoms: 0, literals: 0, syntax: true }.program(prog);
 }
 
+/// Version `v` as facts of program `p`, added to `facts`: its rules, literals, atoms and terms read through their
+/// handles, its declarations, facts, inputs and outputs, and its other fields as the version keeps them (its `.about`
+/// rows, renamed to `p`).
+pub fn write_version(facts: &mut Facts, p: &str, v: &super::program_image::Version) {
+    use super::program_image::{AggRef, AtomRef, Lit, RuleRef, TermRef};
+    let mut w = Writer { facts, p: p.to_owned(), terms: 0, atoms: 0, literals: 0, syntax: true };
+    fn term(w: &mut Writer<'_>, v: &super::program_image::Version, r: RuleRef<'_>, t: TermRef<'_>) -> i64 {
+        let id = w.terms;
+        w.terms += 1;
+        let (kind, num, text): (&str, i64, String) = match t {
+            TermRef::Var(x) => ("var", 0, v.text(r.var(x)).to_owned()),
+            TermRef::Wild => ("wild", 0, String::new()),
+            TermRef::Int(i) => ("int", i, String::new()),
+            TermRef::Branded(b) => ("atom", b.value(), brand_tag(b).to_owned()),
+            TermRef::Str(a) => ("str", 0, v.text(a).to_owned()),
+            TermRef::Top => ("top", 0, String::new()),
+            TermRef::Call(f, _) => ("call", 0, v.text(f).to_owned()),
+        };
+        w.row("term", vec![n(id), s(kind), n(num), s(&text)]);
+        if let TermRef::Call(_, args) = t {
+            for (i, arg) in args.enumerate() {
+                let u = term(w, v, r, arg);
+                w.row("call_arg", vec![n(id), n(i), n(u)]);
+            }
+        }
+        id
+    }
+    fn atom(w: &mut Writer<'_>, v: &super::program_image::Version, r: RuleRef<'_>, a: AtomRef<'_>) -> i64 {
+        let id = w.atoms;
+        w.atoms += 1;
+        w.row("atom", vec![n(id), s(v.rel_name(a.rel())), n(a.neg() as i64), n(a.gated() as i64)]);
+        for (i, arg) in a.args().enumerate() {
+            let t = term(w, v, r, arg);
+            w.row("arg", vec![n(id), n(i), n(t)]);
+        }
+        id
+    }
+    w.row("program", vec![]);
+    for (k, r) in v.rules().enumerate() {
+        let head = atom(&mut w, v, r, r.head());
+        w.row("rule", vec![n(k), n(head)]);
+        for (i, lit) in r.body().enumerate() {
+            let l = w.literals;
+            w.literals += 1;
+            let name = |x| v.text(r.var(x)).to_owned();
+            match lit.view() {
+                Lit::Atom(a) => {
+                    let a = atom(&mut w, v, r, a);
+                    w.row("lit_atom", vec![n(l), n(a)]);
+                }
+                Lit::Cmp { l: left, op, r: right } => {
+                    let (left, right) = (term(&mut w, v, r, left), term(&mut w, v, r, right));
+                    w.row("lit_cmp", vec![n(l), n(left), s(op.as_str()), n(right)]);
+                }
+                Lit::Agg { var, op, over, atom: a } => {
+                    let a = atom(&mut w, v, r, a);
+                    let op_name = match op {
+                        AggRef::Count => "count",
+                        AggRef::Min => "min",
+                        AggRef::Max => "max",
+                        AggRef::Sum => "sum",
+                        AggRef::Product => "product",
+                        AggRef::Join { .. } => "join",
+                    };
+                    w.row("lit_agg", vec![n(l), s(&name(var)), s(op_name), n(a)]);
+                    if let Some(over) = over {
+                        w.row("agg_over", vec![n(l), s(&name(over))]);
+                    }
+                    if let AggRef::Join { by, sep } = op {
+                        w.row("agg_join", vec![n(l), s(v.text(sep))]);
+                        for (j, x) in by.enumerate() {
+                            w.row("agg_by", vec![n(l), n(j), s(&name(x))]);
+                        }
+                    }
+                }
+                Lit::Nearest { n: node, a, kindset } => w.row("lit_nearest", vec![n(l), s(&name(node)), s(&name(a)), s(v.text(kindset))]),
+                Lit::Ast { document, node, matcher, captures } => {
+                    w.row("lit_ast", vec![n(l), s(&name(document)), s(&name(node)), s(v.text(matcher))]);
+                    for (j, (c, x)) in captures.enumerate() {
+                        w.row("ast_capture", vec![n(l), n(j), s(v.text(c)), s(&name(x))]);
+                    }
+                }
+            }
+            w.row("body", vec![n(k), n(i), n(l)]);
+        }
+    }
+    for rel in v.declared_names() {
+        let cols = v.columns_of(&rel).unwrap_or_default();
+        w.row("relation", vec![s(&rel), n(cols.len())]);
+        for (i, (col, ty)) in cols.iter().enumerate() {
+            w.row("decl", vec![s(&rel), n(i), s(col), s(ty)]);
+        }
+    }
+    let fact_names = v.fact_names();
+    for rel in &fact_names {
+        for (row, values) in v.fact_values(rel, &Default::default()).unwrap_or_default().iter().enumerate() {
+            w.row("fact_row", vec![s(rel), n(row), n(values.len())]);
+            for (i, x) in values.iter().enumerate() {
+                let (kind, num, text) = match x {
+                    Value::Int(x) => ("int", *x, ""),
+                    Value::Branded(b) => ("atom", b.value(), brand_tag(*b)),
+                    Value::Str(x) => ("str", 0, x.as_str()),
+                };
+                w.row("fact", vec![s(rel), n(row), n(i), s(kind), n(num), s(text)]);
+            }
+        }
+    }
+    for (k, rel) in v.input_names().iter().enumerate() {
+        w.row("input", vec![n(k), s(rel)]);
+    }
+    for (k, rel) in v.output_names().iter().enumerate() {
+        w.row("output", vec![n(k), s(rel)]);
+    }
+    // The other fields: the version's `.about` rows, each its program column renamed `p`.
+    for f in v.about_facts() {
+        for cells in f.rows() {
+            let row: Vec<Value> = cells.skip(1).map(|c| v.value(c)).collect();
+            w.row(v.text(f.name()), row);
+        }
+    }
+    for rel in &fact_names {
+        w.row("fact_rel", vec![s(rel)]);
+    }
+}
+
 /// What of `prog` its `.rr` text has no syntax for (`program_text`, decision 0155), as facts of program `p`: `program`
 /// reads them back as a program of those parts alone.
 pub fn write_about(facts: &mut Facts, p: &str, prog: &Program) {

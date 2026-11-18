@@ -470,7 +470,7 @@ unknown(cp, cs) :- call_open(c), node(d, c, _, cs, _), doc(d, cp, _).
     std::fs::create_dir_all(&rule_dir).unwrap();
     let rule = rule_dir.join("rule.rr");
     std::fs::write(&rule, format!("#include \"python/calls.rr\"\n#include \"python/types.rr\"\n{keyed}")).unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let through = rule_dir.join("out");
     let report = corpus::run(&text, &project, None, &through, "program", Binding::Cpu, 1 << 18).unwrap();
     assert_eq!(report.typing_runs.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(), ["calls"], "the program ran once");
@@ -501,7 +501,7 @@ at(p, s, \"open\") :- call_open(c), node(d, c, _, s, _), doc(d, p, _).
     std::fs::create_dir_all(&rule_dir).unwrap();
     let path = rule_dir.join("rule.rr");
     std::fs::write(&path, rule).unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&path).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&path).unwrap()).unwrap();
     let out = rule_dir.join("out");
     corpus::run(&text, &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let mut got: BTreeSet<(String, u64)> = BTreeSet::new();
@@ -1259,7 +1259,7 @@ at(p, s, \"finding\") :- LEG_083_TYPED(f), node(d, f, _, s, _), doc(d, p, _).
     std::fs::create_dir_all(&rule_dir).unwrap();
     let rule = rule_dir.join("rule.rr");
     std::fs::write(&rule, format!("{rule_src}\n{spans}")).unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = rule_dir.join("out");
     let report = corpus::run(&text, &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     assert_eq!(report.typing_runs.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>(), ["calls"]);
@@ -1582,7 +1582,7 @@ rets(f, a) :- struct__ret(f, a).
 ats(s, p, l) :- struct__at(s, p, l).
 .output units, modules, defs, imports, bindings, bases, members, params, rets, ats
 "#;
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reader).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(reader).unwrap()).unwrap();
     let run = || corpus::run_with_options(&[&text], &root, None, &out, "program", Binding::Cpu, 1 << 18, &corpus::Typing::default(), &serde_json::json!({ "env": settings, "reuse": std::env::var("RERAIL_PYTHON_REUSE").is_ok_and(|v| v == "on") })).unwrap();
     let count = |rel: &str| output::shown(&out, rel).map_or(0, |t| t.len());
     let show = |what: &str, r: &corpus::Report| {

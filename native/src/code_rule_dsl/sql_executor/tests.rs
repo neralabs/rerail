@@ -570,7 +570,7 @@ dup(x) :- def(a, x), def(b, x), a != b.
 named(n, x) :- def(n, x), x = "g".
 .output named
 "#).unwrap();
-    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     let report = crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     assert_eq!(report.memo, (0, 0), "the run memoises every file");

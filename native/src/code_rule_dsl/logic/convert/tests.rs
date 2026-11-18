@@ -2195,7 +2195,7 @@ violation("{TARGET_ID}", "required-contracts", "SPTA001", p, 1) :- in_scope(d), 
     std::fs::write(dir.join(format!("{TARGET_ID}.rr")), authored).unwrap();
     let c = convert_over(&rule_file(TARGET).unwrap(), &Adjust::default(), Some(&dir)).unwrap();
     assert!(c.program.contains("match_all(\"") && c.program.contains("match_group(\"") && !c.program.contains("match_all_("), "{}", c.program);
-    let again = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(&c.program).unwrap()).unwrap();
+    let again = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(&c.program).unwrap()).unwrap();
     assert_eq!(again, c.program);
     let run = dir.join("run");
     write_files(&run, [EXECUTOR]);

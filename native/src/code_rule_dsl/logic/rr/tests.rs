@@ -1675,7 +1675,7 @@ rhs(l, r) :- field(a, "left", x), text(x, l), field(a, "right", r), kind(a, "ass
 same(l, m) :- rhs(l, r), rhs(m, s), l < m, @tree_digest(r) = @tree_digest(s).
 .output same
 "#).unwrap();
-    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "same").unwrap(), [["a", "b"], ["c", "d"], ["e", "f"], ["g", "h"]]);
@@ -1699,7 +1699,7 @@ unit("<module>", s) :- def_digest(n, s), kind(n, "module").
 unit(x, s) :- def_digest(n, s), field(n, "name", i), text(i, x).
 .output unit
 "#).unwrap();
-        let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+        let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
         let out = dir.join("out");
         crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
         crate::code_rule_dsl::logic::plan::output::shown(&out, "unit").unwrap().into_iter().map(|r| (r[0].clone(), r[1].clone())).collect()
@@ -1732,7 +1732,7 @@ fn definition_ids_keep_other_definitions_rows_across_a_body_edit() {
         std::fs::write(dir.join("a.py"), source).unwrap();
         let rule = dir.join("d.rr");
         std::fs::write(&rule, ".decl k(n: node, s: symbol)\nk(n, s) :- kind(n, s).\n.decl p(n: node, q: node, i: number)\np(n, q, i) :- child(n, q, i).\n.output k, p\n").unwrap();
-        let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+        let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
         let out = dir.join("out");
         crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
         ["k", "p"].iter().flat_map(|r| crate::code_rule_dsl::logic::plan::output::shown(&out, r).unwrap().into_iter().map(|row| std::iter::once((*r).to_owned()).chain(row).collect::<Vec<_>>()).collect::<Vec<_>>()).collect()
@@ -1786,7 +1786,7 @@ hit(m, c) :- src_line(d, _, sp), match_all("(?<m>SEC\\d+)", sp), text(m, c).
 .violation NQ(at: span, c: symbol) code {c} "{c} suppression"
 NQ(m, c) :- hit(m, c).
 "#).unwrap();
-    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
@@ -1817,7 +1817,7 @@ wide(x) :- piece(t), match_all("(?<w>[\\p{Alphabetic}\\p{N}]+)", t), match("[\\s
 odd(x) :- piece(t), match_all("(?<w>[a-z0-9ℝ]+)", t), !match(".*ℝ.*", w), text(w, x).
 .output wide, odd
 "#).unwrap();
-    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
@@ -1849,7 +1849,7 @@ digit(x) :- wd(w), match_all("(?<d>[0-9])", w), text(d, x).
 ndig(t, n) :- wd(w), text(w, t), n = count : { match_all("(?<d>[0-9])", w) }.
 .output param, digit, ndig
 "#).unwrap();
-    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
@@ -1880,7 +1880,7 @@ digits(x, k, c) :- piece_word(_, w), match_all("(?<d>[0-9]+)", w), text(d, x), l
 per(x, n) :- piece_word(_, w), text(w, x), n = count : { match_all("(?<d>[0-9])", w) }.
 .output digits, per
 "#).unwrap();
-    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
@@ -1909,7 +1909,7 @@ in_node(t, k) :- kind(n, "argument_list"), text(n, t), k = count : { match_all("
 in_text(t, k) :- kind(n, "argument_list"), text(n, t), k = count : { match_all(",", t, _, _, _) }.
 .output comma, in_node, in_text
 "#).unwrap();
-    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
@@ -1927,7 +1927,7 @@ fn noqa_sec_ratchet_counts_every_sec_code_on_suppression_lines() {
     std::fs::create_dir_all(dir.join("impl")).unwrap();
     std::fs::write(dir.join("impl/a.py"), "x = \"SEC1\"  # noqa: SEC2\ny = 1  # noqa: E501, SEC3 SEC44\nz = \"SEC9\"\n").unwrap();
     let rule = crate::code_rule_dsl::logic::rr::library().join("../data-layer/noqa-sec-ratchet.rr");
-    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "annotations").unwrap(), [["noqa_sec_annotations", "4"]]);
@@ -1953,7 +1953,7 @@ lines(d, k) :- line_count(d, k).
 err(d) :- syntax_error(d, _, _).
 .output lines, err
 "#).unwrap();
-    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
@@ -1987,7 +1987,7 @@ called(x, p) :- kind(c, "call"), field(c, "function", f), text(f, x), defined(x)
 UNKNOWN(c, x) :- kind(c, "call"), field(c, "function", f), text(f, x), !defined(x).
 .output called
 "#).unwrap();
-    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     // Each run's files end in a comment of its own (this test's directory and the chunk size), so no run reads
     // another's rows from the per-file memo (decision 0052): every run evaluates its chunks.
     let originals: Vec<(std::path::PathBuf, String)> = std::fs::read_dir(&dir).unwrap().filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "py")).map(|p| { let s = std::fs::read_to_string(&p).unwrap(); (p, s) }).collect();
@@ -2215,7 +2215,7 @@ fn guests_run_with<T>(name: &str, files: &[(&str, &str)], rule: &str, read: impl
     }
     let path = dir.join("g.rr");
     std::fs::write(&path, rule).unwrap();
-    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&path).unwrap()).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&path).unwrap()).unwrap();
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     let rows = read(&crate::code_rule_dsl::logic::plan::output::Outputs::open(&out).unwrap());
@@ -2614,7 +2614,7 @@ objects(n, x) :- q(s, x0), t = @parse("sql", x0), tape_of(d, t), node(d, n, "obj
         }
         let path = dir.join("g.rr");
         std::fs::write(&path, rule).unwrap();
-        let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&path).unwrap()).unwrap();
+        let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&path).unwrap()).unwrap();
         let out = dir.join("out");
         let report = crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
         let rows: Vec<Vec<Vec<String>>> = ["tables", "objects"].iter().map(|rel| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default()).collect();
@@ -2657,7 +2657,7 @@ through(x) :- doc_role(g, "code"), node(g, i, "import_statement", _, _), text(i,
         .map(|(i, text)| {
             let path = dir.join(format!("p{i}.rr"));
             std::fs::write(&path, text).unwrap();
-            crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&path).unwrap()).unwrap()
+            crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&path).unwrap()).unwrap()
         })
         .collect();
     let out = dir.join("out");
@@ -2770,7 +2770,7 @@ Todo(@place(p, l)) :- doc(d, p, _), src_line(d, l, sp), contains("TODO", sp).
     // The program with its includes, as the corpus reads it.
     let rule = dir.with_extension("scope-forms.rr");
     std::fs::write(&rule, program).unwrap();
-    let flat = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let flat = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     std::fs::remove_file(&rule).unwrap();
     let paths = |options: serde_json::Value| {
         let out = dir.join("out");
@@ -2812,7 +2812,7 @@ tctx(c) :- tctx(p), child(p, c, _).
 "#;
     let rule = dir.with_extension("finding-columns.rr");
     std::fs::write(&rule, program).unwrap();
-    let flat = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let flat = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     std::fs::remove_file(&rule).unwrap();
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(&flat, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
@@ -2943,7 +2943,7 @@ def_at(f, s) :- kind(f, "function_definition"), field(f, "name", n), text(n, s).
     let policy = |name: &str, scope: &str, body: &str| -> String {
         let rule = dir.join(format!("{name}.rr"));
         std::fs::write(&rule, format!(".policy \"t:{name}\" revision 1\n.language python\n#include \"python/ast.rr\"\n#include \"fact-spaces-lib.rr\"\n.scope dirs \"{scope}\"\n{body}\n")).unwrap();
-        crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap()
+        crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap()
     };
     let a = policy("a", "a", ".violation Fn(at: node) \"a def\"\nFn(f) :- def_at(f, _).");
     let b = policy("b", "b", ".violation Dup(at: node) \"two defs\"\nDup(f) :- def_at(f, s), def_at(g, s), f != g.");
@@ -3735,7 +3735,7 @@ fn has_over_a_guest_holds_with_two_programs() {
         std::fs::write(&path, format!(
             "embed(d, s, \"sql\", \"query\") :- kind(c, \"call\"), field(c, \"arguments\", a), child(a, s, _), kind(s, \"string\"), docof(s, d).\n.violation {clause}(at: node) code \"{clause}\" \"m\"\n{clause}(n) :- {body}.\n"
         )).unwrap();
-        crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&path).unwrap()).unwrap()
+        crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&path).unwrap()).unwrap()
     };
     let has = text("has_ref", "guest(g, _, _, \"sql\"), doc_root(g, n), has(n, _, \"object_reference\")");
     let other = text("calls", "kind(n, \"call\")");

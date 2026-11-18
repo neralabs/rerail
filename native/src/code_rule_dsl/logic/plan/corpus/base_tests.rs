@@ -486,7 +486,7 @@ lone(s) :- name(_, s), x = cat(s, "_[a-z]+"), !match(x, "load_async").
     let twin = sorted(names.iter().flat_map(|s| names.iter().filter(move |t| whole(&format!("{s}_[a-z]+"), t)).map(move |t| r![s, t])));
     assert_eq!(twin, [["load", "load_async"], ["load", "load_lazy"]]);
     let lone = sorted(names.iter().filter(|s| !whole(&format!("{s}_[a-z]+"), "load_async")).map(|s| r![s]));
-    let printed = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(program).unwrap()).unwrap();
+    let printed = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(program).unwrap()).unwrap();
     for program in [program, printed.as_str()] {
         assert_eq!(run(&dir, program, &["twin", "lone"]), [twin.clone(), lone.clone()], "{program}");
     }
@@ -874,10 +874,10 @@ first_stmt(p, l, c) :- kind(b, "expression_statement"), !next_sibling(_, b), at(
 before_return(p, l, c) :- kind(a, "expression_statement"), precedes(a, b), kind(b, "return_statement"), at(a, p, l, c).
 .output kinds, within_def, within_any, follows_stmt, first_stmt, before_return
 "#;
-    let parsed = crate::code_rule_dsl::logic::rr::parse(program).unwrap();
+    let parsed = crate::code_rule_dsl::logic::rr::parse_version(program).unwrap();
     // `within(n, a)` is the engine's tree relation (decision 0050), read as it is, not a kind set's axis.
     let within = crate::code_rule_dsl::facts::vtab::syntax::WITHIN;
-    assert!(parsed.rules.iter().flat_map(|r| &r.body).any(|l| l.atom().is_some_and(|a| a.rel == within)), "{:?}", parsed.rules);
+    assert!(parsed.rules().flat_map(|r| r.body()).any(|l| l.atom().is_some_and(|a| parsed.rel_name(a.rel()) == within)), "{}", parsed.show());
     let got = run(&dir, program, &["kinds", "within_def", "within_any", "follows_stmt", "first_stmt", "before_return"]);
     let inside = json!({ "kind": "identifier", "inside": { "kind": "function_definition", "stopBy": "end" } });
     let want = [

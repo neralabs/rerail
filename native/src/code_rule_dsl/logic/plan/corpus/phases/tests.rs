@@ -12,8 +12,7 @@
         std::fs::write(src.join("b.py"), "def g():\n    return 2\n").unwrap();
         let out = dir.join("out");
         crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
-        let text = crate::code_rule_dsl::logic::rr::print(
-            &crate::code_rule_dsl::logic::rr::parse("#include \"core.rr\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n").unwrap(),
+        let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version("#include \"core.rr\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n").unwrap(),
         )
         .unwrap();
         let run = || crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[&text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &serde_json::Value::Null).unwrap();
@@ -51,7 +50,7 @@
         let out = dir.join("out");
         crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
         let reader = "#include \"core.rr\"\n.decl sources__library(p: symbol, m: symbol, g: symbol, c: symbol)\n.decl lib(m: symbol)\nlib(m) :- sources__library(_, m, _, _).\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output lib, defs\n";
-        let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reader).unwrap()).unwrap();
+        let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(reader).unwrap()).unwrap();
         let run = || crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[&text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &serde_json::Value::Null).unwrap();
         let rows = |rel: &str| {
             let mut v: Vec<Vec<String>> = crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
@@ -108,7 +107,7 @@ at(n, s) :- kind(n, "function_definition"), field(n, "name", i), text(i, s).
         crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
         let options = serde_json::json!({ "phase_dir": phases.to_string_lossy() });
         let run = |text: &str| crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &options);
-        let print = |text: &str| crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(text).unwrap()).unwrap();
+        let print = |text: &str| crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(text).unwrap()).unwrap();
         // A private relation is not the reader's to read.
         phase("unit, def", "");
         let err = run(&print(&reader(".decl p1__def(s: symbol, k: symbol)\n.decl p1__private(s: symbol)\n.decl q(s: symbol)\nq(s) :- p1__private(s).\n.output q"))).err().expect("a private relation refused").to_string();
@@ -175,7 +174,7 @@ anc(s, a) :- anc(s, b), p1__base(b, a).
         crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
         let options = serde_json::json!({ "phase_dir": phases.to_string_lossy() });
         let run = |text: &str| crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[text], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &options);
-        let reader = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse("#include \"core.rr\"\n.decl p2__anc(s: symbol, a: symbol)\n.decl r(s: symbol, a: symbol)\nr(s, a) :- p2__anc(s, a).\n.output r\n").unwrap()).unwrap();
+        let reader = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version("#include \"core.rr\"\n.decl p2__anc(s: symbol, a: symbol)\n.decl r(s: symbol, a: symbol)\nr(s, a) :- p2__anc(s, a).\n.output r\n").unwrap()).unwrap();
         let report = run(&reader).unwrap();
         assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "r").unwrap(), [["B", "A"]]);
         // Phase 1 (`sources`) first, which gives every run its documents, then both phases, listed flat, in the order
@@ -217,7 +216,7 @@ anc(s, a) :- anc(s, b), p1__base(b, a).
         crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
         let options = serde_json::json!({ "phase_dir": phases.to_string_lossy(), "env": ["mode=strict"] });
         let reader = "#include \"core.rr\"\n.decl mode(m: symbol)\nmode(m) :- env(\"mode\", m).\n.decl p1__def(s: symbol, k: symbol)\n.decl r(s: symbol, m: symbol)\nr(s, m) :- p1__def(s, _), mode(m), kind(_, \"module\").\n.output r\n";
-        let reader = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse(reader).unwrap()).unwrap();
+        let reader = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version(reader).unwrap()).unwrap();
         let report = crate::code_rule_dsl::logic::plan::corpus::run_with_options(&[&reader], &src, None, &out, "program", Binding::Cpu, 1 << 18, &Default::default(), &options).unwrap();
         assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "r").unwrap(), [["A", "strict"]]);
         assert_eq!(report.phase_runs.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["sources", "p1"]);
