@@ -518,10 +518,11 @@ export class LinkedFiles {
  * refused is not asked for again until a whole walk walks fewer folders than it refused, or the watch it had ended:
  * each ask costs the engine a look at the folder's file system, and on Linux each watch it took up before the refusal.
  *
- * What no notice tells of, the next whole pass reads, at the turn's end at the latest: a write through a hard link made
- * to a name outside the folder after the last whole walk, a write through a memory map (on Linux only one its program
- * still holds at the result: the engine tells of one let go of), and on Windows a write that keeps the size by a
- * program that still holds the file open (Windows tells of it as the program closes the file).
+ * What no notice tells of, the next whole pass reads: a write through a hard link made to a name outside the folder
+ * after the last whole walk, a write through a memory map (on Linux only one its program still holds at the result: the
+ * engine tells of one let go of), and on Windows a write that keeps the size by a program that still holds the file open
+ * (Windows tells of it as the program closes the file). A pass reads whole once the last whole walk began more than
+ * `fullWalkMs` ago, so such a write waits for the first result past that, or for the turn's end if it comes first.
  */
 export class SessionNotices {
   readonly #root: string;
@@ -551,11 +552,23 @@ export class SessionNotices {
   #looks = Number.POSITIVE_INFINITY;
   /** How many folders the engine last refused to watch: none is asked for again until a whole walk walks fewer. */
   #refused: number | undefined;
+  /** The longest a write no notice tells of waits for a whole walk, from when the last one began. */
+  readonly #fullWalkMs: number;
+  readonly #now: () => number;
+  /** When the pass that began last began. */
+  #began = Number.NEGATIVE_INFINITY;
+  /** When the last whole walk that finished began. */
+  #walkedAt = Number.NEGATIVE_INFINITY;
 
-  /** `root`: the session folder (physical). */
-  constructor(root: string, platform: NodeJS.Platform = process.platform) {
+  /**
+   * `root`: the session folder (physical). `fullWalkMs`: how long after the last whole walk began a pass reads whole
+   * again, whatever the notices say. `now`: the clock that is read by, `Date.now` (looked up at each read) by default.
+   */
+  constructor(root: string, options: { fullWalkMs: number; platform?: NodeJS.Platform; now?: () => number }) {
     this.#root = root;
-    this.#byFolder = platform === "linux";
+    this.#byFolder = (options.platform ?? process.platform) === "linux";
+    this.#fullWalkMs = options.fullWalkMs;
+    this.#now = options.now ?? ((): number => Date.now());
   }
 
   /**
@@ -567,14 +580,16 @@ export class SessionNotices {
   }
 
   /**
-   * What the pass that begins now reads: the whole folder when `whole` asks for it, the notices cannot vouch for the
-   * rest or the paths to read reach the bound (`#noticed`), else the paths notices named since the last pass and the
-   * linked files. A whole pass watches the folder again first when its watch is down, so a write made while it runs is
-   * a notice. Until `ended`, the next pass reads whole: one that stops midway leaves unread what it took.
+   * What the pass that begins now reads: the whole folder when `#readsWhole` says so or the paths to read reach the bound
+   * (`#noticed`), else the paths notices named since the last pass and the linked files. A whole pass watches the
+   * folder again first when its watch is down, so a write made while it runs is a notice. Until `ended`, the next pass
+   * reads whole: one that stops midway leaves unread what it took.
    */
   begin(whole: boolean): SessionReads {
     this.#collect();
-    const paths = whole || this.#whole || this.#seen === undefined ? undefined : this.#noticed();
+    const began = this.#now();
+    const paths = this.#readsWhole(whole, began) ? undefined : this.#noticed();
+    this.#began = began;
     this.#paths = new Set();
     this.#whole = true;
     // A pass of noticed paths reads fewer paths than the bound, so it notes them all.
@@ -583,6 +598,15 @@ export class SessionNotices {
     this.#seen = undefined;
     this.#open();
     return { whole: true, linked };
+  }
+
+  /**
+   * Whether the pass that begins at `now` reads the whole folder, whatever the notices named: when `whole` asks for it,
+   * when the notices cannot vouch for the rest, and once the last whole walk began more than `fullWalkMs` ago. That last
+   * is a clock, not a fact, because no notice and no count can tell of the writes it bounds (see the class).
+   */
+  #readsWhole(whole: boolean, now: number): boolean {
+    return whole || this.#whole || this.#seen === undefined || now - this.#walkedAt > this.#fullWalkMs;
   }
 
   /**
@@ -607,14 +631,15 @@ export class SessionNotices {
 
   /**
    * The pass that began last finished: a whole one with what it `seen`, which notices are weighed against from now on
-   * (on Linux the watch follows its folders), one that read only noticed paths with nothing. `found`: the files with
-   * another name it found, and how many files it looked at.
+   * (on Linux the watch follows its folders) and the period runs from as it began, one that read only noticed paths with
+   * nothing. `found`: the files with another name it found, and how many files it looked at.
    */
   ended(seen: WorktreeRead | undefined, found: SessionFound): void {
     if (seen === undefined) {
       this.#endedNoticed(found.linked);
       return;
     }
+    this.#walkedAt = this.#began;
     this.#looks = found.files + seen.folders.size;
     this.#linked = found.linked.keep(this.#looks);
     if (this.#refused !== undefined && seen.folders.size < this.#refused) this.#refused = undefined;

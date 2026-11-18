@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { BOUNDARY_DISCOVERY_WAIT_MS, CodeRuleBridge } from "../../../../src/engine/code-rule/code-rule-bridge.js";
 import type { CodeRuleAuditor, CodeRuleEditBatch } from "../../../../src/engine/code-rule/code-rule.js";
 import { LinkedFiles, SessionNotices, SharedTreeWatch, WorktreeNotices } from "../../../../src/engine/code-rule/worktree-notices.js";
-import { RepositoryWorktreeWalks, WorktreeWalks } from "../../../../src/engine/code-rule/worktree-walks.js";
+import { RepositoryWorktreeWalks, WORKTREE_FULL_WALK_MS, WorktreeWalks } from "../../../../src/engine/code-rule/worktree-walks.js";
 import { removeFolder } from "../../../support/platform/remove-folder.js";
 import { StampTreeWatch } from "./support/stamp-tree-watch.js";
 
@@ -496,7 +496,7 @@ describe("a shell command's result reads the session folder by its change notice
 
   it("hands each whole walk the bound the last one set, and reads by notices again once a walk finds fewer linked files", async () => {
     const root = await workspace();
-    const notices = new SessionNotices(root, "win32");
+    const notices = new SessionNotices(root, { platform: "win32", fullWalkMs: WORKTREE_FULL_WALK_MS });
     notices.use(new StampTreeWatch());
     const seen = { folders: new Set(["", "src", "src/pkg_0"]), leftOut: new Set<string>() };
     // The first whole walk: three linked files of six looks (three files, three folders).

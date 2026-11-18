@@ -47,8 +47,8 @@ import { type LinkedFiles, type NoticedRead, SessionNotices, type SessionReads, 
 import { ToolCallWindows } from "./tool-call-windows.js";
 import { type LentBytes, WalkReadBuffers } from "./walk-read-buffers.js";
 import {
-  type WatcherWalk, type WorktreeFindings, type WorktreeScan, type WorktreeScanned, type WorktreeSnapshot, WorktreeView, type WorktreeWalk, WorktreeWalks,
-  type WorktreeWatch,
+  type WatcherWalk, WORKTREE_FULL_WALK_MS, type WorktreeFindings, type WorktreeScan, type WorktreeScanned, type WorktreeSnapshot, WorktreeView, type WorktreeWalk,
+  WorktreeWalks, type WorktreeWatch,
 } from "./worktree-walks.js";
 
 export { WORKTREE_WALK_GAP_MS } from "./worktree-walks.js";
@@ -816,7 +816,8 @@ function walkedPaths(walk: WalkStart, current: ReadonlyMap<string, Source>): Ite
 /**
  * Whether a pass for `checkpoint` reads the whole session folder whatever its notices say: at a turn's end, which so
  * finds within the turn a write no notice told of; and until a walk finished with nothing it could not read or check,
- * which only a whole walk reads again.
+ * which only a whole walk reads again. A command's result reads whole too once the last whole walk began more than
+ * `WORKTREE_FULL_WALK_MS` ago (`SessionNotices`), so in a long turn such a write waits no longer than that.
  */
 function readsWholeFolder(discovery: SourceDiscovery, checkpoint: DiscoveryCheckpoint): boolean {
   return checkpoint !== "edit" || !discovery.baselineComplete || discovery.error !== undefined || discovery.baselineRoots.size > 0;
@@ -1320,7 +1321,8 @@ export class CodeRuleBridge {
         heads: new Map(from.gitSeen.heads), git, unmerged: new Map(from.gitSeen.unmerged), passedCheckouts: new Set(from.gitSeen.passedCheckouts),
         readUnmerged: gitUnmergedReader(), toolCalls: this.#unwatched,
         late: new Set(), askingAgain: new Map(), listingsAgain: new Set(), listingSlots: { free: LISTINGS_AGAIN_AT_ONCE, waiting: [] },
-        notices: new SessionNotices(root),
+        // A write no notice tells of waits for a whole walk no longer here than in the other worktrees.
+        notices: new SessionNotices(root, { fullWalkMs: WORKTREE_FULL_WALK_MS }),
       };
       this.#unwatched = new ToolCallWindows();
       // Before the first walk can start, which would otherwise read a held call's edit as another writer's change.
