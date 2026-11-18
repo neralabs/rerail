@@ -682,6 +682,26 @@ Still refused: a generic call on `?:`'s right side (`m ?: f<M>()!!`).
 
 Corpus: 400 the same (step 26: 397), 91 refused, 0 differ.
 
+## Kotlin, step 28 (`28-function-types.bitlex`)
+
+```kotlin
+val h: HTML.() -> Unit = {}
+fun f(w: A.B.() -> Unit, v: suspend () -> T) {}
+```
+
+- A type's last `.` before a `(` ends a function type's receiver (`ft_dot`, in `dotted`): no
+  expression has `.(`. Back from it over names, dots and type arguments without blanks, the
+  type's first name takes `generic` (`frecv`). The type is then a `function_type` whose
+  `receiver_type` holds the receiver's `user_type`. A receiver with blanks in its type arguments
+  (`Map<K, V>.()`) puts the mark inside them, where no rule takes it: refused.
+- The receiver's first name is no soft word. `suspend` after a `:` and before a `(` takes
+  `generic` too and is the function type's `type_modifiers`. One choice opens on both.
+- The alternatives after `generic` are one group, `generic (… | … | …)`: a mark is a token of
+  its own, so three alternatives that each start with it were not LL(1). The compiler's message
+  now says when the token it names is a mark.
+
+Corpus: 405 the same (step 27: 400), 86 refused, 0 differ.
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment

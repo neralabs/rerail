@@ -377,6 +377,17 @@ fn strings_in_templates_are_the_lean_parsers() {
 }
 
 #[test]
+fn function_types_are_the_lean_parsers() {
+    same(&[
+        "val h: HTML.() -> Unit = {}\n",
+        "fun f(w: A.B.() -> Unit) {}\n",
+        "fun f(w: suspend () -> T) {}\n",
+        "fun f(b: J.() -> Unit = {}, w: suspend () -> T, x: M<K>.(Int) -> Unit) {}\n",
+        "fun A.B.f(x: C.() -> D): E.() -> F = x\n",
+    ]);
+}
+
+#[test]
 fn delegates_and_names_are_the_lean_parsers() {
     same(&[
         "fun f() {\n    val state by viewModel.uiState.collectAsState()\n}\n",
@@ -435,7 +446,6 @@ fn what_step_24_does_not_read_is_refused() {
 fn what_step_23_does_not_read_is_refused() {
     refused(&[
         "fun interface P {\n    fun f()\n}\n",
-        "fun f(w: suspend () -> T) {}\n",
         "fun f() {\n    @Suppress(\"D\")\n    if (a) b()\n}\n",
         "fun f(g: ((Int) -> Int) -> Int) {}\n",
         "val x = when (a) {\n    B,\n    C,\n    -> d\n    else -> e\n}\n",
@@ -446,7 +456,6 @@ fn what_step_23_does_not_read_is_refused() {
 fn what_step_22_does_not_read_is_refused() {
     refused(&[
         "fun f() {\n    val d = x as java.util.List<Int>\n    g(d)\n}\n",
-        "val h: HTML.() -> Unit = {}\n",
         "fun <T : Comparable<T>> B.f() {}\n",
         "val <T : Any> List<T>.second: T get() = this[1]\n",
     ]);
