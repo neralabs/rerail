@@ -34,6 +34,8 @@ const EVERY: &str = "  array 0 shape 2 1
   array 0 %19 = part %18 1
   array 0 %20 = carry %0
   array 0 %21 = map add %20 %17
+  array 0 %22 = concat %0 %1
+  array 0 %23 = call f0 %0 env %22 %1
   array 0 rounds %20 %21
   array 0 output %21
   array 0 output %19
@@ -43,7 +45,8 @@ const EVERY: &str = "  array 0 shape 2 1
 fn every_operation_reads_back_as_it_was_written() {
     let p = program(EVERY).unwrap_or_else(|e| panic!("{e}"));
     let a = &p.array_programs[0];
-    assert_eq!(a.ops.len(), 22);
+    assert_eq!(a.ops.len(), 24);
+    assert_eq!(a.ops[23], ArrayOp::Call { f: 0, args: vec![0], env: vec![22, 1] });
     assert_eq!(a.ops[8], ArrayOp::Scan { how: Combine::Add, excl: true, a: 0, seg: Some(6) });
     assert_eq!(a.ops[6], ArrayOp::Map(MapOp::Shr, 0, 3));
     assert_eq!(a.rounds, vec![vec![(20, 21)]]);
@@ -91,13 +94,13 @@ fn every_operation_is_a_data_parallel_primitive() {
     let a: &ArrayProgram = &p.array_programs[0];
     for (i, op) in a.ops.iter().enumerate() {
         let prim = op.primitive();
-        assert_eq!(prim == Primitive::Call, matches!(op, ArrayOp::Call(..)), "%{i} = {}", op.text());
+        assert_eq!(prim == Primitive::Call, matches!(op, ArrayOp::Call { .. }), "%{i} = {}", op.text());
     }
     // `EVERY` holds every operation, so a new one fails here until it is added there.
     let mut kinds: Vec<String> = a.ops.iter().map(|op| op.text().split(' ').next().unwrap().to_owned()).collect();
     kinds.sort();
     kinds.dedup();
-    assert_eq!(kinds.len(), 17, "{kinds:?}");
+    assert_eq!(kinds.len(), 18, "{kinds:?}");
 }
 
 /// Program 0 of `rows` (shape `inputs params`), run on `inputs`: its outputs.
@@ -145,6 +148,7 @@ fn each_operation_means_what_its_row_says() {
     assert_eq!(one("search le %0 %1", &[x, &[1]]), Err("a search of an array not sorted"));
     assert_eq!(one("compact %0", &[f]), Ok(vec![0, 3]));
     assert_eq!(one("expand %0", &[&[2, 0, 1]]), Ok(vec![0, 0, 2]));
+    assert_eq!(one("concat %0 %1", &[&[2, 0], &[1]]), Ok(vec![2, 0, 1]));
     assert_eq!(one("map add %0 %1", &[x, &[1, 2]]), Err("operands of unequal lengths"));
 }
 
@@ -154,16 +158,17 @@ fn a_call_runs_its_function_on_each_element_alone() {
     struct Repeat;
     impl crate::array::Calls for Repeat {
         // Element `x`: `x` results, each (x, k).
-        fn call(&mut self, f: u16, fun: &crate::array::Fun, args: &[i64], out: &mut Vec<i64>) -> Result<(), &'static str> {
+        fn call(&mut self, f: u16, fun: &crate::array::Fun, args: &[i64], env: &[&[i64]], out: &mut Vec<i64>) -> Result<(), &'static str> {
             assert_eq!((f, fun.name.as_str(), fun.fields), (0, "repeat", 2));
+            assert_eq!(env, &[&[7i64, 8][..]], "the env array whole, for every element");
             for k in 0..args[0] {
                 out.extend([args[0], k + args[1]]);
             }
             Ok(())
         }
     }
-    let rows = ["fun f0 words repeat fields=2", "%0 = input 0", "%1 = param 0", "%2 = call f0 %0 %1", "%3 = part %2 0", "%4 = part %2 1", "output %2", "output %3", "output %4"];
-    let out = run("1 1", &rows, &[&[2, 0, 1]], &[100], &mut Repeat).unwrap();
+    let rows = ["fun f0 words repeat fields=2", "%0 = input 0", "%1 = param 0", "%2 = input 1", "%3 = call f0 %0 %1 env %2", "%4 = part %3 0", "%5 = part %3 1", "output %3", "output %4", "output %5"];
+    let out = run("2 1", &rows, &[&[2, 0, 1], &[7, 8]], &[100], &mut Repeat).unwrap();
     assert_eq!(out, vec![vec![2, 0, 1], vec![2, 2, 1], vec![100, 101, 100]]);
 }
 

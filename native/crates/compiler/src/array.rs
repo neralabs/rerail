@@ -162,9 +162,13 @@ pub enum ArrayOp {
     Compact(u16),
     /// For counts `c`, each output element's source: `i` repeated `c[i]` times.
     Expand(u16),
+    /// `a`'s elements, then `b`'s.
+    Concat(u16, u16),
     /// Function `f` (`ArrayProgram::funs`) on each element of the arguments (equally long; a
-    /// scalar broadcast): a ragged result. The value is each element's count of results.
-    Call(u16, Vec<u16>),
+    /// scalar broadcast), with the `env` arrays whole (a table every element reads, as an
+    /// expansion reads the definitions by position): a ragged result. The value is each
+    /// element's count of results.
+    Call { f: u16, args: Vec<u16>, env: Vec<u16> },
     /// Field `k` of a call's results, every element's in order: as long as the sum of the counts.
     Part(u16, u8),
     /// A fixed point's carry (`ArrayProgram::rounds`): in the first round, `init`; in each round
@@ -235,11 +239,11 @@ impl ArrayOp {
             ArrayOp::Scan { .. } => Primitive::Scan,
             ArrayOp::Sort(_) => Primitive::Sort,
             ArrayOp::Search { .. } => Primitive::Search,
-            ArrayOp::Gather(..) | ArrayOp::Part(..) => Primitive::Gather,
+            ArrayOp::Gather(..) | ArrayOp::Part(..) | ArrayOp::Concat(..) => Primitive::Gather,
             ArrayOp::Scatter { .. } => Primitive::Scatter,
             ArrayOp::Compact(_) => Primitive::Compact,
             ArrayOp::Expand(_) => Primitive::Expand,
-            ArrayOp::Call(..) => Primitive::Call,
+            ArrayOp::Call { .. } => Primitive::Call,
         }
     }
 
@@ -248,13 +252,13 @@ impl ArrayOp {
         match self {
             ArrayOp::Input(_) | ArrayOp::Param(_) | ArrayOp::Const(_) => vec![],
             ArrayOp::Iota(a) | ArrayOp::Len(a) | ArrayOp::Compact(a) | ArrayOp::Expand(a) | ArrayOp::Carry(a) | ArrayOp::Part(a, _) => vec![*a],
-            ArrayOp::Map(_, a, b) | ArrayOp::Gather(a, b) => vec![*a, *b],
+            ArrayOp::Map(_, a, b) | ArrayOp::Gather(a, b) | ArrayOp::Concat(a, b) => vec![*a, *b],
             ArrayOp::Select(m, a, b) => vec![*m, *a, *b],
             ArrayOp::Scan { a, seg, .. } => [Some(*a), *seg].into_iter().flatten().collect(),
             ArrayOp::Sort(keys) => keys.clone(),
             ArrayOp::Scatter { src, idx, n, init, .. } => vec![*src, *idx, *n, *init],
             ArrayOp::Search { sorted, q, .. } => vec![*sorted, *q],
-            ArrayOp::Call(_, args) => args.clone(),
+            ArrayOp::Call { args, env, .. } => args.iter().chain(env).copied().collect(),
         }
     }
 
@@ -280,8 +284,17 @@ impl ArrayOp {
             ArrayOp::Search { le, sorted, q } => format!("search {} %{sorted} %{q}", if *le { "le" } else { "lt" }),
             ArrayOp::Compact(m) => format!("compact %{m}"),
             ArrayOp::Expand(c) => format!("expand %{c}"),
-            ArrayOp::Call(f, args) if args.is_empty() => format!("call f{f}"),
-            ArrayOp::Call(f, args) => format!("call f{f} {}", vs(args)),
+            ArrayOp::Concat(a, b) => format!("concat %{a} %{b}"),
+            ArrayOp::Call { f, args, env } => {
+                let mut s = format!("call f{f}");
+                if !args.is_empty() {
+                    s += &format!(" {}", vs(args));
+                }
+                if !env.is_empty() {
+                    s += &format!(" env {}", vs(env));
+                }
+                s
+            }
             ArrayOp::Part(c, k) => format!("part %{c} {k}"),
             ArrayOp::Carry(a) => format!("carry %{a}"),
         }
@@ -319,7 +332,12 @@ impl ArrayOp {
             ["search", le, s, q] if *le == "le" || *le == "lt" => ArrayOp::Search { le: *le == "le", sorted: v(s)?, q: v(q)? },
             ["compact", m] => ArrayOp::Compact(v(m)?),
             ["expand", c] => ArrayOp::Expand(v(c)?),
-            ["call", f, args @ ..] => ArrayOp::Call(f.strip_prefix('f').and_then(|f| f.parse().ok()).ok_or_else(|| format!("a bad function `{f}`"))?, values(args)?),
+            ["concat", a, b] => ArrayOp::Concat(v(a)?, v(b)?),
+            ["call", f, rest @ ..] => {
+                let f = f.strip_prefix('f').and_then(|f| f.parse().ok()).ok_or_else(|| format!("a bad function `{f}`"))?;
+                let k = rest.iter().position(|w| *w == "env").unwrap_or(rest.len());
+                ArrayOp::Call { f, args: values(&rest[..k])?, env: values(rest.get(k + 1..).unwrap_or(&[]))? }
+            }
             ["part", c, k] => ArrayOp::Part(v(c)?, k.parse().map_err(|_| format!("a bad field `{k}`"))?),
             ["carry", a] => ArrayOp::Carry(v(a)?),
             _ => return Err(format!("a bad array operation `{}`", words.join(" "))),
@@ -347,9 +365,9 @@ impl ArrayProgram {
                 ArrayOp::Param(k) if *k >= self.params => return bad,
                 ArrayOp::Sort(keys) if keys.is_empty() || keys.len() > MAX_KEYS => return bad,
                 ArrayOp::Scan { how: Combine::Set, .. } => return bad,
-                ArrayOp::Call(f, _) if usize::from(*f) >= self.funs.len() => return bad,
+                ArrayOp::Call { f, .. } if usize::from(*f) >= self.funs.len() => return bad,
                 ArrayOp::Part(c, k) => match &self.ops[usize::from(*c)] {
-                    ArrayOp::Call(f, _) if *k < self.funs[usize::from(*f)].fields => {}
+                    ArrayOp::Call { f, .. } if *k < self.funs[usize::from(*f)].fields => {}
                     _ => return bad,
                 },
                 _ => {}
@@ -453,14 +471,15 @@ pub fn array_rows(out: &mut String, at: usize, p: &ArrayProgram) {
 }
 
 /// What a run's `call`s ask of their functions: function `f` (`ArrayProgram::funs`) of one
-/// element's arguments, its results pushed to `out` (each `fields` values).
+/// element's arguments and the call's `env` arrays, its results pushed to `out` (each `fields`
+/// values).
 pub trait Calls {
-    fn call(&mut self, f: u16, fun: &Fun, args: &[i64], out: &mut Vec<i64>) -> Result<(), &'static str>;
+    fn call(&mut self, f: u16, fun: &Fun, args: &[i64], env: &[&[i64]], out: &mut Vec<i64>) -> Result<(), &'static str>;
 }
 
 /// No functions: a program without calls.
 impl Calls for () {
-    fn call(&mut self, _: u16, _: &Fun, _: &[i64], _: &mut Vec<i64>) -> Result<(), &'static str> {
+    fn call(&mut self, _: u16, _: &Fun, _: &[i64], _: &[&[i64]], _: &mut Vec<i64>) -> Result<(), &'static str> {
         Err("no functions")
     }
 }
@@ -617,9 +636,11 @@ impl ArrayProgram {
                 }
                 out
             }
-            ArrayOp::Call(f, args) => {
+            ArrayOp::Concat(x, y) => a(*x).iter().chain(a(*y)).copied().collect(),
+            ArrayOp::Call { f, args, env } => {
                 let fun = &self.funs[usize::from(*f)];
                 let xs: Vec<&[i64]> = args.iter().map(|&x| a(x).as_slice()).collect();
+                let env: Vec<&[i64]> = env.iter().map(|&x| a(x).as_slice()).collect();
                 let w = if xs.is_empty() { 1 } else { width(&xs)? };
                 let fields = usize::from(fun.fields);
                 let mut counts = Vec::with_capacity(w);
@@ -629,7 +650,7 @@ impl ArrayProgram {
                     one.clear();
                     one.extend(xs.iter().map(|x| at(x, j)));
                     let before = rows.len();
-                    calls.call(*f, fun, &one, &mut rows)?;
+                    calls.call(*f, fun, &one, &env, &mut rows)?;
                     let made = rows.len() - before;
                     if fields == 0 || made % fields != 0 {
                         if fields == 0 && made == 0 {
