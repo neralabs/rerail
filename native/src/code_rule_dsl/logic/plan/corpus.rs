@@ -883,7 +883,7 @@ pub fn combine_handed(read: &Arc<crate::code_rule_dsl::logic::program_image::Ver
     let none = added::Added::default();
     let key = texts_digest(&[text.as_str()], &[None], &none);
     let made = combine_stored_version(&[text.as_str()], &none, &key, &front::Lists::default(), Some(read))?;
-    let hidden = combine_tail(&[text.as_str()], &none, Some(read), None)?;
+    let hidden = combine_tail(&[text.as_str()], &none, Some(read), None)?.0;
     let kept = phases::reading_store().and_then(|store| {
         store.settle(&combined::queued(&key));
         combined::lookup_version(&store, &key, &front::Lists::default()).ok().flatten()
@@ -1342,12 +1342,12 @@ fn keep_prepared(key: [u8; 32], p: Arc<Prepared>) {
 /// `combine` of one program already read (`rr::read_file`): the program itself, as a run holds it, never printed and
 /// read again (decision 0249).
 pub fn combine_read_program(read: &Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
-    combine_tail(&[""], &added::Added::default(), Some(read), None)
+    combine_tail(&[""], &added::Added::default(), Some(read), None).map(|(v, _)| v)
 }
 
 /// The programs `programs` (`.rr` text) combined, past the process's and the store's kept programs.
 pub fn combine_texts(programs: &[&str]) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
-    combine_tail(programs, &added::Added::default(), None, None)
+    combine_tail(programs, &added::Added::default(), None, None).map(|(v, _)| v)
 }
 
 /// What the combine does to the linked program, on the whole (decision 0281's path, step 7a-1): one program's
