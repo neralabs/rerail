@@ -127,7 +127,10 @@ export function sessionNoteRules(workspace: string, databasePath = defaultRerail
  */
 export function startStateReader(database: RerailDatabase): (workspace: string, spelling?: string) => RepositoryStartState {
   const resolveCheckout = createCheckoutResolver(database);
-  return (workspace, spelling) => stateOf(checkoutStatus(database, spelledCheckout(resolveCheckout(workspace), spelling)));
+  return (workspace, spelling) => {
+    const checkout = resolveCheckout(workspace);
+    return stateOf(checkoutStatus(database, spelling === undefined ? checkout : spelledCheckout(checkout, spelling)));
+  };
 }
 
 /**

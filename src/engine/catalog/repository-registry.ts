@@ -92,14 +92,15 @@ function earlierKeyOf(location: Pick<RepositoryIdentityLocation, "git" | "worksp
 
 /**
  * `checkout` as a caller that spelt its folder `spelling` finds it: with the key Rerail 0.1.4 and earlier recorded the
- * folder under for that spelling ({@link earlierKeyOf}) where it is another; `checkout` itself without a spelling, or
- * where the spelling does not resolve.
+ * folder under for that spelling ({@link earlierKeyOf}) where it is another; `checkout` itself where the spelling does
+ * not resolve.
  */
-export function spelledCheckout(checkout: CheckoutContext | undefined, spelling: string | undefined): CheckoutContext | undefined {
-  if (checkout === undefined || spelling === undefined) return checkout;
+export function spelledCheckout(checkout: CheckoutContext | undefined, spelling: string): CheckoutContext | undefined {
+  if (checkout === undefined) return undefined;
+  const { git, checkoutPath } = checkout;
   let earlierCheckoutPath: string | undefined;
   try {
-    earlierCheckoutPath = earlierKeyOf({ git: checkout.git, workspaceRoot: spelling }, checkout.checkoutPath);
+    earlierCheckoutPath = earlierKeyOf({ git, workspaceRoot: spelling }, checkoutPath);
   } catch {
     return checkout;
   }

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { defaultRerailDatabasePath, openRerailDatabase, recordCheckout, repositoryIdentityLocation } from "../../src/engine/index.js";
+import { SqliteSessionStore } from "../../src/runtime/index.js";
 import { createRerailApi, DatabaseApiStores, operations } from "../../src/api/index.js";
 import { readPresentation } from "../../src/presentation/session-presentation.js";
 import { closeNativeTestDaemons, startNativeTestDaemon } from "../support/native-daemon.js";
@@ -70,24 +71,59 @@ describe.runIf(process.platform === "win32")("On Windows, the status line in a f
     expect(footer).toMatchObject({ status: "not-on-here", text: "", repositoryState: "stopped" });
   });
 
-  it("reads the stop at the daemon only from the spelling apart from `repository`, and asked without one or with one it cannot use, as before", async () => {
-    const { spelled } = await stoppedBy014("Asked Apart");
+  /** The daemon's `/api/presentation` over the home's database, as `repository`'s start state and the answer's status. */
+  async function askedApart(test: (state: (query: Record<string, string>) => Promise<[number, string | undefined]>) => Promise<void>): Promise<void> {
     const path = defaultRerailDatabasePath();
     const stores = new DatabaseApiStores(path, {
       health: () => ({ pid: process.pid, database: { path, exists: true }, native: { ok: true } }), origin: () => "http://127.0.0.1:4737",
     });
     try {
       const app = createRerailApi(stores, operations, { version: "0.0.0-test" });
-      const state = async (extra: Record<string, string>) => {
-        const response = await app.request(`/api/presentation?${new URLSearchParams({ repository: realpathSync.native(spelled), host: "claude-code", ...extra })}`);
+      await test(async query => {
+        const response = await app.request(`/api/presentation?${new URLSearchParams({ host: "claude-code", ...query })}`);
         return [response.status, ((await response.json()) as { repositoryState?: string }).repositoryState];
-      };
-      expect(await state({ spelling: spelled })).toEqual([200, "stopped"]);
-      expect(await state({})).toEqual([200, "started"]);
-      expect(await state({ spelling: "Asked Apart" })).toEqual([200, "started"]);
-      expect(await state({ spelling: "Q:\\a drive no letter names\\Asked Apart" })).toEqual([200, "started"]);
+      });
     } finally {
       stores.close();
     }
+  }
+
+  it("reads the stop at the daemon only from the spelling apart from `repository`, and asked without one or with one it cannot use, as before", async () => {
+    const { root, spelled } = await stoppedBy014("Asked Apart");
+    const repository = realpathSync.native(spelled);
+    await askedApart(async state => {
+      expect(await state({ repository, spelling: spelled })).toEqual([200, "stopped"]);
+      expect(await state({ repository })).toEqual([200, "started"]);
+      // Relative to the daemon's own folder on that drive, so no spelling of the session's folder.
+      expect(await state({ repository, spelling: `${spelled.slice(0, 2)}Asked Apart` })).toEqual([200, "started"]);
+      expect(await state({ repository, spelling: "Q:\\a drive no letter names\\Asked Apart" })).toEqual([200, "started"]);
+      expect(await state({ repository: join(root, "share"), spelling: `${spelled.slice(0, 2)}\\` })).toEqual([200, "stopped"]);
+    });
+  });
+
+  it("reads a session's folder below the one asked about without the spelling, which names the folder asked about", async () => {
+    const { spelled } = await stoppedBy014("Asked Above");
+    const repository = realpathSync.native(spelled);
+    const below = join(repository, "Below");
+    mkdirSync(below);
+    const sessions = new SqliteSessionStore(defaultRerailDatabasePath());
+    try {
+      sessions.openSession({ host: "claude-code", sessionId: "a session below", cwd: below });
+    } finally {
+      sessions.close();
+    }
+    const database = openRerailDatabase(defaultRerailDatabasePath());
+    try {
+      // Recorded as of the same repository as the folder above, so only which key is read tells the two apart.
+      const { checkoutPath } = recordCheckout(database, below);
+      const above = database.$client.prepare("SELECT repository_key FROM checkouts WHERE checkout_path = ?").get(realpathSync(spelled)) as { repository_key: string };
+      database.$client.prepare("UPDATE checkouts SET repository_key = ? WHERE checkout_path = ?").run(above.repository_key, checkoutPath);
+    } finally {
+      database.$client.close();
+    }
+    await askedApart(async state => {
+      expect(await state({ repository, spelling: spelled, sessionId: "a session below" })).toEqual([200, "started"]);
+      expect(await state({ repository, spelling: spelled })).toEqual([200, "stopped"]);
+    });
   });
 });
