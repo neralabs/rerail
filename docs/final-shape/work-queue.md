@@ -1639,6 +1639,13 @@ block is given back only with its last part (0325, step 2's open item).
     components").
   - Format 15 on B-now's 50 files: 316 G after the merge of Native-and-GPU-strata (05c9366c7) and the fixes
     below, against 287 G before. Not yet traced; the next samples' top is the join's own work.
+  - The merges of django-bugs (8a95b095d) and of 0353 step 2 (f1f2c8b0c) took py50 format 15 cold from 315 to 340 G
+    (M3, interleaved, findings the same). Fixed in three commits: the store writer (e8b8125b9: 13,677 segment files
+    → 45, frames encoded outside the lock), Q59's guard narrowed (79e2385bc), and step 2's reads in joins
+    (0e1903acb: probes read rows as they find them, steps read only the columns they use, shorter granule
+    searches; 0353 "Step 2's reads in joins"). Now 322 against 314 G (+2.6%) on 15, 319 against 315 on 16, 397
+    against 391 on 16z, findings bc99a752 on all six. Left: on format 15 the parent search, and the select that finds
+    the tape node of a node probed by its id.
   - The Metal binding's side-by-side runs.
   - The full data-layer repo (9,010 files), which is past the 2-minute cap per run.
   - `.rr`'s format 16 table.
@@ -1744,6 +1751,10 @@ Q86 (step 6's prices) waits for step 4: most of what it prices goes.
   a kept plan not led by it is searched again (`valid_live_driver`); decision 0048's last section. Test
   `a_demanded_rule_is_driven_by_its_demand`. Two PostHog runs: every demanded plan led by its demand (the outlier
   run: 19 of 24 not), 2,531 and 2,509 G, findings the same.
+- **Narrowed** (2026-11-17, 79e2385bc): forcing the demand first cost more than it fixed (`not_name` 614,913 units of
+  work led by its demand, against 9,269 led by a constant-restricted `kind`). A demanded rule may be led by its demand
+  or by an atom a constant restricts; any other lead is searched again from the demand (`Body::demand_bounds_lead`).
+  Test `a_demanded_rule_may_be_led_by_a_constant_restricted_atom`; decision 0048's last section.
 
 ### Q88. (Q60 at django-bugs 36f3475c0) A run's plans depend on which concurrent chunk planned first
 
