@@ -15,7 +15,16 @@ use std::sync::Arc;
 /// lattice's value and each ground rule a fact (`program::tops`). A derivation of `v`: every rule came from one of
 /// `v`'s. Also the sentinel relations, those and every declared one of no columns, by id. A rule pass (`Normalize`).
 pub fn normalize(v: &Arc<Version>) -> Result<(Arc<Version>, Vec<RelId>), String> {
-    let mut pass = Normalize::default();
+    run_normalize(v, Normalize::default())
+}
+
+/// `normalize` with each lattice's top given by relation (the SQL extension's lattices, whose operations the session
+/// registers: `native::TOP` where none is given), and `top` read as its value whatever the lattices.
+pub fn normalize_with_tops(v: &Arc<Version>, tops: BTreeMap<String, i64>) -> Result<(Arc<Version>, Vec<RelId>), String> {
+    run_normalize(v, Normalize { given_tops: Some(tops), ..Normalize::default() })
+}
+
+fn run_normalize(v: &Arc<Version>, mut pass: Normalize) -> Result<(Arc<Version>, Vec<RelId>), String> {
     let mut p = Pipeline::new("normalize", v.clone());
     p.rules(&mut pass);
     let (out, _) = p.finish()?;
@@ -32,6 +41,8 @@ pub struct Normalize {
     /// Each lattice's value column and top, by relation, when any lattice is not flat.
     top_of: Vec<Option<(usize, i64)>>,
     tops: bool,
+    /// The tops given (`normalize_with_tops`), by relation.
+    given_tops: Option<BTreeMap<String, i64>>,
     /// The facts it states: each sentinel's, with its presence cell, and each ground rule's head.
     facts: BTreeMap<RelId, Vec<Vec<Cell>>>,
     /// The relations given a presence column, and every declared one of no columns, by id.
@@ -65,9 +76,14 @@ impl RulePass for Normalize {
         sentinels.dedup();
         self.sentinels = sentinels;
         // Each lattice's value column (in `v`'s atoms) and its top, when any lattice is not flat.
-        self.tops = about.lattice.iter().any(|l| v.text(l.lattice) != "flat");
+        self.tops = self.given_tops.is_some() || about.lattice.iter().any(|l| v.text(l.lattice) != "flat");
         self.top_of = vec![None; n];
-        if self.tops {
+        if let Some(given) = &self.given_tops {
+            for l in &about.lattice {
+                let top = given.get(v.rel_name(l.rel)).copied().unwrap_or(crate::code_rule_dsl::logic::native::TOP);
+                self.top_of[l.rel.index()] = Some((l.keys, top));
+            }
+        } else if self.tops {
             for l in &about.lattice {
                 let lat = crate::code_rule_dsl::logic::native::lattice(v.text(l.lattice)).map_err(|e| e.to_string())?;
                 self.top_of[l.rel.index()] = Some((l.keys, lat.top()));

@@ -6,8 +6,10 @@ fn error(message: impl std::fmt::Display) -> napi::Error {
     napi::Error::from_reason(message.to_string())
 }
 
-pub fn logical_arity(program:&front::Program,name:&str)->usize {
-    if program.nullary.contains(name){0}else{program.decls[name].len()}
+/// The columns relation `name` has as written: none for a relation of no columns (its presence column the
+/// emitter's), its declared columns otherwise.
+pub fn logical_arity(program: &(impl crate::code_rule_dsl::logic::program_image::fields::ProgramFields + ?Sized), name: &str) -> usize {
+    if program.nullary().contains(name) { 0 } else { program.columns_of(name).map_or(0, |c| c.len()) }
 }
 
 pub fn physical(program: &mut front::Program) {
