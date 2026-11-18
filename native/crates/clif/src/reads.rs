@@ -10,7 +10,7 @@
 //! Every load here reads the tape or its view, which no code writes while it is read (`readonly`).
 //! Format 16's arrays have 8 bytes of room past their last value, so a value is one word's load.
 
-use crate::view::{F15_STRIDE_SHIFT, F15_TAIL_FROM_START, F16_BLOCK, F16_K, F16_PART, F16_SUB, at};
+use crate::view::{F15_STRIDE_SHIFT, F15_TAIL_FROM_START, F16_BLOCK, F16_K, F16_PART, F16_SUB, F16Z_BLOCK, F16Z_FORMAT, at, z};
 use cranelift_codegen::ir::{
     self, AbiParam, Function, InstBuilder, MemFlags, Signature, UserFuncName, Value,
     condcodes::IntCC,
@@ -116,6 +116,8 @@ pub const READS: &[Read] = &[
     Read { family: Family::View, name: "view_loc_end", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::loc_end },
     Read { family: Family::View, name: "view_loc_col", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::loc_col },
     Read { family: Family::View, name: "view_loc_docof", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::loc_docof },
+    // A 16z tape's block in the reader's slot (decision 0353 step 4b): last, so no other read's number moves.
+    Read { family: Family::Tape, name: "tape_z_block", params: &[I32], ret: I64, hot: false, body: z_block },
 ];
 
 /// The reads of format 16 alone: a side list's value, and a node's slot (16z's parent steps read it block by
@@ -151,12 +153,19 @@ pub trait Callee {
 /// The read's body as a function named `name`, its calls of other reads through `callee`: for a tape of
 /// either format, as its view says (the JIT's, which runs one program over documents of both).
 pub fn build(read: &Read, call_conv: CallConv, name: UserFuncName, callee: &mut dyn Callee) -> Function {
-    build_for(read, call_conv, name, callee, None)
+    build_formats(read, call_conv, name, callee, None, true)
 }
 
 /// The read's body for tapes of `format` alone (15 or 16; `None` either, as its view says): the other's code
 /// is not built, so a reader of one format (the tape crate's `F16`, `F15`) tests none.
 pub fn build_for(read: &Read, call_conv: CallConv, name: UserFuncName, callee: &mut dyn Callee, format: Option<u32>) -> Function {
+    build_formats(read, call_conv, name, callee, format, false)
+}
+
+/// `build_for`, and with `z` a 16z tape too (decision 0353 step 4b) where the body reads either format: its block
+/// decoded into the reader's slot (`tape_z_block`) and read as format 16. The JIT's reads read 16z; the tape crate's
+/// Rust reads a block at a time itself (`F16Z`), and the kernels' reads do not yet.
+pub fn build_formats(read: &Read, call_conv: CallConv, name: UserFuncName, callee: &mut dyn Callee, format: Option<u32>, z: bool) -> Function {
     let mut func = Function::with_name_signature(name, signature(read, call_conv));
     let mut context = FunctionBuilderContext::new();
     let mut f = FunctionBuilder::new(&mut func, &mut context);
@@ -170,7 +179,7 @@ pub fn build_for(read: &Read, call_conv: CallConv, name: UserFuncName, callee: &
         Family::Relation | Family::Lines => (None, None, None),
         Family::View => (None, Some((params[1], params[2])), Some(params[3])),
     };
-    let mut b = B { f, tape: params[0], view, doc_tape, lines, args: params[pointers..].to_vec(), call_conv, callee, format };
+    let mut b = B { f, tape: params[0], view, doc_tape, lines, args: params[pointers..].to_vec(), call_conv, callee, format, z, slot: false };
     let value = (read.body)(&mut b);
     b.f.ins().return_(&[value]);
     b.f.seal_all_blocks();
@@ -193,7 +202,7 @@ pub fn rust_source() -> Result<String, String> {
         let reads: Vec<(u32, &Read)> = READS
             .iter()
             .enumerate()
-            .filter(|(_, read)| read.family == Family::Tape && (format == 16 || !F16_ONLY.contains(&read.name)))
+            .filter(|(_, read)| read.family == Family::Tape && read.name != "tape_z_block" && (format == 16 || !F16_ONLY.contains(&read.name)))
             .map(|(k, read)| (k as u32, read))
             .collect();
         let funcs: Vec<(u32, Function, bool)> =
@@ -223,8 +232,8 @@ pub fn msl_source() -> Result<String, String> {
         READS
             .iter()
             .enumerate()
-            .filter(|(_, read)| read.family == Family::Tape)
-            .map(|(k, read)| (k as u32, build(read, CallConv::SystemV, UserFuncName::user(0, k as u32), &mut ByIndex), read.name))
+            .filter(|(_, read)| read.family == Family::Tape && read.name != "tape_z_block")
+            .map(|(k, read)| (k as u32, build_for(read, CallConv::SystemV, UserFuncName::user(0, k as u32), &mut ByIndex, None), read.name))
             .collect();
     let body = crate::msl::translate_reads(&funcs, "clif_", Family::Tape)?;
     Ok(format!(
@@ -241,7 +250,7 @@ pub fn view_msl_source() -> Result<String, String> {
         .iter()
         .enumerate()
         .filter(|(_, read)| matches!(read.family, Family::View | Family::Lines) || read.name == "loc_line")
-        .map(|(k, read)| (k as u32, build(read, CallConv::SystemV, UserFuncName::user(0, k as u32), &mut ByIndex), read.name))
+        .map(|(k, read)| (k as u32, build_for(read, CallConv::SystemV, UserFuncName::user(0, k as u32), &mut ByIndex, None), read.name))
         .collect();
     let body = crate::msl::translate_reads(&funcs, "clif_", Family::View)?;
     Ok(format!(
@@ -450,6 +459,11 @@ pub struct B<'a, 'c> {
     callee: &'c mut dyn Callee,
     /// The one format the body reads (`build_for`), or `None` for either.
     format: Option<u32>,
+    /// Whether a 16z tape is read too (`build_formats`).
+    z: bool,
+    /// Whether the tape being read is a 16z block decoded into the reader's slot, which the reads write: its loads
+    /// are not of memory no code writes.
+    slot: bool,
 }
 
 /// A load of the tape's bytes.
@@ -473,17 +487,27 @@ impl B<'_, '_> {
     pub(crate) fn c64(&mut self, value: i64) -> Value {
         self.f.ins().iconst(I64, value)
     }
+    /// A load of the tape's bytes: or of the slot a 16z block is decoded into.
+    fn mem(&self) -> MemFlags {
+        if self.slot { MemFlags::new().with_notrap() } else { memory() }
+    }
+    /// A load of the view's fields: or of the view of a 16z block in its slot.
+    fn fields(&self) -> MemFlags {
+        if self.slot { MemFlags::new().with_notrap().with_aligned() } else { fields() }
+    }
     /// The view's u32 at byte `offset`.
     fn view(&mut self, offset: i32) -> Value {
         let view = self.view.expect("a read of the tape's family");
-        self.f.ins().load(I32, fields(), view, offset)
+        let flags = self.fields();
+        self.f.ins().load(I32, flags, view, offset)
     }
     /// The view's `k`-th u32 of the array at byte `offset`.
     fn view_at(&mut self, offset: i32, k: Value) -> Value {
         let k = self.f.ins().uextend(I64, k);
         let k = self.f.ins().ishl_imm(k, 2);
         let p = self.f.ins().iadd(self.view.expect("a read of the tape's family"), k);
-        self.f.ins().load(I32, fields(), p, offset)
+        let flags = self.fields();
+        self.f.ins().load(I32, flags, p, offset)
     }
     /// The tape's address `base + offset` (both u32s).
     fn address(&mut self, base: Value, offset: Value) -> Value {
@@ -494,20 +518,24 @@ impl B<'_, '_> {
     }
     fn u8(&mut self, base: Value, offset: Value) -> Value {
         let p = self.address(base, offset);
-        self.f.ins().uload8(I32, memory(), p, 0)
+        let flags = self.mem();
+        self.f.ins().uload8(I32, flags, p, 0)
     }
     fn u16(&mut self, base: Value, offset: Value) -> Value {
         let p = self.address(base, offset);
-        self.f.ins().uload16(I32, memory(), p, 0)
+        let flags = self.mem();
+        self.f.ins().uload16(I32, flags, p, 0)
     }
     fn u32(&mut self, base: Value, offset: Value) -> Value {
         let p = self.address(base, offset);
-        self.f.ins().load(I32, memory(), p, 0)
+        let flags = self.mem();
+        self.f.ins().load(I32, flags, p, 0)
     }
     /// Eight bytes, little-endian, at any alignment.
     fn word(&mut self, base: Value, offset: Value) -> Value {
         let p = self.address(base, offset);
-        self.f.ins().load(I64, memory(), p, 0)
+        let flags = self.mem();
+        self.f.ins().load(I64, flags, p, 0)
     }
     /// The low `w` bytes' mask (all ones at 8 or more).
     fn mask(&mut self, w: Value) -> Value {
@@ -531,16 +559,65 @@ impl B<'_, '_> {
     }
     /// `sixteen`'s value for a format 16 tape, else `fifteen`'s: the view's format tested, unless the body is
     /// built for one (`build_for`).
-    fn by_format(&mut self, ty: ir::Type, sixteen: impl FnOnce(&mut Self) -> Value, fifteen: impl FnOnce(&mut Self) -> Value) -> Value {
+    /// `sixteen` takes the node (its read's first argument): of a 16z tape, its place in its block, the block
+    /// decoded into the reader's slot and read as format 16 (`in_block`).
+    fn by_format(&mut self, ty: ir::Type, sixteen: impl Fn(&mut Self, Value) -> Value, fifteen: impl FnOnce(&mut Self) -> Value) -> Value {
+        let sixteen = &sixteen;
+        self.by_formats(
+            ty,
+            |b| {
+                let i = b.arg(0);
+                sixteen(b, i)
+            },
+            |b| b.in_block(sixteen),
+            fifteen,
+        )
+    }
+    /// `by_format` with a 16z tape's body of its own (`zed`).
+    fn by_formats(&mut self, ty: ir::Type, sixteen: impl FnOnce(&mut Self) -> Value, zed: impl FnOnce(&mut Self) -> Value, fifteen: impl FnOnce(&mut Self) -> Value) -> Value {
         match self.format {
             Some(16) => sixteen(self),
             Some(_) => fifteen(self),
             None => {
                 let format = self.view(at::FORMAT);
                 let f16 = self.f.ins().icmp_imm(IntCC::Equal, format, 16);
-                self.either(ty, f16, sixteen, fifteen)
+                if !self.z {
+                    return self.either(ty, f16, sixteen, fifteen);
+                }
+                self.either(ty, f16, sixteen, |b| {
+                    let z = b.f.ins().icmp_imm(IntCC::Equal, format, i64::from(F16Z_FORMAT));
+                    b.either(ty, z, zed, fifteen)
+                })
             }
         }
+    }
+    /// A format 16 read's `body` of a tape of format 16 or, read too (`z`), 16z.
+    fn sixteen_or_z(&mut self, ty: ir::Type, body: impl Fn(&mut Self, Value) -> Value) -> Value {
+        if self.format.is_some() || !self.z {
+            let i = self.arg(0);
+            return body(self, i);
+        }
+        let format = self.view(at::FORMAT);
+        let z = self.f.ins().icmp_imm(IntCC::Equal, format, i64::from(F16Z_FORMAT));
+        let body = &body;
+        self.either(ty, z, |b| b.in_block(body), |b| {
+            let i = b.arg(0);
+            body(b, i)
+        })
+    }
+    /// A 16z tape's `body` of its first argument's node: its block in the reader's slot (`tape_z_block`), read as
+    /// format 16 with the node's place in it. The body's calls of other reads read the slot (format 16's).
+    fn in_block(&mut self, body: impl Fn(&mut Self, Value) -> Value) -> Value {
+        let i = self.arg(0);
+        let block = self.f.ins().ushr_imm(i, i64::from(F16Z_BLOCK.trailing_zeros()));
+        let local = self.f.ins().band_imm(i, i64::from(F16Z_BLOCK - 1));
+        let slot = self.call("tape_z_block", &[block]);
+        let tape = self.f.ins().iadd_imm(slot, i64::from(z::SLOT_BYTES));
+        let view = self.f.ins().iadd_imm(slot, i64::from(z::SLOT_VIEW));
+        let held = (std::mem::replace(&mut self.tape, tape), self.view.replace(view), self.format.replace(16), std::mem::replace(&mut self.slot, true));
+        let value = body(self, local);
+        (self.tape, self.view, self.format, self.slot) = (held.0, held.1, held.2, held.3);
+        value
     }
     /// `then` where `cond`, else `otherwise`: a value of type `ty`.
     pub(crate) fn either(&mut self, ty: ir::Type, cond: Value, then: impl FnOnce(&mut Self) -> Value, otherwise: impl FnOnce(&mut Self) -> Value) -> Value {
@@ -711,7 +788,7 @@ fn size(b: &mut B<'_, '_>) -> Value {
     let i = b.arg(0);
     b.by_format(
         I32,
-        |b| {
+        |b, i| {
             let v = b.get(0, i);
             let leaf = b.f.ins().band_imm(v, 1);
             let leaf = b.f.ins().icmp_imm(IntCC::NotEqual, leaf, 0);
@@ -735,7 +812,7 @@ fn number(b: &mut B<'_, '_>) -> Value {
     let i = b.arg(0);
     b.by_format(
         I32,
-        |b| {
+        |b, i| {
             let codes = b.column(0);
             let byte = b.u8(codes, i);
             let cut = b.view(at::CUT);
@@ -769,7 +846,7 @@ fn start(b: &mut B<'_, '_>) -> Value {
     let i = b.arg(0);
     b.by_format(
         I32,
-        |b| {
+        |b, i| {
             // Its checkpoint, then the gaps of the nodes after it, to the node's own.
             let c = b.f.ins().ushr_imm(i, i64::from(F16_K.trailing_zeros()));
             let from = b.checkpoint(c);
@@ -857,7 +934,7 @@ fn end(b: &mut B<'_, '_>) -> Value {
     let i = b.arg(0);
     b.by_format(
         I32,
-        |b| {
+        |b, i| {
             let start = b.call("tape_start", &[i]);
             let length = b.get(2, i);
             let length = b.f.ins().ireduce(I32, length);
@@ -893,12 +970,13 @@ fn parent(b: &mut B<'_, '_>) -> Value {
         root,
         |b| b.c32(NONE),
         |b| {
-            b.by_format(I32, |b| parent16(b, i), |b| parent15(b, i))
+            // A 16z tape's walk reads each slot in its block (`tape_slot`), back over blocks' starts.
+            b.by_formats(I32, |b| parent16(b, i, false), |b| parent16(b, i, true), |b| parent15(b, i))
         },
     )
 }
 
-fn parent16(b: &mut B<'_, '_>, i: Value) -> Value {
+fn parent16(b: &mut B<'_, '_>, i: Value, z: bool) -> Value {
     let (head, body, sibling, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
     b.f.append_block_param(head, I32);
     b.f.append_block_param(done, I32);
@@ -909,7 +987,7 @@ fn parent16(b: &mut B<'_, '_>, i: Value) -> Value {
     b.f.ins().brif(j, body, &[], done, &[none.into()]);
     b.f.switch_to_block(body);
     let before = b.f.ins().iadd_imm(j, -1);
-    let v = b.get(0, before);
+    let v = if z { b.call("tape_slot", &[before]) } else { b.get(0, before) };
     let leaf = b.f.ins().band_imm(v, 1);
     b.f.ins().brif(leaf, sibling, &[], done, &[before.into()]);
     b.f.switch_to_block(sibling);
@@ -982,7 +1060,7 @@ fn length(b: &mut B<'_, '_>) -> Value {
     let i = b.arg(0);
     b.by_format(
         I32,
-        |b| {
+        |b, i| {
             let length = b.get(2, i);
             b.f.ins().ireduce(I32, length)
         },
@@ -1000,7 +1078,7 @@ fn start_next(b: &mut B<'_, '_>) -> Value {
     let (i, prev) = (b.arg(0), b.arg(1));
     b.by_format(
         I32,
-        |b| {
+        |b, i| {
             let r = b.f.ins().band_imm(i, i64::from(F16_K - 1));
             b.either(
                 I32,
@@ -1024,8 +1102,277 @@ fn start_next(b: &mut B<'_, '_>) -> Value {
 /// Format 16's slot of the node: an inner node's subtree size, shifted up by one; a leaf's step back to its previous
 /// sibling or (bit 1) its parent, shifted up by two, with bit 0 set.
 fn slot(b: &mut B<'_, '_>) -> Value {
-    let i = b.arg(0);
-    b.get(0, i)
+    b.sixteen_or_z(I64, |b, i| b.get(0, i))
+}
+
+/// A 16z tape's block `block` (decision 0353 step 4b): the address of the reader's slot that holds it, decoded into
+/// it on a miss, the slot not read last replaced (a parent's walk back over a block's start keeps both). The slot's
+/// view is the block's as format 16's (its regions from the slot's bytes, each side list one part).
+fn z_block(b: &mut B<'_, '_>) -> Value {
+    let block = b.arg(0);
+    let reader = b.view.expect("a read of the tape's family");
+    let rw = MemFlags::new().with_notrap().with_aligned();
+    let key = b.f.ins().iadd_imm(block, 1);
+    let stride = b.column(3);
+    let stride = b.f.ins().uextend(I64, stride);
+    let s0 = b.f.ins().iadd_imm(reader, i64::from(z::SLOTS));
+    let s1 = b.f.ins().iadd(s0, stride);
+    let (hit0, try1, hit1, miss, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(done, I64);
+    let k0 = b.f.ins().load(I32, rw, s0, 0);
+    let is0 = b.f.ins().icmp(IntCC::Equal, k0, key);
+    b.f.ins().brif(is0, hit0, &[], try1, &[]);
+    b.f.switch_to_block(hit0);
+    let one = b.c32(1);
+    b.f.ins().store(rw, one, reader, z::NEXT);
+    b.f.ins().jump(done, &[s0.into()]);
+    b.f.switch_to_block(try1);
+    let k1 = b.f.ins().load(I32, rw, s1, 0);
+    let is1 = b.f.ins().icmp(IntCC::Equal, k1, key);
+    b.f.ins().brif(is1, hit1, &[], miss, &[]);
+    b.f.switch_to_block(hit1);
+    let zero = b.c32(0);
+    b.f.ins().store(rw, zero, reader, z::NEXT);
+    b.f.ins().jump(done, &[s1.into()]);
+    b.f.switch_to_block(miss);
+    let next = b.f.ins().load(I32, rw, reader, z::NEXT);
+    let slot = b.f.ins().select(next, s1, s0);
+    let flip = b.f.ins().bxor_imm(next, 1);
+    b.f.ins().store(rw, flip, reader, z::NEXT);
+    z_decode(b, block, slot);
+    b.f.ins().store(rw, key, slot, 0);
+    b.f.ins().jump(done, &[slot.into()]);
+    b.f.switch_to_block(done);
+    b.f.block_params(done)[0]
+}
+
+/// Block `block` of the reader's 16z tape decoded into `slot`: its bytes (LZ4's block format, `z_lz4`), each side
+/// list's one part after them, and its view.
+fn z_decode(b: &mut B<'_, '_>, block: Value, slot: Value) {
+    let rw = MemFlags::new().with_notrap().with_aligned();
+    let nodes = b.view(at::NODES);
+    let first = b.f.ins().ishl_imm(block, i64::from(F16Z_BLOCK.trailing_zeros()));
+    let left = b.f.ins().isub(nodes, first);
+    let most = b.c32(i64::from(F16Z_BLOCK));
+    let nb = b.f.ins().umin(left, most);
+    // Its side lists' lengths, four u32s a block.
+    let sides = b.column(1);
+    let sixteen = b.f.ins().imul_imm(block, 16);
+    let side: Vec<Value> = (0..4)
+        .map(|k| {
+            let at = b.f.ins().iadd_imm(sixteen, 4 * k);
+            b.u32(sides, at)
+        })
+        .collect();
+    // Its regions as format 16's (`f16::layout`): the codes, slots, gaps and lengths, the checkpoints, the side
+    // lists, each with 8 bytes of room after it.
+    let (w0, w1, w2, cw) = (b.width(0), b.width(1), b.width(2), b.width(3));
+    let checkpoints = b.f.ins().iadd_imm(nb, i64::from(F16_K) - 1);
+    let checkpoints = b.f.ins().ushr_imm(checkpoints, i64::from(F16_K.trailing_zeros()));
+    let lens = [nb, b.f.ins().imul(nb, w0), b.f.ins().imul(nb, w1), b.f.ins().imul(nb, w2), b.f.ins().imul(checkpoints, cw), side[0], side[1], side[2], side[3]];
+    let mut at = vec![b.c32(0)];
+    for len in lens {
+        let last = *at.last().expect("a region's start");
+        let end = b.f.ins().iadd(last, len);
+        at.push(b.f.ins().iadd_imm(end, 8));
+    }
+    let end = at[9];
+    // The compressed block: from its start in the block index to the next's.
+    let index = b.column(0);
+    let four = b.f.ins().imul_imm(block, 4);
+    let from = b.u32(index, four);
+    let after = b.f.ins().iadd_imm(four, 4);
+    let to = b.u32(index, after);
+    let comp = b.column(2);
+    let src = b.address(comp, from);
+    let src_end = b.address(comp, to);
+    let dst = b.f.ins().iadd_imm(slot, i64::from(z::SLOT_BYTES));
+    let end64 = b.f.ins().uextend(I64, end);
+    let dst_end = b.f.ins().iadd(dst, end64);
+    z_lz4(b, src, src_end, dst, dst_end);
+    // Each side list's one part: from 0 to its length.
+    for (k, &len) in side.iter().enumerate() {
+        let zero = b.c32(0);
+        b.f.ins().store(rw, zero, dst_end, 8 * k as i32);
+        b.f.ins().store(rw, len, dst_end, 8 * k as i32 + 4);
+    }
+    // The block's view: its nodes, format 16's, its regions and parts, the tape's widths and choices.
+    let view = b.f.ins().iadd_imm(slot, i64::from(z::SLOT_VIEW));
+    let sixteen = b.c32(16);
+    let widths = b.view(at::WIDTHS);
+    let (cut, per) = (b.view(at::CUT), b.view(at::PER));
+    for (value, offset) in [(nb, at::NODES), (sixteen, at::FORMAT), (widths, at::WIDTHS), (cut, at::CUT), (per, at::PER)] {
+        b.f.ins().store(rw, value, view, offset);
+    }
+    for k in 0..5 {
+        b.f.ins().store(rw, at[k], view, at::COLUMNS + 4 * k as i32);
+    }
+    for k in 0..4 {
+        b.f.ins().store(rw, at[5 + k], view, at::SIDE + 4 * k as i32);
+        let part = b.f.ins().iadd_imm(end, 8 * k as i64);
+        b.f.ins().store(rw, part, view, at::PARTS + 4 * k as i32);
+    }
+}
+
+/// LZ4's block format decoded from `src..src_end` to `dst..dst_end` (decision 0353 step 4b), in words: a
+/// sequence's literals 8 bytes a copy, then 4, 2 and 1; a match 8 bytes a copy, an offset under 8 widened first as
+/// LZ4's reference decoder widens it (its copies may run 8 bytes past `dst_end`, into the slot's room). A length's
+/// extension bytes are read one a step, each 255 bytes of the length. A sequence that would write past `dst_end`
+/// or read before `dst` (a corrupt block) ends the decode.
+fn z_lz4(b: &mut B<'_, '_>, src: Value, src_end: Value, dst: Value, dst_end: Value) {
+    let rw = MemFlags::new().with_notrap();
+    let tape = memory();
+    let (head, token, literals, after, matched, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(head, I64);
+    b.f.append_block_param(head, I64);
+    b.f.ins().jump(head, &[src.into(), dst.into()]);
+    b.f.switch_to_block(head);
+    let (s, d) = (b.f.block_params(head)[0], b.f.block_params(head)[1]);
+    let more = b.f.ins().icmp(IntCC::UnsignedLessThan, s, src_end);
+    b.f.ins().brif(more, token, &[], done, &[]);
+    b.f.switch_to_block(token);
+    let t = b.f.ins().uload8(I32, tape, s, 0);
+    let s = b.f.ins().iadd_imm(s, 1);
+    let lit = b.f.ins().ushr_imm(t, 4);
+    let (lit, s) = z_length(b, lit, s, src_end);
+    let lit = b.f.ins().uextend(I64, lit);
+    let d_lit = b.f.ins().iadd(d, lit);
+    let fits = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, d_lit, dst_end);
+    b.f.ins().brif(fits, literals, &[], done, &[]);
+    b.f.switch_to_block(literals);
+    z_copy_exact(b, s, d, lit);
+    let s = b.f.ins().iadd(s, lit);
+    let more = b.f.ins().icmp(IntCC::UnsignedLessThan, s, src_end);
+    b.f.ins().brif(more, after, &[], done, &[]);
+    // The match: its offset back, its length (4 more than its own).
+    b.f.switch_to_block(after);
+    let off = b.f.ins().uload16(I32, tape, s, 0);
+    let off = b.f.ins().uextend(I64, off);
+    let s = b.f.ins().iadd_imm(s, 2);
+    let m = b.f.ins().band_imm(t, 15);
+    let (m, s) = z_length(b, m, s, src_end);
+    let m = b.f.ins().iadd_imm(m, 4);
+    let m = b.f.ins().uextend(I64, m);
+    let back = b.f.ins().isub(d_lit, dst);
+    let some = b.f.ins().icmp_imm(IntCC::NotEqual, off, 0);
+    let within = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, off, back);
+    let d_end = b.f.ins().iadd(d_lit, m);
+    let fits = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, d_end, dst_end);
+    let ok = b.f.ins().band(some, within);
+    let ok = b.f.ins().band(ok, fits);
+    b.f.ins().brif(ok, matched, &[], done, &[]);
+    b.f.switch_to_block(matched);
+    let from = b.f.ins().isub(d_lit, off);
+    // An offset under 8: its first 8 bytes a byte at a time and a word, and the source moved on to a multiple of
+    // the offset at least 8 back (LZ4's `inc32table` and `dec64table`, a nibble each).
+    let (near, far, copy) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(copy, I64);
+    let small = b.f.ins().icmp_imm(IntCC::UnsignedLessThan, off, 8);
+    b.f.ins().brif(small, near, &[], far, &[]);
+    b.f.switch_to_block(near);
+    for j in 0..4 {
+        let byte = b.f.ins().uload8(I32, rw, from, j);
+        b.f.ins().istore8(rw, byte, d_lit, j);
+    }
+    let shift = b.f.ins().ishl_imm(off, 2);
+    let inc = b.c64(0x4440_1210);
+    let inc = b.f.ins().ushr(inc, shift);
+    let inc = b.f.ins().band_imm(inc, 15);
+    let at = b.f.ins().iadd(from, inc);
+    let word = b.f.ins().load(I32, rw, at, 0);
+    b.f.ins().store(rw, word, d_lit, 4);
+    let dec = b.c64(0x7650_3444);
+    let dec = b.f.ins().ushr(dec, shift);
+    let dec = b.f.ins().band_imm(dec, 15);
+    let at = b.f.ins().iadd_imm(at, 4);
+    let at = b.f.ins().isub(at, dec);
+    b.f.ins().jump(copy, &[at.into()]);
+    b.f.switch_to_block(far);
+    let word = b.f.ins().load(I64, rw, from, 0);
+    b.f.ins().store(rw, word, d_lit, 0);
+    let at = b.f.ins().iadd_imm(from, 8);
+    b.f.ins().jump(copy, &[at.into()]);
+    // The rest 8 bytes a copy, at least 8 back.
+    b.f.switch_to_block(copy);
+    let from = b.f.block_params(copy)[0];
+    let (wild, step) = (b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(wild, I64);
+    b.f.append_block_param(wild, I64);
+    let to = b.f.ins().iadd_imm(d_lit, 8);
+    b.f.ins().jump(wild, &[to.into(), from.into()]);
+    b.f.switch_to_block(wild);
+    let (to, from) = (b.f.block_params(wild)[0], b.f.block_params(wild)[1]);
+    let left = b.f.ins().icmp(IntCC::UnsignedLessThan, to, d_end);
+    b.f.ins().brif(left, step, &[], head, &[s.into(), d_end.into()]);
+    b.f.switch_to_block(step);
+    let word = b.f.ins().load(I64, rw, from, 0);
+    b.f.ins().store(rw, word, to, 0);
+    let to = b.f.ins().iadd_imm(to, 8);
+    let from = b.f.ins().iadd_imm(from, 8);
+    b.f.ins().jump(wild, &[to.into(), from.into()]);
+    b.f.switch_to_block(done);
+}
+
+/// An LZ4 length of `nibble` (a u32): 15 is followed by bytes added to it, the last under 255. Returns the length and
+/// the source past it.
+fn z_length(b: &mut B<'_, '_>, nibble: Value, s: Value, src_end: Value) -> (Value, Value) {
+    let (head, step, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(head, I32);
+    b.f.append_block_param(head, I64);
+    b.f.append_block_param(done, I32);
+    b.f.append_block_param(done, I64);
+    let long = b.f.ins().icmp_imm(IntCC::Equal, nibble, 15);
+    b.f.ins().brif(long, head, &[nibble.into(), s.into()], done, &[nibble.into(), s.into()]);
+    b.f.switch_to_block(head);
+    let (n, s) = (b.f.block_params(head)[0], b.f.block_params(head)[1]);
+    let some = b.f.ins().icmp(IntCC::UnsignedLessThan, s, src_end);
+    b.f.ins().brif(some, step, &[], done, &[n.into(), s.into()]);
+    b.f.switch_to_block(step);
+    let byte = b.f.ins().uload8(I32, memory(), s, 0);
+    let n = b.f.ins().iadd(n, byte);
+    let s = b.f.ins().iadd_imm(s, 1);
+    let again = b.f.ins().icmp_imm(IntCC::Equal, byte, 255);
+    b.f.ins().brif(again, head, &[n.into(), s.into()], done, &[n.into(), s.into()]);
+    b.f.switch_to_block(done);
+    (b.f.block_params(done)[0], b.f.block_params(done)[1])
+}
+
+/// `n` bytes from `s` to `d`: 8 a copy, then 4, 2 and 1, so no load passes `s + n` (the last block's literals end
+/// the tape).
+fn z_copy_exact(b: &mut B<'_, '_>, s: Value, d: Value, n: Value) {
+    let rw = MemFlags::new().with_notrap();
+    let (head, step, tail) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(head, I64);
+    let whole = b.f.ins().band_imm(n, !7);
+    let zero = b.c64(0);
+    b.f.ins().jump(head, &[zero.into()]);
+    b.f.switch_to_block(head);
+    let k = b.f.block_params(head)[0];
+    let more = b.f.ins().icmp(IntCC::UnsignedLessThan, k, whole);
+    b.f.ins().brif(more, step, &[], tail, &[]);
+    b.f.switch_to_block(step);
+    let from = b.f.ins().iadd(s, k);
+    let word = b.f.ins().load(I64, memory(), from, 0);
+    let to = b.f.ins().iadd(d, k);
+    b.f.ins().store(rw, word, to, 0);
+    let k = b.f.ins().iadd_imm(k, 8);
+    b.f.ins().jump(head, &[k.into()]);
+    b.f.switch_to_block(tail);
+    let mut k = whole;
+    for (bit, ty) in [(4, I32), (2, ir::types::I16), (1, ir::types::I8)] {
+        let (copy, next) = (b.f.create_block(), b.f.create_block());
+        let has = b.f.ins().band_imm(n, bit);
+        b.f.ins().brif(has, copy, &[], next, &[]);
+        b.f.switch_to_block(copy);
+        let from = b.f.ins().iadd(s, k);
+        let to = b.f.ins().iadd(d, k);
+        let value = b.f.ins().load(ty, memory(), from, 0);
+        b.f.ins().store(rw, value, to, 0);
+        b.f.ins().jump(next, &[]);
+        b.f.switch_to_block(next);
+        let step = b.f.ins().band_imm(n, bit);
+        k = b.f.ins().iadd(k, step);
+    }
 }
 
 /// One past the node's subtree.

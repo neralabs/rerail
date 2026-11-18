@@ -186,6 +186,31 @@
         assert_eq!(execution.into_outcome().unwrap().outputs, expected);
     }
 
+    /// Decision 0353 step 4b: the JIT reads a 16z tape where it is held, a block decoded into its evaluation's
+    /// reader where a read falls: over a document of several blocks, its outputs are format 15's.
+    #[test]
+    fn the_jit_reads_a_16z_tape_as_format_15() {
+        use crate::code_rule_dsl::tape::formats::{Format, as_run};
+        let source: String = (0..400).map(|i| format!("v{i} = call(argument, b=[{i}])\nif v{i}:\n  pass\n")).collect();
+        let native = StrDoc::new(&source, SupportLang::Python);
+        let held = |format: Format| {
+            as_run(format, || {
+                let grammar = Grammar::new(SupportLang::Python).unwrap();
+                let image = TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap().primary.in_format(format);
+                TapeDoc::restore(Arc::new(source.clone()), grammar, &image, &|| false).unwrap()
+            })
+        };
+        let (plain, z) = (held(Format::F15), held(Format::F16Z));
+        assert_eq!(z.doc_tape().image().format(), Format::F16Z);
+        assert!(z.transducer_len() > 3 * rerail_tape_format::f16::Z, "{} nodes", z.transducer_len());
+        let programs = ["call", "argument", "v7"].map(identifier_program).to_vec();
+        let anchors = vec![programs.iter().map(|_| (0..plain.transducer_len() as u32).collect::<Vec<_>>()).collect::<Vec<_>>()];
+        let expected = execute_batch(&programs, std::slice::from_ref(&plain), Some(&anchors)).unwrap();
+        let outputs: usize = expected.iter().flatten().map(Vec::len).sum();
+        assert!(outputs >= 800, "{outputs} outputs");
+        assert_eq!(execute_with_backend(ExecutionBackend::CpuJit, &programs, std::slice::from_ref(&z), &anchors).unwrap(), expected);
+    }
+
     fn assert_jit_parity(programs: &[Program], tapes: &[TapeDoc]) {
         let anchors = tapes
             .iter()

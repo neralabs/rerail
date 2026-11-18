@@ -223,6 +223,10 @@ fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
             let tape_on_device = || -> Result<_, &'static str> {
                 let tape = p.facts.tape.as_ref().ok_or("views.refused.no_tape")?;
                 let (bytes, view) = tape.in_place().map_err(|_| "views.refused.not_in_place")?;
+                // A 16z tape's reads decode a block into a reader's slot; the kernels' reads do not yet (0353 step 4b).
+                if view.format == rerail_clif::view::F16Z_FORMAT {
+                    return Err("views.refused.z_on_device");
+                }
                 let room = tape.image().room().ok_or(if tape.image().format() == crate::code_rule_dsl::tape::formats::Format::F16Z { "views.refused.unplaced_16z" } else { "views.refused.unplaced" })?;
                 let (address, slab) = crate::code_rule_dsl::tape::placed::on_device(room, bytes).ok_or("views.refused.not_in_room")?;
                 Ok((address, slab, view))

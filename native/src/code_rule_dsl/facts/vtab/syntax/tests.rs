@@ -1862,6 +1862,9 @@ kernel void view_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[
             let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image.clone().in_format(format), lines).unwrap());
             let dialect = Dialect::new(core::facts_tag(&facts)).unwrap();
             let (tape, view) = facts.tape.as_ref().unwrap().in_place().unwrap();
+            // A 16z tape's reads decode its blocks into the reader's slots (0353 step 4b).
+            let reader = rerail_clif::view::Reader::new(&view);
+            let v = reader.view();
             for (shape, narrowed) in [(Shape::Core, false), (Shape::T, false), (Shape::Core, true)] {
                 let p = if narrowed { Projected::anchored(7, Arc::clone(&facts), Some(&dialect), shape, &anchors) } else { Projected::new(7, Arc::clone(&facts), Some(&dialect), shape, false, None) };
                 let at = format!("{label} {} {shape:?}{}", format.name(), if narrowed { " narrowed" } else { "" });
@@ -1899,16 +1902,17 @@ kernel void view_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[
                 let ll = words.as_ptr().cast::<u8>();
                 let jitted: Vec<i64> = (0..n)
                     .flat_map(|l| {
-                        let mut row: Vec<i64> = (0..5).map(|c| node(e, t, &view, ll, l, c)).collect();
-                        row.extend((0..3).map(|c| if l + 1 < n { child(e, t, &view, ll, l, c) } else { 0 }));
-                        row.extend((0..3).map(|c| if l < nf { field(e, t, &view, ll, l, c) } else { 0 }));
-                        row.extend((0..3).map(|c| core_node(e, t, &view, ll, l, c)));
-                        row.extend((0..2).map(|c| line(e, t, &view, ll, l, c)));
+                        let mut row: Vec<i64> = (0..5).map(|c| node(e, t, v, ll, l, c)).collect();
+                        row.extend((0..3).map(|c| if l + 1 < n { child(e, t, v, ll, l, c) } else { 0 }));
+                        row.extend((0..3).map(|c| if l < nf { field(e, t, v, ll, l, c) } else { 0 }));
+                        row.extend((0..3).map(|c| core_node(e, t, v, ll, l, c)));
+                        row.extend((0..2).map(|c| line(e, t, v, ll, l, c)));
                         row
                     })
                     .collect();
                 assert_eq!(jitted, want, "{at}: the JIT's rows");
-                if let (Some(device), Some((pipe, queue))) = (&device, &pipe) {
+                // The kernels' reads do not read 16z yet.
+                if let (Some(device), Some((pipe, queue)), false) = (&device, &pipe, view.format == rerail_clif::view::F16Z_FORMAT) {
                     let d = block.offset_of(entry.desc()) as u64;
                     // The tape where the device reads it: a test's buffer of its bytes, a word of room past them.
                     let mut bytes = tape.to_vec();

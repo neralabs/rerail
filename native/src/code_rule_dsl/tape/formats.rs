@@ -308,9 +308,6 @@ pub struct DocTape {
     reader: AnyTape<'static>,
     image: Arc<TapeImage>,
     other: [OnceLock<TapeImage>; 3],
-    /// A 16z tape laid out as the format 16 tape it is the blocks of, once, for the readers that read format 16's
-    /// arrays in place (`in_place`), as the device's slab lays it out.
-    laid: OnceLock<Result<f16::Tape16, String>>,
 }
 
 impl DocTape {
@@ -320,7 +317,7 @@ impl DocTape {
         // is in the `Arc`'s allocation, which does not move, and is never changed once held; this holds the `Arc`
         // for as long as the reader, and `reader` lends it at the borrow of `self` only.
         let reader = unsafe { std::mem::transmute::<AnyTape<'_>, AnyTape<'static>>(reader) };
-        DocTape { reader, image, other: Default::default(), laid: OnceLock::new() }
+        DocTape { reader, image, other: Default::default() }
     }
 
     /// The tape's reader, made once: a node's reads dispatch on the format, and nothing is built a read.
@@ -337,12 +334,12 @@ impl DocTape {
     pub fn bytes(&self) -> usize {
         self.image.estimated_bytes()
             + self.other.iter().filter_map(OnceLock::get).map(TapeImage::estimated_bytes).sum::<usize>()
-            + self.laid.get().and_then(|laid| laid.as_ref().ok()).map_or(0, f16::Tape16::bytes)
     }
 
     /// The tape as the reads written once take it (decision 0310): the bytes every offset of its view counts
-    /// from, and the view. Format 15's columns and format 16's arrays as held; a 16z tape's blocks laid out as
-    /// format 16 once.
+    /// from, and the view. Format 15's columns and format 16's arrays as held; a 16z tape's blocks as stored, which
+    /// a reader reads through a `rerail_clif::view::Reader` of its own (a block decoded where a read falls, 0353
+    /// step 4b).
     pub fn in_place(&self) -> Result<(&[u8], rerail_clif::view::TapeView), String> {
         fn sixteen<'a>(t: &'a f16::Tape16, lang: Option<&Lang>) -> Result<(&'a [u8], rerail_clif::view::TapeView), String> {
             let lang = lang.ok_or("a format 16 tape of a language without its table")?;
@@ -352,16 +349,7 @@ impl DocTape {
         match self.image.held() {
             Held::F15(c) => Ok((c.laid_out().0, c.view())),
             Held::F16(t) => sixteen(t, lang),
-            Held::F16Z(z) => {
-                // copy (0353 step 4b): the 16z tape's blocks laid out as format 16 in a vector of its own. It goes:
-                // the reads written once read 16z in place, a block decoded where a read falls.
-                let laid = self.laid.get_or_init(|| {
-                    let mut bytes = vec![0; z.unblocked_len()];
-                    z.unblock_into(&mut bytes)?;
-                    f16::Tape16::from_bytes(bytes)
-                });
-                sixteen(laid.as_ref().map_err(Clone::clone)?, lang)
-            }
+            Held::F16Z(z) => Ok((z.as_bytes(), z.view(lang.ok_or("a 16z tape of a language without its table")?)?)),
         }
     }
 

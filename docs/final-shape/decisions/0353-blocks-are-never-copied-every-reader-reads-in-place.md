@@ -381,7 +381,7 @@ Each row is marked in the code with `copy (0353 step N)`.
 | 12 | Findings, frames and memo entries copied into rows of their own | The output, frames and memo stores | Not yet measured | Step 8 (0325 step 7) |
 | 13 | The transducer's residency: every tape it reads copied into slabs of its own, and documents copied between slabs | `residency::slabs::admit_docs`, `insert`'s `place`; `rerail_metal::slabs::gather` | Each tape a Metal batch reads | Step 7 |
 | 14 | Found 2026-11-17: the line starts copied into the chunk block for the `line` and `Loc` views, and the spans past a document's nodes beside them; a guest's places made there. Both views read in place where the batch's tapes are on the device (step 4d); the copies are the fallback of a batch whose tapes are not, or with a guest placed by pieces or segments | `device_chunk.rs`, `fill_lines`, `fill_locs` | 4 bytes a line, 8 a span, each batch that makes the views | Step 4 |
-| 15 | Found 2026-11-17, unmarked: a 16z tape's blocks laid out as format 16 for the reads written once (`DocTape::in_place`'s `laid`), the whole tape, once per document, for its views and the CPU executor; its views then refused on the device (`views.refused.not_in_room`) and made | `tape/formats.rs`, `DocTape::in_place` | The tape's format 16 size, each 16z document read in place (16z is opt-in: `RERAIL_TAPE=16z`) | Step 4b |
+| 15 | Found 2026-11-17: a 16z tape's blocks laid out as format 16. `DocTape::in_place`'s copy went 2026-11-18 (the CPU reads 16z in place, step 4b); left, the transducer's residency's (`unblock_into` into its slab, for the kernels), and a 16z batch's views, refused on the device (`views.refused.z_on_device`) and made | `residency/slabs.rs`, `place`'s `unblock_into` | The tape's format 16 size, each 16z document a Metal batch reads (16z is opt-in: `RERAIL_TAPE=16z`) | Step 4b (the kernels) |
 
 ## The plan
 
@@ -454,6 +454,27 @@ Each step ends with:
        - Open for the kernels: a stage's probes read a view at any row, so a threadgroup's reads are not within
          one or two blocks as a scan's are. A probe whose block is not the group's needs a slot of its own; how
          many, and where, is decided when the kernels' part is built, against a probe-heavy stratum's misses.
+       - The CPU's part (2026-11-18): a 16z tape's view (`F16Z_FORMAT`, `Tape16Z::view`) names its block index,
+         its blocks' side lengths and its compressed bytes where they lie as stored, and a slot's stride. A reader
+         (`view::Reader`) is the view and two slots after it. A format 16 read of a 16z tape (`by_format`'s third
+         case) calls `tape_z_block` (cold), which finds the node's block in a slot or decodes it there (LZ4's block
+         format in words: 8-byte copies, an offset under 8 widened as LZ4's reference decoder does, a length's
+         extension bytes one a step), writes the block's view, and the read reads the slot as format 16 with the
+         node's place in its block; `parent` walks back over blocks' starts by `tape_slot`. `DocTape::in_place`
+         gives the stored bytes (row 15's laid-out copy goes); the CPU executor gives each evaluation that reads a
+         16z tape a reader of its own, since an evaluation's tasks run in order on one worker.
+         hogql cold with `RERAIL_TAPE=16z`, against the commit before: findings 1,629 throughout; the CPU's
+         binding, 4 pairs at load 30–49, peak footprint 397–472 MB against 429–456 MB, 121.7–143.5 B instructions
+         against 119.7–128.3 B (noise); the Metal binding, 1 pair at load 45, 102.7 B against 112.9 B, peak
+         1,207 MB against 1,289 MB. Checks: the JIT's reads of a 16z tape of 6 blocks equal `F16Z`'s, node by
+         node, and the JIT executor's outputs over one equal format 15's.
+       - The tape crate's `F16Z` still decodes with `lz4_sys` into its thread's two blocks, then reads them with the
+         generated format 16 reads: the same block, decoded by a second decoder. The Rust backend checks each load
+         against the tape's bytes, and a slot is not the tape's: the generated module reads 16z when its loads of a
+         slot are checked against the slot.
+       - Left for the kernels: the device's views refuse a 16z batch (`views.refused.z_on_device`) and are made;
+         the transducer's residency lays a 16z tape out whole in its slab (`unblock_into`, row 13). Both go when
+         the kernels' reads decode a block.
      - **4c.** The views' reads written once (CLIF, for Rust, the JIT and MSL), over a document's `TapeView` and
        its projection's `Numbering`: each view's scan over 64-node groups (the open subtrees from one descent) and
        its probes (by id; by parent, first child and next numbered sibling). Check: their rows equal `Viewed`'s,

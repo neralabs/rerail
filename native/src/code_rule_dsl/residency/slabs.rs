@@ -223,6 +223,8 @@ fn place(
         }
     }
     if let Some(z) = &plan.z {
+        // copy (0353 step 4b): a 16z tape laid out whole as format 16 in the transducer's slab, for the kernels'
+        // reads, which do not read 16z yet; it goes when they decode a block where a read falls.
         z.unblock_into(tape).map_err(invalid)?;
     }
     let tape = &*tape;

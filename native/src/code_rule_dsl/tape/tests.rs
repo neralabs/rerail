@@ -5249,7 +5249,8 @@ fn the_lean_parsers_write_each_format_directly() {
 
 /// The reads written once in CLIF (decision 0310), JIT-compiled whole, read a document's tape where it is held as
 /// the document reads it, in every format a run may hold: format 15's columns in their one buffer, format 16's
-/// arrays, and a 16z tape's blocks laid out as format 16 once. Every node's code (through the device's codes: kind,
+/// arrays, and a 16z tape's blocks as stored, a block decoded into the reader's slot where a read falls (0353 step
+/// 4b). Every node's code (through the device's codes: kind,
 /// field, flags), parent, next sibling, children, subtree and span; one document past a side-list part (1,024
 /// nodes), with gaps and lengths past a byte.
 #[test]
@@ -5275,6 +5276,9 @@ fn the_clif_reads_read_every_format_as_the_document_does() {
             });
             assert_eq!(doc.doc_tape().image().format(), format, "held as {format:?}");
             let (tape, view) = doc.doc_tape().in_place().unwrap();
+            let reader = rerail_clif::view::Reader::new(&view);
+            // SAFETY: the reader's view, which this thread alone reads.
+            let view = unsafe { &*reader.view() };
             let codes = resident::doc_codes(&doc).unwrap();
             let none = |v: Option<u32>| v.unwrap_or(NONE);
             let n = doc.transducer_len() as u32;

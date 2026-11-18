@@ -944,6 +944,27 @@ impl Tape16Z {
         Ok(())
     }
 
+    /// The view the reads written once take of this tape as stored (decision 0353 step 4b,
+    /// `rerail_clif::view::F16Z_FORMAT`): its block index, side lengths and compressed bytes where they lie in
+    /// `as_bytes`, format 16's widths and `lang`'s choices, and the stride of a reader's slot (`view::Reader`), which
+    /// holds its largest block decoded. A reader of the view reads it through a `view::Reader` of its own.
+    pub fn view(&self, lang: &Lang) -> Result<TapeView, String> {
+        use rerail_clif::view::{F16Z_BLOCK, F16Z_FORMAT, z};
+        const _: () = assert!(F16Z_BLOCK as usize == Z);
+        if self.mark != lang.revision || self.widths != lang.widths {
+            return Err(format!("a tape of revision {}, read with revision {}", self.mark, lang.revision));
+        }
+        let blocks = self.n.div_ceil(Z);
+        let largest = (0..blocks).map(|b| layout(Z.min(self.n - b * Z), self.widths, self.cw, self.sides[b])[REGIONS]).max().unwrap_or(0);
+        let stride = (z::SLOT_BYTES as usize + largest + z::SLACK).next_multiple_of(16);
+        let frame = Placement { n: self.n, cw: self.cw, at: [0; REGIONS + 1], parts: [0; 4], vw: self.vw }.frame(0)?;
+        let mut view = bind(frame, lang)?;
+        let at = |offset: usize| u32::try_from(offset).map_err(|_| "a tape past 4 GiB".to_owned());
+        view.format = F16Z_FORMAT;
+        view.columns = [at(HEAD16Z)?, at(HEAD16Z + 4 * (blocks + 1))?, at(self.comp)?, at(stride)?, 0];
+        Ok(view)
+    }
+
     /// Read with `lang`'s choices (its revision and widths).
     pub fn reader<'a>(&'a self, lang: &'a Lang) -> Result<F16Z<'a>, String> {
         if self.mark != lang.revision || self.widths != lang.widths {
@@ -1311,6 +1332,12 @@ mod tests {
         let t = sixteen(&lang, &plain, &(0..600).collect::<Vec<_>>(), pos + 2);
         let v = placement(t.as_bytes()).unwrap().view(&lang, 0).unwrap();
         same_reads(&reads, &t.reader(&lang).unwrap(), t.as_bytes(), &v);
+        // 16z, the same nodes in blocks (decision 0353 step 4b): each read decodes its block into the reader's slot.
+        let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), pos + 2, 0, true) else { panic!("16z") };
+        assert!(z.len() > 3 * Z, "the tape spans blocks");
+        let reader = rerail_clif::view::Reader::new(&z.view(&lang).unwrap());
+        // SAFETY: the reader's view, which this thread alone reads.
+        same_reads(&reads, &z.reader(&lang).unwrap(), z.as_bytes(), unsafe { &*reader.view() });
         // Format 15.
         let (image, _) = crate::tape::tests::sample();
         let (columns, table) = crate::tape::f15_columns(&image).unwrap();

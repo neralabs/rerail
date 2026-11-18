@@ -89,6 +89,61 @@ pub const F16_K: u32 = 8;
 pub const F16_BLOCK: u32 = 256;
 pub const F16_PART: u32 = 1024;
 pub const F16_SUB: u32 = F16_PART / F16_BLOCK;
+/// A 16z tape's format in its view (decision 0353 step 4b): format 16 in LZ4 blocks of `F16Z_BLOCK` nodes, read
+/// in place, a block decoded where a read falls into a slot of the reader's (`Reader`). Its view's `columns` are
+/// the block index's offset (a u32 a block, one more at the end: each block's start in the compressed bytes), the
+/// blocks' side lengths' (four u32s a block), the compressed bytes' and the reader's slot stride; its widths, cut
+/// and per are format 16's.
+pub const F16Z_FORMAT: u32 = 1016;
+pub const F16Z_BLOCK: u32 = 1024;
+
+/// Where a 16z reader's view and slots lie, from the view's first byte (`Reader`): the slot a miss replaces (a
+/// u32 after the view), then two slots, each a key (its block plus one; 0 empty), the block's view (format 16's,
+/// its offsets from the slot's bytes) and the block's bytes: its regions, each side list's one part, and room for
+/// the decode's 8-byte copies past its end.
+pub mod z {
+    pub const NEXT: i32 = 116;
+    pub const SLOTS: i32 = 128;
+    pub const SLOT_VIEW: i32 = 16;
+    pub const SLOT_BYTES: i32 = 144;
+    /// The room past a block's bytes: its side lists' parts (32 bytes) and the decode's copies past its end.
+    pub const SLACK: usize = 64;
+}
+
+/// A reader's view of a tape (decision 0353 step 4b): the view, and for a 16z tape the two slots its reads decode
+/// blocks into, which the reads write. One reader a thread: a reader is not shared while it reads.
+pub struct Reader {
+    words: *mut u128,
+    len: usize,
+}
+
+impl Reader {
+    /// `view`'s reader: the view alone for format 15 or 16; for 16z, its slots after it, empty.
+    pub fn new(view: &TapeView) -> Reader {
+        let bytes = if view.format == F16Z_FORMAT { z::SLOTS as usize + 2 * view.columns[3] as usize } else { z::SLOTS as usize };
+        let len = bytes.div_ceil(16);
+        let words = Box::into_raw(vec![0u128; len].into_boxed_slice()).cast::<u128>();
+        // SAFETY: the buffer is at least `SLOTS` bytes, 16-aligned; the view is plain words.
+        unsafe { words.cast::<TapeView>().write(*view) };
+        Reader { words, len }
+    }
+
+    /// The view the reads take: its address, its slots after it.
+    pub fn view(&self) -> *const TapeView {
+        self.words.cast()
+    }
+}
+
+impl Drop for Reader {
+    fn drop(&mut self) {
+        // SAFETY: the buffer `new` made, of `len` words.
+        drop(unsafe { Box::from_raw(std::ptr::slice_from_raw_parts_mut(self.words, self.len)) });
+    }
+}
+
+// SAFETY: a reader owns its buffer; it is read (and its slots written) by one thread at a time.
+unsafe impl Send for Reader {}
+
 /// Format 15's checkpoint stride (`base`'s, a u32 every 16 nodes) and its tails-from-start flag.
 pub const F15_STRIDE_SHIFT: u32 = 4;
 pub const F15_TAIL_FROM_START: u32 = 1 << 12;
