@@ -295,10 +295,13 @@ export class SqliteAuditControlStore {
     });
     return this.getSettings(sessionId);
   }
-  /** `updateSettings` for a checkout by its folder, before any session there exists: what its sessions start with. */
+  /**
+   * `updateSettings` for a checkout by its folder, before any session there exists: what its sessions start with. The
+   * change starts from the settings {@link getWorkspaceSettings} reads for the folder as spelt here.
+   */
   updateWorkspaceSettings(workspaceRoot: string, patch: z.input<typeof auditSettingsPatchSchema>): AuditSettings {
     const parsed = auditSettingsPatchSchema.parse(patch);
-    return this.#database.transaction(() => this.#saveSettings(canonicalWorkspace(workspaceRoot), parsed));
+    return this.#database.transaction(() => this.#saveSettings(canonicalWorkspace(workspaceRoot), parsed, { cwd: workspaceRoot }));
   }
   /**
    * Merges `patch` over the checkout's saved settings, else the defaults, and saves the result under the canonical key.

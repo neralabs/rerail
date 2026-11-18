@@ -149,6 +149,13 @@ describe("audit controls", () => {
       expect(rows()[stored]).toEqual({ scope: "repository", mode: "log", steerStrategy: "rewind" });
     }, { recordedHere: false }));
 
+    it("by the folder as spelt, a change of one setting starts from what 0.1.4 saved there, as a read of it finds it", () => inSpelledFolder(({ spelled, controls, saveAsEarlier }) => {
+      saveAsEarlier({ scope: "ai-output", mode: "log" });
+      expect(controls.getWorkspaceSettings(spelled)?.mode).toBe("log");
+      controls.updateWorkspaceSettings(spelled, { steerStrategy: "rewind" });
+      expect(controls.getWorkspaceSettings(spelled)).toEqual({ ...LOG, steerStrategy: "rewind" });
+    }));
+
     it("reads a row saved under the stored spelling before the one 0.1.4 saved", () => inSpelledFolder(({ stored, controls, saveAsEarlier }) => {
       saveAsEarlier({ scope: "ai-output", mode: "log" });
       controls.updateWorkspaceSettings(stored, { mode: "steer" });
