@@ -163,6 +163,24 @@ A GPU atomic into `malloc`ed memory was seen by the CPU.
 - A copy into device memory is no help on a unified device: 53 GB/s, slower than reading in place.
 - `cudaHostRegisterReadOnly` on a file mapping is refused ("operation not supported"). Nothing needs it.
 
+**A discrete card: a V100 (16 GB, sm_70) on a cloud VM, driver 580, CUDA 12.9** (2026-11-18). This is the
+partitioned case (§7.2). The same probe, 256 MB of `u64`, best of 4:
+
+| Memory the kernel reads | Result | Time | Bandwidth |
+|---|---|---|---|
+| `cudaMalloc` (device memory) | correct | 0.54 ms | 500 GB/s |
+| `cudaHostAlloc` (pinned, mapped), read in place over PCIe | correct | 21.8 ms | 12.3 GB/s |
+| copy of pinned memory to `cudaMalloc` memory | — | 21.7 ms | 12.3 GB/s |
+| anonymous `mmap` after `cudaHostRegister`, read in place | correct | 21.9 ms | 12.3 GB/s |
+| `malloc`, anonymous `mmap`, huge pages, file `mmap`, read in place | illegal access, or a crash | — | — |
+
+`hostNativeAtomics = 0`. A GPU atomic into `malloc`ed memory faults.
+
+- **Host memory is about 40× slower to read than device memory here**, and pageable memory cannot be read at all.
+  A block a kernel reads more than once is copied into device memory first, as Q1's answer says (§7.2).
+- Reading pinned memory in place costs the same as copying it, so a block read once can stay in place.
+- The card has 16 GB, so §7.3's limits apply. Volta is the oldest card CUDA 12 builds for: CUDA 13 dropped sm_70.
+
 **UKL on CUDA, as it stands.** We compiled the vendored random forest kernels against upstream's CUDA shim
 (`nvcc -ptx -arch=sm_121`). It failed with 42 errors, all from the shim falling behind the kernels:
 
@@ -480,7 +498,7 @@ Progress (2026-11-18):
 - **Step 2, first half: done.** All 17 random-forest kernels are written once in UKL
   (`randomforest_kernels_ukl.h`), and the hand-written Metal wrappers (`randomforest_kernels.metal`) are gone.
   - On Metal, the forest's library is built from the UKL source, and the forest's tests pass.
-  - On CUDA, NVRTC compiles all 17 for sm_121 (GB10) into one cubin. Registers range from 10 to 76; static shared
+  - On CUDA, NVRTC compiles all 17 into one cubin: for sm_121 (GB10, CUDA 13) and for sm_70 (V100, CUDA 12.9). Registers range from 10 to 76; static shared
     memory is 0 to 32,640 bytes per kernel.
   - UKL gained the rows the kernels needed (§3.1): `ARGS` (a structure of arguments), `CONSTBUFFER`, `SHARED`
     (threadgroup storage declared in the kernel's own scope, which is the only place Metal allows it),

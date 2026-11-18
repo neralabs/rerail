@@ -25,7 +25,7 @@ int main(int argc, char** argv) {
     char* cubin = malloc(cs); nvrtcGetCUBIN(prog, cubin);
     printf("cubin %zu bytes\n", cs);
     // Load it on the device: the entry points the module exports, by the names the shim gives them.
-    cuInit(0); CUdevice d; cuDeviceGet(&d, 0); CUcontext c; cuCtxCreate(&c, NULL, 0, d);
+    cuInit(0); CUdevice d; cuDeviceGet(&d, 0); CUcontext c; cuDevicePrimaryCtxRetain(&c, d); cuCtxSetCurrent(c);  // the primary context: the same call on CUDA 12 and 13
     CUmodule m; CUresult lr = cuModuleLoadData(&m, cubin);
     if (lr != CUDA_SUCCESS) { const char* s; cuGetErrorString(lr, &s); printf("load: %s\n", s); return 1; }
     for (int k = 3; k < argc; ++k) {
