@@ -543,6 +543,11 @@ pub fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLi
     if !native_cpu_output::lowered(native) {
         return Err(Error::UnsupportedBackend);
     }
+    // Its code in one reservation (`rerail_clif::jit::builder`): the reads' calls are `bl`s. The browser's stand-in
+    // (`wasm/cranelift-jit`) builds no module.
+    #[cfg(not(target_family = "wasm"))]
+    let builder = rerail_clif::jit::builder().unwrap_or_else(|e| compile_failed("the JIT builder", e));
+    #[cfg(target_family = "wasm")]
     let builder = JITBuilder::new(default_libcall_names()).unwrap_or_else(|e| compile_failed("the JIT builder", e));
     let mut module = JITModule::new(builder);
     // The tape's reads (decision 0310): declared once, the cold ones defined; every function's pass inlines the hot.
