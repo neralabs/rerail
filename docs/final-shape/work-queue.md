@@ -3791,4 +3791,28 @@ native join it falls back to the planner's whole-rule order.
   later process prepares from them, and the check keeps them honest. Measure the refused share first and after.
 - **Done when**: a cold run's refused prepared lines are under a tenth of those taken, with the joins' CPU no worse
   than with prepared plans off.
+- **Tried, dropped** (2026-11-18): each refusal noted the rows per node the run held of the relations the plan
+  assumed, and at the run's end the version's plans were made again with them in place of the estimates (the
+  columns' distinct values scaled with them), kept for the next run. corpus0 x B-now, profiling, M3: a second run on
+  the same store over the corpus edited (a comment line added to every file, so nothing is reused) refused 938 lines
+  against 3,382, but took 1,263 billion instructions against 963 with prepared plans off (+31%; joins 41.3 s ->
+  51.4 s); the commit before it, 987 (+2.5%); with derived estimates off, 967 (+0.5%); 463 findings, d067ec2ebf6f, in
+  every one. Correcting a relation's rows lets more lines take a plan whose distributions are still estimates, and a
+  line's plan taken on a kept-plan miss is kept (`decide`), so its order outlives the run. The diff is not in the
+  tree. What the next attempt needs: a plan priced on the run's statistics is what a search gives at 0.1-0.3 s a run
+  (search) and 1-2 s (statistics) of about 85 s; a prepared plan has to be priced as well as that to pay.
+
+### Q185. A lowered program's identity is its store's: kept plans and prepared plans miss across stores
+
+- **Found** (2026-11-18, while measuring Q184): the same rules lowered on two fresh stores give versions of other
+  identities (`manager::identity`): a lowered rule holds a name as the store's atom (decision 0270, `#n2708` on
+  one, `#n13220` on another), and every hash over the rules' text moves with it: rule hashes, the file-local
+  helpers' names (`fl<hash>_…`, `typing::file_local::helper_name` hashes the rule's text, atoms included), the version
+  identity and `line_key`. Within one store all of them hold (the atoms are the store's for good), so a project's
+  later runs read what its earlier ones kept. A run on a new store (CI, a fresh checkout) never reads another
+  store's kept or prepared plans, even for the same rules.
+- **Next**: decide whether plans should move across stores at all. If so, key them by the program before lowering,
+  or hash a branded name by its text (as `relocate` maps names by their strings), helpers' names included.
+- **Done when**: two fresh stores give the same rules one identity, and a test lowers them on two numberings and
+  finds the same keys.
 

@@ -445,3 +445,11 @@ refused, 14,565 searched against 15,146. Planning is 1-3% of the run's CPU (sear
 of 94 s); a wrong order costs ten times that. The criterion "a run plans none of the relations that have shapes"
 is met for the relations whose facts size them; for the rest it waits on estimates good enough to keep (Q184).
 
+**A later run on the same store** (2026-11-18). The measurement above gave each run a new store. A second run on
+the store of a first, over the corpus edited so that nothing is reused, searches about 5,000 lines with prepared plans
+or without: the kept plans (decision 0038) answer the rest. Instructions: 963 billion off, 987 with prepared plans
+(+2.5%, within the runs' spread), 967 with derived estimates off. Making a version's plans again from the sizes a
+run saw (Q184) cost 31% and was dropped. So on a warm store prepared plans save no planning, and on a cold one they
+save little (planning is 1-3% of the run). The criterion that a run plans none of the relations with shapes is met
+where facts size them; for derived relations it is open (Q184), as is reading plans across stores (Q185).
+
