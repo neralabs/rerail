@@ -6,7 +6,7 @@
  * page names (`setNeeds`: the open view's, the sidebar's and an open sheet's, from `views/index.js`). Long lists
  * are paged with a cursor: a poll refreshes their first page and keeps the further pages the person loaded.
  */
-import { get, send } from "./api.js";
+import { ACCESS_KEY, get, send } from "./api.js";
 import { data, ui, sinceFor, setScope, pagedList, panelRuleId } from "./state.js";
 import { toStoredRules } from "./derive.js";
 import { historyRuleId } from "./history-model.js";
@@ -685,8 +685,10 @@ async function poll() {
   const since = sinceFor();
   const started = generation;
   try {
-    const shared = [loadRepositories(), loadHealth()];
-    const results = await Promise.all(ui.scope === null ? shared : [...shared, ...await scopedJobs(since)]);
+    // Every read is under the one `Promise.all` from the start: a context read that fails while the shared reads are
+    // still out must not leave their failures unhandled.
+    const scoped = ui.scope === null ? [] : scopedJobs(since).then(jobs => Promise.all(jobs));
+    const results = (await Promise.all([loadRepositories(), loadHealth(), scoped])).flat();
     if (started !== generation) return;
     if (since === 0) { data.activityAll = data.activity; data.activityAllSessions = data.activitySessions; }
     data.updatedAt = Date.now();
@@ -705,8 +707,11 @@ async function poll() {
     data.missing = !data.accessRequired && /^\/api\/repository(\/rules)?\?.* answered 404$/u.test(error.message);
     data.disconnected = !data.missing && !data.accessRequired;
     data.loaded = data.missing;
-    backoff = data.missing ? INTERVAL : Math.min(MAX_BACKOFF, backoff * 2);
-    if (!data.missing) console.warn("poll failed", error);
+    // Only a daemon that did not answer is asked less often. One that refused this browser is asked at the usual pace,
+    // so the page that asks to connect it continues soon after `rerail manage` does.
+    backoff = data.disconnected ? Math.min(MAX_BACKOFF, backoff * 2) : INTERVAL;
+    // A refused browser or an unknown repository is an answer the page shows; only a daemon that did not answer warns.
+    if (data.disconnected) console.warn("poll failed", error);
     onChange(data.missing);
   }
 }
@@ -735,6 +740,8 @@ export function startPolling(listener) {
   onChange = listener;
   refresh().then(schedule);
   document.addEventListener("visibilitychange", () => { if (hidden()) clearTimeout(timer); else refreshNow(); });
+  // Another tab of this origin stored the capability (the link `rerail manage` opens): read with it now.
+  window.addEventListener("storage", event => { if (event.key === ACCESS_KEY && !hidden()) refreshNow(); });
 }
 
 /** A user action that changes what to fetch (view, range, selected session) wants data now. */

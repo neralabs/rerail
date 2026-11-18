@@ -15,6 +15,7 @@ import type { CheckoutContext, CheckoutRecord, RepositoryKey, RepositoryRecord, 
 import {
   GIT_IDENTITY_FILE,
   normalizeRemoteAddress,
+  outsideGit,
   readCloneIdAt,
   readRemoteAddress,
   repositoryFolderName,
@@ -53,10 +54,15 @@ function repositoryByKeyOrAlias(db: Reader, key: RepositoryKey): RepositoryRow |
     ?? db.select().from(repositories).where(ne(repositories.aliases, [])).all().find(row => row.aliases.includes(key));
 }
 
-/** The normalised key of the checkout's `origin` or sole remote; undefined without one or without git. */
-function remoteKeyOf(root: string): RepositoryKey | undefined {
+/**
+ * The normalised key of the checkout's `origin` or sole remote; undefined without one or without git. A folder outside
+ * Git ({@link outsideGit}) has no remote, so Git is not started to say so. A folder with no work tree that Git still
+ * places in a repository, a bare repository or a folder inside a `.git`, is keyed by that repository's remote.
+ */
+function remoteKeyOf(location: RepositoryIdentityLocation): RepositoryKey | undefined {
+  if (!location.git && outsideGit(location.workspaceRoot)) return undefined;
   try {
-    const remote = readRemoteAddress(root);
+    const remote = readRemoteAddress(location.workspaceRoot);
     return remote === undefined ? undefined : normalizeRemoteAddress(remote.url);
   } catch (error) {
     if (error instanceof GitUnavailableError) return undefined;
@@ -164,7 +170,7 @@ function cloneRepository(db: Reader, cloneId: string): RepositoryKey | undefined
 
 /** The repository the checkout's remote names, created when none is known: keyed by the remote, else by the clone id. */
 function remoteRepositoryCreated(tx: Writer, location: RepositoryIdentityLocation, cloneId: string, now: number): RepositoryKey {
-  const remoteKey = remoteKeyOf(location.workspaceRoot);
+  const remoteKey = remoteKeyOf(location);
   const known = remoteKey === undefined ? undefined : repositoryByKeyOrAlias(tx, remoteKey)?.repositoryKey;
   if (known !== undefined) return known;
   const repositoryKey = remoteKey ?? `${CLONE_KEY_PREFIX}${cloneId}`;
@@ -177,7 +183,7 @@ function remoteRepositoryCreated(tx: Writer, location: RepositoryIdentityLocatio
 /** A clone-keyed repository adopts the checkout's remote once per process; "no remote" is not remembered, so a remote added later is adopted. */
 function adoptRemoteOnce<C extends CheckoutContext>(db: RerailDatabase, context: C, location: RepositoryIdentityLocation, now: number): C {
   if (!context.repositoryKey.startsWith(CLONE_KEY_PREFIX) || adoptionChecked.has(context.repositoryKey)) return context;
-  const remoteKey = remoteKeyOf(location.workspaceRoot);
+  const remoteKey = remoteKeyOf(location);
   if (remoteKey === undefined) return context;
   adoptionChecked.add(context.repositoryKey);
   const target = repositoryByKeyOrAlias(db, remoteKey)?.repositoryKey ?? remoteKey;
@@ -253,7 +259,7 @@ function remoteRepository(
   remoteKeys: Map<string, RepositoryKey | undefined>,
 ): RepositoryKey | undefined {
   if (!location.git) return undefined;
-  if (!remoteKeys.has(checkoutPath)) remoteKeys.set(checkoutPath, remoteKeyOf(location.workspaceRoot));
+  if (!remoteKeys.has(checkoutPath)) remoteKeys.set(checkoutPath, remoteKeyOf(location));
   const remoteKey = remoteKeys.get(checkoutPath);
   return remoteKey === undefined ? undefined : repositoryByKeyOrAlias(db, remoteKey)?.repositoryKey;
 }
