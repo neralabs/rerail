@@ -21,6 +21,7 @@ import { isBusy } from "../engine/storage/sqlite-wal.js";
 import { DAEMON_ACCESS_HEADER, sameSecret, type EngineEndpoint } from "./daemon-control.js";
 import { ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, engineHoldsCapability, engineProof, isEngineChallenge } from "./engine-proof.js";
 import { isNamedPipe } from "./engine-pipe.js";
+import { needsRoom } from "../engine/memory-room.js";
 import { checkoutStatus } from "./repository-start.js";
 import { nativeTreeWatch, type TreeWatch } from "../engine/code-rule/tree-watch.js";
 import { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
@@ -221,16 +222,12 @@ type EngineServiceOptions = Omit<RerailRuntimeOptions, "workspaceRoot"> & {
   idleSessionMs?: number;
   /** The clock idle sessions are measured by; defaults to `Date.now`. */
   now?: () => number;
-  /** How long a checkout's runtime stays open once no session uses it; {@link IDLE_RUNTIME_MS} by default. */
-  idleRuntimeMs?: number;
+  /**
+   * Whether the daemon needs the room a runtime no session uses takes (`needsRoom` in engine/memory-room.ts, by
+   * default): asked as such a runtime's last session leaves it, as a runtime opens and at each minute's sweep.
+   */
+  needsRoom?: () => boolean;
 };
-
-/**
- * How long a checkout's runtime stays open after its last session ends. A session that starts there again within it
- * finds its rules compiled and its checkout walked: the five packs a TypeScript repository adds take 12 s of CPU to
- * compile on a Windows laptop. After it the runtime closes, and the engine frees what its rules held.
- */
-export const IDLE_RUNTIME_MS = 15 * 60_000;
 
 interface EngineRoutingState {
   runtimes: Map<string, RerailRuntime>;
@@ -240,10 +237,10 @@ interface EngineRoutingState {
   lastEventAt: Map<string, number>;
   lanes: SessionLanes;
   pending: Set<Promise<readonly AdapterDelivery[]>>;
-  /** The runtimes no session uses, each with the timer that closes it. */
-  idle: Map<string, NodeJS.Timeout>;
-  /** How long a runtime no session uses stays open: `idleRuntimeMs`, or `IDLE_RUNTIME_MS`. */
-  idleRuntimeMs: number;
+  /** The runtimes no session uses, the one unused longest first: each stays open until the daemon needs the room. */
+  unused: Set<string>;
+  /** Whether the daemon needs the room the unused runtimes take: the service's `needsRoom`, else engine/memory-room.ts's. */
+  needsRoom: () => boolean;
   /** What each open runtime was made with, by its key: a suspended session's runtime is made again from it. */
   runtimeOptions: Map<string, RerailRuntimeOptions>;
   /** The sessions the idle close suspended, by session id, until a runtime opens one again or the service closes. */
@@ -396,7 +393,7 @@ async function routeEngineEvent(
 /**
  * The session has ended, whether its runtime recorded the end or not: it is no longer quiet, its suspension, when its
  * runtime did not open it again (a stopped repository, or an open that failed), ends its record here, and the runtime it
- * used retires once no other session uses it.
+ * used is kept unused once no other session uses it (`keepUnusedRuntime`).
  */
 function afterSessionEnd(state: EngineRoutingState, sessionId: string, runtimeKey: string): void {
   state.lastEventAt.delete(laneOf(runtimeKey, sessionId));
@@ -406,8 +403,7 @@ function afterSessionEnd(state: EngineRoutingState, sessionId: string, runtimeKe
 
 /** The runtime at `runtimeKey` is about to be used: it is no longer one to close for want of use. */
 function keepRuntime(state: EngineRoutingState, runtimeKey: string): void {
-  clearTimeout(state.idle.get(runtimeKey));
-  state.idle.delete(runtimeKey);
+  state.unused.delete(runtimeKey);
 }
 
 /** The runtime open at `runtimeKey`, else one made with `runtimeOptions`, which takes back the sessions the service suspended. */
@@ -420,6 +416,8 @@ function runtimeFor(
   const open = state.runtimes.get(runtimeKey);
   if (open !== undefined) return open;
   if (runtimeOptions === undefined) throw new Error(`Kernel runtime is unavailable for session ${sessionId}`);
+  // A runtime about to open takes memory: the unused ones go first when the daemon has no room for both.
+  makeRoom(state);
   const runtime = new RerailRuntime({
     ...runtimeOptions, autostart: false, startGate: true, worktreeWalks: state.worktreeWalks,
     suspendedSessions: suspendedSessions(state, runtimeKey), ownerLockId: ownerLockFor(state, runtimeOptions.databasePath),
@@ -444,18 +442,18 @@ function track(state: EngineRoutingState, work: Promise<unknown>): void {
   void settled.then(() => state.pending.delete(settled));
 }
 
-/** `sessionId` no longer uses the runtime at `runtimeKey`, which closes once no session has used it a while. */
+/** `sessionId` no longer uses the runtime at `runtimeKey`, which stays open unused until the daemon needs the room. */
 function releaseSessionRuntime(state: EngineRoutingState, sessionId: string, runtimeKey: string): void {
   const keys = state.runtimeKeysBySession.get(sessionId);
   keys?.delete(runtimeKey);
   if (keys?.size === 0) state.runtimeKeysBySession.delete(sessionId);
-  retireUnusedRuntime(state, runtimeKey);
+  keepUnusedRuntime(state, runtimeKey);
 }
 
 /**
  * Suspends each session that has sent no event for `idleMs` (`IDLE_SESSION_MS`): its runtime frees what it holds and
  * keeps it open in the database (`RerailRuntime.closeIdleSession`), and the service keeps its suspension for the
- * session's next open; then its runtime retires as after an end. The check runs again in the session's lane, so an
+ * session's next open; then its runtime is kept unused as after an end. The check runs again in the session's lane, so an
  * event that came in meanwhile keeps the session open. A session that still owes its agent a tool call's check, a
  * steer, a held finding or a scan stays as it is until it has been quiet for `OWING_SESSION_IDLE_MS`, and so does one
  * whose suspension fails, which is reported; the next sweep looks again. A runtime whose owner rows name no lock
@@ -494,9 +492,10 @@ async function closeIdleSessions(state: EngineRoutingState, idleMs: number, now:
 
 /**
  * One idle sweep: suspends this service's quiet sessions (`closeIdleSessions`), ends those that can no longer open again
- * (`endUnopenableSessions`), then ends what a daemon that died left open (`endAbandonedSessions`), as a start does, for
- * when the start's own pass failed, which it reports: with one daemon per Rerail home (`holdHomeDaemonLock`), no other
- * start comes while this one runs. Only once an owner lock beside the database is free (`someOwnerLockFreed`), which a
+ * (`endUnopenableSessions`), closes the unused runtimes of removed checkouts (`closeRemovedCheckouts`) and, when the
+ * daemon needs the room, every unused one (`makeRoom`), then ends what a daemon that died left open
+ * (`endAbandonedSessions`), as a start does, for when the start's own pass failed, which it reports: with one daemon
+ * per Rerail home (`holdHomeDaemonLock`), no other start comes while this one runs. Only once an owner lock beside the database is free (`someOwnerLockFreed`), which a
  * service that ended leaves: opening a writer waits for another process's write lock, up to `busy_timeout`, on the
  * daemon's main thread, so a minute with no such lock opens no writer. Rows that name no lock are judged at the next
  * start then, or by a sweep a free lock brings.
@@ -506,6 +505,8 @@ async function sweepIdle(state: EngineRoutingState, options: EngineServiceOption
   const now = options.now ?? Date.now;
   await closeIdleSessions(state, idleMs, now);
   await endUnopenableSessions(state);
+  closeRemovedCheckouts(state);
+  makeRoom(state);
   if (someOwnerLockFreed(databasePath)) endAbandonedSessions(databasePath, idleMs, now);
 }
 
@@ -592,7 +593,7 @@ async function resumeSuspended(state: EngineRoutingState, sessionId: string, now
     const reason = readingStartStates(suspension.databasePath, database => unopenable(entry, database));
     if (reason !== undefined) {
       endUnopened(state, entry, reason);
-      retireUnusedRuntime(state, runtimeKey);
+      keepUnusedRuntime(state, runtimeKey);
       return;
     }
     try {
@@ -706,24 +707,35 @@ function runtimeInUse(state: EngineRoutingState, runtimeKey: string): boolean {
 }
 
 /**
- * Disposes the runtime at `runtimeKey` once no session has used it for `state.idleRuntimeMs`. A runtime holds its
- * checkout's whole source walk (one observation for every file of the working tree, ignored ones included, about
- * 100,000 in a large repository) and its compiled rules, so a daemon that kept the runtime of every checkout and
- * worktree it ever served grew until its heap ran out. The next event for that checkout makes a new runtime, as the
- * first one did.
+ * Keeps the runtime at `runtimeKey`, which no session uses any more, open for the checkout's next session: that session
+ * finds its rules compiled and its checkout walked (the five packs a TypeScript repository adds take 12 s of CPU to
+ * compile on a Windows laptop), however long after the last one it comes. Kept runtimes close once the daemon needs the
+ * room (`makeRoom`) or their checkout folder is removed (`closeRemovedCheckouts`): a runtime holds its checkout's whole
+ * source walk (one observation for every file of the working tree, ignored ones included, about 100,000 in a large
+ * repository) and its compiled rules, so a daemon that kept the runtime of every checkout and worktree it ever served
+ * grew until its heap ran out. The next event for a closed one makes a new runtime, as the first one did.
  */
-function retireUnusedRuntime(state: EngineRoutingState, runtimeKey: string): void {
-  if (runtimeInUse(state, runtimeKey) || !state.runtimes.has(runtimeKey) || state.idle.has(runtimeKey)) return;
-  if (state.idleRuntimeMs <= 0) {
-    disposeRuntime(state, runtimeKey);
-    return;
+function keepUnusedRuntime(state: EngineRoutingState, runtimeKey: string): void {
+  if (runtimeInUse(state, runtimeKey) || !state.runtimes.has(runtimeKey)) return;
+  state.unused.add(runtimeKey);
+  makeRoom(state);
+}
+
+/**
+ * Closes every runtime no session uses, the one unused longest first, while the daemon needs the room
+ * (`state.needsRoom`); asked only while there is one, so a daemon that keeps none reads no memory figure.
+ */
+function makeRoom(state: EngineRoutingState): void {
+  if (state.unused.size === 0 || !state.needsRoom()) return;
+  for (const runtimeKey of [...state.unused]) disposeRuntime(state, runtimeKey);
+}
+
+/** Closes each runtime no session uses whose checkout folder was removed: no session can open in it again. */
+function closeRemovedCheckouts(state: EngineRoutingState): void {
+  for (const runtimeKey of [...state.unused]) {
+    const folder = state.runtimeOptions.get(runtimeKey)?.workspaceRoot;
+    if (folder !== undefined && !existsSync(folder)) disposeRuntime(state, runtimeKey);
   }
-  const timer = setTimeout(() => {
-    state.idle.delete(runtimeKey);
-    if (!runtimeInUse(state, runtimeKey)) disposeRuntime(state, runtimeKey);
-  }, state.idleRuntimeMs);
-  timer.unref();
-  state.idle.set(runtimeKey, timer);
 }
 
 /**
@@ -742,6 +754,7 @@ function disposeRuntime(state: EngineRoutingState, runtimeKey: string): void {
   const runtime = state.runtimes.get(runtimeKey);
   if (runtime === undefined) return;
   state.runtimes.delete(runtimeKey);
+  state.unused.delete(runtimeKey);
   state.runtimeOptions.delete(runtimeKey);
   for (const [configuration, key] of state.runtimeKeysByConfiguration) if (key === runtimeKey) state.runtimeKeysByConfiguration.delete(configuration);
   const disposal = runtime.dispose().then(() => {
@@ -1026,8 +1039,8 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     lastEventAt: new Map(),
     lanes: new SessionLanes(),
     pending: new Set(),
-    idle: new Map(),
-    idleRuntimeMs: options.idleRuntimeMs ?? IDLE_RUNTIME_MS,
+    unused: new Set(),
+    needsRoom: options.needsRoom ?? (() => needsRoom()),
     runtimeOptions: new Map(),
     suspended: new Map(),
     resumeRetries: new Map(),
@@ -1095,8 +1108,6 @@ export async function startEngineService(options: EngineServiceOptions): Promise
         const stopLooking = cutStalledRequests(connections);
         try {
           await closed.promise;
-          for (const timer of routing.idle.values()) clearTimeout(timer);
-          routing.idle.clear();
           await Promise.allSettled(routing.pending);
         } finally {
           stopLooking();

@@ -68,7 +68,7 @@ type HeldOutcome = { readonly ok: true; readonly executable: WeakRef<NativeCompi
  * daemon keeps no earlier versions; two repositories configuring one rule differently each keep theirs.
  *
  * An executable is held weakly: the catalogs of the checkouts that run it hold it, and once the daemon closes the last
- * runtime using it (`IDLE_RUNTIME_MS` after its repository's last session ended) the engine frees its program. Most
+ * runtime using it (when it needs the room, `keepUnusedRuntime` in engine-service.ts) the engine frees its program. Most
  * rules compile to 0.3 MB, the Node pack's builtins rule to 512 MB, so keeping every rule ever compiled kept a daemon
  * with no session open at its busiest size.
  */

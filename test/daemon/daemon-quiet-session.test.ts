@@ -39,7 +39,7 @@ vi.mock("../../src/runtime/engine-service.js", async importOriginal => {
     ...actual,
     startEngineService: async (options: Parameters<typeof startEngineService>[0]) => {
       const service = await actual.startEngineService({
-        ...options, idleSessionMs: 60_000, idleRuntimeMs: 0, now: () => engines.clock.now, createAuditor: engines.createAuditor,
+        ...options, idleSessionMs: 60_000, needsRoom: () => true, now: () => engines.clock.now, createAuditor: engines.createAuditor,
       });
       engines.started.push(service);
       return service;
