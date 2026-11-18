@@ -32,7 +32,7 @@ def err_figures(text):
 
 
 steps = sorted(p.stem for p in (d / "cold").glob("[0-9][0-9].json"))
-cold = {s: findings((d / "cold" / f"{s}.json").read_text())[0] for s in steps}
+cold = {s: (findings((d / "cold" / f"{s}.json").read_text()) or [set()])[0] for s in steps}
 session = findings((d / "session" / "all.json").read_text()) if (d / "session" / "all.json").exists() else []
 session_lines = re.findall(r"repeat line \d+: ([\d.]+) s CPU[^;]*; footprint (\d+) MB, at most (\d+) MB; (\w+)", (d / "session" / "all.err").read_text()) if (d / "session" / "all.err").exists() else []
 session_runs = [l for l in session_lines]
@@ -41,7 +41,8 @@ for k, s in enumerate(steps):
     c = err_figures((d / "cold" / f"{s}.err").read_text())
     kp = d / "kept" / f"{s}.err"
     ke = err_figures(kp.read_text()) if kp.exists() else {}
-    kf = findings((d / "kept" / f"{s}.json").read_text())[0] if (d / "kept" / f"{s}.json").exists() else None
+    # A run that stopped leaves its JSON empty: no findings to compare (`-`).
+    kf = (findings((d / "kept" / f"{s}.json").read_text()) or [None])[0] if (d / "kept" / f"{s}.json").exists() else None
     sf = session[k] if k < len(session) else None
     sc = session_runs[k][0] if k < len(session_runs) else ""
     same = lambda f: "-" if f is None else ("yes" if f == cold[s] else f"NO ({len(f - cold[s])} extra, {len(cold[s] - f)} missing)")
