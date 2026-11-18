@@ -10,7 +10,6 @@ import { engineHoldsCapability, engineProof } from "../../../src/runtime/engine-
 import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../../src/runtime/engine-pipe.js";
 import { chooseEngineSocketPath, ingestEngineEvent, listenBesideHeldPipe, preparePrivateDirectory, startEngineService } from "../../../src/runtime/engine-service.js";
 import { testEmbedder } from "../../support/hook-events.js";
-import { testEngineEndpoint } from "../../support/platform/engine-endpoint.js";
 import { startTestRepository } from "../../support/started-repository.js";
 import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
 
@@ -349,28 +348,5 @@ describe("an engine pipe another process holds", () => {
     await expect(listenBesideHeldPipe(PIPE, held, { listen, ownEngineAnswers: async () => true, fallback: () => FALLBACK }))
       .rejects.toThrow(/in use by a running daemon/u);
     await expect(listenBesideHeldPipe(PIPE, held, { listen, ownEngineAnswers: async () => false, fallback: undefined })).rejects.toBe(held);
-  });
-});
-
-// On every system, the Windows pipe included: the daemon takes what hooks left untaken in this step.
-describe("engine service before-event step", () => {
-  let root: string | undefined;
-  afterEach(async () => {
-    if (root !== undefined) await removeFolder(root);
-    root = undefined;
-  });
-
-  it("runs before it routes each event sent on its socket or pipe", async () => {
-    // A Unix socket path must fit 104 bytes on macOS and 108 on Linux, so off Windows the folder sits in SOCKET_ROOT.
-    root = await mkdtemp(join(process.platform === "win32" ? tmpdir() : SOCKET_ROOT, "rerail-before-event-"));
-    const socketPath = testEngineEndpoint(root);
-    const steps: string[] = [];
-    const service = await startEngineService({ socketPath, storageRoot: join(root, "state"), beforeEvent: () => steps.push("before") });
-    try {
-      await expect(ingestEngineEvent({ socketPath }, { kind: "session-end", eventId: "end", sessionId: "s" })).rejects.toThrow(/\(400\)/u);
-      expect(steps).toEqual(["before"]);
-    } finally {
-      await service.close();
-    }
   });
 });

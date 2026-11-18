@@ -24,8 +24,9 @@ import { isNamedPipe } from "./engine-pipe.js";
 import { checkoutStatus } from "./repository-start.js";
 import { nativeTreeWatch, type TreeWatch } from "../engine/code-rule/tree-watch.js";
 import { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
+import { NO_UNTAKEN_EVENTS, untakenEventTaker, type UntakenEventTaker, type UntakenPass } from "../engine/untaken-events.js";
 import {
-  endSuspendedSessions, failQueuedScans, RerailRuntime, type RerailRuntimeOptions, type SessionSuspension, type SuspendedSessions,
+  endSuspendedSessions, failQueuedScans, type IngestOptions, RerailRuntime, type RerailRuntimeOptions, type SessionSuspension, type SuspendedSessions,
 } from "./runtime.js";
 import { SessionLanes } from "./session-lanes.js";
 
@@ -41,6 +42,15 @@ export interface EngineService {
     event: AdapterEvent,
     configuration?: EngineRuntimeConfiguration,
   ): Promise<readonly AdapterDelivery[]>;
+  /**
+   * The taker of the events hooks left in the home `untakenEvents` names while its daemon did not read
+   * (`untaken-events.ts`); one that takes nothing without it. Each event it takes is checked as one sent to `ingest`,
+   * recorded at the time its hook met it. No one waits for its answer, so it takes none of what the session holds for
+   * its agent: its own findings and the steers they raise wait for the session's next event, whose answer carries them
+   * (`IngestOptions.signal`). `ingest` waits for it to begin every such check first, so none is checked after an event
+   * sent later.
+   */
+  readonly untaken: UntakenEventTaker;
   /** How many runtimes are open: one per checkout some live session uses. */
   openRuntimes(): number;
   /**
@@ -233,10 +243,10 @@ type EngineServiceOptions = Omit<RerailRuntimeOptions, "workspaceRoot"> & {
   /** How long a checkout's runtime stays open once no session uses it; {@link IDLE_RUNTIME_MS} by default. */
   idleRuntimeMs?: number;
   /**
-   * Runs before each event sent on the socket is taken: the daemon records there the events hooks left untaken while it
-   * did not read (`untaken-events.ts`), so none of them is recorded after an event sent later.
+   * The Rerail home whose untaken events the service checks (`EngineService.untaken`), and who hears of each pass over
+   * them once its checks end; none taken without it.
    */
-  beforeEvent?: () => void;
+  untakenEvents?: { home: string; lateChecked: (pass: UntakenPass) => void };
 };
 
 /**
@@ -389,15 +399,16 @@ async function routeEngineEvent(
 ): Promise<readonly AdapterDelivery[]> {
   const sessionId = event.kind === "session-start" ? event.session.sessionId : event.sessionId;
   const { runtimeKey, runtimeOptions } = resolveRuntimeRoute(event, configuration, options, state);
-  // Aborts once the hook that sent the event stops waiting for its answer (`watchHookRequests`); none outside a request.
-  const signal = handledHookRequest.getStore();
+  // The signal aborts once the hook that sent the event stops waiting for its answer (`watchHookRequests`); none outside
+  // a request. An event a hook left untaken carries one aborted from the start, and the time its hook met it.
+  const ingestOptions = handledHookRequest.getStore();
   const lane = laneOf(runtimeKey, sessionId);
   keepRuntime(state, runtimeKey);
   const execution = state.lanes.run(lane, () => {
     const runtime = runtimeFor(state, runtimeKey, runtimeOptions, sessionId);
     // Every event, not only a start: a session whose start was lost still uses this runtime until it ends.
     if (event.kind !== "session-end") noteSessionUse(state, sessionId, runtimeKey, (options.now ?? Date.now)());
-    return runtime.ingest(event, { signal });
+    return runtime.ingest(event, ingestOptions);
   });
   track(state, execution);
   try {
@@ -930,10 +941,30 @@ function hookRequestSignal(response: ServerResponse): AbortSignal {
 }
 
 /**
- * The hook request the engine socket is handling (`watchHookRequests`), through the awaits of its handling; none for an
- * event ingested outside a request (`EngineService.ingest` called directly).
+ * How the hook request the engine socket is handling is waited for (`watchHookRequests`), through the awaits of its
+ * handling, or an untaken event's (`ingestUntaken`); none for an event ingested outside a request (`EngineService.ingest`
+ * called directly).
  */
-const handledHookRequest = new AsyncLocalStorage<AbortSignal>();
+const handledHookRequest = new AsyncLocalStorage<IngestOptions>();
+
+/** The signal of an event no one has waited for since it arrived: one a hook left while the daemon did not read. */
+const NO_ONE_WAITS = AbortSignal.abort();
+
+/**
+ * The taker of `options.untakenEvents`' home, which begins each event's check through `route` in its session's queue,
+ * as no one's request, at the time its hook met it; one that takes nothing without a home.
+ */
+function untakenTaker(options: EngineServiceOptions, route: (request: EngineRequest) => Promise<readonly AdapterDelivery[]>): UntakenEventTaker {
+  const untaken = options.untakenEvents;
+  if (untaken === undefined) return NO_UNTAKEN_EVENTS;
+  return untakenEventTaker(untaken.home, {
+    take: async ({ body, arrivedAt }) => {
+      const request = parseEngineRequest(JSON.parse(body));
+      await handledHookRequest.run({ signal: NO_ONE_WAITS, observedAt: arrivedAt }, () => route(request));
+    },
+    passed: untaken.lateChecked,
+  });
+}
 
 /**
  * Gives each request `server` handles its `hookRequestSignal`, watched from before its body is read, so a close at any
@@ -943,7 +974,7 @@ const handledHookRequest = new AsyncLocalStorage<AbortSignal>();
  */
 function watchHookRequests(server: Server): void {
   server.prependListener("request", (_incoming: IncomingMessage, response: ServerResponse) => {
-    handledHookRequest.enterWith(hookRequestSignal(response));
+    handledHookRequest.enterWith({ signal: hookRequestSignal(response) });
   });
 }
 
@@ -1088,18 +1119,22 @@ export async function startEngineService(options: EngineServiceOptions): Promise
   let socketPath = options.socketPath;
   const connections = trackConnections(server);
   watchHookRequests(server);
+  const untaken = untakenTaker(options, async ({ event, configuration }) => await routeEngineEvent(event, configuration, options, routing));
   const engineService: EngineService = {
     get socketPath() {
       return socketPath;
     },
     ingest: async (event, configuration) => {
-      options.beforeEvent?.();
+      // Every event hooks left before this one was sent begins its check first, in its session's queue.
+      await untaken.taken();
       return await routeEngineEvent(event, configuration, options, routing);
     },
+    untaken,
     openRuntimes: () => routing.runtimes.size,
     closeIdleSessions: sweepIdleSessions,
     resumeSession: sessionId => resumeSuspended(routing, sessionId, options.now ?? Date.now),
     async close() {
+      untaken.close();
       clearInterval(idleSweep);
       for (const timer of routing.resumeRetries.values()) clearTimeout(timer);
       routing.resumeRetries.clear();

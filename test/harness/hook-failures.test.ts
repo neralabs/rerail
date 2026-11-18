@@ -16,7 +16,7 @@ vi.mock("../../src/runtime/daemon-control.js", async () => {
 
 import { HOOK_FAILURES_FILE, hookFailureLines, readHookFailures, recordHookFailure, type HookFailure, type HookFailureLog } from "../../src/harness/hook-failures.js";
 import { DaemonUnreachableError, hookRerailStarted, runHostHook } from "../../src/harness/hook-host.js";
-import { leaveUntaken, LOCKS_DIR, loadNativeBinding, UNTAKEN_EVENTS_DIR, untakenFolderId } from "../../src/engine/index.js";
+import { leaveUntaken, LOCKS_DIR, loadNativeBinding, UNTAKEN_EVENTS_DIR, UNTAKEN_MOST_EVENTS, untakenFolderId } from "../../src/engine/index.js";
 import { daemonLeftEventUntaken, engineRequestBody, parseEngineRequest } from "../../src/runtime/index.js";
 import { listenAsEngine } from "../support/platform/engine-endpoint.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
@@ -652,6 +652,27 @@ describe("a hook beside a daemon that runs but does not read", () => {
     expect(await daemonLeftEventUntaken()).toBeDefined();
     await closeEngine();
     expect(await daemonLeftEventUntaken()).toBeUndefined();
+  });
+
+  it("loses its event, and says why, once the folder holds the most events Rerail keeps for the daemon", async () => {
+    const rerailHome = await home();
+    const front = await silentFront();
+    const closeEngine = await recordedDaemon(rerailHome, (front.server.address() as AddressInfo).port);
+    try {
+      for (let count = 0; count < UNTAKEN_MOST_EVENTS; count += 1) {
+        writeFileSync(join(rerailHome, UNTAKEN_EVENTS_DIR, `${String(1_000 + count).padStart(13, "0")}-${process.pid}-1-${count}-2.json`), "{}");
+      }
+      const handle = async (runtime: { ingest: (event: ReturnType<typeof prompt>) => Promise<unknown> }) => ({ answered: await runtime.ingest(prompt("past the bound")) });
+      const options = { storageRoot: join(rerailHome, "sessions"), daemonDeadline: Date.now() + 60_000, arrivedAt: 9_000 };
+      expect(await runHostHook("claude-code", rerailHome, "s", false, options, handle, "UserPromptSubmit")).toEqual({ answered: [] });
+      expect(front.requests()).toBe(0);
+      expect(readdirSync(join(rerailHome, UNTAKEN_EVENTS_DIR))).toHaveLength(UNTAKEN_MOST_EVENTS);
+      expect(readHookFailures(rerailHome, 0).failures).toEqual([expect.objectContaining({
+        event: "UserPromptSubmit", reason: expect.stringContaining(`${UNTAKEN_MOST_EVENTS} events already wait for it, the most Rerail keeps, so this event was not recorded`),
+      })]);
+    } finally {
+      await Promise.all([closeFront(front.server), closeEngine()]);
+    }
   });
 
   it("reads a state file it cannot read as no event left untaken, and goes on to ask as before", async () => {

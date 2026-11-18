@@ -5,7 +5,7 @@ import { readRepositoryState } from "../presentation/session-presentation.js";
 import { isRerailStarted } from "../runtime/repository-start.js";
 import { RerailRuntime } from "../runtime/runtime.js";
 import { engineRequestBody, ingestEngineEvent, type EngineRuntimeConfiguration } from "../runtime/engine-service.js";
-import { leaveUntaken } from "../engine/untaken-events.js";
+import { leaveUntaken, UntakenFolderFullError } from "../engine/untaken-events.js";
 import { scrubValue } from "../engine/secret-scrub.js";
 import { WITHHELD_OUTPUT, type Withheld } from "../engine/transcript-boundary.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
@@ -148,7 +148,7 @@ export function answerAutostartOff<Output>(error: unknown, startsSession: boolea
  * a session (`startsSession`) waits for a daemon to start; any other hook that finds none running answers `{}` at
  * once, so a daemon that is down never stalls a tool call or shows as a hook error (design N11), records the lost event
  * in the hook failure log and starts a daemon in the background. One whose daemon runs but left its whole bounded wait
- * unanswered leaves the event in the home's untaken folder for the daemon to record when it reads again, and so does
+ * unanswered leaves the event in the home's untaken folder for the daemon to check when it reads again, and so does
  * every later hook while that event is still there, without asking the daemon (`leaveForDaemon`). A daemon that cannot
  * be reached throws
  * `DaemonUnreachableError`, so a coding agent without a footer can say so. Every failure, `event` named as the coding
@@ -284,8 +284,8 @@ async function runWithLoop(hook: HookRun, loopFor: (lock: SessionLock) => Rerail
 /**
  * Runs the hook's handler with an `ingest` that leaves each event in the home's untaken folder for the daemon `daemon`
  * names, which runs but does not read (`untaken-events.ts`), and gives the coding agent what a daemon that holds
- * nothing for the event gives: no delivery. The daemon records the event as it reads again, before any event sent to
- * it after; it does not check it then, since the moment its finding could reach the agent has passed.
+ * nothing for the event gives: no delivery. The daemon checks the event as it reads again, before any event sent to it
+ * after, and what that check finds reaches the agent with the session's next answer.
  */
 async function leaveForDaemon(hook: HookRun, daemon: DaemonState): Promise<HookOutput> {
   return await runWithLoop(hook, () => ({ ingest: async adapterEvent => await leaveEvent(hook, daemon, adapterEvent), untaken: true }));
@@ -299,8 +299,11 @@ async function leaveForDaemon(hook: HookRun, daemon: DaemonState): Promise<HookO
 async function leaveEvent(hook: HookRun, daemon: DaemonState, adapterEvent: AdapterEvent): Promise<readonly AdapterDelivery[]> {
   try {
     await leaveUntaken(defaultRerailHome(), daemon.pid, engineRequestBody(untakenForm(adapterEvent), hook.configuration), hook.arrivedAt);
-  } catch {
-    recordHookFailure({ host: hook.host, event: hook.event, reason: lostEventReason({ status: "unresponsive", state: daemon }) });
+  } catch (error) {
+    const reason = error instanceof UntakenFolderFullError
+      ? `the Rerail daemon (pid ${daemon.pid}) is running but not reading, and ${error.message}, so this event was not recorded`
+      : lostEventReason({ status: "unresponsive", state: daemon });
+    recordHookFailure({ host: hook.host, event: hook.event, reason });
   }
   return [];
 }

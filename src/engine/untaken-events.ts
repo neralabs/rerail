@@ -6,18 +6,32 @@ import { replaceFile } from "./file-replace.js";
 /**
  * The Rerail home's untaken events: events whose hook found the home's daemon running but not reading. The first hook
  * of such a silence waits its whole bounded wait for the daemon, then leaves its event here; while an event left for
- * that daemon is still here, the daemon has not run its event loop since, so a later hook leaves its event behind it at
- * once instead of waiting again. Each event is one file, written whole (`replaceFile`), named
- * `<arrival ms>-<daemon pid>-<hook pid>-<count>.json`: the order hooks met their events, and whose silence it was.
- * The daemon takes the folder in that order whenever its event loop runs (a watch of the folder, its start, and before
- * any event sent to it), so no event sent after a silence is recorded before one left during it. Its state file names
- * the folder it watches (`untakenFolderId`), so a hook skips its wait only for events in that very folder. The home is
- * private to its owner, and a process that can write here can read `daemon.json`'s capability and send events itself,
- * so the folder lets in no one the engine socket keeps out.
+ * that daemon is still untaken, the daemon has not run its event loop since, so a later hook leaves its event behind it
+ * at once instead of waiting again. Each event is one file, written whole (`replaceFile`), named
+ * `<arrival ms>-<daemon pid>-<hook pid>-<count>-<bytes>.json`: the order hooks met their events, whose silence it was,
+ * and its size. The daemon takes the folder in that order whenever its event loop runs (a watch of the folder, its
+ * start, and before any event sent to it), so no event sent after a silence is checked before one left during it. As it
+ * begins to take, it marks the newest event it takes (`TAKEN_MARK`), so a hook counts as untaken only what came after:
+ * events the daemon is taking, or a file another program keeps it from removing, never make a hook skip a daemon that
+ * reads. Its state file names the folder it watches (`untakenFolderId`), so a hook skips its wait only for events in
+ * that very folder. The home is private to its owner, and a process that can write here can read `daemon.json`'s
+ * capability and send events itself, so the folder lets in no one the engine socket keeps out.
  */
 export const UNTAKEN_EVENTS_DIR = "untaken-events";
 
-const UNTAKEN = /^(\d{13})-(\d+)-(\d+)-(\d+)\.json$/u;
+/** In the folder: the name of the newest event the daemon has taken, which hooks count nothing up to. */
+const TAKEN_MARK = "taken";
+
+/**
+ * The most events, and the most bytes of them, the folder holds: a hook that finds it full loses its event, as a hook
+ * that finds no daemon does. A daemon that reads again checks each left event as it checks one sent to it, so the bound
+ * keeps the work a resume brings to what the daemon checks in a few seconds, and a resume never turns into a second
+ * silence. An event is at most an engine request's frame.
+ */
+export const UNTAKEN_MOST_EVENTS = 256;
+export const UNTAKEN_MOST_BYTES = 16 * 1024 * 1024;
+
+const UNTAKEN = /^(\d{13})-(\d+)-(\d+)-(\d+)-(\d+)\.json$/u;
 
 /** How many events this process has left, so two left in one millisecond get two names. */
 let left = 0;
@@ -30,15 +44,16 @@ function untakenFolder(home: string): string {
 interface UntakenName {
   name: string;
   order: readonly number[];
+  bytes: number;
 }
 
 function parsedName(name: string): UntakenName | undefined {
   const match = UNTAKEN.exec(name);
-  return match === null ? undefined : { name, order: match.slice(1).map(Number) };
+  return match === null ? undefined : { name, order: match.slice(1, 5).map(Number), bytes: Number(match[5]) };
 }
 
 /** First by arrival, then by daemon, hook and count: the order the hooks met their events. */
-function earlier(a: UntakenName, b: UntakenName): number {
+function earlier(a: Pick<UntakenName, "order">, b: Pick<UntakenName, "order">): number {
   const differs = a.order.findIndex((value, index) => value !== b.order[index]);
   return differs === -1 ? 0 : a.order[differs]! - b.order[differs]!;
 }
@@ -54,15 +69,42 @@ function untakenNames(home: string): UntakenName[] {
   return names.map(parsedName).filter(name => name !== undefined).sort(earlier);
 }
 
+/** The newest event the daemon has taken from `home`'s folder; undefined when it has taken none there. */
+function takenMark(home: string): UntakenName | undefined {
+  try {
+    return parsedName(readFileSync(join(untakenFolder(home), TAKEN_MARK), "utf8").trim());
+  } catch {
+    return undefined;
+  }
+}
+
+/** The events of `home` no daemon has begun to take: those after the taken mark. */
+function waitingNames(home: string): UntakenName[] {
+  const names = untakenNames(home);
+  const mark = names.length === 0 ? undefined : takenMark(home);
+  return mark === undefined ? names : names.filter(name => earlier(name, mark) > 0);
+}
+
+/** A hook found the folder holding its bound of events (`UNTAKEN_MOST_EVENTS`, `UNTAKEN_MOST_BYTES`): its event is lost. */
+export class UntakenFolderFullError extends Error {
+  constructor(readonly events: number) {
+    super(`${events} events already wait for it, the most Rerail keeps`);
+  }
+}
+
 /**
  * Leaves `body` (an engine request, `engineRequestBody`) in `home` for the daemon `daemonPid`, which runs but did not
- * read, under the time its hook met the event (`arrivedAt`, epoch ms). Throws when it cannot be written, so the caller
- * counts the event lost.
+ * read, under the time its hook met the event (`arrivedAt`, epoch ms). Throws when it cannot be written, or when the
+ * folder holds its bound already (`UntakenFolderFullError`), so the caller counts the event lost.
  */
 export async function leaveUntaken(home: string, daemonPid: number, body: string, arrivedAt: number): Promise<void> {
+  const bytes = Buffer.byteLength(body);
+  const held = untakenNames(home);
+  const heldBytes = held.reduce((sum, name) => sum + name.bytes, 0);
+  if (held.length >= UNTAKEN_MOST_EVENTS || heldBytes + bytes > UNTAKEN_MOST_BYTES) throw new UntakenFolderFullError(held.length);
   mkdirSync(untakenFolder(home), { recursive: true, mode: 0o700 });
   left += 1;
-  const name = `${String(arrivedAt).padStart(13, "0")}-${daemonPid}-${process.pid}-${left}.json`;
+  const name = `${String(arrivedAt).padStart(13, "0")}-${daemonPid}-${process.pid}-${left}-${bytes}.json`;
   await replaceFile(join(untakenFolder(home), name), body, { mode: 0o600 });
 }
 
@@ -79,11 +121,24 @@ export function untakenFolderId(home: string): string | undefined {
 }
 
 /**
- * Whether `home` holds an event a hook left for the daemon `daemonPid` that no daemon has taken, in the folder `folderId`
- * names: the one that daemon watches. A folder removed, moved or made again since is another folder.
+ * Whether `home` holds an event a hook left for the daemon `daemonPid` that no daemon has begun to take, in the folder
+ * `folderId` names: the one that daemon watches. A folder removed, moved or made again since is another folder.
  */
 export function untakenFor(home: string, daemonPid: number, folderId: string): boolean {
-  return untakenFolderId(home) === folderId && untakenNames(home).some(entry => entry.order[1] === daemonPid);
+  return untakenFolderId(home) === folderId && waitingNames(home).some(entry => entry.order[1] === daemonPid);
+}
+
+/** What waits in `home` for the daemon `daemonPid`: how many events, and when the first of them came (epoch ms). */
+export interface UntakenWaiting {
+  events: number;
+  since: number;
+}
+
+/** The events left in `home` for the daemon `daemonPid` that it has not begun to take; undefined when there are none. */
+export function untakenWaiting(home: string, daemonPid: number): UntakenWaiting | undefined {
+  const waiting = waitingNames(home).filter(entry => entry.order[1] === daemonPid);
+  const first = waiting[0];
+  return first === undefined ? undefined : { events: waiting.length, since: first.order[0]! };
 }
 
 /** One event a hook left: its engine request (`engineRequestBody`), and when its hook met it (epoch ms). */
@@ -92,80 +147,148 @@ export interface UntakenEvent {
   arrivedAt: number;
 }
 
+/** One pass of a taker over the folder: how many events it handed on, the first and last arrival, and how many failed. */
+export interface UntakenPass {
+  events: number;
+  from: number;
+  to: number;
+  failed: number;
+}
+
+/** Where a taker hands the events it takes: `take` begins one's check and resolves when it ends; `passed` hears of each pass. */
+export interface UntakenHandler {
+  take(event: UntakenEvent): Promise<void>;
+  passed(pass: UntakenPass): void;
+}
+
 /** A daemon's taker of its home's untaken events. */
 export interface UntakenEventTaker {
-  /** Records every event the folder holds, oldest first, removing each once it is recorded. */
-  take(): void;
   /**
-   * Takes every event the folder holds as `take` does, a slice per turn of the event loop, so a long backlog keeps the
-   * daemon answering while it is taken; a `take` meanwhile takes the rest at once, in the same order. Ends at `close`.
+   * Hands every event the folder holds to `take`, oldest first, a slice per turn of the event loop, each removed once
+   * handed on, and resolves once every event the folder held at the call is handed on. One pass runs at a time: a call
+   * during one waits for it and for the pass after it, which takes what came since. Takes nothing after `close`.
    */
-  drain(): Promise<void>;
+  taken(): Promise<void>;
   /**
-   * Takes the folder whenever it changes, until `close`, following it when it is removed or replaced, and returns the id
-   * of the folder it watches (`untakenFolderId`); undefined where no watch can start. `watching` gets the id of each
-   * folder it follows to, and undefined once it can follow no more (the home is gone, or the watch failed where the
-   * folder still is), after which events are taken only at `take` and `drain`.
+   * Starts a pass whenever the folder changes, until `close`, following it when it is removed or replaced, and returns
+   * the id of the folder it watches (`untakenFolderId`); undefined where no watch can start. `watching` gets the id of
+   * each folder it follows to, and undefined once it can follow no more (the home is gone, or the watch failed where the
+   * folder still is), after which events are taken only at `taken`.
    */
   watch(watching: (folderId: string | undefined) => void): string | undefined;
   close(): void;
 }
 
-/** How many events a slice of `drain` takes before it lets the event loop run. */
-const DRAIN_SLICE = 64;
+/** The taker where no hook leaves events (an engine service no daemon's home names): there is nothing to take. */
+export const NO_UNTAKEN_EVENTS: UntakenEventTaker = { taken: async () => undefined, watch: () => undefined, close: () => undefined };
+
+/** How many events a pass hands on before it lets the event loop run. */
+const PASS_SLICE = 16;
 
 /**
- * The taker of `home`'s untaken events for its daemon: `record` stores one, synchronously, and reports its own
- * failures. A take runs to its end on the daemon's one thread, so an event sent to the daemon while it takes waits
- * behind every event left before it. A file Windows keeps from removal is removed at a later take and not recorded
- * twice.
+ * The taker of `home`'s untaken events for its daemon, which hands each to `handler`. Each pass first writes the taken
+ * mark, so hooks stop counting what it takes, then hands the events on a slice at a time: the daemon answers between
+ * slices. A file Windows keeps from removal is removed at a later pass and not handed on twice.
  */
-export function untakenEventTaker(home: string, record: (event: UntakenEvent) => void): UntakenEventTaker {
-  const recorded = new Set<string>();
+export function untakenEventTaker(home: string, handler: UntakenHandler): UntakenEventTaker {
+  const taker = new Taker(home, handler);
   let watcher: FolderWatch | undefined;
-  let closed = false;
-  const takeSome = (limit: number): boolean => {
-    const names = untakenNames(home);
-    for (const { name, order } of names.slice(0, limit)) {
-      const path = join(untakenFolder(home), name);
-      if (!recorded.has(name)) recordFile(path, order[0]!, record);
-      recorded.add(name);
-      if (removed(path)) recorded.delete(name);
-    }
-    return names.length > limit;
-  };
-  const take = (): void => void takeSome(Number.POSITIVE_INFINITY);
   return {
-    take,
-    drain: async () => {
-      while (!closed && takeSome(DRAIN_SLICE)) await nextTurn();
-    },
+    taken: () => taker.taken(),
     watch: watching => {
-      watcher = watchFolder(home, take, watching);
+      watcher = watchFolder(home, () => void taker.taken(), watching);
       return watcher?.folderId();
     },
     close: () => {
-      closed = true;
+      taker.closed = true;
       watcher?.close();
     },
   };
 }
 
-/** Hands the event in `path` to `record`; a file that is gone or cannot be read is a take another daemon made first. */
-function recordFile(path: string, arrivedAt: number, record: (event: UntakenEvent) => void): void {
+/** The passes of one taker: at most one runs, and calls meanwhile share the one after it. */
+class Taker {
+  closed = false;
+  /** Events handed on whose file is still there (Windows holds it): removed at a later pass, never handed on again. */
+  readonly #handed = new Set<string>();
+  #running: Promise<void> | undefined;
+  #next: Promise<void> | undefined;
+
+  constructor(readonly home: string, readonly handler: UntakenHandler) {}
+
+  taken(): Promise<void> {
+    if (this.#running !== undefined) {
+      this.#next ??= this.#running.then(() => {
+        this.#next = undefined;
+        return this.taken();
+      });
+      return this.#next;
+    }
+    this.#running = this.#pass().finally(() => {
+      this.#running = undefined;
+    });
+    return this.#running;
+  }
+
+  async #pass(): Promise<void> {
+    if (this.closed) return;
+    for (const name of [...this.#handed]) removedName(this.home, name, this.#handed);
+    const fresh = untakenNames(this.home).filter(name => !this.#handed.has(name.name));
+    if (fresh.length === 0) return;
+    await markTaken(this.home, fresh.at(-1)!);
+    const checks: Promise<boolean>[] = [];
+    for (let start = 0; start < fresh.length && !this.closed; start += PASS_SLICE) {
+      // Each check's end is heard at once, so one that fails while later slices are handed on is no unhandled rejection.
+      for (const name of fresh.slice(start, start + PASS_SLICE)) checks.push(handOn(this.home, name, this.handler, this.#handed).then(() => true, () => false));
+      await nextTurn();
+    }
+    void reportPass(fresh, checks, this.handler);
+  }
+}
+
+/**
+ * Writes the taken mark: `newest` and every event before it are the daemon's now. Where it cannot be written, a hook
+ * still counts each of those events until the pass removes its file.
+ */
+async function markTaken(home: string, newest: UntakenName): Promise<void> {
+  await replaceFile(join(untakenFolder(home), TAKEN_MARK), newest.name, { mode: 0o600 }).catch(() => undefined);
+}
+
+/**
+ * Hands the event `name` holds to `handler`, removes its file, and returns its check, failed where the file cannot be
+ * read (a take another daemon made first) or its check fails.
+ */
+function handOn(home: string, name: UntakenName, handler: UntakenHandler, handed: Set<string>): Promise<void> {
+  const path = join(untakenFolder(home), name.name);
   let body: string;
   try {
     body = readFileSync(path, "utf8");
-  } catch {
-    return;
+  } catch (error) {
+    return Promise.reject(error instanceof Error ? error : new Error(String(error)));
   }
-  record({ body, arrivedAt });
+  // Begun before the file goes, in the folder's order: a daemon checks a session's events in the order it begins them.
+  const check = handler.take({ body, arrivedAt: name.order[0]! });
+  handed.add(name.name);
+  removedName(home, name.name, handed);
+  return check;
 }
 
-/** Removes `path`; false while Windows holds it open. */
-function removed(path: string): boolean {
+/** Tells `handler` of a pass over `names` once every check it began has ended (each true when it passed). */
+async function reportPass(names: readonly UntakenName[], checks: readonly Promise<boolean>[], handler: UntakenHandler): Promise<void> {
+  const ended = await Promise.all(checks);
+  const failed = ended.filter(passed => !passed).length + names.length - checks.length;
   try {
-    rmSync(path, { force: true });
+    handler.passed({ events: names.length, from: names[0]!.order[0]!, to: names.at(-1)!.order[0]!, failed });
+  } catch {
+    // What the daemon says of a pass is its own; the events are checked whatever it could say.
+  }
+}
+
+/** Removes the event file `name`, forgetting it was handed on once it is gone; false while Windows holds it open. */
+function removedName(home: string, name: string, handed: Set<string>): boolean {
+  try {
+    rmSync(join(untakenFolder(home), name), { force: true });
+    handed.delete(name);
     return true;
   } catch {
     return false;

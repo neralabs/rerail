@@ -21,8 +21,7 @@ import { startRemoteSink, type RemoteSinkLoop } from "../runtime/remote-outbox.j
 import { chooseEngineSocketPath, engineWorktreeWalks, startEngineService, type EngineService } from "../runtime/engine-service.js";
 import { engineIdentity, enginePipeName, fallbackPipe } from "../runtime/engine-pipe.js";
 import { resolveSessionPaths } from "../runtime/session-paths.js";
-import { untakenEventTaker, type UntakenEventTaker } from "../engine/untaken-events.js";
-import { recordUntakenEvent } from "./untaken-record.js";
+import type { UntakenPass } from "../engine/untaken-events.js";
 import { createMergeAssistService, type MergeAssistRuntime } from "../runtime/merge-assist/service.js";
 import { NativeSessionServer } from "./native-session-server.js";
 import { startCheckoutPruning, type CheckoutPruning } from "./checkout-pruning.js";
@@ -120,6 +119,11 @@ export interface RerailDaemonOptions {
   enginePlatform?: NodeJS.Platform;
   /** The coding agent check `GET /api/coding-agents` reports; the daemon's entry point passes set-up's. */
   codingAgents?: () => Promise<CodingAgentState[]>;
+  /**
+   * Hears of each pass over the events hooks left untaken while the daemon did not read, once their checks ended: the
+   * daemon's entry point writes it to the hook failure log, where `rerail status` reads it.
+   */
+  lateChecked?: (pass: UntakenPass) => void;
   /**
    * The certificate (a PEM chain, leaf first) and private key to serve https with; omitted, the daemon serves http.
    * The state file records the leaf's SHA-256 fingerprint, which Rerail's own clients pin.
@@ -435,11 +439,9 @@ interface StartedServices {
  * database last, once nothing uses it. The start's own error is the one thrown; a close that failed too is written to
  * stderr, so a later EADDRINUSE has its cause on record.
  */
-async function closeAfterFailedStart(
-  { engineService, nativeServer, server, worktreeWalks }: StartedServices, stores: DatabaseApiStores, untaken: UntakenEventTaker,
-): Promise<void> {
-  // A watch of the untaken folder holds it open, and on Windows keeps the home from being removed.
-  untaken.close();
+async function closeAfterFailedStart({ engineService, nativeServer, server, worktreeWalks }: StartedServices, stores: DatabaseApiStores): Promise<void> {
+  // A watch of the untaken folder holds it open, and on Windows keeps the home from being removed: the engine service's
+  // close ends it first.
   const failed = (what: string, reason: unknown): void => {
     process.stderr.write(`rerail daemon: could not close ${what} after a failed start: ${reason instanceof Error ? reason.message : String(reason)}\n`);
   };
@@ -470,20 +472,26 @@ function daemonMergeAssist(database: () => RerailDatabase): { mergeAssist?: Merg
 }
 
 /**
- * The taker of the events hooks leave untaken in the home `stateFile` is in, which records them in `stores`; none for a
- * daemon no state file names, since no hook finds it to leave one.
+ * The home whose untaken events the engine service checks (`EngineService.untaken`): the one `stateFile` is in, since
+ * hooks find the daemon there; none for a daemon no state file names. Each pass goes to daemon.log and to `lateChecked`.
  */
-function untakenTaker(stateFile: string | undefined, databasePath: string, stores: DatabaseApiStores): UntakenEventTaker {
-  if (stateFile === undefined) return NO_UNTAKEN;
-  return untakenEventTaker(dirname(stateFile), event => recordUntakenEvent({
-    databasePath,
-    sessionStore: () => stores.sessionStore(),
-    markChanged: () => stores.markChanged(),
-  }, event));
+function untakenEvents(stateFile: string | undefined, lateChecked: RerailDaemonOptions["lateChecked"]): { home: string; lateChecked: (pass: UntakenPass) => void } | undefined {
+  if (stateFile === undefined) return undefined;
+  return {
+    home: dirname(stateFile),
+    lateChecked: pass => {
+      process.stdout.write(`rerail daemon: ${lateCheckLine(pass)}\n`);
+      lateChecked?.(pass);
+    },
+  };
 }
 
-/** The taker of a daemon no state file names: no hook finds it to leave an event, so there is nothing to take. */
-const NO_UNTAKEN: UntakenEventTaker = { take: () => undefined, drain: async () => undefined, watch: () => undefined, close: () => undefined };
+/** What daemon.log says of a pass over the events hooks left while the daemon did not read. */
+function lateCheckLine({ events, from, to, failed }: UntakenPass): string {
+  const what = events === 1 ? "1 hook event" : `${events} hook events`;
+  const lost = failed === 0 ? "" : `; ${failed} could not be checked and ${failed === 1 ? "is" : "are"} lost`;
+  return `checked late ${what} left from ${new Date(from).toISOString()} to ${new Date(to).toISOString()} while it did not read${lost}`;
+}
 
 export class RerailDaemon {
   readonly host: string;
@@ -516,14 +524,12 @@ export class RerailDaemon {
   /** What this daemon wrote to the state file, which its close removes only while the file still holds it. */
   #recordText: string | undefined;
   #provenanceMove: { readonly stop: AbortController; readonly done: Promise<void> } | undefined;
-  /** The taker of the events hooks leave untaken in this daemon's home (none to take for a daemon no state file names). */
-  readonly #untaken: UntakenEventTaker;
   /** The id of the untaken folder its watch watches, which the state file names so hooks leave events there unasked. */
   #untakenFolder: string | undefined;
 
   private constructor({
     server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot, nativeServer, nativeToken, accessToken, mergeAssist,
-    worktreeWalks, tlsFingerprint256, untaken,
+    worktreeWalks, tlsFingerprint256,
   }: {
     server: DaemonServer;
     engineService: EngineService;
@@ -540,7 +546,6 @@ export class RerailDaemon {
     accessToken: string;
     mergeAssist?: MergeAssistRuntime;
     tlsFingerprint256: string | undefined;
-    untaken: UntakenEventTaker;
   }) {
     const address = server.address() as AddressInfo;
     this.host = address.address;
@@ -562,7 +567,6 @@ export class RerailDaemon {
     this.#accessToken = accessToken;
     this.#mergeAssist = mergeAssist;
     this.#tlsFingerprint256 = tlsFingerprint256;
-    this.#untaken = untaken;
   }
 
   static async start(options: RerailDaemonOptions): Promise<RerailDaemon> {
@@ -598,7 +602,7 @@ export class RerailDaemon {
       resumeSession: sessionId => void started.engineService?.resumeSession(sessionId),
       ...sharedMergeAssist,
     });
-    const untaken = untakenTaker(options.stateFile, databasePath, stores);
+    const untaken = untakenEvents(options.stateFile, options.lateChecked);
     try {
       // One walk of each repository's other worktrees for the sessions of both servers: hook sessions and native OMP and
       // Pi sessions in worktrees of one repository read them once, through the engine's one watch.
@@ -611,7 +615,7 @@ export class RerailDaemon {
         databasePath,
         workspaceRoot,
         accessToken,
-        beforeEvent: () => untaken.take(),
+        ...(untaken === undefined ? {} : { untakenEvents: untaken }),
         worktreeWalks,
         ...sharedMergeAssist,
         // On Windows any local user can create the default pipe first; the engine then listens on a random name.
@@ -630,14 +634,14 @@ export class RerailDaemon {
       await listenPreferred(server, options.port, remembered, bindHost);
       daemon = new RerailDaemon({
         server, engineService, kernelSocketPath: engineService.socketPath, stores, options, databasePath, native, ui, workspaceRoot,
-        nativeServer: sessions, nativeToken, accessToken, tlsFingerprint256, worktreeWalks, untaken, ...sharedMergeAssist,
+        nativeServer: sessions, nativeToken, accessToken, tlsFingerprint256, worktreeWalks, ...sharedMergeAssist,
       });
       await daemon.#announce(remembered);
       daemon.#startCheckoutPruning();
       daemon.#startProvenanceMove();
       return daemon;
     } catch (error) {
-      await closeAfterFailedStart(started, stores, untaken);
+      await closeAfterFailedStart(started, stores);
       throw error;
     }
   }
@@ -664,7 +668,7 @@ export class RerailDaemon {
    * out this daemon are still taken at its next event and its next start.
    */
   #watchUntaken(stateFile: string): void {
-    this.#untakenFolder = this.#untaken.watch(folder => this.#untakenFollowed(stateFile, folder));
+    this.#untakenFolder = this.#engineService.untaken.watch(folder => this.#untakenFollowed(stateFile, folder));
   }
 
   /**
@@ -712,9 +716,9 @@ export class RerailDaemon {
   async #record(stateFile: string): Promise<void> {
     this.#watchUntaken(stateFile);
     await this.#writeRecord(stateFile);
-    // After the file, so a launcher waiting for it is not held by a long backlog; an event sent meanwhile takes the rest
-    // first (the engine service's before-event step).
-    void this.#untaken.drain();
+    // After the file, so a launcher waiting for it is not held by a backlog; an event sent meanwhile waits for the pass
+    // to begin every check of it first (the engine service's before-event step).
+    void this.#engineService.untaken.taken();
     const check = this.#options.recordCheck;
     if (check === undefined) return;
     this.#recordCheck = setInterval(() => {
@@ -814,7 +818,7 @@ export class RerailDaemon {
     if (this.#closed) return;
     this.#closed = true;
     clearInterval(this.#recordCheck);
-    this.#untaken.close();
+    this.#engineService.untaken.close();
     // A write in flight lands before the state file is removed below, never after.
     await this.#recordChecked;
     try {
@@ -1293,7 +1297,7 @@ async function packageVersion(): Promise<string> {
  * from the layers above the daemon, the record check of the home's one daemon, which only `runHomeDaemon` sets, and why
  * it serves this computer alone, which only `serveRerailDaemon`'s loopback restart sets.
  */
-type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents" | "recordCheck" | "remoteRefused">;
+type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents" | "lateChecked" | "recordCheck" | "remoteRefused">;
 
 /**
  * Runs the daemon (`serveRerailDaemon`) as the one daemon of its Rerail home, whatever the build. It takes the home's
