@@ -177,7 +177,7 @@ pub fn build_with_tape(file: &dyn SourceFile, keep: bool) -> Result<(Built, Opti
     // Where the device reads tapes, the parse's in a slab's room too (decision 0353 step 4a): a guest's, a run's
     // without a store.
     let primary = placed_where_read(image.primary, &grammar)?;
-    let lines = Arc::new(LineTable::new(file.source(), Terminators::of(language)));
+    let lines = Arc::new(LineTable::placed(file.source(), Terminators::of(language)));
     let doc = kept_tape(keep, file, &grammar, &primary, &lines)?;
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
     let facts = read_off(doc.as_ref(), file, &grammar, primary, lines)?;
@@ -331,7 +331,7 @@ pub fn build_in_wave_with_tape(
             primary
         }
     };
-    let lines = Arc::new(LineTable::new(file.source(), Terminators::of(language)));
+    let lines = Arc::new(LineTable::placed(file.source(), Terminators::of(language)));
     let doc = kept_tape(keep, file, &grammar, &primary, &lines)?;
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
     let facts = read_off(doc.as_ref(), file, &grammar, primary, lines)?;
@@ -372,7 +372,7 @@ pub(crate) fn build_cached_with_tape(
             let held = held.map_err(|e| e.to_string())?;
             let grammar = Arc::new(tape::Grammar::new(language)?);
             let primary = queued_image(&held, &grammar)?;
-            let lines = Arc::new(LineTable::new(file.source(), Terminators::of(language)));
+            let lines = Arc::new(LineTable::placed(file.source(), Terminators::of(language)));
             let doc = kept_tape(keep, file, &grammar, &primary, &lines)?;
             return Ok((Built::Facts(read_off(doc.as_ref(), file, &grammar, primary, lines)?), known, doc));
         }
@@ -423,7 +423,7 @@ pub(crate) fn build_cached_with_tape(
             primary
         }
     };
-    let lines = Arc::new(LineTable::new(file.source(), Terminators::of(language)));
+    let lines = Arc::new(LineTable::placed(file.source(), Terminators::of(language)));
     let doc = kept_tape(keep, file, &grammar, &primary, &lines)?;
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
     let facts = read_off(doc.as_ref(), file, &grammar, primary, lines)?;

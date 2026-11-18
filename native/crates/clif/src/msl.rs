@@ -75,6 +75,8 @@ pub fn translate_reads(funcs: &[(u32, ir::Function, &str)], prefix: &str, family
     let mut out = String::from(HELPERS);
     let mut bodies = String::new();
     for (id, f, n) in funcs {
+        // Each read in its own family (a view read's source holds the lines' reads it calls too).
+        let family = crate::reads::READS.get(*id as usize).map_or(family, |read| read.family);
         let signature = signature(f, &format!("{prefix}{n}"), family)?;
         writeln!(out, "{signature};").unwrap();
         writeln!(bodies, "{signature}{{").unwrap();
@@ -89,8 +91,8 @@ pub fn translate_reads(funcs: &[(u32, ir::Function, &str)], prefix: &str, family
 fn pointers(family: Family) -> (&'static str, &'static str) {
     match family {
         Family::Tape => ("device const uchar* t,CLIF_VIEW_SPACE const uint* v", "t,v"),
-        Family::Relation => ("device const uchar* t,ulong a0", "t"),
-        Family::View => ("device const uchar* t,ulong a0,device const uchar* tt,CLIF_VIEW_SPACE const uint* v", "t"),
+        Family::Relation | Family::Lines => ("device const uchar* t,ulong a0", "t"),
+        Family::View => ("device const uchar* t,ulong a0,device const uchar* tt,CLIF_VIEW_SPACE const uint* v,device const uchar* ll", "t"),
     }
 }
 
@@ -451,7 +453,8 @@ fn instruction(
             let more: Vec<&String> = args.iter().skip(to.pointers()).collect();
             let pointers = match (family, to) {
                 (Family::View, Family::Tape) => "tt,v".to_owned(),
-                (Family::View, Family::View) => format!("t,{},tt,v", args[0]),
+                (Family::View, Family::Lines) => "ll,0".to_owned(),
+                (Family::View, Family::View) => format!("t,{},tt,v,ll", args[0]),
                 (_, Family::Relation) => format!("t,{}", args[0]),
                 (Family::Tape, _) => pointers(family).1.to_owned(),
                 (from, to) => return Err(format!("a {from:?} read's call of a {to:?} read")),

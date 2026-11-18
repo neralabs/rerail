@@ -94,6 +94,19 @@ pub const VIEW_LOC_DOCOF: u32 = 8;
 /// The `line` view (`View::Line`): each node's id and the line its start is on, by the facts' own lines.
 pub const VIEW_LINE: u32 = 9;
 
+/// A view's number in the views' reads (`vread`'s `kind`: 1 + its place in `rerail_clif::view_reads::VIEWS`), of its
+/// device code.
+pub fn read_kind(view: u32) -> u32 {
+    match view {
+        VIEW_NODE => 1,
+        VIEW_CHILD => 2,
+        VIEW_FIELD => 3,
+        VIEW_CORE => 4,
+        VIEW_LINE => 5,
+        _ => panic!("view {view} has no read"),
+    }
+}
+
 /// The device's code of `view`, for the views it makes.
 pub fn device_view(view: View) -> Option<u32> {
     Some(match view {
@@ -145,6 +158,8 @@ pub struct ViewsInPlace {
     /// The buffers the reads reach by address, which a pass that reads a view makes resident: the batch's block's
     /// (the one the addresses are of), and each slab a tape lies in.
     pub buffers: Vec<metal::Buffer>,
+    /// Whether every document's lines are in a slab (`LineTable::placed`), so the `line` view is read in place too.
+    pub lines: bool,
     _entries: Vec<super::view_docs::ViewEntry>,
 }
 
@@ -167,6 +182,7 @@ fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
     let dir: *mut ViewDir = b.alloc_t(1);
     let mut slabs: Vec<metal::Buffer> = Vec::new();
     let mut entries = Vec::with_capacity(n);
+    let mut lines = true;
     for (i, p) in batch.docs.iter().enumerate() {
         // Each refusal counted by why: what step 4b (16z laid out apart) and the loads not yet placed leave.
         let refused = |why: &'static str| {
@@ -176,7 +192,8 @@ fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
         if !Arc::ptr_eq(p.block(), b) {
             return refused("views.refused.block");
         }
-        let mut row = ViewRow { rows: [batch.nodes[i] as u32, batch.children[i] as u32, batch.fields[i] as u32, batch.nodes[i] as u32], ..Default::default() };
+        let first = batch.nodes[i] as u32;
+        let mut row = ViewRow { rows: [first, batch.children[i] as u32, batch.fields[i] as u32, first, first], ..Default::default() };
         if p.len() > 0 {
             let Some(tape) = p.facts.tape.as_ref() else { return refused("views.refused.no_tape") };
             let Ok((bytes, view)) = tape.in_place() else { return refused("views.refused.not_in_place") };
@@ -184,6 +201,24 @@ fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
             let Some((address, slab)) = crate::code_rule_dsl::tape::placed::on_device(room, bytes) else { return refused("views.refused.not_in_room") };
             if !slabs.iter().any(|s| s.gpu_address() == slab.gpu_address()) {
                 slabs.push(slab);
+            }
+            // Its lines where the device reads them: else the batch's `line` view is made (counted).
+            let table = &p.facts.lines;
+            let words = table.words();
+            // SAFETY: the words as bytes, their own range.
+            let bytes = unsafe { std::slice::from_raw_parts(words.as_ptr().cast::<u8>(), 4 * words.len()) };
+            match table.room().and_then(|room| crate::code_rule_dsl::tape::placed::on_device(room, bytes)) {
+                Some((address, slab)) => {
+                    row.lines = address;
+                    if !slabs.iter().any(|s| s.gpu_address() == slab.gpu_address()) {
+                        slabs.push(slab);
+                    }
+                }
+                None if lines => {
+                    crate::code_rule_dsl::prof::count("views.refused.lines_unplaced", 1);
+                    lines = false;
+                }
+                None => {}
             }
             let entry = super::view_docs::ViewEntry::new(b, p, &batch.dialects[p.tag]);
             row.entry = b.offset_of(entry.desc()) as u64;
@@ -201,7 +236,7 @@ fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
     unsafe { dir.write(ViewDir { chunk: base, ndocs: n as u32, pad: 0, rows: base + b.offset_of(rows) as u64 }) };
     let mut buffers = vec![buffer];
     buffers.extend(slabs);
-    Some(ViewsInPlace { dir: base + b.offset_of(dir) as u64, buffers, _entries: entries })
+    Some(ViewsInPlace { dir: base + b.offset_of(dir) as u64, buffers, lines, _entries: entries })
 }
 
 /// Copies `src` into the block and points `span` at it.
@@ -341,6 +376,8 @@ pub fn build(batch: &Batch) -> Chunk {
 /// Puts each document's facts' line starts into `batch`'s chunk, once, for the `line` view made on the device (decision
 /// 0325 step 3: it was read on the host, a row at a time, for an upload). False when the block cannot hold them: the
 /// view is then made on the host.
+// copy (0353 step 4): the facts' line starts copied into the chunk, for a batch whose `line` view is made (its tapes
+// not on the device). It goes with the made views: the views' reads read the lines where `LineTable::placed` put them.
 pub fn fill_lines(batch: &Batch, chunk: &Chunk) -> bool {
     *chunk.lines.get_or_init(|| {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "the facts' lines in the chunk block".into());
@@ -368,6 +405,8 @@ pub fn fill_lines(batch: &Batch, chunk: &Chunk) -> bool {
 /// host finds them. False when a document has no places (no `core.rr` extra) or the block cannot hold them: the views
 /// are then made on the host. A batch with a guest was refused, and its views read on the host for an upload (28 MB
 /// on posthog/hogql).
+// copy (0353 step 4): the line starts and the spans past the nodes copied into the chunk for the `Loc` views. It goes:
+// the views' reads read the lines in place, and the spans where they are written once (Q123).
 pub fn fill_locs(batch: &Batch, chunk: &Chunk) -> bool {
     *chunk.locs.get_or_init(|| {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "core.rr's places in the chunk block".into());

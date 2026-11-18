@@ -3825,18 +3825,22 @@ impl Source for Viewed {
     fn device_view(&self) -> Option<crate::code_rule_dsl::facts::vtab::DeviceView<'_>> {
         let view = device_chunk::device_view(self.view)?;
         let chunk = self.batch.chunk();
+        // The views the views' reads answer are read in place where every tape (and for `line`, every document's
+        // lines) is on the device.
+        #[cfg(target_os = "macos")]
+        let in_place = matches!(view, device_chunk::VIEW_NODE | device_chunk::VIEW_CHILD | device_chunk::VIEW_FIELD | device_chunk::VIEW_CORE | device_chunk::VIEW_LINE)
+            .then(|| device_chunk::views_in_place(&self.batch, chunk))
+            .flatten()
+            .filter(|v| view != device_chunk::VIEW_LINE || v.lines)
+            .map(|v| crate::code_rule_dsl::facts::vtab::ViewInPlace { dir: v.dir, kind: device_chunk::read_kind(view), buffers: v.buffers.clone(), keep: Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync> });
+        #[cfg(not(target_os = "macos"))]
+        let in_place: Option<()> = None;
         if matches!(self.view, View::Loc(_)) && !device_chunk::fill_locs(&self.batch, chunk) {
             return None;
         }
-        if matches!(self.view, View::Line) && !device_chunk::fill_lines(&self.batch, chunk) {
+        if matches!(self.view, View::Line) && in_place.is_none() && !device_chunk::fill_lines(&self.batch, chunk) {
             return None;
         }
-        // The views the views' reads answer are read in place where every tape is on the device.
-        #[cfg(target_os = "macos")]
-        let in_place = matches!(view, device_chunk::VIEW_NODE | device_chunk::VIEW_CHILD | device_chunk::VIEW_FIELD | device_chunk::VIEW_CORE)
-            .then(|| device_chunk::views_in_place(&self.batch, chunk))
-            .flatten()
-            .map(|v| crate::code_rule_dsl::facts::vtab::ViewInPlace { dir: v.dir, kind: view + 1, buffers: v.buffers.clone(), keep: Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync> });
         Some(crate::code_rule_dsl::facts::vtab::DeviceView {
             block: &chunk.block,
             root: chunk.root,

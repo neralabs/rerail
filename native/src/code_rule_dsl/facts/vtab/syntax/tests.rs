@@ -1796,11 +1796,11 @@ kernel void ids_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[b
     assert_eq!(tried, 3 * 3 * 3, "every case, format and shape");
 }
 
-/// Decision 0353 step 4c: the `node`, `child`, `field` and `core_node` views' rows read through the views' reads (written once in CLIF), by the JIT on
+/// Decision 0353 step 4c: the `node`, `child`, `field`, `core_node` and `line` views' rows read through the views' reads (written once in CLIF), by the JIT on
 /// the host and as MSL on the device, over the document's entry, its numbering where it lies in its block and its
 /// tape where it is read in place, are the host's rows (`Viewed::value_of`): every numbered node's document, id, kind,
-/// start and end; each child's parent, id and place; each fielded node's parent, field and id; each node's tape node.
-/// In all three formats, whole and narrowed.
+/// start and end; each child's parent, id and place; each fielded node's parent, field and id; each node's tape node;
+/// each node's line, by its lines where they lie (step 4d). In all three formats, whole and narrowed.
 #[cfg(target_os = "macos")]
 #[test]
 fn the_view_reads_are_the_hosts_rows() {
@@ -1809,29 +1809,31 @@ fn the_view_reads_are_the_hosts_rows() {
     use metal::{CompileOptions, Device, MTLResourceOptions, MTLSize};
     use ranks::Item;
     use rerail_clif::view::TapeView;
-    const WIDE: usize = 14;
+    const WIDE: usize = 16;
     const KERNEL: &str = r#"
 // The tape is reached by its GPU address (a pointer in the stage's constants, the buffer made resident): no binding.
-struct Tapes { device const uchar* tt; };
+struct Tapes { device const uchar* tt; device const uchar* ll; };
 kernel void view_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[buffer(1)]], constant uint& n [[buffer(2)]],
                        constant Tapes& tapes [[buffer(3)]], constant uint* tv [[buffer(4)]], device long* out [[buffer(5)]],
                        constant uint& nf [[buffer(6)]], uint l [[thread_position_in_grid]]) {
     if (l >= n) return;
     device const uchar* tt = tapes.tt;
+    device const uchar* ll = tapes.ll;
     uint v[29];
     for (uint k = 0u; k < 29u; k++) v[k] = tv[k];
-    device long* o = out + l * 14u;
-    for (uint c = 0u; c < 5u; c++) o[c] = long(clif_view_node(b, d, tt, v, l, c));
-    for (uint c = 0u; c < 3u; c++) o[5u + c] = l + 1u < n ? long(clif_view_child(b, d, tt, v, l, c)) : 0;
-    for (uint c = 0u; c < 3u; c++) o[8u + c] = l < nf ? long(clif_view_field(b, d, tt, v, l, c)) : 0;
-    for (uint c = 0u; c < 3u; c++) o[11u + c] = long(clif_view_core(b, d, tt, v, l, c));
+    device long* o = out + l * 16u;
+    for (uint c = 0u; c < 5u; c++) o[c] = long(clif_view_node(b, d, tt, v, ll, l, c));
+    for (uint c = 0u; c < 3u; c++) o[5u + c] = l + 1u < n ? long(clif_view_child(b, d, tt, v, ll, l, c)) : 0;
+    for (uint c = 0u; c < 3u; c++) o[8u + c] = l < nf ? long(clif_view_field(b, d, tt, v, ll, l, c)) : 0;
+    for (uint c = 0u; c < 3u; c++) o[11u + c] = long(clif_view_core(b, d, tt, v, ll, l, c));
+    for (uint c = 0u; c < 2u; c++) o[14u + c] = long(clif_view_line(b, d, tt, v, ll, l, c));
 }
 "#;
     const _: () = assert!(std::mem::size_of::<TapeView>() == 29 * 4);
     let jit = rerail_clif::jit::Reads::new();
-    // SAFETY: `view_node`'s signature: the entry, the tape's base, its view, a local, a column.
-    let read = |name: &str| -> extern "C" fn(*const u8, *const u8, *const TapeView, u32, u32) -> i64 { unsafe { std::mem::transmute(jit.function(name)) } };
-    let (node, child, field, core_node) = (read("view_node"), read("view_child"), read("view_field"), read("view_core"));
+    // SAFETY: `view_node`'s signature: the entry, the tape's base, its view, the lines' base, a local, a column.
+    let read = |name: &str| -> extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, u32, u32) -> i64 { unsafe { std::mem::transmute(jit.function(name)) } };
+    let (node, child, field, core_node, line) = (read("view_node"), read("view_child"), read("view_field"), read("view_core"), read("view_line"));
     let device = Device::system_default();
     let pipe = device.as_ref().map(|device| {
         let source = format!(
@@ -1856,6 +1858,7 @@ kernel void view_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[
         let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
         for format in Format::ALL {
             let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
+            let words: Vec<u32> = lines.words().to_vec();
             let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image.clone().in_format(format), lines).unwrap());
             let dialect = Dialect::new(core::facts_tag(&facts)).unwrap();
             let (tape, view) = facts.tape.as_ref().unwrap().in_place().unwrap();
@@ -1887,17 +1890,20 @@ kernel void view_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[
                         row.extend(child);
                         row.extend(field);
                         row.extend([i64::from(p.key), i64::from(x), p.global(l)]);
+                        row.extend([p.global(l), i64::from(facts.start_line(x))]);
                         row
                     })
                     .collect();
                 let e = entry.desc();
                 let t = tape.as_ptr();
+                let ll = words.as_ptr().cast::<u8>();
                 let jitted: Vec<i64> = (0..n)
                     .flat_map(|l| {
-                        let mut row: Vec<i64> = (0..5).map(|c| node(e, t, &view, l, c)).collect();
-                        row.extend((0..3).map(|c| if l + 1 < n { child(e, t, &view, l, c) } else { 0 }));
-                        row.extend((0..3).map(|c| if l < nf { field(e, t, &view, l, c) } else { 0 }));
-                        row.extend((0..3).map(|c| core_node(e, t, &view, l, c)));
+                        let mut row: Vec<i64> = (0..5).map(|c| node(e, t, &view, ll, l, c)).collect();
+                        row.extend((0..3).map(|c| if l + 1 < n { child(e, t, &view, ll, l, c) } else { 0 }));
+                        row.extend((0..3).map(|c| if l < nf { field(e, t, &view, ll, l, c) } else { 0 }));
+                        row.extend((0..3).map(|c| core_node(e, t, &view, ll, l, c)));
+                        row.extend((0..2).map(|c| line(e, t, &view, ll, l, c)));
                         row
                     })
                     .collect();
@@ -1915,9 +1921,12 @@ kernel void view_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[
                     enc.set_buffer(0, Some(&block.gpu_buffer(device)), 0);
                     enc.set_bytes(1, 8, (&raw const d).cast());
                     enc.set_bytes(2, 4, (&raw const n).cast());
-                    let address = tt.gpu_address();
-                    enc.set_bytes(3, 8, (&raw const address).cast());
+                    // Its lines where the device reads them: a test's buffer of their words.
+                    let lb = device.new_buffer_with_data(words.as_ptr().cast(), 4 * words.len() as u64, MTLResourceOptions::StorageModeShared);
+                    let address = [tt.gpu_address(), lb.gpu_address()];
+                    enc.set_bytes(3, 16, address.as_ptr().cast());
                     enc.use_resource(&tt, metal::MTLResourceUsage::Read);
+                    enc.use_resource(&lb, metal::MTLResourceUsage::Read);
                     enc.set_bytes(4, std::mem::size_of::<TapeView>() as u64, (&raw const view).cast());
                     enc.set_buffer(5, Some(&out), 0);
                     enc.set_bytes(6, 4, (&raw const nf).cast());

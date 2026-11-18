@@ -78,7 +78,7 @@ impl B<'_, '_> {
         self.word_at(I32, p, at::COUNT)
     }
     /// The first `i` in `0..n` (u32s) for which `below(i)` is false, `below` true before it and false from it.
-    fn bisect(&mut self, n: Value, below: &mut dyn FnMut(&mut Self, Value) -> Value) -> Value {
+    pub(crate) fn bisect(&mut self, n: Value, below: &mut dyn FnMut(&mut Self, Value) -> Value) -> Value {
         let (head, body, done) = (self.f.create_block(), self.f.create_block(), self.f.create_block());
         self.f.append_block_param(head, I32);
         self.f.append_block_param(head, I32);

@@ -243,8 +243,8 @@ struct SlabEntry {
     slab: Arc<Slab>,
     /// The admission clock when a document of it was last asked for.
     last_use: u64,
-    /// Whether it holds a loaded tape's home (`tape_room`, decision 0353 step 4a): the tape holds the slab, so
-    /// retiring it would free nothing, only lose its count. Never retired.
+    /// Whether it holds a loaded tape's home (`tape_room`, decision 0353 step 4a): while a tape holds the slab,
+    /// retiring it would free nothing, only lose its count. Retired once only the pool holds it.
     tapes: bool,
 }
 
@@ -323,7 +323,7 @@ impl State {
             .slabs
             .iter()
             .enumerate()
-            .filter(|(_, entry)| !keep.contains(&entry.slab.id) && !entry.tapes)
+            .filter(|(_, entry)| !keep.contains(&entry.slab.id) && (!entry.tapes || Arc::strong_count(&entry.slab) == 1))
             .min_by_key(|(_, entry)| entry.last_use)
             .map(|(at, _)| at)
         else {

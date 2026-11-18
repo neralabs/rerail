@@ -521,10 +521,11 @@ static inline long vread(uint kind, device const ViewDir* d, uint r, uint col) {
     uint i = r - e.rows[k];
     device const uint* v = e.view;
     switch (k) {
-        case 0u: return long(clif_view_node(d->chunk, e.entry, e.tape, v, i, col));
-        case 1u: return long(clif_view_child(d->chunk, e.entry, e.tape, v, i, col));
-        case 2u: return long(clif_view_field(d->chunk, e.entry, e.tape, v, i, col));
-        default: return long(clif_view_core(d->chunk, e.entry, e.tape, v, i, col));
+        case 0u: return long(clif_view_node(d->chunk, e.entry, e.tape, v, e.lines, i, col));
+        case 1u: return long(clif_view_child(d->chunk, e.entry, e.tape, v, e.lines, i, col));
+        case 2u: return long(clif_view_field(d->chunk, e.entry, e.tape, v, e.lines, i, col));
+        case 3u: return long(clif_view_core(d->chunk, e.entry, e.tape, v, e.lines, i, col));
+        default: return long(clif_view_line(d->chunk, e.entry, e.tape, v, e.lines, i, col));
     }
 }
 "#;

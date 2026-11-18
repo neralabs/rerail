@@ -34,9 +34,13 @@ pub enum Family {
     /// aligned (the block's own words: the Rust backend checks none against a length).
     Relation,
     /// A view's (`view_*`, decision 0353 step 4): a document's entry (`view_reads::ViewDoc`, in its batch's block,
-    /// a load of it aligned as a relation's), the tape's base and its view. A view read calls the numbering's reads
-    /// with the descriptor its entry refers to, and the tape's with the tape's base and view.
+    /// a load of it aligned as a relation's), the tape's base and its view, its lines' base. A view read calls the
+    /// numbering's reads with the descriptor its entry refers to, the tape's with the tape's base and view, the
+    /// lines' with their base.
     View,
+    /// A document's lines' (`lines_*`, decision 0353 step 4d): the base of its `LineTable`'s words (`[n, starts[n],
+    /// ends[n]]`, u32s, in a slab's room beside its tape), every load aligned, an offset from it.
+    Lines,
 }
 
 impl Family {
@@ -44,8 +48,8 @@ impl Family {
     pub fn pointers(self) -> usize {
         match self {
             Family::Tape => 2,
-            Family::Relation => 1,
-            Family::View => 3,
+            Family::Relation | Family::Lines => 1,
+            Family::View => 4,
         }
     }
 }
@@ -100,10 +104,12 @@ pub const READS: &[Read] = &[
     Read { family: Family::Relation, name: "num_order_of", params: &[I32], ret: I32, hot: true, body: crate::id_reads::order_of },
     Read { family: Family::Relation, name: "num_number_of_order", params: &[I32], ret: I32, hot: true, body: crate::id_reads::number_of_order },
     // A view's rows (decision 0353 step 4c): row `l` of the document's rows, column `col`.
+    Read { family: Family::Lines, name: "lines_line", params: &[I32], ret: I32, hot: true, body: crate::view_reads::lines_line },
     Read { family: Family::View, name: "view_node", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::node },
     Read { family: Family::View, name: "view_child", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::child },
     Read { family: Family::View, name: "view_field", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::field },
     Read { family: Family::View, name: "view_core", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::core },
+    Read { family: Family::View, name: "view_line", params: &[I32, I32], ret: I64, hot: true, body: crate::view_reads::line },
 ];
 
 /// The reads of format 16 alone: a side list's value, and a node's slot (16z's parent steps read it block by
@@ -153,12 +159,12 @@ pub fn build_for(read: &Read, call_conv: CallConv, name: UserFuncName, callee: &
     f.switch_to_block(entry);
     let params = f.block_params(entry).to_vec();
     let pointers = read.family.pointers();
-    let (view, doc_tape) = match read.family {
-        Family::Tape => (Some(params[1]), None),
-        Family::Relation => (None, None),
-        Family::View => (None, Some((params[1], params[2]))),
+    let (view, doc_tape, lines) = match read.family {
+        Family::Tape => (Some(params[1]), None, None),
+        Family::Relation | Family::Lines => (None, None, None),
+        Family::View => (None, Some((params[1], params[2])), Some(params[3])),
     };
-    let mut b = B { f, tape: params[0], view, doc_tape, args: params[pointers..].to_vec(), call_conv, callee, format };
+    let mut b = B { f, tape: params[0], view, doc_tape, lines, args: params[pointers..].to_vec(), call_conv, callee, format };
     let value = (read.body)(&mut b);
     b.f.ins().return_(&[value]);
     b.f.seal_all_blocks();
@@ -228,7 +234,7 @@ pub fn view_msl_source() -> Result<String, String> {
     let funcs: Vec<(u32, Function, &str)> = READS
         .iter()
         .enumerate()
-        .filter(|(_, read)| read.family == Family::View)
+        .filter(|(_, read)| matches!(read.family, Family::View | Family::Lines))
         .map(|(k, read)| (k as u32, build(read, CallConv::SystemV, UserFuncName::user(0, k as u32), &mut ByIndex), read.name))
         .collect();
     let body = crate::msl::translate_reads(&funcs, "clif_", Family::View)?;
@@ -430,6 +436,8 @@ pub struct B<'a, 'c> {
     view: Option<Value>,
     /// A view read's tape: its base and its view (the view's family alone).
     doc_tape: Option<(Value, Value)>,
+    /// A view read's lines' base (the view's family alone).
+    lines: Option<Value>,
     args: Vec<Value>,
     call_conv: CallConv,
     callee: &'c mut dyn Callee,
@@ -557,6 +565,16 @@ impl B<'_, '_> {
         let (base, view) = self.doc_tape.expect("a view read");
         let tape = std::mem::replace(&mut self.tape, base);
         let held = std::mem::replace(&mut self.view, Some(view));
+        let value = self.call(name, args);
+        self.tape = tape;
+        self.view = held;
+        value
+    }
+    /// The lines' read `name` called by a view read, with its lines' base.
+    pub(crate) fn call_lines(&mut self, name: &str, args: &[Value]) -> Value {
+        let base = self.lines.expect("a view read");
+        let tape = std::mem::replace(&mut self.tape, base);
+        let held = self.view.take();
         let value = self.call(name, args);
         self.tape = tape;
         self.view = held;

@@ -40,19 +40,19 @@ pub struct ViewDoc {
 const _: () = assert!(std::mem::size_of::<ViewDoc>() == 16 + 16 * 4);
 
 /// A document of a batch, as a kernel finds its views' rows (decision 0353 step 4d): its entry's offset in the
-/// batch's block, its tape's GPU address and view (the reads' own), and its first row in each view (`node`, `child`,
-/// `field`, `core_node`).
+/// batch's block, its tape's and its lines' GPU addresses, its tape's view (the reads' own), and its first row in
+/// each view (`VIEWS`).
 #[repr(C)]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ViewRow {
     pub entry: u64,
-    /// A device address: `device const uchar*` in the kernels.
+    /// Device addresses: `device const uchar*` in the kernels.
     pub tape: u64,
-    pub rows: [u32; 4],
+    pub lines: u64,
+    pub rows: [u32; VIEWS.len()],
     pub view: crate::view::TapeView,
-    pub pad: u32,
 }
-const _: () = assert!(std::mem::size_of::<ViewRow>() == 8 + 8 + 16 + 116 + 4);
+const _: () = assert!(std::mem::size_of::<ViewRow>() == 8 + 8 + 8 + 20 + 116);
 
 /// A batch's documents as its views' reads find them: the batch's block's GPU address (the entries' base), its
 /// documents' rows (their GPU address), how many.
@@ -66,8 +66,9 @@ pub struct ViewDir {
 }
 const _: () = assert!(std::mem::size_of::<ViewDir>() == 24);
 
-/// A view's number in a kernel's reads (`ViewDir`'s rows' and `vread`'s): `node`, `child`, `field`, `core_node`.
-pub const VIEWS: [&str; 4] = ["view_node", "view_child", "view_field", "view_core"];
+/// A view's number in a kernel's reads (`ViewDir`'s rows' and `vread`'s): `node`, `child`, `field`, `core_node`,
+/// `line`.
+pub const VIEWS: [&str; 5] = ["view_node", "view_child", "view_field", "view_core", "view_line"];
 
 /// A field's byte offset in the entry.
 pub mod at {
@@ -90,6 +91,8 @@ pub const NODE_COLUMNS: u32 = 5;
 pub const CHILD_COLUMNS: u32 = 3;
 pub const FIELD_COLUMNS: u32 = 3;
 pub const CORE_COLUMNS: u32 = 3;
+/// `line`'s: the node's id, the line its start is on (from 1).
+pub const LINE_COLUMNS: u32 = 2;
 
 /// The entry's MSL: `struct ViewDoc`, each field's offset and the size asserted against this definition's.
 pub fn msl() -> String {
@@ -105,7 +108,7 @@ pub fn msl() -> String {
         ("Run", "places", offset_of!(ViewDoc, places)),
     ];
     let mut s = String::from(
-        "struct ViewRow {\n    ulong entry;\n    device const uchar* tape;\n    uint rows[4];\n    uint view[29];\n    uint pad;\n};\n\
+        "struct ViewRow {\n    ulong entry;\n    device const uchar* tape;\n    device const uchar* lines;\n    uint rows[5];\n    uint view[29];\n};\n\
          struct ViewDir {\n    device const uchar* chunk;\n    uint ndocs;\n    uint pad;\n    device const ViewRow* rows;\n};\n",
     );
     s += &format!("static_assert(sizeof(ViewRow) == {}, \"ViewRow: size\");\n", std::mem::size_of::<ViewRow>());
@@ -245,5 +248,31 @@ pub fn core(b: &mut B<'_, '_>) -> Value {
             let x = b.tape_node(l);
             b.f.ins().uextend(I64, x)
         }, |b| b.node_id(l))
+    })
+}
+
+/// `lines_line(at)`: the lines starting at or before byte `at` (`Facts::start_line`: `LineTable::line` + 1), by
+/// bisection of the starts.
+pub fn lines_line(b: &mut B<'_, '_>) -> Value {
+    let at_ = b.arg(0);
+    let n = b.word_at(I32, b.tape, 0);
+    b.bisect(n, &mut |b, i| {
+        let starts = b.f.ins().iadd_imm(b.tape, 4);
+        let p = b.item(starts, i, 4);
+        let start = b.word_at(I32, p, 0);
+        b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, start, at_)
+    })
+}
+
+/// `view_line(l, col)`: column `col` of the `line` view's row of numbered node `l`: its id, the line its start is
+/// on.
+pub fn line(b: &mut B<'_, '_>) -> Value {
+    let (l, col) = (b.arg(0), b.arg(1));
+    let c = b.f.ins().icmp_imm(IntCC::Equal, col, 0);
+    b.either(I64, c, |b| b.node_id(l), |b| {
+        let x = b.tape_node(l);
+        let start = b.call_tape("tape_start", &[x]);
+        let line = b.call_lines("lines_line", &[start]);
+        b.f.ins().uextend(I64, line)
     })
 }

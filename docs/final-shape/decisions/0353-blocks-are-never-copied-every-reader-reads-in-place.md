@@ -380,6 +380,7 @@ Each row is marked in the code with `copy (0353 step N)`.
 | 11 | The transducer's packed batch: 44 bytes a node, and its child lists | `PackedBatch::nodes` (0293 "Interim") | Each matched batch | Step 7 |
 | 12 | Findings, frames and memo entries copied into rows of their own | The output, frames and memo stores | Not yet measured | Step 8 (0325 step 7) |
 | 13 | The transducer's residency: every tape it reads copied into slabs of its own, and documents copied between slabs | `residency::slabs::admit_docs`, `insert`'s `place`; `rerail_metal::slabs::gather` | Each tape a Metal batch reads | Step 7 |
+| 14 | Found 2026-11-17: the line starts copied into the chunk block for the `line` and `Loc` views, and the spans past a document's nodes (its tokens', comments', matches') beside them; a guest's places made there. `line` reads the lines in place when the batch's tapes are on the device (step 4d); the copy is its fallback, and `Loc`'s path | `device_chunk.rs`, `fill_lines`, `fill_locs` | 4 bytes a line, 8 a span, each batch that makes the views | Step 4 (Q123) |
 
 ## The plan
 
@@ -464,10 +465,20 @@ Each step ends with:
          build, `rows_copy`. Checked: `views_made_on_the_device_are_the_hosts_rows`, hogql's findings.
        - Not yet: the scans over 64-node groups and the probes by parent (first child, next sibling); the Rust
          backend of the view reads (the host's `Viewed` reads the same columns through `Facts`, by hand).
-       - Left made (the copies 4d removes next): `line` and the `Loc` views (`line`, `end_line`, `col`, `docof`),
-         whose line starts and spans live in no block (the facts' `LineTable`, Q123's spans); the axis (step 5).
-         `expand_view`, `VIEW_EXPAND` and ChunkDoc's node columns stay for them.
-       - hogql cold, 3 pairs: views made 347–503 MB against 597–788 MB; `node` and `child` 0.
+       - `line` (`View::Line`, 2026-11-17): a document's line starts are a derived fact written once where they are
+         computed, by a chunked search of the terminators (`memchr`, no byte loop): `LineTable`'s u32 words `[n,
+         starts[n], ends[n]]`, in a slab's room beside the tape for a loaded document (`LineTable::placed`). A fourth
+         family of reads, the lines' (`lines_line`: the starts at or before a byte, by bisection), which a view read
+         calls with the lines' base, its fourth pointer; `ViewRow` holds the lines' GPU address. A batch where a
+         document's lines are not in a slab makes `line` (counted, `views.refused.lines_unplaced`).
+       - Left made (the copies 4d removes next): the `Loc` views (`line`, `end_line`, `col`, `docof`), whose spans
+         past the nodes live in no block (Q123's spans; row 14); the axis (step 5). `expand_view`, `VIEW_EXPAND` and
+         ChunkDoc's node columns stay for them, and for a batch whose tapes are not on the device.
+       - Found on the way: the slabs holding tapes were never retired (4d's first part); now they are retired once
+         only the pool holds them, so a long session frees them with its tapes.
+       - hogql cold, 3 pairs: views made 347–503 MB against 597–788 MB; `node` and `child` 0. With `line` (whose
+         rows hogql's core.rr shape does not read: its `line` is `Loc`'s), 3 pairs against 4d at load 7–9: 67–78 B
+         instructions against 77–83 B, findings 1,629.
      - **4e.** Measured: the 660.8 MB is 0; refusals and strata apart, against Q68's.
    - A stage's input may be a tape view: the kernels read the chunk block's placed tapes through the generated MSL
      (`metal_tape.metal`'s reads, 0293 §9).

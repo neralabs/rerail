@@ -626,7 +626,7 @@ impl Layer {
             }
             let starts = lines.starts();
             for (l, &s) in starts.iter().enumerate() {
-                let e = starts.get(l + 1).copied().unwrap_or(source.len() + 1);
+                let e = starts.get(l + 1).map_or(source.len() + 1, |&e| e as usize);
                 insert("line_span", &[d, l as i64, s as i64, e as i64])?;
             }
             if around {
