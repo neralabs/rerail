@@ -199,7 +199,13 @@ impl View {
         if let Some(stamp) = &stamp && let Some(tree) = self.observed_tree(id, stamp) && repo.has_object(id) {
             return Ok(tree);
         }
-        let tree = verified_object(repo, id)?.try_into_tree().map_err(error)?;
+        let tree = verified_object(repo, id).map_err(|err| {
+            if err.kind() == io::ErrorKind::NotFound {
+                error(format_args!("missing Git tree object {id}"))
+            } else {
+                err
+            }
+        })?.try_into_tree().map_err(error)?;
         match stamp {
             Some(stamp) => self.remember_tree(&stamp, tree),
             None => decode_tree(tree),

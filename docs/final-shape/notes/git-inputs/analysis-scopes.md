@@ -57,6 +57,8 @@ The source inventory requires every tree that passes its filter to be readable.
 When a policy asks for a tree that the inventory read, it receives those same
 decoded entries. The request can still reach trees outside the inventory.
 The inventory also uses verified tree entries from earlier policy requests in the same scan.
+An explicit path under a missing tree gives a source error for that path.
+The scan still checks other requested paths whose trees it can read.
 
 ## Retention and invalidation
 
