@@ -1,0 +1,1 @@
+One audit whose stored rule provenance is damaged no longer makes `GET /api/audits`, `audits_list` and the support bundle fail for every audit beside it: that audit lists with no rule provenance and a failure that says so, and `daemon.log` names it.

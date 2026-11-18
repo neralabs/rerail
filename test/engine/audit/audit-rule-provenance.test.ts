@@ -6,7 +6,7 @@ import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
+import { SqliteAuditReader, SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
 import type {
   AuditInput, AuditRecord, AuditRuleProvenance, LegacyAuditRuleProvenance, RepositoryAuditRuleProvenance,
 } from "../../../src/engine/audit/audit.js";
@@ -1014,16 +1014,19 @@ describe("audit rule provenance", () => {
       + "and the audit reads as it did.\n");
     expect(auditsNamingNoCopy(path)).toBe(1);
     expect(inlineAudits(path)).toBe(1);
-    // It reads as the build before reads it, before the move and after; every other audit reads as written.
+    // The build before fails on it, before the move and after. This build reads it with no provenance and a failure
+    // that says so, and every other audit as written.
     expect(before).toMatch(/^SyntaxError: /u);
+    const quiet = spyOnStderr();
     const store = new SqliteAuditStore(path);
     try {
-      expect(readOutcome(() => store.get(damaged)?.ruleProvenance)).toBe(before);
+      expect(store.get(damaged)).toMatchObject({ ruleProvenance: [], failures: [UNREADABLE_PROVENANCE] });
       for (const { auditId, text } of written.filter(({ auditId }) => auditId !== damaged)) {
         expect(JSON.stringify(store.get(auditId)?.ruleProvenance), auditId).toBe(text);
       }
     } finally {
       store.close();
+      quiet.restore();
     }
     expect(readOutcome(() => readAsOlder(path, [damaged])[0]?.ruleProvenance)).toBe(before);
   }, 60_000);
@@ -1467,5 +1470,171 @@ describe("audit rule provenance", () => {
 
     resetRepositoryHistory(path, "remote:example/kept");
     expect(storedCopies()).toBe(0);
+  });
+});
+
+/**
+ * The failure an audit lists after its own when the rule provenance the database holds for it is not a JSON array, so
+ * it reads as none.
+ */
+const UNREADABLE_PROVENANCE = {
+  clauseId: "rule-provenance", code: "adapter-error", stage: "persistence",
+  message: "The audit's rule provenance in the database is not a JSON array, which only a damaged file or a hand edit leaves, so it reads as none.",
+};
+
+/**
+ * Six finished audits this build records, oldest first: three of one checkout's rules, then three of another's, each
+ * naming the stored copy of its provenance.
+ */
+function sixAudits(path: string): { auditIds: string[]; expected: Map<string, AuditRuleProvenance[]> } {
+  const first = provenanceOf("/home/dev/app", 3);
+  const second = provenanceOf("/home/dev/app-worktree", 4);
+  const store = new SqliteAuditStore(path);
+  try {
+    const recorded = [first, first, first, second, second, second].map(provenance => {
+      const auditId = store.start(auditInput("/home/dev/app", provenance));
+      store.finish(auditId, { status: "completed" });
+      return [auditId, provenance] as const;
+    });
+    return { auditIds: recorded.map(([auditId]) => auditId), expected: new Map(recorded) };
+  } finally {
+    store.close();
+  }
+}
+
+/**
+ * Writes `text` over an audit's own provenance and makes it name no stored copy, past the CHECK on `audits`, as the
+ * issue's steps do by hand: only a damaged file or a hand edit leaves such text.
+ */
+function damageAuditRow(path: string, auditId: string, text: string): void {
+  const database = new Database(path);
+  try {
+    database.pragma("ignore_check_constraints = ON");
+    database.prepare("UPDATE audits SET rule_provenance_json = ?, rule_provenance_id = NULL WHERE audit_id = ?").run(text, auditId);
+  } finally {
+    database.close();
+  }
+}
+
+/** Writes `text` over the stored copy of the provenance `auditId` names, past its CHECK; the copy's id. */
+function damageStoredCopy(path: string, auditId: string, text: string): number {
+  const database = new Database(path);
+  try {
+    database.pragma("ignore_check_constraints = ON");
+    const copy = database.prepare("SELECT rule_provenance_id FROM audits WHERE audit_id = ?").pluck().get(auditId) as number;
+    database.prepare("UPDATE audit_rule_provenances SET rule_provenance_json = ? WHERE provenance_id = ?").run(text, copy);
+    return copy;
+  } finally {
+    database.close();
+  }
+}
+
+/** The message `JSON.parse` fails with on `text`, as this Node writes it. */
+function parseFailure(text: string): string {
+  try {
+    JSON.parse(text);
+    return "parsed";
+  } catch (error) {
+    return (error as Error).message;
+  }
+}
+
+describe("an audit whose rule provenance does not read", () => {
+  it("lists every audit of each page that holds one whose provenance in its row does not parse, that one with no provenance and a failure that says so", async () => {
+    const path = await temporaryDatabase();
+    const { auditIds, expected } = sixAudits(path);
+    const damaged = auditIds[4]!;
+    damageAuditRow(path, damaged, '[{"ruleId":"typescript/broken","revision":3');
+    expected.set(damaged, []);
+    const stderr = spyOnStderr();
+    const store = new SqliteAuditStore(path);
+    const reader = new SqliteAuditReader(path);
+    try {
+      const listed = store.list({ limit: 200 }).audits;
+      expect(new Map(listed.map(audit => [audit.auditId, audit.ruleProvenance]))).toEqual(expected);
+      const record = listed.find(audit => audit.auditId === damaged);
+      expect(record).toMatchObject({ failures: [UNREADABLE_PROVENANCE], failureCount: 1, unlistedFailureCount: 0, blindFiles: [] });
+      expect(listed.filter(audit => audit.failures.length > 0)).toHaveLength(1);
+      // Each page of two answers, the one holding it among them; together they hold every audit.
+      const paged = [0, 2, 4].flatMap(offset => store.list({ limit: 2, offset }).audits.map(audit => audit.auditId));
+      expect(paged.sort()).toEqual([...auditIds].sort());
+      expect(store.get(damaged)).toEqual(record);
+      expect(store.get(auditIds[0]!)?.ruleProvenance).toEqual(expected.get(auditIds[0]!));
+      // The read-only reader the remote outbox and the support bundle read through reads the same.
+      expect(reader.list({ limit: 200 }).audits).toEqual(listed);
+      expect(reader.get(damaged)).toEqual(record);
+    } finally {
+      reader.close();
+      store.close();
+      stderr.restore();
+    }
+  });
+
+  it("reads every audit that names a stored copy whose text does not parse with no provenance and a failure that says so, and every other as stored", async () => {
+    const path = await temporaryDatabase();
+    const { auditIds, expected } = sixAudits(path);
+    damageStoredCopy(path, auditIds[0]!, '[{"ruleId":"typescript/broken"');
+    for (const auditId of auditIds.slice(0, 3)) expected.set(auditId, []);
+    const stderr = spyOnStderr();
+    const store = new SqliteAuditStore(path);
+    try {
+      const listed = store.list({ limit: 200 }).audits;
+      expect(new Map(listed.map(audit => [audit.auditId, audit.ruleProvenance]))).toEqual(expected);
+      expect(new Map(listed.map(audit => [audit.auditId, audit.failures]))).toEqual(new Map(auditIds.map((auditId, index) => [
+        auditId, index < 3 ? [UNREADABLE_PROVENANCE] : [],
+      ])));
+      expect(store.get(auditIds[1]!)?.failures).toEqual([UNREADABLE_PROVENANCE]);
+    } finally {
+      store.close();
+      stderr.restore();
+    }
+  });
+
+  it.each(['{"ruleId":"typescript/broken"}', "null", '"[]"', "3"])(
+    "reads provenance that parses as %s, which is no JSON array, as none, with a failure that says so",
+    async text => {
+      const path = await temporaryDatabase();
+      const { auditIds } = sixAudits(path);
+      damageAuditRow(path, auditIds[2]!, text);
+      const stderr = spyOnStderr();
+      const store = new SqliteAuditStore(path);
+      try {
+        expect(store.get(auditIds[2]!)).toMatchObject({ ruleProvenance: [], failures: [UNREADABLE_PROVENANCE], failureCount: 1 });
+      } finally {
+        store.close();
+        stderr.restore();
+      }
+    },
+  );
+
+  it("names in its log, once for each damaged text, the audit that read it with no provenance and where that text is", async () => {
+    const path = await temporaryDatabase();
+    const { auditIds } = sixAudits(path);
+    const text = '[{"ruleId":"typescript/broken","revision":3';
+    damageAuditRow(path, auditIds[4]!, text);
+    const copy = damageStoredCopy(path, auditIds[0]!, "{}");
+    const stderr = spyOnStderr();
+    const store = new SqliteAuditStore(path);
+    const reader = new SqliteAuditReader(path);
+    let logged = "";
+    try {
+      store.get(auditIds[1]!);
+      store.list({ limit: 200 });
+      // Later reads of either text, on this connection or another, say nothing more.
+      store.list({ limit: 200 });
+      store.get(auditIds[4]!);
+      reader.list({ limit: 200 });
+    } finally {
+      logged = stderr.logged();
+      reader.close();
+      store.close();
+      stderr.restore();
+    }
+    expect(logged).toBe(
+      `rerail: ${path}: audit ${auditIds[1]} reads with no rule provenance, and a failure that says so: rule_provenance_json `
+      + `of audit_rule_provenances row ${copy}, which every audit naming it reads, is not a JSON array (it parses to another JSON value).\n`
+      + `rerail: ${path}: audit ${auditIds[4]} reads with no rule provenance, and a failure that says so: the rule_provenance_json `
+      + `of its own row is not a JSON array (${parseFailure(text)}).\n`,
+    );
   });
 });

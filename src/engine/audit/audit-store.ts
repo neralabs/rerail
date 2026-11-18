@@ -86,16 +86,73 @@ function unlistedFailures(database: RerailDatabase): SQL<number> {
     : sql<number>`0`;
 }
 /**
- * An audit's rule provenance in a select from `audits`: the copy `audit_rule_provenances` keeps, or the row's own for
- * an audit an older build wrote. Written with table names, as `unlistedFailures` is.
+ * An audit's rule provenance in a select from `audits`, as the text the database holds: the copy
+ * `audit_rule_provenances` keeps, or the row's own for an audit an older build wrote. `record` parses it
+ * (`readProvenance`), so one audit's damaged text fails no page that holds it. Written with table names, as
+ * `unlistedFailures` is.
  */
-function ruleProvenance(): SQL<AuditRuleProvenance[]> {
-  return sql<AuditRuleProvenance[]>`coalesce((SELECT provenance.rule_provenance_json FROM audit_rule_provenances provenance
-    WHERE provenance.provenance_id = audits.rule_provenance_id), audits.rule_provenance_json)`.mapWith(audits.ruleProvenance);
+function ruleProvenanceText(): SQL<string> {
+  return sql<string>`coalesce((SELECT provenance.rule_provenance_json FROM audit_rule_provenances provenance
+    WHERE provenance.provenance_id = audits.rule_provenance_id), audits.rule_provenance_json)`;
 }
-/** An `audits` row with its rule provenance and `unlistedFailures`, which `record` reads. */
+/** An `audits` row with its rule provenance's text and `unlistedFailures`, which `record` reads. */
 function auditColumns(database: RerailDatabase) {
-  return { ...getTableColumns(audits), ruleProvenance: ruleProvenance(), unlistedFailureCount: unlistedFailures(database) };
+  return { ...getTableColumns(audits), ruleProvenance: ruleProvenanceText(), unlistedFailureCount: unlistedFailures(database) };
+}
+/** An `audits` row as `auditColumns` selects it. */
+type AuditReadRow = Omit<AuditRow, "ruleProvenance"> & { ruleProvenance: string; unlistedFailureCount: number };
+
+/**
+ * The failure an audit lists after its own when the rule provenance the database holds for it is not a JSON array: the
+ * CHECK on each table that holds one refuses such text on insert, so only a damaged file or a hand edit leaves it.
+ */
+const UNREADABLE_PROVENANCE: AuditFailure = {
+  clauseId: "rule-provenance", code: "adapter-error", stage: "persistence",
+  message: "The audit's rule provenance in the database is not a JSON array, which only a damaged file or a hand edit leaves, so it reads as none.",
+};
+
+/** The JSON array `text` holds, or why it holds none. */
+function parsedProvenance(text: string): AuditRuleProvenance[] | string {
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch (error) {
+    return (error as SyntaxError).message; // JSON.parse throws nothing else
+  }
+  return Array.isArray(value) ? (value as AuditRuleProvenance[]) : "it parses to another JSON value";
+}
+
+/**
+ * Each damaged provenance text this process has named in its log, by its file and place, so a page read again, or the
+ * same text read through another audit or connection, writes no line again.
+ */
+const NAMED_UNREADABLE = new Set<string>();
+
+/**
+ * The line that names `row`'s audit and where its damaged provenance text is, once for each such text: the daemon's
+ * stderr is `daemon.log`. Every audit naming a damaged stored copy reads it, so the line names the copy's row.
+ */
+function sayUnreadable(database: RerailDatabase, row: AuditReadRow, why: string): void {
+  const copy = row.ruleProvenanceId;
+  const [where, place] = copy === null
+    ? [`audit ${row.auditId}`, "the rule_provenance_json of its own row"]
+    : [`copy ${copy}`, `rule_provenance_json of audit_rule_provenances row ${copy}, which every audit naming it reads,`];
+  const key = `${database.$client.name}\0${where}`;
+  if (NAMED_UNREADABLE.has(key)) return;
+  NAMED_UNREADABLE.add(key);
+  process.stderr.write(`rerail: ${database.$client.name}: audit ${row.auditId} reads with no rule provenance, and a failure `
+    + `that says so: ${place} is not a JSON array (${why}).\n`);
+}
+
+/**
+ * `row`'s rule provenance, and the failure to list after its own when that text is no JSON array: such an audit reads
+ * as none, rather than failing every read of a page that holds it, and its failure and `sayUnreadable` say so.
+ */
+function readProvenance(database: RerailDatabase, row: AuditReadRow): { provenance: AuditRuleProvenance[]; failures: AuditFailure[] } {
+  const parsed = parsedProvenance(row.ruleProvenance);
+  if (Array.isArray(parsed)) return { provenance: parsed, failures: row.failures };
+  sayUnreadable(database, row, parsed);
+  return { provenance: [], failures: [...row.failures, UNREADABLE_PROVENANCE] };
 }
 
 /**
@@ -277,8 +334,9 @@ function paging(query: Pick<AuditQuery, "limit" | "offset">): { limit: number; o
   };
 }
 
-function record(row: AuditRow & { unlistedFailureCount: number }): AuditRecord {
-  const blindFiles = blindFilePaths(row.failures);
+function record(database: RerailDatabase, row: AuditReadRow): AuditRecord {
+  const { provenance, failures } = readProvenance(database, row);
+  const blindFiles = blindFilePaths(failures);
   return {
     auditId: row.auditId,
     sessionId: row.sessionId,
@@ -289,14 +347,14 @@ function record(row: AuditRow & { unlistedFailureCount: number }): AuditRecord {
     revision: row.revision,
     catalogRevision: row.catalogRevision,
     ruleRevisions: row.ruleRevisions,
-    ruleProvenance: row.ruleProvenance,
+    ruleProvenance: provenance,
     paths: row.paths,
     startedAt: row.startedAt,
     finishedAt: row.finishedAt,
     status: row.status,
     violations: row.violations,
-    failures: row.failures,
-    failureCount: row.failures.length + row.unlistedFailureCount,
+    failures,
+    failureCount: failures.length + row.unlistedFailureCount,
     unlistedFailureCount: row.unlistedFailureCount,
     blindFiles,
     blindFileCount: blindFiles.length,
@@ -315,7 +373,7 @@ function listAudits(database: RerailDatabase, query: AuditQuery = {}, repository
     .limit(limit)
     .offset(offset)
     .all()
-    .map(record);
+    .map(row => record(database, row));
   return { audits: page, total };
 }
 
@@ -771,7 +829,7 @@ export class SqliteAuditStore implements AuditRecorder, AuditReader {
 
   get(auditId: string): AuditRecord | undefined {
     const row = this.#database.select(auditColumns(this.#database)).from(audits).where(eq(audits.auditId, auditId)).get();
-    return row === undefined ? undefined : record(row);
+    return row === undefined ? undefined : record(this.#database, row);
   }
   list(query: AuditQuery = {}, repositoryIds?: readonly string[]): AuditPage {
     return listAudits(this.#database, query, repositoryIds);
@@ -821,7 +879,7 @@ export class SqliteAuditReader implements AuditReader {
     const database = this.#database.open();
     if (database === undefined) return undefined;
     const row = database.select(auditColumns(database)).from(audits).where(eq(audits.auditId, auditId)).get();
-    return row === undefined ? undefined : record(row);
+    return row === undefined ? undefined : record(database, row);
   }
   list(query: AuditQuery = {}, repositoryIds?: readonly string[]): AuditPage {
     const database = this.#database.open();
