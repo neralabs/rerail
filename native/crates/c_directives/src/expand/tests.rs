@@ -451,6 +451,100 @@ fn the_corpus_compiled_is_the_interpreters() {
     assert!(differ.is_empty());
 }
 
+/// The compiled words' shape (decision 0348, stage 4d), at every depth: no call but of their
+/// own functions (none at depth 0, every one of `#if`'s `EXPR` words past it), no indirect or
+/// tail call, and each depth's returns their own stated dispatches (`Step::Return`).
+#[test]
+fn the_compiled_words_have_their_shape() {
+    use rerail_compiler::native_cpu_pp::{MAX_K, compile_k};
+    use rerail_compiler::native_cpu_shape::Step;
+    for cpp in [false, true] {
+        let p = program(cpp).unwrap();
+        let returns = |k: usize| compile_k(p, k).unwrap().heads.iter().filter(|&&h| h == Step::Return).count();
+        let (r0, r1) = (returns(0), returns(1));
+        for k in [0, 1, 2, 4, 8, MAX_K] {
+            let c = compile_k(p, k).unwrap_or_else(|e| panic!("cpp {cpp} k {k}: {e:?}"));
+            let functions = c.clif.matches("function ").count();
+            assert!(!c.clif.contains("call_indirect") && !c.clif.contains("return_call"), "cpp {cpp} k {k}");
+            let calls = c.clif.lines().filter(|l| l.contains(" = call ") || l.trim_start().starts_with("call ")).count();
+            if k == 0 {
+                assert_eq!((functions, calls), (1, 0), "cpp {cpp}");
+            } else {
+                assert!(functions > 1 && calls > 0, "cpp {cpp} k {k}");
+            }
+            // Each depth past 0 adds the evaluator's `RETURN`s' dispatches once more.
+            assert_eq!(c.heads.iter().filter(|&&h| h == Step::Return).count(), r0 + k * (r1 - r0), "cpp {cpp} k {k}");
+        }
+    }
+}
+
+/// The corpus's TUs expanded by the words' interpreter, by the compiled words (each TU at its
+/// depth) and by the lean pass: each's instructions retired, cycles and wall time on this
+/// thread, the runs warmed first (every depth compiled). The words' runs are their runs alone
+/// (the grammars' reads are tier 1's and mode (a)'s); the lean pass's lexes too. A benchmark:
+/// through `scripts/dev/quiet-run`, at `--profile profiling`.
+#[test]
+#[ignore = "a benchmark of the corpus (~/orca/rerail-shared/lean-corpus, or RERAIL_C_CORPUS)"]
+fn the_corpus_timed() {
+    use rerail_compiler::native_cpu_codegen::retired;
+    use std::cell::Cell;
+    let root = std::env::var("RERAIL_C_CORPUS").map(std::path::PathBuf::from).unwrap_or_else(|_| std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("orca/rerail-shared/lean-corpus"));
+    #[derive(Default, Clone, Copy)]
+    struct Cost {
+        instructions: u64,
+        cycles: u64,
+        wall: std::time::Duration,
+    }
+    let timed = |cost: &Cell<Cost>, f: &mut dyn FnMut()| {
+        let (i0, c0, t0) = (retired().0, retired().1, std::time::Instant::now());
+        f();
+        let (t1, (i1, c1)) = (std::time::Instant::now(), retired());
+        let c = cost.get();
+        cost.set(Cost { instructions: c.instructions + (i1 - i0), cycles: c.cycles + (c1 - c0), wall: c.wall + (t1 - t0) });
+    };
+    let (words, jit, lean_pass) = (Cell::new(Cost::default()), Cell::new(Cost::default()), Cell::new(Cost::default()));
+    let mut tus = 0;
+    for (dir, cpp) in [("c", false), ("cpp", true)] {
+        let Ok(entries) = std::fs::read_dir(root.join(dir)) else { continue };
+        let mut paths: Vec<_> = entries.filter_map(|e| e.ok().map(|e| e.path())).collect();
+        paths.sort();
+        let srcs: Vec<Vec<u8>> = paths.iter().map(|p| std::fs::read(p).unwrap()).collect();
+        let c = Compiled::new();
+        for pass in 0..2 {
+            let on = Cell::new(pass == 1);
+            let run_words = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| {
+                let mut r = None;
+                if on.get() { timed(&words, &mut || r = Some(pp_words::run(w, f, e, b))) } else { r = Some(pp_words::run(w, f, e, b)) }
+                r.unwrap()
+            };
+            let run_jit = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| {
+                let mut r = None;
+                if on.get() { timed(&jit, &mut || r = Some(c.run(w, f, e, b))) } else { r = Some(c.run(w, f, e, b)) }
+                r.unwrap()
+            };
+            for src in &srcs {
+                let files = [("main.c", src.as_slice())];
+                let want = expand_tu_with("main.c", &mut search(&files, &[]), cpp, &INTERPRETED, &run_words);
+                if want.is_err() {
+                    continue;
+                }
+                let got = expand_tu_with("main.c", &mut search(&files, &[]), cpp, &INTERPRETED, &run_jit);
+                assert_eq!(got, want);
+                if pass == 1 {
+                    timed(&lean_pass, &mut || {
+                        std::hint::black_box(lean(src, cpp));
+                    });
+                    tus += 1;
+                }
+            }
+        }
+    }
+    for (name, c) in [("the words' interpreter", words.get()), ("the compiled words", jit.get()), ("the lean pass (lexing too)", lean_pass.get())] {
+        eprintln!("{name:28} {:>8.1} M instructions {:>8.1} M cycles {:>10.3?}", c.instructions as f64 / 1e6, c.cycles as f64 / 1e6, c.wall);
+    }
+    eprintln!("over {tus} TUs");
+}
+
 /// `if_depth` on lines whose calls are counted by hand on `expand.lab`'s `cond`.
 #[test]
 fn an_ifs_depth_is_estimated_from_above() {
