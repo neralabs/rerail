@@ -1,6 +1,6 @@
 # Daemon: starting Git no longer stalls every hook on Linux
 
-For [pull request #756](https://github.com/neralabs/rerail/pull/756), head 8a908c3fd. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #756](https://github.com/neralabs/rerail/pull/756), head db0b14052. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -10,7 +10,7 @@ For [pull request #756](https://github.com/neralabs/rerail/pull/756), head 8a908
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 1,575 lines in 11 files: 1,201 ship, 374 are tests and text | Fast. Fast lane: no high-risk path; the automated reviewer can approve. | Nothing. It stands alone on `main`; no pull request needs it. | 3 |
+| 2,118 lines in 11 files: 1,466 ship, 652 are tests and text | Fast. Fast lane: no high-risk path; the automated reviewer can approve. | Nothing. It stands alone on `main`; no pull request needs it. | 3 |
 
 ## 2. Intent, and the gap
 
@@ -45,7 +45,7 @@ Start with `run.rs`: the blocking run holds the daemon's thread, so its ends at 
 
 | Change | Check | It holds with this limit |
 |---|---|---|
-| Git start | CI at this head | CI's integration job and the change's 75 test files ran on Linux x64 at 7f1075da9, whose source is this head's but for one comment; GitHub's CI is the pull request's own run. |
+| Git start | CI at this head | CI's integration job and the change's 75 test files ran on Linux x64 at db0b14052, whose source is this head's but for one test file's time limits; GitHub's CI is the pull request's own run. |
 
 </details>
 
@@ -61,7 +61,7 @@ Start with `run.rs`: the blocking run holds the daemon's thread, so its ends at 
 
 | Option | What a user gets | Cost | What it breaks |
 |---|---|---|---|
-| The engine's `posix_spawn` **(chosen)** | Every Git start holds the daemon 0.2 to 0.5 ms at 1.8 and 4.0 GB, against 44 to 92 ms. | About 650 lines of Rust and 280 of TypeScript; one thread per running Git, for its run, on Rust's default stack. | Nothing measured: every read answers as through Node in 9 repository states. |
+| The engine's `posix_spawn` **(chosen)** | Every Git start holds the daemon 0.2 to 0.5 ms at 1.8 and 4.0 GB, against 44 to 92 ms. | About 680 lines of Rust and 410 of TypeScript; one thread per running Git, for its run, on Rust's default stack. | Nothing measured: every read answers as through Node in 9 repository states. |
 | A process kept beside the daemon to start Git for it | The same for the reads that do not block. | A 65 to 73 MiB process, a framing protocol and its own failure states; `runGit` still forks. | Every Git shares its one pipe, so a read's end can queue behind another read's output. |
 | A `cat-file --batch` reader kept per repository | No start for blob reads. | A long-lived Git keeps the index and packs it first read. | Every other start still copies the daemon. |
 
