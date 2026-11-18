@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { runFeedbackCommand } from "../../src/cli/feedback-cli.js";
 import { defaultRerailDatabasePath, openRerailDatabase, steerFeedback } from "../../src/engine/index.js";
 import { SqliteSessionStore } from "../../src/runtime/index.js";
-import { installPack } from "../support/installed-packs.js";
+import { installPackDirectory } from "../support/installed-packs.js";
 import { startTestRepository } from "../support/started-repository.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
@@ -22,6 +22,23 @@ afterEach(async () => {
 });
 
 /**
+ * The Python pack as the registry installs it, listing only `RULE` and `OTHER_RULE`. Each `rerail feedback` reads and
+ * checks every rule document its installed packs list: the whole pack's 6 MB of them took about a second a call on a
+ * Linux CI runner, and the file's first case, which pays for the first read, ran past its 5 s limit.
+ */
+function pythonPackOfTheTwoRules(root: string): string {
+  const source = join("packs", "python");
+  const copy = join(root, "python-pack");
+  mkdirSync(join(copy, "rules"), { recursive: true });
+  const pack = JSON.parse(readFileSync(join(source, "pack.json"), "utf8")) as { rules: { id: string; document: string }[] };
+  const rules = pack.rules.filter(rule => rule.id === RULE || rule.id === OTHER_RULE);
+  for (const rule of rules) copyFileSync(join(source, rule.document), join(copy, rule.document));
+  writeFileSync(join(copy, "pack.json"), JSON.stringify({ ...pack, rules }));
+  copyFileSync(join(source, "package.json"), join(copy, "package.json"));
+  return copy;
+}
+
+/**
  * A Rerail home with the Python pack installed and a started git repository in which a Claude Code session was
  * steered about `RULE`; `run` is `rerail feedback` from that repository.
  */
@@ -30,7 +47,8 @@ async function steeredRepository() {
   directories.push(root);
   const home = join(root, "home");
   vi.stubEnv("RERAIL_HOME", home);
-  installPack("python", home);
+  const pack = pythonPackOfTheTwoRules(root);
+  installPackDirectory(pack, "python", home, JSON.parse(readFileSync(join(pack, "package.json"), "utf8")).version);
   const workspace = join(root, "repo");
   mkdirSync(workspace);
   execFileSync("git", ["init", "-q", workspace]);
