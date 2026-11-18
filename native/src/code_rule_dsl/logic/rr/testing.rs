@@ -366,9 +366,10 @@ pub fn run(path: &Path, test: &Test, work: &Path) -> Result<Outcome, String> {
         return Err(format!("{}: not among its program's modules", path.display()));
     };
     statements.extend(test.rules.iter().cloned());
-    let mut program = super::lower_files(path, modules).map_err(|e| format!("{id}: {e}"))?;
+    let read = super::lower_files(path, modules).map_err(|e| format!("{id}: {e}"))?;
     // The relations the test's `.expect`s read are outputs of its run.
-    let declared: BTreeSet<String> = program.decls.keys().cloned().map(String::from).collect();
+    let declared: BTreeSet<String> = read.declared_names().into_iter().collect();
+    let mut program = crate::code_rule_dsl::logic::program_image::Builder::on(&read);
     for e in &test.expects {
         let relation = match &e.what {
             Expected::Row { relation, .. } => relation,
@@ -378,10 +379,9 @@ pub fn run(path: &Path, test: &Test, work: &Path) -> Result<Outcome, String> {
         if !declared.contains(relation) {
             return bad(path, e.line, format!("`.expect` names {relation}, which no rule declares"));
         }
-        if !program.outputs.contains(relation) {
-            program.outputs.push(relation.clone());
-        }
+        program.add_output(relation);
     }
+    let program = program.finish().map(|(v, _)| v).map_err(|e| format!("{id}: {e}"))?;
     let report = crate::code_rule_dsl::tools::run_program(program, &files, &root, &out, &serde_json::Value::Null).map_err(|e| format!("{id}: {e}"))?;
     let findings: Vec<Finding> = report["diagnostics"]
         .as_array()

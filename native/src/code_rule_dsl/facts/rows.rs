@@ -144,7 +144,7 @@ pub fn in_chunk<R>(f: impl FnOnce() -> R) -> R {
 fn lease(bytes: usize, life: Life) -> Result<Block, String> {
     use rerail_blocks::alloc::{Need, Writes};
     let device = BLOCK_DEVICE.get().map_or(rerail_blocks::alloc::Device::May, |f| f());
-    rerail_blocks::alloc::block(&Need { kind: kind::FACTS, bytes: bytes.max(life.block_bytes()), writes: Writes::Churn, device })
+    rerail_blocks::alloc::block(&Need { kind: kind::FACTS, bytes: bytes.max(life.block_bytes()), writes: Writes::Churn, device, ..Need::SLAB })
 }
 
 /// What a block of relations asks of the policy about the device: the run's binding's (`placement::block_device`,
@@ -461,14 +461,13 @@ fn room_for(k: usize, rows: usize) -> usize {
     bytes + (k + 1) * size_of::<rerail_blocks::rows::ColDir>() + 4096
 }
 
-/// A block of the device's own of at least `bytes`: a relation alone in it. Without Metal, anonymous memory.
+/// A block of the device's own of at least `bytes`: a relation alone in it, from the block policy (decision 0342) as
+/// every block is (Q205). Exact, and counted as a device join's buffers are (bounded inside the join's budget, a
+/// refusal running it on the CPU). Without Metal, anonymous memory.
 fn lease_exact(bytes: usize, life: Life) -> Result<Block, String> {
-    #[cfg(target_os = "macos")]
-    if life == Life::Device {
-        return rerail_accel::gpu::shared::lease_block_for_join(kind::FACTS, bytes);
-    }
-    let _ = life;
-    Ok(Block::anon(kind::FACTS, bytes.max(4 * rerail_blocks::block::PAGE)))
+    use rerail_blocks::alloc::{Budget, Device, Need, Size, Writes};
+    let device = if cfg!(target_os = "macos") && life == Life::Device { Device::Must } else { Device::No };
+    rerail_blocks::alloc::block(&Need { kind: kind::FACTS, bytes, writes: Writes::Once, device, size: Size::Exact, budget: Budget::Join })
 }
 
 /// A relation of `k` columns holding `vals` (row by row), alone in a block of anonymous memory, as a run's block is
@@ -2056,6 +2055,20 @@ mod tests {
         let again = kept2.shared(4);
         assert_eq!(again.tail.as_ref().map(Part::len), Some(4), "the writer given back");
         assert_eq!((0..4).map(|i| again.get(i, 0)).collect::<Vec<_>>(), [1, 2, 3, 4]);
+    }
+
+    /// An empty kept relation has its width: one started from it holds what it pushes. Its width was inferred from its
+    /// rows, so 0, and the started one dropped every row and read past its segments (a session's maintained cross-file
+    /// stratum over an empty kept relation: "a row of the tail").
+    #[test]
+    fn a_relation_started_from_an_empty_kept_one_holds_its_rows() {
+        let k = 3;
+        let kept = Rows::frozen(k, Vec::new(), 0);
+        let mut next = kept.shared(0);
+        next.extend_from_slice(&[1, 2, 3, 4, 5, 6]);
+        assert_eq!(next.len(), 6);
+        assert_eq!(*next.row(1, k), [4, 5, 6]);
+        assert_eq!(next.get(0, 2), 3);
     }
 
     /// The block a relation's rows lie in.

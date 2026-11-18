@@ -215,6 +215,90 @@ impl Relation {
         Some(rel)
     }
 
+    /// A copy of this full relation in open `block`: its descriptor made again, then its rows' and kills' chunks,
+    /// dead bits, indexes and statistics copied whole by `memcpy` (no row decoded or re-sorted, no index rebuilt),
+    /// each reference set to its copy. A reader of the copy reads what a reader of this reads (0401 F2, F6). It is
+    /// frozen or not (a run's part, its rows in any order, with the indexes the run added); nothing writes it
+    /// meanwhile, and an open relation's set test (`pending`) is not copied. `None` when `block` has no room.
+    ///
+    /// A continuation (decision 0384 steps 7 and 8) is copied as a full relation: every row it reads, its chain's
+    /// first, its indexes (of every id) as they are.
+    pub fn try_copy_into<'b>(&self, block: &'b Block) -> Option<&'b Relation> {
+        assert!(!self.is_delta() || self.continues(), "only a full relation or a continuation is copied");
+        let spec = Spec {
+            widths: (0..self.arity as usize).map(|c| self.rows.col(c).width).collect(),
+            order: self.okey[..self.nokey as usize].to_vec(),
+            indexes: Vec::new(),
+            min_log: self.rows.min_log,
+        };
+        let rel = Relation::try_create(block, &spec, None)?;
+        let rows = if self.continues() { self.try_copy_chain_into(block, &rel.rows) } else { rel.rows.try_copy_from(block, &self.rows) };
+        if !rows || !rel.killed.try_copy_from(block, &self.killed) {
+            return None;
+        }
+        /// `src`'s items in `block`, `dst` set to them.
+        fn copy_span<T>(block: &Block, dst: &Span<T>, src: &Span<T>) -> Option<()> {
+            if src.is_empty() {
+                return Some(());
+            }
+            let p: *mut T = block.try_alloc_t(src.len())?;
+            // SAFETY: `p` holds `src.len()` items, just allocated in open `block`, where `dst` lies too; the items are
+            // plain data (`Pod`), copied as bytes.
+            unsafe {
+                std::ptr::copy_nonoverlapping(src.as_ptr(), p, src.len());
+                Span::set(dst, p, src.len());
+            }
+            Some(())
+        }
+        copy_span(block, &rel.dead, &self.dead)?;
+        copy_span(block, &rel.stats, &self.stats)?;
+        if !self.indexes.is_empty() {
+            let n = self.indexes.len();
+            let dir: *mut Index = block.try_alloc_t(n)?;
+            // SAFETY: `dir` holds `n` zeroed entries in open `block`, as `rel` is; each index's spans are copied
+            // after its fixed fields.
+            unsafe {
+                Span::set(&rel.indexes, dir, n);
+                for (i, ix) in self.indexes.as_slice().iter().enumerate() {
+                    let to = &*dir.add(i);
+                    let w = dir.add(i);
+                    (*w).ncols = std::ptr::read_volatile(&raw const ix.ncols);
+                    (*w).ordered = ix.ordered;
+                    (*w).key = ix.key;
+                    (*w).mask = ix.mask;
+                    copy_span(block, &to.offs, &ix.offs)?;
+                    copy_span(block, &to.rows, &ix.rows)?;
+                }
+            }
+        }
+        // SAFETY: `rel` is this block's and not yet given to anyone: its counters are ours to set.
+        unsafe {
+            let me = std::ptr::from_ref(rel).cast_mut();
+            (*me).base_rows = 0;
+        }
+        rel.live.store(self.live.load(Acquire), Relaxed);
+        rel.nindex.store(self.nindex.load(Acquire), Relaxed);
+        // A continuation's copy continues none: a full relation of the rows it read.
+        rel.flags.store(self.flags.load(Acquire) & !(DELTA | CONTINUES), Release);
+        Some(rel)
+    }
+
+    /// A continuation's every row, its chain's first, appended to `to` in `block` (`try_copy_into`).
+    fn try_copy_chain_into(&self, block: &Block, to: &crate::rows::Rows) -> bool {
+        // The chain, root first, each with the rows of its own it reads: up to the next one's start, the last all.
+        let mut chain = vec![self];
+        while let Some(b) = chain.last().and_then(|r| r.base()) {
+            chain.push(b);
+        }
+        chain.reverse();
+        (0..chain.len()).all(|i| {
+            let r = chain[i];
+            let from = if r.continues() { r.base_rows } else { 0 };
+            let upto = chain.get(i + 1).map_or(r.rows.len(), |next| next.base_rows - from);
+            to.try_append_from(block, &r.rows, 0, upto)
+        })
+    }
+
     /// Gives its chunks back to the block's free list (decision 0342), when the block keeps one. Returns the bytes
     /// given to the OS with them (`Block::free_chunk`).
     ///
@@ -468,11 +552,21 @@ impl Relation {
         cap * width + self.dead.len() * 8 + ix + size_of::<Relation>()
     }
 
-    /// Bytes this relation's values, order, indexes and bits take (what a reader may touch).
+    /// Bytes this relation's values, order, indexes and bits take (what a reader may touch: a continuation's chain's
+    /// rows too, decision 0384 step 7).
     pub fn bytes(&self) -> usize {
         let ix: usize =
             self.indexes.as_slice().iter().map(|i| i.offs.len() * 4 + i.rows.len() * 4).sum();
-        self.rows.value_bytes() + self.dead.len() * 8 + ix
+        self.rows.value_bytes() + self.chain_value_bytes() + self.dead.len() * 8 + ix
+    }
+
+    /// A continuation's chain's values it reads (0 for one that continues none): what a copy of it holds past its own.
+    pub fn chain_value_bytes(&self) -> usize {
+        if !self.continues() {
+            return 0;
+        }
+        let width: usize = (0..self.rows.ncols as usize).map(|c| self.rows.col(c).width as usize).sum();
+        self.base_rows as usize * width
     }
 }
 
@@ -1221,6 +1315,15 @@ mod tests {
         let mut threes: Vec<u32> = fork2.group(i, key(3)).iter().copied().filter(|&id| fork2.get(id, 0) == 3).collect();
         threes.sort_unstable();
         assert_eq!(threes, (0..160).filter(|id| id % 10 == 3).collect::<Vec<u32>>(), "every id down the chain");
+        // Copied whole (into a kept block, 0401): a full relation of every row it reads, its index as it is.
+        let kept = Block::anon(kind::FACTS, 16 << 20);
+        let copy = fork2.try_copy_into(&kept).expect("room");
+        assert!(!copy.continues() && !copy.is_delta() && copy.rows.len() == 160);
+        assert!((0..160).all(|id| copy.get(id, 1) == fork2.get(id, 1)), "every row, read where it lies in the copy");
+        let ci = copy.find_index(&[0], 160).expect("its index copied");
+        let mut threes: Vec<u32> = copy.group(ci, key(3)).iter().copied().filter(|&id| copy.get(id, 0) == 3).collect();
+        threes.sort_unstable();
+        assert_eq!(threes, (0..160).filter(|id| id % 10 == 3).collect::<Vec<u32>>(), "the copy's index");
     }
 
     /// Decision 0384 step 5: an added index's buckets and rows are chunks of a free-listed block, which forgetting it

@@ -287,7 +287,7 @@ pub(super) struct Guests {
 pub(super) enum Seen {
     /// Files and code in the run's language: a rule that names no guest.
     Code,
-    /// And annotations: a relation whose copies for them were folded into it (`hiding::fold_own` widens its bound).
+    /// And annotations: a relation whose copies for them were folded into it (`combining::FoldOwn` widens its bound).
     Annotations,
     /// Every guest: a rule enters one through a guest relation (`hiding::ENTRIES`, `READS`), or reads an AST
     /// matcher's literal.

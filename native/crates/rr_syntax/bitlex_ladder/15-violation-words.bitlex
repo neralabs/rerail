@@ -19,6 +19,7 @@
 # or more; a policy document nested deeper than the JSON reader's limit.
 
 lexer rr
+deprecated back_fill
 
 class quote     = '"'
 class backslash = '\\'

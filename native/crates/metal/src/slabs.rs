@@ -101,7 +101,7 @@ impl Slab {
         // touched the device (the parser crate's tests) had every lease refused as over capacity.
         let device = crate::METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
         // From the one block policy (decision 0342): a device slab, room made within the Metal budget.
-        let need = rerail_blocks::alloc::Need { kind: rerail_blocks::block::kind::CHUNK, bytes, writes: rerail_blocks::alloc::Writes::Once, device: rerail_blocks::alloc::Device::Must };
+        let need = rerail_blocks::alloc::Need { kind: rerail_blocks::block::kind::CHUNK, bytes, writes: rerail_blocks::alloc::Writes::Once, device: rerail_blocks::alloc::Device::Must, ..rerail_blocks::alloc::Need::SLAB };
         let block = rerail_blocks::alloc::block(&need).map_err(|_| Error::BackendCapacity)?;
         let buffer = block.gpu_buffer(device);
         Ok(Slab { id, block, buffer, tables: Mutex::default() })
@@ -308,6 +308,9 @@ struct SlabEntry {
     slab: Arc<Slab>,
     /// The admission clock when a document of it was last asked for.
     last_use: u64,
+    /// Whether it holds a loaded tape's home (`tape_room`, decision 0353 step 4a): while a tape holds the slab,
+    /// retiring it would free nothing, only lose its count. Retired once only the pool holds it.
+    tapes: bool,
 }
 
 #[derive(Default)]
@@ -365,7 +368,7 @@ impl State {
                     Ok(slab) => {
                         self.next_slab += 1;
                         let offset = slab.room(bytes).ok_or(Error::BackendCapacity)?;
-                        self.slabs.push(SlabEntry { slab: Arc::new(slab), last_use: self.clock });
+                        self.slabs.push(SlabEntry { slab: Arc::new(slab), last_use: self.clock, tapes: false });
                         rerail_prof::count("residency.slabs", 1);
                         return Ok((self.slabs.len() - 1, offset));
                     }
@@ -385,7 +388,7 @@ impl State {
             .slabs
             .iter()
             .enumerate()
-            .filter(|(_, entry)| !keep.contains(&entry.slab.id))
+            .filter(|(_, entry)| !keep.contains(&entry.slab.id) && (!entry.tapes || Arc::strong_count(&entry.slab) == 1))
             .min_by_key(|(_, entry)| entry.last_use)
             .map(|(at, _)| at)
         else {
@@ -506,6 +509,18 @@ pub fn resident(digests: &[[u8; 32]]) -> Result<Vec<Arc<Resident>>, Error> {
 /// write it into a slab at an offset (`bytes` of room there, its own). The writer is given where the table lies in
 /// that slab, and whether it is new: the room after the document's, for the writer to fill (`Placed::table`).
 pub type Placement<'a> = ([u8; 32], usize, Option<Table>, Box<dyn FnOnce(&Arc<Slab>, usize, Option<TableAt>) -> Result<Placed, Error> + 'a>);
+
+/// A room of `bytes` (16-byte aligned) for a tape the store loads (decision 0353 step 4a): its slab and its offset
+/// there. The tape is written there once, by its load, and read there by the host and the device; the slab lives as
+/// long as a holder of it does, retired from the residency or not.
+pub fn tape_room(bytes: usize) -> Result<(Arc<Slab>, usize), Error> {
+    let mut state = STATE.0.lock().map_err(|_| Error::BackendFailure)?;
+    let (at, offset) = state.room(bytes, &[])?;
+    let clock = state.clock;
+    state.slabs[at].last_use = clock;
+    state.slabs[at].tapes = true;
+    Ok((Arc::clone(&state.slabs[at].slab), offset))
+}
 
 /// Where a document's language table lies in its slab: `at`, and whether the slab holds it already (else the writer
 /// writes it there).

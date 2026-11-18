@@ -24,6 +24,10 @@ cranelift-native = "=0.125.4"
 libc = "0.2.189"
 # The one pool the engine runs on (tier 2 clusters compiled in parallel).
 rayon = "=1.12.0"
+# The grammar compiler's maps (`bitlex_masks`, `bitlex_prove`, `bitlex_tier2`, `grammar`): a
+# fixed hasher, so a compile is the same each run (the questions asked, and so the program, follow
+# the maps' order), and a cheap one for its small integer keys.
+rustc-hash = "=2.1.3"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }

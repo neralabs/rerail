@@ -3,6 +3,16 @@
 
 use super::*;
 
+/// The tests' grammar: the crate's, or `RERAIL_KOTLIN_GRAMMAR`'s file (a variant tried without a
+/// rebuild). It shadows the crate's `compiled`.
+fn compiled() -> Result<&'static Compiled, &'static str> {
+    static OTHER: std::sync::OnceLock<Result<Compiled, String>> = std::sync::OnceLock::new();
+    match std::env::var("RERAIL_KOTLIN_GRAMMAR") {
+        Ok(p) => OTHER.get_or_init(|| compile_text(&std::fs::read_to_string(p).expect("the grammar file"))).as_ref().map_err(String::as_str),
+        Err(_) => super::compiled(),
+    }
+}
+
 /// Each of `texts` read by the compiled grammar as the lean parser reads it.
 fn same(texts: &[&str]) {
     let c = compiled().unwrap_or_else(|e| panic!("the grammar compiles: {e}"));
@@ -348,10 +358,234 @@ fn destructured_parameters_are_the_lean_parsers() {
 }
 
 #[test]
+fn types_and_aliases_are_the_lean_parsers() {
+    same(&[
+        "fun f(s: (() -> Int)?) = 1\n",
+        "val c: ((Boolean) -> Unit)? = null\n",
+        "val l = mutableListOf<(Int) -> Unit>()\n",
+        "typealias O = (Int) -> Unit\n",
+        "public typealias W = Int\n",
+        "typealias M<T> = Map<String, T>\n",
+        "@Entity(primaryKeys = [A, B])\nclass E\n",
+        "class A\n@Inject\nconstructor(\n    private val b: B,\n)\n",
+        "class A\n@JvmOverloads\nconstructor(context: C) : B(context)\n",
+        "class A @Inject constructor(b: B)\n",
+        "@Ann\nclass A\n@Ann\nclass B\n",
+    ]);
+}
+
+#[test]
+fn strings_in_templates_are_the_lean_parsers() {
+    same(&[
+        "val s = \"${\"x\"}\"\n",
+        "val v = \"${System.getProperty(\"user.name\")}\" + a\n",
+        "val p = \"${name.replace('.', '/')}/a\"\n",
+        "val q = \"a ${f(\"b\", 'c')} d $e\"\n",
+        "val r = \"${f(\"$x\")}\"\n",
+        "// \"${f(\"}\")}\"\nval a = 1\n",
+    ]);
+}
+
+/// Step 35: templates in raw strings.
+#[test]
+fn raw_templates_are_the_lean_parsers() {
+    same(&[
+        "val x = \"\"\"a ${b} \"c\" ${d}\"\"\"\nval y = \"\"\"${e}\"\"\"\n",
+        "val x = \"\"\"\n  a $b ${c.d}\n  \"q\" \"\"\n\"\"\"\n",
+        "val h = \"\"\"${a}\"\"\"\n",
+        "val s = \"a ${f('x')} b ${g(\"y\")} c\" + \"\"\"${h} \"\"\" + \"${i}\"\n",
+        "fun q() = \"\"\"\n    SELECT * FROM ${t.name} WHERE a = ${b + 1}\n    AND c = '$d'\n\"\"\".trimIndent()\n",
+    ]);
+    // A raw string's template at a block's edge (bytes 64, 65, 128): its `$`, its `}` and the
+    // raw tail after it each across a block from the string's opener.
+    let at = |q: usize, line: &str| format!("//{}\n{line}\n", "x".repeat(q - line.find('$').expect("a dollar") - 3));
+    let lines = ["val v = \"\"\"c${a}d\"\"\"", "val v = \"\"\"${a} ${b}\"\"\"", "val v = \"\"\"c${ab}\"\"\""];
+    let texts: Vec<String> = [64, 65, 66, 128].iter().flat_map(|&q| lines.iter().map(move |l| at(q, l))).collect();
+    same(&texts.iter().map(String::as_str).collect::<Vec<_>>());
+}
+
+#[test]
+fn what_step_35_does_not_read_is_refused() {
+    refused(&[
+        // A string, a character or a backtick name in a raw string's template: its `}` would
+        // open a tail; a raw string in a template, a raw tail.
+        "val h = \"\"\"${f(\"a\")}\"\"\"\n",
+        "val h = \"\"\"${f('a')}\"\"\"\n",
+        "val h = \"${f(\"\"\"a\"\"\")}\"\n",
+    ]);
+}
+
+#[test]
+fn soft_names_are_the_lean_parsers() {
+    same(&[
+        "fun f(constructor: C) {\n    val constructor = g()\n}\n",
+        "val x = f(by = \"foo\")\n",
+        "val x = when (c) {\n    !in A..B -> 1\n    !is C -> 2\n    else -> 3\n}\n",
+        "val y = a !in b && c !is D\n",
+        "class A private constructor(x: Int) : B by x {\n    constructor() : this(1)\n    val m by lazy { 1 }\n}\n",
+    ]);
+}
+
+#[test]
+fn names_after_dots_are_the_lean_parsers() {
+    same(&[
+        "fun f(limit: W) = limit.value\n\ninternal operator fun g() {}\n",
+        "val a = b.data\nprivate fun c() {}\n",
+        "internal fun f() {}\n",
+        "private val x = 1\n",
+    ]);
+}
+
+#[test]
+fn constructor_lines_are_the_lean_parsers() {
+    same(&[
+        "class A {\n    private constructor(x: Int) : this()\n}\n",
+        "class A {\n    val x = 1\n    private constructor(x: Int) : this()\n}\n",
+        "class A {\n    fun f() {}\n\n    @Inject internal constructor(x: Int)\n}\n",
+        "class A\ninternal constructor(x: Int) {\n}\n",
+        "class A\n@Inject public constructor(x: Int)\n",
+        "class A\n@Inject constructor(x: Int)\n",
+        "class A\n\ninternal class B private constructor(x: Int)\n",
+        "class A\n@Inject\nclass B @Inject constructor(x: Int)\n",
+    ]);
+}
+
+#[test]
+fn soft_words_in_templates_are_the_lean_parsers() {
+    same(&[
+        "val s = \"a $value b\"\n",
+        "val s = \"$data\"\n",
+        "val s = \"$values $field.x\"\n",
+        "val s = \"\"\"$get x\"\"\"\n",
+        "val s = \"$constructor $value\"\n",
+        "val s = \"a $field b\"\n",
+    ]);
+}
+
+#[test]
+fn swallowed_comments_are_the_lean_parsers() {
+    same(&[
+        "abstract class A {\n    val x = 1\n    /* c */\n    abstract fun f()\n}\n",
+        "fun f() {\n    a()\n    /* c */\n    when (x) {}\n}\n",
+        "fun f() {\n    a()\n    /** c\n     * d */\n    error(1)\n}\n",
+        "class A {\n    /* c */\n    abstract fun f()\n}\n",
+        "val a = 1\n/* c */\nexternal fun f()\n",
+        "abstract class A {\n    fun f() {}\n    /* c */\n    abstract fun g()\n}\n",
+        "fun f() {\n    val s = \"a\"\n    /* c */\n    error(s)\n}\n",
+        "fun f() {\n    a[1]\n    /* c */\n    error(s)\n}\n",
+    ]);
+}
+
+#[test]
+fn annotated_expressions_are_the_lean_parsers() {
+    same(&[
+        "fun f() {\n    @Suppress(\"D\")\n    if (a) b()\n}\n",
+        "fun f() {\n    @Suppress(\"D\") if (a) b() else c()\n    @Suppress(\"D\")\n    val x = 1\n}\n",
+        "fun f() {\n    @Suppress(\"D\", \"E\")\n    when (a) {\n        1 -> b()\n    }\n}\n",
+        "val x = when (a) {\n    B,\n    C,\n    -> d\n    else -> e\n}\n",
+        "val x = when (a) {\n    B, C, -> d\n    in r -> e\n    else -> f\n}\n",
+    ]);
+}
+
+#[test]
+fn function_types_are_the_lean_parsers() {
+    same(&[
+        "val h: HTML.() -> Unit = {}\n",
+        "fun f(w: A.B.() -> Unit) {}\n",
+        "fun f(w: suspend () -> T) {}\n",
+        "fun f(b: J.() -> Unit = {}, w: suspend () -> T, x: M<K>.(Int) -> Unit) {}\n",
+        "fun A.B.f(x: C.() -> D): E.() -> F = x\n",
+    ]);
+}
+
+#[test]
+fn delegates_and_names_are_the_lean_parsers() {
+    same(&[
+        "fun f() {\n    val state by viewModel.uiState.collectAsState()\n}\n",
+        "fun g(\n    set: AttributeSet,\n    get: Int,\n) {}\n",
+    ]);
+}
+
+#[test]
+fn what_step_34_does_not_read_is_refused() {
+    refused(&[
+        // The lean parser's `fun` leaf: a function's `fun` is implied, and the `interface`
+        // after it comes too late to keep it.
+        "fun interface A {\n    fun f()\n}\n",
+    ]);
+}
+
+#[test]
+fn what_step_30_does_not_read_is_refused() {
+    refused(&[
+        "package a\n\n/* c */\nabstract class A\n",
+        "package a\n/* c */\nabstract class A\n",
+        "val a = 1\n/* c */ /* d */\nexternal fun f()\n",
+        "val x = when (a) {\n    1 -> b\n    /* c */\n    else -> d\n}\n",
+        "fun f() {\n    a +\n    /* c */\n    abstract()\n}\n",
+        "fun f() {\n    g(\n        a(),\n        /* c */ eq(false),\n    )\n}\n",
+    ]);
+}
+
+#[test]
+fn what_step_27_does_not_read_is_refused() {
+    refused(&[
+        "class A {\n    private val m by lazy { m ?: getSystemService<M>()!! }\n}\n",
+    ]);
+}
+
+#[test]
+fn variance_and_accessors_are_the_lean_parsers() {
+    same(&[
+        "fun f(a: Array<out Any>) {}\n",
+        "val p: P<in T> = x\n",
+        "class A<out T>\n",
+        "class B<in T, reified out C>\n",
+        "val x = out\n",
+        "fun f(out: Int) = out\n",
+        "fun f() {\n    System.out.println(1)\n}\n",
+        "fun f() {\n    a()\n    get(i).g(o)\n}\n",
+        "fun f() {\n    set.add(1)\n}\n",
+        "fun f() {\n    get(1)\n}\n",
+        "class A {\n    val x: Int\n        get() = 1\n    var y = 2\n        set(v) {\n            field = v\n        }\n}\n",
+        "class A {\n    private val t = this::class.simpleName\n    private val m by lazy { n }\n}\n",
+    ]);
+}
+
+#[test]
+fn class_delegates_are_the_lean_parsers() {
+    same(&[
+        "class A(d: C) : C by d {\n}\n",
+        "class A(d: C) : C by d {\n    fun f() = 1\n}\n",
+        "class A(m: M) : M by m, B {\n}\n",
+        "class A : C by D() {\n}\n",
+        "class A(d: C) : C by d\n",
+        "class A {\n    val b by lazy { 1 }\n}\n",
+        "fun f() = object : I by itr {\n    override fun g() = 1\n}\n",
+    ]);
+}
+
+#[test]
+fn what_step_24_does_not_read_is_refused() {
+    refused(&[
+        "val s = \"${f(\"}\")}\"\n",
+        "val s = \"${f(\"${x}\")}\"\n",
+        "val s = \"${if (a) { 1 } else 2}\"\n",
+    ]);
+}
+
+#[test]
+fn what_step_23_does_not_read_is_refused() {
+    refused(&[
+        "fun interface P {\n    fun f()\n}\n",
+        "fun f(g: ((Int) -> Int) -> Int) {}\n",
+    ]);
+}
+
+#[test]
 fn what_step_22_does_not_read_is_refused() {
     refused(&[
         "fun f() {\n    val d = x as java.util.List<Int>\n    g(d)\n}\n",
-        "val h: HTML.() -> Unit = {}\n",
         "fun <T : Comparable<T>> B.f() {}\n",
         "val <T : Any> List<T>.second: T get() = this[1]\n",
     ]);
@@ -362,7 +596,6 @@ fn what_step_21_does_not_read_is_refused() {
     refused(&[
         "val h = \"\"\"\"a\"\"\"\n",
         "val h = \"\"\"a\"\"\"\"\n",
-        "val h = \"\"\"${a}\"\"\"\n",
         "val h = \"\"\"\\$a\"\"\"\n",
     ]);
 }
@@ -376,7 +609,6 @@ fn what_step_20_does_not_read_is_refused() {
         "import a.b import c\n",
         "val s = 'x\n",
         "val s = \"a\nb\"\n",
-        "val s = \"${\"x\"}\"\n",
         "val s = \"${ {x} }\"\n",
         "val s = \"${}\"\n",
         "val s = \"open\n",
@@ -390,16 +622,11 @@ fn what_step_20_does_not_read_is_refused() {
         "val x = 0x\n",
         "class A { val x = 1 }\n",
         "val x: Int\n    get() = 1\n",
-        "fun f() {\n    get(1)\n}\n",
         "fun f(noinline: Int) {}\n",
         "fun String?.h() = 1\n",
         "fun f() {\n    loop@ for (i in a) break@loop\n}\n",
         "val a = b as java.util.List<Int>\n",
-        "class A(d: C) : C by d {\n}\n",
-        "val s = \"a $field b\"\n",
-        "abstract class A {\n    fun f() {}\n    /* c */\n    abstract fun g()\n}\n",
         "fun f() {\n    a()\n    /* c */\n    // d\n    b()\n}\n",
-        "class A\n@Inject constructor(x: Int)\n",
         "fun f() {\n    a\n    /* c */ .b()\n}\n",
     ]);
 }
@@ -465,7 +692,16 @@ fn corpus() {
 #[ignore = "a tool: set RERAIL_KOTLIN_SHOW"]
 fn show() {
     let c = compiled().expect("compiles");
-    eprintln!("tier 2: {} words", c.program.words.len());
+    let r = c.program.block_programs[0].records.as_ref();
+    eprintln!("tier 2: {} words; the code holds {:?} marks and {:?} bits in all", c.program.words.len(), r.map(|r| r.mark_bits()), r.map(|r| r.marks.len()));
+    // `RERAIL_KOTLIN_WORDS=PC`: tier 2's words from 20 lines before its to 20 after.
+    if let Ok(pc) = std::env::var("RERAIL_KOTLIN_WORDS") {
+        let lines: Vec<&str> = c.words.lines().collect();
+        let at = lines.iter().position(|l| l.trim_start().starts_with(&format!("{pc:0>4}"))).unwrap_or(0);
+        for l in &lines[at.saturating_sub(20)..(at + 20).min(lines.len())] {
+            eprintln!("  {l}");
+        }
+    }
     for p in std::env::var("RERAIL_KOTLIN_SHOW").expect("set RERAIL_KOTLIN_SHOW").split(':') {
         let text = std::fs::read_to_string(p).expect("a file");
         let lean = lean_text(&text).unwrap_or_else(|| "refused".into());
@@ -587,6 +823,63 @@ fn program_size() {
     }
 }
 
+/// The grammar's compile, phase by phase (`compile_timed`): what a JIT pays before its first
+/// file. Run on an optimized build (`--profile profiling`).
+#[test]
+#[ignore = "a measurement: run by hand, on an optimized build"]
+fn compile_time() {
+    let text = match std::env::var("RERAIL_KOTLIN_GRAMMAR") {
+        Ok(p) => std::fs::read_to_string(p).expect("the grammar file"),
+        Err(_) => crate::GRAMMAR.to_owned(),
+    };
+    // Cold, then with the answers the cold compile made (decision 0414). With
+    // `RERAIL_KOTLIN_EDIT` (a grammar file): that grammar with the first's answers, then cold.
+    let edit = std::env::var("RERAIL_KOTLIN_EDIT").ok().map(|p| std::fs::read_to_string(p).expect("the edited grammar"));
+    let mut passes = vec![("cold", &text), ("warm", &text)];
+    if let Some(e) = &edit {
+        passes = vec![("cold", &text), ("edited, warm", e), ("edited, cold", e)];
+    }
+    let mut known = crate::Proofs::default();
+    let mut prints = Vec::new();
+    for (pass, text) in passes {
+        eprintln!("{pass}:");
+        let mut total = std::time::Duration::ZERO;
+        let given = if pass.ends_with("cold") { crate::Proofs::default() } else { std::mem::take(&mut known) };
+        let c = crate::compile_timed(text, given, &mut |name, t| {
+            total += t;
+            eprintln!("  {name:>16}: {:8.1} ms", t.as_secs_f64() * 1e3);
+        })
+        .expect("the grammar compiles");
+        eprintln!("  {:>16}: {:8.1} ms", "total", total.as_secs_f64() * 1e3);
+        eprintln!("  {:>16}: {} made", "answers", c.proofs.len());
+        eprintln!("  {:>16}: {:016x}", "fingerprint", fingerprint(&c));
+        prints.push(fingerprint(&c));
+        if known.is_empty() {
+            known = c.proofs.iter().cloned().collect();
+        }
+    }
+    assert_eq!(prints[prints.len() - 2], prints[prints.len() - 1], "the known answers make the same program");
+}
+
+/// What was compiled, as one number: tier 2's words and machine, and tier 1's program.
+fn fingerprint(c: &crate::Compiled) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (&c.words, &c.machine, c.program.block_programs.iter().map(|b| b.canonical_bytes()).collect::<Vec<_>>()).hash(&mut h);
+    h.finish()
+}
+
+/// The answers a compile made, given to another compile of the grammar (decision 0414): it asks
+/// none of its questions again, and makes the same program.
+#[test]
+fn known_answers_make_the_same_program() {
+    let cold = compiled().expect("compiles");
+    let known: crate::Proofs = cold.proofs.iter().cloned().collect();
+    let warm = crate::compile_timed(crate::GRAMMAR, known, &mut |_, _| {}).expect("compiles");
+    assert_eq!(warm.proofs.len(), 0, "a question asked again");
+    assert_eq!(fingerprint(&warm), fingerprint(cold));
+}
+
 /// Tier 1 alone: `RERAIL_KOTLIN_GRAMMAR`'s, the interpreter's records against the CPU's, over
 /// `RERAIL_KOTLIN_SHOW`'s files. A grammar's tokens with a small tree compile in seconds.
 #[test]
@@ -601,10 +894,19 @@ fn tier1_records() {
         let same = run.positions == cpu.positions && run.codes == cpu.codes && run.totals == cpu.totals;
         eprintln!("== {p}: {}", if same { "the same" } else { "DIFFERS" });
         if !same {
-            for (i, (x, y)) in run.positions.iter().zip(&cpu.positions).enumerate() {
-                eprintln!("positions {i}: interp {x:?}\n             cpu {y:?}");
+            // The first record where they part, with the ones around it: start, last, code.
+            let rec = |r: &rerail_compiler::block::BlockRun, i: usize| (r.positions[0].get(i).copied(), r.positions.get(1).and_then(|l| l.get(i)).copied(), r.codes.get(i).map(|c| format!("{c:#x}")));
+            let n = run.positions[0].len().max(cpu.positions[0].len());
+            if let Some(i) = (0..n).find(|&i| rec(&run, i) != rec(&cpu, i)) {
+                for j in i.saturating_sub(3)..(i + 4).min(n) {
+                    eprintln!("record {j}: interp {:?}\n          cpu {:?}", rec(&run, j), rec(&cpu, j));
+                }
+                if let Some(Some(at)) = rec(&run, i).0.or(rec(&cpu, i).0).map(|a| Some(a as usize)) {
+                    let from = at.saturating_sub(60);
+                    eprintln!("bytes {from}..: {:?}", String::from_utf8_lossy(&src[from..(at + 40).min(src.len())]));
+                }
             }
-            eprintln!("totals: interp {:?} cpu {:?}", run.totals, cpu.totals);
+            eprintln!("records: interp {} cpu {}; totals: interp {:?} cpu {:?}", run.positions[0].len(), cpu.positions[0].len(), run.totals, cpu.totals);
         }
     }
 }

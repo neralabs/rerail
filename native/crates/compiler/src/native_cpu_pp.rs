@@ -19,7 +19,7 @@ use crate::pp_words::{self, DIGITS, EmC, Asked, B_BASE_FILE, B_COUNTER, B_DATE, 
 use crate::program::{ACCEPT, ARG, BUILTIN, COND, EMBED, DEFINE, DEFINED, EXPR, FRAME, GLUE, GOTO, IF, INCLUDE, IS, LINEDIR, PRAGMA, SKIP, KEEP, LINE, LOOKUP, MACRO, PAINT, PEEK, PRE, PUSH, PUT, PpTables, READ, RETURN, SKIPLINE, STOP, STR, SUB, UNDEF, Words, split};
 use cranelift_codegen::ir::{AbiParam, Block, BlockArg, BlockCall, InstBuilder, JumpTableData, MemFlags, Value, condcodes::IntCC, types};
 use cranelift_codegen::ir::{ExtFuncData, ExternalName, FuncRef, UserExternalName};
-use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Switch, Variable};
+use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module, default_libcall_names};
 use std::mem::{offset_of, size_of};
@@ -40,7 +40,7 @@ macro_rules! em {
 
 /// Why the compiled words refuse a TU: the index the code returns above bit 32 (`run_native`),
 /// each the interpreter's reason.
-const REASONS: &[&str] = &[
+pub const REASONS: &[&str] = &[
     "the compiled words refuse",
     "the program stopped",
     "past the calls' bound",
@@ -74,6 +74,7 @@ const REASONS: &[&str] = &[
     "past the wanted files' bound",
     "past push_macro's bound",
     "past the unanswered features' bound",
+    "a _Pragma's text the token grammar refuses",
 ];
 const R_STOPPED: u64 = 1;
 const R_CALLS: u64 = 2;
@@ -107,6 +108,7 @@ const R_NO_PREC: u64 = 29;
 const R_WANTED: u64 = 30;
 const R_PUSHED: u64 = 31;
 const R_ASKED: u64 = 32;
+const R_PRAGMA: u64 = 33;
 
 /// One of the machine's buffers in `Ctx`: its start's, length's and room's fields, its
 /// element's size, and why a push past its room refuses.
@@ -198,8 +200,17 @@ pub struct CompiledPp {
     pub heads: Vec<Step>,
     /// Its machine code's bytes, each function's: the run's (`pp_run`) first.
     pub code_bytes: Vec<usize>,
-    /// Each word's CLIF instructions in the run's function (its copies' at every depth).
+    /// Each word's CLIF instructions in the run's function.
     pub word_insts: Vec<usize>,
+    /// Each function's IR as Cranelift was given it, by its id, where asked for (`rust_source`).
+    pub ir: Vec<(u32, cranelift_codegen::ir::Function)>,
+    /// The run's function's id.
+    pub run_id: u32,
+    /// Each function's machine code as Cranelift prints it, the run's first, where asked for
+    /// (`disassemble`).
+    pub disasm: Vec<String>,
+    /// Each function's machine code's bytes, the run's first, where asked for.
+    pub code: Vec<Vec<u8>>,
 }
 
 impl CompiledPp {
@@ -234,10 +245,15 @@ fn ld(f: &mut FunctionBuilder<'_>, ty: types::Type, base: Value, off: i32) -> Va
     f.ins().load(ty, flags(), base, off)
 }
 
-/// A narrow load, widened to 64 bits.
+/// A narrow load, widened to 64 bits: one extending load (`uload8` and the rest), which the
+/// backend emits as one instruction, where a load and an `uextend` cost a move more.
 fn ldu(f: &mut FunctionBuilder<'_>, ty: types::Type, base: Value, off: i32) -> Value {
-    let x = f.ins().load(ty, flags(), base, off);
-    if ty == types::I64 { x } else { f.ins().uextend(types::I64, x) }
+    match ty {
+        types::I8 => f.ins().uload8(types::I64, flags(), base, off),
+        types::I16 => f.ins().uload16(types::I64, flags(), base, off),
+        types::I32 => f.ins().uload32(flags(), base, off),
+        _ => f.ins().load(ty, flags(), base, off),
+    }
 }
 
 fn st(f: &mut FunctionBuilder<'_>, ty: types::Type, x: Value, base: Value, off: i32) {
@@ -278,86 +294,58 @@ struct Lower<'a, 'b> {
 }
 
 impl Lower<'_, '_> {
-    /// `rs` pushed on the return stack, the first lowest (refusing past its bound).
-    fn push_returns(&mut self, pc: usize, rs: &[Value]) {
+    /// Return point `v` (a rank) pushed on the return stack (refusing past its bound).
+    fn push_return(&mut self, pc: usize, v: Value) {
         let ctx = self.ctx;
         let n = ld(self.f, types::I64, ctx, at!(nreturns));
         let room = ld(self.f, types::I64, ctx, at!(room_returns));
-        let end = self.f.ins().iadd_imm(n, rs.len() as i64);
+        let end = self.f.ins().iadd_imm(n, 1);
         let ok = self.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, end, room);
         self.check(ok, pc, R_CALLS);
         let r = ld(self.f, types::I64, ctx, at!(returns));
         let slot = elem(self.f, r, n, 4);
-        for (i, &v) in rs.iter().enumerate() {
-            self.f.ins().store(flags(), v, slot, 4 * i as i32);
-        }
+        self.f.ins().store(flags(), v, slot, 0);
         st(self.f, types::I64, end, ctx, at!(nreturns));
     }
 
+    /// To `cases`' block whose key `x` is (the keys rising, small), else to `default`: a jump
+    /// table. Cranelift's code has it as a tree of compares
+    /// (`native_cpu_codegen::switch_trees`, its jump tables' barrier); `clif_rust`'s keeps
+    /// the table. Ends the current block.
+    fn switch(&mut self, x: Value, cases: &[(u64, Block)], default: Block) {
+        debug_assert!(cases.windows(2).all(|w| w[0].0 < w[1].0));
+        let n = cases.last().map_or(0, |c| c.0 as usize + 1);
+        let mut entries = vec![default; n];
+        for &(k, b) in cases {
+            entries[k as usize] = b;
+        }
+        let calls: Vec<BlockCall> = entries.iter().map(|&b| self.f.func.dfg.block_call(b, &[])).collect();
+        let dflt = self.f.func.dfg.block_call(default, &[]);
+        let jt = self.f.create_jump_table(JumpTableData::new(dflt, &calls));
+        let x = match self.f.func.dfg.value_type(x).bits() {
+            32 => x,
+            b if b > 32 => self.f.ins().ireduce(types::I32, x),
+            _ => self.f.ins().uextend(types::I32, x),
+        };
+        self.f.ins().br_table(x, jt);
+    }
+
     /// A return to the return point of rank `to`, its block `targets[to]`: through a dispatch
-    /// block of the `RETURN`'s own (`Step::Return`), a table over the ranks.
+    /// block of the `RETURN`'s own (`Step::Return`), a tree of compares over the ranks
+    /// (`switch`).
     fn dispatch(&mut self, pc: usize, to: Value, targets: &[Block]) {
         let dispatch = self.f.create_block();
         self.heads.push((dispatch, Step::Return));
         self.f.ins().jump(dispatch, &[]);
         self.f.switch_to_block(dispatch);
         let bad = self.f.create_block();
-        let targets: Vec<BlockCall> = targets.iter().map(|&b| self.f.func.dfg.block_call(b, &[])).collect();
-        let default = self.f.func.dfg.block_call(bad, &[]);
-        let jt = self.f.create_jump_table(JumpTableData::new(default, &targets));
-        self.f.ins().br_table(to, jt);
+        let cases: Vec<(u64, Block)> = targets.iter().enumerate().map(|(k, &b)| (k as u64, b)).collect();
+        self.switch(to, &cases, bad);
         self.f.switch_to_block(bad);
         self.refuse(pc, R_NO_CALL);
     }
 
-    /// Word `pc` of `#if`'s evaluator at static depth `d` (`Spec`): `d` calls' return points
-    /// in SSA variables, not on the return stack. A `PUSH` below the depth `K` keeps its return
-    /// point in a variable and goes on at depth `d + 1`; at `K`, the `K` kept are moved to the
-    /// return stack with it, and it goes on at depth 0. A `RETURN` returns to its variable's
-    /// return point at depth `d - 1`, at depth 0 to the return stack's. An `EXPR` word calls its
-    /// outlined function (one for every depth).
-    fn spec_word(&mut self, sp: &Spec, pc: usize, d: usize) {
-        let (op, mode, operand) = split(self.words[pc]);
-        let at = |sp: &Spec, l: &Self, p: usize, d: usize| if d == 0 { l.blocks[p] } else { sp.copies[d - 1][p] };
-        match op {
-            GOTO => {
-                let b = at(sp, self, usize::from(operand), d);
-                self.f.ins().jump(b, &[]);
-            }
-            PUSH => {
-                let r = self.f.ins().iconst(types::I32, i64::from(self.ranks[usize::from(operand)]));
-                if d < sp.k {
-                    self.f.def_var(sp.vars[d], r);
-                    let b = at(sp, self, pc + 1, d + 1);
-                    self.f.ins().jump(b, &[]);
-                } else {
-                    let mut rs: Vec<Value> = sp.vars.iter().map(|&v| self.f.use_var(v)).collect();
-                    rs.push(r);
-                    self.push_returns(pc, &rs);
-                    let b = self.blocks[pc + 1];
-                    self.f.ins().jump(b, &[]);
-                }
-            }
-            RETURN if d > 0 => {
-                let to = self.f.use_var(sp.vars[d - 1]);
-                let bad = self.f.create_block();
-                let targets: Vec<Block> = self.rets.iter().map(|&p| if sp.region[p] { at(sp, self, p, d - 1) } else { bad }).collect();
-                self.dispatch(pc, to, &targets);
-                self.f.switch_to_block(bad);
-                self.refuse(pc, R_NO_CALL);
-            }
-            RETURN => {
-                let _ = self.word(pc);
-            }
-            _ => {
-                let next = at(sp, self, pc + 1, d);
-                let skip = if pp_words::is_test(op, mode) { at(sp, self, pc + 2, d) } else { next };
-                self.call_word(sp.calls[pc].expect("an outlined word"), op, mode, next, skip);
-            }
-        }
-    }
-
-    /// An outlined word called (`compile_k`): its result 0 to `next`, 1 to `skip`, else the
+    /// An outlined word called (`compile`): its result 0 to `next`, 1 to `skip`, else the
     /// refusal; the held branch through a step of its own where the word steps where it holds.
     fn call_word(&mut self, fref: FuncRef, op: u8, mode: u8, next: Block, skip: Block) {
         let ctx = self.ctx;
@@ -2637,7 +2625,14 @@ impl Lower<'_, '_> {
         let lr = self.f.ins().band(ll, ri);
         let not_lr = branch(self, lr);
         if self.pp.suffix {
+            // C++'s: where the run is C++'s.
+            let cpp = self.is_cpp();
+            let (yes, no) = (self.f.create_block(), self.f.create_block());
+            self.f.ins().brif(cpp, yes, &[], no, &[]);
+            self.f.switch_to_block(yes);
             kind(self, LITERAL);
+            self.f.switch_to_block(no);
+            none(self);
         } else {
             none(self);
         }
@@ -2655,18 +2650,33 @@ impl Lower<'_, '_> {
         let b = op_like(self, rk);
         let ops = self.f.ins().band(a, b);
         let not_ops = branch(self, ops);
-        let ops: Vec<Vec<u8>> = self.pp.ops.iter().map(|&i| self.strings[usize::from(i)].clone()).collect();
-        for op in ops {
-            let eq = self.spelled_at(lp, tn, &op);
-            let k = match &op[..] {
-                b"#" | b"%:" => HASH,
-                b"##" | b"%:%:" => HASHHASH,
-                b"<:" | b":>" | b"<%" | b"%>" => DIGRAPH,
-                _ => PUNCT,
-            };
-            let not_this = branch(self, eq);
-            kind(self, k);
-            self.f.switch_to_block(not_this);
+        // Then C++'s own, where the run is C++'s.
+        let strings = |l: &Self, ops: &[u16]| -> Vec<Vec<u8>> { ops.iter().map(|&i| l.strings[usize::from(i)].clone()).collect() };
+        let (ops, cpp_ops) = (strings(self, &self.pp.ops), strings(self, &self.pp.cpp_ops));
+        for (k, list) in [ops, cpp_ops].into_iter().enumerate() {
+            if k == 1 {
+                if list.is_empty() {
+                    break;
+                }
+                let cpp = self.is_cpp();
+                let (yes, no) = (self.f.create_block(), self.f.create_block());
+                self.f.ins().brif(cpp, yes, &[], no, &[]);
+                self.f.switch_to_block(no);
+                none(self);
+                self.f.switch_to_block(yes);
+            }
+            for op in list {
+                let eq = self.spelled_at(lp, tn, &op);
+                let k = match &op[..] {
+                    b"#" | b"%:" => HASH,
+                    b"##" | b"%:%:" => HASHHASH,
+                    b"<:" | b":>" | b"<%" | b"%>" => DIGRAPH,
+                    _ => PUNCT,
+                };
+                let not_this = branch(self, eq);
+                kind(self, k);
+                self.f.switch_to_block(not_this);
+            }
         }
         none(self);
         self.f.switch_to_block(not_ops);
@@ -2674,6 +2684,12 @@ impl Lower<'_, '_> {
         self.f.switch_to_block(join);
         let r = self.f.block_params(join);
         (r[0], r[1])
+    }
+
+    /// Whether the run is C++'s (`Env::cpp`), as an `i8` 0 or 1.
+    fn is_cpp(&mut self) -> Value {
+        let c = ld(self.f, types::I64, self.ctx, at!(cpp));
+        self.f.ins().icmp_imm(IntCC::NotEqual, c, 0)
     }
 
     /// `Machine::file_src`: the top source (a file's): its address.
@@ -2859,6 +2875,13 @@ impl Lower<'_, '_> {
     /// (`Step::Item`).
     #[allow(clippy::too_many_arguments)]
     fn find_named(&mut self, file: Value, p: Value, n: Value, angle: Value, next: Value, embed: Value) -> (Value, Value) {
+        let no = self.f.ins().iconst(types::I8, 0);
+        self.find_named_as(file, p, n, angle, next, embed, no)
+    }
+
+    /// `find_named`, or a `_Pragma`'s text's file (`pragma`).
+    #[allow(clippy::too_many_arguments)]
+    fn find_named_as(&mut self, file: Value, p: Value, n: Value, angle: Value, next: Value, embed: Value, pragma: Value) -> (Value, Value) {
         let fc = self.file_c(file);
         let named = ld(self.f, types::I64, fc, offset_of!(FileC, named) as i32);
         let count = ld(self.f, types::I64, fc, offset_of!(FileC, nnamed) as i32);
@@ -2880,7 +2903,7 @@ impl Lower<'_, '_> {
         let e = elem(self.f, named, i, NAMED);
         let len = ld(self.f, types::I64, e, offset_of!(NamedC, len) as i32);
         let mut same = self.f.ins().icmp(IntCC::Equal, len, n);
-        for (o, want) in [(offset_of!(NamedC, angle), angle), (offset_of!(NamedC, next), next), (offset_of!(NamedC, embed), embed)] {
+        for (o, want) in [(offset_of!(NamedC, angle), angle), (offset_of!(NamedC, next), next), (offset_of!(NamedC, embed), embed), (offset_of!(NamedC, pragma), pragma)] {
             let x = ldu(self.f, types::I8, e, o as i32);
             let w = self.f.ins().uextend(types::I64, want);
             let eq = self.f.ins().icmp(IntCC::Equal, x, w);
@@ -2909,6 +2932,13 @@ impl Lower<'_, '_> {
     /// `Machine::want`: a file wanted and not found, recorded; its name's bytes copied.
     #[allow(clippy::too_many_arguments)]
     fn want(&mut self, pc: usize, file: Value, p: Value, n: Value, angle: Value, next: Value, embed: Value) {
+        let no = self.f.ins().iconst(types::I8, 0);
+        self.want_as(pc, file, p, n, angle, next, embed, no);
+    }
+
+    /// `want`, or a `_Pragma`'s text wanted as a file (`pragma`).
+    #[allow(clippy::too_many_arguments)]
+    fn want_as(&mut self, pc: usize, file: Value, p: Value, n: Value, angle: Value, next: Value, embed: Value, pragma: Value) {
         let ctx = self.ctx;
         let nw = self.vlen(WANTED);
         let room = ld(self.f, types::I64, ctx, at!(room_wanted));
@@ -2927,6 +2957,7 @@ impl Lower<'_, '_> {
         st(self.f, types::I8, angle, w, offset_of!(Want, angle) as i32);
         st(self.f, types::I8, next, w, offset_of!(Want, next) as i32);
         st(self.f, types::I8, embed, w, offset_of!(Want, embed) as i32);
+        st(self.f, types::I8, pragma, w, offset_of!(Want, pragma) as i32);
     }
 
     /// `Src::file(f, end)` pushed (refusing past the sources' bound).
@@ -3242,6 +3273,14 @@ impl Lower<'_, '_> {
         self.f.ins().jump(head, &[n1.into()]);
         self.f.switch_to_block(done);
         let n = self.f.block_params(done)[0];
+        self.pragma_of(pc, file, n, next);
+    }
+
+    /// `Machine::pragma_of`: the pragma whose first tokens (at most three) are `pragma_toks`
+    /// and whose count is `n`, carried out for `file`; then `next`.
+    fn pragma_of(&mut self, pc: usize, file: Value, n: Value, next: Block) {
+        let ctx = self.ctx;
+        let pt = at!(pragma_toks);
         let t0 = pt;
         let t1 = pt + TOK as i32;
         let t2 = pt + 2 * TOK as i32;
@@ -3544,15 +3583,15 @@ impl Lower<'_, '_> {
     fn builtin_value(&mut self, pc: usize, b: Value, lo: Value, hi: Value) {
         let ctx = self.ctx;
         let done = self.f.create_block();
-        let mut sw = Switch::new();
         let mut cases = Vec::new();
         for c in [B_LINE, B_FILE, B_FILE_NAME, B_BASE_FILE, B_COUNTER, B_INCLUDE_LEVEL, B_DATE, B_TIME, B_TIMESTAMP, B_HAS_INCLUDE, B_HAS_INCLUDE_NEXT, B_HAS_EMBED] {
             let blk = self.f.create_block();
-            sw.set_entry(u128::from(c), blk);
             cases.push((c, blk));
         }
         let feature = self.f.create_block();
-        sw.emit(self.f, b, feature);
+        let mut keyed: Vec<(u64, Block)> = cases.iter().map(|&(c, blk)| (u64::from(c), blk)).collect();
+        keyed.sort_unstable_by_key(|c| c.0);
+        self.switch(b, &keyed, feature);
         for (c, blk) in cases {
             self.f.switch_to_block(blk);
             match c {
@@ -3786,118 +3825,6 @@ impl Lower<'_, '_> {
         self.f.switch_to_block(done);
     }
 
-    /// `pragma_words` of the `n` bytes at `p` (`_Pragma`'s text): its word's range, and
-    /// `( "…" )`'s string's (where `ok`). A fold a byte a lane (`lanes`): the state (0 blanks,
-    /// 1 the word, 2 blanks, 3 after `(`, 4 the string's prefix, 5 the string, 6 an escaped
-    /// byte, 7 closed, 8 none), the byte's index, and the ranges' ends.
-    fn pragma_words(&mut self, p: Value, n: Value) -> ((Value, Value), Value, (Value, Value)) {
-        let k = |l: &mut Self, x: i64| l.f.ins().iconst(types::I64, x);
-        let init = [k(self, 0), k(self, 0), k(self, 0), k(self, 0), k(self, 0), k(self, 0)];
-        let st = self.lanes(p, n, &init, &mut |l, c, st| {
-            let f = &mut *l.f;
-            let (mut state, i, mut w0, mut w1, mut s0, mut e) = (st[0], st[1], st[2], st[3], st[4], st[5]);
-            let is = |f: &mut FunctionBuilder<'_>, x: Value, y: i64| f.ins().icmp_imm(IntCC::Equal, x, y);
-            let k = |f: &mut FunctionBuilder<'_>, x: i64| f.ins().iconst(types::I64, x);
-            let mut blank = f.ins().iconst(types::I8, 0);
-            for b in [b' ', b'\t', 0x0b, 0x0c] {
-                let x = is(f, c, i64::from(b));
-                blank = f.ins().bor(blank, x);
-            }
-            let mut word = f.ins().iconst(types::I8, 0);
-            for (lo, n) in [(b'0', 10), (b'A', 26), (b'a', 26)] {
-                let d = f.ins().iadd_imm(c, -i64::from(lo));
-                let x = f.ins().icmp_imm(IntCC::UnsignedLessThan, d, n);
-                word = f.ins().bor(word, x);
-            }
-            for b in [b'_', b'$'] {
-                let x = is(f, c, i64::from(b));
-                word = f.ins().bor(word, x);
-            }
-            let nblank = f.ins().bxor_imm(blank, 1);
-            let nword = f.ins().bxor_imm(word, 1);
-            let lp = is(f, c, i64::from(b'('));
-            let q = is(f, c, i64::from(b'"'));
-            let bs = is(f, c, i64::from(b'\\'));
-            // 0: blanks, then the word begins here.
-            let s = is(f, state, 0);
-            let go = f.ins().band(s, nblank);
-            w0 = f.ins().select(go, i, w0);
-            let one = k(f, 1);
-            state = f.ins().select(go, one, state);
-            // 1: the word, then its end here.
-            let s = is(f, state, 1);
-            let end = f.ins().band(s, nword);
-            w1 = f.ins().select(end, i, w1);
-            let two = k(f, 2);
-            state = f.ins().select(end, two, state);
-            let mut cons = f.ins().band(s, word);
-            // 2: blanks, then `(`, else none.
-            let s = is(f, state, 2);
-            let nc = f.ins().bxor_imm(cons, 1);
-            let s = f.ins().band(s, nc);
-            let paren = f.ins().band(s, lp);
-            let other = f.ins().band(s, nblank);
-            let np = f.ins().bxor_imm(lp, 1);
-            let other = f.ins().band(other, np);
-            let three = k(f, 3);
-            let eight = k(f, 8);
-            state = f.ins().select(paren, three, state);
-            state = f.ins().select(other, eight, state);
-            cons = f.ins().bor(cons, s);
-            // 3: blanks, then the string's prefix begins here.
-            let s = is(f, state, 3);
-            let nc = f.ins().bxor_imm(cons, 1);
-            let s = f.ins().band(s, nc);
-            let go = f.ins().band(s, nblank);
-            s0 = f.ins().select(go, i, s0);
-            let four = k(f, 4);
-            state = f.ins().select(go, four, state);
-            let sb = f.ins().band(s, blank);
-            cons = f.ins().bor(cons, sb);
-            // 4: the prefix's word bytes, then `"`, else none.
-            let s = is(f, state, 4);
-            let nc = f.ins().bxor_imm(cons, 1);
-            let s = f.ins().band(s, nc);
-            let open = f.ins().band(s, q);
-            let nq = f.ins().bxor_imm(q, 1);
-            let bad = f.ins().band(s, nword);
-            let bad = f.ins().band(bad, nq);
-            let five = k(f, 5);
-            state = f.ins().select(open, five, state);
-            state = f.ins().select(bad, eight, state);
-            cons = f.ins().bor(cons, s);
-            // 6: an escaped byte passed.
-            let s6 = is(f, state, 6);
-            let nc = f.ins().bxor_imm(cons, 1);
-            let s6 = f.ins().band(s6, nc);
-            state = f.ins().select(s6, five, state);
-            cons = f.ins().bor(cons, s6);
-            // 5: the string to its `"`, a `\` passing the byte after it.
-            let s5 = is(f, state, 5);
-            let nc = f.ins().bxor_imm(cons, 1);
-            let s5 = f.ins().band(s5, nc);
-            let esc = f.ins().band(s5, bs);
-            let close = f.ins().band(s5, q);
-            let six = k(f, 6);
-            let seven = k(f, 7);
-            state = f.ins().select(esc, six, state);
-            state = f.ins().select(close, seven, state);
-            let i1 = f.ins().iadd_imm(i, 1);
-            e = f.ins().select(close, i1, e);
-            vec![state, i1, w0, w1, s0, e]
-        });
-        let (state, w0, w1, s0, e) = (st[0], st[2], st[3], st[4], st[5]);
-        let f = &mut *self.f;
-        // The text's end: in the blanks, the word is empty there; in the word, it ends there.
-        let s0_ = f.ins().icmp_imm(IntCC::Equal, state, 0);
-        let s1_ = f.ins().icmp_imm(IntCC::Equal, state, 1);
-        let w0 = f.ins().select(s0_, n, w0);
-        let open = f.ins().bor(s0_, s1_);
-        let w1 = f.ins().select(open, n, w1);
-        let ok = f.ins().icmp_imm(IntCC::Equal, state, 7);
-        ((w0, w1), ok, (s0, e))
-    }
-
     fn bi_state(&mut self) -> Value {
         ld(self.f, types::I64, self.ctx, at!(bi))
     }
@@ -4078,17 +4005,38 @@ impl Lower<'_, '_> {
                 let (ok, t0, t1) = self.destringize(pc, p, n);
                 let text = self.f.create_block();
                 self.f.ins().brif(ok, text, &[], skip, &[]);
+                // Its text is a file of its own, lexed by the token grammar (the host's): the
+                // file on top's named one, its first three tokens the pragma's; else wanted.
                 self.f.switch_to_block(text);
                 let base = ld(self.f, types::I64, ctx, at!(scratch));
                 let tp = self.f.ins().iadd(base, t0);
                 let tn = self.f.ins().isub(t1, t0);
-                let ((w0, w1), has_lit, (l0, l1)) = self.pragma_words(tp, tn);
                 let file = self.cur_file();
-                let wp = self.f.ins().iadd(tp, w0);
-                let wn = self.f.ins().isub(w1, w0);
-                let lp = self.f.ins().iadd(tp, l0);
-                let ln = self.f.ins().isub(l1, l0);
-                self.pragma_do(pc, file, (wp, wn), has_lit, (lp, ln), skip);
+                let (no, yes) = (self.f.ins().iconst(types::I8, 0), self.f.ins().iconst(types::I8, 1));
+                let (found, to) = self.find_named_as(file, tp, tn, no, no, no, yes);
+                let (hit, miss) = (self.f.create_block(), self.f.create_block());
+                self.f.ins().brif(found, hit, &[], miss, &[]);
+                self.f.switch_to_block(miss);
+                self.want_as(pc, file, tp, tn, no, no, no, yes);
+                self.f.ins().jump(skip, &[]);
+                self.f.switch_to_block(hit);
+                let lexed = self.f.ins().icmp_imm(IntCC::NotEqual, to, i64::from(NONE));
+                self.check(lexed, pc, R_PRAGMA);
+                let fc = self.file_c(to);
+                let toks = ld(self.f, types::I64, fc, offset_of!(FileC, toks) as i32);
+                let ntoks = ld(self.f, types::I64, fc, offset_of!(FileC, ntoks) as i32);
+                // Its first tokens, at most three (straight code), where `#pragma`'s are kept.
+                for k in 0..3i64 {
+                    let have = self.f.ins().icmp_imm(IntCC::UnsignedGreaterThan, ntoks, k);
+                    let (put, on) = (self.f.create_block(), self.f.create_block());
+                    self.f.ins().brif(have, put, &[], on, &[]);
+                    self.f.switch_to_block(put);
+                    let src = self.f.ins().iadd_imm(toks, k * TOK);
+                    copy_tok(self.f, src, 0, ctx, at!(pragma_toks) + (k * TOK) as i32);
+                    self.f.ins().jump(on, &[]);
+                    self.f.switch_to_block(on);
+                }
+                self.pragma_of(pc, file, ntoks, skip);
             }
         }
     }
@@ -4926,7 +4874,10 @@ impl Lower<'_, '_> {
         self.f.ins().jump(join, &[k.into()]);
         self.f.switch_to_block(other);
         if self.pp.cpp {
+            // C++'s alternative tokens, where the run is C++'s.
             let ident = self.f.ins().icmp_imm(IntCC::Equal, kind, i64::from(IDENT));
+            let cpp = self.is_cpp();
+            let ident = self.f.ins().band(ident, cpp);
             let alt = self.f.create_block();
             let none = self.f.ins().iconst(types::I64, NO_OP);
             self.f.ins().brif(ident, alt, &[], join, &[none.into()]);
@@ -5084,16 +5035,12 @@ impl Lower<'_, '_> {
         let u = self.f.ins().bor(lu, ru);
         let ub = self.f.ins().icmp_imm(IntCC::NotEqual, u, 0);
         let lub = self.f.ins().icmp_imm(IntCC::NotEqual, lu, 0);
-        let mut sw = Switch::new();
         let bad = self.f.create_block();
-        let case = |l: &mut Self, sw: &mut Switch, name: &[u8]| {
-            let b = l.f.create_block();
-            sw.set_entry(u128::from(op_index(name)), b);
-            b
-        };
         let names: [&[u8]; 18] = [b"||", b"&&", b"|", b"^", b"&", b"==", b"!=", b"<", b">", b"<=", b">=", b"<<", b">>", b"+", b"-", b"*", b"/", b"%"];
-        let blocks: Vec<Block> = names.iter().map(|n| case(self, &mut sw, n)).collect();
-        sw.emit(self.f, op, bad);
+        let blocks: Vec<Block> = names.iter().map(|_| self.f.create_block()).collect();
+        let mut keyed: Vec<(u64, Block)> = names.iter().zip(&blocks).map(|(n, &b)| (u64::from(op_index(n)), b)).collect();
+        keyed.sort_unstable_by_key(|c| c.0);
+        self.switch(op, &keyed, bad);
         self.f.switch_to_block(bad);
         self.refuse(pc, R_NO_OP);
         for (name, blk) in names.iter().zip(blocks) {
@@ -5730,8 +5677,15 @@ impl Lower<'_, '_> {
         self.f.ins().brif(is_id, ident, &[], other, &[]);
         self.f.switch_to_block(ident);
         let f8 = self.f.ins().iconst(types::I8, 0);
+        // C's: an identifier is 0.
+        let c_ident = self.f.create_block();
         if self.pp.cpp {
-            // An alternative token is an operator, no primary; `true` is 1.
+            // C++'s, where the run is C++'s: an alternative token is an operator, no primary;
+            // `true` is 1.
+            let cpp = self.is_cpp();
+            let cpp_ident = self.f.create_block();
+            self.f.ins().brif(cpp, cpp_ident, &[], c_ident, &[]);
+            self.f.switch_to_block(cpp_ident);
             let mut alt = self.f.ins().iconst(types::I8, 0);
             for (name, _) in crate::pp_expr::ALT {
                 let e = self.spelled_at(p, n, name);
@@ -5742,10 +5696,13 @@ impl Lower<'_, '_> {
             let ok = self.f.ins().bxor_imm(alt, 1);
             self.f.ins().jump(join, &[ok.into(), tv.into(), f8.into()]);
         } else {
-            let one = self.f.ins().iconst(types::I8, 1);
-            let z = self.f.ins().iconst(types::I64, 0);
-            self.f.ins().jump(join, &[one.into(), z.into(), f8.into()]);
+            self.f.ins().jump(c_ident, &[]);
         }
+        self.f.switch_to_block(c_ident);
+        let f8 = self.f.ins().iconst(types::I8, 0);
+        let one = self.f.ins().iconst(types::I8, 1);
+        let z = self.f.ins().iconst(types::I64, 0);
+        self.f.ins().jump(join, &[one.into(), z.into(), f8.into()]);
         self.f.switch_to_block(other);
         let f8 = self.f.ins().iconst(types::I8, 0);
         let z = self.f.ins().iconst(types::I64, 0);
@@ -6017,7 +5974,7 @@ impl Lower<'_, '_> {
             STOP => self.refuse(pc, R_STOPPED),
             PUSH => {
                 let r = self.f.ins().iconst(types::I32, i64::from(self.ranks[usize::from(operand)]));
-                self.push_returns(pc, &[r]);
+                self.push_return(pc, r);
                 self.next(pc);
             }
             RETURN => {
@@ -6632,27 +6589,10 @@ impl Lower<'_, '_> {
     }
 }
 
-/// `#if`'s evaluator lowered at each static depth (`Lower::spec_word`).
-struct Spec {
-    /// The depth `K`: the calls whose return points are kept in variables.
-    k: usize,
-    /// Whether each word is the evaluator's.
-    region: Vec<bool>,
-    /// The evaluator's words' blocks at depths 1 to `K` (depth 0's are the program's).
-    copies: Vec<Vec<Block>>,
-    /// The return points of the calls at depths 0 to `K - 1`, as ranks.
-    vars: Vec<Variable>,
-    /// Each outlined word's function.
-    calls: Vec<Option<FuncRef>>,
-}
-
 /// A word whose code is over this many CLIF instructions is a function of its own, called
-/// (`compile_k`): the run's function keeps the words a token passes through, not the rare large
+/// (`compile`): the run's function keeps the words a token passes through, not the rare large
 /// ones (each of `BUILTIN`'s modes made the whole of `builtin_value` again).
 pub const OUTLINE: usize = 512;
-
-/// The largest depth `compile_k` takes.
-pub const MAX_K: usize = 16;
 
 /// Each word's rank among the return points, and the return points by rank.
 fn return_points(words: &[u32]) -> (Vec<u32>, Vec<usize>) {
@@ -6668,51 +6608,152 @@ fn return_points(words: &[u32]) -> (Vec<u32>, Vec<usize>) {
     (ranks, rets)
 }
 
-/// `#if`'s evaluator: the words a call made for `EXPR m=14` (`PUSH` to it, then the callee's
-/// `GOTO`) reaches before its `RETURN`s. `None` unless they are all `EXPR`, `PUSH`, `GOTO` and
-/// `RETURN`, so they can be lowered at each depth.
-fn evaluator(words: &[u32]) -> Option<Vec<bool>> {
-    let mut region = vec![false; words.len()];
-    let mut work = Vec::new();
-    for pc in 0..words.len().saturating_sub(1) {
-        let (op, _, operand) = split(words[pc]);
-        let (rop, rmode, _) = split(words[usize::from(operand)]);
-        let (gop, _, callee) = split(words[pc + 1]);
-        if op == PUSH && rop == EXPR && rmode == 14 && gop == GOTO {
-            work.push(usize::from(callee));
+/// Each branch on a combination of tests made a chain of branches on the tests themselves:
+/// `brif(bor(a, b), T, F)` is `brif(a, T, m); m: brif(b, T, F)`, `band` the dual, a `not`
+/// (`bxor_imm x, 1`) swaps the targets, and a widened test is the test. The backend fuses a
+/// compare into the branch that tests it, but materializes a combination (`cset`, `orr`, `uxtb`,
+/// then `cbnz`): Q184's moves and selects. Only where every operand is a test (0 or 1), so
+/// `band`'s split means what it did. The operands are computed before the first branch, as
+/// before: nothing moves past a branch.
+fn branch_on_tests(func: &mut cranelift_codegen::ir::Function) {
+    use cranelift_codegen::cursor::{Cursor, FuncCursor};
+    use cranelift_codegen::ir::{InstructionData, Opcode, ValueDef};
+    fn def(func: &cranelift_codegen::ir::Function, v: Value) -> Option<(Opcode, Vec<Value>, Option<i64>)> {
+        let v = func.dfg.resolve_aliases(v);
+        let ValueDef::Result(inst, 0) = func.dfg.value_def(v) else { return None };
+        let data = &func.dfg.insts[inst];
+        let imm = match data {
+            InstructionData::BinaryImm64 { imm, .. } => Some(imm.bits()),
+            _ => None,
+        };
+        Some((data.opcode(), func.dfg.inst_args(inst).iter().map(|&a| func.dfg.resolve_aliases(a)).collect(), imm))
+    }
+    fn is_test(func: &cranelift_codegen::ir::Function, v: Value, depth: u32) -> bool {
+        depth < 8
+            && match def(func, v) {
+                Some((Opcode::Icmp | Opcode::IcmpImm, _, _)) => true,
+                Some((Opcode::Band | Opcode::Bor | Opcode::Bxor, args, _)) => args.iter().all(|&a| is_test(func, a, depth + 1)),
+                Some((Opcode::BxorImm, args, Some(1))) | Some((Opcode::Uextend, args, _)) => is_test(func, args[0], depth + 1),
+                _ => false,
+            }
+    }
+    let mut work: Vec<Block> = func.layout.blocks().collect();
+    while let Some(block) = work.pop() {
+        let Some(inst) = func.layout.last_inst(block) else { continue };
+        let InstructionData::Brif { arg, blocks, .. } = func.dfg.insts[inst] else { continue };
+        let pool = &func.dfg.value_lists;
+        let call = |b: &BlockCall| (b.block(pool), b.args(pool).collect::<Vec<BlockArg>>());
+        let ((t, targs), (e, eargs)) = (call(&blocks[0]), call(&blocks[1]));
+        let Some((op, args, imm)) = def(func, arg) else { continue };
+        enum Then {
+            Or(Value, Value),
+            And(Value, Value),
+            Swap(Value),
+            Same(Value),
+        }
+        let then = match (op, imm) {
+            (Opcode::Bor, _) if is_test(func, arg, 0) => Then::Or(args[0], args[1]),
+            (Opcode::Band, _) if is_test(func, arg, 0) => Then::And(args[0], args[1]),
+            (Opcode::BxorImm, Some(1)) if is_test(func, args[0], 0) => Then::Swap(args[0]),
+            (Opcode::Uextend, _) if is_test(func, args[0], 0) => Then::Same(args[0]),
+            _ => continue,
+        };
+        let mut pos = FuncCursor::new(func).at_inst(inst);
+        pos.remove_inst();
+        match then {
+            Then::Or(a, b) | Then::And(a, b) => {
+                let m = pos.func.dfg.make_block();
+                pos.func.layout.insert_block_after(m, block);
+                let mut pos = FuncCursor::new(pos.func).at_bottom(block);
+                if matches!(then, Then::Or(..)) {
+                    pos.ins().brif(a, t, &targs, m, &[]);
+                } else {
+                    pos.ins().brif(a, m, &[], e, &eargs);
+                }
+                let mut pos = FuncCursor::new(pos.func).at_bottom(m);
+                pos.ins().brif(b, t, &targs, e, &eargs);
+                work.extend([block, m]);
+            }
+            Then::Swap(x) => {
+                let mut pos = FuncCursor::new(pos.func).at_bottom(block);
+                pos.ins().brif(x, e, &eargs, t, &targs);
+                work.push(block);
+            }
+            Then::Same(x) => {
+                let mut pos = FuncCursor::new(pos.func).at_bottom(block);
+                pos.ins().brif(x, t, &targs, e, &eargs);
+                work.push(block);
+            }
         }
     }
-    while let Some(pc) = work.pop() {
-        if std::mem::replace(&mut region[pc], true) {
-            continue;
-        }
-        let (op, mode, operand) = split(words[pc]);
-        match op {
-            GOTO => work.push(usize::from(operand)),
-            PUSH => work.extend([pc + 1, usize::from(operand)]),
-            RETURN => {}
-            EXPR if mode != 14 => work.extend(if pp_words::is_test(op, mode) { vec![pc + 1, pc + 2] } else { vec![pc + 1] }),
-            _ => return None,
-        }
-    }
-    region.iter().any(|&r| r).then_some(region)
 }
 
 /// Compile `program`'s words (validated first).
 pub fn compile(program: &Words) -> Result<CompiledPp, Error> {
-    compile_k(program, 0)
+    compile_kept(program, false)
 }
 
-/// `compile`, `#if`'s evaluator flattened to depth `k` (at most `MAX_K`): its first `k` calls'
-/// return points are SSA variables, its words lowered once at each depth, so a `RETURN` there
-/// is a jump by a variable's value; past `k` the return stack holds them, as at depth 0. Its
-/// `EXPR` words are functions of their own, called from every depth, so the depths repeat only
-/// the calls' small words. `k` 0: no depth, no function of its own.
-pub fn compile_k(program: &Words, k: usize) -> Result<CompiledPp, Error> {
-    pp_words::validate(program)?;
-    if k > MAX_K {
-        return Err(Error::RefusedShape(format!("#if's depth {k} is past {MAX_K}")));
+/// The compiled words' IR as Rust (`clif_rust`): the same functions, compiled by
+/// rustc and LLVM ahead of time. Its entry is `pp_run`, run by `run_aot`; it ends with its
+/// fingerprint, `SOURCE`, so a build runs it only where the words translate to it again.
+pub fn rust_source(program: &Words) -> Result<String, String> {
+    let c = compile_kept(program, true).map_err(|e| format!("{e:?}"))?;
+    let one = crate::clif_rust::translate(&c.ir, &[(c.run_id, "pp_run")], &[])?;
+    let h = crate::clif_rust::fingerprint(&one);
+    Ok(format!("{one}\n/// This source's fingerprint (`clif_rust::fingerprint` of what comes before).\npub const SOURCE: u64 = {h:#x};\n"))
+}
+
+/// The words' compiled code as MSL (`clif_msl`, decision 0348 stage 5): the JIT's functions, the
+/// run's entry the kernel `pp_batch` over a batch of contexts, and its fingerprint.
+pub fn msl_source(program: &Words) -> Result<String, String> {
+    let c = compile_kept(program, true).map_err(|e| format!("{e:?}"))?;
+    let one = crate::clif_msl::translate(&c.ir, &[(c.run_id, "pp_batch")])?;
+    let h = crate::clif_rust::fingerprint(&one);
+    Ok(format!("{one}\n// This source's fingerprint (`clif_rust::fingerprint` of what comes before): {h:#x}.\n"))
+}
+
+/// The interface an ahead-of-time build shares with the harness that runs it (`run_aot`): the
+/// sizes of the context and of the records it points at, and the refusal reasons. A build
+/// records it, and the host runs a build only where it is the compiler's now, so a build left
+/// stale by a change of the compiler is never handed a context of another layout.
+pub const ABI: u64 = {
+    use std::mem::size_of;
+    let parts = [
+        size_of::<Ctx>(), size_of::<Tok>(), size_of::<Inc>(), size_of::<Want>(), size_of::<EmC>(), size_of::<Bi>(), size_of::<Asked>(),
+        size_of::<FeatureC>(), size_of::<NamedC>(), size_of::<Src>(), size_of::<Def>(), size_of::<Slot>(), size_of::<Frame>(),
+        size_of::<Ex>(), size_of::<DefState>(), size_of::<Sub>(), size_of::<FileC>(), REASONS.len(),
+    ];
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    let mut i = 0;
+    while i < parts.len() {
+        h = (h ^ parts[i] as u64).wrapping_mul(0x100_0000_01b3);
+        i += 1;
     }
+    h
+};
+
+/// `pp_words::run`'s work, by an ahead-of-time build of the words (`rust_source`'s `pp_run`).
+///
+/// # Safety
+/// `entry` must be `rust_source`'s `pp_run` for `program`.
+pub unsafe fn run_aot(entry: unsafe extern "C" fn(u64) -> u64, program: &Words, files: &[File], env: &Env, bounds: &Bounds) -> Result<Expanded, Refused> {
+    // SAFETY: the same ABI: one pointer-sized argument, a 64-bit result.
+    let code = unsafe { std::mem::transmute::<unsafe extern "C" fn(u64) -> u64, unsafe extern "C" fn(*mut Ctx) -> u64>(entry) };
+    // SAFETY: as `CompiledPp::run`'s; the caller vouches the code is the words'.
+    unsafe { pp_words::run_native(program, files, env, bounds, code, REASONS) }
+}
+
+/// The compiled words, their IR and machine code kept (`ir`, `disasm`): to read
+/// Cranelift's code beside rustc's of the same IR (`rust_source`).
+pub fn disassemble(program: &Words) -> Result<CompiledPp, Error> {
+    compile_kept(program, true)
+}
+
+fn compile_kept(program: &Words, keep: bool) -> Result<CompiledPp, Error> {
+    let mut ir = Vec::new();
+    let mut disasm = Vec::new();
+    let mut code_kept = Vec::new();
+    pp_words::validate(program)?;
     let mut builder = JITBuilder::with_flags(&[("opt_level", "speed")], default_libcall_names()).map_err(|_| Error::BackendFailure)?;
     // One arena for the module's code, so a call of an outlined word is a direct branch (its
     // `colocated`): JIT mappings apart can be past a branch's reach.
@@ -6724,16 +6765,13 @@ pub fn compile_k(program: &Words, k: usize) -> Result<CompiledPp, Error> {
     signature.returns.push(AbiParam::new(types::I64));
     let id = module.declare_function("pp_run", Linkage::Local, &signature).map_err(|_| Error::BackendFailure)?;
     let (ranks, rets) = return_points(&program.words);
-    let region = if k > 0 { evaluator(&program.words) } else { None };
     let mut fctx = FunctionBuilderContext::new();
     let mut clif = String::new();
     let mut all_heads = Vec::new();
-    // The evaluator's `EXPR` words, a function each: 0 its next word, 1 the one after, else the
-    // refusal.
+    // The outlined words, a function each: 0 its next word, 1 the one after, else the refusal.
     let mut outlined = Vec::new();
     let mut sizes = Vec::new();
-    // Each word lowered alone, and kept so where it is large (or one of the evaluator's `EXPR`s
-    // at a depth): the words that go elsewhere than their next two stay in the run's function.
+    // Each word lowered alone, and kept so where it is large: the words that go elsewhere than their next two stay in the run's function.
     for pc in (0..program.words.len()).filter(|&pc| !matches!(split(program.words[pc]).0, GOTO | PUSH | RETURN | ACCEPT | STOP)) {
         let mut context = module.make_context();
         context.func.signature = signature.clone();
@@ -6764,16 +6802,25 @@ pub fn compile_k(program: &Words, k: usize) -> Result<CompiledPp, Error> {
             f.seal_all_blocks();
             f.finalize();
         }
-        let evaluator = region.as_ref().is_some_and(|r| r[pc]) && split(program.words[pc]).0 == EXPR;
-        if !evaluator && context.func.dfg.num_insts() <= OUTLINE {
+        if context.func.dfg.num_insts() <= OUTLINE {
             module.clear_context(&mut context);
             continue;
         }
         let fid = module.declare_function(&format!("pp_word_{pc}"), Linkage::Local, &signature).map_err(|_| Error::BackendFailure)?;
+        branch_on_tests(&mut context.func);
         crate::native_cpu_shape::check(&context.func, &heads, &[]).map_err(|r| Error::RefusedShape(format!("word {pc}: {r:?}")))?;
         clif.push_str(&context.func.display().to_string());
         all_heads.extend(heads.iter().map(|h| h.1));
+        if keep {
+            ir.push((fid.as_u32(), context.func.clone()));
+            context.set_disasm(true);
+        }
+        crate::native_cpu_codegen::switch_trees(&mut context.func);
         module.define_function(fid, &mut context).map_err(|e| Error::RefusedShape(format!("word {pc}: {e:?}")))?;
+        if keep {
+            disasm.push(context.compiled_code().and_then(|c| c.vcode.clone()).unwrap_or_default());
+            code_kept.push(context.compiled_code().map_or(Vec::new(), |c| c.code_buffer().to_vec()));
+        }
         sizes.push(context.compiled_code().map_or(0, |c| c.code_info().total_size as usize));
         module.clear_context(&mut context);
         outlined.push((pc, fid));
@@ -6798,29 +6845,12 @@ pub fn compile_k(program: &Words, k: usize) -> Result<CompiledPp, Error> {
             let name = f.func.declare_imported_user_function(name.clone());
             calls[pc] = Some(f.import_function(ExtFuncData { name: ExternalName::user(name), signature: sig, colocated: true }));
         }
-        let spec = region.map(|region| {
-            // Blocks for the evaluator's words only (another's entry is never reached).
-            let copies = (0..k).map(|_| (0..program.words.len()).map(|p| if region[p] { f.create_block() } else { blocks[p] }).collect()).collect();
-            let vars = (0..k).map(|_| f.declare_var(types::I32)).collect();
-            Spec { k, region, copies, vars, calls: calls.clone() }
-        });
         f.ins().jump(blocks[0], &[]);
         let mut l = Lower { f: &mut f, ctx, words: &program.words, strings: &program.strings, blocks, exit, heads: Vec::new(), pp: &program.pp, ranks: &ranks, rets: &rets };
         for pc in 0..program.words.len() {
             let before = l.f.func.dfg.num_insts();
             let b = l.blocks[pc];
             l.f.switch_to_block(b);
-            if let Some(sp) = spec.as_ref().filter(|sp| sp.region[pc]) {
-                for d in 0..=k {
-                    if d > 0 {
-                        let b = sp.copies[d - 1][pc];
-                        l.f.switch_to_block(b);
-                    }
-                    l.spec_word(sp, pc, d);
-                }
-                word_insts[pc] = l.f.func.dfg.num_insts() - before;
-                continue;
-            }
             // A token read is a stated step: a cycle through `READ`'s block.
             let (op, mode, _) = split(l.words[pc]);
             if op == READ {
@@ -6859,17 +6889,27 @@ pub fn compile_k(program: &Words, k: usize) -> Result<CompiledPp, Error> {
             let _ = std::fs::write(path, cranelift_codegen::print_errors::pretty_verifier_error(&context.func, None, e));
         }
     }
+    branch_on_tests(&mut context.func);
     crate::native_cpu_shape::check(&context.func, &heads, &own).map_err(|r| Error::RefusedShape(format!("{r:?}")))?;
     clif.push_str(&context.func.display().to_string());
     all_heads.extend(heads.iter().map(|h| h.1));
+    if keep {
+        ir.push((id.as_u32(), context.func.clone()));
+        context.set_disasm(true);
+    }
+    crate::native_cpu_codegen::switch_trees(&mut context.func);
     module.define_function(id, &mut context).map_err(|e| Error::RefusedShape(format!("pp_run: {e:?}")))?;
+    if keep {
+        disasm.insert(0, context.compiled_code().and_then(|c| c.vcode.clone()).unwrap_or_default());
+        code_kept.insert(0, context.compiled_code().map_or(Vec::new(), |c| c.code_buffer().to_vec()));
+    }
     sizes.insert(0, context.compiled_code().map_or(0, |c| c.code_info().total_size as usize));
     module.clear_context(&mut context);
     module.finalize_definitions().map_err(|_| Error::BackendFailure)?;
     let code = module.get_finalized_function(id);
     // SAFETY: `pp_run` was declared and defined with this signature.
     let entry = unsafe { std::mem::transmute::<*const u8, unsafe extern "C" fn(*mut Ctx) -> u64>(code) };
-    Ok(CompiledPp { _module: module, entry, clif, heads: all_heads, code_bytes: sizes, word_insts })
+    Ok(CompiledPp { _module: module, entry, clif, heads: all_heads, code_bytes: sizes, word_insts, ir, run_id: id.as_u32(), disasm, code: code_kept })
 }
 
 #[cfg(test)]
@@ -6879,7 +6919,7 @@ mod tests {
 
     /// A file of tokens over `text`: each a word, its kind and flags.
     fn file<'a>(text: &'a [u8], toks: &'a [Tok]) -> File<'a> {
-        File { path: b"main.c", bytes: text, lines: &[], toks, chains: &[], includes: &[], named: &[], if_depth: 0 }
+        File { path: b"main.c", bytes: text, lines: &[], toks, chains: &[], includes: &[], named: &[] }
     }
 
     fn tok(kind: u8, flags: u8, start: u32, end: u32) -> Tok {

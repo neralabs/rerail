@@ -1,8 +1,9 @@
 program - ir=7 grammar=none
 ; Decision 0348: a translation unit's preprocessing, as preprocessing words (the compiler's
 ; `pp_words`, which says what each word does). The lean preprocessor's `Pp` is its reference.
-; A line ending `; C++ only` is left out of C's program (`expand::program`). Generated from a
-; labeled text, the words numbered and their strings listed.
+; One program for C and C++: the rows marked `cpp` (and `ppsuffix`, `ppcpp`) apply where the run
+; is C++'s (`pp_words::Env::cpp`). Generated from a labeled text, the words numbered and their
+; strings listed.
   mode set=0 query=0
   string 0 "("
   string 1 ")"
@@ -26,63 +27,63 @@ program - ir=7 grammar=none
   string 19 "<<="
   string 20 ">>="
   string 21 "..."
-  string 22 "->*"
-  string 23 "<=>"
-  string 24 "->"
-  string 25 "++"
-  string 26 "--"
-  string 27 "<<"
-  string 28 ">>"
-  string 29 "<="
-  string 30 ">="
-  string 31 "=="
-  string 32 "!="
-  string 33 "&&"
-  string 34 "||"
-  string 35 "*="
-  string 36 "/="
-  string 37 "%="
-  string 38 "+="
-  string 39 "-="
-  string 40 "&="
-  string 41 "^="
-  string 42 "|="
-  string 43 "::"
-  string 44 ".*"
-  string 45 "<:"
-  string 46 ":>"
-  string 47 "<%"
-  string 48 "%>"
-  string 49 "%:"
-  string 50 "%:%:"
-  string 51 "##"
-  string 52 "#"
-  string 53 "["
-  string 54 "]"
-  string 55 "{"
-  string 56 "}"
-  string 57 ";"
-  string 58 "~"
-  string 59 "?"
-  string 60 ":"
-  string 61 "."
-  string 62 "="
-  string 63 "!"
-  string 64 "+"
-  string 65 "-"
-  string 66 "*"
-  string 67 "/"
-  string 68 "%"
-  string 69 "^"
-  string 70 "&"
-  string 71 "|"
-  string 72 "<"
-  string 73 ">"
+  string 22 "->"
+  string 23 "++"
+  string 24 "--"
+  string 25 "<<"
+  string 26 ">>"
+  string 27 "<="
+  string 28 ">="
+  string 29 "=="
+  string 30 "!="
+  string 31 "&&"
+  string 32 "||"
+  string 33 "*="
+  string 34 "/="
+  string 35 "%="
+  string 36 "+="
+  string 37 "-="
+  string 38 "&="
+  string 39 "^="
+  string 40 "|="
+  string 41 "::"
+  string 42 "<:"
+  string 43 ":>"
+  string 44 "<%"
+  string 45 "%>"
+  string 46 "%:"
+  string 47 "%:%:"
+  string 48 "##"
+  string 49 "#"
+  string 50 "["
+  string 51 "]"
+  string 52 "{"
+  string 53 "}"
+  string 54 ";"
+  string 55 "~"
+  string 56 "?"
+  string 57 ":"
+  string 58 "."
+  string 59 "="
+  string 60 "!"
+  string 61 "+"
+  string 62 "-"
+  string 63 "*"
+  string 64 "/"
+  string 65 "%"
+  string 66 "^"
+  string 67 "&"
+  string 68 "|"
+  string 69 "<"
+  string 70 ">"
+  string 71 "->*"
+  string 72 "<=>"
+  string 73 ".*"
   ppop s19
   ppop s20
   ppop s21
-  ppop s22  ; C++ only
-  ppop s23  ; C++ only
+  ppop s22
+  ppop s23
   ppop s24
   ppop s25
   ppop s26
@@ -103,23 +104,23 @@ program - ir=7 grammar=none
   ppop s41
   ppop s42
   ppop s43
-  ppop s44  ; C++ only
+  ppop s44
   ppop s45
   ppop s46
   ppop s47
   ppop s48
   ppop s49
+  ppop s0
+  ppop s1
   ppop s50
   ppop s51
   ppop s52
-  ppop s0
-  ppop s1
   ppop s53
   ppop s54
+  ppop s2
   ppop s55
   ppop s56
   ppop s57
-  ppop s2
   ppop s58
   ppop s59
   ppop s60
@@ -133,11 +134,11 @@ program - ir=7 grammar=none
   ppop s68
   ppop s69
   ppop s70
-  ppop s71
-  ppop s72
-  ppop s73
-  ppsuffix  ; C++ only
-  ppcpp  ; C++ only
+  ppop s71 cpp
+  ppop s72 cpp
+  ppop s73 cpp
+  ppsuffix
+  ppcpp
   ; main: the TU's tokens, macros expanded, onto the output tape.
   0000 PUSH @0002
   0001 GOTO @0007

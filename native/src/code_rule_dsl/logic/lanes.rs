@@ -115,6 +115,74 @@ pub mod wave {
         /// The submissions to this thread's wave so far (`joined`): one that opens the wave defers its commit, and the
         /// rest join it and defer nothing, though their strata wait on it as much.
         static JOINED: Cell<u64> = const { Cell::new(0) };
+        /// The open submission its strata share (the device joins' wave, `setfix::device`), of the job running here
+        /// (`Scope`): one kind of value, held as `Any` so this module names no form.
+        static OPEN: RefCell<Option<Box<dyn std::any::Any>>> = const { RefCell::new(None) };
+    }
+
+    /// The job's open submission (`OPEN`) as a `T`, for `f` to read, open or take. Re-entered from inside `f`, it
+    /// panics (the borrow is held), as the open submission is one value.
+    pub fn with_open<T: 'static, R>(f: impl FnOnce(&mut Option<T>) -> R) -> R {
+        OPEN.with_borrow_mut(|slot| {
+            let mut open: Option<T> = slot.take().map(|b| *b.downcast::<T>().expect("one kind of open submission"));
+            let r = f(&mut open);
+            *slot = open.map(|t| Box::new(t) as Box<dyn std::any::Any>);
+            r
+        })
+    }
+
+    /// A job's wave (decision 0386): what a job queues, defers and opens for its wave is its own, not its thread's.
+    /// A job starts on a thread that may be in the middle of another (a wait runs the pool's jobs): entering, it
+    /// saves the thread's (the outer job's) and starts empty; leaving, it runs what it deferred and did not flush
+    /// (its open submission is finished there, on the thread that encoded it), hands what it queued and did not take
+    /// to the outer job's wave, and restores the rest. So no submission outlives its job on a thread that may go idle,
+    /// and a job's strata never wait on a wave another job flushes.
+    pub struct Scope {
+        queued: Vec<(&'static str, u64, Kernel)>,
+        deferred: Vec<Box<dyn FnOnce() -> Result<(), String>>>,
+        open: Option<Box<dyn std::any::Any>>,
+    }
+
+    /// Enters a job's wave scope.
+    pub fn enter() -> Scope {
+        Scope { queued: QUEUED.with_borrow_mut(std::mem::take), deferred: DEFERRED.with_borrow_mut(std::mem::take), open: OPEN.with_borrow_mut(Option::take) }
+    }
+
+    impl Scope {
+        /// Leaves it: what the job deferred runs, then the outer wave is restored. A deferred submission that fails
+        /// failed the strata in it, which ran on the CPU (`setfix::device::submit`): the scope's exit goes on.
+        pub fn exit(self) {
+            let mut runs = 0u64;
+            loop {
+                let deferred = DEFERRED.with_borrow_mut(std::mem::take);
+                if deferred.is_empty() {
+                    break;
+                }
+                for f in deferred {
+                    runs += 1;
+                    if f().is_err() {
+                        super::prof::count("device wave (decision 0386)", "a job's unflushed submission failed at its end", 1);
+                    }
+                }
+            }
+            if runs > 0 {
+                super::prof::count("device wave (decision 0386)", "submissions a job deferred and finished at its end", runs);
+            }
+            let left = OPEN.with_borrow_mut(Option::take);
+            debug_assert!(left.is_none(), "a job's open submission outlived its deferred finish");
+            let Scope { mut queued, deferred, open } = self;
+            QUEUED.with_borrow_mut(|q| {
+                queued.append(q);
+                *q = queued;
+            });
+            DEFERRED.with_borrow_mut(|d| *d = deferred);
+            OPEN.with_borrow_mut(|o| *o = open);
+        }
+    }
+
+    /// `rerail_accel::exec::set_job_scope`'s entry and exit: every pool job runs in a wave scope of its own.
+    pub fn install_job_scope() {
+        rerail_accel::exec::set_job_scope(|| Box::new(enter()), |s| s.downcast::<Scope>().expect("a wave scope").exit());
     }
 
     /// Runs `f` when the wave is flushed (a form that encoded its work into a submission of its own, shared by the
@@ -181,6 +249,13 @@ pub mod wave {
     /// it read that one's rows, or panicked on its rules (Q170).
     pub fn kept_here(mark: Mark) -> bool {
         deferred_since(mark) || FLUSHES.get() > mark.2 || JOINED.get() > mark.3
+    }
+
+    /// A mark at `queued` launches, no deferred submission, and this thread's flushes and joins as they are now (for
+    /// tests).
+    #[cfg(test)]
+    pub fn mark_at(queued: usize) -> Mark {
+        Mark(queued, 0, FLUSHES.get(), JOINED.get())
     }
 
     /// The launches queued on this thread since `mark`, taken off it.
@@ -322,6 +397,51 @@ mod cpu_lane_tests {
 #[cfg(test)]
 mod wave_tests {
     use super::wave;
+
+    /// Decision 0386: a job's wave scope. Entered, the outer job's queued launches, deferred submissions and open
+    /// submission are put aside; the job's own deferred submissions run when it leaves (its open submission
+    /// finished there), what it queued and did not take goes to the outer wave, and the outer's are back.
+    /// A launch to queue (a histogram of no codes): the scope test queues launches and never runs them.
+    fn histogram() -> rerail_accel::Kernel {
+        rerail_accel::Kernel::Histogram { off: std::sync::Arc::from([0u32, 0]), codes: std::sync::Arc::from(Vec::<u16>::new()), width: 1 }
+    }
+
+    #[test]
+    fn a_jobs_wave_scope_keeps_the_outer_waves_apart() {
+        std::thread::spawn(|| {
+            let finished = std::rc::Rc::new(std::cell::Cell::new(0));
+            wave::with_open::<u32, _>(|o| *o = Some(1));
+            let f = std::rc::Rc::clone(&finished);
+            wave::defer(Box::new(move || {
+                f.set(f.get() + 1);
+                wave::with_open::<u32, _>(Option::take);
+                Ok(())
+            }));
+            let outer = wave::queue("a test's form", vec![histogram()]);
+            let scope = wave::enter();
+            assert_eq!(wave::with_open::<u32, _>(|o| *o), None, "the job sees no open submission");
+            assert!(wave::take_queued(wave::mark_at(0)).len() == 0 && !wave::deferred_since(wave::mark_at(0)), "and nothing queued or deferred");
+            wave::with_open::<u32, _>(|o| *o = Some(2));
+            let f = std::rc::Rc::clone(&finished);
+            wave::defer(Box::new(move || {
+                f.set(f.get() + 10);
+                assert_eq!(wave::with_open::<u32, _>(Option::take), Some(2), "the job's own open submission");
+                Ok(())
+            }));
+            let inner = wave::queue("a test's form", vec![histogram()]);
+            scope.exit();
+            assert_eq!(finished.get(), 10, "the job's deferred submission ran as it left, the outer's did not");
+            assert_eq!(wave::with_open::<u32, _>(|o| *o), Some(1), "the outer open submission is back");
+            let left = wave::take_queued(wave::mark_at(0));
+            assert_eq!(left.tickets(), [outer, inner].concat(), "the job's untaken launches went to the outer wave, after its own");
+            // Not run here: the flush below runs the outer's deferred submission alone.
+            drop(left);
+            wave::flush(1).unwrap();
+            assert_eq!(finished.get(), 11, "the outer's ran at its flush");
+        })
+        .join()
+        .unwrap();
+    }
 
     /// Smoking gun 7 (t34, 2026-11-13): a level's strata may run as a job off the run's thread (decision 0113 §4), and
     /// the wave their launches join is flushed there. The job takes its waves off its thread's count (`since`) and

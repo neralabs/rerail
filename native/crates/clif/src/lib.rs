@@ -31,3 +31,5 @@ pub mod msl;
 #[cfg(feature = "ir")]
 pub mod rust;
 pub mod view;
+/// The views' entries' layout always (the facts write them); their reads in CLIF with `ir`.
+pub mod view_reads;

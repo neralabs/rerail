@@ -84,6 +84,10 @@ pub enum BlockInst {
     Load(u16),
     /// The bytes inside the stream at a delay (`block::BlockOp::Within`), from its length.
     Within(u8),
+    /// The file's positions before the stream (`block::BlockOp::Prefix`): the low `n` bits of
+    /// the first block where the file starts with `word`'s `n` bytes. From the file's first
+    /// word, compared once (`native_cpu_block::stream_start`).
+    Prefix(u8, u64),
     /// The bytes whose position is `r` mod `k` (`block::BlockOp::Phase`), from the position.
     Phase(u8, u8),
     /// Plane `j` of each byte's position (`block::BlockOp::Position`), from the position.
@@ -145,6 +149,7 @@ impl BlockNative {
                 BlockOp::Fill(a, b) => BlockInst::Fill(a, b),
                 BlockOp::BackFill(a, b) => BlockInst::BackFill(a, b),
                 BlockOp::Within(d) => BlockInst::Within(d),
+                BlockOp::Prefix(n, w) => BlockInst::Prefix(n, w),
                 BlockOp::Phase(k, r) => BlockInst::Phase(k, r),
                 BlockOp::Position(j) => BlockInst::Position(j),
                 BlockOp::Carry(a) => BlockInst::Carry(a),
@@ -191,7 +196,7 @@ impl BlockNative {
 
     /// A walk with its values renamed by `m`.
     fn walk_renamed(w: &crate::block::Walk, m: impl Fn(u16) -> u16) -> crate::block::Walk {
-        let kinds = w.kinds.iter().map(|k| crate::block::WalkKind { opener: m(k.opener), closer: m(k.closer), open: m(k.open), fill: m(k.fill), empty: k.empty.map(|(e, n)| (m(e), n)), ..*k }).collect();
+        let kinds = w.kinds.iter().map(|k| crate::block::WalkKind { opener: m(k.opener), closer: m(k.closer), open: m(k.open), fill: m(k.fill), empty: k.empty.map(|(e, n)| (m(e), n)), or: k.or.map(|(c, n)| (m(c), n)), ..*k }).collect();
         crate::block::Walk { group: w.group, hidden: m(w.hidden), kinds }
     }
 
@@ -325,10 +330,13 @@ impl BlockNative {
         }
     }
 
-    /// The output of the records' lasts extract, where their end rules give the lasts instead
-    /// (decision 0177): the CPU makes no last-byte mask for it.
+    /// The output of the records' lasts extract, where their end rules (decision 0177) or
+    /// their gaps (0411) give the lasts instead: the CPU makes no last-byte mask for it.
     pub fn ruled_lasts(&self) -> Option<usize> {
-        let r = self.records.as_ref().filter(|r| !r.rules.is_empty())?;
+        let r = self
+            .records
+            .as_ref()
+            .filter(|r| !r.rules.is_empty() || r.gap.is_some())?;
         self.extracts.get(usize::from(r.lasts)).copied()
     }
 
@@ -358,6 +366,17 @@ impl BlockNative {
         let (lift, at) = crate::native_cpu_block::loop_marks(r, &|o| bytes.can(o));
         let looped: u32 = lift.iter().chain(&at).fold(0, |a, &(k, _)| a | 1 << k);
         r.marks.iter().enumerate().filter(|&(k, m)| looped >> k & 1 == 0 && m.0 != crate::records::WORD_ALONE).map(|(_, m)| usize::from(m.0)).collect()
+    }
+
+    /// The outputs whose rows the CPU's tier 1 does not store: those the record pass makes
+    /// (`records_made`), and the totals no one reads by their rows (`rowless_totals`), each its
+    /// file's flag only. Its rows are compared to the interpreter's without them.
+    pub fn cpu_unstored(&self) -> Vec<usize> {
+        let mut v = self.records_made();
+        v.extend(self.rowless_totals());
+        v.sort_unstable();
+        v.dedup();
+        v
     }
 
     /// The outputs the CPU's token loop makes from the file's bytes where it reads them
@@ -394,17 +413,17 @@ impl BlockNative {
         v
     }
 
-    /// The totals whose words no one reads from the rows where the CPU's token loop runs
-    /// (decision 0347): a total is read as one running word, its file's flag (`Batch::results`),
-    /// and only tier 2 (`masks`), a mark, or the token loop's own reads (the skip, the end
-    /// rules', the readers', the tests') read a row. simdjson keeps its error flags so: one
-    /// register, OR-ed a block, never stored a block.
+    /// The totals whose words no one reads from the rows (decisions 0347, 0406): a total is read
+    /// as one running word, its file's flag (`Batch::results`, tier 2's `totals`), and only
+    /// tier 2 (`masks`), a mark, or the token loop's own reads (the skip, the end rules', the
+    /// readers', the tests') read a row. With no token loop, only tier 2's masks and the marks.
+    /// simdjson keeps its error flags so: one register, never stored a block.
     pub fn rowless_totals(&self) -> Vec<usize> {
         use crate::records::EndRule;
-        let Some(r) = self.records.as_ref().filter(|r| r.skip.is_some()) else {
-            return Vec::new();
-        };
         let mut read: Vec<usize> = self.masks.clone();
+        let Some(r) = self.records.as_ref() else {
+            return self.totals.iter().copied().filter(|t| !read.contains(t)).collect();
+        };
         read.extend(r.skip.map(usize::from));
         read.extend(r.marks.iter().filter(|m| m.0 != crate::records::WORD_ALONE).map(|m| usize::from(m.0)));
         read.extend(r.rules.iter().filter_map(|x| match *x {
@@ -562,7 +581,7 @@ impl BlockNative {
         let mut pure = vec![false; n];
         for x in 0..n {
             pure[x] = match self.insts[x] {
-                BlockInst::Const(_) | BlockInst::Within(_) | BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) | BlockInst::PlaneBefore(_) | BlockInst::Pair { .. } => true,
+                BlockInst::Const(_) | BlockInst::Within(_) | BlockInst::Prefix(..) | BlockInst::EqByte(_) | BlockInst::Class { .. } | BlockInst::Plane(_) | BlockInst::PlaneBefore(_) | BlockInst::Pair { .. } => true,
                 BlockInst::Not(_) | BlockInst::And(..) | BlockInst::Or(..) | BlockInst::Xor(..) | BlockInst::AndNot(..) | BlockInst::Prev(..) | BlockInst::Early(..) => self.insts[x].operands().into_iter().all(|o| pure[o]),
                 _ => false,
             };

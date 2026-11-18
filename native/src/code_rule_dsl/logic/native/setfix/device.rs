@@ -1352,7 +1352,21 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                     (Owner::Src(_), Some(view)) if ids.is_none() && view.whole() => view.src.device_view().filter(|d| d.rows == n),
                     _ => None,
                 };
-                if let Some(d) = made {
+                // A view the views' reads answer is read in place (decision 0353 step 4d): its relation holds no
+                // value, only the indexes its probes build, and the entry holds every column (the view's own).
+                let in_place = made.as_ref().and_then(|d| d.in_place.clone().map(|v| (d.view, v)));
+                if let Some((view, v)) = in_place {
+                    let ncols = rel.view.as_ref().map_or(0, |view| view.src.columns().len());
+                    let dev = mj::DevRel::view(ncols, n, v).map_err(|e| format!("{e:?}: a view of {n} rows read in place"))?;
+                    rep.in_place += 1;
+                    // By the view's device code (`device_chunk::VIEW_*`), as `view_made` counts them.
+                    crate::code_rule_dsl::prof::count(["device.view_read.node", "device.view_read.child", "device.view_read.field", "device.view_read.core", "device.view_read.axis", "device.view_read.line", "device.view_read.end_line", "device.view_read.col", "device.view_read.docof", "device.view_read.tline"].get(view as usize).copied().unwrap_or("device.view_read.other"), n);
+                    let bytes = old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.verdicts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
+                    let (texts, verdicts, mapped) = old.map_or_else(Default::default, |o| (o.texts, o.verdicts, o.mapped));
+                    res.entries.push(Entry { owner, cols: (0..ncols).collect(), dev: Rc::new(dev), indexes: Vec::new(), texts, verdicts, mapped, bytes, used: clock });
+                    res.bytes = res.bytes();
+                    res.entries.len() - 1
+                } else if let Some(d) = made {
                     let device = rerail_accel::gpu::join::device()?;
                     let block = d.block.gpu_buffer(device);
                     let dev = mj::DevRel::empty(k, n).map_err(|e| format!("{e:?}: a view of {n} rows, {k} columns"))?;
@@ -1360,6 +1374,8 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                     rep.uploads += 1;
                     rep.upload_cpu += thread_cpu() - c0;
                     let by = &mut rep.upload_by[profile::UPLOAD_MADE];
+                    // By view (`device_chunk::VIEW_*`), for the profile: what step 4 removes, view by view.
+                    crate::code_rule_dsl::prof::count(["device.view_made.node", "device.view_made.child", "device.view_made.field", "device.view_made.core", "device.view_made.axis", "device.view_made.line", "device.view_made.end_line", "device.view_made.col", "device.view_made.docof", "device.view_made.tline"].get(d.view as usize).copied().unwrap_or("device.view_made.other"), dev.bytes());
                     by.0 += dev.bytes() as u64;
                     by.1 += thread_cpu() - c0;
                     let bytes = dev.bytes() + old.as_ref().map_or(0, |o| o.texts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.verdicts.iter().map(|t| t.1.bytes()).sum::<usize>() + o.mapped.iter().map(|t| t.1.0.bytes()).sum::<usize>());
@@ -1455,7 +1471,8 @@ pub fn column_stats(cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStat
                 let owner = Owner::of(rel);
                 let e = res.entries.iter().find(|e| e.owner.same(&owner))?;
                 let at = e.cols.iter().position(|&w| w == owner_col(rel, *col))?;
-                (e.dev.rows == rel.len() - rel.ndead && at < e.dev.cols).then(|| (e.dev.clone(), at))
+                // A view read in place holds no column where it lies (its rows are its reads').
+                (e.dev.rows == rel.len() - rel.ndead && at < e.dev.cols && e.dev.view.is_none()).then(|| (e.dev.clone(), at))
             })
             .collect()
     });
@@ -1888,6 +1905,11 @@ impl<'p> Run<'p> {
         if self.arena_full() {
             return Some(format!("its texts past the device's text arena of {} bytes", arena_max()));
         }
+        // A 16z view's blocks: a read that found no room in its batch's cache read the dead entry (0353 step 4b).
+        #[cfg(target_os = "macos")]
+        if self.rels.iter().flatten().filter_map(|(r, _)| r.view.as_ref()).any(|v| v.cache_failed() > v.failed) {
+            return Some("a 16z block found no room in its batch's cache".to_owned());
+        }
         None
     }
 
@@ -1988,10 +2010,6 @@ fn run_here(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner
 }
 
 thread_local! {
-    /// The level's open command buffer (decision 0113 §3's wave): the strata placed on the device encode their joins
-    /// into it and wait for the wave, so a level's small strata go out in one commit and one wait. Its number, and
-    /// whether it is open.
-    static WAVE: RefCell<Option<(u64, mj::Batch)>> = const { RefCell::new(None) };
     /// The waves flushed, by number: their completion (or why they failed), and the device's seconds not yet
     /// counted by a stratum.
     static FLUSHED: RefCell<HashMap<u64, Result<Option<mj::Done>, String>>> = RefCell::new(HashMap::new());
@@ -2028,9 +2046,16 @@ fn shared_batch(arena: &Rc<mj::Arena>) -> Result<mj::Batch, String> {
     mj::Batch::with_shared_arena(Rc::clone(arena)).map_err(|e| format!("{e:?}"))
 }
 
-/// The thread's open wave, committed (`direct_batch`).
+/// The level's wave (decision 0113 §3): the strata placed on the device encode their joins into its batch and wait
+/// for it, so a level's strata wait once. Its number and its batch. It is the job's open submission
+/// (`lanes::wave::with_open`, decision 0386), not its thread's: a job nested on a thread opens a wave of its own, and
+/// the wave is finished by the job that opened it.
+type Wave = (u64, mj::Batch);
+
+/// The job's open wave, committed (`direct_batch`). Its batch holds no open command buffer between strata (`submit`
+/// commits before it returns, decision 0386): this commits only what a stratum's own encoding left.
 fn commit_wave() -> Result<(), String> {
-    WAVE.with_borrow_mut(|w| match w {
+    crate::code_rule_dsl::logic::lanes::wave::with_open::<Wave, _>(|w| match w {
         Some((_, wave)) => wave.commit_open().map_err(|e| format!("{e:?}")),
         None => Ok(()),
     })
@@ -2057,30 +2082,38 @@ fn submit_(rules: &[(&Plan, &JoinRule, usize)], names: &Interner) -> Result<Opti
     let rules = &some[..];
     let c0 = thread_cpu();
     let mut rep = Report { rules: rules.len() as u32, stages: rules.iter().map(|r| r.0.stages.len() as u32).sum(), ..Report::default() };
-    let opened = WAVE.with_borrow(Option::is_none);
+    use crate::code_rule_dsl::logic::lanes::wave::with_open;
+    // A process that did not make the pool (`threads::configure`: a test's) gets the job scopes at its first wave.
+    crate::code_rule_dsl::logic::lanes::wave::install_job_scope();
+    let opened = with_open::<Wave, _>(|w| w.is_none());
     if opened {
         let n = WAVES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-        WAVE.with_borrow_mut(|w| -> Result<(), String> {
+        with_open::<Wave, _>(|w| -> Result<(), String> {
             *w = Some((n, mj::Batch::new().map_err(|e| format!("{e:?}"))?));
             Ok(())
         })?;
         crate::code_rule_dsl::logic::lanes::wave::defer(Box::new(move || {
-            let Some((n, mut batch)) = WAVE.with_borrow_mut(Option::take) else { return Ok(()) };
+            let Some((n, mut batch)) = with_open::<Wave, _>(Option::take) else { return Ok(()) };
             let done = on_lane("stratum joins (a wave)", 1, || batch.finish().map_err(|e| format!("{e:?}")));
             // A failed wave fails its strata, which then run on the CPU: the flush itself goes on.
             FLUSHED.with_borrow_mut(|f| f.insert(n, done.map(Some)));
             Ok(())
         }));
     }
-    let encoded = WAVE.with_borrow_mut(|w| {
+    // Encoded and committed before it returns (decision 0386): the wave's batch holds its strata's committed command
+    // buffers, waited for once when the wave is flushed, and no open one. An open command buffer outliving this call
+    // would be held by a thread that then waits, or goes idle: past the queue's 64, every thread asking for one waits.
+    let encoded = with_open::<Wave, _>(|w| {
         let (n, batch) = w.as_mut().expect("the open wave");
-        encode_runs(rules, batch, &mut rep, names).map(|runs| (*n, runs))
+        let runs = encode_runs(rules, batch, &mut rep, names);
+        let committed = batch.commit_open().map_err(|e| format!("{e:?}"));
+        runs.and_then(|runs| committed.map(|()| (*n, runs)))
     })?;
     let (wave, runs) = encoded;
     if runs.len() < rules.len() {
         // Encoded work it will not wait for: the wave runs it and nothing reads it, but it writes the runs' buffers,
         // which the wave keeps until it is done (back in the pool, another job's would be written).
-        WAVE.with_borrow_mut(|w| w.as_mut().expect("the open wave").1.hold(Box::new(runs)));
+        with_open::<Wave, _>(|w| w.as_mut().expect("the open wave").1.hold(Box::new(runs)));
         return Ok(None);
     }
     rep.encode_cpu = thread_cpu() - c0 - rep.upload_cpu;

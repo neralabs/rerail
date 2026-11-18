@@ -64,9 +64,10 @@ pub(in crate::code_rule_dsl) enum Pass<'a> {
     /// fact case (`patterns::FACT`) tests them, so a fact settles from scratch as a pattern does.
     Fact { target: u32, rows: Vec<(u32, Vec<(u32, u32)>)> },
     Empty { target: u32 },
-    /// A roots pass whose program is a node-set formula (decision 0036 on Metal, 0365 §9): `formula` evaluated on the
-    /// device (`label_formula`) within `roots`, into the pass's scratch row, which settles as a program's does. No walk.
-    Formula { target: u32, roots: std::sync::Arc<Roots>, formula: std::sync::Arc<DeviceFormula> },
+    /// A pass whose program is a node-set formula (decision 0036 on Metal, 0365 §9, §10): `formula` evaluated on the
+    /// device (`label_formula`) into the pass's scratch row, which settles as a program's does. No walk. A roots
+    /// pass's is within `roots`; a targets pass's (`image`) is the image of its starts, which the formula holds.
+    Formula { target: u32, roots: std::sync::Arc<Roots>, formula: std::sync::Arc<DeviceFormula>, image: bool },
 }
 
 /// A formula `label_formula` evaluates (decision 0365): where its set goes (`row`, `mode`, `rule`, as `FormulaTarget`),
@@ -294,8 +295,11 @@ pub(in crate::code_rule_dsl) struct Plan<'a> {
     pub(in crate::code_rule_dsl) w_cost: Option<&'a (dyn Fn(u32, usize) -> u64 + Sync)>,
 }
 
-/// The root walks' kernels in `KERNELS`: 8 and 32 frames.
-const ROOT_KERNELS: [usize; 2] = [9, 10];
+/// The root walks' kernel in `KERNELS`, for 8 and 32 frames (`ROOT_FRAMES`, its shape's `frames`), and its tiers'
+/// names, which their dispatches and the profile keep.
+const ROOT_KERNEL: usize = 5;
+const ROOT_FRAMES: [u32; 2] = [8, 32];
+const ROOT_NAMES: [&str; 2] = ["root_records_8", "root_records_32"];
 /// Words of a root record (`root_records_*`).
 const ROOT_RECORD: usize = 20;
 /// The 32-frame root walks' pool: threads striding over the items, each a device stack of 32
@@ -318,22 +322,30 @@ fn formula_leaf(word: u32) -> bool {
 /// A walk's anchor as the device evaluates it (decision 0365): `Set::anchor` of its micro walk, its text tests kept by
 /// slot key (`DeviceFormula::texts`; the device reads the walk's row for each, every node where there is none). `None`
 /// where the walk is not a micro walk, or the anchor tests no more than a rule over codes does (`narrowing`).
-pub(in crate::code_rule_dsl) fn device_anchor(program: &Program) -> Option<std::sync::Arc<DeviceFormula>> {
+///
+/// A label `unknown` names (a recursive group's own, Q133) is read as every node, as on the CPU (`anchor_bits`).
+pub(in crate::code_rule_dsl) fn device_anchor(program: &Program, unknown: &dyn Fn(u16) -> bool) -> Option<std::sync::Arc<DeviceFormula>> {
     let walk = Micro::of(program)?;
-    let mut formula = narrowing(&compile_sets::Set::anchor(&walk.words, &|_| true))?;
+    let mut formula = narrowing(&compile_sets::Set::anchor(&walk.words, &|_| true).labels_unknown(unknown))?;
     formula.texts = (0..walk.texts.len()).map(|slot| walk.slot_key(program, slot)).collect();
     Some(std::sync::Arc::new(formula))
 }
 
-/// A fused pack's anchor: the union of its members' anchors, their text tests dropped (each member's slots are its own);
-/// `None` where one has none.
+/// A fused pack's anchor: the union of its members' anchors, `None` where one has none. Each member's text tests are
+/// kept, its slots past the members' before it, by their keys (`DeviceFormula::texts`): the device reads the row the
+/// pack's walk (or another walk) reads for the key, every node where none does.
 fn pack_anchor(programs: &[&Program]) -> Option<std::sync::Arc<DeviceFormula>> {
-    let members = programs.iter().map(|program| {
-        let set = compile_sets::Set::anchor(&Micro::of(program)?.words, &|_| false);
-        narrowing(&set).map(|_| set)
-    });
-    let union = compile_sets::Set::Or(members.collect::<Option<Vec<_>>>()?);
-    narrowing(&union).map(std::sync::Arc::new)
+    let (mut members, mut texts) = (Vec::new(), Vec::new());
+    for program in programs {
+        let walk = Micro::of(program)?;
+        let set = compile_sets::Set::anchor(&walk.words, &|_| true);
+        narrowing(&set)?;
+        members.push(set.shift_texts(u16::try_from(texts.len()).ok()?));
+        texts.extend((0..walk.texts.len()).map(|slot| walk.slot_key(program, slot)));
+    }
+    let mut union = narrowing(&compile_sets::Set::Or(members))?;
+    union.texts = texts;
+    Some(std::sync::Arc::new(union))
 }
 
 /// A roots pass's program as a device formula (decision 0036 on Metal, 0365 §9): its micro walk's formula (`Set::of`,
@@ -342,6 +354,21 @@ pub(in crate::code_rule_dsl) fn device_formula(program: &Program) -> Option<std:
     use compile_sets::device_ops;
     let walk = Micro::of(program)?;
     let formula = compile_sets::Set::of(&walk.words)?.device()?;
+    (!formula.words.iter().any(|&word| word & 255 == device_ops::TEXT)).then(|| std::sync::Arc::new(formula))
+}
+
+/// A targets pass's program as a device formula (decision 0036 on Metal, 0365 §10): the image of its starts under its
+/// micro walk (`Set::targets`, exact where the capture is the walk's last act), the starts its rule over codes (kinds
+/// and entry tests) as tests the formula reads. No text test, as `device_formula`; listed roots are not a formula's.
+pub(in crate::code_rule_dsl) fn device_targets(program: &Program, roots: &Roots) -> Option<std::sync::Arc<DeviceFormula>> {
+    use compile_sets::{Set, device_ops};
+    let Roots::Codes { kinds, entry, anchor: None, .. } = roots else { return None };
+    let walk = Micro::of(program)?;
+    let mut starts = entry.iter().map(|&(op, arg)| if op == super::super::KIND { Set::Kind(arg) } else { Set::Class(arg) }).collect::<Vec<_>>();
+    if let Some(kinds) = kinds {
+        starts.push(Set::Or(kinds.iter().map(|&kind| Set::Kind(kind)).collect()));
+    }
+    let formula = Set::targets(&walk.words, Set::And(starts))?.device()?;
     (!formula.words.iter().any(|&word| word & 255 == device_ops::TEXT)).then(|| std::sync::Arc::new(formula))
 }
 
@@ -639,6 +666,8 @@ struct Shape {
     budget: u32,
     /// The lanes a micro walk's item takes (`Runner::walk`, `ROOT_LANES`): a power of two up to 32; 0 is 1.
     lanes: u32,
+    /// A walk's frames, its stack in `stacks` (`label_micro`, `label_group`, `root_records`: the tier's).
+    frames: u32,
 }
 
 /// A walk's steps before it spills a frame, and between spills: well past a short walk's (most take
@@ -684,34 +713,7 @@ fn walk_steps_on() -> bool {
 
 /// A micro walk's words as text: what a profile names the walk by.
 fn describe_walk(tier: usize, words: &[u32]) -> String {
-    let mut out = format!("t{tier}:");
-    for &word in words {
-        let (op, mode, arg) = super::super::split(word);
-        let named = if mode == 1 { "n" } else { "" };
-        let part = match op {
-            0 => "fail".to_owned(),
-            1 => format!("kind={arg}"),
-            2 => format!("field={arg}"),
-            3 => format!("flags{mode}/{arg}"),
-            4 => format!("text{arg}"),
-            10 => format!("class={arg}"),
-            16 => format!("child{named}"),
-            17 => format!("next{named}"),
-            18 => "parent".to_owned(),
-            19 => format!("desc{named}"),
-            20 => format!("after{named}"),
-            21 => format!("save{arg}"),
-            22 => format!("load{arg}"),
-            32 => "capture".to_owned(),
-            48 => format!("fork@{arg}"),
-            49 => format!("jump@{arg}"),
-            64 => format!("emit{arg}"),
-            other => format!("op{other}/{arg}"),
-        };
-        out.push(' ');
-        out.push_str(&part);
-    }
-    out
+    format!("t{tier}: {}", super::super::compile_micro::describe(words))
 }
 
 #[repr(C)]
@@ -893,34 +895,24 @@ static SOURCE: std::sync::LazyLock<String> =
     std::sync::LazyLock::new(|| format!("{}{}{}", *TAPE_VIEW, include_str!("metal_work_queue.metal"), include_str!("metal_label_passes.metal")));
 /// Where a label kernel binds the batch's chunk block (`DocView`'s `at`): past every other buffer.
 const SLAB_SLOT: u64 = 27;
-const KERNELS: [&str; 16] = [
-    "label_sink",
-    "label_settle",
-    "label_round",
-    "label_micro",
-    "label_micro_8",
-    "label_micro_32",
-    "label_micro_deep",
-    "label_group_8",
-    "label_group_32",
-    "root_records_8",
-    "root_records_32",
-    "label_group_64",
-    "label_group_128",
-    "label_group_256",
-    "label_formula",
-    "label_leaves",
-];
+/// A walk's stack tiers are one kernel each (`label_micro`, `label_group`, `root_records`), their frames the dispatch's
+/// shape's (`Shape::frames`), not a template's: an Apple GPU's compiler compiled each tier's copy of the walk on its own,
+/// 8–10 s each for format 16 (work queue Q181).
+const KERNELS: [&str; 8] = ["label_sink", "label_settle", "label_round", "label_micro", "label_group", "root_records", "label_formula", "label_leaves"];
 /// `label_formula` and `label_leaves` in `KERNELS` (decision 0365).
-const FORMULA_KERNEL: usize = 14;
-const LEAVES_KERNEL: usize = 15;
+const FORMULA_KERNEL: usize = 6;
+const LEAVES_KERNEL: usize = 7;
 /// `label_formula`'s threads a (file, formula).
 const FORMULA_WIDTH: u64 = 128;
+/// `label_formula`'s profile words: a step kind's members by its op (to `REACH_CHAIN`), and its reads and groups (16–20).
+const FORMULA_STATS: usize = compile_sets::device_ops::REACH_CHAIN as usize + 1;
 /// `label_formula`'s scratch: the formulas of a dispatch each have their own, so a level's formulas take as many
 /// dispatches as this holds.
 const FORMULA_SCRATCH_BYTES: usize = 32 << 20;
-/// The fused group kernels in `KERNELS` (`Runner::group`): 8, 32, 64, 128 and 256 frames a walk.
-const GROUP_KERNELS: [usize; 5] = [7, 8, 11, 12, 13];
+/// The fused group kernel in `KERNELS` (`Runner::group`), for 8, 32, 64, 128 and 256 frames a walk (`GROUP_FRAMES`),
+/// and its tiers' names, which their dispatches and the profile keep.
+const GROUP_KERNEL: usize = 4;
+const GROUP_NAMES: [&str; 5] = ["label_group_8", "label_group_32", "label_group_64", "label_group_128", "label_group_256"];
 /// The frames of each fused group kernel (`GROUP_KERNELS`). A walk takes the fewest that hold its
 /// static depth, at most the loop tier's 64, which a loop walk (no static depth) takes, as
 /// `label_micro` does. A run whose walk outgrows them runs again deep (`Runner::deep`), where the
@@ -951,8 +943,9 @@ fn tier(walk: &Micro) -> usize {
     }
 }
 
-/// Each tier's kernel in `KERNELS`.
-const TIER_KERNELS: [usize; 3] = [4, 5, 3];
+/// The micro walks' kernel in `KERNELS`, every tier's, and each tier's name, which its dispatches and the profile keep.
+const MICRO_KERNEL: usize = 3;
+const TIER_NAMES: [&str; 3] = ["label_micro_8", "label_micro_32", "label_micro"];
 
 /// The loop tier's threads (`MICRO_POOL`), each striding over the items with a 64-frame stack
 /// of 17 words a frame (`MicroFrame`) in `Runner::stacks`. The pool's threads are the kernel's
@@ -984,8 +977,8 @@ fn stack_lanes(frames: usize, words: usize) -> usize {
 /// Frames a micro tier's walks hold (`TIER_KERNELS`).
 const TIER_FRAMES: [usize; 3] = [8, 32, 64];
 const MICRO_DEEP_POOL: usize = 2048;
-/// The deep pool's kernel in `KERNELS`.
-const DEEP_KERNEL: usize = 6;
+/// The deep pool's frames (`label_micro_deep`).
+const MICRO_DEEP_FRAMES: usize = 128;
 /// The launches an evaluation's encoding stays within (`metal_launch_budget`, list step 13): a
 /// recursive group's rounds are encoded from what the plan's fixed launches leave, and a plan
 /// that cannot fit (its fixed launches and two rounds a group, or a rerun) is refused before it
@@ -1029,7 +1022,7 @@ static PATTERN_PIPELINES: LazyLock<Mutex<HashMap<(String, u32), ComputePipelineS
 
 /// A pipeline of a source over [`TAPE_VIEW`] for a batch of tapes in `format` (0: mixed).
 fn pipeline_of(source: &str, name: &str, format: u32) -> Result<ComputePipelineState, Error> {
-    rerail_metal::runtime::pipeline_named_constant(source, name, Some(format))
+    rerail_metal::runtime::pipeline_named_fixed(source, name, Some(format))
 }
 
 /// Releases the compiled label and pattern kernels (the residency's drop).
@@ -1047,12 +1040,24 @@ fn pipelines(format: u32) -> Result<Vec<ComputePipelineState>, Error> {
     if let Some(pipelines) = cached.get(&format) {
         return Ok(pipelines.clone());
     }
-    let pipelines = KERNELS
-        .iter()
-        .map(|name| pipeline_of(&SOURCE, name, format))
-        .collect::<Result<Vec<_>, _>>()?;
+    // The library once (its front end, with the first kernel), then the others side by side: each pipeline is a
+    // back-end compile of its own, and Metal's compiler service runs them at once (work queue Q181: format 16's took 67
+    // s one after another, 23 s together, on a loaded M3 Max). A kernel that fails to compile panics on its thread,
+    // and the panic goes on here (decision 0382).
+    let first = pipeline_of(&SOURCE, KERNELS[0], format)?;
+    let rest = std::thread::scope(|scope| {
+        let compiles = KERNELS[1..].iter().map(|name| scope.spawn(move || pipeline_of(&SOURCE, name, format))).collect::<Vec<_>>();
+        compiles.into_iter().map(|compile| compile.join().unwrap_or_else(|panic| std::panic::resume_unwind(panic))).collect::<Result<Vec<_>, _>>()
+    })?;
+    let pipelines = std::iter::once(first).chain(rest).collect::<Vec<_>>();
     cached.insert(format, pipelines.clone());
     Ok(pipelines)
+}
+
+/// The label kernels' source and names (`SOURCE`, `KERNELS`), for the compile probe (work queue Q181).
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn label_source() -> (&'static str, &'static [&'static str]) {
+    (&SOURCE, &KERNELS)
 }
 
 /// Compiles every label kernel and the fact-only pattern kernel for a batch of `format` (0: mixed): how many of each.
@@ -1077,6 +1082,25 @@ fn pattern_pipelines(patterns: &[&PackedPattern], facts: bool, format: u32) -> R
         names.extend(group_names);
     }
     Ok(Some((pipelines, names)))
+}
+
+/// The sources of the pattern kernels a plan of `patterns` compiles (`pattern_pipelines`), in its order.
+pub(in crate::code_rule_dsl) fn pattern_sources(patterns: &[&PackedPattern], facts: bool) -> Vec<String> {
+    if patterns.is_empty() && !facts {
+        return Vec::new();
+    }
+    let groups = patterns.chunks(patterns::GROUP).collect::<Vec<_>>();
+    let groups = if groups.is_empty() { vec![&[][..]] } else { groups };
+    groups.into_iter().enumerate().map(|(group, members)| patterns::source(members, group * patterns::GROUP).0).collect()
+}
+
+/// Whether the pattern kernels of `sources` (`pattern_sources`) are at hand without a compile (decision 0395):
+/// otherwise the wave runs on the CPU, and the kernels are compiled as the mode says
+/// (`rerail_accel::gpu::kernels::Mode`). The label kernels are the interpreter's, fixed (shipped): never pending.
+/// `format` is the batch's tape format, the kernels' function constant (`pattern_pipeline`).
+pub(in crate::code_rule_dsl) fn patterns_ready(sources: &[String], format: u32) -> bool {
+    // Each asked, so every one missing is recorded, not only the first.
+    sources.iter().map(|source| rerail_accel::gpu::kernels::ready(source, patterns::KERNEL, Some(format)).is_some()).fold(true, |all, ready| all && ready)
 }
 
 /// One group's pattern kernel, compiled once per distinct source.
@@ -1630,6 +1654,10 @@ fn encode(
             }
             continue;
         }
+        // The group's anchors, its own labels read as every node (Q133): once, before its sweeps or rounds.
+        for level in levels {
+            runner.anchors(level)?;
+        }
         if sweeps(levels) {
             let reverse = complements(levels);
             for round in 0..rounds {
@@ -1662,8 +1690,11 @@ fn encode(
     crate::code_rule_dsl::prof::time("gpu.flush", || runner.flush())?;
     mark("flushed");
     for stats in &runner.formula_stats {
-        let words = unsafe { std::slice::from_raw_parts(stats.buffer.contents().cast::<u32>(), 21) };
-        let names = ["", "", "", "", "", "", "", "child", "descendant", "parent", "following", "chain", "", "", "child_in", "descendant_in", "following_in"];
+        let words = unsafe { std::slice::from_raw_parts(stats.buffer.contents().cast::<u32>(), FORMULA_STATS) };
+        let mut names = [""; FORMULA_STATS];
+        for (op, name) in [(7, "child"), (8, "descendant"), (9, "parent"), (10, "following"), (11, "chain"), (14, "child_in"), (15, "descendant_in"), (16, "following_in"), (23, "reach_descendant"), (24, "reach_following"), (25, "reach_chain")] {
+            names[op] = name;
+        }
         for (op, name) in names.iter().enumerate().filter(|(_, name)| !name.is_empty()) {
             crate::code_rule_dsl::prof::count_named(format!("formula.members.{name}"), words[op] as usize);
         }
@@ -1923,9 +1954,9 @@ impl Runner<'_> {
     }
 
     /// One label kernel over `threads`, its buffers bound in order and `shape` after them.
-    fn kernel(&mut self, pipeline: usize, buffers: &[(&Buffer, u64)], shape: Shape, threads: usize) {
+    fn kernel(&mut self, pipeline: usize, label: &'static str, buffers: &[(&Buffer, u64)], shape: Shape, threads: usize) {
         let state = self.kernels[pipeline].clone();
-        self.dispatch(&state, KERNELS[pipeline], buffers, shape, threads);
+        self.dispatch(&state, label, buffers, shape, threads);
     }
 
     /// The clause's pattern kernel over the level's (pattern, root) items.
@@ -1991,7 +2022,7 @@ impl Runner<'_> {
             finish: 1,
             ..self.shape()
         };
-        self.kernel(2, &[(&flags, 0), (&head, 0)], shape, 1);
+        self.kernel(2, KERNELS[2], &[(&flags, 0), (&head, 0)], shape, 1);
     }
 
     /// Every level's batch, built once, and one workspace for all of them, sized before anything
@@ -2300,6 +2331,9 @@ impl Runner<'_> {
                 table.extend(rules);
                 Ok::<_, Error>(table)
             }).transpose()?;
+            // The label batch's rows are the labels' (`tapes`): W's matchers' programs have no capture predicates, so
+            // no contains test's row (`PackedBatch::contains_rows`) is left out.
+            assert_eq!(batch.contains_row_count(), 0, "a label pass's program with a contains test");
             batch.header.supertype_count = self.tapes.supertype_count;
             let (lanes, states) = if sweep.is_some() { WIDE } else { self.lanes };
             batch.state_cap = states;
@@ -2390,11 +2424,12 @@ impl Runner<'_> {
                     let (rule, _) = self.root_table.at(roots)?;
                     list.push(FormulaJob { formula: std::sync::Arc::clone(anchor), row, mode, rule, texts: texts(anchor) });
                 }
-                Pass::Formula { roots, formula, .. } => {
-                    crate::code_rule_dsl::prof::count("gpu.formula_passes", 1);
+                Pass::Formula { roots, formula, image, .. } => {
+                    crate::code_rule_dsl::prof::count(if *image { "gpu.formula_images" } else { "gpu.formula_passes" }, 1);
                     let (rule, _) = self.root_table.at(roots)?;
                     let row = at as u32 * self.words as u32;
-                    list.push(FormulaJob { formula: std::sync::Arc::clone(formula), row, mode: 2, rule, texts: texts(formula) });
+                    let mode = if *image { 3 } else { 2 };
+                    list.push(FormulaJob { formula: std::sync::Arc::clone(formula), row, mode, rule, texts: texts(formula) });
                 }
                 _ => {}
             }
@@ -2555,7 +2590,7 @@ impl Runner<'_> {
         let rules = self.root_words.as_ref().ok_or(Error::BackendFailure)?.buffer.clone();
         // Profiling (`RERAIL_PROF`): each step kind's members, the parent and child reads, the (file, formula)s.
         let profile = crate::code_rule_dsl::prof::on();
-        let stats = MappedBuffer::zeroed::<u32>(self.device, if profile { 21 } else { 1 })?;
+        let stats = MappedBuffer::zeroed::<u32>(self.device, if profile { FORMULA_STATS } else { 1 })?;
         for first in (0..count).step_by(per) {
             let formulas = per.min(count - first);
             let shape = Shape { item_count: first as u32, target_count: formulas as u32, queue: stride as u32, profile: u32::from(profile), ..base };
@@ -2720,6 +2755,7 @@ impl Runner<'_> {
         };
         self.kernel(
             1,
+            KERNELS[1],
             &[(&labels, 8), scratch, (&flags, 0), (&settles, 0), counts],
             shape,
             target_count * self.words,
@@ -2963,7 +2999,7 @@ impl Runner<'_> {
         let items = self.root_words.as_ref().ok_or(Error::BackendFailure)?.buffer.clone();
         let texts = if texts.is_empty() { self.upload(&[0_u32])? } else { self.upload(&texts)? };
         let (group_levels, ops) = (self.upload(&shape_levels)?, self.upload(&ops)?);
-        let shape = Shape { target_count: shape_levels.len() as u32, steps, ..self.shape() };
+        let mut shape = Shape { target_count: shape_levels.len() as u32, steps, ..self.shape() };
         let tapes = &self.tapes;
         let buffers = [
             tapes.docs.buffer.clone(),
@@ -2981,7 +3017,8 @@ impl Runner<'_> {
         // The fewest frames that hold its deepest walk; the kernel's stacks in device memory, one per
         // thread launched.
         let depth = GROUP_FRAMES.iter().position(|&frames| deepest <= frames).expect("checked above");
-        let pipeline = GROUP_KERNELS[depth];
+        let (pipeline, label) = (GROUP_KERNEL, GROUP_NAMES[depth]);
+        shape.frames = GROUP_FRAMES[depth] as u32;
         let mut buffers = buffers.to_vec();
         if self.group_stacks[depth].is_none() {
             let words = GROUP_STACK_WORDS / 32 * GROUP_FRAMES[depth];
@@ -2990,8 +3027,8 @@ impl Runner<'_> {
         buffers.push(self.group_stacks[depth].as_ref().expect("group stacks").buffer.clone());
         let state = self.kernels[pipeline].clone();
         let encoder = self.command.new_compute_command_encoder();
-        encoder.set_label(KERNELS[pipeline]);
-        crate::code_rule_dsl::prof::count_named(format!("kernel.{}", KERNELS[pipeline]), 1);
+        encoder.set_label(label);
+        crate::code_rule_dsl::prof::count_named(format!("kernel.{label}"), 1);
         encoder.set_compute_pipeline_state(&state);
         // Scratch (5) and the tallies (8) are parts of the label state.
         let (scratch_at, counts_at) = (self.tapes.scratch_at, self.tapes.counts_at);
@@ -3012,8 +3049,8 @@ impl Runner<'_> {
         encoder.end_encoding();
         self.encoded = true;
         self.outcome.dispatches += 1;
-        self.split(KERNELS[pipeline]);
-        self.split(KERNELS[pipeline]);
+        self.split(label);
+        self.split(label);
         Ok(true)
     }
 
@@ -3052,7 +3089,8 @@ impl Runner<'_> {
             let rows = (0..walk.texts.len()).map(|slot| text_row(&walk, program, slot, self.files, &bases, self.words)).collect::<Option<Vec<_>>>()?;
             Some((walk, rows))
         };
-        let mut packs = Vec::<(RootsPack, Micro, Vec<std::sync::Arc<Vec<u32>>>, bool)>::new();
+        // A pack: its walk, text rows and their keys (`Micro::slot_key`), and set mode.
+        let mut packs = Vec::<(RootsPack, Micro, Vec<std::sync::Arc<Vec<u32>>>, Vec<String>, bool)>::new();
         let mut packed = vec![false; jobs.programs.len()];
         {
             let mut by = std::collections::BTreeMap::<u32, Vec<usize>>::new();
@@ -3080,7 +3118,8 @@ impl Runner<'_> {
                         .map(|&at| jobs.starts[at].iter().map(|starts| starts.iter().enumerate().map(|(task, &start)| (start, task as u32)).collect()).collect())
                         .collect();
                     crate::code_rule_dsl::prof::count("gpu.root_packed", chunk.len());
-                    packs.push((RootsPack { members: chunk.to_vec(), emits: fused.emits, captures: fused.captures, tasks }, walk, rows, set));
+                    let keys = (0..walk.texts.len()).map(|slot| walk.slot_key(&fused.program, slot)).collect();
+                    packs.push((RootsPack { members: chunk.to_vec(), emits: fused.emits, captures: fused.captures, tasks }, walk, rows, keys, set));
                 }
             }
         }
@@ -3106,7 +3145,7 @@ impl Runner<'_> {
                 slot_rows.insert(walk.slot_key(program, slot), text_start + slot as u32);
             }
             // The fourth word: set mode with one label, so the walk ends at its first emit.
-            let anchor = anchor_of(device_anchor(program));
+            let anchor = anchor_of(device_anchor(program, &|_| false));
             passes.push([words.len() as u32, walk.words.len() as u32, text_start, u32::from(walk.key_stop()), anchor]);
             longest = longest.max(walk.words.len());
             match &self.label_rows {
@@ -3126,10 +3165,13 @@ impl Runner<'_> {
                 tiers[tier].extend(starts.iter().enumerate().map(|(task, &start)| [at as u32, file as u32, task as u32, bases[file] + start]));
             }
         }
-        for (index, (pack, walk, rows, set)) in packs.iter().enumerate() {
+        for (index, (pack, walk, rows, keys, set)) in packs.iter().enumerate() {
             let pass = (jobs.programs.len() + index) as u32;
             let text_start = (texts.len() / self.words) as u32;
             rows.iter().for_each(|row| texts.extend_from_slice(row));
+            for (slot, key) in keys.iter().enumerate() {
+                slot_rows.entry(key.clone()).or_insert(text_start + slot as u32);
+            }
             let pad = if *set { 1 + pack.emits.len() as u32 } else { 0 };
             // The union of its members' anchors: none where one has none.
             let members = pack.members.iter().map(|&at| jobs.programs[at]).collect::<Vec<_>>();
@@ -3207,6 +3249,7 @@ impl Runner<'_> {
                 target_count: capacity as u32,
                 round: offset as u32,
                 steps,
+                frames: ROOT_FRAMES[tier.min(1)],
                 ..self.shape()
             };
             let tapes = &self.tapes;
@@ -3226,10 +3269,10 @@ impl Runner<'_> {
                 // pooled stacks, or `ROOT_POOL` lanes of 32.
                 let stacks = self.stacks()?;
                 let threads = if tier == 0 { tier_items.len().min(stack_lanes(8, 31)) } else { tier_items.len().min(ROOT_POOL) };
-                let kernel = ROOT_KERNELS[tier.min(1)];
+                let (kernel, label) = (ROOT_KERNEL, ROOT_NAMES[tier.min(1)]);
                 let state = self.kernels[kernel].clone();
                 let encoder = self.command.new_compute_command_encoder();
-                encoder.set_label(KERNELS[kernel]);
+                encoder.set_label(label);
                 encoder.set_compute_pipeline_state(&state);
                 for (index, (buffer, offset)) in buffers.iter().enumerate() {
                     encoder.set_buffer(index as u64, Some(buffer), *offset);
@@ -3242,7 +3285,7 @@ impl Runner<'_> {
                 encoder.end_encoding();
                 self.encoded = true;
                 self.outcome.dispatches += 1;
-                self.split(KERNELS[kernel]);
+                self.split(label);
             }
             offset += tier_items.len() as u64;
         }
@@ -3311,12 +3354,13 @@ impl Runner<'_> {
         }
         let lanes = TIER_LANES[tier];
         shape.lanes = lanes as u32;
-        let (pipeline, threads) = match tier {
-            2 if self.deep => (DEEP_KERNEL, (threads * lanes).min(MICRO_DEEP_POOL)),
-            2 => (TIER_KERNELS[2], (threads * lanes).min(MICRO_POOL)),
-            _ => (TIER_KERNELS[tier], (threads * lanes).min(stack_lanes(TIER_FRAMES[tier], 17))),
+        let (label, frames, threads) = match tier {
+            2 if self.deep => ("label_micro_deep", MICRO_DEEP_FRAMES, (threads * lanes).min(MICRO_DEEP_POOL)),
+            2 => (TIER_NAMES[2], TIER_FRAMES[2], (threads * lanes).min(MICRO_POOL)),
+            _ => (TIER_NAMES[tier], TIER_FRAMES[tier], (threads * lanes).min(stack_lanes(TIER_FRAMES[tier], 17))),
         };
-        self.kernel(pipeline, &buffers, shape, threads);
+        shape.frames = frames as u32;
+        self.kernel(MICRO_KERNEL, label, &buffers, shape, threads);
         self.walk_bind = None;
         }
         Ok(())
@@ -3362,6 +3406,7 @@ impl Runner<'_> {
         };
         self.kernel(
             0,
+            KERNELS[0],
             &[
                 (&scheduler, 0),
                 (&results, 0),

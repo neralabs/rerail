@@ -2,8 +2,10 @@
 //! `metal_tape.metal`'s hand port.
 //!
 //! A read's function takes the tape (`device const uchar* t`, where the view's offsets count from: the
-//! document's first byte in its batch's block) and its view as u32s (`thread const uint* v`, the device's `DocView`, `at` first), then its own
-//! parameters. In the body the tape and the view are byte offsets from those pointers, 0 where they come in, so
+//! document's first byte in its batch's block) and its view as u32s (`CLIF_VIEW_SPACE const uint* v`: `thread` unless a
+//! kernel source defines it `device`, as the join kernels do, which read each document's view where the batch's
+//! directory holds it; the device's `DocView`, `at` first), then its own parameters. In the body the tape and the view
+//! are byte offsets from those pointers, 0 where they come in, so
 //! an address the read computes is an offset: a load of the view (marked aligned: its fields) reads `v`, a load of
 //! the tape reads `t`, at any alignment (two aligned words shifted together where it is not aligned to its size;
 //! a slab lays the document's source after its tape, so the second word lies in it).
@@ -46,6 +48,9 @@ fn ty(t: ir::Type) -> Result<(&'static str, &'static str), String> {
 /// kernel source may define before the reads, as the label passes' does to make the format a constant). Guarded,
 /// so a kernel may include the reads of several families.
 pub const HELPERS: &str = "\
+#ifndef CLIF_VIEW_SPACE
+#define CLIF_VIEW_SPACE thread
+#endif
 #ifndef clif_view
 #define clif_view(v,a) (v)[(a)/4u]
 #endif
@@ -63,15 +68,41 @@ inline ushort clif_u16(device const uchar* t,uint a){return (a&1u)==0u?*(device 
 inline uint clif_u32(device const uchar* t,uint a){return clif_lo(t,a);}
 inline ulong clif_u64(device const uchar* t,uint a){return clif_word(t,a);}
 #endif
+#ifndef CLIF_CACHE_HELPERS
+#define CLIF_CACHE_HELPERS 1
+inline ulong clif_cword(device const uchar* t,ulong a){device coherent(device) const ulong* w=(device coherent(device) const ulong*)(t+(a&~7ul));uint s=uint(a&7ul)*8u;return s==0u?w[0]:(w[0]>>s)|(w[1]<<(64u-s));}
+inline uchar clif_c8(device const uchar* t,ulong a){return *(device coherent(device) const uchar*)(t+a);}
+inline ushort clif_c16(device const uchar* t,ulong a){return (a&1ul)==0ul?*(device coherent(device) const ushort*)(t+a):ushort(clif_cword(t,a));}
+inline uint clif_c32(device const uchar* t,ulong a){return (a&3ul)==0ul?*(device coherent(device) const uint*)(t+a):uint(clif_cword(t,a));}
+inline ulong clif_c64(device const uchar* t,ulong a){return clif_cword(t,a);}
+inline void clif_st8(device const uchar* t,ulong a,ulong x){*(device coherent(device) uchar*)(t+a)=uchar(x);}
+inline void clif_stw(device const uchar* t,ulong a,ulong x,uint n){device coherent(device) ulong* w=(device coherent(device) ulong*)(t+(a&~7ul));uint s=uint(a&7ul)*8u;ulong m=n==64u?~0ul:((1ul<<n)-1ul);x&=m;w[0]=(w[0]&~(m<<s))|(x<<s);if(s+n>64u){uint r=64u-s;w[1]=(w[1]&~(m>>r))|(x>>r);}}
+inline void clif_st16(device const uchar* t,ulong a,ulong x){if((a&1ul)==0ul)*(device coherent(device) ushort*)(t+a)=ushort(x);else clif_stw(t,a,x,16u);}
+inline void clif_st32(device const uchar* t,ulong a,ulong x){if((a&3ul)==0ul)*(device coherent(device) uint*)(t+a)=uint(x);else clif_stw(t,a,x,32u);}
+inline void clif_st64(device const uchar* t,ulong a,ulong x){if((a&7ul)==0ul)*(device coherent(device) ulong*)(t+a)=x;else clif_stw(t,a,x,64u);}
+inline uint clif_ald(device const uchar* t,ulong a){return atomic_load_explicit((device atomic_uint*)(t+a),memory_order_relaxed);}
+inline void clif_ast(device const uchar* t,ulong a,uint x){atomic_store_explicit((device atomic_uint*)(t+a),x,memory_order_relaxed);}
+inline uint clif_aadd(device const uchar* t,ulong a,uint x){return atomic_fetch_add_explicit((device atomic_uint*)(t+a),x,memory_order_relaxed);}
+// A strong compare-and-swap: the value seen, which is `e` where it swapped (a weak one's spurious failure tried again,
+// a bounded number of times, then reported as a value other than `e`).
+inline uint clif_acas(device const uchar* t,ulong a,uint e,uint n){for(uint k=0u;k<64u;k++){uint x=e;if(atomic_compare_exchange_weak_explicit((device atomic_uint*)(t+a),&x,n,memory_order_relaxed,memory_order_relaxed))return e;if(x!=e)return x;}return ~e;}
+inline void clif_fence(){atomic_thread_fence(mem_flags::mem_device,memory_order_seq_cst,thread_scope_device);}
+#endif
 ";
 
 /// The reads `funcs` of `family` (by their user name's index, each with its name) as MSL functions, `prefix` before
 /// each name: declarations first, so a read may call one defined after it.
 pub fn translate_reads(funcs: &[(u32, ir::Function, &str)], prefix: &str, family: Family) -> Result<String, String> {
-    let named = |id: u32| funcs.iter().find(|(f, ..)| *f == id).map(|(.., n)| format!("{prefix}{n}")).ok_or(format!("a call of u0:{id}, no read"));
+    // A read of another family (a view read's calls of the tape's and the numbering's) is named by its place in
+    // `READS`, defined in its own family's source.
+    let named = |id: u32| {
+        funcs.iter().find(|(f, ..)| *f == id).map(|(.., n)| format!("{prefix}{n}")).or_else(|| crate::reads::READS.get(id as usize).filter(|read| read.family != family).map(|read| format!("{prefix}{}", read.name))).ok_or(format!("a call of u0:{id}, no read"))
+    };
     let mut out = String::from(HELPERS);
     let mut bodies = String::new();
     for (id, f, n) in funcs {
+        // Each read in its own family (a view read's source holds the lines' reads it calls too).
+        let family = crate::reads::READS.get(*id as usize).map_or(family, |read| read.family);
         let signature = signature(f, &format!("{prefix}{n}"), family)?;
         writeln!(out, "{signature};").unwrap();
         writeln!(bodies, "{signature}{{").unwrap();
@@ -115,7 +146,9 @@ fn low_words(f: &ir::Function, family: Family) -> std::collections::HashSet<ir::
                         Opcode::Ishl => k == 1 || result_low,
                         Opcode::Ushr | Opcode::Sshr => k == 1,
                         Opcode::Ireduce => true,
-                        Opcode::Load | Opcode::Uload8 | Opcode::Uload16 | Opcode::Uload32 => k == 0,
+                        // A load of the tape (read-only, below 4 GiB of it); a cache's (decision 0353 step 4b) may lie
+                        // anywhere from it.
+                        Opcode::Load | Opcode::Uload8 | Opcode::Uload16 | Opcode::Uload32 => k == 0 && data.memflags().is_some_and(|m| m.readonly()),
                         Opcode::Select => k != 0 && result_low,
                         // A call passes the tape and the view on as `t` and `v`, not their offsets (`instruction`).
                         Opcode::Call => k < 2,
@@ -154,8 +187,9 @@ fn low_words(f: &ir::Function, family: Family) -> std::collections::HashSet<ir::
 /// The pointers a read of `family` takes, as MSL's parameters and as a call passes them on.
 fn pointers(family: Family) -> (&'static str, &'static str) {
     match family {
-        Family::Tape => ("device const uchar* t,thread const uint* v", "t,v"),
-        Family::Relation => ("device const uchar* t,ulong a0", "t"),
+        Family::Tape => ("device const uchar* t,CLIF_VIEW_SPACE const uint* v", "t,v"),
+        Family::Relation | Family::Lines => ("device const uchar* t,ulong a0", "t"),
+        Family::View => ("device const uchar* t,ulong a0,device const uchar* tt,CLIF_VIEW_SPACE const uint* v,device const uchar* ll", "t"),
     }
 }
 
@@ -210,7 +244,8 @@ fn body(out: &mut String, f: &ir::Function, named: &dyn Fn(u32) -> Result<String
     // The family's pointers are offsets from `t` (and `v`): a relation's descriptor is its offset from `t`. The
     // read's own parameters are its arguments.
     for (k, &p) in dfg.block_params(entry).iter().enumerate() {
-        if family == Family::Relation && k == 0 {
+        if family != Family::Tape && k == 0 {
+            // The descriptor: its offset from `t`.
             writeln!(out, " {}=a0;", name(p)).unwrap();
         } else if k < family.pointers() {
             writeln!(out, " {}=0;", name(p)).unwrap();
@@ -637,6 +672,11 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
             format!("({p}+ulong(long({off})))")
         }
     };
+    // A cache's address (decision 0353 step 4b): 64 bits, its offset added as a signed one.
+    let wide_addr = |p: &str| -> String {
+        let off = data.load_store_offset().unwrap_or(0);
+        if off == 0 { format!("ulong({p})") } else { format!("(ulong({p})+ulong(long({off})))") }
+    };
     Ok(match op {
         Opcode::Iconst => set(k(imm()?)),
         Opcode::Iadd => set(format!("{}+{}", args[0], args[1])),
@@ -675,6 +715,8 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         Opcode::Ctz => set(format!("{u}(ctz({}))", args[0])),
         Opcode::Umin => set(format!("min({},{})", args[0], args[1])),
         Opcode::Umax => set(format!("max({},{})", args[0], args[1])),
+        Opcode::Smin => set(format!("{u}(min({s}({}),{s}({})))", args[0], args[1])),
+        Opcode::Smax => set(format!("{u}(max({s}({}),{s}({})))", args[0], args[1])),
         Opcode::Icmp | Opcode::IcmpImm => {
             let cc = match data {
                 InstructionData::IntCompare { cond, .. } | InstructionData::IntCompareImm { cond, .. } => *cond,
@@ -694,7 +736,11 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
                 Opcode::Uload32 => 32,
                 _ => bits,
             };
-            if aligned && family == Family::Relation {
+            if family == Family::View && !aligned {
+                return Err("a view read's load of the tape: the tape's reads make them".into());
+            }
+            let readonly = data.memflags().is_some_and(|m| m.readonly());
+            if aligned && family != Family::Tape {
                 // The block's own words, at their alignment.
                 let t = match size {
                     8 => "uchar",
@@ -709,6 +755,9 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
                     return Err(format!("a load of the view of {size} bits"));
                 }
                 set(format!("{u}(clif_view(v,{}))", addr(&args[0])))
+            } else if !readonly {
+                // A cache's (decision 0353 step 4b), which other threads write: coherent across the device.
+                set(format!("{u}(clif_c{size}(t,{}))", wide_addr(&args[0])))
             } else if result_low && size == 64 {
                 // The low word of a little-endian 64-bit load is the 32-bit load at its address.
                 set(format!("uint(clif_u32(t,{}))", addr(&args[0])))
@@ -716,6 +765,24 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
                 set(format!("{u}(clif_u{size}(t,{}))", addr(&args[0])))
             }
         }
+        // A cache's stores, atomics and fences (decision 0353 step 4b): of the tape's family, at offsets from `t`.
+        Opcode::Store | Opcode::Istore8 | Opcode::Istore16 | Opcode::Istore32 => {
+            let bits = match op {
+                Opcode::Istore8 => 8,
+                Opcode::Istore16 => 16,
+                Opcode::Istore32 => 32,
+                _ => dfg.value_type(dfg.inst_args(inst)[0]).bits(),
+            };
+            format!("clif_st{bits}(t,{},ulong({}));", wide_addr(&args[1]), args[0])
+        }
+        Opcode::AtomicLoad => set(format!("clif_ald(t,{})", wide_addr(&args[0]))),
+        Opcode::AtomicStore => format!("clif_ast(t,{},uint({}));", wide_addr(&args[1]), args[0]),
+        Opcode::AtomicRmw => {
+            let InstructionData::AtomicRmw { op: ir::AtomicRmwOp::Add, .. } = data else { return Err("an atomic other than an add".into()) };
+            set(format!("clif_aadd(t,{},uint({}))", wide_addr(&args[0]), args[1]))
+        }
+        Opcode::AtomicCas => set(format!("clif_acas(t,{},uint({}),uint({}))", wide_addr(&args[0]), args[1], args[2])),
+        Opcode::Fence => "clif_fence();".to_owned(),
         Opcode::Call => {
             let InstructionData::Call { func_ref, .. } = data else { return Err("a call of no function".into()) };
             let callee = match &dfg.ext_funcs[*func_ref].name {
@@ -724,10 +791,16 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
             };
             // A read's call passes its pointers on: the callee's offsets count from the same ones. (A relation's read
             // passes `t` and the callee's descriptor, an offset from it.)
-            let more: Vec<&String> = args.iter().skip(family.pointers()).collect();
-            let pointers = match family {
-                Family::Relation => format!("t,{}", args[0]),
-                Family::Tape => pointers(family).1.to_owned(),
+            // A view read's: the tape's reads take its tape (`tt`, `v`), the numbering's the descriptor it computed.
+            let to = crate::reads::READS.get(callee as usize).map_or(family, |read| read.family);
+            let more: Vec<&String> = args.iter().skip(to.pointers()).collect();
+            let pointers = match (family, to) {
+                (Family::View, Family::Tape) => "tt,v".to_owned(),
+                (Family::View, Family::Lines) => "ll,0".to_owned(),
+                (Family::View, Family::View) => format!("t,{},tt,v,ll", args[0]),
+                (_, Family::Relation) => format!("t,{}", args[0]),
+                (Family::Tape, _) => pointers(family).1.to_owned(),
+                (from, to) => return Err(format!("a {from:?} read's call of a {to:?} read")),
             };
             let call = format!("{}({pointers}{}{})", named(callee)?, if more.is_empty() { "" } else { "," }, more.iter().map(|a| a.as_str()).collect::<Vec<_>>().join(","));
             match results.len() {

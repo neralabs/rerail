@@ -345,7 +345,7 @@ struct Scratch {
     numbers: Option<(metal::Buffer, usize)>,
     codes: Option<(metal::Buffer, usize)>,
     tables: Option<(metal::Buffer, usize)>,
-    /// `predict_values`' next prediction, committed ahead and waiting on `event` (`Armed`), on a queue of its own:
+    /// `predict_values`' next prediction, committed ahead and waiting on `event` (`Armed`), on the process's waiting queue (`gpu::shared`):
     /// a command buffer waiting on an event holds back the ones its queue commits after it.
     armed: Option<Armed>,
     armed_queue: Option<MetalComputeQueue>,
@@ -362,6 +362,9 @@ struct Armed {
     /// Each column's kind (categorical), and the code tables' room, as armed.
     categorical: Vec<bool>,
     tables: usize,
+    /// Its categorical columns take buckets (`predict_columns`): their code tables are the identity, written when
+    /// armed, not a call's names.
+    identity: bool,
     bufs: ArmedBuffers,
     value: u64,
     pending: MetalComputeEvent,
@@ -375,6 +378,27 @@ struct ArmedBuffers {
     tables: metal::Buffer,
     data: metal::Buffer,
     out: metal::Buffer,
+}
+
+/// A column of rows to predict (`DeviceForest::predict_columns_timed`).
+pub enum PredictColumn<'a> {
+    /// Values, bucketed on the device by the feature space's numeric splits (a NaN is a null).
+    Numbers(&'a [f64]),
+    /// Buckets found by the caller (a categorical column's, `BucketRules::bucket_of_name`), passed through.
+    Buckets(&'a [u32]),
+}
+
+impl PredictColumn<'_> {
+    pub fn len(&self) -> usize {
+        match self {
+            PredictColumn::Numbers(v) => v.len(),
+            PredictColumn::Buckets(v) => v.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 }
 
 /// The words describing a column to `rowBuckets` (`ROW_BUCKET_WORDS` in the kernels).
@@ -573,6 +597,102 @@ impl DeviceForest {
         Ok(self.predict_values_timed(b, columns)?.0)
     }
 
+    /// The predictions on rows given as columns of numbers (bucketed on the device by the feature space's splits) or
+    /// of buckets (a categorical column's buckets the caller found, `BucketRules::bucket_of_name`), always through an
+    /// armed prediction (`Armed`): the host copies the columns into its buffers and signals, nothing else. A call
+    /// larger than the armed rows, or of other kinds, arms a larger one first.
+    pub fn predict_columns_timed(&self, b: &DeviceBucketizer, columns: &[PredictColumn<'_>]) -> Result<(Vec<[f32; 2]>, f64), String> {
+        if columns.len() != self.num_features || b.columns.len() != self.num_features {
+            return Err(format!("{} columns and a bucketizer of {} for a forest over {}", columns.len(), b.columns.len(), self.num_features));
+        }
+        if let Some(i) = (0..self.num_features).find(|&i| b.columns[i].bits != self.feature_bits[i]) {
+            return Err(format!("column {i} has {}-bit buckets, the forest's {}", b.columns[i].bits, self.feature_bits[i]));
+        }
+        let num_rows = columns.first().map_or(0, PredictColumn::len);
+        if columns.iter().any(|c| c.len() != num_rows) {
+            return Err("the columns differ in length".into());
+        }
+        if num_rows == 0 {
+            return Ok((Vec::new(), 0.0));
+        }
+        crate::gpu::shared::get().ok_or("no Metal device")?;
+        let mut scratch = self.scratch.lock().map_err(|_| "a prediction panicked")?;
+        let categorical: Vec<bool> = columns.iter().map(|c| matches!(c, PredictColumn::Buckets(_))).collect();
+        let a = match scratch.armed.take() {
+            Some(a) if a.identity && a.rows >= num_rows && a.categorical == categorical => a,
+            other => {
+                if let Some(a) = other {
+                    let _ = Self::fire(&scratch, &a);
+                }
+                let tables = Self::identity_words(b, &categorical);
+                self.arm(&mut scratch, b, num_rows.next_power_of_two().max(64), categorical, tables, true, None)?
+            }
+        };
+        let words: Vec<usize> = b.columns.iter().map(|c| crate::bucket::WritableBucketList::words_required(num_rows, (1u32 << c.bits) - 1)).collect();
+        Self::write_columns(b, columns, &a.bufs, a.rows, &words);
+        let got = Self::fire(&scratch, &a).and_then(|()| {
+            let items = num_rows * self.num_forests as usize;
+            let out = unsafe { std::slice::from_raw_parts(a.bufs.out.contents().cast::<[f32; 2]>(), items) };
+            if out.iter().any(|v| v[0].is_nan()) {
+                return Err("a walk did not reach a leaf".to_owned());
+            }
+            Ok((out.to_vec(), a.pending.gpu_seconds()))
+        });
+        let Armed { rows, categorical, tables, bufs, .. } = a;
+        scratch.armed = self.arm(&mut scratch, b, rows, categorical, tables, true, Some(bufs)).ok();
+        got
+    }
+
+    /// Arms a prediction for `predict_columns` of up to `rows` rows of these kinds (true: buckets), so its first
+    /// call is already committed. Nothing if one is armed.
+    pub fn prepare_columns(&self, b: &DeviceBucketizer, buckets: &[bool], rows: usize) -> Result<(), String> {
+        if buckets.len() != self.num_features || b.columns.len() != self.num_features {
+            return Err(format!("{} columns and a bucketizer of {} for a forest over {}", buckets.len(), b.columns.len(), self.num_features));
+        }
+        let mut scratch = self.scratch.lock().map_err(|_| "a prediction panicked")?;
+        if scratch.armed.is_none() {
+            let tables = Self::identity_words(b, buckets);
+            scratch.armed = Some(self.arm(&mut scratch, b, rows.next_power_of_two().max(64), buckets.to_vec(), tables, true, None)?);
+        }
+        Ok(())
+    }
+
+    /// The identity code tables' words (`Armed::identity`): each bucket column's buckets and its null.
+    fn identity_words(b: &DeviceBucketizer, buckets: &[bool]) -> usize {
+        b.columns.iter().zip(buckets).filter(|(_, c)| **c).map(|(bc, _)| (1usize << bc.bits) + 1).sum()
+    }
+
+    /// Writes a call's columns into an armed prediction's buffers (`Armed::identity`'s tables, written when armed).
+    fn write_columns(b: &DeviceBucketizer, columns: &[PredictColumn<'_>], bufs: &ArmedBuffers, rows: usize, words: &[usize]) {
+        let ncat = columns.iter().filter(|c| matches!(c, PredictColumn::Buckets(_))).count();
+        let nnum = columns.len() - ncat;
+        let desc = unsafe { std::slice::from_raw_parts_mut(bufs.columns.contents().cast::<u32>(), columns.len() * ROW_BUCKET_WORDS) };
+        let numbers = unsafe { std::slice::from_raw_parts_mut(bufs.numbers.contents().cast::<f64>(), nnum.max(1) * rows) };
+        let codes_out = unsafe { std::slice::from_raw_parts_mut(bufs.codes.contents().cast::<u32>(), ncat.max(1) * rows) };
+        let (mut num_at, mut code_at, mut at_table) = (0usize, 0usize, 0usize);
+        for (i, (c, bc)) in columns.iter().zip(&b.columns).enumerate() {
+            let d = &mut desc[i * ROW_BUCKET_WORDS..(i + 1) * ROW_BUCKET_WORDS];
+            d[1] = bc.bits;
+            d[7] = words[i] as u32;
+            match c {
+                PredictColumn::Numbers(v) => {
+                    let at = num_at * rows;
+                    numbers[at..at + v.len()].copy_from_slice(v);
+                    (d[0], d[2], d[3], d[4], d[5], d[6]) = (0, at as u32, bc.num_splits, bc.split_start, bc.numeric_offset, bc.null_bucket);
+                    num_at += 1;
+                }
+                PredictColumn::Buckets(v) => {
+                    let at = code_at * rows;
+                    codes_out[at..at + v.len()].copy_from_slice(v);
+                    let n = 1u32 << bc.bits;
+                    (d[0], d[2], d[3], d[4], d[5], d[6]) = (1, at as u32, n, at_table as u32, 0, bc.null_bucket);
+                    code_at += 1;
+                    at_table += n as usize + 1;
+                }
+            }
+        }
+    }
+
     /// Arms a prediction of up to `rows` rows of columns of `like`'s kinds (`Armed`), so the first call is
     /// already committed: the device starts as soon as its rows are written. Nothing if one is armed.
     pub fn prepare_values(&self, b: &DeviceBucketizer, like: &[ColumnData], rows: usize) -> Result<(), String> {
@@ -582,7 +702,7 @@ impl DeviceForest {
         let mut scratch = self.scratch.lock().map_err(|_| "a prediction panicked")?;
         if scratch.armed.is_none() {
             let categorical = like.iter().map(|c| matches!(c, ColumnData::Categorical { .. })).collect();
-            scratch.armed = Some(self.arm(&mut scratch, b, rows.next_power_of_two().max(64), categorical, 256, None)?);
+            scratch.armed = Some(self.arm(&mut scratch, b, rows.next_power_of_two().max(64), categorical, 256, false, None)?);
         }
         Ok(())
     }
@@ -608,7 +728,7 @@ impl DeviceForest {
         let categorical: Vec<bool> = columns.iter().map(|c| matches!(c, ColumnData::Categorical { .. })).collect();
         let table_words: usize = columns.iter().map(|c| if let ColumnData::Categorical { names, .. } = c { names.len() + 1 } else { 0 }).sum();
         if let Some(a) = scratch.armed.take() {
-            if a.rows >= num_rows && a.categorical == categorical && a.tables >= table_words {
+            if !a.identity && a.rows >= num_rows && a.categorical == categorical && a.tables >= table_words {
                 Self::write_values(b, columns, &a.bufs, a.rows, &words);
                 let fired = Self::fire(&scratch, &a);
                 let got = fired.and_then(|()| {
@@ -620,7 +740,7 @@ impl DeviceForest {
                     Ok((out.to_vec(), a.pending.gpu_seconds()))
                 });
                 let Armed { rows, categorical, tables, bufs, .. } = a;
-                scratch.armed = self.arm(&mut scratch, b, rows, categorical, tables, Some(bufs)).ok();
+                scratch.armed = self.arm(&mut scratch, b, rows, categorical, tables, false, Some(bufs)).ok();
                 return got;
             }
             // Too small, or columns of other kinds: released (on the last call's rows, unread), and armed anew below.
@@ -629,7 +749,7 @@ impl DeviceForest {
         let got = self.predict_values_now(&mut scratch, b, columns, num_rows, &words);
         if got.is_ok() {
             let rows = num_rows.next_power_of_two().max(64);
-            scratch.armed = self.arm(&mut scratch, b, rows, categorical, (table_words * 2).max(256), None).ok();
+            scratch.armed = self.arm(&mut scratch, b, rows, categorical, (table_words * 2).max(256), false, None).ok();
         }
         got
     }
@@ -818,7 +938,8 @@ impl DeviceForest {
 
     /// Encodes and commits a prediction of `rows` rows of columns of these kinds (`Armed`), waiting on the forest's
     /// event: the buffers are `bufs` (or new ones), their descriptions those of the last call (or none packed).
-    fn arm(&self, scratch: &mut Scratch, b: &DeviceBucketizer, rows: usize, categorical: Vec<bool>, tables: usize, bufs: Option<ArmedBuffers>) -> Result<Armed, String> {
+    #[allow(clippy::too_many_arguments)]
+    fn arm(&self, scratch: &mut Scratch, b: &DeviceBucketizer, rows: usize, categorical: Vec<bool>, tables: usize, identity: bool, bufs: Option<ArmedBuffers>) -> Result<Armed, String> {
         use ComputeKernelArgument::{Buffer as B, Int};
         let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
         let device = &shared.device;
@@ -839,6 +960,20 @@ impl DeviceForest {
                 // Described as packing nothing (each column's words 0): a prediction signalled before a call wrote
                 // its rows reads no value.
                 let desc = unsafe { std::slice::from_raw_parts_mut(bufs.columns.contents().cast::<u32>(), categorical.len() * ROW_BUCKET_WORDS) };
+                if identity {
+                    // Each categorical column's code is its bucket: the table maps a code to itself, a code past
+                    // the column's buckets (and the table's last entry) to its null bucket.
+                    let t = unsafe { std::slice::from_raw_parts_mut(bufs.tables.contents().cast::<u32>(), tables.max(1)) };
+                    let mut at = 0;
+                    for (bc, _) in b.columns.iter().zip(&categorical).filter(|(_, c)| **c) {
+                        let n = 1usize << bc.bits;
+                        for (j, e) in t[at..at + n].iter_mut().enumerate() {
+                            *e = j as u32;
+                        }
+                        t[at + n] = bc.null_bucket;
+                        at += n + 1;
+                    }
+                }
                 for (i, bc) in b.columns.iter().enumerate() {
                     let d = &mut desc[i * ROW_BUCKET_WORDS..(i + 1) * ROW_BUCKET_WORDS];
                     d.fill(0);
@@ -865,7 +1000,7 @@ impl DeviceForest {
             scratch.row_plans.insert(key, k.plan(&named, &[(categorical.len() * stride) as u32])?);
         }
         let Scratch { armed_queue, row_plans, plans, .. } = scratch;
-        let queue = armed_queue.get_or_insert_with(|| MetalComputeQueue::new(&device.new_command_queue()));
+        let queue = armed_queue.get_or_insert_with(|| MetalComputeQueue::new(&shared.waiting));
         // First in the command buffer, before any encoder: the device waits here for the call's rows.
         queue.command_buffer.encode_wait_for_event(&event, value);
         {
@@ -874,7 +1009,7 @@ impl DeviceForest {
         }
         self.encode_forest(plans, queue, &bufs.data, &bufs.out, rows, stride)?;
         let pending = queue.flush();
-        Ok(Armed { rows, categorical, tables, bufs, value, pending })
+        Ok(Armed { rows, categorical, tables, identity, bufs, value, pending })
     }
 
     /// Signals an armed prediction and waits for it: its predictions, or an error if it did not complete.
@@ -1653,6 +1788,49 @@ mod tests {
                 swapped[i] = (0..n).map(|r| CellValue::Float(r as f64)).collect();
                 let (got, want) = (f.predict_values(&b, &values).unwrap(), f.predict(&RowBuckets::from_values(&fs, &swapped).unwrap()).unwrap());
                 assert!(got.iter().zip(&want).all(|(g, w)| (g[0] - w[0]).abs() <= 1e-6) && got.len() == want.len(), "kinds changed");
+            }
+        }
+    }
+
+    /// Columns of buckets the caller found (`predict_columns_timed`) predict as the values they came from, at sizes
+    /// under and over the armed rows.
+    #[test]
+    fn bucket_columns_predict_as_their_values() {
+        if crate::gpu::shared::get().is_none() {
+            return;
+        }
+        let (cols, labels) = columns(3000, 3);
+        let named: Vec<(String, Vec<CellValue>)> = cols.iter().enumerate().map(|(i, c)| (format!("c{i}"), c.clone())).collect();
+        let fs = Arc::new(DatasetFeatureSpace::from_columns(&named, FeatureType::Boolean).unwrap());
+        let forest = train_forest(&training_data(fs.clone(), &labels, None, None).unwrap(), &RandomForestProcedureConfig::default()).unwrap();
+        let f = DeviceForest::new(&FlatForest::new(&forest).unwrap()).unwrap();
+        let rules = BucketRules::new(&fs).unwrap();
+        let b = DeviceBucketizer::from_rules(&rules).unwrap();
+        let (test, _) = columns(3000, 9);
+        for n in [5usize, 100, 2000, 1] {
+            let part: Vec<Vec<CellValue>> = test.iter().map(|c| c[..n].to_vec()).collect();
+            let values: Vec<ColumnData> = part.iter().enumerate().map(|(i, c)| ColumnData::from_values(&format!("c{i}"), c).unwrap()).collect();
+            let want = f.predict(&RowBuckets::from_values(&fs, &part).unwrap()).unwrap();
+            let buckets: Vec<Vec<u32>> = values
+                .iter()
+                .enumerate()
+                .map(|(i, v)| match v {
+                    ColumnData::Categorical { codes, names } => codes.iter().map(|&c| rules.bucket_of_name(i, names.get(c as usize).map(String::as_str))).collect(),
+                    ColumnData::Numeric(_) => Vec::new(),
+                })
+                .collect();
+            let given: Vec<PredictColumn<'_>> = values
+                .iter()
+                .zip(&buckets)
+                .map(|(v, bk)| match v {
+                    ColumnData::Numeric(x) => PredictColumn::Numbers(x),
+                    ColumnData::Categorical { .. } => PredictColumn::Buckets(bk),
+                })
+                .collect();
+            let (got, _) = f.predict_columns_timed(&b, &given).unwrap();
+            assert_eq!(got.len(), want.len(), "{n} rows");
+            for (g, w) in got.iter().zip(&want) {
+                assert!((g[0] - w[0]).abs() <= 1e-6, "{n} rows: {g:?} against {w:?}");
             }
         }
     }

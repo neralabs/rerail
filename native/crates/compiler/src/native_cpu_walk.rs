@@ -54,9 +54,10 @@ impl WalkCalls {
 }
 
 /// The words a walk's function reads and writes, eight bytes each: the state (in, then out),
-/// each kind's opener and closer, then the values it makes (`block::Walk::made`).
+/// each kind's opener, closer and second closer (`or`; zero without), then the values it makes
+/// (`block::Walk::made`).
 pub fn layout(kinds: usize, made: usize) -> usize {
-    1 + 2 * kinds + made
+    1 + 3 * kinds + made
 }
 
 /// Value `v` of the CPU's form as byte tests, as `block::byte_tests` gives them on the program.
@@ -140,10 +141,11 @@ pub fn build_walk(native: &BlockNative, w: usize, calls: &WalkCalls) -> Result<F
         let p = f.block_params(entry).to_vec();
         let (io, base, i, len) = (p[0], p[1], p[2], p[3]);
         let state = f.ins().load(types::I64, flags, io, 0);
-        let openers: Vec<Value> = (0..kinds).map(|k| f.ins().load(types::I64, flags, io, 8 * (1 + 2 * k as i32))).collect();
-        let closers: Vec<Value> = (0..kinds).map(|k| f.ins().load(types::I64, flags, io, 8 * (2 + 2 * k as i32))).collect();
+        let openers: Vec<Value> = (0..kinds).map(|k| f.ins().load(types::I64, flags, io, 8 * (1 + 3 * k as i32))).collect();
+        let closers: Vec<Value> = (0..kinds).map(|k| f.ins().load(types::I64, flags, io, 8 * (2 + 3 * k as i32))).collect();
+        let seconds: Vec<Value> = (0..kinds).map(|k| f.ins().load(types::I64, flags, io, 8 * (3 + 3 * k as i32))).collect();
         // Each value made, by its place in `made`: its word's offset in `io`.
-        let out = |v: u16| 8 * (1 + 2 * kinds + made.iter().position(|&m| m == v).expect("made")) as i32;
+        let out = |v: u16| 8 * (1 + 3 * kinds + made.iter().position(|&m| m == v).expect("made")) as i32;
         let zero = f.ins().iconst(types::I64, 0);
         for &v in &made[1..] {
             f.ins().store(flags, zero, io, out(v));
@@ -157,20 +159,32 @@ pub fn build_walk(native: &BlockNative, w: usize, calls: &WalkCalls) -> Result<F
         let open = f.ins().band_imm(state, (1 << WalkState::SKIP) - 1);
         let skip = f.ins().ushr_imm(state, i64::from(WalkState::SKIP));
         let skip = f.ins().band_imm(skip, 3);
+        // The last kind with no `after` opened, plus one (0: none), past the kinds' flags.
+        let last_at = i64::from(WalkState::NONE) + kinds as i64;
+        let conditioned = walk.kinds.iter().any(|k| k.after != 0);
+        let last0 = if conditioned {
+            let l = f.ins().ushr_imm(state, last_at);
+            f.ins().band_imm(l, 15)
+        } else {
+            zero
+        };
         // The hidden bytes the region before hides past its block.
         let hidden = low(&mut f, skip);
         f.ins().store(flags, hidden, io, out(walk.hidden));
 
+        // (the resume place, the last plain kind plus one)
         let head = f.create_block();
         f.append_block_param(head, types::I64);
+        f.append_block_param(head, types::I64);
         let exit = f.create_block();
-        // (the kind open plus one, the resume place)
+        // (the kind open plus one, the resume place, the last plain kind plus one)
+        f.append_block_param(exit, types::I64);
         f.append_block_param(exit, types::I64);
         f.append_block_param(exit, types::I64);
 
         // A region open at the block's start: kind `open - 1`, to its closer's first byte.
         let cont = f.create_block();
-        f.ins().brif(open, cont, &[], head, &[skip.into()]);
+        f.ins().brif(open, cont, &[], head, &[skip.into(), last0.into()]);
         f.switch_to_block(cont);
         for (k, kind) in walk.kinds.iter().enumerate() {
             let this = f.create_block();
@@ -179,12 +193,12 @@ pub fn build_walk(native: &BlockNative, w: usize, calls: &WalkCalls) -> Result<F
                 let is = f.ins().icmp_imm(IntCC::Equal, open, k as i64 + 1);
                 f.ins().brif(is, this, &[], next, &[]);
                 f.switch_to_block(this);
-                emit_cont(&mut f, kind, closers[k], &or, walk.hidden, head, exit, k);
+                emit_cont(&mut f, kind, (closers[k], seconds[k]), &or, walk.hidden, head, exit, k, last0);
                 f.switch_to_block(next);
             } else {
                 f.ins().jump(this, &[]);
                 f.switch_to_block(this);
-                emit_cont(&mut f, kind, closers[k], &or, walk.hidden, head, exit, k);
+                emit_cont(&mut f, kind, (closers[k], seconds[k]), &or, walk.hidden, head, exit, k, last0);
             }
         }
 
@@ -192,7 +206,24 @@ pub fn build_walk(native: &BlockNative, w: usize, calls: &WalkCalls) -> Result<F
         f.switch_to_block(head);
         heads.push((head, Step::Region));
         let r = f.block_params(head)[0];
+        let last = f.block_params(head)[1];
         let above = from(&mut f, r);
+        // A kind with `after`: its openers only where the last plain kind is one it names.
+        let openers: Vec<Value> = walk
+            .kinds
+            .iter()
+            .zip(&openers)
+            .map(|(kind, &o)| {
+                if kind.after == 0 {
+                    return o;
+                }
+                let named = f.ins().iconst(types::I64, i64::from(kind.after) << 1);
+                let bit = f.ins().ushr(named, last);
+                let bit = f.ins().band_imm(bit, 1);
+                let all = f.ins().ineg(bit);
+                f.ins().band(o, all)
+            })
+            .collect();
         let mut any = None;
         for &o in &openers {
             let m = f.ins().band(o, above);
@@ -203,7 +234,7 @@ pub fn build_walk(native: &BlockNative, w: usize, calls: &WalkCalls) -> Result<F
         }
         let any = any.expect("a kind");
         let found = f.create_block();
-        f.ins().brif(any, found, &[], exit, &[zero.into(), r.into()]);
+        f.ins().brif(any, found, &[], exit, &[zero.into(), r.into(), last.into()]);
         f.switch_to_block(found);
         let t = f.ins().ctz(any);
         let one = f.ins().iconst(types::I64, 1);
@@ -216,26 +247,32 @@ pub fn build_walk(native: &BlockNative, w: usize, calls: &WalkCalls) -> Result<F
                 let has = f.ins().band(openers[k], bit);
                 f.ins().brif(has, this, &[], next, &[]);
                 f.switch_to_block(this);
-                emit_kind(&mut f, kind, &scans[k], closers[k], &or, walk.hidden, head, exit, k, (t, bit), (base, i, len), &mut heads);
+                emit_kind(&mut f, kind, &scans[k], (closers[k], seconds[k]), &or, walk.hidden, (head, exit, last), k, (t, bit), (base, i, len), &mut heads);
                 f.switch_to_block(next);
             } else {
                 f.ins().jump(this, &[]);
                 f.switch_to_block(this);
-                emit_kind(&mut f, kind, &scans[k], closers[k], &or, walk.hidden, head, exit, k, (t, bit), (base, i, len), &mut heads);
+                emit_kind(&mut f, kind, &scans[k], (closers[k], seconds[k]), &or, walk.hidden, (head, exit, last), k, (t, bit), (base, i, len), &mut heads);
             }
         }
 
         // The state out: the kind open, the places hidden past the block, the kinds' flags.
         f.switch_to_block(exit);
-        let (open_out, r) = (f.block_params(exit)[0], f.block_params(exit)[1]);
+        let (open_out, r, last_out) = (f.block_params(exit)[0], f.block_params(exit)[1], f.block_params(exit)[2]);
         let past = f.ins().iadd_imm(r, -64);
         let over = f.ins().icmp_imm(IntCC::SignedGreaterThan, past, 0);
         let past = f.ins().select(over, past, zero);
         let past = f.ins().ishl_imm(past, i64::from(WalkState::SKIP));
         let now = f.ins().load(types::I64, flags, io, 0);
-        let kept = f.ins().band_imm(now, !((1i64 << WalkState::NONE) - 1));
+        let kept = f.ins().band_imm(now, ((1i64 << last_at) - 1) & !((1i64 << WalkState::NONE) - 1));
         let s = f.ins().bor(kept, open_out);
         let s = f.ins().bor(s, past);
+        let s = if conditioned {
+            let l = f.ins().ishl_imm(last_out, last_at);
+            f.ins().bor(s, l)
+        } else {
+            s
+        };
         f.ins().store(flags, s, io, 0);
         f.ins().return_(&[]);
         f.seal_all_blocks();
@@ -248,7 +285,7 @@ pub fn build_walk(native: &BlockNative, w: usize, calls: &WalkCalls) -> Result<F
 /// A region of kind `k` open at the block's start: closed at its closer's first bit, or open
 /// through the block.
 #[allow(clippy::too_many_arguments)]
-fn emit_cont(f: &mut FunctionBuilder<'_>, kind: &crate::block::WalkKind, closer: Value, or: &dyn Fn(&mut FunctionBuilder<'_>, u16, Value), hidden: u16, head: Block, exit: Block, k: usize) {
+fn emit_cont(f: &mut FunctionBuilder<'_>, kind: &crate::block::WalkKind, (closer, second): (Value, Value), or: &dyn Fn(&mut FunctionBuilder<'_>, u16, Value), hidden: u16, head: Block, exit: Block, k: usize, last: Value) {
     let (through, close) = (f.create_block(), f.create_block());
     f.ins().brif(closer, close, &[], through, &[]);
     f.switch_to_block(through);
@@ -257,15 +294,29 @@ fn emit_cont(f: &mut FunctionBuilder<'_>, kind: &crate::block::WalkKind, closer:
     or(&mut *f, hidden, all);
     let open = f.ins().iconst(types::I64, k as i64 + 1);
     let zero = f.ins().iconst(types::I64, 0);
-    f.ins().jump(exit, &[open.into(), zero.into()]);
+    f.ins().jump(exit, &[open.into(), zero.into(), last.into()]);
     f.switch_to_block(close);
     let c = f.ins().ctz(closer);
     let fill = low(&mut *f, c);
     or(&mut *f, kind.fill, fill);
-    let to = if kind.outside { c } else { f.ins().iadd_imm(c, i64::from(kind.bytes)) };
+    let to = closer_end(&mut *f, kind, c, second);
     let h = low(&mut *f, to);
     or(&mut *f, hidden, h);
-    f.ins().jump(head, &[to.into()]);
+    f.ins().jump(head, &[to.into(), last.into()]);
+}
+
+/// The place after a closer at `c`: its bytes on (`outside`: `c`), or the second closer's
+/// where it has a bit at `c` (`WalkKind::or`).
+fn closer_end(f: &mut FunctionBuilder<'_>, kind: &crate::block::WalkKind, c: Value, second: Value) -> Value {
+    if kind.outside {
+        return c;
+    }
+    let to = f.ins().iadd_imm(c, i64::from(kind.bytes));
+    let Some((_, m)) = kind.or else { return to };
+    let at = f.ins().ushr(second, c);
+    let at = f.ins().band_imm(at, 1);
+    let wide = f.ins().iadd_imm(c, i64::from(m));
+    f.ins().select(at, wide, to)
 }
 
 /// An opener of kind `k` taken at place `t` (`bit`): its region to its closer's first bit after
@@ -276,17 +327,18 @@ fn emit_kind(
     f: &mut FunctionBuilder<'_>,
     kind: &crate::block::WalkKind,
     scan: &Option<Vec<(u8, ByteTest)>>,
-    closer: Value,
+    (closer, second): (Value, Value),
     or: &dyn Fn(&mut FunctionBuilder<'_>, u16, Value),
     hidden: u16,
-    head: Block,
-    exit: Block,
+    (head, exit, last): (Block, Block, Value),
     k: usize,
     (t, bit): (Value, Value),
     (base, i, len): (Value, Value, Value),
     heads: &mut Vec<(Block, Step)>,
 ) {
     let past = after(&mut *f, t);
+    // The last plain kind from here: this one, if plain (an `empty` opens none).
+    let now = if kind.after == 0 { f.ins().iconst(types::I64, k as i64 + 1) } else { last };
     let cm = f.ins().band(closer, past);
     let (close, through) = (f.create_block(), f.create_block());
     // No closer in the block: open through it, or (an `else`) look past it first.
@@ -301,11 +353,11 @@ fn emit_kind(
     let below = low(&mut *f, c);
     let fill = f.ins().band(start, below);
     or(&mut *f, kind.fill, fill);
-    let to = if kind.outside { c } else { f.ins().iadd_imm(c, i64::from(kind.bytes)) };
+    let to = closer_end(&mut *f, kind, c, second);
     let upto = low(&mut *f, to);
     let h = f.ins().band(upto, past);
     or(&mut *f, hidden, h);
-    f.ins().jump(head, &[to.into()]);
+    f.ins().jump(head, &[to.into(), now.into()]);
 
     f.switch_to_block(through);
     or(&mut *f, kind.open, bit);
@@ -316,7 +368,7 @@ fn emit_kind(
     or(&mut *f, hidden, past2);
     let open = f.ins().iconst(types::I64, k as i64 + 1);
     let zero = f.ins().iconst(types::I64, 0);
-    f.ins().jump(exit, &[open.into(), zero.into()]);
+    f.ins().jump(exit, &[open.into(), zero.into(), now.into()]);
 
     let (Some(tests), Some((e, m))) = (scan, kind.empty) else { return };
     let flags = MemFlags::trusted();
@@ -377,7 +429,7 @@ fn emit_kind(
     let upto = low(&mut *f, to);
     let h = f.ins().band(upto, past);
     or(&mut *f, hidden, h);
-    f.ins().jump(head, &[to.into()]);
+    f.ins().jump(head, &[to.into(), last.into()]);
 }
 
 /// The words' address: the function's first parameter.

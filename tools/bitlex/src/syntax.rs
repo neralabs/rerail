@@ -57,6 +57,10 @@ pub enum TokenTest {
     Count,
     /// The mask at each of the token's first bytes, from its first.
     Run,
+    /// The mask at every byte of the token, the token that long at least: `all(digit) at
+    /// least 19`, an integer's token of 19 digits or more, as a lexer knows the number it read
+    /// had no `.`.
+    All,
 }
 
 /// A mark's token test (`Stmt::Mark`'s `at` and `after`): at tokens of `kind`, `test` over
@@ -76,6 +80,10 @@ pub struct MarkCheck {
 pub enum TokenRule {
     /// Its first byte, then the bytes of the mask after it, in a row.
     Run(Expr),
+    /// `run R once D`: a run of `R` with one bit of `D` in it at most; the second ends the token
+    /// before it, as a lexer reads a number's one `.` and stops at the next (`1.2.3` is `1.2`,
+    /// `.`, `3`). Every loop cuts the run there (`TokenCheck`'s cut); the mask form below.
+    RunOnce(Expr, Expr),
     /// One byte, or two where the mask holds at its first.
     Pair(Expr),
     /// `pair P`, `P` a `pairs P = "AB" …`: one byte, or two where its first and the next are
@@ -132,7 +140,7 @@ impl Parts {
     /// With `closes`: the closers' last bytes, as one mask (`ReadArm::last`); `None`, every
     /// closer the region's length.
     pub fn closer_last(&self, rs: &[Region]) -> Option<Expr> {
-        if self.closes.is_empty() && rs.iter().all(|r| r.bytes == rs[0].bytes) {
+        if self.closes.is_empty() && rs.iter().all(|r| r.bytes == rs[0].bytes && r.or.is_none()) {
             return None;
         }
         let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
@@ -144,7 +152,7 @@ impl Parts {
         }
         for r in rs {
             let own = self.own(r);
-            last = Some(or_of(last, prev(own, r.bytes - 1)));
+            last = Some(or_of(last, r.closer_last(own)));
         }
         last
     }
@@ -194,7 +202,7 @@ impl Parts {
             out.push(token(k, c.clone(), prev(c, n - 1)));
         }
         let own = self.own(r);
-        out.insert(0, token(kind, own.clone(), prev(own, r.bytes - 1)));
+        out.insert(0, token(kind, own.clone(), r.closer_last(own)));
         let mut covered: Option<Expr> = None;
         let mut cover = |c: Expr| {
             covered = Some(match covered.take() {
@@ -249,6 +257,9 @@ impl TokenRule {
     ///
     /// ```text
     /// run R:  t = s | fill(prev(s) & R, ~R);   last = t & ~next(t & ~s)
+    /// run R once D: the run's bytes from the second `D` after a start on cut, each token's:
+    ///         d = t & D & ~s;  one = fill(prev(d) & ~s, ~t | s);
+    ///         t' = t & ~fill(d & one, ~t | s);   last = t' & ~next(t' & ~s)
     /// pair P: last = (s & ~P) | prev(s & P)
     /// ```
     pub fn last(&self, s: &Expr) -> Expr {
@@ -260,6 +271,17 @@ impl TokenRule {
             TokenRule::Run(r) => {
                 let after = call("fill", vec![and(call("prev", vec![s.clone()]), r.clone()), not(r.clone())]);
                 let t = or(s.clone(), after);
+                and(t.clone(), not(call("next", vec![and(t, not(s.clone()))])))
+            }
+            TokenRule::RunOnce(r, d) => {
+                let after = call("fill", vec![and(call("prev", vec![s.clone()]), r.clone()), not(r.clone())]);
+                let t = or(s.clone(), after);
+                // A start, or a byte past the run, ends what the fills carry: each token's own.
+                let stop = or(not(t.clone()), s.clone());
+                let ds = and(and(t.clone(), d.clone()), not(s.clone()));
+                let one = call("fill", vec![and(call("prev", vec![ds.clone()]), not(s.clone())), stop.clone()]);
+                let cut = call("fill", vec![and(ds, one), stop]);
+                let t = and(t, not(cut));
                 and(t.clone(), not(call("next", vec![and(t, not(s.clone()))])))
             }
             TokenRule::Pair(p) | TokenRule::Pairs { mask: p, .. } => or(and(s.clone(), not(p.clone())), call("prev", vec![and(s.clone(), p.clone())])),
@@ -277,6 +299,8 @@ impl TokenRule {
                     let f = name(format!("f_{}", r.kind));
                     let mut last = if r.outside {
                         and(f.clone(), not(call("next", vec![f])))
+                    } else if r.or.is_some() {
+                        r.closer_last(and(prev(f.clone(), 1), not(f)))
                     } else {
                         and(prev(f.clone(), r.bytes), not(prev(f, r.bytes - 1)))
                     };
@@ -353,6 +377,14 @@ pub struct Region {
     /// `else E bytes M`: an opener with no byte of the closer after it anywhere in the file
     /// opens no region; it is `E`, `M` bytes from the opener's first, hidden after it.
     pub empty: Option<(String, u8)>,
+    /// `or C2 [bytes M]`: a second closer, of `M` bytes (1 to 3). The region runs to the first
+    /// byte of either; one of `C2` is `M` bytes, the others `bytes N` (a raw string's `"""`, or
+    /// its template's `$`).
+    pub or: Option<(Expr, u8)>,
+    /// `after K …`: the region opens only where the last region opened before its opener, of
+    /// the kinds with no `after`, is one of `K …` (a template's tail goes back to the kind of
+    /// string the template is in). Such a kind has no `else` and no `outside`.
+    pub after: Vec<String>,
 }
 
 impl Regions {
@@ -367,6 +399,13 @@ impl Regions {
     /// next H       = prev(f_K) | … | prev(f_K, N)     # `outside`: prev(f_K) & ~C
     ///              | prev(E) | … | prev(E, M - 1)
     /// ```
+    ///
+    /// With `or C2 bytes M`, the closer is `C | C2`, and the bytes past its first are counted
+    /// from it: `c = prev(f_K) & ~f_K`, and `prev(f_K) | prev(c & ~C2) | … | prev(c & ~C2, N
+    /// - 1) | prev(c & C2) | … | prev(c & C2, M - 1)`. A kind with `after A …`
+    /// comes after the kinds with none, which it reads: its openers are where the last of
+    /// their openers before is an `A`, `o_K = O & ~H & prev(fill(o_A | …, o_B | …))`, the `B`s
+    /// the others.
     pub fn body(&self) -> Vec<Stmt> {
         let name = |s: &str| Expr::Name(s.to_string());
         let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
@@ -384,8 +423,34 @@ impl Regions {
             Some(h) => Expr::Or(Box::new(h), Box::new(e)),
             None => e,
         });
+        let plain: Vec<&Region> = self.kinds.iter().filter(|r| r.after.is_empty()).collect();
+        // Where two kinds open a byte the walk opens the first listed that may: each kind's
+        // opener excludes the earlier kinds' taken.
+        let mut earlier: Option<Expr> = None;
+        let any = |rs: Vec<&Region>| rs.iter().fold(None, |a: Option<Expr>, r| {
+            let o = name(&format!("o_{}", r.kind));
+            Some(match a {
+                Some(a) => Expr::Or(Box::new(a), Box::new(o)),
+                None => o,
+            })
+        });
         for r in &self.kinds {
-            let open = and(r.opener.clone(), not(name(&self.hidden)));
+            let mut open = and(r.opener.clone(), not(name(&self.hidden)));
+            if !r.after.is_empty() {
+                let named = any(plain.iter().copied().filter(|k| r.after.contains(&k.kind)).collect()).expect("verified: a kind named");
+                let others = any(plain.iter().copied().filter(|k| !r.after.contains(&k.kind)).collect()).unwrap_or(Expr::Empty);
+                open = and(open, call("prev", vec![Arg::E(call("fill", vec![Arg::E(named), Arg::E(others)]))]));
+            }
+            if let Some(e) = &earlier {
+                open = and(open, not(e.clone()));
+            }
+            let taken = format!("taken_{}", r.kind);
+            out.push(Stmt::Mask(taken.clone(), open));
+            let open = name(&taken);
+            earlier = Some(match earlier.take() {
+                Some(e) => Expr::Or(Box::new(e), Box::new(open.clone())),
+                None => open.clone(),
+            });
             let o = format!("o_{}", r.kind);
             let f = format!("f_{}", r.kind);
             match &r.empty {
@@ -398,9 +463,20 @@ impl Regions {
                 }
                 None => out.push(Stmt::Mask(o.clone(), open)),
             }
-            out.push(Stmt::Mask(f.clone(), call("fill", vec![Arg::E(name(&o)), Arg::E(r.closer.clone())])));
+            out.push(Stmt::Mask(f.clone(), call("fill", vec![Arg::E(name(&o)), Arg::E(r.closers())])));
             if r.outside {
                 or(and(prev(&f, 1), not(r.closer.clone())));
+            } else if let Some((c2, m)) = &r.or {
+                let pk = |e: Expr, k: u8| call("prev", vec![Arg::E(e), Arg::N(u64::from(k))]);
+                let c = and(prev(&f, 1), not(name(&f)));
+                let (l, l2) = (and(c.clone(), not(c2.clone())), and(c, c2.clone()));
+                or(prev(&f, 1));
+                for k in 1..r.bytes {
+                    or(pk(l.clone(), k));
+                }
+                for k in 1..*m {
+                    or(pk(l2.clone(), k));
+                }
             } else {
                 for k in 1..=r.bytes {
                     or(prev(&f, k));
@@ -416,6 +492,25 @@ impl Region {
     /// The name of its `else`'s mask: whether a byte of the closer comes after a byte.
     pub fn later(&self) -> String {
         format!("{}_later", self.kind)
+    }
+
+    /// Its closers: `C`, or `C | C2` with `or C2`.
+    pub fn closers(&self) -> Expr {
+        match &self.or {
+            Some((c2, _)) => Expr::Or(Box::new(self.closer.clone()), Box::new(c2.clone())),
+            None => self.closer.clone(),
+        }
+    }
+
+    /// The last bytes of its closers from their first bytes `c` (a mask at their first
+    /// bytes): `N - 1` bytes on, or `M - 1` where `C2` holds (`or C2 bytes M`).
+    pub fn closer_last(&self, c: Expr) -> Expr {
+        let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
+        let not = |a: Expr| Expr::Not(Box::new(a));
+        match &self.or {
+            Some((c2, m)) => Expr::Or(Box::new(prev(and(c.clone(), not(c2.clone())), self.bytes - 1)), Box::new(prev(and(c, c2.clone()), m - 1))),
+            None => prev(c, self.bytes - 1),
+        }
     }
 }
 
@@ -610,11 +705,16 @@ pub enum Stmt {
     /// ends at, for its caller to take: tree-sitter's scanner gives its semicolon wherever one is
     /// valid, before the token after it, which the level might read on (`a` then `b` on the next
     /// line is two statements, not an infix call).
-    Mark { kind: String, at: Expr, end: bool, unless: Vec<Vec<u8>>, unplaced: Option<String>, checks: Vec<MarkCheck>, settles: bool, ends: bool },
+    ///
+    /// `, before A | B …` and `, unless before A | B …` (decision 0416): the token the mark is
+    /// before must be (or must not be) one of these choices, as a parser asks of the token it
+    /// peeks at. `next` holds them: a `~` of the choices for `unless before`.
+    Mark { kind: String, at: Expr, end: bool, unless: Vec<Vec<u8>>, unplaced: Option<String>, checks: Vec<MarkCheck>, settles: bool, ends: bool, next: Option<Vec<TokenElem>> },
     /// `mark KIND = tokens [after E] E …` (decision 0129): a mark before a token that begins a
     /// run of tokens, each one of an element's choices (`|`): a token kind (a name) or a word
     /// (a string), the extras between them skipped. `after`: the token before is one of
-    /// `before`'s. The mark is at the first element's token.
+    /// `before`'s, or (`after ~E`) none of them, or no token at all. The mark is at the first
+    /// element's token.
     TokenMark { kind: String, before: Vec<TokenElem>, seq: Vec<Vec<TokenElem>> },
     /// `hidden KIND …` (in a tree): marks taken where the grammar can take them and skipped
     /// elsewhere. A mark not hidden, where the grammar can not take it, refuses the file.
@@ -828,9 +928,26 @@ struct P {
     classed: Vec<u8>,
     /// The `pairs` read so far, by name, for a token's `pair` (`TokenRule::Pairs`).
     pair_sets: Vec<(String, Vec<[u8; 2]>)>,
+    /// `deprecated back_fill`: the grammar still uses `back_fill`, while it moves to what replaces
+    /// it (`BACK_FILL_REMOVED`).
+    back_fill_ok: bool,
 }
 
 type R<T> = Result<T, String>;
+
+/// Why `back_fill` is refused, and what to write instead (decision 0416).
+pub const BACK_FILL_REMOVED: &str = "`back_fill` is removed from Bitlex (decision 0416). A value at a byte that is made from the \
+bytes after it needs a pass backward over the whole file, and the lean parsers never make one: they look ahead from \
+where they stand, and only where they need to. Write what the back fill asks, at the token:
+  - the next token, or a run of tokens from here: a token mark, `mark K = tokens [after E] A B ...`, \
+which tier 2 tests at the token, as a parser peeks; a run of choices is `(A | B)*`;
+  - a gap mark that the token after the gap decides: `mark K = E, before A | B ...` or \
+`mark K = E, unless before A | B ...`, which tier 2 tests at that token, as a scanner asks of the next token;
+  - the token's own later bytes: a test of the token, `escape \"WHY\" at KIND when count(E) at least N`, \
+or a mark's `at KIND when ...`;
+  - what the text is inside (a class's header, a declaration's run up to its `(`): the tree's rules, \
+which carry it as a parser carries its state.
+A grammar not yet moved may say `deprecated back_fill` on a line of its own, for the time it takes.";
 
 impl P {
     fn peek(&self) -> Option<&Tok> {
@@ -1212,6 +1329,9 @@ impl P {
             }
         }
         self.want_p(")")?;
+        if last == "back_fill" && !self.back_fill_ok {
+            return Err(BACK_FILL_REMOVED.into());
+        }
         Ok(Expr::Call(last, args))
     }
     /// A number: terms joined by `-`, left to right.
@@ -1232,6 +1352,9 @@ impl P {
             return Ok(NExpr::Position);
         }
         let name = self.ident()?;
+        if name == "back_fill" && !self.back_fill_ok {
+            return Err(BACK_FILL_REMOVED.into());
+        }
         if (name == "fill" || name == "back_fill") && self.eat_p("(") {
             let s = self.expr()?;
             self.want_p(",")?;
@@ -1265,6 +1388,16 @@ impl P {
             self.want_p("..")?;
             let closer = self.expr()?;
             let bytes = if self.eat_kw("bytes") { self.int()? } else { 1 };
+            let or = if self.eat_kw("or") {
+                let c = self.expr()?;
+                let m = if self.eat_kw("bytes") { self.int()? } else { 1 };
+                if !(1..=3).contains(&m) {
+                    return self.err("a second closer of 1 to 3 bytes");
+                }
+                Some((c, m as u8))
+            } else {
+                None
+            };
             let outside = self.eat_kw("outside");
             let empty = if self.eat_kw("else") {
                 let e = self.ident()?;
@@ -1273,14 +1406,38 @@ impl P {
             } else {
                 None
             };
-            if !(1..=3).contains(&bytes) || (outside && bytes != 1) || empty.as_ref().is_some_and(|e| !(1..=3).contains(&e.1)) {
-                return self.err("a closer of 1 to 3 bytes (`outside`: 1), an `else` of 1 to 3");
+            let mut after = Vec::new();
+            if self.eat_kw("after") {
+                while matches!(self.peek(), Some(Tok::Ident(_))) {
+                    after.push(self.ident()?);
+                }
+                if after.is_empty() || outside || empty.is_some() {
+                    return self.err("`after` and the kinds it names, on a kind with no `outside` or `else`");
+                }
             }
-            kinds.push(Region { kind, opener, closer, bytes: bytes as u8, outside, empty: empty.map(|(e, m)| (e, m as u8)) });
+            if !(1..=3).contains(&bytes) || (outside && bytes != 1) || (outside && or.is_some()) || empty.as_ref().is_some_and(|e| !(1..=3).contains(&e.1)) {
+                return self.err("a closer of 1 to 3 bytes (`outside`: 1, and no `or`), an `else` of 1 to 3");
+            }
+            kinds.push(Region { kind, opener, closer, bytes: bytes as u8, outside, empty: empty.map(|(e, m)| (e, m as u8)), or, after });
             self.nls();
         }
         if kinds.is_empty() {
             return self.err("a region");
+        }
+        // `after` names kinds of these regions with no `after` of their own; at most 15 kinds.
+        for r in &kinds {
+            for a in &r.after {
+                if !kinds.iter().any(|k| k.kind == *a && k.after.is_empty()) {
+                    return Err(format!("region {}: `after {a}`, not a kind of these regions with no `after`", r.kind));
+                }
+            }
+        }
+        // The kinds with `after` come last: they read the openers the plain kinds took.
+        if let Some(w) = kinds.windows(2).find(|w| !w[0].after.is_empty() && w[1].after.is_empty()) {
+            return Err(format!("region {}: a kind with no `after` after {}, which has one; the kinds with `after` come last", w[1].kind, w[0].kind));
+        }
+        if kinds.len() > 15 && kinds.iter().any(|r| !r.after.is_empty()) {
+            return Err("regions with `after`: at most 15 kinds".into());
         }
         Ok(Regions { hidden, kinds })
     }
@@ -1397,14 +1554,16 @@ impl P {
         Ok(last)
     }
 
-    /// A token test: `count(E) at least N` or `run(E) at least N` (`TokenTest`).
+    /// A token test: `count(E)`, `run(E)` or `all(E)`, `at least N` (`TokenTest`).
     fn token_test(&mut self) -> R<(TokenTest, Expr, u32)> {
         let test = if self.eat_kw("count") {
             TokenTest::Count
         } else if self.eat_kw("run") {
             TokenTest::Run
+        } else if self.eat_kw("all") {
+            TokenTest::All
         } else {
-            return self.err("`count` or `run`");
+            return self.err("`count`, `run` or `all`");
         };
         self.want_p("(")?;
         let expr = self.expr()?;
@@ -1463,6 +1622,16 @@ impl P {
     fn stmt(&mut self) -> R<Stmt> {
         let kw = self.ident()?;
         let s = match kw.as_str() {
+            // The grammar still uses `back_fill` (`BACK_FILL_REMOVED`): then the next statement.
+            "deprecated" => {
+                let what = self.ident()?;
+                if what != "back_fill" {
+                    return self.err("`deprecated back_fill`");
+                }
+                self.back_fill_ok = true;
+                self.nls();
+                return self.stmt();
+            }
             "lexer" => Stmt::Lexer(self.ident()?),
             "class" => {
                 let n = self.ident()?;
@@ -1778,11 +1947,12 @@ impl P {
                     if seq.is_empty() {
                         return self.err("a token after `tokens`");
                     }
-                    // The mark's token, and the one before, are tokens of the choices: no `~`, no
-                    // `end`; an `end` only in the last element.
+                    // The mark's token is a token of the choices: no `~`, no `end`; an `end` only in
+                    // the last element. The one before (`after`) has no `end`; a `~` there holds
+                    // where no token comes before too (the file's first).
                     let special = |c: &[TokenElem]| c.iter().any(|x| matches!(x, TokenElem::Not(_) | TokenElem::End));
                     let ends = |c: &[TokenElem]| c.contains(&TokenElem::End);
-                    if special(&seq[0]) || special(&before) || seq[..seq.len() - 1].iter().any(|c| ends(c)) {
+                    if special(&seq[0]) || ends(&before) || seq[..seq.len() - 1].iter().any(|c| ends(c)) {
                         return self.err("a mark's token of kinds and words, and `end` only last");
                     }
                     let s = Stmt::TokenMark { kind, before, seq };
@@ -1801,9 +1971,21 @@ impl P {
                     }
                 }
                 let (mut end, mut unplaced, mut checks, mut settles, mut ends) = (false, None, vec![], false, false);
+                let mut next: Option<Vec<TokenElem>> = None;
                 while self.eat_p(",") {
                     self.nls();
-                    if self.eat_kw("settles") {
+                    let not = self.eat_kw("unless");
+                    if not || self.is_kw("before") {
+                        self.want_kw("before")?;
+                        if next.is_some() {
+                            return self.err("one `before` a mark");
+                        }
+                        let choices = self.token_choices()?;
+                        if choices.iter().any(|c| matches!(c, TokenElem::Not(_) | TokenElem::End)) {
+                            return self.err("a `before`'s kinds and words");
+                        }
+                        next = Some(if not { vec![TokenElem::Not(choices)] } else { choices });
+                    } else if self.eat_kw("settles") {
                         settles = true;
                     } else if self.eat_kw("ends") {
                         ends = true;
@@ -1824,7 +2006,7 @@ impl P {
                         end = true;
                     }
                 }
-                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends }
+                Stmt::Mark { kind, at, end, unless, unplaced, checks, settles, ends, next }
             }
             "token" => {
                 let kind = self.kind()?;
@@ -1836,7 +2018,8 @@ impl P {
                 let rule = if through.is_some() || last.is_some() {
                     None
                 } else if self.eat_kw("run") {
-                    Some(TokenRule::Run(self.expr()?))
+                    let r = self.expr()?;
+                    if self.eat_kw("once") { Some(TokenRule::RunOnce(r, self.expr()?)) } else { Some(TokenRule::Run(r)) }
                 } else if self.eat_kw("pair") {
                     let e = self.expr()?;
                     match &e {
@@ -2074,7 +2257,7 @@ pub fn prefix_of(stmts: &[Stmt]) -> Result<Option<Vec<u8>>, String> {
 }
 
 pub fn parse(src: &str) -> Result<Vec<Stmt>, String> {
-    let mut p = P { t: lex(src)?, i: 0, regions: vec![], before: vec![], after: vec![], classed: vec![], pair_sets: vec![] };
+    let mut p = P { t: lex(src)?, i: 0, regions: vec![], before: vec![], after: vec![], classed: vec![], pair_sets: vec![], back_fill_ok: false };
     p.nls();
     let mut out = vec![];
     while p.peek().is_some() {
@@ -2090,6 +2273,37 @@ pub fn parse(src: &str) -> Result<Vec<Stmt>, String> {
 #[cfg(test)]
 mod tier2_tests {
     use super::*;
+
+    /// `back_fill` is refused, as a mask's and as a number's, with what to write instead
+    /// (decision 0416); `deprecated back_fill` lets a grammar not yet moved use it.
+    #[test]
+    fn back_fill_is_refused() {
+        for body in ["mask m = back_fill(q, sp)\n", "number n = back_fill(q, sp, position)\n"] {
+            let src = format!("lexer t\nclass q = '\"'\nclass sp = ' '\n{body}");
+            assert_eq!(parse(&src).err().as_deref(), Some(BACK_FILL_REMOVED), "{body}");
+            let allowed = format!("lexer t\ndeprecated back_fill\nclass q = '\"'\nclass sp = ' '\n{body}");
+            assert!(parse(&allowed).is_ok(), "{body}");
+        }
+    }
+
+    /// A gap mark's `before` and `unless before` (decision 0416): the choices of the token after
+    /// it, `unless before` as their `~`; one a mark, of kinds and words.
+    #[test]
+    fn a_mark_is_before_a_token() {
+        let mark = |m: &str| {
+            let src = format!("lexer t\nclass lf = '\\n'\n{m}\n");
+            parse(&src).map(|s| match s.into_iter().last() {
+                Some(Stmt::Mark { next, end, .. }) => (next, end),
+                other => panic!("{other:?}"),
+            })
+        };
+        let word = |w: &str| TokenElem::Word(w.as_bytes().to_vec());
+        assert_eq!(mark("mark k = lf, before \".\" | name, end"), Ok((Some(vec![word("."), TokenElem::Kind("name".into())]), true)));
+        assert_eq!(mark("mark k = lf, unless before \"}\""), Ok((Some(vec![TokenElem::Not(vec![word("}")])]), false)));
+        assert!(mark("mark k = lf, before ~\"}\"").is_err());
+        assert!(mark("mark k = lf, before end").is_err());
+        assert!(mark("mark k = lf, before \".\", unless before \"}\"").is_err());
+    }
 
     /// The tier-2 forms of decision 0071, as JSON's tree section writes them.
     #[test]
@@ -2130,7 +2344,7 @@ tree json {
     /// that restarts at each of its starts, and the compares, with a constant too.
     #[test]
     fn numbers_evaluate_per_byte() {
-        let src = "lexer t\nclass tick = '`'\nmask last = tick & ~next(tick)\nnumber end = back_fill(last, ~tick, position)\nnumber rem = end - position\nmask long = tick & at_least(rem, 3)\nnumber n = fill(long, long, rem)\nmask close = tick & at_least(rem, n) & ~long\nmask over = above(n, rem)\n";
+        let src = "lexer t\ndeprecated back_fill\nclass tick = '`'\nmask last = tick & ~next(tick)\nnumber end = back_fill(last, ~tick, position)\nnumber rem = end - position\nmask long = tick & at_least(rem, 3)\nnumber n = fill(long, long, rem)\nmask close = tick & at_least(rem, n) & ~long\nmask over = above(n, rem)\n";
         let stmts = parse(src).expect("parses");
         let tables = std::collections::HashMap::new();
         let text = b"a````b``c`````d";
@@ -2152,7 +2366,7 @@ tree json {
         assert_eq!(ones("close"), Vec::<usize>::new(), "no run after a long one as long as it");
         assert!(stmts.iter().any(|s| matches!(s, Stmt::Number(n, NExpr::Sub(..)) if n == "rem")));
         assert_eq!(ones("over"), [2, 3, 4, 6, 7, 11, 12, 13]);
-        let bad = "lexer t\nclass q = '\"'\nrounds until settled {\n  carry h = empty\n  number x = back_fill(q, h, position)\n  next h = prev(at_least(x, 1))\n}\n";
+        let bad = "lexer t\ndeprecated back_fill\nclass q = '\"'\nrounds until settled {\n  carry h = empty\n  number x = back_fill(q, h, position)\n  next h = prev(at_least(x, 1))\n}\n";
         let stmts = parse(bad).expect("parses");
         assert!(strictly_causal(match &stmts[2] {
             Stmt::Rounds { body, .. } => body,

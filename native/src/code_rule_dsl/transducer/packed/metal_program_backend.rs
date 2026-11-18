@@ -512,7 +512,7 @@ fn jit_support(
         }
         for capture in 0..program.capture_programs.len() {
             source.push_str(&format!(
-                "__attribute__((noinline)) bool jit_capture_{program_index}_{capture}(thread JitContext& context){{uint outcome=evaluate_assertion(context.assertions[context.program.captureStart+{capture}u],context.assertionData,context.captures,context.path->captures,context.task,context.file,context.program,*context.nodes,context.source,context.strings,context.stringBytes,context.values,context.nfaStates,context.nfaData,context.nfaRanges,context.luaInstructions,context.luaMembers,context.valueWork,*context.lineStarts,context.path->steps,*context.evaluation,*context.globalArenas,context.valueBase,context.valueCapacity);if(outcome==2u){{context.status->error=6u;return false;}}if(outcome==3u){{context.status->error=4u;return false;}}if(outcome==4u){{context.status->error=2u;return false;}}*context.keep=outcome==1u;return true;}}"
+                "__attribute__((noinline)) bool jit_capture_{program_index}_{capture}(thread JitContext& context){{uint outcome=evaluate_assertion(context.assertions[context.program.captureStart+{capture}u],context.assertionData,context.captures,context.path->captures,context.task,context.file,context.program,*context.nodes,context.supertypes,context.source,context.strings,context.stringBytes,context.values,context.nfaStates,context.nfaData,context.nfaRanges,context.luaInstructions,context.luaMembers,context.valueWork,*context.lineStarts,context.path->steps,*context.evaluation,*context.globalArenas,context.valueBase,context.valueCapacity);if(outcome==2u){{context.status->error=6u;return false;}}if(outcome==3u){{context.status->error=4u;return false;}}if(outcome==4u){{context.status->error=2u;return false;}}*context.keep=outcome==1u;return true;}}"
             ));
         }
     }
@@ -604,14 +604,14 @@ pub(super) fn compile_resident_interpreter_cached() -> Result<Engine, Error> {
         return Ok(engine.clone());
     }
     let source = format!("{}{}", *RESIDENT_PREFIX, kernel_source(INTERPRETER_FETCH, None, "", "", ""));
-    let engine = Engine::Interpreter { pipeline: pipeline_named(&source, "run_batch")?, buffers: Arc::new(Mutex::new(None)) };
+    let engine = Engine::Interpreter { pipeline: rerail_metal::runtime::pipeline_named_fixed(&source, "run_batch", None)?, buffers: Arc::new(Mutex::new(None)) };
     *cached = Some(engine.clone());
     Ok(engine)
 }
 
 pub fn compile_interpreter() -> Result<Engine, Error> {
     Ok(Engine::Interpreter {
-        pipeline: pipeline_named(&format!("{}{}", *TAPE_PREFIX, kernel_source(INTERPRETER_FETCH, None, "", "", "")), "run_batch")?,
+        pipeline: rerail_metal::runtime::pipeline_named_fixed(&format!("{}{}", *TAPE_PREFIX, kernel_source(INTERPRETER_FETCH, None, "", "", "")), "run_batch", None)?,
         buffers: Arc::new(Mutex::new(None)),
     })
 }
@@ -641,7 +641,7 @@ pub(in crate::code_rule_dsl) fn compile_sweep_cached() -> Result<ComputePipeline
     let begin = source.find("kernel void run_batch(").expect("the runtime has run_batch") + "kernel void run_batch(".len();
     let end = begin + source[begin..].find("uint tid [[thread_position_in_grid]]){").expect("run_batch's thread position");
     let kernel = include_str!("metal_label_sweep.metal").replace("/*PARAMETERS*/", &source[begin..end]);
-    let pipeline = pipeline_named(&format!("{source}\n{kernel}"), "label_sweep")?;
+    let pipeline = rerail_metal::runtime::pipeline_named_fixed(&format!("{source}\n{kernel}"), "label_sweep", None)?;
     *cached = Some(pipeline.clone());
     Ok(pipeline)
 }
