@@ -361,12 +361,13 @@ function takeMergeAssist(body, request) {
 }
 
 /**
- * When the daemon reads gh's sign-in again for the Merge Assist status the page holds (`performance.now()`, the page's
- * own clock from the moment the status came, so neither clock's time of day counts); `null` where it runs no gh.
+ * When the daemon reads gh's sign-in again for the Merge Assist status the page last read (`performance.now()`, the
+ * page's own clock from the moment the status came, so neither clock's time of day counts); `null` where it runs no gh.
+ * A write's answered status needs none: its commit starts a read, after which the wake is set.
  */
 let githubDueAt = null;
 
-/** Hold a Merge Assist status the daemon answered, and when it reads gh again for one (`readAgainInMs`). */
+/** Hold a Merge Assist status a read answered, and when the daemon reads gh again for one (`readAgainInMs`). */
 function holdMergeAssist(status) {
   data.mergeAssist = status;
   const readAgainInMs = status.readiness?.github?.readAgainInMs;
@@ -448,7 +449,7 @@ function loadMergeAssist(maxAge = 0) {
 function keepWriteStatus(write, request, status) {
   if (status === undefined || write !== mergeAssistWrites.sent) return;
   mergeAssistRequests.held = request;
-  holdMergeAssist(status);
+  data.mergeAssist = status;
   data.mergeAssistError = null;
   mergeAssistRead.at = Date.now();
 }
