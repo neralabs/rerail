@@ -410,9 +410,8 @@ pub struct Module {
     docof: Option<bool>,
     /// The `.violation`s of its includes that its rules give a `@place` (`Lowerer::clause`).
     places: BTreeSet<String>,
-    /// Its rules, where its walk wrote them as a version (decision 0377 step 3), or its image holds them: then
-    /// `l.prog` is its header alone.
-    version: Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>,
+    /// Its program, rules and header, as its walk wrote it (decision 0377 step 3) or its image holds it.
+    version: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
 }
 
 /// `statements` lowered as a module whose includes are `scope` (each module it reaches, once): its clauses read their
@@ -580,10 +579,9 @@ pub fn lower_module_seeded_written(statements: Vec<Statement>, seeds: &Seeds) ->
     l.stated = l.prog.inputs.iter().take_while(|r| stated.contains(*r)).count();
     l.deps = own_deps;
     let docof = declares_docof.then_some(l.docof_of_locs);
-    let version = match std::mem::take(&mut l.out) {
-        Out::Tree => None,
-        Out::Version(w) => Some(w.version(&l.prog)?),
-    };
+    // The module's header goes into its version with its rules: what the link and the modules that include it read.
+    let Out::Version(w) = std::mem::take(&mut l.out) else { unreachable!("the walk writes a version") };
+    let version = w.version(&std::mem::take(&mut l.prog))?;
     Ok(Module { l, written, docof, places, version })
 }
 
@@ -597,7 +595,6 @@ pub fn lower_module_in_written(statements: Vec<Statement>, scope: &[&Module]) ->
 /// and the modules that include it read of it, each as rows of names and numbers.
 #[derive(Clone, Debug, Default)]
 pub struct ModuleParts {
-    pub prog: Program,
     /// Each `.violation`: name, arity, code (`name`, `column` with its index, or `constant` with its text), whether
     /// its `at` is a node, whether it has a place relation, its columns, its message and its tag column.
     pub violations: Vec<ViolationParts>,
@@ -622,8 +619,6 @@ pub struct ModuleParts {
     pub places: BTreeSet<String>,
     /// The demands its text, or an include's, states (`Lowerer::printed_demands`).
     pub printed: BTreeSet<String>,
-    /// Its rules as a version, where `prog` holds its header alone (`Module::version`).
-    pub version: Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -643,7 +638,6 @@ impl Module {
     pub fn parts(&self) -> ModuleParts {
         let l = &self.l;
         ModuleParts {
-            prog: l.prog.clone(),
             violations: l
                 .violations
                 .iter()
@@ -675,29 +669,17 @@ impl Module {
             docof: self.docof,
             places: self.places.clone(),
             printed: l.printed_demands.clone(),
-            version: self.version.clone(),
         }
     }
 
-    /// The module with its rules as a version (`version`), its program its header alone.
-    pub fn as_version(mut self) -> Result<Module, Error> {
-        if self.version.is_none() {
-            self.version = Some(rules_version(&std::mem::take(&mut self.l.prog.rules))?);
-        }
-        Ok(self)
+    /// Its program, rules and header (its image's).
+    pub fn version(&self) -> &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version> {
+        &self.version
     }
 
-    /// The module with its rules in its program: decoded from its version, where it holds one.
-    pub fn tree(mut self) -> Result<Module, Error> {
-        if let Some(v) = self.version.take() {
-            self.l.prog.rules = v.program(&Default::default()).map_err(Error::Syntax)?.rules;
-        }
-        Ok(self)
-    }
-
-    /// The module its image's parts are.
-    pub fn of_parts(p: ModuleParts) -> Result<Module, Error> {
-        let mut l = Lowerer { prog: p.prog, three: p.three, sets: p.sets, made: p.made, next: p.next, stated: p.stated, once: p.once, printed_demands: p.printed, docof_of_locs: p.docof.unwrap_or(false), ..Lowerer::default() };
+    /// The module its image's parts are, its program `version`.
+    pub fn of_parts(p: ModuleParts, version: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>) -> Result<Module, Error> {
+        let mut l = Lowerer { three: p.three, sets: p.sets, made: p.made, next: p.next, stated: p.stated, once: p.once, printed_demands: p.printed, docof_of_locs: p.docof.unwrap_or(false), ..Lowerer::default() };
         for v in p.violations {
             let code = match v.code.0.as_str() {
                 "name" => FindingCode::Name,
@@ -712,7 +694,7 @@ impl Module {
         for (r, x) in p.deps {
             l.deps.entry(r).or_default().insert(x);
         }
-        Ok(Module { l, written: p.written.into_iter().collect(), docof: p.docof, places: p.places, version: p.version })
+        Ok(Module { l, written: p.written.into_iter().collect(), docof: p.docof, places: p.places, version })
     }
 }
 
@@ -740,35 +722,38 @@ impl Lowerer {
         let mut seeded = Seeded { decls: BTreeSet::new(), inputs: BTreeSet::new(), natives: BTreeSet::new(), kindsets: BTreeSet::new(), lattice: BTreeSet::new(), tapes: BTreeSet::new(), qualifiers: BTreeSet::new(), lattices: BTreeSet::new(), three: BTreeSet::new(), violations: Vec::new() };
         for m in scope {
             let helpers: BTreeSet<String> = m.l.made.iter().map(|(stem, n)| format!("rr_{stem}{n}")).collect();
-            let p = &m.l.prog;
-            for (rel, cols) in p.decls.iter().filter(|(r, _)| !helpers.contains(r.as_str())) {
-                seeded.decls.insert(rel.to_string());
-                self.prog.decls.insert(rel.clone(), cols.clone());
+            // Its header, read from its version.
+            use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as F;
+            let p = &*m.version;
+            for rel in F::declared_names(p).into_iter().filter(|r| !helpers.contains(r)) {
+                let cols = F::columns_of(p, &rel).unwrap_or_default();
+                seeded.decls.insert(rel.clone());
+                self.prog.decls.insert(rel.into(), cols.into_iter().map(|(c, t)| (c.into(), t.into())).collect());
             }
-            for rel in p.inputs.iter().filter(|r| !helpers.contains(*r)) {
-                if seeded.inputs.insert(rel.clone()) && !self.prog.inputs.contains(rel) {
-                    self.prog.inputs.push(rel.clone());
+            for rel in F::input_names(p).into_iter().filter(|r| !helpers.contains(r)) {
+                if seeded.inputs.insert(rel.clone()) && !self.prog.inputs.contains(&rel) {
+                    self.prog.inputs.push(rel);
                 }
             }
-            for (rel, n) in &p.natives {
+            for (rel, n) in F::natives(p) {
                 seeded.natives.insert(rel.clone());
-                self.prog.natives.insert(rel.clone(), n.clone());
+                self.prog.natives.insert(rel, n);
             }
-            for (rel, k) in &p.kindsets {
+            for (rel, k) in F::kindsets(p) {
                 seeded.kindsets.insert(rel.clone());
-                self.prog.kindsets.insert(rel.clone(), k.clone());
+                self.prog.kindsets.insert(rel, k);
             }
-            for (rel, d) in &p.lattice {
+            for (rel, d) in F::lattice(p) {
                 seeded.lattice.insert(rel.clone());
-                self.prog.lattice.insert(rel.clone(), d.clone());
+                self.prog.lattice.insert(rel, d);
             }
-            for (rel, cols) in &p.tapes {
+            for (rel, cols) in F::tapes(p) {
                 seeded.tapes.insert(rel.clone());
-                self.prog.tapes.entry(rel.clone()).or_default().extend(cols.iter().copied());
+                self.prog.tapes.entry(rel).or_default().extend(cols);
             }
-            for (rel, q) in &p.qualifiers {
+            for (rel, q) in F::qualifiers(p) {
                 seeded.qualifiers.insert(rel.clone());
-                self.prog.qualifiers.entry(rel.clone()).or_default().extend(q.iter().cloned());
+                self.prog.qualifiers.entry(rel).or_default().extend(q);
             }
             for (name, l) in &m.l.lattices {
                 seeded.lattices.insert(name.clone());
@@ -809,28 +794,16 @@ impl Lowerer {
         given.into_iter().zip(seeded.violations).filter(|(v, had)| v.places && !had).map(|(v, _)| v.name).collect()
     }
 
-    /// `m` after the modules linked so far: its helpers numbered after theirs, its parts added to theirs.
-    fn append(&mut self, m: Module) {
-        let (b, b_stated, own) = self.link(m).expect("a module of rules links");
-        debug_assert!(own.is_none(), "a tree's link appends trees");
-        append_parts(&mut self.prog, b, &mut self.stated, b_stated);
-    }
-
-    /// `append` but the union of the programs: `m`'s helpers numbered after the modules linked so far, and what the
-    /// lowerer knows of them added to theirs. `m`'s program, so renamed, is returned with the count of its inputs
-    /// stated first, for `append_parts`.
+    /// Module `m` after the modules linked so far: its helpers numbered after theirs, and what the lowerer knows of
+    /// them added to theirs. Its program, so renamed, is returned (`relinked`) with the count of its inputs stated
+    /// first, for `append_fields`.
     ///
-    /// A module whose rules are a version (`Module::version`) is linked by the same steps over its helpers' rules
-    /// alone, decoded (what the helpers' keys read): the renames and the merged helpers' rules dropped are then written
-    /// over its version's rules (`relinked`), and the program returned is its header alone, with that version.
-    fn link(&mut self, m: Module) -> Result<(Program, usize, Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>), Error> {
-        let Module { l: mut m, docof, places, version, .. } = m;
-        if let Some(v) = &version {
-            let helpers: BTreeSet<&str> = m.once.iter().map(|(name, _, _)| name.as_str()).collect();
-            let lists = Default::default();
-            let mut tree = crate::code_rule_dsl::logic::program_image::Tree::new(v, &lists);
-            m.prog.rules = v.rules().filter(|r| helpers.contains(v.rel_name(r.head().rel()))).map(|r| tree.rule(r)).collect();
-        }
+    /// Its helpers' keys read their rules, decoded, and their column types; the renames and the merged helpers'
+    /// rules and declarations dropped are then written over its version (`relinked`).
+    fn link(&mut self, m: Module) -> Result<(std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, usize), Error> {
+        use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as F;
+        let Module { l: mut m, docof, places, version: v, .. } = m;
+        let (mut rules, mut types) = helpers_of(&v, &m.once);
         let mut merged: Vec<(String, String, usize)> = Vec::new();
         let mut rename: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         for (stem, n) in &m.made {
@@ -841,12 +814,12 @@ impl Lowerer {
         }
         // A Python candidates relation is numbered by the natives made before it: another module's may hold the
         // number for another native.
-        for (name, native) in &m.prog.natives {
+        for (name, native) in &F::natives(&*v) {
             if name.starts_with("rr_python_candidates_") && self.prog.natives.get(name).is_some_and(|n| n != native) {
                 let mut serial = self.prog.natives.len();
                 let new = loop {
                     let new = format!("rr_python_candidates_{serial}");
-                    if !self.prog.decls.contains_key(new.as_str()) && !m.prog.decls.contains_key(new.as_str()) {
+                    if !self.prog.decls.contains_key(new.as_str()) && !F::declares(&*v, &new) {
                         break new;
                     }
                     serial += 1;
@@ -855,24 +828,25 @@ impl Lowerer {
             }
         }
         if !rename.is_empty() {
-            rename_relations(&mut m.prog, &rename);
+            rename_rules(&mut rules, &rename);
+            types = types.into_iter().map(|(k, t)| (rename.get(&k).cloned().unwrap_or(k), t)).collect();
         }
         // A helper `helper_once` made that equals one an earlier module made is that one, as in one lowering of them
         // all (decision 0225 §6 with 0246): in the order made, each renamed before the next's key reads it.
         for (name, stem, k) in std::mem::take(&mut m.once) {
             let name = rename.get(&name).cloned().unwrap_or(name);
-            let key = self.once_key(&m.prog, &name, &stem, k);
+            let key = self.once_key(types.get(&name).cloned().unwrap_or_default(), &rules, &name, &stem, k);
             match self.helpers.get(&key) {
                 Some(made) => {
                     let made = made.clone();
                     merged.push((name.clone(), made.clone(), k));
-                    m.prog.decls.remove(name.as_str());
+                    types.remove(&name);
                     let mut seen = 0;
-                    m.prog.rules.retain(|r| r.head.rel != name.as_str() || {
+                    rules.retain(|r| r.head.rel != name.as_str() || {
                         seen += 1;
                         seen > k
                     });
-                    rename_relations(&mut m.prog, &std::collections::HashMap::from([(name, made)]));
+                    rename_rules(&mut rules, &std::collections::HashMap::from([(name, made)]));
                 }
                 None => {
                     self.helpers.insert(key, name.clone());
@@ -881,7 +855,7 @@ impl Lowerer {
             }
         }
         self.next += m.next;
-        let at = self.prog.rules.len() + self.appended;
+        let at = self.appended;
         self.modal.extend(m.modal.into_iter().map(|(i, s)| (i + at, s)));
         for v in self.violations.iter_mut().filter(|v| places.contains(&v.name)) {
             v.places = true;
@@ -893,24 +867,28 @@ impl Lowerer {
         if let Some(d) = docof {
             self.docof_of_locs = d;
         }
-        let own = match version {
-            None => None,
-            Some(v) => {
-                m.prog.rules.clear();
-                let own = relinked(&v, &m.prog, &rename, &merged)?;
-                self.appended += own.size();
-                Some(own)
-            }
-        };
-        Ok((m.prog, m.stated, own))
+        let own = relinked(&v, &rename, &merged)?;
+        self.appended += own.size();
+        Ok((own, m.stated))
     }
 }
 
-/// A module's rules, from version `v`, as `Lowerer::link` leaves them, under its linked `header`: each relation
-/// renamed by `rename`, then the first `k` rules of each helper `merged` into another (`(name, made, k)`, in order)
-/// dropped and the helper read as that one. One definition with the tree's (`rename_relations`, then each merge's
-/// `retain` and rename), over the version: no rule is decoded.
-pub fn relinked(v: &crate::code_rule_dsl::logic::program_image::Version, header: &Program, rename: &std::collections::HashMap<String, String>, merged: &[(String, String, usize)]) -> Result<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Error> {
+/// The rules of the helpers `helper_once` made (`once`) in version `v`, decoded, and their column types: what their
+/// keys read (`Lowerer::once_key`).
+fn helpers_of(v: &crate::code_rule_dsl::logic::program_image::Version, once: &[(String, String, usize)]) -> (Vec<Rule>, BTreeMap<String, Vec<String>>) {
+    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as F;
+    let helpers: BTreeSet<&str> = once.iter().map(|(name, _, _)| name.as_str()).collect();
+    let lists = Default::default();
+    let mut tree = crate::code_rule_dsl::logic::program_image::Tree::new(v, &lists);
+    let rules = v.rules().filter(|r| helpers.contains(v.rel_name(r.head().rel()))).map(|r| tree.rule(r)).collect();
+    let types = helpers.iter().map(|h| (h.to_string(), F::columns_of(v, h).unwrap_or_default().into_iter().map(|(_, t)| t).collect())).collect();
+    (rules, types)
+}
+
+/// A module's program, from version `v`, as `Lowerer::link` leaves it: each relation renamed by `rename`, then the
+/// first `k` rules of each helper `merged` into another (`(name, made, k)`, in order) and its declaration dropped and
+/// the helper read as that one; its header renamed the same (`renamed_fields`). No rule is decoded.
+pub fn relinked(v: &crate::code_rule_dsl::logic::program_image::Version, rename: &std::collections::HashMap<String, String>, merged: &[(String, String, usize)]) -> Result<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Error> {
     use crate::code_rule_dsl::logic::program_image::{AtomId, AtomRef, Builder, Rewrite, Slot};
     let into: std::collections::HashMap<&str, &str> = merged.iter().map(|(n, m, _)| (n.as_str(), m.as_str())).collect();
     let to = |rel: &str| -> Option<String> {
@@ -963,7 +941,11 @@ pub fn relinked(v: &crate::code_rule_dsl::logic::program_image::Version, header:
         let mut rw = Renamed { v, to: &to, vars };
         b.rewrite(v, r, &mut rw).finish().map_err(Error::Syntax)?;
     }
-    b.set_program_header(header);
+    if edits {
+        renamed_fields(&mut b, v, &to, rename, &into);
+    } else {
+        b.copy_fields(v, &|r: &str| !r.starts_with("module_"));
+    }
     let bytes = b.finish_bytes().map_err(Error::Syntax)?;
     crate::code_rule_dsl::logic::program_image::Version::open(&bytes).map_err(Error::Syntax)
 }
@@ -990,53 +972,40 @@ pub struct LinkedVersions {
 /// `link` with the modules' rules kept as versions (`LinkedVersions`).
 pub fn link_versions(modules: Vec<Module>) -> Result<LinkedVersions, Error> {
     let mut modules = modules.into_iter();
-    let Some(Module { mut l, version, .. }) = modules.next() else {
+    let Some(Module { mut l, version: v, .. }) = modules.next() else {
         let lowered = whole_front(Lowerer::default())?;
-        let first = relinked(rules_version(&[])?.as_ref(), &Program::default(), &Default::default(), &[])?;
+        let first = relinked(rules_version(&[])?.as_ref(), &Default::default(), &[])?;
         return Ok(LinkedVersions { first, appended: Vec::new(), lowered });
-    };
-    let v = match version {
-        Some(v) => v,
-        None => rules_version(&std::mem::take(&mut l.prog.rules))?,
     };
     // The first module's helpers by their keys (read from an image, it has none), as `link` keys them.
     l.helpers.clear();
     {
-        let helpers: BTreeSet<&str> = l.once.iter().map(|(name, _, _)| name.as_str()).collect();
-        let lists = Default::default();
-        let mut tree = crate::code_rule_dsl::logic::program_image::Tree::new(&v, &lists);
-        let mut keyed = l.prog.clone();
-        keyed.rules = v.rules().filter(|r| helpers.contains(v.rel_name(r.head().rel()))).map(|r| tree.rule(r)).collect();
+        let (rules, types) = helpers_of(&v, &l.once);
         for (name, stem, k) in l.once.clone() {
-            let key = l.once_key(&keyed, &name, &stem, k);
+            let key = l.once_key(types.get(&name).cloned().unwrap_or_default(), &rules, &name, &stem, k);
             l.helpers.entry(key).or_insert(name);
         }
     }
-    let first = relinked(&v, &l.prog, &Default::default(), &[])?;
+    // The lowerer's header is the modules' linked so far: what the next module's renames are checked against.
+    let first = relinked(&v, &Default::default(), &[])?;
+    let mut stated = 0;
+    append_fields(&mut l.prog, &*first, &mut stated, l.stated);
+    l.stated = stated;
     l.appended = first.size();
     let mut appended = Vec::new();
     for m in modules {
-        let (header, b_stated, own) = l.link(m.as_version()?)?;
-        let own = own.expect("a module linked as a version");
-        appended.push((own, l.stated, b_stated));
-        append_parts(&mut l.prog, header, &mut l.stated, b_stated);
+        let (own, b_stated) = l.link(m)?;
+        appended.push((std::sync::Arc::clone(&own), l.stated, b_stated));
+        append_fields(&mut l.prog, &*own, &mut l.stated, b_stated);
     }
     let lowered = whole_front(l)?;
     Ok(LinkedVersions { first, appended, lowered })
 }
 
-/// `b`, a module's program (`Lowerer::link`), added to `a`, the modules linked so far: its rules after theirs, its
-/// parts added to theirs; its first `b_stated` inputs after `a`'s first `stated`, which counts them. `a` and `b` may be
-/// headers alone (a version's: `lowering_tail::AppendModule`).
-pub fn append_parts(a: &mut Program, b: Program, stated: &mut usize, b_stated: usize) {
-    append_fields(a, &b, stated, b_stated);
-    a.rules.extend(b.rules);
-}
-
-/// `append_parts` of the fields alone: `b`'s added to `a`'s, a version's edit's or a tree's. A declaration, a lattice,
-/// a kind set, a native or an answer of `b` replaces `a`'s; facts, qualifiers and tape columns add to `a`'s; the
-/// inputs `b` states first (`b_stated`) go after the `stated` `a` states first, the rest last; each list keeps its
-/// first.
+/// A module's fields (`Lowerer::link`), `b`'s, added to `a`'s, the modules' linked so far: a version's edit's or a
+/// tree's. A declaration, a lattice, a kind set, a native or an answer of `b` replaces `a`'s; facts, qualifiers and
+/// tape columns add to `a`'s; the inputs `b` states first (`b_stated`) go after the `stated` `a` states first, the rest
+/// last; each list keeps its first.
 pub fn append_fields(a: &mut (impl crate::code_rule_dsl::logic::program_image::fields::FieldsMut + ?Sized), b: &(impl crate::code_rule_dsl::logic::program_image::fields::ProgramFields + ?Sized), stated: &mut usize, b_stated: usize) {
     use crate::code_rule_dsl::logic::program_facts::Field;
     for rel in b.declared_names() {
@@ -1187,9 +1156,9 @@ fn helper_order(v: &str) -> (&str, u64) {
     (v, 0)
 }
 
-/// `prog`'s helpers named as `rename` says (a module's, numbered when it is linked): relations, and the variables and
-/// columns `fresh` named too.
-fn rename_relations(prog: &mut Program, rename: &std::collections::HashMap<String, String>) {
+/// `rules`' helpers named as `rename` says (a module's, numbered when it is linked): relations, and the variables
+/// `fresh` named too (`renamed_fields` renames a header the same).
+fn rename_rules(rules: &mut [Rule], rename: &std::collections::HashMap<String, String>) {
     let to = |rel: &str| rename.get(rel).cloned().unwrap_or_else(|| rel.to_owned());
     fn term(t: &mut Term, rename: &std::collections::HashMap<String, String>) {
         match t {
@@ -1208,7 +1177,7 @@ fn rename_relations(prog: &mut Program, rename: &std::collections::HashMap<Strin
         }
         a.args.make_mut().iter_mut().for_each(|t| term(t, rename));
     };
-    for rule in &mut prog.rules {
+    for rule in rules {
         atom(&mut rule.head);
         for l in rule.body.make_mut() {
             match l {
@@ -1239,33 +1208,54 @@ fn rename_relations(prog: &mut Program, rename: &std::collections::HashMap<Strin
             }
         }
     }
-    let keyed = |m: &mut BTreeMap<String, _>| *m = std::mem::take(m).into_iter().map(|(k, v)| (to(&k), v)).collect();
-    keyed(&mut prog.facts);
-    prog.decls = std::mem::take(&mut prog.decls).into_iter().map(|(k, v)| (to(&k).into(), v.iter().map(|(c, t)| (to(c).into(), t.clone())).collect())).collect();
-    prog.lattice = std::mem::take(&mut prog.lattice).into_iter().map(|(k, v)| (to(&k), v)).collect();
-    prog.kindsets = std::mem::take(&mut prog.kindsets).into_iter().map(|(k, v)| (to(&k), v)).collect();
-    prog.qualifiers = std::mem::take(&mut prog.qualifiers).into_iter().map(|(k, v)| (to(&k), v)).collect();
-    prog.tapes = std::mem::take(&mut prog.tapes).into_iter().map(|(k, v)| (to(&k), v)).collect();
-    prog.natives = std::mem::take(&mut prog.natives)
-        .into_iter()
-        .map(|(k, mut n)| {
-            n.rename_reads(to);
-            (to(&k), n)
-        })
-        .collect();
-    prog.nullary = std::mem::take(&mut prog.nullary).into_iter().map(|r| to(&r)).collect();
-    for list in [&mut prog.inputs, &mut prog.outputs, &mut prog.demand] {
-        for r in list.iter_mut() {
-            *r = to(r);
+}
+
+/// Version `v`'s header stated on `b`, each relation named as `to` says (`relinked`'s renames, then merges), the
+/// helpers merged into another (`into`'s, by their names after `rename`) declared no more: its declarations and their columns, facts, inputs,
+/// outputs, and the fields that name relations (lattices, kind sets, qualifiers, tape columns, natives and what they
+/// read, nullary relations, demands, shapes); its other `.about` rows as they are.
+fn renamed_fields(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>, v: &crate::code_rule_dsl::logic::program_image::Version, to: &dyn Fn(&str) -> Option<String>, rename: &std::collections::HashMap<String, String>, into: &std::collections::HashMap<&str, &str>) {
+    use crate::code_rule_dsl::logic::program_facts::Field;
+    use crate::code_rule_dsl::logic::program_image::fields::{FieldsMut, ProgramFields as F};
+    let to = |r: &str| to(r).unwrap_or_else(|| r.to_owned());
+    b.set_about(&v.about_kept(&|r: &str| !r.starts_with("module_")));
+    for rel in F::declared_names(v) {
+        if into.contains_key(rename.get(&rel).map_or(rel.as_str(), String::as_str)) {
+            continue;
         }
+        let cols: Vec<(String, String)> = F::columns_of(v, &rel).unwrap_or_default().into_iter().map(|(c, t)| (to(&c), t)).collect();
+        let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
+        FieldsMut::declare(b, &to(&rel), &pairs);
     }
-    for shape in &mut prog.shapes {
+    for rel in F::fact_names(v) {
+        b.set_facts(&to(&rel), &F::fact_rows(v, &rel));
+    }
+    let names = |l: Vec<String>| -> Vec<String> { l.iter().map(|r| to(r)).collect() };
+    b.set_inputs(&names(F::input_names(v)));
+    b.set_outputs(&names(F::output_names(v)));
+    fn keyed<X>(m: BTreeMap<String, X>, to: &dyn Fn(&str) -> String) -> BTreeMap<String, X> {
+        m.into_iter().map(|(k, x)| (to(&k), x)).collect()
+    }
+    b.set_field(Field::Lattice(&keyed(F::lattice(v), &to)));
+    b.set_field(Field::Kindsets(&keyed(F::kindsets(v), &to)));
+    b.set_field(Field::Qualifiers(&keyed(F::qualifiers(v), &to)));
+    b.set_field(Field::Tapes(&keyed(F::tapes(v), &to)));
+    let natives: BTreeMap<String, _> = F::natives(v).into_iter().map(|(k, mut n)| {
+        n.rename_reads(&to);
+        (to(&k), n)
+    }).collect();
+    b.set_field(Field::Natives(&natives));
+    b.set_field(Field::Nullary(&F::nullary(v).iter().map(|r| to(r)).collect()));
+    b.set_field(Field::Demand(&names(F::demand(v))));
+    let mut shapes = F::shapes(v);
+    for shape in &mut shapes {
         shape.head = to(&shape.head);
         shape.lit = to(&shape.lit);
         if let crate::code_rule_dsl::logic::front::ShapeWait::After(a) = &mut shape.wait {
             *a = to(a);
         }
     }
+    b.set_field(Field::Shapes(&shapes));
 }
 
 /// The scope's own declarations taken out of a module's program linked in it (`rr::link_seeded_version`), but for
@@ -1307,25 +1297,23 @@ pub fn unseed(program: &mut (impl crate::code_rule_dsl::logic::program_image::fi
 /// `link_seeded` up to the program's analyses, apart: the scope's program (its seeds' header: no rules), the
 /// module's own program linked into it (`Lowerer::link`), and what the lowerer knows of them (`Lowered`, its program
 /// the scope's). `rr::link_seeded_version` makes the scope's version once (`Scoped`), appends the module's onto it
-/// (`append_parts`, `lowering_tail::AppendModule`), checks it is `declared`, and runs the analyses on it.
+/// (`lowering_tail::AppendModule`), checks it is `declared`, and runs the analyses on it.
 pub fn link_seeded_parts(m: Module, seeds: &Seeds) -> Result<Linked, Error> {
     let mut l = seeds.l.clone();
     l.violations.clear();
-    let (own, own_stated, version) = l.link(m)?;
+    let (own, own_stated) = l.link(m)?;
     let stated = l.stated;
     let lowered = whole_front(l)?;
     debug_assert!(lowered.program.rules.is_empty(), "a scope's seeds hold no rules");
-    Ok(Linked { lowered, own, version, stated, own_stated })
+    Ok(Linked { lowered, own, stated, own_stated })
 }
 
 /// `link_seeded_parts`'s parts.
 pub struct Linked {
     pub lowered: Lowered,
-    /// The module's own program, linked: with its rules, or its header alone where the walk wrote them (`written`).
-    pub own: Program,
-    /// Its rules, as `Lowerer::link` leaves them, where its walk wrote them as a version (`own` its header then).
-    pub version: Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>,
-    /// The scope's inputs stated first, and the module's (`append_parts`).
+    /// The module's own program, rules and header, as `Lowerer::link` leaves it.
+    pub own: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
+    /// The scope's inputs stated first, and the module's (`append_fields`).
     pub stated: usize,
     pub own_stated: usize,
 }
@@ -1894,10 +1882,10 @@ impl Lowerer {
 
     /// The key `helper_once` made helper `name` under (stem `stem`, its first `k` rules), from `prog` as it is now:
     /// its relations' names as linking renamed them.
-    fn once_key(&mut self, prog: &Program, name: &str, stem: &str, k: usize) -> HelperKey {
+    /// Helper `name`'s key: its stem, its column types `cols`, and the templates of its first `k` rules in `rules`.
+    fn once_key(&mut self, cols: Vec<String>, rules: &[Rule], name: &str, stem: &str, k: usize) -> HelperKey {
         let names = self.template_names.get_or_insert_with(crate::code_rule_dsl::logic::front::template::CanonicalNames::new);
-        let cols = prog.decls.get(name).map(|c| c.iter().map(|(_, t)| t.to_string()).collect()).unwrap_or_default();
-        let rules = prog.rules.iter().filter(|r| r.head.rel == name).take(k).map(|r| crate::code_rule_dsl::logic::front::template::template(r, names)).collect();
+        let rules = rules.iter().filter(|r| r.head.rel == name).take(k).map(|r| crate::code_rule_dsl::logic::front::template::template(r, names)).collect();
         (stem.to_owned(), cols, rules)
     }
 

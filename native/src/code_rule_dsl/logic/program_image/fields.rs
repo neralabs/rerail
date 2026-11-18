@@ -348,6 +348,15 @@ pub trait FieldsMut: ProgramFields {
     }
 }
 
+impl Version {
+    /// Its `.about` relations that `keep` keeps, as rows.
+    pub fn about_kept(&self, keep: &dyn Fn(&str) -> bool) -> Facts {
+        let names: Vec<String> = self.about_facts().iter().map(|f| self.text(f.name()).to_owned()).filter(|n| keep(n)).collect();
+        let names: Vec<&str> = names.iter().map(String::as_str).collect();
+        ProgramFields::about(self, &names)
+    }
+}
+
 impl ProgramFields for Version {
     fn input_names(&self) -> Vec<String> {
         Version::input_names(self)
@@ -424,6 +433,22 @@ impl Builder<'_> {
         if was.about(&names) != about {
             self.set_about(&about);
         }
+    }
+
+    /// States `v`'s header on this builder as `set_program_header` states a program's: its declarations, facts, inputs
+    /// and outputs, and the `.about` relations `about` keeps (an image's `module_*` rows are no program's fields).
+    pub fn copy_fields(&mut self, v: &Version, about: &dyn Fn(&str) -> bool) {
+        for rel in ProgramFields::declared_names(v) {
+            let cols = ProgramFields::columns_of(v, &rel).unwrap_or_default();
+            let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
+            FieldsMut::declare(self, &rel, &pairs);
+        }
+        for rel in ProgramFields::fact_names(v) {
+            self.set_facts(&rel, &ProgramFields::fact_rows(v, &rel));
+        }
+        self.set_inputs(&ProgramFields::input_names(v));
+        self.set_outputs(&ProgramFields::output_names(v));
+        self.set_about(&v.about_kept(about));
     }
 
     /// A cell of this builder's atoms as a value.

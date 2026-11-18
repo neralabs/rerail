@@ -315,8 +315,8 @@ impl Text {
         closed_program(&files, &own)?;
         let own: Vec<syntax::Statement> = own.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_))).collect();
         // Its rules written as a version in the walk (decision 0377 step 3).
-        let mut linked = lower::link_seeded_parts(lower::lower_module_seeded_written(own, &scoped.seeds)?, &scoped.seeds)?;
-        let written = own_version(&linked.own, linked.version.take())?;
+        let linked = lower::link_seeded_parts(lower::lower_module_seeded_written(own, &scoped.seeds)?, &scoped.seeds)?;
+        let written = std::sync::Arc::clone(&linked.own);
         let version = link_seeded_version(linked, written, scoped, core_names())?;
         // A text that adds to library relations asks of the library (decision 0089 §3): its request's cone, the library
         // relations that read what it adds, and the helpers they read, are copied from the linked library, made once
@@ -329,15 +329,13 @@ impl Text {
         Ok(Some(Own { version, asked, declared }))
     }
 
-    /// The text's own program as its walk writes it (`lower::lower_module_seeded_written`), and whether the linked
-    /// module held its header alone: a test's view of decision 0377 step 3.
+    /// The text's own program as its walk writes it (`lower::lower_module_seeded_written`) and its link leaves it: a
+    /// test's view of decision 0377 step 3.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub fn own_written(self, scoped: &Scoped) -> Result<(bool, std::sync::Arc<super::program_image::Version>), Error> {
+    pub fn own_written(self, scoped: &Scoped) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
         let Read::Modular { own, .. } = self.0 else { return Err(Error::Syntax("not a modular text".to_owned())) };
         let own: Vec<syntax::Statement> = own.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_))).collect();
-        let mut w = lower::link_seeded_parts(lower::lower_module_seeded_written(own, &scoped.seeds)?, &scoped.seeds)?;
-        let header_alone = w.own.rules.is_empty() && w.version.is_some();
-        Ok((header_alone, own_version(&w.own, w.version.take())?))
+        Ok(lower::link_seeded_parts(lower::lower_module_seeded_written(own, &scoped.seeds)?, &scoped.seeds)?.own)
     }
 
     /// `lower_in` as a version: the stored image handed on unread (decision 0281's path, step 7a-2); else the text
@@ -1013,29 +1011,12 @@ pub fn with_cone(program: &mut Program, library: &Program, asked: &BTreeSet<Stri
     }
 }
 
-/// A lowered program's image (decision 0173): its rules, declarations, facts and `.about` rows.
-/// `program` as a version, opened from the image the store keeps of it (`encode_program`).
-/// `lower::link_seeded` as a version (decision 0281's path, step 7b): the module's program appended onto the scope's
-/// version (made once, `Scoped`), then its three-valued relations, findings, core.rr's declarations, its span patterns, grammar names, `builtins_out`, `kind_sets`,
-/// `unit`, `whole_back`,
-/// `front::finish` and `whole()`'s tail (`lower::link_seeded_front`), the tail run on it as program passes (`preparation::lowering_tail` and
-/// `DropRepeated`: aggregate demand, `unit`, the sets, then the widened contexts), then the
-/// scope's declarations taken out of its header (`lower::unseed`).
-/// A module's own program as a version: the one its walk wrote, as the link left it (`version`), or `own` encoded.
-fn own_version(own: &Program, version: Option<std::sync::Arc<super::program_image::Version>>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
-    match version {
-        Some(v) => Ok(v),
-        None => version_of(own),
-    }
-}
-
-/// The module linked in `scoped` (`lower::link_seeded_parts`), its own program `own_v` (`own_version`), appended onto
+/// The module linked in `scoped` (`lower::link_seeded_parts`), its own program `own_v`, appended onto
 /// the scope's version and through the lowering's tail.
 fn link_seeded_version(linked: lower::Linked, own_v: std::sync::Arc<super::program_image::Version>, scoped: &Scoped, core: &BTreeSet<String>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     use super::program_image::Builder;
     let seeds = &scoped.seeds;
-    let lower::Linked { lowered, own, stated, own_stated, .. } = linked;
-    drop(own);
+    let lower::Linked { lowered, stated, own_stated, .. } = linked;
     let v = lowering_tail_on(scoped.version()?, vec![(own_v, stated, own_stated)], true, lowered)?;
     let mut b = Builder::on(&v);
     lower::unseed(&mut b, seeds, core);
@@ -1113,11 +1094,13 @@ fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, append
     Ok(v)
 }
 
+/// `program` as a version, opened from the image the store keeps of it (`encode_program`).
 fn version_of(program: &Program) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     let bytes = encode_program(program).map_err(Error::Syntax)?;
     super::program_image::Version::open(&bytes).map_err(Error::Syntax)
 }
 
+/// A lowered program's image (decision 0173): its rules, declarations, facts and `.about` rows.
 fn encode_program(program: &Program) -> Result<Vec<u8>, String> {
     let mut b = super::program_image::Builder::of_program_less_maintenance(program)?;
     b.set_about(&super::program_image::about_of(program));

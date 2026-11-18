@@ -4201,8 +4201,7 @@ fn a_module_is_linked_and_checked_declared_on_the_version() {
     assert!(v.rules().any(|r| v.rel_name(r.head().rel()) == "hit"), "{}", v.show());
 }
 
-/// A text's rules are written as a version in its walk (decision 0377 step 3): the module linked holds its header
-/// alone, its rules in the version the walk wrote.
+/// A text's rules are written as a version in its walk (decision 0377 step 3), its header with them.
 #[test]
 fn a_texts_rules_are_written_as_a_version_in_its_walk() {
     // Two aggregates of two literals under one head make two helpers of one stem and column types (`helper_once`),
@@ -4211,8 +4210,7 @@ fn a_texts_rules_are_written_as_a_version_in_its_walk() {
     let files = super::read_text(src).unwrap().files().expect("a modular text");
     let library = super::lower_library(&files, None).unwrap();
     let scoped = library.scoped(&files);
-    let (header_alone, v) = super::read_text(src).unwrap().own_written(&scoped).unwrap();
-    assert!(header_alone, "the walk wrote the rules");
+    let v = super::read_text(src).unwrap().own_written(&scoped).unwrap();
     assert!(v.rules().count() >= 2, "{}", v.show());
     // Each aggregate's helper, numbered by the link after the scope's: written in the walk, and read by `sizes`.
     let helpers: BTreeSet<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).filter(|h| h.starts_with("rr_agg")).collect();

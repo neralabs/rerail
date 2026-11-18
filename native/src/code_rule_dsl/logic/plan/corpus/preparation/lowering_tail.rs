@@ -1551,7 +1551,7 @@ impl ProgramPass for ThreeValued {
     }
 }
 
-/// A module's program linked onto the scope's (`lower::append_parts`, as `Lowerer::append` adds it on the tree):
+/// A module's program linked onto the scope's (`lower::append_fields`):
 /// its header added to the input's, its rules copied after the input's. Its settings: the module's version (by
 /// digest) and the counts of inputs stated first.
 pub struct AppendModule {
