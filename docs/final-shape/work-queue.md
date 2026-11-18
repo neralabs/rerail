@@ -2402,3 +2402,20 @@ and the input relations' hash indexes and sorted orders. Then `rr_agg56` (Q82, 0
   sets, the header's lists) on one program, then fix whichever side makes it differ.
 - **Done when**: the debug build lowers ep2's rules with both checks passing. A debug run of the combine's splice
   (0373) waits on it; meanwhile `RERAIL_COMBINE_LINK=check` checks the splice in the profiling build.
+
+### Q91. A rule edit lays out every kept input, though none changed (Q18's kept inputs laziness)
+
+- **Found** (2026-11-17, ep2 e53, profiled): "the kept inputs (decision 0117)" reports "0 of 1008 inputs changed,
+  from 0 changed files", and its patch takes 0.001 s. Yet `retain::kept_inputs` takes 0.077 s, decoding and laying
+  out all 1,008 inputs' documents frames: their rows 0.015 s, the digests rebuilt and checked against the frame's
+  0.007 s, the owners' granules (content keys, a sort) 0.012 s (20 inputs of 22,375 rows each), the granules
+  admitted 0.014 s, the ranges and sources 0.012 s. 340 of the inputs have no rows.
+- **What a rule edit reads of them**: nothing but each input's digest (`Stored::digest`, read undecoded) and,
+  where the run reads its kept statistics, the stats part. `docs` and `ranges` are read only for the evaluated
+  owners (`patch_owners`), and the rows only where the cross part reads the input (`Lazy`).
+- **Plan**: each input's layout (`docs`, `ranges`, the granules and their starts) is made on first use (a
+  `OnceLock` in `KeptInput`, `Lazy` reading it), and its failure is told as `Lazy` tells one now. What blocks it:
+  `Lazy::len` (the planner's) is the sum of the owners' row counts, which today come from decoding the documents
+  frame. The documents frame should record its rows' total where the keeper writes it (`write_frames`), a frame
+  format change. Admitting all 64 granules of each input instead would be 64k keys.
+- **Done when**: a rule edit decodes no documents frame, and `kept_inputs` on ep2 is the stats parts' admission.

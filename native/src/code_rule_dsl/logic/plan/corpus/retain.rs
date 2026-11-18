@@ -1563,7 +1563,10 @@ pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32
     type Owners = Vec<(i64, i64, u64)>;
     let mut docs_of_rel: HashMap<String, (Arc<DocDigests>, u64, Owners)> = HashMap::new();
     for (rel, frame) in &names {
+        let s_rows = crate::code_rule_dsl::logic::profile::span(|| "an input's documents' frame: its rows".into());
         let Some(got) = admitted.get(frame).and_then(|a| a.rows().ok()) else { return Ok(Err(format!("{rel}: its documents' frame does not decode"))) };
+        drop(s_rows);
+        let _s_docs = crate::code_rule_dsl::logic::profile::span(|| "an input's documents' frame: its digests, checked".into());
         if got.types.len() != 3 || got.rows.len() != got.n * 3 {
             return Ok(Err(format!("{rel}: its documents' frame is not three columns a row")));
         }
@@ -1572,6 +1575,8 @@ pub(in crate::code_rule_dsl) fn kept_inputs(store: &ContentStore, space: [u8; 32
         if docs.len() != got.n || digest_of_docs(&docs) != at.digest {
             return Ok(Err(format!("{rel}: its documents' frame does not match its digest")));
         }
+        drop(_s_docs);
+        let _s_owners = crate::code_rule_dsl::logic::profile::span(|| format!("an input's documents' frame: its owners' granules ({} rows)", got.n));
         let atom_owned = got.types.first() == Some(&b's');
         let mut keys: Vec<i64> = got.rows.chunks_exact(3).map(|r| r[0]).collect();
         if atom_owned {
