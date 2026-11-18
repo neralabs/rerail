@@ -27,7 +27,7 @@ export const WORKTREE_PACK_ID = "worktree";
  */
 export const WORKTREE_PUBLISHER = "worktree";
 /** A rule document larger than this is left out unread, as a dependency manifest that large is when matching packs. */
-const MAX_RULE_DOCUMENT_BYTES = 1024 * 1024;
+export const MAX_RULE_DOCUMENT_BYTES = 1024 * 1024;
 
 /** Whether `pack` is a checkout's own rules rather than an installed pack. */
 export function isWorktreePack(pack: Pick<RulePack, "publisher"> | undefined): boolean {
@@ -47,6 +47,8 @@ interface RuleFile {
   readonly regular: boolean;
   readonly size: number;
 }
+
+type RuleFileEntry = Omit<RuleFile, "stamp">;
 
 /**
  * The `.json` entries directly in the checkout's rules folder, by name; undefined when there is no such folder. A
@@ -92,7 +94,12 @@ function packRuleOf(document: RuleDocument): RulePackRule {
  * no installed pack has, and a code rule must compile, unless the engine refuses it only as `language-not-supported`.
  * No pack when no rule loads, or when an installed pack holds the id `worktree`.
  */
-function readWorktreePack(installed: RuleCatalog, directory: string, files: readonly RuleFile[]): { loaded: LoadedRulePack | undefined; skipped: SkippedRulePack[] } {
+function readWorktreePack(
+  installed: RuleCatalog,
+  directory: string,
+  files: readonly RuleFileEntry[],
+  readJson = readJsonDocument,
+): { loaded: LoadedRulePack | undefined; skipped: SkippedRulePack[] } {
   const skipped: SkippedRulePack[] = [];
   const leaveOut = (path: string, reason: string): void => {
     skipped.push({ path, packageName: null, version: null, reason });
@@ -119,7 +126,7 @@ function readWorktreePack(installed: RuleCatalog, directory: string, files: read
     let source: unknown;
     let document: RuleDocument;
     try {
-      source = readJsonDocument(file.path);
+      source = readJson(file.path);
       document = parseRuleDocument(source, file.path);
     } catch (error) {
       leaveOut(file.path, documentProblem(error));
@@ -215,11 +222,17 @@ export function rrPayloadHash(inputs: RrPolicySource["inputs"]): string {
 
 /** The worktree catalog including its relational policies for headless scans and approvals. */
 export function worktreeScanCatalog(installed: RuleCatalog, root: string, fromRef?: {
-  files: readonly Pick<RuleFile, "path" | "regular" | "size">[];
+  json: readonly RuleFileEntry[];
+  rr: readonly RuleFileEntry[];
+  readJson(path: string): unknown;
   inspect(path: string): string;
 }): RuleCatalog {
-  const base = worktreeRuleCatalog(installed, root);
-  const files = fromRef?.files ?? ruleFiles(root, ".rr");
+  const base = (() => {
+    if (fromRef === undefined) return worktreeRuleCatalog(installed, root);
+    const { loaded, skipped } = readWorktreePack(installed, WORKTREE_RULES_FOLDER, fromRef.json, fromRef.readJson);
+    return withWorktreePack(installed, loaded, skipped);
+  })();
+  const files = fromRef?.rr ?? ruleFiles(root, ".rr");
   if (!files?.length) return base;
   const rrPolicies: RrPolicySource[] = [];
   const skipped = [...base.skipped];

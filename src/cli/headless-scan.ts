@@ -13,9 +13,9 @@
  *   session's: content no one approved in the Rerail home (`rerail rules approve`) runs in Log.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { eq } from "drizzle-orm";
 import type { AuditInput, AuditRecorder, AuditResult, AuditRuleProvenance } from "../engine/audit/audit.js";
 import { CheckoutOwners } from "../engine/catalog/checkout-owner.js";
@@ -26,14 +26,15 @@ import { rulePackPackageOf } from "../engine/catalog/rule-packs.js";
 import { resolveRrModes, setRuleSetting, setUpRepository } from "../engine/catalog/rule-configuration.js";
 import { upsertLibraryRule } from "../engine/catalog/rule-library.js";
 import type { RuleDocument } from "../engine/catalog/rule-store.js";
-import { isWorktreePack, rrPayloadHash, WORKTREE_PACK_ID, WORKTREE_RULES_FOLDER, worktreeScanCatalog } from "../engine/catalog/worktree-pack.js";
+import { isWorktreePack, MAX_RULE_DOCUMENT_BYTES, rrPayloadHash, WORKTREE_PACK_ID, WORKTREE_RULES_FOLDER, worktreeScanCatalog } from "../engine/catalog/worktree-pack.js";
 import { CheckoutCodeRuleRouter } from "../engine/code-rule/checkout-code-rule-router.js";
 import { CheckoutCatalogs, startingCheckout } from "../engine/code-rule/code-rule-dsl-catalog.js";
 import { loadNativeBinding, type NativeAnalysisScopeRun, type NativeGitRevisionSource } from "../engine/native/native.js";
 import { analysisScopeHome, readAnalysisScopeGeneration, scanContentStore } from "../engine/native/analysis-scope.js";
 import { assertContentStoreOwner } from "../engine/native/main-instance.js";
 import { SOURCE_LANGUAGES, SOURCE_NAMES } from "../engine/code-rule/code-rule-languages.js";
-import { readGitBlobs, runGit } from "../engine/git.js";
+import { runGit } from "../engine/git.js";
+import { parseJsonWithoutDuplicateKeys } from "../engine/json-duplicate-keys.js";
 import { compareDeterministicStrings } from "../engine/stable-json.js";
 import { defaultRerailDatabasePath, openRerailDatabase, openRerailDatabaseAsIs, type RerailDatabase } from "../engine/storage/database.js";
 import { repositories } from "../engine/storage/schema.js";
@@ -155,53 +156,56 @@ function diffPaths(root: string, against: string): string[] {
 interface RefRules {
   readonly documents: RuleDocument[];
   readonly skipped: ScanFailure[];
-  readonly rr?: { catalog: RuleCatalog; source: NativeGitRevisionSource; root: string; ref: string };
+  readonly rr?: { catalog: RuleCatalog; source: NativeGitRevisionSource; ref: string };
 }
 
-/**
- * The rule documents in `.rerail/rules/` at `ref`, loaded exactly as a checkout's own rules are
- * (`worktreeScanCatalog`): the ref's entries are listed in a folder of their own, so a file that is
- * not a regular file, is too large, does not parse or compile, repeats an earlier file's id (the first by file name
- * keeps it) or takes the id of an installed pack's rule is left out with why, and the others load. A ref that is not a
- * commit throws: a typo must not pass as a scan with no rules.
- */
-async function rulesAtRef(root: string, ref: string, scratch: string): Promise<RefRules> {
-  const resolved = gitMaybe(root, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
-  if (resolved === null) throw new Error(`--rules-ref ${ref} is not a commit in ${root}`);
-  if (runGit(root, ["cat-file", "-e", `${resolved}:${WORKTREE_RULES_FOLDER}`]).status !== 0) return { documents: [], skipped: [] };
-  const copy = join(scratch, "rules-ref");
-  const folder = join(copy, WORKTREE_RULES_FOLDER);
-  mkdirSync(folder, { recursive: true });
-  // `<mode> <type> <object>\t<name>`: regular files are written as they are, anything else as what it is, so the
-  // loader leaves it out as it would leave it out of a checkout.
-  const entries = nulList(git(root, ["ls-tree", "-z", `${resolved}:${WORKTREE_RULES_FOLDER}`])).flatMap(entry => {
-    const match = /^(\d+) (\w+) ([0-9a-f]+)\t(.+)$/su.exec(entry);
-    if (match === null) return [];
-    const [, mode, type, object, name] = match as unknown as [string, string, string, string, string];
-    return name.includes("/") || name === "." || name === ".." ? [] : [{ mode, type, object, name }];
-  });
-  const json = entries.filter(entry => entry.name.endsWith(".json"));
-  const blobs = await readGitBlobs(root, json.filter(entry => entry.type === "blob").map(entry => entry.object), { maxBlobBytes: MAX_REF_RULE_BYTES });
-  for (const { mode, type, object, name } of json) {
-    const target = join(folder, name);
-    const blob = blobs.get(object);
-    if (type === "blob" && mode === "120000") symlinkSync(blob?.toString("utf8") ?? "missing", target);
-    else if (type === "blob" && blob !== undefined) writeFileSync(target, blob);
-    else if (type === "blob") {
-      // Larger than the loader reads: a file of that size, which it leaves out as too large.
-      writeFileSync(target, "");
-      truncateSync(target, MAX_REF_RULE_BYTES + 1);
-    } else mkdirSync(target);
+/** Load the ref's policies through the same catalog rules used for a checkout. */
+function rulesAtRef(root: string, ref: string): RefRules {
+  const binding = loadNativeBinding();
+  let source: NativeGitRevisionSource;
+  try {
+    source = new binding.GitRevisionSource(root, ref, "rules-ref");
+  } catch (error) {
+    throw new Error(`--rules-ref ${ref} is not a commit in ${root}`, { cause: error });
   }
+  if (!source.commit) throw new Error(`--rules-ref ${ref} is not a commit in ${root}`);
+  const failures: ScanFailure[] = [];
+  const unreadable = (path: string, error: unknown) => {
+    failures.push({
+      code: "adapter-error", path: `${ref}:${path}`, ruleId: null,
+      message: error instanceof Error ? error.message : String(error),
+    });
+  };
+  let entries: NonNullable<ReturnType<NativeGitRevisionSource["readDirectory"]>>;
+  try {
+    entries = source.readDirectory(WORKTREE_RULES_FOLDER) ?? [];
+  } catch (error) {
+    unreadable(WORKTREE_RULES_FOLDER, error);
+    return { documents: [], skipped: failures };
+  }
+  const files = entries.sort((left, right) => compareDeterministicStrings(left.name, right.name))
+    .map(({ name, mode }) => ({
+      name, path: `${WORKTREE_RULES_FOLDER}/${name}`, regular: mode === 0o100644 || mode === 0o100755, size: 0,
+    }));
+  const bytes = new Map<string, Buffer>();
+  const json = files.filter(file => file.name.endsWith(".json")).filter(file => {
+    if (!file.regular) return true;
+    try {
+      const contents = source.readFile(file.path, MAX_RULE_DOCUMENT_BYTES);
+      if (contents == null) file.size = MAX_RULE_DOCUMENT_BYTES + 1;
+      else bytes.set(file.path, contents);
+      return true;
+    } catch (error) {
+      unreadable(file.path, error);
+      return false;
+    }
+  });
+  const rr = files.filter(file => file.name.endsWith(".rr"));
   const installed = loadRuleCatalog();
-  const rrEntries = entries.filter(entry => entry.name.endsWith(".rr")).sort((left, right) => compareDeterministicStrings(left.name, right.name));
-  const source = rrEntries.length > 0
-    ? new (loadNativeBinding().GitRevisionSource)(root, resolved, "rules-ref")
-    : undefined;
-  const catalog = worktreeScanCatalog(installed, copy, source === undefined ? undefined : {
-    // The native reader checks the size when it reads the Git object.
-    files: rrEntries.map(({ name, mode }) => ({ path: join(folder, name), regular: mode === "100644" || mode === "100755", size: 0 })),
-    inspect: path => loadNativeBinding().inspectRrPolicy(relative(copy, path), source),
+  const catalog = worktreeScanCatalog(installed, root, {
+    json, rr,
+    readJson: path => parseJsonWithoutDuplicateKeys(bytes.get(path)!.toString("utf8"), path),
+    inspect: path => binding.inspectRrPolicy(path, source),
   });
   const pack = catalog.packs.get(WORKTREE_PACK_ID);
   const documents = pack === undefined || !isWorktreePack(pack)
@@ -213,14 +217,11 @@ async function rulesAtRef(root: string, ref: string, scratch: string): Promise<R
   const skipped = catalog.skipped.filter(entry => !installed.skipped.includes(entry)).map((entry): ScanFailure => ({
     code: entry.path.endsWith(".rr") ? "adapter-error" : "rule-left-out",
     message: `${entry.reason}; it does not run`,
-    path: `${ref}:${relative(copy, entry.path).split(sep).join("/")}`,
+    path: `${ref}:${entry.path}`,
     ruleId: null,
   }));
-  return { documents, skipped, ...(source === undefined ? {} : { rr: { catalog, source, root: copy, ref } }) };
+  return { documents, skipped: [...failures, ...skipped], ...(rr.length === 0 ? {} : { rr: { catalog, source, ref } }) };
 }
-
-/** Past the loader's own limit for a rule file (1 MiB), so a larger one is left out as it would be in a checkout. */
-const MAX_REF_RULE_BYTES = 1024 * 1024;
 
 /**
  * Each `--pack` as the id of a pack installed in the Rerail home, given by its id (`complexity`) or its package name
@@ -404,12 +405,22 @@ async function withScanScratch<T>(home: RerailDatabase | undefined, run: (scratc
 }
 
 /** What the scan covers: the paths asked for, what differs from the base or HEAD, or null for the whole repository. */
-function scanTarget(options: HeadlessScanOptions, root: string, source: NativeGitRevisionSource | undefined): { base: ScanReport["base"]; paths: string[] | null } {
+function scanTarget(options: HeadlessScanOptions, root: string, source: NativeGitRevisionSource | undefined): { base: ScanReport["base"]; paths: string[] | null; failures?: ScanFailure[] } {
   if (options.paths !== undefined) {
-    const paths = [...new Set(options.paths.map(path => path.replace(/^\.\//u, "")).filter(path => path.length > 0))]
-      .filter(path => source === undefined ? existsSync(join(root, path)) : source.containsPath(path))
-      .sort((left, right) => left.localeCompare(right));
-    return { base: null, paths };
+    const failures: ScanFailure[] = [];
+    const inputs = [...new Set(options.paths.map(path => path.replace(/^\.\//u, "")).filter(path => path.length > 0))];
+    const paths = inputs.filter(path => {
+      try {
+        return source === undefined ? existsSync(join(root, path)) : source.containsPath(path);
+      } catch (error) {
+        failures.push({
+          code: "adapter-error", path, ruleId: null,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        return false;
+      }
+    }).sort((left, right) => left.localeCompare(right));
+    return { base: null, paths, failures };
   }
   if (options.scope !== "git-diff") return { base: null, paths: null };
   if (options.base === undefined) {
@@ -508,7 +519,7 @@ async function scanRrRules(
   configured?: { policies: ReadonlyMap<string, RrPolicySource>; mode: ReturnType<typeof resolveRrModes> },
   refPolicy?: NonNullable<RefRules["rr"]>,
 ): Promise<{ rules: ScanRule[]; violations: ScanViolation[] }> {
-  const inputs = policies.map(path => refPolicy === undefined ? resolve(path) : relative(refPolicy.root, path));
+  const inputs = refPolicy === undefined ? policies.map(path => resolve(path)) : [...policies];
   const reports = JSON.parse(await loadNativeBinding().scanRrPoliciesAsync(inputs, root, store, output, analysisRun, paths ?? undefined, source, refPolicy?.source)) as RrReport[];
   const rules: ScanRule[] = [];
   const violations: ScanViolation[] = [];
@@ -564,7 +575,7 @@ async function scanReport(
 ): Promise<ScanReport> {
   const databasePath = join(scratch, "rerail.sqlite");
   const explicitRr = (options.rr?.length ?? 0) > 0;
-  const refRules = options.rulesRef === undefined ? undefined : await rulesAtRef(root, options.rulesRef, scratch);
+  const refRules = options.rulesRef === undefined ? undefined : rulesAtRef(root, options.rulesRef);
   const catalog = options.rulesRef !== undefined ? refRules?.rr?.catalog
     : explicitRr ? undefined : worktreeScanCatalog(loadRuleCatalog(), root);
   const configuredPolicies = catalog?.rrPolicies ?? [];
@@ -579,12 +590,12 @@ async function scanReport(
   } finally {
     home?.$client.close();
   }
-  const { base, paths } = scanTarget(options, root, source);
+  const { base, paths, failures: pathFailures = [] } = scanTarget(options, root, source);
   if (source !== undefined && paths !== null) source.restrictPaths(paths);
   const audits = explicitRr ? [] : await runScanAudits(databasePath, root, `scan-${scanId}`, paths, source, analysisStore, analysisRun);
   const rules = scanRules(audits, refRuleIds, options.rulesRef);
   const violations = scanViolations(audits, rules);
-  const failures = [...refRules?.skipped ?? [], ...audits.flatMap(audit => audit.result?.failures ?? []).map((failure): ScanFailure => ({
+  const failures = [...pathFailures, ...refRules?.skipped ?? [], ...audits.flatMap(audit => audit.result?.failures ?? []).map((failure): ScanFailure => ({
     code: failure.code,
     message: failure.message,
     path: failure.path ?? null,
@@ -592,6 +603,7 @@ async function scanReport(
   }))];
   let completed = audits.every(audit => audit.result?.status === "completed")
     && (audits.length > 0 || paths?.length === 0 || source !== undefined)
+    && pathFailures.length === 0
     && !refRules?.skipped.some(failure => failure.code === "adapter-error");
   for (const skipped of (refRules === undefined ? catalog?.skipped.filter(policy => policy.path?.endsWith(".rr")) : undefined) ?? []) {
     failures.push({ code: "adapter-error", message: skipped.reason, path: skipped.path, ruleId: null });

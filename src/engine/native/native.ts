@@ -197,6 +197,10 @@ export interface NativeGitRevisionSource {
   readonly commit: string | null;
   containsPath(path: string): boolean;
   readSource(path: string): Buffer | null;
+  /** A missing directory gives no entries. An unreadable object throws. */
+  readDirectory(path: string): { name: string; mode: number }[] | null;
+  /** A file above the byte limit gives no result. A read failure throws. */
+  readFile(path: string, limit: number): Buffer | null;
 }
 
 export interface NativeRepositoryIndexOptions {

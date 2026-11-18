@@ -40,7 +40,8 @@ rerail scan [--repo <dir>] [--scope repository|git-diff] [--base <ref>] [--revis
 <details>
 <summary>Option details</summary>
 
-- `--scope repository` with `--path`/`--paths-from`: paths are relative to the checkout; missing ones are skipped.
+- With `--path` or `--paths-from`, paths are relative to the repository. The scan skips absent paths.
+  If a Git object prevents path lookup, the scan reports the path and fails.
 - `--scope git-diff`: the merge base is of `<ref>` and `HEAD`, so `--base` gives a pull request's changes. Deleted
   files are not scanned. No changed files is a completed scan with nothing in it.
 - `--rules-ref`: replaces the working tree's rules. Those rules run in Log until approved (see
@@ -102,6 +103,9 @@ rerail scope delete review
 Rerail discovers Git from the current folder or `--repo` and reads the selected tree directly.
 The scan uses today's rules, packs, and approvals. Use `--rules-ref` to select rules independently.
 The ref supplies its JSON and `.rr` policies. It also supplies local `.rr` includes.
+Rerail reads policy files from Git objects. Names use Git case rules.
+If the ref has no rules directory, the ref supplies zero policies.
+If Rerail cannot read an object for the policy directory or a policy file, the scan fails.
 Approvals apply to the policy and include bytes that the scan reads.
 A `.rr` policy load error fails the scan, including with `--rules-ref`.
 Explicit `--rr` scans use the registered repository identity when it exists.

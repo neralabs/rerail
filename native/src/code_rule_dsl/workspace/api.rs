@@ -80,6 +80,13 @@ pub struct GitRevisionSource {
 }
 
 #[cfg(not(feature = "headless"))]
+#[napi(object)]
+pub struct GitDirectoryEntry {
+    pub name: String,
+    pub mode: u32,
+}
+
+#[cfg(not(feature = "headless"))]
 impl GitRevisionSource {
     pub fn pinned_snapshot(&self) -> Arc<crate::git_workspace::snapshot::Snapshot> {
         Arc::clone(&self.snapshot)
@@ -107,11 +114,26 @@ impl GitRevisionSource {
     }
 
     #[napi]
-    pub fn contains_path(&self, path: String) -> bool {
-        let path = Path::new(&path);
-        path.is_relative()
-            && path.components().all(|part| matches!(part, std::path::Component::Normal(_) | std::path::Component::CurDir))
-            && crate::git_workspace::snapshot::canonicalize(self.snapshot.root().join(path)).is_ok()
+    pub fn contains_path(&self, path: String) -> Result<bool> {
+        self.snapshot.contains_path(Path::new(&path)).map_err(|err| invalid(err.to_string()))
+    }
+
+    #[napi]
+    pub fn read_directory(&self, path: String) -> Result<Option<Vec<GitDirectoryEntry>>> {
+        let entries = self.snapshot.directory_entries(&path).map_err(|err| invalid(err.to_string()))?;
+        Ok(entries.map(|entries| entries.into_iter()
+            .map(|(name, mode)| GitDirectoryEntry { name, mode: u32::from(mode) })
+            .collect()))
+    }
+
+    /// An oversized file has no result. A read failure is an error.
+    #[napi]
+    pub fn read_file(&self, path: String, limit: u32) -> Result<Option<Buffer>> {
+        match self.snapshot.read_source(&path, u64::from(limit)) {
+            Ok(bytes) => Ok(Some(bytes.into())),
+            Err(err) if err.kind() == std::io::ErrorKind::FileTooLarge => Ok(None),
+            Err(err) => Err(invalid(err.to_string())),
+        }
     }
 
     #[napi]

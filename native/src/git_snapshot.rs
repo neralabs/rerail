@@ -67,12 +67,44 @@ enum Entry {
     Dir(gix::ObjectId),
 }
 
+/// Return absence only after reading a tree and checking its entries.
+fn lookup_tree_entry(
+    repo: &gix::Repository,
+    mut id: gix::ObjectId,
+    path: &Path,
+) -> io::Result<Option<(gix::ObjectId, gix::objs::tree::EntryMode)>> {
+    let mut components = path.components().peekable();
+    while let Some(component) = components.next() {
+        let tree = repo.find_tree(id).map_err(error)?;
+        let name = component.as_os_str().as_encoded_bytes();
+        let mut found = None;
+        for entry in tree.iter() {
+            let entry = entry.map_err(error)?;
+            if entry.filename().as_bytes() == name {
+                found = Some((entry.id().detach(), entry.mode()));
+                break;
+            }
+        }
+        let Some((target, mode)) = found else {
+            return Ok(None);
+        };
+        if components.peek().is_none() {
+            return Ok(Some((target, mode)));
+        }
+        if !mode.is_tree() {
+            return Ok(None);
+        }
+        id = target;
+    }
+    Ok(None)
+}
+
 impl View {
     fn ignore_blob(&self) -> Result<Option<gix::ObjectId>, String> {
         self.ignore_blob.get_or_init(|| self.with_repo(|repo| {
-            let tree = repo.find_tree(self.tree).map_err(|e| e.to_string())?;
-            let entry = tree.lookup_entry_by_path(".rerailignore").map_err(|e| e.to_string())?;
-            Ok(entry.filter(|entry| entry.mode().is_blob()).map(|entry| entry.id().detach()))
+            let entry = lookup_tree_entry(repo, self.tree, Path::new(".rerailignore"))
+                .map_err(|e| e.to_string())?;
+            Ok(entry.filter(|(_, mode)| mode.is_blob()).map(|(id, _)| id))
         })).clone()
     }
 
@@ -123,15 +155,10 @@ impl View {
             )));
         }
         self.with_repo(|repo| {
-            let tree = repo.find_tree(self.tree).map_err(error)?;
-            let entry = tree
-                .lookup_entry_by_path(full)
-                .map_err(error)?
-                .ok_or_else(missing)?;
-            let id = entry.id().detach();
-            if entry.mode().is_tree() {
+            let (id, mode) = lookup_tree_entry(repo, self.tree, &full)?.ok_or_else(missing)?;
+            if mode.is_tree() {
                 Ok(Entry::Dir(id))
-            } else if entry.mode().is_blob() {
+            } else if mode.is_blob() {
                 Ok(Entry::File(id))
             } else {
                 Err(missing())
@@ -225,6 +252,39 @@ impl Snapshot {
                 return Err(io::Error::from(io::ErrorKind::FileTooLarge));
             }
             read()
+        })
+    }
+
+    pub fn contains_path(&self, path: &Path) -> io::Result<bool> {
+        if !path.is_relative() || path.components().any(|part| !matches!(part, Component::Normal(_) | Component::CurDir)) {
+            return Ok(false);
+        }
+        match self.view.entry(&self.view.root.join(path)) {
+            Ok(_) => Ok(true),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(err) => Err(err),
+        }
+    }
+
+    /// List raw entry modes without opening any of their objects.
+    pub fn directory_entries(&self, path: &str) -> io::Result<Option<Vec<(String, u16)>>> {
+        super::check_source_path(path)?;
+        let directory = match self.view.entry(&self.view.root.join(path)) {
+            Ok(Entry::Dir(id)) => id,
+            Ok(Entry::File(_)) => return Err(io::Error::from(io::ErrorKind::NotADirectory)),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(err),
+        };
+        self.view.with_repo(|repo| {
+            let tree = repo.find_tree(directory).map_err(error)?;
+            tree.iter().map(|entry| {
+                let entry = entry.map_err(error)?;
+                let name = entry.filename().to_str().map_err(error)?;
+                if name.is_empty() || name == "." || name == ".." || name.contains('/') {
+                    return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid Git entry name"));
+                }
+                Ok((name.to_owned(), entry.mode().value()))
+            }).collect::<io::Result<Vec<_>>>().map(Some)
         })
     }
 

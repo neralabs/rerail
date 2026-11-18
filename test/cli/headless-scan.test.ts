@@ -247,6 +247,20 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
     expect(complete.violations.map(finding => finding.message)).toEqual(["complete tree"]);
   });
 
+  it("reports unreadable requested Git paths while scanning the paths it can read", async () => {
+    const root = checkout();
+    const blob = git(root, "rev-parse", "HEAD:a.py");
+    const tree = execFileSync("git", ["mktree", "--missing"], {
+      cwd: root, input: `100644 blob ${blob}\ta.py\n040000 tree ${"1".repeat(40)}\tgaps\n`, encoding: "utf8",
+    }).trim();
+    const report = await scan(root, {
+      revision: tree, analysisScope: "paths", paths: ["a.py", "absent.py", "gaps/a.py"],
+    });
+    expect(report.status).toBe("failed");
+    expect(report.violations.map(finding => finding.path)).toEqual(["a.py"]);
+    expect(report.failures).toEqual([expect.objectContaining({ code: "adapter-error", path: "gaps/a.py" })]);
+  });
+
   it("keeps a Git snapshot owned by two scopes after one is deleted", async () => {
     const root = checkout();
     const databasePath = join(`${root}-home`, "rerail.sqlite");
@@ -764,6 +778,32 @@ LanguageKey(@place(path, 1), k) :- source_language_key(path, k, _).
       expect.objectContaining({ code: "rule-left-out", path: "HEAD:.rerail/rules/z-again.json", message: expect.stringContaining("rule needle is already in needle.json") }),
     ]));
     expect(report.status).toBe("completed");
+  });
+
+  it("loads distinct Git policy names and reports unreadable policy objects", async () => {
+    const root = checkout();
+    const missing = "1".repeat(40);
+    const tree = (input: string) => execFileSync("git", ["mktree", "--missing"], { cwd: root, input, encoding: "utf8" }).trim();
+    const blob = (document: unknown) => execFileSync("git", ["hash-object", "-w", "--stdin"], {
+      cwd: root, input: JSON.stringify(document), encoding: "utf8",
+    }).trim();
+    const policyRef = (rules: string) => git(root, "commit-tree", tree(`040000 tree ${tree(`040000 tree ${rules}\trules\n`)}\t.rerail\n`), "-m", "policy ref");
+    const upper = blob(needle("upper", "NEEDLE"));
+    const lower = blob(needle("lower", "NEEDLE"));
+    const policies = `100644 blob ${upper}\tFinding.json\n100644 blob ${lower}\tfinding.json\n`;
+    const distinct = await scan(root, { rulesRef: policyRef(tree(policies)) });
+    expect(distinct.status).toBe("completed");
+    expect(distinct.violations.map(finding => finding.ruleId).sort()).toEqual(["lower", "upper"]);
+
+    for (const [rules, expectedPath] of [
+      [missing, ".rerail/rules"],
+      [tree(`${policies}100644 blob ${missing}\tunavailable.json\n`), ".rerail/rules/unavailable.json"],
+    ] as const) {
+      const rulesRef = policyRef(rules);
+      const report = await scan(root, { rulesRef });
+      expect(report.status).toBe("failed");
+      expect(report.failures).toEqual([expect.objectContaining({ code: "adapter-error", path: `${rulesRef}:${expectedPath}` })]);
+    }
   });
 
   it("refuses a --pack that is not installed rather than scanning without it", async () => {
