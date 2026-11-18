@@ -2,9 +2,9 @@
 // The engine's Rust tests in CI: compiled once, run in legs (ci.yml's `rust-tests-build` and `rust` jobs).
 //
 // `build` runs `cargo test --workspace` with this script as cargo's target runner (`capture`): cargo compiles every
-// test binary and runs the doc tests as it always does, and hands each test binary to the runner, which records the
-// binary with the working directory and the environment cargo gave it (the package's directory, CARGO_MANIFEST_DIR,
-// CARGO_PKG_*, .cargo/config.toml's [env], the library path) instead of running it. Then it lists every binary's tests
+// test binary and runs the doc tests (rustdoc hands them to the runner, which runs them), and hands each test binary to
+// the runner, which records it with the working directory and the environment cargo gave it (the package's directory,
+// CARGO_MANIFEST_DIR, CARGO_PKG_*, .cargo/config.toml's [env], the library path) instead of running it. Then it lists every binary's tests
 // (`--list`) whole and under each leg's filters, and fails unless each test falls in exactly one leg. What it writes
 // (`<dir>/native-tests.tar.zst`: the binaries at their paths under target/, and the manifest) is the artifact each
 // leg unpacks in its checkout, at the same path as the build's, where `run <leg>` runs each binary with the leg's
@@ -101,6 +101,13 @@ export function parseResult(line) {
 
 function capture() {
   const [exe, ...args] = process.argv.slice(3);
+  // rustdoc hands cargo's runner the doc tests it compiled (a crate's merged doc tests, edition 2024) from a temporary
+  // directory it removes after: those run here, as cargo would run them.
+  const target = resolve(process.env.CARGO_TARGET_DIR ?? join(ROOT, "target"));
+  if (relative(target, resolve(exe)).startsWith("..")) {
+    const doc = spawnSync(exe, args, { stdio: "inherit" });
+    process.exit(doc.status ?? 1);
+  }
   const parent = JSON.parse(readFileSync(process.env.NATIVE_TESTS_PARENT_ENV, "utf8"));
   const record = { exe, args, cwd: process.cwd(), env: envDelta(process.env, parent), path: process.env.PATH === parent.PATH };
   appendFileSync(process.env.NATIVE_TESTS_CAPTURE, `${JSON.stringify(record)}\n`);
