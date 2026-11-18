@@ -487,8 +487,9 @@ pub mod tests {
         let native = &c.native;
         let got = run_serial_split(&[native], &batch, Segments { blocks: 29, warm: 1 }).expect("Metal runs tier 1");
         let mut differ = 0;
-        // The CPU's form leaves out the masks its record pass makes (`BlockNative::records_made`).
-        let unmade = native.records_made();
+        // The CPU's form leaves out the masks its record pass makes, and the rows of the totals
+        // no one reads by them (`BlockNative::cpu_unstored`).
+        let unmade = native.cpu_unstored();
         let same_outputs = |g: &[Vec<u64>], w: &[Vec<u64>]| g.len() == w.len() && (0..w.len()).all(|o| unmade.contains(&o) || g[o] == w[o]);
         // Metal sets the gap marks the CPU's tier 2 tests itself (`lazy_marks`).
         let lazy = lazy_bits(native);
@@ -1874,7 +1875,7 @@ pub mod tests {
 
     /// A compiled tier 1's codes against another run's: the same; or, for a file it refuses (a
     /// total set), the same up to the refusal and none or 0s past it, as a refusal leaves the
-    /// compiled loop (decision 0177; `ladder::tier1_equal`'s rule) where the interpreter reads on.
+    /// compiled loop (decision 0177; `ladder::tier1_agrees`'s rule) where the interpreter reads on.
     fn codes_agree(got: &[u32], want: &[u32], refused: bool) -> bool {
         if !refused {
             return got == want;

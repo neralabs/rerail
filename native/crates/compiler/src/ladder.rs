@@ -587,15 +587,17 @@ pub fn check_shape(name: &str, c: &Compiled) {
 }
 
 /// Tier 1 on the CPU against its interpreter, on what the CPU makes: every output but those its
-/// record pass makes instead (`BlockNative::records_made`, all of them where the pass has no
+/// record pass makes instead (`BlockNative::cpu_unstored`, all of them where the pass has no
 /// block loop: `PassShape::block_loop`), the positions and totals, and the codes but for the
 /// gap marks tier 2 on the CPU tests itself (`native_cpu_block::lazy_code_bits`). A file both
 /// send to the fallback (a total set) is the same up to its refusal: a refusal leaves the compiled
 /// loop (decision 0177), so its positions are a prefix of the interpreter's, which goes on, and its
 /// codes the interpreter's up to the refusal and none or 0s past it; its outputs are not read.
-fn tier1_equal(c: &Compiled, cpu: &crate::block::BlockRun, interpreted: &crate::block::BlockRun) -> bool {
+/// The outputs not compared are those the CPU stores no rows for (`BlockNative::cpu_unstored`:
+/// the record pass's, a token's last by its gap (decision 0411), and the totals read by no row).
+pub(crate) fn tier1_agrees(c: &Compiled, cpu: &crate::block::BlockRun, interpreted: &crate::block::BlockRun) -> bool {
     let block = &c.native.block_programs[0];
-    let unmade = block.records_made();
+    let unmade = block.cpu_unstored();
     let looped = c.parser.tier1.passes.iter().all(|p| p.back || p.block_loop);
     let lazy = crate::native_cpu_block::lazy_code_bits(block);
     let outputs = !looped || (cpu.outputs.len() == interpreted.outputs.len() && (0..cpu.outputs.len()).all(|o| unmade.contains(&o) || cpu.outputs[o] == interpreted.outputs[o]));
@@ -645,7 +647,7 @@ pub fn check_ladder(
             let interp = crate::stream::run(&c.program, &bytes, &run).ok().map(as_ids);
             let compiled = c.parser.parse(&bytes).ok().map(as_ids);
             let tier1 = c.parser.tier1.extract(&bytes);
-            if !tier1_equal(&c, &tier1, &run) {
+            if !tier1_agrees(&c, &tier1, &run) {
                 differ.push(format!("{}: tier 1 compiled differs from its interpreter", show()));
                 break;
             }

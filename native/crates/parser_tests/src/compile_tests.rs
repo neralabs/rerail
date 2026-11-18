@@ -391,6 +391,7 @@ fn json_stream_equals_the_evaluator_on_every_executor() {
     let prepared = Executors::new(&p);
     let label = |name: &str| usize::from(compiled.labels.iter().find(|l| l.0 == name).unwrap_or_else(|| panic!("no {name}")).1);
     let (starts, lasts) = (label(bitlex_compile::STREAM_START), label(bitlex_compile::STREAM_LAST));
+    let lasts_made = p.block_programs.first().is_some_and(|b| rerail_compiler::block_native::BlockNative::lower(b).records_made().contains(&lasts));
     let mut cases = inputs();
     cases.extend(JSON_CASES.iter().map(|c| c.to_vec()));
     let (mut compared, mut rejected, mut conservative) = (0, 0, 0);
@@ -416,7 +417,10 @@ fn json_stream_equals_the_evaluator_on_every_executor() {
             }
             let at = format!("{executor}, {n} bytes: {:?}", String::from_utf8_lossy(&bytes));
             assert_eq!(cut(got[starts].clone(), n), want_starts, "starts, {at}");
-            assert_eq!(cut(got[lasts].clone(), n), want_lasts, "lasts, {at}");
+            // The CPU makes no lasts mask where its record pass makes the lasts (decision 0411).
+            if !(executor == "cranelift" && lasts_made) {
+                assert_eq!(cut(got[lasts].clone(), n), want_lasts, "lasts, {at}");
+            }
             compared += 1;
         }
     }
@@ -1246,10 +1250,17 @@ fn json_compiled_path_equals_the_interpreters() {
     assert_eq!(tier2.table_passes, 0, "no pass over the table");
     assert!(tier2.own_calls > 0 && rerail_compiler::clif_text::callees(&tier2.clif).len() == tier2.own_calls, "every call an outlined function's: {}", tier2.own_calls);
     let files = json_tier2_files();
+    let made =
+        rerail_compiler::block_native::BlockNative::lower(&p.block_programs[0]).cpu_unstored();
     for f in &files {
         let want1 = p.block_programs[0].run_files(&[f]).remove(0);
         let got1 = tier1.extract(f);
-        assert_eq!(got1, want1, "tier 1: {}", String::from_utf8_lossy(f));
+        assert_eq!(
+            got1.without(&made),
+            want1.without(&made),
+            "tier 1: {}",
+            String::from_utf8_lossy(f)
+        );
         let want = stream::run(&p, f, &want1).map_err(|r| r.pc);
         let got = tier2.run(f, &got1).map_err(|r| r.pc);
         assert_eq!(got, want, "tier 2: {}", String::from_utf8_lossy(f));

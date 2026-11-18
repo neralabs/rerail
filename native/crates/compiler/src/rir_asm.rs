@@ -646,10 +646,16 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 let kinds = line.word()?;
                 let hex = kinds.strip_prefix("kinds=").ok_or("`records S L kinds=…`")?;
                 let kinds: Vec<u8> = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)).collect::<Result<_, _>>().map_err(|_| "a bad kind")?;
-                program.records = Some(crate::records::Records { starts, lasts, kinds, words: Vec::new(), marks: Vec::new(), ends: Vec::new(), rules: Vec::new(), skip: None, gaps: 0, extra: None, untaken: Vec::new(), unless: Vec::new(), unplaced: 0, checks: Vec::new(), readers: Vec::new(), retags: Vec::new(), nexts: Vec::new(), tested_only: 0, check_masks: Vec::new(), prefix: Vec::new() });
+                program.records = Some(crate::records::Records { starts, lasts, kinds, words: Vec::new(), marks: Vec::new(), ends: Vec::new(), rules: Vec::new(), skip: None, gaps: 0, extra: None, untaken: Vec::new(), unless: Vec::new(), unplaced: 0, checks: Vec::new(), readers: Vec::new(), retags: Vec::new(), nexts: Vec::new(), tested_only: 0, check_masks: Vec::new(), prefix: Vec::new(), gap: None });
             } else if first == "word" {
                 let r = program.records.as_mut().ok_or(format!("block {at} word before its records"))?;
                 r.words.push(line.quoted()?);
+            } else if first == "recgap" {
+                let r = program
+                    .records
+                    .as_mut()
+                    .ok_or(format!("block {at} recgap before its records"))?;
+                r.gap = Some(line.number("")?);
             } else if first == "recends" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recends before its records"))?;
                 let hex = line.word()?;
