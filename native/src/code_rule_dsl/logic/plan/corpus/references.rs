@@ -23,11 +23,14 @@ use crate::code_rule_dsl::facts::vtab::syntax;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::logic::front::Program;
 use crate::code_rule_dsl::model::{CodeRuleScope, FileInput, package_marker_directory, python_module_in};
+use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::tape::TapeDoc;
 use crate::content_store::ContentStore;
 use serde_json::Value;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
+use std::path::Path;
+use super::reference_facts;
 
 /// The relations, and their columns (`sql::select::input_columns`).
 pub(in crate::code_rule_dsl) use super::REFERENCE_RELATIONS as RELATIONS;
@@ -69,8 +72,40 @@ fn scope(value: Option<&Value>) -> Result<CodeRuleScope> {
     crate::code_rule_dsl::compile::compile_scope(value).map_err(|e| Error::Plan(format!(".references scope: {}", e.reason)))
 }
 
-/// One summarized file: its path, summary, and its definitions' nodes by byte range (`syntax::definitions`).
-type File = (Arc<str>, Arc<Summary>, HashMap<(u32, u32), i64>);
+enum LocalSummary {
+    Direct(Summary),
+    Requested(reference_facts::Source),
+}
+
+/// One file's summary and its definitions' nodes by byte range (`syntax::definitions`).
+type File = (Arc<str>, LocalSummary, HashMap<(u32, u32), i64>);
+
+fn summarize(tape: TapeDoc, path: &str, module: Option<&ModulePath>) -> Summary {
+    let has_errors = tape.syntax_error_nodes().next().is_some();
+    let bytes = tape.source.len();
+    let root = ast_grep_core::AstGrep::doc(tape);
+    crate::code_rule_dsl::prof::count("reference.tape_summaries", 1);
+    calls::summarize(root.root(), GrammarDialect::Python, path, module, has_errors, bytes, None).0
+}
+
+pub(in crate::code_rule_dsl) fn summarize_tape(tape: TapeDoc, module: &str, stub: bool) -> Result<String> {
+    let module: Option<ModulePath> = serde_json::from_str(module).map_err(|err| Error::Plan(err.to_string()))?;
+    let path = if stub { "input.pyi" } else { "input.py" };
+    let summary = summarize(tape, path, module.as_ref());
+    if crate::code_rule_dsl::budget::matcher_budget_exhausted() {
+        return Err(Error::Plan("reference analysis was interrupted".into()));
+    }
+    let bytes = summary.encode();
+    Ok(bytes.iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+fn decode_summary(hex: &str) -> Option<Summary> {
+    if hex.len() % 2 != 0 { return None; }
+    let bytes: Vec<u8> = hex.as_bytes().chunks_exact(2)
+        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok())
+        .collect::<Option<_>>()?;
+    Summary::decode(&bytes, crate::code_rule_dsl::language::Family::Python)
+}
 
 /// The corpus's files as the graph reads them, gathered while the chunks are built (`add`, from the chunk builder's
 /// jobs, in any order), linked once they all are (`relations`), in path order.
@@ -79,43 +114,64 @@ pub(in crate::code_rule_dsl) struct Files {
     /// The directories the corpus marks as packages (`__init__.py`), from which each file's module follows.
     packages: HashSet<String>,
     files: Mutex<Vec<File>>,
+    retained: bool,
 }
 
 impl Files {
     /// For `prog`, over the corpus's `paths`; `None` where `prog` reads neither relation.
-    pub(in crate::code_rule_dsl) fn new(prog: &Program, read: &BTreeSet<String>, paths: &[String]) -> Result<Option<Self>> {
+    pub(in crate::code_rule_dsl) fn new(prog: &Program, read: &BTreeSet<String>, paths: &[String], retained: bool) -> Result<Option<Self>> {
         if !RELATIONS.iter().any(|r| read.contains(*r)) {
             return Ok(None);
         }
         let packages = paths.iter().filter_map(|p| package_marker_directory(p)).map(str::to_owned).collect();
-        Ok(Some(Files { config: Config::of(prog)?, packages, files: Mutex::new(Vec::new()) }))
+        Ok(Some(Files { config: Config::of(prog)?, packages, files: Mutex::new(Vec::new()), retained }))
     }
 
     /// Document `key` at `path`, with its source and core facts: summarized as W's stateless evaluation summarizes an
     /// in-scope Python file, its module named by the corpus's package markers (`eval::parse_snapshot`).
-    fn add_file(&self, key: u32, path: &str, tape: &TapeDoc, facts: &Arc<Facts>) -> Result<()> {
+    fn add_file(&self, key: u32, path: &str, digest: [u8; 32], tape: Option<&TapeDoc>, facts: &Arc<Facts>) -> Result<()> {
         if !self.config.scope.as_ref().is_some_and(|scope| scope.matches(path)) {
             return Ok(());
         }
         let module = (!self.packages.is_empty()).then(|| python_module_in(path, |directory| self.packages.contains(directory))).flatten();
-        let file = FileInput::new(path.to_owned(), "python".to_owned(), Arc::clone(&tape.source), module.as_ref(), None, "references").map_err(|e| Error::Plan(format!("{path}: {}", e.reason)))?;
-        let has_errors = tape.syntax_error_nodes().next().is_some();
-        let root = ast_grep_core::AstGrep::doc(tape.clone());
-        crate::code_rule_dsl::prof::count("reference.tape_summaries", 1);
-        let (summary, _) = calls::summarize(root.root(), GrammarDialect::Python, path, file.module.as_deref(), has_errors, file.source.len(), None);
+        let file = FileInput::new(path.to_owned(), "python".to_owned(), Arc::clone(&facts.source), module.as_ref(), None, "references").map_err(|e| Error::Plan(format!("{path}: {}", e.reason)))?;
+        let summary = if self.retained {
+            LocalSummary::Requested(reference_facts::Source {
+                path: path.to_owned(), digest: crate::content_store::observe::hex(&digest),
+                module: serde_json::to_string(&file.module.as_deref()).map_err(|err| Error::Plan(err.to_string()))?,
+                stub: crate::code_rule_dsl::language::is_stub_file(path), extractor: calls::summary::EXTRACTOR_VERSION,
+            })
+        } else {
+            LocalSummary::Direct(summarize(tape.expect("direct reference analysis requests tapes").clone(), path, file.module.as_deref()))
+        };
         let nodes = syntax::definitions(key, facts).map_err(|e| Error::Plan(format!("{path}: {e}")))?;
-        self.files.lock().expect("reference files").push((Arc::from(path), Arc::new(summary), nodes));
+        self.files.lock().expect("reference files").push((Arc::from(path), summary, nodes));
         Ok(())
     }
 
     /// The relations the program reads, as (name, columns, values): the summaries linked as W links them for the
     /// configured key (`CallsView::build_modes`), each edge and open definition at its node, `via` as an atom.
     #[allow(clippy::type_complexity)]
-    fn relations_of(self, store: &ContentStore, read: &BTreeSet<String>) -> Result<Vec<(&'static str, Vec<String>, Vec<Option<Vec<i64>>>)>> {
+    fn relations_of(self, root: &Path, store: &ContentStore, read: &BTreeSet<String>) -> Result<Vec<(&'static str, Vec<String>, Vec<Option<Vec<i64>>>)>> {
         let key = self.config.key;
         let mut files = self.files.into_inner().expect("reference files");
         files.sort_unstable_by(|a, b| a.0.cmp(&b.0));
-        let graph = Graph::link_references(key, files.iter().map(|(path, summary, _)| (Arc::clone(path), Arc::new(summary.as_references(key)))).collect());
+        let sources: Vec<_> = files.iter().filter_map(|(_, summary, _)| match summary {
+            LocalSummary::Requested(source) => Some(source.clone()),
+            LocalSummary::Direct(_) => None,
+        }).collect();
+        let summaries = reference_facts::run(root, &sources)?;
+        let summaries = files.iter().map(|(path, summary, _)| {
+            let summary = match summary {
+                LocalSummary::Direct(summary) => summary.as_references(key),
+                LocalSummary::Requested(_) => {
+                    summaries.get(path.as_ref()).and_then(|bytes| decode_summary(bytes))
+                        .ok_or_else(|| Error::Plan(format!("{path}: missing or invalid reference summary")))?.as_references(key)
+                }
+            };
+            Ok((Arc::clone(path), Arc::new(summary)))
+        }).collect::<Result<_>>()?;
+        let graph = Graph::link_references(key, summaries);
         let nodes: HashMap<&str, &HashMap<(u32, u32), i64>> = files.iter().map(|(path, _, nodes)| (path.as_ref(), nodes)).collect();
         let node = |path: &str, def: calls::summary::Def| {
             nodes.get(path).and_then(|n| n.get(&(def.start, def.end))).copied().ok_or_else(|| Error::Plan(format!("{path}: no definition node at {}..{}", def.start, def.end)))
@@ -148,18 +204,22 @@ fn columns(names: &[&str]) -> Vec<String> {
 }
 
 /// Python's reference graph, made where a program of Python files reads it (`corpus::install_cross_file`).
-pub(in crate::code_rule_dsl) fn make(label: &str, prog: &Program, read: &BTreeSet<String>, paths: &[String]) -> Result<Option<Box<dyn super::CrossFileRelations>>> {
+pub(in crate::code_rule_dsl) fn make(label: &str, prog: &Program, read: &BTreeSet<String>, paths: &[String], retained: bool) -> Result<Option<Box<dyn super::CrossFileRelations>>> {
     if label != "python" {
         return Ok(None);
     }
-    Ok(Files::new(prog, read, paths)?.map(|files| Box::new(files) as Box<dyn super::CrossFileRelations>))
+    Ok(Files::new(prog, read, paths, retained)?.map(|files| Box::new(files) as Box<dyn super::CrossFileRelations>))
 }
 
 impl super::CrossFileRelations for Files {
-    fn add(&self, key: u32, path: &str, tape: &TapeDoc, facts: &Arc<Facts>) -> Result<()> {
-        self.add_file(key, path, tape, facts)
+    fn needs_tapes(&self) -> bool {
+        !self.retained
     }
-    fn relations(self: Box<Self>, store: &ContentStore, read: &BTreeSet<String>) -> Result<Vec<(&'static str, Vec<String>, Vec<Option<Vec<i64>>>)>> {
-        (*self).relations_of(store, read)
+
+    fn add(&self, key: u32, path: &str, digest: [u8; 32], tape: Option<&TapeDoc>, facts: &Arc<Facts>) -> Result<()> {
+        self.add_file(key, path, digest, tape, facts)
+    }
+    fn relations(self: Box<Self>, root: &Path, store: &ContentStore, read: &BTreeSet<String>) -> Result<Vec<(&'static str, Vec<String>, Vec<Option<Vec<i64>>>)>> {
+        (*self).relations_of(root, store, read)
     }
 }

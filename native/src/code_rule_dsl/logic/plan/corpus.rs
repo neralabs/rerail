@@ -47,14 +47,16 @@ pub const REFERENCE_RELATIONS: [&str; 2] = ["reference_edge", "reference_open"];
 /// Base relations a program reads that are built across a run's files (the reference graph's,
 /// `corpus::references`): each file added as its facts are built, the rows bound in the cross-file part.
 pub trait CrossFileRelations: Send + Sync {
-    /// Adds the file with key `key` at `path`, with its parsed tape and facts.
-    fn add(&self, key: u32, path: &str, tape: &crate::code_rule_dsl::tape::TapeDoc, facts: &Arc<crate::code_rule_dsl::facts::core::Facts>) -> Result<()>;
+    /// Whether each file needs its parsed tape beside its facts.
+    fn needs_tapes(&self) -> bool;
+    /// Adds the file with key `key` at `path`.
+    fn add(&self, key: u32, path: &str, digest: [u8; 32], tape: Option<&crate::code_rule_dsl::tape::TapeDoc>, facts: &Arc<crate::code_rule_dsl::facts::core::Facts>) -> Result<()>;
     /// The relations the run's files give, with their columns and rows.
-    fn relations(self: Box<Self>, store: &crate::content_store::ContentStore, read: &BTreeSet<String>) -> Result<Vec<(&'static str, Vec<String>, Vec<Option<Vec<i64>>>)>>;
+    fn relations(self: Box<Self>, root: &Path, store: &crate::content_store::ContentStore, read: &BTreeSet<String>) -> Result<Vec<(&'static str, Vec<String>, Vec<Option<Vec<i64>>>)>>;
 }
 
 /// What makes a program's cross-file relations over the files at `paths` of the dialect `label`, where it reads them.
-pub(crate) type MakeCrossFile = fn(&str, &crate::code_rule_dsl::logic::front::Program, &BTreeSet<String>, &[String]) -> Result<Option<Box<dyn CrossFileRelations>>>;
+pub(crate) type MakeCrossFile = fn(&str, &crate::code_rule_dsl::logic::front::Program, &BTreeSet<String>, &[String], bool) -> Result<Option<Box<dyn CrossFileRelations>>>;
 
 static CROSS_FILE: std::sync::OnceLock<MakeCrossFile> = std::sync::OnceLock::new();
 
@@ -62,6 +64,8 @@ static CROSS_FILE: std::sync::OnceLock<MakeCrossFile> = std::sync::OnceLock::new
 pub fn install_cross_file(make: MakeCrossFile) {
     let _ = CROSS_FILE.set(make);
 }
+
+pub mod reference_facts;
 pub mod prepared;
 pub mod maintain;
 pub mod supports;
@@ -677,6 +681,7 @@ pub struct Texts<'a> {
     /// The source texts of the run inside which this one runs (phase 1's: the outer run's, decision 0300), which its
     /// builder borrows.
     pub sources: Option<&'a texts::Sources>,
+    reference_sources: &'a [reference_facts::Source],
     reads: std::cell::RefCell<Vec<crate::code_rule_dsl::logic::rr::TextRead>>,
     names: std::cell::OnceCell<Vec<crate::code_rule_dsl::logic::rr::TextNames>>,
 }
@@ -687,7 +692,7 @@ impl<'a> Texts<'a> {
     pub fn of_read(key: &'a [&'a str], read: &'a front::Program) -> Self {
         let names = std::cell::OnceCell::new();
         let _ = names.set(vec![crate::code_rule_dsl::logic::rr::TextNames::of_program(read)]);
-        Texts { programs: key, graphs: vec![None], derived: Vec::new(), read: Some(read), sources: None, reads: std::cell::RefCell::new(Vec::new()), names }
+        Texts { programs: key, graphs: vec![None], derived: Vec::new(), read: Some(read), sources: None, reference_sources: &[], reads: std::cell::RefCell::new(Vec::new()), names }
     }
 
     /// `programs`, each parsed once, and phase 0's graphs derived for those that include something.
@@ -697,7 +702,7 @@ impl<'a> Texts<'a> {
         let derived = if phase0::active() { Vec::new() } else { phase0::graphs(&seeds)? };
         let mut at = derived.iter();
         let graphs = reads.iter().map(|r| r.seed.as_ref().and_then(|_| at.next()).map(|g| g.digest())).collect();
-        Ok(Texts { programs, graphs, derived, read: None, sources: None, reads: std::cell::RefCell::new(reads), names: std::cell::OnceCell::new() })
+        Ok(Texts { programs, graphs, derived, read: None, sources: None, reference_sources: &[], reads: std::cell::RefCell::new(reads), names: std::cell::OnceCell::new() })
     }
 
     /// Each text's library files, declared relations and phase (`rr::TextRead::resolved`).
@@ -2508,7 +2513,7 @@ pub fn run_with_options(
     typing: &Typing,
     options: &serde_json::Value,
 ) -> Result<Report> {
-    run_handed(programs, None, None, root, t_facts, out, modes, binding, chunk_nodes, typing, options, None)
+    run_handed(programs, None, None, root, t_facts, out, modes, binding, chunk_nodes, typing, options, None, &[])
 }
 
 /// `run_with_options` of a program already read (`tools::run_program`, which read the file): the run holds that
@@ -2541,15 +2546,19 @@ pub(super) fn run_read_handing(
     options: &serde_json::Value,
 ) -> Result<Report> {
     let key = read_key(read)?;
-    run_handed(&[key.as_str()], Some(read), sources, root, None, out, modes, binding, chunk_nodes, typing, options, None)
+    run_handed(&[key.as_str()], Some(read), sources, root, None, out, modes, binding, chunk_nodes, typing, options, None, &[])
 }
 
 /// Evaluate a fact-only phase against the retained store and return its output image.
 fn run_fact_image(read: &front::Program, root: &Path, options: &serde_json::Value) -> Result<Vec<u8>> {
+    run_fact_image_with_references(read, root, options, &[])
+}
+
+fn run_fact_image_with_references(read: &front::Program, root: &Path, options: &serde_json::Value, reference_sources: &[reference_facts::Source]) -> Result<Vec<u8>> {
     let key = read_key(read)?;
     let mut image = Vec::new();
     run_handed(&[key.as_str()], Some(read), None, root, None, Path::new(""), "program",
-        Binding::Cpu, 1 << 18, &Typing::default(), options, Some(&mut image))?;
+        Binding::Cpu, 1 << 18, &Typing::default(), options, Some(&mut image), reference_sources)?;
     Ok(image)
 }
 
@@ -2574,6 +2583,7 @@ fn run_handed(
     typing: &Typing,
     options: &serde_json::Value,
     image: Option<&mut Vec<u8>>,
+    reference_sources: &[reference_facts::Source],
 ) -> Result<Report> {
     // The `RERAIL_*` switches stay as they are until the run ends: a test sets them only while no run reads them.
     let _switches = switches::reading();
@@ -2627,6 +2637,7 @@ fn run_handed(
     };
     let texts = Texts {
         sources,
+        reference_sources,
         ..texts
     };
     let mut component_seeded = false;
@@ -3091,6 +3102,10 @@ fn run_observed(
         phases::facts(&prog, root, out, modes, binding, chunk_nodes, typing, options)?
     };
     phased.extend(git::inputs(&prog, root, options));
+    let reference_sources = given.reference_sources;
+    if prog.inputs.iter().any(|name| name == reference_facts::INPUT) {
+        phased.insert(reference_facts::INPUT.to_owned(), reference_facts::inputs(reference_sources));
+    }
     phase_runs.splice(0..0, phase_one_run);
     // A phase's exports are the run's inputs, not its facts: their rows are bound as relations once the program is
     // prepared, so an edit that changes them leaves the program, its prepared plans and its keys as they were.
@@ -3929,7 +3944,7 @@ fn run_observed(
     });
     // The reference graph's relations, for a program that reads them: its files are summarized as the chunks are
     // built, and linked once they all are (`references`). W's graph is Python's.
-    let references = match CROSS_FILE.get() { Some(make) => make(label, &prog, &read, &docs.iter().map(|(_, p)| p.clone()).filter(|p| !text_document(root, p, label)).collect::<Vec<_>>())?, None => None };
+    let references = match CROSS_FILE.get() { Some(make) => make(label, &prog, &read, &docs.iter().map(|(_, p)| p.clone()).filter(|p| !text_document(root, p, label)).collect::<Vec<_>>(), tapes.is_some() && crate::git_workspace::snapshot::contains(root))?, None => None };
     let part_of = |version| lowered.with_version(version);
     crate::code_rule_dsl::logic::profile::decision("file-local split", || {
         format!(
@@ -5122,7 +5137,8 @@ fn run_observed(
     // The matchers a chunk runs (decision 0106). A chunk's documents keep their tapes for them, and for a program that
     // reads W's values, f-string trees or string annotations (`syntax::taped`).
     let chunk_matchers = matchers::compiled(&matchers, &prog.policies).map_err(Error::Plan)?;
-    let keep_tapes = references.is_some() || !chunk_matchers.is_empty() || read.iter().any(|rel| syntax::taped(rel));
+    let keep_tapes = references.as_ref().is_some_and(|references| references.needs_tapes())
+        || !chunk_matchers.is_empty() || read.iter().any(|rel| syntax::taped(rel));
     if !chunk_matchers.is_empty() {
         crate::code_rule_dsl::logic::profile::decision("ast matchers (decision 0106)", || format!("{} matchers run by the transducer over each chunk's tapes", chunk_matchers.len()));
     }
@@ -5191,8 +5207,8 @@ fn run_observed(
         };
         let (facts, tape) = held.as_ref();
         if let Some(references) = &references {
-            let _refs = crate::code_rule_dsl::logic::profile::span(|| "W's reference graph from the tape".into());
-            references.add(*d as u32, path, tape.as_ref().expect("reference analysis requests tapes"), facts)?;
+            let _refs = crate::code_rule_dsl::logic::profile::span(|| "record reference sources and definition sites".into());
+            references.add(*d as u32, path, source_digest, tape.as_ref(), facts)?;
         }
         // The tape, in the file's context: kept only for a program that reads W's values, f-string trees or string
         // annotations off it, or runs matchers over it (decision 0106).
@@ -6971,6 +6987,7 @@ fn run_observed(
                         == git_selection.get_or_init(|| crate::git_workspace::snapshot::inventory_selection(&git_root)).as_ref();
                 }
                 if req == git::INVENTORY_TRAIL { return true; }
+                if req == reference_facts::REQUEST { return !rows.is_empty(); }
                 let Some((roots, named, _)) = journal else { return false };
                 let Some(text) = key.first().and_then(|&atom| sym_text(atom)) else { return false };
                 let path = std::path::Path::new(&text);
@@ -7085,6 +7102,7 @@ fn run_observed(
         let mut load_levels = 0usize;
         // Where an answer's time goes (decision 0114 §6): reported once the cone ends.
         let times = std::cell::RefCell::new(AnswerTimes::default());
+        let reference_paths: HashMap<_, _> = reference_sources.iter().map(|source| (source.digest.as_str(), source.path.as_str())).collect();
         let mut answer_one = |rel: &str, rows: &[Vec<i64>], process: &mut dyn FnMut(Step) -> Result<Option<(Task, Ctx)>>| -> Result<Vec<(String, Vec<Vec<i64>>)>> {
             pauses += 1;
             let t_call = std::time::Instant::now();
@@ -7144,6 +7162,19 @@ fn run_observed(
                     out.push(found);
                 }
                 return Ok(vec![("git_inventory_trail_of".to_owned(), out)]);
+            }
+            if rel == reference_facts::REQUEST {
+                let mut out = Vec::with_capacity(rows.len());
+                for row in rows {
+                    let [digest, module, stub, ..] = row.as_slice() else { return Err(Error::Plan("invalid reference summary key".into())) };
+                    let digest = text(*digest)?;
+                    let path = reference_paths.get(digest.as_str()).ok_or_else(|| Error::Plan("reference request has no source".into()))?;
+                    let summary = reference_facts::answer(store, root, path, &digest, &text(*module)?, *stub != 0)?;
+                    let mut result = row.clone();
+                    result.extend(atoms(&[&summary])?);
+                    out.push(result);
+                }
+                return Ok(vec![(reference_facts::ANSWER.to_owned(), out)]);
             }
             if let Some((produced, _)) = WORLD.iter().find(|(_, req)| *req == rel) {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| format!("answer {rel}"));
@@ -7460,7 +7491,7 @@ fn run_observed(
     (parse_cpu.0, parse_cpu.1, batch_cpu.0, batch_cpu.1) = (worker_cpu.0.0, worker_cpu.0.1, worker_cpu.1.0, worker_cpu.1.1);
     // The reference graph over every chunk's files, bound for the cross-file part with its statistics.
     if let Some(references) = references {
-        for (rel, columns, values) in references.relations(store, &read)? {
+        for (rel, columns, values) in references.relations(root, store, &read)? {
             let source = crate::code_rule_dsl::logic::native::component::columns_source(columns, values);
             totals.add(rel, source.len(), &syntax::statistics(source.as_ref()));
             cross_inputs.push((rel.to_owned(), Arc::clone(&source)));
@@ -11338,7 +11369,7 @@ fn cone_of(cross: &super::body::Placed, exports: &[String], base: &[String], pro
     let mut parts = crate::code_rule_dsl::logic::answers::split(&whole).expect("the program has answers");
     // Git answers start empty and are produced by the fixpoint. Unlike a
     // document load's exports, they have no caller-supplied seed rows.
-    parts.load_inputs.retain(|rel| !matches!(rel.as_str(), "git_revision_of" | "git_object_of" | "git_inventory_child_of" | "git_inventory_trail_of"));
+    parts.load_inputs.retain(|rel| !matches!(rel.as_str(), "git_revision_of" | "git_object_of" | "git_inventory_child_of" | "git_inventory_trail_of" | reference_facts::ANSWER));
     // The rest reads the answers as inputs: the runner binds what it gave.
     for rel in answers.values().flatten().filter(|r| !exports.contains(r)) {
         if !parts.rest_inputs.contains(rel) {

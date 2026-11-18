@@ -25,7 +25,7 @@ use ast_grep_core::{Doc, Node};
 use foldhash::{HashMap, HashMapExt};
 
 /// Bumped whenever extraction changes what a summary holds for the same file.
-pub(crate) const EXTRACTOR_VERSION: u32 = 18;
+pub const EXTRACTOR_VERSION: u32 = 18;
 
 pub const ASYNC: u8 = 1;
 pub const CLASS: u8 = 2;

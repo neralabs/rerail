@@ -4802,6 +4802,7 @@ pub(crate) fn install_languages() {
     waves::owner::database::install_connection_setup(demand::vtab::set_up_connection);
     // Python's reference graph, a program's cross-file relations.
     logic::plan::corpus::install_cross_file(logic::plan::corpus::references::make);
+    logic::plan::corpus::reference_facts::install(logic::plan::corpus::references::summarize_tape);
     // A snapshot's files, as an SQL session binds them.
     sql_executor::documents::install_snapshot_files(|json| {
         let (snapshot, _) = eval::parse_snapshot(json, false)?;

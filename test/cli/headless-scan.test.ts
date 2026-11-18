@@ -956,14 +956,16 @@ Seen(@place(p, 1)) :- git_tree_file(_, _, p, _, _), git_tree_walk_complete(_, _)
     expect(measure("distinct")).toBe(shared + 1);
   }, 30_000);
 
-  it("shares verified trees in either policy order and builds references from the tape", () => {
+  it("shares verified trees in either policy order and reuses reference summaries across revisions", () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), "rerail-tree-order-")));
     roots.push(root);
     git(root, "init", "-q");
     mkdirSync(join(root, "src"));
-    writeFileSync(join(root, "src/a.py"), "def helper():\n    pass\n\ndef caller():\n    helper()\n");
+    writeFileSync(join(root, "src/__init__.py"), "# package\n");
+    writeFileSync(join(root, "src/a.py"), "from .b import helper\n\ndef caller():\n    helper()\n");
+    writeFileSync(join(root, "src/b.py"), "def helper():\n    pass\n");
     writeFileSync(join(root, ".rerailignore"), "ignored/\n");
-    git(root, "add", "src/a.py", ".rerailignore");
+    git(root, "add", "src/__init__.py", "src/a.py", "src/b.py", ".rerailignore");
     git(root, "commit", "-qm", "source");
     const walk = join(root, "walk.rr");
     writeFileSync(walk, `
@@ -971,7 +973,7 @@ Seen(@place(p, 1)) :- git_tree_file(_, _, p, _, _), git_tree_walk_complete(_, _)
 .policy "walk" revision 1
 .violation Seen(at: span) "tree file"
 git_tree_walk_request(r, t) :- git_source_tree(r, t).
-Seen(@place(p, 1)) :- git_tree_file(_, _, p, _, _), p != ".rerailignore".
+Seen(@place(p, 1)) :- git_tree_file(_, _, p, _, _), p != ".rerailignore", p != "src/__init__.py".
 `);
     const references = join(root, "references.rr");
     writeFileSync(references, `
@@ -989,25 +991,29 @@ Referenced(src) :- reference_edge(src, _, _).
         scope: "repository", packs: [], version: "test",
       })));
     `;
-    for (const [caseName, paths, warm] of [
-      ["walk-first", [walk, references], false], ["references-first", [references, walk], false],
-      ["references-first", [references, walk], true],
-    ] as const) {
+    const evaluate = (caseName: string, paths: string[], state: string) => {
       const home = join(root, caseName);
-      const profile = join(home, warm ? "profile-warm" : "profile");
+      const profile = join(home, `profile-${state}`);
       const report = JSON.parse(execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-", root, join(home, "home.sqlite"), ...paths], {
         input: script, encoding: "utf8",
         env: { ...process.env, RERAIL_PROFILE: profile, RERAIL_CONTENT_STORE_PATH: join(home, "content.sqlite") },
       })) as ScanReport;
       expect(report.status, JSON.stringify(report.failures)).toBe("completed");
-      expect(report.violations.map(finding => finding.code).sort()).toEqual(["Referenced", "Seen"]);
+      expect(report.violations.map(finding => finding.code).sort()).toEqual(state === "changed" ? ["Seen", "Seen"] : ["Referenced", "Seen", "Seen"]);
       const counters = new Map([...readFileSync(join(profile, "profile.txt"), "utf8").matchAll(/^\s*count\s+(\d+)\s+([a-z._]+)$/gmu)]
         .map(([, count, name]) => [name, Number(count)]));
-      expect(counters.get("git.tree_decodes") ?? 0).toBe(warm ? 0 : 2);
-      if (!warm) expect(counters.get("reference.tape_summaries")).toBe(1);
+      expect(counters.get("git.tree_decodes") ?? 0).toBe(state === "warm" ? 0 : 2);
+      expect(counters.get("reference.tape_summaries") ?? 0).toBe(state === "warm" ? 0 : state === "changed" ? 1 : 3);
       expect(counters.get("source_ast.parses") ?? 0).toBe(0);
-    }
-  }, 60_000);
+    };
+    evaluate("walk-first", [walk, references], "cold");
+    evaluate("references-first", [references, walk], "cold");
+    evaluate("references-first", [references, walk], "warm");
+    writeFileSync(join(root, "src/b.py"), "def replacement():\n    pass\n");
+    git(root, "add", "src/b.py");
+    git(root, "commit", "-qm", "change the target file");
+    evaluate("references-first", [references, walk], "changed");
+  }, 90_000);
 
   it.each(["loose", "packed"])("rechecks a %s tree after corruption and restoration with the same cache", (representation) => {
     const root = checkout();

@@ -199,7 +199,7 @@ fn derive(
     own[OWN] = serde_json::Value::Array(wanted.iter().map(|r| serde_json::Value::String(r.clone())).collect());
     own["inputFiles"] = serde_json::json!([]);
     let out = scratch.join("constants");
-    let report: Report = super::run_handed(programs, read, None, root, None, &out, modes, binding, chunk_nodes, typing, &own, None)?;
+    let report: Report = super::run_handed(programs, read, None, root, None, &out, modes, binding, chunk_nodes, typing, &own, None, &[])?;
     let copies: Vec<String> = wanted.iter().map(|rel| copy(rel)).collect();
     let image = crate::code_rule_dsl::logic::plan::output::base_of(&out, copies.iter().map(String::as_str)).map_err(|e| super::super::Error::Plan(format!("the run's constants: {e}")))?;
     let _ = std::fs::remove_dir_all(&out);

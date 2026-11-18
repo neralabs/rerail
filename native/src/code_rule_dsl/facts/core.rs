@@ -201,6 +201,29 @@ fn queued_tape(source: &[u8; 32], tag: i64, gv: i64, fv: i64) -> crate::content_
     crate::content_store::write_back::Key::of(&[b"tape", source, &tag.to_le_bytes(), &gv.to_le_bytes(), &fv.to_le_bytes()])
 }
 
+/// Restore a tape already built by the source phase, including tapes awaiting publication.
+pub fn restore_tape(file: &dyn SourceFile, cache: &crate::content_store::ContentStore, digest: [u8; 32]) -> crate::content_store::StoreResult<Option<TapeDoc>> {
+    use crate::code_rule_dsl::{lines::Terminators, tape::{Grammar, TapeImage, formats}};
+    use crate::content_store::{HashKey, StoreError};
+    let language = file_language(file).ok_or_else(|| StoreError::Invalid(format!("{} has no grammar", file.language())))?;
+    let tag = i64::from(tape_tag(language).ok_or_else(|| StoreError::Invalid("the dialect has no tape tag".into()))?);
+    let grammar_version = crate::code_rule_dsl::build_ids::grammar_version();
+    let format = i64::from(formats::stored_version());
+    let bytes = match cache.queued_tape(&queued_tape(&digest, tag, grammar_version, format)) {
+        Some(bytes) => bytes?,
+        None => {
+            let Some(source) = cache.source_by_hash(HashKey::from_sha256_digest(digest))? else { return Ok(None) };
+            let Some(frame) = cache.tape_frames_for(&[source], tag, grammar_version, format)?.into_iter().next().flatten()
+                else { return Ok(None) };
+            frame.bytes()?
+        }
+    };
+    let grammar = Arc::new(Grammar::new(language).map_err(StoreError::Invalid)?);
+    let primary = TapeImage::from_bytes(&bytes, &grammar).map_err(StoreError::Invalid)?;
+    let lines = Arc::new(LineTable::new(file.source(), Terminators::of(language)));
+    kept_tape(true, file, &grammar, &primary, &lines).map_err(StoreError::Invalid)
+}
+
 /// [`build`] in a run's waves (decision 0104): no SQL is read or written. The tape is `found` (read before the
 /// first wave), or one still queued by this process, else the file is parsed and its source and tape are handed to
 /// the store's writer, behind the run (`named`: the run's manifest names the source it stores, decision 0306). `digest` is the source's

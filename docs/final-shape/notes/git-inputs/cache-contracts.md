@@ -247,6 +247,8 @@ The Python reference extractor currently takes the file's tape and effective mod
 Its local result describes definitions and reference names. It contains no resolved edges to other files.
 Retain those local facts by tape, effective module, and extractor version.
 Include whether the module has a containing package, because that changes relative imports.
+Include the stub setting, which changes which bindings the extractor reads.
+The source path locates the tape on a miss. The local result key uses the source content and parser versions.
 Use file-local definition ranges to join the summary to each placement's current nodes.
 The link step reads the current placements, import names, and rule settings.
 A change in another file can change those links without rebuilding this file's summary.
