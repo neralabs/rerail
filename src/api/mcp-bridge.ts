@@ -92,30 +92,26 @@ const DAEMON_REFUSED = "Rerail daemon refused the access capability in daemon.js
 
 /**
  * How long the daemon has to answer each part of a relayed call. The checks before it may be sent the capability (on
- * Windows its engine's proof, then the health check of a newly recorded daemon) have it from the moment the bridge takes
- * the call; the call itself has it from its send, as it always had. A daemon whose one event loop is in an audit or a
- * long garbage collection is waited for and answers, and one that never answers fails the call here. The coding agent's
- * own limit on an MCP call is far longer.
+ * Windows its engine's proof, then the health check of a newly recorded daemon) have it from the moment the bridge
+ * takes the call; the call itself has it from its send, as it always had. A daemon whose one event loop is in an audit
+ * or a long garbage collection is waited for and answers, and one that never answers fails the call here. The coding
+ * agent's own limit on an MCP call is far longer.
  */
 const CALL_TIMEOUT_MS = 30_000;
 /** The daemon runs, and took the call, but gave no answer by the call's bound: busy or stuck, never "not running". */
 const DAEMON_NOT_ANSWERING = `Rerail daemon is running but did not answer within ${CALL_TIMEOUT_MS / 1_000} s; try again, and if it stays silent run rerail daemon stop, then rerail daemon start`;
 
 /**
- * One relayed call's bound, {@link CALL_TIMEOUT_MS}: the checks have it from the moment the bridge takes the call, and from
- * {@link CallBound.sent} the daemon's answer has it whole, so a check that waited for a busy daemon never shortens the
- * time a tool has to answer. Each wait ends on its answer or at the bound, whichever comes first. The bound reads the
- * monotonic clock its timer runs on, so a step of the wall clock moves neither, and its one timer ends with the call, so
- * an idle bridge holds none.
+ * One relayed call's bound, {@link CALL_TIMEOUT_MS}: the checks have it from the moment the bridge takes the call, and
+ * from {@link CallBound.sent} the daemon's answer has it whole, so a check that waited for a busy daemon never shortens
+ * the time a tool has to answer. Each wait ends on its answer or at the bound, whichever comes first. The bound reads
+ * the monotonic clock its timer runs on, so a step of the wall clock moves neither, and its one timer ends with the
+ * call, so an idle bridge holds none.
  */
 class CallBound {
   readonly #abort = new AbortController();
-  #ends = 0;
-  #timer: NodeJS.Timeout | undefined;
-
-  constructor() {
-    this.#start();
-  }
+  readonly #timer = setTimeout(() => this.#abort.abort(new Error(DAEMON_NOT_ANSWERING)), CALL_TIMEOUT_MS);
+  #ends = performance.now() + CALL_TIMEOUT_MS;
 
   /** Aborts at the bound, with the call's answer as its reason: the signal each request of the call carries. */
   get signal(): AbortSignal {
@@ -135,20 +131,15 @@ class CallBound {
     return Math.max(1, this.#ends - performance.now());
   }
 
-  /** The call goes to the daemon now: its answer has the whole bound from here, whatever the checks took. */
+  /** The call goes to the daemon now: its one timer counts the whole bound again from here, whatever checks took. */
   sent(): void {
-    this.#start();
+    this.#ends = performance.now() + CALL_TIMEOUT_MS;
+    this.#timer.refresh();
   }
 
   /** Ends the bound's timer once the call has its answer. */
   end(): void {
     clearTimeout(this.#timer);
-  }
-
-  #start(): void {
-    clearTimeout(this.#timer);
-    this.#ends = performance.now() + CALL_TIMEOUT_MS;
-    this.#timer = setTimeout(() => this.#abort.abort(new Error(DAEMON_NOT_ANSWERING)), CALL_TIMEOUT_MS);
   }
 }
 
@@ -236,14 +227,14 @@ async function post(
       signal: bound.signal,
     });
   } catch (error) {
-    // A daemon silent until the bound took the request: it runs. Any other failure may be a daemon that stopped or moved.
+    // A daemon silent until the bound took the request and runs; any other failure may be one that stopped or moved.
     if (bound.passed) throw new Error(DAEMON_NOT_ANSWERING);
     await daemon.recheck(bound);
     throw error;
   }
 }
 
-/** The line the daemon's `response` with `body` answers the call with; undefined when the server answered with no body. */
+/** The line the daemon's `response` with `body` answers the call with; undefined when the server sent no body. */
 function answerLine(response: Response, body: string): string | undefined {
   if (response.ok) return body === "" ? undefined : body;
   // A refusal is not an MCP answer: the client gets a JSON-RPC error that says what to do, not the daemon's body.

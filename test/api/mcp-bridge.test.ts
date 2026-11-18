@@ -595,12 +595,27 @@ describe("Rerail MCP bridge beside a busy daemon", () => {
       proofs.push(timeoutMs);
       return "proved";
     });
-    // The wall clock jumps a minute while the relay fails to connect: the home's check after it still has its whole time.
+    // The new daemon answers its first health check after 1.5 s, and every later one at once.
+    const firstCheck = Promise.withResolvers<void>();
+    let checks = 0;
+    const health = async (): Promise<Response> => {
+      checks += 1;
+      if (checks === 1) {
+        firstCheck.resolve();
+        await new Promise((resolve) => setTimeout(resolve, 1_500));
+      }
+      return jsonResponse(200, { status: "ok", pid: process.pid });
+    };
+    // The wall clock jumps a minute while the relay fails to connect: the home's check after it still has the whole
+    // time the send gave the call, counted from the send.
     const steppedRefusal = async (): Promise<Response> => {
       vi.setSystemTime(Date.now() + 60_000);
       throw new TypeError("fetch failed");
     };
-    const run = await runBridge([ping], [steppedRefusal], { daemon: windowsDaemon, machine });
+    const pending = runBridge([ping], [steppedRefusal], { daemon: windowsDaemon, machine, health });
+    await firstCheck.promise;
+    await vi.advanceTimersByTimeAsync(1_500);
+    const run = await pending;
     expect(run.stdout).toEqual([fetchFailed]);
     expect(proofs).toEqual([30_000, 30_000]);
   });
