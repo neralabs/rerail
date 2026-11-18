@@ -498,6 +498,27 @@ fn record(store: &ContentStore, key: &[u8; 32], p: &Prepared) {
     keep(store, key, &p.version, |digest| facts_of(p, digest));
 }
 
+/// The facts kept under `key` alone (`keep_facts`): no image.
+pub(in crate::code_rule_dsl::logic::plan::corpus) fn kept_facts_alone(store: &ContentStore, key: &[u8; 32]) -> Option<Facts> {
+    let source = store.source_by_hash(HashKey::sha256(source_text(key).as_bytes())).ok()??;
+    let set = plan();
+    let result = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH }).ok()?.results.remove(&set.plans[0])?;
+    program_facts::decode(&result.entry).ok()
+}
+
+/// Keeps `facts` under `key`, no image beside them, written by the store's writer (`kept_facts_alone` reads them).
+pub(in crate::code_rule_dsl::logic::plan::corpus) fn keep_facts(store: &ContentStore, key: &[u8; 32], facts: &Facts) {
+    let entry = program_facts::encode(facts);
+    fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
+        let (key, entry): ([u8; 32], Vec<u8>) = crate::content_store::record::codec::from_body("kept facts", body)?;
+        let source = super::super::memo::source(cx.store, &source_text(&key))?;
+        cx.name([source]);
+        let set = plan();
+        cx.store.put_facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry }], &[]).map(drop)
+    }
+    store.record("kept facts", Vec::new(), &(*key, entry), None, apply);
+}
+
 /// Keeps `version` and the facts `facts` makes of its image's digest under `key` (either stage's part).
 pub(in crate::code_rule_dsl::logic::plan::corpus) fn keep(store: &ContentStore, key: &[u8; 32], version: &Arc<Version>, facts: impl FnOnce(&[u8; 32]) -> Facts) {
     let Some(encoded) = program_text::encode_version(version) else { return };

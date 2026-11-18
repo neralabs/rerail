@@ -1487,6 +1487,106 @@ fn input_ident(rel: &str, prog: &Placed, key: &[u8; 32]) -> [u8; 32] {
     h.finalize().into()
 }
 
+/// What names a program's frames, for the key its identities are kept under (`kept_identities`): its version (its
+/// rules in order, its declarations, facts, inputs and outputs) and its maintained parts.
+fn program_key(h: &mut sha2::Sha256, p: &Placed) {
+    use sha2::Digest as _;
+    h.update(crate::code_rule_dsl::logic::program_image::manager::identity(&p.v));
+    h.update(p.digest().to_le_bytes());
+    for set in p.together() {
+        for r in set {
+            h.update(r.as_bytes());
+            h.update([0]);
+        }
+        h.update([1]);
+    }
+}
+
+/// Identities kept as a stored fact under `key` (`parts::keep_facts`): read back where kept, else made by `make` and
+/// kept. The key names everything they are made of (the programs, the binds, the engine), so a program the run held
+/// before reads its identities rather than hashing its strata again (Q19's identities, decision 0379).
+fn kept_identities(store: &ContentStore, what: &str, key: [u8; 32], make: impl FnOnce() -> Result<Vec<(String, [u8; 32])>>) -> Result<Vec<(String, [u8; 32])>> {
+    use super::preparation::parts::{hex, keep_facts, kept_facts_alone, rows_of, str};
+    let kept = {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| format!("{what}: kept"));
+        kept_facts_alone(store, &key).and_then(|f| rows_of(&f, "frame_ident").map(|r| Some((r.first()?.clone(), super::preparation::parts::unhex(r.get(1)?)?))).collect::<Option<Vec<_>>>())
+    };
+    if let Some(k) = kept {
+        return Ok(k);
+    }
+    let made = make()?;
+    let mut facts = crate::code_rule_dsl::logic::program_facts::Facts::new();
+    facts.insert("frame_ident".to_owned(), made.iter().map(|(name, ident)| vec![str(name), str(&hex(ident))].into()).collect());
+    keep_facts(store, &key, &facts);
+    Ok(made)
+}
+
+/// A program's derived relations' identities (`plan::identities`, by its components), as `Retained::from_frames`
+/// and `frame_rels` name them.
+pub(in crate::code_rule_dsl) type StrataIdents = Arc<HashMap<String, [u8; 32]>>;
+
+/// `p`'s strata identities (`identities_by_heads` over `sccs`), kept as a stored fact under the program and its
+/// components. Read before the first wave only (decision 0104): a reader inside the waves is handed them.
+fn strata_idents_kept(store: &ContentStore, p: &Placed, sccs: &[BTreeSet<String>]) -> Result<StrataIdents> {
+    use sha2::{Digest as _, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"rerail/strata identities v1\0");
+    h.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
+    program_key(&mut h, p);
+    for scc in sccs {
+        for r in scc {
+            h.update(r.as_bytes());
+            h.update([0]);
+        }
+        h.update([1]);
+    }
+    let leaves = crate::code_rule_dsl::logic::plan::Leaves::of_placed(p.clone());
+    let made = kept_identities(store, "a program's strata identities", h.finalize().into(), || Ok(leaves.identities_by_heads(sccs)?.into_iter().collect()))?;
+    Ok(Arc::new(made.into_iter().collect()))
+}
+
+/// `frame_rels`, its parts kept as stored facts (`kept_identities`): the whole set under the programs, `binds` and
+/// `bound`, and each program's strata identities (`strata_idents_kept`), returned for `Retained::from_frames`.
+/// Before the first wave (decision 0104).
+pub(in crate::code_rule_dsl) fn frame_rels_kept(store: &ContentStore, progs: &[&Placed], binds: &[u8; 32], bound: &[&str]) -> Result<(std::collections::HashSet<FrameRel>, Vec<StrataIdents>)> {
+    use sha2::{Digest as _, Sha256};
+    let strata = progs.iter().map(|p| strata_idents_kept(store, p, &p.components()?)).collect::<Result<Vec<_>>>()?;
+    let mut h = Sha256::new();
+    h.update(b"rerail/frame rels v1\0");
+    h.update(crate::code_rule_dsl::build_ids::engine().as_bytes());
+    for p in progs {
+        program_key(&mut h, p);
+    }
+    h.update(binds);
+    let mut b: Vec<&str> = bound.to_vec();
+    b.sort_unstable();
+    b.dedup();
+    for r in b {
+        h.update(r.as_bytes());
+        h.update([0]);
+    }
+    let rels = kept_identities(store, "the cross part's frame identities", h.finalize().into(), || {
+        let mut out: std::collections::HashSet<FrameRel> = strata.iter().flat_map(|s| s.iter().map(|(name, ident)| FrameRel { name: name.clone(), ident: *ident })).collect();
+        out.extend(input_rels(progs, binds, bound)?);
+        Ok(out.into_iter().map(|f| (f.name, f.ident)).collect())
+    })?;
+    Ok((rels.into_iter().map(|(name, ident)| FrameRel { name, ident }).collect(), strata))
+}
+
+/// `frame_rels`' inputs: each declared relation of each of `progs`, and each of `bound`, as the part's input under
+/// `binds`.
+fn input_rels(progs: &[&Placed], binds: &[u8; 32], bound: &[&str]) -> Result<Vec<FrameRel>> {
+    let _s = crate::code_rule_dsl::logic::profile::span(|| "frame identities: the inputs'".into());
+    let mut out = Vec::new();
+    for p in progs {
+        let fields = p.fields()?;
+        for rel in fields.decls_by_name().into_iter().map(|(rel, _)| rel).chain(bound.iter().copied()) {
+            out.push(FrameRel { name: rel.to_owned(), ident: input_ident(rel, p, binds) });
+        }
+    }
+    Ok(out)
+}
+
 /// The frames a run's cross part can read in its space (Q19, `ContentStore::preload_frames_live`): each derived
 /// relation's identity in each of `progs` (`plan::identities`, by their components, as `Retained::from_frames`,
 /// `kept_strata::load` and the planner's `Kept` name them), and each declared relation's as the part's input under
@@ -1503,13 +1603,8 @@ pub(in crate::code_rule_dsl) fn frame_rels(progs: &[&Placed], binds: &[u8; 32], 
         let leaves = crate::code_rule_dsl::logic::plan::Leaves::of_placed((*p).clone());
         let _s = crate::code_rule_dsl::logic::profile::span(|| "frame identities: the strata's".into());
         out.extend(leaves.identities_by_heads(&sccs)?.into_iter().map(|(name, ident)| FrameRel { name, ident }));
-        drop(_s);
-        let _s = crate::code_rule_dsl::logic::profile::span(|| "frame identities: the inputs'".into());
-        let fields = p.fields()?;
-        for rel in fields.decls_by_name().into_iter().map(|(rel, _)| rel).chain(bound.iter().copied()) {
-            out.insert(FrameRel { name: rel.to_owned(), ident: input_ident(rel, p, binds) });
-        }
     }
+    out.extend(input_rels(progs, binds, bound)?);
     Ok(out)
 }
 
@@ -2256,11 +2351,21 @@ impl Retained {
     /// `sccs`: `prog`'s strata, computed once by the caller.
     /// `binds`: the key of the part's program alone (`keys`), which names its inputs' frames.
     pub(in crate::code_rule_dsl) fn from_frames(store: &ContentStore, space: [u8; 32], key: [u8; 32], binds: [u8; 32], prog: &Placed, sccs: &[BTreeSet<String>], bound: &HashMap<String, u64>) -> Result<Retained> {
+        Self::from_frames_named(store, space, key, binds, prog, sccs, bound, None)
+    }
+
+    /// `from_frames`, the program's strata identities handed in where the run read them before the first wave
+    /// (`frame_rels_kept`).
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::code_rule_dsl) fn from_frames_named(store: &ContentStore, space: [u8; 32], key: [u8; 32], binds: [u8; 32], prog: &Placed, sccs: &[BTreeSet<String>], bound: &HashMap<String, u64>, strata: Option<&StrataIdents>) -> Result<Retained> {
         // The program's version, for its identities and its leaves' (`from_frame_snapshot`).
         let leaves = crate::code_rule_dsl::logic::plan::Leaves::of_placed(prog.clone());
-        let idents = {
-            let _s = crate::code_rule_dsl::logic::profile::span(|| "the kept part's identities".into());
-            leaves.identities_by_heads(sccs)?
+        let idents: Vec<(String, [u8; 32])> = match strata {
+            Some(held) => held.iter().map(|(name, ident)| (name.clone(), *ident)).collect(),
+            None => {
+                let _s = crate::code_rule_dsl::logic::profile::span(|| "the kept part's identities".into());
+                leaves.identities_by_heads(sccs)?.into_iter().collect()
+            }
         };
         let derived: BTreeSet<&String> = sccs.iter().flatten().collect();
         let mut names: HashMap<String, FrameRel> = idents.into_iter().map(|(name, ident)| (name.clone(), FrameRel { name, ident })).collect();

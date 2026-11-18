@@ -5424,6 +5424,9 @@ fn run_observed(
     // reads its input deltas from the documents whose content changed.
     let run_docs_held: std::sync::Mutex<input_delta::Docs> = std::sync::Mutex::new(HashMap::new());
     let run_docs = &run_docs_held;
+    // The cross program's strata identities, read with the cross part's frames (kept as a stored fact, before the
+    // first wave): what `Retained::from_frames` names its frames by.
+    let mut cross_idents: Vec<(u64, retain::StrataIdents)> = Vec::new();
     // The run's waves: from its first chunk to the cross-file part's last stratum. SQL a wave's thread runs or waits on
     // meanwhile is a hazard in the profile (decision 0104); before is the run's beginning, after its end.
     {
@@ -5445,7 +5448,10 @@ fn run_observed(
                     // And what the run binds from an earlier phase, which `Retained::from_frames` reads as an input,
                     // declared or not.
                     let bound: Vec<&str> = repository.iter().map(|(rel, _, _)| rel.as_str()).collect();
-                    Some(retain::frame_rels(&[&cross.placed()?, &maintained.0.placed()?], &binds, &bound)?)
+                    let progs = [cross.placed()?, maintained.0.placed()?];
+                    let (rels, strata) = retain::frame_rels_kept(store, &[&progs[0], &progs[1]], &binds, &bound)?;
+                    cross_idents = progs.iter().map(super::body::Placed::digest).zip(strata).collect();
+                    Some(rels)
                 }
             }
             None => None,
@@ -8849,7 +8855,8 @@ fn run_observed(
                     let frames_space = kept_strata::space(root);
                     if cell.is_none() && from_frames.is_some() {
                         let _s = span("the kept part, from the frames");
-                        cell = Some(retain::Retained::from_frames(store, frames_space, ckey, binds, &cross_placed, &cross_sccs, &digests)?);
+                        let strata = cross_idents.iter().find(|(d, _)| *d == cross_placed.digest()).map(|(_, s)| s);
+                        cell = Some(retain::Retained::from_frames_named(store, frames_space, ckey, binds, &cross_placed, &cross_sccs, &digests, strata)?);
                         if let (Some(c), Some(k)) = (cell.as_mut(), kept_loaded.as_ref()) {
                             c.adopt_inputs(k);
                         }
