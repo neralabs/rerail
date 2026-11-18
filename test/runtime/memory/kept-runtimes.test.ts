@@ -7,11 +7,11 @@ import { removeFolder } from "../../support/platform/remove-folder.js";
 
 /**
  * Kept runtimes over open runtimes named `keys`, each in the folder of the same name; `room.short` says the daemon needs
- * the room, `using` holds the keys a session uses, and `closed` the keys closed, in order.
+ * the room, `busy` holds the keys a session uses, and `closed` the keys closed, in order.
  */
 function kept(keys: readonly string[], options: Partial<KeptRuntimesOptions> = {}) {
   const open = new Set(keys);
-  const using = new Set<string>();
+  const busy = new Set<string>();
   const closed: string[] = [];
   const room = { short: false, reads: 0 };
   const runtimes = new KeptRuntimes({
@@ -19,7 +19,7 @@ function kept(keys: readonly string[], options: Partial<KeptRuntimesOptions> = {
       room.reads += 1;
       return room.short;
     },
-    inUse: key => using.has(key),
+    inUse: key => busy.has(key),
     folderOf: key => (open.has(key) ? key : undefined),
     close: async (key) => {
       open.delete(key);
@@ -28,7 +28,7 @@ function kept(keys: readonly string[], options: Partial<KeptRuntimesOptions> = {
     removed: async () => false,
     ...options,
   });
-  return { runtimes, using, closed, room };
+  return { runtimes, busy, closed, room };
 }
 
 describe("the runtimes no session uses, kept for their checkout's next session", () => {
@@ -78,17 +78,17 @@ describe("the runtimes no session uses, kept for their checkout's next session",
   // A scan's open came for a quiet session while its close ran: the close's release kept the runtime, and the open used
   // it without taking it out, so the next room check closed it under the reopened session.
   it("keeps no runtime a use is on its way to, and keeps it again once that use ends with no session in it", async () => {
-    const { runtimes, closed, room, using } = kept(["a", "b"]);
+    const { runtimes, closed, room, busy } = kept(["a", "b"]);
     const release = runtimes.claim("a");
     runtimes.left("a");
     room.short = true;
     await runtimes.closeAll();
     expect(closed).toEqual([]);
-    using.add("a");
+    busy.add("a");
     release();
     await runtimes.closeAll();
     expect(closed).toEqual([]);
-    using.delete("a");
+    busy.delete("a");
     runtimes.left("a");
     await runtimes.closeAll();
     expect(closed).toEqual(["a"]);
@@ -108,9 +108,9 @@ describe("the runtimes no session uses, kept for their checkout's next session",
   });
 
   it("closes no runtime a session uses, should one be kept", async () => {
-    const { runtimes, closed, using } = kept(["a"]);
+    const { runtimes, closed, busy } = kept(["a"]);
     runtimes.left("a");
-    using.add("a");
+    busy.add("a");
     await runtimes.closeAll();
     expect(closed).toEqual([]);
   });
