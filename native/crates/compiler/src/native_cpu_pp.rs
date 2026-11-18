@@ -17,7 +17,7 @@ use crate::native_cpu_shape::Step;
 use crate::pp_expr::Value as Val;
 use crate::pp_words::{self, BOL, Bounds, COND_ELSE, COND_SIZE, COND_SRC, COND_TAKEN, Ctx, Ex, OPS, op_index, DIGRAPH, Def, DefState, EOF, EXP, Env, Expanded, File, FileC, Frame, HASH, HASHHASH, IDENT, LEVEL, LITERAL, NO_PARAM, NOEXP, NONE, NUMBER, PAIR, PASTE, PASTE_MARK, PLACEMARKER, PUNCT, Refused, SPACE, Slot, Src, Sub, Tok, USE, VA_ARGS, VA_OPT, VA_OPT_MARK};
 use crate::program::{ACCEPT, ARG, COND, DEFINE, DEFINED, EXPR, FRAME, GLUE, GOTO, IF, IS, SKIP, KEEP, LINE, LOOKUP, MACRO, PAINT, PEEK, PRE, PUSH, PUT, PpTables, READ, RETURN, SKIPLINE, STOP, STR, SUB, UNDEF, Words, split};
-use cranelift_codegen::ir::{AbiParam, Block, BlockCall, InstBuilder, JumpTableData, MemFlags, Value, condcodes::IntCC, types};
+use cranelift_codegen::ir::{AbiParam, Block, BlockArg, BlockCall, InstBuilder, JumpTableData, MemFlags, Value, condcodes::IntCC, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Switch};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{Linkage, Module, default_libcall_names};
@@ -3075,7 +3075,575 @@ impl Lower<'_, '_> {
         (r[0], r[1])
     }
 
-    /// `EXPR` (`Machine::expr`), its modes but the primary's (`m=5`).
+    /// The `n` bytes at `p` folded through `lane` a byte at a time (`init` the fold's values),
+    /// eight lanes a step: straight code over each 8-byte window (`Step::Word`), a lane past
+    /// the end leaving the fold as it was.
+    fn lanes(&mut self, p: Value, n: Value, init: &[Value], lane: &mut dyn FnMut(&mut Self, Value, &[Value]) -> Vec<Value>) -> Vec<Value> {
+        let tys: Vec<types::Type> = init.iter().map(|&v| self.f.func.dfg.value_type(v)).collect();
+        let head = self.f.create_block();
+        self.f.append_block_param(head, types::I64);
+        let done = self.f.create_block();
+        for &t in &tys {
+            self.f.append_block_param(head, t);
+            self.f.append_block_param(done, t);
+        }
+        self.heads.push((head, Step::Word));
+        let z = self.f.ins().iconst(types::I64, 0);
+        let args: Vec<BlockArg> = std::iter::once(z).chain(init.iter().copied()).map(BlockArg::from).collect();
+        self.f.ins().jump(head, &args);
+        self.f.switch_to_block(head);
+        let params = self.f.block_params(head).to_vec();
+        let (i, st0) = (params[0], params[1..].to_vec());
+        let more = self.f.ins().icmp(IntCC::UnsignedLessThan, i, n);
+        let step = self.f.create_block();
+        let out: Vec<BlockArg> = st0.iter().copied().map(BlockArg::from).collect();
+        self.f.ins().brif(more, step, &[], done, &out);
+        self.f.switch_to_block(step);
+        let rem = self.f.ins().isub(n, i);
+        let q = self.f.ins().iadd(p, i);
+        let w = self.chunk(q, rem);
+        let mut st = st0;
+        for j in 0..8i64 {
+            let c = self.f.ins().ushr_imm(w, 8 * j);
+            let c = self.f.ins().band_imm(c, 0xff);
+            let valid = self.f.ins().icmp_imm(IntCC::UnsignedGreaterThan, rem, j);
+            let new = lane(self, c, &st);
+            st = st.iter().zip(new).map(|(&old, new)| self.f.ins().select(valid, new, old)).collect();
+        }
+        let i8 = self.f.ins().iadd_imm(i, 8);
+        let args: Vec<BlockArg> = std::iter::once(i8).chain(st).map(BlockArg::from).collect();
+        self.f.ins().jump(head, &args);
+        self.f.switch_to_block(done);
+        self.f.block_params(done).to_vec()
+    }
+
+    /// The first of the `n` bytes at `p` whose high bit `class` sets: whether there is one, and
+    /// its index; eight a step (`Step::Word`).
+    fn find_first(&mut self, p: Value, n: Value, class: fn(&mut Self, Value) -> Value) -> (Value, Value) {
+        let head = self.f.create_block();
+        self.f.append_block_param(head, types::I64);
+        self.heads.push((head, Step::Word));
+        let join = self.f.create_block();
+        self.f.append_block_param(join, types::I8);
+        self.f.append_block_param(join, types::I64);
+        let z = self.f.ins().iconst(types::I64, 0);
+        self.f.ins().jump(head, &[z.into()]);
+        self.f.switch_to_block(head);
+        let i = self.f.block_params(head)[0];
+        let more = self.f.ins().icmp(IntCC::UnsignedLessThan, i, n);
+        let step = self.f.create_block();
+        let no = self.f.ins().iconst(types::I8, 0);
+        self.f.ins().brif(more, step, &[], join, &[no.into(), z.into()]);
+        self.f.switch_to_block(step);
+        let rem = self.f.ins().isub(n, i);
+        let q = self.f.ins().iadd(p, i);
+        let w = self.chunk(q, rem);
+        let m = class(self, w);
+        let valid = self.valid_bytes(rem);
+        let m = self.f.ins().band(m, valid);
+        let hit = self.f.create_block();
+        let on = self.f.create_block();
+        self.f.ins().brif(m, hit, &[], on, &[]);
+        self.f.switch_to_block(on);
+        let i8 = self.f.ins().iadd_imm(i, 8);
+        self.f.ins().jump(head, &[i8.into()]);
+        self.f.switch_to_block(hit);
+        let tz = self.f.ins().ctz(m);
+        let j = self.f.ins().ushr_imm(tz, 3);
+        let k = self.f.ins().iadd(i, j);
+        let yes = self.f.ins().iconst(types::I8, 1);
+        self.f.ins().jump(join, &[yes.into(), k.into()]);
+        self.f.switch_to_block(join);
+        let r = self.f.block_params(join);
+        (r[0], r[1])
+    }
+
+    fn quote_class(&mut self, w: Value) -> Value {
+        let a = self.bytes_eq(w, b'"');
+        let b = self.bytes_eq(w, b'\'');
+        self.f.ins().bor(a, b)
+    }
+
+    /// `pp_expr::number` of the `n` bytes at `p`: whether it is an integer constant, its bits and
+    /// unsigned flag. A fold a byte a lane (`lanes`): its phase (0 the first byte, 1 after a
+    /// leading `0`, 2 the digits, 3 the suffix), radix, value, overflow, digits, and the suffix
+    /// lowered and packed; digit separators pass.
+    fn number(&mut self, p: Value, n: Value) -> (Value, Value, Value) {
+        let k = |l: &mut Self, x: i64| l.f.ins().iconst(types::I64, x);
+        let init = [k(self, 0), k(self, 10), k(self, 0), k(self, 0), k(self, 0), k(self, 0), k(self, 0)];
+        let st = self.lanes(p, n, &init, &mut |l, c, st| {
+            let (phase, radix, v, of, ndig, sfx, slen) = (st[0], st[1], st[2], st[3], st[4], st[5], st[6]);
+            let f = &mut *l.f;
+            let one = f.ins().iconst(types::I64, 1);
+            let lc = f.ins().bor_imm(c, 0x20);
+            let up = f.ins().iadd_imm(c, -i64::from(b'A'));
+            let is_up = f.ins().icmp_imm(IntCC::UnsignedLessThan, up, 26);
+            let lower = f.ins().select(is_up, lc, c);
+            // The first byte: a `0` (octal so far), else a decimal's first digit.
+            let p0 = f.ins().icmp_imm(IntCC::Equal, phase, 0);
+            let is0 = f.ins().icmp_imm(IntCC::Equal, c, i64::from(b'0'));
+            let c1 = f.ins().iconst(types::I64, 1);
+            let c2 = f.ins().iconst(types::I64, 2);
+            let c8 = f.ins().iconst(types::I64, 8);
+            let c10 = f.ins().iconst(types::I64, 10);
+            let ph0 = f.ins().select(is0, c1, c2);
+            let phase = f.ins().select(p0, ph0, phase);
+            let r0 = f.ins().select(is0, c8, c10);
+            let radix = f.ins().select(p0, r0, radix);
+            let cons = f.ins().band(p0, is0);
+            // After a leading `0`: `x` or `b`, else octal's digits.
+            let p1 = f.ins().icmp_imm(IntCC::Equal, phase, 1);
+            let ncons = f.ins().bxor_imm(cons, 1);
+            let p1 = f.ins().band(p1, ncons);
+            let x = f.ins().icmp_imm(IntCC::Equal, lc, i64::from(b'x'));
+            let b = f.ins().icmp_imm(IntCC::Equal, lc, i64::from(b'b'));
+            let c16 = f.ins().iconst(types::I64, 16);
+            let rb = f.ins().select(b, c2, c8);
+            let rx = f.ins().select(x, c16, rb);
+            let radix = f.ins().select(p1, rx, radix);
+            let phase = f.ins().select(p1, c2, phase);
+            let xb = f.ins().bor(x, b);
+            let took = f.ins().band(p1, xb);
+            let cons = f.ins().bor(cons, took);
+            // A digit of the radix.
+            let p2 = f.ins().icmp_imm(IntCC::Equal, phase, 2);
+            let ncons = f.ins().bxor_imm(cons, 1);
+            let p2 = f.ins().band(p2, ncons);
+            let dd = f.ins().iadd_imm(c, -i64::from(b'0'));
+            let is_dec = f.ins().icmp_imm(IntCC::UnsignedLessThan, dd, 10);
+            let hx = f.ins().iadd_imm(lc, -i64::from(b'a'));
+            let is_hex = f.ins().icmp_imm(IntCC::UnsignedLessThan, hx, 6);
+            let hv = f.ins().iadd_imm(hx, 10);
+            let big = f.ins().iconst(types::I64, 99);
+            let d = f.ins().select(is_hex, hv, big);
+            let d = f.ins().select(is_dec, dd, d);
+            let isd = f.ins().icmp(IntCC::UnsignedLessThan, d, radix);
+            let take = f.ins().band(p2, isd);
+            let hi = f.ins().umulhi(v, radix);
+            let m = f.ins().imul(v, radix);
+            let sum = f.ins().iadd(m, d);
+            let carry = f.ins().icmp(IntCC::UnsignedLessThan, sum, m);
+            let wide = f.ins().icmp_imm(IntCC::NotEqual, hi, 0);
+            let over = f.ins().bor(wide, carry);
+            let over = f.ins().band(take, over);
+            let over = f.ins().uextend(types::I64, over);
+            let of = f.ins().bor(of, over);
+            let v = f.ins().select(take, sum, v);
+            let t64 = f.ins().uextend(types::I64, take);
+            let ndig = f.ins().iadd(ndig, t64);
+            let nd = f.ins().bxor_imm(isd, 1);
+            let ends = f.ins().band(p2, nd);
+            let c3 = f.ins().iconst(types::I64, 3);
+            let phase = f.ins().select(ends, c3, phase);
+            let cons = f.ins().bor(cons, take);
+            // The suffix's bytes, lowered.
+            let p3 = f.ins().icmp_imm(IntCC::Equal, phase, 3);
+            let ncons = f.ins().bxor_imm(cons, 1);
+            let p3 = f.ins().band(p3, ncons);
+            let c7 = f.ins().iconst(types::I64, 7);
+            let at = f.ins().umin(slen, c7);
+            let sh = f.ins().ishl_imm(at, 3);
+            let byte = f.ins().ishl(lower, sh);
+            let s1 = f.ins().bor(sfx, byte);
+            let sfx = f.ins().select(p3, s1, sfx);
+            let l1 = f.ins().iadd(slen, one);
+            let slen = f.ins().select(p3, l1, slen);
+            // A separator: nothing.
+            let sep = f.ins().icmp_imm(IntCC::Equal, c, i64::from(b'\''));
+            [phase, radix, v, of, ndig, sfx, slen].iter().zip(st).map(|(&new, &old)| f.ins().select(sep, old, new)).collect()
+        });
+        let (radix, v, of, ndig, sfx, slen) = (st[1], st[2], st[3], st[4], st[5], st[6]);
+        let f = &mut *self.f;
+        let pack = |s: &[u8]| s.iter().enumerate().fold(0i64, |a, (i, &c)| a | (i64::from(c) << (8 * i)));
+        let mut signed = f.ins().iconst(types::I8, 0);
+        let mut unsigned = f.ins().iconst(types::I8, 0);
+        for (list, out) in [(&[&b""[..], b"l", b"ll", b"z", b"wb"][..], &mut signed), (&[&b"u"[..], b"ul", b"lu", b"ull", b"llu", b"uz", b"zu", b"uwb", b"wbu"][..], &mut unsigned)] {
+            for x in list {
+                let a = f.ins().icmp_imm(IntCC::Equal, sfx, pack(x));
+                let b = f.ins().icmp_imm(IntCC::Equal, slen, x.len() as i64);
+                let e = f.ins().band(a, b);
+                *out = f.ins().bor(*out, e);
+            }
+        }
+        let suffix_ok = f.ins().bor(signed, unsigned);
+        let no_of = f.ins().icmp_imm(IntCC::Equal, of, 0);
+        let r10 = f.ins().icmp_imm(IntCC::Equal, radix, 10);
+        let r8 = f.ins().icmp_imm(IntCC::Equal, radix, 8);
+        let free = f.ins().bor(r10, r8);
+        let some = f.ins().icmp_imm(IntCC::NotEqual, ndig, 0);
+        let digits_ok = f.ins().bor(free, some);
+        let ok = f.ins().band(suffix_ok, no_of);
+        let ok = f.ins().band(ok, digits_ok);
+        // A decimal past `intmax_t` is unsigned.
+        let past = f.ins().icmp_imm(IntCC::SignedLessThan, v, 0);
+        let past = f.ins().band(past, r10);
+        let uns = f.ins().bor(unsigned, past);
+        (ok, v, uns)
+    }
+
+    /// `pp_expr::char_value` of the `n` bytes at `p`, whose first quote (at `q`) is `'`:
+    /// whether it is a character constant, and its value. A fold over its body a byte a lane
+    /// (`lanes`): the escape's state (0 none, 1 after `\`, 2 octal, 3 hex, 4 `\u`/`\U`, 5 a
+    /// UTF-8 character's continuation), its value so far, its count and width or lead byte, and
+    /// the characters' first, count and GCC's packing.
+    fn char_value(&mut self, p: Value, n: Value, q: Value) -> (Value, Value) {
+        // The prefix: the bytes before the quote.
+        let (lp, ln) = (p, q);
+        let wide = self.f.ins().icmp_imm(IntCC::NotEqual, q, 0);
+        let b0 = self.f.ins().iadd_imm(q, 1);
+        let b1 = self.f.ins().iadd_imm(n, -1);
+        let has_body = self.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, b0, b1);
+        let nonempty = self.f.ins().icmp_imm(IntCC::NotEqual, n, 0);
+        let has_body = self.f.ins().band(has_body, nonempty);
+        let start = self.f.ins().iadd(p, b0);
+        let z = self.f.ins().iconst(types::I64, 0);
+        let len = self.f.ins().isub(b1, b0);
+        let len = self.f.ins().select(has_body, len, z);
+        let k = |l: &mut Self, x: i64| l.f.ins().iconst(types::I64, x);
+        // state, acc, aux, lead, first, count, fold, bad
+        let init = [k(self, 0), k(self, 0), k(self, 0), k(self, 0), k(self, 0), k(self, 0), k(self, 0), k(self, 0)];
+        fn emit(f: &mut FunctionBuilder<'_>, cond: Value, val: Value, first: Value, count: Value, fold: Value) -> (Value, Value, Value) {
+            let none = f.ins().icmp_imm(IntCC::Equal, count, 0);
+            let set = f.ins().band(cond, none);
+            let first = f.ins().select(set, val, first);
+            let c = f.ins().uextend(types::I64, cond);
+            let count = f.ins().iadd(count, c);
+            let sh = f.ins().ishl_imm(fold, 8);
+            let lo = f.ins().band_imm(val, 0xff);
+            let x = f.ins().bor(sh, lo);
+            let x = f.ins().band_imm(x, 0xffff_ffff);
+            let fold = f.ins().select(cond, x, fold);
+            (first, count, fold)
+        }
+        let st = self.lanes(start, len, &init, &mut |l, c, st| {
+            let f = &mut *l.f;
+            let (state, acc, aux, lead, first, count, fold, bad) = (st[0], st[1], st[2], st[3], st[4], st[5], st[6], st[7]);
+            let k = |f: &mut FunctionBuilder<'_>, x: i64| f.ins().iconst(types::I64, x);
+            let is = |f: &mut FunctionBuilder<'_>, x: Value, y: i64| f.ins().icmp_imm(IntCC::Equal, x, y);
+            let lc = f.ins().bor_imm(c, 0x20);
+            let dd = f.ins().iadd_imm(c, -i64::from(b'0'));
+            let is_dec = f.ins().icmp_imm(IntCC::UnsignedLessThan, dd, 10);
+            let is_oct = f.ins().icmp_imm(IntCC::UnsignedLessThan, dd, 8);
+            let hx = f.ins().iadd_imm(lc, -i64::from(b'a'));
+            let is_hx = f.ins().icmp_imm(IntCC::UnsignedLessThan, hx, 6);
+            let hv = f.ins().iadd_imm(hx, 10);
+            let hexd = f.ins().select(is_dec, dd, hv);
+            let is_hex = f.ins().bor(is_dec, is_hx);
+            let zero = k(f, 0);
+            let mut bad = bad;
+            let mut st_ = state;
+            let mut acc = acc;
+            let mut aux = aux;
+            let mut lead = lead;
+            let (mut first, mut count, mut fold) = (first, count, fold);
+            let mut cons = f.ins().iconst(types::I8, 0);
+            // 2: octal, up to two more digits; else it ends and the byte is read anew.
+            let s2 = is(f, st_, 2);
+            let more = f.ins().icmp_imm(IntCC::UnsignedLessThan, aux, 2);
+            let go = f.ins().band(is_oct, more);
+            let take = f.ins().band(s2, go);
+            let a8 = f.ins().ishl_imm(acc, 3);
+            let a8 = f.ins().iadd(a8, dd);
+            acc = f.ins().select(take, a8, acc);
+            let aux1 = f.ins().iadd_imm(aux, 1);
+            aux = f.ins().select(take, aux1, aux);
+            cons = f.ins().bor(cons, take);
+            let nt = f.ins().bxor_imm(go, 1);
+            let end2 = f.ins().band(s2, nt);
+            (first, count, fold) = emit(f, end2, acc, first, count, fold);
+            st_ = f.ins().select(end2, zero, st_);
+            // 3: hex digits, any number; at least one.
+            let s3 = is(f, st_, 3);
+            let take = f.ins().band(s3, is_hex);
+            let a16 = f.ins().ishl_imm(acc, 4);
+            let a16 = f.ins().iadd(a16, hexd);
+            acc = f.ins().select(take, a16, acc);
+            let aux1 = f.ins().iadd_imm(aux, 1);
+            aux = f.ins().select(take, aux1, aux);
+            cons = f.ins().bor(cons, take);
+            let nh = f.ins().bxor_imm(is_hex, 1);
+            let end3 = f.ins().band(s3, nh);
+            let none = is(f, aux, 0);
+            let empty = f.ins().band(end3, none);
+            let e64 = f.ins().uextend(types::I64, empty);
+            bad = f.ins().bor(bad, e64);
+            (first, count, fold) = emit(f, end3, acc, first, count, fold);
+            st_ = f.ins().select(end3, zero, st_);
+            // 4: `\u`'s or `\U`'s hex digits (`from_str_radix`: a `+` may lead).
+            let s4 = is(f, st_, 4);
+            let at0 = f.ins().icmp(IntCC::Equal, aux, lead);
+            let plus = is(f, c, i64::from(b'+'));
+            let lead_plus = f.ins().band(at0, plus);
+            let ok = f.ins().bor(is_hex, lead_plus);
+            let nok = f.ins().bxor_imm(ok, 1);
+            let wrong = f.ins().band(s4, nok);
+            let w64 = f.ins().uextend(types::I64, wrong);
+            bad = f.ins().bor(bad, w64);
+            let a16 = f.ins().ishl_imm(acc, 4);
+            let a16 = f.ins().iadd(a16, hexd);
+            let a16 = f.ins().select(lead_plus, acc, a16);
+            acc = f.ins().select(s4, a16, acc);
+            let aux1 = f.ins().iadd_imm(aux, -1);
+            aux = f.ins().select(s4, aux1, aux);
+            let last = is(f, aux, 0);
+            let end4 = f.ins().band(s4, last);
+            (first, count, fold) = emit(f, end4, acc, first, count, fold);
+            st_ = f.ins().select(end4, zero, st_);
+            cons = f.ins().bor(cons, s4);
+            // 5: a UTF-8 character's continuation bytes (`from_utf8`'s ranges).
+            let s5 = is(f, st_, 5);
+            let need3 = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, lead, 0xf0);
+            let need2 = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, lead, 0xe0);
+            let two = k(f, 2);
+            let one = k(f, 1);
+            let three = k(f, 3);
+            let need = f.ins().select(need2, two, one);
+            let need = f.ins().select(need3, three, need);
+            let second = f.ins().icmp(IntCC::Equal, aux, need);
+            let (mut lo, mut hi) = (k(f, 0x80), k(f, 0xbf));
+            for (b, l, h) in [(0xe0, 0xa0, 0xbf), (0xed, 0x80, 0x9f), (0xf0, 0x90, 0xbf), (0xf4, 0x80, 0x8f)] {
+                let x = is(f, lead, b);
+                let x = f.ins().band(x, second);
+                let lv = k(f, l);
+                let hv = k(f, h);
+                lo = f.ins().select(x, lv, lo);
+                hi = f.ins().select(x, hv, hi);
+            }
+            let ge = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, c, lo);
+            let le = f.ins().icmp(IntCC::UnsignedLessThanOrEqual, c, hi);
+            let inr = f.ins().band(ge, le);
+            let nin = f.ins().bxor_imm(inr, 1);
+            let wrong = f.ins().band(s5, nin);
+            let w64 = f.ins().uextend(types::I64, wrong);
+            bad = f.ins().bor(bad, w64);
+            let a6 = f.ins().ishl_imm(acc, 6);
+            let low6 = f.ins().band_imm(c, 0x3f);
+            let a6 = f.ins().bor(a6, low6);
+            acc = f.ins().select(s5, a6, acc);
+            let aux1 = f.ins().iadd_imm(aux, -1);
+            aux = f.ins().select(s5, aux1, aux);
+            let last = is(f, aux, 0);
+            let end5 = f.ins().band(s5, last);
+            (first, count, fold) = emit(f, end5, acc, first, count, fold);
+            st_ = f.ins().select(end5, zero, st_);
+            cons = f.ins().bor(cons, s5);
+            // 1: the escape's letter.
+            let s1 = is(f, st_, 1);
+            let ncons = f.ins().bxor_imm(cons, 1);
+            let s1 = f.ins().band(s1, ncons);
+            // A letter's character, else the byte itself (`\'`, `\\`, `\?`, …).
+            let mut sv = c;
+            for (ch, v) in [(b'n', 10), (b't', 9), (b'r', 13), (b'a', 7), (b'b', 8), (b'f', 12), (b'v', 11), (b'e', 27), (b'E', 27)] {
+                let x = is(f, c, i64::from(ch));
+                let vv = k(f, v);
+                sv = f.ins().select(x, vv, sv);
+            }
+            let x = is(f, c, i64::from(b'x'));
+            let u = is(f, c, i64::from(b'u'));
+            let uu = is(f, c, i64::from(b'U'));
+            let uni = f.ins().bor(u, uu);
+            let other = f.ins().bor(is_oct, x);
+            let other = f.ins().bor(other, uni);
+            let plain = f.ins().bxor_imm(other, 1);
+            let e1 = f.ins().band(s1, plain);
+            (first, count, fold) = emit(f, e1, sv, first, count, fold);
+            let o1 = f.ins().band(s1, is_oct);
+            let x1 = f.ins().band(s1, x);
+            let u1 = f.ins().band(s1, uni);
+            let k2 = k(f, 2);
+            let k3 = k(f, 3);
+            let k4 = k(f, 4);
+            let k8 = k(f, 8);
+            st_ = f.ins().select(e1, zero, st_);
+            st_ = f.ins().select(o1, k2, st_);
+            st_ = f.ins().select(x1, k3, st_);
+            st_ = f.ins().select(u1, k4, st_);
+            acc = f.ins().select(o1, dd, acc);
+            let starts = f.ins().bor(x1, u1);
+            acc = f.ins().select(starts, zero, acc);
+            let width = f.ins().select(uu, k8, k4);
+            aux = f.ins().select(o1, zero, aux);
+            aux = f.ins().select(x1, zero, aux);
+            aux = f.ins().select(u1, width, aux);
+            lead = f.ins().select(u1, width, lead);
+            cons = f.ins().bor(cons, s1);
+            // 0: a character, a `\`, or (wide) a UTF-8 character's lead byte.
+            let s0 = is(f, st_, 0);
+            let ncons = f.ins().bxor_imm(cons, 1);
+            let s0 = f.ins().band(s0, ncons);
+            let bs = is(f, c, i64::from(b'\\'));
+            let hi_b = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, c, 0x80);
+            let utf = f.ins().band(hi_b, wide);
+            let nbs = f.ins().bxor_imm(bs, 1);
+            let nutf = f.ins().bxor_imm(utf, 1);
+            let ch = f.ins().band(s0, nbs);
+            let ch = f.ins().band(ch, nutf);
+            (first, count, fold) = emit(f, ch, c, first, count, fold);
+            let b1 = f.ins().band(s0, bs);
+            let one_ = k(f, 1);
+            st_ = f.ins().select(b1, one_, st_);
+            let u0 = f.ins().band(s0, utf);
+            let in2 = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, c, 0xc2);
+            let le2 = f.ins().icmp_imm(IntCC::UnsignedLessThanOrEqual, c, 0xdf);
+            let r2 = f.ins().band(in2, le2);
+            let ge3 = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, c, 0xe0);
+            let le3 = f.ins().icmp_imm(IntCC::UnsignedLessThanOrEqual, c, 0xef);
+            let r3 = f.ins().band(ge3, le3);
+            let ge4 = f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, c, 0xf0);
+            let le4 = f.ins().icmp_imm(IntCC::UnsignedLessThanOrEqual, c, 0xf4);
+            let r4 = f.ins().band(ge4, le4);
+            let lead_ok = f.ins().bor(r2, r3);
+            let lead_ok = f.ins().bor(lead_ok, r4);
+            let nl = f.ins().bxor_imm(lead_ok, 1);
+            let wrong = f.ins().band(u0, nl);
+            let w64 = f.ins().uextend(types::I64, wrong);
+            bad = f.ins().bor(bad, w64);
+            let n_ = f.ins().select(r3, two, one);
+            let n_ = f.ins().select(r4, three, n_);
+            let m2 = f.ins().band_imm(c, 0x1f);
+            let m3 = f.ins().band_imm(c, 0x0f);
+            let m4 = f.ins().band_imm(c, 0x07);
+            let a = f.ins().select(r3, m3, m2);
+            let a = f.ins().select(r4, m4, a);
+            let five = k(f, 5);
+            st_ = f.ins().select(u0, five, st_);
+            acc = f.ins().select(u0, a, acc);
+            aux = f.ins().select(u0, n_, aux);
+            lead = f.ins().select(u0, c, lead);
+            vec![st_, acc, aux, lead, first, count, fold, bad]
+        });
+        let (state, acc, aux, first, count, fold, bad) = (st[0], st[1], st[2], st[4], st[5], st[6], st[7]);
+        let f = &mut *self.f;
+        // The body's end: an octal or hex escape ends with it; `\` or a part left is none.
+        let s2 = f.ins().icmp_imm(IntCC::Equal, state, 2);
+        let s3 = f.ins().icmp_imm(IntCC::Equal, state, 3);
+        let ends = f.ins().bor(s2, s3);
+        let (first, count, fold) = emit(f, ends, acc, first, count, fold);
+        let aux0 = f.ins().icmp_imm(IntCC::Equal, aux, 0);
+        let hex_empty = f.ins().band(s3, aux0);
+        let s1 = f.ins().icmp_imm(IntCC::Equal, state, 1);
+        let s4 = f.ins().icmp_imm(IntCC::Equal, state, 4);
+        let s5 = f.ins().icmp_imm(IntCC::Equal, state, 5);
+        let left = f.ins().bor(s1, s4);
+        let left = f.ins().bor(left, s5);
+        let left = f.ins().bor(left, hex_empty);
+        let badb = f.ins().icmp_imm(IntCC::NotEqual, bad, 0);
+        let fail = f.ins().bor(left, badb);
+        let some = f.ins().icmp_imm(IntCC::NotEqual, count, 0);
+        let nf = f.ins().bxor_imm(fail, 1);
+        let ok = f.ins().band(some, nf);
+        let ok = f.ins().band(ok, has_body);
+        // Its value by prefix: a plain one's one character a signed `char`, several packed as
+        // `int`; `u8`, `u`, `L` (signed 32 bits), `U`.
+        let one = f.ins().icmp_imm(IntCC::Equal, count, 1);
+        let c8 = f.ins().ireduce(types::I8, first);
+        let c8 = f.ins().sextend(types::I64, c8);
+        let c32 = f.ins().ireduce(types::I32, fold);
+        let c32 = f.ins().sextend(types::I64, c32);
+        let plain = f.ins().select(one, c8, c32);
+        let u8v = f.ins().band_imm(first, 0xff);
+        let u16v = f.ins().band_imm(first, 0xffff);
+        let l32 = f.ins().ireduce(types::I32, first);
+        let l32 = f.ins().sextend(types::I64, l32);
+        let u32v = f.ins().band_imm(first, 0xffff_ffff);
+        let mut v = plain;
+        // No prefix, or one of the four.
+        let mut known = f.ins().icmp_imm(IntCC::Equal, ln, 0);
+        let pres: [(&[u8], Value); 4] = [(b"u8", u8v), (b"u", u16v), (b"L", l32), (b"U", u32v)];
+        for (pre, val) in pres {
+            let e = self.spelled_at(lp, ln, pre);
+            v = self.f.ins().select(e, val, v);
+            known = self.f.ins().bor(known, e);
+        }
+        let ok = self.f.ins().band(ok, known);
+        (ok, v)
+    }
+
+    /// `EXPR m=5`: `T`'s value as a primary (`pp_expr::primary`): a number, a character
+    /// constant, an identifier (0, C++'s `true` 1); any other an error and a 0.
+    fn expr_primary(&mut self, pc: usize) {
+        let e = self.ex_state();
+        let kind = ldu(self.f, types::I8, e, ex!(t) + T_KIND);
+        let (p, n) = self.spelling(e, ex!(t));
+        let join = self.f.create_block();
+        self.f.append_block_param(join, types::I8);
+        self.f.append_block_param(join, types::I64);
+        self.f.append_block_param(join, types::I8);
+        let z = self.f.ins().iconst(types::I64, 0);
+        let f8 = self.f.ins().iconst(types::I8, 0);
+        let num = self.f.create_block();
+        let not_num = self.f.create_block();
+        let is_num = self.f.ins().icmp_imm(IntCC::Equal, kind, i64::from(NUMBER));
+        self.f.ins().brif(is_num, num, &[], not_num, &[]);
+        self.f.switch_to_block(num);
+        let (ok, v, u) = self.number(p, n);
+        self.f.ins().jump(join, &[ok.into(), v.into(), u.into()]);
+        self.f.switch_to_block(not_num);
+        let lit = self.f.create_block();
+        let not_lit = self.f.create_block();
+        let is_lit = self.f.ins().icmp_imm(IntCC::Equal, kind, i64::from(LITERAL));
+        self.f.ins().brif(is_lit, lit, &[], not_lit, &[]);
+        self.f.switch_to_block(lit);
+        let (found, q) = self.find_first(p, n, Self::quote_class);
+        let chr = self.f.create_block();
+        self.f.ins().brif(found, chr, &[], join, &[f8.into(), z.into(), f8.into()]);
+        self.f.switch_to_block(chr);
+        let qp = self.f.ins().iadd(p, q);
+        let qc = ldu(self.f, types::I8, qp, 0);
+        let single = self.f.ins().icmp_imm(IntCC::Equal, qc, i64::from(b'\''));
+        let cv = self.f.create_block();
+        self.f.ins().brif(single, cv, &[], join, &[f8.into(), z.into(), f8.into()]);
+        self.f.switch_to_block(cv);
+        let (ok, v) = self.char_value(p, n, q);
+        let f8 = self.f.ins().iconst(types::I8, 0);
+        self.f.ins().jump(join, &[ok.into(), v.into(), f8.into()]);
+        self.f.switch_to_block(not_lit);
+        let ident = self.f.create_block();
+        let other = self.f.create_block();
+        let is_id = self.f.ins().icmp_imm(IntCC::Equal, kind, i64::from(IDENT));
+        self.f.ins().brif(is_id, ident, &[], other, &[]);
+        self.f.switch_to_block(ident);
+        let f8 = self.f.ins().iconst(types::I8, 0);
+        if self.pp.cpp {
+            // An alternative token is an operator, no primary; `true` is 1.
+            let mut alt = self.f.ins().iconst(types::I8, 0);
+            for (name, _) in crate::pp_expr::ALT {
+                let e = self.spelled_at(p, n, name);
+                alt = self.f.ins().bor(alt, e);
+            }
+            let t = self.spelled_at(p, n, b"true");
+            let tv = self.f.ins().uextend(types::I64, t);
+            let ok = self.f.ins().bxor_imm(alt, 1);
+            self.f.ins().jump(join, &[ok.into(), tv.into(), f8.into()]);
+        } else {
+            let one = self.f.ins().iconst(types::I8, 1);
+            let z = self.f.ins().iconst(types::I64, 0);
+            self.f.ins().jump(join, &[one.into(), z.into(), f8.into()]);
+        }
+        self.f.switch_to_block(other);
+        let f8 = self.f.ins().iconst(types::I8, 0);
+        let z = self.f.ins().iconst(types::I64, 0);
+        self.f.ins().jump(join, &[f8.into(), z.into(), f8.into()]);
+        self.f.switch_to_block(join);
+        let r = self.f.block_params(join).to_vec();
+        let (ok, v, u) = (r[0], r[1], r[2]);
+        let bad = self.f.create_block();
+        let push = self.f.create_block();
+        self.f.append_block_param(push, types::I64);
+        self.f.append_block_param(push, types::I8);
+        self.f.ins().brif(ok, push, &[v.into(), u.into()], bad, &[]);
+        self.f.switch_to_block(bad);
+        self.expr_err();
+        let z = self.f.ins().iconst(types::I64, 0);
+        let f8 = self.f.ins().iconst(types::I8, 0);
+        self.f.ins().jump(push, &[z.into(), f8.into()]);
+        self.f.switch_to_block(push);
+        let (v, u) = (self.f.block_params(push)[0], self.f.block_params(push)[1]);
+        self.val_push(pc, v, u);
+        self.next(pc);
+    }
+
+    /// `EXPR` (`Machine::expr`), its modes but the primary's (`m=5`, `expr_primary`).
     fn expr(&mut self, pc: usize, mode: u8) {
         let next = self.blocks[pc + 1];
         let skip = self.blocks.get(pc + 2).copied().unwrap_or(next);
@@ -3407,12 +3975,7 @@ impl Lower<'_, '_> {
             COND => self.cond(pc, mode),
             IF if mode != 1 => self.if_open(pc, mode == 0),
             IF => self.expr_begin(pc),
-            EXPR if mode == 5 => {
-                if !self.partial {
-                    return Err(Error::RefusedShape(format!("the preprocessing word {op:#04x} m={mode} at {pc} is not lowered yet")));
-                }
-                self.refuse(pc, R_NOT_LOWERED);
-            }
+            EXPR if mode == 5 => self.expr_primary(pc),
             EXPR => self.expr(pc, mode),
             STR => self.str_word(pc, mode),
             GLUE => self.glue(pc),

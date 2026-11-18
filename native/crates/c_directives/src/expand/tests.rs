@@ -408,3 +408,52 @@ fn the_compiled_words_are_the_interpreters() {
     eprintln!("the same {same}, not lowered yet {not_lowered} (at {at:?}), differ {}", differ.len());
     assert!(differ.is_empty(), "{}", differ.join("\n"));
 }
+
+/// `#if`'s primaries and operators, the JIT's against the interpreter's, value by value: each
+/// case's 64 bits, whether it is unsigned, and whether it is an error, each an `#if` of its own.
+#[test]
+fn the_compiled_ifs_have_the_interpreters_values() {
+    use rerail_compiler::native_cpu_pp::compile_partial;
+    const CASES: &[&str] = &[
+        // Numbers.
+        "0", "7", "010", "0x1F", "0X1f", "0b101", "0B11", "1'000'000", "0'7", "0x'1", "18446744073709551615", "18446744073709551616", "9223372036854775808",
+        "1u", "1U", "1ul", "1LU", "1ull", "1LLU", "1z", "1uz", "1ZU", "1wb", "1uwb", "1WBU", "1lul", "1uu", "08", "0x", "0b2", "1.5", "1e3", "077777777777777777777",
+        "0777777777777777777777", "0xffffffffffffffff", "0x10000000000000000", "0b1111111111111111111111111111111111111111111111111111111111111111", "123456789012345678",
+        // Character constants.
+        "'a'", "'ab'", "'abcde'", "'\\n'", "'\\e'", "'\\x41'", "'\\x'", "'\\101'", "'\\1234'", "'\\0'", "'\\''", "'\\\\'", "'\\q'", "u8'a'", "u'a'", "U'a'", "L'a'",
+        "L'\\xffffffff'", "u'\\xffff1'", "U'\\U0001F600'", "u'\\u00e9'", "u'\\u+0e9'", "u'\\u00'", "L'é'", "'é'", "U'😀'", "u8'é'", "L'\\xe9'", "'\\x80'", "'\\377'", "'ab\\n'",
+        // Identifiers, operators.
+        "true", "foo", "(1 and 1)", "-1 < 0u", "0 && 1/0", "1 || 1/0", "1 ? 2 : 1/0", "0 ? 1/0 : 3", "1/0", "1%0", "(-9223372036854775807-1) / -1", "(-9223372036854775807-1) % -1",
+        "1 << 64", "1 << 63", "-1 >> 70", "-8 >> 1", "18446744073709551615u >> 63", "~0u", "!5", "-(0u)", "-1u", "7 / -2", "-7 % 2", "7u / 2", "3 * -4", "2 + 3 * 4 - 1",
+        "1 == 1u", "2 != 3", "5 & 3 | 8 ^ 1", "-1 <= 0", "0u >= 1", "(1)", "((2))", "1 +", "(1", "1 2", "+-~!0", "1 ? 2 : 3 ? 4 : 5", "0 ? 2u : -1",
+    ];
+    let words = |v: &[Out]| v.iter().map(|t| String::from_utf8_lossy(&t.2).into_owned()).collect::<String>();
+    let mut unlexed = Vec::new();
+    for cpp in [false, true] {
+        let p = program(cpp).unwrap();
+        let c = compile_partial(p).unwrap_or_else(|e| panic!("cpp {cpp}: {e:?}"));
+        let jit = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| c.run(w, f, e, b);
+        let mut differ = Vec::new();
+        for case in CASES {
+            let mut src = format!("#if ({case}) == ({case})\nok\n#else\nerr\n#endif\n#if ({case}) * 0 - 1 > 0\nu\n#else\ns\n#endif\n");
+            for k in (0..64).rev() {
+                src.push_str(&format!("#if (({case}) >> {k}) & 1\n1\n#else\n0\n#endif\n"));
+            }
+            let files = [("main.c", src.as_bytes())];
+            let want = match expand_tu_with("main.c", &mut search(&files, &[]), cpp, &INTERPRETED, &pp_words::run) {
+                Ok(w) => w,
+                Err(e) if e.contains("token grammar refuses") => {
+                    unlexed.push(format!("{case} (cpp {cpp})"));
+                    continue;
+                }
+                Err(e) => panic!("{case} (cpp {cpp}): {e}"),
+            };
+            let got = expand_tu_with("main.c", &mut search(&files, &[]), cpp, &INTERPRETED, &jit).unwrap_or_else(|e| panic!("{case} (cpp {cpp}): {e}"));
+            if got != want {
+                differ.push(format!("{case}: interpreter {} JIT {}", words(&want), words(&got)));
+            }
+        }
+        assert!(differ.is_empty(), "cpp {cpp}:\n{}", differ.join("\n"));
+    }
+    eprintln!("the token grammar refuses {unlexed:?}");
+}
