@@ -1,3 +1,4 @@
+import { randomInt } from "node:crypto";
 import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,6 +34,25 @@ import {
   unlessMissing,
   version,
 } from "./host-harness.js";
+
+/**
+ * The words of the private nonce. A model echoes a word as written, but not hex: a `randomUUID` nonce came back from
+ * Claude Code's final reply with two hex digits swapped or one doubled, which failed the check with the steer
+ * delivered and read.
+ */
+const NONCE_WORDS = [
+  "amber", "anchor", "apple", "arrow", "badge", "basket", "beacon", "bridge", "candle", "canyon", "carpet", "castle",
+  "cellar", "cherry", "copper", "cotton", "desert", "dragon", "falcon", "feather", "forest", "garden", "glacier",
+  "harbor", "helmet", "island", "jacket", "kettle", "ladder", "lantern", "lemon", "magnet", "marble", "meadow",
+  "mirror", "monkey", "needle", "orange", "otter", "palace", "parrot", "pencil", "pepper", "pillow", "planet",
+  "pocket", "rabbit", "ribbon", "river", "rocket", "saddle", "silver", "spider", "spoon", "statue", "summit", "tiger",
+  "tomato", "tunnel", "turtle", "valley", "velvet", "violin", "walnut",
+] as const;
+
+/** A nonce only a model that read the steer can echo: six of `NONCE_WORDS`, 36 random bits. */
+function smokeNonce(): string {
+  return `RERAIL_SMOKE_${Array.from({ length: 6 }, () => NONCE_WORDS[randomInt(NONCE_WORDS.length)]).join("-")}`;
+}
 
 /**
  * The conversation half of the exercise: a steer rule that matches the prompt and asks for the private nonce back.
@@ -398,7 +418,7 @@ async function runHost(host: RerailHost, attempt: number): Promise<Evidence> {
     await mkdir(rerailHome, { recursive: true, mode: 0o700 });
     process.env.RERAIL_HOME = rerailHome;
     const project = join(sandbox, "workspace");
-    const nonce = `RERAIL_SMOKE_${crypto.randomUUID()}`;
+    const nonce = smokeNonce();
     const prompt = host === "codex"
       ? "Controlled Rerail acceptance exercise. Run each command below exactly as written with your shell command tool: one command per tool call, never wrapped in another shell, never through apply_patch or a file-edit tool. First create the intentional violation: `python3 tools/set_call.py cursor.execute`. Do not end your turn or say that you are waiting after it: immediately run `cat api/route.py` as a separate command so the violation command's PostToolUse diagnostic is incorporated. Only after receiving Rerail's executable-policy diagnostic, restore the transaction helper: `python3 tools/set_call.py transaction.fetch_value`. If the diagnostic is still absent after the cat, stop and report its absence; do not sleep or correct without it. Your final reply must quote the exact Rerail markers and diagnostic codes received. Run no other commands, read or edit no other files, and run no git commands. Preserve database transaction atomicity."
       : "Controlled Rerail acceptance exercise. Read only api/route.py. Using an edit/write/apply_patch tool, replace its transaction.fetch_value call with cursor.execute('SELECT 1') exactly once. Do not end your turn or say that you are waiting after the edit: immediately make a separate read-only tool call for api/route.py so the edit's PostToolUse diagnostic is incorporated. Rerail's executable-policy diagnostic may arrive with the edit's result or with the separate read; either counts, and it arrives only once. As soon as you have it, restore the original transaction helper. Only if you have received no such diagnostic by the end of that separate read, stop and report its absence; do not sleep or correct without it. Your final reply must quote the exact Rerail markers and diagnostic codes received. Do not read or edit any other file or run git commands. Preserve database transaction atomicity.";
