@@ -396,35 +396,35 @@ fn a_context_in_a_negations_cycle_is_widened() {
     assert!(!ctx.is_empty() && ctx.iter().all(|r| !r.contains("ask(")), "{ctx:?}");
 }
 
-/// Decision 0361 step 7: a count over a node's earlier children (python/ast's `body_stmt`) is a running count
-/// along `child`'s index, a row per child, not a helper of every child with every earlier sibling.
+/// A count below a bound (`rank_form`, decision 0361 step 7), end to end: each statement's place among its module's,
+/// comments not counted (python/ast's `body_stmt`).
 #[test]
-fn a_count_of_earlier_siblings_is_a_running_count() {
-    let p = parse(concat!(
-        ".decl child(p: node, c: node, i: number)\n.decl kind(n: node, k: symbol)\n.decl body(b: node)\n.input child, kind, body\n",
-        ".decl stmt(b: node, s: node, i: number)\n.output stmt\n",
-        "stmt(b, s, i) :- body(b), child(b, s, _), !kind(s, \"comment\"), i = count : { child(b, s2, _), !kind(s2, \"comment\"), s2 < s }.\n",
-    ))
-    .unwrap();
-    front::strata(&p).unwrap_or_else(|e| panic!("{e}"));
-    let helpers: Vec<String> = p.rules.iter().filter(|r| r.head.rel.starts_with("rr_")).map(|r| r.to_string()).collect();
-    assert!(helpers.iter().any(|r| r.starts_with("rr_run")), "{helpers:?}");
-    assert!(helpers.iter().all(|r| !r.starts_with("rr_agg")), "no pair helper: {helpers:?}");
-}
-
-/// The running count's values: each statement's place among its module's, comments not counted.
-#[test]
-fn a_running_count_numbers_the_statements_past_comments() {
+fn a_count_below_a_bound_numbers_the_statements_past_comments() {
     let rows = finding_contract("a = 1\n# c\nb = 2\n# d\n# e\nc = 3\n", r#"
-.policy "contract:running" revision 1
+.policy "contract:rank" revision 1
 .language python
-.violation At(at: node, i: number) code "RUN001"
+.violation At(at: node, i: number) code "RANK001"
     "{i}"
 At(s, i) :- kind(m, "module"), child(m, s, _), !kind(s, "comment"),
     i = count : { child(m, s2, _), !kind(s2, "comment"), s2 < s }.
 "#);
     let got: BTreeSet<(i64, String)> = rows.iter().map(|r| (r["line"].as_i64().unwrap(), r["message"].as_str().unwrap().to_owned())).collect();
     assert_eq!(got, [(1, "0".to_owned()), (3, "1".to_owned()), (6, "2".to_owned())].into_iter().collect());
+}
+
+/// Counting above (`s2 > s`): each statement's count of later ones, comments not counted.
+#[test]
+fn a_count_above_a_bound_counts_the_later_statements() {
+    let rows = finding_contract("a = 1\n# c\nb = 2\nc = 3\n", r#"
+.policy "contract:rank-above" revision 1
+.language python
+.violation At(at: node, i: number) code "RANK002"
+    "{i}"
+At(s, i) :- kind(m, "module"), child(m, s, _), !kind(s, "comment"),
+    i = count : { child(m, s2, _), !kind(s2, "comment"), s2 > s }.
+"#);
+    let got: BTreeSet<(i64, String)> = rows.iter().map(|r| (r["line"].as_i64().unwrap(), r["message"].as_str().unwrap().to_owned())).collect();
+    assert_eq!(got, [(1, "2".to_owned()), (3, "1".to_owned()), (4, "0".to_owned())].into_iter().collect());
 }
 
 /// An aggregate's context leaves out the clause's own head where the rest binds its variables: through it, the

@@ -1315,7 +1315,7 @@ pub(in crate::code_rule_dsl) struct Form {
 
 /// The about rows of the run's version a form keeps of its stratum's relations (its lattices and natives: few
 /// rows, each a relation's).
-const STRATUM_ABOUT: [&str; 14] = [
+const STRATUM_ABOUT: [&str; 15] = [
     "lattice",
     "lattice_merge",
     "lattice_widen",
@@ -1328,6 +1328,7 @@ const STRATUM_ABOUT: [&str; 14] = [
     "native_components",
     "native_reach",
     "native_reach_through",
+    "native_rank",
     "native_text_test",
     "native_text_pattern",
 ];

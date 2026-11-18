@@ -3799,96 +3799,6 @@ impl Lowerer {
     }
 
     #[allow(clippy::too_many_arguments)]
-    /// Decision 0361 step 7, a running aggregate from `child`'s order: `i = count : { child(g, y, _), F(y), y < x }`
-    /// beside `child(g, x, _)` (python/ast's `body_stmt`: a statement's place among its body's statements, comments
-    /// not counted). Siblings' node order is their index order, dense from 0 (core.rr), so the count is a running
-    /// count along the index: `rr_run(g, i, k)`, k of g's children before index i pass F, a row per child. As a pair
-    /// helper it held every sibling with every earlier one (80 K children, 1.6 M pairs at 300 files).
-    ///
-    ///   rr_runf(g, y, i) :- ctx(g), child(g, y, i), F(y).
-    ///   rr_run(g, 0, 0) :- ctx(g).
-    ///   rr_run(g, i + 1, k + 1) :- rr_run(g, i, k), rr_runf(g, y, i), child(g, _, i + 1), k + 1 <= i + 1.
-    ///   rr_run(g, i + 1, k) :- rr_run(g, i, k), child(g, y, i), !rr_runf(g, y, i), child(g, _, i + 1).
-    ///
-    /// Each step reads the next child, which bounds the index as decision 0043's joins in child order are bounded
-    /// (`front::cycles`): the run stops at g's last child, and every x asked about is one of them.
-    /// and the aggregate is `child(g, x, ix), rr_run(g, ix, var)`. `F` is the body's other literals, over `y` and
-    /// `g` alone. `None` when the body is not of this form, or the rule does not hold `child(g, x, _)`.
-    fn running_count(&mut self, var: &str, body: &[Lit], outer: &BTreeSet<String>) -> Result<Option<Vec<Literal>>, Error> {
-        let name = |t: &STerm| match t { STerm::Var(v) => Some(v.clone()), _ => None };
-        // The one positive `child(g, y, _)`, g the rule's and y the body's own, its index unused elsewhere.
-        let mut children = body.iter().enumerate().filter(|(_, l)| matches!(l, Lit::Atom { rel, neg: false, .. } if rel == "child"));
-        let (Some((at, Lit::Atom { args, .. })), None) = (children.next(), children.next()) else { return Ok(None) };
-        let [g, y, ix] = args.as_slice() else { return Ok(None) };
-        let (Some(g), Some(y)) = (name(g), name(y)) else { return Ok(None) };
-        if !outer.contains(&g) || outer.contains(&y) || g == y || self.rewritten("child") {
-            return Ok(None);
-        }
-        let rest: Vec<(usize, &Lit)> = body.iter().enumerate().filter(|(j, _)| *j != at).collect();
-        if let Some(i) = name(ix) && rest.iter().any(|(_, l)| body_vars(std::slice::from_ref(*l)).contains(&i)) {
-            return Ok(None);
-        }
-        // The one `y < x` (or `x > y`), x the rule's.
-        let before = |l: &Lit| match l {
-            Lit::Cmp { l: STerm::Var(a), op: "<", r: STerm::Var(b) } if *a == y && outer.contains(b) && *b != g => Some(b.clone()),
-            Lit::Cmp { l: STerm::Var(b), op: ">", r: STerm::Var(a) } if *a == y && outer.contains(b) && *b != g => Some(b.clone()),
-            _ => None,
-        };
-        let mut xs = rest.iter().filter_map(|(_, l)| before(l));
-        let (Some(x), None) = (xs.next(), xs.next()) else { return Ok(None) };
-        let filters: Vec<Lit> = rest.iter().filter(|(_, l)| before(l).is_none()).map(|(_, l)| (*l).clone()).collect();
-        let only_gy = |l: &Lit| !matches!(l, Lit::Group { .. } | Lit::Pattern { .. }) && body_vars(std::slice::from_ref(l)).iter().all(|v| *v == y || *v == g) && {
-            // No aggregate inside: its variables would be the body's own.
-            let mut all = Vec::new();
-            l.vars(&mut all);
-            all.iter().all(|v| *v == y || *v == g)
-        };
-        if !filters.iter().all(only_gy) {
-            return Ok(None);
-        }
-        // The rule holds `child(g, x, _)`: x is one of g's children, at its index.
-        let sibling = self.siblings.iter().any(|l| matches!(l, Lit::Atom { rel, neg: false, args } if rel == "child"
-            && matches!(args.as_slice(), [STerm::Var(a), STerm::Var(b), _] if *a == g && *b == x)));
-        if !sibling {
-            return Ok(None);
-        }
-        let ctx = self.context(std::slice::from_ref(&g))?;
-        let (i, k, xi) = (self.fresh("i"), self.fresh("k"), self.fresh("i"));
-        let v = |n: &str| Term::Var(n.to_owned().into());
-        let sv = |n: &str| STerm::Var(n.to_owned());
-        let plus = |n: &str| Term::Call("add".into(), [v(n), Term::Int(1)].into());
-        let heads = self.heads.iter().cloned().collect::<Vec<_>>().join(",");
-        // The children that pass F.
-        let mut fbody = vec![Lit::Atom { rel: "child".to_owned(), args: vec![sv(&g), sv(&y), sv(&i)], neg: false }];
-        fbody.extend(filters);
-        let mut bodies = self.conjunction(&fbody, &[g.clone(), y.clone(), i.clone()].into_iter().collect())?;
-        for b in &mut bodies {
-            b.insert(0, Literal::Atom(ctx.clone()));
-        }
-        let fargs = vec![v(&g), v(&y), v(&i)];
-        let frules = bodies.into_iter().map(|b| unset(fargs.clone(), b)).collect::<Result<Vec<_>, _>>()?;
-        let fname = self.fresh("runf");
-        let fname = self.helper_once(fname, &format!("runf {heads}"), vec![(g.clone(), "node".into()), (y.clone(), "node".into()), (i.clone(), "int".into())], frules);
-        let f_atom = |neg| Literal::Atom(Atom { rel: fname.clone().into(), args: fargs.clone().into(), neg, gated: false });
-        let run = self.fresh("run");
-        let run_atom = |args: Vec<Term>| Literal::Atom(Atom { rel: run.clone().into(), args: args.into(), neg: false, gated: false });
-        let child_gyi = self.atom("child", &[sv(&g), sv(&y), sv(&i)], false)?;
-        // `j = i + 1, child(g, _, j)`: a computed term is bound before an atom reads it.
-        let (j, k1) = (self.fresh("i"), self.fresh("k"));
-        let next = [Literal::Cmp { l: v(&j), op: "=", r: plus(&i) }, self.atom("child", &[sv(&g), STerm::Wild, sv(&j)], false)?];
-        let step = |mut body: Vec<Literal>| { body.extend(next.iter().cloned()); body };
-        let rules = vec![
-            (vec![v(&g), Term::Int(0), Term::Int(0)], vec![Literal::Atom(ctx.clone())]),
-            // `k1 <= j` always holds (at most i of the first i children pass): it bounds the count for the check.
-            (vec![v(&g), v(&j), v(&k1)], step(vec![run_atom(vec![v(&g), v(&i), v(&k)]), f_atom(false)]).into_iter()
-                .chain([Literal::Cmp { l: v(&k1), op: "=", r: plus(&k) }, Literal::Cmp { l: v(&k1), op: "<=", r: v(&j) }]).collect()),
-            (vec![v(&g), v(&j), v(&k)], step(vec![run_atom(vec![v(&g), v(&i), v(&k)]), child_gyi, f_atom(true)])),
-        ];
-        let run = self.helper_once(run.clone(), &format!("run {heads}"), vec![(g.clone(), "node".into()), (i.clone(), "int".into()), (k.clone(), "int".into())], rules);
-        let at_x = self.atom("child", &[sv(&g), sv(&x), sv(&xi)], false)?;
-        Ok(Some(vec![at_x, Literal::Atom(Atom { rel: run.into(), args: vec![v(&g), v(&xi), v(var)].into(), neg: false, gated: false })]))
-    }
-
     fn aggregate(&mut self, var: &str, agg: &str, over: Option<&STerm>, by: &[STerm], sep: &Option<String>, body: &[Lit], outer: &BTreeSet<String>) -> Result<Vec<Literal>, Error> {
         // A value or key that is a term (`sum strlen(x) - strlen(a)`) is a variable the body binds.
         let mut body = body.to_vec();
@@ -3920,9 +3830,6 @@ impl Lowerer {
         }
         if op != AggOp::Count && over.is_none() {
             return Err(Error::Syntax(format!("{agg} needs the variable it aggregates")));
-        }
-        if op == AggOp::Count && over.is_none() && by.is_empty() && let Some(out) = self.running_count(var, body, outer)? {
-            return Ok(out);
         }
         // The body's own variables the aggregate reads: its value, and a join's keys.
         let own = |v: &str| over.as_deref() == Some(v) || by.iter().any(|b| b == v);

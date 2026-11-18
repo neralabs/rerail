@@ -2000,3 +2000,28 @@ At 300 files it went from 2.36 s CPU and 17.1 M work to 0.6 s and 2.2 M, with fi
 Next: key the rewrite by a declared `order(i dense in p)`, not by `child`'s name, once `.layout` lands (steps 1–2).
 The run takes one wave per child index. A body of thousands of statements is thousands of small waves: watch for it
 in the profile's per-stratum waves.
+
+### Q89. A count below a bound is found by form, not by a relation's name (0361 step 7)
+
+Done 2026-11-17. The user: "make the rewrite generic and structural, not based on the name of the relation, and
+never create such a fragile optimization or fix again". Q88's lowering rewrite, keyed on `child`, is removed.
+`logic::rank_form` finds any `count : H(…)` whose rule's comparison is all that ties the asked rows to the counted
+ones, and makes it from the two parts' rows with `Native::Rank`, a sort and a binary search a group (0361, "Step 7: a
+count below a bound, by form").
+
+At 300 files it applied to 30 counts. The aggregate helpers went from 20.7 M work to 3.6 M, every head together from
+437.8 M to 413.9 M, the findings are the reference's and the peak was 2.29 GB. Strict 10-file outputs are
+byte-identical.
+
+Tests:
+- `rank_counts_what_the_pairs_would`: the kernel against the pairs, every op;
+- four rank-form tests over relations of any names: the op's side, a tie that widens the group, and a comparison
+  within the counted rows left as rows;
+- two end-to-end counts, below and above.
+
+The touched areas' tests pass: 328 in rerail-engine and 178 of 179 in rerail-logic.
+
+A red test found, not from this work: `plan::corpus::tests::branded_constants_have_their_postings_counted` (Q36)
+fails at HEAD without these changes too. `Own::constants_of` finds no branded `field` or `kind` constant in a
+program that `rr::parse` lowers alone, with left `(0, 0)` against right `(1, 1)`. It runs only in rerail-logic. The
+next step is to trace where that program's kind and field names should become branded atoms.

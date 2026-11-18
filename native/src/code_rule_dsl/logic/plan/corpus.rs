@@ -3517,6 +3517,13 @@ fn run_observed(
             if !undone.is_empty() {
                 crate::code_rule_dsl::logic::profile::decision("reach index (decision 0119)", || format!("{} made rows again after demand, in cycles: {}", undone.len(), undone.join(", ")));
             }
+            // Counts below a bound made without the pairs (decision 0361 step 7), once demand has placed its readers:
+            // a relation the form replaced is unread, and pruned.
+            let ranks = crate::code_rule_dsl::logic::rank_form::find(&mut prog);
+            if ranks > 0 {
+                prog = front::prune(prog);
+                crate::code_rule_dsl::logic::profile::decision("counts below a bound (decision 0361 step 7)", || format!("{ranks} counts made by rank over their asked and counted rows, not their pairs"));
+            }
             drop(preparing);
             // The `ast` atoms become relations the transducer's matchers fill per chunk (decision 0106).
             // A Python program's tree-shaped parts become matchers first (decision 0106 §4), unless `RERAIL_AST_PARTS=off`.

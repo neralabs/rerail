@@ -823,11 +823,14 @@ fn split_in(
     }
     let constants: BTreeSet<String> = (0..n).filter(|&r| constant[r]).map(|r| rels.names[r].to_owned()).collect();
     let filters: BTreeSet<String> = (0..n).filter(|&r| filtering[r]).map(|r| rels.names[r].to_owned()).collect();
-    // Python fact operators preserve each demanded node's document, and a text test's rows are its input's rows.
+    // Python fact operators preserve each demanded node's document, a text test's rows are its input's rows, and a
+    // rank's are its groups'.
     // Their rules must still pass the ordinary dependency/location checks below. Other native operators remain
     // cross-file.
     let cross_native = |r: &str| prog.natives.get(r).is_some_and(|n| match n {
         crate::code_rule_dsl::logic::front::Native::TextTest { .. } => false,
+        // A rank's rows are its groups' (`rank_form`): its rule's join on the group is judged as any rule's.
+        crate::code_rule_dsl::logic::front::Native::Rank { .. } => false,
         crate::code_rule_dsl::logic::front::Native::PythonCandidates { targets, .. } => !constants.contains(targets) && !(prog.facts.contains_key(targets) && !prog.inputs.contains(targets)),
         crate::code_rule_dsl::logic::front::Native::Python { targets, .. } => targets.as_ref().is_some_and(|t|
             !constants.contains(t) && !(prog.facts.contains_key(t) && !prog.inputs.contains(t))),

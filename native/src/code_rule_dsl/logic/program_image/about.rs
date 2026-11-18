@@ -23,6 +23,7 @@ pub(crate) const RELATION_COLUMNS: &[(&str, &[usize])] = &[
     ("native_components", &[1, 2, 3]),
     ("native_reach", &[1, 2, 3]),
     ("native_reach_through", &[1, 2, 3]),
+    ("native_rank", &[1, 2, 3]),
     ("lattice", &[1]),
     ("lattice_merge", &[1]),
     ("lattice_widen", &[1]),
@@ -51,6 +52,7 @@ pub enum NativeKind {
     Components,
     Reach,
     ReachThrough,
+    Rank,
 }
 
 /// A native relation: its kind, the relations it reads (`front::Native::reads`, in its order) and its every field.
@@ -76,6 +78,8 @@ pub enum NativeSpec {
     Components { edge: RelId, own: RelId },
     Reach { seed: RelId, edge: RelId },
     ReachThrough { reach: RelId, map: RelId },
+    /// Its op's text.
+    Rank { query: RelId, counted: RelId, group: usize, op: AtomId },
 }
 
 /// A lattice relation's declaration, as the analyses read it.
@@ -234,6 +238,14 @@ impl About {
                     "native_python" => about.natives.extend(native(NativeKind::Python, &[3, 4], a(2).zip(r(3)).map(|(kind, input)| NativeSpec::Python { kind, input, targets: opt(4) }))),
                     "native_components" => about.natives.extend(native(NativeKind::Components, &[2, 3], r(2).zip(r(3)).map(|(edge, own)| NativeSpec::Components { edge, own }))),
                     "native_reach" => about.natives.extend(native(NativeKind::Reach, &[2, 3], r(2).zip(r(3)).map(|(seed, edge)| NativeSpec::Reach { seed, edge }))),
+                    "native_rank" => about.natives.extend(native(
+                        NativeKind::Rank,
+                        &[2, 3],
+                        match (r(2), r(3), int(row.get(4).copied()), a(5)) {
+                            (Some(query), Some(counted), Some(group), Some(op)) => Some(NativeSpec::Rank { query, counted, group: group as usize, op }),
+                            _ => None,
+                        },
+                    )),
                     "native_reach_through" => about.natives.extend(native(NativeKind::ReachThrough, &[2, 3], r(2).zip(r(3)).map(|(reach, map)| NativeSpec::ReachThrough { reach, map }))),
                     "lattice" => {
                         if let (Some(rel), Some(Cell::Int(keys)), Some(ty)) = (r(1), row.get(2).copied(), row.get(3).copied().and_then(atom)) {

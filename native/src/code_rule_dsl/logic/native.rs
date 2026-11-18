@@ -27,6 +27,7 @@ pub mod aggregation;
 pub mod dfs_first;
 /// `components` (`core.rr`, decision 0063): each document's import component and its Merkle key.
 pub mod components;
+pub mod rank;
 /// The reach index (decision 0119): a transitive closure as one bitmap per start.
 pub mod reach;
 pub mod match_all;
