@@ -315,6 +315,22 @@ describe("the daemon's change stream (GET /api/changes)", () => {
     await stream.stop();
   });
 
+  it("never starts listening for a client that leaves before the first message, which waits for the checkout's files", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const checkout = gitRepository(join(realpathSync(root), "web"));
+    recordCheckout(database, checkout);
+    const response = await app.request(`/api/changes?${new URLSearchParams({ checkout })}`);
+
+    await response.body!.cancel();
+    // A second stream's first message comes after its own read of the files, which went out after the first's.
+    const second = await open(`?${new URLSearchParams({ checkout })}`);
+    await second.next();
+    await second.stop();
+
+    // Nothing listens any more, so the beat is gone: the first stream never listened.
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("stops listening when the client leaves: no beat is left running", async () => {
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     const stream = await open();
