@@ -172,7 +172,9 @@ The forward scans differed from the lean parser's in two places:
 - A run stopped at the first place its rest held, not where a depth closes (`type_args_end`
   counts `<` and `>`). Now it counts them (`nest`, below, Q222).
 - A run passes line breaks: they are no tokens. The annotation before `if` / `when` ran to
-  a line break before. Open: Q223.
+  a line break before. The lean parser reads tokens too, and passes them: on a line break
+  before the `if`, and a declaration after, the tapes are the same (Q223). What the run can not
+  say, an annotation before any other expression, is refused: Q225.
 
 ## A run's depths: `nest` (Q222)
 

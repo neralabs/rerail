@@ -1860,6 +1860,22 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
   The lean parser reads an annotation and then any expression, without asking.
 - **Done when**: the annotated expression is the lean parser's (an annotation, then an
   expression, with no peek), or a run can name a gap mark as a stop. A test has the line break.
+- **Done** (2026-11-18): no difference is left. `@A(x)` and `if` on the next line, and a declaration
+  on the line after, give the lean parser's tape (the run passes line breaks as the lean parser
+  passes them: it reads tokens): `annotated_expressions_are_the_lean_parsers`. What the run cannot
+  say is refused, to the lean parser: Q225.
+
+### Q225. Kotlin: an annotated expression where the lean parser's `declaration_ahead` decides
+
+- **What**: in a statement, the lean parser skips annotations (`skip_annotation`) and modifiers
+  and asks for a declaration's keyword (`declaration_ahead`); where there is none, the `@` is an
+  annotation over any expression. The grammar marks only `@A(…)` before `if` or `when` (a run to
+  the `)`), so `@A if …`, `@A(x) foo()` and `@A foo()` are refused (no wrong tape;
+  `annotated_expressions_are_the_lean_parsers` lists them). A run can not say "annotations, then
+  modifiers": an annotation's name and a modifier are both names.
+- **Done when**: the statement's `@` is decided as `declaration_ahead` decides (a token mark with
+  the annotation's structure, or the tree reading the annotations and then choosing, as the lean
+  parser does), and the refused cases are the lean parser's.
 
 ### Q224. `deprecated back_fill` leaves the language
 

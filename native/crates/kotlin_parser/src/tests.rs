@@ -497,7 +497,12 @@ fn annotated_expressions_are_the_lean_parsers() {
         "fun f() {\n    @Suppress(\"D\", \"E\")\n    when (a) {\n        1 -> b()\n    }\n}\n",
         "val x = when (a) {\n    B,\n    C,\n    -> d\n    else -> e\n}\n",
         "val x = when (a) {\n    B, C, -> d\n    in r -> e\n    else -> f\n}\n",
+        // The run to the `)` passes line breaks (Q223): a declaration after is still one.
+        "fun f() {\n    @A(x) if (y) z\n    val q = 1\n}\n",
     ]);
+    // An annotation before any other expression, or with no arguments: the lean parser's
+    // `declaration_ahead` decides, which no run of tokens says (Q225). Refused, to the lean parser.
+    refused(&["fun f() {\n    @A if (y) z\n}\n", "fun f() {\n    @A(x) foo()\n}\n", "fun f() {\n    @A foo()\n    val q = 1\n}\n"]);
 }
 
 #[test]
@@ -927,3 +932,4 @@ fn tier1_records() {
         }
     }
 }
+
