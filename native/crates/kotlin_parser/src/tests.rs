@@ -387,6 +387,20 @@ fn strings_in_templates_are_the_lean_parsers() {
 }
 
 #[test]
+fn swallowed_comments_are_the_lean_parsers() {
+    same(&[
+        "abstract class A {\n    val x = 1\n    /* c */\n    abstract fun f()\n}\n",
+        "fun f() {\n    a()\n    /* c */\n    when (x) {}\n}\n",
+        "fun f() {\n    a()\n    /** c\n     * d */\n    error(1)\n}\n",
+        "class A {\n    /* c */\n    abstract fun f()\n}\n",
+        "val a = 1\n/* c */\nexternal fun f()\n",
+        "abstract class A {\n    fun f() {}\n    /* c */\n    abstract fun g()\n}\n",
+        "fun f() {\n    val s = \"a\"\n    /* c */\n    error(s)\n}\n",
+        "fun f() {\n    a[1]\n    /* c */\n    error(s)\n}\n",
+    ]);
+}
+
+#[test]
 fn annotated_expressions_are_the_lean_parsers() {
     same(&[
         "fun f() {\n    @Suppress(\"D\")\n    if (a) b()\n}\n",
@@ -413,6 +427,18 @@ fn delegates_and_names_are_the_lean_parsers() {
     same(&[
         "fun f() {\n    val state by viewModel.uiState.collectAsState()\n}\n",
         "fun g(\n    set: AttributeSet,\n    get: Int,\n) {}\n",
+    ]);
+}
+
+#[test]
+fn what_step_30_does_not_read_is_refused() {
+    refused(&[
+        "package a\n\n/* c */\nabstract class A\n",
+        "package a\n/* c */\nabstract class A\n",
+        "val a = 1\n/* c */ /* d */\nexternal fun f()\n",
+        "val x = when (a) {\n    1 -> b\n    /* c */\n    else -> d\n}\n",
+        "fun f() {\n    a +\n    /* c */\n    abstract()\n}\n",
+        "fun f() {\n    g(\n        a(),\n        /* c */ eq(false),\n    )\n}\n",
     ]);
 }
 
@@ -517,7 +543,6 @@ fn what_step_20_does_not_read_is_refused() {
         "fun f() {\n    loop@ for (i in a) break@loop\n}\n",
         "val a = b as java.util.List<Int>\n",
         "val s = \"a $field b\"\n",
-        "abstract class A {\n    fun f() {}\n    /* c */\n    abstract fun g()\n}\n",
         "fun f() {\n    a()\n    /* c */\n    // d\n    b()\n}\n",
         "class A\n@Inject constructor(x: Int)\n",
         "fun f() {\n    a\n    /* c */ .b()\n}\n",

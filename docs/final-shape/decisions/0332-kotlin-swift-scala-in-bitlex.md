@@ -728,6 +728,34 @@ fun f() {
 
 Corpus: 409 the same (step 28: 405), 82 refused, 0 differ.
 
+## Kotlin, step 30 (`30-swallowed-comments.bitlex`)
+
+```kotlin
+abstract class A {
+    val x = 1
+    /* c */
+    abstract fun f()
+}
+```
+
+- The lean lexer's `Asi::Swallow` case: a block comment that starts a line after a statement's
+  line, before a word starting with `a`, `e` or `w` that does not go on the line. The scanner
+  folds the comment into the semicolon it inserts, so the lean tree has no comment there. Here
+  the comment's bytes are skipped (`skip swallowed`; several `skip`s are ORed) and its token is
+  no start (`swallow_open`).
+- The swallow is read only where a semicolon may come: after a line that ends with a word, `)`,
+  `]`, `}` or a quote (`ok_lf`), and that is no header's line (`hdr_gap`). A header holds its
+  semicolon, so the lean parser's `package_header` ends at the next word. Before `else` it is
+  escaped, since a `when` entry holds its line break too. After a `{` no semicolon may come, and
+  the comment is an ordinary extra. Other line ends (`,`, an operator) are still refused.
+- A pitfall found here: `fill(a, stop)` holds at its start even where the start is a stop byte.
+  So "the last solid byte before the line break is X" is `fill(prev(X) & ~solid, solid)`.
+  Without the `& ~solid`, a line ending `),` passed as one ending `)`. That gave one differ in
+  the corpus, inside an argument list.
+
+Corpus: 414 the same (step 29: 409), 77 refused, 0 differ. The lost comments' open item (below)
+now covers the zero-width case only.
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment
@@ -913,7 +941,8 @@ Single-extra grammars compile as before: rr's tests and the compiler's targeted 
   even with `code` or `by_w` made to look up to 30 bytes ahead. So it needs something more of
   step 27's lexer, perhaps its token loop running in parts.
 
-- Open: the lean parser's lost block comments (26 corpus files, three escapes). After a line
+- Open: the lean parser's lost block comments (26 corpus files at step 29, three escapes; step
+  30 reads the swallowed ones after a statement's line). After a line
   break, before a token that goes on the line, it keeps the comment as a zero-width
   `multiline_comment` at the next token's start, inside that token's node. Before a word with
   `a`, `e` or `w` (`Asi::Swallow`), the comment is gone, and the statement ends at the word's
