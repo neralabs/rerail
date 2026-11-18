@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { mkdtemp, open } from "node:fs/promises";
+import { appendFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { type FileHandle, mkdtemp, open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -26,9 +26,64 @@ vi.mock("../../src/engine/storage/database.js", async () => {
   };
 });
 
+/**
+ * The files whose every write by the scrub first waits until another process has appended to the file, with the number
+ * of such writes per file. Each write of `rewriteAppendedFile` comes after its read of the file, so an append always
+ * lands between the two: the moment a line would be lost if the scrub wrote past what it read. `stalled` names a file
+ * no append reached within `APPEND_DEADLINE_MS`.
+ */
+const appendsBetween = vi.hoisted(() => ({ waited: new Map<string, number>(), stalled: undefined as string | undefined }));
+vi.mock("../../src/engine/no-follow.js", async () => {
+  const actual = await vi.importActual<typeof import("../../src/engine/no-follow.js")>("../../src/engine/no-follow.js");
+  return {
+    ...actual,
+    openNoFollow: async (...args: Parameters<typeof actual.openNoFollow>) => {
+      const handle = await actual.openNoFollow(...args);
+      return appendsBetween.waited.has(args[0]) ? writingAfterAnAppend(args[0], handle) : handle;
+    },
+  };
+});
+
+/**
+ * How long a write waits for the appender: far past its pace (an append every 1 ms, about every 16 ms on Windows) and
+ * well inside the test's own limit, so an appender that stopped is named rather than left to the test's timeout.
+ */
+const APPEND_DEADLINE_MS = 2_000;
+
+/**
+ * `handle`, whose writes each wait until the file at `path` has grown, that is until another process appended to it. A
+ * write no append reaches by `APPEND_DEADLINE_MS` fails, and `appendsBetween.stalled` says so: the scrub reports a
+ * write that fails as a file it skipped, not as an error.
+ */
+function writingAfterAnAppend(path: string, handle: FileHandle): FileHandle {
+  return new Proxy(handle, {
+    get(target, property) {
+      const value: unknown = Reflect.get(target, property, target);
+      if (property !== "write") return typeof value === "function" ? value.bind(target) : value;
+      return async (...args: unknown[]) => {
+        const size = statSync(path).size;
+        // An appender that stopped appends to no file again, so once one write has waited out the deadline, every later
+        // write fails at once, and `stalled` keeps the first file named.
+        const deadline = appendsBetween.stalled === undefined ? performance.now() + APPEND_DEADLINE_MS : 0;
+        while (statSync(path).size === size) {
+          if (performance.now() > deadline) {
+            appendsBetween.stalled ??= `no append to ${path} within ${APPEND_DEADLINE_MS} ms: the appender stopped`;
+            throw new Error(appendsBetween.stalled);
+          }
+          await delay(1);
+        }
+        appendsBetween.waited.set(path, (appendsBetween.waited.get(path) ?? 0) + 1);
+        return await (Reflect.apply(target.write, target, args) as Promise<unknown>);
+      };
+    },
+  });
+}
+
 const directories: string[] = [];
 afterEach(async () => {
   erase.failure = undefined;
+  appendsBetween.waited.clear();
+  appendsBetween.stalled = undefined;
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   await Promise.all(directories.splice(0).map(path => removeFolder(path)));
@@ -229,10 +284,14 @@ describe("rerail scrub alongside running sessions", () => {
       const exited = new Promise(resolve => child.once("exit", resolve));
       try {
         while (!readFileSync(log, "utf8").includes("appended 0")) await delay(5);
-        const appendedBefore = readFileSync(ledger, "utf8").split("appended-").length;
-        expect(await runScrubCommand([], () => "usage")).toBe(0);
-        // The appender kept writing for the whole run.
-        expect(readFileSync(ledger, "utf8").split("appended-").length).toBeGreaterThan(appendedBefore);
+        // Each write of the scrub to either file first waits for an append after its read of it. Left to the clock, the
+        // whole scrub could fall between two appends, as Windows wakes the appender's 1 ms wait only every 15.6 ms or so.
+        appendsBetween.waited.set(ledger, 0).set(log, 0);
+        const scrubbed = await runScrubCommand([], () => "usage");
+        expect(appendsBetween.stalled).toBeUndefined();
+        expect(scrubbed).toBe(0);
+        expect(appendsBetween.waited.get(ledger)).toBeGreaterThan(0);
+        expect(appendsBetween.waited.get(log)).toBeGreaterThan(0);
       } finally {
         writeFileSync(stop, "");
         await exited;

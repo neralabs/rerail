@@ -224,6 +224,26 @@ function sessionResponse(stores: RerailApiStores, caller: ApiCaller, sessionId: 
 }
 const sessionId = z.object({ sessionId: z.string().min(1) });
 
+/**
+ * `operation` with the start state of the folder its `repository` names read also under `spelling`, the folder as a
+ * Windows host spelt it ({@link RerailApiStores.repositoryState}); unchanged without one, or for any other folder.
+ */
+function readingSpelling(operation: Operation): Operation {
+  return { ...operation, handler: (stores, input, caller) => operation.handler(spelledStores(stores, input), input, caller) };
+}
+
+/** `stores` whose start-state read of `repository` passes `spelling` on; `stores` itself where it is no absolute path. */
+function spelledStores(stores: RerailApiStores, { repository, spelling }: { repository?: unknown; spelling?: unknown }): RerailApiStores {
+  if (typeof spelling !== "string" || !isAbsolute(spelling)) return stores;
+  const repositoryState = (workspace: string) => stores.repositoryState(workspace, workspace === repository ? spelling : undefined);
+  return new Proxy(stores, { get: (target, key) => key === "repositoryState" ? repositoryState : boundTo(target, Reflect.get(target, key)) });
+}
+
+/** `value` called on `target`, as a property read of `target` gives it: stores keep private fields a proxy cannot reach. */
+function boundTo(target: object, value: unknown): unknown {
+  return typeof value === "function" ? (value as (...parameters: unknown[]) => unknown).bind(target) : value;
+}
+
 const repositoryFilter = {
   repository: z.string().min(1).optional().describe("Only this repository's history (its key or an alias); machine-wide without it. A coding agent reads only its own repository's."),
 };
@@ -321,7 +341,7 @@ export const operations: readonly Operation[] = [
       return { removed: stores.preferences().remove(input.repository, input.host) };
     },
   }),
-  defineOperation({
+  readingSpelling(defineOperation({
     id: "presentation_get",
     method: "GET",
     path: "/api/presentation",
@@ -331,6 +351,7 @@ export const operations: readonly Operation[] = [
       host: z.enum(PRESENTATION_HOSTS).exclude([""]),
       sessionId: z.string().min(1).optional().describe("Exact session for passive daemon health and compact status."),
       onDemand: booleanParameter.optional().describe("Read session status even when ambient presentation is silent."),
+      spelling: z.string().optional().describe("On Windows, `repository` as the host spelt it, where that differs: read only for a start or stop Rerail 0.1.4 saved under it."),
     }).strict(),
     output: presentationResponseSchema,
     handler: (stores, input, caller) => {
@@ -362,7 +383,7 @@ export const operations: readonly Operation[] = [
       if (presence === "silent" && !input.onDemand) session = null;
       return { presence, repositoryState, scope, context: { daemon, session } };
     },
-  }),
+  })),
   defineOperation({
     id: "rules_activity",
     method: "GET",

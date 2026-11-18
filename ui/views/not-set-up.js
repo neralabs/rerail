@@ -20,7 +20,7 @@ export function render(root) {
       h("div.list", null, h("div.empty", null,
         h("h3", null, "No rule packs are on."),
         h("p.acts", null,
-          h("button.btn.sm.solid", { "data-act": "setup", disabled: ui.settingUp }, ui.settingUp ? "Setting up…" : "Set up with recommended packs"),
+          h("button.btn.sm.solid", { "data-act": "setup", disabled: ui.settingUp }, ui.settingUp ? "Setting up…" : "Set up with suggested packs"),
           h("button.btn.sm", { "data-act": "nav", "data-i": "packs?review=1" }, "Review rule packs"),
           h("button.btn.sm.ghost.link", { "data-act": "nav", "data-i": "packs" }, icon("plus"), "Add rule packs")))))));
 }

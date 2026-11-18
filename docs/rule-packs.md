@@ -35,7 +35,7 @@ Packs that port a linter are [linter-equivalent](#linter-equivalent) to it.
 | Function complexity | language | counts like lizard 1.24.0 | 8 (8) | Python, TypeScript, JavaScript, PHP, Blade, Rust, Vue or Java source outside tests. See [Function complexity](#function-complexity). |
 | JavaScript | language | ESLint 10.11.0, eslint-plugin-unicorn 76.0.0 | 121 (36) | JavaScript or TypeScript source. ESLint core rules apply to both; eslint-plugin-unicorn rules to JavaScript files only. |
 | TypeScript | language | typescript-eslint 8.70.1, @vitest/eslint-plugin 1.6.27 | 65 (23) | a `typescript` dependency, or `*.ts`/`*.tsx` files |
-| Python | language | Ruff 0.16.9, Bandit 1.9.4 | 537 (316) | Python source outside tests, scripts and docs |
+| Python | language | Ruff 0.16.9, Bandit 1.9.4 | 538 (317) | Python source outside tests, scripts and docs |
 | PHP | language | PHP_CodeSniffer 4.0.4, PHPStan 2.2.16, Psalm 6.19.1 | 15 (5) | PHP source: `*.php` files, not Blade views |
 | Blade | language | Bladestan 0.11.7, tlint 9.7.0, blade-parser 2.1.0 | 10 (8) | Blade templates: `*.blade.php` files |
 | Rust | language | Clippy 0.1.99 (Rust 1.99.0) | 33 (17) | `*.rs` files |
@@ -99,7 +99,7 @@ Packs never install into a project's `node_modules`: one Rerail serves every rep
 
 1. **Fetch** every listed pack into a staging folder. Nothing in the repository is read until the person allows it.
 2. **Keep newer versions** the computer already has installed.
-3. **Ask** which fitting packs to install.
+3. **Ask** which suggested packs to install.
 4. **Install only what the answer carries:** "Yes", "Change rule packs…" (`--answer choose`), "Not now" (`--answer not-now`) or "Skip, I'll pick packs".
 5. **Verify** the catalog still loads every pack; otherwise put the change back and ask again.
 
@@ -250,6 +250,14 @@ A rule document is a `rerail.policy/v1` code rule or a conversation rule; no `pa
 - **Trust.** The folder comes from the working tree, so whatever a branch commits there runs in every started checkout of that branch and reaches the coding agent. Rerail has not reviewed it, so approval is needed again after each edit ([approval](rule-scoping.md#approval)). To keep rules to one worktree, exclude the folder from Git (`.git/info/exclude`).
 
 </details>
+
+## Packs a repository lists
+
+In [internal testing](internal-testing.md): a repository can list the packs it runs in `.rerail/packs.json`, by
+published pack and exact version or by a folder in the repository, each for the whole repository or only the
+`folders` it names, so every machine scanning a commit runs the same rules. Today only the headless `rerail scan`
+reads it ([headless scan](headless-scan.md#packs-the-repository-lists));
+a session still runs the packs its machine attaches ([design](repository-packs.md)).
 
 ## Where a pack's rules live
 
