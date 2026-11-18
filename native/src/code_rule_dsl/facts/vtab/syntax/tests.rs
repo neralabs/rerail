@@ -1905,7 +1905,7 @@ kernel void view_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[
         for format in Format::ALL {
             let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
             let words: Vec<u32> = lines.words().to_vec();
-            let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image.clone().in_format(format), lines).unwrap());
+            let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image.clone().in_format(format, source.as_bytes()), lines).unwrap());
             let dialect = Dialect::new(core::facts_tag(&facts)).unwrap();
             let (tape, view) = facts.tape.as_ref().unwrap().in_place().unwrap();
             // A 16z tape's reads decode its blocks into the reader's slots (0353 step 4b).

@@ -200,7 +200,7 @@
         let held = |format: Format| {
             as_run(format, || {
                 let grammar = Grammar::new(SupportLang::Python).unwrap();
-                let image = TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap().primary.in_format(format);
+                let image = TapeImage::encode(native.tree.root_node(), &grammar, &source, &|| false).unwrap().primary.in_format(format, source.as_bytes());
                 TapeDoc::restore(Arc::new(source.clone()), grammar, &image, &|| false).unwrap()
             })
         };

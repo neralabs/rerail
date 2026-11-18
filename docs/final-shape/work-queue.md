@@ -5135,3 +5135,69 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   edit to an included file; which one failed was not printed.
 - **To do:** run it cold beside the 0275 tests until it fails with its message; suspects are the observer's view of
   the edited include (decision 0105's flush) and the store's queued entry being found before its write settles.
+
+### Q241. (PR #508, t47) A library's relations in a pack: kind sets, stated facts, value cycles, spans, `nearest`
+
+- **Seen** (2026-11-18, the hub at ffc390de8 on the M3): six of Tim's tests fail on the hub's `combine_texts`. A
+  library's kind set read as a relation is no relation of the pack (`keyed_kind`); a program's facts of a library
+  relation are read from the library's copy (`p0_hit` reads `dec_lit_repr`, not its request's); a value cycle the
+  library bounds is "unbounded" in a pack; a `nearest` over a library set climbs to an empty set (`ks8`); a
+  `match_all` over a library relation's node and a `nearest` over a library relation of kinds find nothing in a pack.
+- **Keep**: decision 0089's library held once, and the request cones as they are; Tim's fixes (363b91c0b, 4146acbd9,
+  afeb076e5) are on the tree's lowering (`rr::Text::lower_in`), so they are ported onto the version's combine.
+- **Done when**: the six `corpus::tests` named in t47 pass, unignored.
+
+### Q242. (PR #508, t47) A pack's guests and dialects
+
+- **Seen**: `a_policy_reads_in_a_pack_only_the_guests_it_asks_for_alone` (C408 finds a `Literal`'s text another
+  policy's guest asked for) and `a_batchs_policies_of_several_dialects_run_as_one_pack_a_dialect` fail.
+- **Keep**: decision 0055's one set of guests a pack; Tim's `rr::guest_asks` splits packs by the guests they ask for
+  (370b90f9c), and runs a language's dialects as one pack each (1999e204e).
+- **Done when**: both `rr::tape_tests` pass, unignored.
+
+### Q243. (PR #508, t47) The run after a cold one writes its kept plans
+
+- **Seen**: `the_run_after_a_cold_one_writes_nothing` (the hub's own) and its symlink twin exit 3 under
+  `RERAIL_WARM=list`: "a write gathered for the store in a warm run (the kept plans)", and through the symlink an
+  `observer_meta` write to `<real>/store.sqlite.files`.
+- **Keep**: Tim's 4f9110496 (a graph kept as an image names no plans), 70026ed6b (a memo hit known by digest names
+  its source), 0206654a5 (the corpus walk reads the root's real path before the waves).
+- **Done when**: both pass, unignored.
+
+### Q244. (PR #508, t47) A negated cross product is bound by its rule's context
+
+- **Seen**: `rr_not1($hi, $lo) :- lit($lo, _), lit($hi, _)`, unbound: every pair of strings in the corpus
+  (eslint-yoda's `yoda_in_order`).
+- **Keep**: Tim's 3fe6f8227, without the 0201 ports he reverted (adfb49fac; see Q247).
+- **Done when**: `rr::tests::a_negated_cross_product_is_bound_by_the_rules_context` passes, unignored.
+
+### Q245. (PR #508, t47) `using` as a name reads without a syntax error
+
+- **Seen**: JavaScript's `const using = [1]; using.filter(x => x)` reads with errors at 24..25 and 31..31.
+- **Keep**: Tim's 7410a263b (#735's grammars, Patches 18 and 30), in the hub's vendored grammars (format 16).
+- **Done when**: `tape::tests::using_as_a_name_reads_without_an_error_on_the_products_path` passes, unignored.
+
+### Q246. (PR #508, t47) The end of children meets implied tokens (RER-131)
+
+- **Seen**: the packed matcher finds no `case $V:` in `case 1: f(); break;`.
+- **Keep**: Tim's 65ff68df5 and the vendored ast-grep-core half (its test needs `tokenless_matched`, ported with
+  it); the rer-131 worktree's work on tapes of named nodes.
+- **Done when**: `ast_pattern_end_of_children_meets_implied_tokens` passes, unignored, and the vendored test is in.
+
+### Q247. (PR #508, t47) RUF013 finds nothing on the hub
+
+- **Seen**: `ruff_ruf013_finds_an_implicit_optional` (one implicit and one explicit Optional) gets no diagnostic.
+  Tim reverted his ports of 0201 §5 and §6 because with them RUF013 found none of its 33 keys; the hub has its own
+  0201. First check the sample against the pack's own fixtures (`check-ruff-ruf013-implicit-optional.py`).
+- **Done when**: the cause is found and the test passes, unignored.
+
+### Q248. (PR #508, t47) Tests that wait on code or data
+
+- 7529228ce (`budget::matcher_calls`), 53361e039 (`clif_text::reachable_calls`) and 65ff68df5's vendored half need
+  functions the hub lacks: their tests go in with the ports.
+- `slice::tests::the_backends_find_the_same_keys_on_real_files` needs the Python pack's upstream fixtures, which are
+  not in Git; the farm's checkout has 1 file of the 4 it samples. Send them with the job (`--tree`) or restore them
+  (`pack-data` from 236fc98d2~1).
+- Windows, Linux and x86-64 (12 commits, t47's portability class) come last, with the Windows work.
+- Tim's TypeScript CLI tests (9036be38c, 9cc6eb22f: `rules test` on a `.rr` file; ed1872a09: `--delete-data`)
+  are ported into `test/cli/` with their fixes.

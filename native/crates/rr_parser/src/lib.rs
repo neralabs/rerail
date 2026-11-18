@@ -788,6 +788,30 @@ pub mod tests {
         assert_eq!(interp, Vec::<usize>::new(), "files whose interpreter image is not the lean tape");
     }
 
+    /// The gap marks tier 2 on the CPU tests itself (`native_cpu_block::lazy_marks`: the line
+    /// marks, where a statement asks whether the next token is on its line) read the token's
+    /// `Next` and `Start` as their caller has them: in one function, whose state is in a stack
+    /// slot, as in clusters by rules, whose state is in `ctx`. Each tree is the interpreter's: a
+    /// `.policy` with no object ends at its line, a setting's arguments are on its line.
+    /// PR #508's 0d1f9497e (t47).
+    #[test]
+    fn a_lazy_marks_token_is_its_callers() {
+        use rerail_compiler::native_cpu_clusters as cl;
+        let c = crate::compiled().expect("compiles");
+        let mut native = rerail_compiler::native_ir::lower(&c.program, 0, 0).expect("lowers");
+        native.tag = rerail_tape_format::RR_TAG;
+        let n = native.structural.len();
+        for (shape, cut) in [("one function", cl::Cut::one(n)), ("by rules", cl::by_rules(&native))] {
+            let parser = rerail_compiler::native_cpu_stream::Parser::with_cut(&native, &cut).expect("compiles");
+            for src in [".policy\nmust().", ".mode\nr(x).", ".policy // c\n\nmust().", ".mode a\n.policy must().", ".policy must()."] {
+                let run = c.program.block_programs[0].run(src.as_bytes());
+                let want = rerail_compiler::stream::run(&c.program, src.as_bytes(), &run).map(rerail_compiler::ladder::as_ids).expect("the interpreter parses it");
+                let got = parser.parse(src.as_bytes()).map(rerail_compiler::ladder::as_ids).ok();
+                assert_eq!(got.as_ref(), Some(&want), "{shape}: {src:?}");
+            }
+        }
+    }
+
     /// `tapes` over the corpus as one batch equals `tape` file by file. Prints the time.
     #[test]
     #[ignore = "the corpus on Metal: run by hand"]

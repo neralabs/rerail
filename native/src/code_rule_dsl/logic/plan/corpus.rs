@@ -90,6 +90,8 @@ pub const COMBINING: &[&str] = &[
     "RERAIL_LIBRARIES",
     "RERAIL_REQUESTS",
     "RERAIL_SCOPE_GUARDS",
+    // The combine's tail kept or run whole (`=whole`), or checked against the whole (`=check`, decision 0393).
+    "RERAIL_COMBINE_TAIL",
     // The `.rr` lowering: source attributes answered eagerly (`sources_on_request`), node ids compared raw
     // (`front::finish`'s `order_nodes`).
     "RERAIL_NODE_SOURCES",
@@ -11559,7 +11561,19 @@ pub mod tests {
         let dir = tempfile::tempdir().unwrap();
         let work = dir.path().join("work");
         std::fs::create_dir_all(work.join("ignored/pkg")).unwrap();
-        let git = |args: &[&str]| assert!(std::process::Command::new("git").arg("-C").arg(&work).args(args).output().unwrap().status.success(), "git {args:?}");
+        // Git as the test states it, not as the host's configuration does (a farm host's signing or hooks failed the
+        // commit): no global or system configuration, no signing.
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .args(["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", "-C"])
+                .arg(&work)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        };
         git(&["init", "-q"]);
         std::fs::write(work.join(".gitignore"), "/ignored/\n").unwrap();
         std::fs::write(work.join("ignored/pkg/a.py"), "x = 1\n").unwrap();
