@@ -325,4 +325,45 @@ describe.skipIf(process.platform === "win32")("the status script Claude Code's s
     expect(statusLine(shell, input("session-one"), { PATH: bin }, `set -- "${join(root, "gone node")}" /package/claude-status.js; `))
       .toBe("from PATH /package/claude-status.js\n");
   });
+
+  /**
+   * A folder for PATH whose only program is a `sleep` that returns at once, lists each pause it was asked for in
+   * `slept`, and, with `fileAt`, copies `line` to the session's status file on that call, as the daemon writes it.
+   */
+  function fakeSleep(sessionId: string, fileAt?: number): { path: string; slept: () => string[] } {
+    const bin = join(root, "sleep-bin");
+    const log = join(root, "slept");
+    const line = join(root, "line");
+    mkdirSync(bin);
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(log, "");
+    writeFileSync(line, "24-bit\n256\nplain\n");
+    const write = fileAt === undefined ? "" : [
+      "calls=0", `while IFS= read -r pause; do calls=$((calls + 1)); done < "${log}"`,
+      `if [ "$calls" -eq ${fileAt} ]; then while IFS= read -r text; do printf '%s\\n' "$text"; done < "${line}" > "${join(folder, sessionId)}"; fi`,
+    ].join("\n");
+    writeFileSync(join(bin, "sleep"), `#!/bin/sh\nprintf '%s\\n' "$1" >> "${log}"\n${write}\n`, { mode: 0o755 });
+    return { path: bin, slept: () => readFileSync(log, "utf8").split("\n").filter(pause => pause !== "") };
+  }
+
+  /** Claude Code's input for a session that has had no reply yet, or has had one. */
+  const inputAt = (sessionId: string, apiMs: number): object => ({ ...input(sessionId), cost: { total_duration_ms: 11_761, total_api_duration_ms: apiMs } });
+
+  // Claude Code draws a new session's status line about a second before its start hook has told the daemon of it.
+  it.each(shells)("%s waits, at a session's first draw, for the file the daemon writes once the session's start hook has run", (shell) => {
+    const sleep = fakeSleep("new-session", 2);
+    writeFileSync(join(home, "daemon.json"), "{}");
+    expect(statusLine(shell, inputAt("new-session", 0), { PATH: sleep.path, NO_COLOR: "1" })).toBe("plain\n");
+    expect(sleep.slept()).toEqual(["0.2", "0.3"]);
+  });
+
+  it.each(shells)("%s gives up after six sleeps where no file comes, and never waits once the session has had a reply", (shell) => {
+    const sleep = fakeSleep("no-file");
+    expect(statusLine(shell, inputAt("no-file", 0), { PATH: sleep.path, NO_COLOR: "1" })).toBe("R E R A I L ✕ not running\n");
+    expect(sleep.slept()).toEqual(["0.2", "0.3", "0.5", "1", "2", "3"]);
+    for (const answered of [inputAt("no-file", 2_300), inputAt("no-file", 0.5), input("no-file")]) {
+      expect(statusLine(shell, answered, { PATH: sleep.path, NO_COLOR: "1" })).toBe("R E R A I L ✕ not running\n");
+    }
+    expect(sleep.slept()).toHaveLength(6);
+  });
 });

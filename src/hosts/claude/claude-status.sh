@@ -1,6 +1,7 @@
 # Rerail's Claude Code status line. The registered status command reads this file into the shell Claude Code already
 # started for it (`. <this file>`): it is never run as a program. It uses shell built-ins only (read, case, printf, [),
-# so a refresh starts no process of its own. POSIX sh: /bin/sh is bash 3.2 on macOS and dash on most of Linux.
+# so a refresh starts no process of its own; only a session's first draw may start `sleep` (below). POSIX sh: /bin/sh
+# is bash 3.2 on macOS and dash on most of Linux.
 #
 # The daemon keeps each session's line in <Rerail home>/status/<session id> (src/presentation/claude-status-files.ts)
 # and this prints it. The file holds the line three times, for a terminal with 24-bit colour, 256 colours and no
@@ -23,27 +24,32 @@ case ${_RERAIL_CLAUDE_STATUS_PARENT:-} in
   *) if kill -0 "$_RERAIL_CLAUDE_STATUS_PARENT" 2>/dev/null; then nested=1; fi ;;
 esac
 
-# The session id of the JSON Claude Code writes to stdin: the first `"session_id": "<id>"` in it. Every line is read,
-# so Claude Code never writes to a closed pipe.
-id=
-while IFS= read -r line || [ -n "$line" ]; do
-  if [ -n "$id" ]; then continue; fi
+# Sets `value` to what follows the first `"<$1>":` in `$line`, spaces skipped; empty when the line has none.
+after_key() {
+  value=
   rest=$line
   while :; do
-    case $rest in *'"session_id"'*) ;; *) break ;; esac
-    rest=${rest#*'"session_id"'}
+    case $rest in *"\"$1\""*) ;; *) return ;; esac
+    rest=${rest#*"\"$1\""}
     value=${rest#"${rest%%[! ]*}"}
-    case $value in :*) ;; *) continue ;; esac
+    case $value in :*) ;; *) value=; continue ;; esac
     value=${value#:}
     value=${value#"${value%%[! ]*}"}
-    case $value in
-      '"'*)
-        value=${value#'"'}
-        id=${value%%'"'*}
-        break
-        ;;
-    esac
+    return
   done
+}
+
+# From the JSON Claude Code writes to stdin: the session id, its first `"session_id": "<id>"`; and whether the session
+# has had no reply yet, `"total_api_duration_ms": 0`. Every line is read, so Claude Code never writes to a closed pipe.
+id=
+unanswered=
+while IFS= read -r line || [ -n "$line" ]; do
+  if [ -z "$id" ]; then
+    after_key session_id
+    case $value in '"'*) value=${value#'"'}; id=${value%%'"'*} ;; esac
+  fi
+  after_key total_api_duration_ms
+  case $value in 0 | 0[!0-9.]*) unanswered=1 ;; esac
 done
 
 # The id names a file, so one that could name anything else (`/`, `..`) is no session.
@@ -70,6 +76,18 @@ else
 fi
 
 home=${RERAIL_HOME:-$HOME/.rerail}
+
+# Claude Code draws the status line as a session starts, about a second before the session's start hook has told the
+# daemon of it, and draws again only with the session's first reply. So until that reply, a draw that finds no file
+# waits for one: 7 s at most, in six sleeps at most, the only program this script starts. The Node status line waits
+# the same (STARTING_WAITS_MS in claude-status.ts). Without a `sleep` to start there is no wait.
+if [ -z "$nested" ] && [ -n "$id" ] && [ -n "$unanswered" ] && [ ! -e "$home/status/$id" ] && command -v sleep >/dev/null 2>&1; then
+  for pause in 0.2 0.3 0.5 1 2 3; do
+    sleep "$pause" || break
+    if [ -e "$home/status/$id" ]; then break; fi
+  done
+fi
+
 if [ -n "$nested" ]; then
   :
 elif [ -z "$id" ]; then
@@ -84,8 +102,8 @@ elif [ -r "$home/status/$id" ]; then
     fi
   done < "$home/status/$id"
 elif [ -e "$home/daemon.json" ]; then
-  # A daemon is recorded and keeps no line for this session: Rerail is not on in its repository, or the daemon has
-  # not recorded the session's start yet. Either way there is nothing to draw.
+  # A daemon is recorded and keeps no line for this session: Rerail is not on in its repository, or the session's
+  # start never reached the daemon. Either way there is nothing to draw.
   :
 else
   printf "$brand $red✕$plain not running\n"

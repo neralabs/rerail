@@ -100,6 +100,19 @@ describe("composed Claude status", () => {
     expect(mocks.presentation.mock.calls.map(([request]) => request.cwd)).toEqual(["/workspace", "/workspace/src"]);
   });
 
+  it("waits for the daemon to record a session that has had no reply yet, and never once it has had one", async () => {
+    const starting = { presence: "compact", status: "starting", text: "starting" };
+    const unanswered = Buffer.from('{"session_id":"claude-1","cwd":"/workspace","cost":{"total_api_duration_ms":0}}');
+    // Claude Code draws a new session's status line before its start hook has run, and not again until its first reply.
+    mocks.presentation.mockResolvedValueOnce(starting).mockResolvedValueOnce(starting);
+    expect((await render(unanswered)).toString()).toBe("Rerail | 2 rules | steered 1×\n");
+    expect(mocks.presentation).toHaveBeenCalledTimes(3);
+    mocks.presentation.mockClear().mockResolvedValue(starting);
+    expect((await render(Buffer.from('{"session_id":"claude-1","cwd":"/workspace","cost":{"total_api_duration_ms":2300}}'))).toString()).toBe("starting\n");
+    expect((await render()).toString()).toBe("starting\n");
+    expect(mocks.presentation).toHaveBeenCalledTimes(2);
+  });
+
   it("retains prior output on command failure and separates the Rerail line", async () => {
     mocks.command.mockReturnValue(nodePredecessor("process.stdout.write('existing\\u001b[32m status'); process.exitCode = 7"));
     const result = await render();
