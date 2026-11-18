@@ -1339,8 +1339,20 @@ transducer crate, which the engine's `waves::matches` test calls; now `pub`). Co
   A long scan's spill halves its range at a node both halves reach. A `desc` or closure followed by
   `capture; emit` marks its range in place, 32 nodes a word op. At s1000, the time was one closure pass's single
   136,902-node scan, whose spills ran one after another. `label_micro_8` + `label_micro` went from 265–340 ms to
-  93–120 ms, with the same findings. Open: the longest walk is 4,106 counted steps in the loop tier and 2,149 in
-  t0, not under 100, and a spilled piece walks a frame at a time.
+  93–120 ms, with the same findings.
+- **Progress** (2026-11-17, 0380 item 3): such a scan is a segmented pass over 64-node windows. Its pieces are halved
+  into the queue before it starts, and a frame taken from the queue scans the same way. The longest closure or
+  `desc` walk went from 4,106 steps to 63, and the loop tier's steps from 7.1 M to 4.0 M. The longest walk of any
+  kind is now 509, a `following` scan (Q65).
+
+### Q65. A `following` scan for a kind hops one sibling at a time
+
+- **Found** (2026-11-17, 0380): `save0 after kind=238 load0 capture emit0` (877,007 walks, 12.6 steps on average,
+  the longest 509) is s1000's longest walk. It scans the start's following siblings for one of kind 238. Each hop
+  over a sibling's subtree reads its size, so each read waits on the one before. A block of n statements makes n
+  such scans, n² hops in all.
+- **Done when**: the longest walk at s1000 is under 100 steps (Q56's bound), with nothing precomputed: for
+  example, the siblings' scan as one pass over the parent's children, its answer shared by every start among them.
 
 ### Q50. A device run's matcher launches: the host's part and the GPU's in series, and prices 3× high
 

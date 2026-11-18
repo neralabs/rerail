@@ -50,16 +50,21 @@ the closures below cut the loop tier's steps from 19.0 M to 3.9 M, and `label_mi
      climb.
    - Both halves then reach the cut exactly, and each is a scan of its own. So a long scan spreads over the
      dispatch's threads in halvings.
-3. **A scan whose candidates are captured and emitted at once marks them in place.** This applies where the
-   closure's exit (or a `desc`'s next words) is `capture; emit` with nothing captured before:
-   - **The closure** reads a window of 8 nodes' sizes, flags and tests together, and gathers a label's marks a
-     word at a time.
-   - **`desc`** marks its subtree's range as a range:
-     - where every node counts, 32 nodes a word op;
-     - for a named `desc`, the named nodes' flags are read one after another, with no frame.
-     - A tally by start adds the count once.
-     - An emit that marks the start does so at the range's first candidate.
-     - This holds in a pack (`fusion::Fused`) too: its emit's row, or the start with its `fired` bit.
+3. **A scan whose candidates are captured and emitted at once is a segmented pass** (`scan_marks`). This applies
+   where a closure's exit, or a `desc`'s next words, is `capture; emit` with nothing captured before.
+   - The scan reads a window of 64 nodes at a time. Their flags and tests are read side by side, none waiting on
+     another, into two masks: the nodes given (named, where the scan is named) and the nodes entered.
+   - A node the scan reaches but does not enter hides its subtree's bits. Its size is read only then, and a subtree
+     past the window moves the scan to its end.
+   - The window's marks are then a mask, written a word of 32 nodes at a time. A tally by start adds the count
+     once, and a tally by node adds each set bit. An emit that marks the start does so at the first node given,
+     and so does a pack's emit (its row, its `fired` bit).
+   - A `desc` of every node reads nothing: its marks are its range.
+   - Before it starts, a scan longer than 4 spill budgets of nodes (2,048 at the budget of 512) is halved into the
+     work queue (`scan_cut`, item 2) until its own piece fits. So a long scan's pieces run side by side from the
+     start, rather than after `budget` steps one thread at a time.
+   - A frame taken from the queue scans the same way. Before, it walked a node at a time.
+   - A step is a window or a size read.
 4. Nothing is precomputed. Every read is of the tape in place: sizes, flags, kinds and classes. The device's parent
    stays the climb (0359).
 
@@ -75,20 +80,22 @@ Same command, findings md5 db93ef6db62fb0961f159c0c667254e1 in every run (unchan
 | The halving cut | 92–98 ms | 33 ms | 75.8 M / 7.1 M | 22 |
 | A captured `desc` marks its range (labels and tallies) | 73–77 ms | 42–49 ms | 61.8 M / 7.1 M | 73–99 |
 | … in packs and start marks too | 45–55 ms | 47–65 ms | 60.9 M / 7.1 M | 18–20 |
+| The segmented pass, its pieces halved before the scan | 58–71 ms | 25–35 ms | 60.8 M / 4.0 M | 51–94 |
 
-The two kernels overlap on the device, so their sum is the one to compare: 265–340 ms before, 93–120 ms after. The
-loop tier's steps grew from 3.9 M to 7.1 M with the halving. A spilled piece resumes a frame at a time rather than
-through the fused scan, and it counts each node it reaches.
+The two kernels overlap on the device, so their sum is the one to compare: 265–340 ms before, and 93–120 ms with the
+range marks at load 18–20. The segmented pass ran at load 51–94 only, so its times are high for the load. Its steps
+are the like-for-like number. The loop tier's steps fell from 7.1 M to 4.0 M. The longest closure or `desc` walk
+fell from 4,106 (loop tier) and 2,149 (t0) to 63, and the longest walk of any kind is 509 (see Open).
 
 Runs: CPU 7.7–8.2 s and wall 2.4–3.0 s at load 18–20, against CPU 8.0–8.2 s and wall 2.8 s at load 16 before.
 
 The spill test (`spilled_walks_find_the_cpus_roots`, a budget of one step, 24 fixtures) took 31 s, against 112 s
-with the cut at the candidate's subtree end.
+with the cut at the candidate's subtree end. At that budget a scan's piece is 128 nodes, so the test halves every
+long scan before it starts; it took 41–44 s and found the CPU's roots.
 
 ## Open
 
-- Q56's done-when asks for a longest walk under 100 steps at s1000. The longest is still 4,106 steps (the
-  `class=16393` closure, in its pieces' counting). In t0 it is 2,149, against 4,280 before: a named `desc`'s range,
-  counted a node read each, though no read waits on the one before. The halving bounds a scan's critical path, not
-  its counted steps.
-- A spilled closure piece walks its scan a frame at a time. Re-entering the fused scan would cut its steps.
+- The longest walk at s1000 is 509 steps, against Q56's bound of 100: `save0 after kind=238 load0 capture emit0`,
+  877,007 walks averaging 12.6 steps. It is a scan of the start's following siblings for one of a kind. Each hop
+  over a sibling's subtree reads its size, so the hops wait on each other, and a block of n statements makes n
+  such scans, n² hops in all. Neither change here touches `following` (resume 3). Work queue Q65.
