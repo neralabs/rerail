@@ -25,10 +25,12 @@ describe("the second look for Git", () => {
   let repository = "";
   let outside: string[] = [];
 
-  /** git.ts as a new process loads it: no Git looked for yet. */
+  /** git.ts as a new process that lives on loads it, as the daemon does: no Git looked for yet. */
   async function freshGit(): Promise<GitModule> {
     vi.resetModules();
-    return await import("../../src/engine/git.js");
+    const git = await import("../../src/engine/git.js");
+    git.gitLivesOn();
+    return git;
   }
 
   /** `folder`, made with a stand-in Git in it. */

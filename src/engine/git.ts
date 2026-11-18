@@ -572,7 +572,7 @@ function launcherHomes(env: NodeJS.ProcessEnv, shareExists: boolean | undefined)
  * tells which, and on a home share that does not answer (a domain account's home folder on a laptop off the network)
  * Windows waits about 21 s for the server: a look in Rerail's thread stopped every call the daemon serves for that
  * long. So a start in the daemon takes the answer of the last look off the thread (`shareExists`,
- * {@link ProcessGit.followHomeShare}): the share, or the profile. In any other process, and in the daemon before the
+ * {@link ProcessGit.livesOn}): the share, or the profile. In any other process, and in the daemon before the
  * first answer, both, the share's first, so the launcher's is among them.
  */
 function unsetHomes(env: NodeJS.ProcessEnv, shareExists: boolean | undefined): string[] {
@@ -686,7 +686,7 @@ function keptBy(look: GitLook, disk: GitProbe & GitPathProbe): KeptGit {
  * How a {@link ProcessGit} reads the disk: `now` in its thread, for the first look, which a process makes before its
  * first Git call; `later` off its thread, for each look after a Git it kept is gone; `within`, in another thread with
  * each answer waited for in this one ({@link askedInThread}), for such a look made by a call that blocks; and `folder`,
- * off its thread, for whether the home share exists, in a process that follows it ({@link ProcessGit.followHomeShare}).
+ * off its thread, for whether the home share exists, in a process that follows it ({@link ProcessGit.livesOn}).
  */
 export interface GitDisks {
   readonly now: GitProbe & GitPathProbe;
@@ -753,8 +753,10 @@ export class ProcessGit {
   readonly #builds = new Map<string, GitForWindowsBuild | undefined>();
   /** The look after the Git kept was found gone, while it runs: every start that failed on that Git waits for it. */
   #looking: Promise<string | undefined> | undefined;
-  /** The home share's last answer, once {@link followHomeShare} has the process follow it. */
+  /** The home share's last answer, once {@link livesOn} has the process follow it. */
   #share: HomeShare | undefined;
+  /** Whether this process lives on past each call ({@link livesOn}), so a look for Git may outlast the call. */
+  #livesOn = false;
 
   /** `decide` makes the look at the first ask, after the daemon has named its repository (`searchGitFrom`). */
   constructor(decide: () => GitLook, disks: GitDisks = machineDisks) {
@@ -763,14 +765,19 @@ export class ProcessGit {
   }
 
   /**
-   * Has each start from now on put the launcher's home's bin on `PATH` by the home share's last answer, asked again off
-   * this thread at each start ({@link HomeShare}). Only the daemon, which lives on, calls this. On a share that does not
-   * answer, the ask is pending for about 21 s, and a process that ends once its event loop is empty, as a hook or a
-   * command does, would live that long after its work. Without it a start puts both homes' bin on `PATH`, the share's
-   * first ({@link unsetHomes}), and asks the disk nothing.
+   * Has this process work as one that lives on past each call, the daemon, from now on: each start puts the launcher's
+   * home's bin on `PATH` by the home share's last answer, asked again off this thread at each start ({@link HomeShare}),
+   * and a start that finds no program at the Git kept looks for Git again ({@link afterMissing}, {@link replacedNow}).
+   * Only the daemon calls this. Each leaves a question to the disk pending past the call that asked it: on a folder that
+   * does not answer (a share off the network: Windows waits about 21 s for its server) a process cannot end until that
+   * question returns, so a hook or a command, which ends after its answer, would live that long. Without it a start
+   * puts both homes' bin on `PATH`, the share's first ({@link unsetHomes}), and asks the disk nothing; and a start that
+   * finds no program at the Git kept fails as the start did, with no look, so the next process looks afresh at its
+   * first ask.
    */
-  followHomeShare(): void {
+  livesOn(): void {
     this.#share ??= new HomeShare(path => this.#disks.folder(path));
+    this.#livesOn = true;
   }
 
   /** The Git's path; throws {@link GitUnavailableError} when none is installed. */
@@ -783,7 +790,7 @@ export class ProcessGit {
 
   /**
    * The environment a start of `executable`, a Git this process kept, gets from `env`: as {@link gitStartEnvironment}
-   * gives it, by what the look that found that Git read and, in a process that follows it ({@link followHomeShare}),
+   * gives it, by what the look that found that Git read and, in a process that follows it ({@link livesOn}),
    * the last answer about the home share. It reads no file, so no start waits on a folder.
    */
   startEnvironment(executable: string, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -800,11 +807,13 @@ export class ProcessGit {
    * no Git, or `failed` again: that start's failure stands and the Git kept stays, so the next start that fails looks
    * again, and no call starts the same missing program twice. With `limits`, the start waits for the look no longer
    * than its time limit and only until its signal is aborted: past either it gets undefined, while the look goes on and
-   * keeps what it finds for the starts after it.
+   * keeps what it finds for the starts after it. Undefined with no look in a process that does not live on
+   * ({@link livesOn}).
    */
   async afterMissing(failed: string, limits?: ReadLimits): Promise<string | undefined> {
     const kept = this.#kept;
     if (kept === undefined || kept.found.path !== failed) return kept?.found.path;
+    if (!this.#livesOn) return undefined;
     this.#looking ??= this.#lookAgain(kept);
     return await (limits === undefined ? this.#looking : withinLimits(this.#looking, limits));
   }
@@ -814,15 +823,24 @@ export class ProcessGit {
    * else the Git a look finds and keeps, a look that reads the disk in another thread and is waited for here no longer
    * than `timeoutMs`, the call's own time limit ({@link GitDisks}). Undefined when that look finds no Git or `failed`
    * again, or runs out of time; then Git is looked for again off this thread ({@link afterMissing}) for the calls that
-   * follow, and this one fails as its start did.
+   * follow, and this one fails as its start did. Undefined with no look in a process that does not live on
+   * ({@link livesOn}).
    */
   replacedNow(failed: string, timeoutMs: number): string | undefined {
     const kept = this.#kept;
     if (kept === undefined || kept.found.path !== failed) return kept?.found.path;
+    if (!this.#livesOn) return undefined;
     const again = this.#disks.within(timeoutMs, disk => keptBy(kept.look, disk));
     // A look that fails leaves the Git kept, so the next start that fails looks again.
-    if (again === undefined) this.afterMissing(failed).catch(() => undefined);
+    if (again === undefined) this.#lookLater(failed);
     return again === undefined ? undefined : this.#replace(kept, again);
+  }
+
+  /** The look {@link afterMissing} makes, for the calls after this one; a failure of it is written to stderr. */
+  #lookLater(failed: string): void {
+    this.afterMissing(failed).catch((error: unknown) => {
+      process.stderr.write(`rerail: looking for Git again after ${failed} was found gone failed: ${error instanceof Error ? error.message : String(error)}\n`);
+    });
   }
 
   async #lookAgain(kept: KeptGit): Promise<string | undefined> {
@@ -858,13 +876,22 @@ export function gitExecutable(): string {
 }
 
 /**
+ * Has this process's Git work as one that lives on past each call ({@link ProcessGit.livesOn}): each start following
+ * the home share's last answer, and Git looked for again once the Git kept is gone. Only a process that lives on calls
+ * it: the daemon ({@link prepareDaemonGit}), and tests that look for Git again.
+ */
+export function gitLivesOn(): void {
+  processGit.livesOn();
+}
+
+/**
  * Has this process's Git run as the daemon's, which serves the checkout in `folder` and lives on: looked for from that
- * folder ({@link searchGitFrom}), and each start following the home share's last answer
- * ({@link ProcessGit.followHomeShare}). The daemon calls it as it starts, before anything runs Git.
+ * folder ({@link searchGitFrom}), and working as a process that lives on does ({@link gitLivesOn}). The daemon calls it
+ * as it starts, before anything runs Git.
  */
 export function prepareDaemonGit(folder: string): void {
   searchGitFrom(folder);
-  processGit.followHomeShare();
+  gitLivesOn();
 }
 
 /** Whether a Git start failed because no program was at the path it named: Node's `ENOENT` from the start itself. */
