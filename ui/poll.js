@@ -883,7 +883,7 @@ let githubTimer = null;
 function armGithubRead() {
   clearTimeout(githubTimer);
   githubTimer = null;
-  const github = mergeAssistShown()?.readiness.github;
+  const github = mergeAssistShown()?.readiness?.github;
   if (github?.state !== "signed-in" || github.readAt === undefined) return;
   const wait = Date.parse(github.readAt) + GITHUB_READING_MS - Date.now();
   githubTimer = setTimeout(() => { githubTimer = null; if (mergeAssistShown() !== null) void refresh(); }, Math.max(INTERVAL, wait || 0));
