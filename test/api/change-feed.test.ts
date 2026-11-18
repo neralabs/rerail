@@ -1,28 +1,27 @@
+import { execFileSync } from "node:child_process";
 import { EventEmitter } from "node:events";
 import type { FSWatcher, watch as watchFolder } from "node:fs";
-import { appendFileSync, chmodSync, closeSync, constants, mkdtempSync, openSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { databaseChangeFeed, LOOK_AGAIN_MS, type ChangeNotice } from "../../src/api/change-feed.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
-/** libuv's `UV_FS_O_TEMPORARY` on Windows (`_O_TEMPORARY`): the handle deletes the file when it closes. */
-const WINDOWS_O_TEMPORARY = 0x40;
-
 /**
- * Makes `wal` in `folder` a file `stat` cannot read, as a person's machine can: on Windows a file pending delete (a
- * handle still open on it after another deleted it), elsewhere its folder's rights taken away. Returns the call that
- * undoes it.
+ * Takes the rights to the database's `folder` away, as a person's machine can, so `stat` of a file in it fails: the
+ * mode on Linux and macOS; on Windows a deny for everyone, which the folder and its files inherit (a file pending
+ * delete does not do it there: Windows 11 still answers its `stat`). The owner keeps the right to change the folder's
+ * rights, so the call it returns gives them back.
  */
-function makeUnreadable(folder: string, wal: string): () => void {
+function takeFolderRights(folder: string): () => void {
   if (process.platform !== "win32") {
     chmodSync(folder, 0o000);
     return () => chmodSync(folder, 0o700);
   }
-  const held = openSync(wal, "r");
-  closeSync(openSync(wal, constants.O_RDWR | WINDOWS_O_TEMPORARY));
-  return () => closeSync(held);
+  const icacls = win32.join(process.env.SystemRoot ?? String.raw`C:\Windows`, "System32", "icacls.exe");
+  execFileSync(icacls, [folder, "/deny", "*S-1-1-0:(OI)(CI)(F)"], { stdio: "ignore", windowsHide: true });
+  return () => execFileSync(icacls, [folder, "/remove:d", "*S-1-1-0"], { stdio: "ignore", windowsHide: true });
 }
 
 const DATABASE = join("/rerail-home", "rerail.sqlite");
@@ -221,7 +220,7 @@ describe("the database's change feed", () => {
   });
 
   // Root reads a folder whatever its rights say.
-  it.skipIf(process.getuid?.() === 0)("looks again, and throws nowhere, when the database's files cannot be read: a -wal pending delete on Windows, its folder's rights taken away elsewhere", async () => {
+  it.skipIf(process.getuid?.() === 0)("looks again, and throws nowhere, when the database's files cannot be read: their folder's rights taken away", async () => {
     const folder = fakeWatch();
     const home = mkdtempSync(join(tmpdir(), "rerail-feed-"));
     const database = join(home, "rerail.sqlite");
@@ -231,7 +230,7 @@ describe("the database's change feed", () => {
     const feed = databaseChangeFeed(database, () => version, { watch: folder.watch, beatMs: 60_000 });
     const heard: ChangeNotice[] = [];
     feed.listen(notice => heard.push(notice));
-    const restore = makeUnreadable(home, `${database}-wal`);
+    const restore = takeFolderRights(home);
     try {
       expect(() => statSync(`${database}-wal`)).toThrow(/EACCES|EPERM/u);
       folder.report("rerail.sqlite-wal");

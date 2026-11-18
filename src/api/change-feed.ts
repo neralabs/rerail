@@ -100,8 +100,8 @@ function versionTracker(version: () => string | undefined): { moved(): boolean; 
 
 /**
  * The database's main and `-wal` files by size and time: every write to either moves it. Files it cannot read (their
- * folder's rights changed, a `-wal` pending delete on Windows, a link loop) give a value never given before, so the
- * looks run as for a new write; it is read in timer callbacks, where a throw would end the daemon.
+ * folder's rights changed while the daemon runs, a link loop) give a value never given before, so the looks run as for
+ * a new write; it is read in timer callbacks, where a throw would end the daemon.
  */
 function filesWritten(databasePath: string): () => string {
   let unreadable = 0;
