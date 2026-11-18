@@ -372,7 +372,13 @@ mod tests {
         let case = "git_start::run::tests::a_run_in_a_process_whose_open_file_limit_drops";
         let this_binary = std::env::current_exe().expect("this test binary");
         let ran = std::process::Command::new(this_binary)
-            .args([case, "--exact", "--ignored", "--nocapture", "--test-threads=1"])
+            .args([
+                case,
+                "--exact",
+                "--ignored",
+                "--nocapture",
+                "--test-threads=1",
+            ])
             .env(OWN_PROCESS, "1")
             .output()
             .expect("the case in a process of its own");
