@@ -907,10 +907,9 @@ jobs:
 
   # The Windows engine the Windows unit shards load, built once per run and handed to them as the build job hands
   # Linux's to the Linux jobs. Restored from the cache keyed by its inputs on this OS when they are unchanged; on a
-  # miss, built from the cargo target of the last build (as in the build job) and saved straight after the build, so a
-  # later failure or a cancellation keeps it. The `ci-test` profile (Cargo.toml): release code without release's single
-  # codegen unit and thin LTO, which only cost time here; package.yml builds and smokes the released Windows engine. Gated
-  # as the shards are.
+  # miss, built from main's last cargo target (as in the build job) and saved straight after the build, so a later
+  # failure or a cancellation keeps it. The release profile, as `npm run build:native` and package.yml build it, the
+  # library only. Gated as the shards are.
   build-windows:
     name: Build (Windows)
     needs: changes
@@ -965,7 +964,7 @@ jobs:
             native/*.node
             native/index.js
             native/index.d.ts
-          key: rerail-native-ci-test-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-napi${{ steps.napi.outputs.version }}-${{ hashFiles('native/**', '!native/*.node', '!native/index.js', '!native/index.d.ts', 'accel/**', 'tools/bitlex/**', 'languages/**', 'Cargo.lock', 'Cargo.toml', '.cargo/config.toml', 'rust-toolchain.toml') }}
+          key: rerail-native-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-napi${{ steps.napi.outputs.version }}-${{ hashFiles('native/**', '!native/*.node', '!native/index.js', '!native/index.d.ts', 'accel/**', 'tools/bitlex/**', 'languages/**', 'Cargo.lock', 'Cargo.toml', '.cargo/config.toml', 'rust-toolchain.toml') }}
 
       - name: Install pinned Rust toolchain
         if: steps.native-cache.outputs.cache-hit != 'true'
@@ -983,10 +982,10 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: rerail-target-ci-test-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock') }}-${{ github.run_id }}
+          key: rerail-target-release-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock') }}-${{ github.run_id }}
           restore-keys: |
-            rerail-target-ci-test-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock') }}-
-            rerail-target-ci-test-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-
+            rerail-target-release-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock') }}-
+            rerail-target-release-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-
 
       - name: Date the restored target's unchanged sources before it
         if: steps.native-cache.outputs.cache-hit != 'true'
@@ -994,13 +993,9 @@ jobs:
 
       - uses: ./.github/actions/node-deps
 
-      # build:native's checks and build, under the ci-test profile, the library only.
       - name: Build the native engine
         if: steps.native-cache.outputs.cache-hit != 'true'
-        run: |
-          node scripts/build/require-cargo.mjs
-          node scripts/build/require-lfs.mjs
-          npx napi build --platform --profile ci-test --manifest-path native/Cargo.toml --output-dir native -- --lib
+        run: npm run build:native -- -- --lib
 
       - name: Save the native engine
         if: steps.native-cache.outputs.cache-hit != 'true'
@@ -1043,7 +1038,7 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-          PREFIX: rerail-target-ci-test-${{ runner.os }}-${{ runner.arch }}-
+          PREFIX: rerail-target-release-${{ runner.os }}-${{ runner.arch }}-
           KEEP: ${{ steps.target-cache.outputs.cache-primary-key }}
         run: bash scripts/build/drop-superseded-caches.sh
 
@@ -1587,9 +1582,9 @@ jobs:
           exit "$status"
 
   # The macOS engine the real-session smoke loads (it runs the hosts under sandbox-exec, so on macOS only), built as
-  # build-windows builds Windows': restored by its inputs, else built from the last cargo target under the ci-test
-  # profile and saved straight after the build, in its own job so a smoke that times out or is re-run never costs a
-  # build or loses its save. Gated as the smoke is.
+  # build-windows builds Windows': restored by its inputs, else built from main's last cargo target and saved straight
+  # after the build, in its own job so a smoke that times out or is re-run never costs a build or loses its save. Gated
+  # as the smoke is.
   build-macos:
     name: Build (macOS)
     needs: changes
@@ -1640,7 +1635,7 @@ jobs:
             native/*.node
             native/index.js
             native/index.d.ts
-          key: rerail-native-ci-test-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-napi${{ steps.napi.outputs.version }}-${{ hashFiles('native/**', '!native/*.node', '!native/index.js', '!native/index.d.ts', 'accel/**', 'tools/bitlex/**', 'languages/**', 'Cargo.lock', 'Cargo.toml', '.cargo/config.toml', 'rust-toolchain.toml') }}
+          key: rerail-native-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-napi${{ steps.napi.outputs.version }}-${{ hashFiles('native/**', '!native/*.node', '!native/index.js', '!native/index.d.ts', 'accel/**', 'tools/bitlex/**', 'languages/**', 'Cargo.lock', 'Cargo.toml', '.cargo/config.toml', 'rust-toolchain.toml') }}
 
       - name: Install pinned Rust toolchain
         if: steps.native-cache.outputs.cache-hit != 'true'
@@ -1658,10 +1653,10 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: rerail-target-ci-test-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock') }}-${{ github.run_id }}
+          key: rerail-target-release-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock') }}-${{ github.run_id }}
           restore-keys: |
-            rerail-target-ci-test-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock') }}-
-            rerail-target-ci-test-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-
+            rerail-target-release-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock') }}-
+            rerail-target-release-${{ runner.os }}-${{ runner.arch }}-${{ steps.rust-toolchain.outputs.channel }}-
 
       - name: Date the restored target's unchanged sources before it
         if: steps.native-cache.outputs.cache-hit != 'true'
@@ -1669,13 +1664,9 @@ jobs:
 
       - uses: ./.github/actions/node-deps
 
-      # build:native's checks and build, under the ci-test profile, the library only.
       - name: Build the native engine
         if: steps.native-cache.outputs.cache-hit != 'true'
-        run: |
-          node scripts/build/require-cargo.mjs
-          node scripts/build/require-lfs.mjs
-          npx napi build --platform --profile ci-test --manifest-path native/Cargo.toml --output-dir native -- --lib
+        run: npm run build:native -- -- --lib
 
       - name: Save the native engine
         if: steps.native-cache.outputs.cache-hit != 'true'
@@ -1718,7 +1709,7 @@ jobs:
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
-          PREFIX: rerail-target-ci-test-${{ runner.os }}-${{ runner.arch }}-
+          PREFIX: rerail-target-release-${{ runner.os }}-${{ runner.arch }}-
           KEEP: ${{ steps.target-cache.outputs.cache-primary-key }}
         run: bash scripts/build/drop-superseded-caches.sh
 
