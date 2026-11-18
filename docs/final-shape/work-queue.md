@@ -2286,7 +2286,10 @@ too, not as walks from every start.
   the groups' starts 20.9% of before, the CPU sweeps −21%, Metal's device time −36%. 0390's narrowing has nothing
   to narrow on a recursive utility (every read is under a move), and semi-naive rounds would save at most two thirds
   of the walks left, against an anchor evaluation per round: neither is built.
-- **Left**: the CPU's anchor evaluation costs about half of what it saves in the sweeps (0396, "Not yet").
+- **Done** (2026-11-18, 0396 §6): the CPU's anchor evaluation had cost about half of what it saved in the sweeps.
+  The formula reader now reads labels, texts and steps over every node in place, gathers an `or` into one row, and
+  tests a conjunction's steps within its tests. The group anchors went from about 0.9 s to 0.1 s; the sweeps are 2.78
+  s, against 4.43 s without group anchors. `formula_rows_are_the_sets_members` checks it node by node.
 - **Measured** (2026-11-18, `anchor_rows_per_answer`, 10 of corpus0's files, M1 Max, debug): the groups' roots
   passes start at 5,736,730 nodes a round (6,770 formula passes, which Metal walks in the groups, and 120 micro
   walks). Within the group anchors: 1,281,802 (22%); within anchors reading the settled labels, the best a per-round
@@ -2350,6 +2353,19 @@ kernel and tape format, through function constants, with nothing yet in Metal's 
 way. A user's first run after an engine update pays the same cost. Find what the compile spends: the size of the
 generated MSL, the number of pipelines, and whether each format must be its own pipeline. Then cut it, or
 precompile the libraries (a `.metallib` built with the engine).
+
+- **Measured** (2026-11-18, `label_kernels_compile_cost`, M3 Max under load): the front end is about 1 s; the back
+  end the rest (format 16 67.2 s, format 0 52.8 s, format 15 7.3 s). The walk interpreter was compiled 11 times,
+  once per stack tier (a `FRAMES` template whose stacks were in device memory anyway), and the pipelines one after
+  another.
+- **Done** (2026-11-18, decision 0409): one kernel per walk family, its frames the dispatch's (`Shape::frames`), 16
+  kernels to 8; a format's pipelines compile in parallel. Format 16: 10.7 s of back end, 6.9 s wall.
+- **Done** (2026-11-18, decision 0410): `label_micro` and `root_records` each called their walk twice, and the
+  compiler inlined a copy of it, with every format 16 read under it, at each call; one loop each, one call. Format
+  16's pipelines 10 to 5.5 s; device time unchanged. The side lists' search out of line halved the compile too, but
+  cost the walks 28% of device time: rejected.
+- **Left**: `label_group` (1.5 s) and the reads' own expansion (`tape_next` computes `size` four times), which
+  would be a change of the reads in CLIF; a measure of the compile by the compiler service's CPU, not wall.
 
 ### Q69. The `.rr` ladder's field ids lose 64 in the interpreters and the compiled parser
 

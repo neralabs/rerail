@@ -981,6 +981,132 @@ fn on_metal_anchored_walks_find_the_unanchored_roots() {
 /// where its root walk starts) against the roots it finds, the root walk's steps, and the rows its label passes
 /// start at (each pass's domain). A census, not a check: it prints the totals and the clauses with the most
 /// candidates per answer and the most steps.
+/// The members of `set` on `tape`, node by node from what each test and step means: the reference the formula reader
+/// (`compile_sets::Reader`) is checked against, whatever order or shortcut it evaluates in.
+fn set_members(set: &super::compile_sets::Set, tape: &TapeDoc, labels: &[Vec<u64>], texts: &[Vec<u64>]) -> Vec<bool> {
+    use super::compile_sets::{Set, Step};
+    use crate::code_rule_dsl::tape::DERIVED_CLASS_BASE;
+    let len = tape.transducer_len() as u32;
+    let bit = |row: &[u64], node: u32| row.get(node as usize / 64).is_some_and(|word| word >> (node % 64) & 1 != 0);
+    let named = |node: u32, named: bool| !named || tape.transducer_flags(node) & crate::code_rule_dsl::transducer::NAMED != 0;
+    let each = |f: &dyn Fn(u32) -> bool| (0..len).map(f).collect::<Vec<_>>();
+    let of = |set: &Set| set_members(set, tape, labels, texts);
+    match set {
+        Set::All => vec![true; len as usize],
+        Set::Kind(kind) => each(&|node| tape.transducer_kind(node) == *kind),
+        Set::Field(field) => each(&|node| tape.transducer_field(node) == *field),
+        Set::Flags { mode, arg } => each(&|node| tape.transducer_flags(node) & mode == *mode && tape.transducer_flags(node) & arg == 0),
+        Set::Class(class) if *class >= DERIVED_CLASS_BASE => each(&|node| labels.get(usize::from(class - DERIVED_CLASS_BASE)).is_some_and(|row| bit(row, node))),
+        Set::Class(class) => each(&|node| tape.transducer_has_supertype(node, *class)),
+        Set::Text(slot) => each(&|node| texts.get(usize::from(*slot)).is_some_and(|row| bit(row, node))),
+        Set::And(parts) => parts.iter().map(of).fold(vec![true; len as usize], |a, b| a.iter().zip(b).map(|(a, b)| *a && b).collect()),
+        Set::Or(parts) => parts.iter().map(of).fold(vec![false; len as usize], |a, b| a.iter().zip(b).map(|(a, b)| *a || b).collect()),
+        Set::Child { named: n, of: inner } => {
+            let inner = of(inner);
+            each(&|node| tape.transducer_children(node).any(|child| inner[child as usize] && named(child, *n)))
+        }
+        Set::Descendant { named: n, of: inner } => {
+            let inner = of(inner);
+            each(&|node| tape.transducer_descendants(node).any(|below| inner[below as usize] && named(below, *n)))
+        }
+        Set::Following { named: n, of: inner } => {
+            let inner = of(inner);
+            each(&|node| {
+                tape.transducer_parent(node).is_some_and(|parent| tape.transducer_children(parent).skip_while(|&c| c != node).skip(1).any(|c| inner[c as usize] && named(c, *n)))
+            })
+        }
+        Set::Parent(inner) => {
+            let inner = of(inner);
+            each(&|node| tape.transducer_parent(node).is_some_and(|parent| inner[parent as usize]))
+        }
+        Set::Chain { named: n, through, to } => {
+            let (through, to) = (of(through), of(to));
+            // A node with a child that ends the chain: in `to`, or in `through` with such a child itself.
+            let mut reach = vec![false; len as usize];
+            for node in (0..len).rev() {
+                reach[node as usize] = tape.transducer_children(node).any(|c| named(c, *n) && (to[c as usize] || (through[c as usize] && reach[c as usize])));
+            }
+            reach
+        }
+        Set::Reached { step, named: n, from } => {
+            let from = of(from);
+            match step {
+                Step::Child => each(&|node| named(node, *n) && tape.transducer_parent(node).is_some_and(|p| from[p as usize])),
+                Step::Descendant => each(&|node| {
+                    named(node, *n) && std::iter::successors(tape.transducer_parent(node), |&p| tape.transducer_parent(p)).any(|a| from[a as usize])
+                }),
+                Step::Parent => each(&|node| tape.transducer_children(node).any(|c| from[c as usize])),
+                Step::Following => each(&|node| {
+                    named(node, *n) && tape.transducer_parent(node).is_some_and(|p| tape.transducer_children(p).take_while(|&c| c != node).any(|c| from[c as usize]))
+                }),
+                Step::Chain(through) => {
+                    let through = of(through);
+                    let mut reached = vec![false; len as usize];
+                    for node in 0..len {
+                        reached[node as usize] = named(node, *n)
+                            && tape.transducer_parent(node).is_some_and(|p| from[p as usize] || (reached[p as usize] && through[p as usize]));
+                    }
+                    reached
+                }
+            }
+        }
+    }
+}
+
+/// The formula reader's sets are their members (`set_members`): each label program's anchor, its anchor with its
+/// recursive group's labels read as every node (Q133), and its formula where it is one, on real tapes with their
+/// labels settled. The reader tests a conjunction's steps within its tests and keeps the steps over every node; the
+/// members are the same.
+#[test]
+fn formula_rows_are_the_sets_members() {
+    use super::compile_sets::{Index, Reader, Set};
+    let mut tapes = fixtures();
+    tapes.truncate(3);
+    let compiled = clauses();
+    let mut lowered = Vec::new();
+    for (_, compiled) in &compiled {
+        for (_, grammar) in python_matchers(compiled) {
+            if let Ok(tree) = match_tree(grammar)
+                && let Ok(matcher) = LoweredMatcher::lower(&tree)
+            {
+                lowered.push(matcher);
+            }
+        }
+    }
+    let (mut sets, mut differ) = (0, Vec::new());
+    for matchers in lowered.chunks(16) {
+        let wave = LoweredWave::new(&matchers.iter().collect::<Vec<_>>()).unwrap();
+        let active = vec![vec![true; tapes.len()]; matchers.len()];
+        let Ok(views) = wave.labelled(&tapes, &active) else { continue };
+        for (t, view) in views.iter().enumerate() {
+            let index = Index::default();
+            let labels = view.transducer_labels();
+            for clause in &wave.clauses {
+                for (at, def) in clause.labels.defs.iter().enumerate() {
+                    let (Label::Roots(program, _) | Label::Targets(program, _) | Label::Count { program, .. }) = def else { continue };
+                    let Some(walk) = super::compile_micro::Micro::of(program) else { continue };
+                    let texts = walk.texts(program, view).unwrap_or_default();
+                    let id = (crate::code_rule_dsl::tape::DERIVED_CLASS_BASE as usize + clause.labels.offset() + at) as u16;
+                    let group = clause.labels.group_of(id).unwrap_or(&[]);
+                    let unknown = |label: u16| group.contains(&(crate::code_rule_dsl::tape::DERIVED_CLASS_BASE + label));
+                    let anchor = Set::anchor(&walk.words, &|slot| usize::from(slot) < texts.len());
+                    for set in [Some(anchor.clone()), Some(anchor.labels_unknown(&unknown)), Set::of(&walk.words)].into_iter().flatten() {
+                        let read = Reader { tape: view, index: &index, labels, texts: &texts }.eval(&set);
+                        let want = set_members(&set, view, labels, &texts);
+                        sets += 1;
+                        if let Some(node) = (0..want.len()).find(|&node| want[node] != (read[node / 64] >> (node % 64) & 1 != 0)) {
+                            differ.push(format!("tape {t} node {node}: {set:?}"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("formula rows: {sets} sets, {} differ", differ.len());
+    assert!(sets > 1000, "the clauses' label programs give sets ({sets})");
+    assert!(differ.is_empty(), "{} sets differ from their members: {:?}", differ.len(), &differ[..differ.len().min(5)]);
+}
+
 /// The reads of recursive utilities in `tree` (`Recur`), and those not under a move (`Walk`, `Count`, a fact's slot or
 /// a constraint, each tested at another node): `counts`' two halves.
 fn unmoved_recurs(tree: &crate::code_rule_dsl::matcher::lower::MatchTree, moved: bool, counts: &mut (usize, usize)) {
@@ -1044,6 +1170,7 @@ fn anchor_rows_per_answer() {
         Reader { tape: view, index, labels: view.transducer_labels(), texts: &texts }.eval(&set)
     };
     let anchored = |program: &super::Program, view: &TapeDoc, index: &super::compile_sets::Index| anchored_with(program, view, index, &|_| false);
+
     let get = |bits: &[u64], node: u32| bits.get(node as usize / 64).is_some_and(|w| w >> (node % 64) & 1 != 0);
     for (matchers, names) in lowered.chunks(16).zip(names.chunks(16)) {
         let wave = LoweredWave::new(&matchers.iter().collect::<Vec<_>>()).unwrap();
@@ -1542,3 +1669,97 @@ fn ast_pattern_verdicts_reuse_their_bindings() {
     }
 }
 
+
+/// A tape's presence bitmap (the codes it holds, in its header): of every (program, file) pair, how many the file's
+/// kinds and fields alone rule out before any label is known (`possible`), against how many have an empty anchor
+/// with every label read as every node (what any file-level test could rule out at most), by pairs and by the
+/// nodes a pass over those files would read.
+#[test]
+#[ignore = "a census, run by name"]
+fn presence_bitmap_census() {
+    use super::compile_sets::Set;
+    use std::collections::HashSet;
+    fn possible(set: &Set, kinds: &HashSet<u16>, fields: &HashSet<u16>) -> bool {
+        match set {
+            Set::Kind(k) => kinds.contains(k),
+            Set::Field(f) => fields.contains(f),
+            Set::And(parts) => parts.iter().all(|p| possible(p, kinds, fields)),
+            Set::Or(parts) => parts.iter().any(|p| possible(p, kinds, fields)),
+            Set::Child { of, .. } | Set::Descendant { of, .. } | Set::Parent(of) | Set::Following { of, .. } | Set::Reached { from: of, .. } => possible(of, kinds, fields),
+            Set::Chain { to, .. } => possible(to, kinds, fields),
+            Set::All | Set::Flags { .. } | Set::Class(_) | Set::Text(_) => true,
+        }
+    }
+    let mut tapes = fixtures();
+    if std::env::var_os("RERAIL_S1_FILES").is_none() {
+        tapes.truncate(20);
+    }
+    let mut lowered = Vec::new();
+    for (_, compiled) in &clauses() {
+        for (_, grammar) in python_matchers(compiled) {
+            if let Ok(tree) = match_tree(grammar)
+                && let Ok(matcher) = LoweredMatcher::lower(&tree)
+            {
+                lowered.push(matcher);
+            }
+        }
+    }
+    let present: Vec<(HashSet<u16>, HashSet<u16>)> = tapes
+        .iter()
+        .map(|t| (0..t.transducer_len() as u32).map(|n| (t.transducer_kind(n), t.transducer_field(n))).unzip())
+        .collect();
+    let distinct: Vec<usize> = present.iter().map(|(k, _)| k.len()).collect();
+    eprintln!("presence: {} files, {} nodes, kinds a file: min {} median {} max {}", tapes.len(), tapes.iter().map(TapeDoc::transducer_len).sum::<usize>(), distinct.iter().min().unwrap_or(&0), {
+        let mut d = distinct.clone();
+        d.sort_unstable();
+        d.get(d.len() / 2).copied().unwrap_or(0)
+    }, distinct.iter().max().unwrap_or(&0));
+    // (role) -> pairs, pairs ruled out by presence, pairs with an empty anchor; the same weighted by the file's nodes.
+    let mut counts = BTreeMap::<&str, [u64; 6]>::new();
+    for chunk in lowered.chunks(16) {
+        let wave = LoweredWave::new(&chunk.iter().collect::<Vec<_>>()).unwrap();
+        let active = vec![vec![true; tapes.len()]; chunk.len()];
+        let Ok(views) = wave.labelled(&tapes, &active) else { continue };
+        let indexes: Vec<super::compile_sets::Index> = views.iter().map(|_| Default::default()).collect();
+        for clause in &wave.clauses {
+            let mut programs = vec![("clause", &clause.program)];
+            for def in &clause.labels.defs {
+                match def {
+                    Label::Roots(p, _) | Label::Targets(p, _) | Label::Pattern(p, _) | Label::Constrained(p, _, _) => programs.push(("label", p)),
+                    Label::Count { program, .. } => programs.push(("label", program)),
+                    Label::Complement(_) | Label::Fact(..) | Label::Empty => {}
+                }
+            }
+            for (role, program) in programs {
+                let walk = super::compile_micro::Micro::of(program);
+                for ((view, index), (kinds, fields)) in views.iter().zip(&indexes).zip(&present) {
+                    let texts = walk.as_ref().and_then(|walk| walk.texts(program, view));
+                    let set = match (&walk, &texts) {
+                        (Some(walk), Some(_)) => Set::anchor(&walk.words, &|_| true),
+                        _ => Set::anchor(&program.words, &|_| false),
+                    }
+                    .labels_unknown(&|_| true);
+                    let texts = texts.unwrap_or_default();
+                    let empty = super::compile_sets::Reader { tape: view, index, labels: view.transducer_labels(), texts: &texts }.eval(&set).iter().all(|w| *w == 0);
+                    let ruled_out = !possible(&set, kinds, fields);
+                    assert!(!ruled_out || empty, "a set ruled out by presence has members");
+                    let nodes = view.transducer_len() as u64;
+                    let c = counts.entry(role).or_default();
+                    c[0] += 1;
+                    c[1] += u64::from(ruled_out);
+                    c[2] += u64::from(empty);
+                    c[3] += nodes;
+                    c[4] += if ruled_out { nodes } else { 0 };
+                    c[5] += if empty { nodes } else { 0 };
+                }
+            }
+        }
+    }
+    for (role, c) in &counts {
+        let pct = |a: u64, b: u64| 100.0 * a as f64 / b.max(1) as f64;
+        eprintln!(
+            "presence: {role:<6} {} pairs: ruled out by presence {} ({:.1}%), empty anchor {} ({:.1}%); by nodes: {:.1}% and {:.1}%",
+            c[0], c[1], pct(c[1], c[0]), c[2], pct(c[2], c[0]), pct(c[4], c[3]), pct(c[5], c[3])
+        );
+    }
+}
