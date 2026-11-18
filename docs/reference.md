@@ -435,10 +435,13 @@ The daemon writes rules and work links; the shared runtime records harness event
 - `/healthz` reports version, pid, database path and presence, kernel status, `installedAt`, and `model`: bundled model files checked once per process against `model/manifest.json`, `ok` or the problem and file. `healthy` means engine and model are ok; `status` only means the daemon answers.
 - `/mcp` is stateless and JSON-response. Non-POST gets `405 Allow: POST`; there is no SSE listener or transport session.
 - `/api/changes[?checkout=<path>]` stays open while the dashboard tab shows. Each message's data is a change token: it
-  is sent at once, again whenever any process commits to the database or the installed packs or the checkout's own
-  rules change, and every 5 s with nothing new, so the page can tell a daemon that stopped answering from one with
-  nothing to say. A message named `conflicts` comes at each Merge Assist conflict event. The page reads again when the
-  token moves, at most every 5 s while changes keep coming. A daemon that stops closes the stream.
+  is sent at once, again when any process's commit to the database becomes readable or a pack is installed or
+  removed, and every 5 s, when it also covers the checkout's own rules and branches, so the page can tell a daemon
+  that stopped answering from one with nothing to say. A message named `conflicts` comes at each Merge Assist conflict
+  event. The page reads again when the token moves, at most every 5 s while changes keep coming, and at a 5 s message
+  once its activity window has moved on, or while its Merge Assist page shows a scan running or gh not ready. A failed
+  read is tried again after 5 s, doubling to 30 s. A browser without Web Locks, or a page that is not a secure context,
+  holds no stream and reads every 5 s. A daemon that stops closes the stream.
 - UI client-side routes fall back to `index.html`.
 
 Without the native addon the daemon still runs: `status`, `/healthz` and the UI header report the kernel unavailable, and transcripts stay readable. Model files can fail `model/manifest.json`; a clone without Git LFS has a pointer for `model.safetensors`. Then `rerail status` prints `Model: checksum mismatch (model.safetensors)` and exits 5, and `/healthz` reports it. The dashboard header turns red naming the file, and session attaches fail until the files are fetched and the daemon restarted.
