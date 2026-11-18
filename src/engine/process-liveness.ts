@@ -18,28 +18,38 @@ export type ProcessSignal = (pid: number, signal?: string | number) => boolean;
  * POSIX `kill(2)` and in libuv's Windows `uv_kill` alike; any other failure is read as gone.
  */
 export function processState(pid: number, kill: ProcessSignal = (target, signal) => process.kill(target, signal)): ProcessState {
-  let state: ProcessState = "running";
+  const signalled = signalState(pid, kill);
+  if (signalled === "gone") return "gone";
+  const zombie = isZombie(pid);
+  // A zombie answers signal 0 until it is reaped, and its /proc entry goes with the reaping: one reaped between the
+  // signal and the read answers the signal again with `ESRCH`, so it reads as gone, never as running.
+  if (zombie === undefined) return signalState(pid, kill);
+  return zombie ? "gone" : signalled;
+}
+
+/** What signal 0 alone says of `pid`. */
+function signalState(pid: number, kill: ProcessSignal): ProcessState {
   try {
     kill(pid, 0);
   } catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "EPERM")) return "gone";
-    state = "running-not-signalable";
+    return error instanceof Error && "code" in error && error.code === "EPERM" ? "running-not-signalable" : "gone";
   }
-  return isZombie(pid) ? "gone" : state;
+  return "running";
 }
 
 /**
  * A process that has exited but was never reaped still answers signal 0. In a container without an init process
  * nothing reaps a detached daemon, so it stays a zombie for as long as the container runs: it holds no port, no socket
- * and no lock, and counts as gone.
+ * and no lock, and counts as gone. Undefined on Linux when `/proc` has no entry to read for `pid`: it was reaped since
+ * it answered, or `/proc` hides it or is not mounted.
  */
-function isZombie(pid: number): boolean {
+function isZombie(pid: number): boolean | undefined {
   if (process.platform !== "linux") return false;
   let stat: string;
   try {
     stat = readFileSync(`/proc/${pid}/stat`, "utf8");
   } catch {
-    return false;
+    return undefined;
   }
   // `pid (comm) state …`: the command name may itself hold spaces and parentheses, so the state follows the last `)`.
   return /^\s*[ZX]/u.test(stat.slice(stat.lastIndexOf(")") + 1));

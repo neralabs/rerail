@@ -87,4 +87,13 @@ export class ToolCallWindows {
     for (const running of this.#running.values()) if (running.start <= to && counted(running)) return true;
     return this.#finished.some(window => window.start <= to && window.end >= from && counted(window));
   }
+
+  /**
+   * Whether call `toolCallId` still runs and had begun by `stamp`: what it wrote then may not be all it writes. With no
+   * stamp to go by, whether it still runs.
+   */
+  runsSince(toolCallId: string, stamp: number | undefined): boolean {
+    const running = this.#running.get(toolCallId);
+    return running !== undefined && (stamp === undefined || running.start <= stamp);
+  }
 }

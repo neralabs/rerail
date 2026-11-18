@@ -17,13 +17,15 @@ import { StampTreeWatch } from "./support/stamp-tree-watch.js";
 
 /**
  * How many times a walk read each file whole (`WalkReadBuffers.lend`), by the path it was read at; each path `lstat` was
- * asked about; the listings held back until a test lets them go, by folder; how many times Git listed each checkout's
- * changed files; and the files whose next opening fails as one another process holds does.
+ * asked about; the listings held back until a test lets them go, by folder; the openings held back the same way, by
+ * file; how many times Git listed each checkout's changed files; and the files whose next opening fails as one another
+ * process holds does.
  */
 const counted = vi.hoisted(() => ({
   reads: new Map<string, number>(),
   stats: [] as string[],
   held: new Map<string, () => Promise<void>>(),
+  heldOpenings: new Map<string, () => Promise<void>>(),
   listings: new Map<string, number>(),
   busy: new Set<string>(),
 }));
@@ -43,6 +45,9 @@ vi.mock("node:fs/promises", async importOriginal => {
     ...actual,
     open: async (...args: Parameters<typeof actual.open>) => {
       if (counted.busy.delete(String(args[0]))) throw Object.assign(new Error("EBUSY: resource busy or locked, open"), { code: "EBUSY" });
+      const hold = counted.heldOpenings.get(String(args[0]));
+      counted.heldOpenings.delete(String(args[0]));
+      await hold?.();
       return await actual.open(...args);
     },
     lstat: async (...args: Parameters<typeof actual.lstat>) => {
@@ -78,6 +83,7 @@ const releases: Array<() => void> = [];
 afterEach(async () => {
   releases.splice(0).forEach(release => release());
   counted.held.clear();
+  counted.heldOpenings.clear();
   counted.busy.clear();
   await Promise.all(bridges.splice(0).map(bridge => bridge.close()));
   reads.clear();
@@ -233,6 +239,18 @@ function holdListing(folder: string): { entered: Promise<void>; release: () => v
   const released = Promise.withResolvers<void>();
   releases.push(released.resolve);
   counted.held.set(folder, async () => {
+    entered.resolve();
+    await released.promise;
+  });
+  return { entered: entered.promise, release: released.resolve };
+}
+
+/** Holds the next opening of `file` until `release` is called; `entered` resolves as the opening starts. */
+function holdOpening(file: string): { entered: Promise<void>; release: () => void } {
+  const entered = Promise.withResolvers<void>();
+  const released = Promise.withResolvers<void>();
+  releases.push(released.resolve);
+  counted.heldOpenings.set(file, async () => {
     entered.resolve();
     await released.promise;
   });
@@ -463,6 +481,31 @@ describe("WorktreeWalks", () => {
     await turn(first, second, third);
     // `w4` is new to each session: listed once for the first session's walk and once for the walk the other two share.
     expect(listings.get(worktrees[3]!)).toBe(2);
+  });
+
+  it("lists a worktree's changed files from Git once for a session still taking the walk that first showed it, whatever walks begin meanwhile", async () => {
+    const { checkouts, worktrees } = await repository();
+    await mkdir(join(worktrees[2]!, "deep"));
+    const walks = new WorktreeWalks({ gapMs: 0 });
+    const first = await session(worktrees[0]!, checkouts, walks);
+    const second = await opened(worktrees[1]!, checkouts, walks);
+    const walk = holdListing(join(worktrees[2]!, "deep"));
+    await second.bridge.checkpoint("turn");
+    await walk.entered;
+    // A tool call holds the second session's lane while it reads the file it names, so the second session takes the walk
+    // that first shows it the other worktrees only once that call has begun.
+    const call = holdOpening(join(worktrees[1]!, "src", "held.py"));
+    const begun = second.bridge.begin("write-1", "write", { path: "src/held.py" });
+    await call.entered;
+    walk.release();
+    // The first session's next walk begins while the second still takes that one, and shows it nothing first.
+    await turn(first);
+    call.release();
+    await begun;
+    await second.bridge.finish("write-1");
+    await turn(second);
+    // `w3` is new to the first session's first walk and to the second session's, and to no walk after them.
+    expect(listings.get(worktrees[2]!)).toBe(2);
   });
 
   it("walks at once for a session whose own last walk is past the gap, whatever walk another session just had", async () => {

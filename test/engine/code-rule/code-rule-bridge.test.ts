@@ -1272,6 +1272,40 @@ describe("CodeRuleBridge", () => {
     }));
   });
 
+  // Claude Code runs a turn's commands side by side. The walk at one's result found the file the other was still
+  // writing, emptied and not yet written again, audited that as the session's edit, and measured the other's change
+  // from the empty file, so every line of it read as the agent's. So too for a command answered while the evaluator
+  // opened, as a reopened session's first one in OMP, whose writes the turn's end reports.
+  it.each([
+    ["begun", (bridge: CodeRuleBridge) => bridge.begin("shell-1", "Bash", { command: "python3 generate.py" }), (bridge: CodeRuleBridge) => bridge.finish("shell-1")],
+    ["answered while the evaluator opened", (bridge: CodeRuleBridge) => bridge.unwatchedCall("shell-1", { toolName: "Bash" }), async (bridge: CodeRuleBridge) => {
+      await bridge.unwatchedResult("shell-1");
+      await bridge.checkpoint("turn");
+    }],
+  ] as const)("leaves a file a command %s is still writing to the walk after it ends, though another command's result walks first", async (_kind, start, end) => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, "x = 1\n");
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, auditor(auditGeneratedEdits));
+    await bridge.openWorkspace("session-1");
+    await bridge.begin("write-1", "write", { path: ["src/a.py"] });
+    await writeFile(path, "x = 2\n");
+    await bridge.finish("write-1");
+    await awaitClockAfter(path);
+
+    await start(bridge);
+    await bridge.begin("shell-2", "Bash", { command: "ls" });
+    await writeFile(path, "");
+    await bridge.finish("shell-2");
+    await writeFile(path, "x = 2\ny = 3\n");
+    await end(bridge);
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits).map(({ generatedText, previousText, previousReadError }) => ({ generatedText, previousText, previousReadError }))).toEqual([
+      { generatedText: "x = 2\n", previousText: "x = 1\n", previousReadError: undefined },
+      { generatedText: "x = 2\ny = 3\n", previousText: "x = 2\n", previousReadError: undefined },
+    ]);
+  });
+
   it("delivers committed full-file snapshots in deterministic batches", async () => {
     const root = await workspace();
     await writeFile(join(root, "src", "a.py"), "before\n");

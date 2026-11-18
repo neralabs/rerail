@@ -1416,7 +1416,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     event: Extract<AdapterEvent, { kind: "call" }>,
   ): Promise<Readonly<Record<string, Preimage>> | undefined> {
     if (bridge !== undefined) return await bridge.begin(event.toolCallId, event.toolName, event.input, undefined, event.cwd);
-    await state.codeRuleBridge?.unwatchedCall(event.toolCallId, event.cwd);
+    await state.codeRuleBridge?.unwatchedCall(event.toolCallId, { toolName: event.toolName, cwd: event.cwd });
     return undefined;
   }
 
@@ -1447,7 +1447,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    */
   async #noteTurnWindow(state: RuntimeSessionState, event: AdapterEvent): Promise<void> {
     if (ADAPTER_CAPABILITIES[state.descriptor.host].observedFileWrite !== "shell") return;
-    if (event.kind === "user-prompt" || event.kind === "call") await state.codeRuleBridge?.unwatchedCall(TURN_WINDOW_ID, event.session?.cwd);
+    if (event.kind === "user-prompt" || event.kind === "call") await state.codeRuleBridge?.unwatchedCall(TURN_WINDOW_ID, { cwd: event.session?.cwd });
     else if (event.kind === "turn-end") await state.codeRuleBridge?.unwatchedResult(TURN_WINDOW_ID);
   }
 
