@@ -16,11 +16,12 @@ const LOCK_FILE = "daemon.lock";
 const HOLDER_FILE = "daemon.json";
 
 /**
- * How long a daemon waits for a lock another process holds before it takes that holder for a running daemon. A start
- * that asks whether a daemon runs ({@link homeDaemonLockHeld}) holds it for an instant, and a daemon restarting itself
- * lets go as it exits, just after it launches the next one: the OS hands the lock to the waiting daemon at that release,
- * well inside this bound. Only a running daemon holds it for longer, and nothing but time tells one from a holder that is
- * about to let go.
+ * How long a daemon waits for a lock another process holds before it takes that holder for a running daemon. A daemon
+ * restarting itself gives the lock up as it closes, before it launches the next one, so that one never waits for it.
+ * Who can still hold it: a start asking whether a daemon runs ({@link homeDaemonLockHeld}), for an instant; a daemon of
+ * a Rerail before this one, which let go only as it exited, after it launched the next; a daemon between its take and
+ * its record, for an instant; and a running daemon. The OS hands the lock over at any release, so this bound paces
+ * nothing: it only says when a holder that has not let go is taken for a running daemon.
  */
 const ACQUIRE_WAIT_MS = 1_000;
 
@@ -41,7 +42,7 @@ export interface HomeDaemonLease {
    * missing file, or no file id), the home counts as held, as before the check.
    */
   holdsHome(): boolean;
-  /** Gives the lock up before process exit, once the daemon has closed. */
+  /** Gives the lock up before process exit, once the daemon has closed (`RerailDaemonOptions.homeLease`). */
   release(): void;
 }
 
