@@ -816,6 +816,11 @@ describe("source-scoped steers", () => {
   });
 
   describe("a Claude Code session reopened while its rules open again", () => {
+    // A case that times out never reaches its own clean-up: the next case must not start under its faked setTimeout.
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
     /** The steer the needle rule gives for `file`. */
     const needle = (file: string) => expect.objectContaining({ content: expect.stringContaining(`- ${file}:1:1 — No needle [`) });
 
