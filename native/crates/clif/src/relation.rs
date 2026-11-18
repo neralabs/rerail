@@ -27,6 +27,9 @@ const SPAN_OFF: i32 = offset_of!(Span<u64>, off) as i32;
 const SPAN_LEN: i32 = offset_of!(Span<u64>, len) as i32;
 const ROWS_MIN_LOG: i32 = offset_of!(Rows, min_log) as i32;
 const ROWS_COLS: i32 = offset_of!(Rows, cols) as i32;
+const ROWS_RESERVED: i32 = offset_of!(Rows, reserved) as i32;
+const ROWS_NEEDED: i32 = offset_of!(Rows, needed) as i32;
+const ROWS_NCOLS: i32 = offset_of!(Rows, ncols) as i32;
 const COL_WIDTH: i32 = offset_of!(ColDir, width) as i32;
 const COL_CHUNK: i32 = offset_of!(ColDir, chunk) as i32;
 const COL_SIZE: i64 = size_of::<ColDir>() as i64;
@@ -142,6 +145,54 @@ pub fn rows_at(b: &mut B<'_, '_>) -> Value {
     let min_log = b.word_at(I32, b.tape, ROWS_MIN_LOG);
     let dir = b.call("rows_col", &[c]);
     b.call_at("col_at", dir, &[min_log, i])
+}
+
+/// `rows_put(rows, i, c, v)`: `v` written as row `i`'s value in column `c`, at the column's width; 1. Where the row
+/// is not below the rows the chunks hold (`reserved`), or the column not below the columns, nothing is written and
+/// the rows' `needed` is counted (the overflow protocol); 0. Decision 0427: a device writer's row and column come
+/// from its sizes and its kernels, which the host's sizing bounds; this bounds them whatever the sizes held. A row
+/// past the chunks made would find a chunk's offset 0, its address the column's directory, and overwrite it and the
+/// descriptors after it (Q253).
+pub fn rows_put(b: &mut B<'_, '_>) -> Value {
+    let (i, c, v) = (b.arg(0), b.arg(1), b.arg(2));
+    let reserved = b.word_at(I32, b.tape, ROWS_RESERVED);
+    let ncols = b.word_at(I32, b.tape, ROWS_NCOLS);
+    let in_rows = b.f.ins().icmp(IntCC::UnsignedLessThan, i, reserved);
+    let in_cols = b.f.ins().icmp(IntCC::UnsignedLessThan, c, ncols);
+    let ok = b.f.ins().band(in_rows, in_cols);
+    b.either(
+        I32,
+        ok,
+        |b| {
+            let p = b.call("rows_at", &[i, c]);
+            let width = b.call("rows_width", &[c]);
+            let four = b.f.ins().icmp_imm(IntCC::Equal, width, 4);
+            b.either(
+                I32,
+                four,
+                |b| {
+                    let low = b.f.ins().ireduce(I32, v);
+                    b.f.ins().store(written(), low, p, 0);
+                    b.c32(1)
+                },
+                |b| {
+                    b.f.ins().store(written(), v, p, 0);
+                    b.c32(1)
+                },
+            )
+        },
+        |b| {
+            let needed = b.f.ins().iadd_imm(b.tape, i64::from(ROWS_NEEDED));
+            let one = b.c32(1);
+            b.f.ins().atomic_rmw(I32, cranelift_codegen::ir::MemFlags::trusted(), cranelift_codegen::ir::AtomicRmwOp::Add, needed, one);
+            b.c32(0)
+        },
+    )
+}
+
+/// A store of a row's value: aligned, as the loads of the block's words are, and not read-only.
+fn written() -> cranelift_codegen::ir::MemFlags {
+    cranelift_codegen::ir::MemFlags::new().with_notrap().with_aligned()
 }
 
 /// `rows_get(rows, i, c)`: row `i`'s value in column `c` (a 4-byte column's unsigned).
@@ -308,6 +359,52 @@ mod tests {
                 assert_eq!(g, ((start as u64) << 32) | group.len() as u64, "rel_group of row {id}'s key");
             }
         }
+    }
+
+    /// Decision 0427: the device's row writer (`rows_put`) writes a row the chunks hold at its column's width, and
+    /// a row past them, or a column past the columns, not at all: it counts the rows' `needed`, and the relation's
+    /// directory and descriptor are as they were (a row past the chunks made would have found a chunk offset of 0,
+    /// its address the column's directory: Q253).
+    #[test]
+    fn the_devices_row_writer_stays_in_its_rows() {
+        let reads = crate::jit::Reads::new();
+        type Put = extern "C" fn(*const u8, u32, u32, u64) -> u32;
+        type Two = extern "C" fn(*const u8, u32, u32) -> u64;
+        // SAFETY: each read's signature: its descriptor's address, then its parameters.
+        let (put, get): (Put, Two) = unsafe { (std::mem::transmute(reads.function("rows_put")), std::mem::transmute(reads.function("rows_get"))) };
+        let spec = Spec { widths: vec![8, 4], order: vec![0], indexes: vec![], min_log: 4 };
+        let lock = Mutex::new(());
+        let block = Block::anon(kind::FACTS, 1 << 20);
+        let rel = Relation::create(&block, &spec, None);
+        RelW { block: &block, rel, lock: &lock }.extend(&(0..40i64).flat_map(|i| [i, i]).collect::<Vec<_>>());
+        let rows = std::ptr::from_ref(&rel.rows).cast::<u8>();
+        let reserved = rel.rows.reserved.load(std::sync::atomic::Ordering::Relaxed);
+        assert!(reserved >= 40);
+        let descriptor = |r: &Relation| unsafe { std::slice::from_raw_parts(std::ptr::from_ref(r).cast::<u8>(), std::mem::size_of::<Relation>()) }.to_vec();
+        let dirs = |r: &Relation| r.rows.cols.as_slice().iter().map(|d| (d.width, d.chunk.iter().map(|c| c.load(std::sync::atomic::Ordering::Relaxed)).collect::<Vec<_>>())).collect::<Vec<_>>();
+        // In its rows: written at the column's width (the 4-byte column's next row untouched).
+        assert_eq!(put(rows, 7, 0, 0x0101_463c_52c3_00cd), 1);
+        assert_eq!(put(rows, 7, 1, 0xFFFF_FFFF_0000_0009), 1);
+        assert_eq!(get(rows, 7, 0), 0x0101_463c_52c3_00cd);
+        assert_eq!((get(rows, 7, 1), get(rows, 8, 1)), (9, 8));
+        // What an unchecked writer's address was (`rows_at`): a row past the chunks made, inside its column's
+        // directory, whose chunk offsets it would overwrite.
+        // SAFETY: `rows_at`'s signature; it reads the descriptor and the directory only.
+        let at: Two = unsafe { std::mem::transmute(reads.function("rows_at")) };
+        let col = std::ptr::from_ref(&rel.rows.cols.as_slice()[0]) as u64;
+        let wild = at(rows, reserved + 16, 0);
+        assert!((col..col + std::mem::size_of::<rerail_blocks::rows::ColDir>() as u64).contains(&wild), "row {} at {wild:#x}, the directory at {col:#x}", reserved + 16);
+        // Past its chunks, or its columns: nothing written, each counted.
+        let (before, dir) = (descriptor(rel), dirs(rel));
+        for (i, c) in [(reserved, 0), (reserved, 1), (reserved + 5000, 0), (u32::MAX, 1), (3, 2), (3, u32::MAX)] {
+            assert_eq!(put(rows, i, c, 0x0101_463c_52c3_00cd), 0, "row {i} column {c}");
+        }
+        assert_eq!(rel.rows.needed.load(std::sync::atomic::Ordering::Relaxed), 6);
+        let mut now = descriptor(rel);
+        let at = std::mem::offset_of!(Relation, rows) + std::mem::offset_of!(rerail_blocks::rows::Rows, needed);
+        now[at..at + 4].copy_from_slice(&before[at..at + 4]);
+        assert_eq!(now, before, "the descriptor, but for its count");
+        assert_eq!(dirs(rel), dir, "the columns' directories");
     }
 
     /// The host's chunk arithmetic for ranges (`rows::chunk_of`) is the reads': every row's address through

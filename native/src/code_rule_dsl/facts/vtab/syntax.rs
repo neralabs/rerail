@@ -3158,6 +3158,13 @@ struct NodeRows {
 }
 
 impl NodeRows {
+    /// The bytes of its rows so far (a copy's size, decision 0353's row 7).
+    fn bytes(&self) -> usize {
+        std::mem::size_of_val(self.text.as_slice()) + std::mem::size_of_val(self.intval.as_slice()) + std::mem::size_of_val(self.op.as_slice()) + std::mem::size_of_val(self.name.as_slice()) + std::mem::size_of_val(self.strs.as_slice()) + std::mem::size_of_val(self.strprefix.as_slice())
+    }
+}
+
+impl NodeRows {
     /// Document `p`'s rows (`dialect` its grammar's kinds; `core`: in `core.rr`'s shape).
     fn document(&mut self, p: &Projected, dialect: &Dialect, core: bool, string: &mut dyn FnMut(&str) -> usize) {
         let f = &*p.facts;
@@ -3470,6 +3477,8 @@ impl Batch {
 // copy (0353 step 3): core.rr's per-node rows. Tape answers become tape views, and derived values become
 // rules computed on demand, written once (decision 0353).
             let nodes_span = crate::code_rule_dsl::logic::profile::span(|| "node rows".into());
+            static NODE_ROWS: rerail_prof::copies::Site = rerail_prof::copies::Site::new(7, "3", "core.rr's and the vtab's per-node rows (node rows)");
+            let (copying, rows_before) = (NODE_ROWS.start(), rows.bytes() + c.bytes());
             if let Some(dialect) = dialect {
                 // In core.rr's shape `NodeRows` makes only `intval` and T's `op` (`op_t`).
                 if scalar_nodes && (!core || projection.wants("intval") || projection.wants("op_t")) {
@@ -3498,6 +3507,7 @@ impl Batch {
                     c.withheld(&p, &(line, msg.clone()), &mut string);
                 }
             }
+            copying.done((rows.bytes() + c.bytes()).saturating_sub(rows_before));
             drop(nodes_span);
             let document_span = crate::code_rule_dsl::logic::profile::span(|| "document rows".into());
             // A text-only document has core.rr's text rows too (its lines, `split_line`), and no tokens.

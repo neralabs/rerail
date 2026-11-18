@@ -1192,16 +1192,19 @@ impl Rows {
             // the rows it is bound with (`InBlock::rows`), and its indexes are of them (`find_index`'s rows).
             ([(0, p)], None) => p,
             (segs, tail) => self.merged.get_or_init(|| {
-                let parts: Vec<&Part> = segs.iter().map(|(_, p)| p).chain(tail.iter()).collect();
-                let rows: usize = parts.iter().map(|p| p.len() as usize).sum();
-                MERGED[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                MERGED[1].fetch_add(rows * self.k * 8, std::sync::atomic::Ordering::Relaxed);
-                crate::code_rule_dsl::logic::profile::decision("rows of many parts merged into one", || format!("{} parts, {rows} rows of {} columns ({} KB copied)", parts.len(), self.k, rows * self.k * 8 >> 10));
-                let mut one = Part::new(self.life, self.k, rows);
-                for p in parts {
-                    one.copy_from(p, 0, p.len());
-                }
-                one
+                static SITE: rerail_prof::copies::Site = rerail_prof::copies::Site::new(9, "6", "a relation's parts merged into one for the device (Rows::in_block)");
+                SITE.time(|| {
+                    let parts: Vec<&Part> = segs.iter().map(|(_, p)| p).chain(tail.iter()).collect();
+                    let rows: usize = parts.iter().map(|p| p.len() as usize).sum();
+                    MERGED[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    MERGED[1].fetch_add(rows * self.k * 8, std::sync::atomic::Ordering::Relaxed);
+                    crate::code_rule_dsl::logic::profile::decision("rows of many parts merged into one", || format!("{} parts, {rows} rows of {} columns ({} KB copied)", parts.len(), self.k, rows * self.k * 8 >> 10));
+                    let mut one = Part::new(self.life, self.k, rows);
+                    for p in parts {
+                        one.copy_from(p, 0, p.len());
+                    }
+                    (one, 8 * self.k * rows)
+                })
             }),
         })
     }

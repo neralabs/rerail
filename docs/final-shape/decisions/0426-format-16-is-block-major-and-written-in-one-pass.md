@@ -1,0 +1,240 @@
+# 0426. Format 16 is block-major and written in one pass, with a presence structure beside it
+
+Status: accepted (2026-11-18)
+
+Numbered 0399 where it was written (sync-integration-hub-tape); renumbered at its merge into django-bugs, where the hub's 0399 is `\u` escapes.
+
+## Intro
+
+Every parser should write formats 16 and 16z as it parses, on the CPU and on the GPU, with no intermediate node
+format. Today every format 16 tape goes through format 15:
+
+- the lean parsers' `Writer` keeps 15-shaped working columns for every node, then `finish_16` runs `f16::write`;
+- tier 2 (the Bitlex compiler's backends) writes format 15 bytes;
+- tree-sitter walks its cursor into a format 15 image, then `f16::write_from` converts it.
+
+Format 16 was meant to be written in one pass (0156 §7), but its layout prevents it:
+
+- **Ten regions end to end.** Every region's start, and the side lists' part starts ahead of them, depend on the
+  final node count and the side lists' sizes.
+- **No cell has its final place before the parse ends.** `write` fills five growing arrays and the side lists,
+  and `Tape16::laid` joins them at the end.
+- **The writer's peak is about 23 bytes a node** (26 for 16z), for a tape of about 4.5 bytes a node.
+
+The user (2026-11-18):
+
+- "We can adjust the 16 and 16z formats so that this is easier. They are not written in stone yet."
+- "We can accumulate things, just not do a full transform from an intermediate format."
+- "Incremental is the parser. One pass + whatever needs to be written at the end from accumulated information."
+- "I really want for 16 to be designed with writing in one pass in mind and for this to be fast."
+- "I want this to be a switch based on common abstractions, not via copying and specialization of the kernels."
+
+Then: "go ahead with block major; we output both the tape and a separate kinds/fields structure; for each block,
+optionally, a kinds/fields structure."
+
+## Decision
+
+### 1. The layout: a header, fixed-stride blocks, a tail
+
+```text
+header      fixed size: n, the stride, block 0's start and the tail's starts (written at the end)
+block 0     codes[Z] | slots[Z·w0] | gaps[Z·w1] | lengths[Z·w2] | checkpoints[Z/K·cw]
+block 1     … at block 0's start + S, S = Z·(1 + w0 + w1 + w2) + Z/K·cw
+last block  the same columns at its own row count R = n − b·Z (no padding), then 8 bytes of room
+tail        the four side lists (each block's part, as today), their part starts, the newline index
+```
+
+- **Constants:** Z = 1,024 nodes a block (the side lists' part and 16z's block, as before), K = 8.
+- **Addressing.** Node i's cell in column r is at `blocks + (i >> 10)·S + R(b)·before[r] + (i & 1023)·w[r]`, where:
+  - `R(b) = min(Z, n − b·Z)`;
+  - `before[r]` is the bytes a row holds before column r: 0, 1, 1 + w0, 1 + w0 + w1, 1 + w0 + w1 + w2.
+- **Checkpoints** are the block's last column. Checkpoint c (node c·K) is in block c >> 7, at row c & 127.
+- **A full block's place depends only on its index.** So the writer writes every cell at its final address. At
+  the end it does three things:
+  - moves the last block's columns down to its row count, at most S bytes;
+  - appends the tail;
+  - fills in the header.
+- **A one-block tape** (n ≤ 1,024: most files) is today's region layout, with no side-list part starts ahead of it.
+- **Side lists' value widths are known before the first node.**
+  - Slots: 4 bytes (n < 2³⁰, which every read's u32 index needs anyway).
+  - Gaps and lengths: the bytes the source's length takes.
+  - Codes' low parts: the language's, as before.
+- **Escapes arrive out of order** (an ancestor's size escapes at its close). So each block keeps its entries until
+  the tape ends, and its part is laid into the tail then.
+- **The view (`TapeView`) holds:**
+  - `columns[0]`: block 0's start;
+  - `columns[1..5]`: `before[1..5]`;
+  - `stride`: S (a new field).
+
+  The side lists, part starts and newline index keep their fields.
+- **The reads change once, in CLIF** (0310): `cell(r, i)` and `checkpoint(c)` compute the address above, and the
+  Rust and MSL backends are generated from them.
+- **Marks.**
+  - The magics become `TMPTAPB6` (16) and `TMPTAPBZ` (16z).
+  - `formats::F16_LAYOUT` goes to 4, so a store built before reads cold, not wrong.
+
+### 2. One writer, its ops the abstraction
+
+- **The ops** take a writer state:
+  - `open(number, start) → node`;
+  - `close(end)` (the innermost open node);
+  - `leaf(number, start, end)`;
+  - `wrap(at, number, start)`: an open node before the nodes from `at` on;
+  - `retag(node, number)`;
+  - `set_start(node, start)` (an open node);
+  - `commit()`;
+  - `finish() → (tape, presence)`.
+- **The state:** the output's address, the open stack (each open node: its index, its children so far, its last
+  child, its start), the window's edit state, and each pending block's side-list entries.
+- **When each cell is written:**
+  - a node's code, gap, its checkpoint (every K-th node) and its length (a leaf's) when it is opened or closed;
+  - an inner node's slot (`size << 1`) at its close;
+  - a leaf's slot when the node after it is opened, or at the end.
+- **The commit frontier and the window** (amended at step 2, below).
+  - `commit()` says no edit reaches before the nodes so far but for the open ones (a statement parsed: what
+    `Writer::commit` means today).
+  - The window is the nodes since the last commit. The caller holds it in its own working state (the lean `Writer`'s
+    columns), where its edits are made: a wrap (`insert`, a chain's wraps), `insert_leaf(s)`, `truncate` and `rewind`.
+    The commit passes the window's nodes to the ops in preorder: `open`, `leaf`, and `close` where a subtree ends.
+  - Only two edits reach a node the ops already have: `retag` (a kind found at a node's close) and `set_start` of an
+    open node. Both write the node's cells again in its block, which is not final while the node is open. An open
+    node passed on is closed in the ops once its subtree is.
+  - An edit before the last commit (anything but those two) makes the tape format 15's, said once a language
+    (`keeps_15`), as a code the table lacks does.
+  - The window is all the writer's columns hold: a commit gives the cells of the nodes it passes back, and the next
+    nodes take them (`WINDOW` = 4,096 cells at first, more where a statement is longer). The parse may still read
+    its open ancestors (their key, start, and once closed their size and end), which the writer keeps beside the
+    ops' open stack. A read of any other node passed on is lost, as an edit before the commit is.
+  - So a format 15 tape cannot be finished from the columns. Where format 16 fails, the sink changes its target to
+    format 15 and asks for the parse again at the same widths (`Sink::again`); the parsers' loops already parse
+    again on a `Redo`.
+  - Every lean parser with a table commits at its top-level items: Python, JavaScript and TypeScript, Rr, C#, Java
+    and PHP at their statements and declarations, Rust at its items, CSS at its rules, HTML and Vue after each tag, text or entity, Markdown before each document-level block (not between a
+    paragraph and the setext underline that may follow it), and Markdown's inline parser every 256 nodes, which
+    it writes in order and never edits. SQL does not commit yet: its program holds its tokens (each `;`) until it
+    closes, and `claim` decides then, from all its children, which the tape stores; its window is the file until
+    `claim` decides a token as it comes.
+- **When a block is final:** every node in it is closed, the node after its last is open, and the frontier is past
+  it. A block that holds an open ancestor stays pending; the root's block finishes last.
+- **16z's piece order is the order its blocks were finished**, which follows the writer's commits: a parser that
+  commits at its statements and the conversion, which commits at each node, give the same blocks in another order.
+  A reader goes through the pieces' index, so the order is not part of what a tape says; the bytes are the same for
+  the same parser and source, not across writers.
+- **One compile, one entry point.** The parse calls the same ops whatever the format. The format is a field of
+  the writer's state, read only by the block sink (§3), once per 1,024 nodes.
+- **Written once, three backends.** The ops are written in CLIF, as the reads are (0310), and translated to Rust,
+  Cranelift and MSL. Until then, the Rust reference in `tape_format::f16` is what the CLIF ops are tested against.
+- **The callers:**
+  - lean parsers call the ops through their `Writer`. Its target is given where it is made: each parser takes a
+    `Sink` (its `target()`, and its `finish`) where it took a finish closure, and makes its writer
+    `Writer::new(…).to(sink.target(), src)`. A closure is a sink for format 15. Each key's number is the language's
+    number of its code (`Sixteen::number`), resolved once a code id;
+  - tier 2's tape words (LEAF, OPEN, CLOSE, MERGE, WRAP, RETAG, drop, ACCEPT) become calls of them, once the ops are
+    in CLIF (step 4): tier 2's code is Cranelift's, and calls them there;
+  - simdjson's kernels (JSON) switch at run time, by their sink: with an event buffer set, the walk's `open`, `leaf`
+    and `close` append events (three words each) instead of writing format 15's columns, and the buffer is passed to
+    the ops when full (4,096 nodes) and at the end (`rerail_simdjson::events_with`). One compile, one entry point;
+    the walk never edits a node, so each window is committed;
+  - tree-sitter's cursor walk calls `open`, `leaf` and `close` directly, through an output trait (`TreeOut`) whose
+    other implementation is format 15's pending nodes. Every walk that writes a tree uses it, through
+    `TapeImage::walked`: the cursor walk, an embedded program's tape with its placeholders left out
+    (`omitting`), Blade's Forte tree and the format strings' trees. A walk never edits a node, so it commits after
+    each one, and 16z's blocks are compressed as soon as their nodes close.
+- **Format 15 keeps its writer until it is dropped.**
+
+### 3. 16 and 16z: a block sink
+
+- **When a block is final**, the sink either leaves it in place (16) or compresses its four pieces and appends
+  them (16z). The pieces are codes, slots, gaps and lengths, each with its side-list part.
+- **16z's stored form is unchanged:**
+  - the header, the side lists' part starts, the checkpoints (raw) and the newline index;
+  - the piece index (written at the end, since pieces are appended in the order blocks finish);
+  - the payload.
+- **Placement** decodes each block into its place in the block-major tape. A block decodes alone, as before.
+  - **Since the merge of Native-and-GPU-strata (2026-11-18):** a 16z tape is never laid out whole (decision 0353
+    step 4b). It is placed as stored, and a reader decodes the block a read falls in into a cache entry
+    (`rerail_clif::reads`' `z_decode`, written once in CLIF for the CPU, the JIT and the kernels). The entry holds
+    the block as a format 16 tape of one block: column `q` at `nb × C[q]`, `C[q]` the least that clears the piece
+    before it (its column, then its side part) and 16 bytes of room. The view's `columns` hold `C`, as a
+    block-major tape's hold the bytes a row has before each column, so format 16's reads read the entry unchanged.
+    The checkpoints are copied from where they are stored raw. The newline index is read in place (`lines` in the
+    16z view). `decode_into` and its relatives remain only as a test's oracle.
+- **The 16z writer's peak** is the compressed output, plus the pending blocks (those holding open ancestors),
+  plus one block's match state.
+
+### 4. A presence structure beside the tape
+
+- **The writer also outputs a document's presence:** the kinds and the fields its nodes have, as bitmaps over the
+  language's kinds and fields.
+- **Optionally, one presence per block** (`Presence::blocks`).
+- **It is not in the tape.** Its use is deciding not to load, decompress or dispatch a document (or a block), so
+  it belongs where that decision is made. The store keeps it beside the document's row as a derived fact, written
+  once where it is computed (0353).
+- **The writer sets two bits a node,** from the language's tables of each number's kind and field.
+- **Census** (a5eab5c73, 100 corpus0 files): kinds and fields alone rule out 20% of the (clause program, file) pairs
+  and 12% of the (label program, file) pairs, against 39% and 21% that any file-level test could.
+
+### 5. 16z's compression by node ranges (later step)
+
+- A subtree is contiguous in every column, so an earlier subtree of the same shape is an LZ4 match, apart from its
+  edge cells. At close, the writer hashes each subtree bottom-up and registers it.
+- When a block is final, its pieces are written as ordinary LZ4 sequences: matches from the registered subtrees
+  within the block, literals for the rest. Decoders do not change.
+- Measured against LZ4 HC 9 in the lab before it replaces it.
+
+## Requirements, each with its test
+
+| | Requirement | Test |
+|---|---|---|
+| R1 | Block-major tapes read as the tape they were written from, node by node: every read, every format | `f16::tests` (the existing round trips, over the new layout), `tape_reads_*` |
+| R2 | A one-block tape is the region layout: no part starts ahead, no padding | `one_block_is_the_regions` |
+| R3 | A tape of n nodes is `header + (B−1)·S + last block + 8 + tail` bytes: no padding in the last block | `the_last_block_is_compact` |
+| R4 | The writer writes each cell at its final place: at `finish` it moves the last block's columns down and appends the tail, and nothing else is copied | `finish_moves_only_the_last_block` |
+| R5 | The ops (`open`, `close`, `leaf`) give the tape `write` gives from the same nodes, in 16 and 16z | `ops_write_the_tape` |
+| R6 | `retag` and `set_start` of a node the ops have, escaped values and block edges among them, give the tape of the nodes written right | `retag_and_set_start` |
+| R7 | A lean writer's edits (a rewind, a wrap, a retag after a commit, a close of a node passed on open) give the tape format 15 gives | `a_parsers_writer_finishes_in_format_16_as_in_format_15`, `the_lean_parsers_write_each_format_directly` |
+| R7a | A format 16 writer's columns hold the window, not the file; a read of a node given back or an edit before the window makes the parse run again for format 15; each lean parser with a table writes a file of a few hundred items in format 16 with no such fallback | `a_format_16_writers_columns_are_the_window`, `the_lean_parsers_write_each_format_directly` |
+| R8 | 16z written by the ops is the 16 tape's blocks, each decoded in place alone | `sixteen` (the existing check), `a_block_decodes_alone` |
+| R9 | A 16z block is compressed only when final: the root's block last; the pending blocks are those holding open ancestors | `blocks_finish_when_closed` |
+| R10 | The presence is the kinds and fields the tape's nodes have, per document and (optionally) per block | `presence_is_the_tapes_kinds` |
+| R11 | The device reads block-major tapes as the CPU does | `the_label_kernels_compile_for_every_format`, `on_metal_anchored_walks_find_the_unanchored_roots` |
+| R12 | No format 15 column, image or tape is made for a format 16 run (lean, tier 2, tree-sitter) | `no_intermediate_tape` (step 3) |
+
+## Steps
+
+1. The layout, the reads in CLIF, the Rust reference writer's ops (`open`, `close`, `leaf`, `commit`, `finish`),
+   the 16z sink and the presence (R1–R5, R8–R10). `write` becomes a caller of the ops.
+2. The edits that reach the ops (`retag`, `set_start`) (R6); the lean `Writer` passes its committed nodes to the
+   ops through its target (R7). Then its columns shrink to the window, and the parsers that do not commit yet
+   commit at their statements (R7a).
+3. Tree-sitter's cursor walk and derived documents call the ops (R12); then tier 2's words.
+4. The ops in CLIF, three backends; tier 2's GPU path writes its tape on the device.
+5. Node-range LZ4 for 16z (§5), after the lab measures it.
+6. The store keeps the presence; the planner leaves out the documents and blocks a program's anchor cannot touch.
+
+## Measured
+
+- **Step 1** (b5fbb9ed5). The engine's format tests and the device's read the block-major layout as before
+  (R1, R11). The GPU's time on the label kernels, M3 Max, under load (28–60): 265k–282k µs, against 388k µs for the
+  same run with the reads off and 480k–830k µs recorded earlier that day. That spread is the machine's sharing, so
+  the new addressing costs nothing measurable.
+- **Step 3, JSON.** simdjson's kernels give their events to the ops (`encode_16`); a file the strict read refuses is
+  walked again as JSONC, as before. `no_intermediate_tape` holds for JSON, and its bytes are those format 15's
+  image converts to (`the_lean_parsers_write_each_format_directly`). Tier 2's JSON parser is not the engine's
+  (simdjson is); its words call the ops in step 4. The index writer (`tape_from_index`, for a CPU no kernel runs on)
+  keeps format 15.
+- **Step 2, second part.** The lean writer's columns are the window (R7a). A format 16 run's writer for a large
+  file had columns for every node (two `u32`s and the size and tail cells, 12–16 bytes a node, from the guess
+  `Writer::new` is given); it now has them for the nodes since the last commit, 4,096 cells at most for a usual
+  file.
+- **Step 3, first part.** The cursor walk, `omitting`, Blade and the format strings write through `walked`.
+  `no_intermediate_tape` parses one file in each language with a format 16 table, through the engine's entry
+  point, and finds no document made in format 15 first. The exceptions:
+  - JSON's parsers: simdjson's kernels (`rerail_simdjson`, which write format 15's columns), and tier 2, until they
+    call the ops;
+  - the lean parsers whose languages have no table yet (C and C++, Go, Kotlin, Scala, Swift). They take a `Sink`
+    when their tables come.
+- **Step 2.** The edits are made in the caller's window, not in the tape (amended §2). The decision first had the
+  ops move a block's cells for a wrap, re-encoding the siblings' slots and the checkpoints after it. But the lean
+  parsers already make every edit in their own columns, and their commits mark where edits stop, so only a retag
+  and an open node's start can reach a node the ops have.

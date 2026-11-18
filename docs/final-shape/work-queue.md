@@ -2346,6 +2346,35 @@ where the rest goes (a sample of the run), before reading the wave's CPU totals 
   Where both meet, one mechanism stays: this scratch's shape (by node id, the `Earlier`/`Later` bounds) inside
   whichever scope the merge keeps.
 
+### Q183. Every parser writes format 16 and 16z in one pass, block-major, with a presence structure beside it
+
+Asked 2026-11-18 (the user): every parser writes 15, 16 and 16z incrementally on the CPU and the GPU, with no
+intermediate node format, as a switch over common abstractions; then "go ahead with block major; we output both the
+tape and a separate kinds/fields structure; for each block, optionally, a kinds/fields structure". Decision 0426
+holds the design, its requirements (R1–R12) and its steps.
+
+- **Keep**: tapes read in place (no decoding but 16z's per-block placement); one compile and one entry point for
+  16 and 16z; every read written once in CLIF; format 15 untouched until dropped.
+- **Done when**: 0426's requirement tests pass and no format 16 run makes a format 15 column, image or tape.
+- **Steps**: 0426 §Steps 1–6.
+- **Done** (2026-11-18, step 1, b5fbb9ed5): block-major format 16, the reads in CLIF on every backend, the writer's
+  ops with the 16z sink and the presence.
+- **Done** (2026-11-18, step 2, first part): `retag` and `set_start` in the ops; every lean parser takes a `Sink`, and
+  its writer passes committed nodes to the ops in a format 16 run. Python, ECMAScript and `.rr` commit at their
+  statements; the others pass everything at the end.
+- **Done** (2026-11-18, step 3, first part): the cursor walk, `omitting`, Blade and the format strings write by the
+  ops through `TapeImage::walked` (`TreeOut`); `no_intermediate_tape` (R12) holds for every language with a table
+  but JSON.
+- **Done** (2026-11-18, step 2, second part): the lean writer's columns hold the window, the nodes since the last
+  commit (R7a); every lean parser with a table commits at its top-level items; a format 16 failure parses again for
+  format 15 (`Sink::again`).
+- **Done** (2026-11-18, step 3, JSON): simdjson's kernels give their walk's events to the ops, switched by the sink at
+  run time (one compile).
+- **Next**: step 4 (the ops in CLIF, three backends; tier 2's words call them, JSON's tier 2 among them; the GPU
+  writer); SQL commits at its statements once `claim` decides a program's held tokens as they come; C, C++, Go,
+  Kotlin, Scala and Swift take a `Sink` when their tables come; simdjson's index writer (a CPU no
+  kernel runs on) on the ops.
+
 ### Q181. (Q136 on oscar until 2026-11-18; Q25 on sync-integration-hub-tape) The label pipelines compile cold for 110 s
 
 Found 2026-11-17 (the merge of the hub at 3206e1736, M3 Max, debug): `lowered_clauses_find_the_same_roots_on_metal`
@@ -3124,7 +3153,7 @@ data"; blocks never get copied into other data structures for convenience. Decis
 inventory of today's copies (12 sites, marked `copy (0353 step N)`) and the plan.
 
 1. Step 1 is done: the record, `AGENTS.md`, the guard (`scripts/check/check-no-block-copies.py`, in pre-commit) and
-   the marks. Left of it: the profile's `copies (decision 0353)` counter.
+   the marks, and the profile's `copies (decision 0353)` counter (2026-11-18; hogql 16z: 792.4 MB, 0.90 s CPU).
 2. Step 2 in progress. The granule table and its rank index answer every id equal to `DefIds::low`'s, in all three
    formats, and are measured: a point read is 171 instructions, a scan 59 an id (0353, "Node identity").
    `Projected`'s `core`, `local`, `up`, `size` and `fielded` are gone: the rank index, read by passes in order, at
@@ -5012,7 +5041,7 @@ place of the views: copies of tape answers. The views already cover the whole so
 - **Done when**: no place row is made for a node or token in core.rr's shape.
 
 
-### Q217. (Q124 on Native-and-GPU-strata at 903627c46) The device's `str_cmp` of made texts loses rows under load
+### Q217. (Q124 on Native-and-GPU-strata until 2026-11-18) The device's `str_cmp` of made texts loses rows under load — done 2026-11-18
 
 `device::parity::parity_random_texts` (seeded, deterministic cases) differed in 2 of 16 full runs (2026-11-17), each
 time a different case, each a `str_cmp` over a made text (`cat`, `sql_replace` into the arena): #216 (device 6
@@ -5264,3 +5293,107 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
 - **Seen** (ga161936): after the outputs were written, `main` panicked "cannot access a Thread Local Storage value
   during or after destruction", "thread local panicked on drop, aborting" (rc 134). No backtrace.
 - **Wanted**: the drop that reads it named (a run with `RUST_BACKTRACE=1`), and fixed.
+
+- **Done** (2026-11-18, at `3200d8871`): 300 runs of `parity_random_texts` (120 six at a time, 180 twelve at a
+  time; `tmp/gpu/q124/six.sh`), each running all 1,200 cases on the device with no refusal (`--nocapture`), all
+  equal to the CPU's. What ended it is not proven: no build of the old commit was made to tell. The likeliest is
+  `683d9f62e` (Q253): before it, a device row's stores went through `rows_at`, 8 bytes whatever its column's width
+  and unbounded by its chunks, so stores made in parallel could overwrite their neighbours in whatever order the
+  threads ran. The two suspects above were read and hold: a full arena's text sets `TEXTFN_FULL` and `complete`
+  runs the stage again from its first text function in a new batch's arena; and the join's passes are one serial
+  encoder, each dispatch seeing the last's writes.
+
+### Q253. (Q125 on Native-and-GPU-strata until 2026-11-18) A relation read with a garbage header: "an index of a full relation" (16z, 1 run in 95)
+
+hogql cold on Metal with 16z, engine of 0353 step 4b's transducer kernels (2026-11-18): one run of 95 panicked in
+a device join, `metal_join.rs` `index`, with `base_rows` 2,436,104,195. A loop of 150 since crashed once (SIGSEGV
+in `Relation::index_built`, from a wave's `Batch::finish`): the store through the descriptor's `indexes` span,
+whose offset word was data. Both runs saw a relation's descriptor overwritten with row values.
+
+- **Cause (0427, "Q253")**: the device's row writers (`view_expand`, `rows_copy` into a relation, the lattice's
+  held rows) stored through `rows_at` with no bound. A row past the chunks its relation holds finds a chunk offset
+  of 0, so its address is the column's directory, and the write goes over it and the descriptors after it
+  (`the_devices_row_writer_stays_in_its_rows` shows the address). The host sizes each write against the `DevRel`'s
+  rows, not the relation's chunks.
+- **Fixed**: one bounded writer, `rows_put` (CLIF). It writes a row only below `Rows::reserved` and a column only
+  below `ncols`, at the column's width, and otherwise counts `needed`. A batch whose kernels counted one fails,
+  naming the relation (`a device batch refused: … (Q253)`), and its strata run on the CPU.
+- Runs: 180 clean with the diagnostic engine (the descriptor compared when an index is marked built); with `rows_put`, 179 of 180 clean (no refusal, no panic, 1,629 findings each), and one killed at the 300 s cap with
+  no output (Q255), three at a time, on 2026-11-18. 180 more: 174 clean, none refused, and 6 failed in the same
+  seconds when the disk filled (the store's writes: "database or disk is full"), not the engine's work. So 353 of
+  360 runs clean with `rows_put`, against 1 to 2 in 150 lost before it; 180 more clean (no hang, the sampler on).
+- **Second chain, also bounded**: the label passes' marks and tallies (`bits[node / 32]`, `tally[node]`, atomic)
+  took any node a walk or capture gave them. Before the walk bounds and the dead entry (`4289c4f60`, `3f2c1748f`), a
+  torn 16z read could make that any number, an atomic write up to 16 GB away. Now a node past the batch's is not
+  written, and the passes rerun on the interpreter (`gpu.node_past_batch`), or the task fails (runtime error 8).
+- **Which it was**: `rows_put` refused nothing in 540 runs, and every device part's chunks cover its rows. The
+  crashes stopped with the walk bounds and the dead entry: 533 clean since, against 2 in about 245 before. The
+  garbage words look like ORed bits more than row values. So the label marks are the likely writer; both chains are
+  bounded now, which no run can tell apart from here (0427, "Open").
+- **The torn read alone does not do it**: an engine with the dead entry undone (the exhausted read back on the entry
+  as found, everything else at `e949b985b`) ran 12 runs with a 1 MB cache (10 to 16 million failed reads each) and
+  180 at the usual size: no node past a batch, no row refused, no crash, every run 1629 findings. So a torn value
+  reached a write only through a read `4289c4f60` bounded (a walk's hop, a side's offset). Those reads hold now, and
+  the writes they fed are bounded where they are made; the guards count (`gpu.node_past_batch`, the refusal), so a
+  run that still reaches one names it. 600 runs on `engine-q125d` (the guards) since: none reached one.
+
+### Q254. (Q126 on Native-and-GPU-strata until 2026-11-18) Source reads at a node's span, held to the source (0427's open part) — done 2026-11-18
+
+`tape_start` is held to the source's length (the view's `source_len`, now set by every format's view from the
+tape's header), and `tape_end` between the start and the source's end. So every kernel's text read at a span
+(`same_text`, `text_is`, the batch runtime's spans, the views' reads) stays in the source and is never reversed.
+The header's length is checked against the held source when a document is made resident. The spans as stated
+(`tape_start_stated`, `tape_end_stated`) are for the tape's check and the CPU's bounds-checked scans only.
+`a_tapes_spans_stay_within_its_source` reads every span of an overstated tape against a guarded source.
+
+### Q255. (Q127 on Native-and-GPU-strata until 2026-11-18) A hogql 16z run that hangs: 2 in about 1,500, no output
+
+Of 180 hogql 16z cold runs on Metal (2026-11-18, three at a time, load about 50), one ran to the 300 s cap with
+nothing in its log, between two warm runs of 4 s. Two cold runs before had waited about 3 minutes on the Metal
+compiler service (`xpc_connection_send_message_with_reply_sync`), then finished. This one was not cold. It was not
+sampled. `tmp/gpu/q36/hang127.sh` samples any run still going at 90 s, beside the loops (its first run read no
+elapsed time: macOS's `ps` has no `etimes`; it reads `etime` now). 180 more runs had no hang.
+
+The second (`r-ql-31`, `engine-q125d`, 2026-11-18 13:44) came while a profiling build recompiled every crate above
+`rerail-clif`, at a load of 153: again an empty log, the cap at 300 s. The sampler missed it: `pgrep -f` matched the
+loops' `zsh` wrappers, so it sampled those. It matches the engine's process name now (`pgrep -x`), with a heartbeat
+each minute, and the loops set `RERAIL_DEADLINE=120` so a run still going dumps its profile. What the samples it
+took show: runs over 90 s are cold first runs, waiting on the Metal compiler (`MTLCompiler`, the GPU's shader
+factory) while other runs compile too. 600 runs since, three at a time, with the device tests three times and two
+builds (one recompiling everything above `rerail-clif`) beside them: none past 60 s once warm, no hang.
+
+- **Likely**: a compile at very high load, not a deadlock: both hangs had empty logs (the first kernels not yet
+  made) and the second came under a build's load. Not proven until a sample catches one.
+
+- **Do**: from a sample, name where it waits (a GPU hang, a compile, or a lock), then fix it at its cause.
+- **Done when**: 180 runs, three at a time, have none past 60 s.
+
+### Q256. (Q189 on sync-integration-hub-tape) Format 16 on Metal: a relation's descriptor overwritten while its index was built (1 hogql run in 9)
+
+- **Found** (2026-11-18, the merge of Native-and-GPU-strata 871ac76f0 into oscar): hogql cold on Metal
+  (`tmp/hogql/run.sh`, the `len` rule, a debug engine with `test-hooks`, on the M3), in format 16: one run of 9
+  panicked 17 s in, in Q253's guard (`metal_join.rs`, `Building::check`: "a relation's descriptor overwritten while
+  its index was built"), from a host stream stratum's job. The other 8 found 1,629, as 16z (1 run) and 15 (1 run)
+  did. The failing run's log was replaced by the next run's, so the relation and the bytes that changed are not
+  known; `tmp/hogql/loop16.sh` now stops at a panic and prints it.
+- **What differs from Q253's runs**: format 16 is 0426's block-major tape (oscar), read by the views and the label
+  kernels through `block_column`; Q253's 600 clean runs were 16z on strata's own layout. Oscar never had the guard,
+  so whether oscar's format 16 wrote over a descriptor before the merge is not known either.
+- **Do**: catch one with its message (the bytes changed say which writer: ORed bits are label marks, row values a
+  row writer), then bound that writer where it writes (0427).
+- **Done when**: 180 format 16 runs, three at a time, have no panic.
+
+### Q257. Format 16's writer reserves too little tail where codes pass a byte: `finish` grows the room, copying the tape
+
+- **Found** (2026-11-18, at the merge of oscar into django-bugs): `f16::tests::ops_write_the_tape` failed 4 runs in
+  5 under the crate's parallel run, at oscar's own 7577c16b9 too. Its check that the tape is the writer's room (0426,
+  R4: nothing copied but the last block) held only when `realloc` grew the room in place. `Writer::new` reserves the
+  tail as `nodes / 2` bytes of side lists ("their usual share"); on the test's nodes the side lists are about 4.7 KB
+  for 2,001 nodes: 1,036 codes past a byte (a table of 600 codes, `low_w` 1) and 243 escaped slots.
+- **Now**: `finish_moves_only_the_last_block` (the R4 test 0426 names, missing until now) checks the room is kept
+  where codes fit a byte; `ops_write_the_tape` states that its nodes pass the reserve.
+- **Do**: size the side lists' reserve from what the writer knows (the language's code count against `low_w`, the
+  source's length against the slot and gap widths), or grow the room while the side lists fill, before the tail;
+  measure how often `finish` grows the room on hogql and PostHog first.
+- **Done when**: no tape of the PostHog corpus is copied by `finish`, and a test with a table past 256 codes holds R4.
+

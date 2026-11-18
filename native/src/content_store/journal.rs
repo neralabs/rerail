@@ -667,7 +667,9 @@ mod fsevents {
             let t = Instant::now();
             let fresh = all[at].synced.is_none_or(|(e, _)| e != epoch);
             let first = all[at].synced.is_none();
-            let r = sync(&mut all[at], epoch, WAIT.max(settle));
+            // The caller's bound where it gives one (Q221: no longer than checking what the journal would save), else
+            // the cookie's usual wait, or the settle the caller allows if longer.
+            let r = sync(&mut all[at], epoch, wait.unwrap_or(WAIT.max(settle)));
             if std::env::var_os("RERAIL_JOURNAL_TRACE").is_some() {
                 let live = &all[at];
                 let (n, history, cookie) = live.shared.seen.lock().map(|s| (s.events.len(), s.history_at, s.cookie_at)).unwrap_or((0, None, None));

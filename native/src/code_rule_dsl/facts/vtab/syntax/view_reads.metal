@@ -5,7 +5,7 @@ struct ViewRow {
     device const uchar* tape;
     device const uchar* lines;
     uint rows[9];
-    uint view[29];
+    uint view[30];
 };
 struct ViewDir {
     device const uchar* chunk;
@@ -13,7 +13,7 @@ struct ViewDir {
     uint pad;
     device const ViewRow* rows;
 };
-static_assert(sizeof(ViewRow) == 176, "ViewRow: size");
+static_assert(sizeof(ViewRow) == 184, "ViewRow: size");
 static_assert(__builtin_offsetof(ViewRow, view) == 60, "ViewRow.view");
 static_assert(sizeof(ViewDir) == 24, "ViewDir: size");
 static_assert(__builtin_offsetof(ViewDir, rows) == 16, "ViewDir.rows");
@@ -108,7 +108,7 @@ inline ulong clif_view_loc_end(device const uchar* t,ulong a0,device const uchar
 inline ulong clif_view_loc_col(device const uchar* t,ulong a0,device const uchar* tt,CLIF_VIEW_SPACE const uint* v,device const uchar* ll,uint a4,uint a5);
 inline ulong clif_view_loc_docof(device const uchar* t,ulong a0,device const uchar* tt,CLIF_VIEW_SPACE const uint* v,device const uchar* ll,uint a4,uint a5);
 inline uint clif_lines_line(device const uchar* t,ulong a0,uint a1){
- uint v0=0;
+ ulong v0=0;
  uint v1=0;
  uint v4=0;
  uint v5=0;
@@ -123,10 +123,10 @@ inline uint clif_lines_line(device const uchar* t,ulong a0,uint a1){
   if(v7!=0){
    uint v8=v4+v5;
    uint v9=uint((uint)(v8)>>(uint(1)&31u));
-   uint v10=v0+uint(4ul);
-   uint v11=uint(v9);
-   uint v12=v11*uint(4ul);
-   uint v13=v10+v12;
+   ulong v10=v0+ulong(4ul);
+   ulong v11=ulong(v9);
+   ulong v12=v11*ulong(4ul);
+   ulong v13=v10+v12;
    uint v14=uint(*(device const uint*)(t+v13));
    uchar v15=uchar((uint)(v14)<=(uint)(v1));
    uint v16=v9+uint(1ul);
@@ -142,10 +142,10 @@ inline uint clif_lines_line(device const uchar* t,ulong a0,uint a1){
  return v6;
 }
 inline ulong clif_view_node(device const uchar* t,ulong a0,device const uchar* tt,CLIF_VIEW_SPACE const uint* v,device const uchar* ll,uint a4,uint a5){
- uint v0=0;
- uint v1=0;
- uint v2=0;
- uint v3=0;
+ ulong v0=0;
+ ulong v1=0;
+ ulong v2=0;
+ ulong v3=0;
  uint v4=0;
  uint v5=0;
  ulong v7=0;
@@ -172,14 +172,14 @@ inline ulong clif_view_node(device const uchar* t,ulong a0,device const uchar* t
    uint v12=uint(*(device const uint*)(t+v0));
    ulong v13=ulong(v12);
    v14=ulong((ulong)(v13)<<(uint(32)&63u));
-   uint v15=uint(*(device const uint*)(t+(v0+uint(8u))));
+   uint v15=uint(*(device const uint*)(t+(v0+ulong(long(8)))));
    uchar v16=uchar((uint)(v15)!=(uint)(uint(0ul)));
    if(v16!=0){
     {uint t0=v4;v17=t0;}
    }else{
-    uint v18=uint(*(device const uint*)(t+(v0+uint(16u))));
-    uint v19=v0+uint(16ul);
-    uint v20=v19+v18;
+    ulong v18=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+    ulong v19=v0+ulong(16ul);
+    ulong v20=v19+v18;
     uint v21=uint(0ul);
     uint v22=clif_num_low_of(t,v20,v21,v4);
     {uint t0=v22;v17=t0;}
@@ -188,20 +188,20 @@ inline ulong clif_view_node(device const uchar* t,ulong a0,device const uchar* t
    ulong v24=v14|v23;
    {ulong t0=v24;v11=t0;}
   }else{
-   uint v25=uint(*(device const uint*)(t+(v0+uint(16u))));
-   uint v26=v0+uint(16ul);
-   uint v27=v26+v25;
+   ulong v25=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+   ulong v26=v0+ulong(16ul);
+   ulong v27=v26+v25;
    uint v28=uint(0ul);
    v29=clif_num_select(t,v27,v28,v4);
    uchar v30=uchar((uint)(v5)==(uint)(uint(2ul)));
    if(v30!=0){
     uint v32=clif_tape_number(tt,v,v29);
-    uint v33=uint(*(device const uint*)(t+(v0+uint(32u))));
-    uint v34=v0+uint(32ul);
-    uint v35=v34+v33;
-    uint v36=uint(v32);
-    uint v37=v36*uint(4ul);
-    uint v38=v35+v37;
+    ulong v33=ulong(*(device const ulong*)(t+(v0+ulong(long(32)))));
+    ulong v34=v0+ulong(32ul);
+    ulong v35=v34+v33;
+    ulong v36=ulong(v32);
+    ulong v37=v36*ulong(4ul);
+    ulong v38=v35+v37;
     uint v39=uint(*(device const uint*)(t+v38));
     ulong v40=ulong(v39);
     {ulong t0=v40;v31=t0;}
@@ -224,10 +224,10 @@ inline ulong clif_view_node(device const uchar* t,ulong a0,device const uchar* t
  return v7;
 }
 inline ulong clif_view_child(device const uchar* t,ulong a0,device const uchar* tt,CLIF_VIEW_SPACE const uint* v,device const uchar* ll,uint a4,uint a5){
- uint v0=0;
- uint v1=0;
- uint v2=0;
- uint v3=0;
+ ulong v0=0;
+ ulong v1=0;
+ ulong v2=0;
+ ulong v3=0;
  uint v4=0;
  uint v5=0;
  uint v6=0;
@@ -250,9 +250,9 @@ inline ulong clif_view_child(device const uchar* t,ulong a0,device const uchar* 
  v6=v4+uint(1ul);
  uchar v7=uchar((uint)(v5)==(uint)(uint(0ul)));
  if(v7!=0){
-  uint v9=uint(*(device const uint*)(t+(v0+uint(16u))));
-  uint v10=v0+uint(16ul);
-  uint v11=v10+v9;
+  ulong v9=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+  ulong v10=v0+ulong(16ul);
+  ulong v11=v10+v9;
   uint v12=uint(0ul);
   v13=clif_num_select(t,v11,v12,v6);
   uchar v14=uchar((uint)(v6)==(uint)(uint(0ul)));
@@ -261,16 +261,16 @@ inline ulong clif_view_child(device const uchar* t,ulong a0,device const uchar* 
    {ulong t0=v16;v15=t0;}
   }else{
    v17=clif_tape_parent(tt,v,v13);
-   uint v18=uint(*(device const uint*)(t+(v0+uint(16u))));
-   uint v19=v0+uint(16ul);
-   uint v20=v19+v18;
+   ulong v18=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+   ulong v19=v0+ulong(16ul);
+   ulong v20=v19+v18;
    uint v21=uint(0ul);
    uint v22=clif_num_is(t,v20,v21,v17);
    uchar v23=uchar((uint)(v22)!=(uint)(uint(0ul)));
    if(v23!=0){
-    uint v25=uint(*(device const uint*)(t+(v0+uint(16u))));
-    uint v26=v0+uint(16ul);
-    uint v27=v26+v25;
+    ulong v25=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+    ulong v26=v0+ulong(16ul);
+    ulong v27=v26+v25;
     uint v28=uint(0ul);
     uint v29=clif_num_rank(t,v27,v28,v17);
     {uint t0=v29;v24=t0;}
@@ -281,14 +281,14 @@ inline ulong clif_view_child(device const uchar* t,ulong a0,device const uchar* 
    uint v31=uint(*(device const uint*)(t+v0));
    ulong v32=ulong(v31);
    v33=ulong((ulong)(v32)<<(uint(32)&63u));
-   uint v34=uint(*(device const uint*)(t+(v0+uint(8u))));
+   uint v34=uint(*(device const uint*)(t+(v0+ulong(long(8)))));
    uchar v35=uchar((uint)(v34)!=(uint)(uint(0ul)));
    if(v35!=0){
     {uint t0=v24;v36=t0;}
    }else{
-    uint v37=uint(*(device const uint*)(t+(v0+uint(16u))));
-    uint v38=v0+uint(16ul);
-    uint v39=v38+v37;
+    ulong v37=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+    ulong v38=v0+ulong(16ul);
+    ulong v39=v38+v37;
     uint v40=uint(0ul);
     uint v41=clif_num_low_of(t,v39,v40,v24);
     {uint t0=v41;v36=t0;}
@@ -304,14 +304,14 @@ inline ulong clif_view_child(device const uchar* t,ulong a0,device const uchar* 
    uint v46=uint(*(device const uint*)(t+v0));
    ulong v47=ulong(v46);
    v48=ulong((ulong)(v47)<<(uint(32)&63u));
-   uint v49=uint(*(device const uint*)(t+(v0+uint(8u))));
+   uint v49=uint(*(device const uint*)(t+(v0+ulong(long(8)))));
    uchar v50=uchar((uint)(v49)!=(uint)(uint(0ul)));
    if(v50!=0){
     {uint t0=v6;v51=t0;}
    }else{
-    uint v52=uint(*(device const uint*)(t+(v0+uint(16u))));
-    uint v53=v0+uint(16ul);
-    uint v54=v53+v52;
+    ulong v52=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+    ulong v53=v0+ulong(16ul);
+    ulong v54=v53+v52;
     uint v55=uint(0ul);
     uint v56=clif_num_low_of(t,v54,v55,v6);
     {uint t0=v56;v51=t0;}
@@ -320,12 +320,12 @@ inline ulong clif_view_child(device const uchar* t,ulong a0,device const uchar* 
    ulong v58=v48|v57;
    {ulong t0=v58;v45=t0;}
   }else{
-   uint v59=uint(*(device const uint*)(t+(v0+uint(64u))));
-   uint v60=v0+uint(64ul);
-   uint v61=v60+v59;
-   uint v62=uint(v6);
-   uint v63=v62*uint(4ul);
-   uint v64=v61+v63;
+   ulong v59=ulong(*(device const ulong*)(t+(v0+ulong(long(64)))));
+   ulong v60=v0+ulong(64ul);
+   ulong v61=v60+v59;
+   ulong v62=ulong(v6);
+   ulong v63=v62*ulong(4ul);
+   ulong v64=v61+v63;
    uint v65=uint(*(device const uint*)(t+v64));
    ulong v66=ulong(v65);
    {ulong t0=v66;v45=t0;}
@@ -335,10 +335,10 @@ inline ulong clif_view_child(device const uchar* t,ulong a0,device const uchar* 
  return v8;
 }
 inline ulong clif_view_field(device const uchar* t,ulong a0,device const uchar* tt,CLIF_VIEW_SPACE const uint* v,device const uchar* ll,uint a4,uint a5){
- uint v0=0;
- uint v1=0;
- uint v2=0;
- uint v3=0;
+ ulong v0=0;
+ ulong v1=0;
+ ulong v2=0;
+ ulong v3=0;
  uint v4=0;
  uint v5=0;
  uint v10=0;
@@ -358,14 +358,14 @@ inline ulong clif_view_field(device const uchar* t,ulong a0,device const uchar* 
  v3=0;
  v4=a4;
  v5=a5;
- uint v6=uint(*(device const uint*)(t+(v0+uint(16u))));
- uint v7=v0+uint(16ul);
- uint v8=v7+v6;
+ ulong v6=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+ ulong v7=v0+ulong(16ul);
+ ulong v8=v7+v6;
  uint v9=uint(2ul);
  v10=clif_num_select(t,v8,v9,v4);
- uint v11=uint(*(device const uint*)(t+(v0+uint(16u))));
- uint v12=v0+uint(16ul);
- uint v13=v12+v11;
+ ulong v11=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+ ulong v12=v0+ulong(16ul);
+ ulong v13=v12+v11;
  uint v14=uint(0ul);
  v15=clif_num_rank(t,v13,v14,v10);
  uchar v16=uchar((uint)(v5)==(uint)(uint(0ul)));
@@ -376,16 +376,16 @@ inline ulong clif_view_field(device const uchar* t,ulong a0,device const uchar* 
    {ulong t0=v20;v19=t0;}
   }else{
    v21=clif_tape_parent(tt,v,v10);
-   uint v22=uint(*(device const uint*)(t+(v0+uint(16u))));
-   uint v23=v0+uint(16ul);
-   uint v24=v23+v22;
+   ulong v22=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+   ulong v23=v0+ulong(16ul);
+   ulong v24=v23+v22;
    uint v25=uint(0ul);
    uint v26=clif_num_is(t,v24,v25,v21);
    uchar v27=uchar((uint)(v26)!=(uint)(uint(0ul)));
    if(v27!=0){
-    uint v29=uint(*(device const uint*)(t+(v0+uint(16u))));
-    uint v30=v0+uint(16ul);
-    uint v31=v30+v29;
+    ulong v29=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+    ulong v30=v0+ulong(16ul);
+    ulong v31=v30+v29;
     uint v32=uint(0ul);
     uint v33=clif_num_rank(t,v31,v32,v21);
     {uint t0=v33;v28=t0;}
@@ -396,14 +396,14 @@ inline ulong clif_view_field(device const uchar* t,ulong a0,device const uchar* 
    uint v35=uint(*(device const uint*)(t+v0));
    ulong v36=ulong(v35);
    v37=ulong((ulong)(v36)<<(uint(32)&63u));
-   uint v38=uint(*(device const uint*)(t+(v0+uint(8u))));
+   uint v38=uint(*(device const uint*)(t+(v0+ulong(long(8)))));
    uchar v39=uchar((uint)(v38)!=(uint)(uint(0ul)));
    if(v39!=0){
     {uint t0=v28;v40=t0;}
    }else{
-    uint v41=uint(*(device const uint*)(t+(v0+uint(16u))));
-    uint v42=v0+uint(16ul);
-    uint v43=v42+v41;
+    ulong v41=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+    ulong v42=v0+ulong(16ul);
+    ulong v43=v42+v41;
     uint v44=uint(0ul);
     uint v45=clif_num_low_of(t,v43,v44,v28);
     {uint t0=v45;v40=t0;}
@@ -417,12 +417,12 @@ inline ulong clif_view_field(device const uchar* t,ulong a0,device const uchar* 
   uchar v48=uchar((uint)(v5)==(uint)(uint(1ul)));
   if(v48!=0){
    uint v50=clif_tape_number(tt,v,v10);
-   uint v51=uint(*(device const uint*)(t+(v0+uint(48u))));
-   uint v52=v0+uint(48ul);
-   uint v53=v52+v51;
-   uint v54=uint(v50);
-   uint v55=v54*uint(4ul);
-   uint v56=v53+v55;
+   ulong v51=ulong(*(device const ulong*)(t+(v0+ulong(long(48)))));
+   ulong v52=v0+ulong(48ul);
+   ulong v53=v52+v51;
+   ulong v54=ulong(v50);
+   ulong v55=v54*ulong(4ul);
+   ulong v56=v53+v55;
    uint v57=uint(*(device const uint*)(t+v56));
    ulong v58=ulong(v57);
    {ulong t0=v58;v49=t0;}
@@ -430,14 +430,14 @@ inline ulong clif_view_field(device const uchar* t,ulong a0,device const uchar* 
    uint v59=uint(*(device const uint*)(t+v0));
    ulong v60=ulong(v59);
    v61=ulong((ulong)(v60)<<(uint(32)&63u));
-   uint v62=uint(*(device const uint*)(t+(v0+uint(8u))));
+   uint v62=uint(*(device const uint*)(t+(v0+ulong(long(8)))));
    uchar v63=uchar((uint)(v62)!=(uint)(uint(0ul)));
    if(v63!=0){
     {uint t0=v15;v64=t0;}
    }else{
-    uint v65=uint(*(device const uint*)(t+(v0+uint(16u))));
-    uint v66=v0+uint(16ul);
-    uint v67=v66+v65;
+    ulong v65=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+    ulong v66=v0+ulong(16ul);
+    ulong v67=v66+v65;
     uint v68=uint(0ul);
     uint v69=clif_num_low_of(t,v67,v68,v15);
     {uint t0=v69;v64=t0;}
@@ -451,10 +451,10 @@ inline ulong clif_view_field(device const uchar* t,ulong a0,device const uchar* 
  return v17;
 }
 inline ulong clif_view_core(device const uchar* t,ulong a0,device const uchar* tt,CLIF_VIEW_SPACE const uint* v,device const uchar* ll,uint a4,uint a5){
- uint v0=0;
- uint v1=0;
- uint v2=0;
- uint v3=0;
+ ulong v0=0;
+ ulong v1=0;
+ ulong v2=0;
+ ulong v3=0;
  uint v4=0;
  uint v5=0;
  ulong v7=0;
@@ -475,9 +475,9 @@ inline ulong clif_view_core(device const uchar* t,ulong a0,device const uchar* t
  }else{
   uchar v10=uchar((uint)(v5)==(uint)(uint(1ul)));
   if(v10!=0){
-   uint v12=uint(*(device const uint*)(t+(v0+uint(16u))));
-   uint v13=v0+uint(16ul);
-   uint v14=v13+v12;
+   ulong v12=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+   ulong v13=v0+ulong(16ul);
+   ulong v14=v13+v12;
    uint v15=uint(0ul);
    uint v16=clif_num_select(t,v14,v15,v4);
    ulong v17=ulong(v16);
@@ -486,14 +486,14 @@ inline ulong clif_view_core(device const uchar* t,ulong a0,device const uchar* t
    uint v18=uint(*(device const uint*)(t+v0));
    ulong v19=ulong(v18);
    v20=ulong((ulong)(v19)<<(uint(32)&63u));
-   uint v21=uint(*(device const uint*)(t+(v0+uint(8u))));
+   uint v21=uint(*(device const uint*)(t+(v0+ulong(long(8)))));
    uchar v22=uchar((uint)(v21)!=(uint)(uint(0ul)));
    if(v22!=0){
     {uint t0=v4;v23=t0;}
    }else{
-    uint v24=uint(*(device const uint*)(t+(v0+uint(16u))));
-    uint v25=v0+uint(16ul);
-    uint v26=v25+v24;
+    ulong v24=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+    ulong v25=v0+ulong(16ul);
+    ulong v26=v25+v24;
     uint v27=uint(0ul);
     uint v28=clif_num_low_of(t,v26,v27,v4);
     {uint t0=v28;v23=t0;}
@@ -507,10 +507,10 @@ inline ulong clif_view_core(device const uchar* t,ulong a0,device const uchar* t
  return v7;
 }
 inline ulong clif_view_line(device const uchar* t,ulong a0,device const uchar* tt,CLIF_VIEW_SPACE const uint* v,device const uchar* ll,uint a4,uint a5){
- uint v0=0;
- uint v1=0;
- uint v2=0;
- uint v3=0;
+ ulong v0=0;
+ ulong v1=0;
+ ulong v2=0;
+ ulong v3=0;
  uint v4=0;
  uint v5=0;
  ulong v7=0;
@@ -527,14 +527,14 @@ inline ulong clif_view_line(device const uchar* t,ulong a0,device const uchar* t
   uint v8=uint(*(device const uint*)(t+v0));
   ulong v9=ulong(v8);
   v10=ulong((ulong)(v9)<<(uint(32)&63u));
-  uint v11=uint(*(device const uint*)(t+(v0+uint(8u))));
+  uint v11=uint(*(device const uint*)(t+(v0+ulong(long(8)))));
   uchar v12=uchar((uint)(v11)!=(uint)(uint(0ul)));
   if(v12!=0){
    {uint t0=v4;v13=t0;}
   }else{
-   uint v14=uint(*(device const uint*)(t+(v0+uint(16u))));
-   uint v15=v0+uint(16ul);
-   uint v16=v15+v14;
+   ulong v14=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+   ulong v15=v0+ulong(16ul);
+   ulong v16=v15+v14;
    uint v17=uint(0ul);
    uint v18=clif_num_low_of(t,v16,v17,v4);
    {uint t0=v18;v13=t0;}
@@ -543,9 +543,9 @@ inline ulong clif_view_line(device const uchar* t,ulong a0,device const uchar* t
   ulong v20=v10|v19;
   {ulong t0=v20;v7=t0;}
  }else{
-  uint v21=uint(*(device const uint*)(t+(v0+uint(16u))));
-  uint v22=v0+uint(16ul);
-  uint v23=v22+v21;
+  ulong v21=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+  ulong v22=v0+ulong(16ul);
+  ulong v23=v22+v21;
   uint v24=uint(0ul);
   uint v25=clif_num_select(t,v23,v24,v4);
   uint v26=clif_tape_start(tt,v,v25);
@@ -590,10 +590,10 @@ inline uint clif_loc_line(device const uchar* t,ulong a0,uint a1){
  return v6;
 }
 inline ulong clif_view_loc_line(device const uchar* t,ulong a0,device const uchar* tt,CLIF_VIEW_SPACE const uint* v,device const uchar* ll,uint a4,uint a5){
- uint v0=0;
- uint v1=0;
- uint v2=0;
- uint v3=0;
+ ulong v0=0;
+ ulong v1=0;
+ ulong v2=0;
+ ulong v3=0;
  uint v4=0;
  uint v5=0;
  ulong v7=0;
@@ -629,28 +629,28 @@ inline ulong clif_view_loc_line(device const uchar* t,ulong a0,device const ucha
   uint v8=uint(*(device const uint*)(t+v0));
   ulong v9=ulong(v8);
   v10=ulong((ulong)(v9)<<(uint(32)&63u));
-  uint v11=uint(*(device const uint*)(t+(v0+uint(8u))));
+  uint v11=uint(*(device const uint*)(t+(v0+ulong(long(8)))));
   uchar v12=uchar((uint)(v11)!=(uint)(uint(0ul)));
   if(v12!=0){
    {uint t0=v4;v13=t0;}
   }else{
-   v14=uint(*(device const uint*)(t+(v0+uint(12u))));
+   v14=uint(*(device const uint*)(t+(v0+ulong(long(12)))));
    uchar v15=uchar((uint)(v4)<(uint)(v14));
    if(v15!=0){
-    uint v17=uint(*(device const uint*)(t+(v0+uint(16u))));
-    uint v18=v0+uint(16ul);
-    uint v19=v18+v17;
+    ulong v17=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+    ulong v18=v0+ulong(16ul);
+    ulong v19=v18+v17;
     uint v20=uint(0ul);
     uint v21=clif_num_low_of(t,v19,v20,v4);
     {uint t0=v21;v16=t0;}
    }else{
     v22=v4-v14;
-    v23=uint(*(device const uint*)(t+(v0+uint(80u))));
+    v23=uint(*(device const uint*)(t+(v0+ulong(long(80)))));
     uchar v24=uchar((uint)(v22)<(uint)(v23));
     if(v24!=0){
-     uint v26=uint(*(device const uint*)(t+(v0+uint(16u))));
-     uint v27=v0+uint(16ul);
-     uint v28=v27+v26;
+     ulong v26=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+     ulong v27=v0+ulong(16ul);
+     ulong v28=v27+v26;
      uint v29=uint(1ul);
      uint v30=clif_num_low_of(t,v28,v29,v22);
      {uint t0=v30;v25=t0;}
@@ -674,12 +674,12 @@ inline ulong clif_view_loc_line(device const uchar* t,ulong a0,device const ucha
   ulong v41=v10|v40;
   {ulong t0=v41;v7=t0;}
  }else{
-  v42=uint(*(device const uint*)(t+(v0+uint(12u))));
+  v42=uint(*(device const uint*)(t+(v0+ulong(long(12)))));
   uchar v43=uchar((uint)(v4)<(uint)(v42));
   if(v43!=0){
-   uint v45=uint(*(device const uint*)(t+(v0+uint(16u))));
-   uint v46=v0+uint(16ul);
-   uint v47=v46+v45;
+   ulong v45=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+   ulong v46=v0+ulong(16ul);
+   ulong v47=v46+v45;
    uint v48=uint(0ul);
    uint v49=clif_num_select(t,v47,v48,v4);
    uint v50=clif_tape_start(tt,v,v49);
@@ -691,12 +691,12 @@ inline ulong clif_view_loc_line(device const uchar* t,ulong a0,device const ucha
    {ulong t0=v55;v44=t0;}
   }else{
    v56=v4-v42;
-   v57=uint(*(device const uint*)(t+(v0+uint(80u))));
+   v57=uint(*(device const uint*)(t+(v0+ulong(long(80)))));
    uchar v58=uchar((uint)(v56)<(uint)(v57));
    if(v58!=0){
-    uint v60=uint(*(device const uint*)(t+(v0+uint(16u))));
-    uint v61=v0+uint(16ul);
-    uint v62=v61+v60;
+    ulong v60=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+    ulong v61=v0+ulong(16ul);
+    ulong v62=v61+v60;
     uint v63=uint(1ul);
     uint v64=clif_num_select(t,v62,v63,v56);
     uint v65=clif_tape_start(tt,v,v64);
@@ -708,22 +708,22 @@ inline ulong clif_view_loc_line(device const uchar* t,ulong a0,device const ucha
     {ulong t0=v70;v59=t0;}
    }else{
     v71=v56-v57;
-    uint v72=uint(*(device const uint*)(t+(v0+uint(84u))));
+    uint v72=uint(*(device const uint*)(t+(v0+ulong(long(84)))));
     uint v73=uint(0ul);
-    uint v74=uint(*(device const uint*)(t+(v0+uint(96u))));
-    uint v75=v0+uint(96ul);
-    uint v76=v75+v74;
-    uint v77=uint(v73);
-    uint v78=v77*uint(4ul);
-    uint v79=v76+v78;
+    ulong v74=ulong(*(device const ulong*)(t+(v0+ulong(long(96)))));
+    ulong v75=v0+ulong(96ul);
+    ulong v76=v75+v74;
+    ulong v77=ulong(v73);
+    ulong v78=v77*ulong(4ul);
+    ulong v79=v76+v78;
     uint v80=uint(*(device const uint*)(t+v79));
     uint v81=v80+uint(1ul);
-    uint v82=uint(*(device const uint*)(t+(v0+uint(96u))));
-    uint v83=v0+uint(96ul);
-    uint v84=v83+v82;
-    uint v85=uint(v81);
-    uint v86=v85*uint(4ul);
-    uint v87=v84+v86;
+    ulong v82=ulong(*(device const ulong*)(t+(v0+ulong(long(96)))));
+    ulong v83=v0+ulong(96ul);
+    ulong v84=v83+v82;
+    ulong v85=ulong(v81);
+    ulong v86=v85*ulong(4ul);
+    ulong v87=v84+v86;
     uint v88=uint(*(device const uint*)(t+v87));
     uint v89=v88+uint(1ul);
     uint v90=uint(0ul);
@@ -732,9 +732,9 @@ inline ulong clif_view_loc_line(device const uchar* t,ulong a0,device const ucha
     uchar v93=uchar((uint)(v71)>=(uint)(v92));
     if(v93!=0){
      uint v95=v71-v92;
-     uint v96=uint(*(device const uint*)(t+(v0+uint(16u))));
-     uint v97=v0+uint(16ul);
-     uint v98=v97+v96;
+     ulong v96=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+     ulong v97=v0+ulong(16ul);
+     ulong v98=v97+v96;
      uint v99=uint(0ul);
      uint v100=clif_num_select(t,v98,v99,v95);
      uint v101=clif_tape_end(tt,v,v100);
@@ -747,36 +747,36 @@ inline ulong clif_view_loc_line(device const uchar* t,ulong a0,device const ucha
      uchar v106=uchar((uint)(v71)==(uint)(uint(0ul)));
      if(v106!=0){
       uint v108=uint(0ul);
-      uint v109=uint(*(device const uint*)(t+(v0+uint(92u))));
+      uint v109=uint(*(device const uint*)(t+(v0+ulong(long(92)))));
       ulong v110=ulong(v108);
       ulong v111=ulong((ulong)(v110)<<(uint(32)&63u));
       ulong v112=ulong(v109);
       ulong v113=v111|v112;
       {ulong t0=v113;v107=t0;}
      }else{
-      uint v114=uint(*(device const uint*)(t+(v0+uint(96u))));
-      uint v115=v0+uint(96ul);
-      uint v116=v115+v114;
-      uint v117=uint(v71);
-      uint v118=v117*uint(4ul);
-      uint v119=v116+v118;
+      ulong v114=ulong(*(device const ulong*)(t+(v0+ulong(long(96)))));
+      ulong v115=v0+ulong(96ul);
+      ulong v116=v115+v114;
+      ulong v117=ulong(v71);
+      ulong v118=v117*ulong(4ul);
+      ulong v119=v116+v118;
       uint v120=uint(*(device const uint*)(t+v119));
       uint v121=uint(0ul);
-      uint v122=uint(*(device const uint*)(t+(v0+uint(96u))));
-      uint v123=v0+uint(96ul);
-      uint v124=v123+v122;
-      uint v125=uint(v121);
-      uint v126=v125*uint(4ul);
-      uint v127=v124+v126;
+      ulong v122=ulong(*(device const ulong*)(t+(v0+ulong(long(96)))));
+      ulong v123=v0+ulong(96ul);
+      ulong v124=v123+v122;
+      ulong v125=ulong(v121);
+      ulong v126=v125*ulong(4ul);
+      ulong v127=v124+v126;
       uint v128=uint(*(device const uint*)(t+v127));
       uint v129=v128+v71;
       uint v130=v129+uint(1ul);
-      uint v131=uint(*(device const uint*)(t+(v0+uint(96u))));
-      uint v132=v0+uint(96ul);
-      uint v133=v132+v131;
-      uint v134=uint(v130);
-      uint v135=v134*uint(4ul);
-      uint v136=v133+v135;
+      ulong v131=ulong(*(device const ulong*)(t+(v0+ulong(long(96)))));
+      ulong v132=v0+ulong(96ul);
+      ulong v133=v132+v131;
+      ulong v134=ulong(v130);
+      ulong v135=v134*ulong(4ul);
+      ulong v136=v133+v135;
       uint v137=uint(*(device const uint*)(t+v136));
       ulong v138=ulong(v120);
       ulong v139=ulong((ulong)(v138)<<(uint(32)&63u));
@@ -790,14 +790,14 @@ inline ulong clif_view_loc_line(device const uchar* t,ulong a0,device const ucha
    }
    {ulong t0=v59;v44=t0;}
   }
-  v142=uint(*(device const uint*)(t+(v0+uint(112u))));
+  v142=uint(*(device const uint*)(t+(v0+ulong(long(112)))));
   uchar v143=uchar((uint)(v142)==(uint)(uint(0ul)));
   if(v143!=0){
    {ulong t0=v44;v144=t0;}
   }else{
-   uint v145=uint(*(device const uint*)(t+(v0+uint(128u))));
+   uint v145=uint(*(device const uint*)(t+(v0+ulong(long(128)))));
    v146=ulong(v145);
-   uint v147=uint(*(device const uint*)(t+(v0+uint(132u))));
+   uint v147=uint(*(device const uint*)(t+(v0+ulong(long(132)))));
    v148=ulong(v147);
    uchar v149=uchar((uint)(v142)==(uint)(uint(2ul)));
    if(v149!=0){
@@ -805,7 +805,7 @@ inline ulong clif_view_loc_line(device const uchar* t,ulong a0,device const ucha
     ulong v152=v151|v148;
     {ulong t0=v152;v150=t0;}
    }else{
-    ulong v153=ulong(*(device const ulong*)(t+(v0+uint(120u))));
+    ulong v153=ulong(*(device const ulong*)(t+(v0+ulong(long(120)))));
     ulong v154=ulong((ulong)(v44)>>(uint(32)&63u));
     ulong v155=v44&ulong(4294967295ul);
     ulong v156=v154+v153;
@@ -820,12 +820,12 @@ inline ulong clif_view_loc_line(device const uchar* t,ulong a0,device const ucha
    }
    {ulong t0=v150;v144=t0;}
   }
-  uint v164=uint((ulong)(v144)>>32u);
+  ulong v164=ulong((ulong)(v144)>>(uint(32)&63u));
   uint v165=uint(v164);
   uint v166=uint(v144);
-  uint v167=uint(*(device const uint*)(t+(v0+uint(96u))));
-  uint v168=v0+uint(96ul);
-  uint v169=v168+v167;
+  ulong v167=ulong(*(device const ulong*)(t+(v0+ulong(long(96)))));
+  ulong v168=v0+ulong(96ul);
+  ulong v169=v168+v167;
   uint v170=clif_loc_line(t,v169,v165);
   uint v171=uint(1ul);
   uint v172=max(v170,v171);
@@ -835,10 +835,10 @@ inline ulong clif_view_loc_line(device const uchar* t,ulong a0,device const ucha
  return v7;
 }
 inline ulong clif_view_loc_end(device const uchar* t,ulong a0,device const uchar* tt,CLIF_VIEW_SPACE const uint* v,device const uchar* ll,uint a4,uint a5){
- uint v0=0;
- uint v1=0;
- uint v2=0;
- uint v3=0;
+ ulong v0=0;
+ ulong v1=0;
+ ulong v2=0;
+ ulong v3=0;
  uint v4=0;
  uint v5=0;
  ulong v7=0;
@@ -877,28 +877,28 @@ inline ulong clif_view_loc_end(device const uchar* t,ulong a0,device const uchar
   uint v8=uint(*(device const uint*)(t+v0));
   ulong v9=ulong(v8);
   v10=ulong((ulong)(v9)<<(uint(32)&63u));
-  uint v11=uint(*(device const uint*)(t+(v0+uint(8u))));
+  uint v11=uint(*(device const uint*)(t+(v0+ulong(long(8)))));
   uchar v12=uchar((uint)(v11)!=(uint)(uint(0ul)));
   if(v12!=0){
    {uint t0=v4;v13=t0;}
   }else{
-   v14=uint(*(device const uint*)(t+(v0+uint(12u))));
+   v14=uint(*(device const uint*)(t+(v0+ulong(long(12)))));
    uchar v15=uchar((uint)(v4)<(uint)(v14));
    if(v15!=0){
-    uint v17=uint(*(device const uint*)(t+(v0+uint(16u))));
-    uint v18=v0+uint(16ul);
-    uint v19=v18+v17;
+    ulong v17=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+    ulong v18=v0+ulong(16ul);
+    ulong v19=v18+v17;
     uint v20=uint(0ul);
     uint v21=clif_num_low_of(t,v19,v20,v4);
     {uint t0=v21;v16=t0;}
    }else{
     v22=v4-v14;
-    v23=uint(*(device const uint*)(t+(v0+uint(80u))));
+    v23=uint(*(device const uint*)(t+(v0+ulong(long(80)))));
     uchar v24=uchar((uint)(v22)<(uint)(v23));
     if(v24!=0){
-     uint v26=uint(*(device const uint*)(t+(v0+uint(16u))));
-     uint v27=v0+uint(16ul);
-     uint v28=v27+v26;
+     ulong v26=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+     ulong v27=v0+ulong(16ul);
+     ulong v28=v27+v26;
      uint v29=uint(1ul);
      uint v30=clif_num_low_of(t,v28,v29,v22);
      {uint t0=v30;v25=t0;}
@@ -922,12 +922,12 @@ inline ulong clif_view_loc_end(device const uchar* t,ulong a0,device const uchar
   ulong v41=v10|v40;
   {ulong t0=v41;v7=t0;}
  }else{
-  v42=uint(*(device const uint*)(t+(v0+uint(12u))));
+  v42=uint(*(device const uint*)(t+(v0+ulong(long(12)))));
   uchar v43=uchar((uint)(v4)<(uint)(v42));
   if(v43!=0){
-   uint v45=uint(*(device const uint*)(t+(v0+uint(16u))));
-   uint v46=v0+uint(16ul);
-   uint v47=v46+v45;
+   ulong v45=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+   ulong v46=v0+ulong(16ul);
+   ulong v47=v46+v45;
    uint v48=uint(0ul);
    uint v49=clif_num_select(t,v47,v48,v4);
    uint v50=clif_tape_start(tt,v,v49);
@@ -939,12 +939,12 @@ inline ulong clif_view_loc_end(device const uchar* t,ulong a0,device const uchar
    {ulong t0=v55;v44=t0;}
   }else{
    v56=v4-v42;
-   v57=uint(*(device const uint*)(t+(v0+uint(80u))));
+   v57=uint(*(device const uint*)(t+(v0+ulong(long(80)))));
    uchar v58=uchar((uint)(v56)<(uint)(v57));
    if(v58!=0){
-    uint v60=uint(*(device const uint*)(t+(v0+uint(16u))));
-    uint v61=v0+uint(16ul);
-    uint v62=v61+v60;
+    ulong v60=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+    ulong v61=v0+ulong(16ul);
+    ulong v62=v61+v60;
     uint v63=uint(1ul);
     uint v64=clif_num_select(t,v62,v63,v56);
     uint v65=clif_tape_start(tt,v,v64);
@@ -956,22 +956,22 @@ inline ulong clif_view_loc_end(device const uchar* t,ulong a0,device const uchar
     {ulong t0=v70;v59=t0;}
    }else{
     v71=v56-v57;
-    uint v72=uint(*(device const uint*)(t+(v0+uint(84u))));
+    uint v72=uint(*(device const uint*)(t+(v0+ulong(long(84)))));
     uint v73=uint(0ul);
-    uint v74=uint(*(device const uint*)(t+(v0+uint(96u))));
-    uint v75=v0+uint(96ul);
-    uint v76=v75+v74;
-    uint v77=uint(v73);
-    uint v78=v77*uint(4ul);
-    uint v79=v76+v78;
+    ulong v74=ulong(*(device const ulong*)(t+(v0+ulong(long(96)))));
+    ulong v75=v0+ulong(96ul);
+    ulong v76=v75+v74;
+    ulong v77=ulong(v73);
+    ulong v78=v77*ulong(4ul);
+    ulong v79=v76+v78;
     uint v80=uint(*(device const uint*)(t+v79));
     uint v81=v80+uint(1ul);
-    uint v82=uint(*(device const uint*)(t+(v0+uint(96u))));
-    uint v83=v0+uint(96ul);
-    uint v84=v83+v82;
-    uint v85=uint(v81);
-    uint v86=v85*uint(4ul);
-    uint v87=v84+v86;
+    ulong v82=ulong(*(device const ulong*)(t+(v0+ulong(long(96)))));
+    ulong v83=v0+ulong(96ul);
+    ulong v84=v83+v82;
+    ulong v85=ulong(v81);
+    ulong v86=v85*ulong(4ul);
+    ulong v87=v84+v86;
     uint v88=uint(*(device const uint*)(t+v87));
     uint v89=v88+uint(1ul);
     uint v90=uint(0ul);
@@ -980,9 +980,9 @@ inline ulong clif_view_loc_end(device const uchar* t,ulong a0,device const uchar
     uchar v93=uchar((uint)(v71)>=(uint)(v92));
     if(v93!=0){
      uint v95=v71-v92;
-     uint v96=uint(*(device const uint*)(t+(v0+uint(16u))));
-     uint v97=v0+uint(16ul);
-     uint v98=v97+v96;
+     ulong v96=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+     ulong v97=v0+ulong(16ul);
+     ulong v98=v97+v96;
      uint v99=uint(0ul);
      uint v100=clif_num_select(t,v98,v99,v95);
      uint v101=clif_tape_end(tt,v,v100);
@@ -995,36 +995,36 @@ inline ulong clif_view_loc_end(device const uchar* t,ulong a0,device const uchar
      uchar v106=uchar((uint)(v71)==(uint)(uint(0ul)));
      if(v106!=0){
       uint v108=uint(0ul);
-      uint v109=uint(*(device const uint*)(t+(v0+uint(92u))));
+      uint v109=uint(*(device const uint*)(t+(v0+ulong(long(92)))));
       ulong v110=ulong(v108);
       ulong v111=ulong((ulong)(v110)<<(uint(32)&63u));
       ulong v112=ulong(v109);
       ulong v113=v111|v112;
       {ulong t0=v113;v107=t0;}
      }else{
-      uint v114=uint(*(device const uint*)(t+(v0+uint(96u))));
-      uint v115=v0+uint(96ul);
-      uint v116=v115+v114;
-      uint v117=uint(v71);
-      uint v118=v117*uint(4ul);
-      uint v119=v116+v118;
+      ulong v114=ulong(*(device const ulong*)(t+(v0+ulong(long(96)))));
+      ulong v115=v0+ulong(96ul);
+      ulong v116=v115+v114;
+      ulong v117=ulong(v71);
+      ulong v118=v117*ulong(4ul);
+      ulong v119=v116+v118;
       uint v120=uint(*(device const uint*)(t+v119));
       uint v121=uint(0ul);
-      uint v122=uint(*(device const uint*)(t+(v0+uint(96u))));
-      uint v123=v0+uint(96ul);
-      uint v124=v123+v122;
-      uint v125=uint(v121);
-      uint v126=v125*uint(4ul);
-      uint v127=v124+v126;
+      ulong v122=ulong(*(device const ulong*)(t+(v0+ulong(long(96)))));
+      ulong v123=v0+ulong(96ul);
+      ulong v124=v123+v122;
+      ulong v125=ulong(v121);
+      ulong v126=v125*ulong(4ul);
+      ulong v127=v124+v126;
       uint v128=uint(*(device const uint*)(t+v127));
       uint v129=v128+v71;
       uint v130=v129+uint(1ul);
-      uint v131=uint(*(device const uint*)(t+(v0+uint(96u))));
-      uint v132=v0+uint(96ul);
-      uint v133=v132+v131;
-      uint v134=uint(v130);
-      uint v135=v134*uint(4ul);
-      uint v136=v133+v135;
+      ulong v131=ulong(*(device const ulong*)(t+(v0+ulong(long(96)))));
+      ulong v132=v0+ulong(96ul);
+      ulong v133=v132+v131;
+      ulong v134=ulong(v130);
+      ulong v135=v134*ulong(4ul);
+      ulong v136=v133+v135;
       uint v137=uint(*(device const uint*)(t+v136));
       ulong v138=ulong(v120);
       ulong v139=ulong((ulong)(v138)<<(uint(32)&63u));
@@ -1038,14 +1038,14 @@ inline ulong clif_view_loc_end(device const uchar* t,ulong a0,device const uchar
    }
    {ulong t0=v59;v44=t0;}
   }
-  v142=uint(*(device const uint*)(t+(v0+uint(112u))));
+  v142=uint(*(device const uint*)(t+(v0+ulong(long(112)))));
   uchar v143=uchar((uint)(v142)==(uint)(uint(0ul)));
   if(v143!=0){
    {ulong t0=v44;v144=t0;}
   }else{
-   uint v145=uint(*(device const uint*)(t+(v0+uint(128u))));
+   uint v145=uint(*(device const uint*)(t+(v0+ulong(long(128)))));
    v146=ulong(v145);
-   uint v147=uint(*(device const uint*)(t+(v0+uint(132u))));
+   uint v147=uint(*(device const uint*)(t+(v0+ulong(long(132)))));
    v148=ulong(v147);
    uchar v149=uchar((uint)(v142)==(uint)(uint(2ul)));
    if(v149!=0){
@@ -1053,7 +1053,7 @@ inline ulong clif_view_loc_end(device const uchar* t,ulong a0,device const uchar
     ulong v152=v151|v148;
     {ulong t0=v152;v150=t0;}
    }else{
-    ulong v153=ulong(*(device const ulong*)(t+(v0+uint(120u))));
+    ulong v153=ulong(*(device const ulong*)(t+(v0+ulong(long(120)))));
     ulong v154=ulong((ulong)(v44)>>(uint(32)&63u));
     ulong v155=v44&ulong(4294967295ul);
     ulong v156=v154+v153;
@@ -1068,21 +1068,21 @@ inline ulong clif_view_loc_end(device const uchar* t,ulong a0,device const uchar
    }
    {ulong t0=v150;v144=t0;}
   }
-  uint v164=uint((ulong)(v144)>>32u);
+  ulong v164=ulong((ulong)(v144)>>(uint(32)&63u));
   uint v165=uint(v164);
   v166=uint(v144);
-  uint v167=uint(*(device const uint*)(t+(v0+uint(96u))));
-  uint v168=v0+uint(96ul);
-  uint v169=v168+v167;
+  ulong v167=ulong(*(device const ulong*)(t+(v0+ulong(long(96)))));
+  ulong v168=v0+ulong(96ul);
+  ulong v169=v168+v167;
   uint v170=clif_loc_line(t,v169,v165);
   uint v171=uint(1ul);
   v172=max(v170,v171);
   uchar v173=uchar((uint)(v166)>(uint)(v165));
   if(v173!=0){
    uint v175=v166+uint(18446744073709551615ul);
-   uint v176=uint(*(device const uint*)(t+(v0+uint(96u))));
-   uint v177=v0+uint(96ul);
-   uint v178=v177+v176;
+   ulong v176=ulong(*(device const ulong*)(t+(v0+ulong(long(96)))));
+   ulong v177=v0+ulong(96ul);
+   ulong v178=v177+v176;
    uint v179=clif_loc_line(t,v178,v175);
    uint v180=uint(1ul);
    uint v181=max(v179,v180);
@@ -1096,10 +1096,10 @@ inline ulong clif_view_loc_end(device const uchar* t,ulong a0,device const uchar
  return v7;
 }
 inline ulong clif_view_loc_col(device const uchar* t,ulong a0,device const uchar* tt,CLIF_VIEW_SPACE const uint* v,device const uchar* ll,uint a4,uint a5){
- uint v0=0;
- uint v1=0;
- uint v2=0;
- uint v3=0;
+ ulong v0=0;
+ ulong v1=0;
+ ulong v2=0;
+ ulong v3=0;
  uint v4=0;
  uint v5=0;
  ulong v7=0;
@@ -1135,28 +1135,28 @@ inline ulong clif_view_loc_col(device const uchar* t,ulong a0,device const uchar
   uint v8=uint(*(device const uint*)(t+v0));
   ulong v9=ulong(v8);
   v10=ulong((ulong)(v9)<<(uint(32)&63u));
-  uint v11=uint(*(device const uint*)(t+(v0+uint(8u))));
+  uint v11=uint(*(device const uint*)(t+(v0+ulong(long(8)))));
   uchar v12=uchar((uint)(v11)!=(uint)(uint(0ul)));
   if(v12!=0){
    {uint t0=v4;v13=t0;}
   }else{
-   v14=uint(*(device const uint*)(t+(v0+uint(12u))));
+   v14=uint(*(device const uint*)(t+(v0+ulong(long(12)))));
    uchar v15=uchar((uint)(v4)<(uint)(v14));
    if(v15!=0){
-    uint v17=uint(*(device const uint*)(t+(v0+uint(16u))));
-    uint v18=v0+uint(16ul);
-    uint v19=v18+v17;
+    ulong v17=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+    ulong v18=v0+ulong(16ul);
+    ulong v19=v18+v17;
     uint v20=uint(0ul);
     uint v21=clif_num_low_of(t,v19,v20,v4);
     {uint t0=v21;v16=t0;}
    }else{
     v22=v4-v14;
-    v23=uint(*(device const uint*)(t+(v0+uint(80u))));
+    v23=uint(*(device const uint*)(t+(v0+ulong(long(80)))));
     uchar v24=uchar((uint)(v22)<(uint)(v23));
     if(v24!=0){
-     uint v26=uint(*(device const uint*)(t+(v0+uint(16u))));
-     uint v27=v0+uint(16ul);
-     uint v28=v27+v26;
+     ulong v26=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+     ulong v27=v0+ulong(16ul);
+     ulong v28=v27+v26;
      uint v29=uint(1ul);
      uint v30=clif_num_low_of(t,v28,v29,v22);
      {uint t0=v30;v25=t0;}
@@ -1180,12 +1180,12 @@ inline ulong clif_view_loc_col(device const uchar* t,ulong a0,device const uchar
   ulong v41=v10|v40;
   {ulong t0=v41;v7=t0;}
  }else{
-  v42=uint(*(device const uint*)(t+(v0+uint(12u))));
+  v42=uint(*(device const uint*)(t+(v0+ulong(long(12)))));
   uchar v43=uchar((uint)(v4)<(uint)(v42));
   if(v43!=0){
-   uint v45=uint(*(device const uint*)(t+(v0+uint(16u))));
-   uint v46=v0+uint(16ul);
-   uint v47=v46+v45;
+   ulong v45=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+   ulong v46=v0+ulong(16ul);
+   ulong v47=v46+v45;
    uint v48=uint(0ul);
    uint v49=clif_num_select(t,v47,v48,v4);
    uint v50=clif_tape_start(tt,v,v49);
@@ -1197,12 +1197,12 @@ inline ulong clif_view_loc_col(device const uchar* t,ulong a0,device const uchar
    {ulong t0=v55;v44=t0;}
   }else{
    v56=v4-v42;
-   v57=uint(*(device const uint*)(t+(v0+uint(80u))));
+   v57=uint(*(device const uint*)(t+(v0+ulong(long(80)))));
    uchar v58=uchar((uint)(v56)<(uint)(v57));
    if(v58!=0){
-    uint v60=uint(*(device const uint*)(t+(v0+uint(16u))));
-    uint v61=v0+uint(16ul);
-    uint v62=v61+v60;
+    ulong v60=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+    ulong v61=v0+ulong(16ul);
+    ulong v62=v61+v60;
     uint v63=uint(1ul);
     uint v64=clif_num_select(t,v62,v63,v56);
     uint v65=clif_tape_start(tt,v,v64);
@@ -1214,22 +1214,22 @@ inline ulong clif_view_loc_col(device const uchar* t,ulong a0,device const uchar
     {ulong t0=v70;v59=t0;}
    }else{
     v71=v56-v57;
-    uint v72=uint(*(device const uint*)(t+(v0+uint(84u))));
+    uint v72=uint(*(device const uint*)(t+(v0+ulong(long(84)))));
     uint v73=uint(0ul);
-    uint v74=uint(*(device const uint*)(t+(v0+uint(96u))));
-    uint v75=v0+uint(96ul);
-    uint v76=v75+v74;
-    uint v77=uint(v73);
-    uint v78=v77*uint(4ul);
-    uint v79=v76+v78;
+    ulong v74=ulong(*(device const ulong*)(t+(v0+ulong(long(96)))));
+    ulong v75=v0+ulong(96ul);
+    ulong v76=v75+v74;
+    ulong v77=ulong(v73);
+    ulong v78=v77*ulong(4ul);
+    ulong v79=v76+v78;
     uint v80=uint(*(device const uint*)(t+v79));
     uint v81=v80+uint(1ul);
-    uint v82=uint(*(device const uint*)(t+(v0+uint(96u))));
-    uint v83=v0+uint(96ul);
-    uint v84=v83+v82;
-    uint v85=uint(v81);
-    uint v86=v85*uint(4ul);
-    uint v87=v84+v86;
+    ulong v82=ulong(*(device const ulong*)(t+(v0+ulong(long(96)))));
+    ulong v83=v0+ulong(96ul);
+    ulong v84=v83+v82;
+    ulong v85=ulong(v81);
+    ulong v86=v85*ulong(4ul);
+    ulong v87=v84+v86;
     uint v88=uint(*(device const uint*)(t+v87));
     uint v89=v88+uint(1ul);
     uint v90=uint(0ul);
@@ -1238,9 +1238,9 @@ inline ulong clif_view_loc_col(device const uchar* t,ulong a0,device const uchar
     uchar v93=uchar((uint)(v71)>=(uint)(v92));
     if(v93!=0){
      uint v95=v71-v92;
-     uint v96=uint(*(device const uint*)(t+(v0+uint(16u))));
-     uint v97=v0+uint(16ul);
-     uint v98=v97+v96;
+     ulong v96=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+     ulong v97=v0+ulong(16ul);
+     ulong v98=v97+v96;
      uint v99=uint(0ul);
      uint v100=clif_num_select(t,v98,v99,v95);
      uint v101=clif_tape_end(tt,v,v100);
@@ -1253,36 +1253,36 @@ inline ulong clif_view_loc_col(device const uchar* t,ulong a0,device const uchar
      uchar v106=uchar((uint)(v71)==(uint)(uint(0ul)));
      if(v106!=0){
       uint v108=uint(0ul);
-      uint v109=uint(*(device const uint*)(t+(v0+uint(92u))));
+      uint v109=uint(*(device const uint*)(t+(v0+ulong(long(92)))));
       ulong v110=ulong(v108);
       ulong v111=ulong((ulong)(v110)<<(uint(32)&63u));
       ulong v112=ulong(v109);
       ulong v113=v111|v112;
       {ulong t0=v113;v107=t0;}
      }else{
-      uint v114=uint(*(device const uint*)(t+(v0+uint(96u))));
-      uint v115=v0+uint(96ul);
-      uint v116=v115+v114;
-      uint v117=uint(v71);
-      uint v118=v117*uint(4ul);
-      uint v119=v116+v118;
+      ulong v114=ulong(*(device const ulong*)(t+(v0+ulong(long(96)))));
+      ulong v115=v0+ulong(96ul);
+      ulong v116=v115+v114;
+      ulong v117=ulong(v71);
+      ulong v118=v117*ulong(4ul);
+      ulong v119=v116+v118;
       uint v120=uint(*(device const uint*)(t+v119));
       uint v121=uint(0ul);
-      uint v122=uint(*(device const uint*)(t+(v0+uint(96u))));
-      uint v123=v0+uint(96ul);
-      uint v124=v123+v122;
-      uint v125=uint(v121);
-      uint v126=v125*uint(4ul);
-      uint v127=v124+v126;
+      ulong v122=ulong(*(device const ulong*)(t+(v0+ulong(long(96)))));
+      ulong v123=v0+ulong(96ul);
+      ulong v124=v123+v122;
+      ulong v125=ulong(v121);
+      ulong v126=v125*ulong(4ul);
+      ulong v127=v124+v126;
       uint v128=uint(*(device const uint*)(t+v127));
       uint v129=v128+v71;
       uint v130=v129+uint(1ul);
-      uint v131=uint(*(device const uint*)(t+(v0+uint(96u))));
-      uint v132=v0+uint(96ul);
-      uint v133=v132+v131;
-      uint v134=uint(v130);
-      uint v135=v134*uint(4ul);
-      uint v136=v133+v135;
+      ulong v131=ulong(*(device const ulong*)(t+(v0+ulong(long(96)))));
+      ulong v132=v0+ulong(96ul);
+      ulong v133=v132+v131;
+      ulong v134=ulong(v130);
+      ulong v135=v134*ulong(4ul);
+      ulong v136=v133+v135;
       uint v137=uint(*(device const uint*)(t+v136));
       ulong v138=ulong(v120);
       ulong v139=ulong((ulong)(v138)<<(uint(32)&63u));
@@ -1296,14 +1296,14 @@ inline ulong clif_view_loc_col(device const uchar* t,ulong a0,device const uchar
    }
    {ulong t0=v59;v44=t0;}
   }
-  v142=uint(*(device const uint*)(t+(v0+uint(112u))));
+  v142=uint(*(device const uint*)(t+(v0+ulong(long(112)))));
   uchar v143=uchar((uint)(v142)==(uint)(uint(0ul)));
   if(v143!=0){
    {ulong t0=v44;v144=t0;}
   }else{
-   uint v145=uint(*(device const uint*)(t+(v0+uint(128u))));
+   uint v145=uint(*(device const uint*)(t+(v0+ulong(long(128)))));
    v146=ulong(v145);
-   uint v147=uint(*(device const uint*)(t+(v0+uint(132u))));
+   uint v147=uint(*(device const uint*)(t+(v0+ulong(long(132)))));
    v148=ulong(v147);
    uchar v149=uchar((uint)(v142)==(uint)(uint(2ul)));
    if(v149!=0){
@@ -1311,7 +1311,7 @@ inline ulong clif_view_loc_col(device const uchar* t,ulong a0,device const uchar
     ulong v152=v151|v148;
     {ulong t0=v152;v150=t0;}
    }else{
-    ulong v153=ulong(*(device const ulong*)(t+(v0+uint(120u))));
+    ulong v153=ulong(*(device const ulong*)(t+(v0+ulong(long(120)))));
     ulong v154=ulong((ulong)(v44)>>(uint(32)&63u));
     ulong v155=v44&ulong(4294967295ul);
     ulong v156=v154+v153;
@@ -1326,21 +1326,21 @@ inline ulong clif_view_loc_col(device const uchar* t,ulong a0,device const uchar
    }
    {ulong t0=v150;v144=t0;}
   }
-  uint v164=uint((ulong)(v144)>>32u);
+  ulong v164=ulong((ulong)(v144)>>(uint(32)&63u));
   uint v165=uint(v164);
   uint v166=uint(v144);
-  uint v167=uint(*(device const uint*)(t+(v0+uint(96u))));
-  uint v168=v0+uint(96ul);
-  uint v169=v168+v167;
+  ulong v167=ulong(*(device const ulong*)(t+(v0+ulong(long(96)))));
+  ulong v168=v0+ulong(96ul);
+  ulong v169=v168+v167;
   uint v170=clif_loc_line(t,v169,v165);
   uint v171=uint(1ul);
   uint v172=max(v170,v171);
-  uint v173=uint(*(device const uint*)(t+(v0+uint(96u))));
-  uint v174=v0+uint(96ul);
-  uint v175=v174+v173;
-  uint v176=uint(v172);
-  uint v177=v176*uint(4ul);
-  uint v178=v175+v177;
+  ulong v173=ulong(*(device const ulong*)(t+(v0+ulong(long(96)))));
+  ulong v174=v0+ulong(96ul);
+  ulong v175=v174+v173;
+  ulong v176=ulong(v172);
+  ulong v177=v176*ulong(4ul);
+  ulong v178=v175+v177;
   uint v179=uint(*(device const uint*)(t+v178));
   uint v180=v165-v179;
   ulong v181=ulong(v180);
@@ -1349,10 +1349,10 @@ inline ulong clif_view_loc_col(device const uchar* t,ulong a0,device const uchar
  return v7;
 }
 inline ulong clif_view_loc_docof(device const uchar* t,ulong a0,device const uchar* tt,CLIF_VIEW_SPACE const uint* v,device const uchar* ll,uint a4,uint a5){
- uint v0=0;
- uint v1=0;
- uint v2=0;
- uint v3=0;
+ ulong v0=0;
+ ulong v1=0;
+ ulong v2=0;
+ ulong v3=0;
  uint v4=0;
  uint v5=0;
  ulong v7=0;
@@ -1374,28 +1374,28 @@ inline ulong clif_view_loc_docof(device const uchar* t,ulong a0,device const uch
   uint v8=uint(*(device const uint*)(t+v0));
   ulong v9=ulong(v8);
   v10=ulong((ulong)(v9)<<(uint(32)&63u));
-  uint v11=uint(*(device const uint*)(t+(v0+uint(8u))));
+  uint v11=uint(*(device const uint*)(t+(v0+ulong(long(8)))));
   uchar v12=uchar((uint)(v11)!=(uint)(uint(0ul)));
   if(v12!=0){
    {uint t0=v4;v13=t0;}
   }else{
-   v14=uint(*(device const uint*)(t+(v0+uint(12u))));
+   v14=uint(*(device const uint*)(t+(v0+ulong(long(12)))));
    uchar v15=uchar((uint)(v4)<(uint)(v14));
    if(v15!=0){
-    uint v17=uint(*(device const uint*)(t+(v0+uint(16u))));
-    uint v18=v0+uint(16ul);
-    uint v19=v18+v17;
+    ulong v17=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+    ulong v18=v0+ulong(16ul);
+    ulong v19=v18+v17;
     uint v20=uint(0ul);
     uint v21=clif_num_low_of(t,v19,v20,v4);
     {uint t0=v21;v16=t0;}
    }else{
     v22=v4-v14;
-    v23=uint(*(device const uint*)(t+(v0+uint(80u))));
+    v23=uint(*(device const uint*)(t+(v0+ulong(long(80)))));
     uchar v24=uchar((uint)(v22)<(uint)(v23));
     if(v24!=0){
-     uint v26=uint(*(device const uint*)(t+(v0+uint(16u))));
-     uint v27=v0+uint(16ul);
-     uint v28=v27+v26;
+     ulong v26=ulong(*(device const ulong*)(t+(v0+ulong(long(16)))));
+     ulong v27=v0+ulong(16ul);
+     ulong v28=v27+v26;
      uint v29=uint(1ul);
      uint v30=clif_num_low_of(t,v28,v29,v22);
      {uint t0=v30;v25=t0;}

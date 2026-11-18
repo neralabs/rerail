@@ -750,7 +750,7 @@ pub struct LoweredWave {
     /// The level passes fused into one walk, built at their first batch (`Packs`).
     packs: Packs,
     /// The sources of its pattern kernels on Metal, made at the first ask (`metal_ready`).
-    metal_sources: std::sync::OnceLock<Result<Vec<String>, Error>>,
+    metal_sources: [std::sync::OnceLock<Result<Vec<String>, Error>>; 2],
 }
 
 impl LoweredWave {
@@ -1116,7 +1116,8 @@ impl LoweredWave {
     /// kernels are not runs on the CPU meanwhile; they are compiled as the mode says.
     pub fn metal_ready(&self, format: u32) -> bool {
         let Some(device) = super::device::matcher() else { return true };
-        match self.metal_sources.get_or_init(|| device.wave_pattern_sources(self)) {
+        // The sources by the tape view the batch's format reads (`pattern_variant`).
+        match self.metal_sources[device.pattern_variant(format)].get_or_init(|| device.wave_pattern_sources(self, format)) {
             Ok(sources) => device.patterns_ready(sources, format),
             // No Metal form of its patterns: the Metal run says why (`roots_batch`).
             Err(_) => true,

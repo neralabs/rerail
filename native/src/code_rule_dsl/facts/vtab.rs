@@ -83,8 +83,8 @@ pub struct ViewInPlace {
 impl ViewInPlace {
     /// Its batch's cache's counts (`None` without one): for tuning, in the statistics mode (`RERAIL_ZCACHE_STATS`).
     pub fn cache_counts(&self) -> Option<rerail_clif::view::cache::Counts> {
-        // SAFETY: the cache's header, in a shared buffer this view keeps.
-        self.cache.as_ref().map(|c| unsafe { rerail_clif::view::cache::Counts::read(c.contents().cast::<u8>()) })
+        // SAFETY: the cache's shared buffer, all of it, which this view keeps.
+        self.cache.as_ref().map(|c| rerail_clif::view::cache::Counts::checked(unsafe { std::slice::from_raw_parts(c.contents().cast::<u8>(), c.length() as usize) }))
     }
 
     /// The failures its batch's cache has counted (0 without one).

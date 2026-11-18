@@ -732,11 +732,36 @@ pub fn pipeline_named_constant(
     constant: Option<u32>,
 ) -> Result<ComputePipelineState, Error> {
     crate::device()?;
-    #[cfg(any(test, feature = "test-hooks"))]
-    let before = rerail_accel::gpu::kernels::made_here();
+    // A measurement's sources (`RERAIL_METAL_DUMP=<dir>`): each library's source, by its digest, and the pipelines
+    // made of it, to compile apart and cold (`scripts/dev/metal/compile-time.swift`; the system's shader cache keeps
+    // a compile by its code, so a comment added to the source still finds it).
+    if let Some(dir) = std::env::var_os("RERAIL_METAL_DUMP") {
+        use sha2::Digest as _;
+        let digest: [u8; 32] = sha2::Sha256::digest(source.as_bytes()).into();
+        let stem = std::path::Path::new(&dir).join(digest[..6].iter().map(|b| format!("{b:02x}")).collect::<String>());
+        if !stem.with_extension("metal").exists() {
+            let _ = std::fs::write(stem.with_extension("metal"), source);
+        }
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(stem.with_extension("pipelines")) {
+            use std::io::Write as _;
+            let _ = writeln!(f, "{name} {}", constant.map_or(-1, i64::from));
+        }
+    }
+    let started = std::time::Instant::now();
+    let made = rerail_accel::gpu::kernels::made_here();
     let pipeline = rerail_accel::gpu::kernels::pipeline(source, name, constant);
+    // The wall of a pipeline this thread made (compiled, or loaded from the store's archive), in the profile: in all,
+    // and by kernel.
+    if rerail_accel::gpu::kernels::made_here() > made {
+        let ms = started.elapsed().as_millis() as usize;
+        rerail_prof::count("metal.compile_ms", ms);
+        rerail_prof::count("metal.compiles", 1);
+        if rerail_prof::on() {
+            rerail_prof::count_named(format!("metal.compile_ms.{name}"), ms);
+        }
+    }
     #[cfg(any(test, feature = "test-hooks"))]
-    COMPILED_HERE.set(COMPILED_HERE.get() + (rerail_accel::gpu::kernels::made_here() - before) as usize);
+    COMPILED_HERE.set(COMPILED_HERE.get() + (rerail_accel::gpu::kernels::made_here() - made) as usize);
     Ok(pipeline)
 }
 

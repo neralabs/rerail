@@ -2,10 +2,9 @@
 //! `metal_tape.metal`'s hand port.
 //!
 //! A read's function takes the tape (`device const uchar* t`, where the view's offsets count from: the
-//! document's first byte in its batch's block) and its view as u32s (`CLIF_VIEW_SPACE const uint* v`: `thread` unless a
-//! kernel source defines it `device`, as the join kernels do, which read each document's view where the batch's
-//! directory holds it; the device's `DocView`, `at` first), then its own parameters. In the body the tape and the view
-//! are byte offsets from those pointers, 0 where they come in, so
+//! document's first byte in its batch's block) and its view as u32s (`CLIF_VIEW_SPACE const uint* v`: `thread` unless a kernel source defines it `device`, as the
+//! join kernels do, which read each document's view where the batch's directory holds it; the device's
+//! `DocView`, `at` first), then its own parameters. In the body the tape and the view are byte offsets from those pointers, 0 where they come in, so
 //! an address the read computes is an offset: a load of the view (marked aligned: its fields) reads `v`, a load of
 //! the tape reads `t`, at any alignment (two aligned words shifted together where it is not aligned to its size;
 //! a slab lays the document's source after its tape, so the second word lies in it).
@@ -26,12 +25,16 @@
 //! A GPU computes in 32 bits; a 64-bit add or shift is several instructions. Every offset a read computes from the
 //! tape or the view is below 4 GiB on the device (a document's parts are offsets from its first byte, u32 in its
 //! view), so a 64-bit value whose every use reads only its low 32 bits (`low_words`: an address, a modular step to
-//! another such value) is computed as a `uint`, with the same low bits, and a 64-bit load of it reads 32 bits. A
-//! relation's offsets are a block's, not bounded so: its reads keep 64 bits.
+//! another such value) is computed as a `uint`, with the same low bits, and a 64-bit load of it reads 32 bits. The
+//! other families' offsets (a relation's, a view's entry, the lines') are a block's, not bounded so: their reads
+//! keep 64 bits.
 
 use cranelift_codegen::ir::{self, InstructionData, Opcode, condcodes::IntCC, types};
 use crate::reads::Family;
 use std::fmt::Write;
+
+/// The reads compiled as calls (`__attribute__((noinline))`), by name.
+const COLD: [&str; 2] = ["tape_z_block", "_z"];
 
 /// MSL's unsigned type for a Cranelift integer type, and its signed one.
 fn ty(t: ir::Type) -> Result<(&'static str, &'static str), String> {
@@ -121,7 +124,7 @@ pub fn translate_reads(funcs: &[(u32, ir::Function, &str)], prefix: &str, family
 fn low_words(f: &ir::Function, family: Family) -> std::collections::HashSet<ir::Value> {
     let dfg = &f.dfg;
     let mut low: std::collections::HashSet<ir::Value> = std::collections::HashSet::new();
-    if family == Family::Relation {
+    if family != Family::Tape {
         return low;
     }
     for b in f.layout.blocks() {
@@ -198,7 +201,11 @@ fn signature(f: &ir::Function, name: &str, family: Family) -> Result<String, Str
     let params: Vec<String> =
         f.signature.params.iter().enumerate().skip(family.pointers()).map(|(i, p)| Ok(format!("{} a{i}", ty(p.value_type)?.0))).collect::<Result<_, String>>()?;
     let more = if params.is_empty() { String::new() } else { format!(",{}", params.join(",")) };
-    Ok(format!("inline {} {name}({}{more})", ty(ret.value_type)?.0, pointers(family).0))
+    // A cold read (decision 0353 step 4b: a 16z block decoded into its cache, once a block) is a call, not inlined
+    // into every read that may fall on one: inlined, it made each view's kernel carry the decoder once for every
+    // tape read in it.
+    let inline = if COLD.iter().any(|cold| name.ends_with(cold)) { "__attribute__((noinline))" } else { "inline" };
+    Ok(format!("{inline} {} {name}({}{more})", ty(ret.value_type)?.0, pointers(family).0))
 }
 
 fn body(out: &mut String, f: &ir::Function, named: &dyn Fn(u32) -> Result<String, String>, family: Family) -> Result<(), String> {
@@ -241,11 +248,10 @@ fn body(out: &mut String, f: &ir::Function, named: &dyn Fn(u32) -> Result<String
     for (v, t) in &declared {
         writeln!(out, " {t} v{v}=0;").unwrap();
     }
-    // The family's pointers are offsets from `t` (and `v`): a relation's descriptor is its offset from `t`. The
+    // The family's pointers are offsets from `t` (and `v`): a relation's or a view's descriptor is its offset from `t`. The
     // read's own parameters are its arguments.
     for (k, &p) in dfg.block_params(entry).iter().enumerate() {
         if family != Family::Tape && k == 0 {
-            // The descriptor: its offset from `t`.
             writeln!(out, " {}=a0;", name(p)).unwrap();
         } else if k < family.pointers() {
             writeln!(out, " {}=0;", name(p)).unwrap();
