@@ -117,10 +117,57 @@ impl<'a> P<'a> {
         }
     }
 
+    /// At a `?` touching a call ending `try`'s or `await`'s operand: whether tree-sitter's GLR
+    /// keeps the operand going on through the optional chain. It does where the chain (`.name`s)
+    /// reaches a call or subscript and the expression goes on after that one (an operator, a
+    /// `.`, `[`, `?`, `!`, `as` on its line, a `.` on the next); it ends at the first call where
+    /// the statement ends there, a closure follows, or no call does (`?.b ?? c`). Probed.
+    fn chain_goes_on(&mut self) -> bool {
+        let mut j = 1;
+        loop {
+            match self.kind_at(j) {
+                T::Dot if matches!(self.kind_at(j + 1), T::Name | T::Int) => j += 2,
+                T::LParen | T::LBracket if self.adjacent(j - 1) => break,
+                _ => return false,
+            }
+        }
+        let mut d = 0;
+        loop {
+            match self.kind_at(j) {
+                T::LParen | T::LBracket | T::LBrace => d += 1,
+                T::RParen | T::RBracket | T::RBrace => {
+                    d -= 1;
+                    if d == 0 {
+                        break;
+                    }
+                }
+                T::Eof => return false,
+                _ => {}
+            }
+            j += 1;
+        }
+        let t = self.peek_at(j + 1);
+        if t.nl {
+            return t.kind == T::Dot;
+        }
+        !matches!(t.kind, T::Eof | T::RBrace | T::Semi | T::RParen | T::RBracket | T::Comma | T::LBrace | T::Colon)
+    }
+
+    /// After a directive ended at a function's name (`#if _runtime`): the call of it, and the
+    /// operators after.
+    pub(super) fn directive_call(&mut self, m: crate::tw::Mark) -> R<()> {
+        let n = self.t.wrap(m, K::CallExpression, f::NONE);
+        self.call_suffix(true, false)?;
+        self.close(n);
+        self.operators(m, TOP)
+    }
+
     // ---- Operators after an operand.
 
     /// The operators after the operand read since `m`, in context `cx`.
     fn operators(&mut self, m: crate::tw::Mark, cx: Cx) -> R<()> {
+        // `try`'s operand gone on through an optional chain past its first call.
+        let mut chained = false;
         loop {
             if self.ends() {
                 return Ok(());
@@ -175,25 +222,29 @@ impl<'a> P<'a> {
                     self.close(n);
                 }
                 T::LParen | T::LBracket => {
-                    let p = if cx.hack { 0 } else { -2 };
+                    // In a hack operand the call is always read (past the GLR's pruning, the
+                    // operand is at its operator's precedence, the call still its own).
+                    let p = if cx.hack { i8::MAX } else { -2 };
                     if !cx.shifts(p) {
                         return Ok(());
                     }
                     if cx.hack {
-                        // Seen: a chain of `&&` over nine calls nests right, then left.
                         self.hack_calls += 1;
-                        if self.hack_calls > 6 {
-                            return self.refuse();
-                        }
                     }
                     let n = self.t.wrap(m, K::CallExpression, f::NONE);
                     self.call_suffix(true, cx.split)?;
                     self.close(n);
                     if cx.stop != 0 {
-                        if self.peek() == T::Question && self.touching() {
-                            // An optional chain's `?` after the call: tree-sitter's GLR ends the
-                            // operand there or goes on (both seen), by what follows.
-                            return self.refuse();
+                        if self.peek() == T::Question && self.touching() && self.chain_goes_on() {
+                            // An optional chain's `?` after the call: the operand goes on to the
+                            // chain's next call where the expression goes on after it (probed).
+                            chained = true;
+                            continue;
+                        }
+                        if chained && cx.stop == 1 && self.peek() == T::Question && !self.touching() {
+                            // Gone on so, `try`'s operand takes a ternary after the call too
+                            // (a binary operator stays outside it; probed).
+                            continue;
                         }
                         return Ok(());
                     }
@@ -300,7 +351,16 @@ impl<'a> P<'a> {
                     } else {
                         self.tkf(super::punct(t.kind).expect("an operator"), of)?;
                     }
-                    let rcx = if hack { HACK } else { Cx { prec, right, hack: false, stop: 0, split: false } };
+                    // Past seven calls read into right operands, tree-sitter's GLR has pruned the
+                    // versions that nest right: the chain's rest nests left inside the last one
+                    // (`a(x) ^ … ^ (g(x) ^ ((h(x) ^ i(x)) ^ j(x)))`, probed).
+                    let rcx = if !hack {
+                        Cx { prec, right, hack: false, stop: 0, split: false }
+                    } else if self.hack_calls < 7 {
+                        HACK
+                    } else {
+                        Cx { prec, right, hack: true, stop: 0, split: false }
+                    };
                     self.expr_f(rcx, rf)?;
                     self.close(n);
                     if cx.stop == 1 {
@@ -400,9 +460,11 @@ impl<'a> P<'a> {
                 Ok(())
             }
             T::Minus | T::Plus if self.if_true && self.kind_at(1) == T::Dot && self.adjacent(0) => {
-                // `c ? -.x : y`: seen as a navigation of the operator (`_referenceable_operator`),
-                // elsewhere as prefixes: the GLR's choice, not read.
-                self.refuse()
+                // `c ? -.x : y`: in a ternary's middle, a navigation of the operator
+                // (`_referenceable_operator`, the operator its target; probed), elsewhere prefixes.
+                // The operator here, the navigation the operators' after it.
+                self.tk(super::punct(t.kind).expect("an operator"))?;
+                Ok(())
             }
             T::Minus | T::Plus | T::Bang | T::Tilde | T::Amp | T::Dot | T::PlusPlus | T::MinusMinus | T::Custom => {
                 let n = self.open(K::PrefixExpression);
@@ -427,8 +489,22 @@ impl<'a> P<'a> {
                     return self.refuse();
                 }
                 if t.kind == T::Dot && self.peek() == T::Name && !self.tok().tick && matches!(self.word(), w::REPEAT | w::EACH) && self.kind_at(1) == T::LParen {
-                    // `.repeat(…)`: the pack expansion's keyword (seen as `prefix(., value_pack_expansion)`).
-                    return self.refuse();
+                    // `.repeat(…)`, `.each(…)`: the keyword's pack (`value_pack_expansion`,
+                    // `value_parameter_pack`) over a tuple, the prefix's target (probed).
+                    let m = self.mark();
+                    let each = self.word() == w::EACH;
+                    let p = self.open(if each { K::ValueParameterPack } else { K::ValuePackExpansion });
+                    self.tk(if each { K::TEach } else { K::TRepeat })?;
+                    self.tuple_expression()?;
+                    self.close(p);
+                    let stmt = std::mem::replace(&mut self.stmt, false);
+                    let r = self.operators(m, PREFIX);
+                    self.stmt = stmt;
+                    r?;
+                    self.t.field_since(m, f::TARGET);
+                    self.t.unmark(m);
+                    self.close(n);
+                    return Ok(());
                 }
                 if t.kind == T::Dot && self.peek() == T::Name && !self.tok().tick && matches!(self.word(), w::DEFAULT | w::CASE | w::ELSE | w::IN | w::WHERE | w::CATCH | w::LET | w::VAR | w::FUNC | w::RETURN | w::IMPORT | w::INIT) {
                     // `.default`: after a `.`, any word is a name.
@@ -524,6 +600,35 @@ impl<'a> P<'a> {
                         _ => {}
                     }
                 }
+                // `A.B<C, D>(…)`, `A.B<C, D> { … }`: a qualified generic type's constructor,
+                // where the comparisons tree-sitter also parses cannot (probed: `a.b<C>(d)` is
+                // comparisons).
+                if self.kind_at(1) == T::Dot && self.adjacent(0) {
+                    let mut k = 0;
+                    while self.kind_at(k + 1) == T::Dot && self.kind_at(k + 2) == T::Name && self.adjacent(k) && self.adjacent(k + 1) {
+                        k += 2;
+                    }
+                    if self.kind_at(k + 1) == T::Lt && self.adjacent(k) {
+                        if let Some(close) = self.type_args_end(k + 1) {
+                            let args = self.kind_at(close + 1) == T::LParen && self.adjacent(close);
+                            let lambda = self.kind_at(close + 1) == T::LBrace && !self.no_lambda;
+                            if (args || lambda) && self.comparisons_fail(k + 1, close) {
+                                let n = self.open(K::ConstructorExpression);
+                                self.user_type_f(f::CONSTRUCTED_TYPE)?;
+                                let s = self.open(K::ConstructorSuffix);
+                                if args {
+                                    self.value_arguments()?;
+                                }
+                                if self.peek() == T::LBrace && !self.no_lambda && !(args && self.ends()) {
+                                    self.lambda_literal()?;
+                                }
+                                self.close(s);
+                                self.close(n);
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
                 // A generic type's constructor: `Name<…>(`.
                 if self.kind_at(1) == T::Lt && self.adjacent(0) {
                     if let Some(close) = self.type_args_end(1) {
@@ -609,18 +714,12 @@ impl<'a> P<'a> {
         }
     }
 
-    /// After `Name<…>.member` (`k`: the member's index), whether tree-sitter's GLR keeps the
-    /// type (a navigation of `user_type`) over the comparisons it also parses (`Name < … > .member`).
-    /// Measured on the corpus: the type where a binary operator follows and its operand is no call,
-    /// or where a call is navigated on; else the comparisons.
-    fn generic_member_is_type(&mut self, lt: usize, k: usize) -> bool {
-        if self.kind_at(k) != T::Name {
-            return false;
-        }
-        // Where the comparisons cannot parse: a `>` inside before no operand, or a `,` at the
-        // arguments' top where no list takes it.
+    /// Whether `Name < … >` from the `<` at `lt` to the `>` at `close` cannot parse as
+    /// comparisons: a `>` inside before no operand, or a `,` at the arguments' top where no list
+    /// takes it.
+    fn comparisons_fail(&mut self, lt: usize, close: usize) -> bool {
         let mut d = 0;
-        for j in lt..k - 2 {
+        for j in lt..close {
             match self.kind_at(j) {
                 T::Lt => d += 1,
                 T::Gt | T::GtGt => {
@@ -632,6 +731,20 @@ impl<'a> P<'a> {
                 T::Comma if d == 1 && self.stmt => return true,
                 _ => {}
             }
+        }
+        false
+    }
+
+    /// After `Name<…>.member` (`k`: the member's index), whether tree-sitter's GLR keeps the
+    /// type (a navigation of `user_type`) over the comparisons it also parses (`Name < … > .member`).
+    /// Measured on the corpus: the type where a binary operator follows and its operand is no call,
+    /// or where a call is navigated on; else the comparisons.
+    fn generic_member_is_type(&mut self, lt: usize, k: usize) -> bool {
+        if self.kind_at(k) != T::Name {
+            return false;
+        }
+        if self.comparisons_fail(lt, k - 2) {
+            return true;
         }
         let mut j = k + 1;
         if self.kind_at(j) == T::LParen && self.adjacent(k) {
@@ -1019,6 +1132,7 @@ impl<'a> P<'a> {
         let base = self.i;
         let src = self.src;
         let at = |k: usize| src.get(k).copied().unwrap_or(0);
+        let mut interpolated = false;
         let mut i = t.start as usize;
         if at(i) == b'#' {
             // A raw string: one `raw_str_end_part` where no interpolation is in it.
@@ -1056,6 +1170,7 @@ impl<'a> P<'a> {
                     b'(' => {
                         self.t.token(K::TBackslashLParen, f::NONE, i as u32, i as u32 + 2);
                         i = self.interpolation(i + 2)?;
+                        interpolated = true;
                     }
                     b'u' if at(i + 2) == b'{' => {
                         let mut k = i + 3;
@@ -1102,8 +1217,12 @@ impl<'a> P<'a> {
         } else {
             self.t.token(K::TDQuote, f::NONE, close as u32, end as u32);
         }
+        // Without an interpolation's tokens, those read after the string are those lexed from its
+        // end already.
         self.i = base;
-        self.relex_at(end);
+        if interpolated || end != t.end as usize {
+            self.relex_at(end);
+        }
         self.t.last_end = end as u32;
         self.t.close_at(n, end as u32);
         Ok(())

@@ -96,6 +96,11 @@ pub const COUNT: u8 = 0x65;
 /// the check holds at a bit of its mask among the token's bytes, as the lean lexer checks a
 /// string's `\u` escapes where it notes one.
 pub const CHECK: u8 = 0x66;
+/// The pending extras that start where mask `operand` (`Words::block_programs`' masks) does not
+/// hold, from the first on, are no longer pending: the nodes closed next keep them, as a leaf
+/// taken after them would. A settling mark's arm (`mark … , settles`): the extras before its
+/// line break are the statement's.
+pub const SETTLE: u8 = 0x67;
 
 pub const NAMED: u8 = 1;
 pub const GREEDY: u8 = 1;
@@ -147,8 +152,9 @@ pub struct Words {
     /// leaf of kind `K` where a `LEAF` names `stream_ir::WORD_KIND`. Rising by string.
     pub word_kinds: Vec<(u16, u16)>,
     /// The extras a `TOKEN` takes (`m` with `TOKEN_EXTRAS`; `tokenextra bB #K`): a token whose
-    /// record's code has mark bit `B` (`records::MARK_SHIFT + B`) is an extra of kind `K`. Rising
-    /// by bit.
+    /// record's code has the first entry's mark bit `B` (`records::MARK_SHIFT + B`) is an extra,
+    /// of the first entry's kind `K`, or of a later entry's where it has that entry's bit too
+    /// (`stream::extra_kind`: a kind each, after the first). Rising by bit.
     pub extras: Vec<(u8, u16)>,
     /// The token marks (decision 0129; `tokenmark K oO kK sW …`): mark `K` holds where its
     /// record's bit does and its tokens follow, each element one record (the extras between
@@ -231,6 +237,10 @@ pub struct TokenElem {
     pub offset: i8,
     pub kinds: u64,
     pub words: Vec<u16>,
+    /// The kinds' hard keywords (strings): a record of one of the kinds whose word is one of
+    /// these is that keyword's token, of the keyword's own kind (as Bitlex's evaluator has it),
+    /// not one of the kinds. `simple_identifier "<"` holds at `foo <` but not at `fun <`.
+    pub except: Vec<u16>,
     /// A token none of the kinds and words (never the file's end).
     pub not: bool,
     /// The file's end takes it too: no token left (the last element only).
@@ -242,7 +252,8 @@ impl TokenElem {
     pub fn takes(&self, code: u32) -> bool {
         let kind = code & 0xff;
         let word = crate::records::word_of(code);
-        (kind < 64 && self.kinds >> kind & 1 == 1) || (word > 0 && self.words.contains(&((word - 1) as u16)))
+        let keyword = word > 0 && self.except.contains(&((word - 1) as u16));
+        (kind < 64 && self.kinds >> kind & 1 == 1 && !keyword) || (word > 0 && self.words.contains(&((word - 1) as u16)))
     }
 
     /// Whether the element holds at a record's code (`None`: no record left, the file's end).

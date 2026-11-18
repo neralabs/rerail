@@ -67,6 +67,12 @@ pub mod go_lean;
 pub mod c_lean;
 /// C#'s tape from the lean parser (`rerail_csharp_lean`).
 pub mod csharp_lean;
+/// Kotlin's tape from the lean parser (`rerail_kotlin_lean`).
+pub mod kotlin_lean;
+/// Swift's tape from the lean parser (`rerail_swift_lean`).
+pub mod swift_lean;
+/// Scala's tape from the lean parser (`rerail_scala_lean`).
+pub mod scala_lean;
 /// PHP's tape from the lean parser (`rerail_php_lean`).
 pub mod php_lean;
 /// HTML's tape from the lean parser (`rerail_html_lean`).
@@ -1591,6 +1597,19 @@ impl TapeImage {
             None => source_digest(source, &budget)?,
         };
         Ok(Self::of15([&code, &size, &base, &off, &tail], widths, codes, Vec::new(), grammar.lang, source.len(), Some(digest)))
+    }
+
+    /// A written tape whose codes name contextual aliases (`Code::alias`, an index into
+    /// `kind_aliases`): a kind whose symbol's own name or namedness is not the node's, as
+    /// `encode_node` finds it. The aliases numbered by first use, as `pack` numbers them.
+    pub fn with_kind_aliases(mut self, kind_aliases: Vec<(String, bool)>) -> Result<Self, String> {
+        if kind_aliases.len() >= usize::from(SENTINEL)
+            || self.codes.iter().any(|code| code.alias != SENTINEL && usize::from(code.alias) >= kind_aliases.len())
+        {
+            return Err("a written tape's aliases do not agree with its codes".into());
+        }
+        self.kind_aliases = kind_aliases;
+        Ok(self)
     }
 
     /// The columns of `nodes`, in preorder with their sizes set: codes folded and numbered by

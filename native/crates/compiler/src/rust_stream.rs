@@ -472,11 +472,16 @@ fn token_step(out: &mut String, x: &Facts<'_>, any: Option<u8>, extras: bool, fl
     } else {
         ("", "            self.last_end = self.rec_end;\n", "", "")
     };
-    let extra = match (extras, n.extras.first()) {
-        (true, Some(&(bit, kind))) => format!(
-            "            if c >> {} & 1 != 0 {{\n{extra_end}                self.leaf::<true, true>({kind}, self.rec_end);\n                self.room()?;\n                continue;\n            }}\n",
-            crate::records::MARK_SHIFT + u32::from(bit)
-        ),
+    let extra = match (extras, n.extras.split_first()) {
+        (true, Some((&(bit, kind), more))) => {
+            // The leaf's kind: the first's, or the last later kind whose bit the code has
+            // (`stream::extra_kind`).
+            let kind = more.iter().fold(kind.to_string(), |k, &(b, later)| format!("if c >> {} & 1 != 0 {{ {later} }} else {{ {k} }}", crate::records::MARK_SHIFT + u32::from(b)));
+            format!(
+                "            if c >> {} & 1 != 0 {{\n{extra_end}                self.leaf::<true, true>({kind}, self.rec_end);\n                self.room()?;\n                continue;\n            }}\n",
+                crate::records::MARK_SHIFT + u32::from(bit)
+            )
+        }
         _ => String::new(),
     };
     // The token marks that refuse (`TokenMark::refuses`): their bits in the code, one test; where
@@ -697,6 +702,21 @@ fn node_words(out: &mut String, x: &Facts<'_>) {
         $OPEN_MADE
         self.nopen += 1;
         self.nodes = n + 1;
+    }
+
+    /// `SETTLE`: the pending extras, from the first, while output `o` does not hold at their
+    /// starts, settled: the nodes closed next keep them.
+    #[inline(always)]
+    fn settle_before(&mut self, o: usize) {
+        let first = self.nodes - self.pending;
+        let mut i = first;
+        while i < self.nodes && !self.bit(o, unsafe { (*self.row(i)).start }) {
+            i += 1;
+        }
+        if i > first {
+            self.keep = unsafe { (*self.row(i - 1)).end };
+            self.pending = self.nodes - i;
+        }
     }
 
     /// `CLOSE`: its end, size and tail; the pending extras after it are its parent's. A node
@@ -1191,7 +1211,14 @@ fn pattern(out: &mut String, i: usize, m: &TokenMark, extra_bit: u8) {
     let test = |el: &crate::program::TokenElem| -> String {
         let mut t = Vec::new();
         if el.kinds != 0 {
-            t.push(format!("((c & 0xff) < 64 && {:#x}u64 >> (c & 0xff) & 1 != 0)", el.kinds));
+            // Not one of the kinds' hard keywords (`TokenElem::except`).
+            let keyword = if el.except.is_empty() {
+                String::new()
+            } else {
+                let x: Vec<String> = el.except.iter().map(|&s| (u32::from(s) + 1).to_string()).collect();
+                format!(" && !matches!((c >> 8) & 0xff, {})", x.join(" | "))
+            };
+            t.push(format!("((c & 0xff) < 64 && {:#x}u64 >> (c & 0xff) & 1 != 0{keyword})", el.kinds));
         }
         if !el.words.is_empty() {
             let w: Vec<String> = el.words.iter().map(|&s| (u32::from(s) + 1).to_string()).collect();
@@ -1574,6 +1601,7 @@ fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>
             format!("s.leaf::<{deferred}, {extra}>({k}, {end});\n{}", jump(0)?)
         }
         Op::Settle { .. } => format!("s.pending = 0;\n{}", jump(0)?),
+        Op::SettleBefore { mask } => format!("s.settle_before({});\n{}", mask_output(n, mask)?, jump(0)?),
         Op::Mark { mask, order, end, keep, word: mark_word, pattern } => {
             let k = u32::from(order);
             let here = if (k as usize) < x.in_code {
