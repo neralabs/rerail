@@ -153,7 +153,7 @@ pub(super) fn analyze(i: &Input) -> Vec<Finding> {
             format!(
                 "{scalar} scalar node visits; {nodes} identities; {strings} interned batch strings. Consumer paths: {reasons}"
             ),
-            "Check the named consumers for candidate restrictions before Projection::of; push only semantically valid demands into producers.",
+            "Check the named consumers for candidate restrictions before the projection (text_demand::projection); push only semantically valid demands into producers.",
         );
     }
     let construction: Vec<_> = i

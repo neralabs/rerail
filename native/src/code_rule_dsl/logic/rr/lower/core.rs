@@ -1,7 +1,7 @@
 //! core.rr's relations in a program: core.rr is every program's prelude (decision 0043), as the libraries read it.
 //!
 //! - **Declarations.** `rr::program` reads core.rr before every file, so a file's program has all of core.rr's
-//!   declarations, and a program that includes core.rr reads core.rr's shape (`syntax::Projection::of`); the
+//!   declarations, and a program that includes core.rr reads core.rr's shape (`plan::text_demand::projection_of`); the
 //!   inputs it does not read are neither bound nor planned. A file may not declare or derive a
 //!   core.rr relation (decision 0141, `rr::read_file`). A relation read and not declared, which core.rr declares,
 //!   has core.rr's declaration and is an input (`declare_core`: a program's text parsed alone, `rr::parse`). Such a

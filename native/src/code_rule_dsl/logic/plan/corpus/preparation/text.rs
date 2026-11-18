@@ -4,7 +4,7 @@
 //! - `Absorb` (`matchers::absorb`): a Python program's tree-shaped parts as `ast` literals (decision 0106 §4);
 //! - `MatcherRelations` (`matchers::lower`): each `ast` literal an atom of its matcher's relation (decision 0106);
 //! - `NodeSubjects` (`strings::node_subject_tests`): a text test on a node tests the node's text;
-//! - `Twins` (`syntax::long_text_twins`): twin rules reading text past the inline bound (decision 0109);
+//! - `Twins`: twin rules reading text past the inline bound (decision 0109);
 //! - `ImpliedSets` (`strings::implied_set_tests`): a test over a constant table's values gains the whole table's;
 //! - `TextRelations` (`strings::as_relations`): text tests over text relations as the vocabulary's relations
 //!   (decision 0037), `match_all` and `match_group` as their regexes' relations, and the `fstring_template` markers.
@@ -51,6 +51,24 @@ pub fn passes(p: &mut Pipeline<'_>, dialect: crate::code_rule_dsl::language::Gra
     p.rules(&mut relations);
     let vocabulary = Vocabulary::from_parts(relations.tests, relations.specs, relations.matches, relations.markers);
     Ok(Found { matchers, vocabulary })
+}
+
+/// Version `v` with each `ast` literal an atom of its matcher's relation (`MatcherRelations`, decision 0106): that
+/// version and its matchers, by relation.
+pub fn matcher_relations(v: Arc<Version>) -> Result<(Arc<Version>, Matchers)> {
+    let mut p = Pipeline::new("the matchers' relations", v);
+    let mut lowering = MatcherRelations::default();
+    p.rules(&mut lowering);
+    Ok((p.finish()?.0, lowering.out))
+}
+
+/// Version `v` with the twins of its rules reading text past the inline bound (`Twins`, decision 0109), `matchers`
+/// its matchers: that version and the number of twins made.
+pub fn long_text_twins(v: Arc<Version>, matchers: &Matchers) -> Result<(Arc<Version>, usize)> {
+    let mut p = Pipeline::new("long text twins", v);
+    let mut twins = Twins { matchers: matchers.clone(), by_rule: HashMap::new(), made: 0 };
+    p.rules(&mut twins);
+    Ok((p.finish()?.0, twins.made))
 }
 
 fn name<'v>(v: &'v Version, r: RuleRef<'v>, s: Slot) -> &'v str {
@@ -391,8 +409,13 @@ impl RulePass for NodeSubjects {
     }
 }
 
-// ---- syntax::long_text_twins ----
+// ---- long text twins ----
 
+/// Rules reading `text(v, t)` of a node `v` whose kind no body fixes see `text` within its bound only
+/// (`core_rr::TEXT_INLINE`): making every node's text at any length costs a run 40% more work (decision 0109). Each
+/// such rule gets twins, one per non-empty set of those atoms, reading `t = @rr_node_text(v)` in their place: the
+/// text of the nodes the rule binds, when past the bound (`LongTexts::long_text`). The rule and its twins together
+/// read every text, each once. More than `MAX` such atoms in one rule keep the any-kind projection instead.
 struct Twins {
     matchers: Matchers,
     /// The rules twinned, by id: their `text` atoms' places.
@@ -407,7 +430,8 @@ impl RulePass for Twins {
         let v = cx.v();
         let demand = text_demand::text_kind_demand(v, &self.matchers);
         let rules: Vec<RuleRef<'_>> = v.rules().collect();
-        // A twin binds `v` by the rest of its body: an atom whose `text` alone binds `v` is not twinned.
+        // A twin binds `v` by the rest of its body: an atom whose `text` alone binds `v` (`list_constant(v) :- text(v,
+        // s), glob(…, s)`) is not twinned, and its rule keeps the any-kind projection.
         let bound = |r: RuleRef<'_>, i: usize| {
             let body: Vec<LitRef<'_>> = r.body().collect();
             let Some(Lit::Atom(text)) = body.get(i).map(|l| l.view()) else { return false };
@@ -429,7 +453,9 @@ impl RulePass for Twins {
         let v = cx.v();
         let atoms = self.by_rule.remove(&r.id()).expect("selected in begin");
         let body: Vec<LitRef<'_>> = r.body().collect();
-        // The rule as it was, then its twins.
+        // The rule as it was, then its twins: each rule's twins follow it, so a rule's place does not depend on what
+        // other rules the program holds, and a twin serves its rule's readers. Fresh names are counted per rule: a
+        // rule's twins do not depend on the others'.
         let mut w = out.rule().head_from(v, r, r.head());
         for l in &body {
             w = w.lit(v, r, *l);
@@ -459,6 +485,7 @@ impl RulePass for Twins {
                     None => w = w.lit(v, r, *l),
                 }
             }
+            // Expose the sparse domain to the join planner before evaluating the text functor.
             for (_, node, _) in &swapped {
                 w = w.atom("rr_long_text_node", &[T::Var(name(v, r, *node))]);
             }

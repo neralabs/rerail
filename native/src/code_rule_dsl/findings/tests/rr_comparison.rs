@@ -296,21 +296,23 @@ asked(k) :- rr_embed_req(s,"annotation"), kind(s,k).
 
 #[test]
 fn long_text_fallback_exposes_its_candidate_keys_to_planning() {
-    use crate::code_rule_dsl::{facts::vtab::syntax, logic::{rr,front::{Literal,Term}}};
-    let mut p=rr::parse(r#"
+    use crate::code_rule_dsl::logic::program_image::{Lit, TermRef};
+    let p = crate::code_rule_dsl::logic::rr::parse_version(r#"
 #include "core.rr"
 .decl result(t:symbol)
 result(t) :- node(_,n,_,_,_), text(n,t).
 .output result
 "#).unwrap();
-    assert_eq!(syntax::long_text_twins(&mut p,&[]),1);
-    for rule in &p.rules {
-        for node in rule.body.iter().filter_map(|lit| match lit {
-            Literal::Cmp { r:Term::Call(f,args),.. } if f=="rr_node_text" => args.first(),
-            _=>None,
+    let (p, made) = crate::code_rule_dsl::logic::plan::corpus::preparation::text::long_text_twins(p, &Vec::new()).unwrap();
+    assert_eq!(made, 1);
+    for rule in p.rules() {
+        for node in rule.body().filter_map(|lit| match lit.view() {
+            Lit::Cmp { r: TermRef::Call(f, mut args), .. } if p.text(f) == "rr_node_text" => args.next(),
+            _ => None,
         }) {
-            assert!(rule.body.iter().any(|lit| matches!(lit,Literal::Atom(a) if !a.neg && a.rel=="rr_long_text_node" && a.args==[node.clone()])),
-                "long-text fallback must expose its sparse node domain before joins: {rule}");
+            let node = p.show_term(rule, node);
+            assert!(rule.body().filter_map(|l| l.atom()).any(|a| !a.neg() && p.rel_name(a.rel()) == "rr_long_text_node" && a.args().map(|t| p.show_term(rule, t)).collect::<Vec<_>>() == [node.clone()]),
+                "long-text fallback must expose its sparse node domain before joins: {}", p.show_rule(rule));
         }
     }
 }

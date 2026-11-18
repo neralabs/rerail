@@ -1576,7 +1576,7 @@ fn every_switch_lowering_reads_is_classified() {
     }
     assert!(unlisted.is_empty(), "switches read in combining or preparing, in neither its list nor NOT_PREPARING: {unlisted:?}");
     // And the other way: a listed switch keys what it changes, read in combining or preparing, or after them by what
-    // hangs off the prepared key (the run's extraction: `with_long_text`'s text nodes and anchors, the span
+    // hangs off the prepared key (the run's extraction: `with_long_text_parts`'s text nodes and anchors, the span
     // prefilter, both in `facts/vtab/syntax.rs`; the rest of `run_observed`). One read nowhere there keys nothing it
     // changes: a session's next run cold for nothing.
     for text in sources(&["facts/vtab/syntax.rs"]).into_iter().map(|(_, t)| t).chain([region("\nfn run_observed(", "\n}\n")]) {

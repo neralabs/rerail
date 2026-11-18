@@ -118,7 +118,7 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     // lowering, `rr::lower::printf_pieces`).
     ("zero_pad", &[Number, Number], Text),
     // A node's text past `text`'s inline bound (`facts::vtab::syntax::LongTexts::long_text`): none for a shorter one, which
-    // `text` holds. The long-text twin of a rule reading `text(v, t)` reads it (`syntax::long_text_twins`).
+    // `text` holds. The long-text twin of a rule reading `text(v, t)` reads it (`preparation::text`'s `Twins`).
     ("rr_node_text", &[Number], Text),
     // A node's exact text at any length (`facts::vtab::syntax::LongTexts::text_any`): `node_text`'s answer (decision 0174).
     ("rr_node_text_any", &[Number], Text),
