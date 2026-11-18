@@ -28,10 +28,9 @@ import { upsertLibraryRule } from "../engine/catalog/rule-library.js";
 import type { RuleDocument } from "../engine/catalog/rule-store.js";
 import { isWorktreePack, rrPayloadHash, WORKTREE_PACK_ID, WORKTREE_RULES_FOLDER, worktreeScanCatalog } from "../engine/catalog/worktree-pack.js";
 import { CheckoutCodeRuleRouter } from "../engine/code-rule/checkout-code-rule-router.js";
-import type { CodeRuleViolation } from "../engine/code-rule/code-rule.js";
 import { CheckoutCatalogs, startingCheckout } from "../engine/code-rule/code-rule-dsl-catalog.js";
 import { loadNativeBinding, type NativeAnalysisScopeRun, type NativeGitRevisionSource } from "../engine/native/native.js";
-import { readAnalysisScopeGeneration, scanContentStore } from "../engine/native/analysis-scope.js";
+import { analysisScopeHome, readAnalysisScopeGeneration, scanContentStore } from "../engine/native/analysis-scope.js";
 import { assertContentStoreOwner } from "../engine/native/main-instance.js";
 import { SOURCE_LANGUAGES, SOURCE_NAMES } from "../engine/code-rule/code-rule-languages.js";
 import { readGitBlobs, runGit } from "../engine/git.js";
@@ -339,19 +338,7 @@ function repositoryOf(database: RerailDatabase | undefined, root: string): { key
   return { key: checkout.repositoryKey, displayName: row?.displayName ?? checkout.repositoryKey };
 }
 
-/**
- * `sha256(ruleId \0 path \0 matched text)`, the matched text with its whitespace collapsed, so a finding keeps its
- * fingerprint when lines move or are re-indented. Without a span, the rule's code stands in for the text.
- */
-export function violationFingerprint(violation: Pick<CodeRuleViolation, "ruleId" | "path" | "span" | "code">, readSource: (path: string) => Buffer | undefined): string {
-  let matched: string | undefined;
-  if (violation.path !== undefined && violation.span !== undefined) {
-    const source = readSource(violation.path);
-    matched = source?.subarray(violation.span.startByte, violation.span.endByte).toString("utf8");
-  }
-  return findingFingerprint(violation.ruleId, violation.path ?? "", violation.code, matched);
-}
-
+/** The matched text is from the evaluated source. A finding without text uses its code. */
 function findingFingerprint(ruleId: string, path: string, code: string, matched?: string): string {
   const text = matched?.replace(/\s+/gu, " ").trim() ?? `code:${code}`;
   return createHash("sha256").update(`${ruleId}\0${path}\0${text}`).digest("hex").slice(0, 32);
@@ -436,7 +423,7 @@ function scanTarget(options: HeadlessScanOptions, root: string, source: NativeGi
 type ScanAudit = AuditInput & { result?: AuditResult };
 
 /** Runs the audits of one session over `paths` (or the whole repository), recording them rather than storing them. */
-async function runScanAudits(databasePath: string, root: string, sessionId: string, paths: readonly string[] | null, revisionSource: NativeGitRevisionSource | undefined, analysisStore: string, analysisRun: NativeAnalysisScopeRun): Promise<ScanAudit[]> {
+async function runScanAudits(databasePath: string, root: string, sessionId: string, paths: readonly string[] | null, revisionSource: NativeGitRevisionSource | undefined, analysisStore: string, analysisRun: NativeAnalysisScopeRun | undefined): Promise<ScanAudit[]> {
   const audits: ScanAudit[] = [];
   const recorder: AuditRecorder = {
     start(input) { audits.push({ ...input, paths: [...input.paths] }); return String(audits.length - 1); },
@@ -456,7 +443,7 @@ async function runScanAudits(databasePath: string, root: string, sessionId: stri
     audits: recorder,
     followGitignore: catalogs.followsGitignore(root),
     analysisStore,
-    analysisRun,
+    ...(analysisRun === undefined ? {} : { analysisRun }),
     ...(revisionSource === undefined ? {} : { revisionSource }),
   });
   try {
@@ -481,18 +468,7 @@ function scanRules(audits: readonly ScanAudit[], refRuleIds: ReadonlySet<string>
   return rules;
 }
 
-function scanSourceReader(root: string, source: NativeGitRevisionSource | undefined): (path: string) => Buffer | undefined {
-  const sources = new Map<string, Buffer | undefined>();
-  return (path: string): Buffer | undefined => {
-    if (!sources.has(path)) {
-      try { sources.set(path, source === undefined ? readFileSync(join(root, path)) : source.readSource(path) ?? undefined); } catch { sources.set(path, undefined); }
-    }
-    return sources.get(path);
-  };
-}
-
-function scanViolations(audits: readonly ScanAudit[], rules: ReadonlyMap<string, ScanRule>, root: string, source: NativeGitRevisionSource | undefined): ScanViolation[] {
-  const readSource = scanSourceReader(root, source);
+function scanViolations(audits: readonly ScanAudit[], rules: ReadonlyMap<string, ScanRule>): ScanViolation[] {
   const violations = audits.flatMap(audit => audit.result?.violations ?? []).map((violation): ScanViolation => ({
     ruleId: violation.ruleId,
     payloadHash: rules.get(violation.ruleId)?.payloadHash ?? null,
@@ -503,7 +479,7 @@ function scanViolations(audits: readonly ScanAudit[], rules: ReadonlyMap<string,
     start: violation.span === undefined ? null : position(violation.span.startLine, violation.span.startColumn),
     end: violation.span === undefined ? null : position(violation.span.endLine, violation.span.endColumn),
     message: violation.message,
-    fingerprint: violationFingerprint(violation, readSource),
+    fingerprint: findingFingerprint(violation.ruleId, violation.path ?? "", violation.code, violation.matchedText),
   }));
   return distinctFingerprints(violations);
 }
@@ -527,7 +503,7 @@ interface RrReport {
 }
 
 async function scanRrRules(
-  policies: readonly string[], root: string, store: string, output: string, analysisRun: NativeAnalysisScopeRun,
+  policies: readonly string[], root: string, store: string, output: string, analysisRun: NativeAnalysisScopeRun | undefined,
   paths: string[] | null, source: NativeGitRevisionSource | undefined,
   configured?: { policies: ReadonlyMap<string, RrPolicySource>; mode: ReturnType<typeof resolveRrModes> },
   refPolicy?: NonNullable<RefRules["rr"]>,
@@ -583,7 +559,7 @@ async function scanReport(
     root: string; home: RerailDatabase | undefined; useHome: boolean; packs: readonly string[];
     scanId: string; startedAt: number; source: NativeGitRevisionSource | undefined;
     analysisStore: string;
-    analysisRun: NativeAnalysisScopeRun;
+    analysisRun: NativeAnalysisScopeRun | undefined;
   },
 ): Promise<ScanReport> {
   const databasePath = join(scratch, "rerail.sqlite");
@@ -607,7 +583,7 @@ async function scanReport(
   if (source !== undefined && paths !== null) source.restrictPaths(paths);
   const audits = explicitRr ? [] : await runScanAudits(databasePath, root, `scan-${scanId}`, paths, source, analysisStore, analysisRun);
   const rules = scanRules(audits, refRuleIds, options.rulesRef);
-  const violations = scanViolations(audits, rules, root, source);
+  const violations = scanViolations(audits, rules);
   const failures = [...refRules?.skipped ?? [], ...audits.flatMap(audit => audit.result?.failures ?? []).map((failure): ScanFailure => ({
     code: failure.code,
     message: failure.message,
@@ -682,14 +658,22 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
   const startedAt = Date.now();
   const binding = loadNativeBinding();
   const homeDatabase = options.databasePath ?? defaultRerailDatabasePath();
-  const generation = readAnalysisScopeGeneration(homeDatabase);
+  const directory = options.revision === undefined;
+  const generation = directory ? readAnalysisScopeGeneration(homeDatabase) : 0;
   const scanId = randomUUID();
   const root = scanRoot(options);
-  const analysisStore = scanContentStore(homeDatabase);
-  assertContentStoreOwner(analysisStore);
+  const durableStore = scanContentStore(homeDatabase);
+  assertContentStoreOwner(durableStore);
   const packs = installedPackIds(options.packs);
-  mkdirSync(dirname(homeDatabase), { recursive: true, mode: 0o700 });
-  const analysisRun = new binding.AnalysisScopeRun(analysisStore, options.analysisScope ?? resolve(options.repo), options.revision === undefined, scanId, generation);
+  let analysisRun: NativeAnalysisScopeRun | undefined;
+  let cacheWarning: string | undefined;
+  try {
+    mkdirSync(dirname(homeDatabase), { recursive: true, mode: 0o700 });
+    analysisRun = new binding.AnalysisScopeRun(durableStore, options.analysisScope ?? resolve(options.repo), directory, scanId, generation, directory ? analysisScopeHome(homeDatabase) : undefined);
+  } catch (error) {
+    cacheWarning = error instanceof Error ? error.message : String(error);
+  }
+  const analysisStore = analysisRun === undefined ? ":memory:" : durableStore;
   try {
     const source = options.revision === undefined ? undefined : new binding.GitRevisionSource(root, options.revision, options.analysisScope!);
     if (source !== undefined)
@@ -697,19 +681,20 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
     const home = openHomeDatabase(homeDatabase);
     const useHome = homeIsScanConfiguration(options, home, root, packs);
     const report = await withScanScratch(home, scratch => scanReport(scratch, options, { root, home, useHome, packs, scanId, startedAt, source, analysisStore, analysisRun }));
+    if (cacheWarning !== undefined) report.cacheWarnings = [cacheWarning];
     try {
-      const warning = analysisRun.finish(report.status === "completed");
+      const warning = analysisRun?.finish(report.status === "completed");
       if (warning !== null && warning !== undefined) report.cacheWarnings = [warning];
     } catch (error) {
       (report.cacheWarnings ??= []).push(error instanceof Error ? error.message : String(error));
-      try { analysisRun.finish(false); } catch { /* Collection can release any abandoned ownership. */ }
+      try { analysisRun?.finish(false); } catch { /* Collection can release any abandoned ownership. */ }
     }
     return report;
   } catch (error) {
-    analysisRun.finish(false);
+    analysisRun?.finish(false);
     throw error;
   } finally {
-    await binding.collectAnalysisCacheAsync(analysisStore).catch(error => {
+    if (analysisRun !== undefined) await binding.collectAnalysisCacheAsync(durableStore).catch(error => {
       process.stderr.write(`rerail: analysis cache collection failed: ${String(error)}\n`);
     });
   }

@@ -5,38 +5,43 @@
 .decl git_inventory_host_name(version: symbol, name: symbol, language: symbol)
 .input git_inventory_host_registry, git_inventory_host_suffix, git_inventory_host_name
 
-.decl sl_version(version: symbol)
-sl_version(v) :- git_inventory_host_registry(v).
-sl_version(v) :- source_grammar_registry(v), !git_inventory_host_registry(_).
+.decl sl_basename(path: symbol, name: symbol)
+sl_basename(p, @ascii_lower(@replace_all(p, "(?s)^.*/", ""))) :- source_language_request(p).
 
-.decl source_language_key(path: symbol, version: symbol, algorithm: symbol)
-source_language_key(p, v, "basename-v2") :- source_language_request(p), sl_version(v).
+.decl sl_named(path: symbol, name: symbol, grammar: symbol)
+sl_named(p, name, g) :- sl_basename(p, name), git_inventory_host_name(_, name, g).
 
-.decl sl_basename(path: symbol, version: symbol, name: symbol)
-sl_basename(p, v, @ascii_lower(@replace_all(p, "(?s)^.*/", ""))) :- source_language_key(p, v, _).
+.decl sl_suffix(suffix: symbol, grammar: symbol, order: number, built: number)
+sl_suffix(ext, g, order, built) :- !git_inventory_host_registry(_), source_grammar_suffix(g, ext, order, built).
+sl_suffix(ext, g, 0, 1) :- git_inventory_host_suffix(_, ext, g).
 
-.decl sl_named(path: symbol, version: symbol, grammar: symbol)
-sl_named(p, v, g) :- sl_basename(p, v, name), git_inventory_host_name(v, name, g).
-
-.decl sl_suffix(version: symbol, suffix: symbol, grammar: symbol, order: number, built: number)
-sl_suffix(v, ext, g, order, built) :-
-    source_grammar_registry(v), !git_inventory_host_registry(_), source_grammar_suffix(g, ext, order, built).
-sl_suffix(v, ext, g, 0, 1) :- git_inventory_host_suffix(v, ext, g).
-
-.decl sl_candidate(path: symbol, version: symbol, length: number, order: number, grammar: symbol, built: number)
-sl_candidate(p, v, strlen(ext), order, g, built) :-
-    sl_basename(p, v, name), sl_suffix(v, ext, g, order, built), !sl_named(p, v, _),
+.decl sl_candidate(path: symbol, suffix: symbol, length: number, order: number, grammar: symbol, built: number)
+sl_candidate(p, ext, strlen(ext), order, g, built) :-
+    sl_basename(p, name), sl_suffix(ext, g, order, built), !sl_named(p, _, _),
     suffix(ext, name), strlen(ext) < strlen(name).
 
-.decl sl_longest(path: symbol, version: symbol, length: number)
-sl_longest(p, v, n) :-
-    sl_candidate(p, v, _, _, _, _), n = max len : { sl_candidate(p, v, len, _, _, _) }.
+.decl sl_longest(path: symbol, length: number)
+sl_longest(p, n) :-
+    sl_candidate(p, _, _, _, _, _), n = max len : { sl_candidate(p, _, len, _, _, _) }.
 
-.decl source_language_result(path: symbol, version: symbol, grammar: symbol)
-source_language_result(p, v, g) :- source_language_key(p, v, _), sl_named(p, v, g).
-source_language_result(p, v, g) :-
-    source_language_key(p, v, _), sl_longest(p, v, n),
-    i = max j : { sl_candidate(p, v, n, j, _, _) }, sl_candidate(p, v, n, i, g, 1).
+// The winner carries the inputs that affect the result. The registry version
+// and entries for other names or suffixes stay out of a file's key.
+.decl sl_selected(path: symbol, kind: symbol, selector: symbol, grammar: symbol, built: number)
+sl_selected(p, "name", name, g, 1) :- sl_named(p, name, g).
+sl_selected(p, "suffix", ext, g, built) :-
+    sl_longest(p, n), i = max j : { sl_candidate(p, _, n, j, _, _) },
+    sl_candidate(p, ext, n, i, g, built).
+
+.decl sl_evidence(path: symbol, inputs: symbol, grammar: symbol)
+sl_evidence(p, cat(k, "\t", s, "\t", g), g) :- sl_selected(p, k, s, g, 1).
+sl_evidence(p, cat(k, "\t", s, "\t", g, "\tunbuilt"), "") :- sl_selected(p, k, s, g, 0).
+sl_evidence(p, "unlisted", "") :- source_language_request(p), !sl_selected(p, _, _, _, _).
+
+.decl source_language_key(path: symbol, inputs: symbol, algorithm: symbol)
+source_language_key(p, @sha256(inputs), "basename-v3") :- sl_evidence(p, inputs, _).
+
+.decl source_language_result(path: symbol, inputs: symbol, grammar: symbol)
+source_language_result(p, key, g) :- source_language_key(p, key, _), sl_evidence(p, _, g), g != "".
 .cache source_language_result by source_language_key
 
 .decl source_language(path: symbol, grammar: symbol)

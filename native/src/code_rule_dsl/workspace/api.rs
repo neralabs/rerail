@@ -137,8 +137,8 @@ pub struct AnalysisScopeRun(Mutex<AnalysisRun>);
 #[napi]
 impl AnalysisScopeRun {
     #[napi(constructor)]
-    pub fn new(store_path: String, value: String, directory: bool, id: String, generation: f64) -> Result<Self> {
-        let scope = if directory { analysis_scope::directory(Path::new(&value)) }
+    pub fn new(store_path: String, value: String, directory: bool, id: String, generation: f64, home: Option<String>) -> Result<Self> {
+        let scope = if directory { analysis_scope::directory_in(Path::new(&value), home.as_deref()) }
             else { analysis_scope::named(&value).ok_or_else(|| invalid("analysis scope name must not be empty"))? };
         let store = crate::content_store::ContentStore::open(Path::new(&store_path)).map_err(|e| invalid(e.to_string()))?;
         AnalysisRun::begin_at(store, &scope, &id, generation as i64).map(|run| Self(Mutex::new(run))).map_err(|e| invalid(e.to_string()))
@@ -192,10 +192,12 @@ impl CodeRuleDslWorkspace {
         secret_names: SecretNamePatterns,
         analysis: Option<&AnalysisScopeRun>,
         generation: Option<f64>,
+        home: Option<String>,
     ) -> Result<AsyncTask<WorkspaceStorageTask>> {
         let mut task = self.storage_task(root, store_path, &secret_names)?;
         task.analysis_owner = analysis.map(AnalysisScopeRun::owner);
         task.analysis_generation = generation.unwrap_or_default() as i64;
+        task.analysis_home = home;
         Ok(AsyncTask::new(task))
     }
 
@@ -234,6 +236,7 @@ impl CodeRuleDslWorkspace {
             snapshot: None,
             analysis_owner: None,
             analysis_generation: 0,
+            analysis_home: None,
             store_path: PathBuf::from(store_path),
             secret_names: Arc::new(SecretNames::compile(secret_names)?),
         })
@@ -610,8 +613,11 @@ impl CodeRuleDslWorkspace {
         &self,
         cursor: u32,
         maximum_bytes: u32,
+        include_match_text: Option<bool>,
     ) -> AsyncTask<WorkspaceResultPageTask> {
-        AsyncTask::new(self.result_page_task(cursor, maximum_bytes))
+        let mut task = self.result_page_task(cursor, maximum_bytes);
+        task.include_match_text = include_match_text.unwrap_or_default();
+        AsyncTask::new(task)
     }
 
     pub fn result_page_task(
@@ -624,6 +630,7 @@ impl CodeRuleDslWorkspace {
             closed: Arc::clone(&self.closed),
             cursor: cursor as usize,
             maximum_bytes: maximum_bytes as usize,
+            include_match_text: false,
         }
     }
 
@@ -923,6 +930,7 @@ pub struct WorkspaceStorageTask {
     snapshot: Option<Arc<crate::git_workspace::snapshot::Snapshot>>,
     analysis_owner: Option<AnalysisOwner>,
     analysis_generation: i64,
+    analysis_home: Option<String>,
     /// The store file the host named.
     store_path: PathBuf,
     /// The names whose files the store never holds.
@@ -945,17 +953,19 @@ impl Task for WorkspaceStorageTask {
             let deferred = self.snapshot.is_some() || self.analysis_owner.is_some();
             let owner = if let Some(owner) = self.analysis_owner.take() {
                 if let Some(snapshot) = &self.snapshot { snapshot.set_analysis_owner(owner.clone()); }
-                owner
+                Some(owner)
+            } else if self.store_path == Path::new(":memory:") {
+                None
             } else {
                 let store = crate::content_store::ContentStore::open(&self.store_path).map_err(|err| invalid(err.to_string()))?;
                 if let Some(snapshot) = &self.snapshot {
                     snapshot.begin_analysis(&store).map_err(|err| invalid(err.to_string()))?;
                 }
-                match crate::git_workspace::snapshot::analysis_owner(Path::new(&self.root)) {
+                Some(match crate::git_workspace::snapshot::analysis_owner(Path::new(&self.root)) {
                     Some(owner) => owner,
-                    None => store.begin_analysis_scope_at(&analysis_scope::directory(Path::new(&self.root)), self.analysis_generation)
+                    None => store.begin_analysis_scope_at(&analysis_scope::directory_in(Path::new(&self.root), self.analysis_home.as_deref()), self.analysis_generation)
                         .map_err(|err| invalid(err.to_string()))?,
-                }
+                })
             };
             let discovered = if let Some(snapshot) = &self.snapshot {
                 snapshot.workspace(&self.store_path).map_err(crate::git_workspace::DiscoveryError::Failed)
@@ -1021,11 +1031,13 @@ impl Task for WorkspaceStorageTask {
                 state.import_root = Some(PathBuf::from(&self.root));
                 state.import_generation += 1;
             }
-            if deferred {
-                state.pending_analysis = Some((owner, self.root.clone()));
-            } else {
-                context.store.own_analysis_snapshot(&owner, &self.root, context.snapshot_id)
-                    .map_err(|err| invalid(err.to_string()))?;
+            if let Some(owner) = owner {
+                if deferred {
+                    state.pending_analysis = Some((owner, self.root.clone()));
+                } else {
+                    context.store.own_analysis_snapshot(&owner, &self.root, context.snapshot_id)
+                        .map_err(|err| invalid(err.to_string()))?;
+                }
             }
             state.storage = Some(context);
             #[cfg(any(test, feature = "test-hooks"))]
@@ -1485,6 +1497,7 @@ pub struct WorkspaceResultPageTask {
     closed: Arc<AtomicBool>,
     cursor: usize,
     maximum_bytes: usize,
+    include_match_text: bool,
 }
 
 impl Task for WorkspaceResultPageTask {
@@ -1515,7 +1528,7 @@ impl Task for WorkspaceResultPageTask {
                 closed: &self.closed,
             };
             check_closed(&self.closed)?;
-            serialize_result_page(&mut state, self.cursor, self.maximum_bytes)
+            serialize_result_page(&mut state, self.cursor, self.maximum_bytes, self.include_match_text)
         })
     }
 

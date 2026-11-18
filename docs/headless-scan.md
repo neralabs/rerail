@@ -198,9 +198,11 @@ rerail scan --repo ./head --scope git-diff --base origin/main --rules-ref origin
   For a `.rr` policy, it hashes the list of file digests for the policy and its includes.
 - **`cacheWarnings`** lists errors that prevented the scan from retaining its cache.
   The report keeps the findings and scan status.
+  If the durable cache cannot open, the scan uses temporary in-memory storage.
 - **`fingerprint`**: 32 hex characters, `sha256(ruleId \0 path \0 matched text)`, whitespace runs collapsed to one
   space. It is stable while the rule, path and text are, even if the text moves in the file. When one rule matches the
   same text more than once in a file, the second and later matches also hash their ordinal, so fingerprints are unique
   within a scan. The text is never in the report.
+  The scan uses the evaluated file version for both the position and the matched text.
 
 </details>

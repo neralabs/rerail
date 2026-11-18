@@ -109,6 +109,14 @@ pub fn directory(path: &Path) -> String {
     format!("cwd:{}", path.to_string_lossy())
 }
 
+pub fn directory_in(path: &Path, home: Option<&str>) -> String {
+    let directory = directory(path);
+    match home {
+        Some(home) => format!("cwd:{home}:{}", &directory["cwd:".len()..]),
+        None => directory,
+    }
+}
+
 pub fn acquisition_time() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |t| t.as_micros() as i64)
 }
@@ -167,18 +175,23 @@ fn own_snapshot(tx: &rusqlite::Connection, owner: &AnalysisOwner, workspace: &st
 
 impl ContentStore {
     pub fn delete_analysis_scope(&self, scope: &str) -> StoreResult<usize> {
-        self.release_analysis_scopes(scope, None, None, None)
+        self.release_analysis_scopes(scope, None, None, None, None)
     }
 
     pub fn delete_directory_analysis_scopes(&self, path: &Path, release: Option<&str>) -> StoreResult<usize> {
-        let scope = directory(path);
+        let (before, home) = release
+            .and_then(|id| id.split_once(':'))
+            .map_or((None, None), |(before, receipt)| {
+                (before.parse::<i64>().ok(), receipt.split_once(':').map(|(_, home)| home))
+            });
+        let scope = directory_in(path, home);
         let separator = std::path::MAIN_SEPARATOR;
         let subtree = if scope.ends_with(separator) { scope.clone() } else { format!("{scope}{separator}") };
-        let before = release.and_then(|id| id.split_once(':')?.0.parse::<i64>().ok());
-        self.release_analysis_scopes(&scope, Some(&subtree), release, before)
+        let legacy = home.map(|_| directory(path));
+        self.release_analysis_scopes(&scope, Some(&subtree), release, before, legacy.as_deref())
     }
 
-    fn release_analysis_scopes(&self, scope: &str, subtree: Option<&str>, release: Option<&str>, before: Option<i64>) -> StoreResult<usize> {
+    fn release_analysis_scopes(&self, scope: &str, subtree: Option<&str>, release: Option<&str>, before: Option<i64>, legacy: Option<&str>) -> StoreResult<usize> {
         self.immediate_transaction(|tx| {
             if let Some(release) = release
                 && tx.execute_cached("INSERT OR IGNORE INTO analysis_scope_release(id,scope,before) VALUES (?1,?2,?3)",
@@ -188,7 +201,15 @@ impl ContentStore {
             }
             const RELEASING: &str = "(scope=?1 OR (?2 IS NOT NULL AND substr(scope,1,length(?2))=?2))";
             if let Some(before) = before {
-                Ok(release_memberships(tx, &format!("{RELEASING} AND acquired_at<=?3"), (scope, subtree, before))?)
+                let predicate = format!("{RELEASING} AND acquired_at<=?3");
+                let mut released = release_memberships(tx, &predicate, (scope, subtree, before))?;
+                // Entries made before scopes recorded their home still use the bare directory.
+                if let Some(legacy) = legacy {
+                    let separator = std::path::MAIN_SEPARATOR;
+                    let subtree = if legacy.ends_with(separator) { legacy.to_owned() } else { format!("{legacy}{separator}") };
+                    released += release_memberships(tx, &predicate, (legacy, Some(subtree.as_str()), before))?;
+                }
+                Ok(released)
             } else {
                 let args = (scope, subtree);
                 tx.execute_cached(&format!("UPDATE analysis_scope_generation SET generation=generation+1 WHERE {RELEASING}"), args)?;

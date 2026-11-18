@@ -144,7 +144,7 @@ export interface NativeCodeRuleDslWorkspace {
    * binding never chooses a store itself and refuses an empty path. A file `secretNames` names is evaluated but never
    * written to the store (not its source, syntax trees or results): it stays in the workspace's memory instead.
    */
-  enableStorageAsync(root: string, storePath: string, secretNames: NativeSecretNames, analysis?: NativeAnalysisScopeRun, generation?: number): Promise<NativeStorageAttachment>;
+  enableStorageAsync(root: string, storePath: string, secretNames: NativeSecretNames, analysis?: NativeAnalysisScopeRun, generation?: number, home?: string): Promise<NativeStorageAttachment>;
   /**
    * `placement`, when given, is a JSON `CodeRulePlacement` (repository-model.ts): this workspace runs the code rule per folder
    * at the entry's mode (`null` is off there), and a linter's suppression comment silences its violations there unless the
@@ -173,7 +173,7 @@ export interface NativeCodeRuleDslWorkspace {
   retainAnalysisScopeAsync(): Promise<void>;
   memoryProfile(): string;
   /** One page of ordered results, computed off the JS thread; the last page releases the result index. */
-  resultPageAsync(cursor: number, maximumBytes: number): Promise<string>;
+  resultPageAsync(cursor: number, maximumBytes: number, includeMatchText?: boolean): Promise<string>;
   evictInactive(): boolean;
   /** A snapshot-qualified reference to the deepest node spanning exactly the range, or null. */
   nodeReference(path: string, startByte: number, endByte: number): string | null;
@@ -411,11 +411,11 @@ export interface NativeAnalysisScopeRun {
 }
 
 export interface NativeBinding {
-  AnalysisScopeRun: new (store: string, scope: string, directory: boolean, id: string, generation: number) => NativeAnalysisScopeRun;
+  AnalysisScopeRun: new (store: string, scope: string, directory: boolean, id: string, generation: number, home?: string) => NativeAnalysisScopeRun;
   collectAnalysisCacheAsync(store: string): Promise<void>;
   inspectRrPolicy(path: string, source?: NativeGitRevisionSource): string;
   GitRevisionSource: new (root: string, revision: string, analysisScope: string) => NativeGitRevisionSource;
-  scanRrPoliciesAsync(paths: string[], root: string, store: string, output: string, analysis: NativeAnalysisScopeRun, sourcePaths: string[] | undefined, source: NativeGitRevisionSource | undefined, policySource?: NativeGitRevisionSource): Promise<string>;
+  scanRrPoliciesAsync(paths: string[], root: string, store: string, output: string, analysis: NativeAnalysisScopeRun | undefined, sourcePaths: string[] | undefined, source: NativeGitRevisionSource | undefined, policySource?: NativeGitRevisionSource): Promise<string>;
   CodeRuleDslExecution: new () => NativeCodeRuleDslExecution;
   CodeRuleSqlExecutor: NativeCodeRuleSqlExecutorConstructor;
   executeSqlRequest(storePath: string, requestJson: string): string;

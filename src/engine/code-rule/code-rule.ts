@@ -1495,6 +1495,8 @@ export interface CodeRuleViolation {
   message: string;
   path?: string | undefined; // NOSONAR - exactOptionalPropertyTypes: zod-parsed native violations carry `path: undefined`
   span?: CodeRuleSourceSpan | undefined; // NOSONAR - as `path`
+  /** The span's text from the evaluated source, for headless scan fingerprints. */
+  matchedText?: string | undefined;
   captures: Record<string, CodeRuleSourceSpan[]>;
   variables: Record<string, boolean | number | string>;
   fix?: CodeRuleViolationFix | undefined; // NOSONAR - exactOptionalPropertyTypes: zod-parsed native violations carry `fix: undefined`

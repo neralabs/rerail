@@ -2313,7 +2313,7 @@ thread_local! {
 }
 
 struct StoreSelection {
-    path: PathBuf,
+    path: Option<PathBuf>,
     ownership: Option<(PathBuf, crate::content_store::analysis_scope::AnalysisOwner)>,
 }
 
@@ -2325,7 +2325,8 @@ impl ThreadStore {
     }
 
     fn select(path: &Path, ownership: Option<(PathBuf, crate::content_store::analysis_scope::AnalysisOwner)>) -> Self {
-        Self(THREAD_STORE.with(|store| store.replace(Some(StoreSelection { path: path.to_owned(), ownership }))))
+        let path = (path != Path::new(":memory:")).then(|| path.to_owned());
+        Self(THREAD_STORE.with(|store| store.replace(Some(StoreSelection { path, ownership }))))
     }
 
     fn owner(root: &Path) -> Option<crate::content_store::analysis_scope::AnalysisOwner> {
@@ -2334,6 +2335,10 @@ impl ThreadStore {
             let (expected, owner) = store.as_ref()?.ownership.as_ref()?;
             (expected == root).then(|| owner.clone())
         })
+    }
+
+    fn ephemeral() -> bool {
+        THREAD_STORE.with(|store| store.borrow().as_ref().is_some_and(|store| store.path.is_none()))
     }
 }
 
@@ -2374,7 +2379,7 @@ fn names_its_store() -> bool {
 /// The path `tape_cache` opens (`None`: `RERAIL_TAPE_CACHE=off`).
 pub fn tape_cache_path() -> Option<std::path::PathBuf> {
     if let Some(path) = THREAD_STORE.with(|store| store.borrow().as_ref().map(|store| store.path.clone())) {
-        return Some(path);
+        return path;
     }
     #[cfg(any(test, feature = "test-hooks"))]
     if let Some(path) = TEST_TAPE_CACHE.with(|p| p.borrow().clone()).or_else(test_store::handed) {
@@ -2837,7 +2842,8 @@ fn run_observed(
     options: &serde_json::Value,
     captured: Option<&mut Vec<u8>>,
 ) -> Result<Report> {
-    let in_memory = captured.is_some();
+    let capturing = captured.is_some();
+    let in_memory = capturing || ThreadStore::ephemeral();
     // The run's writes are waves of its own (decision 0259): each sealed at a boundary of the run (`end_wave`), the
     // last as the run ends, and the store takes each in one transaction.
     let _waves = crate::content_store::write_back::run_waves();
@@ -3261,11 +3267,11 @@ fn run_observed(
     if !dialect.built() {
         return Err(Error::Plan(format!("{label} is not in this build (its `lang-{label}` feature is off)")));
     }
-    if !in_memory {
+    if !capturing {
         std::fs::create_dir_all(out).map_err(|e| Error::Plan(e.to_string()))?;
     }
     // The outputs are rerail's own: outside the file observer, for this process and the next (decision 0284).
-    if !in_memory {
+    if !capturing {
         observe(|o| o.own_output(out));
     }
     // A long-lived process (the browser's engine, `session`) keeps its store, its last program compiled and each
@@ -9251,7 +9257,7 @@ fn run_observed(
         });
         let mut wrote = 0usize;
         let (depth, deltas, base) = match &over {
-            _ if in_memory => {
+            _ if capturing => {
                 captured.expect("the in-memory destination").extend_from_slice(&bytes);
                 (1, 0, true)
             }

@@ -1,5 +1,5 @@
 import { dirname, join } from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { eq, sql } from "drizzle-orm";
 import { analysisScopeGeneration, analysisScopeReleases } from "../storage/schema.js";
@@ -7,6 +7,7 @@ import { openRerailDatabase, openSqliteDatabase, type RerailDatabase } from "../
 import { loadNativeBinding } from "./native.js";
 import { contentStoreOverride, contentStorePath } from "./rerail-build.js";
 import { assertContentStoreOwner } from "./main-instance.js";
+import { storedPath } from "../catalog/checkout-control.js";
 
 export function scanContentStore(databasePath: string): string {
   return contentStoreOverride() ?? join(dirname(databasePath), `revision-${loadNativeBinding().contentStoreFileName()}`);
@@ -14,6 +15,10 @@ export function scanContentStore(databasePath: string): string {
 
 // Keep generation tokens above the legacy microsecond timestamps already stored on ownership rows.
 const INITIAL_GENERATION = 2 ** 52;
+
+export function analysisScopeHome(databasePath: string): string {
+  return createHash("sha256").update(storedPath(databasePath)).digest("hex");
+}
 
 export function readAnalysisScopeGeneration(databasePath: string): number {
   if (!existsSync(databasePath)) return INITIAL_GENERATION;
@@ -29,13 +34,14 @@ export function readAnalysisScopeGeneration(databasePath: string): number {
 type Transaction = Parameters<Parameters<RerailDatabase["transaction"]>[0]>[0];
 
 /** Advance the acquisition generation in the same transaction as the stop. */
-export function queueAnalysisScopeReleases(tx: Transaction, directories: readonly string[]): void {
+export function queueAnalysisScopeReleases(tx: Transaction, directories: readonly string[], databasePath: string): void {
   if (directories.length === 0) return;
   const { generation } = tx.insert(analysisScopeGeneration).values({ singleton: 1, generation: INITIAL_GENERATION + 1 })
     .onConflictDoUpdate({ target: analysisScopeGeneration.singleton, set: { generation: sql`${analysisScopeGeneration.generation} + 1` } })
     .returning({ generation: analysisScopeGeneration.generation }).get();
+  const home = analysisScopeHome(databasePath);
   for (const directory of directories) {
-    tx.insert(analysisScopeReleases).values({ id: `${generation - 1}:${randomUUID()}`, directory }).run();
+    tx.insert(analysisScopeReleases).values({ id: `${generation - 1}:${randomUUID()}:${home}`, directory }).run();
   }
 }
 

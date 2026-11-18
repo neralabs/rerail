@@ -385,10 +385,15 @@ pub(super) fn attach_storage(
     // publication share it (`publish_snapshot` joins it).
     let _deadline = OperationDeadline::enter();
     let repository_prefix = repository_prefix(root, &discovered.worktree_root)?;
-    let (store, maintenance) = match shared_content_store(store_path) {
-        Ok(shared) => shared,
-        Err(StoreError::Busy) => return Ok(busy("while opening the store")),
-        Err(error) => return Err(invalid(error.to_string())),
+    let (store, maintenance) = if store_path == std::path::Path::new(":memory:") {
+        let store = ContentStore::open_ephemeral().map_err(|error| invalid(error.to_string()))?;
+        (StdArc::new(store), None)
+    } else {
+        match shared_content_store(store_path) {
+            Ok((store, maintenance)) => (store, Some(maintenance)),
+            Err(StoreError::Busy) => return Ok(busy("while opening the store")),
+            Err(error) => return Err(invalid(error.to_string())),
+        }
     };
     let mut owner = format!(
         "rerail:{}:{}",
@@ -425,11 +430,13 @@ pub(super) fn attach_storage(
             )));
         }
     };
-    maintenance.register(workspace_id, &owner);
-    let registration = StdArc::new(StorageRegistration {
-        maintenance,
-        workspace_id,
-        transient_store: transient.then(|| StdArc::clone(&store)),
+    let registration = maintenance.map(|maintenance| {
+        maintenance.register(workspace_id, &owner);
+        StdArc::new(StorageRegistration {
+            maintenance,
+            workspace_id,
+            transient_store: transient.then(|| StdArc::clone(&store)),
+        })
     });
     Ok(Attached::Storage(StorageContext {
         store,
@@ -439,7 +446,7 @@ pub(super) fn attach_storage(
         snapshot_id: snapshot,
         owner,
         secret_names,
-        _maintenance: Some(registration),
+        _maintenance: registration,
     }))
 }
 

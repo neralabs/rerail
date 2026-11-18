@@ -73,7 +73,9 @@ Collection also checks whether another workspace still has a live lease on the
 snapshot. A managed stop queues the release in the same transaction as the stop.
 The stop advances a durable generation. A scan or watch reads the generation
 before discovery. The release affects the checkout and its descendants in
-ended generations. A directory scope keeps the latest snapshot for each
+ended generations. The canonical control database path identifies the home
+that owns a directory scope. Homes can share a store and keep independent
+directory scopes. A directory scope keeps the latest snapshot for each
 workspace. It protects the latest manifest for each policy set. An edited
 policy keeps its policy set and gets a new cache key.
 
@@ -84,6 +86,9 @@ and parser and tape versions. Path and module identity remain inputs to
 context-sensitive rules. An unchanged file retains its cache key across
 revisions. A changed file requests new content, and changes to the imports or
 configuration invalidate their dependents.
+Each language key identifies the matching name or suffix that selects the
+language. A file without a match has its own key. A change to an unrelated
+registry entry leaves these keys intact.
 
 The Git view stays pinned during a run. Different revisions can use the same
 cache space, provided the engine compares their input facts before it reuses

@@ -431,9 +431,10 @@ impl InventoryFilter {
         use gix::bstr::ByteSlice as _;
         use gix::ignore::glob::{wildmatch, wildmatch::Mode as Match};
         let below = format!("{directory}/");
-        self.rules.workspace.patterns.iter().flat_map(|list| &list.patterns).any(|entry| {
+        let mut later = std::collections::HashSet::new();
+        self.rules.workspace.patterns.iter().rev().flat_map(|list| list.patterns.iter().rev()).any(|entry| {
             let pattern = &entry.pattern;
-            if !pattern.is_negative() {
+            if !later.insert((&pattern.text, pattern.mode - Mode::NEGATIVE)) || !pattern.is_negative() {
                 return false;
             }
             if pattern.mode.contains(Mode::NO_SUB_DIR) && !pattern.mode.contains(Mode::ABSOLUTE) {

@@ -175,7 +175,7 @@ const resultPageSchema = z.strictObject({
   revision: z.number().int().nonnegative(),
   cursor: z.number().int().nonnegative(),
   done: z.boolean(),
-  violations: z.array(violationSchema),
+  violations: z.array(violationSchema.extend({ matchedText: z.string().optional() })),
   failures: z.array(failureSchema),
   coverage: z.array(coverageSchema),
   blindFiles: z.array(blindFileSchema).default([]),
@@ -589,6 +589,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   readonly #analysisStore: string | undefined;
   readonly #analysisRun: NativeAnalysisScopeRun | undefined;
   readonly #analysisGeneration: (() => number) | undefined;
+  readonly #analysisHome: string | undefined;
   /** Git's exclude stack for this checkout, opened on first use; null outside Git or where it cannot be opened. */
   #gitIgnore: NativeGitIgnoreMatcher | null | undefined;
   #scope: AuditScope;
@@ -673,6 +674,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       analysisStore?: string;
       analysisRun?: NativeAnalysisScopeRun;
       analysisGeneration?: () => number;
+      analysisHome?: string;
     },
   ) {
     this.#catalog = catalog;
@@ -689,6 +691,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#analysisStore = options.analysisStore;
     this.#analysisRun = options.analysisRun;
     this.#analysisGeneration = options.analysisGeneration;
+    this.#analysisHome = options.analysisHome;
     this.#ownedAudits =
       options.audits === undefined
         ? new SqliteAuditStore(defaultRerailDatabasePath())
@@ -1053,7 +1056,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       // The store is a cache every checkout shares, kept on disk: a file named like one holding secrets never goes into it.
       const secretNames = { files: SENSITIVE_FILE_NAMES, folders: SENSITIVE_FOLDER_NAMES };
       const attachment = this.#revisionSource === undefined
-        ? workspace.enableStorageAsync(this.#workspaceRoot, storePath, secretNames, this.#analysisRun, generation)
+        ? workspace.enableStorageAsync(this.#workspaceRoot, storePath, secretNames, this.#analysisRun, generation, this.#analysisHome)
         : workspace.enableRevisionStorageAsync(this.#revisionSource, storePath, secretNames, this.#analysisRun);
       storage = attachment.then(({ attached, reason, discoveryMilliseconds, publicationMilliseconds }) => {
         if (!attached && this.#revisionSource !== undefined) throw new Error(reason ?? "Cannot attach Git source");
@@ -1812,7 +1815,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       pageIndex += 1;
     }
     while (true) {
-      const page = resultPageSchema.parse(JSON.parse(await workspace.resultPageAsync(cursor, RESULT_PAGE_BYTES)));
+      const page = resultPageSchema.parse(JSON.parse(await workspace.resultPageAsync(cursor, RESULT_PAGE_BYTES, this.#analysisStore !== undefined)));
       violationCount += page.violations.length;
       const pageFailures = withBlindFiles(page.failures, page.blindFiles).map((item) => ({ ...item, stage: "evaluate" as const }));
       if (paged) {

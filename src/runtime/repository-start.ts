@@ -227,7 +227,7 @@ export function setRepositoryStarted(database: RerailDatabase, repositoryKey: Re
     tx.update(checkouts).set({ started: null }).where(eq(checkouts.repositoryKey, repositoryKey)).run();
     if (!started) {
       const directories = tx.select({ directory: checkouts.checkoutPath }).from(checkouts).where(eq(checkouts.repositoryKey, repositoryKey)).all();
-      queueAnalysisScopeReleases(tx, directories.map(({ directory }) => directory));
+      queueAnalysisScopeReleases(tx, directories.map(({ directory }) => directory), database.$client.name);
     }
     clearSetupReview(tx, repositoryKey);
   }, { behavior: "immediate" });
@@ -239,7 +239,7 @@ export function setCheckoutStarted(database: RerailDatabase, checkout: CheckoutC
     tx.update(checkouts).set({ started }).where(eq(checkouts.checkoutPath, checkout.checkoutPath)).run();
     const nested = nestedCheckouts(tx, checkout).map(row => row.checkoutPath);
     if (nested.length > 0) tx.update(checkouts).set({ started: null }).where(inArray(checkouts.checkoutPath, nested)).run();
-    if (!started) queueAnalysisScopeReleases(tx, [checkout.checkoutPath]);
+    if (!started) queueAnalysisScopeReleases(tx, [checkout.checkoutPath], database.$client.name);
     clearSetupReview(tx, checkout.repositoryKey);
   }, { behavior: "immediate" });
 }
@@ -321,7 +321,7 @@ export function stopRerail(workspace: string, io: RepositorySetupIo, options: Re
     const known = lookupCheckout(database, workspace);
     previous = stateOf(checkoutStatus(database, known));
     if (known === undefined) {
-      database.transaction(tx => queueAnalysisScopeReleases(tx, [workspace]), { behavior: "immediate" });
+      database.transaction(tx => queueAnalysisScopeReleases(tx, [workspace], database.$client.name), { behavior: "immediate" });
       settleLocalRelease();
       io.say(`○ Rerail has not been started in ${name}, so there is nothing to stop. Start it with ${startCommand}.`);
       return previous;

@@ -298,13 +298,13 @@ pub fn scan_rr_policies_async(
     root: String,
     store: String,
     output: String,
-    analysis: &rerail_w::code_rule_dsl::workspace::api::AnalysisScopeRun,
+    analysis: Option<&rerail_w::code_rule_dsl::workspace::api::AnalysisScopeRun>,
     source_paths: Option<Vec<String>>,
     source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>,
     policy_source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>,
 ) -> napi::bindgen_prelude::AsyncTask<ScanRrPolicies> {
     napi::bindgen_prelude::AsyncTask::new(ScanRrPolicies {
-        paths, root, store, output, owner: analysis.owner(), source_paths,
+        paths, root, store, output, owner: analysis.map(|run| run.owner()), source_paths,
         snapshot: source.map(|source| source.pinned_snapshot()),
         policy_snapshot: policy_source.map(|source| source.pinned_snapshot()),
     })
@@ -316,7 +316,7 @@ pub struct ScanRrPolicies {
     root: String,
     store: String,
     output: String,
-    owner: content_store::analysis_scope::AnalysisOwner,
+    owner: Option<content_store::analysis_scope::AnalysisOwner>,
     source_paths: Option<Vec<String>>,
     snapshot: Option<std::sync::Arc<git_workspace::snapshot::Snapshot>>,
     policy_snapshot: Option<std::sync::Arc<git_workspace::snapshot::Snapshot>>,
@@ -330,14 +330,16 @@ impl napi::Task for ScanRrPolicies {
     fn compute(&mut self) -> Result<String> {
         let path = Path::new(&self.store);
         let ownership = if let Some(snapshot) = &self.snapshot {
-            snapshot.set_analysis_owner(self.owner.clone());
+            if let Some(owner) = &self.owner {
+                snapshot.set_analysis_owner(owner.clone());
+            }
             None
         } else {
-            Some((self.root.clone().into(), self.owner.clone()))
+            self.owner.clone().map(|owner| (self.root.clone().into(), owner))
         };
         code_rule_dsl::logic::plan::corpus::with_tape_cache_path(path, ownership, || {
             let root = self.snapshot.as_ref().map_or_else(|| Path::new(&self.root), |snapshot| snapshot.root());
-            let options = serde_json::json!({ "sourcePaths": self.source_paths, "scanSpans": true });
+            let options = serde_json::json!({ "sourcePaths": self.source_paths, "scanSpans": true, "reuse": path != Path::new(":memory:") });
             let mut ids = std::collections::HashSet::new();
             let mut policies = Vec::new();
             for path in &self.paths {

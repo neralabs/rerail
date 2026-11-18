@@ -524,24 +524,50 @@ pub(super) fn serialize_result_page(
     state: &mut WorkspaceState,
     cursor: usize,
     maximum_bytes: usize,
+    include_match_text: bool,
 ) -> Result<String> {
     if cursor == 0 {
         state.result_page_index = Some(build_result_page_index(state)?);
     }
     let index = state
         .result_page_index
-        .as_ref()
+        .take()
         .filter(|index| index.revision == state.revision)
         .ok_or_else(|| invalid("result page cursor is stale; restart at cursor 0"))?;
     let total = index.violations.len();
     let mut bytes = 0_usize;
     let start = cursor.min(total);
     let mut next = start;
+    let mut entries = Vec::new();
+    let mut current_source = None;
     for violation in &index.violations[start..] {
-        if next > start && bytes.saturating_add(violation.len()) > maximum_bytes {
+        let entry = if include_match_text {
+            let mut finding: Value = serde_json::from_str(violation).map_err(json_error)?;
+            if let (Some(path), Some(lo), Some(hi)) = (
+                finding["path"].as_str(),
+                finding["span"]["startByte"].as_u64(),
+                finding["span"]["endByte"].as_u64(),
+            ) {
+                let (previous, source) = current_source.get_or_insert_with(|| {
+                    (path.to_owned(), super::documents::source(state, path).ok())
+                });
+                if previous != path {
+                    *previous = path.to_owned();
+                    *source = super::documents::source(state, path).ok();
+                }
+                if let Some(text) = source.as_ref().and_then(|source| source.get(lo as usize..hi as usize)) {
+                    finding["matchedText"] = json!(text);
+                }
+            }
+            std::borrow::Cow::Owned(serde_json::to_string(&finding).map_err(json_error)?)
+        } else {
+            std::borrow::Cow::Borrowed(violation.as_ref())
+        };
+        if next > start && bytes.saturating_add(entry.len()) > maximum_bytes {
             break;
         }
-        bytes = bytes.saturating_add(violation.len());
+        bytes = bytes.saturating_add(entry.len());
+        entries.push(entry);
         next += 1;
     }
     let done = next >= total;
@@ -561,7 +587,7 @@ pub(super) fn serialize_result_page(
     page.extend_from_slice(format!(",\"cursor\":{next},\"done\":{done},\"failures\":").as_bytes());
     serde_json::to_writer(&mut page, failures).map_err(json_error)?;
     page.extend_from_slice(format!(",\"revision\":{},\"violations\":[", state.revision).as_bytes());
-    for (position, violation) in index.violations[start..next].iter().enumerate() {
+    for (position, violation) in entries.into_iter().enumerate() {
         if position > 0 {
             page.push(b',');
         }
@@ -569,8 +595,8 @@ pub(super) fn serialize_result_page(
     }
     page.extend_from_slice(b"]}");
     let page = String::from_utf8(page).map_err(|error| invalid(error.to_string()))?;
-    if done {
-        state.result_page_index = None;
+    if !done {
+        state.result_page_index = Some(index);
     }
     Ok(page)
 }

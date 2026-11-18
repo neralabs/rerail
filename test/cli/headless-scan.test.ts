@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { runAuditCommand, SCAN_VIOLATIONS_EXIT } from "../../src/cli/audit-cli.js";
 import { runRuleApproveCommand } from "../../src/cli/rule-approval-cli.js";
 import { runHeadlessScan, type ScanReport } from "../../src/cli/headless-scan.js";
-import { readAnalysisScopeGeneration, scanContentStore, settleAnalysisScopeReleases } from "../../src/engine/native/analysis-scope.js";
+import { analysisScopeHome, readAnalysisScopeGeneration, scanContentStore, settleAnalysisScopeReleases } from "../../src/engine/native/analysis-scope.js";
 import { loadNativeBinding } from "../../src/engine/native/native.js";
 import { openRerailDatabase } from "../../src/engine/storage/database.js";
 import { recordCheckout } from "../../src/engine/catalog/repository-registry.js";
@@ -208,6 +208,19 @@ Message(@place("commit", 1), subject) :- git_source_commit(r,c), git_subject(r,c
     const wildcard = await scan(root, { revision: makeTree(`100644 blob ${wildcardIgnore}\t.rerailignore\n040000 tree ${data}\tdata\n`), analysisScope: "ignore", paths: ["a.py", "data"] });
     expect(wildcard.status, JSON.stringify(wildcard.failures)).toBe("completed");
     expect(wildcard.violations.map(finding => finding.path)).toEqual(["a.py", "data/a/a.py"]);
+
+    const missingA = execFileSync("git", ["mktree", "--missing"], {
+      cwd: root, input: `040000 tree ${"1".repeat(40)}\ta\n`, encoding: "utf8",
+    }).trim();
+    writeFileSync(join(root, ".rerailignore"), "/data/a/\n!/data/[ab]/a.py\n/data/[ab]/a.py\n");
+    const cancelledIgnore = git(root, "hash-object", "-w", ".rerailignore");
+    const cancelled = await scan(root, {
+      revision: makeTree(`100644 blob ${cancelledIgnore}\t.rerailignore\n040000 tree ${missingA}\tdata\n`),
+      analysisScope: "ignore",
+      paths: ["a.py", "data"],
+    });
+    expect(cancelled.status, JSON.stringify(cancelled.failures)).toBe("completed");
+    expect(cancelled.violations.map(finding => finding.path)).toEqual(["a.py"]);
   });
 
   it("reports completeness for the requested tree and exposes failures for an incomplete walk", async () => {
@@ -251,7 +264,7 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
       try {
         const owners = () => store.prepare("SELECT scope, snapshot_id FROM analysis_scope_snapshot UNION SELECT scope, snapshot_id FROM analysis_scope_workspace_snapshot ORDER BY scope")
           .all() as { scope: string; snapshot_id: number }[];
-        expect(owners().map(owner => owner.scope)).toEqual([`cwd:${subdirectory}`, "named:release", "named:review"]);
+        expect(owners().map(owner => owner.scope)).toEqual([`cwd:${analysisScopeHome(databasePath)}:${subdirectory}`, "named:release", "named:review"]);
         stopRerail(root, { lane: "terminal", say: () => undefined }, { databasePath });
         const both = owners();
         expect(both.map(owner => owner.scope)).toEqual(["named:release", "named:review"]);
@@ -342,6 +355,52 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
         expect(store.prepare("SELECT scope FROM analysis_scope_snapshot WHERE scope = 'named:atomic'").all()).toEqual([]);
       } finally { store.close(); }
     } finally { fail.mockRestore(); }
+  });
+
+  it("reports findings from the selected tree when its durable cache cannot open", async () => {
+    const root = checkout();
+    const storePath = join(root, "unreadable.sqlite");
+    const invalid = "this is not a database";
+    writeFileSync(storePath, invalid);
+    writeFileSync(join(root, "a.py"), "x = f(NEEDLE)\n");
+    git(root, "add", "a.py");
+    git(root, "commit", "-qm", "committed call");
+    writeFileSync(join(root, "a.py"), "# no call or violation in the checkout\n");
+    const policy = join(root, ".rerail/rules/call.rr");
+    writeFileSync(policy, `#include "core.rr"\n.policy "find-call" revision 1\n.language python\n.violation Call(at: node) "call"\nCall(n) :- kind(n, "call").\n`);
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", storePath);
+    try {
+      const report = await scan(root, { revision: "HEAD", analysisScope: "fallback" });
+      expect(report.status, JSON.stringify(report.failures)).toBe("completed");
+      expect(report.violations.map(finding => finding.ruleId).sort()).toEqual(["find-call", "needle"]);
+      expect(report.cacheWarnings).toEqual([expect.stringMatching(/file is not a database/u)]);
+      expect(readFileSync(storePath, "utf8")).toBe(invalid);
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it("releases directory ownership only for the stopped home in a shared store", async () => {
+    const root = checkout();
+    const first = join(`${root}-home`, "first.sqlite");
+    const second = join(`${root}-home`, "second.sqlite");
+    const storePath = join(`${root}-home`, "shared.sqlite");
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", storePath);
+    try {
+      expect((await scan(root, { databasePath: first })).status).toBe("completed");
+      const db = openRerailDatabase(first);
+      try {
+        const checkout = recordCheckout(db, root);
+        setCheckoutStarted(db, checkout, false);
+        setCheckoutStarted(db, checkout, true);
+        setCheckoutStarted(db, checkout, false);
+      } finally { db.$client.close(); }
+      expect((await scan(root, { databasePath: second })).status).toBe("completed");
+      settleAnalysisScopeReleases(first);
+      const store = new Database(storePath, { readonly: true });
+      try {
+        expect(store.prepare("SELECT scope FROM analysis_scope_workspace_snapshot").pluck().all())
+          .toEqual([`cwd:${analysisScopeHome(second)}:${root}`]);
+      } finally { store.close(); }
+    } finally { vi.unstubAllEnvs(); }
   });
 
   it("rejects duplicate explicit policy IDs and leaves no named ownership", async () => {
@@ -489,7 +548,18 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
     git(root, "add", "a.py", "b.sample");
     git(root, "commit", "-qm", "files for both registry versions");
     const store = join(home, "store.sqlite");
-    writeFileSync(join(home, "policy.rr"), `#include "core.rr"\n.policy "source-version" revision 1\n.language python\n.violation Call(at: node) "call"\nCall(n) :- kind(n, "call").\n`);
+    writeFileSync(join(home, "policy.rr"), `
+#include "core.rr"
+#include "source-language.rr"
+.policy "source-version" revision 1
+.language python
+.violation Call(at: node) "call"
+.violation LanguageKey(at: span, key: symbol) "{key}"
+Call(n) :- kind(n, "call").
+source_language_request("a.py").
+source_language_request("b.sample").
+LanguageKey(@place(path, 1), k) :- source_language_key(path, k, _).
+`);
     const script = `
       import { join } from "node:path";
       import { loadNativeBinding } from "./src/engine/native/native.ts";
@@ -500,21 +570,23 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
       const store = join(home, "store.sqlite");
       const run = new engine.AnalysisScopeRun(store, "versions", false, index, 0);
       const [report] = JSON.parse(await engine.scanRrPoliciesAsync([join(home, "policy.rr")], root, store, join(home, "out-" + index), run, undefined, source));
-      console.log(JSON.stringify({ paths: report.diagnostics.map(finding => finding.path).sort(), warning: run.finish(true) }));
+      const paths = report.diagnostics.filter(finding => finding.code === "Call").map(finding => finding.path).sort();
+      const keys = Object.fromEntries(report.diagnostics.filter(finding => finding.code === "LanguageKey").map(finding => [finding.path, finding.message]));
+      console.log(JSON.stringify({ paths, keys, warning: run.finish(true) }));
     `;
     const measure = (index: number, registry: Record<string, string>, grammar: string) => {
       const profile = join(home, `profile-${index}`);
       const output = execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-", root, home, String(index), JSON.stringify(registry)], {
         input: script, encoding: "utf8", env: { ...process.env, RERAIL_PROFILE: profile, RERAIL_TEST_GRAMMAR_BUILD_ID: grammar.repeat(32) },
       });
-      const { paths, warning } = JSON.parse(output) as { paths: string[]; warning: string | null };
+      const { paths, keys, warning } = JSON.parse(output) as { paths: string[]; keys: Record<string, string>; warning: string | null };
       expect(warning).toBeNull();
       const counters = new Map([...readFileSync(join(profile, "profile.txt"), "utf8")
         .matchAll(/^\s*count\s+(\d+)\s+(source_(?:language|tape)\.[a-z]+)$/gmu)]
         .map(([, count, name]) => [name, Number(count)]));
       const db = new Database(store, { readonly: true });
       try {
-        return { paths, classifications: counters.get("source_language.evaluations") ?? 0, parses: counters.get("source_tape.parses") ?? 0,
+        return { paths, keys, classifications: counters.get("source_language.evaluations") ?? 0, parses: counters.get("source_tape.parses") ?? 0,
           tapes: db.prepare("SELECT printf('%015x', grammar_version) AS version, count(*) AS count FROM tape_objects GROUP BY grammar_version ORDER BY grammar_version")
             .all() as { version: string; count: number }[] };
       } finally { db.close(); }
@@ -523,17 +595,21 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
     const extended = { ...original, ".sample": "python" };
     const cold = measure(0, original, "a");
     expect(cold.paths).toEqual(["a.py"]);
+    expect(Object.keys(cold.keys).sort()).toEqual(["a.py", "b.sample"]);
     expect(cold.classifications).toBeGreaterThan(0);
     expect(cold.parses).toBeGreaterThan(0);
     expect(measure(1, original, "a")).toEqual({ ...cold, classifications: 0, parses: 0 });
     const relabeled = measure(2, extended, "a");
     expect(relabeled.paths).toEqual(["a.py", "b.sample"]);
+    expect(relabeled.keys["a.py"]).toBe(cold.keys["a.py"]);
+    expect(relabeled.keys["b.sample"]).not.toBe(cold.keys["b.sample"]);
     expect(relabeled.classifications).toBeGreaterThan(0);
     expect(relabeled.tapes[0]?.count).toBe(cold.tapes[0]!.count + 1);
     // Test hooks let a new process change the parser build ID without rebuilding the addon.
     if (cold.tapes[0]?.version === "a".repeat(15)) {
       const reparsed = measure(3, extended, "b");
       expect(reparsed.paths).toEqual(relabeled.paths);
+      expect(reparsed.keys).toEqual(relabeled.keys);
       expect(reparsed.classifications).toBe(0);
       expect(reparsed.parses).toBe(2);
       expect(reparsed.tapes).toEqual([...relabeled.tapes, { version: "b".repeat(15), count: 2 }]);
@@ -552,7 +628,7 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
     }
     const store = new Database(scanContentStore(databasePath), { readonly: true });
     try {
-      const sets = store.prepare("SELECT count(DISTINCT lane) AS lanes FROM analysis_scope_manifest JOIN corpus_manifests USING(manifest_id) WHERE scope = ? AND policy <> lane GROUP BY policy").all(`cwd:${root}`);
+      const sets = store.prepare("SELECT count(DISTINCT lane) AS lanes FROM analysis_scope_manifest JOIN corpus_manifests USING(manifest_id) WHERE scope = ? AND policy <> lane GROUP BY policy").all(`cwd:${analysisScopeHome(databasePath)}:${root}`);
       expect(sets).toEqual([{ lanes: 2 }]);
     } finally { store.close(); }
   });
@@ -587,6 +663,22 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
     const after = (await scan(root)).violations.map(violation => violation.fingerprint);
     expect(after[0]).toBe(before);
     expect(new Set(after).size).toBe(2);
+  });
+
+  it("keeps the evaluated JSON finding's fingerprint when its file changes before reporting", async () => {
+    const root = checkout();
+    const baseline = await scan(root);
+    const prototype = loadNativeBinding().CodeRuleDslWorkspace.prototype;
+    const retain = prototype.retainAnalysisScopeAsync;
+    const edit = vi.spyOn(prototype, "retainAnalysisScopeAsync").mockImplementation(async function (this: typeof prototype) {
+      await retain.call(this);
+      writeFileSync(join(root, "a.py"), "# edited after evaluation\nx = NEEDLE\n");
+    });
+    try {
+      const raced = await scan(root);
+      expect(raced.status, JSON.stringify(raced.failures)).toBe("completed");
+      expect(raced.violations).toEqual(baseline.violations);
+    } finally { edit.mockRestore(); }
   });
 
   it("runs the rules at --rules-ref, not the working tree's, in Log until a person approves that content", async () => {
