@@ -151,6 +151,30 @@ describe("a folder outside Git", () => {
   });
 });
 
+describe("a linked worktree whose main checkout was deleted", () => {
+  it("starts no Git process however often the daemon's readers ask about it, since Git refuses it", async () => {
+    const root = await plainRoot();
+    const main = checkout(root, "main");
+    const worktree = join(root, "feature");
+    git(main, "worktree", "add", "-q", "-b", "feature", worktree);
+    const db = database(root);
+    const recorded = recordCheckout(db, worktree);
+    await removeFolder(main);
+    expect(gitTop(worktree), "Git refuses the worktree: its .git file names a Git folder that went with the main checkout").toBeUndefined();
+    vi.mocked(runGit).mockClear();
+    const resolveCheckout = createCheckoutResolver(db);
+    const startState = startStateReader(db);
+
+    for (let event = 0; event < 3; event += 1) {
+      expect(repositoryIdentityLocation(worktree).git).toBe(false);
+      expect(resolveCheckout(worktree)?.repositoryKey).toBe(recorded.repositoryKey);
+      expect(startState(worktree)).toBe("stopped");
+    }
+
+    expect(locateCalls(worktree)).toBe(0);
+  });
+});
+
 describe("a folder Git places in a repository with no work tree", () => {
   it.for([
     { name: "a bare repository", make: (root: string) => bareRepository(root) },

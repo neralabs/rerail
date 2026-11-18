@@ -53,7 +53,8 @@ export function repositoryIdentityLocation(workspace: string): RepositoryIdentit
  * session working in it, starts no Git process.
  */
 function locateInGit(requested: string): ReturnType<typeof runGit> | undefined {
-  if (outsideGit(requested)) return undefined;
+  // Git refuses a worktree whose Git folder is gone (exit 128), so it is not asked there either.
+  if (outsideGit(requested) || worktreeGitFolderGone(requested)) return undefined;
   try {
     return runGit(requested, ["rev-parse", "--show-toplevel", "--path-format=absolute", "--git-common-dir", "--git-dir"]);
   } catch (error) {
@@ -92,10 +93,12 @@ export function outsideGit(folder: string): boolean {
 /**
  * Whether `folder` is a linked worktree whose Git folder is gone: its own `.git` is a file whose `gitdir:` line names a
  * folder in a Git folder's `worktrees`, and nothing is there. Its main checkout was deleted or moved away, and the
- * clone's id file, kept in that Git folder, went with it. Read from the disk without starting Git; false wherever
- * `.git` is no such file, or the disk cannot tell.
+ * clone's id file, kept in that Git folder, went with it; Git, asked about the folder, reads that file first and
+ * refuses it. Read from the disk without starting Git; false where `GIT_DIR` would have Git look elsewhere, where
+ * `.git` is no such file, or where the disk cannot tell.
  */
 export function worktreeGitFolderGone(folder: string): boolean {
+  if (process.env.GIT_DIR !== undefined) return false;
   let text: string;
   try {
     text = readFileSync(join(folder, ".git"), "utf8");
