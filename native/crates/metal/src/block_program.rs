@@ -212,6 +212,23 @@ pub(crate) fn starts_late(p: &BlockNative) -> bool {
     p.insts.iter().any(|i| matches!(i, BlockInst::Early(..))) || p.records.as_ref().is_some_and(|r| !r.prefix.is_empty())
 }
 
+/// What `program` needs that generated MSL lacks (decision 0202's `metal-form` list), if any: a
+/// `run_batch` of it is refused. A fixed point (`rounds`) is the CPU's for now: each lane would run
+/// its rounds in its own frame, within `block::MAX_ROUNDS`, to the same values. A `back_fill`
+/// likewise: a backward pass over the groups' summaries, not generated yet. An `early` too
+/// (decision 0330): a file's first lane shifted down, not generated yet.
+pub fn missing_form(program: &BlockNative) -> Option<&'static str> {
+    if !program.groups.is_empty() {
+        Some("a fixed point (rounds)")
+    } else if program.insts.iter().any(|i| matches!(i, BlockInst::BackFill(..) | BlockInst::Load(_))) {
+        Some("a back fill or a load")
+    } else if starts_late(program) {
+        Some("an early start (a file's first lane shifted down)")
+    } else {
+        None
+    }
+}
+
 /// Run `files` in one launch, each under `programs[file.program]` (decision 0066). `spins` is the
 /// polls of a predecessor after the first; 0 tests the repeated launch.
 pub fn run_batch(
@@ -221,19 +238,7 @@ pub fn run_batch(
     executor: Executor,
     spins: u32,
 ) -> Result<BatchRun, Error> {
-    // A fixed point (`rounds`) is the CPU's for now: each lane would run its rounds in its own
-    // frame, within `block::MAX_ROUNDS`, to the same values.
-    // A `back_fill` likewise: a backward pass over the groups' summaries, not generated yet. An
-    // `early` too (decision 0330): a file's first lane shifted down, not generated yet.
-    if programs.iter().any(|p| !p.groups.is_empty() || p.insts.iter().any(|i| matches!(i, BlockInst::BackFill(..) | BlockInst::Load(_))) || starts_late(p)) {
-        // Decision 0202's `metal-form` list: what the program needs that Metal lacks.
-        let reason = if programs.iter().any(|p| !p.groups.is_empty()) {
-            "a fixed point (rounds)"
-        } else if programs.iter().any(|p| p.insts.iter().any(|i| matches!(i, BlockInst::BackFill(..) | BlockInst::Load(_)))) {
-            "a back fill or a load"
-        } else {
-            "an early start (a file's first lane shifted down)"
-        };
+    if let Some(reason) = programs.iter().find_map(|p| missing_form(p)) {
         rerail_accel::forms::missing("metal-form", "block program", "block program", reason, files.len() as u64);
         return Err(Error::UnsupportedBackend);
     }

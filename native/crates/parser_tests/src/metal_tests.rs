@@ -9,24 +9,34 @@ use rerail_compiler::{block, block_native as native_ir};
 use rerail_metal::block_program;
 
 /// Every step's tier 1 on Metal, generated MSL (one lane width, the class planes), equals the
-/// CPU interpreter on every document: outputs and extracted positions.
+/// CPU interpreter on every document: outputs and extracted positions. A step whose program needs
+/// a form generated MSL lacks (`block_program::missing_form`: a fixed point, a back fill or load,
+/// an early start) is refused by that name and counted, not compared; most steps run.
 #[test]
 fn every_step_on_metal_equals_the_interpreter() {
     use block_program::{ClassStrategy, Executor, LaneWidth, run_split};
     let steps = steps_in(DIR);
     let compiled: Vec<Compiled> = steps.iter().map(|(n, s)| compile_step(n, s)).collect();
     let docs: Vec<Vec<Vec<u8>>> = compiled.iter().zip(&steps).map(|(c, (n, _))| documents(&Lang::of(&c.stmts), seed(n), &|b| reference(c, b).is_some()).0).collect();
-    let forms: Vec<&native_ir::BlockNative> = compiled.iter().map(|c| &c.native.block_programs[0]).collect();
-    let files: Vec<block::BatchFile<'_>> = docs.iter().enumerate().flat_map(|(p, ds)| ds.iter().map(move |b| block::BatchFile { bytes: b, program: p })).collect();
+    let all: Vec<&native_ir::BlockNative> = compiled.iter().map(|c| &c.native.block_programs[0]).collect();
+    // The steps Metal runs, by their place in `steps`; the others with the form they lack.
+    let (run_on, refused): (Vec<usize>, Vec<usize>) = (0..steps.len()).partition(|&k| block_program::missing_form(all[k]).is_none());
+    for &k in &refused {
+        eprintln!("  refused {}: {}", steps[k].0, block_program::missing_form(all[k]).unwrap_or_default());
+    }
+    assert!(refused.len() * 2 < steps.len(), "most steps run on Metal: {} of {} refused", refused.len(), steps.len());
+    let forms: Vec<&native_ir::BlockNative> = run_on.iter().map(|&k| all[k]).collect();
+    let files: Vec<block::BatchFile<'_>> = run_on.iter().enumerate().flat_map(|(p, &k)| docs[k].iter().map(move |b| block::BatchFile { bytes: b, program: p })).collect();
     let run = run_split(&forms, &files, LaneWidth::W32, Executor::Generated(ClassStrategy::Planes), 64).unwrap_or_else(|e| panic!("metal: {e:?}"));
     let mut differ = Vec::new();
     for (f, got) in files.iter().zip(&run.files) {
-        let want = compiled[f.program].program.block_programs[0].run_files(&[f.bytes]).remove(0);
+        let k = run_on[f.program];
+        let want = compiled[k].program.block_programs[0].run_files(&[f.bytes]).remove(0);
         if got.outputs != want.outputs || got.positions != want.positions {
-            differ.push(format!("{}: {:?}", steps[f.program].0, String::from_utf8_lossy(f.bytes)));
+            differ.push(format!("{}: {:?}", steps[k].0, String::from_utf8_lossy(f.bytes)));
         }
     }
-    eprintln!("{} files over {} steps on Metal", files.len(), steps.len());
+    eprintln!("{} files over {} steps on Metal, {} refused", files.len(), run_on.len(), refused.len());
     assert!(differ.is_empty(), "{} files differ:\n{}", differ.len(), differ.join("\n"));
 }
 

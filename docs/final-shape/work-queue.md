@@ -2222,7 +2222,7 @@ code. 0366's change is tier 1's alone and leaves both sides' trees as they were.
   JSON 30 own calls (`json_compiled_path_equals_the_interpreters`), so it was reverted. The C
   grammar keeps its starts out of the run.
 
-### Q130. (Q33 on Go-C-and-C-support) JSON's tier 2 makes 30 calls of its own (`json_compiled_path_equals_the_interpreters` red)
+### Q130. (Done; Q33 on Go-C-and-C-support) JSON's tier 2 makes 30 calls of its own (`json_compiled_path_equals_the_interpreters` red)
 
 - **Keep**: the test's shape claim: JSON defers no leaf, so tier 2 has no own call and no pass
   over the table at its end.
@@ -2232,6 +2232,14 @@ code. 0366's change is tier 1's alone and leaves both sides' trees as they were.
   of `534c74dbf` (the Parser-generators merge, 0177's token-loop steps), with the compiler,
   tape-format, Metal, rr-parser and parser-tests sources of each. So it came in with that line,
   not with 0327's or 0348's work. Found by the farm run for 0348 stage 1.
+- **Done** (2026-11-18): the 30 calls are the tape writer's (decision 0140, since 8a1762be0):
+  `tempo_tape_blocks` at 24 places (a block's base and offsets), `tempo_tape_commit` at 5 (a
+  commit of codes) and `tempo_tape_finish` at the image's end. None is a pass over the table:
+  those are `shift_rows` and `drop_rows`, which JSON has neither of. The claim is now the one
+  the test meant: `CompiledStream::table_passes` (calls of `shift` or `drop`, counted by callee in
+  the IR, `clif_text::callees`) is 0, and every call is an outlined function's. A wrap's test
+  (`a_wrap_goes_before_the_node_it_wraps`) asserts its one `shift` call, so the count is not
+  vacuous.
 
 ### Q131. (Q34 on Go-C-and-C-support) Lowering C's token grammar takes minutes in a debug build
 
@@ -2314,6 +2322,107 @@ regenerated since keep the wider condition. The profiling build has none (Q13).
   warning.
 - **Record**: —
 
+### Q184. (Q36 on Go-C-and-C-support) The compiled pp words stall: 45% of the interpreter's instructions, 1.09× its cycles
+
+- **Keep**: the compiled words equal the interpreter on the examples and the corpus; the shape
+  test (no function over 128 KB, stated steps only).
+- **Done when**: a profile of the corpus run on the compiled words (xctrace's CPU Counters, or
+  the Time Profiler mapped to words by Cranelift's block offsets) names where the cycles go
+  (branch misses, cache misses, a load chain), and the cause is fixed in the lowering's shape.
+- **Record** (2026-11-17, 0348 stage 4d): ruled out by measurement: reservations per TU,
+  `readonly` invariant loads, `T` and `D` in SSA variables (patch not kept). Small and
+  expansion-light TUs are worst (1.28–1.48×); the half that expand most run at 0.92×.
+- **Record** (2026-11-17, later): the same IR built by rustc (`rerail-pp-aot`, Q185) runs the
+  corpus at depth 0 in 533–556 M cycles against Cranelift's 1,240–1,258 M: the stall is
+  Cranelift's code, not the words' IR (1.35× the instructions, 2.33× the cycles). Refusal
+  blocks marked cold: −1.4%, not kept. The plan: `docs/final-shape/notes/t44-pp-words-codegen-plan.md`
+  (cycles by word, the two compilers' code side by side, fixes one at a time, K judged on both,
+  and a decision for the user on which code the CPU path runs).
+- **Record** (2026-11-17, later): t44's step 4 done. `#if` flattening measured slower on both
+  compilers (depth 16 against 0: Cranelift 1.11×, rustc 1.67×) and removed; C and C++ made one
+  program, the dialect `Env::cpp`. One build each: Cranelift 1,235 M cycles, rustc 487 M, the
+  interpreter 1,098 M. Steps 1–3 and the user's choice (step 5) are open.
+- **Done** (2026-11-18): the cause was Cranelift's jump tables. Its Arm `br_table` carries a
+  speculation barrier (`csel`, `csdb`) on every dispatch, and every rir `RETURN` dispatched
+  through one; LLVM's tables have none. Dispatches are now trees of compares in Cranelift's
+  code (since Q186 the shared `native_cpu_codegen::switch_trees`), and the shape test
+  refuses a `csdb`: 1,197 M cycles to 550 M, 1.14× rustc's. With it, extending loads (`uload8`/`16`/`32`) and branches on combined tests split
+  into branches on each test (`branch_on_tests`): 2,134 M instructions to 1,966 M. The user
+  chose to ship rustc's build as the CPU path (t44, step 5): `expand::native`, the
+  `generated` feature on by default.
+
+### Q185. (Q37 on Go-C-and-C-support) The pp words' ahead-of-time Rust (`clif_rust`), checked once
+
+- **Done when**: `clif_rust` writes the run's function and the outlined words as Rust, it
+  compiles, and it equals the interpreter on the examples (0348's plan, stage 4b).
+- **Done** (2026-11-17): `rerail-pp-aot` (C and C++ at depth 0, C++ at 4) equals the
+  interpreter on the examples and TUs, 90 runs (`the_aot_words_are_the_interpreters`, with
+  `--features generated`).
+
+### Q186. (Q38 on Go-C-and-C-support) Tier 1's and tier 2's jump tables carry Cranelift's speculation barrier
+
+- **Found** (2026-11-18, Q184): on Arm, Cranelift emits every `br_table` with a `csel` and a
+  `csdb`, unconditionally (no setting turns it off). In the pp words that barrier on the return
+  dispatches was 54% of the corpus's cycles. `native_cpu_block.rs` (one `br_table`) and
+  `native_cpu_stream.rs` (three) dispatch so too.
+- **Done when**: each is measured on its own benchmark with the dispatch as a tree of compares
+  (as `native_cpu_pp`'s `Lower::switch`), and kept where it is faster, with a guard as the pp
+  words' shape test has.
+- **Done** (2026-11-18): one pass for every Cranelift backend,
+  `native_cpu_codegen::switch_trees`, run inside `define_function` and
+  `define_functions` and before the pp words' defines, after the IR `clif_rust` takes (rustc's
+  code keeps its tables, which carry no barrier). A bounds test, then a balanced tree over the
+  table's runs of one target. `rr_against_rust` (M1 Max, quiet run, two runs each): tier 1
+  127.0–127.3 M cycles to 112.7–112.8 M (−11%, IPC 3.1 to 3.5); tier 2 148 M either way (no
+  table on its path; `Pick::Table` is only an experiment's). The pp words with the shared pass
+  in place of their own trees: Cranelift 0.52× the interpreter's cycles (0.50× with their own),
+  at the edge of the noise, so one mechanism kept. Guards: `a_table_as_compares_is_the_table`
+  (every index, a gap, a block argument, past the end; no `csdb` in the code) and the pp shape
+  test (no `csdb` in the words' code). `parser_tests`' four red tests (Q130 and three more) failed
+  the same at the base commit; all four fixed since (Q130, Q187).
+
+- **At the hub's merge of Go-C-and-C-support dd6dcc161** (2026-11-18): the hub had 0322's `switch_trees` (rustc's
+  lowering of a table of up to 32 runs whose targets take no arguments; the rest left as `br_table`s). One pass is
+  kept: `switch_trees` lowers those as rustc does, then this item's balanced tree (`balanced_trees`) takes every table
+  left, so no `br_table` reaches Cranelift's code. `a_table_as_compares_is_the_table` runs both ways (a target with an
+  argument and without).
+
+### Q187. (Q39 on Go-C-and-C-support) `parser_tests`' three other red tests
+
+- **Keep**: each test's claim, the `.rr` ladder's above all: every step, every generated
+  document, the reference, the interpreters, Cranelift, the tape and the engine agree.
+- **Done** (2026-11-18), each by its cause:
+  - `only_the_compiler_reads_tier2s_states`: false hits of `.arms` on a token reader's arms
+    (`readers[i].arms`) and tier 1's counts (`shape.arms`, `cols.arms`, `c.arms`). The guard
+    now takes a `.arms` by its receiver; a real read (`g.arms`, `states[k].arms`) still fails it.
+  - `rr_cases_parse_from_their_steps`: step 22 sends a float's second `.` and a 19-digit
+    number to the engine on purpose (2b6e570bd, 69756c977; doc 39), and the cases still asked
+    the step to parse them. They are `TO_THE_ENGINE` from step 22, checked to be refused by
+    exactly those escapes, and split copies without those parts keep the rest of each case.
+  - `rr_steps_parse_as_the_reference_and_the_engine`, five causes in turn:
+    1. The jump-table check counted `br_table`s in tier 2's IR, which Q186 turns to compares in
+       Cranelift's code: it now refuses any jump table in either tier's machine code.
+    2. `hot_loop` asked for `block2` in a pass with no block loop (`bodiless_body`, 0177):
+       `PassShape::block_loop` says which passes have one, and the branch count skips the
+       others.
+    3. The ladder's `Ids` numbered kinds and fields from one count, so later steps gave fields
+       ids past the tape's 6 field bits (`FIELD_LIMIT`), and Cranelift's tape dropped the high
+       bits (31 of 33 steps differed). Fields are numbered apart, as a grammar's are.
+    4. Tier 1's comparison asked the CPU for what 0177 leaves out on purpose: the gap marks
+       tier 2 tests itself (`native_cpu_block::lazy_code_bits`, now shared with rr_parser's
+       Metal test), the outputs a bodiless pass does not make, and the codes of a file both
+       send to the fallback, which tier 2 never reads.
+    5. Two real bugs found once the ladder reached step 22's documents:
+       - bitlex's reference matched a token mark's kind after `keywords` had retagged it, so
+         `io_bare`'s `hash_word` never held at `#include` and the reference parsed what the
+         engine refuses. A kind now holds at a token whose rule made it, as the compiler's
+         code reads it.
+       - Cranelift's tier 2 tested a lazy gap mark in a word function that reads the state in
+         `ctx`, also where the state is in the function's slot (no clusters, `Parser::new`), so
+         `line` never held: a setting ran past its line. Without clusters, it is tested in place,
+         as a token mark's test already was. The production parser (clusters by rules) was not
+         affected.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
@@ -2337,6 +2446,11 @@ regenerated since keep the wider condition. The profiling build has none (Q13).
    (`corpus::requests_file_local`, `file_local::requests_file_local`), with the test
    `a_cross_file_reader_finds_the_text_of_another_files_node`; `a_cross_file_text_test_is_maintained_as_a_filter`
    runs again.
+
+- **At the hub's merge of Go-C-and-C-support dd6dcc161** (2026-11-18): the hub's tier 1 leaves its loop at a refusal
+  (0177), which Go-C's has not, so `tier1_equal` takes a file both refuse as the same up to the refusal (its
+  positions a prefix of the interpreter's, its codes none or 0s past it); the hub's `tier1_agrees` is folded into it.
+  The state-table guard takes `self.arms` in `Reader`'s methods (0332) as a reader's.
 
 ### Q55. (Q66 at Native-and-GPU-strata e0a0362b9) Relations are blocks the CPU and GPU read in place (0325): steps 4–7
 
@@ -2698,7 +2812,7 @@ always a refusal.
   (3 executors x 3 widths). The five poll loops (`look_back`, `halo_exchange`, `exchange_word`'s two, the sinks'
   look-back) read through `poll`, which `batch_helpers` defines per device: the read-modify-write below Apple GPU
   family 9, the plain load from family 9 on (the M3 passes with it). `WORKERS` stays a constant.
-- **Found on the way** (Q170): five parser tests red on the M1 Max at the hub's HEAD, with or without this change.
+- **Found on the way** (Q183): five parser tests red on the M1 Max at the hub's HEAD, with or without this change.
 
 ### Q124. (Q30 on Swift-Kotlin-Scala-support) A Kotlin header's same-line comment: a mark that settles the extras before its line break
 
@@ -2748,7 +2862,7 @@ always a refusal.
   from Swift-Kotlin-Scala. `headers_are_the_lean_parsers` then passed in 36 s on the M1 Max (it had timed out at
   240 s), and the crate's tests are unignored.
 
-### Q135. On an M1 Max, the resident interpreter finds other roots than the CPU for PYI056's `add-to-all`
+### Q135. (Done) On an M1 Max, the resident interpreter finds other roots than the CPU for PYI056's `add-to-all`
 
 Found 2026-11-17, at the hub's merge of oscar (da5892e9c). `lowered_clauses_find_the_same_roots_on_the_resident_interpreter`
 on the M1 Max: 104 of 122 clauses equal, 17 refused, and `ruff-pyi056-unsupported-method-call-on-all/add-to-all`
@@ -2756,6 +2870,10 @@ differs (both sides `Ok`). The merged tree and oscar's own tip give the same cou
 Oscar's record (0334) has it passing, on the M3. Like Q123, an M1 Max difference. The test is ignored (`Q135`) until fixed.
 
 - **Done when**: the test passes on the M1 Max and the M3, and the ignore is gone.
+- **Done** (2026-11-18): the test passes unignored on the M1 Max (47 s) and the M3 (102 s): 105 of 122 clauses equal,
+  17 refused, none differ (`add-to-all` is equal now). It passes on the M1 Max with Q123's poll change taken out
+  too, so that is not the fix: one of the merges after oscar's (Typing-support f9353c5fe, wolfeel f5817506b,
+  django-bugs 9925798db) is. Not bisected further.
 
 
 ### Q136. (Q68 on cost-classifier) A join's morsel making a lazy order on the pool waited for itself (a hang)
@@ -3596,6 +3714,9 @@ sha) or `program_shared`'s order may hand back the files recorded before the edi
   Typing-support; 0329 records 20 s → under 0.8 s on that 10-file cold run). The merge removes it under 0353, so the
   hub's case is now this item's: measure it on the hub's 10-file cold run before choosing the tape's kind postings or
   an index in the block.
+- **Surveyed** (2026-11-18): t43 (`notes/t43-kind-index-perspective.md`) sets the spike's index against 0353 and
+  t39. Measure first; then one sweep per step for all its kind keys, then an exact code summary per tape block, and
+  kind postings as an optional tape section only if a measured workload still needs them.
 
 ### Q168. (Done) `executors_are_shared` fails on the hub: the join model's prediction makes its own command queue
 
@@ -3612,7 +3733,7 @@ sha) or `program_shared`'s order may hand back the files recorded before the edi
   `metal_frontier_reduce.rs`, `metal_register_conformance.rs`). That is Q63's stale mirror, not the tree.
 
 
-### Q170. Five parser tests red at the hub's HEAD on the M1 Max
+### Q183. (Done; was Q170) Five parser tests red at the hub's HEAD on the M1 Max
 
 Found 2026-11-18 (Q123's run of `rerail-parser-tests` and `rerail-metal`'s libs; the same five fail with Q123's
 change taken out):
@@ -3623,4 +3744,26 @@ change taken out):
 - `rr_tests::rr_cases_parse_from_their_steps` and `rr_steps_parse_as_the_reference_and_the_engine` (lines 409, 394).
 
 Not yet checked on the M3. **Done when**: each passes, or is fixed at its root.
+- **Done** (2026-11-18), each by its cause:
+  - `only_the_compiler_reads_tier2s_states`, both `.rr` ladder tests: fixed on Go-C-and-C-support (dd6dcc161, its
+    Q39, Q187 here), taken by merging Go-C to that commit. Two hub-only causes besides: `Reader`'s own methods read
+    `self.arms` (0332, Kotlin), which the guard now takes as a reader's; and a refused file's tier 1 leaves the loop
+    at the refusal (0177), so the ladder compares its positions as a prefix of the interpreter's and its codes up to
+    the refusal, none or 0s after (`ladder::tier1_equal`, which replaces the hub's `tier1_agrees`).
+  - `unsupported_operations_are_refused`: `text()` is compiled since 0332's Kotlin step 2 (f18cc9ff3); the test
+    names `line_has`, which the evaluator has and the masks do not.
+  - `every_step_on_metal_equals_the_interpreter`: JSON's steps 14 and 15 start early (0330), which generated MSL
+    lacks, and one refused step refused the whole batch. `block_program::missing_form` names the form (`run_batch`
+    refuses by it); the test runs the 13 steps Metal can (2,206 files, equal) and counts the 2 refused by name.
+    Generating the early start is Q188.
+
+
+### Q188. Generated MSL has no early start (0330): JSON's ladder steps 14 and 15 do not run on Metal
+
+Found 2026-11-18 (Q183). `block_program::missing_form` refuses a program that `starts_late` (decision 0330: a value
+whose bits lie in a file's first 16 positions comes down to an earlier delay, so a file's first lane is shifted
+down). The CPU runs it; Metal refuses the batch (`metal-form`, "an early start").
+
+- **Done when**: generated MSL shifts a file's first lane as the CPU does, and `every_step_on_metal_equals_the_interpreter`
+  runs every step, none refused.
 
