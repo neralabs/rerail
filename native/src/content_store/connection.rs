@@ -350,13 +350,20 @@ pub(super) fn take_turn(line: &WriterLine) -> rusqlite::Result<Turn<'_>> {
     } else {
         let spent = OPERATION_WAITED.get().unwrap_or_default();
         let (turn, waited) = line.take(busy_deadline().saturating_sub(spent));
-        ATTEMPT_WAITED.set(ATTEMPT_WAITED.get().saturating_add(waited.unwrap_or_default()));
+        ATTEMPT_WAITED.set(
+            ATTEMPT_WAITED
+                .get()
+                .saturating_add(waited.unwrap_or_default()),
+        );
         turn
     };
     taken.ok_or_else(|| {
         rusqlite::Error::SqliteFailure(
             rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
-            Some("another write of this process held the content store past the write deadline".to_owned()),
+            Some(
+                "another write of this process held the content store past the write deadline"
+                    .to_owned(),
+            ),
         )
     })
 }

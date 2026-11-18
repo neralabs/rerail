@@ -144,7 +144,11 @@ fn the_writer_ahead_hands_the_store_to_the_waiting_writers_in_arrival_order() {
 #[test]
 fn two_stores_on_one_file_share_its_line() {
     let (path, first) = store("shared-line");
-    let spelled = path.parent().unwrap().join(".").join(path.file_name().unwrap());
+    let spelled = path
+        .parent()
+        .unwrap()
+        .join(".")
+        .join(path.file_name().unwrap());
     let second = Arc::new(ContentStore::open(&spelled).unwrap());
     let order = Arc::new(Mutex::new(Vec::new()));
     let holder = Holder::hold(&first, &order);
@@ -169,7 +173,10 @@ fn a_waiter_that_gives_up_marks_the_holder_stalled_until_it_lets_go() {
     assert!(matches!(given_up, Err(StoreError::Busy)), "{given_up:?}");
     assert!(store.writes_stalled());
     holder.let_go();
-    assert!(!store.writes_stalled(), "the stall ends when its holder lets go");
+    assert!(
+        !store.writes_stalled(),
+        "the stall ends when its holder lets go"
+    );
     batch(&store, 1).unwrap();
 }
 

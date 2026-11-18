@@ -1170,7 +1170,11 @@ fn overlay_publication_reports_busy_retries() {
         drop(released.borrow_mut().take());
         Duration::ZERO
     })));
-    let (taken, counted, copy) = (std::rc::Rc::clone(&held), std::rc::Rc::clone(&holds), path.to_path_buf());
+    let (taken, counted, copy) = (
+        std::rc::Rc::clone(&held),
+        std::rc::Rc::clone(&holds),
+        path.to_path_buf(),
+    );
     BEFORE_RELATIONSHIP_WRITE_HOOK.set(Some(Box::new(move || {
         *taken.borrow_mut() = Some(hold_writer(&copy));
         counted.set(counted.get() + 1);
@@ -1192,7 +1196,10 @@ fn overlay_publication_reports_busy_retries() {
         )
         .unwrap();
     assert_eq!(holds.get(), 2, "both passes found the store held");
-    assert!(held.borrow().is_none(), "each pass waited for its holder to let go");
+    assert!(
+        held.borrow().is_none(),
+        "each pass waited for its holder to let go"
+    );
     assert!(
         result.retries >= 2,
         "each held pass retries: {}",
@@ -2189,7 +2196,11 @@ fn snapshot_publication_waits_out_a_writer_held_longer_than_one_busy_timeout() {
         published.is_ok(),
         "a writer held past one busy timeout failed the publication: {published:?}"
     );
-    assert_eq!(attempts.get(), 2, "the publication waited past one busy timeout");
+    assert_eq!(
+        attempts.get(),
+        2,
+        "the publication waited past one busy timeout"
+    );
 }
 
 #[test]

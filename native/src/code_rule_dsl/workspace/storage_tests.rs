@@ -1062,7 +1062,16 @@ fn an_apply_behind_a_stalled_write_publishes_at_the_first_apply_after_it_lets_go
     let repository = Repository::new("stalled-write");
     let store = repository.store("content.sqlite");
     let workspace = attached_workspace(&repository, &store, &needle_code_rule());
-    let shared = Arc::clone(&workspace.state.lock().unwrap().storage.as_ref().unwrap().store);
+    let shared = Arc::clone(
+        &workspace
+            .state
+            .lock()
+            .unwrap()
+            .storage
+            .as_ref()
+            .unwrap()
+            .store,
+    );
     let (holding, held) = std::sync::mpsc::channel();
     let (release, released) = std::sync::mpsc::channel();
     let holder = {

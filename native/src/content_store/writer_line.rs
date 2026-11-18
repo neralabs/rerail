@@ -130,7 +130,12 @@ impl WriterLine {
     }
 
     /// Waits until `ticket`'s turn comes, or `deadline` passes: whether it came.
-    fn wait_for_turn(&self, line: &mut MutexGuard<'_, Line>, ticket: u64, deadline: Instant) -> bool {
+    fn wait_for_turn(
+        &self,
+        line: &mut MutexGuard<'_, Line>,
+        ticket: u64,
+        deadline: Instant,
+    ) -> bool {
         while !line.is_turn(ticket) {
             if self.turn.wait_until(line, deadline).timed_out() {
                 return line.is_turn(ticket);
