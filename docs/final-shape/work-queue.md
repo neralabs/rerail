@@ -1954,9 +1954,10 @@ Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two 
   (`REACH_CHAIN`) takes about 1.1 ms a pass, against 23–68 µs for the other steps. Each thread decides 32 nodes in a
   row, a tape parent read each, and climbs where a parent is before its block. Adding dispatches does not fit the
   launch budget, so the fix stays inside the group.
-- **Direction:** reached(n) is `from` at n's nearest ancestor that is in `from` or not in `through`. With parents in
-  threadgroup memory (a file's nodes, under the 32 KB a group keeps), every node finds that ancestor by pointer
-  doubling: log(depth) rounds with barriers, and no tape read in the rounds.
+- **Direction:** reached(n) is `from` at n's nearest ancestor that is in `from` or not in `through`. Every node can find that
+  ancestor by pointer doubling: log(depth) rounds with barriers, and no tape read in the rounds. The jump pointers
+  are a file's nodes: threadgroup memory holds them only for small files, well under 32 KB a group, so larger files'
+  go to device memory, coalesced.
 - **Done when:** `REACH_CHAIN` is node-parallel within the group, with the rows the same and the step's time measured
   before and after.
 
