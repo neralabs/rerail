@@ -4,7 +4,7 @@ Status: decided by the user (2026-11-18: "I would prefer a single format if poss
 storing 8-byte quantities … please go ahead and design and build this"). Replaces 0401 F1, F2 and F6's copy of a
 run's relation as it lies (8-byte cells in doubling chunks, its hash indexes, a cumulative delta). Keeps 0401's
 intent (F3–F5): the store's kept facts are blocks in mapped files, SQLite holds only which files, and readers
-read them through a virtual table. Steps 1–5 built (2026-11-18); 6 (the virtual table, the frames retired) next.
+read them through a virtual table. Steps 1–7 built (2026-11-18).
 
 ## Intro
 
@@ -130,16 +130,75 @@ what a run checks (digest, reads, types).
   frame; 1,095 frames of phase 0's space with no entry). Its entry is now queued at the hand-off, the rows lent to
   the writer until packed, and the part's write puts its reads. A relation not held in a block is put flat, with
   its levels.
-- **Step 6** is the virtual table over the chain (0401 F5) and the reads in place: a relation that is probed and
-  scanned, not extended, is read from its `Packed` (a leading key by `IntCol::equal_range`, others by a
-  permutation index packed at freeze when a plan asks for it). The frames are retired.
+- **Step 6a: the frames hold no rows.** A frame whose kept entry is put beside it (`Encoded::in_chain`, set by
+  the writers that queue the entry: retain's and kept_strata's) is written as its relation's metadata only:
+  digest, reads, types, row count, `seg = -1`, no bytes and no segment. Every read (the snapshot, the cross
+  space, the SQL admission, a relation's parts) binds it from the chain; one with no entry of its digest is
+  dropped, so its relation is absent and derived again: correct by construction, at the cost of a derivation.
+  A delta frame keeps its bytes (its base's entry holds the rows after it, so a bound base reads none). A store
+  from before keeps its frames' rows until they are written again. An input's granule frame and entry both have
+  digest 0 (its validity is its documents' digests): the pair is queued together, so the entry is the frame's.
+- **Rows read by position are kept as given.** An input's granule (its rows by owner: its readers' owner ranges
+  are positions), its documents' table and its kept statistics (an encoded word stream) are put `given`
+  (`packed::Order::AsGiven`): every row, in the order put, no order recorded. Sorted into canonical order, a
+  granule's owner ranges broke (ep2's edit runs failed the owner check, and the empty source that stood in read
+  past its rows) and the statistics' words were sorted and deduplicated. Every other entry records its canonical
+  order on its first 8 columns (`Packed::okey`), so its leading column is a range (`Packed::leads`); before, the
+  order was kept but not recorded, and no probe took the range.
+- **A retag keeps its entry's digest.** A retag (new reads, the same rows) is put with no digest; its entry took
+  that 0, and every retagged relation stopped matching its frame (ep2: 361 of the cross space's, so k1 derived 877
+  of 1,146 strata again). The entry's digest and types are kept.
+- **Step 6b: read in place.** A kept relation with no levels part, in a process that did not fork (its ids are the
+  store's, decision 0170), is a view of its entry (`retain::kept_source`, `InRel::over_source`): no row copied.
+  Its leading column is probed as a range of the entry (`sorted_range`); another column through its rows sorted
+  by that column, made when first probed. A relation the run extends is made from its rows then (`Rel::based`
+  takes no view; `Rel::compacted` records its start from the view's rows, so the maintain mode has its version).
+  A relation with levels, or in a forked process, is read into the run's relation as before.
+- **A source that could not make its rows** (a kept input's granule that does not decode) reads 0 within its row
+  count, and the native stratum that read it fails with why (`Source::failed`, asked after each probe, never
+  making rows to find out); before, the stand-in held no rows and a join read past them.
+- **Step 6c** is the virtual table (K8).
 
-### K7. Sorted outputs (open)
+### K7. Sorted outputs
 
-A relation may declare that its rows come out in canonical order (an input's nodes, a rule whose plan scans a
-sorted relation and emits in its order). The keep then skips the sort (K3 step 2 already detects it), and a
-planner may use the order: merge joins, range probes on the leading columns. The user: "a lot is faster when
-sorted". Open item Q217.
+A relation may declare that it keeps its rows sorted:
+
+```
+// `calls` keeps its rows in canonical order: by caller, then callee
+.decl calls(caller: number, callee: number) sorted
+```
+
+Canonical order is the keep's (K3): the columns in turn, as signed integers. The declaration is a choice of
+layout, not a promise the rules must keep: the engine makes it true.
+
+- **When its component is done** (`InRel::moved`), its live rows are laid out in canonical order, once (one sort
+  of their ids, dead rows left out, levels following their rows), and the run knows them sorted on its leading
+  columns (`runs::Sorted`, decision 0180, over every row: on every column an order is the dedup order, which
+  leads with a hash). An order a later stratum probes on a prefix of them is then the rows in place: no ids
+  listed, none sorted, a probe a binary search of the rows.
+- **The keep** finds them in order (K3 step 2) and sorts nothing.
+- **The next run** reads them in place (step 6), the leading column a range of the entry.
+- A relation maintained from a kept one keeps its rows where they are: its versions are read by row id (decision
+  0364). It is laid out again when a run derives it whole.
+- The engine is told by its component's spec (`sorted <rels>`), from the `.decl`'s qualifier (decision 0099's
+  list, `front::QUALIFIERS`).
+
+Not built: merge joins over two sorted relations, which the planner may choose once both sides are known sorted.
+
+### K8. The kept facts in SQL
+
+`kept_facts` is an eponymous virtual table over every space's chain, registered beside `atoms` on each of the
+store's connections:
+
+```sql
+-- `calls`, part 0, of one space: its rows as the store numbers them
+SELECT c0, c1 FROM kept_facts WHERE space = ?1 AND rel = 'calls' AND part = 0;
+-- the rows whose first column is 42: a binary search where it leads the entry's order
+SELECT c1 FROM kept_facts WHERE space = ?1 AND rel = 'calls' AND c0 = 42;
+```
+
+Columns `space`, `rel`, `ident`, `part`, `level` (or NULL), then `c0` to `c15` (NULL past the arity). `space`,
+`rel` and `part` choose entries; `c0` narrows each. Only each key's newest entry is read; a gone one is absent.
 
 ## Required behavior, asserted (a test each)
 
@@ -159,6 +218,20 @@ sorted". Open item Q217.
 - K-R8a `a_kept_relation_is_bound_from_its_chain` (store): a relation whose entry is its frame's is read from the
   chain (rows in canonical order, the frame's digest and reads, the entry's levels in its rows' order); a stale or
   missing entry's from its frame.
+- K-R9 `a_frame_in_the_chain_is_its_metadata` (store): a frame put in the chain is written with `seg = -1` and no
+  bytes; read from SQL and from the snapshot, its rows are its entry's; with no entry it is absent; an entry put
+  as given (a granule, a row repeated) is read in its order, every row.
+- K-R8a also: a levels part whose entry has no levels is absent (eight relations, so the map's order reaches a
+  levels part after its part 0: ep2's k1 panicked there). K-R4's retag is put with no digest and keeps the entry's.
+- K-R10 `kept_facts_are_a_virtual_table` (store): rows by space, `rel` and `part`; the newest entry; a gone one
+  absent; `c0 = ?` a range (the entry leads by column 0); an entry put as given leads by none; columns past the
+  arity NULL.
+- `a_relation_started_from_a_view_has_its_version` (engine): a relation compacted from a view has its start, and
+  its delta from the view, by version, relation and mark.
+- `a_kept_input_is_decoded_where_it_is_first_read` (engine) also: `failed` is unknown before the input is read
+  whole, and a failed input reads 0 within its count.
+- K-R11 `a_relation_declared_sorted_is_laid_out_in_order` (engine): a relation declared sorted is in canonical
+  order when done, dead rows left out, known sorted on its leading column.
 - K-R8 ep2's rows are h1's (0 differ) with kept relations bound from the chain (step 5); K-R7 also finds no frame
   of a space with a chain that has no kept entry.
 
@@ -182,6 +255,19 @@ Four runs (k0 cold, k1–k3 one edit each), profiling build:
 The chain is 1.18× the frames: GROUPS holds ids at 25.6 bits where the frames' delta varints take about 8–16.
 The open question below (a line per group, or splitting an id into document and local parts) is where the rest is.
 
+Steps 6–7 (a fresh state, the same four runs):
+
+| | step 5 | steps 6–7 |
+|---|---|---|
+| rows against h1 | 0 differ | 0 differ, every run |
+| k0 | 1,393 G instructions, 2,113 MB peak | 1,256 G, 1,693 MB |
+| k1, k2, k3 | 22.8, 22.2, 22.1 G; 583, 581, 569 MB | 21.2, 20.5, 20.7 G; 233, 226, 235 MB |
+| frames | 151 MB of segments | 32,366 frames, every one metadata: 0 bytes, no segment |
+| chain | 178 MB | 183 MB |
+| bound from the chain | 28,938 of 29,732 | 29,304 of 29,732 (the rest levels and delta parts); none unbound with an entry |
+
+The edit runs' peak fell by 60%: their kept relations are views of the mapped chain, not rows copied in.
+
 ## Steps
 
 1. (built) `IntCol` `GROUPS`; `packed::pack_rows` (sorted check, levels); K-R1–K-R3.
@@ -189,5 +275,5 @@ The open question below (a line per group, or splitting an id into document and 
 3. (built) The store: `facts_chain`, a write appends, tiered merging, sweep; K-R5, K-R6.
 4. (measured) ep2: the chain's bytes against the frames', K-R7.
 5. (built) Bind kept relations from the chain in place of the frames; K-R8a, K-R8.
-6. The virtual table and reads in place; the frames retired.
-7. Sorted outputs (K7, Q217).
+6. (built) The frames hold no rows (6a, K-R9); kept relations read in place (6b); the virtual table (6c, K-R10).
+7. (built) Sorted outputs (K7, K-R11; Q217).

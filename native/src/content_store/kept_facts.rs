@@ -41,8 +41,9 @@ pub enum KeptWhat {
     /// A relation the run derived: its live rows, packed.
     Rows(Box<dyn KeptRows>),
     /// Rows not held as a relation (an input's granule): `n` rows of `widths.len()` columns, flat; each row's level
-    /// (decision 0090) where its relation has them.
-    Flat { widths: Vec<u32>, rows: Vec<i64>, n: usize, levels: Option<Vec<u32>> },
+    /// (decision 0090) where its relation has them. `given`: kept in the order given, every row (an input's granule
+    /// or documents' table, read by position); else in canonical order, as a relation's.
+    Flat { widths: Vec<u32>, rows: Vec<i64>, n: usize, levels: Option<Vec<u32>>, given: bool },
     /// The kept entry's rows as they are, with these reads (a frame's retag).
     Reads,
     /// No longer kept.
@@ -155,7 +156,7 @@ fn columns(what: &KeptWhat, types: &[u8], map: Option<MapIds>) -> StoreResult<Co
                 (cols, n, a, levels.map(|l| ids.iter().map(|&id| l[id]).collect()))
             }
         }
-        KeptWhat::Flat { widths, rows, n, levels } => {
+        KeptWhat::Flat { widths, rows, n, levels, .. } => {
             let a = widths.len();
             let mut cols = vec![0i64; n * a];
             for (r, row) in rows.chunks_exact(a.max(1)).take(*n).enumerate() {
@@ -268,11 +269,14 @@ pub fn write_space(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<Kep
         match &p.what {
             KeptWhat::Rows(_) | KeptWhat::Flat { .. } => {
                 let (cols, n, a, levels) = columns(&p.what, &p.types, map)?;
-                w.put_cols(meta, &cols, n, a, levels.as_deref()).map_err(io)?;
+                let given = if matches!(p.what, KeptWhat::Flat { given: true, .. }) { rerail_blocks::packed::Order::AsGiven } else { rerail_blocks::packed::Order::Canonical };
+                w.put_cols(meta, &cols, n, a, levels.as_deref(), given).map_err(io)?;
             }
             KeptWhat::Reads => {
                 if let Some(k) = chain.get(&p.key()) {
-                    let meta = Meta { types: k.types, ..meta };
+                    // Its rows' digest and types are the entry's: a retag changes the reads alone (its put has
+                    // none; a digest of 0 left every retagged relation unbound, ep2's k1 deriving 877 strata again).
+                    let meta = Meta { types: k.types, digest: k.digest, ..meta };
                     // Rows in a merged file are copied with the new reads; rows in an older one stay there.
                     if merged.files.iter().any(|f| f.holds(k.rows)) { w.copy(&k, Some(meta)).map_err(io)? } else { w.same(meta) }
                 }
@@ -363,6 +367,8 @@ pub fn copy_facts(from: &Path, to: &Path) -> std::io::Result<()> {
     }
     Ok(())
 }
+
+pub mod vtab;
 
 #[cfg(test)]
 mod tests;

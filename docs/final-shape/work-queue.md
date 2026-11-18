@@ -4513,8 +4513,11 @@ native join it falls back to the planner's whole-rule order.
 - **Asked** (the user, 2026-11-18): "we may eventually want to allow the relations to say if they output sorted
   results or not, a lot is faster when sorted".
 - **Now**: the keep checks each put's rows for canonical order in one pass and skips the sort when they are
-  (`packed::prepare`, `Prepared::in_order`); an input's granule usually is. Nothing declares an order, and nothing
-  reads one.
-- **Next**: a relation states its output order (an input's nodes; a rule whose plan scans a sorted relation and
-  emits in its order); the keep trusts it (no check); a planner uses it (merge joins, range probes on leading
-  columns of a `Packed`). Measure how many of ep2's puts come in order (`Put::in_order`) first.
+  (`packed::prepare`, `Prepared::in_order`). Nothing declares an order, and nothing reads one. (An input's granule
+  is kept as given, by owner: its readers' ranges are positions.)
+- **Done** (2026-11-18): `.decl r(…) sorted` (0402 K7). The engine lays a declared relation's rows out in canonical
+  order when its component is done and knows them sorted on its leading columns, so later strata probe them in
+  place; the keep finds them in order and sorts nothing; the next run reads them in place, the leading column a
+  range (step 6b: every canonical entry records its order, `Packed::leads`, K-R10). K-R11.
+- **Open**: merge joins over two sorted relations; an order a rule's plan makes without a declaration (a scan of
+  a sorted relation emitting in its order); which ep2 relations to declare sorted, by their probes.

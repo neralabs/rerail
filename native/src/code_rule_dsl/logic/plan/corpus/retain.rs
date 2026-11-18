@@ -753,8 +753,26 @@ impl Retained {
         let mut late = self.late.borrow_mut();
         let (mut rows, mut n) = self.admitted.get();
         for (rel, key) in wanted.into_iter().zip(&keys) {
-            let Some(got) = admitted.get(key).and_then(|f| f.rows().ok()) else { return Ok(false) };
             let Some(width) = prog.fields()?.arity(rel) else { return Ok(false) };
+            // Read in place where it lies in the chain (decision 0402 step 6): a relation with no levels part to
+            // carry, in a process whose ids are the store's (`AdmittedFrame::kept_rows`).
+            if width > 0
+                && !levels.contains_key(&(key.0.clone(), LEVELS_PART))
+                && let Some(frame) = admitted.get(key)
+                && frame.types().is_some_and(|t| t.len() == width)
+                && let Some(in_place) = frame.kept_rows()
+            {
+                let types = engine_types(frame.types().map(<[u8]>::to_vec).unwrap_or_default());
+                let kept = InRel::over_source(Arc::new(kept_source::KeptSource::new(in_place)), types);
+                rows += kept.len();
+                n += 1;
+                if kept_stats::on() {
+                    self.take_stats(frames, &admitted, rel, &kept);
+                }
+                late.insert(rel.clone(), Kept { rel: kept, width, output: None });
+                continue;
+            }
+            let Some(got) = admitted.get(key).and_then(|f| f.rows().ok()) else { return Ok(false) };
             if got.types.len() != width {
                 return Ok(false);
             }
@@ -1076,6 +1094,12 @@ impl Source for Renamed {
     }
     fn expect_lookups(&self, column: usize, keys: f64) {
         self.0.expect_lookups(column, keys);
+    }
+    fn failure(&self) -> Option<String> {
+        self.0.failure()
+    }
+    fn failed(&self) -> Option<String> {
+        self.0.failed()
     }
     fn statistics(&self) -> Option<Vec<(String, i64, i64, i64, i64)>> {
         let names = self.0.columns();
@@ -1985,7 +2009,8 @@ impl Lazy {
     fn made(&self) -> &(Arc<dyn Source>, Option<String>) {
         let made = self.made.get_or_init(|| match self.decode() {
             Ok(s) => (s, None),
-            Err(why) => (crate::code_rule_dsl::logic::native::component::columns_source(self.names.clone(), vec![Some(Vec::new()); self.width]), Some(why)),
+            // No column held: every row of its count reads 0 (a reader of it fails with `why`, `failed`).
+            Err(why) => (crate::code_rule_dsl::logic::native::component::columns_source(self.names.clone(), vec![None; self.width]), Some(why)),
         });
         if !self.parts.lock().is_empty() {
             self.parts.lock().clear();
@@ -2009,6 +2034,10 @@ impl Source for Lazy {
     fn failure(&self) -> Option<String> {
         let (inner, why) = self.made();
         why.clone().or_else(|| inner.failure())
+    }
+    fn failed(&self) -> Option<String> {
+        let (inner, why) = self.made.get()?;
+        why.clone().or_else(|| inner.failed())
     }
     fn row_stream(&self, range: std::ops::Range<usize>, reverse: bool) -> Option<Box<dyn crate::code_rule_dsl::facts::vtab::RowStream>> {
         self.inner().row_stream(range, reverse)
@@ -2281,6 +2310,9 @@ impl Source for Traced {
     }
     fn failure(&self) -> Option<String> {
         self.inner.failure()
+    }
+    fn failed(&self) -> Option<String> {
+        self.inner.failed()
     }
     fn indexed(&self, column: usize) -> bool {
         self.inner.indexed(column)
@@ -2948,7 +2980,7 @@ impl Retained {
         // documents' table), its digests and granules are of content, so a forked process's frames are written as the
         // store numbers them, and read back as the reader does. Keyed by this process's numbering, they were dropped
         // after a fork, and every next run derived the cross part again.
-        crate::code_rule_dsl::logic::profile::behind(|| store.queue_placed_retagged(was.space, puts, retags, delta_out, Vec::new(), Some((was.names.values().cloned().collect(), super::run_token(), self.key)), placer));
+        crate::code_rule_dsl::logic::profile::behind(|| store.queue_placed_retagged(was.space, puts.into_iter().map(|e| e.in_chain()).collect(), retags, delta_out, Vec::new(), Some((was.names.values().cloned().collect(), super::run_token(), self.key)), placer));
         crate::code_rule_dsl::logic::profile::decision("the kept facts as blocks, beside the frames (decision 0401 step 6)", || format!("this program: {} entries put", kept.len()));
         crate::code_rule_dsl::logic::profile::behind(|| store.queue_kept(was.space, kept));
         Ok(written)
@@ -2990,7 +3022,7 @@ pub(in crate::code_rule_dsl) fn write_input_frames(store: &ContentStore, was: &I
         let _span = crate::code_rule_dsl::logic::profile::span(|| "an input's frames (job)".into());
         let queue = |puts: Vec<EncodedFrame>, kept: Vec<KeptPut>| {
             if !puts.is_empty() {
-                store.queue_encoded_retagged(was.space, puts, Vec::new(), Vec::new(), Vec::new(), None);
+                store.queue_encoded_retagged(was.space, puts.into_iter().map(|e| e.in_chain()).collect(), Vec::new(), Vec::new(), Vec::new(), None);
             }
             store.queue_kept(was.space, kept);
         };
@@ -3130,7 +3162,7 @@ pub(in crate::code_rule_dsl) fn write_input_frames(store: &ContentStore, was: &I
         let put = FramePut { rel: name.clone(), part: DOCS_PART, digest, reads: vec![(GRANULES_READ.to_owned(), mask)], rows: FrameRows { types: docs_types(atom_owner), n: table.len(), rows } };
         kept.push(kept_flat(&put));
         puts.push(put.encoded());
-        store.queue_placed_retagged(was.space, puts, Vec::new(), Vec::new(), Vec::new(), None, placer);
+        store.queue_placed_retagged(was.space, puts.into_iter().map(|e| e.in_chain()).collect(), Vec::new(), Vec::new(), Vec::new(), None, placer);
         store.queue_kept(was.space, kept);
         Some((digest, written))
     };
@@ -3204,7 +3236,7 @@ pub(in crate::code_rule_dsl) fn kept_rows(name: &FrameRel, digest: u64, reads: V
             let mut rows = Vec::with_capacity(rel.len() * w);
             rel.each_live_batch(0, rel.len(), |b| rows.extend_from_slice(b));
             let n = if w == 0 { rel.rows() } else { rows.len() / w };
-            KeptWhat::Flat { widths: vec![8; w], rows, n, levels: rel.live_levels() }
+            KeptWhat::Flat { widths: vec![8; w], rows, n, levels: rel.live_levels(), given: false }
         }
     };
     KeptPut { rel: name.name.clone(), ident: name.ident, part: DOCS_PART, digest, reads, types, what }
@@ -3213,7 +3245,7 @@ pub(in crate::code_rule_dsl) fn kept_rows(name: &FrameRel, digest: u64, reads: V
 /// A frame's rows as an entry of their own (an input's granule or documents, statistics' words).
 pub(in crate::code_rule_dsl) fn kept_flat(put: &FramePut) -> KeptPut {
     let FrameRows { types, rows, n } = &put.rows;
-    KeptPut { rel: put.rel.name.clone(), ident: put.rel.ident, part: put.part, digest: put.digest, reads: put.reads.clone(), types: types.clone(), what: KeptWhat::Flat { widths: vec![8; types.len()], rows: rows.clone(), n: *n, levels: None } }
+    KeptPut { rel: put.rel.name.clone(), ident: put.rel.ident, part: put.part, digest: put.digest, reads: put.reads.clone(), types: types.clone(), what: KeptWhat::Flat { widths: vec![8; types.len()], rows: rows.clone(), n: *n, levels: None, given: true } }
 }
 
 /// The entry's rows as they are, with `reads` (a frame's retag).
@@ -3311,6 +3343,7 @@ impl Retained {
     }
 }
 
+mod kept_source;
 mod kept_stats;
 
 #[cfg(test)]

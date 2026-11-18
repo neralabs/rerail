@@ -258,11 +258,16 @@ fn a_kept_input_is_decoded_where_it_is_first_read() {
     let one = kept["input1"].ranges().unwrap()[&3];
     assert_eq!(read_bad.value(one.0 as usize, 0), (3 << 32) | 1, "input1's row of document 3, from its granule alone");
     assert_eq!(good.failure(), None);
+    assert_eq!(read_bad.failed(), None, "not known before the input is read whole, and not read to find it");
     let mut rows: Vec<i64> = (0..3).map(|r| good.value(r, 0)).collect();
     rows.sort_unstable();
     assert_eq!(rows, (1..=3).map(|d| d << 32).collect::<Vec<i64>>(), "input0 read as kept");
     let why = read_bad.failure().expect("input1's granule is found wrong when it is read");
     assert!(why.contains("input1") && why.contains("not by owner"), "{why}");
+    // Its rows, read now, read 0 within its count (ep2 panicked reading a failed input past no rows); its reader asks
+    // `failed` after reading and fails with it.
+    assert!((0..read_bad.len()).all(|r| read_bad.value(r, 0) == 0));
+    assert_eq!(read_bad.failed(), Some(why));
 }
 
 /// Smoking gun 5 (t34, 2026-11-13): the retain budget is of memory, not of the store. A relation past it was neither

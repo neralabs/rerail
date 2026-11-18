@@ -139,7 +139,8 @@ impl<'s> Kept<'s> {
             // The same relations as kept entries (decision 0402): every frame written has its entry.
             let kept: Vec<KeptPut> = puts.iter().map(super::retain::kept_flat).chain(gone.iter().map(|(f, part)| kept_gone(f, *part))).collect();
             self.store.queue_kept(self.space, kept);
-            self.store.queue_frames(self.space, puts, gone, used.map(|u| (u, super::run_token(), self.program)));
+            // Their rows are their kept entries' (decision 0402 step 6): the frames are the relations' metadata.
+            self.store.queue_encoded(self.space, puts.into_iter().map(|p| p.encoded().in_chain()).collect(), gone, used.map(|u| (u, super::run_token(), self.program)));
         }
     }
 
@@ -444,7 +445,7 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
         // Its kept entry (decision 0402): the same rows, flat, packed by the writer.
         let mut flat = Vec::with_capacity(n * w);
         each(&mut |b| flat.extend_from_slice(b));
-        kept.push(KeptPut { rel: f.name.clone(), ident: f.ident, part: 0, digest, reads: Vec::new(), types: types.clone(), what: KeptWhat::Flat { widths: vec![8; w], rows: flat, n, levels: None } });
+        kept.push(KeptPut { rel: f.name.clone(), ident: f.ident, part: 0, digest, reads: Vec::new(), types: types.clone(), what: KeptWhat::Flat { widths: vec![8; w], rows: flat, n, levels: None, given: false } });
         written += n;
         puts.push(FramePut::encoded_as(f.clone(), 0, digest, Vec::new(), types, n, bytes));
     }
@@ -474,7 +475,7 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
         return;
     }
     store.queue_kept(part.space, kept);
-    store.queue_encoded_retagged(part.space, puts, Vec::new(), Vec::new(), Vec::new(), Some((used, super::run_token(), part.key)));
+    store.queue_encoded_retagged(part.space, puts.into_iter().map(|e| e.in_chain()).collect(), Vec::new(), Vec::new(), Vec::new(), Some((used, super::run_token(), part.key)));
 }
 
 /// A kept entry no longer kept: its frame forgotten.

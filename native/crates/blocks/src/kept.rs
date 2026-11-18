@@ -416,6 +416,9 @@ pub struct Put {
     pub in_order: bool,
 }
 
+/// The columns a packed entry records its order on (`Packed::okey`).
+const MAX_ORDER: usize = 8;
+
 /// A kept file being written: the next of a space's chain, or a roll-up of it. Each put's rows are packed into it as
 /// they are put; the directory, sorted, is written by `finish`, which freezes the file and puts it on the disk.
 pub struct KeptW {
@@ -469,11 +472,13 @@ impl KeptW {
     }
 
     /// `n` rows of `a` columns (`cols`, column-major) with each row's level when they have one, prepared and packed
-    /// (`put`), in the calling thread's scratch.
-    pub fn put_cols(&mut self, meta: Meta, cols: &[i64], n: usize, a: usize, levels: Option<&[u32]>) -> io::Result<Put> {
-        let spec = crate::relation::Spec { widths: vec![8; a], order: Vec::new(), indexes: Vec::new(), min_log: 0 };
+    /// (`put`), in the calling thread's scratch. In canonical order (columns 0, 1, … ascending), the order recorded
+    /// on its first `MAX_ORDER` columns, so a probe of a leading column is a range (`Packed::leads`); or as given.
+    pub fn put_cols(&mut self, meta: Meta, cols: &[i64], n: usize, a: usize, levels: Option<&[u32]>, given: crate::packed::Order) -> io::Result<Put> {
+        let order = (0..a.min(MAX_ORDER) as u16).collect();
+        let spec = crate::relation::Spec { widths: vec![8; a], order, indexes: Vec::new(), min_log: 0 };
         crate::scratch::with(|s| {
-            let prepared = crate::packed::prepare(s, cols, n, a, &spec, levels);
+            let prepared = crate::packed::prepare(s, cols, n, a, &spec, levels, given);
             self.put(meta, &prepared)
         })
     }
@@ -621,7 +626,7 @@ mod tests {
     /// Rows of two columns, as columns.
     fn put(w: &mut KeptW, m: Meta, rows: &[(i64, i64)], levels: Option<&[u32]>) -> Put {
         let cols: Vec<i64> = rows.iter().map(|r| r.0).chain(rows.iter().map(|r| r.1)).collect();
-        w.put_cols(m, &cols, rows.len(), 2, levels).unwrap()
+        w.put_cols(m, &cols, rows.len(), 2, levels, crate::packed::Order::Canonical).unwrap()
     }
 
     fn rows_of(k: &Kept) -> Vec<Vec<i64>> {

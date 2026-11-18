@@ -310,15 +310,28 @@ fn in_canonical_order(cols: &[i64], n: usize, key: &[usize]) -> bool {
     })
 }
 
+/// The order `prepare` lays rows out in.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Order {
+    /// Canonical: the spec's order columns, then the rest; duplicates dropped.
+    Canonical,
+    /// As given, every row.
+    AsGiven,
+}
+
 /// `n` rows of `a` columns (`raw`, column-major), with each row's level when they have one, prepared to be placed:
 /// one pass checks whether they are in canonical order and distinct already (an input's granule usually is, and a
 /// relation that declares its output sorted, K7, always); else they are sorted as `pack_open` sorts and their
 /// duplicates dropped, the levels following their rows. Then each column's encoding is chosen.
-pub fn prepare<'s>(s: &'s Scratch, raw: &'s [i64], n: usize, a: usize, spec: &Spec, levels: Option<&[u32]>) -> Prepared<'s> {
+///
+/// `Order::AsGiven`: the rows are kept in the order given, none dropped, and the packed rows record no order (an
+/// input's granule: its rows by owner, its readers' ranges by position, decision 0117 step 2).
+pub fn prepare<'s>(s: &'s Scratch, raw: &'s [i64], n: usize, a: usize, spec: &Spec, levels: Option<&[u32]>, given: Order) -> Prepared<'s> {
     assert_eq!(raw.len(), n * a);
     assert!(levels.is_none_or(|l| l.len() == n), "a level a row");
     let key = canonical_cols(spec, a);
-    let in_order = in_canonical_order(raw, n, &key);
+    let as_given = given == Order::AsGiven;
+    let in_order = as_given || in_canonical_order(raw, n, &key);
     let (cols, lv, m): (&'s [i64], Option<&'s [i64]>, usize) = if in_order {
         let lv = levels.map(|l| {
             let out: &mut [i64] = s.take(n);
@@ -362,7 +375,8 @@ pub fn prepare<'s>(s: &'s Scratch, raw: &'s [i64], n: usize, a: usize, spec: &Sp
     };
     let mut plan = plan(s, a, spec, cols, m);
     plan.levels = lv.map(|v| (v, choose(v)));
-    Prepared { plan, order: spec.order.clone(), indexes: spec.indexes.clone(), in_order }
+    let order = if as_given { Vec::new() } else { spec.order.clone() };
+    Prepared { plan, order, indexes: spec.indexes.clone(), in_order: in_order && !as_given }
 }
 
 impl Prepared<'_> {
@@ -413,6 +427,11 @@ impl Packed {
     /// Its rows' levels, in their order; `None` when they have none.
     pub fn levels(&self) -> Option<&IntCol> {
         (self.n > 0 && self.levels.len() == self.len()).then_some(&self.levels)
+    }
+
+    /// Whether column `c` leads its canonical order: its rows equal to a value are one range (`col(c).equal_range`).
+    pub fn leads(&self, c: usize) -> bool {
+        self.nokey > 0 && self.okey[0] as usize == c
     }
 
     /// The positions whose columns `cols` equal `key`, in canonical order: a range when the key leads the order,
@@ -497,10 +516,10 @@ mod tests {
         let (a, b) = crate::scratch::with(|s| {
             let ca = s.take::<i64>(10_000);
             ca.copy_from_slice(&columns(&sorted));
-            let pa = prepare(s, ca, 5000, 2, &spec(2), None);
+            let pa = prepare(s, ca, 5000, 2, &spec(2), None, Order::Canonical);
             let cb = s.take::<i64>(10_200);
             cb.copy_from_slice(&columns(&shuffled));
-            let pb = prepare(s, cb, 5100, 2, &spec(2), None);
+            let pb = prepare(s, cb, 5100, 2, &spec(2), None, Order::Canonical);
             assert!(pa.in_order && !pb.in_order);
             assert_eq!((pa.len(), pb.len()), (5000, 5000), "duplicates dropped");
             (read(pa.place_in(&block).0), read(pb.place_in(&block).0))
@@ -518,7 +537,7 @@ mod tests {
         crate::scratch::with(|s| {
             let c = s.take::<i64>(6000);
             c.copy_from_slice(&columns(&rows));
-            let p = prepare(s, c, 3000, 2, &spec(2), Some(&levels[..]));
+            let p = prepare(s, c, 3000, 2, &spec(2), Some(&levels[..]), Order::Canonical);
             assert!(!p.in_order);
             let (packed, _) = p.place_in(&block);
             let lv = packed.levels().expect("levels kept");
@@ -531,7 +550,7 @@ mod tests {
         crate::scratch::with(|s| {
             let c = s.take::<i64>(6000);
             c.copy_from_slice(&columns(&rows));
-            assert!(prepare(s, c, 3000, 2, &spec(2), None).place_in(&block).0.levels().is_none());
+            assert!(prepare(s, c, 3000, 2, &spec(2), None, Order::Canonical).place_in(&block).0.levels().is_none());
         });
     }
 }
