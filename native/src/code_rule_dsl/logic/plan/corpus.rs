@@ -10222,34 +10222,9 @@ fn bind_kept(b: &mut Binder, modules: &Modules, db: &rusqlite::Connection, stats
 }
 
 
-/// Per relation, the integer constants its atoms test, by column (`constant_counts`'s): one pass over the rules,
-/// not one per relation.
-pub fn constants_tested(prog: &front::Program) -> HashMap<&str, BTreeSet<(usize, i64)>> {
-    let mut by: HashMap<&str, BTreeSet<(usize, i64)>> = HashMap::new();
-    for a in prog.rules.iter().flat_map(|r| &r.body).filter_map(front::Literal::atom) {
-        for (c, t) in a.args.iter().enumerate() {
-            if let Some(v) = t.integer() {
-                by.entry(a.rel.as_str()).or_default().insert((c, v));
-            }
-        }
-    }
-    let mut projections: HashMap<(&str, usize), Vec<(&str, usize)>> = HashMap::new();
-    for rule in &prog.rules {
-        let [front::Literal::Atom(a)] = rule.body.as_slice() else { continue };
-        if a.neg { continue; }
-        for (hc, term) in rule.head.args.iter().enumerate() {
-            let front::Term::Var(v) = term else { continue };
-            for (bc, arg) in a.args.iter().enumerate() {
-                if matches!(arg, front::Term::Var(x) if x == v) {
-                    projections.entry((&rule.head.rel, hc)).or_default().push((&a.rel, bc));
-                }
-            }
-        }
-    }
-    tested_through(by, &projections)
-}
-
-/// `constants_tested` of the program of version `v`, read by its rules' handles.
+/// Per relation, the integer constants its atoms test, by column (`constant_counts`'s), read from version `v` by its
+/// rules' handles: one pass over the rules, not one per relation. A relation that copies another's columns (a rule
+/// of one positive atom) passes its tests on to the columns it copies (`tested_through`).
 pub fn constants_tested_in(v: &crate::code_rule_dsl::logic::program_image::Version) -> HashMap<&str, BTreeSet<(usize, i64)>> {
     use crate::code_rule_dsl::logic::program_image::{Lit, TermRef};
     let mut by: HashMap<&str, BTreeSet<(usize, i64)>> = HashMap::new();
@@ -10701,7 +10676,7 @@ fn text_document(path: &str, label: &str) -> bool {
 pub struct CorpusFiles {
     /// Each dialect's files, by its label (the language registry's).
     pub by_label: BTreeMap<&'static str, Vec<String>>,
-    /// Files of no grammar: after `scoped`, those a `.scope text` glob reads as text (`front::Program::text_globs`),
+    /// Files of no grammar: after `scoped`, those a `.scope text` glob reads as text (`ProgramFields::text_globs`),
     /// with the files of a grammar it matches (a `.md` file is Markdown's, and text to a run of another grammar).
     pub text: Vec<String>,
 }
@@ -10732,8 +10707,8 @@ impl CorpusFiles {
 /// parses), else Rust or Python by `Typing::rust`, or by whichever has more files.
 /// The grammar a run of `prog` reads (`corpus_language`, as `run_observed` picks it): its `.language`'s, else the
 /// tree's own, of the files its scope selects. A batch's policies that read one grammar run as one pack (decision 0168).
-pub fn run_language(root: &Path, prog: &front::Program, options: &serde_json::Value) -> Result<&'static str> {
-    let language = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"').to_owned());
+pub fn run_language(root: &Path, prog: &(impl ProgramFields + ?Sized), options: &serde_json::Value) -> Result<&'static str> {
+    let language = prog.setting_values("language").into_iter().next().map(|v| v.trim_matches('"').to_owned());
     if let Some(label) = language.as_deref().and_then(crate::code_rule_dsl::language::label_named) {
         return Ok(label);
     }
@@ -10762,14 +10737,14 @@ fn json_scopes(policies: &[serde_json::Value]) -> Option<Vec<(Vec<String>, Vec<S
 /// `.tsx` and `.js` files): those with files under `root` in the program's scope, the named one first. A program is
 /// lowered for one dialect (its kind names are that grammar's ids), so each is a run of its own. Empty when the
 /// language has one dialect: the run reads it as before.
-pub fn run_dialects(root: &Path, prog: &front::Program, options: &serde_json::Value) -> Result<Vec<&'static str>> {
+pub fn run_dialects(root: &Path, prog: &(impl ProgramFields + ?Sized), options: &serde_json::Value) -> Result<Vec<&'static str>> {
     run_dialects_in(&|| corpus_files(root), prog, options)
 }
 
 /// [`run_dialects`] over a corpus listing `files` makes (once, for many programs).
-pub fn run_dialects_in(files: &dyn Fn() -> Result<CorpusFiles>, prog: &front::Program, options: &serde_json::Value) -> Result<Vec<&'static str>> {
+pub fn run_dialects_in(files: &dyn Fn() -> Result<CorpusFiles>, prog: &(impl ProgramFields + ?Sized), options: &serde_json::Value) -> Result<Vec<&'static str>> {
     use crate::code_rule_dsl::language::{CodeRuleLanguage, label};
-    let Some(name) = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"').to_owned()) else {
+    let Some(name) = prog.setting_values("language").into_iter().next().map(|v| v.trim_matches('"').to_owned()) else {
         return Ok(Vec::new());
     };
     let Some(language) = CodeRuleLanguage::ALL.into_iter().find(|l| l.name() == name) else { return Ok(Vec::new()) };
@@ -10782,7 +10757,7 @@ pub fn run_dialects_in(files: &dyn Fn() -> Result<CorpusFiles>, prog: &front::Pr
     Ok(labels)
 }
 
-/// The files the program's policies select (`front::Program::doc_scopes`, their `.scope`): a document outside
+/// The files the program's policies select (`ProgramFields::doc_scopes`, their `.scope`): a document outside
 /// every policy's scope is not parsed, and gives no facts.
 /// A scope entry taken from a policy option (`.scope dirs option("…")`) reads the option's values, from the run's
 /// `options`. A file of no grammar is read, as text only, when a `.scope text` glob matches it and a scope selects it.
@@ -11079,22 +11054,6 @@ impl Own {
             }
             for (col, n) in tested {
                 out.entry((rel.to_owned(), super::sql_col(rel, col))).or_default().insert(n);
-            }
-        }
-        out
-    }
-
-    pub fn constants(prog: &front::Program) -> BTreeMap<(String, String), BTreeSet<i64>> {
-        let mut out: BTreeMap<(String, String), BTreeSet<i64>> = BTreeMap::new();
-        for literal in prog.rules.iter().flat_map(|r| &r.body) {
-            let Some(atom) = literal.atom() else { continue };
-            if !prog.inputs.iter().any(|x| x == &atom.rel) {
-                continue;
-            }
-            for (i, arg) in atom.args.iter().enumerate() {
-                if let Some(v) = arg.integer() {
-                    out.entry((atom.rel.to_string(), super::sql_col(&atom.rel, i))).or_default().insert(v);
-                }
             }
         }
         out
@@ -11424,11 +11383,8 @@ pub mod tests {
 
     #[test]
     fn constant_demands_reach_projected_input_columns() {
-        let p=crate::code_rule_dsl::logic::rr::parse(".decl raw(d:number,n:number,k:number)\n.input raw\n.decl tags(n:number,k:number)\ntags(n,k) :- raw(_,n,k).\n.decl alias(n:number,k:number)\nalias(n,k) :- tags(n,k).\n.decl out(n:number)\nout(n) :- alias(n,9).\n").unwrap();
-        let demands=super::constants_tested(&p);
-        // And read from the program's version, by its rules' handles: the same.
-        let v=crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap().0;
-        assert_eq!(super::constants_tested_in(&v),demands);
+        let v=crate::code_rule_dsl::logic::rr::parse_version(".decl raw(d:number,n:number,k:number)\n.input raw\n.decl tags(n:number,k:number)\ntags(n,k) :- raw(_,n,k).\n.decl alias(n:number,k:number)\nalias(n,k) :- tags(n,k).\n.decl out(n:number)\nout(n) :- alias(n,9).\n").unwrap();
+        let demands=super::constants_tested_in(&v);
         assert!(demands["alias"].contains(&(1,9)));
         assert!(demands["tags"].contains(&(1,9)));
         assert!(demands["raw"].contains(&(2,9)),"measure the actual source column before planning its consumers");
