@@ -1251,12 +1251,30 @@ fn a_runs_output_directory_is_rerails_own() {
     assert_eq!(names, ["a.py"], "the outputs are not in the listing");
 }
 
+/// `start` (a process a test starts, `switches::started`) while another thread holds `switch` through `switches::set`,
+/// as a test beside it does (`cross_file_rows_are_memoised_per_import_component`'s `RERAIL_INLINE_ONLY`, the session
+/// tests' `RERAIL_CROSS_K4`): the process waits for it, and takes none of it.
+fn beside_a_switch<T>(switch: (&'static str, &'static str), start: impl FnOnce() -> T) -> T {
+    let (held, holding) = std::sync::mpsc::channel();
+    let other = std::thread::spawn(move || {
+        let _switched = super::switches::set(&[switch]);
+        held.send(()).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    });
+    holding.recv().unwrap();
+    let out = start();
+    other.join().unwrap();
+    out
+}
+
 /// The run after a cold one, over what the cold run read unchanged, writes nothing (`RERAIL_WARM`): it names the same
 /// sources and plans, so it records no manifest of its own, and it makes no choice the cold run did not keep. It was
 /// news three ways: the cold run named a source no later run reads (a chunk's tree counts, still written though frames
 /// carry their own statistics since); a nested run reused whole (`reuse::reused`) named none of its plans; and the
 /// cross part whose every stratum was kept, a program of no rules, kept planning choices of its own. Each run is a
-/// process of its own, as the CLI's are: this test binary again, running `one_corpus_run_for_a_parent`.
+/// process of its own, as the CLI's are: this test binary again, running `one_corpus_run_for_a_parent`. The warm one is
+/// started while another test holds `RERAIL_CROSS_K4=off` (`beside_a_switch`): started holding nothing, it took it and
+/// wrote ("a write gathered for the store in a warm run").
 #[test]
 fn the_run_after_a_cold_one_writes_nothing() {
     let temp = tempfile::tempdir().unwrap();
@@ -1290,7 +1308,7 @@ fn the_run_after_a_cold_one_writes_nothing() {
         if warm {
             child.env("RERAIL_WARM", "list");
         }
-        let output = child.output().unwrap();
+        let output = super::switches::started(|| child.output()).unwrap();
         // Each fault and the line after it, which says what was written.
         let stderr = String::from_utf8_lossy(&output.stderr);
         let lines: Vec<&str> = stderr.lines().collect();
@@ -1300,7 +1318,7 @@ fn the_run_after_a_cold_one_writes_nothing() {
     run(false);
     let cold = manifests();
     assert!(!cold.is_empty(), "the cold run recorded its manifests");
-    run(true);
+    beside_a_switch(("RERAIL_CROSS_K4", "off"), || run(true));
     let warm = manifests();
     let new: Vec<&(Vec<u8>, Vec<u8>)> = warm.iter().filter(|m| !cold.contains(m)).collect();
     assert!(new.is_empty(), "the warm run named what the cold run named: no manifest of its own ({} new)", new.len());
@@ -1345,7 +1363,7 @@ y = x{i} + 2
         if strict {
             child.env("RERAIL_SQL_STRICT", "1");
         }
-        let output = child.output().unwrap();
+        let output = super::switches::started(|| child.output()).unwrap();
         let stderr = String::from_utf8_lossy(&output.stderr);
         let fault: Vec<&str> = stderr.lines().skip_while(|l| !l.starts_with("rerail: RERAIL_SQL_STRICT")).take(2).collect();
         assert!(output.status.success(), "the run's process: {}; {}", output.status, fault.join(" "));
@@ -1374,7 +1392,10 @@ fn one_corpus_run_for_a_parent() {
 
 /// A second run in one process names what the first named: no manifest of its own. Its process-memory answers (the
 /// planning choices kept, the groups of automata kept) skipped the store reads that named their sources, so its
-/// manifest left them out, and the next process's run, naming them again, recorded one more.
+/// manifest left them out, and the next process's run, naming them again, recorded one more. Each process is started
+/// holding the switches (`switches::started`): the process of two is started while another thread holds a switch, as
+/// `cross_file_rows_are_memoised_per_import_component` holds `RERAIL_INLINE_ONLY`, and takes none of it (it took it,
+/// ran another plan and recorded two manifests of its own).
 #[test]
 fn a_second_run_in_one_process_records_the_first_runs_manifest() {
     let temp = tempfile::tempdir().unwrap();
@@ -1393,14 +1414,14 @@ fn a_second_run_in_one_process_records_the_first_runs_manifest() {
         rows
     };
     let run = |runs: usize| {
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
             .args(["--exact", "code_rule_dsl::logic::plan::corpus::tests::one_corpus_run_for_a_parent", "--ignored", "--test-threads", "1", "--nocapture"])
             .env("RERAIL_TAPE_CACHE", &store)
             .env("RERAIL_CHILD_RUN", &src)
             .env("RERAIL_CHILD_OUT", base.join("out"))
-            .env("RERAIL_CHILD_RUNS", runs.to_string())
-            .output()
-            .unwrap();
+            .env("RERAIL_CHILD_RUNS", runs.to_string());
+        let output = super::switches::started(|| child.output()).unwrap();
         assert!(output.status.success(), "the runs' process: {}", output.status);
     };
     // A process first keeps phase 0's graphs as images (decision 0246): every later run reads them, and so names none
@@ -1410,8 +1431,8 @@ fn a_second_run_in_one_process_records_the_first_runs_manifest() {
     // A process of one run: what a run names.
     run(1);
     let one = manifests();
-    // A process of two: the second names the same.
-    run(2);
+    // A process of two: the second names the same. Another test's switch is held as it is started.
+    beside_a_switch(("RERAIL_INLINE_ONLY", "near"), || run(2));
     let two = manifests();
     let new: Vec<&(Vec<u8>, Vec<u8>)> = two.iter().filter(|m| !one.contains(m)).collect();
     assert!(new.is_empty(), "each run named what a process's first run names: no manifest of its own ({} new)", new.len());
