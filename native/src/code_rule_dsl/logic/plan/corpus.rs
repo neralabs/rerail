@@ -319,6 +319,8 @@ pub struct Report {
     pub cross_maintained: (usize, usize, usize),
     /// Of those, the strata passed on as quiet, and the relations they held with no column measured (`Outcome::quiet`).
     pub cross_quiet: (usize, usize),
+    /// A session's maintained run: the strata it skipped, no read of them changed (0364 R9; `Outcome::walked`).
+    pub cross_skipped: usize,
     /// The cross-file relations handed off as the run went, their frames made once no later stratum read them and
     /// their rows let go (Q104): a run not driven by deltas.
     pub cross_handed: usize,
@@ -8568,6 +8570,7 @@ fn run_observed(
     let mut cross_unloaded = 0usize;
     let mut cross_derived_again = 0;
     let mut cross_quiet = (0, 0);
+    let mut cross_skipped = 0;
     let (mut cross_changed, mut cross_again) = (Vec::new(), BTreeMap::new());
     let cross_delta_counts = [0usize; 6];
     let mut cross_recursive = 0;
@@ -9091,9 +9094,6 @@ fn run_observed(
                                 maintains: BTreeSet::new(),
                                 seeds: std::mem::take(&mut seeds),
                                 given: maintained.given.clone(),
-                                counts: (0, 0, 0),
-                                again: Vec::new(),
-                                walked: (0, 0, 0),
                             };
                             let hooks = crate::code_rule_dsl::logic::plan::Hooks { maintain: Some(&mut driver), hand_off: hand_off.then_some(&mut hand as &mut dyn FnMut(&str) -> Result<bool>), unload: let_go_inputs.then_some(&mut unload as &mut dyn FnMut(&[String]) -> Result<()>), texts: Some(Arc::clone(&vocabulary)), ..Default::default() };
                             let got = super::run_atoms_native_hooked(part, &db, "main", stats, keep, modes, hooks)?;
@@ -9104,13 +9104,15 @@ fn run_observed(
                             crate::code_rule_dsl::logic::profile::decision("the kept part, from the frames, where reached (decision 0117 step 4)", || {
                                 format!("{rels_read} relations' rows read ({rows_read} rows) for the strata reached; {} relations left stored, unread", got.unread.len())
                             });
-                            let (reached, quiet, of) = driver.walked;
-                            (maintained.maintained, maintained.derived_again, maintained.recursive) = driver.counts;
-                            maintained.again = std::mem::take(&mut driver.again);
+                            let (reached, quiet, of) = got.walked;
+                            // Each stratum's one outcome, as the run counted it (0364 R9).
+                            (maintained.maintained, maintained.recursive) = got.maintained;
+                            maintained.again = got.again.clone();
+                            maintained.derived_again = maintained.again.len();
                             crate::code_rule_dsl::logic::profile::decision("maintenance driven by deltas (decision 0117 step 3)", || {
-                                format!("{reached} of {of} strata reached by a changed read: {} maintained ({} recursive), {} derived again; {quiet} not reached, held as kept", driver.counts.0, driver.counts.2, driver.counts.1)
+                                format!("{reached} of {of} strata reached by a changed read: {} maintained ({} recursive), {} derived again; {quiet} not reached, held as kept", maintained.maintained, maintained.recursive, maintained.derived_again)
                             });
-                            step(&format!("driven: {reached} of {of} strata reached, {} maintained, {} derived again, {quiet} quiet", driver.counts.0, driver.counts.1));
+                            step(&format!("driven: {reached} of {of} strata reached, {} maintained, {} derived again, {quiet} quiet", maintained.maintained, maintained.derived_again));
                             got
                         }
                         None if hand_off => {
@@ -9134,9 +9136,7 @@ fn run_observed(
                     // The relations whose rows are as they were (decision 0117 step 4): their frames are not written.
                     let unchanged_rels = std::mem::take(&mut got.unchanged);
                     let run_deltas = std::mem::take(&mut got.deltas);
-                    // The reached strata the maintain mode did not take, by reason (decision 0364, R3).
-                    let run_again = std::mem::take(&mut got.again);
-                    let run_quiet = got.quiet;
+                    let (run_quiet, run_skipped) = (got.quiet, got.walked.1);
                     step("ran");
                     collect(&db, &got, derived_widths_in(&fields))?;
                     step("collected");
@@ -9197,6 +9197,12 @@ fn run_observed(
                     // (decision 0099) has neither: it is not kept, as one past the budget, and the next run derives it.
                     // The relations of the strata the native engine ran this run (each a key `a/b/…`).
                     let ran_native: BTreeSet<&str> = got.native.iter().flat_map(|k| k.split('/')).collect();
+                    if std::env::var_os("RERAIL_SHAPE_TRACE").is_some() {
+                        for rel in &derived {
+                            let why = if got.inlined.contains(rel.as_str()) { "inlined" } else if got.unread.contains(rel.as_str()) { "unread" } else if handed.contains_key(rel.as_str()) { "handed" } else if fields.width(rel) == 0 { "no columns" } else { continue };
+                            eprintln!("RERAIL_SHAPE_TRACE not kept {rel}: {why}");
+                        }
+                    }
                     // A view of one input is not kept (decision 0090): the next run reads it over the input's rows.
                     let rows = derived
                         .iter()
@@ -9385,14 +9391,12 @@ fn run_observed(
                     cross_recursive = maintained.recursive;
                     cross_derived_again = maintained.derived_again;
                     cross_quiet = run_quiet;
+                    cross_skipped = run_skipped;
                     cross_changed = cut.changed.clone();
                     cross_again = maintained.again.iter().fold(BTreeMap::new(), |mut m, (_, why)| {
                         *m.entry(*why).or_insert(0) += 1;
                         m
                     });
-                    for (why, n) in run_again {
-                        *cross_again.entry(why).or_insert(0) += n;
-                    }
                     // Every program's kept part shares the one budget: past it, only this program's is kept.
                     if next.bytes() + cells.values().map(retain::Retained::bytes).sum::<usize>() > retain::budget() {
                         cells.clear();
@@ -9820,7 +9824,7 @@ fn run_observed(
     if !nested && !phase0::active() {
         crate::code_rule_dsl::logic::profile::run_ends(crate::code_rule_dsl::logic::profile::snapshot());
     }
-    let report = Report { phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), memo_kept, cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, guests_unseen: guests_unseen.load(std::sync::atomic::Ordering::Relaxed), file_tapes: (file_tapes.0.load(std::sync::atomic::Ordering::Relaxed), file_tapes.1.load(std::sync::atomic::Ordering::Relaxed)), cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, cross_unloaded, cross_handed, stats_kept: stats_kept.into_inner(), files_observed: Default::default(), plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
+    let report = Report { phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), typing_runs, phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), memo_kept, cross: cross_counts, prepared: origin, cross_strata, cross_kept, cone_kept, guests_unseen: guests_unseen.load(std::sync::atomic::Ordering::Relaxed), file_tapes: (file_tapes.0.load(std::sync::atomic::Ordering::Relaxed), file_tapes.1.load(std::sync::atomic::Ordering::Relaxed)), cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, cross_skipped, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, cross_unloaded, cross_handed, stats_kept: stats_kept.into_inner(), files_observed: Default::default(), plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
     handed.succeeded();
     Ok(report)
 }
@@ -9871,10 +9875,6 @@ struct Driver<'d, 'k> {
     seeds: Vec<String>,
     /// The changed inputs' rows gone and added (`driven_part`).
     given: maintain::Given,
-    /// Strata maintained, derived again, and of those maintained the recursive.
-    counts: (usize, usize, usize),
-    again: Vec<(String, &'static str)>,
-    walked: (usize, usize, usize),
 }
 
 
@@ -9927,10 +9927,6 @@ impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
         self.has_delta.insert(rel.to_owned());
     }
 
-    fn walked(&mut self, reached: usize, quiet: usize, of: usize) {
-        self.walked = (reached, quiet, of);
-    }
-
     fn seeds(&mut self) -> Vec<String> {
         std::mem::take(&mut self.seeds)
     }
@@ -9946,9 +9942,7 @@ impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
     fn mode_ran(&mut self, scc: &BTreeSet<String>, recursive: bool) {
         self.has_delta.extend(scc.iter().cloned());
         self.maintains.extend(scc.iter().cloned());
-        self.counts.0 += 1;
         if recursive {
-            self.counts.2 += 1;
             maintain::by_levels_ran();
         }
     }

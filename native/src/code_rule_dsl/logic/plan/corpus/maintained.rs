@@ -213,15 +213,14 @@ pub(in crate::code_rule_dsl) fn run_with(
                 maintains: BTreeSet::new(),
                 seeds,
                 given: maintained.given.clone(),
-                counts: (0, 0, 0),
-                again: Vec::new(),
-                walked: (0, 0, 0),
             };
             let hooks = super::super::Hooks { maintain: Some(&mut driver), texts: Some(Arc::clone(texts)), ..Default::default() };
             let got = super::super::run_atoms_native_hooked(part, db, "main", stats.clone(), wanted, modes, hooks)?;
-            (maintained.maintained, maintained.derived_again, maintained.recursive) = driver.counts;
-            maintained.again = std::mem::take(&mut driver.again);
-            let (reached, quiet, of) = driver.walked;
+            // Each stratum's one outcome, as the run counted it (0364 R9).
+            (maintained.maintained, maintained.recursive) = got.maintained;
+            maintained.again = got.again.clone();
+            maintained.derived_again = maintained.again.len();
+            let (reached, quiet, of) = got.walked;
             let mut why: BTreeMap<&str, usize> = BTreeMap::new();
             for (_, w) in &maintained.again {
                 *why.entry(w).or_default() += 1;

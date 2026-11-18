@@ -308,9 +308,14 @@ its probes lost its indexes (kept step 04: 231 G against 163 G). The versions no
 ## Step 4: the kinds still derived again (R3)
 
 Counted over the session replay, the strata derived again for a reason R3 does not allow:
-- **`cparam` changed without a version** (14–28 an edit sequence): `cparam` and `gbase_at` read `nearest`, which
-  the mode refuses. Derived again, each time from SQL, they are never kept, so their readers have no version and
-  are derived again in turn.
+- **`cparam` changed without a version** (28 over the session's nine steps): its readers (`tmap`, `tparg`, …) find
+  `cparam` changed but holding no version. Why `cparam` itself has none is not known yet: on the corpus path the
+  preparation pass makes `nearest(c, m, scope)` an input atom (`nearest_scope(c, m)`, `lower::transduce_nearest`),
+  so `cparam` and `gbase_at` are plain joins, and the mode's refusal of a `nearest` literal never applies to them.
+  An earlier reading here blamed that refusal. The replay's trace (mm12, after step 3's compaction fix) shows
+  `cparam` with no kept rows at every step: "nothing kept: its part's first run" on the steps whose reads change
+  little, past θ on the others (3,922 delta rows against θ × 0 kept). So the run keeps no rows of `cparam` at all,
+  and each run derives it again with no version. Why it is not kept is traced next (`RERAIL_SHAPE_TRACE not kept`).
 - **An aggregate over a changed input** (every small edit of R3's test: `width` counts `child`).
 
 **Aggregates over a changed input.** The refusal was there because an input's rows are read projected (its
@@ -319,16 +324,22 @@ arguments over whole columns, so the aggregate's own read must be whole too. An 
 rows now (`New`, given beside it with `Old`, `Minus` and `Plus`), and the add join reads the aggregate's atom from
 them. Both refusals ("…over a changed input", "…over a changed view of an input") are gone.
 
-**`nearest` (design, next).** The spec has an item for it (`JoinItem::Near`), but the engine has no step and
-refuses the spec. So a stratum that reads `nearest` runs in SQL (its tree read climbs the tape), and the engine
-keeps nothing of it. The first part is that step: climb a bound node's parents on the tape, each tested by its
-kind, as SQL's tree read does, binding the first whose kind is in the set (or, bound from above, walk down). With
-it, an add join or a recheck reads the tape as it is now, which is right. A removal join reads what was, but a changed file's
-tape is its new one: an old node of that file has no old ancestors to climb to. A file that did not change has the
-same tape, so `nearest` of its nodes is as before. So, for a stratum that reads `nearest`:
-- its removal joins evaluate `nearest` as they do now, which is exact for every node of a file that did not change;
-- and every kept row of the stratum that names a node of a changed file is a removal candidate too, read through
-  the stratum's kept rows by document (its node columns' documents, as the kept inputs' owner ranges find them).
-  The recheck then evaluates each against the tape as it is now and keeps those still derived.
-That is sound, since a candidate is only removed when the recheck derives it no more, and it costs the changed
-files' rows. Then `gbase_at` and `cparam` are kept and maintained, and their readers have versions.
+**`nearest` outside the corpus path.** A run that is not prepared (the plain `run`) keeps `nearest` literals, and
+their spec item has no engine step, so such a stratum runs in SQL. A native climb step (the tape's parents, each
+tested by its kind in `node`) is written and parked, uncompiled, in `working-data/native-nearest-step.patch`. The
+corpus path does not need it, and it is not part of 0364.
+
+## Step 5: the driver's three outcomes (R9)
+
+Each stratum the walk reaches had one of five handlings, and only two were counted. The driver's `counts` and
+`again` slots were left over from the forms and never written, so the report's "derived again" was 0 whatever ran.
+- A mode run that changed nothing was counted nowhere.
+- A stratum no changed read reaches, with no kept rows, was derived from its reads, uncounted.
+- A native operator's stratum (the reach index) was made again, uncounted.
+- The report's quiet count (`Outcome::quiet`, decision 0101 §1) counts the strata the mode took and found nothing to
+  do in, not the strata the walk skipped.
+
+Now the run's `Outcome` counts every outcome once: `walked` (reached, skipped, of all), `maintained` (and of them the
+recursive), and `again`, each stratum with its reason (`NOT_KEPT`, `NATIVE_OPERATOR` added to `FIRST_RUN`,
+`THRESHOLD`, …). The `Driver` keeps no counts, and the `walked` hook is gone. The report adds `cross_skipped`, which
+R9 reads beside `cross_maintained` and `cross_again`.

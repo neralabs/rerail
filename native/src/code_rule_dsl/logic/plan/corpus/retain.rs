@@ -574,6 +574,9 @@ pub(in crate::code_rule_dsl) fn after(
         // rows are work. An index's relation is kept where the part stays in memory (`indexes`: a chunk's guest
         // rounds, decision 0331), so its next run's delta is made against it and its readers are maintained.
         if (held.view.is_some() || held.viewed) && !(indexes && held.held_source().is_some()) {
+            if std::env::var_os("RERAIL_SHAPE_TRACE").is_some() {
+                eprintln!("RERAIL_SHAPE_TRACE not kept {rel}: a view ({} rows)", held.rows());
+            }
             continue;
         }
         let k = Kept { rel: held, width, output: outputs.get(&rel).cloned() };

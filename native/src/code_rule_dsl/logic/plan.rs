@@ -4851,9 +4851,14 @@ pub struct Outcome {
     pub handed: BTreeSet<String>,
     /// The relations recomputed in their readers (decision 0099): no table and no engine rows hold them.
     pub inlined: BTreeSet<String>,
-    /// The reached strata derived again, by the class of reason (`maintain::reason_class`): the maintain mode did not
-    /// take them.
-    pub again: BTreeMap<&'static str, usize>,
+    /// A maintained run's strata derived again, each by its key, with the class of its reason (`maintain::reason_class`).
+    /// With `maintained` and `quiet`, each stratum the run walked is counted once (0364 R9).
+    pub again: Vec<(String, &'static str)>,
+    /// A maintained run's strata the maintain mode ran, and of them the recursive.
+    pub maintained: (usize, usize),
+    /// A maintained run's walk: the strata a changed read reached, those skipped (no read changed: each relation its
+    /// kept one), and all it walked.
+    pub walked: (usize, usize, usize),
     /// A maintained run's relations whose rows changed by a delta (decision 0117 step 4): the rows gone and added.
     pub deltas: HashMap<String, Delta>,
     /// A maintained run's relations whose rows are as stored and were never read (decision 0117 step 4): no reached
@@ -7510,7 +7515,7 @@ impl<'a> Run<'a, '_> {
                     }
                     Lit::Atom(_) | Lit::Cmp { .. } => {}
                     // An aggregate is maintained by its groups (`maintain_mode`): over a lower stratum's relation with
-                    // a version, or one a form maintained; an input's rows are read projected, its versions whole.
+                    // a version, or a changed input's versions, given whole.
                     Lit::Agg { atom: a, .. } if a.gated() => return Some("a gated aggregate".into()),
                     Lit::Agg { atom: a, .. } if scc.contains(b.rel(a)) => return Some("an aggregate over its own stratum".into()),
                     Lit::Agg { atom: a, .. } if moved.contains(b.rel(a)) => {
@@ -10001,12 +10006,11 @@ pub trait Maintain {
     fn no_delta(&mut self, rel: &str);
     /// `rel`'s delta was made by the run itself (`reach_delta`): its readers read `rel__minus` and `rel__plus`.
     fn delta_made(&mut self, rel: &str);
-    /// The run's end: how many strata were reached, of those the driver walked.
-    fn walked(&mut self, reached: usize, quiet: usize, of: usize);
     /// The inputs that changed with a delta not empty, or with none: the walk's first moved reads.
     fn seeds(&mut self) -> Vec<String>;
-    /// Stratum `scc` was maintained by the evaluator's mode (decision 0364 stage 3), not by a form: each relation's
-    /// delta is its versions (held as `rel__minus`, `rel__plus`), and it counts as maintained (`recursive`: by levels).
+    /// Stratum `scc` was maintained by the evaluator's mode (decision 0364 stage 3) and its rows changed: each
+    /// relation's change is its version, read by its readers (`recursive`: maintained by levels). The run counts it
+    /// (`Outcome::maintained`).
     fn mode_ran(&mut self, scc: &BTreeSet<String>, recursive: bool);
     /// Input `rel`'s rows gone and added, `[minus, plus]`, read in place: the maintain mode's versions of it.
     fn given(&self, rel: &str) -> Option<[Arc<dyn crate::code_rule_dsl::facts::vtab::Source>; 2]>;
@@ -11561,6 +11565,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                         // Not kept: derived from its reads, as they were, so its rows are as they were.
                         need.extend(reads.iter().filter(|r| !scc.contains(*r)).cloned());
                         base_strata.push(j);
+                        outcome.again.push((stratum_key(scc), crate::code_rule_dsl::logic::plan::corpus::maintain::NOT_KEPT));
                         continue;
                     }
                     // A native operator's stratum (the reach index, decision 0119) has no maintained form: it is made again
@@ -11571,6 +11576,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                     if scc.iter().any(|r| f0.native(r).is_some_and(|n| !matches!(n.spec, super::program_image::NativeSpec::TextTest { .. }))) {
                         need.extend(reads.iter().filter(|r| !scc.contains(*r)).cloned());
                         base_strata.push(j);
+                        outcome.again.push((stratum_key(scc), crate::code_rule_dsl::logic::plan::corpus::maintain::NATIVE_OPERATOR));
                         for r in scc {
                             if let Some(old) = m.kept(r).filter(|_| matches!(f0.native(r).map(|n| &n.spec), Some(super::program_image::NativeSpec::Reach { .. } | super::program_image::NativeSpec::ReachThrough { .. }))) {
                                 reach_olds.insert(r.clone(), old);
@@ -11668,7 +11674,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                             continue;
                         }
                         Some(why) => {
-                            *outcome.again.entry(crate::code_rule_dsl::logic::plan::corpus::maintain::reason_class(&why)).or_insert(0) += 1;
+                            outcome.again.push((key.clone(), crate::code_rule_dsl::logic::plan::corpus::maintain::reason_class(&why)));
                             super::profile::decision("not the maintain mode (decision 0364)", || format!("{key}: {why}"))
                         }
                     }
@@ -11711,12 +11717,15 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                     let Some(ran) = run.maintain_mode(scc, &rules, &moved, olds, &ins)? else {
                         return Err(Error::Plan(format!("{key}: the maintain mode declined: {}", run.why_not.take().unwrap_or_default())));
                     };
+                    // Maintained, whether or not its rows changed.
+                    let recursive = rules.iter().any(|&r| reads_of(&run.versions, r).any(|x| scc.contains(x)));
+                    outcome.maintained.0 += 1;
+                    outcome.maintained.1 += usize::from(recursive);
                     if !ran {
                         outcome.unchanged.extend(scc.iter().cloned());
                         outcome.native.insert(key);
                         continue;
                     }
-                    let recursive = rules.iter().any(|&r| reads_of(&run.versions, r).any(|x| scc.contains(x)));
                     m.mode_ran(scc, recursive);
                     for r in scc {
                         let rel = super::native::component::held(db, r).ok_or_else(|| Error::Plan(format!("{r}: not held after its maintain mode")))?;
@@ -12348,8 +12357,8 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
     }
     finish_wave(&mut run, &mut waiting, &mut outcome, &mut carry, &sccs, &last, &mut asked)?;
     super::lanes::prof::level(None);
-    if let Some(m) = maintaining.as_deref_mut() {
-        m.walked(reached, quiet_slots, sccs.len());
+    if maintaining.is_some() {
+        outcome.walked = (reached, quiet_slots, sccs.len());
     }
     if let Some(ks) = strata_kept.as_deref_mut() {
         for k in std::mem::take(&mut evaluated) {

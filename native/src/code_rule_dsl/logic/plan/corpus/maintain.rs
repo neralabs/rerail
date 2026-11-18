@@ -42,6 +42,11 @@ pub const FIRST_RUN: &str = "nothing kept: its part's first run";
 pub const THRESHOLD: &str = "the edit reaches too much of it (0090 §4)";
 /// A part the level driver does not walk (no kept part, or gates): every stratum of its cut derived again.
 pub const NOT_WALKED: &str = "its part is not walked: no kept part, or gates";
+/// A stratum no changed read reaches whose rows are not kept (a fact relation's, or one the last run did not keep):
+/// derived from its reads, as they were.
+pub const NOT_KEPT: &str = "not reached, its rows not kept";
+/// A native operator's stratum (the reach index, decision 0119): made again from its reads as they are now.
+pub const NATIVE_OPERATOR: &str = "a native operator's stratum, made again";
 /// A read changed with no version (a relation derived again in SQL, or with its kept rows not held).
 pub const NO_VERSION: &str = "a read changed without a version";
 
@@ -67,8 +72,8 @@ pub fn reason_class(why: &str) -> &'static str {
         "a gated aggregate",
         "a native, lattice, gate, request, produced, input or fact relation",
         "a nearest or ast literal: no native step",
-        "an aggregate over a changed input",
-        "an aggregate over a changed view of an input",
+        NOT_KEPT,
+        NATIVE_OPERATOR,
         "an aggregate over its own stratum",
         "its kept rows are not in memory",
         "no rules",

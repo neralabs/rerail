@@ -344,7 +344,6 @@ fn r8_a_session_edit_reads_no_kept_frame() {
 /// R9: the driver decides, for each stratum an edit reaches, one of three things: skip it (no read changed), maintain
 /// it by the mode, or derive it again (R3's reasons). The report's counts are those three and cover every stratum.
 #[test]
-#[ignore = "R9: the driver still has the forms' slots and paths (t43 step 5)"]
 fn r9_each_reached_stratum_is_skipped_maintained_or_derived_again() {
     let mut s = kinds("r9");
     s.run();
@@ -353,5 +352,5 @@ fn r9_each_reached_stratum_is_skipped_maintained_or_derived_again() {
     let r = &ran.report;
     let again: usize = r.cross_again.values().sum();
     assert_eq!(r.cross_maintained.2, again, "R9: every stratum derived again has its reason");
-    assert_eq!(r.cross_strata.expect("a session's run").0, r.cross_quiet.0 + r.cross_maintained.0 + again, "R9: every reached stratum is skipped, maintained or derived again: {:?}", (r.cross_strata, r.cross_quiet, r.cross_maintained, &r.cross_again));
+    assert_eq!(r.cross_strata.expect("a session's run").0, r.cross_skipped + r.cross_maintained.0 + again, "R9: every reached stratum is skipped, maintained or derived again: {:?}", (r.cross_strata, r.cross_skipped, r.cross_maintained, &r.cross_again));
 }
