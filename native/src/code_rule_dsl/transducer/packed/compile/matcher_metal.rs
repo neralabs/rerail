@@ -220,14 +220,33 @@ fn metal<'a>(
             }
         }
     }
-    // Decision 0365: a walk past the recursive groups starts within its anchor, evaluated on the device (`label_formula`).
+    // Decision 0365: a walk starts within its anchor, evaluated on the device (`label_formula`). A recursive group's
+    // anchors read its own labels as every node (Q133), so they hold in every round: each is evaluated once, before
+    // the group's rounds (`Runner::anchors`).
     if anchors_on() {
         let _stage = crate::code_rule_dsl::prof::Stage::start("labels.plan.anchors");
         let mut anchored = HashMap::<(usize, Arc<DeviceFormula>), Arc<Roots>>::new();
-        for (_, levels) in steps.iter_mut().filter(|(recursive, _)| !recursive) {
+        for (recursive, levels) in steps.iter_mut() {
+            let own = if *recursive {
+                levels
+                    .iter()
+                    .flatten()
+                    .map(|pass| match pass {
+                        Pass::Program { target, .. }
+                        | Pass::Count { target, .. }
+                        | Pass::Complement { target, .. }
+                        | Pass::Pattern { target, .. }
+                        | Pass::Fact { target, .. }
+                        | Pass::Empty { target }
+                        | Pass::Formula { target, .. } => *target,
+                    })
+                    .collect::<BTreeSet<u32>>()
+            } else {
+                BTreeSet::new()
+            };
             for pass in levels.iter_mut().flatten() {
                 let (Pass::Program { program, roots, .. } | Pass::Count { program, roots, .. }) = pass else { continue };
-                let Some(formula) = device_anchor(program) else { continue };
+                let Some(formula) = device_anchor(program, &|label| own.contains(&u32::from(label))) else { continue };
                 let key = (Arc::as_ptr(roots) as usize, formula);
                 let with = anchored.entry(key.clone()).or_insert_with(|| {
                     let anchor = Some(key.1.clone());
@@ -462,7 +481,9 @@ fn apart<'a>(
                         .collect::<Option<Vec<_>>>()
                 };
                 // Gone to W's matcher (decision 0334): the group's labels on this file, as far as they got.
-                if !sweep_with(&levels, tape, sets, &texts, budget, w_cost.is_some())? {
+                // The group's anchors read the tape's column sets (decision 0365, Q133): this sweep's own.
+                let index = compile_sets::Index::default();
+                if !sweep_with(&levels, tape, sets, &index, &texts, budget, w_cost.is_some())? {
                     return Ok(levels.iter().flatten().map(|&(_, id)| (u32::from(id - LABEL_BASE), at)).collect());
                 }
             }

@@ -2171,9 +2171,12 @@ too, not as walks from every start.
   recursive groups, the wave's listed roots and the root records. Then (§8, §9) text tests read the walks' rows, and
   0036's roots formula passes are device formulas (`Pass::Formula`); the count anchors are measured. Then (§10)
   targets passes are their images on the device, and a fused pack's anchor keeps its members' text tests.
-- **Left**: anchors in the recursive groups' rounds (0365 §5 keeps them out). A design is with the user: each group
-  member's anchor with the group's own labels read as every node (`Set::labels_unknown`), a superset whatever they
-  settle to, evaluated once before the group's rounds.
+- **Done** (2026-11-18, decision 0396): the recursive groups' walks start within anchors that read the group's own
+  labels as every node, evaluated once before the group's sweeps or rounds, on the CPU and on Metal. On ten files:
+  the groups' starts 20.9% of before, the CPU sweeps −21%, Metal's device time −36%. 0390's narrowing has nothing
+  to narrow on a recursive utility (every read is under a move), and semi-naive rounds would save at most two thirds
+  of the walks left, against an anchor evaluation per round: neither is built.
+- **Left**: the CPU's anchor evaluation costs about half of what it saves in the sweeps (0396, "Not yet").
 - **Measured** (2026-11-18, `anchor_rows_per_answer`, 10 of corpus0's files, M1 Max, debug): the groups' roots
   passes start at 5,736,730 nodes a round (6,770 formula passes, which Metal walks in the groups, and 120 micro
   walks). Within the group anchors: 1,281,802 (22%); within anchors reading the settled labels, the best a per-round

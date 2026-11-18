@@ -832,10 +832,10 @@ fn anchored_walks_find_the_unanchored_roots() {
         for (stage, (_, ms)) in counts.iter().filter(|(stage, _)| stage.starts_with("cpu_ms.")) {
             eprintln!("  {mode:>3} {stage:<36} {ms:>9} ms process CPU");
         }
-        (found, elapsed, count("anchor.kept"), count("anchor.dropped"))
+        (found, elapsed, count("anchor.kept"), count("anchor.dropped"), count("sweep.anchor_dropped"))
     };
-    let (unanchored, plain, _, _) = run("off");
-    let (anchored, with, kept, dropped) = run("on");
+    let (unanchored, plain, _, _, _) = run("off");
+    let (anchored, with, kept, dropped, swept) = run("on");
     unsafe { std::env::remove_var("RERAIL_ANCHORS") };
     // A run's findings: its roots, or W's matcher at its candidates where it gave the clause to W.
     let settled = |found: &(Vec<Vec<BTreeSet<u32>>>, Vec<(usize, usize)>), w: usize, c: usize, t: usize| -> BTreeSet<u32> {
@@ -868,6 +868,9 @@ fn anchored_walks_find_the_unanchored_roots() {
     );
     assert!(differ.is_empty(), "anchored walks differ: {differ:#?}");
     assert!(!crate::code_rule_dsl::prof::on() || dropped > 0, "the anchors dropped no start");
+    // A recursive group's sweep starts within its passes' anchors, the group's own labels read as every node (Q133).
+    eprintln!("the recursive groups' sweeps: {swept} starts outside their anchors");
+    assert!(!crate::code_rule_dsl::prof::on() || swept > 0, "the recursive groups' anchors dropped no start");
 }
 
 /// Decision 0365 on Metal: the anchors evaluated on the device (`label_formula`), for the label passes past the
@@ -979,6 +982,24 @@ fn on_metal_anchored_walks_find_the_unanchored_roots() {
 /// where its root walk starts) against the roots it finds, the root walk's steps, and the rows its label passes
 /// start at (each pass's domain). A census, not a check: it prints the totals and the clauses with the most
 /// candidates per answer and the most steps.
+/// The reads of recursive utilities in `tree` (`Recur`), and those not under a move (`Walk`, `Count`, a fact's slot or
+/// a constraint, each tested at another node): `counts`' two halves.
+fn unmoved_recurs(tree: &crate::code_rule_dsl::matcher::lower::MatchTree, moved: bool, counts: &mut (usize, usize)) {
+    use crate::code_rule_dsl::matcher::lower::MatchTree as T;
+    match tree {
+        T::Recur(_) => {
+            counts.0 += 1;
+            counts.1 += usize::from(!moved);
+        }
+        T::All(trees) | T::Any(trees) => trees.iter().for_each(|tree| unmoved_recurs(tree, moved, counts)),
+        T::Not(tree) | T::Recursive(_, tree) => unmoved_recurs(tree, moved, counts),
+        T::Walk { rule, .. } | T::Count { rule, .. } => unmoved_recurs(rule, true, counts),
+        T::Constrained(_, constraints) => constraints.iter().for_each(|(_, tree)| unmoved_recurs(tree, true, counts)),
+        T::Fact(fact) => fact.slots.iter().for_each(|tree| unmoved_recurs(tree, true, counts)),
+        T::Kind(_) | T::Supertype(..) | T::Pattern(_) | T::Regex(_) | T::Never => {}
+    }
+}
+
 #[test]
 fn anchor_rows_per_answer() {
     let mut tapes = fixtures();
@@ -986,16 +1007,21 @@ fn anchor_rows_per_answer() {
         tapes.truncate(10);
     }
     let (compiled, mut lowered, mut names) = (clauses(), Vec::new(), Vec::new());
+    let mut recursions = (0_usize, 0_usize);
     for (policy, compiled) in &compiled {
         for (clause, grammar) in python_matchers(compiled) {
             if let Ok(tree) = match_tree(grammar)
                 && let Ok(matcher) = LoweredMatcher::lower(&tree)
             {
+                unmoved_recurs(&tree, false, &mut recursions);
                 lowered.push(matcher);
                 names.push(format!("{policy}/{clause}"));
             }
         }
     }
+    // Q133 (a): a recursive utility's label narrowed by the kinds wanted where it is read (0390) is narrowed only where
+    // no read of it is under a move (a move wants every kind at the node it reaches).
+    eprintln!("recursions: {} reads, {} of them not under a move", recursions.0, recursions.1);
     let nodes: usize = tapes.iter().map(TapeDoc::transducer_len).sum();
     // Per clause: candidates, roots, root-walk steps, label rows, label passes, anchored candidates.
     let mut per: Vec<(String, u64, u64, u64, u64, usize, u64)> = Vec::new();

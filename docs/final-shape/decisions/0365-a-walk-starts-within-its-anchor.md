@@ -213,4 +213,5 @@ measured (the census), targets passes as their images on Metal (§10), and a fus
 members' text tests (§8).
 
 1. **The recursive groups' walks** start from every root of their rule (§5): an anchor there would read the group's
-   labels as they settle. A design is with the user (the work queue, Q133).
+   labels as they settle. Done by 0396: each group pass's anchor reads the group's own labels as every node, once
+   before the rounds.

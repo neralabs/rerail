@@ -319,9 +319,11 @@ fn formula_leaf(word: u32) -> bool {
 /// A walk's anchor as the device evaluates it (decision 0365): `Set::anchor` of its micro walk, its text tests kept by
 /// slot key (`DeviceFormula::texts`; the device reads the walk's row for each, every node where there is none). `None`
 /// where the walk is not a micro walk, or the anchor tests no more than a rule over codes does (`narrowing`).
-pub(in crate::code_rule_dsl) fn device_anchor(program: &Program) -> Option<std::sync::Arc<DeviceFormula>> {
+///
+/// A label `unknown` names (a recursive group's own, Q133) is read as every node, as on the CPU (`anchor_bits`).
+pub(in crate::code_rule_dsl) fn device_anchor(program: &Program, unknown: &dyn Fn(u16) -> bool) -> Option<std::sync::Arc<DeviceFormula>> {
     let walk = Micro::of(program)?;
-    let mut formula = narrowing(&compile_sets::Set::anchor(&walk.words, &|_| true))?;
+    let mut formula = narrowing(&compile_sets::Set::anchor(&walk.words, &|_| true).labels_unknown(unknown))?;
     formula.texts = (0..walk.texts.len()).map(|slot| walk.slot_key(program, slot)).collect();
     Some(std::sync::Arc::new(formula))
 }
@@ -1626,6 +1628,10 @@ fn encode(
                 runner.level(level, None)?;
             }
             continue;
+        }
+        // The group's anchors, its own labels read as every node (Q133): once, before its sweeps or rounds.
+        for level in levels {
+            runner.anchors(level)?;
         }
         if sweeps(levels) {
             let reverse = complements(levels);
@@ -3112,7 +3118,7 @@ impl Runner<'_> {
                 slot_rows.insert(walk.slot_key(program, slot), text_start + slot as u32);
             }
             // The fourth word: set mode with one label, so the walk ends at its first emit.
-            let anchor = anchor_of(device_anchor(program));
+            let anchor = anchor_of(device_anchor(program, &|_| false));
             passes.push([words.len() as u32, walk.words.len() as u32, text_start, u32::from(walk.key_stop()), anchor]);
             longest = longest.max(walk.words.len());
             match &self.label_rows {
