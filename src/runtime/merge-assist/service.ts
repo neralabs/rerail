@@ -284,10 +284,8 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   async #githubReadiness(repositoryKey: string, fresh: boolean): Promise<GithubReading> {
     const repository = githubRepositoryOf(repositoryKey);
     if (repository === null) return { readiness: { state: "not-github", login: null, repository: null } };
-    const key = STATE_KEYS.github(repositoryKey);
-    const cached = fresh ? undefined : readState(this.#db, key, githubCacheSchema);
-    const reuse = cached?.readiness.state === "unavailable" ? GITHUB_UNAVAILABLE_MS : GITHUB_READINESS_MS;
-    if (cached !== undefined && this.#now() - cached.at < reuse) return cached;
+    const kept = fresh ? undefined : this.#keptReading(repositoryKey);
+    if (kept !== undefined) return kept;
     let reading = this.#githubReads.get(repositoryKey);
     if (reading === undefined) {
       reading = this.#githubClient.readiness(repository)
@@ -296,6 +294,13 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
       this.#githubReads.set(repositoryKey, reading);
     }
     return await reading;
+  }
+
+  /** The reading kept for the repository while it is young enough to reuse: five minutes, one while gh could not tell. */
+  #keptReading(repositoryKey: string): GithubReading | undefined {
+    const cached = readState(this.#db, STATE_KEYS.github(repositoryKey), githubCacheSchema);
+    const reuse = cached?.readiness.state === "unavailable" ? GITHUB_UNAVAILABLE_MS : GITHUB_READINESS_MS;
+    return cached !== undefined && this.#now() - cached.at < reuse ? cached : undefined;
   }
 
   #keepReadiness(repositoryKey: string, readiness: GithubReadiness): GithubReading {
