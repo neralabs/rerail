@@ -1,14 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-const daemonStop = vi.hoisted(() => ({ beforeStopped: undefined as undefined | ((home: string) => Promise<void>) }));
+const daemonStop = vi.hoisted(() => ({
+  beforeStopped: undefined as undefined | ((home: string) => Promise<void>),
+  result: "stopped" as "stopped" | "record-changed",
+}));
 vi.mock("../../src/runtime/daemon-control.js", async () => {
   const actual = await vi.importActual<typeof import("../../src/runtime/daemon-control.js")>("../../src/runtime/daemon-control.js");
   return {
     ...actual,
-    // A running daemon's exit closes its last connection; the test stands in for that close.
+    // A running daemon's exit closes its last connection; the test stands in for that close, and for what the stop says.
     stopDaemon: async (home: string) => {
       if (daemonStop.beforeStopped === undefined) return await actual.stopDaemon(home);
       await daemonStop.beforeStopped(home);
-      return "stopped" as const;
+      return daemonStop.result;
     },
   };
 });
@@ -46,6 +49,7 @@ const contentCache = (home: string): string =>
 
 afterEach(async () => {
   daemonStop.beforeStopped = undefined;
+  daemonStop.result = "stopped";
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   await Promise.all(temporaryDirectories.splice(0).map((path) => removeFolder(path)));
@@ -191,6 +195,24 @@ describe("rerail install --root", () => {
     const [backup] = (await readdir(hostConfigHome)).filter(name => name.startsWith(".rerail-clean-"));
     expect(await readdir(join(hostConfigHome, backup!, "rerail-home"))).toEqual(["rerail.sqlite"]);
     expect((await readdir(context.home)).filter(name => name.includes(".sqlite"))).toEqual([]);
+  });
+
+  // daemon.json named another daemon, or none, when the stop would signal the one it named: nothing was stopped, and the
+  // daemon it names now may run.
+  it("says daemon.json changed under the stop, never that the daemon was not running, before it backs up or deletes the data", async () => {
+    const { context, packageRoot } = await fixture();
+    const { STOP_ANSWERS } = await vi.importActual<typeof import("../../src/runtime/daemon-control.js")>("../../src/runtime/daemon-control.js");
+    daemonStop.beforeStopped = async () => undefined;
+    daemonStop.result = "record-changed";
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    for (const remove of [["--remove"], ["--remove", "--delete-data"]]) {
+      await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+      output.mockClear();
+      expect(await runInstallCommand(["--root", packageRoot, ...remove], context)).toBe(0);
+      const text = output.mock.calls.join("");
+      expect(text, remove.join(" ")).toContain(STOP_ANSWERS["record-changed"]);
+      expect(text, remove.join(" ")).not.toContain("The Rerail daemon was not running.");
+    }
   });
 
   it.skipIf(process.platform === "win32")("deletes the database, every backup, the cache and recorded checkouts' session ledgers with --delete-data, following no link", async () => {
