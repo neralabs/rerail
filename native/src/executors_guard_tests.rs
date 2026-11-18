@@ -1,8 +1,9 @@
-//! The source guard for decision 0100's one executor: the process has one Metal device and one command queue, one
+//! The source guard for decision 0100's one executor: the process has one Metal device and one command queue (and a
+//! second, `waiting`, for work committed ahead that waits on an event, which would hold the first one back), one
 //! pool of CPU threads, and every other thread is a named service. So the only places that may make any of them are
 //! their owners:
 //!
-//! - the device and the queue: `forest/src/lib.rs` (`gpu::shared`, the lowest crate that uses Metal), which
+//! - the device and the queues: `forest/src/lib.rs` (`gpu::shared`, the lowest crate that uses Metal), which
 //!   `rerail_accel::gpu::shared` and `rerail_metal::{device, queue}` hand out;
 //! - the pool, the device lanes' workers and every service thread: `accel/src/exec.rs` (`configure`, `service`,
 //!   `scoped`).

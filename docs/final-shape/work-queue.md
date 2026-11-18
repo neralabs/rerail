@@ -3493,14 +3493,16 @@ sha) or `program_shared`'s order may hand back the files recorded before the edi
   hub's case is now this item's: measure it on the hub's 10-file cold run before choosing the tape's kind postings or
   an index in the block.
 
-### Q168. `executors_are_shared` fails on the hub: the join model's prediction makes its own command queue
+### Q168. (Done) `executors_are_shared` fails on the hub: the join model's prediction makes its own command queue
 
 - **Found** (2026-11-18, at the hub's merge of django-bugs): `randomforest_predict.rs:868` makes a queue
   (`armed_queue`, `device.new_command_queue()`) outside its owner (`forest::gpu::shared`, decision 0100 §2). It came
   with 316bd6004 (0354, the prediction armed ahead). It fails at the hub's HEAD too, so this merge did not cause it.
 - **Why it may be right**: the prediction's command buffer is committed ahead and waits on an event for its rows.
   On the one queue it would hold every later command buffer behind it.
-- **Open, for the user** (end of the roll-up): allow it as a reasoned exception in the guard, or give the shared
-  module a second queue for buffers that wait on events.
+- **Done** (2026-11-18): the shared module's second queue, as django-bugs did at its merge of rr-align (7fc50c797, past
+  this roll-up's pin, so taken alone; the user: "check the feeders again"). `gpu::shared` holds `waiting`, the queue
+  of work committed ahead that waits on an event, and the armed prediction commits on it. The guard's owner is
+  unchanged. Farm (M1 Max): `executors_are_shared` and the three `randomforest_predict` device tests pass.
 - **Also seen**: on m3 the guard reads three files the checkout deleted (`metal_frontier_conformance.rs`,
   `metal_frontier_reduce.rs`, `metal_register_conformance.rs`). That is Q63's stale mirror, not the tree.
