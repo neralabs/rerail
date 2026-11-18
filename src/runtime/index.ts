@@ -22,7 +22,7 @@ export {
   stopDaemon,
 } from "./daemon-control.js";
 export { type EngineService, ingestEngineEvent, startEngineService } from "./engine-service.js";
-export { ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, engineProof } from "./engine-proof.js";
+export { ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, engineProof } from "./daemon/engine-proof.js";
 export {
   AdapterEventSchema,
   decodeRerailEventFrame,

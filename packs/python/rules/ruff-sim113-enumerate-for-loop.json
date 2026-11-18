@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "ruff-sim113-enumerate-for-loop",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Use enumerate() instead of a counter that starts at 0 and is incremented by hand in each pass of a for loop.",
   "scope": {
@@ -269,75 +269,142 @@
                       }
                     }
                   },
-                  "any": [
+                  "all": [
                     {
-                      "follows": {
-                        "stopBy": "end",
-                        "kind": "expression_statement",
-                        "has": {
-                          "stopBy": "neighbor",
-                          "pattern": "$S4",
-                          "compare": {
-                            "left": "S4",
-                            "op": "eq",
-                            "right": "INIT",
-                            "text": "node"
+                      "resolves": {
+                        "binding": {
+                          "site": {
+                            "any": [
+                              {
+                                "pattern": "$S",
+                                "compare": {
+                                  "left": "S",
+                                  "op": "eq",
+                                  "right": "INIT",
+                                  "text": "node"
+                                }
+                              },
+                              {
+                                "inside": {
+                                  "stopBy": {
+                                    "matches": "scope-root"
+                                  },
+                                  "kind": "for_statement",
+                                  "pattern": "$L3",
+                                  "compare": {
+                                    "left": "L3",
+                                    "op": "eq",
+                                    "right": "LOOP",
+                                    "text": "node"
+                                  }
+                                }
+                              }
+                            ]
                           }
                         }
                       }
                     },
                     {
-                      "inside": {
-                        "stopBy": "end",
-                        "follows": {
-                          "stopBy": "end",
-                          "kind": "expression_statement",
-                          "has": {
-                            "stopBy": "neighbor",
-                            "pattern": "$S4",
-                            "compare": {
-                              "left": "S4",
-                              "op": "eq",
-                              "right": "INIT",
-                              "text": "node"
-                            }
-                          }
-                        }
-                      }
-                    }
-                  ],
-                  "resolves": {
-                    "binding": {
-                      "site": {
-                        "any": [
-                          {
-                            "pattern": "$S",
-                            "compare": {
-                              "left": "S",
-                              "op": "eq",
-                              "right": "INIT",
-                              "text": "node"
-                            }
-                          },
-                          {
-                            "inside": {
-                              "stopBy": {
-                                "matches": "scope-root"
-                              },
-                              "kind": "for_statement",
-                              "pattern": "$L3",
+                      "any": [
+                        {
+                          "follows": {
+                            "stopBy": "end",
+                            "kind": "expression_statement",
+                            "has": {
+                              "stopBy": "neighbor",
+                              "pattern": "$S4",
                               "compare": {
-                                "left": "L3",
+                                "left": "S4",
                                 "op": "eq",
-                                "right": "LOOP",
+                                "right": "INIT",
                                 "text": "node"
                               }
                             }
                           }
-                        ]
-                      }
+                        },
+                        {
+                          "inside": {
+                            "stopBy": "end",
+                            "follows": {
+                              "stopBy": "end",
+                              "any": [
+                                {
+                                  "kind": "expression_statement",
+                                  "has": {
+                                    "stopBy": "neighbor",
+                                    "pattern": "$S4",
+                                    "compare": {
+                                      "left": "S4",
+                                      "op": "eq",
+                                      "right": "INIT",
+                                      "text": "node"
+                                    }
+                                  }
+                                },
+                                {
+                                  "has": {
+                                    "stopBy": {
+                                      "not": {
+                                        "any": [
+                                          {
+                                            "kind": "block"
+                                          },
+                                          {
+                                            "kind": "if_statement"
+                                          },
+                                          {
+                                            "kind": "for_statement"
+                                          },
+                                          {
+                                            "kind": "while_statement"
+                                          },
+                                          {
+                                            "kind": "try_statement"
+                                          },
+                                          {
+                                            "kind": "with_statement"
+                                          },
+                                          {
+                                            "kind": "match_statement"
+                                          },
+                                          {
+                                            "kind": "elif_clause"
+                                          },
+                                          {
+                                            "kind": "else_clause"
+                                          },
+                                          {
+                                            "kind": "except_clause"
+                                          },
+                                          {
+                                            "kind": "finally_clause"
+                                          },
+                                          {
+                                            "kind": "case_clause"
+                                          }
+                                        ]
+                                      }
+                                    },
+                                    "kind": "expression_statement",
+                                    "has": {
+                                      "stopBy": "neighbor",
+                                      "pattern": "$S4",
+                                      "compare": {
+                                        "left": "S4",
+                                        "op": "eq",
+                                        "right": "INIT",
+                                        "text": "node"
+                                      }
+                                    }
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        }
+                      ]
                     }
-                  }
+                  ]
                 }
               }
             }
