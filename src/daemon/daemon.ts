@@ -14,7 +14,7 @@ import { spawn } from "../engine/child-process.js";
 import { replaceFile } from "../engine/file-replace.js";
 import { searchGitFrom } from "../engine/git.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
-import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, relaunchDaemon, sameSecret, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
+import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, lookupDaemon, relaunchDaemon, sameSecret, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
 import { daemonExit } from "./daemon-exit.js";
 import { watchHeap } from "./heap-ceiling.js";
 import { startRemoteSink, type RemoteSinkLoop } from "../runtime/remote-outbox.js";
@@ -40,7 +40,7 @@ import { moveRuleProvenancesInWorker } from "../engine/storage/rule-provenance-m
 import { enabledExperiments, mergeAssistExperimentEnabled, remoteSinkEnabled } from "../engine/experimental-features.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { openToOthers, type AccessReader } from "../engine/storage/private-files.js";
-import { holdHomeDaemonLock, type HomeDaemonLease } from "../engine/native/home-daemon-lock.js";
+import { holdHomeDaemonLock, type HolderRuns, type HomeDaemonLease } from "../engine/native/home-daemon-lock.js";
 import { acquireMainInstance } from "../engine/native/main-instance.js";
 import { currentRerailBuild, isMainRerailBuild } from "../engine/native/rerail-build.js";
 
@@ -1250,7 +1250,7 @@ type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents" | "recordCh
  */
 export async function runHomeDaemon(argv: readonly string[], services: Omit<RerailDaemonServices, "remoteRefused"> = {}): Promise<void> {
   const home = defaultRerailHome();
-  const homeLock = await holdHomeDaemonLock(home);
+  const homeLock = await holdHomeDaemonLock(home, holderAnswers(home));
   if (homeLock === undefined) return await serveRerailDaemon(argv, services);
   process.once("exit", () => homeLock.release());
   await serveRerailDaemon(argv, {
@@ -1258,6 +1258,17 @@ export async function runHomeDaemon(argv: readonly string[], services: Omit<Rera
     recordCheck: { everyMs: RECORD_CHECK_MS, home, holdsHome: () => homeLock.holdsHome() },
     homeLease: homeLock,
   });
+}
+
+/**
+ * Whether the process the home's lock record names is the daemon daemon.json records, answering as it does to a start
+ * (`lookupDaemon`, its record's proof and its health) within the bound given.
+ */
+function holderAnswers(home: string): HolderRuns {
+  return async (pid, withinMs) => {
+    const lookup = await lookupDaemon(home, undefined, withinMs);
+    return lookup.status === "running" && lookup.health.pid === pid;
+  };
 }
 
 /**
