@@ -109,6 +109,12 @@ pub mod wave {
         /// What else the wave runs when it is flushed, after its launches: a form's own submission (the device
         /// joins' open command buffer, `setfix::device`), once.
         static DEFERRED: RefCell<Vec<Box<dyn FnOnce() -> Result<(), String>>>> = RefCell::new(Vec::new());
+        /// The flushes on this thread so far, never taken back (`Mark`, `kept_here`): `FLUSHED` is moved between threads
+        /// with the jobs it counts (`since`), so it cannot say whether this thread flushed since a mark.
+        static FLUSHES: Cell<u64> = const { Cell::new(0) };
+        /// The submissions to this thread's wave so far (`joined`): one that opens the wave defers its commit, and the
+        /// rest join it and defer nothing, though their strata wait on it as much.
+        static JOINED: Cell<u64> = const { Cell::new(0) };
     }
 
     /// Runs `f` when the wave is flushed (a form that encoded its work into a submission of its own, shared by the
@@ -149,14 +155,32 @@ pub mod wave {
         DONE.with_borrow_mut(|d| d.extend(o.0));
     }
 
-    /// Where this thread's wave stood (its launches queued, its deferred submissions) before a job ran on it
-    /// (`take_queued`, `deferred_since`). A thread waiting on a job may run others meanwhile (`Stream::wait` helps the
+    /// Where this thread's wave stood (its launches queued, its deferred submissions, its flushes) before a job ran on
+    /// it (`take_queued`, `kept_here`). A thread waiting on a job may run others meanwhile (`Stream::wait` helps the
     /// pool), so what is queued on it is not all the job's.
     #[derive(Clone, Copy)]
-    pub struct Mark(usize, usize);
+    pub struct Mark(usize, usize, u64, u64);
 
     pub fn mark() -> Mark {
-        Mark(QUEUED.with_borrow(Vec::len), DEFERRED.with_borrow(Vec::len))
+        Mark(QUEUED.with_borrow(Vec::len), DEFERRED.with_borrow(Vec::len), FLUSHES.get(), JOINED.get())
+    }
+
+    /// A stratum's work went into this thread's wave (a device joins' submission, opening the wave or joining it): its
+    /// job's strata finish on this thread (`kept_here`).
+    pub fn joined() {
+        JOINED.set(JOINED.get() + 1);
+    }
+
+    /// Whether a job's strata waiting on their wave must finish on this thread (`Strand::flush_parked`), not go back
+    /// with their launches to another's wave: a submission was deferred here since `mark` (a device joins' command
+    /// buffer, its ticket and its rows this thread's), or this thread flushed a wave since. A job run here while
+    /// this one waited (`Stream::wait` helps the pool) flushes the thread's wave, this job's submissions and launches
+    /// with its own: their results are this thread's then, and the deferred count no longer shows them. A stratum's
+    /// submission that joined a wave opened before `mark` deferred nothing, and counts as `joined`. Before this,
+    /// a stratum so handed on was resumed on another thread, whose ticket of the same number was another stratum's:
+    /// it read that one's rows, or panicked on its rules (Q170).
+    pub fn kept_here(mark: Mark) -> bool {
+        deferred_since(mark) || FLUSHES.get() > mark.2 || JOINED.get() > mark.3
     }
 
     /// The launches queued on this thread since `mark`, taken off it.
@@ -216,6 +240,7 @@ pub mod wave {
     /// Runs every queued launch as one batch (`strata`: how many strata wait on it, for the profile). Returns how
     /// many launches it ran.
     pub fn flush(strata: usize) -> Result<usize, String> {
+        FLUSHES.set(FLUSHES.get() + 1);
         let q = QUEUED.with_borrow_mut(std::mem::take);
         let deferred = DEFERRED.with_borrow_mut(std::mem::take);
         let ran = deferred.len();
@@ -325,6 +350,37 @@ mod wave_tests {
         .join()
         .unwrap();
         assert_eq!(wave::flushed().0 - before.0, 1, "another thread's wave is not the run's");
+    }
+
+    /// Q170: a job's strata that wait on their wave finish on its thread when anything they wait on is the thread's: a
+    /// submission deferred since its mark, a submission that joined a wave opened before it, or a wave flushed here
+    /// meanwhile by a job run while this one waited (which took this job's deferred commit with it). Only with none
+    /// of these do they go back to the run's wave.
+    #[test]
+    fn a_jobs_waiting_strata_stay_where_their_wave_is() {
+        std::thread::spawn(|| {
+            let quiet = wave::mark();
+            assert!(!wave::kept_here(quiet), "nothing of the thread's: back to the run's wave");
+            // Opened here: its commit is deferred to this thread's wave.
+            let opened = wave::mark();
+            wave::defer(Box::new(|| Ok(())));
+            assert!(wave::kept_here(opened));
+            // A job run meanwhile flushed the thread's wave, this one's deferred commit with it.
+            let outer = wave::mark();
+            wave::defer(Box::new(|| Ok(())));
+            wave::flush(1).unwrap();
+            assert!(!wave::deferred_since(outer), "the deferred count no longer shows it");
+            assert!(wave::kept_here(outer), "its results are this thread's");
+            // Joined a wave opened before the mark: nothing deferred, the stratum waits on it all the same.
+            wave::defer(Box::new(|| Ok(())));
+            let joining = wave::mark();
+            wave::joined();
+            assert!(!wave::deferred_since(joining));
+            assert!(wave::kept_here(joining));
+            wave::flush(1).unwrap();
+        })
+        .join()
+        .unwrap();
     }
 }
 

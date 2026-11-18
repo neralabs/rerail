@@ -3177,6 +3177,7 @@ name = "rerail-c-directives"
 version = "0.1.0"
 dependencies = [
  "bitlex",
+ "rerail-c-directives",
  "rerail-c-lean",
  "rerail-c-pp",
  "rerail-compiler",
@@ -3576,6 +3577,7 @@ dependencies = [
  "bitlex",
  "rerail-compiler",
  "rerail-kotlin-lean",
+ "rerail-kotlin-parser",
  "rerail-tape-format",
 ]
 

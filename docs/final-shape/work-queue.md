@@ -3591,6 +3591,172 @@ blocks, so only held rows go first now.
 Test: `held_rows_look_up_what_a_scan_finds` (every column, keys of 2 and 3, an unheld column, and the host fallback
 past the directory).
 
+### Q170. (Q91 on Two-pass at 00b9bc23d) Metal runs of many strata hung, or resumed a stratum with another's rows (0325, 0113 §3)
+
+Found 2026-11-17, sizing the merged copy (`Rows::one`) on a Metal run. A cold 300-file run with `--metal` never ended.
+Runs of 100 files hung (in four of five runs) or panicked in `device::resume` ("index out of bounds: the len is 1 but
+the index is 1"). With the device waves off (`RERAIL_DEVICE_WAVES=off`) they finished. Two faults, both from before
+this session:
+
+- **Command buffers left to no pool.** In the hung process every worker waited in `[MTLCommandQueue commandBuffer]`
+  with the GPU idle. The open batches and the committed buffers still held came to under 48 of the queue's 64.
+  `Batch::pass` took `new_command_buffer().to_owned()` on worker threads with no autorelease pool, so each
+  autoreleased reference was never released and held a slot of the one queue. The buffer is now made in a pool of
+  its own. After that, five runs out of five finished.
+- **A suspended stratum resumed on another thread.** A stratum waiting on its wave keeps its runs, its ticket and
+  its wave's results on its thread (`SUSPENDED`, `FLUSHED`), and each thread counted its own tickets. A trace caught
+  ticket 42 submitted on thread 5 with 3 rules and resumed on thread 6, which found thread 6's ticket 42 (1 rule).
+  Rows were read from the wrong stratum when the counts fit, and the run panicked when they did not. A job hands its
+  waiting strata back to the run's thread unless `deferred_since(mark)`. That said no in two cases:
+  - a job run while this one waited (`Stream::wait` helps the pool) flushed the thread's wave, taking this job's
+    deferred commit with it;
+  - a submission joined a wave opened before the mark, which defers nothing.
+
+  `lanes::wave::kept_here` now also counts flushes and joined submissions since the mark, in counts that only grow.
+  Device tickets are numbered across the process, so a ticket read on the wrong thread is an error ("a stratum's
+  device joins were not submitted"), not another stratum's rows.
+
+Measured:
+- 100 files, Metal: six traced runs had 0 resumes on another thread and 0 panics. The findings equal the CPU's
+  (13,620 lines).
+- 300 files, Metal: 53 s at load 67, and the findings are the reference's. Before this the run hung, and an
+  intermediate build (tickets only) differed in 4 files.
+- The "not submitted" refusals (69) and the `BackendFailure` refusals (527) of the intermediate run are gone.
+- CPU, 300 files: the findings are the reference's (19.5 s, peak 1.85 GB). Strict 10-file outputs are
+  byte-identical.
+
+Test: `a_jobs_waiting_strata_stay_where_their_wave_is` covers a deferred submission, a nested flush, and a
+submission that joined an open wave. The device wave tests (4) and the level-wave tests (2) pass.
+
+Also measured here, for the open items of the user's list:
+- **The merged copy (`Rows::one`).** The CPU binding makes none at 300 files. Metal makes 221, 57 MB copied in all,
+  the largest 7 MB, of relations of 10–16 parts. The profile lists them under "rows of many parts merged into one".
+- **The fixpoint's host indexes.** From the peak heap's stacks (`RERAIL_HEAP_FRAMES`): the sorted runs hold about
+  37 MB, `push_fresh` 8 MB, and the dedup tables and lattice maps are under the sampler's floor.
+- **The profiler** holds about 600 MB of a profiled peak (`profile::planned`, `native`, `work`, `T`, span names). A
+  profiled 300-file run peaks at 2.2–2.5 GB against 1.81–1.85 GB unprofiled, so peaks are compared unprofiled.
+- **Metal's peak** is 3.3–3.5 GB at 100 files against the CPU's 1.2 GB, and 3.5–4.0 GB at 300 files: past the 1 GB
+  budget and Metal's 0.5 GB. That is Q171.
+
+### Q171. (Q92 on Two-pass at 00b9bc23d) A Metal run's peak is two to three times the CPU's (open)
+
+Found 2026-11-17 (Q170). At 100 files a cold run with `--metal` peaks at 3.3–3.5 GB against the CPU's 1.22 GB, and at
+300 files at 3.5–4.0 GB against 1.85 GB. The budget is 1 GB, with Metal allowed 0.5 GB on top. Next: a heap profile
+of a Metal run (`RERAIL_HEAP_FRAMES`) and the device leases at its peak.
+
+2026-11-18, after merging the hub (9e72e45ac): at 100 files 2.25 GB (CPU 1.13 GB), at 300 files 2.13–2.27 GB, 23.5 s
+wall. The device's budget is spent within the run: 136–190 strata a 100-file run are refused for a lease of a few
+words (Q173), and run on the CPU.
+
+### Q172. (Q93 on Two-pass at 00b9bc23d) An export is one relation (decision 0384 step 1)
+
+Built 2026-11-17. The user picked "one relation, written in place" for the merged copy (`Rows::one`) and for the
+fixpoint's indexes. When a chunk is filed (`Exports::add`), its derived relation is read where it lies, and each
+live row no earlier chunk gave is written once into the export's one relation. Before this, the chunk's parts were
+appended to the export and its repeats marked dead. The device merged those parts into a copy each time it bound
+the export.
+
+Measured on cold 300-file runs:
+- Metal (profiled): merges went from 262 (56 MB) to 157 (32 MB), and the peak from 3.8 GB to 3.0 GB.
+- CPU: the findings are the reference's, in 18.3 s at a peak of 1.79 GB, against 19.5 s and 1.85 GB.
+- Strict 10-file outputs are byte-identical.
+
+Test: `an_export_is_one_relation_of_the_chunks_new_rows`, which replaces the test of the old form.
+
+Still merged: 157 relations, nearly all of two parts. Steps 2 and 3 of 0384 cover them.
+
+### Q175. A relation is one relation: steps 2 and 3 of decision 0384 (done)
+
+Done 2026-11-18. At 100 files the Metal merges (`Rows::one`) were 88, 29 MB. Nearly all were relations of parts the
+device wrote, one part per run, or a relation started from frozen rows plus a tail of its own.
+
+- **Step 2.** A relation started from frozen rows takes their relation's writer (`Held::free_at`, `Rows::shared`).
+  The writer is free again when a taker is dropped or frozen unchanged (`Took`).
+- **Step 3.** The device writes a head's rows into room lent past its rows (`Part::room`, `Lent`, `head_room`).
+  `push_fresh` claims them. A stratum's next group writing the same head goes on after the last lot (`Lent::after`).
+
+Cold 300-file Metal: 147 merges (28 MB) to 0. The findings are the reference's: Metal 5 of 5 at 100 files and 3 of 3
+at 300, and the CPU at 300. The strict 10-file outputs are byte-identical. Instructions retired went from 797–823 G
+to 761–779 G.
+
+Tests: `rows_written_into_the_tails_room_keep_one_relation`, `a_relation_started_from_frozen_rows_goes_on_in_their_relation`,
+`a_part_written_elsewhere_becomes_the_tail`.
+
+Left: the merge stays for a second start while the writer is taken, a tail's block with no room, and segments past
+`MAX_SEGMENTS`. None happened in these runs, and the profile lists any that do.
+
+### Q173. (Q94 on Two-pass at 00b9bc23d) Metal runs give wrong findings in some runs (done)
+
+Found 2026-11-17 (Q172). Cold 300-file runs with `--metal` differed from the reference in 4 of 7 profiled runs, by 3
+to 13 files, and in 0 of 2 unprofiled runs. One run had 18 extra B030 findings in `benchmarks/bench_versioning_git.py`.
+Runs on the old export path, with the same binary, differed as often (2 of 4), so this predates Q172. The CPU
+binding's findings are the reference's in every run. Timing matters: profiled runs differ more often.
+
+Narrowed 2026-11-17 at 100 files (about 13 s a run), against the CPU's findings, 10 runs an arm. Arms of 4–5 runs
+misled at first: at a failure rate near 40%, five clean runs in a row come up about 8% of the time.
+
+| Arm | Runs that differ |
+|---|---|
+| `--metal` as is | about 4 in 10 |
+| CPU | 0 of 10 |
+| `RERAIL_DEVICE_JOINS=off` | 0 of 10 |
+| `RERAIL_THREADS=1` | 0 of 10 |
+| `RERAIL_DEVICE_WAVES=off` | 3 of 10 |
+| Relations not bound in place (uploaded instead) | 2 of 8 |
+| Pooled buffers released, not reused | 3 of 10 |
+| Resident entries never trimmed | 4 of 8 |
+| Relations' pages never given back | 4 of 6 (300 files) |
+| Device indexes built in a copy, not the shared block | 4 of 5 (300 files) |
+
+So it is a race between threads inside the device joins, and the waves are not needed for it. These are ruled out:
+- binding in place;
+- the buffer pool's reuse;
+- the resident cache's eviction;
+- the page give-back;
+- device indexes built in shared blocks.
+
+A per-thread check found that rows bound in place do not change between their bind and their batch's end. Host-built and
+device-built indexes use the same hash (`clif_rel_key_mix`, `KEY_SEED`) and the same order within a bucket, and every
+probe reads an index through its own buffer (`ix.bound()`).
+
+Fixed on the way, though it is not this race: `Rows::in_block_dead` kept the first kills delta it made. A live head's dead
+rows change with no row added (`setfix::Levels` kills a line's rows, then brings them back), so the device's subtraction
+of a head's rows (`device.rs`, "less the rows the head holds") could read old dead bits. The delta is now reused only
+while its bits are the ones given. Test: `the_dead_rows_bound_are_those_given_now`.
+
+**Cause** (found 2026-11-18, after merging the hub at 9e72e45ac): a stratum refused at run time left what its batch
+had encoded (views, texts, verdicts, indexes) in its thread's residency cache as if written. The refused batch was dropped
+uncommitted, so later strata on that thread read relations nothing wrote. The refusals are leases past the Metal budget
+(`shared::lease_within`), so they come with many threads leasing at once. That is why one thread, or no device joins,
+never differed. The hub's ef6c6c386 (0325 step 6, `unrun`) fixed it: `run`, `submit`, `resume` and `fixpoint` drop the
+thread's cache on an error.
+
+The proof, at 100 files with 10 runs an arm on the merged build:
+
+| Arm | Runs that differ |
+|---|---|
+| `--metal` as merged | 0 of 10 |
+| Relations back in the run's shared blocks (Q58's chunk blocks off) | 0 of 10 |
+| `unrun`'s clearing off | 7 of 10 |
+
+At 300 files, 3 of 3 runs give the reference's findings, peaks 2.13–2.27 GB. The hub's test
+`a_view_made_in_a_refused_batch_is_made_again` keeps it.
+
+Left to Q171: a 100-file run still has 136–190 strata refused, most of them a lease of a few words (a stratum's totals)
+with the budget already spent. Those strata run on the CPU, and each refusal drops the thread's cache. The reasons were
+unnamed (`From<String> for Error` drops the message). The totals, counters and dedup now say which lease it was.
+
+### Q174. A debug run's check "the requests narrowed on the version are the tree's" fails on B-now's rules (open)
+
+Found 2026-11-18, merging the hub (9e72e45ac) into Two-pass. A debug build's cold 10-file run over corpus0 with
+B-now's rules panics in `corpus.rs`'s check after `RequestsFileLocal`. The sizes agree (5796) and the digests differ.
+The version's narrowed program asks `rr_value_req_by_plain_str_0` and `q8_same_node`-style requests where the tree's
+asks `rr_value_req` for `num_text`, `same_leaf` and `msg_len`. Two-pass's own commits since 5f615621d change no program
+pass, so this is the hub's, the same class as Q169 (a version's step departing from the tree's). The profiling build
+has no such check, and its runs are the reference for this merge's outputs.
+
+- **Done when**: the debug 10-file run passes the check, at the step that departs found and fixed.
+
 ### Q166. `a_library_held_once_is_read_by_each_policy_in_its_own_scope` fails the version's check after `prune` (done)
 
 - **Found** (2026-11-18, the hub's roll-up, merging Two-pass): a debug build's check of the passes before
