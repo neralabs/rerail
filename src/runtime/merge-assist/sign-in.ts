@@ -1,31 +1,40 @@
 /**
  * `gh`'s sign-in for each repository as `gh` last said it, kept in `merge_assist_state` (`github:<repository>`) with
- * when, and with the stamp of `gh`'s sign-in file at the time (gh-config.ts). Every listing of open pull requests reads
- * it afresh. A status shows the kept reading; it reads `gh` in its answer only when none is kept or `gh`'s sign-in
- * changed since (a login, logout, switch or refresh, a token variable set or cleared), so a person sees that change at
- * the next status read. A reading that leaves pull requests unread is read again by the first status read past its
- * pace, off the answer's wait: that read shows the kept one and the new one serves the next read, or, in a process that
- * answers once (the CLI), that read waits for it as before. Nothing is kept while Merge Assist is off.
+ * when, one reading per `gh` environment (gh-config.ts: a CLI and the daemon may run with different token variables or
+ * configuration folders, and so hold different sign-ins), each with the state of `gh`'s hosts file at the time. Every
+ * listing of open pull requests reads it afresh. A status shows the kept reading of its own environment and reads `gh`
+ * in its answer only when none is kept or `gh`'s hosts file changed since (a login, logout, switch or refresh), so a
+ * person sees that change at the next status read. A reading as old as `gh`'s reuse below is read again when a status
+ * asks for it, off the answer's wait: that status shows the kept one and the new one serves the next, or, in a process
+ * that answers once (the CLI), that status waits for it, as every status did before. No timer runs: the age is read
+ * only when a status asks. Nothing is kept while Merge Assist is off.
  */
 import { z } from "zod";
 import { mergeAssistEnabled } from "../../engine/catalog/repository-registry.js";
 import { githubRepositoryOf } from "../../engine/merge-assist/branch-git.js";
-import { githubReadinessSchema, type GithubReadiness, type GithubState, type ShownReadiness } from "../../engine/merge-assist/model.js";
+import { githubReadinessSchema, type GithubReadiness, type ShownReadiness } from "../../engine/merge-assist/model.js";
 import type { RerailDatabase } from "../../engine/storage/database.js";
 import type { GithubClient } from "./github.js";
-import { STATE_KEYS, isoSeconds, readState, writeState } from "./state.js";
+import { STATE_KEYS, isoSeconds, readState, writeState, type StateQueries } from "./state.js";
 
 /**
- * How old a reading that leaves pull requests unread is before a status read starts reading it again. No file tells
- * that `gh` was installed, that the network came back or that `gh` answers again. Five minutes as since Merge Assist
- * began; a minute while `gh` could not tell, so it is asked again soon but not at every status read: a page reads the
- * status every 5 s, and each `gh auth status` with a token GitHub refuses spends a request.
+ * How long a reading stands before the next status asks `gh` again: five minutes since Merge Assist began, so a token
+ * GitHub refused, or a sign-in no file of `gh`'s told, shows within it.
  */
-const REREAD_AFTER_MS: Partial<Record<GithubState, number>> = { "signed-out": 5 * 60_000, missing: 5 * 60_000, unavailable: 60_000 };
+const GITHUB_READINESS_MS = 5 * 60_000;
+/** The same for a `gh` that could not tell: asked again soon, but not at every status read (a page reads every 5 s). */
+const GITHUB_UNAVAILABLE_MS = 60_000;
+/** How many `gh` environments a repository keeps a reading for; the one written longest ago goes first. */
+const ENVIRONMENTS_KEPT = 4;
+/** The hosts file's part of a stamp whose stat had not answered when `gh` did: the next status that has one reads again. */
+const UNANSWERED = "unanswered";
 
-/** A reading as kept: what `gh` said, when (epoch ms), and the stamp of its sign-in file just before (absent from an older build). */
-const keptSchema = z.object({ at: z.number(), readiness: githubReadinessSchema, stamp: z.string().optional() });
-type Kept = z.infer<typeof keptSchema>;
+/** A reading as kept: what `gh` said, when (epoch ms), and the stamp of its sign-in as `gh` started. */
+const readingSchema = z.object({ at: z.number(), readiness: githubReadinessSchema, environment: z.string(), file: z.string() });
+type Reading = z.infer<typeof readingSchema>;
+type KeptStamp = Pick<Reading, "environment" | "file">;
+/** The row: the newest reading at its top, as every build before kept it, and one reading per environment. */
+const keptSchema = z.object({ at: z.number(), readiness: githubReadinessSchema, readings: z.array(readingSchema).optional() });
 
 export interface SignInReadsOptions {
   /** The Rerail database, opened on first use. */
@@ -39,8 +48,19 @@ export interface SignInReadsOptions {
   readonly stopped: () => boolean;
 }
 
-function shownOf(kept: Kept): ShownReadiness {
+function shownOf(kept: Reading): ShownReadiness {
   return { ...kept.readiness, readAt: isoSeconds(kept.at) };
+}
+
+/** What `file` answers if it answers before `by` settles, else undefined: nothing waits on a stat past `by`. */
+async function answered(file: Promise<string>, by: Promise<unknown>): Promise<string | undefined> {
+  return await Promise.race([file, by.then(() => undefined, () => undefined)]);
+}
+
+/** The repository's readings with this one in place of its environment's, the one written longest ago dropped past the bound. */
+function withReading(db: StateQueries, key: string, reading: Reading): Reading[] {
+  const others = (readState(db, key, keptSchema)?.readings ?? []).filter(kept => kept.environment !== reading.environment);
+  return [...others, reading].slice(-ENVIRONMENTS_KEPT);
 }
 
 /** `gh`'s sign-in per repository: read when a listing needs it or it changed, shown as last read. */
@@ -54,16 +74,21 @@ export class SignInReads {
   }
 
   /**
-   * What a status shows for the repository: `unchecked` while Merge Assist is off for it (no `gh` runs), else the kept
-   * reading, read now when none is kept or `gh`'s sign-in changed since.
+   * What a status shows for the repository: `unchecked` while Merge Assist is off for it (no `gh` runs), else this
+   * environment's kept reading, read now when none is kept or `gh`'s hosts file changed since. The file's stat is
+   * waited for no longer than `answerBy`, the status's own work: one that has not answered by then leaves the kept
+   * reading shown with its time.
    */
-  async shown(repositoryKey: string, enabled: boolean): Promise<ShownReadiness> {
+  async shown(repositoryKey: string, enabled: boolean, answerBy: Promise<unknown>): Promise<ShownReadiness> {
     if (!enabled) {
       const repository = githubRepositoryOf(repositoryKey);
       return { state: "unchecked", login: null, repository: repository === null ? null : `${repository.owner}/${repository.name}`, readAt: null };
     }
-    const kept = readState(this.#options.database(), STATE_KEYS.github(repositoryKey), keptSchema);
-    if (kept === undefined || kept.stamp !== this.#options.github().signInStamp()) return await this.read(repositoryKey);
+    const stamp = this.#options.github().signInStamp();
+    const kept = this.#kept(repositoryKey, stamp.environment);
+    if (kept === undefined) return await this.read(repositoryKey);
+    const file = await answered(stamp.file, answerBy);
+    if (file !== undefined && file !== kept.file) return await this.read(repositoryKey);
     return await this.#rereadIfDue(repositoryKey, kept);
   }
 
@@ -74,10 +99,11 @@ export class SignInReads {
     let reading = this.#reads.get(repositoryKey);
     if (reading === undefined) {
       const github = this.#options.github();
-      // Stamped before gh runs: a change while it runs moves the stamp past the kept one, so the next status reads again.
+      // Stamped as gh starts: a change while it runs moves the stamp past the kept one, so the next status reads again.
       const stamp = github.signInStamp();
-      reading = github.readiness(repository)
-        .then(readiness => this.#keep(repositoryKey, readiness, stamp))
+      const said = github.readiness(repository);
+      reading = Promise.all([said, answered(stamp.file, said)])
+        .then(([readiness, file]) => this.#keep(repositoryKey, readiness, { environment: stamp.environment, file: file ?? UNANSWERED }))
         .finally(() => this.#reads.delete(repositoryKey));
       this.#reads.set(repositoryKey, reading);
     }
@@ -89,13 +115,19 @@ export class SignInReads {
     await Promise.allSettled([...this.#reads.values()]);
   }
 
+  /** This environment's kept reading for the repository; none from a build that kept one reading for all. */
+  #kept(repositoryKey: string, environment: string): Reading | undefined {
+    const row = readState(this.#options.database(), STATE_KEYS.github(repositoryKey), keptSchema);
+    return row?.readings?.find(reading => reading.environment === environment);
+  }
+
   /**
-   * The kept reading, and when it leaves pull requests unread and is past its pace, a read of `gh` started for the next
-   * status read; one that answers once waits for it.
+   * The kept reading, and when it is as old as `gh`'s reuse, a read of `gh` started for the next status read; one that
+   * answers once waits for it.
    */
-  async #rereadIfDue(repositoryKey: string, kept: Kept): Promise<ShownReadiness> {
-    const pace = REREAD_AFTER_MS[kept.readiness.state];
-    if (pace === undefined || this.#options.now() - kept.at < pace) return shownOf(kept);
+  async #rereadIfDue(repositoryKey: string, kept: Reading): Promise<ShownReadiness> {
+    const reuse = kept.readiness.state === "unavailable" ? GITHUB_UNAVAILABLE_MS : GITHUB_READINESS_MS;
+    if (this.#options.now() - kept.at < reuse) return shownOf(kept);
     const reading = this.read(repositoryKey);
     if (this.#options.answersOnce === true) return await reading;
     void reading.catch((error: unknown) => {
@@ -105,14 +137,15 @@ export class SignInReads {
   }
 
   /**
-   * Keep what `gh` said, while Merge Assist is on for the repository: turned off meanwhile, it keeps none, and neither
-   * does a service that stopped.
+   * Keep what `gh` said as this environment's reading, while Merge Assist is on for the repository: turned off
+   * meanwhile, it keeps none, and neither does a service that stopped.
    */
-  #keep(repositoryKey: string, readiness: GithubReadiness, stamp: string): ShownReadiness {
+  #keep(repositoryKey: string, readiness: GithubReadiness, stamp: KeptStamp): ShownReadiness {
     const at = this.#options.now();
     if (this.#options.stopped()) return { ...readiness, readAt: isoSeconds(at) };
+    const key = STATE_KEYS.github(repositoryKey);
     this.#options.database().transaction(tx => {
-      if (mergeAssistEnabled(tx, repositoryKey)) writeState(tx, STATE_KEYS.github(repositoryKey), { at, readiness, stamp }, at);
+      if (mergeAssistEnabled(tx, repositoryKey)) writeState(tx, key, { at, readiness, readings: withReading(tx, key, { at, readiness, ...stamp }) }, at);
     }, { behavior: "immediate" });
     return { ...readiness, readAt: isoSeconds(at) };
   }

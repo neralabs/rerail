@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { removeFolder } from "../../support/platform/remove-folder.js";
-import { mergeAssistState, openRerailDatabase, type GithubReadiness } from "../../../src/engine/index.js";
+import { mergeAssistState, openRerailDatabase, type GithubReadiness, type MergeAssistStatus } from "../../../src/engine/index.js";
 import { PULL_REQUEST_LIMIT, type GithubRepository, type PullRequestListing, type PullRequestSummary } from "../../../src/runtime/merge-assist/github.js";
 import { createMergeAssistService, type MergeAssistRuntime } from "../../../src/runtime/merge-assist/service.js";
 import { commit, git } from "../../support/merge-assist/git.js";
@@ -120,23 +120,118 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     expect(github.readinessReads).toBe(readsWhileOn);
   });
 
-  it("shows gh's sign-in as last read, with when, and runs no gh for a status read once one is kept", async () => {
+  it("shows gh's sign-in as last read, with when, and never waits on gh for a status read once one is kept", async () => {
+    const ws = await workspace({ remote: "https://github.com/acme/app.git" });
+    let now = Date.parse("2026-11-03T14:00:00Z");
+    const github = new HeldReadiness();
+    const service = ws.service({ github, now: () => now });
+    // Turning it on reads gh's sign-in, so the person sees at once whether open pull requests can be read.
+    const on = await service.setEnabled(ws.repo, true);
+    const starts = github.starts;
+
+    // Within five minutes, status reads from this process and another one over the same database run no gh.
+    now += 5 * 60_000 - 1_000;
+    const within = await Promise.all([service.status(ws.repo), ws.service({ github, now: () => now }).status(ws.repo)]);
+    expect(github.starts).toBe(starts);
+    // Hours later, with gh stalled, they answer at once with what gh said then, and each process starts one read of gh
+    // for its next status.
+    now += 3 * 60 * 60_000;
+    github.hold();
+    const other = ws.service({ github, now: () => now });
+    const later = await Promise.all([service.status(ws.repo), service.status(ws.repo), other.status(ws.repo)]);
+    expect(github.starts).toBe(starts + 2);
+    github.release();
+    await Promise.all([service.settled(), other.settled()]);
+    expect(on.readiness.github).toEqual({ state: "signed-in", login: "tbelanger", repository: "acme/app", readAt: "2026-11-03T14:00:00Z" });
+    expect([...within, ...later].map(status => status.readiness.github)).toEqual(Array.from({ length: 5 }, () => on.readiness.github));
+  });
+
+  it("shows a token GitHub refuses at the status after the one that finds the reading five minutes old, and that one waits on no gh", async () => {
+    const ws = await workspace({ remote: "https://github.com/acme/app.git" });
+    let now = Date.parse("2026-11-03T14:00:00Z");
+    const github = new HeldReadiness();
+    const service = ws.service({ github, now: () => now });
+    const on = await service.setEnabled(ws.repo, true);
+    const starts = github.starts;
+
+    // The token is revoked: gh auth status fails, and no file of gh's moves.
+    github.options.readinessError = true;
+    now += 5 * 60_000 - 1_000;
+    const within = await service.status(ws.repo);
+    expect(github.starts).toBe(starts);
+    // Past five minutes, with gh slow, two status reads answer with the kept reading and its time; one gh run serves both.
+    now += 1_000;
+    github.hold();
+    const past = await Promise.all([service.status(ws.repo), service.status(ws.repo)]);
+    expect(github.starts).toBe(starts + 1);
+    github.release();
+    await service.settled();
+    const next = await service.status(ws.repo);
+    expect(github.starts).toBe(starts + 1);
+    expect([within, ...past].map(status => status.readiness.github)).toEqual([on.readiness.github, on.readiness.github, on.readiness.github]);
+    expect(next.readiness.github).toEqual({ state: "unavailable", login: null, repository: "acme/app", readAt: "2026-11-03T14:05:00Z" });
+  });
+
+  it("keeps one reading per gh environment, so a CLI and a daemon whose token variables differ each find their own", async () => {
+    const ws = await workspace({ remote: "https://github.com/acme/app.git" });
+    let now = Date.parse("2026-11-03T14:00:00Z");
+    const daemonGh = new FakeGithub({ signInEnvironment: "the daemon's, no token variable" });
+    const shellGh = new FakeGithub({ signInEnvironment: "a shell with GITHUB_TOKEN", readiness: { state: "signed-in", login: "jbarnes", repository: "acme/app" } });
+    const daemon = ws.service({ github: daemonGh, now: () => now });
+    const on = await daemon.setEnabled(ws.repo, true);
+    // A CLI process for each command, as `rerail merge-assist status` runs.
+    const cli = async (): Promise<MergeAssistStatus> => await ws.service({ github: shellGh, now: () => now, answersOnce: true }).status(ws.repo);
+
+    // The shell's first status reads its own gh once; from then on each status after the other's runs none.
+    const first = await cli();
+    const shown: Array<MergeAssistStatus["readiness"]["github"]> = [];
+    for (let round = 0; round < 3; round += 1) {
+      now += 60_000;
+      shown.push((await daemon.status(ws.repo)).readiness.github, (await cli()).readiness.github);
+    }
+    expect([daemonGh.readinessReads, shellGh.readinessReads]).toEqual([1, 1]);
+    expect(first.readiness.github).toEqual({ state: "signed-in", login: "jbarnes", repository: "acme/app", readAt: "2026-11-03T14:00:00Z" });
+    expect(shown).toEqual([1, 2, 3].flatMap(() => [on.readiness.github, first.readiness.github]));
+  });
+
+  it("keeps the readings of four gh environments, the one written longest ago dropped first", async () => {
+    const ws = await workspace({ remote: "https://github.com/acme/app.git" });
+    const now = Date.parse("2026-11-03T14:00:00Z");
+    const environments = ["first", "second", "third", "fourth", "fifth"].map(name => new FakeGithub({ signInEnvironment: name }));
+    for (const [index, github] of environments.entries()) {
+      const service = ws.service({ github, now: () => now });
+      await (index === 0 ? service.setEnabled(ws.repo, true) : service.status(ws.repo));
+    }
+
+    // The newest four answer from what they kept; the first, dropped when the fifth was kept, reads gh again.
+    for (const github of environments.toReversed()) await ws.service({ github, now: () => now }).status(ws.repo);
+    expect(environments.map(github => github.readinessReads)).toEqual([2, 1, 1, 1, 1]);
+  });
+
+  it("answers a status with the kept reading and its time when the stat of gh's hosts file does not answer", async () => {
     const ws = await workspace({ remote: "https://github.com/acme/app.git" });
     let now = Date.parse("2026-11-03T14:00:00Z");
     const github = new FakeGithub();
     const service = ws.service({ github, now: () => now });
-    // Turning it on reads gh's sign-in, so the person sees at once whether open pull requests can be read.
     const on = await service.setEnabled(ws.repo, true);
     const reads = github.readinessReads;
 
-    // Hours later, with gh stalled, status reads from this process and another one over the same database answer with
-    // what gh said then: none of them waits on gh.
-    now += 3 * 60 * 60_000;
-    github.options.readinessStalls = true;
-    const statuses = await Promise.all([service.status(ws.repo), ws.service({ github, now: () => now }).status(ws.repo)]);
+    // gh's folder sits on a drive that stops answering: the daemon's status and the CLI's answer once their Git reads end.
+    github.options.signInStatStalls = true;
+    now += 60_000;
+    const stalled = await Promise.all([service.status(ws.repo), ws.service({ github, now: () => now, answersOnce: true }).status(ws.repo)]);
     expect(github.readinessReads).toBe(reads);
-    expect(on.readiness.github).toEqual({ state: "signed-in", login: "tbelanger", repository: "acme/app", readAt: "2026-11-03T14:00:00Z" });
-    expect(statuses.map(status => status.readiness.github)).toEqual([on.readiness.github, on.readiness.github]);
+    // With no reading kept, gh is read, and kept with a stat that never answered: once the drive answers, the next status
+    // reads gh again, and the one after runs none.
+    ws.database.delete(mergeAssistState).where(eq(mergeAssistState.key, `github:${ws.repositoryKey}`)).run();
+    await service.status(ws.repo);
+    await service.status(ws.repo);
+    expect(github.readinessReads).toBe(reads + 1);
+    github.options.signInStatStalls = false;
+    await service.status(ws.repo);
+    await service.status(ws.repo);
+    expect(github.readinessReads).toBe(reads + 2);
+    expect(stalled.map(status => status.readiness.github)).toEqual([on.readiness.github, on.readiness.github]);
   });
 
   it("reads gh's sign-in afresh for every listing of open pull requests, and the status shows what it said", async () => {
@@ -220,8 +315,8 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     delete github.options.readiness;
     github.options.signInStamp = "after gh auth switch to tbelanger";
     const switched = await service.status(ws.repo);
-    // The file unchanged, status reads from this process and another one run no gh, however long after.
-    now += 3 * 60 * 60_000;
+    // The file unchanged, status reads from this process and another one within five minutes run no gh.
+    now += 5 * 60_000 - 1_000;
     const later = await Promise.all([service.status(ws.repo), ws.service({ github, now: () => now }).status(ws.repo)]);
     expect(github.readinessReads).toBe(reads + 3);
     expect(loggedOut.readiness.github).toEqual({ state: "signed-out", login: null, repository: "acme/app", readAt: "2026-11-03T14:00:01Z" });

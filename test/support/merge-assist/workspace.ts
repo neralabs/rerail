@@ -26,6 +26,9 @@ import {
 } from "../../../src/runtime/index.js";
 import { commit, git } from "./git.js";
 
+/** A stamp of gh's sign-in as the gh client gives it. */
+type SignInStamp = ReturnType<GithubClient["signInStamp"]>;
+
 /** The notes the session has not been handed, recorded as handed, as a delivery that takes them all would. */
 export function takeNotes(service: MergeAssistRuntime, sessionId: string, checkoutPath: string): string[] {
   const notes = service.pendingNotes(sessionId, checkoutPath);
@@ -42,8 +45,12 @@ export interface FakeGithubOptions {
   readinessError?: boolean;
   /** `gh auth status` stalls: a readiness read never answers. */
   readinessStalls?: boolean;
-  /** The stamp of gh's sign-in file; a test changes it as `gh auth login`, `logout` or `switch` rewrites the file. */
+  /** The state of gh's hosts file; a test changes it as `gh auth login`, `logout` or `switch` rewrites the file. */
   signInStamp?: string;
+  /** Which sign-in this gh reads (its token variables and configuration folder); two processes may differ. */
+  signInEnvironment?: string;
+  /** The stat of gh's hosts file never answers, as on a drive that does not. */
+  signInStatStalls?: boolean;
   pullRequests?: PullRequestSummary[];
   /** Whether the listing stopped at its limit. */
   truncated?: boolean;
@@ -65,8 +72,9 @@ export class FakeGithub implements GithubClient {
     return this.options.readiness ?? { state: "signed-in", login: "tbelanger", repository: `${repository.owner}/${repository.name}` };
   }
 
-  signInStamp(): string {
-    return this.options.signInStamp ?? "hosts.yml as first written";
+  signInStamp(): SignInStamp {
+    const file = this.options.signInStatStalls === true ? new Promise<never>(() => undefined) : Promise.resolve(this.options.signInStamp ?? "hosts.yml as first written");
+    return { environment: this.options.signInEnvironment ?? "the person's shell", file };
   }
 
   async openPullRequests(): Promise<{ pulls: PullRequestSummary[]; truncated: boolean }> {

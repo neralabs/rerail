@@ -54,13 +54,17 @@ so the daemon keeps answering sessions while it runs. It never runs while Merge 
   minutes, the 200 newest open ones; when more are open, the scan says so. Each listing reads `gh`'s sign-in afresh
   first. `gh` is signed out only when `gh auth status` says it holds no login for the host; any other failure of it (a
   token it could not check, offline) is `unavailable`. A status shows the sign-in as `gh` last said it, with when
-  (`readAt`), and reads it in its answer only when none is kept or `gh`'s sign-in changed since: `gh auth login`,
+  (`readAt`). A reading is kept per `gh` environment, `hosts.yml`'s path and which of `GH_TOKEN` and `GITHUB_TOKEN`
+  are set (a CLI and the daemon may differ, and so hold two sign-ins), for the last four environments that read it. A
+  status reads `gh` in its answer when its environment has none kept or `gh`'s sign-in changed since: `gh auth login`,
   `logout`, `switch` and `refresh` rewrite `hosts.yml` in `gh`'s configuration folder (`GH_CONFIG_DIR`, else
   `XDG_CONFIG_HOME/gh`, else `%AppData%\GitHub CLI` on Windows, else `~/.config/gh`), and a status compares that
-  file's stamp, and which of `GH_TOKEN` and `GITHUB_TOKEN` are set, with the ones kept beside the reading. A reading
-  that leaves pull requests unread, which no file tells the end of (the network back, `gh` installed), is read again by
-  the first status past five minutes, or one minute while `gh` could not tell: in the background, so that status shows
-  the kept one and the next shows the new one; the CLI, which answers once, shows it in that answer.
+  file's identity, size and times, read with one stat off the daemon's thread, with the ones kept beside the reading.
+  It waits for that stat no longer than its own Git reads take; one that has not answered by then leaves the kept
+  reading shown with its time. A reading five minutes old, or one minute old while `gh` could not tell, is read again
+  when a status asks for it, which covers what no file tells (a token GitHub refuses, the network back, `gh`
+  installed): in the background, so that status shows the kept one and the next shows the new one; the CLI, which
+  answers once, shows it in that answer. No timer runs for it.
 - A branch's own change is its diff from where it left its base branch, so mainline work it merged in does not count,
   and a change of its that the base tip already holds (a squash merge, a cherry-pick) is not live work.
 - **Overlap**: two `git diff --unified=0` hunks in the same file that touch the same base lines or leave at most 3
@@ -176,8 +180,9 @@ it. Otherwise the conflict closes when the overlap is gone.
   `repositories-merge-assist`).
 - `merge_assist_state`, one JSON value per key: `conflicts:<checkout>` (open and dismissed, each with the files and
   content anchor its id rests on), `scan:<checkout>` and `scanning:<checkout>` (the scanning process's pid, so a mark
-  left by a process that died does not block scans), `github:<repository>` (`gh` readiness as last read, when, and a hash
-  of the stamp of `gh`'s sign-in file then: each read of it writes it, a status reads it), `delivered:<session>` (the notes a session was handed) and
+  left by a process that died does not block scans), `github:<repository>` (`gh` readiness as last read and when, and the same
+  per `gh` environment with a hash of that environment and the stat of `gh`'s sign-in file then: each read of it writes
+  it, a status reads it), `delivered:<session>` (the notes a session was handed) and
   `settings:<repository>` (the hook command). A value that does not match what the build expects reads as absent, one
   conflict at a time. A checkout Rerail forgets takes its `conflicts:`, `scan:` and `scanning:` rows with it; a
   repository that takes a new key (a clone that gains a remote) takes its `settings:` row along and drops its

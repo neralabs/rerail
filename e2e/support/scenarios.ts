@@ -473,9 +473,9 @@ function storefrontConflicts(now: number): StoredConflict[] {
 const signedOutGithub: GithubClient = {
   readiness: async repository => ({ state: "signed-out", login: null, repository: repository === null ? null : `${repository.owner}/${repository.name}` }),
   openPullRequests: async () => ({ pulls: [], truncated: false }),
-  // No file stands behind this gh, so the daemon's first status reads its signed-out stand-in once, as it read it once
-  // the seeded reading was past its age.
-  signInStamp: () => "seeded",
+  // No environment of the daemon's gh is this one, so the daemon's first status reads gh once, as it read it once the
+  // seeded reading was past its age.
+  signInStamp: () => ({ environment: "seeded", file: Promise.resolve("seeded") }),
 };
 
 /** Turns Merge Assist on in the checkout as a person does on its page, then stores its conflicts. */

@@ -12,7 +12,7 @@ import {
   PULL_REQUEST_LIMIT,
   type GithubRepository,
 } from "../../../src/runtime/merge-assist/github.js";
-import { ghConfigDir, ghSignInStamp } from "../../../src/runtime/merge-assist/gh-config.js";
+import { ghConfigDir, ghSignInStamps, type SignInStamp } from "../../../src/runtime/merge-assist/gh-config.js";
 
 const REPOSITORY: GithubRepository = { host: "github.com", owner: "neralabs", name: "rerail" };
 const COMMIT = "ed0e9fcf09b181eb3440042af2cb24e5cc63b722";
@@ -293,31 +293,58 @@ describe("the stamp of gh's sign-in", () => {
     expect(ghConfigDir({ UserProfile: "C:\\Users\\t" }, "win32")).toBe("C:\\Users\\t\\.config\\gh");
   });
 
-  it("moves when gh writes, rewrites or removes its hosts file, or a token variable is set, and holds otherwise", () => {
+  it("moves its file part when gh writes, rewrites or removes its hosts file, and holds otherwise", async () => {
     const folder = mkdtempSync(join(tmpdir(), "rerail-gh-config-"));
     try {
-      const env = { GH_CONFIG_DIR: folder };
+      const stamps = ghSignInStamps({ GH_CONFIG_DIR: folder });
+      const file = async (): Promise<string> => await stamps().file;
       const hosts = join(folder, "hosts.yml");
-      const none = ghSignInStamp(env);
+      const none = await file();
       // gh auth login writes the file; gh auth switch rewrites it in place, here at the same length.
       writeFileSync(hosts, "github.com:\n    user: tbelanger\n");
       utimesSync(hosts, 1_700_000_000, 1_700_000_000);
-      const login = ghSignInStamp(env);
+      const login = await file();
       writeFileSync(hosts, "github.com:\n    user: jbarnes01\n");
       utimesSync(hosts, 1_700_000_001, 1_700_000_001);
-      const switched = ghSignInStamp(env);
+      const switched = await file();
       // gh auth logout of the last account leaves the file with no login.
       writeFileSync(hosts, "{}\n");
-      const loggedOut = ghSignInStamp(env);
-      const tokenSet = ghSignInStamp({ ...env, GH_TOKEN: "set" });
-      expect(new Set([none, login, switched, loggedOut, tokenSet]).size).toBe(5);
-      expect(ghSignInStamp(env)).toBe(loggedOut);
-      expect(ghSignInStamp({ ...env, GITHUB_TOKEN: "" })).toBe(loggedOut);
+      const loggedOut = await file();
+      expect(new Set([none, login, switched, loggedOut]).size).toBe(4);
+      expect(await file()).toBe(loggedOut);
       rmSync(hosts);
-      expect(ghSignInStamp(env)).toBe(none);
+      expect(await file()).toBe(none);
     } finally {
       removeFolderSync(folder);
     }
+  });
+
+  it("tells environments apart by gh's folder and the token variables set, not by their values", () => {
+    const environment = (env: NodeJS.ProcessEnv): string => ghSignInStamps(env, "linux", async () => "absent")().environment;
+    const shell = environment({ GH_CONFIG_DIR: "/c/gh" });
+    const withToken = environment({ GH_CONFIG_DIR: "/c/gh", GH_TOKEN: "a" });
+    const withOther = environment({ GH_CONFIG_DIR: "/c/gh", GITHUB_TOKEN: "a" });
+    const elsewhere = environment({ GH_CONFIG_DIR: "/d/gh" });
+    expect(new Set([shell, withToken, withOther, elsewhere]).size).toBe(4);
+    expect(environment({ GH_CONFIG_DIR: "/c/gh", GH_TOKEN: "b" })).toBe(withToken);
+    expect(environment({ GH_CONFIG_DIR: "/c/gh", GITHUB_TOKEN: "" })).toBe(shell);
+    expect(environment({ XDG_CONFIG_HOME: "/c" })).toBe(shell);
+  });
+
+  it("runs one stat of the hosts file at a time: stamps asked while one does not answer share it", async () => {
+    const asked: string[] = [];
+    let answer: (stamp: string) => void = () => undefined;
+    const stamps = ghSignInStamps({ GH_CONFIG_DIR: "/slow/gh" }, "linux", async file => {
+      asked.push(file);
+      return await new Promise<string>(resolve => { answer = resolve; });
+    });
+    const waiting: SignInStamp[] = [stamps(), stamps(), stamps()];
+    expect(asked).toEqual(["/slow/gh/hosts.yml"]);
+    answer("answered");
+    expect(await Promise.all(waiting.map(async stamp => await stamp.file))).toEqual(["answered", "answered", "answered"]);
+    // Once it has answered, the next stamp reads the file again.
+    void stamps().file;
+    expect(asked).toHaveLength(2);
   });
 });
 

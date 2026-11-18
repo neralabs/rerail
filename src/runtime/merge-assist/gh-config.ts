@@ -1,16 +1,28 @@
 /**
- * Where `gh` keeps its sign-in, and a stamp of it read with one stat and no process. `gh auth login`, `logout`,
- * `switch` and `refresh` each end by rewriting `hosts.yml` in `gh`'s configuration folder, in place, so its size or
- * modification time moves; a token in `GH_TOKEN` or `GITHUB_TOKEN` signs `gh` in ahead of that file. The folder is
- * found as `gh`'s own configuration package finds it (go-gh `config.ConfigDir`).
+ * Where `gh` keeps its sign-in, and a stamp of it read with no process. `gh auth login`, `logout`, `switch` and
+ * `refresh` each end by rewriting `hosts.yml` in `gh`'s configuration folder, in place, so its size or modification
+ * time moves; a token in `GH_TOKEN` or `GITHUB_TOKEN` signs `gh` in ahead of that file. The folder is found as `gh`'s
+ * own configuration package finds it (go-gh `config.ConfigDir`).
  */
 import { createHash } from "node:crypto";
-import { statSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { posix, win32 } from "node:path";
 
 /** Token variables `gh` signs in with ahead of `hosts.yml` (the Enterprise ones are kept from `gh`, see github.ts). */
 const TOKEN_VARIABLES = ["GH_TOKEN", "GITHUB_TOKEN"] as const;
+
+/**
+ * A stamp of `gh`'s sign-in in two parts. Two processes whose variables differ (a token in one shell only, another
+ * configuration folder) can hold two sign-ins, so the first part tells them apart; the second moves whenever `gh`
+ * rewrites its hosts file.
+ */
+export interface SignInStamp {
+  /** Which sign-in this process's `gh` reads: `hosts.yml`'s path and the token variables set, hashed. No file call. */
+  readonly environment: string;
+  /** `hosts.yml`'s identity, size and times, or why it has none, read with one stat off the thread; never rejects. */
+  readonly file: Promise<string>;
+}
 
 /** A variable's value, unset when empty; on Windows its name in any case, as Windows and `gh` read it. */
 function envValue(env: NodeJS.ProcessEnv, name: string, windows: boolean): string | undefined {
@@ -41,23 +53,38 @@ export function ghConfigDir(env: NodeJS.ProcessEnv, platform: NodeJS.Platform = 
 }
 
 /** The file's identity, size and times, or why it has none: absent, or unreadable (a folder it may not enter). */
-function fileStamp(file: string): string {
+export async function hostsFileStamp(file: string): Promise<string> {
   try {
-    const stat = statSync(file, { bigint: true, throwIfNoEntry: false });
-    return stat === undefined ? "absent" : `${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
+    const found = await stat(file, { bigint: true });
+    return `${found.ino}:${found.size}:${found.mtimeNs}:${found.ctimeNs}`;
   } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
     // Unreadable is a state of its own, so the stamp moves again once it can be read.
-    return `unreadable:${(error as NodeJS.ErrnoException).code ?? "error"}`;
+    return code === "ENOENT" || code === "ENOTDIR" ? "absent" : `unreadable:${code ?? "error"}`;
   }
 }
 
 /**
- * A stamp of `gh`'s sign-in that moves whenever `gh` changes it: `hosts.yml`'s path, identity, size and times, and
- * which token variables are set. Hashed, so what keeps it holds no path.
+ * Stamps of `gh`'s sign-in under these variables. One stat of a hosts file runs at a time and every stamp asked
+ * meanwhile shares it, so a folder on a drive that never answers holds one of Node's few file threads, not one per
+ * status read.
  */
-export function ghSignInStamp(env: NodeJS.ProcessEnv, platform: NodeJS.Platform = process.platform): string {
-  const windows = platform === "win32";
-  const file = (windows ? win32 : posix).join(ghConfigDir(env, platform), "hosts.yml");
-  const tokens = TOKEN_VARIABLES.filter(name => envValue(env, name, windows) !== undefined);
-  return createHash("sha256").update([file, fileStamp(file), ...tokens].join("\0")).digest("hex").slice(0, 32);
+export function ghSignInStamps(
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform,
+  stampFile: (file: string) => Promise<string> = hostsFileStamp,
+): () => SignInStamp {
+  const running = new Map<string, Promise<string>>();
+  return () => {
+    const windows = platform === "win32";
+    const file = (windows ? win32 : posix).join(ghConfigDir(env, platform), "hosts.yml");
+    let stamped = running.get(file);
+    if (stamped === undefined) {
+      stamped = stampFile(file).finally(() => running.delete(file));
+      running.set(file, stamped);
+    }
+    const tokens = TOKEN_VARIABLES.filter(name => envValue(env, name, windows) !== undefined);
+    // Hashed, so what keeps it holds no path.
+    return { environment: createHash("sha256").update([file, ...tokens].join("\0")).digest("hex").slice(0, 32), file: stamped };
+  };
 }

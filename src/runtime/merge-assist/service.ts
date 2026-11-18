@@ -46,7 +46,9 @@ export class MergeAssistError extends Error {
 export interface MergeAssistService {
   /**
    * The checkout's state and its in-flight conflicts, with `gh`'s sign-in as `gh` last said it and when. Runs `gh`
-   * only while Merge Assist is on, and in its answer only when no reading is kept or `gh`'s sign-in changed since.
+   * only while Merge Assist is on: in its answer when this process's `gh` environment has no reading kept or `gh`'s
+   * sign-in changed since, and for a reading five minutes old (one a minute old while `gh` could not tell) in the
+   * background for the next status, or in its answer where the process answers once.
    */
   status(checkoutPath: string): Promise<MergeAssistStatus>;
   /**
@@ -397,7 +399,9 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     const db = this.#db;
     const root = checkout.checkoutPath;
     const enabled = mergeAssistEnabled(db, checkout.repositoryKey);
-    const { branch, base } = await this.#branches(root);
+    const branches = this.#branches(root);
+    // gh's hosts file is waited for no longer than the status's own Git reads (sign-in.ts).
+    const [{ branch, base }, github] = await Promise.all([branches, this.#signIn.shown(checkout.repositoryKey, enabled, branches)]);
     return {
       repositoryKey: checkout.repositoryKey,
       checkout: root,
@@ -405,9 +409,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
       baseBranch: base,
       enabled,
       settings: readSettings(db, checkout.repositoryKey),
-      readiness: {
-        github: await this.#signIn.shown(checkout.repositoryKey, enabled),
-      },
+      readiness: { github },
       scanning: this.#scanning(root),
       lastScan: readState(db, STATE_KEYS.scan(root), lastScanSchema) ?? null,
       conflicts: orderConflicts(readConflicts(db, root).map(entry => entry.conflict)),
@@ -561,8 +563,8 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
 /**
  * Merge Assist over one database. It runs `gh` only to list open pull requests, each listing with its sign-in read
  * afresh, and the person's hook command on conflict events; a status read runs neither, apart from reading `gh`'s
- * sign-in while Merge Assist is on when none is kept or it changed, or in the background when what it said leaves pull
- * requests unread (sign-in.ts), and nothing while it is off.
+ * sign-in while Merge Assist is on when none is kept or it changed, or once the kept one is five minutes old (a minute
+ * while `gh` could not tell), off the answer where a later status will show it (sign-in.ts), and nothing while it is off.
  */
 export function createMergeAssistService(options: MergeAssistServiceOptions): MergeAssistRuntime {
   return new DatabaseMergeAssist(options);
