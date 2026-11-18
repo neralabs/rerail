@@ -817,7 +817,8 @@ function walkedPaths(walk: WalkStart, current: ReadonlyMap<string, Source>): Ite
  * Whether a pass for `checkpoint` reads the whole session folder whatever its notices say: at a turn's end, which so
  * finds within the turn a write no notice told of; and until a walk finished with nothing it could not read or check,
  * which only a whole walk reads again. A command's result reads whole too once the last whole walk began more than
- * `WORKTREE_FULL_WALK_MS` ago (`SessionNotices`), so in a long turn such a write waits no longer than that.
+ * `WORKTREE_FULL_WALK_MS` ago (`SessionNotices`), so in a long turn such a write is found at the first command result
+ * past that, read when the result arrives: no timer runs for it.
  */
 function readsWholeFolder(discovery: SourceDiscovery, checkpoint: DiscoveryCheckpoint): boolean {
   return checkpoint !== "edit" || !discovery.baselineComplete || discovery.error !== undefined || discovery.baselineRoots.size > 0;
@@ -1333,7 +1334,8 @@ export class CodeRuleBridge {
         heads: new Map(from.gitSeen.heads), git, unmerged: new Map(from.gitSeen.unmerged), passedCheckouts: new Set(from.gitSeen.passedCheckouts),
         readUnmerged: gitUnmergedReader(), toolCalls: this.#unwatched,
         late: new Set(), askingAgain: new Map(), listingsAgain: new Set(), listingSlots: { free: LISTINGS_AGAIN_AT_ONCE, waiting: [] },
-        // A write no notice tells of waits for a whole walk no longer here than in the other worktrees.
+        // A write no notice tells of is found by a whole walk at the first command result ten minutes after the last
+        // one began; the other worktrees reread on a timer of the same length.
         notices: new SessionNotices(root, { fullWalkMs: WORKTREE_FULL_WALK_MS }),
       };
       this.#unwatched = new ToolCallWindows();
