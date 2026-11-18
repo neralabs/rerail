@@ -1237,12 +1237,15 @@ impl MaintMode {
                         Some(_) => {}
                         None => preset.push((*s, v)),
                     },
-                    Term::Cat(..) => return Err(err("the maintain mode: a recheck's head with a computed term")),
+                    // A computed term is not bound by the candidate: the rows the rule derives are compared below.
+                    Term::Cat(..) => {}
                 }
             }
             out.clear();
             run_join_collect(j, store, syms, &preset, out)?;
-            if !out.is_empty() {
+            // The row itself, not only a row of its bound columns: a computed head term, or a slot a later step binds
+            // again (an aggregate's value), makes rows the candidate must equal.
+            if out.chunks_exact(row.len().max(1)).any(|got| got == row) {
                 return Ok(true);
             }
         }

@@ -6414,9 +6414,8 @@ fn bound_head_order(b: &Body<'_>) -> Option<Vec<Step>> {
         }
     }
     let mut bound: BTreeSet<VarSlot> = BTreeSet::new();
-    let mut hv = Vec::new();
-    b.head().args().for_each(|t| vars(t, &mut hv));
-    bound.extend(hv);
+    // Only a plain variable of the head is bound by the candidate: a computed term's are not.
+    bound.extend(b.head().args().filter_map(|t| t.var()));
     let mut left: Vec<usize> = (0..b.len()).collect();
     let mut order = Vec::new();
     while !left.is_empty() {
@@ -7683,9 +7682,6 @@ impl<'a> Run<'a, '_> {
         }
         for &r in rules {
             let b = self.versions.at(r);
-            if b.head().args().any(|t| !matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Str(_) | TermRef::Branded(_))) {
-                return Some("a head with a computed term".into());
-            }
             for i in 0..b.len() {
                 match b.view(i) {
                     Lit::Atom(a) if scc.contains(b.rel(a)) => {}
@@ -7697,7 +7693,22 @@ impl<'a> Run<'a, '_> {
                         }
                     }
                     Lit::Atom(_) | Lit::Cmp { .. } => {}
-                    _ => return Some("a literal other than an atom or a comparison".into()),
+                    // An aggregate is maintained by its groups (`maintain_mode`): over a lower stratum's relation with
+                    // a version, or one a form maintained; an input's rows are read projected, its versions whole.
+                    Lit::Agg { atom: a, .. } if a.gated() => return Some("a gated aggregate".into()),
+                    Lit::Agg { atom: a, .. } if scc.contains(b.rel(a)) => return Some("an aggregate over its own stratum".into()),
+                    Lit::Agg { atom: a, .. } if moved.contains(b.rel(a)) => {
+                        let rel = b.rel(a);
+                        match ins.get(rel) {
+                            Some((_, Some(_))) => return Some("an aggregate over a changed view of an input".into()),
+                            Some(_) if self.versions.whole(self.version).is_input(rel) => return Some("an aggregate over a changed input".into()),
+                            Some(_) => {}
+                            None if super::native::component::held(self.db, rel).is_some_and(|x| x.start().is_some()) => {}
+                            None => return Some(format!("{rel} changed without a version")),
+                        }
+                    }
+                    Lit::Agg { .. } => {}
+                    Lit::Nearest { .. } | Lit::Ast { .. } => return Some("a nearest or ast literal: no native step".into()),
                 }
             }
         }
@@ -7751,7 +7762,7 @@ impl<'a> Run<'a, '_> {
                 input_held.push(name);
             }
         }
-                for (bi, b) in bodies.iter().enumerate() {
+        for (bi, b) in bodies.iter().enumerate() {
             let head_i = ri[vs.head_at(rules[bi])];
             self.model.late(pf, b, None, false)?;
             // The items of `spec` made for literal `at` of the plan `order` (`JoinSpec::from`: its step).
@@ -7764,10 +7775,17 @@ impl<'a> Run<'a, '_> {
                 let mut out = spec.clone();
                 for (i, item) in out.items.iter_mut().enumerate() {
                     let Some(at) = lit_of(spec, order, i) else { continue };
-                    let JoinItem::Atom { neg, src, .. } = item else { continue };
-                    if at == k {
-                        *neg = false;
-                    }
+                    let src = match item {
+                        JoinItem::Atom { neg, src, .. } => {
+                            if at == k {
+                                *neg = false;
+                            }
+                            src
+                        }
+                        // An aggregate reads its relation as the join's other atoms do (it never drives: `k` is an atom).
+                        JoinItem::Count { src, .. } | JoinItem::Extreme { src, .. } | JoinItem::StrJoin { src, .. } => src,
+                        _ => continue,
+                    };
                     let JoinSource::Native(t) = src.clone() else { continue };
                     // An input's version is its own relation (`r__mm_*`), read as it is.
                     if t.contains("__mm_") {
@@ -7832,6 +7850,70 @@ impl<'a> Run<'a, '_> {
                         (false, false) => SpecLine::Seed { head: head_i, join: spec },
                         (false, true) => SpecLine::AddChecked { head: head_i, join: spec },
                     });
+                }
+            }
+            // An aggregate over a changed relation (as the forms' `__grp` relations): its groups whose key is in the
+            // relation's minus or plus are the ones whose value may move. Per such delta, a removal join (the rule over
+            // what was, its aggregate over the old rows) and an add join (the rule now), each led by an atom over that
+            // delta with the aggregate's group slots (its bound arguments) and its own columns wild.
+            for k in 0..b.len() {
+                let Lit::Agg { atom: a, .. } = b.view(k) else { continue };
+                let rel = b.rel(a);
+                if !moved.contains(rel) {
+                    continue;
+                }
+                let (gone, added) = match ins.get(rel) {
+                    Some(([_, mi, pl], _)) => (mi.len(), pl.len()),
+                    None => {
+                        let x = held(rel).expect("a changed read with a version");
+                        (x.version_ids(super::native::component::Ver::Minus).map_or(0, |v| v.len()), x.version_ids(super::native::component::Ver::Plus).map_or(0, |v| v.len()))
+                    }
+                };
+                for (key_ver, n) in [(V::Minus, gone), (V::Plus, added)] {
+                    if n == 0 {
+                        continue;
+                    }
+                    for removing in [true, false] {
+                        plan_site("the maintain mode's aggregate join");
+                        let ((order, _, _), _) = self.model.plan_rule_reused(pf, b, None)?;
+                        self.mode_reads.clear();
+                        if removing {
+                            for i in 0..b.len() {
+                                let (Lit::Atom(x) | Lit::Agg { atom: x, .. }) = b.view(i) else { continue };
+                                if ins.contains_key(b.rel(x)) {
+                                    self.mode_reads.insert(i, format!("{}__mm_old", b.rel(x)));
+                                }
+                            }
+                        }
+                        let made = self.whole_join_spec(b, &order, None, &ri, scc, &native_rels);
+                        self.mode_reads.clear();
+                        let Some(spec) = made else {
+                            self.why_not = Some(format!("the maintain mode: no native aggregate join for a rule of {h}"));
+                            return Ok(None);
+                        };
+                        let mut spec = versioned(&spec, &order, usize::MAX, V::New, if removing { V::Old } else { V::New });
+                        let Some(at) = (0..spec.items.len()).find(|&i| lit_of(&spec, &order, i) == Some(k) && matches!(spec.items[i], JoinItem::Count { .. } | JoinItem::Extreme { .. } | JoinItem::StrJoin { .. })) else {
+                            self.why_not = Some(format!("the maintain mode: no aggregate item for a rule of {h}"));
+                            return Ok(None);
+                        };
+                        let (JoinItem::Count { args, .. } | JoinItem::Extreme { args, .. } | JoinItem::StrJoin { args, .. }) = &spec.items[at] else { unreachable!() };
+                        let args: Vec<super::native::component::spec::Arg> = args.iter().map(|x| match x {
+                            super::native::component::spec::Arg::Local(_) => super::native::component::spec::Arg::Tok(super::native::component::spec::Tok::Wild),
+                            x => x.clone(),
+                        }).collect();
+                        let src = if ins.contains_key(rel) {
+                            JoinSource::Native(format!("{rel}__mm_{}", if key_ver == V::Minus { "minus" } else { "plus" }))
+                        } else {
+                            JoinSource::Version(rel.to_owned(), key_ver)
+                        };
+                        if !spec.from.is_empty() {
+                            let step = spec.from[at];
+                            spec.from.insert(0, step);
+                        }
+                        spec.items.insert(0, JoinItem::Atom { neg: false, src, args });
+                        let spec = Arc::new(spec);
+                        lines.push(if removing { SpecLine::Remove { head: head_i, join: spec } } else { SpecLine::Seed { head: head_i, join: spec } });
+                    }
                 }
             }
             // Its recheck: the head's variables bound, each literal taken as soon as its variables are, the atom that

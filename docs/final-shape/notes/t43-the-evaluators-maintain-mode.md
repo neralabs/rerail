@@ -114,4 +114,22 @@ A session's relations stay in their blocks between runs; nothing moves to frames
     `a_recheck_takes_no_rule_whose_head_constants_differ_from_the_candidate`.
   - Still derived again: the reach index (decision 0119) and its readers, as its tests expect.
   - Still on forms: literals other than atoms and comparisons (30 in the session tests).
+- 8e64f3fbb, stage 5.
+- The mode widened before the forms go (the user, 2026-11-17: "widen, then delete"):
+  - Aggregates (`count`, `sum`, `min`, `max`, `join`) over a changed lower relation, by their groups, as the forms'
+    `__grp` relations did. Per minus and plus of the relation, there is a removal join (the rule over what was, its
+    aggregate over the old rows) and an add join (the rule now). Each is led by an atom over that delta, holding the
+    aggregate's group slots (its bound arguments) with its own columns wild. Aggregate items read the versions by
+    `mode_reads` as atoms do.
+  - Heads with computed terms: a recheck presets only the head's plain slots. It now compares each row a rule
+    derives with the candidate, and never takes a row of the bound columns alone.
+  - Test: `the_maintain_mode_keeps_aggregates_by_their_groups_and_computed_heads`, three edits, each against a run
+    with an empty store.
+  - Still not in the mode, and derived again once the forms go:
+    - lattice, gate, request, native, produced, fact and input relations;
+    - nearest and ast literals (no native step);
+    - aggregates over a changed input or input view (read projected; its versions are whole), gated, or over their
+      own stratum;
+    - recursive strata whose kept rows have no levels;
+    - readers of the reach index (derived again by design).
 
