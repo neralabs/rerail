@@ -159,13 +159,13 @@ describe("the home's untaken events", () => {
       const first = taker.taken();
       // The pass's own removals wake the watch, and an event sent meanwhile asks too; neither takes the rest at once.
       const second = taker.taken();
-      const seen: number[] = [];
-      while (handler.events.length < 100) {
+      // The largest step is kept as the turns go: a loaded machine takes many turns, too many to spread into Math.max.
+      let largest = 0;
+      for (let handed = 0; handler.events.length < 100; handed = handler.events.length) {
         await nextTurn();
-        seen.push(handler.events.length);
+        largest = Math.max(largest, handler.events.length - handed);
       }
-      const steps = seen.map((count, index) => count - (seen[index - 1] ?? 0));
-      expect(Math.max(...steps)).toBeLessThanOrEqual(16);
+      expect(largest).toBeLessThanOrEqual(16);
       await Promise.all([first, second]);
       expect(handler.events.map(event => event.body)).toEqual(Array.from({ length: 100 }, (_, count) => `event ${count}`));
       expect(await eventFiles(rerailHome)).toEqual([]);
