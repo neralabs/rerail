@@ -72,15 +72,17 @@ export function processStartedAt(pid: number, timeoutMs: number, platform: NodeJ
 /**
  * {@link processStartedAt}, with Windows reading the creation time through the engine (`GetProcessTimes`), which starts
  * no process: a hook or a status pays a system call where a PowerShell start costs about a second, and a policy that
- * blocks Windows PowerShell does not keep it from the answer. An engine that does not load, or was built before the
- * read, reads nothing.
+ * blocks Windows PowerShell does not keep it from the answer. As there, Windows reads only while `timeoutMs` is left: a
+ * lookup whose limit went to an engine silent to the proof reads nothing, and keeps the record. An engine that does not
+ * load, or was built before the read, reads nothing.
  */
 export function processStartedAtThroughEngine(
   pid: number,
+  timeoutMs: number,
   platform: NodeJS.Platform = process.platform,
   engine: () => Pick<NativeBinding, "processStartedAt"> = loadNativeBinding,
 ): number | undefined {
-  return startedAt(pid, platform, () => engineStartedAt(pid, engine));
+  return startedAt(pid, platform, () => (timeoutMs > 0 ? engineStartedAt(pid, engine) : undefined));
 }
 
 /** Linux's start of `pid`, `windows` on Windows, and none elsewhere. */

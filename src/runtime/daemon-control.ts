@@ -586,7 +586,7 @@ const THIS_MACHINE: DaemonMachine = {
   forgetMainInstanceHolder: pid => forgetMainInstanceHolder(pid),
   mainInstanceLockHeld: directory => mainInstanceLockHeld(directory),
   homeDaemonLockHeld: home => homeDaemonLockHeld(home),
-  processStartedAt: pid => processStartedAtThroughEngine(pid),
+  processStartedAt: (pid, timeoutMs) => processStartedAtThroughEngine(pid, timeoutMs),
   nodeExecutable: () => nodeExecutable(),
   spawnDetached: nativeSpawnDetached,
   spawn: (command, args, options) => spawn(command, args, options),

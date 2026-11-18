@@ -132,41 +132,56 @@ describe("processStartedAtThroughEngine", () => {
         return pid === 7 ? 1_700_000_000_000 : null;
       },
     });
-    expect(processStartedAtThroughEngine(7, "win32", engine)).toBe(1_700_000_000_000);
-    expect(processStartedAtThroughEngine(8, "win32", engine)).toBeUndefined();
+    expect(processStartedAtThroughEngine(7, 2_000, "win32", engine)).toBe(1_700_000_000_000);
+    expect(processStartedAtThroughEngine(8, 2_000, "win32", engine)).toBeUndefined();
     expect(asked).toEqual([7, 8]);
     expect(vi.mocked(childProcess.spawnSync).mock.calls.length).toBe(spawned);
   });
 
+  // As the PowerShell read is: a lookup whose limit an engine silent to the proof used up keeps the record unread.
+  it("reads nothing on Windows with no time left, and asks the engine nothing", () => {
+    const asked: number[] = [];
+    const engine = () => ({
+      processStartedAt: (pid: number) => {
+        asked.push(pid);
+        return 1_700_000_000_000;
+      },
+    });
+    expect(processStartedAtThroughEngine(7, 0, "win32", engine)).toBeUndefined();
+    expect(processStartedAtThroughEngine(7, -5, "win32", engine)).toBeUndefined();
+    expect(asked).toEqual([]);
+  });
+
   it("reads nothing where the engine does not load or was built before the read", () => {
-    expect(processStartedAtThroughEngine(process.pid, "win32", () => {
+    expect(processStartedAtThroughEngine(process.pid, 2_000, "win32", () => {
       throw new Error("Unsupported platform or missing native addon");
     })).toBeUndefined();
-    expect(processStartedAtThroughEngine(process.pid, "win32", () => ({}))).toBeUndefined();
+    expect(processStartedAtThroughEngine(process.pid, 2_000, "win32", () => ({}))).toBeUndefined();
   });
 
   it("reads Linux's start from /proc without the engine, and none on a system it does not read", () => {
-    expect(processStartedAtThroughEngine(process.pid, "darwin", noEngine)).toBeUndefined();
+    expect(processStartedAtThroughEngine(process.pid, 2_000, "darwin", noEngine)).toBeUndefined();
     if (process.platform !== "linux") return;
-    const started = processStartedAtThroughEngine(process.pid, "linux", noEngine);
+    // Linux reads /proc whatever time is left, as processStartedAt does.
+    const started = processStartedAtThroughEngine(process.pid, 0, "linux", noEngine);
     expect(started).toBeDefined();
     expect(Math.abs(started! - processStartedAt(process.pid, 0, "linux")!)).toBeLessThan(50);
   });
 
   it.runIf(process.platform === "win32")("reads when this process and a later one started through the engine built here", async () => {
     const spawned = vi.mocked(childProcess.spawnSync).mock.calls.length;
-    const started = processStartedAtThroughEngine(process.pid);
+    const started = processStartedAtThroughEngine(process.pid, 2_000);
     expect(started).toBeDefined();
     expect(Math.abs(started! - (Date.now() - process.uptime() * 1_000))).toBeLessThan(1_000);
     const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e6)"], { stdio: "ignore" });
     try {
-      expect(processStartedAtThroughEngine(child.pid!)).toBeGreaterThan(started!);
+      expect(processStartedAtThroughEngine(child.pid!, 2_000)).toBeGreaterThan(started!);
     } finally {
       const closed = once(child, "close");
       child.kill();
       await closed;
     }
-    expect(processStartedAtThroughEngine(DEAD_PID)).toBeUndefined();
+    expect(processStartedAtThroughEngine(DEAD_PID, 2_000)).toBeUndefined();
     expect(vi.mocked(childProcess.spawnSync).mock.calls.length).toBe(spawned);
   });
 });
