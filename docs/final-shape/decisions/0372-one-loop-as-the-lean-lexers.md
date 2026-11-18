@@ -57,6 +57,9 @@ Still unlike lean: the body stores the refill's rows, for the cold path. Lean st
 The rows could go only if the general body also handed its words (it is an outlined call, through
 a slot), and if a token's cursor never went back to an earlier full block.
 
+**Done in 0373:** the rows are gone. Every block hands its words on, the general body's
+through its call's slot, and the cold way classifies the bytes again.
+
 ## Tests
 
 - `rr_parser`, the JSON equality set: `json`, `the_pairs`, `the_marks_tests`,

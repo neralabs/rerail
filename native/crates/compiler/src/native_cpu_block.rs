@@ -721,6 +721,8 @@ pub struct Sinks<'a> {
     /// Values no output is, each stored in a row slot no output uses (`refill_rows`): `(value,
     /// byte offset)`.
     pub extra: &'a [(usize, i32)],
+    /// Whether those are stored; else only kept for the token loop (`Emit::stored_words`).
+    pub extra_stored: bool,
 }
 
 /// Output `k`'s word at delay `d > 0`, stored without holding a word across the loop. The
@@ -1794,7 +1796,9 @@ impl Emit<'_, '_> {
                 let inside = within_word(&mut *f, self.i, self.len, 0);
                 f.ins().band(v, inside)
             };
-            f.ins().store(stores_flags(), word, sk.dst, off);
+            if sk.extra_stored {
+                f.ins().store(stores_flags(), word, sk.dst, off);
+            }
             if let Some(w) = self.stored_words.get_mut(outs + e) {
                 *w = Some(word);
             }
@@ -6203,11 +6207,23 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
             // The body's rows (0361): its words loaded, no byte classified again. Only where the
             // refill waits at the blocks made (`bounded`): their rows are final.
             let from_rows = rd.bytes.and_then(|(b, _)| b.rows.as_ref()).filter(|(os, _)| bounded && term_sets.is_empty() && all.iter().all(|x| os.contains(x)));
-            let (got, rare_got, term_words) = match (rare_need, rd.bytes.filter(|(b, _)| all.iter().all(|&x| b.can(x)))) {
+            let classify = rd.bytes.filter(|(b, _)| all.iter().all(|&x| b.can(x)));
+            let (got, rare_got, term_words) = match (rare_need, classify) {
                 _ if from_rows.is_some() => {
                     let (_, rare_slot) = from_rows.expect("rows");
                     let rare_slot = *rare_slot;
-                    let load = |f: &mut FunctionBuilder<'_>| -> Vec<Value> {
+                    // Where the body stores no rows (0373), a block not handed has its bytes
+                    // classified again, as the refill's own classes (`words_with`).
+                    let stored = rd.bytes.is_none_or(|(b, _)| b.rows_stored);
+                    let load = |f: &mut FunctionBuilder<'_>, heads: &mut Vec<(cranelift_codegen::ir::Block, Step)>| -> Vec<Value> {
+                        if let (false, Some(need), Some((b, file))) = (stored, rare_need.clone(), classify) {
+                            let p = f.ins().ishl_imm(q, 6);
+                            let (mut w, more) = b.words_with(f, &file, &all, &[need], p, heads);
+                            if rare_slot.is_some() {
+                                w.push(more[0]);
+                            }
+                            return w;
+                        }
                         let off = f.ins().imul_imm(q, 8 * outputs as i64);
                         let row = f.ins().iadd(c.out, off);
                         let mut w: Vec<Value> = all.iter().map(|&x| f.ins().load(types::I64, MemFlags::trusted(), row, 8 * i32::from(x))).collect();
@@ -6231,12 +6247,12 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
                             f.ins().jump(join, &words);
                             f.switch_to_block(from_row);
                             f.set_cold_block(from_row);
-                            let words: Vec<BlockArg> = load(&mut *f).into_iter().map(BlockArg::from).collect();
+                            let words: Vec<BlockArg> = load(&mut *f, heads).into_iter().map(BlockArg::from).collect();
                             f.ins().jump(join, &words);
                             f.switch_to_block(join);
                             f.block_params(join).to_vec()
                         }
-                        None => load(&mut *f),
+                        None => load(&mut *f, heads),
                     };
                     let rare = rare_slot.map(|_| w[all.len()]);
                     (w[..all.len()].to_vec(), rare, Vec::new())
@@ -7451,6 +7467,8 @@ struct Loop<'a> {
     /// The outputs whose words a full block hands the token loop as values, then `extra`'s
     /// (`Hand`): the refill's rows (`refill_rows`). None: the refill reads the rows.
     hand: Vec<u16>,
+    /// Whether `extra`'s values are stored in their rows (`Sinks::extra_stored`).
+    extra_stored: bool,
 }
 
 impl Loop<'_> {
@@ -7481,7 +7499,7 @@ fn step(f: &mut FunctionBuilder<'_>, lp: &Loop<'_>, consts: &Consts, p: &[Value]
     let scratch = if lp.rowed() { p[lp.params - 1] } else { scratch };
     let (slot_of, slots) = (lp.slot_of, lp.slots);
     let sunk: Vec<bool> = early.iter().zip(lp.stored).map(|(&e, &s)| e && s).collect();
-    let sinks = slot_of.is_empty().then_some(Sinks { dst, stride: lp.stride, early: &sunk, extra: lp.extra });
+    let sinks = slot_of.is_empty().then_some(Sinks { dst, stride: lp.stride, early: &sunk, extra: lp.extra, extra_stored: lp.extra_stored });
     // The full body's one branch: an all-ASCII block runs a body with the values known on
     // ASCII bytes folded (`native_cpu_lanes`), the others the whole body. Both meet before
     // the sinks.
@@ -7555,7 +7573,7 @@ fn step(f: &mut FunctionBuilder<'_>, lp: &Loop<'_>, consts: &Consts, p: &[Value]
     let again: Vec<Value> = [next, next_base, next_dst].into_iter().chain(packed_out).chain(counts_out).chain(next_row).collect();
     // Each handed output's word: as its sink stored it, or as made here; then the extras'.
     let n = native.outputs.len();
-    let handed: Vec<Value> = if full && !lp.hand.is_empty() {
+    let handed: Vec<Value> = if !lp.hand.is_empty() {
         let outs: Option<Vec<Value>> = lp.hand.iter().map(|&o| extras.get(usize::from(o)).copied().flatten().or_else(|| (!sunk[usize::from(o)]).then(|| words[usize::from(o)]))).collect();
         let more: Option<Vec<Value>> = extras.get(n..).map_or(Some(Vec::new()), |e| e.iter().copied().collect());
         match (outs, more) {
@@ -7584,9 +7602,19 @@ fn general(context: &mut Context, lp: &Loop<'_>) -> Result<(), Error> {
     let p: Vec<Value> = (0..lp.params).map(|k| f.ins().load(types::I64, flags, at, 8 * k as i32)).collect();
     let zero = f.ins().iconst(types::I64, 0);
     let mut heads = Vec::new();
-    let (again, _, _, _) = step(&mut f, lp, &consts, &p, len, false, zero, None, &mut heads);
+    let (again, _, _, hand) = step(&mut f, lp, &consts, &p, len, false, zero, None, &mut heads);
     for (k, &v) in again.iter().enumerate() {
         f.ins().store(flags, v, at, 8 * k as i32);
+    }
+    // The block's words for the token loop (`Hand`), after the parameters: its index, all ones
+    // where it has none, then the words.
+    if !lp.hand.is_empty() {
+        let n = lp.hand.len() + lp.extra.len();
+        let block = if hand.len() == n { p[0] } else { f.ins().iconst(types::I64, -1) };
+        f.ins().store(flags, block, at, 8 * lp.params as i32);
+        for (j, &w) in hand.iter().enumerate().take(n) {
+            f.ins().store(flags, w, at, 8 * (lp.params + 1 + j) as i32);
+        }
     }
     f.ins().return_(&[]);
     f.seal_all_blocks();
@@ -7708,14 +7736,28 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         _ => None,
     };
     let mut extra: Vec<(usize, i32)> = Vec::new();
+    // The refill's words with no row (0373): every block hands them to the token loop (`Hand`),
+    // and its cold way classifies the bytes again. Only where nothing else reads those rows (no
+    // output's is stored but for the refill), and every block's row is final once made, so the
+    // token loop takes each block in its own iteration (`at_once`); with the bytes to classify.
+    let rowless = rows.as_ref().is_some_and(|(outs, _)| {
+        let lean = records.is_some_and(|(_, rt, _)| rt.lean.is_some() && rt.rare.is_some());
+        let only_refill = outs.iter().all(|&o| unmade.contains(&usize::from(o)) && bytewise.can(o));
+        let undelayed = (0..native.outputs.len()).all(|k| unmade.contains(&k) || native.output_delays[k] == 0);
+        lean && only_refill && undelayed
+    });
     if let Some((outs, rare)) = &rows {
-        unmade.retain(|k| !outs.iter().any(|&o| usize::from(o) == *k));
+        if !rowless {
+            unmade.retain(|k| !outs.iter().any(|&o| usize::from(o) == *k));
+        }
         extra.extend(rare);
         bytewise.rows = Some((outs.clone(), rare.map(|r| r.1)));
+        bytewise.rows_stored = !rowless;
     }
+    let extra_stored = !rowless;
     let stored: Vec<bool> = (0..native.outputs.len()).map(|k| !unmade.contains(&k)).collect();
     let hand: Vec<u16> = rows.as_ref().map(|(outs, _)| outs.clone()).unwrap_or_default();
-    let lp = Loop { native, state: &state, counted: &counted, early: &early, stored: &stored, stride: 8 * native.outputs.len() as i64, slot_of, slots, params, walks: Some(&walks), extra: &extra, split: std::cell::Cell::new(false), rare: std::cell::RefCell::new(Vec::new()), hand };
+    let lp = Loop { native, state: &state, counted: &counted, early: &early, stored: &stored, stride: 8 * native.outputs.len() as i64, slot_of, slots, params, walks: Some(&walks), extra: &extra, split: std::cell::Cell::new(false), rare: std::cell::RefCell::new(Vec::new()), hand, extra_stored };
     general(general_context, &lp)?;
     let own = cranelift_codegen::ir::UserExternalName::new(0, outlined.0.as_u32());
     // Each gated region's function, declared here and built where the body lowers it.
@@ -7923,7 +7965,8 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         // The block a full body handed its refill words for, and the words (`Hand`).
         let handed = if tokened && !lp.hand.is_empty() { lp.hand.len() + lp.extra.len() } else { 0 };
         if handed > 0 {
-            for _ in 0..1 + handed {
+            // And whether the part is the file end's (`finish`'s): the others go back by the head.
+            for _ in 0..2 + handed {
                 f.append_block_param(tokens, types::I64);
             }
         }
@@ -8020,25 +8063,24 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         // blocks before it are final (an output's delayed bits go into the row before).
         // `hand`: a full block's words; none from the general body. The last block is the file
         // end's part's (`finish`): `after` takes a part ready to the file's blocks for the end.
-        let to_tokens = |f: &mut FunctionBuilder<'_>, block: &[BlockArg], st: &[Value], hand: &[Value]| -> Vec<BlockArg> {
+        // `hand`: the block's words and the block they are of (`Hand`).
+        let to_tokens = |f: &mut FunctionBuilder<'_>, block: &[BlockArg], st: &[Value], hand: Option<(Value, &[Value])>| -> Vec<BlockArg> {
             let next = match block[0] {
                 BlockArg::Value(v) => v,
                 _ => unreachable!("a value"),
             };
-            let ready = if at_once {
-                let last = f.ins().iadd_imm(blocks, -1);
-                f.ins().umin(next, last)
-            } else {
-                f.ins().iadd_imm(next, -1)
-            };
+            let ready = if at_once { next } else { f.ins().iadd_imm(next, -1) };
             let given: Vec<Value> = if handed == 0 {
                 Vec::new()
-            } else if hand.is_empty() {
-                let none = f.ins().iconst(types::I64, -1);
-                std::iter::once(none).chain(std::iter::repeat_n(none, handed)).collect()
             } else {
-                let this = f.ins().iadd_imm(next, -1);
-                std::iter::once(this).chain(hand.iter().copied()).collect()
+                let closing = f.ins().iconst(types::I64, 0);
+                match hand.filter(|h| h.1.len() == handed) {
+                    Some((this, words)) => [closing, this].into_iter().chain(words.iter().copied()).collect(),
+                    None => {
+                        let none = f.ins().iconst(types::I64, -1);
+                        std::iter::once(closing).chain(std::iter::repeat_n(none, 1 + handed)).collect()
+                    }
+                }
             };
             block.iter().copied().chain(st.iter().map(|&v| v.into())).chain([ready.into()]).chain(given.into_iter().map(BlockArg::from)).collect()
         };
@@ -8099,7 +8141,8 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             // blocks): each block's body, then the tokens of the blocks now final, then the next
             // block by the head. No value is held for a later part, and no row is read a run
             // after it was made.
-            let args = to_tokens(&mut f, &again, &st, &hand);
+            let this = f.ins().iadd_imm(next, -1);
+            let args = to_tokens(&mut f, &again, &st, Some((this, &hand)));
             f.ins().jump(tokens, &args);
         } else {
             let more = f.ins().icmp(IntCC::UnsignedLessThan, next, full_end);
@@ -8110,7 +8153,8 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         f.switch_to_block(general);
         let p = f.block_params(general).to_vec();
         let st = p[params..].to_vec();
-        let slot = f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, 8 * params as u32, 3));
+        // Then the block's words (`general`): its index, and the words.
+        let slot = f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, 8 * (params + if handed > 0 { 1 + handed } else { 0 }) as u32, 3));
         for (k, &v) in p[..params].iter().enumerate() {
             f.ins().stack_store(v, slot, 8 * k as i32);
         }
@@ -8122,7 +8166,9 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         f.ins().call(callee, &[address, len]);
         let back: Vec<BlockArg> = (0..params).map(|k| BlockArg::from(f.ins().stack_load(types::I64, slot, 8 * k as i32))).collect();
         if tokened {
-            let args = to_tokens(&mut f, &back, &st, &[]);
+            let from_general: Vec<Value> = (0..if handed > 0 { 1 + handed } else { 0 }).map(|k| f.ins().stack_load(types::I64, slot, 8 * (params + k) as i32)).collect();
+            let hand = from_general.split_first().map(|(&b, w)| (b, w));
+            let args = to_tokens(&mut f, &back, &st, hand);
             f.ins().jump(tokens, &args);
         } else {
             f.ins().jump(head, &back);
@@ -8136,7 +8182,7 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
             let cols = FileCols::of_tables(&mut f, &vals, t);
             let ready = tp[params + STATE_WORDS];
             let init: [Value; STATE_WORDS] = std::array::from_fn(|k| tp[params + k]);
-            let hand = (handed > 0).then(|| Hand { block: tp[params + STATE_WORDS + 1], outs: lp.hand.clone(), words: tp[params + STATE_WORDS + 2..].to_vec() });
+            let hand = (handed > 0).then(|| Hand { block: tp[params + STATE_WORDS + 2], outs: lp.hand.clone(), words: tp[params + STATE_WORDS + 3..].to_vec() });
             record_tokens(&mut f, rec, t, native.extracts.len(), outputs, &cols, Some(RecPart { ready, init, hand }), Some((&bytewise, &consts, &byte_ids)), after, &mut heads);
             reads_back += cols.reads_back.get();
             arms += cols.arms.get();
@@ -8148,7 +8194,15 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
                 // Every block final at once: the one part is the file's.
                 f.ins().jump(row_end, &st_args);
             } else {
-                let last = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, ready, cols.blocks);
+                // The file end's part only (`closing`): a part from a block that reads the file to
+                // its end goes back by the head, which sends it to `finish`, and `finish`'s part
+                // finds no token past the file's end.
+                let last = if handed > 0 {
+                    let closing = tp[params + STATE_WORDS + 1];
+                    f.ins().icmp_imm(IntCC::NotEqual, closing, 0)
+                } else {
+                    f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, ready, cols.blocks)
+                };
                 let go = f.create_block();
                 f.ins().brif(last, row_end, &st_args, go, &[]);
                 f.switch_to_block(go);
@@ -8229,7 +8283,8 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         if tokened {
             let blocks = f.ins().load(types::I64, MemFlags::trusted().with_readonly(), at, 8);
             let none = f.ins().iconst(types::I64, -1);
-            let given = std::iter::repeat_n(none, if handed > 0 { 1 + handed } else { 0 });
+            let closing = f.ins().iconst(types::I64, 1);
+            let given = (handed > 0).then_some(closing).into_iter().chain(std::iter::repeat_n(none, if handed > 0 { 1 + handed } else { 0 }));
             let args: Vec<BlockArg> = p.iter().copied().chain([blocks]).chain(given).map(BlockArg::from).collect();
             f.ins().jump(tokens, &args);
         }

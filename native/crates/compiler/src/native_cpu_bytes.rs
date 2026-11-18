@@ -56,6 +56,9 @@ pub struct Bytewise<'a> {
     /// refill_rows`): the outputs, and the row slot of the block's rare starts' word. The
     /// refill loads them where its block is made, as simdjson's stage 2 reads stage 1's index.
     pub rows: Option<(Vec<u16>, Option<i32>)>,
+    /// Whether the body stores those words in its rows. Not where it hands every block's to the
+    /// token loop (0373): the refill's cold way classifies the block's bytes again.
+    pub rows_stored: bool,
 }
 
 /// A split run's byte term's mask (`Bytewise::run_split`): its lanes from `s + 1`, `stride`
@@ -110,7 +113,7 @@ impl<'a> Bytewise<'a> {
                     _ => false,
                 };
         }
-        Bytewise { native, plan, can, carries: Vec::new(), bail: None, packs: Default::default(), before_start: None, run_lanes: Default::default(), rows: None }
+        Bytewise { native, plan, can, carries: Vec::new(), bail: None, packs: Default::default(), before_start: None, run_lanes: Default::default(), rows: None, rows_stored: true }
     }
 
     /// The runs whose `escaped` the bytes make: each `a`, once.
