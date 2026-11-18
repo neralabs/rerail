@@ -1,7 +1,7 @@
 import { existsSync, watch } from "node:fs";
 import { on } from "node:events";
 import { createServer, request as httpRequest, type IncomingMessage } from "node:http";
-import { chmod, lstat, mkdtemp, mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, mkdir, readdir, readFile, realpath, rename, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -1172,16 +1172,17 @@ describe("Rerail daemon", () => {
     expect(await checked.promise).toEqual({ events: 1, from: 5_000, to: 5_000, failed: 0 });
   });
 
-  // Windows sends a watch of a removed folder an error, and none of a moved one; the folder id then keeps hooks asking.
-  it.runIf(process.platform !== "win32")("names in its state file the folder its watch follows to once the one it watched is removed", async () => {
+  // Windows sends a watch of a moved folder no notice; the folder id then keeps hooks asking.
+  it.runIf(process.platform !== "win32")("names in its state file the folder its watch follows to once the one it watched is moved away", async () => {
     root = await realpath(await mkdtemp(join(tmpdir(), "rerail-daemon-")));
     const stateFile = join(root, "daemon.json");
     await start({ stateFile });
     const before = (JSON.parse(await readFile(stateFile, "utf8")) as DaemonState).untakenFolder;
     const home = watch(root);
     try {
-      await removeFolder(join(root, UNTAKEN_EVENTS_DIR));
-      // Ends on the state file naming the folder at the path now; before, it kept naming the removed one.
+      // Moved, not removed: the folder made again at the path cannot then reuse the moved one's id.
+      await rename(join(root, UNTAKEN_EVENTS_DIR), join(root, "moved-away"));
+      // Ends on the state file naming the folder at the path now; before, it kept naming the moved one.
       for await (const [, name] of on(home, "change") as AsyncIterable<[string, string | null]>) {
         if (name !== "daemon.json") continue;
         const named = (JSON.parse(await readFile(stateFile, "utf8")) as DaemonState).untakenFolder;

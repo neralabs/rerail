@@ -152,19 +152,22 @@ describe("the home's untaken events", () => {
     }
   });
 
-  it("are counted by no hook once a pass has begun to take them, and a file the daemon cannot remove is handed on once", async () => {
+  // A folder's mode keeps no one from removing a file in it on Windows, and root removes it anyway.
+  it.runIf(process.platform !== "win32" && process.getuid?.() !== 0)("are counted by no hook once a pass has begun to take them, and a file the daemon cannot remove is handed on once", async () => {
     const rerailHome = await home();
     await leaveUntaken(rerailHome, 7, "first", 1_000);
     const folder = untakenFolderId(rerailHome)!;
     const handler = keeper();
-    const taker = untakenEventTaker(rerailHome, handler);
     // A folder its owner may not write keeps the daemon from removing what it took, as a program Windows lets hold a
-    // file does; the taken mark is written first.
-    const pass = taker.taken();
-    await nextTurn();
-    chmodSync(join(rerailHome, UNTAKEN_EVENTS_DIR), 0o500);
+    // file does. Taken away as the event is handed on, after the pass wrote its taken mark.
+    const take = handler.take;
+    handler.take = async event => {
+      chmodSync(join(rerailHome, UNTAKEN_EVENTS_DIR), 0o500);
+      await take(event);
+    };
+    const taker = untakenEventTaker(rerailHome, handler);
     try {
-      await pass;
+      await taker.taken();
       await taker.taken();
       expect(handler.events.map(event => event.body)).toEqual(["first"]);
       expect(untakenFor(rerailHome, 7, folder)).toBe(false);
@@ -172,6 +175,7 @@ describe("the home's untaken events", () => {
     } finally {
       chmodSync(join(rerailHome, UNTAKEN_EVENTS_DIR), 0o700);
     }
+    handler.take = take;
     await leaveUntaken(rerailHome, 7, "second", 2_000);
     expect(untakenFor(rerailHome, 7, folder)).toBe(true);
     expect(untakenWaiting(rerailHome, 7)).toEqual({ events: 1, since: 2_000 });

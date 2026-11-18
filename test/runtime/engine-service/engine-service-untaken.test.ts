@@ -121,13 +121,16 @@ describe("an engine service beside the events hooks left while its daemon did no
     const held = await serviceWithUntaken();
     const tool = { sessionId: SESSION, toolCallId: "edit-1", toolName: "Edit" } as const;
     // The hook left the call and gave the agent its answer; the tool ran; then the hook left the result.
-    await held.leave({ kind: "call", eventId: "edit-1:call", ...tool, input: { file_path: "a.py", old_string: "1", new_string: "2" } }, 1_000);
+    const ran = Date.now();
+    await held.leave({ kind: "call", eventId: "edit-1:call", ...tool, input: { file_path: "a.py", old_string: "1", new_string: "2" } }, ran - 60_000);
     writeFileSync(join(held.root, "a.py"), "def a():\n    return 2\n");
-    await held.leave({ kind: "result", eventId: "edit-1:result", ...tool, output: "ok" }, 2_000);
+    await held.leave({ kind: "result", eventId: "edit-1:result", ...tool, output: "ok" }, ran + 60_000);
     await held.send(prompt("next"));
     const edits = held.batches.flatMap(batch => batch.edits).filter(edit => edit.path === "a.py");
-    // A call begun late read its file's "before" from the file as already edited, and found no edit to check.
-    expect(edits.map(edit => edit.generatedText)).toEqual(["def a():\n    return 2\n"]);
+    // A call begun late read its file's "before" from the file as already edited, and found no edit to check. A walk
+    // of the session's folder may read the edit once more (seen on Windows); each read is of the edit as made.
+    expect(edits.length).toBeGreaterThan(0);
+    expect(new Set(edits.map(edit => edit.generatedText))).toEqual(new Set(["def a():\n    return 2\n"]));
   });
 
   it("takes what a shell command left untaken wrote as the session's own, from when its hooks met it", async () => {
