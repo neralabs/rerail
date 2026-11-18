@@ -1124,6 +1124,25 @@ describe("a record whose live pid is not the home's daemon", () => {
     expect(signals).toEqual([]);
   });
 
+  // The holder record was written an hour ago and the process its pid names started half an hour ago, so before now: it
+  // took a dead holder's pid since, and shows nothing of the lock. The start of the pid daemon.json names cannot be read.
+  it.each(["linux", "win32"] as const)("keeps the record when the holder record's pid started after that record was written and before now, and its stop ends nothing and says what to check (%s)", async platform => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const signals: Array<string | number | undefined> = [];
+    await holdHome(home, OTHER_PID);
+    const anHourAgo = new Date(Date.now() - 3_600_000);
+    await utimes(join(home, LOCKS_DIR, "daemon.json"), anHourAgo, anHourAgo);
+    await writeFile(stateFile, JSON.stringify(state(platform)));
+    const machine = withHolderStarted(machineWith(platform, signals, () => true), Date.now() - 1_800_000);
+    expect(await lookupDaemon(home, machine)).toEqual({ status: "unresponsive", state: state(platform) });
+    expect(existsSync(stateFile)).toBe(true);
+    const said = await stopDaemon(home, machine).then(String, (error: unknown) => String(error));
+    expect(said).toMatch(new RegExp(`could not prove that pid ${LIVE_PID}, which .* names, is this home's daemon, so it ended nothing\\. See its command line with `, "u"));
+    expect(said).toContain(platform === "win32" ? `ProcessId=${LIVE_PID}` : `ps -p ${LIVE_PID} -o command=`);
+    expect(signals).toEqual([]);
+    expect(existsSync(stateFile)).toBe(true);
+  });
+
   // The home's daemon holds its lock and is busy, while daemon.json names a program a dead daemon's pid went to. A start
   // read takes time, as Windows PowerShell does, and the engine proof uses all of a lookup's limit, so `rerail status`
   // on Windows has none left to read it; a stop's lookup reads within the stop's own wait.
