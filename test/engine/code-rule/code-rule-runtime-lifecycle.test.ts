@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdir, opendir, realpath, rm, writeFile } from "node:fs/promises";
 import type * as FsPromises from "node:fs/promises";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import type { AdapterDelivery, RerailHost } from "../../../src/engine/adapter-contract.js";
 import type { CodeRuleAuditor, RuleSteerDelivery } from "../../../src/engine/code-rule/code-rule.js";
 import { languageFor, NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
@@ -816,18 +816,15 @@ describe("source-scoped steers", () => {
   });
 
   describe("a Claude Code session reopened while its rules open again", () => {
-    // A case that times out never reaches its own clean-up: the next case must not start under its faked setTimeout.
-    afterEach(() => {
-      vi.useRealTimers();
-    });
-
     /** The steer the needle rule gives for `file`. */
     const needle = (file: string) => expect.objectContaining({ content: expect.stringContaining(`- ${file}:1:1 — No needle [`) });
 
     /**
      * A Claude Code session whose rules opened, then a runtime of its own: `restart` gives the session to a second one,
      * as a daemon restart does. `reopen` sends the person's prompt to `runtime` after the idle close, which opens the
-     * session again; either way its rules then stay held in their storage attach until the test releases them.
+     * session again; either way its rules then stay held in their storage attach until the test releases them. Its
+     * clean-up runs when the case ends, however it ends: a case that times out never reaches its own last lines, and
+     * the next case must not start under its faked setTimeout, its storage gate or its runtimes.
      */
     async function reopenedFixture() {
       const root = await realpath(await temporaryDirectory());
@@ -906,6 +903,7 @@ describe("source-scoped steers", () => {
           for (const each of runtimes) await each.dispose();
         },
       };
+      onTestFinished(test.close);
       await runtime.ingest({ kind: "session-start", eventId: "start", session });
       await runtime.codeRulesOpened(session.sessionId);
       await test.turnEnd("baseline");
@@ -914,111 +912,87 @@ describe("source-scoped steers", () => {
 
     it("waits at its first tool call for its rules, so the edit's steer rides its own result", async () => {
       const test = await reopenedFixture();
-      try {
-        // The daemon's idle close: the next event, the person's prompt, opens the session again, and its rules with it.
-        await test.reopen();
-        const call = test.write("write", "edited.py");
-        // The call waits for the rules; their storage attaches once the test lets it.
-        test.attachments.workspaces[1]!.release();
-        expect(await call).toEqual([]);
-        await writeFile(join(test.root, "edited.py"), "NEEDLE\n");
-        expect(await test.result("write", "Write")).toEqual([needle("edited.py")]);
-      } finally {
-        await test.close();
-      }
+      // The daemon's idle close: the next event, the person's prompt, opens the session again, and its rules with it.
+      await test.reopen();
+      const call = test.write("write", "edited.py");
+      // The call waits for the rules; their storage attaches once the test lets it.
+      test.attachments.workspaces[1]!.release();
+      expect(await call).toEqual([]);
+      await writeFile(join(test.root, "edited.py"), "NEEDLE\n");
+      expect(await test.result("write", "Write")).toEqual([needle("edited.py")]);
     }, 30_000);
 
     it("answers a call that writes nothing, and its result, while its rules open, and still waits at its first edit", async () => {
       const test = await reopenedFixture();
-      try {
-        await test.reopen();
-        // The bound never fires here, so a boundary that waited for the rules would not answer.
-        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-        expect(await test.call("read", "Read", { file_path: join(test.root, "edited.py") })).toEqual([]);
-        expect(await test.result("read", "Read")).toEqual([]);
-        vi.useRealTimers();
-        // The read spent nothing: the edit's call still waits, and its steer rides its own result.
-        const call = test.write("write", "edited.py");
-        test.attachments.workspaces[1]!.release();
-        expect(await call).toEqual([]);
-        await writeFile(join(test.root, "edited.py"), "NEEDLE\n");
-        expect(await test.result("write", "Write")).toEqual([needle("edited.py")]);
-      } finally {
-        await test.close();
-      }
+      await test.reopen();
+      // The bound never fires here, so a boundary that waited for the rules would not answer.
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      expect(await test.call("read", "Read", { file_path: join(test.root, "edited.py") })).toEqual([]);
+      expect(await test.result("read", "Read")).toEqual([]);
+      vi.useRealTimers();
+      // The read spent nothing: the edit's call still waits, and its steer rides its own result.
+      const call = test.write("write", "edited.py");
+      test.attachments.workspaces[1]!.release();
+      expect(await call).toEqual([]);
+      await writeFile(join(test.root, "edited.py"), "NEEDLE\n");
+      expect(await test.result("write", "Write")).toEqual([needle("edited.py")]);
     }, 30_000);
 
     it("waits its bound out once: no later tool call or result of the opening waits again, and what they skipped is checked once the rules open", async () => {
       const test = await reopenedFixture();
-      try {
-        await test.reopen();
-        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-        // The call waits for the rules within the bound, and the bound runs out before they open.
-        expect(await test.outwaited(test.write("first", "first.py"))).toEqual([]);
-        await writeFile(join(test.root, "first.py"), "NEEDLE\n");
-        // Each later tool call and result answers with the bound never firing again.
-        expect(await test.result("first", "Write")).toEqual([]);
-        expect(await test.write("second", "second.py")).toEqual([]);
-        await writeFile(join(test.root, "second.py"), "NEEDLE\n");
-        expect(await test.result("second", "Write")).toEqual([]);
-        vi.useRealTimers();
-        test.attachments.workspaces[1]!.release();
-        await test.runtime.codeRulesOpened("reopened");
-        // The first pass once they are open checks both edits, and the turn's end carries their steers.
-        expect(await test.turnEnd("turn")).toEqual(expect.arrayContaining([needle("first.py"), needle("second.py")]));
-      } finally {
-        await test.close();
-      }
+      await test.reopen();
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      // The call waits for the rules within the bound, and the bound runs out before they open.
+      expect(await test.outwaited(test.write("first", "first.py"))).toEqual([]);
+      await writeFile(join(test.root, "first.py"), "NEEDLE\n");
+      // Each later tool call and result answers with the bound never firing again.
+      expect(await test.result("first", "Write")).toEqual([]);
+      expect(await test.write("second", "second.py")).toEqual([]);
+      await writeFile(join(test.root, "second.py"), "NEEDLE\n");
+      expect(await test.result("second", "Write")).toEqual([]);
+      vi.useRealTimers();
+      test.attachments.workspaces[1]!.release();
+      await test.runtime.codeRulesOpened("reopened");
+      // The first pass once they are open checks both edits, and the turn's end carries their steers.
+      expect(await test.turnEnd("turn")).toEqual(expect.arrayContaining([needle("first.py"), needle("second.py")]));
     }, 30_000);
 
     it("still waits at the turn's end once a tool call waited its bound out, so the turn's steers reach the agent in that turn", async () => {
       const test = await reopenedFixture();
-      try {
-        await test.reopen();
-        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-        expect(await test.outwaited(test.write("first", "first.py"))).toEqual([]);
-        await writeFile(join(test.root, "first.py"), "NEEDLE\n");
-        expect(await test.result("first", "Write")).toEqual([]);
-        vi.useRealTimers();
-        // The rules open while the turn's end waits for them, and its answer carries the skipped edit's steer.
-        const stop = test.turnEnd("turn");
-        test.attachments.workspaces[1]!.release();
-        expect(await stop).toEqual([needle("first.py")]);
-      } finally {
-        await test.close();
-      }
+      await test.reopen();
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      expect(await test.outwaited(test.write("first", "first.py"))).toEqual([]);
+      await writeFile(join(test.root, "first.py"), "NEEDLE\n");
+      expect(await test.result("first", "Write")).toEqual([]);
+      vi.useRealTimers();
+      // The rules open while the turn's end waits for them, and its answer carries the skipped edit's steer.
+      const stop = test.turnEnd("turn");
+      test.attachments.workspaces[1]!.release();
+      expect(await stop).toEqual([needle("first.py")]);
     }, 30_000);
 
     it("waits at the result of an edit whose call its ledger held across a daemon restart, so the edit is steered there", async () => {
       const test = await reopenedFixture();
-      try {
-        expect(await test.write("write", "edited.py")).toEqual([]);
-        await writeFile(join(test.root, "edited.py"), "NEEDLE\n");
-        // The person allows the write after the daemon restarted: its result opens the session again.
-        const { answer } = await test.restart(() => test.result("write", "Write"));
-        test.attachments.workspaces[1]!.release();
-        expect(await answer).toEqual([needle("edited.py")]);
-      } finally {
-        await test.close();
-      }
+      expect(await test.write("write", "edited.py")).toEqual([]);
+      await writeFile(join(test.root, "edited.py"), "NEEDLE\n");
+      // The person allows the write after the daemon restarted: its result opens the session again.
+      const { answer } = await test.restart(() => test.result("write", "Write"));
+      test.attachments.workspaces[1]!.release();
+      expect(await answer).toEqual([needle("edited.py")]);
     }, 30_000);
 
     it("waits at the turn's end, so an edit by a tool Rerail does not know as a writer is steered in the same turn", async () => {
       const test = await reopenedFixture();
-      try {
-        await test.reopen();
-        vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
-        const input = { target: "edited.py" };
-        expect(await test.call("mcp", "mcp__files__save", input)).toEqual([]);
-        await writeFile(join(test.root, "edited.py"), "NEEDLE\n");
-        expect(await test.result("mcp", "mcp__files__save")).toEqual([]);
-        vi.useRealTimers();
-        const stop = test.turnEnd("turn");
-        test.attachments.workspaces[1]!.release();
-        expect(await stop).toEqual([needle("edited.py")]);
-      } finally {
-        await test.close();
-      }
+      await test.reopen();
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const input = { target: "edited.py" };
+      expect(await test.call("mcp", "mcp__files__save", input)).toEqual([]);
+      await writeFile(join(test.root, "edited.py"), "NEEDLE\n");
+      expect(await test.result("mcp", "mcp__files__save")).toEqual([]);
+      vi.useRealTimers();
+      const stop = test.turnEnd("turn");
+      test.attachments.workspaces[1]!.release();
+      expect(await stop).toEqual([needle("edited.py")]);
     }, 30_000);
   });
 
