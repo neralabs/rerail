@@ -2882,13 +2882,14 @@ describe("CodeRuleBridge and Git's own writes", () => {
     ]));
   });
 
-  // A command that restores one file from another branch and commits another as the walk reads Git: the second reading,
-  // made once `HEAD` holds, still finds the restored file Git's, and stands, since `HEAD` names what it read.
+  // A command that restores from another branch a file the tree before its commit lacks, and commits another, as the walk
+  // reads Git: the second reading, made once `HEAD` holds, still finds the restored file Git's, and stands, since `HEAD`
+  // names what it read. A file the tree before the commit has is measured from it instead, and is no write of Git's.
   it("keeps auditing a file its command committed beside one it restored from another branch", async () => {
     const root = await twoBranches();
     const { bridge, auditGeneratedEdits } = await opened(root);
     await shell(bridge, async () => {
-      git(root, "restore", "--source", "other", "--worktree", "src/a.py");
+      await writeFile(join(root, "src", "new.py"), "violation\n");
       await writeFile(join(root, "src", "mine.py"), "mine\n");
       git(root, "add", "src/mine.py");
       whileVerdictsRead(listsBranches, () => git(root, "commit", "--quiet", "-m", "mine"));
