@@ -3533,6 +3533,9 @@ sha) or `program_shared`'s order may hand back the files recorded before the edi
   Typing-support; 0329 records 20 s → under 0.8 s on that 10-file cold run). The merge removes it under 0353, so the
   hub's case is now this item's: measure it on the hub's 10-file cold run before choosing the tape's kind postings or
   an index in the block.
+- **Surveyed** (2026-11-18): t43 (`notes/t43-kind-index-perspective.md`) sets the spike's index against 0353 and
+  t39. Measure first; then one sweep per step for all its kind keys, then an exact code summary per tape block, and
+  kind postings as an optional tape section only if a measured workload still needs them.
 
 ### Q168. (Done) `executors_are_shared` fails on the hub: the join model's prediction makes its own command queue
 
