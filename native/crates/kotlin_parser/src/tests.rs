@@ -328,6 +328,36 @@ fn raw_strings_are_the_lean_parsers() {
 }
 
 #[test]
+fn destructured_parameters_are_the_lean_parsers() {
+    same(&[
+        "val f = m.forEach { (k, v) -> g(k) }\n",
+        "val f = m.map { (_, v) -> v }\n",
+        "val f = { (a, b), c -> a }\n",
+        "fun f() {\n    for ((k, v) in m) g(k)\n}\n",
+        "val x = a as B.C\nval y = 1\n",
+        "fun f() {\n    val d = x as B.C\n    g(d)\n}\n",
+        "fun f() {\n    g(x as B.C)\n}\n",
+        "fun f() {\n    (x as java.nio.Buffer).position(1)\n}\n",
+        "val x = (a as? B.C)?.d\n",
+        "fun f(a: (url: String) -> Unit) {}\n",
+        "val f: (a: Int, b: String) -> Unit = {}\n",
+        "fun f(a: (Int, b: String) -> Unit) {}\n",
+        "fun <T : Any> B.get(): T = x\n",
+        "fun <T : Any> T.f() {}\n",
+    ]);
+}
+
+#[test]
+fn what_step_22_does_not_read_is_refused() {
+    refused(&[
+        "fun f() {\n    val d = x as java.util.List<Int>\n    g(d)\n}\n",
+        "val h: HTML.() -> Unit = {}\n",
+        "fun <T : Comparable<T>> B.f() {}\n",
+        "val <T : Any> List<T>.second: T get() = this[1]\n",
+    ]);
+}
+
+#[test]
 fn what_step_21_does_not_read_is_refused() {
     refused(&[
         "val h = \"\"\"\"a\"\"\"\n",
@@ -352,7 +382,6 @@ fn what_step_20_does_not_read_is_refused() {
         "val s = \"open\n",
         "/* /* nested */ */\npackage a\n",
         "/* open\n",
-        "val f = { (a, b) -> a }\n",
         "val f = { a, -> a }\n",
         "val x = when (y) { else -> 1 }\n",
         "val x = 1d\n",
@@ -363,7 +392,6 @@ fn what_step_20_does_not_read_is_refused() {
         "val x: Int\n    get() = 1\n",
         "fun f() {\n    get(1)\n}\n",
         "fun f(noinline: Int) {}\n",
-        "fun <T : Any> T.f() {}\n",
         "fun String?.h() = 1\n",
         "fun f() {\n    loop@ for (i in a) break@loop\n}\n",
         "val a = b as java.util.List<Int>\n",

@@ -550,6 +550,32 @@ Corpus: 327 the same (step 20: 311), 164 refused, 0 differ. The top refusals are
 template whose code holds a quote, a brace, a comment or a line break (24); a block comment
 before a word with `a`, `e` or `w` (18); and the grammar at `.`, `(` and `constructor`.
 
+## Kotlin, step 22 (`22-destructured-parameters.bitlex`)
+
+```kotlin
+m.forEach { (k, v) -> g(k) }
+for ((k, v) in m) g(k)
+val b = x as java.nio.Buffer
+fun f(a: (url: String) -> Unit) {}
+fun <T : Any> B.get(): T = x
+```
+
+- A lambda's parameter and a `for`'s variable may be a `multi_variable_declaration`.
+- The type after `as` is a dotted name, or one name with type arguments. With both, the lean
+  parser reads a type at a block's end but, where an expression follows on the next line, a
+  comparison over navigation (`x as a` `.b.C < D > g()`). A `<` after a dotted name after
+  `as` is escaped.
+- A function type's parameter is a `parameter` where a name and `:` start it. The mark shares
+  `assign_id`'s, now `named` (a name before `=` or `:`): a code holds 16 marks, and the 15
+  marks and 2 extras were one too many. No assignment or argument holds a name and `:`.
+- A receiver's run (`decl_run`) goes on past a `:` inside the type parameters, so
+  `fun <T : Any> B.f()` reads. Nested type arguments there (`<T : C<T>>`) are still refused.
+
+Still refused: a function type's receiver (`HTML.() -> Unit`), and a property's type
+parameters (`val <T> List<T>.second`).
+
+Corpus: 355 the same (step 21: 327), 136 refused, 0 differ.
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment
