@@ -76,10 +76,12 @@ inline bool code_admits(device const uint* rule,device const DeviceCode& code){
  }
  return true;
 }
-// The roots of the rule at `at` among document `d`'s nodes 64*group.. (file `file` of the batch), as bits.
-inline ulong root_mask(device const uchar* s,DocView d,device const uint* roots,uint at,uint file,uint group){
+// The roots of the rule at `at` among document `d`'s nodes 64*group + lo .. 64*group + hi (file `file` of the batch),
+// as bits of the group's 64.
+inline ulong root_mask_in(device const uchar* s,DocView d,device const uint* roots,uint at,uint file,uint group,uint lo,uint hi){
  uint from=group*ROOT_GROUP;if(from>=d.nodes)return 0ul;
- uint count=min(ROOT_GROUP,d.nodes-from);
+ uint count=min(ROOT_GROUP,d.nodes-from);hi=min(hi,count);if(lo>=hi)return 0ul;
+ ulong keep=hi-lo==64u?~0ul:(((1ul<<(hi-lo))-1ul)<<lo);
  ulong mask=0ul;
  if(roots[at]!=0u){
   device const uint* row=roots+at+1u;uint b=d.node_base+from,w=b/32u,sh=b%32u;
@@ -89,18 +91,21 @@ inline ulong root_mask(device const uchar* s,DocView d,device const uint* roots,
   uint files=roots[0];
   if(((roots[at+1u+file/32u]>>(file%32u))&1u)==0u)return 0ul;
   device const uint* rule=roots+at+1u+(files+31u)/32u;
-  for(uint k=0u;k<count;k++)if(code_admits(rule,tape_code(s,d,from+k)))mask|=1ul<<k;
+  for(uint k=lo;k<hi;k++)if(code_admits(rule,tape_code(s,d,from+k)))mask|=1ul<<k;
  }
- return count==ROOT_GROUP?mask:(mask&((1ul<<count)-1ul));
+ return mask&keep;
 }
+// The roots among all the group's nodes.
+inline ulong root_mask(device const uchar* s,DocView d,device const uint* roots,uint at,uint file,uint group){return root_mask_in(s,d,roots,at,file,group,0u,ROOT_GROUP);}
 // The lowest set bit of a mask.
 inline uint root_ctz(ulong m){uint low=uint(m);return low!=0u?ctz(low):32u+ctz(uint(m>>32u));}
 // Each root of a mask, document-local: `ROOTS_EACH(mask, group, local) { ... }`. One loop over the
 // mask (a fixed two-trip loop over its halves was unrolled, the body compiled twice).
 #define ROOTS_EACH(MASK,GROUP,LOCAL) for(ulong rootBits=(MASK);rootBits!=0ul;rootBits&=rootBits-1ul)for(uint LOCAL=(GROUP)*ROOT_GROUP+root_ctz(rootBits),rootOnce=0u;rootOnce==0u;rootOnce=1u)
-// A SIMD group's roots, spread over its lanes (decision 0293 §10, work queue Q53). Each lane makes its own group's
-// mask, as above; the SIMD group then numbers all its lanes' roots (lane order, then bit order), and round `r`
-// gives lane `l` root `32r + l`. The roots are as dense over the lanes as a list of them would be, and nothing lists
+// A SIMD group's roots, spread over its lanes (decision 0293 §10, work queue Q60). Each lane makes its own mask (a
+// micro walk's lane its share of its group's nodes, `root_mask_in`; a pattern's lane its own group's);
+// the SIMD group then numbers all its lanes' roots (lane order, then bit order), and round `r` gives lane `l` root
+// `32r + l`. The roots are as dense over the lanes as a list of them would be, and nothing lists
 // them: a thread looping over its group's roots ran up to 64 walks one after another, and a SIMD group lasted as long
 // as its longest lane's sum. Every lane of the SIMD group calls these together (they shuffle); a lane past the
 // items holds an empty mask, and only lanes past the grid's end are missing (`active` counts the others).

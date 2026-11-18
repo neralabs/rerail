@@ -424,6 +424,11 @@ impl Ticket {
     }
 
     /// The job runs on this thread from now: its clock is read here, and what the thread counted before is not its.
+    /// CPU seconds the job spent on a thread that did not resume it (its submission run on the lanes' pool).
+    pub fn add_cpu(&mut self, seconds: f64) {
+        self.cpu += seconds.max(0.0);
+    }
+
     pub fn resume(&mut self) {
         take_phases();
         self.cpu0 = Some((std::thread::current().id(), thread_cpu()));
@@ -567,7 +572,7 @@ impl Scoreboard {
             if t.lane != Lane::Cpu && ok && !cold {
                 u.job_cpu = Some(u.job_cpu.map_or(cpu, |a| a + AVG * (cpu - a)));
             }
-            if ok && !cold && host_est > 0.0 && t.items.iter().all(|i| i.units > 0.0) {
+            if ok && !cold && host_est > 0.0 && t.items.iter().all(|i| i.units > 0.0 && !crate::price::host_learned(i.form, t.lane)) {
                 let r = (cpu / host_est).clamp(0.05, 50.0);
                 u.host_ratio = Some(u.host_ratio.map_or(r, |a| a + AVG * (r - a)));
             }
@@ -581,8 +586,12 @@ impl Scoreboard {
         // A job with no units (a stream's: `strata`, the whole strata loop) prices nothing, and its wall would be
         // fitted as its lane's submission: not kept.
         let units: f64 = t.items.iter().map(|i| i.units).sum();
+        let cold = phases.iter().any(|p| matches!(p.0, "pipeline compile" | "pipeline wait" | "new buffer"));
+        // The run prices its later launches from this one (`price::observe`): one kernel name's jobs only.
+        if units > 0.0 && t.items.windows(2).all(|w| w[0].form == w[1].form) && let Some(first) = t.items.first() {
+            crate::price::observe(t.lane, first.form, t.items.len() as u32, units, ran, cpu, crate::exec::cores_slowdown(), cold, ok);
+        }
         if KEEP.load(Ordering::Relaxed) && units > 0.0 {
-            let cold = phases.iter().any(|p| matches!(p.0, "pipeline compile" | "pipeline wait" | "new buffer"));
             let sample = Sample {
                 lane: t.lane,
                 forms: t.items.iter().map(|i| i.form).collect::<Vec<_>>().join(","),

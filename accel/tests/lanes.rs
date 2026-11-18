@@ -479,6 +479,61 @@ fn a_device_begins_its_next_submission_before_it_reads_the_last() {
     assert_eq!(kinds, ["start", "start", "end", "end"], "the second began while the first was in flight");
 }
 
+/// A "device" whose submissions run to their end as they begin (a program that commits and waits for its own
+/// command buffers), logging when each ended.
+struct AtOnce {
+    delay: std::time::Duration,
+    log: Arc<std::sync::Mutex<Vec<(&'static str, std::time::Instant)>>>,
+}
+
+struct Finished(Vec<rerail_accel::kernel::Output>);
+
+impl rerail_accel::exec::Pending for Finished {
+    fn finish(self: Box<Self>) -> Result<Vec<rerail_accel::kernel::Output>, String> {
+        Ok(self.0)
+    }
+    fn done(&self) -> bool {
+        true
+    }
+}
+
+impl rerail_accel::exec::Backend for AtOnce {
+    fn lane(&self) -> Lane {
+        Lane::Gpu
+    }
+    fn can(&self, _: &Kernel) -> bool {
+        true
+    }
+    fn submit(&self, ks: &[&Kernel]) -> Result<Vec<rerail_accel::kernel::Output>, String> {
+        std::thread::sleep(self.delay);
+        self.log.lock().unwrap().push(("ran", std::time::Instant::now()));
+        Ok(ks.iter().map(|k| cpu::run(k)).collect())
+    }
+    fn start<'a>(&'a self, ks: &[&Kernel]) -> Result<Box<dyn rerail_accel::exec::Pending + 'a>, String> {
+        Ok(Box::new(Finished(self.submit(ks)?)))
+    }
+}
+
+/// A submission that ran to its end as it began is handed back at once: held in flight, its caller waited for the
+/// next submission's whole run too (2026-11-17: each chunk's GPU matcher wave waited for another chunk's).
+#[test]
+fn a_device_hands_back_a_submission_that_ran_as_it_began_before_the_next() {
+    use rerail_accel::exec::CpuBackend;
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let ex = Executor::with(vec![Arc::new(CpuBackend::default()), Arc::new(AtOnce { delay: std::time::Duration::from_millis(300), log: Arc::clone(&log) })]);
+    let mut rng = Rng(0xd3);
+    let (a, b) = (probe(&mut rng, 100), probe(&mut rng, 120));
+    let want = [cpu::run(&a), cpu::run(&b)];
+    let ra = ex.begin(Batch(vec![Launch::on(a, Lane::Gpu)])).unwrap();
+    let rb = ex.begin(Batch(vec![Launch::on(b, Lane::Gpu)])).unwrap();
+    let (da, _) = ra.wait().unwrap();
+    log.lock().unwrap().push(("read", std::time::Instant::now()));
+    let (db, _) = rb.wait().unwrap();
+    assert_eq!((&da[0].out, &db[0].out), (&want[0], &want[1]));
+    let kinds: Vec<&str> = log.lock().unwrap().iter().map(|e| e.0).collect();
+    assert_eq!(kinds, ["ran", "read", "ran"], "the first's outputs came back before the second ended");
+}
+
 /// A program of the caller's (`Kernel::Program`): its result says which lane's form ran it.
 struct Where {
     units: f64,
@@ -593,4 +648,146 @@ fn learned_rates_come_from_warm_samples_of_one_kernel() {
     assert_eq!(fitted.len(), 1, "{fitted:?}");
     assert_eq!((fitted[0].name.as_str(), fitted[0].lane, fitted[0].samples), ("test-learned-span", Lane::Gpu, MIN_SAMPLES));
     assert!((fitted[0].per_unit - 2e-9).abs() < 1e-12, "{}", fitted[0].per_unit);
+}
+
+/// A program that holds its lane's host for `hold` (a wave's encoding and its wait on the device), and says which
+/// thread ran it.
+struct Holds(std::time::Duration);
+
+impl rerail_accel::kernel::Program for Holds {
+    fn name(&self) -> &'static str {
+        "a test's holding program"
+    }
+    fn units(&self) -> f64 {
+        1.0
+    }
+    fn per_unit(&self, lane: Lane) -> Option<f64> {
+        matches!(lane, Lane::Gpu).then_some(1e-3)
+    }
+    fn run(&self, _: Lane) -> Result<rerail_accel::kernel::ProgramOutput, String> {
+        std::thread::sleep(self.0);
+        Ok(Arc::new(std::thread::current().id()))
+    }
+}
+
+/// Two batches of programs on the GPU lane run side by side (decision 0344): its worker begins the second while
+/// the first runs on the lanes' pool, so one's host part runs beside the other's command buffers. Before, a
+/// program ran as it began and the lane took one at a time.
+#[test]
+fn the_gpu_lane_runs_a_program_beside_the_one_before() {
+    let ex = Executor::new();
+    if !ex.lanes().contains(&Lane::Gpu) {
+        return;
+    }
+    let hold = std::time::Duration::from_millis(300);
+    let program = || Kernel::Program(rerail_accel::kernel::ProgramKernel(Arc::new(Holds(hold))));
+    let t0 = std::time::Instant::now();
+    let ra = ex.begin(Batch(vec![Launch::on(program(), Lane::Gpu)])).unwrap();
+    let rb = ex.begin(Batch(vec![Launch::on(program(), Lane::Gpu)])).unwrap();
+    let (da, _) = ra.wait().unwrap();
+    let (db, _) = rb.wait().unwrap();
+    let took = t0.elapsed();
+    assert!(da[0].lane == Lane::Gpu && db[0].lane == Lane::Gpu);
+    let thread = |d: &rerail_accel::exec::Done| match &d.out {
+        rerail_accel::kernel::Output::Program(r) => *r.0.downcast_ref::<std::thread::ThreadId>().expect("a thread id"),
+        other => panic!("not a program's result: {other:?}"),
+    };
+    assert_ne!(thread(&da[0]), thread(&db[0]), "each ran on a thread of the lanes' pool");
+    assert!(took < hold * 2 - hold / 3, "the two ran side by side: {took:?} for two of {hold:?}");
+}
+
+/// A program's price learns from the run's own launches (`price::observe`): before `RUN_MIN_SAMPLES` of them, its
+/// prior; after, its launches' median wall and host CPU a unit, which a stored rate read later does not replace.
+#[test]
+fn a_programs_price_learns_from_the_runs_own_launches() {
+    use rerail_accel::price::{MIN_SAMPLES, Prices, RUN_MIN_SAMPLES, learn_from, observe};
+    struct Priced;
+    impl rerail_accel::kernel::Program for Priced {
+        fn name(&self) -> &'static str {
+            "test-observed-program"
+        }
+        fn units(&self) -> f64 {
+            1e6
+        }
+        fn per_unit(&self, lane: Lane) -> Option<f64> {
+            matches!(lane, Lane::Gpu).then_some(5e-8)
+        }
+        fn run(&self, _: Lane) -> Result<rerail_accel::kernel::ProgramOutput, String> {
+            Ok(Arc::new(()))
+        }
+    }
+    let prices = Prices::default();
+    let k = Kernel::Program(rerail_accel::kernel::ProgramKernel(Arc::new(Priced)));
+    let fixed = prices.fixed[Lane::Gpu.index()];
+    let prior = prices.wall(&k, Lane::Gpu).unwrap();
+    assert!((prior - (fixed.launch + 5e-8 * 1e6)).abs() < 1e-9, "the prior: {prior}");
+    // A launch measured: 1e-8 s a unit of wall, 2e-9 of host CPU.
+    let measured = |n: usize| {
+        for _ in 0..n {
+            observe(Lane::Gpu, "test-observed-program", 1, 1e6, fixed.submission + fixed.launch + 1e-8 * 1e6, 2e-9 * 1e6, 3.0, false, true);
+        }
+    };
+    measured(RUN_MIN_SAMPLES - 1);
+    assert_eq!(prices.wall(&k, Lane::Gpu).unwrap(), prior, "too few of the run's samples: still the prior");
+    measured(1);
+    let wall = prices.wall(&k, Lane::Gpu).unwrap();
+    assert!((wall - (fixed.launch + 1e-8 * 1e6)).abs() < 1e-9, "the run's rate: {wall}");
+    let host = prices.host(&k, Lane::Gpu, true).unwrap();
+    let host_fixed = prices.host[Lane::Gpu.index()];
+    assert!((host - (host_fixed.launch + 2e-9 * 1e6)).abs() < 1e-9, "the run's host CPU: {host}");
+    // A stored rate read after does not replace the run's.
+    let stored = rerail_accel::score::Sample {
+        lane: Lane::Gpu,
+        forms: "test-observed-program".into(),
+        launches: 1,
+        units: 1e6,
+        estimate: 0.0,
+        host_estimate: 0.0,
+        wall: fixed.submission + fixed.launch + 9e-8 * 1e6,
+        cpu: 0.0,
+        waited: 0.0,
+        phases: String::new(),
+        cold: false,
+        ok: true,
+        load: 1.0,
+        threads: 1,
+    };
+    learn_from(&vec![stored; MIN_SAMPLES]);
+    assert_eq!(prices.wall(&k, Lane::Gpu).unwrap(), wall, "the run's rate stays");
+    // The lane's host ratio corrects priors, not a learned line.
+    let mut load = rerail_accel::price::Load { open: [true; Lane::COUNT], ..Default::default() };
+    load.host_scale[Lane::Gpu.index()] = 50.0;
+    let cost = prices.cost(&k, Lane::Gpu, &load).unwrap();
+    assert!((cost.host - host).abs() < 1e-12, "a learned host CPU is not scaled: {} against {host}", cost.host);
+}
+
+/// A program's launches cost a fixed part and a part a unit: the fit finds both (the GPU's matcher wave: about 10 ms
+/// a launch, 1e-8 s a unit), and a few outliers (a launch that waited on a busy machine) do not move it.
+#[test]
+fn a_rate_is_a_launchs_fixed_cost_and_a_units() {
+    let (a, b) = (0.010, 1e-8);
+    let mut points: Vec<(f64, f64)> = [1e5, 3e5, 1e6, 2e6, 4e6, 6e6, 8e6, 1.2e7].iter().map(|&x| (x, a + b * x)).collect();
+    points.push((1e6, 0.5));
+    points.push((2e5, 0.3));
+    let (fa, fb) = rerail_accel::price::line(&points);
+    assert!((fa - a).abs() < 1e-3 && (fb - b).abs() < 1e-9, "{fa} + {fb} x");
+    // One size of launch: a rate a unit through the origin.
+    let (fa, fb) = rerail_accel::price::line(&[(1e6, 0.02); 8]);
+    assert!(fa == 0.0 && (fb - 2e-8).abs() < 1e-15, "{fa} + {fb} x");
+}
+
+/// A cores sample is fitted net of the load it ran under: the price multiplies by the load when it prices, so the
+/// rate is the unloaded one.
+#[test]
+fn a_cores_rate_is_fitted_net_of_the_load_it_ran_under() {
+    use rerail_accel::price::{Prices, RUN_MIN_SAMPLES, observe};
+    let k = program(1e6, Some(1e-6), None);
+    let prices = Prices::default();
+    let fixed = prices.fixed[Lane::Cpu.index()];
+    for _ in 0..RUN_MIN_SAMPLES {
+        // 4e-8 s a unit of wall, run under a slowdown of 4.
+        observe(Lane::Cpu, "a test's program", 1, 1e6, fixed.submission + fixed.launch + 4e-8 * 1e6, 0.0, 4.0, false, true);
+    }
+    let wall = prices.wall(&k, Lane::Cpu).unwrap();
+    assert!((wall - (fixed.launch + 1e-8 * 1e6)).abs() < 1e-9, "the unloaded rate: {wall}");
 }

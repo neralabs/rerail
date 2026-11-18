@@ -536,6 +536,8 @@ struct Shape {
     queue: u32,
     /// A walk's steps between spills (`SPILL_BUDGET`).
     budget: u32,
+    /// The lanes a micro walk's item takes (`Runner::walk`, `ROOT_LANES`): a power of two up to 32; 0 is 1.
+    lanes: u32,
 }
 
 /// A walk's steps before it spills a frame, and between spills: well past a short walk's (most take
@@ -836,6 +838,14 @@ const MICRO_POOL: usize = 4096;
 /// (`simd_roots`), and every pool and stack count here is a multiple of it.
 const SIMD_WIDTH: usize = 32;
 const _: () = assert!(MICRO_POOL % SIMD_WIDTH == 0 && MICRO_DEEP_POOL % SIMD_WIDTH == 0);
+/// The lanes a micro walk's item (a group of 64 nodes) takes in each tier (`Shape::lanes`): each lane finds the roots
+/// among its share of the group's nodes, and the SIMD group walks all its lanes' roots. The short walks' tiers
+/// take a SIMD group an item: a thread an item gave their dispatches a 32nd of the threads (at s1000, `label_micro_8`
+/// 179 ms against 94; work queue Q62). The loop tier's pool is 4,096 threads whatever its items, and its groups hold
+/// few roots (about 6 at s1000): 1, 4 and 32 lanes an item measured the same there (at load 70–95), so it keeps a
+/// thread an item.
+const TIER_LANES: [usize; 3] = [32, 32, 1];
+const _: () = assert!(TIER_LANES[0] <= SIMD_WIDTH && TIER_LANES[1] <= SIMD_WIDTH && TIER_LANES[2] <= SIMD_WIDTH);
 const MICRO_STACK_WORDS: usize = 64 * 17;
 /// The pooled stacks' words (`Runner::stacks`), shared by every tier and the root walks: a tier
 /// of `frames` frames of `words` words each runs this many lanes (32,768 of 8 micro frames).
@@ -1112,7 +1122,7 @@ pub(in crate::code_rule_dsl) fn run(plan: &Plan<'_>, files: &[TapeDoc]) -> Resul
 }
 
 fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
-    let _evaluation = super::super::metal_backend::metal_execution_guard()?;
+    let _evaluation = super::super::metal_backend::evaluation_scope();
     let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
     // A level's launches: the programs' dispatch and sink, the derived labels, the settle.
     let launches = |level: &Vec<Pass<'_>>| {
@@ -1758,12 +1768,14 @@ impl Runner<'_> {
     fn size(&mut self, plan: &Plan<'_>) -> Result<(), Error> {
         let mut widest_seen: Option<(WorkspaceTotals, u32, u32, usize)> = None;
         // Every pass's roots as rules, in one buffer for the run, before anything binds it.
+        let _roots = crate::code_rule_dsl::prof::Stage::start("size.root_table");
         for pass in plan.steps.iter().flat_map(|(_, levels)| levels).flatten() {
             if let Pass::Program { roots, .. } | Pass::Count { roots, .. } | Pass::Pattern { roots, .. } = pass {
                 self.root_table.of(roots, self.files)?;
             }
         }
         self.root_table.prefix(self.files);
+        drop(_roots);
         crate::code_rule_dsl::prof::count("size.root_words", self.root_table.words.len());
         self.root_words = Some(MappedBuffer::from_slice(self.device, &self.root_table.words)?);
         // A sweeping group is one batch of all its programs, by its address; a level is one by
@@ -1805,6 +1817,7 @@ impl Runner<'_> {
                 // walk (multi-target packing, t1 spec-fusion §2.6, §4.3, §4.4; the host's
                 // `matcher::Packs`): an emit marks its member's row (by emit label, `rows`).
                 let packs = {
+                    let _packs = crate::code_rule_dsl::prof::Stage::start("size.fuse");
                     let mut by = std::collections::BTreeMap::<(usize, u32), Vec<usize>>::new();
                     for (at, &(program, roots, mode, _)) in passes.iter().enumerate() {
                         if mode <= 1 && Micro::of(program).is_some() {
@@ -1833,13 +1846,15 @@ impl Runner<'_> {
                     // The rule, shared by passes of its domain; a thread a group of the batch.
                     let Ok((start, any)) = root_table.at(roots) else { return true };
                     let count = if any { root_table.groups() } else { 0 };
+                    // The profile counts the groups a walk launches, which the rule gives; the roots it visits are
+                    // the device's own count (`walk_items.*`). Counting them here walked every root node of every
+                    // file for every pass: 173 of `gpu.size`'s 217 ms on s1000 (2026-11-17).
                     if crate::code_rule_dsl::prof::on() {
-                        let count = (0..files.len()).map(|file| roots.nodes(file, &files[file]).count()).sum::<usize>();
                         let depth = walk.depth().map_or("loop".to_owned(), |depth| format!("{:02}", depth.min(64)));
                         if walk.depth().is_none() && std::env::var_os("RERAIL_DUMP_LOOP").is_some() {
                             eprintln!("LOOP {:?}", walk.ops());
                         }
-                        crate::code_rule_dsl::prof::count_named(format!("depth.{depth}"), count);
+                        crate::code_rule_dsl::prof::count_named(format!("depth_groups.{depth}"), count as usize);
                     }
                     // The walk's slots as rows of `texts`, contiguous from `text_start`; a row
                     // already computed for another pass is copied.
@@ -1865,7 +1880,7 @@ impl Runner<'_> {
                         };
                         let Some(row) = row else {
                             if crate::code_rule_dsl::prof::on() {
-                                crate::code_rule_dsl::prof::count_named(format!("unslotted.{key}"), count as usize);
+                                crate::code_rule_dsl::prof::count_named(format!("unslotted_groups.{key}"), count as usize);
                             }
                             return true;
                         };
@@ -1904,6 +1919,7 @@ impl Runner<'_> {
                     }
                     false
                 };
+                let _placing = crate::code_rule_dsl::prof::Stage::start("size.place");
                 let mut unpacked = vec![false; passes.len()];
                 let mut placed = 0_usize;
                 for (program, members, rows) in &packs {
@@ -1929,6 +1945,7 @@ impl Runner<'_> {
                     placed += usize::from(!alone);
                     alone
                 });
+                drop(_placing);
                 if !words.is_empty() {
                     if texts.is_empty() {
                         texts.push(0);
@@ -2131,13 +2148,13 @@ impl Runner<'_> {
                         }
                     }
                     let count = (constraints.len() / 2) as u32 - start;
-                    // One item for the pass: a thread a group of the batch's nodes, which finds its
-                    // roots from the rule.
+                    // One item for the pass: `LANES` threads a group of the batch's nodes, which find
+                    // its roots from the rule.
                     let (rule, any) = self.root_table.at(roots)?;
                     if any {
                         let group = *pattern / patterns::GROUP;
                         matches[group].extend([*pattern as u32, row, rule, start, count, pattern_threads[group]]);
-                        pattern_threads[group] += self.root_table.groups();
+                        pattern_threads[group] += self.root_table.groups() * patterns::LANES as u32;
                     }
                     Op {
                         target: place(target),
@@ -2703,10 +2720,12 @@ impl Runner<'_> {
         if crate::code_rule_dsl::prof::on() {
             crate::code_rule_dsl::prof::count_named(format!("items.tier{tier}"), threads);
         }
+        let lanes = TIER_LANES[tier];
+        shape.lanes = lanes as u32;
         let (pipeline, threads) = match tier {
-            2 if self.deep => (DEEP_KERNEL, threads.min(MICRO_DEEP_POOL)),
-            2 => (TIER_KERNELS[2], threads.min(MICRO_POOL)),
-            _ => (TIER_KERNELS[tier], threads.min(stack_lanes(TIER_FRAMES[tier], 17))),
+            2 if self.deep => (DEEP_KERNEL, (threads * lanes).min(MICRO_DEEP_POOL)),
+            2 => (TIER_KERNELS[2], (threads * lanes).min(MICRO_POOL)),
+            _ => (TIER_KERNELS[tier], (threads * lanes).min(stack_lanes(TIER_FRAMES[tier], 17))),
         };
         self.kernel(pipeline, &buffers, shape, threads);
         self.walk_bind = None;

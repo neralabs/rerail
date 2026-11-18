@@ -1413,6 +1413,57 @@ transducer crate, which the engine's `waves::matches` test calls; now `pub`). Co
   the CPU.
 - **Done when**: the next launch is encoded while the GPU runs this one, and the matcher's GPU price comes from
   measured samples.
+- **Progress** (2026-11-17, after merging oscar f15aac19d, the hub at 69fcd347d and Native-and-GPU-strata at
+  004e3fddc; s1000 internal_dead_code, the wave pinned to the GPU, format 16, load about 11):
+  - Nothing on another branch pipelines a program's launches: the GPU backend's `start` overlaps joins only
+    (`space::start`), and a program's `run` is synchronous. The merges brought 0321 (placement leans to the GPU)
+    and 0325 step 3 (the device reads relations in their blocks, no uploads).
+  - The wave's clause roots are now a rule the device reads (`ClauseRoots::Rule`, `Roots::Codes`), not lists the
+    host made by testing every node (0293 §10), and the found roots are read from the label's words by their set
+    bits. Same 97,241,194 steps and 0 findings; the lane's numbers did not move (0.31 s of job CPU), so the lists
+    were not the host's cost.
+  - The lane now: 18 launches, 1,208 ms of wall = 311 ms of host CPU + 361 ms of the label passes' command
+    buffers on the GPU + about 540 ms of waiting beyond both. The host's largest part is `gpu.size` (113 ms over
+    19 runs, the workspace sized on the host); encode and the tapes' buffers take 14 ms each. The waiting looks
+    like the one queue shared with the strata 0321 now places on the GPU; this profile cannot tell which.
+  - **The waiting found and fixed** (2026-11-17, load about 21–25): it was the lane's worker. Two submissions deep
+    (0100 §11), it kept every submission in flight until it had begun the next, but a program's `start` runs the
+    whole program (`Done`). So with two chunks' waves queued, the first's outputs went back only after the second
+    had run to its end: each wave's caller waited a whole other wave, and the lane's wall counted it twice. A
+    `Pending` now says whether it is `done`; one that is (or failed to begin) is handed back at once
+    (`exec::worker`; test `a_device_hands_back_a_submission_that_ran_as_it_began_before_the_next`). Alternating
+    runs of the same engine with and without it: the lane 0.73–0.79 s of wall against 1.09–1.20 s, and the run 2.8–2.9 s
+    against 2.9–3.3 s. The lane's wall now equals the wave's own (`== Device`), about 315 ms of GPU, 320 ms of host
+    CPU and 150 ms off a core. `RERAIL_GPU_KERNEL_TIMES` (a command buffer a kernel) was not it: without it the
+    waiting was the same.
+  - **The overlap, the lock, the sizing and the price** (2026-11-17, the user: "do we really need a process-wide
+    Metal execution lock? Shouldn't we take leases on the resources instead?"):
+    - The lock is gone (0344): runs hold leases on the memory they write. The GPU backend's `start` runs a batch of
+      programs on a slot pool of its own, so the worker begins the next wave beside it. On s1000, 6 to 8 of 19 wave
+      batches began while another ran.
+    - `gpu.size` was 173 of its 217 ms in the profile's own count, which walked every root node of every file for
+      each pass. It now counts the groups each walk launches; the real sizing is about 45–60 ms, most of it text rows
+      (`size.texts`).
+    - A program's price learns from the run's own launches (`price::observe`, from 4 samples). Wall and host CPU are
+      each a robust line: a launch's fixed cost plus a unit's. The wave on the GPU: about 6 ms + 1.1–2.0e-8 s a unit of
+      wall, 4.3 ms + 4e-9 s of host CPU. The cores' samples are fitted net of their load, and the lane's host ratio
+      no longer scales a learned host price. The wave's priors are today's measurements.
+    - **Open**: with two waves in flight, a launch's wall includes the time it shares the device, so the per-launch
+      estimates sum past the lane's span (2.36 s against 1.00 s pinned). Placement still treats the GPU lane as one
+      queue, so an unpinned run sent 10 of 20 waves to the cores while the GPU lane looked busy.
+- **Two blockers to the overlap, found** (both resolved by 0344: no lock, and no begin/finish split of the label
+  passes; a program's whole run is the spawned submission):
+  - `rerail_metal::metal_execution_guard` (a process-wide lock from the grid's launch budget, copied from Tempo)
+    is held for a whole label run, encode through readback. A launch begun on the worker (encode and commit in
+    `start`, wait and decode in `finish`) would hold it while the worker begins the next, which then waits on the
+    same lock on the same thread. The lock must end at the commit. The label passes' own process state is behind
+    mutexes (pipelines) or test-only thread-locals; the packed program backend's arenas need checking first.
+  - `label_passes::run_in_pool` loops around `encode` (more rounds, wider lanes, deeper stacks), so its loop state
+    must move into the begun run's `finish` with the plan, which the runner does not borrow (it borrows the device
+    and the tapes only).
+- **Next**: `kernel::Program::begin` (default: run now) and the GPU backend's `start` beginning a batch of programs;
+  `MatcherWave::begin` on the GPU; the lock narrowed to the encode; `gpu.size`'s host part (the text rows and the
+  root table, rebuilt every run).
 
 ### Q54. (Q20 at f51cab698) The CPU JIT's capture pairs compare and scan a byte a step
 
@@ -1462,6 +1513,41 @@ Their siblings, found later the same day (0310 steps 4 and 5):
   - a device test fails on a walk whose steps change (uncompilable MSL fails
     `the_label_kernels_compile_for_every_format` since 2026-11-16);
   - the label passes at s1000 match the hub tree's 292 ms or beat it.
+- **Progress** (2026-11-17):
+  - Format 16 is the default (0340).
+  - The generated MSL is structured control flow, not a dispatch loop (t41, "The generated code as structured
+    control flow"). That took the label passes from 710 to 349 ms, and `label_micro` from 355 to 159 ms, under the
+    hand-written reads' 211.
+  - Left: `label_micro_8`'s parent climbs (171 against the hub's 91), and the walk test.
+  - **The parent climb, read** (2026-11-17): format 16's parent (`reads.rs`, `parent16`) is at most `K - 1 = 7`
+    sibling steps back, each a slot read whose address depends on the one before: a memory latency a step.
+    Every language's slots are one byte (`tables/*.tsv`, `widths 1 1 1`), so a step back over a sibling of 64
+    nodes or more escapes to the side list (`tape_f16_side`): a binary search of up to 8 dependent byte loads, then
+    the value. The view is a thread copy (`thread const uint* v`), so its loads are not the cost. The hub's 91 ms
+    read a parent column, a decoded structure the tape-in-place rule refuses.
+  - **Next, in shape**: a walk's thread runs one window of 64 consecutive nodes (0293 §10). The window's parents
+    come from one forward pass over its slots (8 slots a word load, a stack of open ancestors in thread memory),
+    and `parent` of a node in the window is a read of that, not a climb. That is the walk kernel's change Q60
+    asks for too (a group's roots as a SIMD group's), so it goes with Q60. The side lookup's search can be a word
+    compare (SWAR, the offsets 8 a load) for every escaped read, sizes and gaps included; worth it only if the
+    escapes are a large share, which the device does not count yet (a `walk_escapes` counter beside
+    `walk_steps`).
+  - **The spike** (2026-11-17, decision 0359): the parent climb is not the cost.
+    - An oracle parent column (every parent made by a kernel before the walks) gained nothing (220 ms against
+      172–217 ms), and neither did the window pass (170 ms).
+    - Counted: 4.0 M climbs in 97 M steps, 1.8 hops each, 92% inside the start's window.
+    - The cost was the dispatch's shape: a thread a 64-node group gave `label_micro_8` about 8,800 threads a launch.
+      A group's nodes are now a SIMD group's in the short tiers: `label_micro_8` 88–134 ms, the hub engine's
+      75–107 ms, with the same walks.
+    - `clause_patterns`: a pass's group takes 4 threads and a fact's root one, so no lane idles for a fact. 6.8 →
+      2.1–2.5 ms, under the hub engine's 3.0–3.2.
+    - Nothing is precomputed, parents included (the user): the oracle column was a measurement bound only.
+  - **Left:**
+    - the walk test (a device test that fails on a walk whose steps change);
+    - the reads' widths;
+    - `lowered_clauses_find_the_same_roots_on_the_resident_interpreter` fails on
+      `ruff-d416-missing-section-name-colon/missing-colon-underlined` (`BackendFailure`) without this change too.
+      It was hidden while the engine's `metal-tests` build did not compile (`crate::test_languages`, fixed).
 
 ### Q61. (Q54 at 8e2b232ad) Oscar's engine stops on the data-layer corpus in `step_histograms` (to check on the merged tree)
 
@@ -1489,8 +1575,14 @@ files) compare Metal with the CPU interpreter. They ran only on the grid machine
 product runs, 79 of 115 pass, 18 fail on Q49's work limit, and 18 fail in the ways below. Each is ignored with
 "Q64". The JIT itself did not change with the grid's retirement, so these differences were there before.
 
-- **Refused (`BackendCapacity`)**, where the CPU runs the batch (15). The cause is not traced: it may be Q49's
-  estimate sizing the workspace, or another of the JIT's caps.
+- **Refused (`BackendCapacity`)**, where the CPU runs the batch (15). Traced (2026-11-17): the refusal is the
+  device's. A task's status 2 is `reserve_shared` finding a shared arena full (`metal_batch_runtime.metal`), and
+  `packed_batch` maps it to `BackendCapacity`. None of the host's capacity checks fires. So the arenas are sized
+  short for these batches, perhaps by Q49's estimate.
+  Four of `packed::tests` refuse the same way, and their CPU parity is still asserted (`metal()`, with "Q64"):
+  `scm_quantified_runs_preserve_each_distinct_middle_capture`, `cpu_jit_compiles_general_scm_control_flow`,
+  `scm_host_predicates_filter_text_kinds_lines_and_relations` and
+  `all_backends_execute_every_verified_instruction_and_mode`.
   - `corpus_optional_test_bodies_and_regex_injections_match_cpu`
   - `finite_literal_register_work_stays_broad_across_programs_and_files`
   - `inputs_absent_field_uses_shared_facts_for_wide_and_file_local_inputs`
@@ -1506,10 +1598,6 @@ product runs, 79 of 115 pass, 18 fail on Q49's work limit, and 18 fail in the wa
   - `inputs_shared_root_predicates_intern_values_and_need_no_frontier_records`
   - `inputs_small_automata_defer_long_inputs_into_shared_value_frontiers`
   - `shared_ancestor_sets_exclude_self_cross_scan_groups_and_file_boundaries`
-  - and, found at the hub's merge of f15aac19d (46e5b3abc + oscar), four of `packed::tests` whose Metal parity
-    ran on the grid and now runs the packed JIT, ignored on macOS (their CPU parity still runs elsewhere):
-    `all_backends_execute_every_verified_instruction_and_mode`, `cpu_jit_compiles_general_scm_control_flow`,
-    `scm_host_predicates_filter_text_kinds_lines_and_relations`, `scm_quantified_runs_preserve_each_distinct_middle_capture`.
 - **Failed (`BackendFailure`)** in output directives (2): transformed text snapshots, and a selection with
   zero-length MIME values.
   - `selection_handles_empty_groups_missing_targets_and_zero_length_mime_values`

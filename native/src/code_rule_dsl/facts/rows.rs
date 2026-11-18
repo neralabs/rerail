@@ -627,7 +627,10 @@ impl Rows {
     #[inline(always)]
     fn part_of(&self, id: u32) -> (&Part, u32) {
         if id >= self.from {
-            return (self.tail.as_ref().expect("a row of the tail"), id - self.from);
+            let Some(tail) = self.tail.as_ref() else {
+                panic!("row {id} of a relation of {} rows ({} values a row, the tail from {}, {} segments): past its rows", self.rows(), self.k, self.from, self.segs.len())
+            };
+            return (tail, id - self.from);
         }
         let (first, p) = match &self.segs[..] {
             [only] => only,
@@ -712,6 +715,18 @@ impl std::fmt::Debug for Row {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An empty kept relation keeps its width: one started from it holds the rows pushed to it (it dropped them when
+    /// the width came from the rows, none for no rows).
+    #[test]
+    fn a_relation_started_from_an_empty_one_keeps_its_rows() {
+        let kept = Rows::frozen(3, Vec::new(), 0);
+        let mut next = kept.shared(0);
+        next.extend_from_slice(&[1, 2, 3, 4, 5, 6]);
+        assert_eq!(next.rows(), 2);
+        assert_eq!(*next.row(1, 3), [4, 5, 6]);
+        assert_eq!(next.get(0, 2), 3);
+    }
 
     /// A frozen relation's rows are shared by one started from it, which pushes its own after them; freezing that
     /// one moves its tail into a segment, and both read every row by id.
