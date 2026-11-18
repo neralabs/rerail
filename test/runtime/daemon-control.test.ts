@@ -1047,26 +1047,50 @@ describe("a record whose live pid is not the home's daemon", () => {
     const sent: Array<[number, string | number | undefined]> = [];
     await holdHome(home, OTHER_PID);
     await writeFile(stateFile, JSON.stringify(state(platform)));
+    // Each read of a start time goes to `bounds` with the time it may take.
+    const bounds: number[] = [];
     const machine = (): DaemonMachine => {
       const base = machineWith(platform, signals, () => true, () => STARTED_AT - 500);
       return { ...base, kill: (pid, signal) => {
         if (signal !== 0) sent.push([pid, signal]);
         return base.kill(pid, signal);
+      }, processStartedAt: (pid, timeoutMs) => {
+        bounds.push(timeoutMs);
+        return base.processStartedAt(pid, timeoutMs);
       } };
     };
     expect(await lookupDaemon(home, machine())).toEqual({ status: "unresponsive", state: state(platform) });
     expect(existsSync(stateFile)).toBe(true);
     await expect(startDaemon({ home, packageRoot: "/nowhere/rerail" }, { dev: true }, machine())).rejects.toThrow(/alive but not answering/u);
+    bounds.length = 0;
     expect(await stopDaemon(home, machine())).toBe("stopped");
     expect(sent).toEqual([[LIVE_PID, "SIGTERM"]]);
     expect(existsSync(stateFile)).toBe(false);
+    // The stop's lookup reads within what is left of its 2 s; the verdict and the ask before the SIGTERM, within the
+    // stop's own 10 s wait.
+    expect(bounds).toHaveLength(3);
+    expect(bounds[0]).toBeGreaterThan(0);
+    expect(bounds[0]).toBeLessThanOrEqual(2_000);
+    for (const bound of bounds.slice(1)) {
+      expect(bound).toBeGreaterThan(2_000);
+      expect(bound).toBeLessThanOrEqual(10_000);
+    }
   });
 
-  /** A machine as {@link machineWith}'s where `OTHER_PID`, which the holder record names, started at `otherStarted`. */
-  const withHolderStarted = (machine: DaemonMachine, otherStarted: number): DaemonMachine => ({
+  /**
+   * A machine as {@link machineWith}'s where `OTHER_PID`, which the holder record names, started at `otherStarted`; each
+   * read of its start goes to `bounds` with the time it may take.
+   */
+  const withHolderStarted = (machine: DaemonMachine, otherStarted: number, bounds: number[] = []): DaemonMachine => ({
     ...machine,
-    processStartedAt: (pid, timeoutMs) => (pid === OTHER_PID ? otherStarted : machine.processStartedAt(pid, timeoutMs)),
+    processStartedAt: (pid, timeoutMs) => {
+      if (pid !== OTHER_PID) return machine.processStartedAt(pid, timeoutMs);
+      bounds.push(timeoutMs);
+      return otherStarted;
+    },
   });
+  /** Whether every bound in `bounds` leaves the read some time and at most a lookup's 2 s, and there is one. */
+  const withinALookup = (bounds: readonly number[]): boolean => bounds.length > 0 && bounds.every(bound => bound > 0 && bound <= 2_000);
   const holderRecordWritten = (): number => statSync(join(home, LOCKS_DIR, "daemon.json")).mtimeMs;
 
   // The pid's own start cannot be read, so the lock decides alone.
@@ -1075,9 +1099,11 @@ describe("a record whose live pid is not the home's daemon", () => {
     const signals: Array<string | number | undefined> = [];
     await holdHome(home, OTHER_PID);
     await writeFile(stateFile, JSON.stringify(state(platform)));
-    const machine = (otherStarted: number): DaemonMachine => withHolderStarted(machineWith(platform, signals, () => true), otherStarted);
+    const bounds: number[] = [];
+    const machine = (otherStarted: number): DaemonMachine => withHolderStarted(machineWith(platform, signals, () => true), otherStarted, bounds);
     expect(await lookupDaemon(home, machine(holderRecordWritten() - 1_000))).toEqual({ status: "absent", notDaemon: LIVE_PID });
     expect(existsSync(stateFile)).toBe(false);
+    expect(withinALookup(bounds)).toBe(true);
     // The holder record's pid belongs to a process started after the record: nothing shows that process holds the lock.
     await writeFile(stateFile, JSON.stringify(state(platform)));
     const later = machine(holderRecordWritten() + 3_600_000);
@@ -1096,9 +1122,12 @@ describe("a record whose live pid is not the home's daemon", () => {
   ] as const)("%s", async (_case, startedAfterRecord, message) => {
     const signals: Array<string | number | undefined> = [];
     await holdHome(home, OTHER_PID);
-    const machine = withHolderStarted(machineWith("linux", signals, () => true), holderRecordWritten() + startedAfterRecord);
+    const bounds: number[] = [];
+    const machine = withHolderStarted(machineWith("linux", signals, () => true), holderRecordWritten() + startedAfterRecord, bounds);
     await expect(stopDaemon(home, machine)).rejects.toThrow(new RegExp(message, "u"));
     expect(signals).toEqual([]);
+    // The holder's start is read for the message only, within a lookup's limit.
+    expect(withinALookup(bounds)).toBe(true);
   }, 25_000);
 
   // A daemon of a release before the home's lock holds none; one whose lock file did not open holds none either; one
