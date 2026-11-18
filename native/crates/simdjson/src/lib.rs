@@ -506,10 +506,16 @@ mod tests {
         let kinds = Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, comment: 12, key_field: 1, value_field: 2 };
         let run = std::env::var("RERAIL_TAPE_RUN").unwrap_or_default();
         let kernel = kernel_under_test();
-        let retired = || {
-            let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
-            unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) };
-            info.ri_instructions
+        let retired = || -> u64 {
+            // (macOS's count; 0 on a Linux host, which builds these tests too)
+            #[cfg(target_os = "macos")]
+            {
+                let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
+                unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) };
+                info.ri_instructions
+            }
+            #[cfg(not(target_os = "macos"))]
+            0
         };
         let mut n = 0usize;
         let mut best = u64::MAX;
@@ -636,10 +642,16 @@ mod tests {
     #[test]
     #[ignore = "a measurement: run by name with --nocapture"]
     fn shape_costs() {
-        let retired = || {
-            let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
-            unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) };
-            info.ri_instructions
+        let retired = || -> u64 {
+            // (macOS's count; 0 on a Linux host, which builds these tests too)
+            #[cfg(target_os = "macos")]
+            {
+                let mut info: libc::rusage_info_v4 = unsafe { std::mem::zeroed() };
+                unsafe { libc::proc_pid_rusage(libc::getpid(), libc::RUSAGE_INFO_V4, (&raw mut info).cast()) };
+                info.ri_instructions
+            }
+            #[cfg(not(target_os = "macos"))]
+            0
         };
         let kinds = Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, comment: 12, key_field: 1, value_field: 2 };
         let kernel = kernel_under_test();
