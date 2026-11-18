@@ -1010,7 +1010,8 @@ impl<'a> Pp<'a> {
     /// the isolated one, the call wants tokens after it.
     fn note_cut(&mut self) {
         let Some(p) = &self.par else { return };
-        if self.stack.len() == p.outer + 1 {
+        // A directive's reading has no isolated list (`usize::MAX`).
+        if p.outer.checked_add(1) == Some(self.stack.len()) {
             self.par.as_mut().unwrap().cut = true;
         }
     }

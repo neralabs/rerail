@@ -1,4 +1,4 @@
-//! The preprocessor as parallel passes: a spike of the shape (decision 0409).
+//! The preprocessor as parallel passes: a spike of the shape (decision 0421).
 //!
 //! The serial pass (`Pp::run`) reads a translation unit as one machine, from its first token
 //! to its last. Here the same unit is read as passes over arrays, each of them a map, a scan, a
@@ -91,7 +91,8 @@ pub(super) struct Isolated {
 pub struct Stats {
     /// P1's rounds, the last one the round that changed nothing.
     pub rounds: u32,
-    /// The files read, and the files' instances in the include tree at the end.
+    /// The files read (their tables made), and the files' instances in the include tree at
+    /// the end.
     pub files: u32,
     pub instances: u32,
     /// The include tree's depth (the main file's instance is 1).
@@ -149,7 +150,6 @@ pub fn run(cfg: Config, io: &mut dyn Files, path: &str) -> (Outcome, Stats) {
         let (state, lay) = rounds::settle(&mut pp, &mut tu, &builtins, &mut stats)?;
         text::output(&mut pp, &tu, &state, &lay, &mut stats)
     })();
-    stats.files = pp.files.len() as u32;
     (out, stats)
 }
 

@@ -337,6 +337,7 @@ pub(super) fn settle(pp: &mut Pp, tu: &mut Tu, builtins: &[(u32, u64, u32)], sta
                 }
             }
             stats.instances = lay.order.len() as u32;
+            stats.files = tu.tabs.iter().flatten().count() as u32;
             stats.depth = lay.order.iter().map(|&i| tu.insts[i as usize].chain.len() as u32).max().unwrap_or(0);
             return Ok((state, lay));
         }

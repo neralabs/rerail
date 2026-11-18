@@ -157,6 +157,8 @@ fn pushes_and_pops() {
 fn what_goes_to_the_serial_pass() {
     let refused = |src: &str| both(&[("main.c", src)], c()).0.err();
     assert_eq!(refused("#line 10\n__LINE__\n"), Some("#line"));
+    // A test's operand cut off by its line's end.
+    assert_eq!(refused("#if __has_feature(x\nyes\n#endif\nend\n"), None);
     assert_eq!(refused("#define f(a, b) a b\nf(1,\n#ifdef X\n2\n#else\n3\n#endif\n)\n"), Some("a call past its stretch of text"));
     // An unsupported directive in a group not taken is nothing.
     assert_eq!(refused("#if 0\n#line 10\n#endif\nok\n"), None);
