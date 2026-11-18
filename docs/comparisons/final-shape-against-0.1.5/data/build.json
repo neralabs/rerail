@@ -3839,6 +3839,46 @@
    ],
    "command": "cargo test <crate> --lib -- --exact <test>, 20 rounds (gitignore-repeat.sh)",
    "at": "2026-11-17T18:06"
+  },
+  {
+   "id": "b-on-n-engine",
+   "system": "Linux x64",
+   "machine": "linux-build",
+   "subject": "B",
+   "commit": "60a1af7f4",
+   "what": "B merged into the new version with its four conflicts resolved by keeping both sides (a probe commit on no branch): the engine build with fix 1's Rust module beside the new version's crate split",
+   "state": "measured",
+   "metric": "engine build (npm run build:native, 4 jobs, shared dependency cache)",
+   "unit": "min",
+   "n": 1,
+   "median": 10,
+   "worst": 10,
+   "values": [
+    10
+   ],
+   "command": "build of native tree 03fd4297 at 60a1af7f4: npm run build:native",
+   "at": "2026-11-17T18:25"
+  },
+  {
+   "id": "b-on-n-tests",
+   "system": "Linux x64",
+   "machine": "linux-tests",
+   "subject": "B",
+   "commit": "60a1af7f4",
+   "what": "the 10 test files of fix 1 and fix 3 (the two fixes that conflict with N) at B merged into the new version with the conflicts resolved",
+   "state": "measured",
+   "metric": "tests failed",
+   "unit": "tests",
+   "n": 1,
+   "median": 0,
+   "worst": 0,
+   "values": [
+    0
+   ],
+   "passed": 690,
+   "skipped": 6,
+   "command": "vitest run of the 10 files at 60a1af7f4 on the Linux test host (narrow run, 4 workers)",
+   "at": "2026-11-17T18:57"
   }
  ],
  "findings": [
@@ -3887,7 +3927,9 @@
     "fx-fss676-with",
     "fx-fss676-without",
     "fx-wpc677-with",
-    "fx-wpc677-without"
+    "fx-wpc677-without",
+    "b-on-n-engine",
+    "b-on-n-tests"
    ],
    "severity": "medium"
   },
@@ -3968,6 +4010,11 @@
  ],
  "not_measured": [
   {
+   "what": "The Windows 11 engine and daemon test files at 0.1.5 and at the new version (failures at the new version only; the audit-cli 10 s case on Windows)",
+   "why": "both runs were still going at the bound: 0.1.5's waited 112 minutes for the machine and built its dependencies on its hard disk in 73 minutes before its tests began at 19:10; the new version's is queued and needs its own dependency build",
+   "would_take": "the two runs ending (they are running), then one comparison of their failure lists"
+  },
+  {
    "what": "Conformance scoring (npm run test:conformance and its 8 shards) at the new version and at 0.1.5",
    "why": "every pack's scoring stops at the tool packs' test data, which lives in S3 behind read credentials no test host has (1,351 and 1,350 blocking failures, each 'the AWS CLI is not installed')",
    "would_take": "read access to the pack test data (npm run fixtures:pull), then the same two runs"
@@ -3988,11 +4035,6 @@
    "would_take": "a macOS host and an arm64 Linux host, or the release workflow run on the branch"
   },
   {
-   "what": "main + six fixes' fixes merged into the new version with the two conflicts resolved, built and tested",
-   "why": "the resolution needs a new engine build (fix 1 adds a native module) and its Windows path-owner test needs Windows; not done within the time",
-   "would_take": "one engine build per platform and main + six fixes' test files on Linux and Windows 11"
-  },
-  {
    "what": "The one-line edit in the new engine's logic crate on Windows",
    "why": "measured on Linux only, to keep the Windows build machine free for the load runs",
    "would_take": "one more rebuild on the Windows build machine (about 10 minutes)"
@@ -4001,6 +4043,11 @@
    "what": "The installed-packs integration test (packs installed from npm through setup)",
    "why": "it needs RERAIL_INSTALLED_PACKS_NPM=1 and npm read credentials in CI; the published packs were instead compiled rule by rule at both versions",
    "would_take": "the CI job's token, or the packs being public to the test"
+  },
+  {
+   "what": "B merged into the new version on Windows 11",
+   "why": "fix 1's path-owner read is Windows-only; no Windows build of the resolved merge within the time",
+   "would_take": "its Windows engine build and the same test files on Windows 11"
   }
  ]
 }
