@@ -404,25 +404,27 @@ mod tests {
     fn removal_waits_for_maintenance_with_an_active_wal_reader() {
         use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
         struct ReadWal {
-            path: PathBuf,
+            collector: Frames,
             reading: Option<SyncSender<()>>,
             finish: Receiver<()>,
         }
         impl Job for ReadWal {
-            fn file(&self) -> Option<PathBuf> { Some(self.path.clone()) }
+            fn file(&self) -> Option<PathBuf> { self.collector.file() }
             fn name(&self) -> String { "test WAL retirement".to_owned() }
             fn due(&mut self) -> Due {
-                if self.reading.is_some() { Due::Urgent } else { Due::No }
+                if self.reading.is_none() { return Due::No; }
+                self.collector.due();
+                Due::Urgent
             }
             fn step(&mut self, _: &Slice) -> Result<Step, String> {
-                let db = Connection::open(&self.path).unwrap();
+                let (db, _) = self.collector.reader.as_ref().expect("the collector opened its reader");
                 db.execute_batch("BEGIN").unwrap();
                 let read = || db.query_row("SELECT generation FROM analysis_scope_generation WHERE scope = 'test'", [], |row| row.get::<_, i64>(0)).unwrap();
                 assert_eq!(read(), 2);
                 self.reading.take().unwrap().send(()).unwrap();
                 self.finish.recv_timeout(Duration::from_secs(5)).unwrap();
                 assert_eq!(read(), 2);
-                db.close().unwrap();
+                db.execute_batch("ROLLBACK").unwrap();
                 Ok(Step::Done)
             }
         }
@@ -437,7 +439,8 @@ mod tests {
         assert!(std::fs::metadata(directory.path().join("store.sqlite-wal")).unwrap().len() > 32);
         let (entered, active) = sync_channel(0);
         let (release, finish) = sync_channel(0);
-        let _job = rerail_accel::upkeep::register(Box::new(ReadWal { path, reading: Some(entered), finish }));
+        let collector = Frames::new(&path);
+        let _job = rerail_accel::upkeep::register(Box::new(ReadWal { collector, reading: Some(entered), finish }));
         std::thread::scope(|threads| {
             threads.spawn(rerail_accel::upkeep::run_now);
             active.recv_timeout(Duration::from_secs(5)).unwrap();

@@ -102,6 +102,7 @@ Other releases can make progress while the store is unavailable.
 
 Before a test deletes a store, it waits for active upkeep steps to close their SQLite connections.
 It removes the store's upkeep jobs before it deletes the files.
+The retirement test uses the frame collector's read connection with a transaction that reads from a populated WAL.
 
 The revision is an input to selection and provenance. It is absent from an
 immutable tree record's cache key. That key includes the repository, object
