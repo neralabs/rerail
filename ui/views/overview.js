@@ -58,7 +58,7 @@ function stoppedBanner(repo) {
   return h("div.welcome.warn", { role: "status" }, icon("steered", 22), h("div", null,
     h("b", null, `Rerail is stopped in ${repo}.`),
     h("p", null, "No rules run here, and nothing is logged; rules and history are kept."),
-    h("p.acts", null, h("button.btn.sm.solid", { "data-act": "repostart", "data-i": data.repository.repositoryKey, title: `Starts every checkout of ${repo}.` }, "Start Rerail"))));
+    h("p.acts", null, h("button.btn.sm.solid", { "data-act": "repostart", "data-i": data.repository.repositoryKey, title: `Starts Rerail in every checkout and worktree of ${repo}.` }, "Start Rerail"))));
 }
 
 /** The welcome shows only where Rerail is started: a repository set up but never started reads as stopped. */

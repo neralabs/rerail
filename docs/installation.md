@@ -48,6 +48,11 @@ It installs Rerail under `~/.rerail`, without admin rights or, on Windows, Devel
 3. It shows the recommended rule packs, each with why it matched, or why none fits, and the coding agents it will
    connect. "Not now" installs, connects and turns on nothing.
 
+Connecting a coding agent adds Rerail's commands to it, and the commands load Rerail's skills: instructions, in
+Markdown, that the agent follows for `/rerail-create` (write a rule) and `/rerail-bug-report` (work out what went
+wrong). Codex receives every command as a skill, in `~/.codex/skills/`. `rerail install --remove` takes them out again
+([what each coding agent gets](how-setup-works.md)).
+
 </details>
 
 On yes, it connects your coding agents and starts Rerail in this repository only. Start a new coding agent session
