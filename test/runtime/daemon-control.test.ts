@@ -1165,21 +1165,20 @@ describe("a record whose live pid is not the home's daemon", () => {
     expect(sent).toEqual([[OTHER_PID, "SIGTERM"]]);
   }, 30_000);
 
-  // The home's lock is held and its holder never writes daemon.json: a start or a stop waits its 15 s, then says which
-  // process to end.
-  it.each([
-    ["names the holder as the process to end when it started before its record", -1_000, `A Rerail daemon \\(pid ${OTHER_PID}\\) holds .* end that process`],
-    ["names no process to end when the holder record's pid started after the record", 3_600_000,
-      `A Rerail daemon holds .* names pid ${OTHER_PID}, which Rerail could not show is that daemon: see its command line with ps -p ${OTHER_PID} -o command=, and end it only if`],
-  ] as const)("%s", async (_case, startedAfterRecord, message) => {
+  // The home's lock is held and its holder never writes daemon.json: a start or a stop waits its 15 s, then says what to
+  // check. Here the holder started before its record, as the home's daemon does; a home copied with its timestamps beside
+  // the daemon of the home it came from looks the same, so the record proves no process the one to end.
+  it("names no process to end when the lock's holder never records itself, and gives the holder record's pid with the check of its command line", async () => {
     const signals: Array<string | number | undefined> = [];
     await holdHome(home, OTHER_PID);
     const bounds: number[] = [];
-    const machine = withHolderStarted(machineWith("linux", signals, () => true), holderRecordWritten() + startedAfterRecord, bounds);
-    await expect(stopDaemon(home, machine)).rejects.toThrow(new RegExp(message, "u"));
+    const machine = withHolderStarted(machineWith("linux", signals, () => true), holderRecordWritten() - 1_000, bounds);
+    const said = await stopDaemon(home, machine).then(String, (error: unknown) => String(error));
+    expect(said).toMatch(new RegExp(`A Rerail daemon holds .* names pid ${OTHER_PID}, which Rerail could not show is that daemon: see its command line with ps -p ${OTHER_PID} -o command=, and end it only if`, "u"));
+    expect(said).not.toMatch(/end that process/u);
     expect(signals).toEqual([]);
-    // The holder's start is read for the message only, within a lookup's limit.
-    expect(withinALookup(bounds)).toBe(true);
+    // No start is read for the message.
+    expect(bounds).toEqual([]);
   }, 25_000);
 
   // A daemon of a release before the home's lock holds none; one whose lock file did not open holds none either; one

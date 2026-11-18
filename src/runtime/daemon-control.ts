@@ -917,26 +917,24 @@ async function lookupHomeDaemon(home: string, machine: DaemonMachine, readLimitM
   for (;;) {
     const lookup = await lookupDaemon(home, machine, PROBE_TIMEOUT_MS, readLimitMs);
     if (lookup.status !== "absent" || !homeDaemonRuns(home, machine)) return lookup;
-    if (Date.now() >= deadline) throw new Error(unrecordedDaemonProblem(home, machine));
+    if (Date.now() >= deadline) throw new Error(unrecordedDaemonProblem(home, machine.platform));
     await sleep(POLL_INTERVAL_MS);
   }
 }
 
 /**
- * What to tell the person when a daemon holds `home` and never records itself: which process to end. The pid the holder
- * record names is given as that process only when it is shown to have written the record ({@link holderWroteRecord}),
- * read within the lookup's limit; otherwise the record can be one a holder left that another process's pid now matches,
- * and the person is told how to check it first.
+ * What to tell the person when a daemon holds `home` and never records itself. The pid the holder record names comes
+ * with the command that shows its command line, to check before ending it: nothing Rerail reads on Windows shows which
+ * process holds a lock, and the record can be one a holder left that another process's pid now matches, or one copied
+ * with the home beside the daemon of the home it came from.
  */
-function unrecordedDaemonProblem(home: string, machine: DaemonMachine): string {
+function unrecordedDaemonProblem(home: string, platform: NodeJS.Platform): string {
   const pid = homeDaemonHolder(home);
   const unrecorded = `holds ${home} but has not written ${DAEMON_STATE_FILE} within ${START_TIMEOUT_MS / 1_000}s`;
-  if (pid !== undefined && !holderWroteRecord(home, machine, Date.now() + PROBE_TIMEOUT_MS)) {
-    return `A Rerail daemon ${unrecorded}. ${homeDaemonHolderFile(home)} names pid ${pid}, which Rerail could `
-      + `not show is that daemon: see its command line with ${commandLineCheck(pid, machine.platform)}, and end it only if `
-      + "it runs Rerail's daemon-entry.js for this home. Then run rerail daemon start.";
-  }
-  return `A Rerail daemon${pid === undefined ? "" : ` (pid ${pid})`} ${unrecorded}; end that process, then run rerail daemon start.`;
+  if (pid === undefined) return `A Rerail daemon ${unrecorded}; end that process, then run rerail daemon start.`;
+  return `A Rerail daemon ${unrecorded}. ${homeDaemonHolderFile(home)} names pid ${pid}, which Rerail could `
+    + `not show is that daemon: see its command line with ${commandLineCheck(pid, platform)}, and end it only if `
+    + "it runs Rerail's daemon-entry.js for this home. Then run rerail daemon start.";
 }
 
 export async function startDaemon(
