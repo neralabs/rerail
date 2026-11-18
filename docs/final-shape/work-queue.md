@@ -2454,6 +2454,17 @@ fine) or in 8 runs after; the CPU path never hung (11 runs).
 - `hang50.sh` now signals the run (`SIGUSR1`, `RERAIL_DUMP`) before killing it: the dump's open spans and
   `main_doing` say which wait, and the builder's `Cut` which chunk it holds.
 - **Done when**: the wait is named, its missing ring or slot found, and 20 cold Metal runs end.
+- **Found** (from the code, against the stacks): a load's chunk failed. `drain` stopped the builder and returned the
+  error, which the main thread sent to the cone as that request's answer. The cone had already posted its next
+  request (it posts ahead of their answers). The main thread answered it: the documents went to the builder, and
+  `drain` waited in `Builder::next`. A stopped builder steps no more (`step` returns at once), so `ended` was never
+  set and nothing was ever handed on. The main thread polled the bell for ever, the pool idle: the stacks above.
+- **Fixed**: `next` answers `Err(())` (the builder ended) once the builder is stopped. That load then fails with "the
+  chunk builder ended before a load's documents", and the run ends with its error, not a hang. t51 (the fix): 8 of 8
+  cold Metal runs of the full shape ended, rc 0, 22-33 s (the M3 at load 50-90). Before it, 3 of 13 hung. No run
+  failed, so the first chunk's own error is not seen yet: a run that meets it now ends with it in its log.
+- **Open**: no test fails a load's chunk (the builder is local to `run_observed`, and no hook fails a load), and
+  12 more cold Metal runs are owed for the 20.
 - **Record**: —
 
 ## Questions for the user
