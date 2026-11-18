@@ -21,6 +21,7 @@ import {
   repositoryFolderName,
   repositoryIdentityLocation,
   resolveCloneId,
+  worktreeGitFolderGone,
   worktreeRegistry,
   type RepositoryIdentityLocation,
 } from "./repository-identity.js";
@@ -185,14 +186,14 @@ export function recordCheckout(db: RerailDatabase, workspace: string, now = Date
 }
 
 /**
- * The clone id recorded at a folder Git places in no repository, when the folder still holds a `.git` that Git refuses:
- * a linked worktree whose main checkout was deleted names a Git folder that went with it, and the clone's id file with
- * it. That id cannot be read again, and the checkout recorded there still names it, as {@link lookupCheckout} reads
- * it; a new id would make the checkout a re-clone, and its repository, start state and settings would go. Undefined
- * in a folder outside Git, where the id file decides.
+ * The clone id recorded at a linked worktree whose Git folder is gone ({@link worktreeGitFolderGone}): its main checkout
+ * was deleted or moved away, and the clone's id file went with it. That id cannot be read again, and the checkout
+ * recorded there still names it, as {@link lookupCheckout} reads it; a new id would make the checkout a re-clone, and
+ * its repository, start state and settings would go. Undefined in any other folder Git places in no repository, where
+ * the id file decides.
  */
 function refusedCheckoutCloneId(db: Reader, location: RepositoryIdentityLocation): string | undefined {
-  if (outsideGit(location.workspaceRoot)) return undefined;
+  if (!worktreeGitFolderGone(location.workspaceRoot)) return undefined;
   const checkoutPath = physicalPath(location.workspaceRoot);
   return db.select({ cloneId: checkouts.cloneId }).from(checkouts).where(eq(checkouts.checkoutPath, checkoutPath)).get()?.cloneId;
 }

@@ -89,6 +89,25 @@ export function outsideGit(folder: string): boolean {
   return noMarkerUpFrom(written) && (real === written || noMarkerUpFrom(real));
 }
 
+/**
+ * Whether `folder` is a linked worktree whose Git folder is gone: its own `.git` is a file whose `gitdir:` line names a
+ * folder in a Git folder's `worktrees`, and nothing is there. Its main checkout was deleted or moved away, and the
+ * clone's id file, kept in that Git folder, went with it. Read from the disk without starting Git; false wherever
+ * `.git` is no such file, or the disk cannot tell.
+ */
+export function worktreeGitFolderGone(folder: string): boolean {
+  let text: string;
+  try {
+    text = readFileSync(join(folder, ".git"), "utf8");
+  } catch {
+    return false;
+  }
+  const named = /^gitdir: *(.+)$/mu.exec(text)?.[1];
+  if (named === undefined) return false;
+  const gitFolder = resolve(folder, named.trim());
+  return basename(dirname(gitFolder)) === "worktrees" && !entryMayBeThere(gitFolder);
+}
+
 /** Whether no folder from `start` up to its root holds one of {@link GIT_MARKERS}, or an entry that cannot be read. */
 function noMarkerUpFrom(start: string): boolean {
   for (let current = start; ; current = dirname(current)) {
@@ -242,12 +261,12 @@ export function readCloneIdAt(identityPath: string): string | undefined {
   }
 }
 
-/** Publish complete identity bytes with an atomic no-clobber link. */
-function readOrCreateIdentity(identityPath: string, candidate: string): string {
+/** Publish complete identity bytes with an atomic no-clobber link; `candidate` is asked only when no id file is there. */
+function readOrCreateIdentity(identityPath: string, candidate: () => string): string {
   const existing = readIdentityFile(identityPath);
   if (existing !== undefined) return existing;
   const temporaryPath = `${identityPath}.${process.pid}.${randomUUID()}.tmp`;
-  writeFileSync(temporaryPath, `${candidate}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
+  writeFileSync(temporaryPath, `${candidate()}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
   try {
     try {
       linkSync(temporaryPath, identityPath);
@@ -276,7 +295,7 @@ export function resolveCloneId(
   const location = repositoryIdentityLocation(workspace);
   if (location.git) {
     const legacyId = gitText(location.workspaceRoot, ["config", "--local", "--get", "rerail.repository-id"]) ?? "";
-    return { cloneId: readOrCreateIdentity(location.identityPath, CLONE_ID.test(legacyId) ? legacyId : `git:${randomUUID()}`), location };
+    return { cloneId: readOrCreateIdentity(location.identityPath, () => CLONE_ID.test(legacyId) ? legacyId : `git:${randomUUID()}`), location };
   }
   const directory = dirname(location.identityPath);
   // Created first, so two processes recording the same folder at once both succeed; whichever made it, it must be a
@@ -287,7 +306,7 @@ export function resolveCloneId(
     if (errorCode(error) !== "EEXIST") throw error;
     if (!lstatSync(directory).isDirectory()) throw new Error(`${directory} is not a directory Rerail can keep its identity in`);
   }
-  return { cloneId: readOrCreateIdentity(location.identityPath, recordedIdAt?.(location) ?? randomUUID()), location };
+  return { cloneId: readOrCreateIdentity(location.identityPath, () => recordedIdAt?.(location) ?? randomUUID()), location };
 }
 
 export interface RemoteAddress {
