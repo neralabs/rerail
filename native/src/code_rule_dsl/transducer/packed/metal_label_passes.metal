@@ -160,6 +160,8 @@ static uint walk_next(thread const Tree& t,thread Frame& frame,WalkRead r){
   if(frame.resume==1u){uint end=tree_end(t,frame.end);while(frame.next!=MICRO_NONE){uint child=frame.next;frame.next=tree_next_in(t,child,end,false);if(frame.named==0u||(tree_flags(t,child)&1u))return child;}return MICRO_NONE;}
   if(frame.resume==2u){while(frame.next<frame.end){uint node=frame.next;frame.next++;if(frame.named==0u||(tree_flags(t,node)&1u))return node;}return MICRO_NONE;}
   if(frame.resume==3u){uint node=frame.next;if(node==MICRO_NONE)return MICRO_NONE;frame.next=tree_next_in(t,node,tree_end(t,frame.end),frame.named!=0u);return node;}
+  // A sibling chain's piece (`scan_marks`): from `next`, a hop over each sibling's subtree, up to `end`.
+  if(frame.resume==5u){while(frame.next<frame.end){uint node=frame.next;frame.next=tree_end(t,node);if((frame.named&1u)==0u||(tree_flags(t,node)&1u))return node;}return MICRO_NONE;}
   if(frame.resume==4u){
     bool named=(frame.named&1u)!=0u;
     while(frame.next<frame.end){
@@ -248,6 +250,11 @@ static uint scan_cut(thread const Tree& t,MicroFrame f,WalkRead r){
   if(f.end-f.next<2u*MICRO_CHUNK)return MICRO_NONE;
   uint mid=f.next+(f.end-f.next)/2u,cut=mid;
   if(f.resume==4u)for(uint a=tree_parent(t,mid);a!=TAPE_NONE&&a!=f.node&&a>=f.next;a=tree_parent(t,a))if(!closure_enters(t,f.named,r,a))cut=tree_end(t,a);
+  // A sibling chain's: the sibling whose subtree holds the middle node, a climb to the chain's parent.
+  if(f.resume==5u){
+    uint parent=tree_parent(t,f.next);
+    for(uint up=tree_parent(t,cut);up!=parent;up=tree_parent(t,cut)){if(up==TAPE_NONE)return MICRO_NONE;cut=up;}
+  }
   return cut>f.next&&cut<f.end?cut:MICRO_NONE;
 }
 // A frame given to the dispatch's work queue, as its walk's start, pass and document; false where the queue is full.
@@ -268,7 +275,7 @@ static void micro_spill(thread const Tree& t,MicroQ q,Stack stack,uint depth,uin
     if(f.resume==0u)continue;
     // A range frame (2 descendants, 4 a closure's scan) has candidates while `next` is before `end`. A closure's
     // is given whole: its skips are its subtrees', so a range cut at a node is not its candidates.
-    bool range=f.resume==2u||f.resume==4u;
+    bool range=f.resume==2u||f.resume==4u||f.resume==5u;
     bool has=range?f.next<f.end:f.next!=MICRO_NONE;
     if(!has)continue;
     MicroFrame give=f;
@@ -282,74 +289,145 @@ static void micro_spill(thread const Tree& t,MicroQ q,Stack stack,uint depth,uin
   }
 }
 
-// A range frame (2 a `desc`, 4 a closure) whose candidates are captured and emitted at once, nothing captured before:
-// its scan marks them itself (`scan_marks`), with no frame a candidate and no step through the words.
-static bool scan_marks_at(WalkRead r,MicroPass pass,MicroFrame f){
-  if((f.resume!=2u&&f.resume!=4u)||f.captured!=0u||f.pc+1u>=pass.wordCount)return false;
-  return (r.words[f.pc]&255u)==32u&&(r.words[f.pc+1u]&255u)==64u;
+// A move's candidates scanned as one pass (`scan_marks`), where the words each candidate runs to its emit read the
+// candidate alone (`ScanTail`): tests of it, then at most one `load` of a saved node and tests of that, at most one
+// capture, and the emit. Any move with a frame of candidates scans so: `child` and `after` (a chain of siblings),
+// `desc` (a range) and a closure (a range with skips). The shape is all that is matched, not a pass or a rule.
+struct ScanTail { uint tests,testsEnd,load,fixedEnd,capture,emit; };
+static bool scan_test_op(uint op){return op==1u||op==2u||op==3u||op==4u||op==10u;}
+static bool scan_tail(WalkRead r,MicroPass pass,uint pc,thread ScanTail& x){
+  uint at=pc;
+  x.tests=pc;x.load=MICRO_NONE;x.capture=0u;
+  while(at<pass.wordCount&&scan_test_op(r.words[at]&255u))at++;
+  x.testsEnd=at;x.fixedEnd=at;
+  if(at<pass.wordCount&&(r.words[at]&255u)==22u){
+    x.load=(r.words[at]>>16u)&7u;at++;
+    while(at<pass.wordCount&&scan_test_op(r.words[at]&255u))at++;
+    x.fixedEnd=at;
+  }
+  if(at<pass.wordCount&&(r.words[at]&255u)==32u){x.capture=1u;at++;}
+  x.emit=at;
+  return at<pass.wordCount&&(r.words[at]&255u)==64u;
 }
-// The scan as a segmented pass over windows of 64 nodes (work queue Q56): a window's flags and tests are read side
-// by side, none waiting on another, into masks of the nodes given and entered. A given node the scan reaches but does
-// not enter hides its subtree's bits, its size read where it fails; the window's marks are then a mask, a word of
-// 32 nodes at a time. A `desc` of every node reads nothing. A scan past 4 spill budgets of nodes (2,048 at the budget
-// of 512) is first halved into the work queue (`scan_cut`) until its piece fits, so its pieces run side by side. A step is a window or a size read.
-// 0: the scan is done; 1: the walk is (its start marked, as every emit's in the pass); 2: past the step bound.
+static bool scan_marks_at(WalkRead r,MicroPass pass,MicroFrame f){
+  if(f.resume==0u||f.resume>5u)return false;
+  ScanTail x;
+  return scan_tail(r,pass,f.pc,x)&&f.captured+x.capture<=2u;
+}
+// The scan, a segmented pass over windows of 64 nodes (work queue Q56, Q65). A window's codes and slots lie in a
+// line or two of the tape, so its reads are taken together, none waiting on a far one:
+// - a range's candidates are its nodes; a closure's, those its skips leave (a node reached but not entered hides
+//   its subtree's bits, its size read where it fails); a chain's, its hops over each sibling's subtree, within the
+//   window's slots, the next window where a hop leaves it;
+// - a named move drops the unnamed candidates, and the tail's tests the failing ones, into a mask of outputs.
+// The marks are then a mask, a word of 32 nodes at a time; tallies add a count. Where one output makes every mark
+// (the start's, or a saved node's), the scan stops at its first. Where every output counts, a scan past 4 spill
+// budgets of nodes (2,048 at the budget of 512) is halved into the work queue (`scan_cut`) before it starts, until
+// its piece fits, so its pieces run side by side. A step is a window. 0: the scan is done; 1: the walk is (its start marked, as every emit's in the pass);
+// 2: past the step bound, or a load of a node never saved.
 static uint scan_marks(thread const Tree& t,thread MicroFrame& f,WalkRead r,MicroPass pass,device atomic_uint* scratch,device atomic_uint* counts,constant Shape& shape,uint start,thread uint& fired,thread uint& steps,MicroQ q){
-  bool pack=(pass.targets&4u)!=0u,closure=f.resume==4u,named=(f.named&1u)!=0u;
-  uint label=r.words[f.pc+1u]>>16u;
+  ScanTail x;scan_tail(r,pass,f.pc,x);
+  bool pack=(pass.targets&4u)!=0u,named=(f.named&1u)!=0u;
+  uint label=r.words[x.emit]>>16u;
   device atomic_uint* row=scratch+(pack?r.words[pass.wordCount+1u+label]:pass.target)*shape.words;
   device atomic_uint* tally=counts+pass.target*shape.nodeCount;
   uint route=pack?((pass.targets&3u)==0u?0u:1u):pass.targets;
-  uint piece=max(4u*shape.budget,2u*MICRO_CHUNK);
-  if(route!=0u&&q.capacity!=0u)
-    while(f.end-f.next>piece){
-      uint cut=scan_cut(t,f,r);
-      if(cut==MICRO_NONE)break;
-      MicroFrame give=f;give.next=cut;
-      if(!spill_give(q,give,start))break;
-      f.end=cut;
-    }
+  // `child` and `after` as a chain up to the parent's end.
+  if(f.resume==1u||f.resume==3u){
+    if(f.next==MICRO_NONE||f.end==TAPE_NONE){f.next=0u;f.end=0u;return 0u;}
+    f.end=tree_end(t,f.end);f.resume=5u;f.named&=1u;
+  }
+  bool closure=f.resume==4u,chain=f.resume==5u;
+  uint fixed=MICRO_NONE;
+  if(x.load!=MICRO_NONE){
+    fixed=f.cursors[x.load];
+    if(fixed==MICRO_NONE)return 2u;
+    for(uint pc=x.testsEnd+1u;pc<x.fixedEnd;pc++)if(!micro_test(t,r.head,r.texts,r.textStart,r.labelWords,r.words[pc],fixed)){f.next=f.end;return 0u;}
+  }
+  // An output's own mark: the candidate's (captured), else only what every output marks alike.
+  bool each=x.capture!=0u&&fixed==MICRO_NONE&&route!=0u&&route!=2u;
+  // Halved where every output counts, before the scan. Where one output does, the scan stays whole and stops at its
+  // first: its pieces would each run the scan to their first, and in the short tier a given piece waits for the
+  // dispatch's tail (0380, Q65: the longest walk 290 → 74 steps, the two kernels 68–87 → 98–117 ms).
+  uint piece=max(4u*shape.budget,2u*MICRO_CHUNK),split=q.capacity==0u||!(each||route>=2u)?MICRO_NONE:f.next;
   uint total=0u;
   while(f.next<f.end){
+    if(f.next>=split){
+      split=MICRO_NONE;
+      while(f.end-f.next>piece){
+        uint cut=scan_cut(t,f,r);
+        if(cut==MICRO_NONE)break;
+        MicroFrame give=f;give.next=cut;
+        if(!spill_give(q,give,start))break;
+        f.end=cut;
+      }
+    }
     if(++steps>shape.steps)return 2u;
     uint b=f.next&~63u,lo=f.next-b,hi=min(f.end-b,64u),next=b+hi;
-    ulong live=(hi==64u?~0ul:((1ul<<hi)-1ul))&~((1ul<<lo)-1ul),given=live,enter=live;
-    if(named||closure)
+    ulong live=(hi==64u?~0ul:((1ul<<hi)-1ul))&~((1ul<<lo)-1ul),cand=live;
+    if(chain){
+      cand=0ul;uint hop=f.next;
+      while(hop<b+hi){cand|=1ul<<(hop-b);hop=tree_end(t,hop);}
+      next=hop;
+    }else if(closure){
+      ulong given=live,enter=live;
       for(uint k=lo;k<hi;k++){
         uint node=b+k;ulong bit=1ul<<k;
         if(named&&(tree_flags(t,node)&1u)==0u){given&=~bit;enter&=~bit;}
-        else if(closure&&!closure_tests(t,f.named,r,node))enter&=~bit;
+        else if(!closure_tests(t,f.named,r,node))enter&=~bit;
       }
-    ulong reached=live,fails=live&~enter;
-    while(fails!=0ul){
-      uint k=ctz(fails);ulong bit=1ul<<k;
-      if(++steps>shape.steps)return 2u;
-      uint e=tree_end(t,b+k);
-      if(e>=b+64u){reached&=bit|(bit-1ul);next=e;break;}
-      ulong under=((1ul<<(e-b))-1ul)&~(bit|(bit-1ul));
-      reached&=~under;fails&=~(under|bit);
+      ulong reached=live,fails=live&~enter;
+      while(fails!=0ul){
+        uint k=ctz(fails);ulong bit=1ul<<k;
+        uint e=tree_end(t,b+k);
+        if(e>=b+64u){reached&=bit|(bit-1ul);next=e;break;}
+        ulong under=((1ul<<(e-b))-1ul)&~(bit|(bit-1ul));
+        reached&=~under;fails&=~(under|bit);
+      }
+      cand=reached&given;
     }
-    ulong out=reached&given;
-    if(out!=0ul){
+    ulong out=cand;
+    if((named&&!closure)||x.testsEnd>x.tests)
+      for(ulong c=cand;c!=0ul;c&=c-1ul){
+        uint k=ctz(c),node=b+k;bool keep=!named||closure||(tree_flags(t,node)&1u)!=0u;
+        for(uint pc=x.tests;keep&&pc<x.testsEnd;pc++)keep=micro_test(t,r.head,r.texts,r.textStart,r.labelWords,r.words[pc],node);
+        if(!keep)out&=~(1ul<<k);
+      }
+    f.next=next;
+    if(out==0ul)continue;
+    if(!each&&route!=2u&&route!=3u){
+      // One output makes every mark.
       if(route==0u){
         mark(row,start);
         if(!pack)return 1u;
         uint members=r.words[pass.wordCount];
         fired|=1u<<label;
         if(fired==(members>=32u?0xffffffffu:((1u<<members)-1u)))return 1u;
-        f.next=f.end;return 0u;
+      }else{
+        if(f.captured>0u)mark(row,f.capture0);
+        if(f.captured>1u)mark(row,f.capture1);
+        if(x.capture!=0u)mark(row,fixed);
       }
-      if(route==1u){
-        uint w0=uint(out),w1=uint(out>>32u);
-        if(w0!=0u)atomic_fetch_or_explicit(&row[b/32u],w0,memory_order_relaxed);
-        if(w1!=0u)atomic_fetch_or_explicit(&row[b/32u+1u],w1,memory_order_relaxed);
-      }else if(route==2u)total+=popcount(out);
-      else for(ulong o=out;o!=0ul;o&=o-1ul)atomic_fetch_add_explicit(&tally[b+ctz(o)],1u,memory_order_relaxed);
+      f.next=f.end;return 0u;
     }
-    f.next=next;
+    total+=popcount(out);
+    if(each&&route==1u){
+      uint w0=uint(out),w1=uint(out>>32u);
+      if(w0!=0u)atomic_fetch_or_explicit(&row[b/32u],w0,memory_order_relaxed);
+      if(w1!=0u)atomic_fetch_or_explicit(&row[b/32u+1u],w1,memory_order_relaxed);
+    }else if(each)for(ulong o=out;o!=0ul;o&=o-1ul)atomic_fetch_add_explicit(&tally[b+ctz(o)],1u,memory_order_relaxed);
   }
-  if(total!=0u)atomic_fetch_add_explicit(&tally[start],total,memory_order_relaxed);
   f.next=f.end;
+  if(total==0u)return 0u;
+  if(route==2u)atomic_fetch_add_explicit(&tally[start],total,memory_order_relaxed);
+  else if(route==3u){
+    if(f.captured>0u)atomic_fetch_add_explicit(&tally[f.capture0],total,memory_order_relaxed);
+    if(f.captured>1u)atomic_fetch_add_explicit(&tally[f.capture1],total,memory_order_relaxed);
+    if(x.capture!=0u&&fixed!=MICRO_NONE)atomic_fetch_add_explicit(&tally[fixed],total,memory_order_relaxed);
+  }else{
+    if(f.captured>0u)mark(row,f.capture0);
+    if(f.captured>1u)mark(row,f.capture1);
+  }
   return 0u;
 }
 
@@ -361,7 +439,7 @@ static void micro_from(thread const Tree& t,device const uint* head,MicroPass pa
   MicroFrame path={0u,start,0u,0u,0u,MICRO_NONE,{MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE,MICRO_NONE},MICRO_NONE,MICRO_NONE,0u};
   #define MICRO_FAIL {atomic_fetch_or_explicit(&flags[0],2u,memory_order_relaxed);return;}
   // A spilled frame's walk starts at its frame (`depth0` 1), as a path that ended.
-  bool fresh=depth0==0u;
+  bool fresh=depth0==0u,received=!fresh;
   while(true){
     bool alive=fresh;
     fresh=true;
@@ -383,7 +461,7 @@ static void micro_from(thread const Tree& t,device const uint* head,MicroPass pa
           if(op==16u){frame.resume=1u;frame.next=tree_first(t,path.node);frame.end=path.node;}
           else if(op==19u){frame.resume=2u;frame.next=path.node+1u;frame.end=tree_end(t,path.node);}
           else{frame.resume=3u;frame.end=path.end!=MICRO_NONE?path.end:tree_parent(t,path.node);frame.next=frame.end==TAPE_NONE?MICRO_NONE:tree_next_in(t,path.node,tree_end(t,frame.end),named);}
-          if(op==19u&&scan_marks_at(r,pass,frame)){uint ended=scan_marks(t,frame,r,pass,scratch,counts,shape,start,fired,steps,q);if(ended==2u)MICRO_FAIL if(ended==1u)return;alive=false;break;}
+          if(scan_marks_at(r,pass,frame)){uint ended=scan_marks(t,frame,r,pass,scratch,counts,shape,start,fired,steps,q);if(ended==2u)MICRO_FAIL if(ended==1u)return;alive=false;break;}
           uint candidate=walk_next(t,frame,r);
           if(candidate==MICRO_NONE){alive=false;break;}
           if(depth==FRAMES)MICRO_FAIL
@@ -433,11 +511,11 @@ static void micro_from(thread const Tree& t,device const uint* head,MicroPass pa
       if(stack[depth-1u].resume==0u){path=stack[--depth];break;}
       // The top frame advanced in thread memory (the stack may be in device memory).
       MicroFrame top=stack[depth-1u];
-      // A frame given whole (a spill's) scans as the walk's own does.
-      if(scan_marks_at(r,pass,top)){uint ended=scan_marks(t,top,r,pass,scratch,counts,shape,start,fired,steps,q);if(ended==2u)MICRO_FAIL if(ended==1u)return;depth--;continue;}
+      // A frame taken from the queue scans as the walk's own does (a walk's own scans never stay on its stack).
+      if(received&&depth==1u){received=false;if(scan_marks_at(r,pass,top)){uint ended=scan_marks(t,top,r,pass,scratch,counts,shape,start,fired,steps,q);if(ended==2u)MICRO_FAIL if(ended==1u)return;depth--;continue;}}
       uint candidate=walk_next(t,top,r);
       if(candidate==MICRO_NONE){depth--;continue;}
-      stack[depth-1u]=top;path=top;path.node=candidate;if(top.resume==2u||top.resume==4u)path.end=MICRO_NONE;break;
+      stack[depth-1u]=top;path=top;path.node=candidate;if(top.resume>=4u||top.resume==2u)path.end=MICRO_NONE;break;
     }
   }
   #undef MICRO_FAIL
@@ -619,7 +697,7 @@ static bool root_walk(thread const Tree& t,device const uint* head,RootPass pass
       RootFrame top=stack[depth-1u];
       uint candidate=walk_next(t,top,r);
       if(candidate==MICRO_NONE){depth--;continue;}
-      stack[depth-1u]=top;path=top;path.node=candidate;if(top.resume==2u||top.resume==4u)path.end=MICRO_NONE;break;
+      stack[depth-1u]=top;path=top;path.node=candidate;if(top.resume>=4u||top.resume==2u)path.end=MICRO_NONE;break;
     }
   }
 }

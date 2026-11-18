@@ -50,21 +50,31 @@ the closures below cut the loop tier's steps from 19.0 M to 3.9 M, and `label_mi
      climb.
    - Both halves then reach the cut exactly, and each is a scan of its own. So a long scan spreads over the
      dispatch's threads in halvings.
-3. **A scan whose candidates are captured and emitted at once is a segmented pass** (`scan_marks`). This applies
-   where a closure's exit, or a `desc`'s next words, is `capture; emit` with nothing captured before.
-   - The scan reads a window of 64 nodes at a time. Their flags and tests are read side by side, none waiting on
-     another, into two masks: the nodes given (named, where the scan is named) and the nodes entered.
-   - A node the scan reaches but does not enter hides its subtree's bits. Its size is read only then, and a subtree
-     past the window moves the scan to its end.
-   - The window's marks are then a mask, written a word of 32 nodes at a time. A tally by start adds the count
-     once, and a tally by node adds each set bit. An emit that marks the start does so at the first node given,
-     and so does a pack's emit (its row, its `fired` bit).
-   - A `desc` of every node reads nothing: its marks are its range.
-   - Before it starts, a scan longer than 4 spill budgets of nodes (2,048 at the budget of 512) is halved into the
-     work queue (`scan_cut`, item 2) until its own piece fits. So a long scan's pieces run side by side from the
-     start, rather than after `budget` steps one thread at a time.
-   - A frame taken from the queue scans the same way. Before, it walked a node at a time.
-   - A step is a window or a size read.
+3. **A move's candidates are one segmented pass wherever the words to the emit read the candidate alone**
+   (`scan_marks`). The rule matches the walk's shape, not a pass or a rule.
+   - **The moves:** every move with a frame of candidates. `desc` is a range, a closure a range with skips, and
+     `child` and `after` a chain of siblings up to the parent's end.
+   - **The tail:** the words from the candidate to its emit (`ScanTail`) are tests of the candidate, then at most
+     one `load` of a saved node and tests of that node, at most one capture, and the emit. Anything else (another
+     move, a fork, a save) keeps the walk a frame at a time.
+   - **The windows:** the scan reads 64 nodes at a time. A window's codes and slots lie in a line or two of the
+     tape, so its reads go out together and none waits on a far one:
+     - a range's candidates are its nodes;
+     - a closure's are those its skips leave: a node reached but not entered hides its subtree's bits, and its size
+       is read only where it fails;
+     - a chain's are its hops over each sibling's subtree, inside the window's slots, moving to the next window
+       where a hop leaves it.
+   - **The outputs:** a named move drops the unnamed candidates, and the tail's tests drop the failing ones, leaving
+     a mask of outputs.
+     - Where each output marks its own node (the captured candidate), the marks are the mask, a word of 32 nodes at
+       a time. Tallies add a count.
+     - Where one output makes every mark (the start, or a saved node, as in `after kind=K load0 capture emit`), the
+       scan stops at its first output.
+   - **Splitting:** where every output counts, a scan longer than 4 spill budgets of nodes (2,048 at the budget of
+     512) is halved into the work queue before it starts (`scan_cut`, item 2), until its own piece fits. A chain is
+     cut at the sibling that holds the middle node, found by a climb to the parent. A frame taken from the queue
+     scans the same way.
+   - A step is a window.
 4. Nothing is precomputed. Every read is of the tape in place: sizes, flags, kinds and classes. The device's parent
    stays the climb (0359).
 
@@ -81,6 +91,7 @@ Same command, findings md5 db93ef6db62fb0961f159c0c667254e1 in every run (unchan
 | A captured `desc` marks its range (labels and tallies) | 73–77 ms | 42–49 ms | 61.8 M / 7.1 M | 73–99 |
 | … in packs and start marks too | 45–55 ms | 47–65 ms | 60.9 M / 7.1 M | 18–20 |
 | The segmented pass, its pieces halved before the scan | 58–71 ms | 25–35 ms | 60.8 M / 4.0 M | 51–94 |
+| Every move by its tail's shape (`child`, `after` too) | 43.5–46.8 ms | 24.6–33.1 ms | 59.7 M / 4.0 M | 13–14 |
 
 The two kernels overlap on the device, so their sum is the one to compare: 265–340 ms before, and 93–120 ms with the
 range marks at load 18–20. The segmented pass ran at load 51–94 only, so its times are high for the load. Its steps
@@ -93,9 +104,35 @@ The spill test (`spilled_walks_find_the_cpus_roots`, a budget of one step, 24 fi
 with the cut at the candidate's subtree end. At that budget a scan's piece is 128 nodes, so the test halves every
 long scan before it starts; it took 41–44 s and found the CPU's roots.
 
+## Q65: the `after` scan
+
+The longest walk left after the range scans was `save0 after kind=238 load0 capture emit0`: 877,007 walks of 12.6
+steps on average, the longest 509. It scans the start's following siblings for one of kind 238. Under item 3 its
+hops run inside windows of slots, and it stops at its first output. Its longest walk fell to 290 steps, and the
+longest walk at s1000 is now 290.
+
+Splitting the scan wanted once was tried and is not kept. Halving it after a piece of its own found nothing brought
+the longest walk to 74, under Q56's bound of 100, but it cost time. Five pairs of runs alternated at load 13–29:
+
+| Scans wanted once | `label_micro_8` | `label_micro` | Longest walk |
+|---|---|---|---|
+| Whole, stopping at the first output (kept) | 41.5–56.3 ms | 25.4–42.5 ms | 290 |
+| Halved after a first piece | 83.0–108.3 ms | 11.9–16.4 ms | 74 |
+
+The loss is the queue, not the cut or the scan:
+- The halved runs walked the same steps, to within 0.003%. A check of the mark between windows, so a piece stops
+  once another piece has marked it, saved nothing.
+- Handing on the rest whole, with no climb, took 113–128 ms.
+- Moving the `after` walks to the loop tier, so their pieces run there, totalled 103–119 ms.
+- A thread taking one queued piece between its items took 101–105 ms.
+
+In the short tier a given piece waits for the dispatch's tail, and its SIMD group's lanes wait for the lane that
+cuts. The step bound stood in for a dispatch's critical path. Here the dispatch's time and the bound disagree, so
+the time decides.
+
 ## Open
 
-- The longest walk at s1000 is 509 steps, against Q56's bound of 100: `save0 after kind=238 load0 capture emit0`,
-  877,007 walks averaging 12.6 steps. It is a scan of the start's following siblings for one of a kind. Each hop
-  over a sibling's subtree reads its size, so the hops wait on each other, and a block of n statements makes n
-  such scans, n² hops in all. Neither change here touches `following` (resume 3). Work queue Q65.
+- The longest walk at s1000 is 290 steps against Q56's bound of 100: the `after` scan of a long block of large
+  siblings, a window a hop. Each of a block's n starts scans the siblings after it, so the work is n² hops spread
+  over n walks. Sharing one answer among the siblings would need a pass over the parent's children, which is not
+  this walk's shape. Work queue Q65.

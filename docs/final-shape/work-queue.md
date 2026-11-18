@@ -1353,6 +1353,12 @@ transducer crate, which the engine's `waves::matches` test calls; now `pub`). Co
   such scans, n² hops in all.
 - **Done when**: the longest walk at s1000 is under 100 steps (Q56's bound), with nothing precomputed: for
   example, the siblings' scan as one pass over the parent's children, its answer shared by every start among them.
+- **Progress** (2026-11-17, 0380 item 3, "Q65"): `child` and `after` scan by their tail's shape: hops within windows
+  of slots, stopping at the first output where one output makes every mark. The longest walk went from 509 to 290
+  steps, at s1000 too, with `label_micro_8` at 43.5–46.8 ms and `label_micro` at 24.6–33.1 ms (load 13–14). Halving
+  the scan wanted once brought it to 74 steps but cost 40–60 ms in the short tier's queue. That was measured four
+  ways, and it is not kept. Left: the n² hops of a block's starts. Sharing them needs a pass over the parent's
+  children, which a per-start walk is not.
 
 ### Q50. A device run's matcher launches: the host's part and the GPU's in series, and prices 3× high
 
