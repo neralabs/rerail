@@ -419,6 +419,14 @@ impl Store {
         out.sort_by_key(|(name, ..)| *name);
         out
     }
+    /// `a`, analysis `A` of this version read from a store apart from a stored run's rows (the kept plans' entry,
+    /// decision 0361 step 5), held as if computed and counted as loaded: the one held already, if any.
+    pub fn hold<A: Analysis>(&self, a: Arc<A>) -> Arc<A> {
+        *self.loaded.lock().entry(A::NAME).or_default() += 1;
+        let e = Entry { value: a, reads: A::READS, name: A::NAME, maintain: maintain_as::<A>, agrees: agrees_as::<A>, version: A::VERSION, rows: rows_as::<A> };
+        let kept = self.of.lock().entry(TypeId::of::<A>()).or_insert(e).value.clone();
+        kept.downcast::<A>().expect("an entry of its type")
+    }
     /// Whether analysis `A` is held.
     pub fn holds<A: Analysis>(&self) -> bool {
         self.of.lock().contains_key(&TypeId::of::<A>())

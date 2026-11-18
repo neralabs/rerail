@@ -1,6 +1,6 @@
 # 0361. Relations declare their shapes, and plans come from them
 
-Status: decided (2026-11-17), being built: steps 1, 2, 3, 4, 5 and 7 built (2026-11-18; step 5's plans not yet stored across processes, Q183). The user: "a directive which allows us to add enough data to the
+Status: decided (2026-11-17), being built: steps 1, 2, 3, 4, 5 and 7 built (2026-11-18). The user: "a directive which allows us to add enough data to the
 relations in the .rr files that we can provide good default shapes for them (or at least name an algorithm or
 something) so that we don't need to pay for planning, or only in exceptional circumstances."
 
@@ -392,10 +392,13 @@ plans hold take the kept order, its work and rows scaled to the run's nodes, and
 keep nothing. `RERAIL_PREPARED_PLANS=off` plans as before; `RERAIL_PLAN_CACHE_COUNTS` counts the lines taken
 ("prepared"). Step 6's checks are what replan a line whose facts the rows break.
 
-**Not yet: stored across processes** (Q183). An analysis with rows is read back with a version reopened from a stored
-pipeline run, but a stored run keeps its steps' inputs' analyses alone, and the versions a run plans are made after
-it (preparation's output is folded, then split into the parts). So each process makes a part's prepared plans once,
-at its first plan, from the facts alone.
+**Stored across processes** (Q183). An analysis with rows is read back with a version reopened from a stored pipeline
+run, but a stored run keeps its steps' inputs' analyses alone, and the versions a run plans are made after it
+(preparation's output is folded, then split into the parts). So the prepared plans are kept where the kept plans are
+(decision 0116 step 2): in their entry under the prepared program, by the planned version's identity
+(`manager::identity`: its digest, size and rules' hashes in order). A run reads them with the kept plans; a version's
+first plan holds those of its identity (`Store::hold`, counted as loaded) and makes only those of a version no
+earlier run planned, which are written with the kept plans when the run ends.
 
 **Tests** (Relax, live, here):
 - `a_rule_over_shaped_relations_is_planned_with_the_program`: a rule over `child`- and `kind`-shaped relations is
@@ -406,4 +409,6 @@ at its first plan, from the facts alone.
 - `prepared_plans_are_stored_with_the_image_and_read_back`: the rows read back the same.
 - `a_policy_run_takes_its_prepared_plans_and_finds_the_same`: end to end, `run_policies` over three files with a rule
   over `kind` and `child`: its findings exact, and lines taken from the prepared plans.
+- `a_later_run_reads_the_prepared_plans_an_earlier_one_made`: a run keeps the plans it made by the version's
+  identity; a later run of the same program, built again, reads them through the store's rows (loaded 1, computed 0).
 

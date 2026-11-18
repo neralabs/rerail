@@ -3213,3 +3213,32 @@ fn a_policy_run_takes_its_prepared_plans_and_finds_the_same() {
     assert_eq!(hits, [("a.py".to_owned(), 1), ("c.py".to_owned(), 1), ("c.py".to_owned(), 2)], "{report:#}");
     assert!(taken > 0, "no line was taken from the prepared plans");
 }
+
+/// Q183: the prepared plans a run made of a version are kept for the store by its identity, and a later process's run
+/// of the same program (another version, built again) reads them, made none.
+#[test]
+fn a_later_run_reads_the_prepared_plans_an_earlier_one_made() {
+    use crate::code_rule_dsl::logic::program_image::manager::VersionAnalyses as _;
+    let p = prepared_program();
+    let build = || crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap().0;
+    let held = {
+        let _plans = KeepPlans::start(None);
+        assert!(super::prepared_to_store().is_none(), "none made yet");
+        let v = build();
+        let made = prepared::Prepared::of_version(&v);
+        assert_eq!((v.analyses().computed("prepared plans"), v.analyses().loaded("prepared plans")), (1, 0));
+        let held = super::prepared_to_store().expect("made, for the store");
+        assert_eq!(held.get(&crate::code_rule_dsl::logic::program_image::manager::identity(&v)), Some(&made));
+        prepared::ByVersion::clone(&held)
+    };
+    // As the store gives it back: through its rows.
+    let back = prepared::of_store_rows(&prepared::store_rows(&held));
+    let _plans = KeepPlans::start(None);
+    super::take_stored_prepared(back);
+    let v = build();
+    let read = prepared::Prepared::of_version(&v);
+    assert_eq!((v.analyses().computed("prepared plans"), v.analyses().loaded("prepared plans")), (0, 1), "read, not made");
+    assert_eq!(Some(&*read), held.values().next().map(|p| &**p));
+    assert!(super::prepared_to_store().is_none(), "nothing new to store");
+    assert!(std::sync::Arc::ptr_eq(&read, &prepared::Prepared::of_version(&v)), "held by the version");
+}

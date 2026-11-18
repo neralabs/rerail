@@ -35,6 +35,8 @@ pub struct Prepared(pub HashMap<u128, PreparedPlan>);
 
 /// Lines a run took from the prepared plans (`RERAIL_PLAN_CACHE_COUNTS`).
 pub static TAKEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Versions whose prepared plans a run read from the store, and made (Q183; `RERAIL_PLAN_CACHE_COUNTS`).
+pub static VERSIONS: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
 
 impl Prepared {
     /// The version's prepared plans: its analysis, shared; none under `RERAIL_PREPARED_PLANS=off` or
@@ -44,7 +46,57 @@ impl Prepared {
         if off("RERAIL_PREPARED_PLANS") || off("RERAIL_LAYOUT_ESTIMATES") {
             return Default::default();
         }
-        crate::code_rule_dsl::logic::program_image::manager::analysis::<Prepared>(v).unwrap_or_default()
+        use crate::code_rule_dsl::logic::program_image::manager::{self, VersionAnalyses as _};
+        // Held: this version's, as made or read.
+        if v.analyses().holds::<Prepared>() {
+            return manager::analysis::<Prepared>(v).unwrap_or_default();
+        }
+        // The run's kept plans' entry holds the plans an earlier process made of a version the same as this one (Q183):
+        // read, not made.
+        let Some(id) = super::run_holds_plans().then(|| manager::identity(v)) else { return manager::analysis::<Prepared>(v).unwrap_or_default() };
+        if let Some(p) = super::prepared_stored(&id) {
+            VERSIONS[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return v.analyses().hold(p);
+        }
+        let p = manager::analysis::<Prepared>(v).unwrap_or_default();
+        VERSIONS[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        super::prepared_made(id, Arc::clone(&p));
+        p
+    }
+
+    /// The plans as rows, each a line's (`Analysis::rows`).
+    pub fn to_rows(&self) -> Vec<Row> {
+        let mut rows: Vec<Row> = self
+            .0
+            .iter()
+            .map(|(line, p)| {
+                let mut r = vec![Value::Int((line >> 64) as i64), Value::Int(*line as i64), Value::Int(p.work_per_node.to_bits() as i64), Value::Int(p.rows_per_node.to_bits() as i64)];
+                r.extend(p.order.iter().map(|s| Value::Int(((s.at as i64) << 2) | mode_code(s.mode))));
+                r
+            })
+            .collect();
+        rows.sort_by_key(|r| match (&r[0], &r[1]) {
+            (Value::Int(a), Value::Int(b)) => (*a, *b),
+            _ => (0, 0),
+        });
+        rows
+    }
+
+    /// The plans read back from `rows` (`to_rows`'s).
+    pub fn read_rows<'r>(rows: impl IntoIterator<Item = &'r [Value]>) -> Option<Prepared> {
+        let int = |x: &Value| match x {
+            Value::Int(i) => Some(*i),
+            _ => None,
+        };
+        let mut out = HashMap::new();
+        for r in rows {
+            let ints: Vec<i64> = r.iter().map(int).collect::<Option<_>>()?;
+            let [hi, lo, work, rows, steps @ ..] = ints.as_slice() else { return None };
+            let line = (u128::from(*hi as u64) << 64) | u128::from(*lo as u64);
+            let order = steps.iter().map(|&s| Some(Step { at: usize::try_from(s >> 2).ok()?, mode: mode_of(s & 3) })).collect::<Option<Vec<_>>>()?;
+            out.insert(line, PreparedPlan { order, work_per_node: f64::from_bits(*work as u64), rows_per_node: f64::from_bits(*rows as u64) });
+        }
+        Some(Prepared(out))
     }
 
     /// Line `line`'s plan, scaled to a run of `nodes` nodes: its order, work and rows.
@@ -168,36 +220,44 @@ impl Analysis for Prepared {
     }
     const VERSION: u32 = 1;
     fn rows(&self, _v: &Version) -> Option<Vec<Row>> {
-        let mut rows: Vec<Row> = self
-            .0
-            .iter()
-            .map(|(line, p)| {
-                let mut r = vec![Value::Int((line >> 64) as i64), Value::Int(*line as i64), Value::Int(p.work_per_node.to_bits() as i64), Value::Int(p.rows_per_node.to_bits() as i64)];
-                r.extend(p.order.iter().map(|s| Value::Int(((s.at as i64) << 2) | mode_code(s.mode))));
-                r
-            })
-            .collect();
-        rows.sort_by_key(|r| match (&r[0], &r[1]) {
-            (Value::Int(a), Value::Int(b)) => (*a, *b),
-            _ => (0, 0),
-        });
-        Some(rows)
+        Some(self.to_rows())
     }
     fn of_rows(_v: &Version, rows: &[Row]) -> Option<Prepared> {
-        let int = |x: &Value| match x {
-            Value::Int(i) => Some(*i),
-            _ => None,
-        };
-        let mut out = HashMap::new();
-        for r in rows {
-            let ints: Vec<i64> = r.iter().map(int).collect::<Option<_>>()?;
-            let [hi, lo, work, rows, steps @ ..] = ints.as_slice() else { return None };
-            let line = (u128::from(*hi as u64) << 64) | u128::from(*lo as u64);
-            let order = steps.iter().map(|&s| Some(Step { at: usize::try_from(s >> 2).ok()?, mode: mode_of(s & 3) })).collect::<Option<Vec<_>>>()?;
-            out.insert(line, PreparedPlan { order, work_per_node: f64::from_bits(*work as u64), rows_per_node: f64::from_bits(*rows as u64) });
-        }
-        Some(Prepared(out))
+        Prepared::read_rows(rows.iter().map(Vec::as_slice))
     }
+}
+
+/// Prepared plans by the identity of the version they were made of (`manager::identity`): what the kept plans'
+/// entry holds of them (Q183).
+pub type ByVersion = HashMap<[u8; 32], Arc<Prepared>>;
+
+/// `by`'s rows for the kept plans' entry: each the version's identity as four ints, then a plan's row.
+pub fn store_rows(by: &ByVersion) -> Vec<Row> {
+    let mut out: Vec<Row> = Vec::new();
+    for (id, p) in by {
+        let head: Vec<Value> = id.chunks(8).map(|c| Value::Int(i64::from_le_bytes(c.try_into().expect("eight bytes")))).collect();
+        out.extend(p.to_rows().into_iter().map(|r| head.iter().cloned().chain(r).collect()));
+    }
+    out.sort_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
+    out
+}
+
+/// The kept plans' entry's rows read back (`store_rows`'s); a row it cannot read is left out with its version's.
+pub fn of_store_rows(rows: &[Row]) -> ByVersion {
+    let mut by: HashMap<[u8; 32], Vec<&[Value]>> = HashMap::new();
+    let mut bad = HashSet::new();
+    for r in rows {
+        let Some(ids) = r.get(..4).and_then(|h| h.iter().map(|v| if let Value::Int(i) = v { Some(*i) } else { None }).collect::<Option<Vec<i64>>>()) else { continue };
+        let mut id = [0u8; 32];
+        for (k, i) in ids.iter().enumerate() {
+            id[k * 8..k * 8 + 8].copy_from_slice(&i.to_le_bytes());
+        }
+        by.entry(id).or_default().push(&r[4..]);
+        if r.len() < 8 {
+            bad.insert(id);
+        }
+    }
+    by.into_iter().filter(|(id, _)| !bad.contains(id)).filter_map(|(id, rows)| Some((id, Arc::new(Prepared::read_rows(rows)?)))).collect()
 }
 
 fn mode_code(m: Option<super::Mode>) -> i64 {

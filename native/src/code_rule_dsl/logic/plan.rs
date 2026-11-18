@@ -1597,6 +1597,10 @@ pub struct RunPlans {
     /// seen first under another key, or a maintenance rule of a rule planned before, starts from it (decision 0258).
     /// A session's, carried between its runs with its plans.
     orders: arc_swap::ArcSwap<rustc_hash::FxHashMap<u128, Arc<[Step]>>>,
+    /// The prepared plans of the versions planned (decision 0361 step 5, Q183): the store's, read with the kept
+    /// plans, and those this run made, by the version's identity; and whether it made any.
+    prepared: arc_swap::ArcSwap<prepared::ByVersion>,
+    prepared_new: std::sync::atomic::AtomicBool,
 }
 
 impl Default for RunPlans {
@@ -1678,6 +1682,8 @@ impl RunPlans {
             },
             planned_now: Default::default(),
             orders: arc_swap::ArcSwap::from_pointee(orders),
+            prepared: Default::default(),
+            prepared_new: Default::default(),
         }
     }
 
@@ -1864,6 +1870,52 @@ pub fn take_stored_plans(stored: Arc<StoredPlans>) {
     });
 }
 
+/// Whether this thread runs with kept plans (`PLANS`): only then are prepared plans read from or kept for the store.
+#[doc(hidden)]
+pub fn run_holds_plans() -> bool {
+    PLANS.with(|p| p.borrow().is_some())
+}
+
+/// The prepared plans the store kept of the version whose identity is `id` (Q183).
+#[doc(hidden)]
+pub fn prepared_stored(id: &[u8; 32]) -> Option<Arc<prepared::Prepared>> {
+    PLANS.with(|p| p.borrow().as_ref().and_then(|p| p.prepared.load().get(id).cloned()))
+}
+
+/// Keeps `made`, the prepared plans this run made of the version whose identity is `id`, for the store.
+#[doc(hidden)]
+pub fn prepared_made(id: [u8; 32], made: Arc<prepared::Prepared>) {
+    PLANS.with(|p| {
+        if let Some(p) = p.borrow().as_ref() {
+            p.prepared.rcu(|m| {
+                let mut m = prepared::ByVersion::clone(m);
+                m.insert(id, Arc::clone(&made));
+                m
+            });
+            p.prepared_new.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    });
+}
+
+/// Gives this thread's run the prepared plans the store kept (with `take_stored_plans`).
+pub fn take_stored_prepared(stored: prepared::ByVersion) {
+    PLANS.with(|p| {
+        if let Some(p) = p.borrow().as_ref() {
+            p.prepared.store(Arc::new(stored));
+        }
+    });
+}
+
+/// This thread's run's prepared plans for the store, the stored with the made: `None` where it made none.
+pub fn prepared_to_store() -> Option<Arc<prepared::ByVersion>> {
+    PLANS.with(|p| p.borrow().as_ref().filter(|p| p.prepared_new.load(std::sync::atomic::Ordering::Relaxed)).map(|p| p.prepared.load_full()))
+}
+
+/// The prepared plans held for this thread's run, as read and made.
+pub fn prepared_held() -> Arc<prepared::ByVersion> {
+    PLANS.with(|p| p.borrow().as_ref().map(|p| p.prepared.load_full()).unwrap_or_default())
+}
+
 /// This thread's run's plans for the store: the stored ones with the run's over them, or `None` where the run
 /// changed none.
 pub fn plans_to_store() -> Option<StoredPlans> {
@@ -2023,7 +2075,7 @@ impl Drop for KeepPlans {
             let st: Vec<u64> = STATISTICS.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
             let searches: Vec<u64> = SEARCHES.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
             let lazy = lazy_probes_counted();
-            eprintln!("plan cache: {}; budget missed: {}; statistics: {} batches of {} relations, {} late, {} answered by layouts; {} lines prepared; orders: {} searched, {} greedy (under a search's cost); probes: {} left unplanned at open, {} planned later", counts.join(", "), miss.join(", "), st[0], st[1], st[2], SHAPED.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::TAKEN.swap(0, std::sync::atomic::Ordering::Relaxed), searches[0], searches[1], lazy.0, lazy.1);
+            eprintln!("plan cache: {}; budget missed: {}; statistics: {} batches of {} relations, {} late, {} answered by layouts; {} lines prepared ({} versions' plans read, {} made); orders: {} searched, {} greedy (under a search's cost); probes: {} left unplanned at open, {} planned later", counts.join(", "), miss.join(", "), st[0], st[1], st[2], SHAPED.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::TAKEN.swap(0, std::sync::atomic::Ordering::Relaxed), prepared::VERSIONS[0].swap(0, std::sync::atomic::Ordering::Relaxed), prepared::VERSIONS[1].swap(0, std::sync::atomic::Ordering::Relaxed), searches[0], searches[1], lazy.0, lazy.1);
         }
         compose::clear();
         // Every job that entered them has ended: the run's thread holds the last handle.

@@ -3751,7 +3751,7 @@ native join it falls back to the planner's whole-rule order.
   when a build-dependency it reaches lies in the shared workspace, or map that dependency's paths to the disk.
 - **Done when**: the engine's tests run under `RELAX_SHARE=rerail`.
 
-### Q183. Prepared plans are made once a version, but not yet stored with the planned version's image
+### Q183. Prepared plans are made once a version, but not yet stored with the planned version's image (done)
 
 - **Found** (2026-11-18, 0361 step 5): `plan::prepared::Prepared` is an analysis with `rows`/`of_rows`, so a version
   reopened from a stored pipeline run reads it back. But a stored run keeps the analyses of its steps' inputs only
@@ -3761,3 +3761,10 @@ native join it falls back to the planner's whole-rule order.
   `choices`), keyed by the part's identity, and read them back at the run's first plan.
 - **Done when**: a warm process's profile shows the prepared plans read (`Store::loaded("prepared plans")`), none
   made.
+- **Done** (2026-11-18): kept in the kept plans' entry under the prepared program (`rr_prepared_plan`, decision 0116's
+  store), each row the planned version's identity (`manager::identity`) then a plan's. A run reads them with the kept
+  plans; `Prepared::of_version` of a version it does not hold looks its identity up there and holds what it finds
+  (`Store::hold`, counted as loaded), else makes them and keeps them for the store, written when the run made any.
+  Tests: `a_later_run_reads_the_prepared_plans_an_earlier_one_made` (loaded 1, computed 0) and
+  `kept_plans_read_back_from_the_store_by_rule_and_scale` (the entry's round trip). The plan-cache counts line says
+  how many versions' plans a run read and made.
