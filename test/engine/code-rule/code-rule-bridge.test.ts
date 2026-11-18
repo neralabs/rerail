@@ -410,7 +410,7 @@ describe("CodeRuleBridge", () => {
     });
   });
 
-  it("reads a call begun with nothing captured, as from a ledger, against what the session last saw of the file", async () => {
+  it("reads a call begun with nothing captured, as from a ledger, whole, as nothing it holds gives its file's earlier text", async () => {
     const root = await workspace();
     const path = join(root, "src", "a.py");
     await writeFile(path, "before\n");
@@ -422,12 +422,13 @@ describe("CodeRuleBridge", () => {
     await bridge.begin("edit-1", "write", { path: "src/a.py" });
     await writeFile(path, "middle\n");
     await bridge.finish("edit-1");
-    // The session last saw the file as the call before left it, not as this one left it: that sight is its "before".
+    // The session last saw the file as the call before left it, but another write may have come since: no "before" is
+    // certain without the call's own text edits, so the rules read the whole text it left.
     await expect(bridge.begin("edit-2", "write", { path: "src/a.py" }, {})).resolves.toEqual({});
     await writeFile(path, "after\n");
     await bridge.finish("edit-2");
     expect(auditGeneratedEdits.mock.calls.at(-1)?.[1].edits).toEqual([
-      { path: "src/a.py", language: "python", previousText: "middle\n", generatedText: "after\n" },
+      { path: "src/a.py", language: "python", previousReadError: "Original source was not captured for this tool call", generatedText: "after\n" },
     ]);
   });
 
@@ -1937,6 +1938,13 @@ describe("the text a tool call's edits were made on, from the text they left", (
   it("gives none for an edit that removed its old text, as nothing marks where it was", () => {
     expect(undoTextEdits("a\nb\n", [once("x\n", "")])).toBeUndefined();
     expect(undoTextEdits("a\nb\n", [everywhere("x\n", "")])).toBeUndefined();
+  });
+
+  it("gives none where the tool could not have made the edits on the text undoing gives", () => {
+    // Undone, the text holds the old text twice, where the tool makes an edit of one place only on a text holding it once.
+    expect(undoTextEdits("b\nx\na\n", [once("a", "b")])).toBeUndefined();
+    // An Edit with an empty old text created its file: nothing was there to make it on.
+    expect(undoTextEdits("def a():\n", [once("", "def a():\n")])).toBeUndefined();
   });
 
   it("undoes a MultiEdit's edits from the last to the first", () => {

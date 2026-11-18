@@ -106,8 +106,8 @@ export function ledgerPreimage(preimage: Preimage): Preimage {
 /**
  * What `begin` takes in place of preimages for a call no one saw start, which may have run already (its hook left it
  * while the daemon did not read, or gave up waiting): it captures nothing, as what its files hold now may be what it
- * wrote. Its "before" is then the text it left with its own text edits undone, where that is exact, else what the
- * session observed of the file unless that already holds what the call left (`#readToolEdit`).
+ * wrote. Its "before" is then rebuilt from its own text edits only where that is certain (`certainEdit`); the rules
+ * read the whole text it left everywhere else (`#readToolEdit`).
  */
 export const UNSEEN_START = "unseen-start";
 
@@ -204,17 +204,34 @@ function preimageOf(source: Source): Preimage | undefined {
   return source.deleted === true ? {} : undefined;
 }
 /**
- * The digest a tool edit's source had before it when its text was not captured: the one observed before a call whose start
- * was not seen, or a secret-like file's, which finds it again where this session or Git holds it.
+ * The digest a secret-like file had before a tool edit whose start kept no copy of it, which finds the text again where
+ * this session or Git holds it.
  */
-function uncapturedPrior(edit: CodeRuleEdit, preimage: Preimage | undefined, before: string | undefined): string | undefined {
-  if (edit.generatedText === undefined) return undefined;
-  return preimage === undefined ? before : preimage.withheld?.sha256;
+function withheldPrior(edit: CodeRuleEdit, preimage: Preimage): string | undefined {
+  return edit.generatedText === undefined ? undefined : preimage.withheld?.sha256;
 }
-/** `edit` with the text it was made on as its "before", where undoing `textEdits` in the text it left gives it exactly. */
-function undoneEdit(edit: CodeRuleEdit, textEdits: readonly TextEdit[] | undefined): CodeRuleEdit | undefined {
-  const previousText = edit.generatedText === undefined || textEdits === undefined ? undefined : undoTextEdits(edit.generatedText, textEdits);
-  if (previousText === undefined) return undefined;
+/**
+ * `edit`, of a call that captured nothing of its file as it began (its hook left it while the daemon did not read, or
+ * the ledger held nothing), with the text the call was made on as its "before", where that text is certain; undefined
+ * anywhere else, so the rules read the whole text it left and tell every finding of the file: more than the call's own
+ * lines where some are not its own, never fewer. The text is certain only where each of these holds:
+ * - the call's input names its text edits (`inputTextEdits`): an Edit or MultiEdit, not a Write, whose earlier text
+ *   nothing in its input gives;
+ * - undoing them in the text it left, the last first, finds each new text, which is not empty, exactly once (at every
+ *   place, for an edit of every place), the one place each edit can have been made (`undoTextEdits`);
+ * - making them again on the text that gives, as the tool makes them, finds each old text, which is not empty (an Edit
+ *   with an empty one created its file), exactly once (at every place, for an edit of every place) and gives back
+ *   exactly the text the call left;
+ * - that text is what the session last saw of the file (`sight`, its SHA-256 digest).
+ * Then the file held that text when the session last looked, and holds it now with this call's edits and nothing else,
+ * so no other write came between: neither another program's nor another call the same hold left, whose change the
+ * text left would hold besides (a later call that wrote the same text again included). A file the session first saw
+ * after the call wrote it fails the last condition, as what it saw already holds the call's edits.
+ */
+function certainEdit(edit: CodeRuleEdit, textEdits: readonly TextEdit[] | undefined, sight: string | undefined): CodeRuleEdit | undefined {
+  if (edit.generatedText === undefined || textEdits === undefined || sight === undefined) return undefined;
+  const previousText = undoTextEdits(edit.generatedText, textEdits);
+  if (previousText === undefined || sha256(previousText) !== sight) return undefined;
   const { previousReadError: _uncaptured, ...rest } = edit;
   return { ...rest, previousText };
 }
@@ -1117,22 +1134,37 @@ export function inputTextEdits(input: unknown): readonly TextEdit[] | undefined 
 
 /**
  * The text `edits` were made on, from the text they left: each one undone, the last first, by putting its old string
- * back where its new string is. Undefined where that place is not known exactly: a new string that is empty, or one the
- * text holds other than once (not at all, for an edit made at every place), as a later edit or another writer has
- * changed it there. In a text with CRLF line breaks the edits' lines are matched with CRLF, as an editor that keeps a
- * file's line breaks writes them.
+ * back where its new string is, then checked by making them again on it as the tool makes them, which must give back
+ * `text`. Undefined where the place is not known exactly (a new string that is empty, or one the text holds other than
+ * once, or not at all for an edit made at every place, as a later edit or another writer changed it there), or where the
+ * tool could not have made the edits on the text undoing gives (an empty old string, which creates a file, or one that
+ * text holds other than once). In a text with CRLF line breaks the edits' lines are matched with CRLF, as an editor
+ * that keeps a file's line breaks writes them.
  */
 export function undoTextEdits(text: string, edits: readonly TextEdit[]): string | undefined {
   const matched = text.includes("\r\n") ? edits.map(withCrlf) : edits;
-  return matched.reduceRight<string | undefined>((undone, edit) => (undone === undefined ? undefined : undoTextEdit(undone, edit)), text);
+  const undone = matched.reduceRight<string | undefined>((current, edit) => (current === undefined ? undefined : undoTextEdit(current, edit)), text);
+  if (undone === undefined) return undefined;
+  const redone = matched.reduce<string | undefined>((current, edit) => (current === undefined ? undefined : madeOnce(current, edit)), undone);
+  return redone === text ? undone : undefined;
 }
 
 function undoTextEdit(text: string, edit: TextEdit): string | undefined {
-  const at = text.indexOf(edit.newString);
-  if (edit.newString === "" || at < 0) return undefined;
-  if (edit.replaceAll) return text.split(edit.newString).join(edit.oldString);
-  if (text.includes(edit.newString, at + 1)) return undefined;
-  return text.slice(0, at) + edit.oldString + text.slice(at + edit.newString.length);
+  return replacedOnce(text, edit.newString, edit.oldString, edit.replaceAll);
+}
+
+/** `edit` made on `text` as the tool makes it: its old string replaced once, where the text holds it once, or at every place. */
+function madeOnce(text: string, edit: TextEdit): string | undefined {
+  return replacedOnce(text, edit.oldString, edit.newString, edit.replaceAll);
+}
+
+/** `text` with `from` replaced by `to` where it holds `from` exactly once, or at every place it holds it with `everywhere`. */
+function replacedOnce(text: string, from: string, to: string, everywhere: boolean): string | undefined {
+  const at = text.indexOf(from);
+  if (from === "" || at < 0) return undefined;
+  if (everywhere) return text.split(from).join(to);
+  if (text.includes(from, at + 1)) return undefined;
+  return text.slice(0, at) + to + text.slice(at + from.length);
 }
 
 function withCrlf(edit: TextEdit): TextEdit {
@@ -1900,7 +1932,7 @@ export class CodeRuleBridge {
     return preimages;
   }
 
-  /** The tool call's edits, and the digest each source had before it where neither its start nor its input gives it. */
+  /** The tool call's edits, and the digest each secret-like source had before it, of which its start kept no copy. */
   async #readEdits(discovery: SourceDiscovery, pending: PendingEdit): Promise<{ edits: CodeRuleEdit[]; uncaptured: Map<string, string> }> {
     const root = await realpath(this.#cwd);
     const edits: CodeRuleEdit[] = [];
@@ -1913,9 +1945,9 @@ export class CodeRuleBridge {
   }
 
   /**
-   * One file's edit by the call. Where its start captured nothing, its "before" is the text it left with the call's own
-   * text edits undone, where that is exact (`undoTextEdits`), so the rules read the call's lines whatever another writer
-   * or a later call did to the rest of the file; otherwise what the session last saw of the file (`#observedBefore`).
+   * One file's edit by the call. Where its start captured nothing of the file, its "before" is the text it was made on
+   * where that is certain (`certainEdit`), so the rules read the call's own lines; anywhere else they read the whole
+   * text it left. What the session last saw of the file is taken before reading it moves that sight on.
    */
   async #readToolEdit(
     discovery: SourceDiscovery,
@@ -1928,12 +1960,11 @@ export class CodeRuleBridge {
     if (source === undefined) return undefined;
     this.#touchSource(discovery, source.path);
     const preimage = pending.preimages.get(source.path);
-    const before = this.#observedBefore(source)?.digest;
+    const sight = this.#observedSource(source.path)?.digest;
     const edit = this.#readEdit(source, preimage);
     if (edit === undefined) return undefined;
-    const undone = preimage === undefined ? undoneEdit(edit, pending.textEdits) : undefined;
-    if (undone !== undefined) return undone;
-    const prior = uncapturedPrior(edit, preimage, before);
+    if (preimage === undefined) return certainEdit(edit, pending.textEdits, sight) ?? edit;
+    const prior = withheldPrior(edit, preimage);
     if (prior !== undefined) uncaptured.set(edit.path, prior);
     return edit;
   }
@@ -3113,18 +3144,6 @@ export class CodeRuleBridge {
   /** What the session last observed of `path`: its own observation, else the snapshot of the worktree holding it. */
   #observedSource(path: string): ObservedSource | undefined {
     return this.#observed.get(path) ?? this.#worktreeView.get(path);
-  }
-
-  /**
-   * What the session last observed of `source`'s file, as what it held before a call that captured none of it, unless
-   * that already holds the text the call left: the call may have run before anyone saw it start (its hook left it, or
-   * the ledger restored it), and the session then saw the file after it ran (a first walk, in a spell that starts with
-   * the session), so the edit read against it would be no change. Then the call's "before" is unknown and the rules
-   * read the whole text it left.
-   */
-  #observedBefore(source: Source): ObservedSource | undefined {
-    const observed = this.#observedSource(source.path);
-    return observed?.digest === source.digest ? undefined : observed;
   }
 
   /** Forgets `path`, gone; in another worktree, it is marked gone where the snapshot the session took holds it. */

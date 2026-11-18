@@ -298,7 +298,7 @@ describe("an engine service beside the events hooks left while its daemon did no
     expect(checkedEdits(held, "a.py").map(read => read.previousText)).toEqual([seen]);
   });
 
-  it("tells an Edit left untaken each line it wrote, one another writer had removed from the file included", async () => {
+  it("reads an Edit left untaken whole where another writer removed a line since the session last saw the file, so the line it wrote back is told", async () => {
     const held = await serviceWithUntaken();
     await firstView(held);
     writeFileSync(join(held.root, "a.py"), "def a():\n    print(9)\n    return 1\n");
@@ -309,26 +309,14 @@ describe("an engine service beside the events hooks left while its daemon did no
     writeFileSync(join(held.root, "a.py"), left);
     await leftCall(held, "left", "Edit", { file_path: "a.py", old_string: "    print(100)\n    return 1", new_string: "    print(9)\n    print(100)\n    print(303)\n    return 1" }, Date.now());
     await held.service.untaken.taken();
-    // The call's "before" is the text it left with its own edit undone, not the session's older view of the file.
-    expect((await held.send(prompt("next"))).filter(steer => steer.startsWith("print in a.py"))).toEqual([printSteer("a.py", 2), printSteer("a.py", 4)]);
-    expect(checkedEdits(held, "a.py").filter(read => read.generatedText === left).map(read => read.previousText)).toEqual(["def a():\n    print(100)\n    return 1\n"]);
+    // Undone, its edits give a text the session never saw: whether another write came between is unknown, so it is
+    // read whole, its two lines among the rest.
+    const told = (await held.send(prompt("next"))).filter(steer => steer.startsWith("print in a.py"));
+    expect(told).toEqual(expect.arrayContaining([printSteer("a.py", 2), printSteer("a.py", 4)]));
+    expect(checkedEdits(held, "a.py").filter(read => read.generatedText === left).map(read => read.previousText)).toEqual([undefined]);
   });
 
-  it("tells an Edit left untaken none of the lines another writer added to the file since the session last saw it", async () => {
-    const held = await serviceWithUntaken();
-    await firstView(held);
-    await liveEdit(held, "    return 1", "    print(100)\n    return 1", "def a():\n    print(100)\n    return 1\n");
-    const other = "def a():\n    print(100)\n    print(300)\n    return 1\n";
-    writeFileSync(join(held.root, "a.py"), other);
-    const left = "def a():\n    print(100)\n    print(300)\n    print(301)\n    return 1\n";
-    writeFileSync(join(held.root, "a.py"), left);
-    await leftCall(held, "left", "Edit", { file_path: "a.py", old_string: "    return 1", new_string: "    print(301)\n    return 1" }, Date.now());
-    await held.service.untaken.taken();
-    expect((await held.send(prompt("next"))).filter(steer => steer.startsWith("print in a.py"))).toEqual([printSteer("a.py", 4)]);
-    expect(checkedEdits(held, "a.py").filter(read => read.generatedText === left).map(read => read.previousText)).toEqual([other]);
-  });
-
-  it("reads an Edit left untaken whose new text the file no longer holds against what the session last saw of it", async () => {
+  it("reads an Edit left untaken whole where the file no longer holds its new text", async () => {
     const held = await serviceWithUntaken();
     await firstView(held);
     const live = "def a():\n    print(1)\n    return 1\n";
@@ -338,8 +326,57 @@ describe("an engine service beside the events hooks left while its daemon did no
     writeFileSync(join(held.root, "a.py"), now);
     await leftCall(held, "left", "Edit", { file_path: "a.py", old_string: "    return 1", new_string: "    print(2)\n    return 1" }, Date.now());
     await held.service.untaken.taken();
-    expect((await held.send(prompt("next"))).filter(steer => steer.startsWith("print in a.py"))).toEqual([printSteer("a.py", 3)]);
-    expect(checkedEdits(held, "a.py").filter(read => read.generatedText === now).map(read => read.previousText)).toEqual([live]);
+    expect((await held.send(prompt("next"))).filter(steer => steer.startsWith("print in a.py"))).toEqual([printSteer("a.py", 2), printSteer("a.py", 3)]);
+    expect(checkedEdits(held, "a.py").filter(read => read.generatedText === now).map(read => read.previousText)).toEqual([undefined]);
+  });
+
+  it("tells each of two Edits left untaken that write the same text into one file its line, reading both whole", async () => {
+    const held = await serviceWithUntaken();
+    await firstView(held);
+    const edit = { file_path: "a.py", old_string: "    return 1", new_string: "    print(460)\n    return 1" };
+    // The first call ran minutes before the second, each between its own two hooks.
+    writeFileSync(join(held.root, "a.py"), "def a():\n    print(460)\n    return 1\n");
+    await leftCall(held, "first", "Edit", edit, Date.now() - 200_000);
+    const left = "def a():\n    print(460)\n    print(460)\n    return 1\n";
+    writeFileSync(join(held.root, "a.py"), left);
+    await leftCall(held, "second", "Edit", edit, Date.now());
+    await held.service.untaken.taken();
+    // The text left holds the second call's edit besides the first's: undone, the first one's gives a text the session
+    // never saw, and its line 2 is told with the rest.
+    const told = (await held.send(prompt("next"))).filter(steer => steer.startsWith("print in a.py"));
+    expect(told).toEqual(expect.arrayContaining([printSteer("a.py", 2), printSteer("a.py", 3)]));
+    const reads = checkedEdits(held, "a.py").filter(read => read.generatedText === left);
+    expect(reads.length).toBeGreaterThanOrEqual(2);
+    expect(new Set(reads.map(read => read.previousText))).toEqual(new Set([undefined]));
+  });
+
+  it("reads an Edit of every place left untaken whole where its new text was in the file before it", async () => {
+    const held = await serviceWithUntaken();
+    writeFileSync(join(held.root, "a.py"), "def a():\n    pass\n    y = 2\n    pass\n    return 1\n");
+    await firstView(held);
+    await liveEdit(held, "    y = 2", "    y = 2\n    print(0)", "def a():\n    pass\n    y = 2\n    print(0)\n    pass\n    return 1\n");
+    const left = "def a():\n    print(0)\n    y = 2\n    print(0)\n    print(0)\n    return 1\n";
+    writeFileSync(join(held.root, "a.py"), left);
+    await leftCall(held, "left", "Edit", { file_path: "a.py", old_string: "    pass", new_string: "    print(0)", replace_all: true }, Date.now());
+    await held.service.untaken.taken();
+    // Undone at every place, its edit also puts back the line the live call wrote: not what the session saw.
+    expect((await held.send(prompt("next"))).filter(steer => steer.startsWith("print in a.py"))).toEqual(expect.arrayContaining([printSteer("a.py", 2), printSteer("a.py", 5)]));
+    expect(checkedEdits(held, "a.py").filter(read => read.generatedText === left).map(read => read.previousText)).toEqual([undefined]);
+  });
+
+  it("reads a Write left untaken whole where another writer changed its file since the session last saw it", async () => {
+    const held = await serviceWithUntaken();
+    await firstView(held);
+    await liveEdit(held, "    return 1", "    print(9)\n    return 1", "def a():\n    print(9)\n    return 1\n");
+    // Another writer removes line 2; the Write, left while the daemon did not read, writes it back with a line of its own.
+    writeFileSync(join(held.root, "a.py"), "def a():\n    return 1\n");
+    const left = "def a():\n    print(9)\n    print(10)\n    return 1\n";
+    writeFileSync(join(held.root, "a.py"), left);
+    await leftWrite(held, "left", "a.py", left, Date.now());
+    await held.service.untaken.taken();
+    // Read against what the session last saw, line 2, which the Write wrote, was no change of it.
+    expect((await held.send(prompt("next"))).filter(steer => steer.startsWith("print in a.py"))).toEqual([printSteer("a.py", 2), printSteer("a.py", 3)]);
+    expect(checkedEdits(held, "a.py").filter(read => read.generatedText === left).map(read => read.previousText)).toEqual([undefined]);
   });
 
   it("reads an Edit seen live against the text it captured as it began, whatever its input asked for", async () => {
