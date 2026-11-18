@@ -5,9 +5,9 @@
 .mode steer
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
-// ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.
+// ast(n, {…}) atoms are JSON terms with no .rerail form yet; the engine matches them as it does today.
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // auto_call(n): the JSON util `auto-call`, used where the JSON says `matches: "auto-call"`
 .decl pie796_auto_call(n: node)
@@ -25,7 +25,7 @@ pie796_enum_base(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n,
 // PIE796(n): a finding at node n, from clause `non-unique-enums`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PIE796(at: node, v: loc) "Enum contains duplicate value: `{v}`"
     suppress noqa "PIE796"
 PIE796_raw(n, V) :- pie796_member(n, V),
@@ -43,7 +43,7 @@ pie796_member(n, X) :- kind(n, "expression_statement"), child(n, c1, _),
 // PIE796_non_unique_enums_stub(n): a finding at node n, from clause `non-unique-enums-stub`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PIE796_non_unique_enums_stub(at: node, v: loc) code "PIE796" "Enum contains duplicate value: `{v}`"
     suppress noqa "PIE796"
 PIE796_non_unique_enums_stub_raw(n, V) :- pie796_member_non_unique_enums_stub(n, V),

@@ -3,7 +3,7 @@
 .language typescript
 .mode steer
 .scope include "**/*"
-#include "tsx/eslint-a-expressions.rr"
+#include "tsx/eslint-a-expressions.rerail"
 
 // ESLint's no-bitwise: every use of a bitwise operator, in a binary, assignment or unary expression.
 //   a & b    a |= b    ~a    a >>> 2       → reported

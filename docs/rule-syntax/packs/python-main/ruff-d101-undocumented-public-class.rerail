@@ -6,12 +6,12 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // D101(n): a finding at node n, from clause `undocumented-public-class`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation D101(at: node, n_mv: loc) "Add a docstring as the first statement of class `{n_mv}`, explaining what it represents and how to use it."
     suppress noqa "D101"
 D101_raw(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, match("[^_].*", n),

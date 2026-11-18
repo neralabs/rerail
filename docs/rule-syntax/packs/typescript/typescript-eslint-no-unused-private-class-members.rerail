@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-a-functions.rr"
+#include "tsx/eslint-a-functions.rerail"
 //   holder_key, member_kind, is_static, ctor, fn_param, deparen, static_string; through tsx/names: ref_site
 
 // typescript-eslint's no-unused-private-class-members: a `private` or `#private` member that nothing reads. Fields,

@@ -29,7 +29,7 @@ gmi_mutator("update").
 .decl gmi_construction(x: symbol)
 gmi_construction("__init__"). gmi_construction("__new__"). gmi_construction("__post_init__").
 
-#include "python/ast.rr"    // assign_target, del_node, leaf_name; def_name and attr_of from python/names
+#include "python/ast.rerail"    // assign_target, del_node, leaf_name; def_name and attr_of from python/names
 
 // gmi_member(c, f, x): f is a def named x directly in class c's body, decorated or not.
 .decl gmi_member(c: node, f: node, x: symbol)

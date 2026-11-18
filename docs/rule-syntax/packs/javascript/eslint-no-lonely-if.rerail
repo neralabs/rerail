@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-a-control.rr"
+#include "tsx/eslint-a-control.rerail"
 //   body, single_statement, needs_braces, is_comment, asi_hazard
 
 // ESLint's no-lonely-if: an `if` that is the only statement of an else block, which could be an `else if`.

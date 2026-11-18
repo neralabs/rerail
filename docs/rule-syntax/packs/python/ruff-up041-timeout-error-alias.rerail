@@ -10,7 +10,7 @@
 //   except socket.timeout:                          ← UP041 (3.10+)
 //   except (asyncio.TimeoutError, KeyError):        ← UP041 at the tuple (3.11+)
 //   raise asyncio.TimeoutError                      ← UP041 (3.11+)
-#include "python/upgrade-imports.rr"
+#include "python/upgrade-imports.rerail"
 //   exc_site(e, how), handler_tuple(t, e), up_qual(e, q)        (python/upgrade-imports)
 //   targets(m)                                               (python/upgrade)
 

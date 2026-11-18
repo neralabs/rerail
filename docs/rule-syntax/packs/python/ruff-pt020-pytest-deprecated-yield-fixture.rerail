@@ -8,7 +8,7 @@
 // yield. Reported when it is a function's first fixture decorator.
 //   @pytest.yield_fixture()      ← PT020
 //   @pytest.fixture              not reported
-#include "python/pytest.rr"
+#include "python/pytest.rerail"
 //   pytest_fixture(f, d, e), pytest_deco(o, d, e, q)
 
 .violation PT020(at: node) code "PT020"

@@ -6,11 +6,11 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // PYI015(n): a finding at node n, from clause `assignment-default-in-stub`.
 // Each rule below is one way the JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PYI015(at: node) "Replace this assigned value with `...`; a stub only needs to show that the name has a value, and keeps literal values only when they are simple."
     suppress noqa "PYI015"
 PYI015_raw(n) :- !pyi015_alt_10(n), pyi015_assign_slot(n),

@@ -9,7 +9,7 @@
 //   assert (x, "x is set")    ← F631
 //   assert x, "x is set"      not reported
 //   assert ()                 not reported: the empty tuple is false
-#include "python/pyflakes.rr"
+#include "python/pyflakes.rerail"
 //   nonempty_tuple(e)  e, through parentheses, is a tuple with at least one element
 
 .violation F631(at: node) code "F631" "Assert test is a non-empty tuple, which is always `True`"

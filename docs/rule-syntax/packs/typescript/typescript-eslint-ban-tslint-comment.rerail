@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/eslint-a-text.rr"
+#include "tsx/eslint-a-text.rerail"
 //   js_comment(c, t, v)
 
 // typescript-eslint's ban-tslint-comment: a comment whose value starts (after blanks) with a TSLint switch,

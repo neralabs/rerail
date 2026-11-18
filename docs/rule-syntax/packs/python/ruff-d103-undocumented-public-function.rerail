@@ -10,7 +10,7 @@
 //   def run(): pass            ← D103 at `run`
 //   @overload
 //   def run(x: int): ...       not reported
-#include "python/docstrings.rr"
+#include "python/docstrings.rerail"
 
 .violation D103(at: node, x: symbol) code "D103"
     "Add a docstring as the first statement of function `{x}`, describing what it does, its arguments and its return value."

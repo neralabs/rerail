@@ -10,7 +10,7 @@
 //   <div> </div>       not: one space is a text child  <a:b></a:b>        reported; <A:b></A:b> is neither kind
 // tree-sitter drops JSX text that is blank and has a line break, as React does, so "no child" covers both
 // of the rule's cases (no children; one child of spaces holding a newline). A non-breaking space is kept.
-#include "tsx/react.rr"
+#include "tsx/react.rerail"
 
 .violation self_closing(at: node)
     code "react/self-closing-comp"

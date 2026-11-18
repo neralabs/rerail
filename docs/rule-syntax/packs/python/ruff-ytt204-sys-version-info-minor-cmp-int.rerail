@@ -7,7 +7,7 @@
 // Ruff YTT204 (flake8-2020): `sys.version_info.minor` ordered against an int, which misjudges Python 4.0.
 //   sys.version_info.minor <= 7   ← YTT204
 //   version_info.minor > 7        ← YTT204, after `from sys import version_info`
-#include "python/misc2-version.rr"
+#include "python/misc2-version.rerail"
 
 .violation YTT204(at: node) code "YTT204"
     "Compare `sys.version_info` to a tuple with the major and minor version, like `sys.version_info >= (3, 9)`, rather than testing `sys.version_info.minor` alone, which misjudges a new major version."

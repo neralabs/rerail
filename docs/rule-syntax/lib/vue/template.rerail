@@ -27,7 +27,7 @@
 //   <svg><circle :r="1" /></svg>      vns(circle, "svg"); not vcustom: circle is a well-known SVG element
 //   <button @click.native="go" />     vdir(e, a, "on", "click"), vmod(a, "native")
 // </template>
-#include "vue/elements.rr"
+#include "vue/elements.rerail"
 //   vhtml_name(x), vsvg_name(x), vmath_name(x), vsvg_weird_attr(x)
 
 // ---- elements ------------------------------------------------------------------------------------------------------

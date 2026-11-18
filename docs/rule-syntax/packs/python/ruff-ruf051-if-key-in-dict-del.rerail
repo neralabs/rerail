@@ -11,7 +11,7 @@
 //   if k in d:
 //       del d[k]           ← RUF051  `d.pop(k, None)`
 //   if a.k in d: …         not reported: only names and literals
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 
 .violation RUF051(at: node, d: symbol, k: symbol) code "RUF051"
     "Use `{d}.pop({k}, None)` instead of checking `{k} in {d}` and then running `del {d}[{k}]`; keep any comments from the removed lines."

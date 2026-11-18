@@ -4,8 +4,8 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/statements.rr"
-#include "tsx/modules.rr"
+#include "tsx/statements.rerail"
+#include "tsx/modules.rerail"
 //   var_decl, for_head, keyword, decl_stmt (statements); not_stmt, string_stmt, function_kind (modules)
 
 // ESLint's vars-on-top: a `var` statement must be in the leading run of declarations of a program, a function

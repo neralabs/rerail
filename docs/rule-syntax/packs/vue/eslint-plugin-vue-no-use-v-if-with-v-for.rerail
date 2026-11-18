@@ -3,7 +3,7 @@
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/code.rr"
+#include "vue/code.rerail"
 //   vdir(e, a, d, arg), vfor(e, a, f, src), tvar(e, x, id, k), tref(r, x, a)
 
 // eslint-plugin-vue's no-use-v-if-with-v-for: a v-if on an element that also has v-for. When the condition reads one

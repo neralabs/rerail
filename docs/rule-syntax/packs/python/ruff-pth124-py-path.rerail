@@ -9,7 +9,7 @@
 //   py.path.local("../foo")                       ← PTH124
 //   from py.path import local as path; path("x")  ← PTH124
 //   f = py.path.local                             not reported
-#include "python/pathlib.rr"
+#include "python/pathlib.rerail"
 //   pth_call(c, q, f)   c calls q; f the callee (python/pathlib)
 
 .violation PTH124(at: node) code "PTH124"

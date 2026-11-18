@@ -14,7 +14,7 @@
 //   "x".join(("1", "2", "3"))                    ← FLY002: "1x2x3"
 //   "a".join([choice("flarp")])                  not reported: the call has arguments
 //   "".join([foo, "'", '"'])                     not reported: both quotes
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 
 .violation FLY002(at: node) code "FLY002"
     "Replace this `join` of string literals with the single string literal it produces."

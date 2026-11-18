@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/eslint-a-expressions.rr"
+#include "tsx/eslint-a-expressions.rerail"
 //   deparen, call_arg_count, as_array
 
 // typescript-eslint's no-array-constructor: `Array(…)` or `new Array(…)` with any number of arguments but one,

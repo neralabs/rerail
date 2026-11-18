@@ -8,7 +8,7 @@
 
 // PYI020(n): a finding at node n, from clause `quoted-annotation-in-stub`.
 // Each rule below is one way the JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PYI020(at: node) "Remove the quotes from this annotation and write the type directly; a stub resolves forward references, so quoting adds nothing."
     suppress noqa "PYI020"
 PYI020_raw(n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
@@ -17,7 +17,7 @@ PYI020_raw(n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
 // PYI020_nested_quoted_annotation_in_stub(n): a finding at node n, from clause `nested-quoted-annotation-in-stub`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PYI020_nested_quoted_annotation_in_stub(at: loc, q: node) code "PYI020" "Remove the quotes from this annotation and write the type directly; a stub resolves forward references, so quoting adds nothing."
     suppress noqa "PYI020"
 PYI020_nested_quoted_annotation_in_stub_raw(Q, n) :- (kind(n, "string") ; kind(n, "concatenated_string")),

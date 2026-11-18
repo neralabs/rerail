@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
 
-#include "tsx/eslint-a-functions.rr"
+#include "tsx/eslint-a-functions.rerail"
 //   fn_param, default_param, rest_param, optional_param
 
 // ESLint's default-param-last: a parameter that is not required, with some required parameter after it.

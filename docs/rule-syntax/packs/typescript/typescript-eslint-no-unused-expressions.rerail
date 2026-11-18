@@ -4,11 +4,11 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/modules.rr"
+#include "tsx/modules.rerail"
 //   directive
-#include "tsx/ts-b.rr"
+#include "tsx/ts-b.rerail"
 //   module_directive
-#include "tsx/eslint-a-common.rr"
+#include "tsx/eslint-a-common.rerail"
 //   deparen
 
 // typescript-eslint's no-unused-expressions: ESLint's rule. An expression statement whose value is thrown away and

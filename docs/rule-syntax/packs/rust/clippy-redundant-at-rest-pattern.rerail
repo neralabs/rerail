@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "rust/syntax-patterns.rr"
+#include "rust/syntax-patterns.rerail"
 //   bare_pat(p, q)   pattern p without its ref / mut wrappers
 
 // Clippy's redundant_at_rest_pattern (complexity): a slice pattern holding only `name @ ..`, which binds

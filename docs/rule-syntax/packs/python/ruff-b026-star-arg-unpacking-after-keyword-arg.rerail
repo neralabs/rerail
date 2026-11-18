@@ -8,7 +8,7 @@
 // positionally, before the keyword, which the order on the page hides. Each such `*args` is reported.
 //   foo(bam="bam", *["bar", "baz"])    ← B026 at `*[…]`
 //   foo(*["bar"], bam="bam", *["baz"]) ← B026 at the second one only
-#include "python/bugbear.rr"
+#include "python/bugbear.rerail"
 
 .violation B026(at: node) code "B026" "Star-arg unpacking after a keyword argument is strongly discouraged"
     suppress ruff "B026"

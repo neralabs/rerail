@@ -12,8 +12,8 @@
 // Other dialects fold to upper case (ANSI) or quote with `…` (MySQL); this rule reads every file as
 // PostgreSQL, as the JSON does. Function bodies are not checked.
 
-#include "sql/syntax.rr"
-#include "../packs/sql/sqlfluff-rf06-references-quoting.facts.rr"   // pg_reserved
+#include "sql/syntax.rerail"
+#include "../packs/sql/sqlfluff-rf06-references-quoting.facts.rerail"   // pg_reserved
 
 .violation RF06(at: node) code "RF06" "Unnecessary quoted identifier; use the unquoted form."
     suppress sqlfluff "RF06", "L059", "all", "references", "references.quoting"

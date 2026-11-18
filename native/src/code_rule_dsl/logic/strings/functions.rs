@@ -1,8 +1,8 @@
-//! The `core.rr` functors that compute text from text (`@head`, `@join`, `@replace_all`, …), and Soufflé's
+//! The `core.rerail` functors that compute text from text (`@head`, `@join`, `@replace_all`, …), and Soufflé's
 //! built-in functions beyond SQL's (`to_number`, `max`, `min`, `%`), each a native SQL function of the same name
 //! (`lower`, `max`, `min` and `mod` in place of SQLite's own). A rule's call `@f(a, b)` is lowered to `f(a, b)` in
 //! SQL, its symbol arguments decoded to text and a symbol result encoded back (`plan`'s `text_of` / `symbol_of`).
-//! Each function's meaning is `core.rr`'s comment on it, or Soufflé's. A NULL argument, a regex that does not
+//! Each function's meaning is `core.rerail`'s comment on it, or Soufflé's. A NULL argument, a regex that does not
 //! compile, or a value Soufflé has none for (`to_number("a")`, `x % 0`) gives NULL: no value, so the rule gives no
 //! row for it.
 
@@ -49,7 +49,7 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("to_precision", &[Text, Number], Text),
     // JavaScript's `toLowerCase`: Unicode's default case mapping (SQLite's own `lower` is ASCII only).
     ("lower", &[Text], Text),
-    // `.rr`'s `cat(a, b, …)`, two at a time: the native engine's concatenation (SQL concatenates with `||`).
+    // `.rerail`'s `cat(a, b, …)`, two at a time: the native engine's concatenation (SQL concatenates with `||`).
     ("str_concat", &[Text, Text], Text),
     // `str_concat` run backwards: the text between a prefix and a suffix, none when the text has not both
     // (`simplify::concat_inverses`: `$v = cat($a, $x, $b)` with `$v` bound binds `$x`).
@@ -68,9 +68,9 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("float_mul", &[Number, Number], Number),
     ("float_div", &[Number, Number], Number),
     ("float_str", &[Number], Text),
-    // `.rr`'s `match("(?<x>…)", s)`: the named group's text (`strings::group`), none when the regex does not match.
+    // `.rerail`'s `match("(?<x>…)", s)`: the named group's text (`strings::group`), none when the regex does not match.
     ("rx_group", &[Text, Text, Text], Text),
-    // `.rr`'s integer arithmetic, `strlen` and `to_string`, as the native engine computes them (`native_call`); SQL
+    // `.rerail`'s integer arithmetic, `strlen` and `to_string`, as the native engine computes them (`native_call`); SQL
     // lowers the calls to its own operators, and these names give it the same functions. No value on overflow or
     // for a zero divisor; division truncates, as SQLite's does.
     ("rr_add", &[Number, Number], Number),
@@ -79,7 +79,7 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("rr_div", &[Number, Number], Number),
     ("rr_max", &[Number, Number], Number),
     ("rr_min", &[Number, Number], Number),
-    // `.rr`'s `@place(path, line)`, `@place_path` and `@place_line` (`plan::sql_term`'s encoding): a symbol is its
+    // `.rerail`'s `@place(path, line)`, `@place_path` and `@place_line` (`plan::sql_term`'s encoding): a symbol is its
     // atom, so the path is a number here. `-2 - (path << 32 | line)`, `unset` (-1) for a line outside `0 .. 2^32`.
     ("rr_place", &[Number, Number], Number),
     ("rr_place_path", &[Number], Number),
@@ -121,10 +121,10 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("rr_node_text_any", &[Number], Text),
     // A node's value as W reads it (`facts::vtab::syntax::LongTexts::value_any`): `value`'s answer (decision 0174).
     ("rr_node_value", &[Number], Text),
-    // `.rr`'s `substr(s, i, n)`: n characters from the i-th, counted from 0, as SQL's `substr(s, i + 1, n)` gives
+    // `.rerail`'s `substr(s, i, n)`: n characters from the i-th, counted from 0, as SQL's `substr(s, i + 1, n)` gives
     // them (`substr`).
     ("rr_substr", &[Text, Number, Number], Text),
-    // `core.rr`'s semver functors, as node-semver reads ranges (`semver::Range`): `semver_valid` 1 or 0;
+    // `core.rerail`'s semver functors, as node-semver reads ranges (`semver::Range`): `semver_valid` 1 or 0;
     // `semver_subset` none unless both are ranges (an evaluation error in W, which gives no row).
     ("semver_valid", &[Text], Number),
     ("semver_subset", &[Text, Text], Number),
@@ -133,7 +133,7 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("ed25519_ok", &[Text, Text, Text], Number),
 ];
 
-/// The function the native engine computes `.rr`'s call `f` with: `f` itself when it is one of these, or its
+/// The function the native engine computes `.rerail`'s call `f` with: `f` itself when it is one of these, or its
 /// `rr_` name (`@add`, `@strlen`, …).
 pub fn native_call(f: &str) -> Option<(&'static str, &'static [Kind], Kind)> {
     match f {
@@ -144,7 +144,7 @@ pub fn native_call(f: &str) -> Option<(&'static str, &'static [Kind], Kind)> {
 
 /// The function a data-layer program's SQL builtin `@f` with `n` arguments is (decision 0107: t17's catalogue, the
 /// names its SQL stages used), and whether its first two arguments swap (`@like(x, pattern)` is SQLite's
-/// `like(pattern, x)`). `@lower` and `@substr` are not here: `.rr` has its own of those names.
+/// `like(pattern, x)`). `@lower` and `@substr` are not here: `.rerail` has its own of those names.
 pub fn catalogue(f: &str, n: usize) -> Option<(&'static str, bool)> {
     Some(match (f, n) {
         ("instr", 2) => ("sql_instr", false),
@@ -540,7 +540,7 @@ pub fn glob_sub(pat: &str, to: &str, s: &str) -> String {
 }
 
 /// `@slice("_name", 1, 5)` = `"name"`: characters `start` to `end - 1`, a negative position counting from the end.
-/// `.rr`'s `substr(s, i, n)` as SQLite's `substr(s, i + 1, n)` computes it (its `substrFunc`), over characters: a
+/// `.rerail`'s `substr(s, i, n)` as SQLite's `substr(s, i + 1, n)` computes it (its `substrFunc`), over characters: a
 /// start before the text counts from its end, a negative length takes the characters before the start.
 pub(in crate::code_rule_dsl) fn substr(s: &str, i: i64, n: i64) -> String {
     let chars: Vec<char> = s.chars().collect();

@@ -1,11 +1,11 @@
 // python/conditions: the branches of `if sys.version_info ...` and `if sys.platform ...` a run's Python does not take
 // (t21 §2.4), so a stub's bindings for another version or platform are not read.
 //
-// A test is decided from the run's settings (python/env.rr): a version test always (py_version has a default), a
+// A test is decided from the run's settings (python/env.rerail): a version test always (py_version has a default), a
 // platform test when `python.platform` is set. An undecided test keeps both branches.
 //
 // It reads only relations both shapes have (`kind`, `field`, `child`, `op_at`, `name`, `value`, `str`).
-#include "python/env.rr"
+#include "python/env.rerail"
 
 // The tests: `sys.version_info >= (3, 10)` (and `>`, `<`, `<=`), `sys.platform == "win32"` (and `!=`),
 // `sys.platform.startswith("linux")`; `not` of one.
@@ -55,7 +55,7 @@ py_dead(a) :- kind(i, "if_statement"), field(i, "alternative", e), kind(e, "elif
     child(i, e, k), field(i, "alternative", a), child(i, a, j), j > k.
 
 // py_dead_at(n): a statement in a branch not taken, at any depth of statements (a definition, an assignment, an
-// import): what python/modules.rr and a binding rule leave out.
+// import): what python/modules.rerail and a binding rule leave out.
 .decl py_stmt_part(k: symbol)
 py_stmt_part("block"). py_stmt_part("if_statement"). py_stmt_part("elif_clause"). py_stmt_part("else_clause").
 py_stmt_part("decorated_definition"). py_stmt_part("expression_statement"). py_stmt_part("try_statement").

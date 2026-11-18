@@ -1,6 +1,6 @@
-// lib/data-layer/lazy-analyzer.rr: the function model of the data layer's lint_lazy_architecture
+// lib/data-layer/lazy-analyzer.rerail: the function model of the data layer's lint_lazy_architecture
 // (FunctionAnalyzer, scripts/lint_lazy_architecture.py:808-2174). The check's rules (data-layer/
-// lazy-architecture.rr) are predicates over what this file derives: which functions are "facts", which nodes of
+// lazy-architecture.rerail) are predicates over what this file derives: which functions are "facts", which nodes of
 // a function are scanned, the alias state at each node, and the callee strings that key the call graph.
 // Everything is spelling: nothing is resolved beyond the file's own module-level names and imports.
 //
@@ -34,8 +34,8 @@
 //     alias (aliases are only ever added). No ordered recursion is needed: "latest" is a max over syntax.
 //   - Route handlers (`@router.get(…)` nested defs) are skipped, body and all.
 
-#include "python/ast.rr"      // ast_parent, assign_target, assign_value, path_module, unparen, plain_str
-#include "python/names.rr"    // def_name, decorator, attr_of
+#include "python/ast.rerail"      // ast_parent, assign_target, assign_value, path_module, unparen, plain_str
+#include "python/names.rerail"    // def_name, decorator, attr_of
 
 // ---- documents and facts -------------------------------------------------------------------------------------------
 // A module's name is path_module's: the path with `/` as `.`, `__init__` kept (_module_name_for_file).
@@ -502,7 +502,7 @@ la_conn(e) :- (attr_of(e, o, _) ; kind(e, "call"), field(e, "function", o) ;
 
 // ---- tables ---------------------------------------------------------------------------------------------------------------
 // la_set(NAME, v): the script's module-level constants, one row per member (a string constant is one row). The
-// check provides them, generated from the script (data-layer/lazy-architecture.tables.rr).
+// check provides them, generated from the script (data-layer/lazy-architecture.tables.rerail).
 .decl la_set(name: symbol, v: symbol) extensible
 .decl la_side_queue(x: symbol)
 la_side_queue(x) :- la_set("BOOTSTRAP_LAZY_FORBIDDEN_SIDE_QUEUE_ATTRS", x).

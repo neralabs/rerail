@@ -4,9 +4,9 @@
 .mode steer
 .scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
 
-#include "tsx/eslint-a-functions.rr"
+#include "tsx/eslint-a-functions.rerail"
 //   ctor, fn_block, fn_param, deparen, call_arg
-#include "tsx/eslint-b-control.rr"
+#include "tsx/eslint-b-control.rerail"
 //   member_runs_on
 
 // ESLint's no-useless-constructor: a constructor that does what the implicit one does. In a base class that is

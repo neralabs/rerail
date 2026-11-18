@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // global_declared_builtin(n): the JSON util `global-declared-builtin`, used where the JSON says `matches: "global-declared-builtin"`
 .decl ruf060_global_declared_builtin(n: node)

@@ -13,7 +13,7 @@
 //       shared: ClassVar[list[int]] = []       not reported
 //       view: Sequence[int] = []               not reported: an immutable annotation
 //       untyped = []                           not reported: not a field (RUF012 covers it)
-#include "python/ruff-classes.rr"
+#include "python/ruff-classes.rerail"
 
 .violation RUF008(at: node, msg: symbol) code "RUF008" "{msg}"
     suppress ruff "RUF008"

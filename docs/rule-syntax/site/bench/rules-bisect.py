@@ -1,9 +1,9 @@
-# rules-bisect.py <rules dir> <corpus> <always.rr> <csv pattern>: the smallest set of other rule files (ddmin) that, with
-# <always.rr>, still prints <pattern> in violation.csv. Each try in a fresh dir under b002-repro/bis/<n>.
+# rules-bisect.py <rules dir> <corpus> <always.rerail> <csv pattern>: the smallest set of other rule files (ddmin) that, with
+# <always.rerail>, still prints <pattern> in violation.csv. Each try in a fresh dir under b002-repro/bis/<n>.
 import os, shutil, subprocess, sys
 SP = os.path.dirname(os.path.abspath(__file__))
 rules, corpus, always, pat = sys.argv[1:5]
-others = sorted(f for f in os.listdir(rules) if f.endswith('.rr') and f != always)
+others = sorted(f for f in os.listdir(rules) if f.endswith('.rerail') and f != always)
 tries = [0]
 def run(sub):
     tries[0] += 1

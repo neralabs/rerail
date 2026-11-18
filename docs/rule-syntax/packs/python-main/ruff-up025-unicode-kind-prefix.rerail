@@ -27,7 +27,7 @@ up025_type_alias_value(n) :- within_stop(n, p1, up025_stop_1), kind(p1, "assignm
 
 // UP025(n): a finding at node n, from clause `unicode-kind-prefix`.
 // Each rule below is one way the JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation UP025(at: node) "Remove the `u` prefix from this string; every Python 3 string is Unicode already. Keep it only if the code must still run on Python 2."
     suppress noqa "UP025"
 UP025_raw(n) :- up025_u_string(n),
@@ -35,7 +35,7 @@ UP025_raw(n) :- up025_u_string(n),
 
 // UP025_unicode_kind_prefix_in_stub(n): a finding at node n, from clause `unicode-kind-prefix-in-stub`.
 // Each rule below is one way the JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation UP025_unicode_kind_prefix_in_stub(at: node) code "UP025" "Remove the `u` prefix from this string; every Python 3 string is Unicode already. Keep it only if the code must still run on Python 2."
     suppress noqa "UP025"
 UP025_unicode_kind_prefix_in_stub_raw(n) :- up025_u_string(n), !up025_alt_3(n).

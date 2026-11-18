@@ -12,8 +12,8 @@
 //   data.dropna().nunique() == 1         ← PD101
 //   data.nunique() >= 1                  not reported: tests non-empty
 //   {"hello": "world"}.nunique() == 1    not reported: not a series
-#include "python/ruff.rr"
-#include "python/misc-seen.rr"
+#include "python/ruff.rerail"
+#include "python/misc-seen.rerail"
 
 .violation PD101(at: node, alt: symbol) code "PD101"
     "Check a NumPy array, not `nunique()`, which scans every value: `a = s.to_numpy()`, then `{alt}`. Keep nunique if NaN handling matters or `s` isn't a pandas Series."

@@ -7,7 +7,7 @@
 // Ruff YTT303 (flake8-2020): `sys.version[:1]`, the major version as one character. On Python 10 it is "1".
 //   sys.version[:1]          ← YTT303
 //   version[:1]              ← YTT303 after `from sys import version`
-#include "python/misc2-version.rr"
+#include "python/misc2-version.rerail"
 
 .violation YTT303(at: node) code "YTT303"
     "Use `sys.version_info.major` (an int, so compare it to ints, not strings) instead of `sys.version[:1]`, which is only the first digit of a two-digit major version."

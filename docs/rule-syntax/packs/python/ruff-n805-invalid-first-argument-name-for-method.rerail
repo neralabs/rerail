@@ -13,7 +13,7 @@
 //       def m(this): ...            ← N805 at `this`
 //       @staticmethod
 //       def s(x): ...               not reported
-#include "python/naming.rr"
+#include "python/naming.rerail"
 
 .violation N805(at: node, x: symbol) code "N805"
     "Name the first parameter `self` instead of `{x}` and update its uses; if it should receive the class, add `@classmethod` and name it `cls`."

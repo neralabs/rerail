@@ -8,7 +8,7 @@
 //   @overload
 //   def f(x: int) -> int:
 //       """Doc."""               ← D418 at `f`
-#include "python/docstrings.rr"
+#include "python/docstrings.rerail"
 
 .violation D418(at: node) code "D418"
     "Remove the docstring from this `@overload` signature and document the function on its implementation instead."

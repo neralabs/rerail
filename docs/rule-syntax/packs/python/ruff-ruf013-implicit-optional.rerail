@@ -14,8 +14,8 @@
 //   def f(arg: Annotated[int, ...] = None): ...   ← RUF013 at `int`
 //   def f(arg: int | None = None): ...            not reported
 //   def f(arg: MyAlias = None): ...               not reported: unknown type
-#include "python/ruff-classes.rr"
-#include "../packs/python/ruff-ruf013-implicit-optional.stdlib.rr"   // stdlib_module(m), stdlib_module_in(m, minor)
+#include "python/ruff-classes.rerail"
+#include "../packs/python/ruff-ruf013-implicit-optional.stdlib.rerail"   // stdlib_module(m), stdlib_module_in(m, minor)
 
 .violation RUF013(at: node) code "RUF013"
     "Allow `None` explicitly: write `T | None` here (`Optional[T]` before Python 3.10), or give the parameter a default other than `None`."

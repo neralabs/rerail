@@ -14,7 +14,7 @@
 //   os.system("ls *")                                    not reported
 // Bandit tests for `*` only; the JSON also took `?` and `[` (see NOTES-py-bandit.md).
 
-#include "python/security.rr"   // qual_call, process_fn, pos_arg, kwarg, literal, report_at
+#include "python/security.rerail"   // qual_call, process_fn, pos_arg, kwarg, literal, report_at
 
 .violation B609(at: node) code "B609"
     "List the files explicitly instead of using a wildcard in this chown, chmod, tar or rsync command; crafted file names can inject options."

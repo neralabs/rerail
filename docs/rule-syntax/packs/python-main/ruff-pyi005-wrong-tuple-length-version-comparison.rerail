@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // test_slot(n): the JSON util `test-slot`, used where the JSON says `matches: "test-slot"`
 .decl pyi005_test_slot(n: node)
@@ -66,7 +66,7 @@ pyi005_tuple_not_2(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
 
 // PYI005(n, detail): findings from clauses `major-slice`, `major-minor-slice`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PYI005(at: node, detail: symbol) "Match the slice to the tuple length: use {detail}; as written the result ignores the version."
     suppress noqa "PYI005"
 PYI005_raw(n, "`sys.version_info[:2]` for a tuple such as `(3, 9)`, or a one-element tuple such as `(3,)` with `[:1]`") :- kind(n, "comparison_operator"),

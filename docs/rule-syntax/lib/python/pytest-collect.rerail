@@ -31,11 +31,11 @@
 // methods resolve along the nearest base, not C3 order; a list a function builds by `append` counts every growth
 // its `for` loops allow (an `if` inside is ignored); a list built by introspection has no length (open); marks on
 // base classes are not inherited.
-// Internal relations start `pyc_` (`pc_` is data-layer purity-calls.rr's, and a run may read both).
+// Internal relations start `pyc_` (`pc_` is data-layer purity-calls.rerail's, and a run may read both).
 
-#include "python/ast.rr"
-#include "python/calls.rr"   // call_arg, callee, posarg, dexpr (syntax only: no call targets are asked for)
-#include "python/lengths.rr"
+#include "python/ast.rerail"
+#include "python/calls.rerail"   // call_arg, callee, posarg, dexpr (syntax only: no call targets are asked for)
+#include "python/lengths.rerail"
 
 .decl collect_root(dir: symbol)
 .decl collect_fn_prefix(p: symbol)

@@ -27,8 +27,8 @@
 //   4. lao_stub / lao_abstract: the two notions of an empty body.
 //   5. One rule per code.
 
-#include "python/names.rr"
-#include "python/ast.rr"      // ast_parent, def_frame, sig_param, body_stmt, str_const
+#include "python/names.rerail"
+#include "python/ast.rerail"      // ast_parent, def_frame, sig_param, body_stmt, str_const
 
 .decl lao_trigger(v: symbol)
 lao_trigger("Transaction"). lao_trigger("PlanScope"). lao_trigger("legacy_"). lao_trigger("pure_lazy").

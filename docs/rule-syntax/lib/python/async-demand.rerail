@@ -1,6 +1,6 @@
 // Shared demand boundaries for blocking async APIs. Native operators return facts; rules compose them.
-#include "core.rr"
-#include "python/async-candidate-targets.rr"
+#include "core.rerail"
+#include "python/async-candidate-targets.rerail"
 .decl py_call_site(d: number, report: node, call: node, ref: node)
 .input py_call_site
 .decl async_documents(d:number)

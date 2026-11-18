@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-a-control.rr"
+#include "tsx/eslint-a-control.rerail"
 //   jump, jump_label, breakable
 
 // ESLint's no-extra-label: `break x` or `continue x` where x labels the nearest loop or switch around the jump,

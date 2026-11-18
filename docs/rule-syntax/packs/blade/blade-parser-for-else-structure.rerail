@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.blade.php"
 
-#include "blade/syntax.rr"
+#include "blade/syntax.rerail"
 //   blade_block(b, x)   directive block b starts with @x;  blade_directive(d, x)
 
 // stillat/blade-parser's ForElseStructureValidator: a @forelse block needs exactly one @empty among its own

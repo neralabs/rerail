@@ -12,7 +12,7 @@
 //   _("Hello, %s!" % name)                ← INT003
 //   _(template % name)                     not reported: the left side is not a literal
 //   _("Hello, %s!") % name                 not reported: translated first
-#include "python/misc2-messages.rr"
+#include "python/misc2-messages.rerail"
 
 .violation INT003(at: node) code "INT003"
     "Translate the template, then format the result: `_(\"Hello, %s!\") % name`, not `_(\"Hello, %s!\" % name)`. Leave it if the callee is not a translation function or the text is a computed catalog key."

@@ -7,7 +7,7 @@
 // Ruff F706 (pyflakes): `return` in a class body or at module level. CPython rejects the file.
 //   class C: return 1        ← F706
 //   def f(): return 1        not reported
-#include "python/pyflakes.rr"
+#include "python/pyflakes.rerail"
 //   run_scope(n, s, k)  the scope n runs in; a statement's is the def, class or module whose body holds it
 
 .violation F706(at: node) code "F706" "`return` statement outside of a function/method"

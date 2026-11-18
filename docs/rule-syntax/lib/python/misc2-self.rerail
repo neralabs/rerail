@@ -26,8 +26,8 @@
 // pair of an annotation and an access. A relation pairing two nodes no rule ties to one file is evaluated over the
 // whole corpus: SLF001 paired every `self` read as a parameter with every attribute access of every file (36 M pairs
 // on 50 files of the Python real-code corpus) and ran past a 56 GB cap on its 1,644.
-#include "python/ast.rr"
-#include "python/typing.rr"   // pyi_sym
+#include "python/ast.rerail"
+#include "python/typing.rerail"   // pyi_sym
 
 .decl slf_receiver_name(o: node)
 slf_receiver_name(o) :- dotted_expr(o, x), (x = "self" ; x = "cls" ; x = "mcs").

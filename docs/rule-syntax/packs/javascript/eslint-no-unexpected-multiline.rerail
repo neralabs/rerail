@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-b-control.rr"
+#include "tsx/eslint-b-control.rerail"
 //   deparen
 
 // ESLint's no-unexpected-multiline: a line that starts with `(`, `[`, a template or `/…/flags` continues the

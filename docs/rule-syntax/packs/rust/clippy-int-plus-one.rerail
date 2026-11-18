@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "rust/syntax-literals.rr"
+#include "rust/syntax-literals.rerail"
 //   binary(e, op, l, r)   e is `l op r`;   lit_one(e)   the integer literal 1 (1u8, 0x1, …)
 
 // Clippy's int_plus_one (complexity): a non-strict comparison against a value one off, where a strict one

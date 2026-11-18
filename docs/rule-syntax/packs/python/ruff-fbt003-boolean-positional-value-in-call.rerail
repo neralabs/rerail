@@ -12,7 +12,7 @@
 //   {}.deploy(True, False)                ← FBT003 twice
 //   {}.get("hello", False)                not reported: an allowed name
 //   set_visible(True)                     not reported: a setter
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 
 .violation FBT003(at: node) code "FBT003"
     "Pass this boolean by keyword (`name=True`) so the call says what it switches; leave it when the callee only accepts it positionally, such as a builtin or C-extension function."

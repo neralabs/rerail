@@ -3,8 +3,8 @@
 .language typescript
 .mode steer
 .scope include "**/*"
-#include "tsx/eslint-a-expressions.rr"
-#include "tsx/eslint-b-literals.rr"
+#include "tsx/eslint-a-expressions.rerail"
+#include "tsx/eslint-b-literals.rerail"
 //   binop, op_token; string_like (a string or any template literal)
 
 // ESLint's no-useless-concat: `+` joining two string literals (quoted or template) that sit on one line, where

@@ -8,7 +8,7 @@
 
 // PYI033(n): a finding at node n, from clause `legacy-type-comment`.
 // Each rule below is one way the JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PYI033(at: node) "Replace this type comment with an inline annotation, such as `x: int = 1` or a per-parameter annotation; stubs never need type comments. Leave `type: ignore` comments alone."
     suppress noqa "PYI033"
 PYI033_raw(n) :- kind(n, "comment"),

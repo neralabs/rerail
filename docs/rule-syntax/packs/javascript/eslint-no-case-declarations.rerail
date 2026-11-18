@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-a-control.rr"
+#include "tsx/eslint-a-control.rerail"
 //   block_declaration (let, const, using, function, class), case_stmt
 
 // ESLint's no-case-declarations: a lexical declaration directly in a `case` or `default` clause. Its name is

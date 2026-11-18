@@ -8,7 +8,7 @@
 // Any target counts: an assignment, a `for` loop, a `with … as`.
 //   *a, *b, c = items         ← F622
 //   a, *rest = items          not reported
-#include "python/pyflakes.rr"
+#include "python/pyflakes.rerail"
 
 .violation F622(at: node) code "F622" "Two starred expressions in assignment"
     suppress ruff "F622"

@@ -13,7 +13,7 @@
 //   # ruff: noqa                 ← PGH004: file-wide
 //   x = 2  # noqa: X100          not reported
 //   x = 2  # noqa : X300         not reported: Ruff allows the space
-#include "python/misc2-noqa.rr"
+#include "python/misc2-noqa.rerail"
 
 .violation PGH004(at: node, msg: symbol) code "PGH004" "{msg}"
 PGH004(c, "Replace the blanket `noqa` with the codes it should silence, as in `# noqa: F401`, so other problems on this line still surface; delete it if nothing needs silencing.") :-

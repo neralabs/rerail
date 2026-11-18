@@ -9,7 +9,7 @@
 //   SELECT COUNT(DISTINCT(k)) FROM t          reported at DISTINCT; the fix is COUNT(DISTINCT k)
 //   SELECT COUNT(DISTINCT (SELECT 1)) FROM t  fine: the parentheses belong to a subquery
 
-#include "sql/syntax.rr"
+#include "sql/syntax.rerail"
 
 .violation ST08(at: node) code "ST08" "DISTINCT used with parentheses."
     suppress sqlfluff "ST08", "L015", "all", "core", "structure", "structure.distinct"

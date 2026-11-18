@@ -15,7 +15,7 @@ shift
 [ ! -e "$out" ] || { echo "$out exists" >&2; exit 1; }
 mkdir -p "$out/native/lab" "$out/native/crates" "$out/cap"
 cp "$root/rust-toolchain.toml" "$out/"
-# The lab without its build outputs; `lean` (the engine's .rr parser) is left out, so its path need not exist.
+# The lab without its build outputs; `lean` (the engine's .rerail parser) is left out, so its path need not exist.
 mkdir "$out/native/lab/tape16"
 cp -R "$lab/src" "$lab/Cargo.lock" "$lab/kinds.tsv" "$out/native/lab/tape16/"
 sed -e '/^rerail-rr-syntax/d' -e '/^lean = /d' -e '/^# E6: the lean/d' "$lab/Cargo.toml" > "$out/native/lab/tape16/Cargo.toml"

@@ -13,7 +13,7 @@
 // The plugin walks the file once, in order, so a variable or method counts only once its this.state read has
 // been seen; and only a bare call `getNext()` is matched to a method, `this.getNext()` is not.
 //   this.setState(s => ({ value: s.value + 1 }));                           not reported
-#include "tsx/react-class.rr"
+#include "tsx/react-class.rerail"
 //   comp_owner(n, k)  n is in class component or spec k;  this_call(c, x, f): c calls this.x(…)
 
 .violation direct(at: node)

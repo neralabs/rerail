@@ -10,7 +10,7 @@
 //   if x == None: ...         ← E711 "Use `is None` …"
 //   if None != x: ...         ← E711 "Use `is not None` …"
 //   if "a" == None: ...       not reported: a literal on the other side
-#include "python/pyflakes.rr"
+#include "python/pyflakes.rerail"
 //   cmp_pair(c, i, op, l, r)   link i of a comparison (python/ast)
 //   const_non_singleton(e)     a literal or tuple of literals other than None, True, False, `...`
 

@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.blade.php"
 
-#include "blade/syntax.rr"
+#include "blade/syntax.rerail"
 //   (core) the Blade tree: component, slot, element_name, attribute (fields name, value)
 
 // stillat/blade-parser's ComponentShorthandVariableParameterValidator: a component's shorthand variable attribute

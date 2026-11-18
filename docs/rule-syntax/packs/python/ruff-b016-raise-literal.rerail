@@ -8,7 +8,7 @@
 // anything but an exception is a TypeError at run time. Only the raised value is checked, not the `from` cause.
 //   raise "string"             ← B016 at the literal
 //   raise Exception("string")  not reported
-#include "python/bugbear.rr"
+#include "python/bugbear.rerail"
 
 .violation B016(at: node) code "B016" "Cannot raise a literal. Did you intend to return it or raise an Exception?"
     suppress ruff "B016"

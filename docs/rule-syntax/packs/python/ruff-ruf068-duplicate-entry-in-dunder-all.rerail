@@ -10,7 +10,7 @@
 //   __all__ = ["A", "B", "A"]      ← RUF068 at the second "A"
 //   __all__ = [A, "B", "B"]        ← RUF068: other elements need not be strings
 //   __all__ += ["A", "B"]          not reported, though "A" may already be in `__all__`
-#include "python/ruff-sorting.rr"
+#include "python/ruff-sorting.rerail"
 
 .violation RUF068(at: node, dup: symbol) code "RUF068"
     "{dup} is already listed earlier in this `__all__` list; remove the repeat, or correct it if another name was meant."

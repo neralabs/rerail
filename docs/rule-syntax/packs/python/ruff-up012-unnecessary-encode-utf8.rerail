@@ -12,7 +12,7 @@
 //       "café".encode("utf-8")        ← UP012: write "café".encode()
 //       f"{x}".encode()               not reported: nothing to drop
 //   A literal with a `\N`/`\u`/`\U` escape, or an octal one above `\377`, is neither ("1".encode("utf-8") is not reported).
-#include "python/upgrade-format.rr"
+#include "python/upgrade-format.rerail"
 //   str_lit, fstr_lit, wide_escape, ascii_str, utf8_only_arg, up_argc
 
 // encode_on(c, s): call c is `s.encode(…)`.

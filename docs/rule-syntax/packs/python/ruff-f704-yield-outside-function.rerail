@@ -13,7 +13,7 @@
 //   (await c for c in cors)          not reported: a generator expression
 //   (c async for c in await f())     ← F704: the first iterable runs at module level
 //   def f(): type X = (yield)        not reported: Ruff gives this another error, not F704
-#include "python/pyflakes.rr"
+#include "python/pyflakes.rerail"
 //   run_scope(n, s, k)  n runs in scope s of kind k (function, lambda, class, module, comprehension, generator)
 
 .violation F704(at: node) code "F704" "`yield` or `await` outside of a function"

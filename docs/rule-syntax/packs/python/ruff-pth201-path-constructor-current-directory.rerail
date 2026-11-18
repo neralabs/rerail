@@ -10,7 +10,7 @@
 //   Path(".")                            ← PTH201: `Path()`
 //   pathlib.PurePath("")                 ← PTH201
 //   Path(".", "foo"), Path(f"."), Path(b".")      not reported
-#include "python/pathlib.rr"
+#include "python/pathlib.rerail"
 //   pth_call(c, q, f)   c calls q; f the callee (python/pathlib)
 //   call_only(c, a)   a is c's one argument, positional (python/ruff)
 //   plain_str(e, v)   a str literal's value (python/pyflakes)

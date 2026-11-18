@@ -11,7 +11,7 @@
 //   from os.path import isabs
 //   isabs(s=p)                      ← PTH117
 //   os.path.isabs(path=p)           not reported: the parameter is `s`
-#include "python/pathlib.rr"
+#include "python/pathlib.rerail"
 //   single_arg(c, q, x, f, a)   c calls q with one argument a, for parameter x; f the callee (python/pathlib)
 
 .violation PTH117(at: node, s: node) code "PTH117"

@@ -14,7 +14,7 @@
 //       items: list[int] = []                  ← RUF012
 //       cache = {}                             ← RUF012
 //       names: ClassVar[list[str]] = []        not reported
-#include "python/ruff-classes.rr"
+#include "python/ruff-classes.rerail"
 
 .violation RUF012(at: node) code "RUF012"
     "Initialize this mutable default in `__init__`, or annotate it `ClassVar[...]` if one object is meant to be shared; a class-level default is shared by every instance."

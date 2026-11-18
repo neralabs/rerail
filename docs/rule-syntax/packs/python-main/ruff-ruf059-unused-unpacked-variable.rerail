@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 .options {"dummy-variable-rgx": {"type": "string", "default": "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$", "description": "Names of variables that may be unused."}}
 

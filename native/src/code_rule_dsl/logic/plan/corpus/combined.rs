@@ -12,7 +12,7 @@
 //!   (`rr::recording`). A run takes the entry only when each file still reads as recorded: an edited library file, or
 //!   a file appearing where an include looked and found none, combines again.
 //!
-//! The entry is the read record as rows of `read_file` and the program's digest; the program is kept as its `.rr`
+//! The entry is the read record as rows of `read_file` and the program's digest; the program is kept as its `.rerail`
 //! text (`program_text`, decision 0155). The run's manifest names the source and the plan (`named`), so collection
 //! keeps the entry while it keeps the run.
 

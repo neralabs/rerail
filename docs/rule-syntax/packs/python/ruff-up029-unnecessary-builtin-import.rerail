@@ -12,7 +12,7 @@
 //   from six.moves import filter, zip_longest ← UP029 (filter)
 //   from math import pow
 //   from builtins import pow                 not reported: shadows math's pow
-#include "python/ast.rr"
+#include "python/ast.rerail"
 //   import_alias(i, a, m, x, local), from_module_raw(i, m), binding(s, x, site, form), scope_node(n, s)
 
 .violation UP029(at: node) code "UP029"

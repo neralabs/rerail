@@ -5,7 +5,7 @@
 //   cjs_ref(r, x)            r is a reference to the CommonJS global x (require, module, exports, __dirname,
 //                            __filename): nothing in the file declares it, and the global scope has it
 //   cjs_file(d, x)           document d's global scope has CommonJS variable x: a CommonJS file by package type
-//                            (values.rr's package_type), or a `/* global x */` comment
+//                            (values.rerail's package_type), or a `/* global x */` comment
 //   bare_require(c, f)       c calls the identifier `require` (f), which nothing in the file declares; whether a
 //                            global require exists is not asked (the plugin's isShadowed)
 //   require_arg(c, s)        s is the first argument of such a call c
@@ -28,14 +28,14 @@
 // CommonJS globals. ESLint's commonjs sourceType, and eslint-plugin-n's configs for CommonJS files, declare
 // require, module, exports, __filename and __dirname in the global scope. In an ES module they do not exist:
 // `exports = {}` there assigns an undeclared name, which these rules leave alone. The policies follow the
-// plugin's package-type module system (values.rr's package_type): .cjs/.cts CommonJS, .mjs/.mts modules, any other
+// plugin's package-type module system (values.rerail's package_type): .cjs/.cts CommonJS, .mjs/.mts modules, any other
 // file CommonJS unless its package.json says "type": "module".
 //
 // Builds on tsx/values (package_type, cjs_global, tagged, first_arg, node_range), tsx/eslint-a-common (deparen)
 // and through them tsx/names (ref, ref_site, directive_global) and tsx/modules.
 
-#include "tsx/values.rr"
-#include "tsx/eslint-a-common.rr"
+#include "tsx/values.rerail"
+#include "tsx/eslint-a-common.rerail"
 
 .decl cjs_file(d: number, x: symbol)
 cjs_file(d, x) :- package_type(d, "commonjs"), cjs_global(x).

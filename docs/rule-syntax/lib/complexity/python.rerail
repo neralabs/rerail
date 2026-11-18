@@ -1,4 +1,4 @@
-// complexity/python: lizard's decision points in Python, on tree-sitter-python, for complexity/cyclomatic.rr.
+// complexity/python: lizard's decision points in Python, on tree-sitter-python, for complexity/cyclomatic.rerail.
 //
 // A function is a `def`, async, decorated or a method. A `lambda` is not one: its conditions count toward the
 // enclosing def, as lizard counts them. Decisions:
@@ -11,7 +11,7 @@
 //
 //   def f(xs):                    CCN 4
 //       return [x for x in xs if x and ok]      for, if, and
-#include "complexity/cyclomatic.rr"
+#include "complexity/cyclomatic.rerail"
 
 cc_boundary("function_definition").
 cc_decision(n, 0) :- kind(n, k), cc_py_decision(k).

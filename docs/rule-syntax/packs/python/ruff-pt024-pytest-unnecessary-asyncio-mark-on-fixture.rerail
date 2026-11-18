@@ -8,7 +8,7 @@
 //   @pytest.mark.asyncio()       ← PT024
 //   @pytest.fixture
 //   async def client(): ...
-#include "python/pytest.rr"
+#include "python/pytest.rerail"
 //   pytest_fixture(f, d, e), pytest_mark(o, d, e, m)
 
 .violation PT024(at: node) code "PT024"

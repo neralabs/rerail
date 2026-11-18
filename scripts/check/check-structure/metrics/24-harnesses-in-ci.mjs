@@ -18,7 +18,7 @@
 //     `conformance:*` runs, in any package, is also run by CI. Test files those scripts run are covered by
 //     the first part, so watch-mode and single-file variants of a CI-run suite pass.
 // Exemption `data-roots`: test files under `fixtures/` and `packs/<id>/upstream/` are recorded data.
-// Exemption `workbench-samples` (the `.rr` workbench, kept in git as it is: docs/repository-structure.md, "Kept as they
+// Exemption `workbench-samples` (the `.rerail` workbench, kept in git as it is: docs/repository-structure.md, "Kept as they
 // are"): a scenario of the workbench's explorer (`docs/rule-syntax/site/explorer/scenarios/`) holds the sample source
 // a rule is shown on, named as the code it stands for (`test_parse.py` for a pytest rule); nothing runs it.
 // Rust tests run through `cargo test`, which is outside this metric.

@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // bad_mode(n): the JSON util `bad-mode`, used where the JSON says `matches: "bad-mode"`
 //   LIT: metavariable this relation binds for the calling rule

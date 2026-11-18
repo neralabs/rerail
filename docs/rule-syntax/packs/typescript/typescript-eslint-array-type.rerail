@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/ts-a.rr"
+#include "tsx/ts-a.rerail"
 //   type_parent, type_child, ts_keyword
 
 // typescript-eslint's array-type: one way of writing array types. Options `default` and `readonly` (which

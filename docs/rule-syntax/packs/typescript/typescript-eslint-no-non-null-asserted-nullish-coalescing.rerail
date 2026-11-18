@@ -4,9 +4,9 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/ts-b-scope.rr"
+#include "tsx/ts-b-scope.rerail"
 //   use, resolves, unresolved, variable, writes, initialised; through tsx/eslint-a-common: deparen
-#include "tsx/eslint-a-globals.rr"
+#include "tsx/eslint-a-globals.rerail"
 //   es_builtin
 
 // typescript-eslint's no-non-null-asserted-nullish-coalescing: `x! ?? y` asserts x is not null, then handles the

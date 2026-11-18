@@ -3,7 +3,7 @@
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/template.rr"
+#include "vue/template.rerail"
 //   vdir(e, a, d, arg), vdyn(a), vcustom(e), vtag_ignored(e), vkey_text(a, k)
 
 // eslint-plugin-vue's v-on-event-hyphenation: on a custom component, a v-on listener whose static event name is not

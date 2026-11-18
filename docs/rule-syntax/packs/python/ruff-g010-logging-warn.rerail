@@ -9,7 +9,7 @@
 //   logging.warn("Hello World!")                     ← G010, fix: logging.warning(…)
 //   from logging import warn; warn("foo")            ← G010
 //   from distutils import log; log.warn("x")         not reported: not a logger
-#include "python/logging.rr"
+#include "python/logging.rerail"
 
 .violation G010(at: node) code "G010"
     "Replace the deprecated `warn` logging call with `warning`, which takes the same arguments; leave it if this object is not a standard logger and has no `warning` method."

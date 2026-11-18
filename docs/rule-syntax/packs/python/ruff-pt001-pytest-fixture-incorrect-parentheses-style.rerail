@@ -10,7 +10,7 @@
 //   @pytest.fixture()            ← PT001 at the default
 //   @pytest.fixture              ← PT001 with fixture-parentheses = true
 //   @pytest.fixture(scope="module")   never reported
-#include "python/pytest.rr"
+#include "python/pytest.rerail"
 //   pytest_fixture(f, d, e), exc_no_args(c)
 
 .violation PT001(at: node, id: symbol) code "PT001" "{id}"

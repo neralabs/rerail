@@ -12,7 +12,7 @@
 //   f"{repr(x)}"              ← RUF010  `{x!r}`
 //   f"{str(b, 'ascii')}"      not reported: decoding, not a conversion
 //   f"{repr(x)=} {repr(y)}"   not reported: the debug text shows the call, and Ruff stops there
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 
 .violation RUF010(at: node, msg: symbol) code "RUF010" "{msg}"
     suppress ruff "RUF010"

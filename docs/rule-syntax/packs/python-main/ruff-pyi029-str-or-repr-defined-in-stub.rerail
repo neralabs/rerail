@@ -6,12 +6,12 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // PYI029(n): a finding at node n, from clause `str-or-repr-defined-in-stub`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PYI029(at: loc, name: node) "Remove this `{name}` definition from the stub; a `{name}` returning `str` is inherited from `object`, so declaring it is almost always redundant."
     suppress noqa "PYI029"
 PYI029_raw(NAME, n) :- kind(n, "function_definition"), field(n, "name", c1),

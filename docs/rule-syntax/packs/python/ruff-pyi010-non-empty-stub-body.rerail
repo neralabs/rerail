@@ -9,7 +9,7 @@
 //   def f():
 //       raise NotImplementedError      ← PYI010
 //   def g(): ...                       fine
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI010(at: node) code "PYI010" "Replace this function body with `...`; stubs are never executed, so a real body is redundant."
     suppress ruff "PYI010"

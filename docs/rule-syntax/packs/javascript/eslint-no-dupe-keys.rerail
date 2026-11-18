@@ -3,7 +3,7 @@
 .language typescript
 .mode steer
 .scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
-#include "tsx/eslint-a-expressions.rr"
+#include "tsx/eslint-a-expressions.rerail"
 
 // ESLint's no-dupe-keys: a key that an earlier property of the same object literal already defined. Keys
 // compare by their static name, so `a`, "a", ['a'] and `a` are one key, and 1, 0x1 and "1" are one too.

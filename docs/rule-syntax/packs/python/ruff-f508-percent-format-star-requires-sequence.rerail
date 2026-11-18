@@ -7,7 +7,7 @@
 // Ruff F508 (pyflakes): a format with a `*` width or precision applied to a dict display or comprehension. The
 // `*` takes its value from a tuple, so Python raises TypeError.
 //   "%(a)*d" % {"a": 1}           ← F508 (and F506)
-#include "python/pyflakes-format.rr"
+#include "python/pyflakes-format.rerail"
 //   percent_fmt(b, s, r, v), pct_star(v)
 
 .violation F508(at: node) code "F508"

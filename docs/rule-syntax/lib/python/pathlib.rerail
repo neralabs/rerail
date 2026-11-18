@@ -44,7 +44,7 @@
 //   x = 3; os.stat(x)                file_descriptor(<x>)
 //   fd = os.open("f", 0); os.stat(fd)    no row: os.open's result is not inferred
 //   p = Path("a"); p.with_suffix("py")    path_obj(<p>)
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 
 // ---- 1. calls ----------------------------------------------------------------------------------------------------
 // pth_call(c, q, f): `import os.path as osp; (osp.join)(a, b)` gives q "os.path.join" and f `osp.join`.

@@ -8,7 +8,7 @@
 // class body, annotated without a value. These names have their runtime meaning in a stub too.
 //   __all__: list[str]                 ← PYI035
 //   __all__: list[str] = ["f", "g"]    fine
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI035(at: node, msg: symbol) code "PYI035" "{msg}"
     suppress ruff "PYI035"

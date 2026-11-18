@@ -3,7 +3,7 @@
 .language typescript
 .mode steer
 .scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
-#include "tsx/eslint-a-expressions.rr"
+#include "tsx/eslint-a-expressions.rerail"
 
 // ESLint's dot-notation: a constant key in brackets that could be written with a dot.
 //   a["b"]    a[`b`]    a?.["b"]    a[true]     → reported; fix: a.b  a.b  a?.b  a.true

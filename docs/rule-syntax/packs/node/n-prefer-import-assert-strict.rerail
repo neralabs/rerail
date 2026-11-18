@@ -11,7 +11,7 @@
 //   export { strict } from "node:assert"    require("assert")                     not
 // Only the spelling "node:assert" is read. require is the identifier by name.
 
-#include "tsx/node.rr"   // called, call_arg, deparen, estree_parent
+#include "tsx/node.rerail"   // called, call_arg, deparen, estree_parent
 
 .decl assert_source(s: node)
 assert_source(s) :- called(c, f), kind(f, "identifier"), text(f, "require"), call_arg(c, s, 0), !only_strict(c).

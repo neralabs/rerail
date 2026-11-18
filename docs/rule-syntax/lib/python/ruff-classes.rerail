@@ -31,7 +31,7 @@
 //             a: list[int] = []              mutable_value; not class_var_ann, not immutable_ann (RUF008)
 //             b: ClassVar[list[int]] = []    class_var_ann
 //             c: Sequence[int] = []          immutable_ann
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 
 // ---- dataclasses -------------------------------------------------------------------------------------------------
 // dc_dec(c, e, q, k): decorator e of class c resolves to q, a dataclass maker of kind k, bare or called.

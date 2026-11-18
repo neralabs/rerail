@@ -3,7 +3,7 @@
 .language typescript
 .mode steer
 .scope include "**/*"
-#include "tsx/eslint-a-control.rr"
+#include "tsx/eslint-a-control.rerail"
 //   bare
 
 // ESLint's no-void: every `void` expression. `void 0` is an old way to write undefined.

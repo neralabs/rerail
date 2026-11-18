@@ -13,7 +13,7 @@
 //   httpx.get(url)                         not reported: httpx has a default timeout
 //   httpx.Client(timeout=None)             B113
 
-#include "python/security.rr"   // qual_call, call_leaf, kw_none, kw_literal
+#include "python/security.rerail"   // qual_call, call_leaf, kw_none, kw_literal
 
 .violation B113(at: node) code "B113"
     "Pass a finite timeout to this HTTP call; without one a slow server can hang the program."

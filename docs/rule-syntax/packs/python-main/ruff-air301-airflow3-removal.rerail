@@ -5,9 +5,9 @@
 .mode steer
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
-// ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.
+// ast(n, {…}) atoms are JSON terms with no .rerail form yet; the engine matches them as it does today.
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // op_site(n): the JSON util `op-site`, used where the JSON says `matches: "op-site"`
 .decl air301_op_site(n: node)

@@ -9,7 +9,7 @@
 //   components/layout.js:      the same                                 reported: no "pages" at all
 //   pages/_document.page.tsx:  the same                                 fine
 
-#include "tsx/next.rr"
+#include "tsx/next.rerail"
 
 .violation document_import(at: node) code "@next/next/no-document-import-in-page"
     "`<Document />` from `next/document` should not be imported outside of `pages/_document.js`. See: https://nextjs.org/docs/messages/no-document-import-in-page"

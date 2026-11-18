@@ -8,7 +8,7 @@
 //   SELECT count(*) FROM t        fine
 //   SELECT x.count(1) FROM t      fine: a method or a schema's function, not COUNT
 
-#include "sql/syntax.rr"
+#include "sql/syntax.rerail"
 
 .violation CV04(at: node) code "CV04" "Use COUNT(*) instead of COUNT(0) or COUNT(1) to express 'count number of rows'."
     suppress sqlfluff "CV04", "L047", "all", "convention", "convention.count_rows", "core"

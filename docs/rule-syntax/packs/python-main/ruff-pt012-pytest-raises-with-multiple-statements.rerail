@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // raises(n): the JSON util `raises`, used where the JSON says `matches: "raises"`
 .decl pt012_raises(n: node)

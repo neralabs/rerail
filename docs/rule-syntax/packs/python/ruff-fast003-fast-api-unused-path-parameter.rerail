@@ -12,7 +12,7 @@
 //   @app.get("/things/{thing_id}")
 //   async def read_thing(query: str): …          ← FAST003 at {thing_id}
 //   async def read_thing(thing_id: int, query: str): …   not reported
-#include "python/misc2-fastapi.rr"
+#include "python/misc2-fastapi.rerail"
 //   fast_route(f, dc), fast_param(f, p, x, ann, dflt), fast_annotated(ann, a, i), fast_dep_param(f, x),
 //   fast_dep_unknown(f); ruff_arg, call_kwarg, plain_str (python/ruff)
 

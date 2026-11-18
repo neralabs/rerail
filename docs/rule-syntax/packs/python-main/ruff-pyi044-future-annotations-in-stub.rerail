@@ -8,7 +8,7 @@
 
 // PYI044(n): a finding at node n, from clause `future-annotations-import`.
 // Each rule below is one way the JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PYI044(at: node) "Delete `annotations` from this `__future__` import (and the whole line if nothing else is imported); stubs already treat annotations as forward references."
     suppress noqa "PYI044"
 PYI044_raw(n) :-

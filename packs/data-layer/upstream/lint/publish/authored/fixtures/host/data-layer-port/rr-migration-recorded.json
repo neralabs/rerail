@@ -12,31 +12,31 @@
       "observations": 24,
       "programInputs": [
         {
-          "path": "docs/rule-syntax/lib/core.rr",
+          "path": "docs/rule-syntax/lib/core.rerail",
           "sha256": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f"
         },
         {
-          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "path": "docs/rule-syntax/lib/python/ast.rerail",
           "sha256": "b6e089671db0f186ca3f40b4026fa54a2b3534ef0360339cdeb7453a42168c67"
         },
         {
-          "path": "docs/rule-syntax/lib/python/calls.rr",
+          "path": "docs/rule-syntax/lib/python/calls.rerail",
           "sha256": "2887260c7eb2fd90f813a9a89867efa69d517e20c6f7195f541307f85f2e4311"
         },
         {
-          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "path": "docs/rule-syntax/lib/python/flow.rerail",
           "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
         },
         {
-          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "path": "docs/rule-syntax/lib/python/imports.rerail",
           "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
         },
         {
-          "path": "docs/rule-syntax/lib/python/names.rr",
+          "path": "docs/rule-syntax/lib/python/names.rerail",
           "sha256": "9415adc773f653fa77982b2e169c88ce5c7dc2e24a8148163c488caf0915aa53"
         },
         {
-          "path": "packs/data-layer/candidates/rr/generated-index-sources.rr",
+          "path": "packs/data-layer/candidates/rr/generated-index-sources.rerail",
           "sha256": "b96b7f4f2e5cd4de77642d67b189ac155deabf51ba034b513dfa0515bbee7af1"
         }
       ],
@@ -327,27 +327,27 @@
       "observations": 61,
       "programInputs": [
         {
-          "path": "docs/rule-syntax/lib/core.rr",
+          "path": "docs/rule-syntax/lib/core.rerail",
           "sha256": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f"
         },
         {
-          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "path": "docs/rule-syntax/lib/python/ast.rerail",
           "sha256": "b6e089671db0f186ca3f40b4026fa54a2b3534ef0360339cdeb7453a42168c67"
         },
         {
-          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "path": "docs/rule-syntax/lib/python/flow.rerail",
           "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
         },
         {
-          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "path": "docs/rule-syntax/lib/python/imports.rerail",
           "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
         },
         {
-          "path": "docs/rule-syntax/lib/python/names.rr",
+          "path": "docs/rule-syntax/lib/python/names.rerail",
           "sha256": "9415adc773f653fa77982b2e169c88ce5c7dc2e24a8148163c488caf0915aa53"
         },
         {
-          "path": "packs/data-layer/candidates/rr/hnsw-architecture.rr",
+          "path": "packs/data-layer/candidates/rr/hnsw-architecture.rerail",
           "sha256": "d236d9842ef2b589db84c44486ea67db1c40a866ffc6b1d081797f8f2c328100"
         }
       ],
@@ -2181,27 +2181,27 @@
       "observations": 4,
       "programInputs": [
         {
-          "path": "docs/rule-syntax/lib/core.rr",
+          "path": "docs/rule-syntax/lib/core.rerail",
           "sha256": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f"
         },
         {
-          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "path": "docs/rule-syntax/lib/python/ast.rerail",
           "sha256": "b6e089671db0f186ca3f40b4026fa54a2b3534ef0360339cdeb7453a42168c67"
         },
         {
-          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "path": "docs/rule-syntax/lib/python/flow.rerail",
           "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
         },
         {
-          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "path": "docs/rule-syntax/lib/python/imports.rerail",
           "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
         },
         {
-          "path": "docs/rule-syntax/lib/python/names.rr",
+          "path": "docs/rule-syntax/lib/python/names.rerail",
           "sha256": "9415adc773f653fa77982b2e169c88ce5c7dc2e24a8148163c488caf0915aa53"
         },
         {
-          "path": "packs/data-layer/candidates/rr/removed-compat-surfaces.rr",
+          "path": "packs/data-layer/candidates/rr/removed-compat-surfaces.rerail",
           "sha256": "fe6cb20060963766c446edae143d49d4f1dd0da51e0ec31cb3fc5c8cb74ea120"
         }
       ],
@@ -2340,27 +2340,27 @@
       "observations": 3,
       "programInputs": [
         {
-          "path": "docs/rule-syntax/lib/core.rr",
+          "path": "docs/rule-syntax/lib/core.rerail",
           "sha256": "7d8bf070b7d7a318f9bc3a9d798c20a7e05665eb6abc818a3cac4ecb16d3052f"
         },
         {
-          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "path": "docs/rule-syntax/lib/python/ast.rerail",
           "sha256": "b6e089671db0f186ca3f40b4026fa54a2b3534ef0360339cdeb7453a42168c67"
         },
         {
-          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "path": "docs/rule-syntax/lib/python/flow.rerail",
           "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
         },
         {
-          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "path": "docs/rule-syntax/lib/python/imports.rerail",
           "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
         },
         {
-          "path": "docs/rule-syntax/lib/python/names.rr",
+          "path": "docs/rule-syntax/lib/python/names.rerail",
           "sha256": "9415adc773f653fa77982b2e169c88ce5c7dc2e24a8148163c488caf0915aa53"
         },
         {
-          "path": "packs/data-layer/candidates/rr/versioned-lifecycle-legacy-surfaces.rr",
+          "path": "packs/data-layer/candidates/rr/versioned-lifecycle-legacy-surfaces.rerail",
           "sha256": "1a7cd837c201cb4daa6f8ff15484c794be5cc80f5da7fa778ee7251f849a2514"
         }
       ],

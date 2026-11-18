@@ -11,7 +11,7 @@
 //   cast(typ=int, val=3.0)       ← TC006
 //   t.cast(t.Literal["3.0"], x)  ← TC006, with `import typing as t`
 //   cast("int", 3.0)             not reported
-#include "python/misc2-typecheck.rr"
+#include "python/misc2-typecheck.rerail"
 //   tc_cast_type(c, t), stub_file(d)
 
 .violation TC006(at: node) code "TC006"

@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-b-control.rr"
+#include "tsx/eslint-b-control.rerail"
 //   deparen, ref_same, below_unary
 
 // ESLint's operator-assignment. option("option"): "always" (the default) reports `x = x op y` where op has a

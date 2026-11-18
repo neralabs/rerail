@@ -24,7 +24,7 @@
 // "Names" is the linter's _names: Name ids and Attribute attrs in ast.walk of the def (purity-ast's walk_name).
 // A call's name is its function's Name id or Attribute attr (rta_call). Nothing is resolved.
 
-#include "data-layer/purity-ast.rr"
+#include "data-layer/purity-ast.rerail"
 
 // rta_call(c, x): call c is `x(…)` or `….x(…)`, as _call_name has it (a call of a call has no name).
 .decl rta_call(c: node, x: symbol)

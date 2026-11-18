@@ -9,7 +9,7 @@
 // in a file that imports datetime.
 //   datetime.datetime.today()                    ← DTZ002
 //   datetime.datetime.today().astimezone()       not reported
-#include "python/datetime.rr"
+#include "python/datetime.rerail"
 
 .violation DTZ002(at: node) code "DTZ002"
     "Replace `today()` with `now(tz=...)`, passing the zone you mean (`datetime.timezone.utc` for UTC) so the result is aware. Keep `today()` only where a naive local time is required."

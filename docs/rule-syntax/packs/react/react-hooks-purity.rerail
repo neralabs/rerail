@@ -11,7 +11,7 @@
 //   useEffect(() => { Date.now(); });  <b onClick={() => performance.now()}/>   not: they run later
 //   useState(() => Date.now())                                not: an initializer argument is not called here
 // The compiler also follows aliases (`const now = Date.now; now()`); this rule does not (NOTES).
-#include "tsx/react-compiler.rr"
+#include "tsx/react-compiler.rerail"
 
 .violation purity(at: node, msg: symbol)
     code "react-hooks/purity"

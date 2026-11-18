@@ -11,7 +11,7 @@
 // then it is offered here.
 //   key in d.keys()      for k in d.keys(): …      ← SIM118: key in d, for k in d
 //   key in self.keys()   key in d.keys(1)          not reported
-#include "python/simplify.rr"
+#include "python/simplify.rerail"
 //   dict_ref(n) from python/comprehensions; cmp(c, op, l, r), site_only(site) from python/names
 
 .violation SIM118(at: node, op: symbol, call: node) code "SIM118"

@@ -10,7 +10,7 @@
 //   <link href="https://fonts.googleapis.com/css2?family=Inter&display=swap" />  fine
 // The query is the text between the URL's first and second `?` (`href.split('?', 2)[1]`).
 
-#include "tsx/next.rr"
+#include "tsx/next.rerail"
 
 .violation display(at: node, why: symbol) code "@next/next/google-font-display"
     "{why} See: https://nextjs.org/docs/messages/google-font-display"

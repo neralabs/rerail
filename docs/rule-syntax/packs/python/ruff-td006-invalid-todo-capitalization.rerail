@@ -8,7 +8,7 @@
 //   # todo: fix this       ← TD006, fixed to `# TODO: fix this`
 //   # ToDo(x): this        ← TD006
 //   # TODO: fix this       not reported
-#include "python/misc2-todo-span.rr"   // todo_at; python/misc2-todo: todo_item and the TD helpers
+#include "python/misc2-todo-span.rerail"   // todo_at; python/misc2-todo: todo_item and the TD helpers
 
 .violation TD006(at: span, tag: symbol) code "TD006"
     "Write the `{tag}` tag in uppercase as `TODO`."

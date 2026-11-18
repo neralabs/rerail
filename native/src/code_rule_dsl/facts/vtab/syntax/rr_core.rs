@@ -1,4 +1,4 @@
-//! A `.rr` file's reading of its core.rr facts (`core_rr::DialectFacts`): its literals as the rule engine reads them,
+//! A `.rerail` file's reading of its core.rerail facts (`core_rr::DialectFacts`): its literals as the rule engine reads them,
 //! its syntax error the one running it gives.
 
 use super::core_rr::{DialectFacts, Literal};
@@ -7,7 +7,7 @@ use crate::code_rule_dsl::facts::core::Facts;
 pub struct RrFacts;
 
 impl DialectFacts for RrFacts {
-    /// A `.rr` string reads as the rule engine reads it; a backtick literal's `str` is its body.
+    /// A `.rerail` string reads as the rule engine reads it; a backtick literal's `str` is its body.
     fn literal(&self, kind: &str, text: &str) -> Option<Literal> {
         let mut out = Literal::default();
         match kind {

@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-a-control.rr"
+#include "tsx/eslint-a-control.rerail"
 //   deparen
 
 // ESLint's no-plusplus: every `++` and `--`, prefix or postfix.

@@ -18,7 +18,7 @@
 //   if a:                  not reported: the inner `if` has an `else`
 //       if b: …
 //       else: …
-#include "python/simplify.rr"
+#include "python/simplify.rerail"
 //   sim_exempt_if(i); py_orelse, body_stmt, body_len from python/ast
 
 .violation SIM102(at: node) code "SIM102" "Use a single `if` statement instead of nested `if` statements"

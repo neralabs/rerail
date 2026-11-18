@@ -9,7 +9,7 @@
 // PERF203(n): a finding at node n, from clause `try-except-in-loop`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PERF203(at: loc, h: node) "Move the whole loop into one try block, or check the failing condition before the call, so no handler is set up per iteration. Keep it if the loop must carry on after each failure."
     suppress noqa "PERF203"
 PERF203(H, n) :- perf203_handler(n),

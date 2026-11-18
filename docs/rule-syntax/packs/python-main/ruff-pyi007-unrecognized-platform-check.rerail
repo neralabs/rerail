@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // test_slot(n): the JSON util `test-slot`, used where the JSON says `matches: "test-slot"`
 .decl pyi007_test_slot(n: node)
@@ -45,7 +45,7 @@ pyi007_str_literal(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
 
 // PYI007(n, detail): findings from clauses `other-operator`, `non-string-operand`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PYI007(at: node, detail: symbol) "Compare `sys.platform` to a {detail}."
     suppress noqa "PYI007"
 PYI007_raw(n, "string with `==` or `!=`, e.g. `sys.platform == \"linux\"` (use `or` for several platforms); type checkers can't evaluate other operators") :- kind(n, "comparison_operator"),

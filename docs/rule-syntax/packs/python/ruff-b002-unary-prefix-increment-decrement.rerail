@@ -10,7 +10,7 @@
 //   return --n                 ← B002 "Replace this `--` prefix …"
 //   y = -(-n)                  ← B002 too: the same tree as `--n`
 //   z = +-n                    not reported: the operators differ
-#include "python/ast.rr"
+#include "python/ast.rerail"
 
 .violation B002(at: node, detail: symbol) code "B002" "Replace this {detail}."
     suppress ruff "B002"

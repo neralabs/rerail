@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // ref(n): the JSON util `ref`, used where the JSON says `matches: "ref"`
 .decl pth201_ref(n: node)

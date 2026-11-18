@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
 .decl dtz006_callee(n: node)

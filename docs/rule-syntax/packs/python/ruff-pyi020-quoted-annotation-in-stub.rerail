@@ -10,7 +10,7 @@
 // annotation is reported too.
 //   def f(x: "int") -> list["str"]: ...     ← PYI020 twice
 //   x: Literal["a"]                          fine
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI020(at: node) code "PYI020" "Remove the quotes from this annotation and write the type directly; a stub resolves forward references, so quoting adds nothing."
     suppress ruff "PYI020"

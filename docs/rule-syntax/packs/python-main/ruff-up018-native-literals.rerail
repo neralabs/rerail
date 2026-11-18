@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // not_argument(n): the JSON util `not-argument`, used where the JSON says `matches: "not-argument"`
 .decl up018_not_argument(n: node)

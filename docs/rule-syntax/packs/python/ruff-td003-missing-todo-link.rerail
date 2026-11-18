@@ -11,7 +11,7 @@
 //   # TODO(charlie): fix this #1234        not reported
 //   # TODO(charlie): fix this              not reported: the next comment line is a link
 //   # https://github.com/astral-sh/ruff/issues/3870
-#include "python/misc2-todo-span.rr"   // todo_at; python/misc2-todo: todo_item and the TD helpers
+#include "python/misc2-todo-span.rerail"   // todo_at; python/misc2-todo: todo_item and the TD helpers
 
 .violation TD003(at: span, tag: symbol) code "TD003"
     "Add an issue link or ticket id for this `{tag}`: a URL or `#123` on the same line, or a URL or id like `PROJ-123` on the next comment line; leave it if no issue exists yet."

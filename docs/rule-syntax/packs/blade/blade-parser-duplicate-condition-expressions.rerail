@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.blade.php"
 
-#include "blade/syntax.rr"
+#include "blade/syntax.rerail"
 //   blade_code(n)   n is in the PHP the template compiles to
 
 // stillat/blade-parser's DuplicateConditionExpressionsValidator: an @elseif whose condition repeats the @if's or an

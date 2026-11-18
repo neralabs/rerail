@@ -12,7 +12,7 @@
 //   raise future.Exception()   ← RSE102: looks like a class
 //   raise return_error()       not reported: a def
 //   raise AttributeError("m")  not reported: arguments
-#include "python/bugbear.rr"
+#include "python/bugbear.rerail"
 
 .violation RSE102(at: node) code "RSE102"
     "Remove the empty parentheses so the class is raised directly; keep them if the callee is a function that returns the exception."

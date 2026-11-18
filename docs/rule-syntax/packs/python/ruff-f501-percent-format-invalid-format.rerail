@@ -9,7 +9,7 @@
 // Only the first error counts, as CPython stops there.
 //   "%(name)" % {"name": 1}       ← F501: no conversion character
 //   "100%" % ()                   ← F501
-#include "python/pyflakes-format.rr"
+#include "python/pyflakes-format.rerail"
 //   percent_fmt(b, s, r, v)  b is `s % r`, s a plain str literal with value v
 //   pct_error(v, what)       v's first error: "invalid" or "unsupported"
 

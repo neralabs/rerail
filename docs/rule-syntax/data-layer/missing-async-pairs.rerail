@@ -28,8 +28,8 @@
 //   5. arg / differ / signature_mismatch: both sides exist and their argument lists differ.
 // Base names join the two sides: def foo and async def foo_async share base "foo".
 
-#include "python/names.rr"
-#include "python/calls.rr"
+#include "python/names.rerail"
+#include "python/calls.rerail"
 
 // fdef (python/names) and cdef: def and class nodes, for nearest(): "the closest enclosing def" and "the closest
 // enclosing class".

@@ -20,7 +20,7 @@
 //   sys.version[2]                  ytt_version_index(<sys.version>, "2")
 //   sys.version >= "3.9"            ytt_single_cmp(<cmp>, <sys.version>, ">=", <"3.9">), ytt_sys(<sys.version>, "version")
 //   sys.version_info[1] < 7         ytt_info_index(<sys.version_info[1]>, "1")
-#include "python/ruff.rr"   // ruff_qual, ruff_int, slice_part
+#include "python/ruff.rerail"   // ruff_qual, ruff_int, slice_part
 
 .decl ytt_sys(e: node, x: symbol)
 ytt_sys(e, x) :- ruff_qual(e, q), split_dot(q, "sys", x).

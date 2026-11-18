@@ -8,7 +8,7 @@
 // Only a function's first fixture decorator is read, and only a str literal counts.
 //   @pytest.fixture(scope="function")    ← PT003, at the keyword
 //   @pytest.fixture(scope="module")      not reported
-#include "python/pytest.rr"
+#include "python/pytest.rerail"
 //   pytest_fixture(f, d, e), plain_str(s, v)
 
 .violation PT003(at: node, f: symbol) code "PT003"

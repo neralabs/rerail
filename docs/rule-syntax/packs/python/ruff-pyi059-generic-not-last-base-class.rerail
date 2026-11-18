@@ -7,7 +7,7 @@
 // Ruff PYI059 (flake8-pyi), every file: a class whose positional bases include `Generic` (bare or `Generic[…]`)
 // but do not end with it. Generic last keeps a consistent method resolution order. Reported at the base list.
 //   class C(Generic[T], int): ...     ← PYI059: write `class C(int, Generic[T])`
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI059(at: node) code "PYI059" "Move `Generic[...]` after the other positional base classes, keeping keyword arguments last; this changes the method resolution order, so check nothing relied on the old one."
     suppress ruff "PYI059"

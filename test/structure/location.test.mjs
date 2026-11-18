@@ -274,13 +274,13 @@ describe("pack test data and kept records", () => {
     expect(paths(ruleDocLocation(repo))).toEqual(["docs/rule-syntax/packs/python/c.json"]);
   });
 
-  it("treats a file in a tests/ directory under native/ as test-only, and the workbench's .rr as the engine may include it", () => {
+  it("treats a file in a tests/ directory under native/ as test-only, and the workbench's .rerail as the engine may include it", () => {
     const result = engineRoots(
       memoryRepo({
         "native/Cargo.toml": "",
         "native/src/findings/tests/reference.rs": 'const A: &str = include_str!("../../../../packs/python/rules/a.json");\n',
-        "native/src/logic/core.rs": 'const CORE: &str = include_str!("../../../docs/rule-syntax/lib/core.rr");\n',
-        "native/src/logic/other.rs": 'const OTHER: &str = include_str!("../../../docs/notes/other.rr");\n',
+        "native/src/logic/core.rs": 'const CORE: &str = include_str!("../../../docs/rule-syntax/lib/core.rerail");\n',
+        "native/src/logic/other.rs": 'const OTHER: &str = include_str!("../../../docs/notes/other.rerail");\n',
       }),
     );
     expect(paths(result)).toEqual(["native/src/logic/other.rs"]);

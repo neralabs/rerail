@@ -12,7 +12,7 @@
 //   def f(x: Union["str", int]): ...   a quoted member (or one in a tuple) where the expression is evaluated: "str" | int fails
 //   def f(x: Union[str, int]): ...     ← UP007 at the subscript
 //   def f(): x: Union["a", "b"]        ← UP007: a local variable's annotation is never evaluated
-#include "python/upgrade-typing.rr"
+#include "python/upgrade-typing.rerail"
 //   up_typing_sub(s, x), type_arg(s, i, a), rewritable(n, m), runtime_annotation(n)
 
 .violation UP007(at: node) code "UP007"

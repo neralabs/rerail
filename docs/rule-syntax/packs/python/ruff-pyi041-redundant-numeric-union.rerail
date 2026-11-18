@@ -9,7 +9,7 @@
 // that is the whole annotation is checked: `list[int | float]` is not. Return annotations are not checked.
 //   def f(x: int | float): ...              ← PYI041: write `float`
 //   def g(x: int | float | complex): ...    ← PYI041: write `complex`
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI041(at: node, msg: symbol) code "PYI041" "{msg}"
     suppress ruff "PYI041"

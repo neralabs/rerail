@@ -10,7 +10,7 @@
 //   <div title="'">           not: an attribute
 // The rule's default list also has `>` and `}`, but in JSX text those are syntax errors to ESLint's parsers, so
 // only the quotes can be reported (NOTES).
-#include "tsx/react.rr"
+#include "tsx/react.rerail"
 
 // The finding sits on the quote itself (a match_all capture is a span with a line), as ESLint reports each quote.
 .violation unescaped(at: span, msg: symbol)

@@ -13,7 +13,7 @@
 // the plugin's other fix (an object literal assigned to module.exports, split into `exports.k = v;` statements)
 // is not offered.
 
-#include "tsx/node.rr"   // cjs_ref, top_assign, static_prop
+#include "tsx/node.rerail"   // cjs_ref, top_assign, static_prop
 
 .decl exports_mode()  // the "exports" mode
 exports_mode() :- option("option", "exports").

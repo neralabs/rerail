@@ -4,9 +4,9 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-a-functions.rr"
+#include "tsx/eslint-a-functions.rerail"
 //   accessor (getters and setters by list and key), accessor_name, accessor_at, method_call, call_arg
-#include "tsx/names.rr"
+#include "tsx/names.rerail"
 //   ref_site: whether `Object` names a local variable
 
 // ESLint's accessor-pairs: a setter with no getter of the same name beside it (and, with getWithoutSet, a

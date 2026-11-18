@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // test_slot(n): the JSON util `test-slot`, used where the JSON says `matches: "test-slot"`
 .decl pyi008_test_slot(n: node)
@@ -57,7 +57,7 @@ pyi008_right_slot(n) :- child(p3, n, _), kind(p3, "parenthesized_expression"), p
 
 // PYI008(n): a finding at node n, from clause `unknown-platform`.
 // Each rule below is one way the JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PYI008(at: node) "Compare `sys.platform` against `linux`, `win32`, `cygwin` or `darwin`; type checkers don't recognize other names, so this is likely a typo. Leave it if the other name is deliberate."
     suppress noqa "PYI008"
 PYI008_raw(n) :- (kind(n, "string") ; kind(n, "concatenated_string")), pyi008_str_literal(n),

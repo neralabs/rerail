@@ -7,9 +7,9 @@
 //   import pickle as p; p.loads(data)       B301: qualified name pickle.loads
 //   from dill import load; load(f)          B301: dill.load
 //   json.loads(data)                        not reported
-// How Bandit reads the call's name, and the list: python/security.rr (blacklisted).
+// How Bandit reads the call's name, and the list: python/security.rerail (blacklisted).
 
-#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+#include "python/security.rerail"   // blacklisted: Bandit's B001 over calls and imports
 
 .violation B301(at: node) code "B301"
     "Load this data with json or another data-only format instead; unpickling untrusted input can run arbitrary code."

@@ -11,8 +11,8 @@
 //   x.drop(["a"], axis=1, inplace=True)        ← PD002
 //   x.drop(["a"], axis=1, inplace=False)       not reported
 //   x.rotate_z(45, inplace=True)               not reported: not a pandas method
-#include "python/ruff.rr"
-#include "python/misc-seen.rr"
+#include "python/ruff.rerail"
+#include "python/misc-seen.rerail"
 
 .violation PD002(at: node) code "PD002"
     "Remove `inplace=True` and assign the returned object back, e.g. `df = df.sort_values(\"a\")`; leave it if this isn't a pandas object."

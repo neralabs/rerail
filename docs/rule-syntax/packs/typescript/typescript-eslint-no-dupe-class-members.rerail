@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/eslint-a-functions.rr"
+#include "tsx/eslint-a-functions.rerail"
 //   static_key, private_key, estree_key, member_kind, is_static
 
 // typescript-eslint's no-dupe-class-members: ESLint's rule, with overload signatures and computed keys left

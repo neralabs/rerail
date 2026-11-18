@@ -4,7 +4,7 @@
 //
 // bootstrap-cache reads CPython's `ast` (the `pythonAst` stage; columns as
 // native/src/code_rule_dsl/value/python_ast/metadata.py at 40e7b6cac builds them) on tree-sitter's tree, as
-// authored/data-layer-bootstrap-eager-resolve.rr does: Call is `call`, its func the `function` field with
+// authored/data-layer-bootstrap-eager-resolve.rerail does: Call is `call`, its func the `function` field with
 // parentheses dropped, Name `identifier` (ast_name its text), Attribute `attribute` (ast_name its `attribute`).
 // - `fn` (ast_function) is the nearest FunctionDef along CPython's parent chain: a def's decorators, parameters
 //   and annotations are inside it (tree-sitter puts decorators beside the def, under decorated_definition);
@@ -38,7 +38,7 @@ bootstrap_cache_slot(o) :- bootstrap_cache_need(a), node(_, a, "attribute", _, _
 bootstrap_cache_slot(e) :- bootstrap_cache_decorator(_, e).
 bootstrap_cache_slot(x) :- bootstrap_cache_slot(p), node(_, p, "parenthesized_expression", _, _), child(p, x, _),
     !node(_, x, "comment", _, _).
-// Mirrors python/ast.rr unparen (which takes child 0: here any non-comment child).
+// Mirrors python/ast.rerail unparen (which takes child 0: here any non-comment child).
 .decl bootstrap_cache_ast(n: node, e: node)
 bootstrap_cache_ast(n, n) :- bootstrap_cache_slot(n), !node(_, n, "parenthesized_expression", _, _).
 bootstrap_cache_ast(n, e) :- bootstrap_cache_slot(n), node(_, n, "parenthesized_expression", _, _), child(n, x, _),
@@ -51,7 +51,7 @@ bootstrap_cache_call(c, "Name", s) :- node(_, c, "call", _, _), field(c, "functi
 bootstrap_cache_call(c, "Attribute", s) :- node(_, c, "call", _, _), field(c, "function", f0), bootstrap_cache_ast(f0, f),
     node(_, f, "attribute", _, _), field(f, "attribute", a), text(a, s).
 
-// fn: the def a node belongs to, along CPython's parent chain. Mirrors python/ast.rr def_frame, and goes on up
+// fn: the def a node belongs to, along CPython's parent chain. Mirrors python/ast.rerail def_frame, and goes on up
 // from a decorated class (def_frame has no row there; CPython's chain passes through the ClassDef).
 .decl bootstrap_cache_scope(kind: symbol)
 bootstrap_cache_scope("function_definition"). bootstrap_cache_scope("decorator").

@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
 // eslint-plugin-n's n/no-deprecated-api: uses of Node.js APIs that are deprecated (or removed), whatever release
-// the package runs on. The APIs are a generated table (n-no-deprecated-api.facts.rr); this file is the check.
+// the package runs on. The APIs are a generated table (n-no-deprecated-api.facts.rerail); this file is the check.
 //   new Buffer(8)    require("domain")    fs.exists(p, cb)    import { exists } from "node:fs"    process.binding
 //                                                                    each reported, with what replaces it
 //   Buffer.alloc(8)    const Buffer = f(); new Buffer(8)                                   not
@@ -13,8 +13,8 @@
 // version option, else the package's engines.node). ignoreModuleItems and ignoreGlobalItems name what to skip as
 // the message names it, without quotes: "fs.exists", "new buffer.Buffer()", "domain", "process.binding".
 
-#include "tsx/node-trace.rr"                               // module_use; values.rr's api_use
-#include "../packs/node/n-no-deprecated-api.facts.rr"      // dep, dep_hint, dep_alt
+#include "tsx/node-trace.rerail"                               // module_use; values.rerail's api_use
+#include "../packs/node/n-no-deprecated-api.facts.rerail"      // dep, dep_hint, dep_alt
 
 // base(at, api, how, list, b): at uses deprecated api as how; b is its name, unprefixed ("fs.exists"), and list
 // the option that can ignore it.
@@ -25,7 +25,7 @@ base(at, a, how, "ignoreModuleItems", @replace_all(cat(cat(m, "."), mx), "^node:
     mx != "", form_how(f, how), a = @qname(m, mx), dep(a, how, _, _).
 base(at, g, how, "ignoreGlobalItems", g) :- api_use(at, g, how), how != "load", !contains("#", g), dep(g, how, _, _).
 // GLOBAL, root and COUNTER_*: no environment declares them, so ReferenceTracker sees them only where a
-// `/* global GLOBAL */` comment does. (values.rr's env_global asks node_global for those too.)
+// `/* global GLOBAL */` comment does. (values.rerail's env_global asks node_global for those too.)
 base(r, g, "read", "ignoreGlobalItems", g) :- dep(g, "read", _, _), !contains("#", g), !node_global(g),
     ref(r, g, "value"), !ref_site(r, _), docof(r, d), directive_global(d, g).
 .decl form_how(f: symbol, how: symbol)

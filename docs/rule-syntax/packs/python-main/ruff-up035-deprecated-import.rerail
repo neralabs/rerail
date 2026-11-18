@@ -82,7 +82,7 @@ UP035(n, "these names from `typing` instead of the `typing.io` namespace; keep a
 
 // UP035_typing_extensions_to_types_312(n, detail): findings from clauses `typing-extensions-to-collections-abc`, `typing-extensions-to-types-312`, `typing-extensions-to-typing-312`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation UP035_typing_extensions_to_types_312(at: node, detail: symbol) code "UP035" "Import {detail} imported from `typing_extensions`."
     suppress noqa "UP035"
 UP035_typing_extensions_to_types_312_raw(n, "`Buffer` from `collections.abc`, which provides it on this Python version; keep any other names") :- kind(n, "import_from_statement"),
@@ -98,7 +98,7 @@ UP035_typing_extensions_to_types_312_raw(n, "these names from `typing`, which pr
 
 // UP035_typing_extensions_to_warnings(n, detail): findings from clauses `typing-extensions-to-warnings`, `typing-extensions-to-types-313`, `typing-extensions-to-typing-313`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation UP035_typing_extensions_to_warnings(at: node, detail: symbol) code "UP035" "Import {detail} imported from `typing_extensions`."
     suppress noqa "UP035"
 UP035_typing_extensions_to_warnings_raw(n, "`deprecated` from `warnings`, which provides it on this Python version; keep any other names") :- kind(n, "import_from_statement"),
@@ -115,7 +115,7 @@ UP035_typing_extensions_to_warnings_raw(n, "these names from `typing`, which pro
 
 // UP035_mypy_extensions_to_typing_38(n, detail): findings from clauses `typing-extensions-to-typing-38`, `mypy-extensions-to-typing-38`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation UP035_mypy_extensions_to_typing_38(at: node, detail: symbol) code "UP035" "Import these names from {detail}."
     suppress noqa "UP035"
 UP035_mypy_extensions_to_typing_38(n, "`typing`, which provides them on this Python version; keep any names `typing` lacks imported from `typing_extensions`") :- kind(n, "import_from_statement"),
@@ -128,7 +128,7 @@ UP035_mypy_extensions_to_typing_38(n, "`typing` instead of `mypy_extensions`; ke
 
 // UP035_typing_to_re(n, detail): findings from clauses `typing-extensions-to-typing-39`, `typing-re-to-re`, `typing-to-collections-abc`, `typing-to-collections` and 1 more. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation UP035_typing_to_re(at: node, detail: symbol) code "UP035" "Import {detail}."
     suppress noqa "UP035"
 UP035_typing_to_re(n, "these names from `typing`, which provides them on this Python version; keep any names `typing` lacks imported from `typing_extensions`") :- kind(n, "import_from_statement"),
@@ -150,7 +150,7 @@ UP035_typing_to_re(n, "`Match` and `Pattern` from `re` instead of `typing`; keep
 
 // UP035_typing_to_collections_abc_310(n, detail): findings from clauses `typing-extensions-to-typing-310`, `typing-to-collections-abc-310`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation UP035_typing_to_collections_abc_310(at: node, detail: symbol) code "UP035" "Import {detail}."
     suppress noqa "UP035"
 UP035_typing_to_collections_abc_310(n, "these names from `typing`, which provides them on this Python version; keep any names `typing` lacks imported from `typing_extensions`") :- kind(n, "import_from_statement"),
@@ -164,7 +164,7 @@ UP035_typing_to_collections_abc_310(n, "`Callable` from `collections.abc` instea
 
 // UP035_backports_strenum_to_enum(n, detail): findings from clauses `typing-extensions-to-typing-311`, `backports-strenum-to-enum`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation UP035_backports_strenum_to_enum(at: node, detail: symbol) code "UP035" "Import {detail}."
     suppress noqa "UP035"
 UP035_backports_strenum_to_enum_raw(n, "these names from `typing`, which provides them on this Python version; keep any names `typing` lacks imported from `typing_extensions`") :- kind(n, "import_from_statement"),
@@ -178,7 +178,7 @@ UP035_backports_strenum_to_enum_raw(n, "`StrEnum` from `enum`, which provides it
 
 // UP035_typing_re_to_typing(n): a finding at node n, from clause `typing-re-to-typing`.
 // Each rule below is one way the JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation UP035_typing_re_to_typing(at: node) code "UP035" "Import `Match` and `Pattern` from `typing` instead of the `typing.re` namespace; keep any other names imported from `typing.re`."
     suppress noqa "UP035"
 UP035_typing_re_to_typing_raw(n) :- kind(n, "import_from_statement"),
@@ -189,7 +189,7 @@ UP035_typing_re_to_typing_raw(n) :- kind(n, "import_from_statement"),
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `transform` computes LOWER from other metavariables' text; its literals end each rule.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation UP035_typing_builtin_generics(at: node, name: loc, lower: symbol) code "UP035" "`typing.{name}` is deprecated; use the built-in `{lower}` in annotations and drop the `typing` import once nothing else uses it."
     suppress noqa "UP035"
 UP035_typing_builtin_generics(n, NAME, LOWER) :- kind(n, "import_from_statement"),
@@ -199,7 +199,7 @@ UP035_typing_builtin_generics(n, NAME, LOWER) :- kind(n, "import_from_statement"
 // UP035_typing_deque(n, detail): findings from clauses `typing-asynccontextmanager`, `typing-contextmanager`, `typing-abstractset`, `typing-deque` and 1 more. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation UP035_typing_deque(at: node, name: loc, detail: symbol) code "UP035" "{detail} instead and drop the `typing` import once nothing else uses it."
     suppress noqa "UP035"
 UP035_typing_deque(n, NAME, "`typing.AsyncContextManager` is deprecated; use `contextlib.AbstractAsyncContextManager`") :- kind(n, "import_from_statement"),

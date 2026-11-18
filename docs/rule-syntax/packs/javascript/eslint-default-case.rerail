@@ -15,7 +15,7 @@
     suppress eslint "default-case"
     suppress oxlint "default-case"
     suppress biome "lint/style/useDefaultSwitchClause"
-#include "tsx/statements.rr"
+#include "tsx/statements.rerail"
 default_case(s) :- kind(s, "switch_statement"), field(s, "body", b), child(b, c, _), kind(c, "switch_case"),
     count : { child(b, x, _), kind(x, "switch_default") } = 0, !excused(b).
 

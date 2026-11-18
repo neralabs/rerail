@@ -9,7 +9,7 @@
 // reported. Reported at the call. Only in a file that imports datetime.
 //   datetime.datetime.utcnow()                   ← DTZ003
 //   datetime.datetime.utcnow().astimezone()      not reported
-#include "python/datetime.rr"
+#include "python/datetime.rerail"
 
 .violation DTZ003(at: node) code "DTZ003"
     "Replace `utcnow()` with `now(tz=datetime.timezone.utc)` for an aware UTC datetime. Keep `utcnow()` only where the value is mixed with naive datetimes that cannot change too."

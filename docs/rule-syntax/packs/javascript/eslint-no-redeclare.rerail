@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
 
-#include "tsx/eslint-b-scope.rr"
+#include "tsx/eslint-b-scope.rerail"
 //   var_site, global_scope, global_item, es_builtin; pattern_name (tsx/names)
 
 // ESLint's no-redeclare: a variable is declared once. Its declarations, in ESLint's order: being a built-in

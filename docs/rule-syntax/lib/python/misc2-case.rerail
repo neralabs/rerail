@@ -12,7 +12,7 @@
 //   match flag:
 //       case six.PY3: ...          case_value_name(<six.PY3>, "six.PY3")
 //       case x: ...                no row: a capture
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 
 .decl case_value_name(e: node, q: symbol)
 case_value_name(e, @dot(q0, rest)) :- kind(e, "dotted_name"), inside(e, _, "case_pattern"), child(e, h, 0),

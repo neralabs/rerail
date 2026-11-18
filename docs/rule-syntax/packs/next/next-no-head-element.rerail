@@ -8,7 +8,7 @@
 //   pages/index.js:  <head><title>x</title></head>       reported
 //   app/layout.js:   <html><head/></html>                fine
 
-#include "tsx/next.rr"
+#include "tsx/next.rerail"
 
 .violation head(at: node) code "@next/next/no-head-element"
     "Do not use `<head>` element. Use `<Head />` from `next/head` instead. See: https://nextjs.org/docs/messages/no-head-element"

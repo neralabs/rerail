@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/modules.rr"
+#include "tsx/modules.rerail"
 //   use_strict(s, u, i)  u is the i-th "use strict" heading program or function s (i > 0: a repeat)
 //   simple_params(f), source_type(d, "module" | "commonjs" | "script"), scope_stmt, fn_region, fn_code
 

@@ -11,7 +11,7 @@
 //   with pytest.warns(UserWarning): …                 ← PT030
 //   pytest.warns(UserWarning, func)                   ← PT030
 //   with pytest.warns(UserWarning, match="x"): …      not reported
-#include "python/pytest.rr"
+#include "python/pytest.rerail"
 //   exc_call(c, q), exc_argument(c, k, i, a), exc_arg(c, i, a), kwarg(c, k, v), pytest_empty_or_null(e),
 //   pytest_broad(c, e, s)
 

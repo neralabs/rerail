@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // warns_ref(n): the JSON util `warns-ref`, used where the JSON says `matches: "warns-ref"`
 .decl pt030_warns_ref(n: node)

@@ -8,7 +8,7 @@
 
 // PYI009(n): a finding at node n, from clause `pass-statement-stub-body`.
 // Each rule below is one way the JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PYI009(at: node) "Replace this `pass` with `...`; stub bodies are never executed, so the empty body is written as an ellipsis."
     suppress noqa "PYI009"
 PYI009_raw(n) :- kind(n, "pass_statement"), child(p1, n, _), kind(p1, "block"),

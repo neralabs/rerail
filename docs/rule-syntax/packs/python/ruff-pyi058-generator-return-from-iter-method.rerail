@@ -10,7 +10,7 @@
 // Any: then nothing is ever sent, and `Iterator[Y]` says the same. Outside stubs only a body that just yields
 // counts (plain_body). Reported at the method name.
 //   def __iter__(self) -> Generator[int, None, None]: ...     ← PYI058: write `Iterator[int]`
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI058(at: node, msg: symbol) code "PYI058" "{msg}"
     suppress ruff "PYI058"

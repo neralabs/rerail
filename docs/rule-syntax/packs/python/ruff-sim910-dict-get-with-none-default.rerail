@@ -10,7 +10,7 @@
 // Ruff's fix is safe when the call holds no comment: then it is offered here.
 //   d = {}; d.get("k", None)          ← SIM910: d.get("k")
 //   d.get("k", None) for an unknown d, os.environ.get("k", None)     not reported
-#include "python/simplify.rr"
+#include "python/simplify.rerail"
 //   dict_ref(n) from python/comprehensions; call_item, pos_item, call_nkwargs from python/ruff
 
 .violation SIM910(at: node, f: node, key: node) code "SIM910" "Use `{f}({key})` instead of `{f}({key}, None)`"

@@ -3,7 +3,7 @@
 .language typescript
 .mode steer
 .scope include "**/*"
-#include "tsx/eslint-a-expressions.rr"
+#include "tsx/eslint-a-expressions.rerail"
 
 // ESLint's no-eq-null: `==` or `!=` with the literal null on either side.
 //   if (x == null)   null != y      → reported;   x === null   x == undefined   → not

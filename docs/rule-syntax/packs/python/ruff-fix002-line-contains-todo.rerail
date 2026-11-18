@@ -9,7 +9,7 @@
 //   # TODO: something           ← FIX002
 //   # a # todo                  ← FIX002: after another `#`
 //   # TODOS                     not reported: not the whole word
-#include "python/misc-comments.rr"
+#include "python/misc-comments.rerail"
 
 .violation FIX002(at: node, d: symbol) code "FIX002"
     "Do the work this `{d}` comment describes, then remove the `{d}` note; if the work belongs in a separate change or the note documents planned work on purpose, leave it."

@@ -7,7 +7,7 @@
 // Ruff E742 (pycodestyle): a class named `l`, `I` or `O`, letters that many fonts draw like 1 and 0.
 //   class I: ...        ← E742 at `I`
 //   class Id: ...       not reported
-#include "python/pyflakes.rr"
+#include "python/pyflakes.rerail"
 //   ambiguous_name(x)  x is "l", "I" or "O" (also E741, E743)
 
 .violation E742(at: node, x: symbol) code "E742"

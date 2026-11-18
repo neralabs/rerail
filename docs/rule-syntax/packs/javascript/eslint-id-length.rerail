@@ -3,8 +3,8 @@
 .language typescript
 .mode steer
 .scope include "**/*"
-#include "tsx/names.rr"
-#include "tsx/statements.rr"   // for_head
+#include "tsx/names.rerail"
+#include "tsx/statements.rerail"   // for_head
 
 // ESLint's id-length: names that are shorter than min (default 2) or longer than max (default none), where
 // they are declared or written:

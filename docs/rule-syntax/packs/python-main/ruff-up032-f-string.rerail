@@ -8,8 +8,8 @@
 
 // Guest captures a host rule reads, by text (another document): H1
 
-#include "python/format-args.rr"
-#include "python/names.rr"
+#include "python/format-args.rerail"
+#include "python/names.rerail"
 
 // plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
 .decl up032_plain_string(n: node)

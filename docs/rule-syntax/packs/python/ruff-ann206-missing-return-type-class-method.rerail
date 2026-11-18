@@ -10,7 +10,7 @@
 //   class C:
 //       @classmethod
 //       def make(cls): ...           ← ANN206
-#include "python/annotations.rr"
+#include "python/annotations.rerail"
 
 .violation ANN206(at: node, name: symbol) code "ANN206"
     "Add a return type annotation to class method `{name}`, such as `-> Self` for an alternate constructor, naming the type it returns."

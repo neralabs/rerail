@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-a-functions.rr"
+#include "tsx/eslint-a-functions.rerail"
 //   accessor (getters and setters by list and key), accessor_name, accessor_at, list_index
 
 // ESLint's grouped-accessor-pairs: a getter and a setter of one property, in one object literal or class

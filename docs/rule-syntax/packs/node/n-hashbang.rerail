@@ -13,7 +13,7 @@
 // file no package.json governs is skipped; a `#!` line with no line break after it is no shebang. Every finding
 // is on line 1, so the four cases share one key. Not read: convertPath.
 
-#include "tsx/node-package.rr"   // pkg_file, pkg_bin_file, src_shebang, src_bom, npm_ignored
+#include "tsx/node-package.rerail"   // pkg_file, pkg_bin_file, src_shebang, src_bom, npm_ignored
 
 // needs(d): d must start with a node shebang. additionalExecutables are gitignore patterns (pkg_listed); a file
 // they match is checked even where npm leaves it out.

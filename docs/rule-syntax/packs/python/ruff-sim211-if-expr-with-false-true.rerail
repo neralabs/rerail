@@ -8,7 +8,7 @@
 // unsafe; none here.
 //   y = False if x else True       ← SIM211: y = not x
 //   y = False if x else False      not reported
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 //   unparen(e, m)
 
 .violation SIM211(at: node) code "SIM211" "Use `not ...` instead of `False if ... else True`"

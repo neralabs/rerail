@@ -7,9 +7,9 @@
 //   from django.utils.safestring import mark_safe
 //   mark_safe(html)                            B308
 //   format_html("<b>{}</b>", x)                not reported
-// How Bandit reads the call's name, and the list: python/security.rr (blacklisted).
+// How Bandit reads the call's name, and the list: python/security.rerail (blacklisted).
 
-#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+#include "python/security.rerail"   // blacklisted: Bandit's B001 over calls and imports
 
 .violation B308(at: node) code "B308"
     "Build this HTML with format_html() instead of mark_safe so any untrusted parts get escaped."

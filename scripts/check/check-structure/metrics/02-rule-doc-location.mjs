@@ -12,7 +12,7 @@
 // conformance runner; the pack format puts their rule documents in `rules/` (as #1 allows their pack.json).
 // Exemption `pack-test-data`: under `packs/<id>/upstream/` a rule document is pack test data (a recorded corpus, or one
 // in a publish request on its way to S3), never a rule set the engine loads.
-// Exemption `kept-records` (the `.rr` workbench and the design notes, kept in git as they are:
+// Exemption `kept-records` (the `.rerail` workbench and the design notes, kept in git as they are:
 // docs/repository-structure.md, "Kept as they are"), each path with its reason in KEPT_RECORDS below.
 
 import { finding, isRuleDoc, sortFindings } from "../lib.mjs";
@@ -25,8 +25,8 @@ const RULE_SET_DIRS = ["rules", "candidates", "probes", "policies"];
 
 /** Exemption `kept-records`: a directory (ending in `/`) or file, and why its rule documents stay where they are. */
 const KEPT_RECORDS = new Map([
-  ["docs/rule-syntax/packs/python-main/source/", "main's 537 Python rules as the workbench translated them: the source of each `.rr` rule beside it, never loaded as a rule set"],
-  ["docs/rule-syntax/nested-routers.json", "the source rule of the workbench's nested-routers drafts beside it (nested-routers.b1.rr, .b2.rr)"],
+  ["docs/rule-syntax/packs/python-main/source/", "main's 537 Python rules as the workbench translated them: the source of each `.rerail` rule beside it, never loaded as a rule set"],
+  ["docs/rule-syntax/nested-routers.json", "the source rule of the workbench's nested-routers drafts beside it (nested-routers.b1.rerail, .b2.rerail)"],
   ["docs/rule-engine-direction/experiments/m2m7/", "an experiment record: the three rules its measurements were taken on, as they were"],
 ]);
 

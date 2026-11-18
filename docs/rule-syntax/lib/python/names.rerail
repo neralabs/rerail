@@ -3,7 +3,7 @@
 // relations at the end are what rules use. File-local except `sym_of` through re-exports (python/imports).
 //
 // How to read this file
-//   Every relation is a table of facts derived from the parse tree. Node ids are tree-sitter nodes (from lib/core.rr:
+//   Every relation is a table of facts derived from the parse tree. Node ids are tree-sitter nodes (from lib/core.rerail:
 //   kind, field, child, text, nearest, within, ...). A scope is a module, function, class or lambda node.
 //
 // Layering (bottom to top)
@@ -23,7 +23,7 @@
 //
 // Precision: this is approximate, file-local name resolution, not a type checker. Lookup lands on a scope, and every
 // binding of the name in that scope is a candidate (may-precise); only straight-line rebinding (layer 5) prunes.
-#include "python/imports.rr"
+#include "python/imports.rerail"
 
 // Kind sets used with `nearest`/`within`. `scope` is every node that opens a Python scope.
 .decl scope(kind: symbol)
@@ -332,7 +332,7 @@ site_form(site, form) :- binding(_, _, site, form).
 // ---- main's binding terms (rerail.policy/v1 `binds`, `resolves.binding`, `redefines`) -------------------------
 // Main's `binds` holds at a binding's name node; its filters are about the binding's site, the node `binding` above
 // names. Main also names the forms its own way. These two relations are that interface; the JSON translator reads
-// main's terms through them, and lib/tsx/names.rr has the same two.
+// main's terms through them, and lib/tsx/names.rerail has the same two.
 // bind_name(n, site): n is the name node of the binding at site: the identifier assigned, defined, declared or
 // captured, an unaliased import's dotted_name (`os.path` in `import os.path`), an aliased import's alias.
 // e.g. in `def f(): x = 1`, bind_name(<x>, <the assignment>); in `import a as b`, bind_name(<b>, <a as b>).

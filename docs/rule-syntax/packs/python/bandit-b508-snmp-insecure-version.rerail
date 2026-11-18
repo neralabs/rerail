@@ -10,7 +10,7 @@
 //   CommunityData("public", "x", 1)        not reported: Bandit reads the keyword only
 //   UsmUserData("user", "authkey", "privkey")   not reported (see B509)
 
-#include "python/security.rr"   // qual_call, kw_literal
+#include "python/security.rerail"   // qual_call, kw_literal
 
 .violation B508(at: node) code "B508"
     "Switch to SNMPv3 with UsmUserData instead of this CommunityData; mpModel 0 or 1 sends the community string in clear text."

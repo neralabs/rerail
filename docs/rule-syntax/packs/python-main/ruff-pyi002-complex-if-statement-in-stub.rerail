@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // in_test(n): the JSON util `in-test`, used where the JSON says `matches: "in-test"`
 .decl pyi002_in_test(n: node)
@@ -48,7 +48,7 @@ pyi002_plain_left(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), py
 
 // PYI002(n): a finding at node n, from clause `complex-if-statement-in-stub`.
 // Each rule below is one way the JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PYI002(at: node) "Rewrite this stub `if` test as unchained comparisons of `sys.version_info` or `sys.platform` joined by `and`/`or`, or keep only one branch; type checkers cannot evaluate other tests."
     suppress noqa "PYI002"
 PYI002_raw(n) :- pyi002_test_value(n),

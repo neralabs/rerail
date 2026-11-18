@@ -2092,7 +2092,7 @@ fn json_tapes(source: &str) -> Option<(Vec<u8>, Vec<u8>)> {
     Some((ours, theirs))
 }
 
-/// The repository's `.rr` files (outside `.git`, `target` and `node_modules`), with their text.
+/// The repository's `.rerail` files (outside `.git`, `target` and `node_modules`), with their text.
 fn rr_files() -> Vec<(String, String)> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
@@ -2107,7 +2107,7 @@ fn rr_files() -> Vec<(String, String)> {
             });
             if p.is_dir() && !skip {
                 work.push(p);
-            } else if p.extension().is_some_and(|x| x == "rr") {
+            } else if p.extension().is_some_and(|x| x == "rerail") {
                 files.extend(
                     std::fs::read_to_string(&p)
                         .ok()
@@ -2120,7 +2120,7 @@ fn rr_files() -> Vec<(String, String)> {
     files
 }
 
-/// A `.rr` file's tape as it was made before the parsers wrote rows: the statement parser's tree, packed
+/// A `.rerail` file's tape as it was made before the parsers wrote rows: the statement parser's tree, packed
 /// (`Pending` records, `TapeImage::finish`).
 fn packed_rr_tape(grammar: &Grammar, source: &str) -> Vec<u8> {
     let nodes = rerail_rr_syntax::engine_tape(source)
@@ -2150,8 +2150,8 @@ fn packed_rr_tape(grammar: &Grammar, source: &str) -> Vec<u8> {
         .unwrap()
 }
 
-/// A `.rr` file's tape from the lean parser's bytes (the engine's path, `encode_rr`, decision 0140) equals the
-/// statement parser's tree packed by the engine's own passes, byte for byte: every `.rr` file of the repository.
+/// A `.rerail` file's tape from the lean parser's bytes (the engine's path, `encode_rr`, decision 0140) equals the
+/// statement parser's tree packed by the engine's own passes, byte for byte: every `.rerail` file of the repository.
 #[test]
 fn rr_tapes_from_the_lean_parser_are_the_statement_parsers() {
     let grammar = Grammar::new(GrammarDialect::Rr).unwrap();
@@ -2172,7 +2172,7 @@ fn rr_tapes_from_the_lean_parser_are_the_statement_parsers() {
     assert!(checked > 1000, "{checked}");
 }
 
-/// What a `.rr` tape costs, in instructions retired and thread CPU time, over the repository's `.rr` files
+/// What a `.rerail` tape costs, in instructions retired and thread CPU time, over the repository's `.rerail` files
 /// the compiled parser takes: the lean parser's rows and its tape (the engine's path), the compiled Bitlex
 /// parser's rows, and the statement parser's tree and its tape. With `RERAIL_RR_COST_LOOP` set to a step's name, runs that step
 /// alone for 20 s (for a profiler).
@@ -3012,8 +3012,8 @@ fn json_parse_costs() {
     );
 }
 
-/// The lean `.rr` parser writes the engine's tape (decision 0140): its bytes are the engine's
-/// image of every `.rr` file in the repository, and of a prefix of each (an unfinished file).
+/// The lean `.rerail` parser writes the engine's tape (decision 0140): its bytes are the engine's
+/// image of every `.rerail` file in the repository, and of a prefix of each (an unfinished file).
 /// The language tag it writes is the registry's.
 #[test]
 fn lean_rr_tape_is_the_engines_image() {
@@ -3039,7 +3039,7 @@ fn lean_rr_tape_is_the_engines_image() {
             });
             if p.is_dir() && !skip {
                 work.push(p);
-            } else if p.extension().is_some_and(|x| x == "rr") {
+            } else if p.extension().is_some_and(|x| x == "rerail") {
                 files.extend(
                     std::fs::read_to_string(&p)
                         .ok()

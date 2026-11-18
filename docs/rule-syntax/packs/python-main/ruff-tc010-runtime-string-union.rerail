@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // future_seen(n): the JSON util `future-seen`, used where the JSON says `matches: "future-seen"`
 .decl tc010_future_seen(n: node)
@@ -129,7 +129,7 @@ tc010_typed_dict_call(n) :- kind(n, "call"), field(n, "function", c1),
 
 // TC010(n): a finding at node n, from clause `runtime-string-union-in-annotation`.
 // Each rule below is one way the JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation TC010(at: node) "Quote the whole union instead of this member (`\"A | None\"`), or drop the quotes if the name already exists at runtime; a string cannot be an operand of `|`."
     suppress noqa "TC010"
 TC010_raw(n) :- within(n, p1), tc010_annotation_root(p1), !tc010_alt_33(n),
@@ -144,7 +144,7 @@ TC010_runtime_string_union_in_expression(n) :- tc010_union_member(n),
 
 // TC010_runtime_string_union_in_legacy_typed_dict_field(n): a finding at node n, from clause `runtime-string-union-in-legacy-typed-dict-field`.
 // Each rule below is one way the JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation TC010_runtime_string_union_in_legacy_typed_dict_field(at: node) code "TC010" "Quote the whole union instead of this member (`\"A | None\"`), or drop the quotes if the name already exists at runtime; a string cannot be an operand of `|`."
     suppress noqa "TC010"
 TC010_runtime_string_union_in_legacy_typed_dict_field(n) :- tc010_plain_string(n),

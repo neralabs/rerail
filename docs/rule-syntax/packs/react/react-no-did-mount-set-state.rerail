@@ -11,7 +11,7 @@
 // Any key named componentDidMount counts, in a component or not, and an arrow is a function here as any other.
 // The plugin makes the rule a no-op where settings name React 16.3 or later; with no version set (the
 // recording) it assumes the latest and checks.
-#include "tsx/react-class.rr"
+#include "tsx/react-class.rerail"
 //   set_state_in(f, x)  f calls this.setState in a member keyed x, in no function nested in the member
 
 .violation no_did_mount_set_state(at: node)

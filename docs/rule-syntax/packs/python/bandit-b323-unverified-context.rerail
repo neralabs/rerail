@@ -6,9 +6,9 @@
 // Bandit's B323 (its B001 blacklist): a call to ssl._create_unverified_context.
 //   import ssl; ssl._create_unverified_context()     B323
 //   ssl.create_default_context()                     not reported
-// How Bandit reads the call's name, and the list: python/security.rr (blacklisted).
+// How Bandit reads the call's name, and the list: python/security.rerail (blacklisted).
 
-#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+#include "python/security.rerail"   // blacklisted: Bandit's B001 over calls and imports
 
 .violation B323(at: node) code "B323"
     "Use ssl.create_default_context() instead, which verifies certificates and hostnames."

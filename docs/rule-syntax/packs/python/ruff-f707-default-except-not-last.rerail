@@ -9,7 +9,7 @@
 //   try: f()
 //   except: pass              ← F707 at `except`
 //   except ValueError: pass
-#include "python/pyflakes.rr"
+#include "python/pyflakes.rerail"
 //   bare_except(x, kw)  x is an `except:` clause with no type; kw its `except` keyword
 
 .violation F707(at: loc) code "F707"

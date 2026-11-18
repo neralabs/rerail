@@ -9,7 +9,7 @@
 // `pep8-naming.ignore-names`.
 //   from mod import CamelCase as CAMELCASE    ← N814
 //   from mod import BananaFruit as B          not reported: one character
-#include "python/naming.rr"
+#include "python/naming.rerail"
 
 .violation N814(at: node, x: symbol, a: symbol) code "N814"
     "Use a CamelCase alias instead of `{a}` for `{x}` and update its uses; leave it if `{x}` is really a constant despite its CamelCase name."

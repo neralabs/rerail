@@ -37,10 +37,10 @@
 // no-empty-function, no-empty-static-block, no-dupe-class-members, no-extra-bind and arrow-body-style.
 // Builds on tsx/eslint-a-common (function_node, deparen, key_static, static_prop, call_arg, token_text, this_owner,
 // upper_first, limit) and tsx/modules (fn_region, not_stmt).
-#include "tsx/eslint-a-common.rr"
+#include "tsx/eslint-a-common.rerail"
 
 // ---- functions and parameters ----------------------------------------------------------------------------------
-// The function kinds are modules.rr's (common's function_node): in tree-sitter a method is one node,
+// The function kinds are modules.rerail's (common's function_node): in tree-sitter a method is one node,
 // method_definition, which is both ESTree's MethodDefinition (or Property) and its FunctionExpression value.
 // fn_param(f, p, i): parameters in order. Comments inside the list are skipped.
 //   function f(a, b = 1, ...c) {}       a 0, b = 1 1, ...c 2;   x => x   x 0
@@ -234,7 +234,7 @@ fn_start(f, n) :- kind(f, "method_definition"), (field(f, "type_parameters", n) 
 
 // ---- nesting -----------------------------------------------------------------------------------------------------
 // own_fn(n, f): f is the innermost function n is in. A method's key is outside its own code (fn_code, from
-// modules.rr): in `({ [g()]() {} })` the call g() belongs to the code around the method.
+// modules.rerail): in `({ [g()]() {} })` the call g() belongs to the code around the method.
 .decl own_fn(n: node, f: node)
 own_fn(n, f) :- nearest(n, r, fn_code), fn_region(f, r).
 

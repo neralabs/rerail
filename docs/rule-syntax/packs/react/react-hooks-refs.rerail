@@ -13,7 +13,7 @@
 //   items.map(() => ref.current)                                reported at the callback: map calls it now
 //   useEffect(() => { ref.current = v; });  <b onClick={() => ref.current.focus()}/>   not: they run later
 // The compiler also tracks refs through props objects, aliases and returned values; this rule does not (NOTES).
-#include "tsx/react-compiler.rr"
+#include "tsx/react-compiler.rerail"
 
 .violation refs(at: node, msg: symbol)
     code "react-hooks/refs"

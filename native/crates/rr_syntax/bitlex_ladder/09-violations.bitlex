@@ -1,4 +1,4 @@
-# `.rr`, step 9: violations, edits and JSON objects.
+# `.rerail`, step 9: violations, edits and JSON objects.
 #
 #   .violation V(at: loc, c: symbol) code {c} in "E[0-9]+" tag {t} "message {c}"
 #   fix safe v_fix "a fix"

@@ -9,7 +9,7 @@
 // Option allowedVariables (a list): `process.env.NAME` and `process.env["NAME"]` pass for a listed NAME.
 //   allowedVariables ["NODE_ENV"]:   process.env.NODE_ENV  passes;  process.env  alone is still reported
 
-#include "tsx/eslint-a-common.rr"   // deparen: ESTree has no parentheses, so (process).env counts
+#include "tsx/eslint-a-common.rerail"   // deparen: ESTree has no parentheses, so (process).env counts
 
 
 .violation process_env(at: node) code "n/no-process-env" "Pass this value in as configuration instead of reading process.env here."

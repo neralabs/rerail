@@ -12,7 +12,7 @@
 //   os.chmod(path, mode=0o777)           not reported: Bandit reads positional arguments only
 //   os.chmod(path, stat.S_IRWXO)         not reported: a name, not an integer literal
 
-#include "python/security.rr"   // call_leaf, arg_count, pos_arg, literal
+#include "python/security.rerail"   // call_leaf, arg_count, pos_arg, literal
 
 .violation B103(at: node, msg: symbol) code "B103" "{msg}"
     suppress nosec "B103"

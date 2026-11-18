@@ -12,7 +12,7 @@
 //   class C:
 //       def m(self, a: int) -> int: …   not reported: self is the receiver
 //   lambda x: x                         not reported: lambdas are not checked
-#include "python/annotations.rr"
+#include "python/annotations.rerail"
 
 .violation ANN001(at: node, name: symbol) code "ANN001"
     "Add a type annotation to parameter `{name}`."

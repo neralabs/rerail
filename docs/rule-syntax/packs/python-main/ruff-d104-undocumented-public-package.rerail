@@ -8,7 +8,7 @@
 
 // D104(n): a finding at node n, from clause `undocumented-public-package`.
 // Each rule below is one way the JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation D104(at: node) "Add a docstring as the first statement of this package's `__init__.py`, summarizing what the package provides."
     // anchor file.start: at the witness, the module, which starts the file
     suppress noqa "D104"

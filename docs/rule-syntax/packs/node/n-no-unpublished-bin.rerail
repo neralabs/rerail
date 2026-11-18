@@ -9,7 +9,7 @@
 // "Published" is npm's view (npm_ignored: the `files` list, else .npmignore, else .gitignore), which needs the
 // proposed native input. Reported at the Program node, as the plugin does. Not read: convertPath.
 
-#include "tsx/node-package.rr"   // pkg_bin_file, npm_ignored, program_start
+#include "tsx/node-package.rerail"   // pkg_bin_file, npm_ignored, program_start
 
 .violation unpublished_bin(at: loc) code "n/no-unpublished-bin"
     "npm ignores this bin file, so the published package lacks the executable; list it in package.json's files field and keep .npmignore from ignoring it."

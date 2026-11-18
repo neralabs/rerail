@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/eslint-a-common.rr"
+#include "tsx/eslint-a-common.rerail"
 //   deparen, static_string, key_static, static_prop, function_kind
 
 // typescript-eslint's class-literal-property-style: a class exposes a literal one way.

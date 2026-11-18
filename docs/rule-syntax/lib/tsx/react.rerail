@@ -38,8 +38,8 @@
 // The pragma: eslint-plugin-react reads React's name from the first comment with `@jsx X`, else settings
 // (react.pragma), else "React". Settings are not modelled; the comment is.
 //   /** @jsx Preact.h */   → pragma "Preact"
-#include "tsx/jsx.rr"
-#include "tsx/eslint-a-common.rr"
+#include "tsx/jsx.rerail"
+#include "tsx/eslint-a-common.rerail"
 
 // ---- files ----------------------------------------------------------------------------------------------------
 // The React ports run only on files whose JSX runtime is React's or unknown. A file names another JSX library
@@ -145,7 +145,7 @@ prop_str(a, s) :- child(a, v, 1), jsx_string(v, s).
 prop_str(a, s) :- kind(a, "jsx_attribute"), child(a, j, 1), kind(j, "jsx_expression"), prop_value(a, v),
     (kind(v, "string") ; kind(v, "template_string")), value(v, s).
 // jsx_children(e): what React passes as props.children: a child element or expression, or text other than blanks.
-// That is jsx.rr's content(e, c), for some c.
+// That is jsx.rerail's content(e, c), for some c.
 .decl jsx_children(e: node)
 jsx_children(e) :- content(e, _).
 

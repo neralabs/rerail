@@ -8,7 +8,7 @@
 //   `scan_file_content` give `filePath (?s).*` (holds), anything else `\b\B` (never): `les_entry(0)`.
 // - oracleAnalyzer: true makes the file.path patterns `\b\B`, and the module-text `inside` `filePath (?s).*`.
 //
-// Not started from native/src/code_rule_dsl/logic/programs/data_layer/legacy_execution_surfaces.rr: that program is
+// Not started from native/src/code_rule_dsl/logic/programs/data_layer/legacy_execution_surfaces.rerail: that program is
 // over the older candidates/rules policy and embeds W's matchers (`ast(d, n, {…})`) and t17's builtins; this file
 // says each matcher in base relations.
 //

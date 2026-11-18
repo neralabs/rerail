@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // builtin_of(n, key): 3 copies of one rule set (`builtin-ascii`, `builtin-repr`, `builtin-str`), folded into one: row `key` of
 // builtin_of_case gives the strings each copy had.

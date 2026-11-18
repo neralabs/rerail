@@ -3,7 +3,7 @@
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/component.rr"
+#include "vue/component.rerail"
 //   vcomputed(o, x, f), vcomputed_fn(c, f), vcomp(o), vscript(p, setup), static_prop(n, o, x), call_arg(c, a, i)
 
 // eslint-plugin-vue's no-async-in-computed-properties: in a computed getter's own code (not a nested function's),

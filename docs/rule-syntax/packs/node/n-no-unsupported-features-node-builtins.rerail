@@ -6,15 +6,15 @@
 // eslint-plugin-n 18.4.1's n/no-unsupported-features/node-builtins. Every use of a Node.js built-in (a module,
 // a member, a global; read, called or constructed) whose supported releases do not cover every version the package
 // may run on. The data is a table, one row per API; this file is the check.
-//   1. use: each API use (lib/tsx/values.rr), less the names the `ignores` option lists.
+//   1. use: each API use (lib/tsx/values.rerail), less the names the `ignores` option lists.
 //   2. range_of: the releases that have the API: ">=since", plus "^v" for each backport; the same for the releases
 //      where it is experimental. basis: which of the two decides; experimental only under allowExperimental.
-//   3. node_runs_on: the range the file must run on: a valid `version` option, else values.rr's node_range.
+//   3. node_runs_on: the range the file must run on: a valid `version` option, else values.rerail's node_range.
 //   4. a finding where runs_on is not a subset of that range, or where no release supports the API in that form.
 // Not ported: ESLint's settings.node.version.
 
-#include "tsx/values.rr"
-#include "../packs/node/n-no-unsupported-features-node-builtins.facts.rr"   // api_since, api_backport, …
+#include "tsx/values.rerail"
+#include "../packs/node/n-no-unsupported-features-node-builtins.facts.rerail"   // api_since, api_backport, …
 
 // use(at, api, how): a use of a tabled API. `export * from "fs"` uses every direct member of fs ("fs#x", not
 // "fs#x.y"), as ReferenceTracker reports each one at the statement.
@@ -48,7 +48,7 @@ basis(p, how, "supported") :- tabled(p, how), !trial(p, how).
 .decl trial(api: symbol, how: symbol)
 trial(p, how) :- option("allowExperimental", "true"), api_experimental_since(p, how, _).
 
-// node_runs_on(d, r) (values.rr): the range document d must run on; a `version` that is no range is ignored.
+// node_runs_on(d, r) (values.rerail): the range document d must run on; a `version` that is no range is ignored.
 
 // The findings. Both share the plugin's code, so a finding's key is (policy, code, path, line), as in the JSON.
 .violation unsupported(at: node, api: symbol, kind: symbol, since: symbol, ok: symbol, cfg: symbol) code "n/no-unsupported-features/node-builtins"

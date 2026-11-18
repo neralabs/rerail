@@ -30,9 +30,9 @@
 // two linters' files; sap_doc and cli_doc below give each half its own. A file outside both is one a caller handed
 // to a linter directly (the linters' tests do), and both halves read it.
 
-#include "python/ast.rr"
-#include "python/calls.rr"
-#include "data-layer/boot-python.rr"     // callee_name, def_walk (ast.walk of a def), ann_word
+#include "python/ast.rerail"
+#include "python/calls.rerail"
+#include "data-layer/boot-python.rerail"     // callee_name, def_walk (ast.walk of a def), ann_word
 
 // ---- files -------------------------------------------------------------------------------------------------------
 .decl sap_target(p: symbol)   // the standalone script's TARGETS

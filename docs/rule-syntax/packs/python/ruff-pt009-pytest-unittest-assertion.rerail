@@ -8,7 +8,7 @@
 // pytest rewrites plain `assert` statements to show the values. The raising forms are PT027.
 //   self.assertEqual(a, b)       ← PT009
 //   self.assertRaises(E, f)      not reported (PT027)
-#include "python/pytest.rr"
+#include "python/pytest.rerail"
 //   names: attr_of(n, o, a)
 
 .violation PT009(at: node, x: symbol) code "PT009"

@@ -6,11 +6,11 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // PYI011(n): a finding at node n, from clause `typed-argument-default-in-stub`.
 // Each rule below is one way the JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PYI011(at: node) "Replace this default with `...`; type checkers ignore defaults in stubs, and only simple literals and short containers are worth keeping."
     suppress noqa "PYI011"
 PYI011_raw(n) :- pyi011_default_slot(n), !pyi011_alt_7(n).

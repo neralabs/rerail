@@ -16,7 +16,7 @@
 // its first substitution, when the text is empty), and a string constant: a literal, or a variable never
 // reassigned whose initialiser is one (getStringIfConstant). path.sep is "/" here, as on POSIX.
 
-#include "tsx/node.rr"   // cjs_ref, deparen, static_prop; values.rr's api_use
+#include "tsx/node.rerail"   // cjs_ref, deparen, static_prop; values.rerail's api_use
 
 // The module the trace follows, and the API: require("path").sep, `import { sep } from "path"` ("path" only, as
 // the plugin's trace map has no "node:path").

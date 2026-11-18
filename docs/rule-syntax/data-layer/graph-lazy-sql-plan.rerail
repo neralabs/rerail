@@ -25,8 +25,8 @@
 //   a method mentions every Name and attribute name inside it, decorators, defaults and nested defs included.
 // Missing classes and symbols are reported at line 1.
 
-#include "python/ast.rr"      // ast_name, assign_target, assign_ann, unparen
-#include "data-layer/boot-python.rr" // deco_word, def_walk
+#include "python/ast.rerail"      // ast_name, assign_target, assign_ann, unparen
+#include "data-layer/boot-python.rerail" // deco_word, def_walk
 
 // ---- the summary ----------------------------------------------------------------------------------------------
 .decl glsp_scope(k: symbol)

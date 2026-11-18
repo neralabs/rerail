@@ -24,7 +24,7 @@
 //
 // How the parsers work. Each one cuts the string's value into tokens with one regex per step: the text up to
 // the first `%` (or brace), then one placeholder, then the rest, which the next step reads. A step is tested once
-// per distinct remainder, like every text test (core.rr). The steps stop at the first token that does not parse.
+// per distinct remainder, like every text test (core.rerail). The steps stop at the first token that does not parse.
 //
 // CPython background
 //   printf-style: `%%` is a literal %. A placeholder is `%`, then an optional `(key)`, flags `#0- +`, a width
@@ -33,7 +33,7 @@
 //   str.format: `{{` and `}}` are literal braces; a field is `{name!conv:spec}`. name is empty (automatic
 //   numbering), digits (an index) or an identifier (a keyword), followed by `.attr` and `[key]` parts; conv is
 //   r, s or a; spec may hold nested fields, one level deep.
-#include "python/ruff.rr"   // call_kw, call_star, call_kwsplat; python/pyflakes
+#include "python/ruff.rerail"   // call_kw, call_star, call_kwsplat; python/pyflakes
 
 // ---- percent format ----------------------------------------------------------------------------------------------
 .decl percent_fmt(b: node, s: node, r: node, v: symbol)

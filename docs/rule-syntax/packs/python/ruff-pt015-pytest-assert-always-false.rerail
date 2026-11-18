@@ -10,7 +10,7 @@
 //   assert False, "unreachable"      ← PT015
 //   assert list([])                  ← PT015
 //   assert not True                  not reported: Ruff does not evaluate `not`
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 //   truth_of(m, t): Ruff's Truthiness
 
 .violation PT015(at: node) code "PT015"

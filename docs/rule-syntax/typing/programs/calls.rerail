@@ -1,4 +1,4 @@
-// COPY: Typing-support-final-shape@b193a9209:native/src/code_rule_dsl/typing/programs/calls.rr (the engine's Python typing program).
+// COPY: Typing-support-final-shape@b193a9209:native/src/code_rule_dsl/typing/programs/calls.rerail (the engine's Python typing program).
 // Call-target resolution and call chains for Python, in Rerail's Datalog dialect.
 //
 // One points-to relation, `pv(n, kind, v)`: expression n may evaluate to v, a function (`fn`, a function_definition),

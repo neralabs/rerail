@@ -8,7 +8,7 @@
 //   <img src="/a.png" alt="" />                                reported
 //   <picture><source srcSet="/a.webp" /><img src="/a.png" /></picture>   fine
 
-#include "tsx/next.rr"
+#include "tsx/next.rerail"
 
 .violation img(at: node) code "@next/next/no-img-element"
     "Using `<img>` could result in slower LCP and higher bandwidth. Consider using `<Image />` from `next/image` or a custom image loader to automatically optimize images. This may incur additional usage or cost from your provider. See: https://nextjs.org/docs/messages/no-img-element"

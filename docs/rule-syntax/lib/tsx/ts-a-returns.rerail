@@ -1,4 +1,4 @@
-// tsx/ts-a-returns.rr: typescript-eslint's explicitReturnTypeUtils, for the rules that want return types written:
+// tsx/ts-a-returns.rerail: typescript-eslint's explicitReturnTypeUtils, for the rules that want return types written:
 // explicit-function-return-type and explicit-module-boundary-types. Both skip a function whose type comes from
 // where it stands, a function that only returns another function, and constructors and setters.
 //   const f: Handler = () => 1;     typed_fn: the declarator's type says what f returns
@@ -10,7 +10,7 @@
 // tree-sitter's method_definition is both ESTree's MethodDefinition (or Property) and the FunctionExpression in
 // it, so "the function's parent is a method definition" reads as "the function is a method" here.
 
-#include "tsx/ts-a.rr"
+#include "tsx/ts-a.rerail"
 
 // ---- functions and their parents -----------------------------------------------------------------------------------
 // fn_value(f): ESTree's FunctionExpression and ArrowFunctionExpression, methods included. fn_decl(f): a

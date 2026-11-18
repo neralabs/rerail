@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
 
-#include "tsx/eslint-a-functions.rr"
+#include "tsx/eslint-a-functions.rerail"
 //   function_node, fn_block, empty_block, fn_holder, member_kind, fn_words, generator
 
 // ESLint's no-empty-function: a function whose `{ }` body holds no statement and no comment.

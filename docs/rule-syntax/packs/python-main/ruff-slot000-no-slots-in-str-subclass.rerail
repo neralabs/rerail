@@ -6,11 +6,11 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // SLOT000(n): a finding at node n, from clause `no-slots-in-str-subclass`.
 // Each rule below is one way the JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation SLOT000(at: node) "Add `__slots__ = ()` to this `str` subclass so instances skip the per-instance `__dict__`; if it assigns instance attributes, list their names in `__slots__` instead."
     suppress noqa "SLOT000"
 SLOT000_raw(n) :- kind(n, "identifier"), field(p1, "name", n),

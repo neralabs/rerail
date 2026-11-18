@@ -10,7 +10,7 @@
 //   await trio.sleep(0)            ← ASYNC115
 //   await anyio.sleep(delay=0)     ← ASYNC115
 //   await trio.sleep(0.0)          not reported
-#include "python/misc2-async.rr"
+#include "python/misc2-async.rerail"
 
 .violation ASYNC115(at: node, m: symbol) code "ASYNC115"
     "Use `{m}.lowlevel.checkpoint()` instead of `{m}.sleep(0)`"

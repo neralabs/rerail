@@ -3,7 +3,7 @@
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/component.rr"
+#include "vue/component.rerail"
 //   vopt(o, x, h, v), vprops_call(c), vmacro(c, x), vunwrap(e, x), key_static(k, x), call_arg(c, a, i)
 
 // eslint-plugin-vue's require-valid-default-prop. No options. A prop is checked when its type names one of the

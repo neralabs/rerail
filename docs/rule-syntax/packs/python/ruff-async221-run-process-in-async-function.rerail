@@ -11,7 +11,7 @@
 //   async def f(): subprocess.run(cmd)                ← ASYNC221
 //   async def f(): os.spawnl(os.P_WAIT, "x")          ← ASYNC221
 //   async def f(): os.spawnl(os.P_NOWAIT, "x")        not reported: ASYNC220
-#include "python/async-demand.rr"
+#include "python/async-demand.rerail"
 
 .violation ASYNC221(at: node) code "ASYNC221"
     "Async functions should not run processes with blocking methods"

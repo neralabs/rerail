@@ -11,7 +11,7 @@
 //   for _, value in d.items(): print(value)      ← PERF102: use d.values()
 //   for name, (_, _) in d.items(): print(name)   ← PERF102: use d.keys()
 //   for k, v in d.items(): print(k, v)           not reported
-#include "python/misc2-perf.rr"
+#include "python/misc2-perf.rerail"
 //   perf_for(f, t, it), perf_unused(t)
 
 .violation PERF102(at: node, msg: symbol) code "PERF102" "{msg}"

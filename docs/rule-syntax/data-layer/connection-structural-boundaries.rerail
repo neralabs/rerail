@@ -21,8 +21,8 @@
 // Lines are physical lines (core line_count, Python's splitlines). Line-count findings sit at line 1.
 // Options connectionPath, lifecyclePath, sqlPath move the three l2000/l2200 files, as the linter's tests do.
 
-#include "python/names.rr"
-#include "python/ast.rr"      // unparen
+#include "python/names.rerail"
+#include "python/ast.rerail"      // unparen
 
 // The linter's symbol lists: CONNECTION_RESIDUAL_SYMBOLS, SQL_RESIDUAL_SYMBOLS, BACKEND_MIXIN_SYMBOLS.
 .decl csb_residual(role: symbol, v: symbol)

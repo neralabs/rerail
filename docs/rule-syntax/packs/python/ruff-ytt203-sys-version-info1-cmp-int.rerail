@@ -8,7 +8,7 @@
 // `sys.version_info[1] >= 7` is false.
 //   sys.version_info[1] >= 7      ← YTT203
 //   sys.version_info[1] == 7      not reported: an equality
-#include "python/misc2-version.rr"
+#include "python/misc2-version.rerail"
 
 .violation YTT203(at: node) code "YTT203"
     "Compare `sys.version_info` to a tuple with the major and minor version, like `sys.version_info >= (3, 9)`, rather than testing `sys.version_info[1]` alone, which misjudges a new major version."

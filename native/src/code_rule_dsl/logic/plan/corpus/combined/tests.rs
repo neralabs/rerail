@@ -32,9 +32,9 @@
         let dir = std::env::temp_dir().join(format!("rerail-combined-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let store = ContentStore::open(&dir.join("store.sqlite")).unwrap();
-        let lib = dir.join("lib.rr");
+        let lib = dir.join("lib.rerail");
         std::fs::write(&lib, "a").unwrap();
-        let missing = dir.join("missing.rr");
+        let missing = dir.join("missing.rerail");
         let program = rr::parse(".decl e(x: int)\n.output e\ne(1).\n").unwrap();
         let read = [LibraryFile { path: lib.clone(), sha256: Some(Sha256::digest(b"a").into()) }, LibraryFile { path: missing.clone(), sha256: None }];
         let key = [7u8; 32];

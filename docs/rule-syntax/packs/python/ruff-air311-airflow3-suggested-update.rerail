@@ -13,7 +13,7 @@
 //   from airflow.models.param import Param
 //   Param(1)                            ← AIR311: import `Param` from `airflow.sdk.definitions.param`
 //   BashOperator(task_id="t", sla=None) ← AIR311: `sla` has no replacement
-#include "python/misc-airflow.rr"
+#include "python/misc-airflow.rerail"
 
 .violation AIR311(at: node, x: symbol, m: symbol) code "AIR311"
     "Import `{x}` from `{m}` instead; the old name still works in Airflow 3 but is expected to be removed later."

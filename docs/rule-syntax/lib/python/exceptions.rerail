@@ -33,7 +33,7 @@
 //   - A qualified name follows imports, aliases and the file's own definitions (names' sym_of); a name bound by
 //     an assignment or a parameter has none. A builtin has one only when nothing in the file rebinds it.
 //   - `except*` parses as an except clause, as Ruff treats it.
-#include "python/security.rr"   // kwarg; security includes python/ast and python/names
+#include "python/security.rerail"   // kwarg; security includes python/ast and python/names
 
 // ---- 1. calls ----------------------------------------------------------------------------------------------------
 .decl exc_qual(e: node, q: symbol)

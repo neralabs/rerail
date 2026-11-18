@@ -8,7 +8,7 @@
 // unless `dir_fd` is passed and not None: pathlib has no `dir_fd`. Reported at the callee.
 //   os.symlink("usr/bin/python", "tmp/python")           ← PTH211
 //   os.symlink(src, dst, dir_fd=fd)                      not reported
-#include "python/pathlib.rr"
+#include "python/pathlib.rerail"
 //   pth_call(c, q, f)   c calls q; f the callee      kw_set(c, k)   keyword k is not None (python/pathlib)
 
 .violation PTH211(at: node) code "PTH211"

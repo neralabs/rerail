@@ -26,8 +26,8 @@
 //       from distutils import log; log.warn("x")        not: `log` resolves to distutils.log
 //   - Ruff's semantic flag for "in an exception handler" survives into functions defined in the handler, so
 //     log_in_handler looks through defs.
-#include "python/ruff.rr"
-#include "python/misc-seen.rr"
+#include "python/ruff.rerail"
+#include "python/misc-seen.rerail"
 
 .decl log_level(m: symbol)
 log_level("debug"). log_level("info"). log_level("warn"). log_level("warning"). log_level("error").

@@ -7,7 +7,7 @@
 // Ruff F506 (pyflakes): a format that mixes `%(key)` placeholders with positional ones (or a `*` width).
 // Python can format neither a tuple nor a mapping into it.
 //   "%(a)s %s" % ...              ← F506
-#include "python/pyflakes-format.rr"
+#include "python/pyflakes-format.rerail"
 //   percent_fmt(b, s, r, v), pct_key(v, k), pct_positional(v, n)
 
 .violation F506(at: node) code "F506"

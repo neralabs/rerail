@@ -3,7 +3,7 @@
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/component.rr"
+#include "vue/component.rerail"
 //   vvue_import_call(c, x), vmacro(c, x), vsetup(o, f), estree_parent(x, p), static_prop(n, o, x), ref_site(r, s)
 
 // eslint-plugin-vue's no-ref-as-operand: a variable that holds a ref, used where its value is meant. A ref variable

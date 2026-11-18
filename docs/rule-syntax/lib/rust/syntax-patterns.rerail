@@ -20,8 +20,8 @@
 //                           k is its text without parentheses or whitespace, rest = 1 for `..`
 //   elem_count(p, n)        p has n elements
 //
-// Builds on core (the tape, tokens, offsets, text) and rust/syntax.rr (comment_kind).
-#include "rust/syntax.rr"
+// Builds on core (the tape, tokens, offsets, text) and rust/syntax.rerail (comment_kind).
+#include "rust/syntax.rerail"
 
 .decl bare_pat(p: node, q: node)
 bare_pat(p, p) :- kind(p, k), k != "ref_pattern", k != "mut_pattern", child(_, p, _).

@@ -12,9 +12,9 @@
 // earlier assignment has a code" would also give EOP001 from an older `x = a.name` before both, which the
 // script has overwritten. "Latest qualifying" needs the max over the recursive relation.
 
-#include "python/ast.rr"
+#include "python/ast.rerail"
 //   ast_name, expr_ctx, assign_target, assign_value, def_frame, attr_of, call_name
-#include "python/calls.rr"
+#include "python/calls.rerail"
 //   posarg
 
 // frame(n, f): the def whose value map n uses (context.enclosing_function), or the module.

@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/modules.rr"
+#include "tsx/modules.rerail"
 //   import_member(i, m, k, x)  m is the k-th name import i binds; x is its local name (`a as b` binds b)
 //   first_local(i, x)          x is the first of them
 //   import_syntax(i, s)        "none" (import "m"), "all" (* as ns), "multiple" or "single"

@@ -12,7 +12,7 @@
 // The plugin picks the page from the text after the file name's first "pages", and skips it when that part's
 // directory starts with /api.
 
-#include "tsx/next.rr"
+#include "tsx/next.rerail"
 
 .violation typo(at: node, x: symbol, want: symbol) code "@next/next/no-typos"
     "{x} may be a typo. Did you mean {want}?"

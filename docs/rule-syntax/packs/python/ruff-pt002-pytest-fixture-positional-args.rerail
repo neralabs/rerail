@@ -8,7 +8,7 @@
 // them keyword-only in recent versions. Only a function's first fixture decorator is read.
 //   @pytest.fixture("module")            ← PT002
 //   @pytest.fixture(scope="module")      not reported
-#include "python/pytest.rr"
+#include "python/pytest.rerail"
 //   pytest_fixture(f, d, e), exc_item(c, a, j)
 
 .violation PT002(at: node, f: symbol) code "PT002"

@@ -8,7 +8,7 @@
 //   <div ref="hello" />   <div ref={'hello'} />            reported, at the prop
 //   <div ref={this.hello} />   <div ref={`hello`} />     not (templates only with noTemplateLiterals, not in the JSON)
 // Before React 18.3 the plugin also reports reads of this.refs; the recording assumes the latest React.
-#include "tsx/react-class.rr"
+#include "tsx/react-class.rerail"
 
 .violation no_string_refs(at: node)
     code "react/no-string-refs"

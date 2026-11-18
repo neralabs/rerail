@@ -7,9 +7,9 @@
 // to six.moves' copies of them.
 //   import urllib.request; urllib.request.urlopen(url)     B310
 //   from six.moves.urllib.request import urlretrieve; urlretrieve(url)   B310
-// How Bandit reads the call's name, and the list: python/security.rr (blacklisted).
+// How Bandit reads the call's name, and the list: python/security.rerail (blacklisted).
 
-#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+#include "python/security.rerail"   // blacklisted: Bandit's B001 over calls and imports
 
 .violation B310(at: node) code "B310"
     "Audit URL opening for permitted schemes; file or custom schemes may be unexpected."

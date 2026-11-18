@@ -26,11 +26,11 @@
 //   3. Legacy boundaries and the calls into them.
 //   4. The five scans give er_site; the reporter and the signed lists.
 
-#include "python/names.rr"
-#include "python/ast.rr"      // assign_target, assign_value, assign_ann, sig_param, str_const, unparen, body_stmt
-#include "python/calls.rr"    // posarg, call_arg, dexpr
-#include "data-layer/signing.rr"
-#include "eager-resolve.tables.rr"
+#include "python/names.rerail"
+#include "python/ast.rerail"      // assign_target, assign_value, assign_ann, sig_param, str_const, unparen, body_stmt
+#include "python/calls.rerail"    // posarg, call_arg, dexpr
+#include "data-layer/signing.rerail"
+#include "eager-resolve.tables.rerail"
 
 // ---- 1. symbols, bodies, calls -------------------------------------------------------------------------------------
 // er_doc(d, m): a scanned file and its module, the path without .py, "/" as "." (`__init__` kept).

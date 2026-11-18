@@ -13,7 +13,7 @@
 //       return 1
 //   else:                      ← RET505 "Unnecessary `else` after `return` statement"
 //       y()
-#include "python/flow-return.rr"
+#include "python/flow-return.rerail"
 
 .violation RET505(at: span, w: symbol) code "RET505" "Unnecessary `{w}` after `return` statement"
     suppress ruff "RET505"

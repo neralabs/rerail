@@ -8,7 +8,7 @@
 // earlier one. Only plain names count (`self.x` keys do not), and every repeat after the first is reported.
 //   {a: 1, a: 2}              ← F602 at the second a
 //   {a: 1, "a": 2}            not reported: a variable and a string
-#include "python/pyflakes.rr"
+#include "python/pyflakes.rerail"
 
 .violation F602(at: node, x: symbol) code "F602"
     "Remove or merge the repeated key `{x}` in this dict; the later value silently overwrites the earlier one."

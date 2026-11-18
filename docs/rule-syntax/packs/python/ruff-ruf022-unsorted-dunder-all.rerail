@@ -12,7 +12,7 @@
 //   __all__ = ["APRIL", "Day", "f"]     not reported
 //   __all__ = ["a01", "a1"]             not reported: a run starting with 0 compares digit by digit
 //   __all__ = {"b", "a"}                not reported: a set has no order
-#include "python/ruff-sorting.rr"
+#include "python/ruff-sorting.rerail"
 
 .violation RUF022(at: node) code "RUF022"
     "Sort `__all__`: SCREAMING_CASE constants first, then CamelCase classes, then the rest, each in natural order (digit runs by number). Leave it if other code relies on the current order."

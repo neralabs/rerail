@@ -3,7 +3,7 @@
 //
 // What a rule gets from this library:
 //   global_undefined(n)    n is `undefined` and means the global: no parameter, variable or function in scope
-//                          declares the name (tree-sitter gives `undefined` a kind of its own, so names.rr's ref
+//                          declares the name (tree-sitter gives `undefined` a kind of its own, so names.rerail's ref
 //                          and ref_site, which read identifiers, do not see it)
 //   typeof_expr(e)         e is `typeof x`
 //   string_like(x)         x is a string literal or any template literal (astUtils.isStringLiteral)
@@ -14,8 +14,8 @@
 // Rules that use it: valid-typeof (global_undefined, typeof_expr), yoda (literal_like, literal_number,
 // compare_op), no-useless-concat and prefer-template (string_like), use-isnan and no-self-compare (compare_op).
 // Builds on tsx/names (decl_site), tsx/eslint-a-expressions (and its tsx/eslint-a-common: deparen) and core.
-#include "tsx/names.rr"
-#include "tsx/eslint-a-expressions.rr"
+#include "tsx/names.rerail"
+#include "tsx/eslint-a-expressions.rerail"
 
 // ---- undefined ---------------------------------------------------------------------------------------------------
 // global_undefined(n): ESLint asks the scope manager whether `undefined` resolves to the global variable.

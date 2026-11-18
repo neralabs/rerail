@@ -59,7 +59,7 @@ impl Lang {
 }
 
 /// The (parent kind, token) pairs where `dialect`'s grammar may leave out a token `regex` matches: under `kinds`, or
-/// under any kind where `None`. A `.rr` program's token reads are refused by this (`logic::rr::token_reads`).
+/// under any kind where `None`. A `.rerail` program's token reads are refused by this (`logic::rr::token_reads`).
 pub fn implied(dialect: GrammarDialect, kinds: Option<&BTreeSet<String>>, regex: &regex::Regex) -> BTreeSet<(String, String)> {
     Lang::of(dialect).map(|lang| lang.implied_in(kinds, regex, None)).unwrap_or_default()
 }

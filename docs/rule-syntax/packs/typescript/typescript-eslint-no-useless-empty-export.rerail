@@ -5,9 +5,9 @@
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 .scope exclude "**/*.d.ts", "**/*.d.mts", "**/*.d.cts"
 
-#include "tsx/ts-b.rr"
+#include "tsx/ts-b.rerail"
 //   definition_file
-#include "tsx/modules.rr"
+#include "tsx/modules.rerail"
 //   program
 
 // typescript-eslint's no-useless-empty-export: `export {}` makes a file a module. Next to another import or export

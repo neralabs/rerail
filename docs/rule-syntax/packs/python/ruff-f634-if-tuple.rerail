@@ -9,7 +9,7 @@
 //   if (a, b): ...           ← F634
 //   elif (c,): ...           ← F634
 //   if (): ...               not reported: the empty tuple is false
-#include "python/pyflakes.rr"
+#include "python/pyflakes.rerail"
 //   nonempty_tuple(e)  e, through parentheses, is a tuple with at least one element
 
 .violation F634(at: node) code "F634"

@@ -22,11 +22,11 @@
 // Schema authority: some def around the node (any depth; decorators and signature count) has bootstrap, create,
 // drop, ensure, evolve, migration, rename, reconcile, schema or verify in its lowercased name.
 // The linter's signed approval list (APPROVED_USER_SCHEMA_CHECK_CALLSITES) is empty and NEEDS_SIGNING, and its SIDP000
-// fires only for a non-empty list; there is nothing to read. The tables: schema-introspection-data-paths.tables.rr.
+// fires only for a non-empty list; there is nothing to read. The tables: schema-introspection-data-paths.tables.rerail.
 
-#include "python/ast.rr"
-#include "data-layer/boot-python.rr"     // callee_name, def_walk
-#include "../data-layer/schema-introspection-data-paths.tables.rr"
+#include "python/ast.rerail"
+#include "data-layer/boot-python.rerail"     // callee_name, def_walk
+#include "../data-layer/schema-introspection-data-paths.tables.rerail"
 
 // sidp_runtime(d, p): document d, at p, is a data path: no allowed marker occurs in "/" + p.
 .decl sidp_runtime(d: number, p: symbol)

@@ -12,7 +12,7 @@
 // "The same column" compares quoted parts exactly and unquoted parts in any case: x."B" and X."B" are the same,
 // x."B" and X."b" are not.
 
-#include "sql/syntax.rr"
+#include "sql/syntax.rerail"
 
 .violation ST02(at: node, x: node) code "ST02" "Unnecessary CASE statement. Use {x} instead."
     suppress sqlfluff "ST02", "L043", "all", "structure", "structure.simple_case"

@@ -3,8 +3,8 @@
 .language typescript
 .mode steer
 .scope include "**/*"
-#include "tsx/eslint-a-expressions.rr"
-#include "tsx/eslint-b-literals.rr"
+#include "tsx/eslint-a-expressions.rerail"
+#include "tsx/eslint-b-literals.rerail"
 //   binop, equality, static_string; global_undefined, typeof_expr
 
 // ESLint's valid-typeof: `typeof x` compared (==, ===, !=, !==) with a literal that typeof never returns.

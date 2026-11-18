@@ -1,4 +1,4 @@
-// lib/data-layer/purity-ast.rr: the few `ast` idioms the data-layer's purity and authority scripts share, as they
+// lib/data-layer/purity-ast.rerail: the few `ast` idioms the data-layer's purity and authority scripts share, as they
 // spell them. Nothing here resolves a name: the scripts compare spellings, and so do these relations.
 //
 // Interface
@@ -17,7 +17,7 @@
 // looks through calls; method_of takes any def whose nearest scope is the class (one under `if` in the class
 // body too), body_def only the body's own statements.
 
-#include "python/ast.rr"
+#include "python/ast.rerail"
 
 // ast_walk(f, n): `def f(…):` / `class f:` and everything below it, plus its decorators. tree-sitter puts the
 // decorators outside the definition (in a decorated_definition), `ast` inside.

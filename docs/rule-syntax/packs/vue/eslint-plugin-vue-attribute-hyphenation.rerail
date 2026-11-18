@@ -3,7 +3,7 @@
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/template.rr"
+#include "vue/template.rerail"
 //   vplain(e, a, x), vdir(e, a, d, arg), vdyn(a), vcustom(e), vel_name(e, x), vtag_ignored(e), vkey_text(a, k)
 
 // eslint-plugin-vue's attribute-hyphenation: on a custom component or a <slot>, an attribute or prop name that is

@@ -32,8 +32,8 @@
 //   with pytest.raises(E):              pytest_with "pytest.raises"; with two statements, pytest_crowded: PT012
 //       a = f()
 //       g(a)
-#include "python/exceptions.rr"
-#include "python/pyflakes.rr"   // plain_str
+#include "python/exceptions.rerail"
+#include "python/pyflakes.rerail"   // plain_str
 
 // ---- 1. decorators -----------------------------------------------------------------------------------------------
 .decl pytest_deco(o: node, d: node, e: node, q: symbol)

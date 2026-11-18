@@ -11,7 +11,7 @@
 //   "{0} {1}".format(a, b)        ← UP030: "{} {}".format(a, b)
 //   "{1} {0}".format(a, b)        ← UP030: "{} {}".format(b, a)
 //   "{0} {0}".format(a)   "{1} {0}".format(*args)   "{0:<{1}}".format(a, 4)     not reported
-#include "python/pyflakes-format.rr"
+#include "python/pyflakes-format.rerail"
 //   format_call(c, v), brace_ok(v), brace_name, brace_arg, brace_nested; call_pos, call_kw, call_kwsplat
 
 .violation UP030(at: node) code "UP030"

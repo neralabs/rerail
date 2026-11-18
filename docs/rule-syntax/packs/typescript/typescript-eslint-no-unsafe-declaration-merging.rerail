@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/ts-b-scope.rr"
+#include "tsx/ts-b-scope.rerail"
 //   variable
 
 // typescript-eslint's no-unsafe-declaration-merging: `interface A { x: number } class A {}` merges the two, and the

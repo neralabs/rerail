@@ -33,7 +33,7 @@ struct State {
 static STATE: Mutex<Option<State>> = Mutex::new(None);
 
 /// The root of a run, for the run's length: calls answer from the repository that holds it. A run inside another
-/// (phase 0's `bootstrap.rr` run, a phase) sets its own and puts the outer run's back when it ends.
+/// (phase 0's `bootstrap.rerail` run, a phase) sets its own and puts the outer run's back when it ends.
 pub struct Scope(Option<PathBuf>);
 
 pub fn scope(root: &Path) -> Scope {

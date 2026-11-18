@@ -1,6 +1,6 @@
 // data-layer-internal-dead-code: clause `unreachable-internal-symbols` (relational, repository-wide: no partitionBy).
 // Policy: candidates/rules-ast/data-layer-internal-dead-code.json. Starts from
-// native/src/code_rule_dsl/logic/programs/data_layer/internal_dead_code.rr (its stage-per-relation layout), rewritten
+// native/src/code_rule_dsl/logic/programs/data_layer/internal_dead_code.rerail (its stage-per-relation layout), rewritten
 // over the base relations: no `ast(…)` atoms, no SQL builtins.
 // W's reference graph is `reference_edge(src, dst, via)` (the SQL's `reference_edges` rows, between definitions; the
 // converter's `.references` setting gives the policy's siblingLinks and constructorFields); the option

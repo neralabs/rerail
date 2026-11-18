@@ -11,7 +11,7 @@
 //   s.rstrip(r"\n\t ")         ← B005: raw, so "\" repeats
 //   s.strip("we")              not reported: no repeat
 //   s.strip("ab", "c")         not reported: two arguments
-#include "python/bugbear.rr"
+#include "python/bugbear.rerail"
 
 .violation B005(at: node) code "B005"
     "List each character once in this strip argument, or use `removeprefix()`/`removesuffix()` to remove a substring."

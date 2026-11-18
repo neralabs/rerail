@@ -1,7 +1,7 @@
 // python/types: what class of value an expression holds, from the engine's Python typing program.
-// COPY: Typing-support-final-shape@b193a9209:docs/rule-syntax/lib/python/calls.rr (its type relations).
+// COPY: Typing-support-final-shape@b193a9209:docs/rule-syntax/lib/python/calls.rerail (its type relations).
 //
-// The engine infers Python types once, in one program (typing/programs/calls.rr beside this site). It runs over the
+// The engine infers Python types once, in one program (typing/programs/calls.rerail beside this site). It runs over the
 // repository file by file, then in bounded cross-file rounds. There is no type checker: types come from what the
 // code assigns, returns, constructs and inherits, and every gap is "unknown", never a wrong class.
 // The program's answers arrive as facts keyed by file and span (`typing_calls__*`: a node is its path, kind, start

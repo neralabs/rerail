@@ -12,7 +12,7 @@
 //   int(len(xs))          ← RUF046  `len(xs)`
 //   int(round(f))         ← RUF046
 //   int(round(1., 0))     not reported: a float
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 
 param_slot("builtins.round", "number", 0).
 param_slot("builtins.round", "ndigits", 1).

@@ -11,12 +11,12 @@
 // How to read this file
 //   1. line_count (core) gives each file's length, as the script's str.splitlines() counts it.
 //   2. allowlisted reads the allowlist; script_line reads the script, to find the signature.
-//   3. signing.rr rebuilds the signed message from both and checks it.
+//   3. signing.rerail rebuilds the signed message from both and checks it.
 //   4. A bad signature is a gate: it replaces every other finding, as the script exits before scanning.
 //
 // Shows: a JSON reader, a signature verified in Datalog, a gate, and a finding at a fixed line of a file.
 
-#include "data-layer/signing.rr"
+#include "data-layer/signing.rerail"
 //   allow_entry, allow_sig (provided here) -> allow_status("file_length", "valid" | "invalid" | "unsigned")
 
 // .file-length-allowlist.json is one object, {"impl/a.py": 9905, …}: the json reader gives one row per member.

@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/format-args.rr"
+#include "python/format-args.rerail"
 
 // plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
 .decl up030_plain_string(n: node)

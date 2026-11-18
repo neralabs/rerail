@@ -9,7 +9,7 @@
 // its top-level `and`/`or`.
 //   if sys.version_info[:2] == (3,):     ← PYI005
 //   if sys.version_info[:2] >= (3,):     fine: an ordering compares
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI005(at: node, msg: symbol) code "PYI005" "{msg}"
     suppress ruff "PYI005"

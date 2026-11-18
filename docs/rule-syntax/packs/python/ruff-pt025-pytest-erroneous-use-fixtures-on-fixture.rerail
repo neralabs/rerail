@@ -8,7 +8,7 @@
 //   @pytest.mark.usefixtures("a")    ← PT025
 //   @pytest.fixture
 //   def b(): ...
-#include "python/pytest.rr"
+#include "python/pytest.rerail"
 //   pytest_fixture(f, d, e), pytest_mark(o, d, e, m)
 
 .violation PT025(at: node) code "PT025"

@@ -7,7 +7,7 @@
 // Ruff PTH121 (flake8-use-pathlib): every call of `os.path.samefile`, however it is imported. Reported at
 // the callee.
 //   os.path.samefile("a", "b")           ← PTH121: `Path("a").samefile("b")`
-#include "python/pathlib.rr"
+#include "python/pathlib.rerail"
 //   pth_call(c, q, f)   c calls q; f the callee (python/pathlib)
 
 .violation PTH121(at: node) code "PTH121"

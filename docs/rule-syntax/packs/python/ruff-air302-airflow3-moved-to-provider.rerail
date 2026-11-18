@@ -17,8 +17,8 @@
 //       from airflow.operators.http_operator import SimpleHttpOperator as HttpOperator
 //   HttpOperator()                 not reported: the fallback is guarded
 // Ruff also reads names in string annotations (`x: "S3Hook"`); this rule does not.
-#include "python/misc-airflow.rr"
-#include "../packs/python/ruff-air302-airflow3-moved-to-provider.moved.rr"   // air302_moved(old, p, v, m, x)
+#include "python/misc-airflow.rerail"
+#include "../packs/python/ruff-air302-airflow3-moved-to-provider.moved.rerail"   // air302_moved(old, p, v, m, x)
 
 .violation AIR302(at: node, q: symbol, p: symbol, v: symbol, m: symbol, x: symbol) code "AIR302"
     "`{q}` moved into the `{p}` provider in Airflow 3.0: install `apache-airflow-providers-{p}>={v}` and import `{x}` from `{m}` instead."

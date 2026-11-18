@@ -9,7 +9,7 @@
 //   os.mkdir("d", 0o755)                 ← PTH102
 //   os.mkdir("d", dir_fd=None)           ← PTH102
 //   os.mkdir("d", dir_fd=3)              not reported
-#include "python/pathlib.rr"
+#include "python/pathlib.rerail"
 //   pth_call(c, q, f)   c calls q; f the callee      kw_set(c, k)   keyword k is not None (python/pathlib)
 
 .violation PTH102(at: node) code "PTH102"

@@ -9,7 +9,7 @@
 // `Thisé`).
 //   """This function adds."""    ← D404
 //   """Thisbe is a name."""      not reported
-#include "python/docstrings.rr"
+#include "python/docstrings.rerail"
 
 .violation D404(at: node) code "D404"
     "Reword this docstring's summary so it does not open with \"This\": start a function's with an imperative verb (`Return the total.`), a class's or module's with what it is."

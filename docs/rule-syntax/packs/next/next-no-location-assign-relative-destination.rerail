@@ -13,7 +13,7 @@
 // location is the global (also as window.location, globalThis.location, document.location, self.location),
 // not a local or imported name; ["href"] and ["assign"] count as .href and .assign.
 
-#include "tsx/names.rr"
+#include "tsx/names.rerail"
 
 .violation relative(at: node, what: symbol) code "@next/next/no-location-assign-relative-destination"
     "Replace this {what} with redirect() during render or useRouter().push() in a client event handler."

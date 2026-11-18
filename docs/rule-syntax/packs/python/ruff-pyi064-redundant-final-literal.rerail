@@ -9,7 +9,7 @@
 //   x: Final[Literal[1]] = 1      ← PYI064: write `x: Final = 1`
 //   y: Final[Literal[1]]          ← PYI064 (no value)
 //   z: Final[Literal[1]] = 2      ← PYI064 (a different value, or `...`)
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI064(at: node, msg: symbol) code "PYI064" "{msg}"
     suppress ruff "PYI064"

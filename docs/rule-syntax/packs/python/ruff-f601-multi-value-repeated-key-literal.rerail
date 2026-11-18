@@ -10,7 +10,7 @@
 //   {"a": 1, "a": 2}          ← F601 at the second "a"
 //   {1: "x", True: "y"}       ← F601 at True
 //   {"a": 1, a: 2}            not reported: a is a variable (F602 compares those)
-#include "python/pyflakes.rr"
+#include "python/pyflakes.rerail"
 //   literal_key(e, k)  literal e has dict-key value k
 
 .violation F601(at: node, t: symbol) code "F601" "Dictionary key literal `{t}` repeated"

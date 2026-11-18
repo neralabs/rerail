@@ -12,7 +12,7 @@
 //       pass                     not reported: the else clause does something
 //   else:
 //       import x
-#include "python/misc2-typecheck.rr"
+#include "python/misc2-typecheck.rerail"
 //   tc_block(i, b)
 
 .violation TC005(at: node, i: node) code "TC005"

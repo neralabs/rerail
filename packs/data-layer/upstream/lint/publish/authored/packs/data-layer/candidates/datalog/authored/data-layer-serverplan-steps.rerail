@@ -1,7 +1,7 @@
 // data-layer-serverplan-steps: the clauses the converter cannot say (side-effect-tags, runtime-builder-string-name,
 // step-contracts-1 … 6, runtime-reference-summaries). Source: candidates/rules-ast/data-layer-serverplan-steps.json.
 // The relational clauses start from the hand-written programs in
-// native/src/code_rule_dsl/logic/programs/data_layer/serverplan_steps.*.rr, their matcher atoms lowered to the base
+// native/src/code_rule_dsl/logic/programs/data_layer/serverplan_steps.*.rerail, their matcher atoms lowered to the base
 // relations.
 //
 // Options, read from the converter's option facts: entryPoint (default "all": every matcher's `$option: entryPoint`
@@ -100,7 +100,7 @@ violation("data-layer-serverplan-steps", "runtime-builder-string-name", "STEP-03
     sps_on("check_runtime_builder_names_are_enum_members").
 
 // ---- runtime-reference-summaries (STEP-033, STEP-034, STEP-035) -----------------------------------------------------
-// Ported from native/src/code_rule_dsl/logic/programs/data_layer/serverplan_steps.runtime_reference_summaries.rr, its
+// Ported from native/src/code_rule_dsl/logic/programs/data_layer/serverplan_steps.runtime_reference_summaries.rerail, its
 // matcher atoms lowered to the base relations. One relation per input and SQL stage (`rrs_<name>`); the clause is per
 // file (partitionBy file): every join stays in one document. A row id `kind:start:end` is its node. Captures by `has`
 // neighbor and `$X` bind named children only (comments are not nodes): the base relations' `child`/`field`.
@@ -520,7 +520,7 @@ violation("data-layer-serverplan-steps", "step-contracts-5", "STEP-041", p, l) :
 
 // ---- step-contracts-2 (STEP-026, STEP-019) ------------------------------------------------------------------------
 // check_compile_callbacks_no_runtime_authority (STEP-026), check_postop_no_resolved_data_manipulation (STEP-019).
-// Lowered from native/src/code_rule_dsl/logic/programs/data_layer/serverplan_steps.step_contracts_2.rr to the base
+// Lowered from native/src/code_rule_dsl/logic/programs/data_layer/serverplan_steps.step_contracts_2.rerail to the base
 // relations. Options: entryPoint gates each detector (sps_on); strictModulesOnly feeds only `relaxed`, read by no stage.
 
 // ---- raw_nodes: the selector (converter output), its regex over the RETURN_TYPE node (a `type` node, not an
@@ -800,7 +800,7 @@ violation("data-layer-serverplan-steps", "step-contracts-2", "STEP-019", p, l) :
     sps_on("check_postop_no_resolved_data_manipulation").
 
 // ==== step-contracts-1 (31 stages; STEP-016 018 023 024 025 033 034 036 040 045 046 047 048 049 050) ==============
-// Guide: native/.../serverplan_steps.step_contracts_1.rr. Options: strictModulesOnly (`relaxed`) is read by no stage;
+// Guide: native/.../serverplan_steps.step_contracts_1.rerail. Options: strictModulesOnly (`relaxed`) is read by no stage;
 // every query branch is gated by sps_on(its entry). levels' CAST(text AS INTEGER) reads the literal's leading decimal
 // digits (sc1_level0); `nodes` holds the selector's comments (sc1_sel_comment); LIKE folds ASCII only (sc1_derived).
 // ---- raw_nodes selector (the converter's lowering; sc1_m68 reads sps_text for the function's regex) ----
@@ -1282,7 +1282,7 @@ violation("data-layer-serverplan-steps", "step-contracts-1", code, p, l) :- sc1_
 // check_literal_payload_materializer_dispatch_guardrail: a value inside a ResultMaterializationSpec literal payload,
 // that names (an identifier) or constructs (a call whose callee is) a class of the file whose `materialize` method
 // shapes raw rows (iterates or copies a raw parameter, or calls a function of the file that does).
-// Guide: native/src/code_rule_dsl/logic/programs/data_layer/serverplan_steps.step_contracts_3.rr.
+// Guide: native/src/code_rule_dsl/logic/programs/data_layer/serverplan_steps.step_contracts_3.rerail.
 //
 // `nodes` (raw_nodes) is the set sc3_sel; a stage joining `nodes` on a captured id needs that node in it. PARENT is
 // `child`, a field capture (NAME, RIGHT, VALUE, TYPE, FUNCTION, ARGUMENTS, ATTRIBUTE, BODY, PARAMETERS) is `field`.
@@ -1455,7 +1455,7 @@ violation("data-layer-serverplan-steps", "step-contracts-3", "STEP-039", p, l) :
 // ---- step-contracts-4 (STEP-029) ----------------------------------------------------------------------------------
 // check_closed_post_op_runtime_builder_no_callable_escape_hatches: runtime-builder post-ops must not carry
 // callables, callable registries, mutable values, or names that announce one.
-// Guide: native/src/code_rule_dsl/logic/programs/data_layer/serverplan_steps.step_contracts_4.rr.
+// Guide: native/src/code_rule_dsl/logic/programs/data_layer/serverplan_steps.step_contracts_4.rerail.
 //
 // `nodes` (raw_nodes) is sc4_selected; a stage joining `nodes` on a captured id needs that node in it. PARENT is
 // `child`, a field capture (NAME, LEFT, RIGHT, VALUE, FUNCTION, ARGUMENTS, OBJECT, ATTRIBUTE, BODY) is `field`.
@@ -1706,7 +1706,7 @@ violation("data-layer-serverplan-steps", "step-contracts-4", "STEP-029", p, l) :
 // check_legacy_postop_user_callable_escape_hatches: in a strict module (a module-level `CLOSED_POST_OP_STRICT = True`
 // without annotation), a CompiledStep `post_op=`/`post_op_with_refs=` value that is a user callable or a partial of
 // one (or any call under post_op_with_refs), and a user-callable call inside the function a legacy post-op names.
-// Guide: native/src/code_rule_dsl/logic/programs/data_layer/serverplan_steps.step_contracts_6.rr.
+// Guide: native/src/code_rule_dsl/logic/programs/data_layer/serverplan_steps.step_contracts_6.rerail.
 //
 // Options: strictModulesOnly (`option_on`, default true): true keeps the strict modules' nodes in `nodes` (sc6_sel)
 // and `relaxed` matches no file; false keeps every selected node and `relaxed` holds every valid module, whose

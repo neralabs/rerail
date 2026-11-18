@@ -108,7 +108,7 @@ ruf001_without_unambiguous(n, CH) :- !ruf001_unambiguous(n), (ruf001_symbol(n, C
 // RUF001(n): findings from clauses `with-unambiguous`, `without-unambiguous`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation RUF001(at: loc, ch: node) "Replace the look-alike character `{ch}` in this string with the ASCII character it imitates, unless the text is meant to hold it (for example a word in another language)."
     suppress noqa "RUF001"
 RUF001_raw(CH, n) :- ruf001_string_text(n),
@@ -120,7 +120,7 @@ RUF001_raw(CH, n) :- ruf001_string_text(n),
 // RUF001_with_unambiguous_stub(n): findings from clauses `with-unambiguous-stub`, `without-unambiguous-stub`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation RUF001_with_unambiguous_stub(at: loc, ch: node) code "RUF001" "Replace the look-alike character `{ch}` in this string with the ASCII character it imitates, unless the text is meant to hold it (for example a word in another language)."
     suppress noqa "RUF001"
 RUF001_with_unambiguous_stub_raw(CH, n) :- ruf001_string_text(n), !ruf001_in_string_annotation(n),
@@ -131,7 +131,7 @@ RUF001_with_unambiguous_stub_raw(CH, n) :- ruf001_string_text(n), !ruf001_in_str
 // RUF001_with_unambiguous_deferred_annotations(n): findings from clauses `with-unambiguous-deferred-annotations`, `without-unambiguous-deferred-annotations`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation RUF001_with_unambiguous_deferred_annotations(at: loc, ch: node) code "RUF001" "Replace the look-alike character `{ch}` in this string with the ASCII character it imitates, unless the text is meant to hold it (for example a word in another language)."
     suppress noqa "RUF001"
 RUF001_with_unambiguous_deferred_annotations_raw(CH, n) :- ruf001_string_text(n),

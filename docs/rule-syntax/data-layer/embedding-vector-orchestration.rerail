@@ -27,7 +27,7 @@
 //   3. evo_callsite: the grandfathering key. evo_query_root: EVO101's walk down the chain.
 //   4. One rule per code.
 
-#include "python/ast.rr"   // unparen, def_frame, class_path
+#include "python/ast.rerail"   // unparen, def_frame, class_path
 
 // The collector's source triggers.
 .decl evo_trigger(t: symbol)

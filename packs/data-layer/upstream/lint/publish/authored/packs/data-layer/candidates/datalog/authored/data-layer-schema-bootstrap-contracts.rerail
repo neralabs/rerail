@@ -136,7 +136,7 @@ bootstrap_str_names(s, x) :- string_annotation(s), parsed(s, "annotation", r), b
 bootstrap_str_names(s, x) :- string_annotation(s), !parsed(s, "annotation", _), bootstrap_str_value(s, x).
 
 // ---- parameters -----------------------------------------------------------------------------------------------
-// (mirrors python/ast.rr sig_param / param_parts.)
+// (mirrors python/ast.rerail sig_param / param_parts.)
 // bootstrap_param(f, nm, x, t): every `arg` of def f (posonly, args, vararg, kwonly, kwarg), named by identifier
 // nm with text x, annotated t; bootstrap_bare(f, nm, x): one without annotation.
 .decl bootstrap_param(f: node, nm: node, x: symbol, t: node)

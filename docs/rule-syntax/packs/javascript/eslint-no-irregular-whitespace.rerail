@@ -3,7 +3,7 @@
 .language typescript
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
-#include "tsx/eslint-a-text.rr"
+#include "tsx/eslint-a-text.rerail"
 //   end_col(n, c): the column just past n's last character
 
 // ESLint's no-irregular-whitespace: every run of irregular whitespace (no-break space U+00A0, zero-width space
@@ -22,7 +22,7 @@ no_irregular_whitespace(W) :- found(W), !skipped(W).
 // found(W): W is a run of irregular whitespace, or one line separator, on a physical line. match_all gives one row
 // per run, reading each line once, left to right; W is the run itself, so the finding is at its first character.
 // The two classes are ESLint's IRREGULAR_WHITESPACE and IRREGULAR_LINE_TERMINATORS, the JSON's 24 code points
-// (eslint-no-irregular-whitespace.chars.rr lists them; check-eslint-no-irregular-whitespace.py checks this regex
+// (eslint-no-irregular-whitespace.chars.rerail lists them; check-eslint-no-irregular-whitespace.py checks this regex
 // against it). The group name must be in the literal, so the regex is written out.
 .decl run(w: span)
 run(W) :- src_line(_, _, sp), match_all(

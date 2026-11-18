@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/ts-a.rr"
+#include "tsx/ts-a.rerail"
 //   type_parent; through tsx/eslint-a-common: deparen
 
 // typescript-eslint's prefer-as-const: a literal repeated as its own literal type says "this exact value", which

@@ -17,8 +17,8 @@
 //   def helper(session_handle):
 //       return session_handle.write(fn=lambda txn: None)     LCB-020: `session_handle` is a session token
 
-#include "python/names.rr"
-#include "python/ast.rr"       // chain_step, chain_below, sig_param
+#include "python/names.rerail"
+#include "python/ast.rerail"       // chain_step, chain_below, sig_param
 
 .decl lcb_callback(v: symbol)
 lcb_callback("read"). lcb_callback("write"). lcb_callback("read_async"). lcb_callback("write_async").

@@ -4,7 +4,7 @@
 // `cwdExternalPaths` both clauses read (option_json, below). Policy: rules/data-layer-hnsw-architecture.json.
 //
 // The SQL reads CPython's `ast` (the `pythonAst` stage) over the files the gate passes. Here the same rows are read
-// on tree-sitter's tree (as data-layer-connection-mode-split.rr does):
+// on tree-sitter's tree (as data-layer-connection-mode-split.rerail does):
 // - Name: an `identifier` in expression position (not an attribute's attr, a def/class/keyword/parameter name, an
 //   import's names, a global/nonlocal name, an `except … as` alias, inside a case pattern, or a PEP 695 type
 //   parameter's name, which CPython keeps as a string); its token its id.
@@ -233,7 +233,7 @@ hnsw_architecture_forbidden("hnsw_recovery_exhaustive_candidate_limit"). hnsw_ar
 hnsw_architecture_forbidden("hnsw_recovery_pruning_candidate_limit"). hnsw_architecture_forbidden("hnsw_recovery_route_partition_count").
 hnsw_architecture_forbidden("hnsw_search_frontier_iteration_limit"). hnsw_architecture_forbidden("scored_pairs_query").
 
-// HNSW007's regex: stage python_json_pattern's, its JSON-escaped text verbatim (an .rr literal decodes `\\` and
+// HNSW007's regex: stage python_json_pattern's, its JSON-escaped text verbatim (an .rerail literal decodes `\\` and
 // `\uXXXX`, surrogate pairs too, as JSON does), searched as W's rx_matches searches (the Rust regex crate, as
 // match): `sqljson`, or `jsonb?` with an optional `_` and word characters, case-insensitive, between Python-Unicode
 // word boundaries: each the token's start or end or a character outside the class the stage spells out (Python's

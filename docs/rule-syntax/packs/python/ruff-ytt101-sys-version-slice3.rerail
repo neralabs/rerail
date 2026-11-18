@@ -8,7 +8,7 @@
 //   sys.version[:3]          ← YTT101
 //   version[:3]              ← YTT101 after `from sys import version`
 //   sys.version[:i]          not reported: only an int literal
-#include "python/misc2-version.rr"
+#include "python/misc2-version.rerail"
 
 .violation YTT101(at: node) code "YTT101"
     "Use `sys.version_info[:2]` (a tuple) instead of `sys.version[:3]`; the slice truncates a two-digit minor version such as 3.10 to 3.1."

@@ -13,7 +13,7 @@
 //   if x or True: …          ← SIM222 (the test is True)
 //   y = True or x            ← SIM222 (y is True)
 //   y = x or True            not reported
-#include "python/simplify.rr"
+#include "python/simplify.rerail"
 //   sim_operand(t, o, i, v), sim_nops(t, n), sim_truth(e, b), side_effect(e), sim_bool_test(e), in_string_ann(e)
 
 .violation SIM222(at: node, v: node) code "SIM222"

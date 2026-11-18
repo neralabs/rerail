@@ -3,7 +3,7 @@
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/component.rr"
+#include "vue/component.rerail"
 //   vcomp(o), vsetup(o, f), vprops_call(c), vin_setup(n), ref_site(r, s), deparen(e, x), call_arg(c, a, i)
 
 // eslint-plugin-vue's no-setup-props-reactivity-loss. No options. The props come in as setup()'s first parameter,

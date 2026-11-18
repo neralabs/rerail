@@ -8,16 +8,16 @@
 //     module_of / module_path / workspace_module, loads, runs, reaches (the import-time module graph),
 //     exports / resolve_export (what a module exposes, following re-exports), dunder_all, public_name.
 //
-// Layering: built on lib/core.rr (doc, pkg, kind, field, child, text, nearest, within). It also reads relations
+// Layering: built on lib/core.rerail (doc, pkg, kind, field, child, text, nearest, within). It also reads relations
 // defined in python/names (def_name, qualname, type_checking_block, rotgt) and names reads ribind/rifrom/star from
-// here: the two modules are one mutually dependent unit, loaded together via names' `#include "python/imports.rr"`.
+// here: the two modules are one mutually dependent unit, loaded together via names' `#include "python/imports.rerail"`.
 //
 // Python background
 //   `import a.b.c` binds only `a` in the current scope, but loads a, a.b and a.b.c.
 //   `from .m import x` is relative: one dot is the current package, each extra dot goes one package up.
 //   `from m import *` binds every public name of m: those in m's `__all__`, else those not starting with "_".
-#include "python/flow.rr"     // remove_stmt, for the edits at the end of this file
-#include "python/names.rr"    // def_name, qualname, type_checking_block: the other half of the unit
+#include "python/flow.rerail"     // remove_stmt, for the edits at the end of this file
+#include "python/names.rerail"    // def_name, qualname, type_checking_block: the other half of the unit
 
 // `scope` (every node that opens a Python scope) comes from python/names, which includes this file.
 // Function-like scopes: an import inside one runs only when the function is called, not at module import time.
@@ -236,7 +236,7 @@ remove_alias(a) :- import_alias(i, a, _, _, _), count : { import_alias(i, b, _, 
 // hoist(i): move a function-level import to the top of the module, keeping its exact text (`$i` in a template is
 // the statement's source; the applier dedents it). If the module already imports every name it binds, the
 // function-level copy is only deleted. Whether hoisting is *safe* is the calling rule's business: see
-// function-level-imports.b2.rr, which offers it only where no import cycle is proven.
+// function-level-imports.b2.rerail, which offers it only where no import cycle is proven.
 .edit hoist(i: node)
 hoist(i) :- docof(i, d), count : { import_alias(i, _, m, x, l), !top_has(d, m, x, l) } > 0
     => remove_stmt(i), add_top(d, `$i`).

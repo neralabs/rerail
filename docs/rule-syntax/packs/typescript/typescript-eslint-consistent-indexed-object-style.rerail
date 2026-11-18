@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/ts-a.rr"
+#include "tsx/ts-a.rerail"
 //   ts_member, type_literal, mapped_type, type_parent, type_child
 
 // typescript-eslint's consistent-indexed-object-style: an object type that is only an index signature is a Record.

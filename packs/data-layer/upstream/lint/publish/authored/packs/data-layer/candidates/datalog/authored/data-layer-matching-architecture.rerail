@@ -39,7 +39,7 @@ violation("data-layer-matching-architecture", "matching-project-ownership", "MA0
 
 // ---- clause matching-file-checks (per file: partitionBy file; the `files` input is every file in scope) ----
 // The stages read `canonical`, a `pythonAst` stage: CPython `ast` rows. No relation gives those rows; they are
-// emulated here over tree-sitter (`matching_file_` relations, the library python/ast.rr's views, written out for the
+// emulated here over tree-sitter (`matching_file_` relations, the library python/ast.rerail's views, written out for the
 // fields the stages read). The emulation, and where it is not exact:
 // - Name: an identifier in expression position: not an attribute's attr, a def/class/keyword/parameter name, a name
 //   in an import, a global/nonlocal name or an `except … as` name. Match-statement capture names and PEP 695 type
@@ -186,7 +186,7 @@ matching_file_import_kind("import_statement").
 matching_file_import_kind("import_from_statement").
 matching_file_import_kind("future_import_statement").
 
-// mirrors python/ast.rr unparen
+// mirrors python/ast.rerail unparen
 .decl matching_file_unparen(e: node, m: node)
 matching_file_unparen(e, e) :- matching_file_node(e), !node(_, e, "parenthesized_expression", _, _).
 matching_file_unparen(e, m) :- node(_, e, "parenthesized_expression", _, _), matching_file_node(e), child(e, i, 0), matching_file_unparen(i, m).
@@ -195,7 +195,7 @@ matching_file_unparen(e, m) :- node(_, e, "parenthesized_expression", _, _), mat
 matching_file_untype(e, m) :- matching_file_unparen(e, m), !node(_, m, "type", _, _).
 matching_file_untype(e, m) :- matching_file_unparen(e, t), node(_, t, "type", _, _), child(t, i, 0), matching_file_untype(i, m).
 
-// mirrors python/ast.rr ast_name / not_name
+// mirrors python/ast.rerail ast_name / not_name
 .decl matching_file_param_holder(k: symbol)
 matching_file_param_holder("parameters").
 matching_file_param_holder("lambda_parameters").
@@ -242,7 +242,7 @@ matching_file_arg(c, g, 0) :- matching_file_call(c, _), field(c, "arguments", g)
 matching_file_keyword(c, k, x, v) :- matching_file_call(c, _), field(c, "arguments", al), child(al, k, _), node(_, k, "keyword_argument", _, _),
     field(k, "name", i), text(i, x), field(k, "value", v0), matching_file_unparen(v0, v).
 // Constant: kind and value
-// mirrors python/ast.rr fstring, string_form, str_const, ast_constant
+// mirrors python/ast.rerail fstring, string_form, str_const, ast_constant
 .decl matching_file_fstr(n: node)
 matching_file_fstr(n) :- node(_, n, "string", _, _), strprefix(n, p), contains("f", p).
 matching_file_fstr(c) :- node(_, c, "concatenated_string", _, _), child(c, s, _), matching_file_fstr(s).
@@ -349,7 +349,7 @@ matching_file_two_subscripts(n) :- node(_, n, "subscript", _, _), field(n, "subs
 // Assign / AnnAssign: target(s) and value
 .decl matching_file_assign_stmt(a: node)
 matching_file_assign_stmt(a) :- matching_file_node(a), node(_, a, "assignment", _, _), child(s, a, 0), node(_, s, "expression_statement", _, _).
-// mirrors python/ast.rr assign_chain, assign_target, assign_value
+// mirrors python/ast.rerail assign_chain, assign_target, assign_value
 .decl matching_file_chain(a: node, x: node)
 matching_file_chain(a, a) :- matching_file_assign_stmt(a).
 matching_file_chain(a, b) :- matching_file_chain(a, x), field(x, "right", b), node(_, b, "assignment", _, _).
@@ -371,7 +371,7 @@ matching_file_span(f, d, s, e) :- (matching_file_def(f, _) ; matching_file_class
 matching_file_span(f, d, s, e) :- (matching_file_def(f, _) ; matching_file_class(f, _)), node(d, f, _, s, e), !matching_file_decorated(f).
 .decl matching_file_decorated(f: node)
 matching_file_decorated(f) :- child(w, f, _), node(_, w, "decorated_definition", _, _).
-// mirrors python/ast.rr sig_param (in_params, param_parts, param_kind)
+// mirrors python/ast.rerail sig_param (in_params, param_parts, param_kind)
 // parameters: arg p of def f, its name, field (posonlyargs, args, vararg, kwonlyargs, kwarg) and annotation
 .decl matching_file_param_node(f: node, p: node, i: number, x: symbol, form: symbol)
 matching_file_param_node(f, p, i, x, "plain") :- matching_file_def(f, _), field(f, "parameters", ps), child(ps, p, i), node(_, p, "identifier", _, _), text(p, x).
@@ -406,7 +406,7 @@ matching_file_param_annotation(p, a) :- matching_file_param(_, p, _, _, _), fiel
 // The positional parameters' index (posonlyargs, then args): `argument_index`.
 .decl matching_file_positional_param(f: node, p: node, i: number, x: symbol)
 matching_file_positional_param(f, p, i, x) :- matching_file_param(f, p, i, x, k), (k = "posonlyargs" ; k = "args").
-// mirrors names.rr decorator: decorators of a def or class (the decorator_list), their expressions.
+// mirrors names.rerail decorator: decorators of a def or class (the decorator_list), their expressions.
 .decl matching_file_decorator(f: node, e: node)
 matching_file_decorator(f, e) :- (matching_file_def(f, _) ; matching_file_class(f, _)), child(w, f, _), node(_, w, "decorated_definition", _, _),
     child(w, k, _), node(_, k, "decorator", _, _), child(k, e0, 0), matching_file_unparen(e0, e).

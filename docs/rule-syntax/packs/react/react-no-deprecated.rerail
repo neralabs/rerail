@@ -11,7 +11,7 @@
 //   const { PropTypes } = React;   const { render } = require("react-dom"); a destructured property
 //   class A extends React.Component { componentWillMount() {} }             a lifecycle member of a component
 // React's name is the pragma (`/** @jsx Foo */` makes it Foo.createClass); the other modules' names are fixed.
-#include "tsx/react-class.rr"
+#include "tsx/react-class.rerail"
 
 .violation api(at: node, old: symbol, new: symbol)
     code "react/no-deprecated"

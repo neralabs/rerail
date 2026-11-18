@@ -10,7 +10,7 @@
 //   <Ctx.Provider value={{ user }}>         <ThemeContext value={[a, b]}>   (ThemeContext = createContext())
 //   const v = { user }; return <Ctx.Provider value={v}>      reported at the object, on v's line
 // A provider is any <X.Provider>, or a <X> whose X is declared `= createContext(…)` or React.createContext(…).
-#include "tsx/react-class.rr"
+#include "tsx/react-class.rerail"
 //   parent_component(n, c)   n is inside component c: a class, a spec, or a function component
 
 .violation context_value(at: node)

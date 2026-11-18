@@ -6,12 +6,12 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // FBT002(n): a finding at node n, from clause `boolean-default-value-positional-argument`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation FBT002(at: node, name: loc) "Make `{name}` keyword-only by moving it after `*` and update positional callers; keep it positional only when a parent signature or callback protocol requires it."
     suppress noqa "FBT002"
 FBT002_raw(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, !fbt002_tok_follows_2(n),

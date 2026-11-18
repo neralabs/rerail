@@ -3,7 +3,7 @@
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/template.rr"
+#include "vue/template.rerail"
 //   vdir(e, a, d, arg), vmod(a, m)
 
 // eslint-plugin-vue's no-deprecated-v-on-native-modifier: the `native` modifier of a v-on directive, reported at the

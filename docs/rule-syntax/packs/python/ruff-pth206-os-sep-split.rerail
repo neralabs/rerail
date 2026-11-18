@@ -9,7 +9,7 @@
 //   "foo/bar".split(os.sep)              ← PTH206: `Path("foo/bar").parts`
 //   from os import sep; p.split(sep)     ← PTH206
 //   p.split(os.sep, 1), p.rsplit(os.sep) not reported
-#include "python/pathlib.rr"
+#include "python/pathlib.rerail"
 //   call_len(c, n), arg_value(c, x, i, a) (python/pathlib)   ruff_qual(e, q), attr_of(n, o, a) (python/ruff, names)
 
 .violation PTH206(at: node) code "PTH206"

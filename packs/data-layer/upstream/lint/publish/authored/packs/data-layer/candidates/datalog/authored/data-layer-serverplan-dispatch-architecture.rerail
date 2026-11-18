@@ -2,7 +2,7 @@
 // candidates/rules-ast/data-layer-serverplan-dispatch-architecture.json: here backend-identity, step-isinstance,
 // step-type-compare, step-name-compare, dialect-compare, dialect-truth and executor-provenance; backend-family and
 // step-class-match stay converted. The relational clause follows the SQL stages as
-// native/src/code_rule_dsl/logic/programs/data_layer/serverplan_dispatch_architecture.rr reads them, rewritten over
+// native/src/code_rule_dsl/logic/programs/data_layer/serverplan_dispatch_architecture.rerail reads them, rewritten over
 // the base relations (no shards, no SQL builtins).
 //
 // Options: every forbid clause opens with `{"$option": "entryPoint", cases: {all, scan_source: any file}, default:

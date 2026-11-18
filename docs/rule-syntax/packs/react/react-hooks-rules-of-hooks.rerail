@@ -18,7 +18,7 @@
 //   <button onClick={onTick}>                                           reported: passed down
 //   doLater(useEffectEvent(f))                                          reported: not stored in a variable
 // The rule's option additionalHooks (more effect Hooks for useEffectEvent) is not in the JSON.
-#include "tsx/react-hooks.rr"
+#include "tsx/react-hooks.rerail"
 
 .violation rules_of_hooks(at: node, msg: symbol)
     code "react-hooks/rules-of-hooks" "{msg}"

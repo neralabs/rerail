@@ -13,7 +13,7 @@
 //   "%s %s" % (a, b)           ← UP031: "{} {}".format(a, b)
 //   "%d items" % n             ← UP031, by hand
 //   b"%s" % (x,)   "%4%" % ()  not reported (bytes; does not parse)
-#include "python/upgrade-format.rr"
+#include "python/upgrade-format.rerail"
 //   percent_fmt(b, s, r, v), pct_ok(v), pct_spec, pct_conv, rhs_form(e)
 
 .decl printf(b: node, v: symbol)

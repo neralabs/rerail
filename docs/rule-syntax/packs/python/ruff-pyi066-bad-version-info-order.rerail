@@ -11,7 +11,7 @@
 //       def f(): ...
 //   else:
 //       def f(x=...): ...
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI066(at: node, msg: symbol) code "PYI066" "{msg}"
     suppress ruff "PYI066"

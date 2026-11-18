@@ -11,8 +11,8 @@
 //   logger.info("", exc_info=True)                ← LOG014
 //   logger.info("", exc_info=ValueError())        not reported: not a literal
 //   except ...: logger.info("", exc_info=True)    not reported
-#include "python/logging.rr"
-#include "python/ruff-classes.rr"
+#include "python/logging.rerail"
+#include "python/ruff-classes.rerail"
 
 .violation LOG014(at: node) code "LOG014"
     "Remove this `exc_info` argument: outside an except block there is no exception to attach. Leave it if this code only ever runs while an exception is being handled."

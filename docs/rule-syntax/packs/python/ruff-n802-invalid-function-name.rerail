@@ -11,7 +11,7 @@
 //   def BadName(): ...                  ← N802
 //   class V(ast.NodeVisitor):
 //       def visit_Constant(self, n): …  not reported
-#include "python/naming.rr"
+#include "python/naming.rerail"
 
 .violation N802(at: node, x: symbol) code "N802"
     "Rename function `{x}` to lowercase snake_case and update its callers; keep the name if it overrides a method you do not control."

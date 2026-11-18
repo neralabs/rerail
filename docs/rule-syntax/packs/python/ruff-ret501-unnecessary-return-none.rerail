@@ -12,7 +12,7 @@
 //           return None        ← RET501
 //       print()
 //   def g(x) -> int | None: … return None   not reported: annotated
-#include "python/flow-return.rr"
+#include "python/flow-return.rerail"
 
 .violation RET501(at: node) code "RET501"
     "Do not explicitly `return None` in function if it is the only possible return value"

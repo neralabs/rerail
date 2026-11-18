@@ -13,7 +13,7 @@
 //   return False,                ← COM818
 //   foo = (1,)                   not reported
 //   foo = 1,; bar = 2            not reported: a `;` follows
-#include "python/ast.rr"
+#include "python/ast.rerail"
 
 .violation COM818(at: node) code "COM818"
     "Remove the trailing comma if a single value was meant; if a tuple is intended, parenthesize it as `(value,)`."

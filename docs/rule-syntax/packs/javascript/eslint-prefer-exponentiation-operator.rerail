@@ -3,7 +3,7 @@
 .language typescript
 .mode steer
 .scope include "**/*"
-#include "tsx/eslint-b-objects.rr"
+#include "tsx/eslint-b-objects.rerail"
 //   global_member, call_arg, call_arg_count, precedence, touching, cannot_touch, deparen, estree_parent, tagged
 
 // ESLint's prefer-exponentiation-operator: a call of the global Math.pow. ES2016's `**` says the same.

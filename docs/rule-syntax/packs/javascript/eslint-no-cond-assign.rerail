@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-a-control.rr"
+#include "tsx/eslint-a-control.rerail"
 //   deparen_count, assignment, function_node
 
 // ESLint's no-cond-assign. `option`:

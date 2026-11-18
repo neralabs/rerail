@@ -10,9 +10,9 @@
 // one with the two keywords raises ValueError.
 //   subprocess.run(["ls"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)     ← UP022
 //   subprocess.run(["ls"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)   not reported
-#include "python/upgrade.rr"
+#include "python/upgrade.rerail"
 //   targets(m), sym_at(e, q)
-#include "python/upgrade-format.rr"
+#include "python/upgrade-format.rerail"
 //   call_kw(c, k, v), up_kwarg(c, k, ka)
 
 .decl piped(c: node)  // subprocess.run with stdout and stderr both subprocess.PIPE

@@ -13,7 +13,7 @@
 //   HSP-003  … or include "__history_runtime__"
 //   HSP-004  CompiledStep(…, post_op_with_refs=…)
 
-#include "python/ast.rr"    // from_module_raw, unparen, str_const, leaf_name
+#include "python/ast.rerail"    // from_module_raw, unparen, str_const, leaf_name
 
 // hsp_production(d) and hsp_history_file(d), by path. Tests are `tests` directories and test_*.py files.
 .decl hsp_production(d: number)

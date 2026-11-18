@@ -3,7 +3,7 @@
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/component.rr"
+#include "vue/component.rerail"
 //   tvar(e, x, id, k), vname(o, g, x, n), vprop_name(c, x, n), vscript(p, setup), vsetup_doc(d), decl_site(…)
 
 // eslint-plugin-vue's no-template-shadow: a template variable (v-for alias, slot parameter) whose name is already

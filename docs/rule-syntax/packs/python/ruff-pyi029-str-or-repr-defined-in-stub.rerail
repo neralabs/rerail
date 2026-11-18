@@ -9,7 +9,7 @@
 //   class C:
 //       def __str__(self) -> str: ...          ← PYI029
 //       def __repr__(self, x) -> str: ...      fine: another signature
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI029(at: node, x: symbol) code "PYI029" "Remove this `{x}` definition from the stub; a `{x}` returning `str` is inherited from `object`, so declaring it is almost always redundant."
     suppress ruff "PYI029"

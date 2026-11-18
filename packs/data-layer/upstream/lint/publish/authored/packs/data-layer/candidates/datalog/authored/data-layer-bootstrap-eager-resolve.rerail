@@ -33,7 +33,7 @@ bootstrap_sql_slot(v) :- node(_, s, "for_statement", _, _), field(s, "right", v)
 bootstrap_sql_slot(x) :- bootstrap_sql_arg0(_, x).
 bootstrap_sql_slot(x) :- bootstrap_sql_slot(p), node(_, p, "parenthesized_expression", _, _), child(p, x, _), !node(_, x, "comment", _, _).
 
-// bootstrap_sql_ast(n, e): e is the ast node slot n holds, parentheses dropped. Mirrors python/ast.rr unparen
+// bootstrap_sql_ast(n, e): e is the ast node slot n holds, parentheses dropped. Mirrors python/ast.rerail unparen
 // (which takes child 0: here any non-comment child).
 .decl bootstrap_sql_ast(n: node, e: node)
 bootstrap_sql_ast(n, n) :- bootstrap_sql_slot(n), !node(_, n, "parenthesized_expression", _, _).

@@ -7,7 +7,7 @@
 // Ruff D419 (pydocstyle): a docstring whose body is only whitespace.
 //   def f():
 //       """   """          ← D419
-#include "python/docstrings.rr"
+#include "python/docstrings.rerail"
 
 .violation D419(at: node) code "D419"
     "Write a one-line summary of what this module, class or function does in the docstring, or delete the empty docstring."

@@ -9,7 +9,7 @@
 // does. One finding per run of such calls, at the `or`. Ruff's fix is unsafe; none here.
 //   isinstance(a, int) or isinstance(a, float)               ← SIM101: isinstance(a, (int, float))
 //   isinstance(a, int) or b or isinstance(a, float)          not reported: not next to each other
-#include "python/simplify.rr"
+#include "python/simplify.rerail"
 //   sim_operand(t, o, i, v); c4_builtin(c, x), call_nargs(c, n), call_nkwargs(c, 0) (comprehensions); cmp_same(a, b) (compare)
 
 .violation SIM101(at: node, target: symbol) code "SIM101" "Multiple `isinstance` calls for {target}, merge into a single call"

@@ -13,7 +13,7 @@
 //   @pytest.mark.parametrize("a", …)             not reported
 // Both arguments must be there (by position or as argnames=/argvalues=). A string is reported with its
 // parentheses, as written.
-#include "python/pytest.rr"
+#include "python/pytest.rerail"
 //   exc_call(c, q), exc_argument(c, k, i, a), exc_written(a, w), pytest_several(s)
 
 .violation PT006(at: node, id: symbol) code "PT006" "{id}"

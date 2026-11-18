@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "rust/syntax-literals.rr"
+#include "rust/syntax-literals.rerail"
 //   num_lit(n, radix, int, suffix)   a number literal's radix and integer digits;  num_float(n)  it is a float
 
 // Clippy's zero_prefixed_literal (complexity): a decimal integer literal written with a leading 0, which

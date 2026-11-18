@@ -8,7 +8,7 @@
 // Reported once, at the outermost Literal.
 //   Literal[1, Literal[2, 3]]          ← RUF041  `Literal[1, 2, 3]`
 //   Literal[1, Alias]                  not reported: an alias is fine
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation RUF041(at: node) code "RUF041"
     "Flatten this nested `Literal` into one `Literal[...]` listing every value; if an inner group is reused, name it as an alias (`Mode = Literal[...]`) and nest the alias instead."

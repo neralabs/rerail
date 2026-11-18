@@ -63,7 +63,7 @@ graphql_authority_type("type").
 .decl graphql_authority_id(i: node, x: symbol)
 graphql_authority_id(i, x) :- node(_, i, "identifier", _, _), text(i, t), x = @nfkc(t).
 // fn(n, f): f is n's ast fn.
-// mirrors python/ast.rr def_frame (also: a class decorator's fn is the class's fn, as metadata.structure_index visits it)
+// mirrors python/ast.rerail def_frame (also: a class decorator's fn is the class's fn, as metadata.structure_index visits it)
 .decl graphql_authority_fn(n: node, f: node)
 graphql_authority_fn(n, f) :- nearest(n, f, graphql_authority_frame), node(_, f, "function_definition", _, _).
 graphql_authority_fn(n, f) :- nearest(n, dc, graphql_authority_frame), node(_, dc, "decorator", _, _), child(dd, dc, _),
@@ -109,7 +109,7 @@ graphql_authority_root(e, x) :- node(_, e, "call", _, _), field(e, "function", g
 // An Assign/AnnAssign statement: the outermost assignment of a chain `a = b = v`; its direct Name targets and value.
 .decl graphql_authority_inner(a: node)
 graphql_authority_inner(a) :- node(_, b, "assignment", _, _), field(b, "right", a), node(_, a, "assignment", _, _).
-// mirrors python/ast.rr assign_chain / assign_target / assign_value (here with AnnAssign: one chain of one)
+// mirrors python/ast.rerail assign_chain / assign_target / assign_value (here with AnnAssign: one chain of one)
 .decl graphql_authority_chain(a: node, b: node)
 graphql_authority_chain(a, a) :- node(_, a, "assignment", _, _), !graphql_authority_inner(a).
 graphql_authority_chain(a, c) :- graphql_authority_chain(a, b), field(b, "right", c), node(_, c, "assignment", _, _).
@@ -138,7 +138,7 @@ graphql_authority_pos(c, a, i) :- node(_, c, "call", _, _), field(c, "arguments"
     child(al, a, i), node(_, a, k, _, _), k != "keyword_argument", k != "dictionary_splat".
 .decl graphql_authority_arg0(c: node, a: node)
 graphql_authority_arg0(c, a) :- graphql_authority_pos(c, a, i), i = min j : { graphql_authority_pos(c, _, j) }.
-// mirrors python/ast.rr unparen
+// mirrors python/ast.rerail unparen
 .decl graphql_authority_unparen(e: node, m: node)
 graphql_authority_unparen(e, e) :- node(_, e, k, _, _), k != "parenthesized_expression".
 graphql_authority_unparen(e, m) :- node(_, e, "parenthesized_expression", _, _), child(e, i, 0), graphql_authority_unparen(i, m).
@@ -157,7 +157,7 @@ violation("data-layer-graphql-plan-ownership", "graphql-authority", "GPO003", p,
 .decl graphql_authority_ref(e: node, x: symbol)
 graphql_authority_ref(e, x) :- graphql_authority_id(e, x).
 graphql_authority_ref(e, x) :- node(_, e, "attribute", _, _), field(e, "attribute", a), graphql_authority_id(a, x).
-// mirrors python/names.rr decorator (by the expression's or its call's Name id / Attribute attr)
+// mirrors python/names.rerail decorator (by the expression's or its call's Name id / Attribute attr)
 .decl graphql_authority_decorator(c: node, x: symbol)
 graphql_authority_decorator(c, x) :- field(dd, "definition", c), child(dd, dc, _), node(_, dc, "decorator", _, _),
     child(dc, e0, 0), graphql_authority_unparen(e0, e), !node(_, e, "call", _, _), graphql_authority_ref(e, x).

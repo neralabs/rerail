@@ -11,7 +11,7 @@
 //                                                    sqlfluff does not check
 // An ORDER BY inside a subquery does not order the outer query.
 
-#include "sql/syntax.rr"
+#include "sql/syntax.rerail"
 
 .violation AM09(at: node) code "AM09" "LIMIT and OFFSET are used without ORDER BY, which may lead to non-deterministic results."
     suppress sqlfluff "AM09", "all", "ambiguous", "ambiguous.order_by_limit"

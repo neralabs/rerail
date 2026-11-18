@@ -12,7 +12,7 @@
 //       pass
 //   class Good(tuple):           not reported
 //       __slots__ = ()
-#include "python/misc2-slots.rr"
+#include "python/misc2-slots.rerail"
 
 .violation SLOT001(at: node) code "SLOT001"
     "Add `__slots__ = ()` to this `tuple` subclass so instances skip the per-instance `__dict__`; leave it if the class assigns instance attributes, which an empty `__slots__` forbids."

@@ -99,7 +99,7 @@ class PathScope:
     A name is a path if some binding of it in the scope is: a parameter whose annotation mentions a path
     class; an annotated assignment whose annotation does; or an assignment from a path expression.
     A path expression is a path class called, a path's `.parent`/`.parents[i]`, a path method called on a
-    path, `path / x`, `a if c else b` with a path on either side, or a name that is a path here or in an enclosing scope (LEGB, as python/names.rr's
+    path, `path / x`, `a if c else b` with a path on either side, or a name that is a path here or in an enclosing scope (LEGB, as python/names.rerail's
     ref_site: may-precise, no flow pruning).
     """
 

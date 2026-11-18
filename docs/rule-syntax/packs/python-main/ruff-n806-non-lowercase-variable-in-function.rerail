@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 .options {"pep8-naming.ignore-names": {"type": "array", "items": "string", "default": ["setUp", "tearDown", "setUpClass", "tearDownClass", "setUpModule", "tearDownModule", "asyncSetUp", "asyncTearDown", "setUpTestData", "failureException", "longMessage", "maxDiff"], "description": "Names exempt from the check, each a regex over the whole name (a Ruff glob: `*` is `.*`, `?` is `.`)."}}
 

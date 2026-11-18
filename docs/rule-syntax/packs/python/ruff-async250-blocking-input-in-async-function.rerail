@@ -8,7 +8,7 @@
 // waits for the user. A local `input` that shadows the builtin is not reported.
 //   async def f(): input("name: ")          ← ASYNC250
 //   async def f(): await asyncio.to_thread(input)   not reported: not a call of input
-#include "python/misc2-async.rr"
+#include "python/misc2-async.rerail"
 
 .violation ASYNC250(at: node) code "ASYNC250"
     "Read input in a worker thread, such as `await asyncio.to_thread(input)`, instead of calling `input()` directly."

@@ -9,7 +9,7 @@
 //   pytest.raises(ZeroDivisionError, func, 1, b=0)   ← RUF061
 //   with pytest.raises(ZeroDivisionError):           not reported
 //       func(1, b=0)
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 
 param_slot("pytest.raises", "func", 1).
 param_slot("pytest.warns", "func", 1).

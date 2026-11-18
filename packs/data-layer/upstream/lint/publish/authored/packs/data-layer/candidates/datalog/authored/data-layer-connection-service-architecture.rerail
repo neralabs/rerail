@@ -13,12 +13,12 @@
 // - Module rows sit at line 1 (a Module has no lineno); a def's/class's lineno is its def/async/class line;
 // - ClassDef with parent 0 is a module-level class_definition (bare or decorated); `methods` a function_definition
 //   in a class's body block (bare or decorated); `functions` every function_definition;
-// - parentheses are dropped (CPython has no node for them): `connection_un`, mirrors python/ast.rr unparen, over
+// - parentheses are dropped (CPython has no node for them): `connection_un`, mirrors python/ast.rerail unparen, over
 //   the slots read here;
 // - Call: `call`, func its `function` field; callee an identifier's text (Name) or an attribute's `attribute`
 //   (Attribute), '' otherwise; receiver the Attribute func's `object`; args the argument_list's children less
 //   keyword arguments, `**` splats and comments;
-// - Name: an identifier in expression position (`connection_not_name` lists the others, mirrors python/ast.rr
+// - Name: an identifier in expression position (`connection_not_name` lists the others, mirrors python/ast.rerail
 //   not_name); Attribute's ast_name its `attribute`; Load is neither a store target nor a `del` target;
 // - Constant str: a `string` that is no part of a `concatenated_string`, or a `concatenated_string` (one CPython
 //   Constant), with no f-prefixed part, whose value is a str (value_type_of): its `value`, escapes decoded, the
@@ -63,7 +63,7 @@ connection_analysis_path(p) :- connection_doc(_, p), prefix("impl/common/l2200_s
 connection_analysis_path("impl/sqlite/connection.py"). connection_analysis_path("impl/postgres/connection.py").
 connection_analysis_path("impl/mariadb/connection.py"). connection_analysis_path("impl/common/l5150_fts_polyfill/manager.py").
 
-// ---- parentheses dropped, over the slots read: mirrors python/ast.rr unparen -------------------------------------
+// ---- parentheses dropped, over the slots read: mirrors python/ast.rerail unparen -------------------------------------
 .decl connection_slot(e: node)
 connection_slot(f) :- node(_, c, "call", _, _), field(c, "function", f).
 connection_slot(o) :- node(_, a, "attribute", _, _), field(a, "object", o).
@@ -233,7 +233,7 @@ connection_chain_top(a, t) :- node(_, p, "assignment", _, _), field(p, "right", 
 .decl connection_chained(a: node)
 connection_chained(a) :- node(_, p, "assignment", _, _), field(p, "right", a), node(_, a, "assignment", _, _).
 
-// ---- names: mirrors python/ast.rr ast_name / not_name, and expr_ctx's store and del -------------------------
+// ---- names: mirrors python/ast.rerail ast_name / not_name, and expr_ctx's store and del -------------------------
 .decl connection_not_name(n: node)
 connection_not_name(n) :- node(_, a, "attribute", _, _), field(a, "attribute", n).
 connection_not_name(n) :- node(_, p, "function_definition", _, _), field(p, "name", n).

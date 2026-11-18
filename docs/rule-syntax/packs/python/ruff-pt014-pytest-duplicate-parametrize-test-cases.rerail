@@ -9,9 +9,9 @@
 // quotes aside; "ab" is "a" "b" and 1.0 is 1.00, but b"a" and f"a" are not "a").
 //   @pytest.mark.parametrize("x", [1, 1, 2])     ← PT014 at the second 1
 //   @pytest.mark.parametrize("x", [(1, 2), (1,2)])    ← PT014
-#include "python/pytest.rr"
+#include "python/pytest.rerail"
 //   exc_call(c, q), exc_argument(c, k, i, a)
-#include "python/compare.rr"
+#include "python/compare.rerail"
 //   cmp_same(a, b), cmp_same_ask(a, b)
 
 .violation PT014(at: node, i: number) code "PT014"

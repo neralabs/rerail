@@ -11,10 +11,10 @@
 //   <div foo="x" />            unknown
 // Not checked: components, member tags (<a.b>), custom elements (a tag with `-`, or any tag with an `is` prop),
 // fbt/fbs, data-* props and aria-* attributes. A few names match in any case (allowFullScreen, charset, …).
-// The name tables are react-no-unknown-property.props.rr, generated from the JSON (gen-…py, check-…py); they are
+// The name tables are react-no-unknown-property.props.rerail, generated from the JSON (gen-…py, check-…py); they are
 // eslint-plugin-react's for React 19. The options (ignore, requireDataLowercase) are not in the JSON.
-#include "tsx/react.rr"
-#include "../packs/react/react-no-unknown-property.props.rr"   // dom_property, dom_attribute, only_on, …
+#include "tsx/react.rerail"
+#include "../packs/react/react-no-unknown-property.props.rerail"   // dom_property, dom_attribute, only_on, …
 
 .violation unknown_prop(at: node, msg: symbol)
     code "react/no-unknown-property"

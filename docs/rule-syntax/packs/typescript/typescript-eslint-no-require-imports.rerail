@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/eslint-a-common.rr"
+#include "tsx/eslint-a-common.rerail"
 //   deparen, call_arg, static_string; through tsx/names: ref, ref_site
 
 // typescript-eslint's no-require-imports: `require("m")` and `import x = require("m")` are CommonJS imports; ES

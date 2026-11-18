@@ -41,8 +41,8 @@
 // PascalCase object (`React.useState`, `Foo.useBar`). `api.useThing()` and `usefulThing()` are not Hooks.
 // Builds on tsx/react (and through it tsx/eslint-a-common: deparen, call_arg, function_kind, function_node) and
 // tsx/names (ref, ref_site, decl_site: a JSX component tag is a reference there).
-#include "tsx/react.rr"
-#include "tsx/slots.rr"
+#include "tsx/react.rerail"
+#include "tsx/slots.rerail"
 
 // ---- Hooks and the functions around them ----------------------------------------------------------------------
 .decl hook_named(n: node)  // n's text is a Hook's name: "use", "useState", "use3d"; not "user"

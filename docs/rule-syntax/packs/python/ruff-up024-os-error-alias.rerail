@@ -12,7 +12,7 @@
 //   except (OSError, socket.error):       ← UP024 at the tuple
 //   raise mmap.error(1)                   ← UP024 at mmap.error
 //   from .mmap import error; raise error  not reported: a local module's error
-#include "python/upgrade-imports.rr"
+#include "python/upgrade-imports.rerail"
 //   exc_site(e, how), handler_tuple(t, e), up_qual(e, q)        (python/upgrade-imports)
 //   builtin_at(e, x)                                         (python/upgrade)
 

@@ -5,9 +5,9 @@
 .scope include "**/*.py"
 // Bandit's B315 (its B001 blacklist): a call to xml.sax.expatreader.create_parser.
 //   import xml.sax.expatreader; xml.sax.expatreader.create_parser()   B315
-// How Bandit reads the call's name, and the list: python/security.rr (blacklisted).
+// How Bandit reads the call's name, and the list: python/security.rerail (blacklisted).
 
-#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+#include "python/security.rerail"   // blacklisted: Bandit's B001 over calls and imports
 
 .violation B315(at: node) code "B315"
     "Using xml.sax.expatreader to parse untrusted XML may permit XML attacks; use defusedxml."

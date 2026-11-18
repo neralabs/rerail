@@ -1,4 +1,4 @@
-# `.rr`, step 17: a `` `` `` with no closing pair.
+# `.rerail`, step 17: a `` `` `` with no closing pair.
 #
 #   r(x) :- x = replace(c, ``).
 #

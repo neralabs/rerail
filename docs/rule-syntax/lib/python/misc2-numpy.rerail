@@ -20,11 +20,11 @@
 //   `np.random` part resolves to "numpy.random", which no rule names). Imported names are not expressions, so
 //   `from numpy import float` itself is not reported; each read of `float` after it is. Only references that
 //   resolve count: `import numpy as np` must be in the file.
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 //   unparen(e, m), ruff_qual(e, q)
-#include "python/misc2-case.rr"
+#include "python/misc2-case.rerail"
 //   case_value_name(e, q)
-#include "python/exceptions.rr"
+#include "python/exceptions.rerail"
 //   exc_handler(t, x), exc_type(x, e)
 
 .decl npy_ref(e: node, q: symbol)

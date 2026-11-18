@@ -10,7 +10,7 @@
 //   class Foo:
 //       def __post_init__(self, bar: int = 11) -> None: ...      ← RUF033 at 11
 //       # instead:  bar: InitVar[int] = 11  and  def __post_init__(self, bar: int)
-#include "python/ruff-classes.rr"
+#include "python/ruff-classes.rerail"
 
 .violation RUF033(at: node) code "RUF033"
     "The generated `__init__` ignores `__post_init__` defaults: declare this parameter as an `InitVar` field with this default in the class body and drop the default here, unless only direct calls pass it."

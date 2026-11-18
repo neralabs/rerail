@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // in_test(n): the JSON util `in-test`, used where the JSON says `matches: "in-test"`
 .decl pyi004_in_test(n: node)
@@ -95,7 +95,7 @@ pyi004_patch_tuple(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
 
 // PYI004(n): a finding at node n, from clause `patch-version-comparison`.
 // Each rule below is one way the JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PYI004(at: node) "Compare against the major and minor version only, such as `(3, 8)` instead of `(3, 8, 1)`, picking the minor version this branch should cover; type checkers ignore patch versions."
     suppress noqa "PYI004"
 PYI004_raw(n) :- pyi004_single_compare(n), child(n, c1, _), child(_, c1, 0), pyi004_left_tuple(c1),

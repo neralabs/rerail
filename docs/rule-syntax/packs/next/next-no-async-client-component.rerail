@@ -10,7 +10,7 @@
 //   "use client"; const Page = async () => {};  export default Page    the declaration of Page
 // For `export default Page` the plugin reads the first top-level function or variable declaration of Page.
 
-#include "tsx/modules.rr"
+#include "tsx/modules.rerail"
 
 .violation async_client(at: node) code "@next/next/no-async-client-component"
     "Prevent client components from being async functions. See: https://nextjs.org/docs/messages/no-async-client-component"

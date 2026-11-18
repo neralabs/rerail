@@ -4,9 +4,9 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-a-text.rr"
+#include "tsx/eslint-a-text.rerail"
 //   js_comment
-#include "tsx/modules.rr"
+#include "tsx/modules.rerail"
 //   import_decl
 
 // typescript-eslint's triple-slash-reference: `/// <reference types|path|lib="m" />` directives at the head of the

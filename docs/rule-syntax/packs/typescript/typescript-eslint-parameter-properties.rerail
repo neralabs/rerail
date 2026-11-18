@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/eslint-a-functions.rr"
+#include "tsx/eslint-a-functions.rerail"
 //   ctor, fn_param, fn_block, deparen
 
 // typescript-eslint's parameter-properties: one way to declare a class's fields. Option prefer:

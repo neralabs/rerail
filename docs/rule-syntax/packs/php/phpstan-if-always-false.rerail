@@ -5,7 +5,7 @@
 .scope include "**/*.php"
 .scope exclude "**/*.blade.php"
 
-#include "php/values.rr"
+#include "php/values.rerail"
 //   php_if_const(i, c, b)   `if (c)` is always b: literals, class constants, variables with one write
 
 // PHPStan's IfConstantConditionRule (if.alwaysFalse, level 4): an if whose condition is always false.

@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "rust/syntax.rr"
+#include "rust/syntax.rerail"
 //   struct_field(s, i, f)   the i-th field of struct s;   field_vis(f, v)   its visibility modifier
 
 // Clippy's partial_pub_fields (restriction): a struct mixing `pub` and non-`pub` fields. The first field

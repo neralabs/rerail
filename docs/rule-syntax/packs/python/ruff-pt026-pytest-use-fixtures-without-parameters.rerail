@@ -10,7 +10,7 @@
 //   @pytest.mark.usefixtures()       ← PT026
 //   @pytest.mark.usefixtures         ← PT026
 //   @pytest.mark.usefixtures("db")   not reported
-#include "python/pytest.rr"
+#include "python/pytest.rerail"
 //   pytest_mark(o, d, e, m), exc_no_args(c)
 
 .violation PT026(at: node) code "PT026"

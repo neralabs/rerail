@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/ts-b.rr"
+#include "tsx/ts-b.rerail"
 //   ts_namespace, estree_at, in_declare, definition_file
 
 // typescript-eslint's no-namespace: `namespace A {}` and `module A {}` are TypeScript's own modules; ES modules

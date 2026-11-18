@@ -230,7 +230,7 @@ fn build_identities(registry: &[(String, Vec<u8>)]) {
     collect_sources(&manifest.join("src/code_rule_dsl/blade"), &mut view_sources);
     view_sources.push(manifest.join("src/code_rule_dsl/php_view.rs"));
     view_sources.push(manifest.join("src/code_rule_dsl/php_literal.rs"));
-    // A `.rr` tape is the tree the rule engine's parser builds, numbered by its kinds table (decision 0061).
+    // A `.rerail` tape is the tree the rule engine's parser builds, numbered by its kinds table (decision 0061).
     view_sources.push(manifest.join("crates/rr_syntax/src/syntax.rs"));
     view_sources.push(manifest.join("crates/rr_syntax/src/tape.rs"));
     // A named-only tape (RER-131) leaves out the tokens its grammar's automata recognize: the

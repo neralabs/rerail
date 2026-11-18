@@ -10,8 +10,8 @@
 // `https_proxy` and `no_proxy` are exempt. The finding is at the string. Ruff's fix is unsafe; none here.
 //   os.environ["foo"]    os.getenv("Foo")      ← SIM112: "FOO"
 //   os.environ["FOO"]    os.getenv("no_proxy") not reported
-#include "python/simplify.rr"
-#include "python/misc-seen.rr"
+#include "python/simplify.rerail"
+#include "python/misc-seen.rerail"
 //   seen_module(d, "os"); plain_str(e, v) from python/pyflakes, call_q(c, q), ruff_arg(c, i, a) from python/ruff
 
 .violation SIM112(at: node, v: symbol) code "SIM112"

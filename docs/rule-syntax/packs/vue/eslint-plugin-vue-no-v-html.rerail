@@ -3,7 +3,7 @@
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/code.rr"
+#include "vue/code.rerail"
 //   vdir(e, a, d, arg), vexpr(a, x)
 
 // eslint-plugin-vue's no-v-html: every v-html directive in the template. Option ignorePattern: a regex; a value

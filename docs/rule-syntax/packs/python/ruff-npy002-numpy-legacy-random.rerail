@@ -11,9 +11,9 @@
 //   from numpy.random import randint
 //   randint(0, 10)               ← NPY002: `rng.integers(0, 10)`
 //   rng.integers(0, 10)          not reported
-#include "python/misc2-numpy.rr"
+#include "python/misc2-numpy.rerail"
 //   npy_callee(c, e, q)
-#include "../packs/python/ruff-npy002-numpy-legacy-random.methods.rr"   // npy002_method(q, g), npy002_advice(g, m)
+#include "../packs/python/ruff-npy002-numpy-legacy-random.methods.rerail"   // npy002_method(q, g), npy002_advice(g, m)
 
 .violation NPY002(at: node, msg: symbol) code "NPY002" "{msg}"
     suppress ruff "NPY002"

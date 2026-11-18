@@ -17,9 +17,9 @@
 // operator-assignment, no-unsafe-optional-chaining.
 //
 // Builds on tsx/eslint-a-common (deparen, static_prop) and core.
-#include "tsx/eslint-a-common.rr"
-#include "layout.rr"
-#include "tsx/slots.rr"
+#include "tsx/eslint-a-common.rerail"
+#include "layout.rerail"
+#include "tsx/slots.rerail"
 
 // ---- precedence --------------------------------------------------------------------------------------------------
 // getPrecedence ranks ESTree types; below a unary operator are the binary and logical operators, the

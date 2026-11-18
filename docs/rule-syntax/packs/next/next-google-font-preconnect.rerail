@@ -8,7 +8,7 @@
 //   <link rel="preload" href="https://fonts.gstatic.com" />         reported
 //   <link rel="preconnect" href="https://fonts.gstatic.com" />      fine
 
-#include "tsx/next.rr"
+#include "tsx/next.rerail"
 
 .violation preconnect(at: node) code "@next/next/google-font-preconnect"
     "`rel=\"preconnect\"` is missing from Google Font. See: https://nextjs.org/docs/messages/google-font-preconnect"

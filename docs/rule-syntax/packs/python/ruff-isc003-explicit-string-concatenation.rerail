@@ -14,7 +14,7 @@
 //   _ = "abc" + "def"               not reported: one line
 //   _ = ("start" +
 //        variable)                  not reported
-#include "python/ast.rr"
+#include "python/ast.rerail"
 
 .violation ISC003(at: node) code "ISC003"
     "Drop the `+` so the string literals concatenate implicitly inside parentheses; unwrap parenthesized operands first, and keep `+` if the result would become a docstring."

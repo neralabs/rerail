@@ -9,7 +9,7 @@
 //   os.rename("a", "b")                  ← PTH104: `Path("a").rename("b")`
 //   os.rename("a", "b", src_dir_fd=None) ← PTH104
 //   os.rename("a", "b", dst_dir_fd=3)    not reported
-#include "python/pathlib.rr"
+#include "python/pathlib.rerail"
 //   pth_call(c, q, f)   c calls q; f the callee      kw_set(c, k)   keyword k is not None (python/pathlib)
 
 .violation PTH104(at: node) code "PTH104"

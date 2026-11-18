@@ -10,7 +10,7 @@
 //   logging.info("Hello", extra={"name": "foobar"})      ← G101 at "name"
 //   logging.info("Hello", extra=dict(name="foobar"))     ← G101 at name="foobar"
 //   logging.info("Hello", extra=dict(world="World"))     not reported
-#include "python/logging.rr"
+#include "python/logging.rerail"
 
 .violation G101(at: node, k: symbol) code "G101"
     "Rename the `extra` key `{k}`: it clashes with a built-in LogRecord attribute, so a standard-library logger raises KeyError when it builds the record."

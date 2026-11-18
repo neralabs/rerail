@@ -8,7 +8,7 @@
 
 // PYI012(n): a finding at node n, from clause `pass-in-class-body`.
 // Each rule below is one way the JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PYI012(at: node) "Delete this `pass`; the class body already has other statements, so it is redundant in a stub."
     suppress noqa "PYI012"
 PYI012_raw(n) :- kind(n, "pass_statement"), child(p1, n, _), kind(p1, "block"),

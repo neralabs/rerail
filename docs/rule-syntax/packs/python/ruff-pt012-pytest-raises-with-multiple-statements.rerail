@@ -12,7 +12,7 @@
 //       x.check()
 //   with pytest.raises(ValueError):      not reported
 //       make().check()
-#include "python/pytest.rr"
+#include "python/pytest.rerail"
 //   pytest_with(w, q), pytest_crowded(w)
 
 .violation PT012(at: node) code "PT012"

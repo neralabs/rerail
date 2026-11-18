@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // PYI057(n): findings from clauses `byte-string-attribute`, `byte-string-import`, which say the same.
 // Each rule is one way a JSON `rule` can match.

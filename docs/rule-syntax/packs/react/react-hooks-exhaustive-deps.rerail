@@ -19,7 +19,7 @@
 // Values that never change need no listing: refs, state setters, dispatch, useEffectEvent functions, const string,
 // number and null literals, and component functions that only read those.
 // The rule's options (additionalHooks, requireExplicitEffectDeps, …) are not in the JSON.
-#include "tsx/react-hooks.rr"
+#include "tsx/react-hooks.rerail"
 
 .violation exhaustive_deps(at: node, msg: symbol)
     code "react-hooks/exhaustive-deps" "{msg}"

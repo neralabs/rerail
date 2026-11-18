@@ -10,7 +10,7 @@
 //   from os import spawnv; spawnv(m, p, a) B606
 //   os.system("ls")                        not reported (a shell: B605)
 
-#include "python/security.rr"   // qual_call, process_fn
+#include "python/security.rerail"   // qual_call, process_fn
 
 .violation B606(at: node) code "B606"
     "Validate any untrusted input passed to this os exec, spawn or startfile call; it starts whatever program and arguments it receives."

@@ -13,7 +13,7 @@
 //   class C:
 //       def pub(self): ...          ← ANN201
 //   def _helper(): ...              not reported here: private (ANN202)
-#include "python/annotations.rr"
+#include "python/annotations.rerail"
 
 .violation ANN201(at: node, name: symbol) code "ANN201"
     "Add a return type annotation to `{name}` (for example `-> None` if it returns nothing)."

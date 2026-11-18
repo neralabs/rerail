@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // never_like(n): the JSON util `never-like`, used where the JSON says `matches: "never-like"`
 .decl ruf020_never_like(n: node)

@@ -10,7 +10,7 @@
 //   from contextlib import suppress
 //   with suppress():                   ← B022
 //   with suppress(ValueError):         not reported
-#include "python/bugbear.rr"
+#include "python/bugbear.rerail"
 
 .violation B022(at: node) code "B022"
     "No arguments passed to `contextlib.suppress`. No exceptions will be suppressed and therefore this context manager is redundant"

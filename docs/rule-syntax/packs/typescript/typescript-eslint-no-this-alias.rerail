@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/eslint-a-common.rr"
+#include "tsx/eslint-a-common.rerail"
 //   deparen
 
 // typescript-eslint's no-this-alias: `const self = this` keeps `this` for a nested function; an arrow function

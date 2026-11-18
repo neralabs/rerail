@@ -17,9 +17,9 @@
 //       x = f()
 //       return g(x)            not reported: g(x) may raise E
 //   except E: ...
-#include "python/exceptions.rr"
+#include "python/exceptions.rerail"
 //   exc_handler(t, x)
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 //   side_effect(e): Ruff's contains_effect
 
 .violation TRY300(at: node) code "TRY300"

@@ -11,9 +11,9 @@
 // the literal would clash).
 //   str()   int(-1)   bytes(b"a" b"b")      ← UP018: write "", -1, b"a" b"b"
 //   str(1)  int("1")  int(10, base=2)       not reported
-#include "python/upgrade.rr"
+#include "python/upgrade.rerail"
 //   builtin_at(e, x)
-#include "python/upgrade-format.rr"
+#include "python/upgrade-format.rerail"
 //   up_arg, up_kw, up_argc, str_lit
 
 // native(c, t): c calls the builtin t, one of the six, outside a nested f-string.

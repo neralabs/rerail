@@ -11,7 +11,7 @@
 //   class Box[_T]: ...                 ← UP049 at _T
 //   def f[*_Ts, **_P](): ...           ← UP049 at _Ts and at _P
 //   def h[_T_](x: _T_): ...            not reported
-#include "python/ast.rr"
+#include "python/ast.rerail"
 //   type_param(o, p, nm, i, kind, bound, dflt)
 
 .violation UP049(at: node) code "UP049"

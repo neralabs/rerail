@@ -6,13 +6,13 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // RUF007(n): a finding at node n, from clause `zip-instead-of-pairwise`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `transform` computes A1, A2, B2, C1, C2, D1, S1, S2, S3, S4, S5, S6, S7, S8, S9, V1, V2 from other metavariables' text; its literals end each rule.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation RUF007(at: node, id1: loc) "Replace this `zip` with `itertools.pairwise({id1})`, or pairwise over the common slice when both arguments are slices; keep `zip` if the upper bounds differ or `{id1}` is not a plain sequence."
     suppress noqa "RUF007"
 // A2, B2, C2, D1: not bound by this rule, so empty (unset) here, as in ast-grep.

@@ -11,7 +11,7 @@
 //   from pytest.mark import slow     ← PT013
 //   import pytest                    not reported
 //   from .pytest import x            not reported: a relative import is not pytest
-#include "python/pytest.rr"
+#include "python/pytest.rerail"
 
 .violation PT013(at: node, id: symbol) code "PT013" "{id}"
     suppress ruff "PT013"

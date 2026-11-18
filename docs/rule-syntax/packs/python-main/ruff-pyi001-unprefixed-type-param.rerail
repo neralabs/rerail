@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // type_param_callee(n): the JSON util `type-param-callee`, used where the JSON says `matches: "type-param-callee"`
 .decl pyi001_type_param_callee(n: node)
@@ -46,7 +46,7 @@ pyi001_assigned_to_name(n) :- child(p3, n, _), kind(p3, "parenthesized_expressio
 
 // PYI001(n, detail): findings from clauses `unprefixed-type-param`, `unprefixed-type-param-target`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PYI001(at: node, detail: symbol) "{detail}; stubs should not export type variables."
     suppress noqa "PYI001"
 PYI001_raw(n, "Rename this type variable to start with an underscore (`T` becomes `_T`) and update its uses here and in any module importing it") :- pyi001_type_param_call(n),

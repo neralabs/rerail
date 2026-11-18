@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // YTT102(n): a finding at node n, from clause `sys-version2`.
 // Each rule below is one way the JSON `rule` can match.

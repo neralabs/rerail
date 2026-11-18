@@ -12,7 +12,7 @@
 //   from .. import parent              ← TID252
 //   from ...grandparent import x       ← TID252
 //   from . import sibling              not reported, by default
-#include "python/ast.rr"
+#include "python/ast.rerail"
 
 .violation TID252(at: node) code "TID252"
     "Replace the relative module `$M` in this import with its absolute dotted path; keep it relative only where the package layout makes an absolute path impractical."

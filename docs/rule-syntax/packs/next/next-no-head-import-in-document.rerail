@@ -8,7 +8,7 @@
 //   pages/_document/index.tsx:   the same                         reported
 //   pages/index.js:              the same                         fine
 
-#include "tsx/next.rr"
+#include "tsx/next.rerail"
 
 .violation head_import(at: node, rest: symbol) code "@next/next/no-head-import-in-document"
     "`next/head` should not be imported in `pages{rest}`. Use `<Head />` from `next/document` instead. See: https://nextjs.org/docs/messages/no-head-import-in-document"

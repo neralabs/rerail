@@ -38,7 +38,7 @@
 //   class C:
 //       def m(self, a, *args: Any):  ann_method; ann_param a and args (not self); ann_any_type(<Any>)
 //           ...                      ann_missing_return(<m>, "ANN201")
-#include "python/ruff.rr"   // ruff_qual
+#include "python/ruff.rerail"   // ruff_qual
 
 // ---- 1. defs -----------------------------------------------------------------------------------------------------
 .decl ann_def(f: node)

@@ -12,8 +12,8 @@
 //   import matplotlib.pyplot     ← ICN001: it binds `matplotlib`, not `plt`
 //   from numpy import typing     ← ICN001: numpy.typing should be `npt`
 //   import numpy as np           not reported
-#include "python/names.rr"
-#include "../packs/python/ruff-icn001-unconventional-import-alias.aliases.rr"   // icn_alias(m, a)
+#include "python/names.rerail"
+#include "../packs/python/ruff-icn001-unconventional-import-alias.aliases.rerail"   // icn_alias(m, a)
 
 .violation ICN001(at: node, m: symbol, a: symbol) code "ICN001"
     "Write `import {m} as {a}` and rename its uses to match; keep the current name only if `{a}` already means something else in this module."

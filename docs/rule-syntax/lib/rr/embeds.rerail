@@ -1,4 +1,4 @@
-// The code inside a `.rr` file, as guests (decision 0061 §5, decision 0055's `embed`). A row names a grammar; it
+// The code inside a `.rerail` file, as guests (decision 0061 §5, decision 0055's `embed`). A row names a grammar; it
 // makes a guest once that grammar is registered (`json`, `regex` and the pattern grammars are not yet), and none
 // before.
 

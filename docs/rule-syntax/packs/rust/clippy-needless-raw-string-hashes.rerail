@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "rust/syntax-literals.rr"
+#include "rust/syntax-literals.rerail"
 //   raw_str(n, hashes, body)   a raw string literal's `#` count and contents
 //   hashes_needed(n, k)        the `#`s its contents need, as Clippy counts them
 

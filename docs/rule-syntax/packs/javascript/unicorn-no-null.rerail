@@ -4,7 +4,7 @@
 .mode log
 .scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
 .scope exclude "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.config.js", "**/*.config.mjs", "**/*.config.cjs", "**/.*rc.js", "**/.*rc.cjs"
-#include "tsx/eslint-a-common.rr"
+#include "tsx/eslint-a-common.rerail"
 //   call_arg
 
 // unicorn's no-null: the literal `null`, except where an API needs it:

@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-b-scope.rr"
+#include "tsx/eslint-b-scope.rerail"
 //   builtin_ref, called, constructed, prop
 
 // ESLint's no-new-func: the global Function, called or constructed, makes a function from strings, as eval does.

@@ -11,7 +11,7 @@
 // Not checked: names in CREATE/DROP EXTENSION, function arguments, and the parts of a SELECT item that has an
 // alias (only the alias is checked there).
 
-#include "sql/syntax.rr"
+#include "sql/syntax.rerail"
 
 .violation RF05(at: node) code "RF05" "Special characters should not be used in identifiers."
     suppress sqlfluff "RF05", "L057", "all", "references", "references.special_chars"

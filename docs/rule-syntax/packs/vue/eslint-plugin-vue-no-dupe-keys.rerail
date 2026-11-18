@@ -3,7 +3,7 @@
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/component.rr"
+#include "vue/component.rerail"
 //   vname(o, g, x, n), vprops_call(c), vprop_name(c, x, n), vscript(p, setup), decl_site(s, x, site, form, space)
 
 // eslint-plugin-vue's no-dupe-keys.

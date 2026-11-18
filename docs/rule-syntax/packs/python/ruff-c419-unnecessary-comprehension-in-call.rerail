@@ -10,7 +10,7 @@
 // none here.
 //   any([x.ok for x in xs])     all({x for x in xs})     ← C419: any(x.ok for x in xs)
 //   any(x.ok for x in xs)    any([await f(x) for x in xs])    sum([x for x in xs])    not reported
-#include "python/comprehensions.rr"
+#include "python/comprehensions.rerail"
 //   c4_builtin(c, x), c4_first(c, a), call_nkwargs(c, 0), c4_comp(e, k), c4_elt(e, x)
 
 .violation C419(at: node, kind: symbol) code "C419"

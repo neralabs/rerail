@@ -8,7 +8,7 @@
 // Ruff reports it even when `.astimezone` follows. Reported at the call. Only in a file that imports datetime.
 //   datetime.date.fromtimestamp(1234)            ← DTZ012
 //   date.fromtimestamp(1234)                     ← DTZ012, after `from datetime import date`
-#include "python/datetime.rr"
+#include "python/datetime.rerail"
 
 .violation DTZ012(at: node) code "DTZ012"
     "Use `datetime.datetime.fromtimestamp(<timestamp>, tz=...).date()` with the timezone whose date you need; `date.fromtimestamp` gives the naive local date, so keep it only if intended."

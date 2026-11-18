@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // has_else(n): the JSON util `has-else`, used where the JSON says `matches: "has-else"`
 .decl pyi066_has_else(n: node)
@@ -38,7 +38,7 @@ pyi066_bool_value(n) :- child(p3, n, _), kind(p3, "parenthesized_expression"), p
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on L are added to every rule.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PYI066(at: node, l: loc, r: loc) "Rewrite `{l} < {r}` as `{l} >= {r}` and swap this branch's body with the code that runs otherwise, so the newer-version code comes first."
     suppress noqa "PYI066"
 PYI066_raw(n, L, R) :- n ~ `$L < $R`,
@@ -49,7 +49,7 @@ PYI066_raw(n, L, R) :- n ~ `$L < $R`,
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `constraints` on L are added to every rule.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PYI066_bad_version_info_order_in_condition(at: node, l: loc, r: loc) code "PYI066" "Restructure so a `{l} >= {r}` test selects the newer-version branch first, e.g. by nesting the rest of this condition inside it; flipping only `<` and the branches would change behaviour."
     suppress noqa "PYI066"
 PYI066_bad_version_info_order_in_condition_raw(n, L, R) :- n ~ `$L < $R`,

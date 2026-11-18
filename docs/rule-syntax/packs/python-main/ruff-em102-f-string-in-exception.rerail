@@ -5,9 +5,9 @@
 .mode steer
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
-// ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.
+// ast(n, {…}) atoms are JSON terms with no .rerail form yet; the engine matches them as it does today.
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // EM102(n): a finding at node n, from clause `f-string-in-exception`.
 // Each rule below is one way the JSON `rule` can match.

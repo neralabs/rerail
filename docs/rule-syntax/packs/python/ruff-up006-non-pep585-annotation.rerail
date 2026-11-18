@@ -11,7 +11,7 @@
 //   def f(x: List[str]): ...         ← UP006 at List (3.9+)
 //   x: typing.DefaultDict[str, int]  ← UP006 at typing.DefaultDict
 //   def f(x: "List[str]"): ...       ← UP006 inside the string, through `parsed`
-#include "python/upgrade-typing.rr"
+#include "python/upgrade-typing.rerail"
 //   typing_ref(e, x), rewritable(n, m), pep585(x, b)
 
 .violation UP006(at: node, b: symbol) code "UP006"

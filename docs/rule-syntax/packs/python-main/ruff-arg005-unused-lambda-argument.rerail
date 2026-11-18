@@ -6,14 +6,14 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 .options {"dummy-variable-rgx": {"type": "string", "default": "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$", "description": "Names of arguments that may be unused."}, "flake8-unused-arguments.ignore-variadic-names": {"type": "boolean", "default": false, "description": "Don't report unused *args and **kwargs."}}
 
 // ARG005(n): a finding at node n, from clause `unused-lambda-argument`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation ARG005(at: node, n_mv: loc) "Remove `{n_mv}` if no caller passes it, or prefix it with an underscore if the lambda must accept it; keep the name when callers pass it by keyword."
     suppress noqa "ARG005"
 ARG005_raw(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, bind_name(n, b1),

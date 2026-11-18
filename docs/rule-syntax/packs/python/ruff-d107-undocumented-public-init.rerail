@@ -9,7 +9,7 @@
 //   class C:
 //       """Doc."""
 //       def __init__(self): …    ← D107 at `__init__`
-#include "python/docstrings.rr"
+#include "python/docstrings.rerail"
 
 .violation D107(at: node) code "D107"
     "Add a docstring to `__init__` describing its arguments, side effects and raised exceptions."

@@ -7,7 +7,7 @@
 // Ruff PTH122 (flake8-use-pathlib): every call of `os.path.splitext`, however it is imported. Reported at
 // the callee.
 //   root, ext = os.path.splitext(p)      ← PTH122: `p.parent / p.stem` and `p.suffix`
-#include "python/pathlib.rr"
+#include "python/pathlib.rerail"
 //   pth_call(c, q, f)   c calls q; f the callee (python/pathlib)
 
 .violation PTH122(at: node) code "PTH122"

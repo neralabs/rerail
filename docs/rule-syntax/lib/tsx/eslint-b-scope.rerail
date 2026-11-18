@@ -36,10 +36,10 @@
 // Builds on tsx/eslint-a-globals (free_ref, global_var; through it eslint-a-common's deparen, static_prop, called,
 // call_arg, and names and modules), tsx/values (member, pass_through, env_written), tsx/eslint-a-text (js_comment)
 // and tsx/statements (var_scope, for_head).
-#include "tsx/eslint-a-globals.rr"
-#include "tsx/values.rr"
-#include "tsx/eslint-a-text.rr"
-#include "tsx/statements.rr"
+#include "tsx/eslint-a-globals.rerail"
+#include "tsx/values.rerail"
+#include "tsx/eslint-a-text.rerail"
+#include "tsx/statements.rerail"
 
 // ---- built-in globals ------------------------------------------------------------------------------------------
 .decl builtin_ref(r: node, x: symbol)
@@ -117,7 +117,7 @@ item_parts(i, i, "") :- gitem(_, i, _), !contains(":", i).
 
 // ---- variables as eslint-scope groups them -------------------------------------------------------------------------
 // var_site(s, x, id): identifier id declares the variable x of scope s with var, a function declaration or a
-// parameter: the declarations that may repeat. eslint-scope's scopes differ from names.rr's in two places:
+// parameter: the declarations that may repeat. eslint-scope's scopes differ from names.rerail's in two places:
 // a function's body block is no scope of its own (its functions and vars, and the parameters, share the
 // function's), and a static block is a var scope.
 //   function f(a) { var a; function a() {} }      three identifiers of one variable a of f

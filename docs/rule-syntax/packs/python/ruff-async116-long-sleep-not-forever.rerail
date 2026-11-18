@@ -10,7 +10,7 @@
 //   await trio.sleep(86401)        ← ASYNC116
 //   await anyio.sleep(1e10)        ← ASYNC116
 //   await trio.sleep(86400)        not reported: exactly 24 hours
-#include "python/misc2-async.rr"
+#include "python/misc2-async.rerail"
 
 .violation ASYNC116(at: node, m: symbol) code "ASYNC116"
     "`{m}.sleep()` with >24 hour interval should usually be `{m}.sleep_forever()`"

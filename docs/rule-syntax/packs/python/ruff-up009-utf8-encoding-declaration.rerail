@@ -13,7 +13,7 @@
 //   # -*- coding: utf-8 -*-         ← UP009
 //   # coding: utf-8                 not reported when the next line is  # coding: latin-1
 //   x = 1  # coding: utf-8          not reported: not a comment line
-#include "python/ast.rr"
+#include "python/ast.rerail"
 
 .violation UP009(at: node) code "UP009"
     "Delete this UTF-8 encoding declaration comment; Python 3 reads source as UTF-8 by default. Keep it only if the file must also run on Python 2."

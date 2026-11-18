@@ -23,7 +23,7 @@
 // - generic annotations are kept as written, their parameters unresolved: instantiating them is P3's search
 //   (0083 §4).
 
-#include "core.rr"
+#include "core.rerail"
 
 .phase types
 .export binds, bases, anc, attr, sig, rtype, vtype, owner, callret, tparam, tmap, rvar, rgen, ropen, pgen, rcarg, wgen, proto

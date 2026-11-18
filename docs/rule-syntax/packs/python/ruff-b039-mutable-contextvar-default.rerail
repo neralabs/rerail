@@ -12,7 +12,7 @@
 //   ContextVar[set[str]]("cv", default=set[str]())  ← B039
 //   ContextVar("cv", default=bar())              ← B039: bar's result is not known to be immutable
 //   ContextVar("cv", default=frozenset())        not reported
-#include "python/bugbear.rr"
+#include "python/bugbear.rerail"
 
 .violation B039(at: node) code "B039"
     "Default this ContextVar to None and set the mutable value with .set(); a mutable default is shared by every context."

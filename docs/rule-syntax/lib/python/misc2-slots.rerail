@@ -16,7 +16,7 @@
 //       pass
 //   class Bar(tuple):            slots_base(<Bar>, <tuple>); no slots_missing
 //       __slots__ = ()
-#include "python/ast.rr"
+#include "python/ast.rerail"
 
 .decl slots_missing(c: node, nm: node)
 slots_missing(c, nm) :- kind(c, "class_definition"), field(c, "name", nm), docof(c, d), file_name(d, f),

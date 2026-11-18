@@ -20,7 +20,7 @@ pha_lazy("grammar_rows_lazy"). pha_lazy("grammar_rows_lazy_async"). pha_lazy("gr
 pha_legacy_private("_ddl_effect_lazy_impl_async"). pha_legacy_private("_ddl_effect_lazy_now"). pha_legacy_private("_grammar_effect_lazy_impl_async").
 pha_legacy_private("_grammar_effect_lazy_now"). pha_legacy_private("_grammar_row_lazy_impl_async"). pha_legacy_private("_grammar_row_lazy_now").
 pha_legacy_private("_grammar_rows_lazy_impl_async"). pha_legacy_private("_grammar_rows_lazy_now"). pha_legacy_private("_grammar_value_lazy_now").
-// ALLOWLISTED_CALLSITES, "module::Class.function", and _ALLOWLIST_SIGNATURE (lib/data-layer/signing.rr).
+// ALLOWLISTED_CALLSITES, "module::Class.function", and _ALLOWLIST_SIGNATURE (lib/data-layer/signing.rerail).
 allow_entry("plan_helpers", "impl.common.l2070_server_plan.plan_helpers::ddl_via_plan").
 allow_entry("plan_helpers", "impl.common.l2070_server_plan.plan_helpers::ddl_via_plan_async").
 allow_entry("plan_helpers", "impl.common.l2070_server_plan.plan_helpers::scalar_via_plan").

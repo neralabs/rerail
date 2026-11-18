@@ -12,7 +12,7 @@
 //       Camel = 0                     ← N806
 //       T = TypeVar("T")              not reported
 //       Stream = apps.get_model("app", "Stream")    not reported
-#include "python/naming.rr"
+#include "python/naming.rerail"
 
 .violation N806(at: node, x: symbol) code "N806"
     "Rename `{x}` to lowercase snake_case and update its uses; keep the name if it holds a class."

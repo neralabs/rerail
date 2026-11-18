@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 .options {"python-minor-version": {"type": "integer", "default": 10, "description": "Minor version of the minimum supported Python 3 release (10 for Python 3.10)."}}
 

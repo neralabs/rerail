@@ -8,7 +8,7 @@
 // name, anywhere in the `or`. Ruff skips an `or` with a comment inside. Its fix is unsafe; none here.
 //   if a == b or a == c: …           ← SIM109: if a in (b, c): …
 //   if a == b or a == "c": …         not reported: only names on the right
-#include "python/simplify.rr"
+#include "python/simplify.rerail"
 //   sim_operand(t, o, i, v); cmp(c, op, l, r) from python/names
 
 .violation SIM109(at: node, x: symbol) code "SIM109" "Use `{x} in (...)` instead of multiple equality comparisons"

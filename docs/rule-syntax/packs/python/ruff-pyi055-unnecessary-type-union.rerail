@@ -11,7 +11,7 @@
 // invalid `type[A, B]` are not counted.
 //   def f(x: type[int] | type[str]): ...     ← PYI055 in a stub: write `type[int | str]`
 //   X: TypeAlias = type[int] | type[str]     fine: the value runs, in a stub too
-#include "python/typing-context.rr"
+#include "python/typing-context.rerail"
 
 .violation PYI055(at: node, msg: symbol) code "PYI055" "{msg}"
     suppress ruff "PYI055"

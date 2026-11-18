@@ -10,8 +10,8 @@
 //   logger.exception("foo", exc_info=False)       ← LOG007
 //   logging.exception("foo", exc_info=[])         ← LOG007
 //   logger.exception("foo", exc_info=flag)        not reported: unknown
-#include "python/logging.rr"
-#include "python/ruff-classes.rr"
+#include "python/logging.rerail"
+#include "python/ruff-classes.rerail"
 
 .violation LOG007(at: node) code "LOG007"
     "Call `error` instead of `exception` and drop the falsy `exc_info` argument: the log output is the same and the intent is clearer."

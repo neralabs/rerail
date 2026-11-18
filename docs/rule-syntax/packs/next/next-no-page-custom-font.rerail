@@ -13,7 +13,7 @@
 // a class extending next/document's default import when the default export is a class, else whatever declares
 // the name that follows `export default` (a function, class or variable).
 
-#include "tsx/next.rr"
+#include "tsx/next.rerail"
 
 .violation font(at: node, why: symbol) code "@next/next/no-page-custom-font"
     "{why} This is discouraged. See: https://nextjs.org/docs/messages/no-page-custom-font"

@@ -3,7 +3,7 @@
 .language typescript
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
-#include "tsx/eslint-a-expressions.rr"
+#include "tsx/eslint-a-expressions.rerail"
 //   static_string
 
 // ESLint's no-script-url: a string, or a template without substitutions, whose value starts with

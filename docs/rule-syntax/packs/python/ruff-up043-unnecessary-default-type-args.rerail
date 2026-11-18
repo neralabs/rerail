@@ -12,7 +12,7 @@
 //   def f() -> Generator[int, int, None]: ...      ← UP043: the return type can go
 //   def f() -> Generator[int, None, int]: ...      not reported: the last argument is not None
 //   async def f() -> AsyncGenerator[int, None]: ...← UP043
-#include "python/upgrade-typing.rr"
+#include "python/upgrade-typing.rerail"
 //   sub_of(s, q), type_arg(s, i, a), up_type_nargs(s, k)   (python/upgrade-typing); targets(m), stub_file(d)
 
 .violation UP043(at: node) code "UP043"

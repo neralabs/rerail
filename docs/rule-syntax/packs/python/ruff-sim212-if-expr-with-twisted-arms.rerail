@@ -8,7 +8,7 @@
 // fix (`b if b else a`) is unsafe; none here.
 //   y = 0 if not x else x          ← SIM212: y = x if x else 0
 //   y = 0 if not x.a else x.a      not reported: only names
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 //   unparen(e, m)
 
 .violation SIM212(at: node, a: node, b: symbol) code "SIM212"

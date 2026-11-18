@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // annotation_root(n): the JSON util `annotation-root`, used where the JSON says `matches: "annotation-root"`
 .decl up007_annotation_root(n: node)
@@ -162,7 +162,7 @@ up007_typing_context(n) :- up007_future_annotations(n), up007_up_2(n, p1).
 // UP007(n): a finding at node n, from clause `union-annotation`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation UP007(at: loc, name: node) "Write `Union[X, Y]` as `X | Y`, and drop the `Union` import if nothing else uses it. Leave it where a library reads annotations at runtime on Python below 3.10."
     suppress noqa "UP007"
 UP007_raw(NAME, n) :- up007_union_node(n), node(_, n, _, _, _), NAME = n, (!up007_quoted_union(n) ; up007_typing_context(n)).
@@ -171,7 +171,7 @@ UP007_raw(NAME, n) :- up007_union_in_string(n, NAME).
 // UP007_union_annotation_stub(n): a finding at node n, from clause `union-annotation-stub`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation UP007_union_annotation_stub(at: loc, name: node) code "UP007" "Write `Union[X, Y]` as `X | Y`, and drop the `Union` import if nothing else uses it. Leave it where a library reads annotations at runtime on Python below 3.10."
     suppress noqa "UP007"
 UP007_union_annotation_stub_raw(NAME, n) :- up007_union_node(n), node(_, n, _, _, _), NAME = n,
@@ -181,7 +181,7 @@ UP007_union_annotation_stub_raw(NAME, n) :- up007_union_in_string(n, NAME).
 // UP007_union_annotation_future_annotations(n): a finding at node n, from clause `union-annotation-future-annotations`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation UP007_union_annotation_future_annotations(at: loc, name: node) code "UP007" "Write `Union[X, Y]` as `X | Y`, and drop the `Union` import if nothing else uses it. Leave it where a library reads annotations at runtime on Python below 3.10."
     suppress noqa "UP007"
 UP007_union_annotation_future_annotations_raw(NAME, n) :- up007_future_annotations(n),

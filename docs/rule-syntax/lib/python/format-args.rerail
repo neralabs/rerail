@@ -32,7 +32,7 @@
 // The string and the arguments are read from n itself: the object of the call's `.format` attribute, or the left
 // operand of `%` with the right one as the values. Those are the captures `string` and `args` name in every one of
 // main's rules (`$S.format($$$A)`, `($S.format)($$$A)`, `$S % $R`).
-#include "python/pyflakes-format.rr"   // known_non_tuple; python/ast's unparen, plain_str_node, plain_str
+#include "python/pyflakes-format.rerail"   // known_non_tuple; python/ast's unparen, plain_str_node, plain_str
 
 // ---- the string ------------------------------------------------------------------------------------------------
 .decl fa_brace_string(n: node, s: node)

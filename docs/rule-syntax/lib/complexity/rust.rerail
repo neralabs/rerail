@@ -1,4 +1,4 @@
-// complexity/rust: lizard's decision points in Rust, on tree-sitter-rust 0.24, for complexity/cyclomatic.rr.
+// complexity/rust: lizard's decision points in Rust, on tree-sitter-rust 0.24, for complexity/cyclomatic.rerail.
 //
 // A function is an `fn` with a body: methods, trait default methods, nested fns, async, const and unsafe ones. A
 // trait's required method (`fn f(&self);`) is a function_signature_item, not scored. A closure is not a function
@@ -13,7 +13,7 @@
 //       let n = s.parse::<u8>()?;           ?
 //       if n > 9 && n < 99 { … }            if, &&
 //   }
-#include "complexity/cyclomatic.rr"
+#include "complexity/cyclomatic.rerail"
 
 cc_boundary("function_item").
 

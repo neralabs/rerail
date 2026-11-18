@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/ts-a.rr"
+#include "tsx/ts-a.rerail"
 //   ts_member_name(m, x, t)
 
 // typescript-eslint's adjacent-overload-signatures: the overloads of one name are written together. In a list of

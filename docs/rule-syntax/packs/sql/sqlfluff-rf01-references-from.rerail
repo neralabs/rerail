@@ -14,7 +14,7 @@
 // are checked: UPDATE … SET, ON CONFLICT … EXCLUDED.x and policies are not; nor are SQLite triggers' old and new,
 // SELECT … INTO, or a row value's field ((x).key).
 
-#include "sql/syntax.rr"
+#include "sql/syntax.rerail"
 
 .violation RF01(at: node, q: node) code "RF01" "Reference '{q}' refers to table/view not found in the FROM clause or found in ancestor statement."
     suppress sqlfluff "RF01", "L026", "all", "core", "references", "references.from"

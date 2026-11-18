@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "rust/syntax-literals.rr"
+#include "rust/syntax-literals.rerail"
 //   octal_escape(e)   a `\0` escape followed by an octal digit, in a string or byte-string literal
 //   in_macro_def(n), transcribed(n)   in a macro_rules!, in its transcriber
 //   format_string(s)   println!'s format string;   opaque_macro(m)   concat!, stringify!, env!, include*!

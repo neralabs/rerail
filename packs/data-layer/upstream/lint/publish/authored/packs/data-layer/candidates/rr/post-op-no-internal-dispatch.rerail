@@ -23,8 +23,8 @@
 //   5. 005, 006, 008, 009 are single-node checks: a name, a def name, a base class, a keyword argument.
 // Each POSTOPDISPATCHnnn violation is one Python linter code.
 
-#include "python/names.rr"
-#include "python/calls.rr"
+#include "python/names.rerail"
+#include "python/calls.rerail"
 
 // fdef: def nodes (async included). nearest(n, f, fdef) = "f is the innermost def around n". Lambdas do not count.
 // The post-op enums (POST_OP_ENUM_NAMES), the deleted surface names (LEGACY_RUNTIME_SURFACE_NAMES), and the

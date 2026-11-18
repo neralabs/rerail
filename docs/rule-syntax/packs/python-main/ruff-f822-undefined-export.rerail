@@ -7,7 +7,7 @@
 .scope exclude "**/__init__.py", "**/__init__.pyi", "__init__.py", "__init__.pyi"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // F822(n): a finding at node n, from clause `undefined-export`.
 // Each rule below is one way the JSON `rule` can match.

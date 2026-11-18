@@ -23,8 +23,8 @@
 //                                             or at 3.14
 //   type Y = type[int] | type[str]            typing-only: typing_root(<value>)
 //   X: TypeAlias = type[int] | type[str]      runtime, in a stub too
-#include "python/typing.rr"
-#include "python/misc2-typecheck.rr"   // tc_block, tc_ann_owner; future_annotations, stub_file, targets
+#include "python/typing.rerail"
+#include "python/misc2-typecheck.rerail"   // tc_block, tc_ann_owner; future_annotations, stub_file, targets
 .decl typing_root(r: node)
 typing_root(r) :- ann_root(r), deferred_ann(r).
 typing_root(s) :- ann_ctx(s), str_node(s), parsed(s, "annotation", _).   // a string annotation

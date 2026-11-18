@@ -4,8 +4,8 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/ts-a-returns.rr"
-#include "tsx/names.rr"
+#include "tsx/ts-a-returns.rerail"
+#include "tsx/names.rerail"
 //   fn_value, fn_decl, typed_fn, valid_expr_return, ancestor_return, valid_return, immediate_fn, return_head,
 //   held_name; ts-a has_overloads, ts_ctor; names decl_site, ref_site
 
@@ -31,7 +31,7 @@ explicit_module_boundary_types(p, "Give this exported function's parameter an ex
 // checked(x): checkNode reached x.
 .decl checked(x: node)
 checked(d) :- kind(e, "export_statement"), !field(e, "source", _), (field(e, "declaration", d) ; field(e, "value", v), deparen(v, d)).
-// `export = v` (modules.rr's export_assign).
+// `export = v` (modules.rerail's export_assign).
 checked(d) :- export_assign(e), child(e, v, _), !kind(v, "comment"), deparen(v, d).
 checked(d) :- kind(e, "export_statement"), !field(e, "source", _), child(e, c, _), kind(c, "export_clause"),
     child(c, s, _), field(s, "name", n), text(n, x), followed(x, d).
@@ -55,8 +55,8 @@ returned_by(f, g) :- fn_value(f), estree_parent(f, r), kind(r, "return_statement
 returned_by(f, g) :- fn_value(f), estree_parent(f, g), kind(g, "arrow_function"), field(g, "body", b), deparen(b, f).
 
 // followed(x, d): followReference. Upstream looks the name up in the module scope only (`scope.set`): its
-// declarations there (names.rr's decl_site; a `var` in a top-level block is one), and what is assigned to that
-// variable wherever a reference reaches it (names.rr's ref_site), not to a local of the same name. Imports,
+// declarations there (names.rerail's decl_site; a `var` in a top-level block is one), and what is assigned to that
+// variable wherever a reference reaches it (names.rerail's ref_site), not to a local of the same name. Imports,
 // parameters and catch bindings are not followed. A name used inside a function (a class field's value) sits in
 // another scope and is not followed either.
 .decl followed(x: symbol, d: node)

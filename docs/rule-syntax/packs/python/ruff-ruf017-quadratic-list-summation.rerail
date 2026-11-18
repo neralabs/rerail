@@ -12,7 +12,7 @@
 //   sum(x, list())               ← RUF017
 //   sum([x, y])                  not reported
 //   sum(iterable=x, start=[])    not reported: Ruff wants the iterable positional
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 param_slot("builtins.sum", "iterable", 0). param_slot("builtins.sum", "start", 1).
 
 .violation RUF017(at: node) code "RUF017"

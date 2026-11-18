@@ -9,7 +9,7 @@
 // special names and TypeVar-like calls are skipped. Reported at the value.
 //   x = 1          ← PYI052: write `x: int`
 //   X = int        fine
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI052(at: node, x: symbol) code "PYI052" "Add a type annotation to `{x}` (`{x}: <type> = ...`); stubs should declare the type rather than leave it to be inferred from the assigned value."
     suppress ruff "PYI052"

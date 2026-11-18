@@ -87,7 +87,7 @@ pub(in crate::code_rule_dsl) fn policy(source: &str) -> Result<serde_json::Value
     if !gaps.is_empty() {
         return Ok(serde_json::json!({"id": id, "status": "needs-manual-port", "clausesConverted": converted, "gaps": gaps, "approximations": emitter.approx, "program": null}));
     }
-    // The old emitter prints base declarations; public files read the engine-owned ones from core.rr.
+    // The old emitter prints base declarations; public files read the engine-owned ones from core.rerail.
     let old = emitter.program(&[]);
     let base: BTreeSet<&str> = BASE_RELATIONS.iter().copied().collect();
     let body = old.lines().filter(|line| !line.starts_with(".input ") && !line.strip_prefix(".decl ").and_then(|l| l.split('(').next()).is_some_and(|name| base.contains(name))).collect::<Vec<_>>().join("\n");

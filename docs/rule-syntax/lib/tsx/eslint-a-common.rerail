@@ -9,7 +9,7 @@
 //     estree_parent(x, p)      p is x's ESTree parent: the nearest enclosing node that is not a parenthesis
 //   functions
 //     function_node(f)         f is a function: declaration, expression, arrow, generator or method
-//                              (modules.rr's function_kind; a method is its own FunctionExpression)
+//                              (modules.rerail's function_kind; a method is its own FunctionExpression)
 //   static names (ESLint's getStaticPropertyName and getStaticStringValue)
 //     static_string(s, v)      literal or plain template s as String(value): "a" → a, 0x10 → 16, /x/g → /x/g
 //     key_static(k, x)         key node k of a property, method or field has the static name x: `a`, `"a"`, `1`,
@@ -41,10 +41,10 @@
 //                              else default d; the rule states its option and default as a fact limit_rule(o, d)
 //
 // Builds on core and tsx/modules (function_kind, fn_region, not_stmt).
-#include "tsx/modules.rr"
+#include "tsx/modules.rerail"
 
 // ---- parentheses and parents -------------------------------------------------------------------------------------
-// deparen is modules.rr's (its directives need it too).
+// deparen is modules.rerail's (its directives need it too).
 // deparen_count: no-cond-assign wants `if ((a = b))`, two parentheses, one of them the if's own.
 .decl deparen_count(e: node, x: node, k: number)
 deparen_count(e, e, 0) :- node(_, e, k, _, _), k != "parenthesized_expression".

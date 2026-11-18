@@ -12,9 +12,9 @@
 //   open("f", "rt")            ← UP015 "Remove this mode argument"
 //   open("f", "Ub")            ← UP015 "Drop the redundant flags": write "rb"
 //   open("f", "r+")  open("f", "rb")  open("f", "UU")       not reported (the last is invalid)
-#include "python/upgrade.rr"
+#include "python/upgrade.rerail"
 //   builtin_at(e, x), sym_at(e, q)
-#include "python/upgrade-format.rr"
+#include "python/upgrade-format.rerail"
 //   up_arg, up_kw, str_lit
 
 // mode_arg(at, v): the mode of an open call: the string literal, without parentheses, where Ruff reports.

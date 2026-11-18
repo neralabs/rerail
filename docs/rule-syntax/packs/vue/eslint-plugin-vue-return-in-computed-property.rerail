@@ -3,8 +3,8 @@
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/component.rr"
-#include "vue/flow.rr"
+#include "vue/component.rerail"
+#include "vue/flow.rerail"
 //   vcomputed(o, x, f), vcomputed_fn(c, f), vfalls_off(f), vlast_return(f, r)
 
 // eslint-plugin-vue's return-in-computed-property: a computed getter, of the Options API or of computed() imported

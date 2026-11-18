@@ -11,7 +11,7 @@
 //   function Hello({ size = 10, label = "x", items = EMPTY }) { … }          not: primitives and references
 // Components wrapped in memo or forwardRef are not checked: the plugin records the wrapper call, which has no
 // parameters. A fragment default (<></>) is not reported either, as in the plugin.
-#include "tsx/react-class.rr"
+#include "tsx/react-class.rerail"
 //   fn_component(f, c)   function f is a component, recorded at c (f itself unless wrapped)
 
 .violation default_prop(at: node)

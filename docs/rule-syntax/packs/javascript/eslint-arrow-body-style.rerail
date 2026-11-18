@@ -4,9 +4,9 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-a-functions.rr"
+#include "tsx/eslint-a-functions.rerail"
 //   deparen, before_close
-#include "tsx/statements.rr"
+#include "tsx/statements.rerail"
 //   block_stmt
 
 // ESLint's arrow-body-style. `option` says when an arrow's body has braces:

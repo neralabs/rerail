@@ -9,7 +9,7 @@
 // finding is at the parentheses.
 //   @functools.lru_cache()        ← UP011 at `()`
 //   @lru_cache(maxsize=64)        not reported
-#include "python/upgrade.rr"
+#include "python/upgrade.rerail"
 //   sym_at(e, q): e names q, through the bindings visible where it runs; targets(m): Python 3.m or later
 
 .violation UP011(at: node) code "UP011"

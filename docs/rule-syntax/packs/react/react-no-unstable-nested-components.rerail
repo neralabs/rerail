@@ -12,7 +12,7 @@
 // Also not reported: callbacks of .map(), functions returned to a use* hook, children={…} and {() => …} children,
 // components that return only null, and parents whose name starts with a lower-case letter. The options
 // (allowAsProps, customValidators, propNamePattern) are not in the JSON; propNamePattern is "render*".
-#include "tsx/react-class.rr"
+#include "tsx/react-class.rerail"
 //   fn_component(f, c), detected(c), parent_component(n, c), ret_jsx(f): see the library's function components
 
 .violation nested(at: node)

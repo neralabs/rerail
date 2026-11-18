@@ -12,7 +12,7 @@
 //   datetime.min.replace(hour=...)                 ← DTZ901, after `from datetime import datetime`
 //   datetime.datetime.max.replace(tzinfo=...)      not reported
 //   datetime.datetime.min.time()                   not reported
-#include "python/datetime.rr"
+#include "python/datetime.rerail"
 
 .violation DTZ901(at: node, m: symbol) code "DTZ901"
     "Use `datetime.datetime.{m}.replace(tzinfo=...)` so the value is aware; the bare naive value raises TypeError when ordered against aware datetimes. Keep it only when the other values are naive."

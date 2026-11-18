@@ -12,7 +12,7 @@
 //     def f(flag: bool): ...                  trap_param(<f>, <flag>, <bool>, unset)
 //     def f(self, *, flag: bool): ...         no row for flag: keyword-only
 //     def __or__(self, other: bool): ...      no row: an operator
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 
 .decl trap_param(f: node, nm: node, ann: loc, dflt: loc)
 trap_param(f, nm, a, v) :- sig_param(f, _, nm, _, k, a, v), (k = "posonly" ; k = "pos"), kind(f, "function_definition"),

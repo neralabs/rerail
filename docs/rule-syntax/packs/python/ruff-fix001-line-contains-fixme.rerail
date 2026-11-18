@@ -9,7 +9,7 @@
 //   # FIXME: something           ← FIX001
 //   # a # fixme                  ← FIX001: after another `#`
 //   # FIXMES                     not reported: not the whole word
-#include "python/misc-comments.rr"
+#include "python/misc-comments.rerail"
 
 .violation FIX001(at: node, d: symbol) code "FIX001"
     "Fix the bug this `{d}` comment describes, then remove the `{d}` note; if the fix belongs in a separate change, leave the note until that change lands."

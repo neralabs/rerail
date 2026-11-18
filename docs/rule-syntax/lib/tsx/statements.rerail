@@ -33,8 +33,8 @@
 // nearest, next_sibling, precedes, and core's token relations (first_token, last_token, token_before, token_after).
 
 
-#include "tsx/names.rr"
-#include "layout.rr"
+#include "tsx/names.rerail"
+#include "layout.rerail"
 
 // Computed only for the arguments rules ask about, not for every node in the file.
 .pragma "magic-transform" "one_liner,asi_hazard,unbrace_unsafe"
@@ -94,7 +94,7 @@ dangling_if(x) :- body(x, b, w), w != "if", w != "else", w != "do", dangling_if(
 
 // ---- layout ------------------------------------------------------------------------------------------------------
 // The tokens ESLint measures may be ones the tape leaves out (a call's `)`, a block's braces), so lines are read
-// from the nodes, and the code around a node from the source (layout.rr).
+// from the nodes, and the code around a node from the source (layout.rerail).
 // code_end_line(n, l): the line n's code ends on, not counting a trailing `;`. ESLint measures lines to it, so
 // `x()\n;` still counts as one line.
 .decl code_end_line(n: node, l: number)

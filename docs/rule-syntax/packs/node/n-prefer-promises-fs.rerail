@@ -8,9 +8,9 @@
 //   fs.readFile(p, cb)    require("fs").stat(p, cb)    import { writeFile } from "node:fs"; writeFile(p, d, cb)
 //   fs.promises.readFile(p)    fs.readFileSync(p)                                   not reported
 // The functions are the plugin's list; the module is traced through require(), process.getBuiltinModule() and
-// imports (node-trace.rr). Reported at each call.
+// imports (node-trace.rerail). Reported at each call.
 
-#include "tsx/node-trace.rr"   // module_use
+#include "tsx/node-trace.rerail"   // module_use
 trace_module("fs").
 trace_member("fs", x) :- callback_fn(x).
 .decl callback_fn(x: symbol)

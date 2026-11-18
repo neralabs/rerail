@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "rust/syntax-literals.rr"
+#include "rust/syntax-literals.rerail"
 //   dec_lit_repr(n)   a decimal literal of at least lit_repr_threshold whose hex digits show a bit pattern
 //                     (a power of two or a mask, Clippy's test)
 

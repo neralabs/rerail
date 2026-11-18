@@ -8,7 +8,7 @@
 // keeps literals, `-1`, `1 + 2j`, a few math and sys constants, and small flat containers; anything else is `...`.
 //   def f(a: int = x, b: list[int] = [1]): ...     ← PYI011 at `x`; `[1]` is fine
 // PYI014 is the same test for unannotated parameters.
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI011(at: node) code "PYI011" "Replace this default with `...`; type checkers ignore defaults in stubs, and only simple literals and short containers are worth keeping."
     suppress ruff "PYI011"

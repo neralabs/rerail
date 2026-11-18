@@ -10,7 +10,7 @@
 //   Returns:
 //
 //       int                  ← D412 (at `Returns`)
-#include "python/docstrings-sections.rr"
+#include "python/docstrings-sections.rerail"
 
 .violation D412(at: span, k: symbol) code "D412"
     "Remove the blank lines between the `{k}` header and its content; keep one blank line only when the content is a reStructuredText directive (`.. `)."

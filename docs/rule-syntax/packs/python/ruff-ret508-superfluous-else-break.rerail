@@ -13,7 +13,7 @@
 //       break
 //   else:                      ← RET508 "Unnecessary `else` after `break` statement"
 //       y()
-#include "python/flow-return.rr"
+#include "python/flow-return.rerail"
 
 .violation RET508(at: span, w: symbol) code "RET508" "Unnecessary `{w}` after `break` statement"
     suppress ruff "RET508"

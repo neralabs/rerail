@@ -10,9 +10,9 @@
 //   subprocess.run(["ls"], universal_newlines=True)                ← UP021: write text=True
 //   subprocess.run(["ls"], universal_newlines=True, text=True)     ← UP021: drop universal_newlines
 //   subprocess.Popen(["ls"], universal_newlines=True)              not reported
-#include "python/upgrade.rr"
+#include "python/upgrade.rerail"
 //   targets(m), sym_at(e, q)
-#include "python/upgrade-format.rr"
+#include "python/upgrade-format.rerail"
 //   up_kwarg(c, k, ka)
 
 .decl run_call(c: node)

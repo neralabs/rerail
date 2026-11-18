@@ -14,8 +14,8 @@ follow the JSON, except where noted below.
 
 The rules use two libraries:
 
-- `lib/tsx/ts-a.rr` holds expressions, comments, class and type members, and types.
-- `lib/tsx/ts-a-returns.rr` holds the shared logic of the two return-type rules (typescript-eslint's
+- `lib/tsx/ts-a.rerail` holds expressions, comments, class and type members, and types.
+- `lib/tsx/ts-a-returns.rerail` holds the shared logic of the two return-type rules (typescript-eslint's
   explicitReturnTypeUtils).
 
 | rule | lines | score (TP/FP/FN) | deviations |
@@ -30,11 +30,11 @@ The rules use two libraries:
 | consistent-indexed-object-style | 129 | ad-hoc, both modes match | the JSON has no index-signature mode (5); `{ [K in X] }` (14) |
 | consistent-type-assertions | 68 | ad-hoc, 5 option sets match | |
 | consistent-type-definitions | 64 | 46/0/0 | |
-| consistent-type-imports | 82 | 102/0/0, plus ad-hoc in both modes | no fix; names.rr `N.T` and shadowing (6) |
+| consistent-type-imports | 82 | 102/0/0, plus ad-hoc in both modes | no fix; names.rerail `N.T` and shadowing (6) |
 | default-param-last | 23 | 54/0/0 | |
 | explicit-function-return-type | 49 | 406/0/0, also at column level | (7) |
 | explicit-member-accessibility | 73 | 501/0/0, plus ad-hoc on 3 option sets | |
-| explicit-module-boundary-types | 132 | ad-hoc, 2 option sets match, plus the reviewer's cases | names.rr scopes (8) |
+| explicit-module-boundary-types | 132 | ad-hoc, 2 option sets match, plus the reviewer's cases | names.rerail scopes (8) |
 | max-params | 46 | 8/0/0 | |
 | member-ordering | 253 | 46/0/0, plus ad-hoc on 6 option sets | list entries of memberTypes (9) |
 | method-signature-style | 56 | 209/0/0 | fix skipped for duplicate keys and readonly properties (10) |
@@ -57,7 +57,7 @@ The rules use two libraries:
 Totals:
 
 - Rule lines: 2255.
-- Library lines: 368 (`ts-a.rr` 231, `ts-a-returns.rr` 137).
+- Library lines: 368 (`ts-a.rerail` 231, `ts-a-returns.rerail` 137).
 - Scores: 24 of the 26 recorded rules are perfect. The other 2 each have one FN, explained below. All 7
   unrecorded rules match ESLint on every case tried.
 
@@ -91,10 +91,10 @@ Totals:
 6. **consistent-type-imports.**
    - No fix is offered.
    - An import that has attributes and only type uses is not reported.
-   - The rule excludes the `T` in `N.T`. names.rr's `ref` reads that `T` as a reference (see the change requests).
+   - The rule excludes the `T` in `N.T`. names.rerail's `ref` reads that `T` as a reference (see the change requests).
    - `export type { B }` and `export { type B }` count as type uses, not value uses.
-   - A value use that names.rr resolves both to a local (`function f(A) { g(A) }`, `let A`) and to the import
-     belongs to the local. The rule drops it locally (`shadowed`); the cause is names.rr's `look` (see the change
+   - A value use that names.rerail resolves both to a local (`function f(A) { g(A) }`, `let A`) and to the import
+     belongs to the local. The rule drops it locally (`shadowed`); the cause is names.rerail's `look` (see the change
      requests). This applies to value uses only: in `constructor(foo: foo.Foo)` the type's `foo` is the import.
 
 7. **explicit-function-return-type.** An `accessor` field is an AccessorProperty in TSESTree, not a
@@ -108,10 +108,10 @@ Totals:
      tree-sitter, so the second function is not reported (the reviewer's case e6, line 3).
 
 8. **explicit-module-boundary-types.** `followReference` (on `export { a }`, `export default a`, and names inside
-   exported arrays and objects) looks the name up in the module scope only, through names.rr's `decl_site`. A
-   `var` in a top-level block counts. It then follows assignments that names.rr's `ref_site` resolves to that
+   exported arrays and objects) looks the name up in the module scope only, through names.rerail's `decl_site`. A
+   `var` in a top-level block counts. It then follows assignments that names.rerail's `ref_site` resolves to that
    variable. A local of the same name inside a function shadows it: `function f() { let a; a = () => 1; }` is not
-   followed (`local_too` works around names.rr's `look`). Imports, parameters and catch bindings are not followed.
+   followed (`local_too` works around names.rerail's `look`). Imports, parameters and catch bindings are not followed.
    - Constructor and setter signatures (`constructor(a: string);`, `set x(v: number);`, `abstract set y(v)`) need
      no return type.
    - `(a: (any))` counts as `any`.
@@ -201,13 +201,13 @@ Other notes on specific rules:
 
    ts-1's no-invalid-this carries the first two locally as `ts_bound`.
 
-3. **names.rr `ref`** reads every type_identifier as a reference, including the `T` in `N.T`
+3. **names.rerail `ref`** reads every type_identifier as a reference, including the `T` in `N.T`
    (nested_type_identifier).
 
 4. **rrlab option flattening.** A nested list inside a list option prints as its Python repr. Proposal: give each
    inner list its own `option_item(name/i, j, v)` rows, or document the repr.
 
-5. **names.rr `look`** climbs a block and its function separately. In `function f(A) { g(A) }` or
+5. **names.rerail `look`** climbs a block and its function separately. In `function f(A) { g(A) }` or
    `function f() { let a; a = 1; }`, a reference resolves to the local and to the module-level name both, because
    the function path skips the block and the block path skips the parameters. `ref_site` should give one site,
    the nearest. consistent-type-imports (`shadowed`) and explicit-module-boundary-types (`local_too`) work around

@@ -45,7 +45,7 @@
 //     `subscript`. tsub reads both.
 //   - An annotation's `A[x] | B` is a `union_type` of `type` nodes; other `|` unions are binary_operators.
 //   - `Union[A, Union[B, C]]` and `A | (B | C)` are one union of A, B and C to Ruff, in that order.
-#include "python/pyflakes.rr"   // plain_str, py_literal, unparen, py_if, cmp
+#include "python/pyflakes.rerail"   // plain_str, py_literal, unparen, py_if, cmp
 
 // ---- 1. stubs ----------------------------------------------------------------------------------------------------
 // in_stub(n): n is in a stub file.

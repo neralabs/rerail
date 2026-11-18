@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "rust/syntax.rr"
+#include "rust/syntax.rerail"
 //   has_attr(n, x)   n carries #[x]
 
 // Clippy's many_single_char_names (pedantic): more than four single-letter bindings in scope at once.

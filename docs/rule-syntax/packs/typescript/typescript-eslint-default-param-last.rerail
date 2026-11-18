@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/eslint-a-functions.rr"
+#include "tsx/eslint-a-functions.rerail"
 //   function_node, fn_param, default_param, rest_param, optional_param
 
 // typescript-eslint's default-param-last: a parameter with a default or a `?`, followed somewhere by a plain

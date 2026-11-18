@@ -3,7 +3,7 @@
 .language typescript
 .mode steer
 .scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
-#include "tsx/eslint-a-globals.rr"
+#include "tsx/eslint-a-globals.rerail"
 //   callee(c, f), global_ref_to(r, x), global_object_ref(o, x), static_prop(m, o, x), call_arg(c, a, i), deparen(e, l)
 
 // ESLint's no-implied-eval: setTimeout, setInterval and execScript given a string, which they evaluate as code.

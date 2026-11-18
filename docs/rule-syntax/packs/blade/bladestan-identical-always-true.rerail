@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.blade.php"
 
-#include "blade/values.rr"
+#include "blade/values.rerail"
 //   blade_code(n)   n is in the compiled PHP;  php_identical(e, r)  `a === b` expression e is r from the values
 
 // Bladestan's identical.alwaysTrue: PHPStan's StrictComparisonOfDifferentTypesRule (level 4) over the PHP the

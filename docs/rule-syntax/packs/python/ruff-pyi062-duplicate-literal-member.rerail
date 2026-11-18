@@ -8,7 +8,7 @@
 // flattened. Members compare by value, not spelling: "a" and 'a' are one; True and 1 are two. Separate
 // Literals in a union are not compared (PYI030 merges them).
 //   x: Literal[1, 2, 1]        ← PYI062 at the second 1
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI062(at: node) code "PYI062" "Remove the repeated member `{at}` from this Literal; an earlier member already covers it."
     suppress ruff "PYI062"

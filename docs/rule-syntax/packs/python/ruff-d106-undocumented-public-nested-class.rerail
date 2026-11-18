@@ -10,7 +10,7 @@
 //       """Doc."""
 //       class Meta:            ← D106 at `Meta`
 //           pass
-#include "python/docstrings.rr"
+#include "python/docstrings.rerail"
 
 .violation D106(at: node, x: symbol) code "D106"
     "Add a docstring to nested class `{x}` describing its purpose; it does not inherit its enclosing class's docstring."

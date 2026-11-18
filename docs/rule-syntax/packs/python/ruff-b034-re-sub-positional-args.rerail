@@ -10,7 +10,7 @@
 //   re.sub("a", "b", "aaa", re.IGNORECASE)     ← B034
 //   from re import sub; sub("a", "b", "aaa", 5) ← B034
 //   re.split(" ", "a a", maxsplit=2)           not reported
-#include "python/bugbear.rr"
+#include "python/bugbear.rerail"
 
 .violation B034(at: node, q: symbol, p: symbol) code "B034"
     "`{q}` should pass `{p}` and `flags` as keyword arguments to avoid confusion due to unintuitive argument positions"

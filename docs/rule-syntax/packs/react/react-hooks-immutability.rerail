@@ -15,7 +15,7 @@
 //   const f = () => { props = {}; }                                   reported: a parameter reassigned in a closure
 // Frozen values are followed through `const { a } = props` and `const t = state.items`, not further. The compiler
 // knows more mutating calls (its type signatures) and more aliasing; NOTES has the clauses left out.
-#include "tsx/react-compiler.rr"
+#include "tsx/react-compiler.rerail"
 
 .violation immutability(at: node, msg: symbol)
     code "react-hooks/immutability"

@@ -8,7 +8,7 @@
 // `Set` reads like the builtin `set`. Reported at the name it binds: `Set`, or the alias.
 //   from collections.abc import Set              ← PYI025
 //   from collections.abc import Set as AbstractSet    fine
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI025(at: node) code "PYI025" "Import `Set` as `AbstractSet` and rename its uses, so it isn't mistaken for the builtin `set`; keep the name if other modules import `Set` from this file."
     suppress ruff "PYI025"

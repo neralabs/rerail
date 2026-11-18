@@ -4,8 +4,8 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/ts-a.rr"
-#include "tsx/eslint-b-objects.rr"
+#include "tsx/ts-a.rerail"
+#include "tsx/eslint-b-objects.rerail"
 //   ts_member, ts_member_name, ts_ctor, type_literal; natural_key, nat_ask
 
 // typescript-eslint's member-ordering: the members of a class, interface or type literal come in a set order.

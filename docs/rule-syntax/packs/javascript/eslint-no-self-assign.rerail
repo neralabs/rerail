@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-b-control.rr"
+#include "tsx/eslint-b-control.rerail"
 //   deparen, slot, slot_count, ref_same
 
 // ESLint's no-self-assign: `x = x`, with `=`, `&&=`, `||=` or `??=`, also where destructuring pairs a target

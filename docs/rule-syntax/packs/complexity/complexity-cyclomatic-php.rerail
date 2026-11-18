@@ -6,7 +6,7 @@
 .scope exclude "**/*.blade.php", "**/vendor/**", "**/node_modules/**", "**/generated/**", "**/__generated__/**"
 .scope exclude "**/test/**", "**/tests/**", "**/Test/**", "**/Tests/**", "**/spec/**", "**/*Test.php", "**/*TestCase.php"
 
-#include "complexity/php.rr"
+#include "complexity/php.rerail"
 //   cc_report(f, msg)   function f has cyclomatic complexity over 6 (lizard's decision points; nested ones apart)
 
 // The complexity pack's ceiling, with lizard 1.24.0's count: 1 + each if, elseif, for, foreach, while, do,

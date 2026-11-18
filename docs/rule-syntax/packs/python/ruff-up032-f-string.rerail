@@ -14,10 +14,10 @@
 //   "{} {}".format(a, b)       ← UP032: f"{a} {b}"
 //   "{x} {x}".format(x=f())    "{}".format(a["b"])    "{} {}".format(*a)       not reported
 // The finding is at the call.
-#include "python/upgrade.rr"
+#include "python/upgrade.rerail"
 //   sym_at(e, q)
-#include "python/upgrade-format.rr"
-//   lit_piece; and, through it, python/pyflakes-format.rr: format_call, brace_ok, brace_arg,
+#include "python/upgrade-format.rerail"
+//   lit_piece; and, through it, python/pyflakes-format.rerail: format_call, brace_ok, brace_arg,
 //   brace_name, brace_nested, call_pos, call_kw, call_star, call_kwsplat
 
 .violation UP032(at: node) code "UP032"

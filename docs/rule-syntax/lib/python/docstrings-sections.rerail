@@ -33,7 +33,7 @@
 //       -------                      doc_section(s, 3, "Returns", "Returns", 4, ""), doc_dashes(s, 4, 7)
 //       int
 //       """
-#include "python/docstrings.rr"
+#include "python/docstrings.rerail"
 
 // ---- section names -----------------------------------------------------------------------------------------------
 // sec_word(lower, canonical): Ruff's SectionKind names; sec_style(canonical, convention): where each is a section.

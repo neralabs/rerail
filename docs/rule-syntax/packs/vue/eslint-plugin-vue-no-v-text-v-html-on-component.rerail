@@ -3,7 +3,7 @@
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/template.rr"
+#include "vue/template.rerail"
 //   vdir(e, a, d, arg), vcustom(e), vcustom_any_ns(e), vel_name(e, x)
 
 // eslint-plugin-vue's no-v-text-v-html-on-component: v-text or v-html on a custom component. Options: allow (component

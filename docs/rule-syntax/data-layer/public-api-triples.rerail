@@ -24,9 +24,9 @@
 //   4. Violations read checked groups: missing slots, missing decorators, a direct wrapper, a mixed name.
 // The Python linter's _validate_groups loop is spread over exempt, live, checked and the violation rules.
 
-#include "python/names.rr"
-#include "python/imports.rr"
-#include "python/calls.rr"
+#include "python/names.rerail"
+#include "python/imports.rerail"
+#include "python/calls.rerail"
 
 // cdef: class bodies. nearest(f, c, cdef) = "c is the class f is defined in".
 // nonmod: defs and classes. !nearest(f, _, nonmod) = "f is defined at module level".

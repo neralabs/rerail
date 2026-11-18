@@ -10,7 +10,7 @@
 //   set(f(x) for x in y)       ← C401: {f(x) for x in y}
 //   set(x for x in y)          ← C401: set(y)
 //   set(x for x in y if x)     ← C401: {x for x in y if x}
-#include "python/comprehensions.rr"
+#include "python/comprehensions.rerail"
 //   c4_call(c, x), c4_only(c, a), c4_comp(e, k), c4_passthrough(e)
 
 .violation C401(at: node, id: symbol, msg: symbol) code "C401" "{msg}"

@@ -7,7 +7,7 @@
 // react/no-find-dom-node: every call of a function named findDOMNode, bare or as a member, whatever it is bound to.
 //   ReactDOM.findDOMNode(this)   findDOMNode(this)   this.findDOMNode()      reported, at the callee
 //   findDOMNode                                                             not: only calls
-#include "tsx/react.rr"
+#include "tsx/react.rerail"
 
 .violation no_find_dom_node(at: node)
     code "react/no-find-dom-node"

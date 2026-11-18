@@ -12,8 +12,8 @@
 //   {a?.has(x) && <B />}             reported: an optional call is a chain, not a call
 //   const on = true; {on && <B />}   not reported
 // ESLint's fix (coerce with !! or rewrite as a ternary) is not offered: the JSON has none.
-#include "tsx/react.rr"
-#include "tsx/eslint-a-common.rr"
+#include "tsx/react.rerail"
+#include "tsx/eslint-a-common.rerail"
 
 .violation leaked_render(at: node)
     code "react/jsx-no-leaked-render"

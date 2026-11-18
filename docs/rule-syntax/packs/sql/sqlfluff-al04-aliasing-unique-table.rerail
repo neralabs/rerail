@@ -11,7 +11,7 @@
 // itself the table (FROM (SELECT …) AS t) does not count against t.
 // UNNEST and generate_series calls take no part. Names compare as written, "x" and x alike.
 
-#include "sql/syntax.rr"
+#include "sql/syntax.rerail"
 
 .violation AL04(at: node, x: symbol) code "AL04" "Duplicate table alias '{x}'. Table aliases should be unique."
     suppress sqlfluff "AL04", "L020", "aliasing", "aliasing.unique", "aliasing.unique.table", "all", "core"

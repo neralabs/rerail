@@ -9,9 +9,9 @@
 //   from Crypto.Hash import MD5; MD5.new()     B303: Crypto.Hash.MD5.new
 //   hashes.SHA1()   after `from cryptography.hazmat.primitives import hashes`: B303
 //   hashes.SHA256()                             not reported
-// How Bandit reads the call's name, and the list: python/security.rr (blacklisted).
+// How Bandit reads the call's name, and the list: python/security.rerail (blacklisted).
 
-#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+#include "python/security.rerail"   // blacklisted: Bandit's B001 over calls and imports
 
 .violation B303(at: node) code "B303"
     "MD5 and SHA1 are broken for security use. Use SHA-256, or a password hash for passwords."

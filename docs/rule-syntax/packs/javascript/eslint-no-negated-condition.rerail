@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-a-control.rr"
+#include "tsx/eslint-a-control.rerail"
 //   negated, else_of
 
 // ESLint's no-negated-condition: a negated test (`!a`, `a != b`, `a !== b`) where both branches exist, so the

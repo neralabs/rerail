@@ -19,7 +19,7 @@
 //   def shadow():
 //       print(len)              ← F823: a builtin counts as an outer binding
 //       len = 1
-#include "python/pyflakes.rr"
+#include "python/pyflakes.rerail"
 //   run_scope(n, s, k)  the scope n runs in (a comprehension is a scope of its own; its first iterable is not)
 
 .violation F823(at: node, x: symbol) code "F823"

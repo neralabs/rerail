@@ -11,7 +11,7 @@
 //   "{}".format(1, 2)             ← F523
 //   "{0}{1}".format(1, *rest)     not reported
 //   "{} {}".format(1, *a, 2)      ← F523: argument 2 is unused
-#include "python/pyflakes-format.rr"
+#include "python/pyflakes-format.rerail"
 //   format_call(c, v), brace_auto(v, n), brace_index(v, i), arg_pos(c, i, a)
 
 .violation F523(at: node) code "F523" "`.format` call has unused arguments"

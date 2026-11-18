@@ -10,7 +10,7 @@
 //   """Match \d+."""         ← D301
 //   r"""Match \d+."""        not reported
 //   """Snowman: ☃."""   not reported
-#include "python/docstrings.rr"
+#include "python/docstrings.rerail"
 
 .violation D301(at: node) code "D301"
     "Add an `r` prefix (replacing any `u`) so backslashes stay literal, writing each `\\\\` as one `\\`; keep the plain string if an escape like `\\t` or `\\x41` must take effect."

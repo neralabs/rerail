@@ -11,7 +11,7 @@
 //   obj.startswith("foo") or obj.startswith("bar")    ← PIE810 "Call `startswith` once …"
 //   obj.startswith("foo") or obj.endswith("bar")      not reported: different methods
 //   y = ("h", "e"); msg.startswith(y) or msg.startswith(x)   not reported: one call left
-#include "python/bugbear.rr"
+#include "python/bugbear.rerail"
 
 .violation PIE810(at: node, m: symbol) code "PIE810"
     "Call `{m}` once with a tuple of all the prefixes or suffixes instead of or-ing several calls."

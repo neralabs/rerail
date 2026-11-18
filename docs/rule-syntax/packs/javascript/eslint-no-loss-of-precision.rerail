@@ -3,7 +3,7 @@
 .language typescript
 .mode steer
 .scope include "**/*"
-#include "tsx/eslint-a-expressions.rr"
+#include "tsx/eslint-a-expressions.rerail"
 
 // ESLint's no-loss-of-precision: a number literal whose digits a double cannot hold, so the program sees a
 // different number than the one written.

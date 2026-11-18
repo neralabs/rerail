@@ -1,4 +1,4 @@
-//! The checkout this engine runs from: where it reads its own `.rr` files as it runs (the builtin
+//! The checkout this engine runs from: where it reads its own `.rerail` files as it runs (the builtin
 //! typing programs under `native/src/code_rule_dsl/typing/programs`, the rule library under
 //! `docs/rule-syntax/lib`).
 //!

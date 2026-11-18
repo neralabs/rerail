@@ -11,7 +11,7 @@
 // string in it, as in Ruff.
 //   a = 1
 //   __all__ = ["a", "b"]       ← F822 at "b"
-#include "python/pyflakes.rr"
+#include "python/pyflakes.rerail"
 //   all_entry(s, x)   string s names x in the module's `__all__` (=, +=, extend, append, list(…), +)
 //   noqa(st, code)    the first line of statement st has `# noqa` or `# noqa: …code…`
 

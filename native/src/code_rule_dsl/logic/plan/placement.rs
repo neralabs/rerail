@@ -320,7 +320,7 @@ fn row_term(v: &Version, t: TermRef<'_>) -> bool {
     }
 }
 
-/// The device's form of `.rr`'s (or the native engine's) function `f`.
+/// The device's form of `.rerail`'s (or the native engine's) function `f`.
 fn device_fn(f: &str) -> Option<DeviceFn> {
     caps::device_fn(caps::native(f))
 }

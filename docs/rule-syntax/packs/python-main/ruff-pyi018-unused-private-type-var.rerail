@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // typevar_call(n): the JSON util `typevar-call`, used where the JSON says `matches: "typevar-call"`
 .decl pyi018_typevar_call(n: node)
@@ -40,7 +40,7 @@ PYI018(n, NAME) :- kind(n, "identifier"), match("(?P<NAME>_.*)", n), bind_name(n
 // PYI018_unused_private_type_var_in_stub_class(n): a finding at node n, from clause `unused-private-type-var-in-stub-class`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PYI018_unused_private_type_var_in_stub_class(at: node, name: loc) code "PYI018" "Remove the unused private type variable `{name}`, or use it in an annotation; rename it without the underscore if other modules import it."
     suppress noqa "PYI018"
 PYI018_unused_private_type_var_in_stub_class_raw(n, NAME) :- kind(n, "identifier"),

@@ -9,7 +9,7 @@
 //   unannotated:  x = 1 + 1           ← PYI015    (a name, call, subscript or `A | B` is fine: an alias)
 // Neither checks the special names (`__all__`, `__slots__`, `__match_args__`) or TypeVar-like calls; an
 // unannotated one needs one plain-name target.
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI015(at: node) code "PYI015" "Replace this assigned value with `...`; a stub only needs to show that the name has a value, and keeps literal values only when they are simple."
     suppress ruff "PYI015"

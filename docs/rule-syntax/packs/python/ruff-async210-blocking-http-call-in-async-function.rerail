@@ -9,7 +9,7 @@
 // client object (`session.get`) are not resolved and are not reported.
 //   async def f(): requests.get(url)       ← ASYNC210
 //   async def f(): await client.get(url)   not reported
-#include "python/async-demand.rr"
+#include "python/async-demand.rerail"
 
 .violation ASYNC210(at: node) code "ASYNC210"
     "Use an existing async client, or `await asyncio.to_thread(helper, ...)` for the request and response handling; preserve the API and options."

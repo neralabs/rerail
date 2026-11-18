@@ -10,7 +10,7 @@
 //   from builtins import exec; exec(c)   not reported: Bandit reads "builtins.exec"
 //   def f(exec): exec(c)                 B102: Bandit does not see local bindings
 
-#include "python/security.rr"   // qual_call: the callee's name as Bandit reads it
+#include "python/security.rerail"   // qual_call: the callee's name as Bandit reads it
 
 .violation B102(at: node) code "B102"
     "Replace this exec call with code that performs the intended operation directly, unless the executed text is fully trusted."

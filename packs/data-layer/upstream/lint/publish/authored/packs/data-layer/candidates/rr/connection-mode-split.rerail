@@ -21,8 +21,8 @@
 //   class SyncThingSessionHandle:
 //       async def go(self): ...                line 3: public async method on a sync facade
 
-#include "python/names.rr"
-#include "python/ast.rr"      // ast_name
+#include "python/names.rerail"
+#include "python/ast.rerail"      // ast_name
 
 // The linter's name sets: OLD_PUBLIC_NAMES, PRIVATE_CORE_NAMES, PRIVATE_HANDLE_CORE_NAMES and the forbidden methods.
 .decl cms_old(v: symbol)

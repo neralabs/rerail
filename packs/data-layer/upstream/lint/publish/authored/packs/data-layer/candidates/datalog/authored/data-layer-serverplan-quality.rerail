@@ -1,7 +1,7 @@
 // data-layer-serverplan-quality: the clauses the converter does not convert (decision 0043).
 // Policy: gate/data-layer/packs/data-layer/candidates/rules-ast/data-layer-serverplan-quality.json.
 // Older hand-written program for this rule, other clause ids and an older dialect, read for the relational
-// stages: native/src/code_rule_dsl/logic/programs/data_layer/serverplan_quality*.rr.
+// stages: native/src/code_rule_dsl/logic/programs/data_layer/serverplan_quality*.rerail.
 //
 // Options as the run resolves them: every `$option` case is an alternative gated on the converter-given
 // option_value("entryPoint", v) and option_on("oracleAnalyzer") (defaults: "all", false).
@@ -1885,7 +1885,7 @@ violation("data-layer-serverplan-quality", "spq-vector-filter-literals", "SPQ-04
 // DECODED is `replace` over `$STRING` with `value: true` and the never-matching regex \b\B: the right-hand
 // string's value (W's `value`, not followed, as Python's str()), i.e. value(string, v) (escapes decoded, adjacent
 // literals joined). Not modelled: where W cannot know that value it fails the clause (transform-fact-failure,
-// demand/driver/catalog/sql_backend.rs), and a clause failure has no .rr form. It does not arise for the literals
+// demand/driver/catalog/sql_backend.rs), and a clause failure has no .rerail form. It does not arise for the literals
 // the input admits (a str literal with an [rRuU]* prefix, or a concatenation of those), which W decodes, short of
 // W's value budget (rr's value has none): past it W fails the clause where this reports.
 // Stage module_string_values = spq_vector_filter_constants_last (the max __start module_strings row per (path, NAME),
@@ -2821,7 +2821,7 @@ violation("data-layer-serverplan-quality", "quality-project-taxonomy", "SPQ-049"
 // Not modelled (named):
 // - W rejects the whole result when two rows share (detector, issue, identity) ("relational results have
 //   duplicate identities"): backend-control's identity is method start:line, so two controls of one derived method
-//   on one line fail the clause in W; here that line's finding is reported. A clause failure has no .rr form.
+//   on one line fail the clause in W; here that line's finding is reported. A clause failure has no .rerail form.
 // - Suppression comments (ignoredBy / rerail-ignore).
 // Relations beyond the header's: inside(n, a, set) (the engine's tree relation, as the translator uses it).
 // nthChild without ofRule: controls' 2 counts comment tokens (_cx_shift); callable_params' and step_params' 1 is a

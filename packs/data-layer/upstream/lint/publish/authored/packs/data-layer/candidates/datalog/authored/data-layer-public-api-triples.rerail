@@ -1,6 +1,6 @@
 // data-layer-public-api-triples, authored clause `exported-families` (relational SQL stages; decision 0043).
 // Source: gate/data-layer/packs/data-layer/candidates/rules-ast/data-layer-public-api-triples.json.
-// Started from the `.rdl`-style design native/src/code_rule_dsl/logic/programs/data_layer/public_api_triples.rr,
+// Started from the `.rdl`-style design native/src/code_rule_dsl/logic/programs/data_layer/public_api_triples.rerail,
 // rewritten into what the engine lowers: tree relations for its ast(...) inputs, text tests for rx_matches,
 // @rx_replace for rx_replace/rx_extract/trim (the same regex crate's replace_all W's SQL function runs), a walk
 // counted down a fixed string for the hierarchy (no lattice, no counter), and a character-table comparison where

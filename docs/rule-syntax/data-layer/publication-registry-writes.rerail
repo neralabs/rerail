@@ -13,7 +13,7 @@
 // The registry is any attribute named cte_refs, through any path (self.ctx.cte_refs); a bare name cte_refs is not.
 // Reads, `in` tests and iteration are not writes.
 
-#include "python/ast.rr"     // assign_target, unparen; attr_of comes from python/names
+#include "python/ast.rerail"     // assign_target, unparen; attr_of comes from python/names
 
 .decl prw_mutator(m: symbol)
 prw_mutator("clear"). prw_mutator("pop"). prw_mutator("popitem"). prw_mutator("setdefault").

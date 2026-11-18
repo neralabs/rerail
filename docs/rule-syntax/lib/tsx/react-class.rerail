@@ -24,8 +24,8 @@
 //                             class, `new`, regex or JSX element; `<></>` is a jsx_element too, with no name
 //   ancestry
 //     fn_up(n, f)             f is a function around n: declaration, expression, arrow or method
-#include "tsx/react.rr"
-#include "tsx/eslint-a-common.rr"
+#include "tsx/react.rerail"
+#include "tsx/eslint-a-common.rerail"
 
 // ---- components -----------------------------------------------------------------------------------------------
 // comp_owner(n, k). eslint-plugin-react asks the scope chain: for a class, only the nearest class counts

@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
 
-#include "tsx/eslint-a-functions.rr"
+#include "tsx/eslint-a-functions.rerail"
 //   function_node, param_count, this_param, fn_name_kind, fn_head, limit
 
 // ESLint's max-params: a function, method or arrow with more than `max` parameters (default 3; `max`, or the

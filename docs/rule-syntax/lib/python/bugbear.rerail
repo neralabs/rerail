@@ -1,6 +1,6 @@
 // python/bugbear: the vocabulary of Ruff's flake8-bugbear (B) and flake8-pie (PIE) rules: calls of builtins and
 // their argument shapes, Ruff's literal and identifier tests, and exception handlers. Loop variables are in
-// python/bugbear-loops.rr.
+// python/bugbear-loops.rerail.
 //
 // Interface
 //   1. Calls:     bb_builtin_call(c, x)     c's callee resolves to the builtin x: `getattr(…)`, `builtins.getattr(…)`
@@ -29,7 +29,7 @@
 //
 //   getattr(o, "x")                  bb_builtin_call(<call>, "getattr"), npos 2, nkw 0
 //   except (A, b.C) as e:            handler_type(<x>, <tuple>), handler_elt(<x>, <A>, 0), exc_name(<b.C>, "b.C")
-#include "python/ruff.rr"   // call_nargs, call_nkwargs, call_kw; python/pyflakes, python/ast, python/names
+#include "python/ruff.rerail"   // call_nargs, call_nkwargs, call_kw; python/pyflakes, python/ast, python/names
 
 // ---- 1. calls ----------------------------------------------------------------------------------------------------
 .decl bb_builtin_call(c: node, x: symbol)

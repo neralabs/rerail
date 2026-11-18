@@ -704,7 +704,7 @@ fn metal_summary(r: &mut String, state: &State) {
 }
 
 // Its tests (the report over what a run recorded, and the projection's provenance over a parsed program) run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the
-// engine registers as it loads (the languages, their `.rr` libraries).
+// engine registers as it loads (the languages, their `.rerail` libraries).
 
 #[cfg(test)]
 mod tests {

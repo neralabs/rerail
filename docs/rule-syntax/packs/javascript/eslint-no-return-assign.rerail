@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-a-control.rr"
+#include "tsx/eslint-a-control.rerail"
 //   assignment
 
 // ESLint's no-return-assign: an assignment whose nearest enclosing statement (or function or class expression)

@@ -11,7 +11,7 @@
 //   (x, y) = coords = 1, 2      ← RUF059: coords is a plain target
 //   (x, y) = (1, 2)             not reported: each name takes one element (F841's case)
 // Not reported: dummy names (`_`, `_x`), `global` / `nonlocal` names, and functions that call `locals()`.
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 
 .violation RUF059(at: node, n: symbol) code "RUF059"
     "Unpacked variable `{n}` is never used; rename it to `_{n}` or `_` to mark it unused, or use it."

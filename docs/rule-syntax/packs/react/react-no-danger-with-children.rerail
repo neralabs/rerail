@@ -12,7 +12,7 @@
 // The rule's own quirk is kept: children that start on the line after the open tag (a first child that is a
 // line break, to ESTree) do not count, so <div dangerouslySetInnerHTML={h}>⏎<b/></div> is not reported.
 // Any `x.createElement(…)` counts, not only React's, as in the rule.
-#include "tsx/react.rr"
+#include "tsx/react.rerail"
 
 .violation danger_with_children(at: node)
     code "react/no-danger-with-children"

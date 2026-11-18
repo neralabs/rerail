@@ -13,7 +13,7 @@
 //   anything.extra(None, ["a = b"])                           B610: a select of None is no dict
 // The JSON also required a QuerySet-looking receiver; Bandit does not (see NOTES-py-bandit.md).
 
-#include "python/security.rr"   // call_leaf, pos_arg, kwarg, literal
+#include "python/security.rerail"   // call_leaf, pos_arg, kwarg, literal
 
 .violation B610(at: node) code "B610"
     "Pass only literal strings to where, tables and select in this .extra() call, with values in params; dynamic SQL allows injection."

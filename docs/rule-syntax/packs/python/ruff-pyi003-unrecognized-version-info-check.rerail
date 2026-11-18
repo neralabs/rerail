@@ -12,7 +12,7 @@
 //   if sys.version_info[0] == "3":       ← PYI003: not an int
 //   if sys.version_info >= (3, "8"):     ← PYI003: not all ints
 //   if sys.version_info >= (3, 8):       fine
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI003(at: node, msg: symbol) code "PYI003" "{msg}"
     suppress ruff "PYI003"

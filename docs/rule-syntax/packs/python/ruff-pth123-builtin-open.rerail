@@ -13,7 +13,7 @@
 //   def f(fd: int): open(fd)             not reported: fd is annotated int
 //   open("f", closefd=False)             not reported; `closefd=True` is reported
 //   open("f", opener=my_opener)          not reported; `opener=None` is reported
-#include "python/pathlib.rr"
+#include "python/pathlib.rerail"
 //   pth_call(c, q, f)   c calls q; f the callee      fd_arg(c, x)   x's argument is a file descriptor
 //   arg_value(c, x, i, a)   argument x, by keyword or at position i   (python/pathlib)
 

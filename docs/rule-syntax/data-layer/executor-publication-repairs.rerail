@@ -14,7 +14,7 @@
 epr_token("_cte_output_columns"). epr_token("_cte_column_type_hints").
 epr_token("_publication_contract_cache"). epr_token("_cte_publication_contract_cache").
 
-#include "data-layer/pub-lines.rr"   // py_line: lines as splitlines() numbers them (U+2028 splits a line too)
+#include "data-layer/pub-lines.rerail"   // py_line: lines as splitlines() numbers them (U+2028 splits a line too)
 
 .violation executor_publication_repair(at: loc, token: symbol) "executor references producer-owned {token}"
 executor_publication_repair(@place(p, n), t) :- py_line(d, n, s), epr_token(t), contains(t, s), doc(d, p, _).

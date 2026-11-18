@@ -5,7 +5,7 @@
 .scope include "**/*.php"
 .scope exclude "**/*.blade.php"
 
-#include "php/format.rr"
+#include "php/format.rerail"
 //   printf_needs(s, k), printf_invalid(s)    what format string s needs, as PHP 8 parses it
 //   (php/names) php_call, php_arg, php_arg_count, php_spread_call; (php/values) php_value
 

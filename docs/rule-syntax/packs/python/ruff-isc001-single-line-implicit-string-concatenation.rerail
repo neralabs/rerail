@@ -12,7 +12,7 @@
 //   _ = f"a {'b' 'c'} e"           ← ISC001 inside the interpolation
 //   _ = ("abc"
 //        "def")                     not reported: on two lines
-#include "python/ast.rr"
+#include "python/ast.rerail"
 
 .violation ISC001(at: node) code "ISC001"
     "Merge these adjacent literals into one string, escaping any braces or quotes the merge exposes; if they were meant as separate items, add the missing comma instead."

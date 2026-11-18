@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/ts-a.rr"
+#include "tsx/ts-a.rerail"
 //   ts_directive(c, d, desc)
 
 // typescript-eslint's ban-ts-comment: comments that switch TypeScript's checking, `@ts-<directive>`. Each

@@ -10,7 +10,7 @@
 //   <Foo />                         reported if no Foo is declared or imported
 //   import { Bar } from "x"; <Bar.Item />    not reported
 //   function f(Icon) { return <Icon /> }      not reported: a parameter
-#include "tsx/react.rr"
+#include "tsx/react.rerail"
 
 .violation undefined_tag(at: node, x: symbol)
     code "react/jsx-no-undef"
@@ -25,9 +25,9 @@ undefined_tag(n, x) :- react_open(_, o), field(o, "name", t), tag_root(t, n), te
 tag_root(t, t) :- kind(t, "identifier").
 tag_root(t, n) :- kind(t, "member_expression"), field(t, "object", o), (kind(o, "identifier"), n = o ;
     kind(o, "member_expression"), tag_root(o, n)).
-// declared_at(n, x): some scope around n declares x (names.rr's decl_site: variables, functions, classes,
+// declared_at(n, x): some scope around n declares x (names.rerail's decl_site: variables, functions, classes,
 // parameters, imports, catch and loop bindings, a function or class expression's own name; types and interfaces
-// too, since ESLint's scope manager for TypeScript knows them). JSX tag names are not names.rr references, so this
+// too, since ESLint's scope manager for TypeScript knows them). JSX tag names are not names.rerail references, so this
 // looks the name up directly in the enclosing scopes.
 .decl declared_at(n: node, x: symbol)
 declared_at(n, x) :- tag_root(_, n), text(n, x), (inside(n, s, block_scope) ; inside(n, s, fn_scope)),

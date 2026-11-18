@@ -23,7 +23,7 @@
 //   8. Order: latest_assign, the last assignment before a use.
 //   9. Calls by spelling: same_file_call, name_reach.
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // ---- 1. structure ------------------------------------------------------------------------------------------------
 // ts_wrapper(k): tree-sitter kinds with no `ast` node of their own. Their children belong to their parent.
@@ -163,7 +163,7 @@ from_module_raw(i, "") :- kind(i, "import_from_statement"), field(i, "module_nam
 // sig_param(f, p, nm, i, kind, ann, dflt): parameter p of def or lambda f, at position i, named by identifier nm,
 // of kind "posonly", "pos", "vararg", "kwonly" or "kwarg", with its annotation and default, or unset for none.
 // e.g. `def f(a, /, b: int = 0, *c: str, d, **e)`: a posonly; b pos, annotated, with a default; c vararg,
-// annotated `str`; d kwonly; e kwarg. names.rr's param has the names and positions only.
+// annotated `str`; d kwonly; e kwarg. names.rerail's param has the names and positions only.
 .decl in_params(ps: node, p: node, i: number)
 in_params(ps, p, i) :- (kind(ps, "parameters") ; kind(ps, "lambda_parameters")), child(ps, p, i).
 // param_parts(p, nm, ann, dflt, form): the pieces of one parameter node; form is "plain", "star" or "dstar".

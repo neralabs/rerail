@@ -10,7 +10,7 @@
 //   React.createElement("br", {}, "x")    React.createElement("img", { children })  reported, at the call
 // Anything between the tags is a child to the rule, even a line break: <br>⏎</br> is reported.
 // createElement is checked only with an object literal as its props, as in the rule.
-#include "tsx/react.rr"
+#include "tsx/react.rerail"
 
 .violation void_children(at: node, msg: symbol)
     code "react/void-dom-elements-no-children"

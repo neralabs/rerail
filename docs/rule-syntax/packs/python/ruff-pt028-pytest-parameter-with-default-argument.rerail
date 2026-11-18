@@ -11,7 +11,7 @@
 //   class TestC:
 //       def test_y(self, b=2): ...           ← PT028
 //   def helper(a=1): ...                     not reported
-#include "python/pytest.rr"
+#include "python/pytest.rerail"
 //   ast: sig_param(f, p, nm, i, kind, ann, dflt); names: scope_node(n, s), def_name(f, x)
 
 .violation PT028(at: node, x: symbol) code "PT028"

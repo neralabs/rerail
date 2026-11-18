@@ -10,7 +10,7 @@
 // Its fix for reversed is unsafe (equal items come out in another order); none here.
 //   list(sorted(x))        ← C413: sorted(x)        list(sorted\n (x))   ← C413: (sorted\n (x))
 //   reversed(sorted(x))    ← C413: sorted(x, reverse=True)
-#include "python/comprehensions.rr"
+#include "python/comprehensions.rerail"
 //   c4_builtin(c, x), c4_first(c, a), c4_only(c, a)
 
 .violation C413(at: node, outer: symbol, id: symbol, msg: symbol) code "C413" "{msg}"

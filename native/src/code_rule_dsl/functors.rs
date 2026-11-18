@@ -1,10 +1,10 @@
-//! core.rr's functors whose meaning is W's or a language's (`@replace_all`, `@nfkc`, `@py_repr`, …), registered on each
+//! core.rerail's functors whose meaning is W's or a language's (`@replace_all`, `@nfkc`, `@py_repr`, …), registered on each
 //! connection with the rule language's own text functions (`logic::strings::install_functors`).
 
 use rusqlite::Connection;
 use std::collections::HashMap;
 
-/// core.rr's functors whose meaning is W's, which `strings::functions` does not give: `@replace_all(s, re, by)`, each
+/// core.rerail's functors whose meaning is W's, which `strings::functions` does not give: `@replace_all(s, re, by)`, each
 /// match of `re` in `s` replaced by `by`, `$1`
 /// and `${name}` its groups, as W's `replace` transform does (`matcher::transform::replace`); `@rx_replace(s, re, by)`
 /// the same as W's SQL `rx_replace` does it (`waves::relational::functions`: the `regex` crate's `replace_all`, `$1`,

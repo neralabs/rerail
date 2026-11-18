@@ -10,7 +10,7 @@
 //   pytest.raises(E, match="foo.")         ← RUF043  r"foo." or re.escape("foo.")
 //   pytest.raises(E, match="foo\\.bar")    not reported: the dot is escaped
 //   pytest.raises(E, match=r"fo()bar")     not reported: a raw string says it is a regex
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 
 .violation RUF043(at: node) code "RUF043"
     "This `match=` string has regex special characters: make it a raw string (writing doubled backslashes once) if it is a regex, or wrap it in `re.escape(...)` if it is literal text."

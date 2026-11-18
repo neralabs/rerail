@@ -8,10 +8,10 @@
 //   require("./test/helper")   reported when npm does not publish test/helper.js (a private file)
 //   require("mocha")           reported when mocha is a devDependency and not a dependency, peer or optional one
 // Only files npm publishes are checked; with ignorePrivate (the default) a package.json with "private": true is
-// skipped. Option allowModules lists packages never reported. What npm publishes is node-package.rr's proposed
-// npm_ignored; the resolved file is node-resolve.rr's proposed spec_resolved. Not read: convertPath.
+// skipped. Option allowModules lists packages never reported. What npm publishes is node-package.rerail's proposed
+// npm_ignored; the resolved file is node-resolve.rerail's proposed spec_resolved. Not read: convertPath.
 
-#include "tsx/node-resolve.rr"   // spec_unpublished
+#include "tsx/node-resolve.rerail"   // spec_unpublished
 
 .violation unpublished_require(at: node, msg: symbol) code "n/no-unpublished-require" "{msg}"
     suppress eslint "n/no-unpublished-require"

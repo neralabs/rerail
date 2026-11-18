@@ -12,9 +12,9 @@
 //   with a:                ← SIM117: with a, b:
 //       with b: …
 //   async with asyncio.timeout(1):     with b: …      not reported
-#include "python/ast.rr"
+#include "python/ast.rerail"
 //   body_stmt(b, s, i), body_len(b, k); ruff_qual from python/ruff
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 
 .violation SIM117(at: node) code "SIM117"
     "Use a single `with` statement with multiple contexts instead of nested `with` statements"

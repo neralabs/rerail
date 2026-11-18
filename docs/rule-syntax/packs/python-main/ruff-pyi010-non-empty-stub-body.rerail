@@ -52,7 +52,7 @@ pyi010_ends_in_comment(n) :- pyi010_block_like(n), child(n, c1, _),
 
 // PYI010(n): a finding at node n, from clause `non-empty-stub-body`.
 // Each rule below is one way the JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PYI010(at: node) "Replace this function body with `...`; stubs are never executed, so a real body is redundant."
     suppress noqa "PYI010"
 PYI010_raw(n) :- pyi010_sole_statement(n), !pyi010_ends_in_comment(n).
@@ -60,7 +60,7 @@ PYI010_raw(n) :- pyi010_sole_statement(n), !pyi010_ends_in_comment(n).
 // PYI010_non_empty_stub_body_before_comment(n): a finding at node n, from clause `non-empty-stub-body-before-comment`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PYI010_non_empty_stub_body_before_comment(at: loc, body: node) code "PYI010" "Replace this function body with `...`; stubs are never executed, so a real body is redundant."
     suppress noqa "PYI010"
 PYI010_non_empty_stub_body_before_comment_raw(BODY, n) :- pyi010_sole_statement(n),

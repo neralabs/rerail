@@ -12,7 +12,7 @@
 //   with trio.fail_after(1): ...                    ← ASYNC100 at the with
 //   with trio.fail_after(1): await trio.sleep(2)    not reported
 //   async with asyncio.timeout(1), tg(): ...        not reported: an item after the timeout
-#include "python/misc2-async.rr"
+#include "python/misc2-async.rerail"
 
 .violation ASYNC100(at: node, callee: symbol) code "ASYNC100"
     "Add an await inside this `with {callee}(...):` block; without a checkpoint the timeout can never fire."

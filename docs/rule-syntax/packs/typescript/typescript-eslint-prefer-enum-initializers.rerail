@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/ts-b.rr"
+#include "tsx/ts-b.rerail"
 //   enum_member, enum_init
 
 // typescript-eslint's prefer-enum-initializers: every enum member gets a value. Without one, a member's value is its

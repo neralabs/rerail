@@ -16,7 +16,7 @@
 //   class B:
 //       items: list[int] = default_items()     ← RUF009
 //       when: datetime.date = datetime.date(2042, 1, 1)    not reported
-#include "python/ruff-classes.rr"
+#include "python/ruff-classes.rerail"
 
 .violation RUF009(at: node, msg: symbol) code "RUF009" "{msg}"
     suppress ruff "RUF009"

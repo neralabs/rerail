@@ -22,7 +22,7 @@
 // tree-sitter writes a subscript in an annotation as a generic_type: `x: Union[a, b]` is generic_type(identifier,
 // type_parameter(type(a), type(b))); elsewhere, and after an attribute (`typing.Union[a, b]`), it is a subscript.
 // Ruff's AST has one Subscript for both, and no parentheses: `Union[(a, b)]` is `Union[a, b]`.
-#include "python/upgrade.rr"
+#include "python/upgrade.rerail"
 //   targets(m), stub_file(d), future_annotations(d), typing_only(n), typing_ref(e, x)
 
 .decl rewritable(n: node, m: number)

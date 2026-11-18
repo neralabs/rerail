@@ -19,8 +19,8 @@
 //           def helper():
 //               call()           mf_class(<call()>, A), mf_def(<call()>, helper), mf_walk(<call()>, m)
 
-#include "python/names.rr"   // decorator, attr_of
-#include "python/ast.rr"     // unparen
+#include "python/names.rerail"   // decorator, attr_of
+#include "python/ast.rerail"     // unparen
 
 // mf_up(n, o): o is the innermost def or class around n; a decorator stands for the definition it decorates.
 .decl mf_mark(k: symbol)

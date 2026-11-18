@@ -16,7 +16,7 @@
 //   for x in y:
 //       yield x
 //   print(x)                    not reported: x is read after the loop
-#include "python/upgrade.rr"
+#include "python/upgrade.rerail"
 //   body_stmt(b, s, i), body_len(b, k), run_scope(n, s, k), is_async(f), look(n, x, s), expr_ctx(n, c)
 
 .violation UP028(at: node, it: node) code "UP028"

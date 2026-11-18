@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // starmap_ref(n): the JSON util `starmap-ref`, used where the JSON says `matches: "starmap-ref"`
 .decl ruf058_starmap_ref(n: node)
@@ -72,7 +72,7 @@ RUF058(n) :- kind(n, "call"), field(n, "function", c1), ruf058_starmap_ref(c1),
 
 // RUF058_starmap_of_zip_strict(n): a finding at node n, from clause `starmap-of-zip-strict`.
 // Each rule below is one way the JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation RUF058_starmap_of_zip_strict(at: node) code "RUF058" "Replace `starmap(f, zip(a, b, strict=...))` with `map(f, a, b, strict=...)`; `map` accepts `strict=` on Python 3.14+. Keep it if `map` is shadowed in this scope."
     suppress noqa "RUF058"
 RUF058_starmap_of_zip_strict_raw(n) :- kind(n, "call"), field(n, "function", c1),

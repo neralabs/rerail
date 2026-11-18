@@ -13,7 +13,7 @@
 //   zip(xs[1:-1], xs[2:])         ← RUF007
 //   zip(xs, xs[2:])               not reported: not successive
 //   zip(xs, xs[1::2])             not reported: a step
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 
 .violation RUF007(at: node) code "RUF007"
     "Replace this `zip` with `itertools.pairwise(...)` over the sequence, or over the common slice when both arguments are slices; keep `zip` if the upper bounds differ or the argument is not a plain sequence."

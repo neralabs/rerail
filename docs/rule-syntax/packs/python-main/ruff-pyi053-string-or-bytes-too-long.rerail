@@ -6,11 +6,11 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // PYI053(n): a finding at node n, from clause `string-or-bytes-too-long`.
 // Each rule below is one way the JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PYI053(at: node) "Replace this literal with `...`: it is longer than 50 characters, and a stub only needs the type, so the full value is an implementation detail."
     suppress noqa "PYI053"
 PYI053_raw(n) :- pyi053_long_literal(n), !pyi053_stub_skip(n).

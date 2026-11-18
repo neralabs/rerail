@@ -5,7 +5,7 @@
 .scope include "**/*.php"
 .scope exclude "**/*.blade.php"
 
-#include "php/names.rr"
+#include "php/names.rerail"
 //   php_call_written(c, x), php_arg(c, i, e), php_named_arg(c, p, e), php_first_arg(c, e), php_logical(b)
 
 // PHP_CodeSniffer's Generic.PHP.NoSilencedErrors (code Discouraged): every `@` error-control operator, reported at

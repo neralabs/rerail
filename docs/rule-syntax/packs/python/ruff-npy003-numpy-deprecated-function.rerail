@@ -10,7 +10,7 @@
 //   np.round_(x)                 ← NPY003: use `np.round`
 //   from numpy import product
 //   product(x)                   ← NPY003 at the read
-#include "python/misc2-numpy.rr"
+#include "python/misc2-numpy.rerail"
 //   npy_ref(e, q)
 
 .violation NPY003(at: node, new: symbol) code "NPY003"

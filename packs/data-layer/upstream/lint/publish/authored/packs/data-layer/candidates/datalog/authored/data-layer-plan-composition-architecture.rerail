@@ -2,7 +2,7 @@
 // stage, partitionBy file, requireNonemptyInput gate: documents without syntax errors). A finding is (issue, path,
 // line): the code is the row's `issue` (SPC-001 … SPC-005), the line its node's `line`.
 // The `pythonAst` rows (CPython `ast`, W's python_ast worker: `ast_name` the first str of a node's name/id/arg/attr,
-// `ast_annotation` `ast.unparse` of a node at field annotation/returns) are read over tree-sitter, as python/ast.rr
+// `ast_annotation` `ast.unparse` of a node at field annotation/returns) are read over tree-sitter, as python/ast.rerail
 // does (not included: only a few of its views are needed, written here per check). An identifier (a Name's id, an
 // attr, a def's or class's name, an import's dotted name parts, a keyword's name) is `@nfkc` of its text, as
 // CPython's parser normalizes it (PEP 3131). Gaps are named at their checks.

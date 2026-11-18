@@ -10,7 +10,7 @@
 //       except Exception: continue       B112, at the except
 //       except KeyError: continue        not reported (check_typed_exception is off, the default)
 
-#include "python/security.rr"   // catch_all_body: the handler Bandit inspects, and its one statement
+#include "python/security.rerail"   // catch_all_body: the handler Bandit inspects, and its one statement
 
 .violation B112(at: node) code "B112"
     "This exception is silently discarded by continuing the loop. Handle or log it, or catch a specific expected exception before continuing."

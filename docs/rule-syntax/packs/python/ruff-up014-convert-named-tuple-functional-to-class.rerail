@@ -13,7 +13,7 @@
 //   X = NamedTuple("X", [("a", int)], b=str)      not reported
 //   X = NamedTuple(typename="X", a=int)           not reported
 //   X = NamedTuple("X", (("a", int),))            not reported: a tuple
-#include "python/upgrade.rr"
+#include "python/upgrade.rerail"
 //   functional_def(s, x, c, what), up_arg(c, i, a), call_nargs(c, n), call_nkwargs(c, n), call_kwsplat(c), identifier(x)
 
 .violation UP014(at: node, x: symbol) code "UP014"

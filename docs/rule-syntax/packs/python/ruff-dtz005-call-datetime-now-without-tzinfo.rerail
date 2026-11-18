@@ -12,7 +12,7 @@
 //   datetime.datetime.now(tz=None)                         ← DTZ005: None
 //   datetime.datetime.now(datetime.timezone.utc)           not reported
 //   datetime.datetime.now().replace(microsecond=0).astimezone()    not reported
-#include "python/datetime.rr"
+#include "python/datetime.rerail"
 
 .violation DTZ005(at: node) code "DTZ005"
     "Pass `tz=` with the zone you mean, such as `datetime.now(tz=datetime.timezone.utc)`, so the result is aware. Leave `now()` bare only where a naive local time is required."

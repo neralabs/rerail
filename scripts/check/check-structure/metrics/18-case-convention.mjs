@@ -15,7 +15,7 @@
 // Exemption `vendored`: `native/grammars/**` is third-party code kept byte-identical.
 // Exemption `fixture-trees`: files below any `fixtures/` directory mimic the projects under test (framework
 // route files such as `pages/_app.tsx` or `app/(shop)/[id]/`); #3 decides where they may live.
-// Exemption `kept-records` (the `.rr` workbench and the design notes, kept in git as they are:
+// Exemption `kept-records` (the `.rerail` workbench and the design notes, kept in git as they are:
 // docs/repository-structure.md, "Kept as they are"): the directories KEPT_RECORDS lists, with their reasons.
 // Exemption `engine-layout`: the engine line's files ENGINE_LAYOUT lists by exact path, with their reasons, until its
 // layout is settled with its owner in a follow-up.

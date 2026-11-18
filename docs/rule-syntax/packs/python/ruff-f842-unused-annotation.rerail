@@ -14,7 +14,7 @@
 //       name: bytes             not reported: only the first annotation counts
 //       age: int                not reported: read below
 //       print(age)
-#include "python/pyflakes.rr"
+#include "python/pyflakes.rerail"
 //   bare_annotation(a, l, x, f)   `x: T` with no value in scope f
 
 .violation F842(at: node, x: symbol) code "F842" "Local variable `{x}` is annotated but never used"

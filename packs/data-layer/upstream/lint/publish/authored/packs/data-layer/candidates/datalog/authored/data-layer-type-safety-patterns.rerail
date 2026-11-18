@@ -1,6 +1,6 @@
 // data-layer-type-safety-patterns: the clauses the converter does not convert (decision 0043).
 // Policy: gate/data-layer/packs/data-layer/candidates/rules-ast/data-layer-type-safety-patterns.json.
-// text-deprecated_filter_method is the converter's (../data-layer-type-safety-patterns.rr); every other clause is here.
+// text-deprecated_filter_method is the converter's (../data-layer-type-safety-patterns.rerail); every other clause is here.
 // Common to all: `syntax: valid` is !tape_syntax_error(d); a W `regex` on a node is a search over its node_text (match() is
 // whole-string, so the pattern is wrapped as (?s:.*)(?:…)(?s:.*)); `file.path.notRegex` a negated match on the path;
 // the finding is at the matched node's line(n, l). `has {field, stopBy: neighbor}` tests the field child only

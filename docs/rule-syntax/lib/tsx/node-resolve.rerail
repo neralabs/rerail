@@ -44,14 +44,14 @@
 // (builtin_spec, the Node.js module table), tsx/node-package (pkg_file) and core (package_for, package_field,
 // tsconfig_for, tsconfig_path).
 
-#include "tsx/node.rr"   // builtin_spec
-#include "tsx/node-package.rr"
+#include "tsx/node.rerail"   // builtin_spec
+#include "tsx/node-package.rerail"
 
 .decl spec_resolved(n: node, file: symbol)
 .input spec_resolved
 
-// The global require, as values.rr traces it: a CommonJS file's require, `const r = require; r(x)`, and
-// require.resolve. (Rows for values.rr's tables; the same rows may come with other tables.)
+// The global require, as values.rerail traces it: a CommonJS file's require, `const r = require; r(x)`, and
+// require.resolve. (Rows for values.rerail's tables; the same rows may come with other tables.)
 node_global("require"). node_global("global"). node_global("globalThis").   // globalThis.require too
 api_known("require"). api_known("require.resolve").
 

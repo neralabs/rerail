@@ -3,7 +3,7 @@
 .language typescript
 .mode steer
 .scope include "**/*"
-#include "tsx/eslint-b-literals.rr"
+#include "tsx/eslint-b-literals.rerail"
 //   compare_op; binop (tsx/eslint-a-expressions), token_text (tsx/eslint-a-common)
 
 // ESLint's no-self-compare: a comparison whose two sides are the same tokens, so its result is fixed (or it is

@@ -8,7 +8,7 @@
 
 // PYI035(n): a finding at node n, from clause `unassigned-dunder-all`.
 // Each rule below is one way the JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PYI035(at: node) "Give `__all__` a value in this stub, such as `__all__: list[str] = [\"name\", ...]` listing the public names; it has the same meaning as at runtime."
     suppress noqa "PYI035"
 PYI035_raw(n) :- kind(n, "expression_statement"), child(n, c1, _), kind(c1, "assignment"),
@@ -25,7 +25,7 @@ pyi035_special_name(n) :- kind(n, "tuple_pattern"), !pyi035_tok_has_1(n), child(
 // PYI035_unassigned_class_special_variable(n): a finding at node n, from clause `unassigned-class-special-variable`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PYI035_unassigned_class_special_variable(at: node, name: loc) code "PYI035" "Give `{name}` a value in this stub, such as a tuple of strings; it has the same meaning as at runtime."
     suppress noqa "PYI035"
 PYI035_unassigned_class_special_variable_raw(n, NAME) :- kind(n, "expression_statement"),

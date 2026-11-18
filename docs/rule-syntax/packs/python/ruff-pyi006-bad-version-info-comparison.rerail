@@ -10,7 +10,7 @@
 //   if sys.version_info > (3, 8):        ← PYI006
 //   if sys.version_info >= (3, 9):       fine
 //   if sys.version_info[0] == 3:         fine: a subscript is PYI003's business
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI006(at: node, msg: symbol) code "PYI006" "{msg}"
     suppress ruff "PYI006"

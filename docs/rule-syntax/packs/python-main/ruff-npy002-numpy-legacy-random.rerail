@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // callee_position(n): the JSON util `callee-position`, used where the JSON says `matches: "callee-position"`
 .decl npy002_callee_position(n: node)

@@ -8,8 +8,8 @@
 // count: see the table file.
 //   # see the 𝐁ug tracker      ← RUF003 at 𝐁
 //   # Привет                   not reported: a Russian word
-#include "python/ast.rr"
-#include "../packs/python/ruff-ruf001-ambiguous-unicode-character-string.confusables.rr"
+#include "python/ast.rerail"
+#include "../packs/python/ruff-ruf001-ambiguous-unicode-character-string.confusables.rerail"
 
 .violation RUF003(at: span, ch: symbol) code "RUF003"
     "Replace the look-alike character `{ch}` in this comment with the ASCII character it imitates, unless the text is meant to hold it (for example a word in another language)."

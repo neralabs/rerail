@@ -9,7 +9,7 @@
 //   except: logging.error("Hello", exc_info=True)              ← G201
 //   except: logging.error("Hello", exc_info=False)             not reported
 //   logging.error("Hello", exc_info=sys.exc_info())             not reported: no handler around it
-#include "python/logging.rr"
+#include "python/logging.rerail"
 
 .violation G201(at: node) code "G201"
     "Call `exception(...)` instead and drop `exc_info`: in an except block it logs the same traceback at ERROR level. Leave it if this object is not a standard logger."

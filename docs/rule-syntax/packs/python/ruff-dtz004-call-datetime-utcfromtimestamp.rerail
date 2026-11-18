@@ -9,7 +9,7 @@
 // `.replace(…)`) is not reported. Reported at the call. Only in a file that imports datetime.
 //   datetime.datetime.utcfromtimestamp(1234)                  ← DTZ004
 //   datetime.datetime.utcfromtimestamp(1234).astimezone()     not reported
-#include "python/datetime.rr"
+#include "python/datetime.rerail"
 
 .violation DTZ004(at: node) code "DTZ004"
     "Replace `utcfromtimestamp(ts)` with `fromtimestamp(ts, tz=datetime.timezone.utc)` for an aware UTC datetime. Keep it only where the value is mixed with naive datetimes that cannot change too."

@@ -1,6 +1,6 @@
 // data-layer-execution-authority-bypass, clause authority-sites (relational, partitionBy file), options at their
 // defaults (oracleAnalyzer false, entryPoint "all"; no stage reads them). Started from
-// native/src/code_rule_dsl/logic/programs/data_layer/execution_authority_bypass.rr, with its `ast(...)` inputs
+// native/src/code_rule_dsl/logic/programs/data_layer/execution_authority_bypass.rerail, with its `ast(...)` inputs
 // written out over the base relations, its @qualname folded in Datalog, its @replace(…, "/", ".") an @rx_replace
 // of the literal "/", and the module-text gate the rules-ast policy adds to raw_functions / raw_classes.
 //

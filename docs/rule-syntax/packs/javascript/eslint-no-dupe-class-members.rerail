@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
 
-#include "tsx/eslint-a-functions.rr"
+#include "tsx/eslint-a-functions.rerail"
 //   static_key, estree_key, member_kind, is_static
 
 // ESLint's no-dupe-class-members: a class member whose name an earlier member of the same class already

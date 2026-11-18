@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // in_test(n): the JSON util `in-test`, used where the JSON says `matches: "in-test"`
 .decl pyi003_in_test(n: node)
@@ -115,7 +115,7 @@ pyi003_int_tuple(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), pyi
 
 // PYI003(n, detail): findings from clauses `unrecognized-version-subscript`, `unrecognized-major-comparison`, `unrecognized-tuple-comparison`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PYI003(at: node, detail: symbol) "{detail}."
     suppress noqa "PYI003"
 PYI003_raw(n, "Index `sys.version_info` only with `[0]`, `[:1]` or `[:2]`, or compare the whole value against a tuple; type checkers do not understand other forms") :- pyi003_single_compare(n),

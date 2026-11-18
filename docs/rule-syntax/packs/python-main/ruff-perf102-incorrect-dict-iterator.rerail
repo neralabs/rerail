@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // elt(n): the JSON util `elt`, used where the JSON says `matches: "elt"`
 .decl perf102_elt(n: node)

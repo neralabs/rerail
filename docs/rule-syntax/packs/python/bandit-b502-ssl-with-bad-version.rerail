@@ -13,7 +13,7 @@
 //   ssl.SSLContext(ssl.PROTOCOL_TLSv1)                      not reported: positional
 //   ssl.wrap_socket(sock, ssl_version=ssl.PROTOCOL_TLS_CLIENT)   not reported
 
-#include "python/security.rr"   // qual_call, kwarg, kw_literal, report_at
+#include "python/security.rerail"   // qual_call, kwarg, kw_literal, report_at
 
 .violation B502(at: node) code "B502"
     "Select TLS 1.2 or newer here (e.g. ssl.PROTOCOL_TLS_CLIENT) instead of this SSLv2, SSLv3, TLS 1.0 or TLS 1.1 protocol."

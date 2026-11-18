@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // doc_expr(n): the JSON util `doc-expr`, used where the JSON says `matches: "doc-expr"`
 .decl d106_doc_expr(n: node)
@@ -36,7 +36,7 @@ d106_public_class(n) :- d106_demand_public_class(n), kind(n, "class_definition")
 // D106(n): a finding at node n, from clause `undocumented-public-nested-class`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation D106(at: node, name: loc) "Add a docstring to nested class `{name}` describing its purpose; it does not inherit its enclosing class's docstring."
     suppress noqa "D106"
 D106_raw(n, NAME) :- kind(n, "identifier"), match("[^_].*", n), node(_, n, _, _, _), NAME = n,
@@ -47,7 +47,7 @@ D106_raw(n, NAME) :- kind(n, "identifier"), match("[^_].*", n), node(_, n, _, _,
 // D106_undocumented_public_nested_class_in_package(n): a finding at node n, from clause `undocumented-public-nested-class-in-package`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation D106_undocumented_public_nested_class_in_package(at: node, name: loc) code "D106" "Add a docstring to nested class `{name}` describing its purpose; it does not inherit its enclosing class's docstring."
     suppress noqa "D106"
 D106_undocumented_public_nested_class_in_package_raw(n, NAME) :- kind(n, "identifier"),

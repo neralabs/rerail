@@ -8,7 +8,7 @@
 // Names compare exactly (the ignoreCase option is off); namespaced props (xlink:href) and spreads are skipped.
 //   <div a="1" b a="2" />       the second `a` is reported
 //   <div a="1" {...p} a="2" />  still reported: the spread does not separate them
-#include "tsx/react.rr"
+#include "tsx/react.rerail"
 
 .violation duplicate_prop(at: node, x: symbol)
     code "react/jsx-no-duplicate-props"

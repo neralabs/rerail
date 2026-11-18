@@ -9,7 +9,7 @@
 //   sys.version >= "3.5"     ← YTT103 at sys.version
 //   sys.version >= "3"       not this rule (YTT302)
 //   sys.version == "3.5"     not reported: an equality
-#include "python/misc2-version.rr"
+#include "python/misc2-version.rerail"
 
 .violation YTT103(at: node) code "YTT103"
     "Compare `sys.version_info` to a tuple such as `sys.version_info >= (3, 9)` instead of ordering `sys.version` against a string; string order misjudges 3.10 as older than 3.9."

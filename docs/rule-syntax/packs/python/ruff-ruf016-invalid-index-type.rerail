@@ -13,7 +13,7 @@
 //   [1][...]                ← RUF016: an ellipsis index
 //   [1][1:"a", 2]           ← RUF016 once, for the tuple; its slice is not looked into
 //   "abc"[i]                not reported
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 
 .violation RUF016(at: node, msg: symbol) code "RUF016" "{msg}"
     suppress ruff "RUF016"

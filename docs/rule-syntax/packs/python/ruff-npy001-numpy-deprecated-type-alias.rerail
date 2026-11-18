@@ -10,7 +10,7 @@
 //   from numpy import float
 //   float(1)                     ← NPY001 at the read, not at the import
 //   np.int64                     not reported
-#include "python/misc2-numpy.rr"
+#include "python/misc2-numpy.rerail"
 //   npy_ref(e, q)
 
 .violation NPY001(at: node, b: symbol) code "NPY001"

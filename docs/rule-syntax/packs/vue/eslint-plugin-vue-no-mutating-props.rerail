@@ -3,8 +3,8 @@
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/component.rr"
-#include "vue/mutation.rr"
+#include "vue/component.rerail"
+#include "vue/mutation.rerail"
 //   vcomp(o), vname(o, g, x, n), vsetup(o, f), vprops_call(c), vprop_name(c, x, n), tfree(r, x, a), vexpr(a, x),
 //   vmut_at(s, at, how, n), vmut_first(s, m, x)
 

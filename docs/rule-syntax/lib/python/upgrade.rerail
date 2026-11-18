@@ -1,6 +1,6 @@
 // python/upgrade: the vocabulary Ruff's pyupgrade (UP) rules share: the Python version the code targets, stubs
 // and `from __future__ import annotations`, and names of the typing modules. The import tables (UP026, UP035)
-// are in python/upgrade-imports.rr; format strings (UP030-UP032) in python/upgrade-format.rr.
+// are in python/upgrade-imports.rerail; format strings (UP030-UP032) in python/upgrade-format.rerail.
 //
 // Interface
 //   target_minor(m), targets(m)   the target Python version (python/version)
@@ -28,7 +28,7 @@
 //   # pythonVersion "3.8"
 //   from __future__ import annotations
 //   def f(x: List[int]): ...         typing_only(<List[int]>), future_annotations(d), !targets(9)
-#include "python/ruff.rr"   // call_nargs, call_kw, …; python/pyflakes (run_scope), python/ast, python/version
+#include "python/ruff.rerail"   // call_nargs, call_kw, …; python/pyflakes (run_scope), python/ast, python/version
 
 // ---- documents ---------------------------------------------------------------------------------------------------
 // future_annotations(d): `from __future__ import annotations` in the module's leading run: only a docstring and

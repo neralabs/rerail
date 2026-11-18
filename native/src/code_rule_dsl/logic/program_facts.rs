@@ -2,7 +2,7 @@
 //! row of a fixed schema, so a rule can read a program as data. A program written as facts reads back as the same
 //! program (`program`).
 //!
-//! These rows are not how a program is kept (decision 0155): a kept program is its `.rr` text (`program_text`). The
+//! These rows are not how a program is kept (decision 0155): a kept program is its `.rerail` text (`program_text`). The
 //! rows are made from a program when asked for, and the text's `.about` part is the rows of what has no syntax
 //! (`write_about`).
 //!
@@ -174,7 +174,7 @@ struct Writer<'a> {
     terms: i64,
     atoms: i64,
     literals: i64,
-    /// Whether the parts `.rr` syntax writes are written too (rules, declarations, facts, inputs, outputs), or only
+    /// Whether the parts `.rerail` syntax writes are written too (rules, declarations, facts, inputs, outputs), or only
     /// the rest (`write_about`, decision 0155).
     syntax: bool,
 }
@@ -278,7 +278,7 @@ impl Writer<'_> {
         self.rest(prog);
     }
 
-    /// What `.rr` syntax writes of `prog`: its rules, declarations, facts' rows, inputs and outputs.
+    /// What `.rerail` syntax writes of `prog`: its rules, declarations, facts' rows, inputs and outputs.
     fn syntax_parts(&mut self, prog: &Program) {
         for (r, rule) in prog.rules.iter().enumerate() {
             let head = self.atom(&rule.head);
@@ -315,7 +315,7 @@ impl Writer<'_> {
         }
     }
 
-    /// The rest: what `.rr` syntax has no form for, and each relation of facts by name (one may have no rows).
+    /// The rest: what `.rerail` syntax has no form for, and each relation of facts by name (one may have no rows).
     fn rest(&mut self, prog: &Program) {
         for rel in &prog.nullary {
             self.row("nullary", vec![s(rel)]);
@@ -470,7 +470,7 @@ pub fn write(facts: &mut Facts, p: &str, prog: &Program) {
     Writer { facts, p: p.to_owned(), terms: 0, atoms: 0, literals: 0, syntax: true }.program(prog);
 }
 
-/// What of `prog` its `.rr` text has no syntax for (`program_text`, decision 0155), as facts of program `p`: `program`
+/// What of `prog` its `.rerail` text has no syntax for (`program_text`, decision 0155), as facts of program `p`: `program`
 /// reads them back as a program of those parts alone.
 pub fn write_about(facts: &mut Facts, p: &str, prog: &Program) {
     Writer { facts, p: p.to_owned(), terms: 0, atoms: 0, literals: 0, syntax: false }.program(prog);
@@ -892,7 +892,7 @@ pub fn program(facts: &Facts, p: &str) -> Result<Program, String> {
     Reader::of(facts, p)?.program()
 }
 
-/// `facts` as a `.rr` document: the schema's declarations and every row as a fact. `rr::parse` reads it back as the
+/// `facts` as a `.rerail` document: the schema's declarations and every row as a fact. `rr::parse` reads it back as the
 /// same rows.
 pub fn document(facts: &Facts, extra: &BTreeMap<Name, crate::code_rule_dsl::logic::front::List<(Name, Name)>>) -> Result<String, String> {
     let mut decls = schema();

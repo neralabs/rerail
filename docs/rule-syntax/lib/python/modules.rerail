@@ -12,7 +12,7 @@
 // (PEP 561's order; t21 §2.2. A workspace `.pyi` beside its `.py` is not read yet: the corpus reads `.py` files.)
 //
 // It reads only relations both shapes have, and the engine's `dir_entry`, `file_line`, `load` and `loaded`.
-#include "python/env.rr"
+#include "python/env.rerail"
 
 // py_import(i, q): import statement i names module q. Relative imports are placed from the document's package, one
 // level up per dot after the first.
@@ -51,7 +51,7 @@ py_want("builtins").
 py_docmod(d, p, q) :- doc(d, p, q), q != "".
 .decl py_workspace(q: symbol)
 py_workspace(q) :- py_docmod(_, p, q), !loaded(p, _, _).
-// A module of the run's own tree that was loaded (phase 1 loads every source file, `sources.rr`): said by py_own.
+// A module of the run's own tree that was loaded (phase 1 loads every source file, `sources.rerail`): said by py_own.
 .decl py_own(q: symbol) extensible
 py_workspace(q) :- py_own(q).
 

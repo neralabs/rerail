@@ -18,7 +18,7 @@
 // names it: `grade` has cyclomatic complexity 7, over the ceiling of 6. A function with no name of its own takes
 // the one its language's table gives it (a variable, a field, an object key); otherwise it is "This function".
 //
-// Each language is a table (lib/complexity/<language>.rr) that gives rows to three relations, and includes this:
+// Each language is a table (lib/complexity/<language>.rerail) that gives rows to three relations, and includes this:
 //   cc_boundary(k)        k is a function kind: a function of this kind is scored, and counting stops at one
 //   cc_decision(n, i)     n is a decision point; i tells apart several at one node (Rust's let-chain `&&`s), else 0
 //   cc_name(f, x)         function f is called x in the message (no row: "This function")

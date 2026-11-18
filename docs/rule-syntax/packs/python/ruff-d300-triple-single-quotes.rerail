@@ -9,7 +9,7 @@
 //   '''Summary.'''           ← D300
 //   "Summary."               ← D300
 //   '''Says """ here.'''     not reported
-#include "python/docstrings.rr"
+#include "python/docstrings.rerail"
 
 .violation D300(at: node) code "D300"
     "Rewrite this docstring with triple double quotes `\"\"\"`; if its text ends with a double quote, escape that quote or reword it."

@@ -11,7 +11,7 @@
 // Literals typed with a time zone or date (DATE '…', TIMESTAMPTZ '…') may depend on the session, so they count
 // as expressions, not constants. A COLLATE on the right is looked through.
 
-#include "sql/syntax.rr"
+#include "sql/syntax.rerail"
 
 .violation ST10(at: loc, why: symbol) code "ST10" "{why}"
     suppress sqlfluff "ST10", "all", "structure", "structure.constant_expression"

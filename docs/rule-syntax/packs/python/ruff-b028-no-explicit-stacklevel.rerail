@@ -12,7 +12,7 @@
 //   warnings.warn("test", skip_file_prefixes=())           ← B028: the default, empty
 //   warnings.warn("test", DeprecationWarning, 1)           not reported
 //   warnings.warn(*args)                                   not reported
-#include "python/bugbear.rr"
+#include "python/bugbear.rerail"
 
 .violation B028(at: node) code "B028"
     "Pass stacklevel= to this warnings.warn() call, usually 2, so the warning points at the caller."

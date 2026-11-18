@@ -1,5 +1,5 @@
 // complexity/ecma: lizard's decision points in TypeScript and JavaScript (and a Vue component's scripts), on
-// tree-sitter-typescript and tree-sitter-javascript, for complexity/cyclomatic.rr.
+// tree-sitter-typescript and tree-sitter-javascript, for complexity/cyclomatic.rerail.
 //
 // A function is a function declaration or expression, an arrow function, a method (getters, setters and
 // constructors are methods) or a generator. A class is not scored itself. Decisions:
@@ -16,7 +16,7 @@
 //     if (a && b) return 1;       if, &&
 //     return a ? 2 : 3;           ?:
 //   }
-#include "complexity/cyclomatic.rr"
+#include "complexity/cyclomatic.rerail"
 
 cc_boundary("function_declaration"). cc_boundary("function_expression"). cc_boundary("arrow_function").
 cc_boundary("method_definition"). cc_boundary("generator_function"). cc_boundary("generator_function_declaration").

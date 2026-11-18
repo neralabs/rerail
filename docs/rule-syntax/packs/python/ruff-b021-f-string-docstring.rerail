@@ -11,7 +11,7 @@
 //       f"""hello {VARIABLE}!"""      ← B021
 //   def bar():
 //       """hello"""                   not reported
-#include "python/ast.rr"
+#include "python/ast.rerail"
 
 .violation B021(at: node) code "B021"
     "f-string used as docstring. Python will interpret this as a joined string, rather than a docstring."

@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/ts-a.rr"
+#include "tsx/ts-a.rerail"
 //   non_null, in_chain
 
 // typescript-eslint's no-non-null-asserted-optional-chain: `?.` says the value may be undefined; a `!` on the

@@ -15,9 +15,9 @@
 //   self.bar._private               ← SLF001: the receiver is `self.bar`, not `self`
 //   def __eq__(self, other): return self._x == other._x     not reported
 //   def g(self, other: Self): other._x                        not reported
-#include "python/misc2-self.rr"
+#include "python/misc2-self.rerail"
 //   slf_super(o), slf_receiver_name(o), slf_own_class(o), slf_same_instance(o, e)
-#include "python/typing.rr"
+#include "python/typing.rerail"
 //   pyi_sym(e, q): `os._exit` through this file's imports, as Ruff resolves it
 
 .violation SLF001(at: node, attr: symbol) code "SLF001"

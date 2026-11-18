@@ -10,7 +10,7 @@
 //   class A:
 //       __metaclass__ = type          ← UP001
 //   __metaclass__ = type              not reported: not in a class
-#include "python/ast.rr"
+#include "python/ast.rerail"
 //   assign_target(a, t), assign_value(a, v), unparen(e, m)
 
 .violation UP001(at: node) code "UP001"

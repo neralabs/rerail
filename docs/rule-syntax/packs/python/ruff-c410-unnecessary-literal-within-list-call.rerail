@@ -9,7 +9,7 @@
 //   list([1, 2])       ← C410: [1, 2], the copy of a list nothing else holds
 //   list((1, 2))       ← C410: [1, 2]
 //   list([1], [2])     not reported
-#include "python/comprehensions.rr"
+#include "python/comprehensions.rerail"
 //   c4_call(c, x), c4_only(c, a), list_like(e, k)
 
 .violation C410(at: node, id: symbol, msg: symbol) code "C410" "{msg}"

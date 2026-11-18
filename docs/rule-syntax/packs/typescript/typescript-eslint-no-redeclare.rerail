@@ -4,9 +4,9 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/ts-b-scope.rr"
+#include "tsx/ts-b-scope.rerail"
 //   variable, scope_type
-#include "tsx/eslint-b-scope.rr"
+#include "tsx/eslint-b-scope.rerail"
 //   global_item, es_builtin, global_var
 
 // typescript-eslint's no-redeclare: a name is declared once per scope. Values and types count together:

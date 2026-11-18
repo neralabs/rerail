@@ -3,7 +3,7 @@
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/code.rr"
+#include "vue/code.rerail"
 //   vdir(e, a, d, arg), vmods(a, m), vval(a, v), vfor_alias(a, i, p), tvar(e, x, id, k), tref(r, x, a)
 
 // eslint-plugin-vue's valid-v-for. On each v-for:

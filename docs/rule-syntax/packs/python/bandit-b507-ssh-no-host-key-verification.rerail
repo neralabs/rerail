@@ -11,7 +11,7 @@
 //   client.set_missing_host_key_policy(WarningPolicy)               B507
 //   client.set_missing_host_key_policy(paramiko.RejectPolicy())     not reported
 
-#include "python/security.rr"   // imported_like, call_leaf, pos_arg
+#include "python/security.rerail"   // imported_like, call_leaf, pos_arg
 
 .violation B507(at: node) code "B507"
     "Set paramiko.RejectPolicy and load known host keys instead of auto-accepting unknown ones; that invites man-in-the-middle attacks."

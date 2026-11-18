@@ -12,7 +12,7 @@
 //   Returns:                 ← D411
 //       int
 //   """
-#include "python/docstrings-sections.rr"
+#include "python/docstrings-sections.rerail"
 
 .violation D411(at: span, k: symbol) code "D411"
     "Add a blank line before the `{k}` section so it is separated from the text above."

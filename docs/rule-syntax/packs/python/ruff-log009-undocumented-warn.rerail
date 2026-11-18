@@ -10,7 +10,7 @@
 //   logging.WARN                      ← LOG009
 //   from logging import WARN; WARN    ← LOG009 at the second WARN
 //   logging.WARNING                   not reported
-#include "python/logging.rr"
+#include "python/logging.rerail"
 
 .violation LOG009(at: node) code "LOG009"
     "Replace this use of the undocumented `WARN` alias with `logging.WARNING` (or `WARNING` imported from `logging`); the value is identical."

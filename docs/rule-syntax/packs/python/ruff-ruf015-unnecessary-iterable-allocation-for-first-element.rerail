@@ -12,7 +12,7 @@
 //   list(x).pop(0)                ← RUF015
 //   list(x)[0x0]                  ← RUF015: the index is the int 0 in any spelling
 //   list(x)[1]                    not reported
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 
 .violation RUF015(at: node, msg: symbol) code "RUF015" "{msg}"
     suppress ruff "RUF015"

@@ -4,9 +4,9 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-a-functions.rr"
+#include "tsx/eslint-a-functions.rerail"
 //   limit
-#include "tsx/modules.rr"
+#include "tsx/modules.rerail"
 //   program, scope_stmt
 
 // ESLint's max-classes-per-file: a file with more than `max` classes (default 1; `max`, or the number form).

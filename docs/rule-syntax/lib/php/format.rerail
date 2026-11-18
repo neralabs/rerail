@@ -27,9 +27,9 @@
 // printf(), the second of sscanf() (php_format_arg). Each relation is tested once per distinct string. No match_all: each format is first reduced, by @replace_all, to its placeholders, one
 // short code each ("<argnum:width-star width-n:precision-star precision-n>"), and counted with @count_matches.
 //
-// Builds on php/values.rr (php_value).
+// Builds on php/values.rerail (php_value).
 
-#include "php/values.rr"
+#include "php/values.rerail"
 
 .decl php_format_arg(c: node, f: node, style: symbol)  // f is call c's format argument, style "printf" or "scanf"
 php_format_arg(c, f, "printf") :- (php_call(c, "sprintf") ; php_call(c, "printf")), php_arg(c, 0, f).

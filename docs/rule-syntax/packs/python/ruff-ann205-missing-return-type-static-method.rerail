@@ -10,7 +10,7 @@
 //   class C:
 //       @staticmethod
 //       def make(a: int): ...        ← ANN205
-#include "python/annotations.rr"
+#include "python/annotations.rerail"
 
 .violation ANN205(at: node, name: symbol) code "ANN205"
     "Add a return type annotation to static method `{name}`, such as `-> int`, naming the type it returns."

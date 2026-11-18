@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-a-control.rr"
+#include "tsx/eslint-a-control.rerail"
 //   deparen, deparen_count
 
 // ESLint's no-sequences: the comma operator, reported at its first comma. A for loop's initialiser and update

@@ -1,4 +1,4 @@
-// lib/data-layer/pub-lines.rr: a file's lines as Python's str.splitlines() numbers them. Many data-layer scripts
+// lib/data-layer/pub-lines.rerail: a file's lines as Python's str.splitlines() numbers them. Many data-layer scripts
 // read a file with `enumerate(text.splitlines(), start=1)` and report the line number. core's src_line splits
 // only at \n, \r\n and \r, as tokenizers do; splitlines() also splits at \v, \f, \x1c, \x1d, \x1e, \x85,
 // U+2028 and U+2029. On a file without those (nearly all), py_line is src_line.

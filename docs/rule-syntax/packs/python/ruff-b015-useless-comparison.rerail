@@ -11,7 +11,7 @@
 //   def test():
 //       1 in (1, 2)            ← B015 "… at end of function scope. Did you mean to return …"
 //   assert 1 in (1, 2)         not reported
-#include "python/ast.rr"
+#include "python/ast.rerail"
 
 .violation B015(at: node, msg: symbol) code "B015" "{msg}"
     suppress ruff "B015"

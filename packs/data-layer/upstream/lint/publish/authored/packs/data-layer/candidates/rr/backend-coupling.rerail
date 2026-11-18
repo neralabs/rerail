@@ -6,7 +6,7 @@
 .scope include "api/**/*.py", "data_layer/**/*.py", "_internal/**/*.py", "impl/**/*.py", "l*/**/*.py"
 .scope exclude "**/.git/**", "**/.venv/**", "**/tmp/**", "**/__pycache__/**", "**/tests/**"
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_backend_coupling.py
-#include "python/ast.rr"
+#include "python/ast.rerail"
 .decl bc_config(key: symbol, i: number, value: symbol)
 bc_config("BACKEND_PREFIXES", 0, "impl.doltdb").
 bc_config("BACKEND_PREFIXES", 1, "impl.mariadb").

@@ -13,7 +13,7 @@
 //   def __iter__(self) -> Iterator[int]     in a class derived from Iterator                ← PYI034
 //   def __aiter__(self) -> AsyncIterator    in a class derived from AsyncIterator           ← PYI034
 // Reported at the method name.
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI034(at: node, m: symbol, c: symbol, msg: symbol) code "PYI034" "{msg}"
     suppress ruff "PYI034"

@@ -3,7 +3,7 @@
 .language typescript
 .mode steer
 .scope include "**/*"
-#include "tsx/eslint-b-objects.rr"
+#include "tsx/eslint-b-objects.rerail"
 //   forwarding, natural_this, call_arg_count, call_arg, dotted_member, deparen
 
 // ESLint's no-useless-call: `f.call(t, …)` or `f.apply(t, [ … ])` where t is the `this` f gets anyway:

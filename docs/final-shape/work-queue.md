@@ -156,7 +156,7 @@ into notes once the queue is done).
     `RERAIL_DUMP_PROGRAMS` and `RERAIL_TIMELINE` change nothing. `keeps.rs` is the plan's, not preparation's (Q14).
     `native_stratum_`: nothing found.
   - *Review 5* (0442f34dd; by me, the user stopped subagents): (1) `RERAIL_SHOWN_COPIES` changes the rules
-    (`hiding::fold_own`, corpus.rs 2630, before the prepared key) and keyed nothing; (2) the `.rr` lowering
+    (`hiding::fold_own`, corpus.rs 2630, before the prepared key) and keyed nothing; (2) the `.rerail` lowering
     `combine_read`'s `rr::parse` runs reads `RERAIL_NODE_SOURCES` (`sources_on_request`), `RERAIL_ORDER_RAW` and,
     through `syntax::definition_ids`, `RERAIL_NODE_IDS` (`front::finish`'s `order_nodes`), and `combine_read`
     itself `RERAIL_SAME` (`same_relations`): all change the combined program, kept in memory and in the store
@@ -248,7 +248,7 @@ into notes once the queue is done).
 
 ### Q4. The `.rdl` comparison checks the on-request step independently
 
-- **Keep**: the `.rdl` ↔ `.rr` comparison as an independent check of lowering, 0174's requests.
+- **Keep**: the `.rdl` ↔ `.rerail` comparison as an independent check of lowering, 0174's requests.
 - **Done when**: `normalized` no longer runs the lowering's own `sources_on_request`; the expected requests are
   derived independently, or the comparison is of the pre-request programs plus a separate check of the requests;
   either `difference` compares inputs in order, or evidence shows input order carries no meaning anywhere
@@ -721,11 +721,11 @@ pass.
   still fails: python-main's programs meeting "a cat's text read by rx has no device form" are 462, the ledger says
   432, with the pack's files unchanged since 692cc9772 (so it is the lowering's, not traced; not re-blessed).
 - **`every_operation_runs_on_every_executor` traced and re-blessed** (2026-11-16). The packs ledger counts a
-  program toward a gap by the operations its `.rr` syntax names (`census`, no lowering), so the 30 are files, not
+  program toward a gap by the operations its `.rerail` syntax names (`census`, no lowering), so the 30 are files, not
   the lowering. The pack's files were unchanged since 692cc9772, but they changed before it: 27b616adc (2026-11-14,
   "ast-grep any/field/compare semantics in the translator") regenerated python-main, and the files naming `match(`
   went from 388 to 418 (token tests such as `b307_tok_has_1(n) :- op(n, t2), match("eval", t2)` in
-  `bandit-b307-eval.rr`, `ruff-b905-…`, `ruff-dtz001-…`). The ledger counts a file toward every probe of an
+  `bandit-b307-eval.rerail`, `ruff-b905-…`, `ruff-dtz001-…`). The ledger counts a file toward every probe of an
   operation it names, so all 30 land on the bound-pattern row, the one `match` probe not on the device. The
   ledger was last blessed at a9291fadd, before that commit. Re-blessed: `packs.tsv`'s one line moves (668 to 698,
   python-main 432 to 462), `matrix.tsv` is unchanged, and no new kind of gap appears. Passes.
@@ -865,7 +865,7 @@ pass.
 - **Found** (2026-11-16, at the hub merge 709a47b26): `cache_architecture::every_stored_table_is_a_relations_the_
   stores_own_or_a_cache_not_yet_moved` refuses `memo_entries` and `memo_packs` (0240's tables; schema.rs and the
   test are the hub's unchanged); `rr::tape_tests::a_policy_refused_its_kept_inputs_runs_again_over_its_store`
-  fails with "@rr_node_text without the run's long-text nodes bound" (0268) on `public-api-triples.rr`, with the
+  fails with "@rr_node_text without the run's long-text nodes bound" (0268) on `public-api-triples.rerail`, with the
   hub's `rr/lower.rs` and `simplify.rs` too (so not 0291).
 - **Found** (2026-11-16, while validating 0297; all five fail at 880f2a0de without 0297's change):
   `plan::corpus::base_tests::base_relations_read_are_inputs` and `plan::corpus::phases::tests::a_phase_hands_on_
@@ -1021,7 +1021,7 @@ pass.
 
 ### Q37. (Q28, then Q31, on Native-and-GPU-strata) A rule that copies a view's columns is a stratum
 
-- **Found** (2026-11-16, Native-and-GPU-strata): `kind(n, k) :- node(_, n, k, _, _).` (`typing/programs/calls.rr`)
+- **Found** (2026-11-16, Native-and-GPU-strata): `kind(n, k) :- node(_, n, k, _, _).` (`typing/programs/calls.rerail`)
   copies the `node` view: 3.5 M rows, 0.28–0.41 s of CPU a cold run of hogql, the costliest stratum with an exact
   estimate. A rule whose body is one view atom, binding distinct variables, is that view's columns.
 - **Whose**: lowering (a request and what its readers read, 0291), where cost-classifier works now. Not taken here.
@@ -1232,7 +1232,7 @@ pass.
 - **Done when**: the faults' detail lines from a failing run name what the observer recorded, and the cause is fixed.
   The m3 was short of disk (38 GB free, the farm's floor 40) when this was written, so it is not reproduced yet.
 - **Record** (2026-11-16, the m3 with 133 GB free): reproduced, and named. The warm run straight after the cold one
-  re-records all 317 rule files (detail: "317 paths, first …/rules/bandit-b101-assert-used.rr"); warm runs 5 s and 20 s
+  re-records all 317 rule files (detail: "317 paths, first …/rules/bandit-b101-assert-used.rerail"); warm runs 5 s and 20 s
   later record nothing. The check copies the rules in just before the cold run, which reads them inside the racy
   window (`RACY_NS`, 2 s: an answer is trusted only when recorded that long after the path changed, git's rule). The
   answer was kept untrusted, so the next run read each file again and recorded it: a write. The m1max is slower to
@@ -1500,5 +1500,5 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
 ### Q67. Every workload on formats 15, 16 and 16z side by side, before format 15 is retired (0336 §3)
 
 - **Done when**: each workload runs on 15, 16 and 16z with the same finding keys (the loose findings contract) and
-  its costs recorded per format; every difference is fixed; `.rr` has a format 16 table. Then format 15 is retired
+  its costs recorded per format; every difference is fixed; `.rerail` has a format 16 table. Then format 15 is retired
   for documents.

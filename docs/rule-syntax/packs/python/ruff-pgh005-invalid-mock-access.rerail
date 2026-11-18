@@ -11,7 +11,7 @@
 //   my_mock.assert_called_once_with()      not reported
 //   assert my_mock.called                  not reported: a real attribute
 // Ruff reports the misspelt names in a bare expression statement (`my_mock.not_called()`) only in preview.
-#include "python/ast.rr"
+#include "python/ast.rerail"
 
 .violation PGH005(at: node, msg: symbol) code "PGH005" "{msg}"
     suppress ruff "PGH005"

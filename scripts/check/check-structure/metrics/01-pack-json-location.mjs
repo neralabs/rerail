@@ -5,9 +5,9 @@
 // not packs; they live with the other fixture data.
 // Exemption `pack-test-data`: under `packs/<id>/upstream/` a pack.json is pack test data (a recorded copy of a pack, or
 // one in a publish request on its way to S3), never a pack.
-// Exemption `workbench` (the `.rr` workbench, kept in git as it is: docs/repository-structure.md, "Kept as they are"):
+// Exemption `workbench` (the `.rerail` workbench, kept in git as it is: docs/repository-structure.md, "Kept as they are"):
 // `docs/rule-syntax/packs/python-main/source/pack.json` is main's Python pack manifest as the workbench translated it,
-// the source of the `.rr` rules beside it; never loaded as a pack.
+// the source of the `.rerail` rules beside it; never loaded as a pack.
 
 import { basename, finding, sortFindings } from "../lib.mjs";
 

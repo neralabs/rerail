@@ -14,7 +14,7 @@
 //   list(map(lambda x: x * 2, xs))      ← C417: [x * 2 for x in xs]
 //   dict(map(lambda v: (v, v**2), xs))  ← C417: {v: v**2 for v in xs}
 //   map(lambda x=1: x, xs)    map(lambda x, y: x, xs, ys)    map(f, xs)      not reported
-#include "python/comprehensions.rr"
+#include "python/comprehensions.rerail"
 //   c4_builtin(c, x), c4_only(c, a), call_nkwargs(c, 0), list_like(e, k); ast_parent, param from python/ast, names
 
 .violation C417(at: node, id: symbol, msg: symbol) code "C417" "{msg}"

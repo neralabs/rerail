@@ -22,7 +22,7 @@
 //! does each later chunk of a run, where the first chunk's choices were made at the same size.
 //!
 //! Kept in the process (each part of a run, each chunk), and across processes in the tape cache: an entry of facts
-//! under a source named by the prepared program's key, a rewritten program as its `.rr` text (`program_text`, decision
+//! under a source named by the prepared program's key, a rewritten program as its `.rerail` text (`program_text`, decision
 //! 0155) named by its digest. The run's manifest names that source and the entry's plan (`named`), so collection keeps
 //! the entry while it keeps the run.
 

@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/ts-b-scope.rr"
+#include "tsx/ts-b-scope.rerail"
 //   resolves, var_decl, deparen, estree_parent
 
 // typescript-eslint's prefer-for-of: a counting loop `for (let i = 0; i < a.length; i++)` whose body uses i

@@ -10,7 +10,7 @@
 //   select a.id, b.id from t               the second id
 // Items with no name (an expression without an alias) take no part.
 
-#include "sql/syntax.rr"
+#include "sql/syntax.rerail"
 
 .violation AL08(at: node, x: symbol) code "AL08" "Reuse of column alias '{x}'."
     suppress sqlfluff "AL08", "aliasing", "aliasing.unique", "aliasing.unique.column", "all", "core"

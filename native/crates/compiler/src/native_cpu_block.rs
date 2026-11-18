@@ -3148,7 +3148,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
     // register (`Run`), each the rule most first bytes take of its form, where their tests
     // are all by first-byte bits (`TOKEN_TESTS`, each on its rule's bytes alone). Both lasts
     // straight-line and one `select`, no branch between them: a run past its block's word
-    // goes to its rule's block. Most tokens are of the two (`.rr`: punctuation and words).
+    // goes to its rule's block. Most tokens are of the two (`.rerail`: punctuation and words).
     let reg_of = |o: u16| regs.and_then(|g| g.runs.iter().find(|&&(k, _)| k == o).map(|&(_, v)| v));
     // The fused rules' exit of their own (`fdone`, as `done`'s): their tokens are never a
     // reader's or an extra, so the loop's tail for them knows it (the lean lexer's run loop).

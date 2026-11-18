@@ -9,7 +9,7 @@
 // match class pattern and inside a string annotation); a bare `ByteString` after the import is not reported again.
 //   from typing import ByteString          ← PYI057 at `ByteString`
 //   def f(x: collections.abc.ByteString)   ← PYI057
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI057(at: node) code "PYI057" "Use `collections.abc.Buffer` (`typing_extensions.Buffer` before Python 3.12) or `bytes | bytearray | memoryview` instead of `ByteString`; it is deprecated and has unclear semantics."
     suppress ruff "PYI057"

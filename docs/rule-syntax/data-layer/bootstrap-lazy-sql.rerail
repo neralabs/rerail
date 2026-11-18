@@ -6,11 +6,11 @@
 .scope tests false
 // Python linter: scripts/lint_bootstrap_lazy_sql.py, report-only (enforcement "report"). In the bootstrap state
 // module: BLB-001 query_lazy(…).execute_lazy(), BLB-002 a for loop over a row collection, BLB-003 model_dump /
-// model_copy, BLB-004 an eager schema probe. The findings are lib/data-layer/boot-lazy-sql.rr's blb.
+// model_copy, BLB-004 an eager schema probe. The findings are lib/data-layer/boot-lazy-sql.rerail's blb.
 // The linter also scans any file named bootstrap.py or with "bootstrap" in its absolute path when called
 // directly; the plugin scans only the file above, which is what .scope says.
 
-#include "data-layer/boot-lazy-sql.rr"
+#include "data-layer/boot-lazy-sql.rerail"
 
 .violation BLB(at: node, c: symbol, what: symbol) code {c} "bootstrap code leaves SQL/proof-owned processing: {what}"
 BLB(at, c, what) :- blb(at, c, what).

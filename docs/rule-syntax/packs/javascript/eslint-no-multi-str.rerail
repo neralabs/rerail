@@ -3,7 +3,7 @@
 .language typescript
 .mode steer
 .scope include "**/*"
-#include "tsx/eslint-a-expressions.rr"
+#include "tsx/eslint-a-expressions.rerail"
 
 // ESLint's no-multi-str: a string literal whose source spans lines, which only a backslash before the line
 // break allows ('a \⏎ b'). Template literals are not string literals. A string that is JSX's own, an attribute

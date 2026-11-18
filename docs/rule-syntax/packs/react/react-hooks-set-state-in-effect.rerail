@@ -13,7 +13,7 @@
 // One finding per effect, at the first such call, as the compiler stops at it.
 // The function called or passed must be declared in the component's render code; one declared inside the
 // effect is not followed, as the compiler does not.
-#include "tsx/react-compiler.rr"
+#include "tsx/react-compiler.rerail"
 
 .violation set_state_in_effect(at: node, msg: symbol)
     code "react-hooks/set-state-in-effect"

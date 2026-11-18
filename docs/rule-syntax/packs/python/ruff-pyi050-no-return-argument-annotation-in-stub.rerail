@@ -9,8 +9,8 @@
 // `*args` and `**kwargs` included, or the string "NoReturn". `Never` is the name for an uninhabited argument.
 // Only a whole annotation counts: `list[NoReturn]` and return annotations are not checked.
 //   def f(x: NoReturn): ...        ← PYI050
-#include "python/typing.rr"
-#include "python/version.rr"   // targets
+#include "python/typing.rerail"
+#include "python/version.rerail"   // targets
 
 .violation PYI050(at: node) code "PYI050" "Annotate this parameter as `Never` instead of `NoReturn`, importing it from `typing_extensions` (or `typing` on Python 3.11+); the two are equivalent for type checkers."
     suppress ruff "PYI050"

@@ -11,8 +11,8 @@
 // and flips `<` and `>`, is safe: it is offered here when the comparison holds no comment.
 //   if 42 == age: …     if "x" < y: …      if CONST == x: …      ← SIM300: age == 42, y > "x", x == CONST
 //   if 42 == CONST: …   if x == 42: …      if f() == x: …        not reported
-#include "python/simplify.rr"
-#include "python/bugbear.rr"
+#include "python/simplify.rerail"
+#include "python/bugbear.rerail"
 //   cmp(c, op, l, r) from python/names; unparen(e, m) from python/ruff; ruff_literal(e) from python/bugbear
 
 .violation SIM300(at: node, l: node, op: symbol, r: node, p: symbol) code "SIM300"

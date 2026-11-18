@@ -2,7 +2,7 @@
 // reach, keyed by symbols. It reads module-level statements, imports, class headers and the definitions in class
 // bodies, and annotations as written; it never reads a function's body.
 //
-// Its documents are the workspace's files and the libraries their imports reach, both phase 1's (`sources.rr`): the
+// Its documents are the workspace's files and the libraries their imports reach, both phase 1's (`sources.rerail`): the
 // imports were resolved there, to their fixed point, and the libraries loaded. Reading `sources__library` takes the
 // libraries as this phase's documents; it loads nothing itself.
 //
@@ -19,8 +19,8 @@
 //                                         param("m.C.run", 1, "n", "int").  ret("m.C.run", "bool").
 // ```
 
-#include "core.rr"
-#include "python/conditions.rr"
+#include "core.rerail"
+#include "python/conditions.rerail"
 
 .phase struct
 .export unit, def, binds, base, member, param, ret, vann, alias, flag, shape, tvar, module_file, at, ann, annarg, all

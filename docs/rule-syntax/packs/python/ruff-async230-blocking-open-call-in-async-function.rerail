@@ -9,7 +9,7 @@
 //   async def f(): open("a")                      ← ASYNC230
 //   async def f(): p = Path("a"); p.open()        ← ASYNC230 at p.open
 //   async def f(): await anyio.open_file("a")     not reported
-#include "python/async-demand.rr"
+#include "python/async-demand.rerail"
 
 .violation ASYNC230(at: node) code "ASYNC230"
     "Open this file with an async file API, such as `anyio.open_file()`, `trio.open_file()` or `aiofiles.open()`."

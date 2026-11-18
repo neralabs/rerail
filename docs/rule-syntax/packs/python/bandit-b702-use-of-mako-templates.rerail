@@ -9,7 +9,7 @@
 //   mako.template.Template(text)           B702
 //   jinja2.Template(text)                  not reported (Jinja2 is B701)
 
-#include "python/security.rr"   // qual_call
+#include "python/security.rerail"   // qual_call
 
 .violation B702(at: node) code "B702"
     "Mako templates do not provide environment-wide escaping; sanitize variables with the n, h, or x filters."

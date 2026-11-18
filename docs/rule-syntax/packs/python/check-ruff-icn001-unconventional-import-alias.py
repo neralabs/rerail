@@ -1,4 +1,4 @@
-"""Checks that ruff-icn001-unconventional-import-alias.aliases.rr round-trips: rebuilding the JSON's module regexes
+"""Checks that ruff-icn001-unconventional-import-alias.aliases.rerail round-trips: rebuilding the JSON's module regexes
 from the table gives the JSON's transforms, in order."""
 import importlib.util, json, os, re
 HERE = os.path.dirname(os.path.abspath(__file__))

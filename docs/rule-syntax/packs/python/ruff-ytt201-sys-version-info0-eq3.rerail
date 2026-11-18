@@ -8,7 +8,7 @@
 //   sys.version_info[0] == 3      ← YTT201 (eq message)
 //   version_info[0] != 3          ← YTT201 (not-eq message), after `from sys import version_info`
 //   sys.version_info[0] >= 3      not reported
-#include "python/misc2-version.rr"
+#include "python/misc2-version.rerail"
 
 .violation YTT201(at: node, msg: symbol) code "YTT201" "{msg}"
     suppress ruff "YTT201"

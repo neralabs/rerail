@@ -13,7 +13,7 @@
 //       fns.append(lambda: x)                  ← B023 at the `x` in the lambda
 //       fns.append(lambda x=x: x)              not reported: x is a parameter
 //       sorted(ys, key=lambda y: y + x)        not reported: consumed now
-#include "python/bugbear-loops.rr"
+#include "python/bugbear-loops.rerail"
 
 .violation B023(at: node, x: symbol) code "B023"
     "Bind `{x}` as a default argument, such as `{x}={x}`, so the function keeps this iteration's value."

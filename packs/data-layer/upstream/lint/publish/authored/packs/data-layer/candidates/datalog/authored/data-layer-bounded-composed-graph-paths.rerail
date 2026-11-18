@@ -69,7 +69,7 @@ text_contract_def_first(k, p, l) :- text_contract_def_back(k, p, _), l = min x :
 // ---- word: the first line holding NAME between Python word boundaries (text-contract-67..70) ----------------------
 // The SQL searches N for left_word || NAME || right_word (stage python_word_boundaries): left_word is `\A` or one
 // character outside Python's `\w` (str.isalnum() or `_`, in the stage's own Unicode tables), right_word `\z` or one
-// such character. text_contract_nonword is the stage's class, its JSON-escaped text verbatim (an .rr literal decodes
+// such character. text_contract_nonword is the stage's class, its JSON-escaped text verbatim (an .rerail literal decodes
 // `\uXXXX` and surrogate pairs as JSON does), searched with the regex crate as rx_matches searches. The line is the
 // one NAME starts on (rx_extract's group 1 runs through left_word's character, so a `\n` it takes is counted, and
 // the leftmost match is the first NAME so bounded). Per line: a line's start is N's start or follows a `\n`, its end

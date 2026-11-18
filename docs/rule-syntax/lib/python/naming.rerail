@@ -38,7 +38,7 @@
 //   class bad_class: ...                     N801: does not start with a capital, or has `_`
 //   def doThing(): ...                       N802: not lower_name
 //   import os.path as P                      N812: name `path` is cased_lower, alias `P` is not lower_name
-#include "python/ast.rr"
+#include "python/ast.rerail"
 
 // ---- 1. case -----------------------------------------------------------------------------------------------------
 // naming_word(x): every identifier's text, the vocabulary the case tests run over (once per distinct string).

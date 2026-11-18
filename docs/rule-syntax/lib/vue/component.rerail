@@ -1,6 +1,6 @@
 // vue/component: a component's script, read as eslint-plugin-vue reads it: the component object (Options API),
 // its options and the names they declare, computed getters, setup(), and <script setup>'s macros.
-// The script is a guest tree of the .vue document (vue/code.rr): its program is the script block's.
+// The script is a guest tree of the .vue document (vue/code.rerail): its program is the script block's.
 //
 // Interface:
 //   vscript(p, setup)       p is the program of a <script> block; setup is "true" for <script setup>
@@ -27,8 +27,8 @@
 //
 //   export default { props: ['a'], computed: { b() { return 1 } }, data() { return { c: 1 } } }
 //     vcomp(o); vname(o, "props", "a", …), vname(o, "computed", "b", …), vname(o, "data", "c", …); vcomputed(o, "b", f)
-#include "vue/code.rr"
-#include "tsx/eslint-a-common.rr"
+#include "vue/code.rerail"
+#include "tsx/eslint-a-common.rerail"
 //   deparen(e, x), key_static(k, x), static_prop(n, o, x), call_arg(c, a, i), function_node(f)
 
 // ---- script blocks ---------------------------------------------------------------------------------------------------

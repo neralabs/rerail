@@ -9,7 +9,7 @@
 //   def __bad__(): ...           ← N807
 //   class C:
 //       def __eq__(self, o): ... not reported: a method
-#include "python/naming.rr"
+#include "python/naming.rerail"
 
 .violation N807(at: node, x: symbol) code "N807"
     "Rename `{x}` without the leading and trailing double underscores and update its callers; only a method of a class should use such a name."

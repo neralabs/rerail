@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // none_lit(n): the JSON util `none-lit`, used where the JSON says `matches: "none-lit"`
 .decl pyi036_none_lit(n: node)

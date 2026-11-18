@@ -10,7 +10,7 @@
 //   class B(A, object): ...        ← UP004 at `object`
 //   object = A
 //   class C(object): ...           not reported: `object` is A here
-#include "python/upgrade.rr"
+#include "python/upgrade.rerail"
 //   builtin_at(e, x): e reads the builtin x, at that point of the module
 
 .violation UP004(at: node, cls: symbol) code "UP004"

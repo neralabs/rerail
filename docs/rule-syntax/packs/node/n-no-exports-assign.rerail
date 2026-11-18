@@ -12,7 +12,7 @@
 //   exports.a = 1                         not: a member, not the variable
 // In an ES module there is no global `exports`, so nothing is reported (cjs_ref).
 
-#include "tsx/node.rr"   // cjs_ref, node_assign, node_left_of, deparen
+#include "tsx/node.rerail"   // cjs_ref, node_assign, node_left_of, deparen
 
 .violation exports_assign(at: node) code "n/no-exports-assign"
     "Assign to module.exports instead of exports, which only rebinds a local variable."

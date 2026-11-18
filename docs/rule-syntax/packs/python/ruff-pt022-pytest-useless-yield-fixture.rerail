@@ -10,7 +10,7 @@
 //   def value():
 //       v = make()
 //       yield v              ← PT022
-#include "python/pytest.rr"
+#include "python/pytest.rerail"
 //   pytest_fixture(f, d, e), pytest_seen(f, n), pytest_deco(o, d, e, q)
 
 .violation PT022(at: node, x: symbol) code "PT022"

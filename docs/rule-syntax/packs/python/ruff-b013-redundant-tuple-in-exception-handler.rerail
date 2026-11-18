@@ -9,7 +9,7 @@
 // needs the tuple. Reported at the tuple; `except*` too.
 //   except (ValueError,):      ← B013
 //   except (*retriable,):      not reported
-#include "python/bugbear.rr"
+#include "python/bugbear.rerail"
 
 .violation B013(at: node) code "B013" "A length-one tuple literal is redundant in exception handlers"
     suppress ruff "B013"

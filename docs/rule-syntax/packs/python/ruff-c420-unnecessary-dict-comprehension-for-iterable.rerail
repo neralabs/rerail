@@ -12,7 +12,7 @@
 //   {x: 0 for x in xs}       ← C420: dict.fromkeys(xs, 0)
 //   {x: None for x in xs}    ← C420: dict.fromkeys(xs)
 //   {x: [] for x in xs}    {x: x for x in xs}    {x: f() for x in xs}    not reported
-#include "python/comprehensions.rr"
+#include "python/comprehensions.rerail"
 //   c4_comp(e, k), c4_simple(e, fc), cmp_same(x, t) (python/compare), c4_builtin_here(n, x)
 
 .violation C420(at: node) code "C420"

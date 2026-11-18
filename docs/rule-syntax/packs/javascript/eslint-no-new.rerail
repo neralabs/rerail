@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-a-control.rr"
+#include "tsx/eslint-a-control.rerail"
 //   deparen
 
 // ESLint's no-new: a `new` expression that is a whole statement, so the object it makes is thrown away.

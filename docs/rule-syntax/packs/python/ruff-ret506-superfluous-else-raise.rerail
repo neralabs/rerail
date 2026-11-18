@@ -13,7 +13,7 @@
 //       raise ValueError
 //   else:                      ← RET506 "Unnecessary `else` after `raise` statement"
 //       y()
-#include "python/flow-return.rr"
+#include "python/flow-return.rerail"
 
 .violation RET506(at: span, w: symbol) code "RET506" "Unnecessary `{w}` after `raise` statement"
     suppress ruff "RET506"

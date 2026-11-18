@@ -1,6 +1,6 @@
-//! The `.rr` text as written: tokens, and statements before lowering (`lower`) or checking (`check`).
+//! The `.rerail` text as written: tokens, and statements before lowering (`lower`) or checking (`check`).
 //!
-//! Soufflé's grammar, with the additions `docs/rule-syntax/lib/core.rr` lists: patterns (``n ~ `…` ``), named regex
+//! Soufflé's grammar, with the additions `docs/rule-syntax/lib/core.rerail` lists: patterns (``n ~ `…` ``), named regex
 //! groups in `match`, `must`/`may` heads, `.violation` with `fix` lines, `=> edits`, `join … by … sep`, and
 //! `ordered by` on a declaration. The policy directives (`.policy`, `.mode`, `.scope`, …) are settings: each is kept
 //! as its text, up to the end of its line. Two JSON forms stay for what has no Datalog form yet: the matcher term
@@ -104,7 +104,7 @@ pub fn unescape(body: &str) -> Result<String, String> {
     Ok(out)
 }
 
-/// A string as an `.rr` literal, read back by `unescape` as the same string.
+/// A string as an `.rerail` literal, read back by `unescape` as the same string.
 pub fn quote(s: &str) -> String {
     // Most strings need no escape: copied whole.
     if !s.chars().any(|c| matches!(c, '"' | '\\') || c.is_control()) {

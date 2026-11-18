@@ -9,7 +9,7 @@
 //   try: f()
 //   except: pass            ← E722
 //   except: log(); raise    not reported: the handler re-raises
-#include "python/pyflakes.rr"
+#include "python/pyflakes.rerail"
 //   bare_except(x, kw)  x is an `except:` clause with no type; kw its `except` keyword
 
 .violation E722(at: loc) code "E722"

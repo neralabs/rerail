@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // any_or_none(n): the JSON util `any-or-none`, used where the JSON says `matches: "any-or-none"`
 .decl pyi058_any_or_none(n: node)
@@ -173,7 +173,7 @@ pyi058_simple_statement(n) :- kind(n, "return_statement"), !pyi058_late_value_re
 
 // PYI058(n, detail): findings from clauses `generator-from-iter`, `async-generator-from-aiter`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PYI058(at: node, detail: symbol) "Annotate {detail}."
     suppress noqa "PYI058"
 PYI058_raw(n, "`__iter__` as returning `Iterator[...]` with the same yield type, not `Generator`; keep `Generator` only if callers rely on `send` or `throw`") :- kind(n, "identifier"),
@@ -186,7 +186,7 @@ PYI058_raw(n, "`__aiter__` as returning `AsyncIterator[...]` with the same yield
 
 // PYI058_generator_from_iter_stub(n, detail): findings from clauses `generator-from-iter-stub`, `async-generator-from-aiter-stub`. Their messages differ only in
 // `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PYI058_generator_from_iter_stub(at: node, detail: symbol) code "PYI058" "Annotate {detail}."
     suppress noqa "PYI058"
 PYI058_generator_from_iter_stub_raw(n, "`__iter__` as returning `Iterator[...]` with the same yield type, not `Generator`; keep `Generator` only if callers rely on `send` or `throw`") :- kind(n, "identifier"),

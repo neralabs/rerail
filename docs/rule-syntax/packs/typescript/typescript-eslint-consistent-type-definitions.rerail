@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/ts-a.rr"
+#include "tsx/ts-a.rerail"
 //   type_child(x, c), type_literal(b)
 
 // typescript-eslint's consistent-type-definitions: object types are declared one way. The option is

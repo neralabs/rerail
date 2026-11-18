@@ -8,9 +8,9 @@
 //   const { TextDecoder } = require("util")     import { TextDecoder } from "node:util"     require("util").TextDecoder
 //   export * from "util"                  reported (the export re-exports TextDecoder)
 //   "never":  TextDecoder  globalThis.TextDecoder                                             reported
-// The module is traced through require(), process.getBuiltinModule() and imports (node-trace.rr).
+// The module is traced through require(), process.getBuiltinModule() and imports (node-trace.rerail).
 
-#include "tsx/node-trace.rr"   // prefer_global_use
+#include "tsx/node-trace.rerail"   // prefer_global_use
 module_global("TextDecoder", "util", "TextDecoder").
 
 .violation prefer_global(at: node, msg: symbol) code "n/prefer-global/text-decoder" "{msg}"

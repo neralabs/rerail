@@ -11,8 +11,8 @@
 //   for i in xs:
 //       try: f(i)
 //       except ValueError: pass      ← PERF203 (Python 3.10)
-#include "python/misc2-perf.rr"
-#include "python/version.rr"
+#include "python/misc2-perf.rerail"
+#include "python/version.rerail"
 //   targets(m)
 
 .violation PERF203(at: node) code "PERF203"

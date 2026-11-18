@@ -10,7 +10,7 @@
 //   raise RuntimeError(f"This is an {example} exception")   ← EM102
 //   raise RuntimeError(t"{x}")                              not reported: a Template, not a str
 //   msg = f"bad {x}"; raise RuntimeError(msg)               not reported
-#include "python/misc2-messages.rr"
+#include "python/misc2-messages.rerail"
 
 .violation EM102(at: node) code "EM102"
     "Assign this f-string to a new variable such as `msg` before the `raise`, then pass that variable to the exception instead."

@@ -3,7 +3,7 @@
 //
 // The SQL reads CPython's `ast` (the `pythonAst` stage, `canonical`/`a`: one row per ast node, as
 // native/src/code_rule_dsl/value/python_ast/metadata.py at 40e7b6cac builds them). Here the same nodes are read on
-// tree-sitter's tree, as data-layer-bootstrap-eager-resolve.rr does:
+// tree-sitter's tree, as data-layer-bootstrap-eager-resolve.rerail does:
 // - parentheses are dropped (`parenthesized_expression` has no ast node): bootstrap_invariants_ast(slot, e);
 // - Call is `call`, its func the `function` field; Attribute is `attribute` (name: its `attribute` field's text,
 //   value: its `object` field); Name is an `identifier` in expression position (not a def/class/keyword/parameter
@@ -158,7 +158,7 @@ bootstrap_invariants_slot(x) :- node(_, c, "class_definition", _, _), field(c, "
 bootstrap_invariants_slot(x) :- node(_, dc, "decorator", _, _), child(dc, x, _).
 bootstrap_invariants_slot(x) :- node(_, f, "function_definition", _, _), field(f, "return_type", t), child(t, x, _).
 bootstrap_invariants_slot(x) :- bootstrap_invariants_slot(p), node(_, p, "parenthesized_expression", _, _), child(p, x, _).
-// mirrors python/ast.rr unparen (restricted to the slots; a comment child is skipped, not taken as child 0)
+// mirrors python/ast.rerail unparen (restricted to the slots; a comment child is skipped, not taken as child 0)
 .decl bootstrap_invariants_ast(x: node, e: node)
 bootstrap_invariants_ast(x, x) :- bootstrap_invariants_slot(x), !node(_, x, "parenthesized_expression", _, _), !node(_, x, "comment", _, _).
 bootstrap_invariants_ast(x, e) :- bootstrap_invariants_slot(x), node(_, x, "parenthesized_expression", _, _), child(x, y, _), bootstrap_invariants_ast(y, e).
@@ -216,7 +216,7 @@ bootstrap_invariants_not_name(n) :- bootstrap_invariants_tpinner(s), node(_, s, 
 bootstrap_invariants_not_name(n) :- bootstrap_invariants_tpinner(c), node(_, c, "constrained_type", _, _), child(c, n, 0), node(_, n, "identifier", _, _).
 bootstrap_invariants_not_name(n) :- bootstrap_invariants_tpinner(c), node(_, c, "constrained_type", _, _), child(c, t, 0), node(_, t, "type", _, _),
     child(t, n, 0), node(_, n, "identifier", _, _).
-// mirrors python/ast.rr ast_name
+// mirrors python/ast.rerail ast_name
 .decl bootstrap_invariants_name(n: node, s: symbol)
 bootstrap_invariants_name(n, s) :- node(_, n, "identifier", _, _), text(n, s), !bootstrap_invariants_not_name(n).
 // Attribute n: its attr s, its value o. A dotted pattern name's Attributes are its identifiers after the first (at
@@ -304,11 +304,11 @@ bootstrap_invariants_annassign(a) :- node(_, st, "expression_statement", _, _), 
 .decl bootstrap_invariants_chain(a: node, x: node)
 bootstrap_invariants_chain(a, a) :- bootstrap_invariants_assign(a).
 bootstrap_invariants_chain(a, b) :- bootstrap_invariants_chain(a, x), field(x, "right", b), node(_, b, "assignment", _, _).
-// mirrors python/ast.rr assign_target (with the AnnAssign target)
+// mirrors python/ast.rerail assign_target (with the AnnAssign target)
 .decl bootstrap_invariants_assign_target(a: node, t: node)
 bootstrap_invariants_assign_target(a, t) :- bootstrap_invariants_chain(a, x), field(x, "left", t0), bootstrap_invariants_ast(t0, t).
 bootstrap_invariants_assign_target(a, t) :- bootstrap_invariants_annassign(a), field(a, "left", t0), bootstrap_invariants_ast(t0, t).
-// mirrors python/ast.rr assign_value
+// mirrors python/ast.rerail assign_value
 .decl bootstrap_invariants_assign_value(a: node, v: node)
 bootstrap_invariants_assign_value(a, v) :- bootstrap_invariants_chain(a, x), field(x, "right", v0), !node(_, v0, "assignment", _, _), bootstrap_invariants_ast(v0, v).
 // Delete s and its targets.
@@ -317,7 +317,7 @@ bootstrap_invariants_del_target(s, t) :- node(_, s, "delete_statement", _, _), c
 bootstrap_invariants_del_target(s, t) :- node(_, s, "delete_statement", _, _), child(s, l, _), node(_, l, "expression_list", _, _), child(l, x, _),
     bootstrap_invariants_ast(x, t).
 // If n (if or elif): its test (parentheses dropped) and body block; the span of its ast subtree.
-// mirrors python/ast.rr py_if
+// mirrors python/ast.rerail py_if
 .decl bootstrap_invariants_if(n: node, t: node, b: node)
 bootstrap_invariants_if(n, t, b) :- node(_, n, "if_statement", _, _), field(n, "condition", t0), bootstrap_invariants_ast(t0, t), field(n, "consequence", b).
 bootstrap_invariants_if(n, t, b) :- node(_, n, "elif_clause", _, _), field(n, "condition", t0), bootstrap_invariants_ast(t0, t), field(n, "consequence", b).
@@ -332,7 +332,7 @@ bootstrap_invariants_or_inner(x) :- bootstrap_invariants_is_or(x), child(p, x, _
 .decl bootstrap_invariants_or_part(t: node, x: node)
 bootstrap_invariants_or_part(t, x) :- bootstrap_invariants_is_or(t), !bootstrap_invariants_or_inner(t), child(t, x, _).
 bootstrap_invariants_or_part(t, y) :- bootstrap_invariants_or_part(t, x), bootstrap_invariants_is_or(x), child(x, y, _).
-// mirrors python/ast.rr bool_operand (its "or" rows)
+// mirrors python/ast.rerail bool_operand (its "or" rows)
 .decl bootstrap_invariants_or_value(t: node, v: node)
 bootstrap_invariants_or_value(t, v) :- bootstrap_invariants_or_part(t, x), !bootstrap_invariants_is_or(x), bootstrap_invariants_ast(x, v).
 
@@ -345,7 +345,7 @@ bootstrap_invariants_class(d, c, x) :- node(d, c, "class_definition", _, _), fie
 .decl bootstrap_invariants_base_named(c: node, s: symbol)
 bootstrap_invariants_base_named(c, s) :- node(_, c, "class_definition", _, _), field(c, "superclasses", al), child(al, b0, _),
     !node(_, b0, "keyword_argument", _, _), bootstrap_invariants_ast(b0, b), bootstrap_invariants_named(b, s).
-// mirrors python/names.rr decorator, followed down call funcs as the SQL's recursive `decorators` stage does
+// mirrors python/names.rerail decorator, followed down call funcs as the SQL's recursive `decorators` stage does
 .decl bootstrap_invariants_deco(f: node, e: node)
 bootstrap_invariants_deco(f, e) :- node(_, dd, "decorated_definition", _, _), field(dd, "definition", f), child(dd, dc, _), node(_, dc, "decorator", _, _),
     child(dc, e0, _), bootstrap_invariants_ast(e0, e).
@@ -426,7 +426,7 @@ bootstrap_invariants_slash_after(ps, i) :- bootstrap_invariants_pitem(ps, i, _, 
 .decl bootstrap_invariants_star_before(ps: node, i: number)
 bootstrap_invariants_star_before(ps, i) :- bootstrap_invariants_pitem(ps, i, _, "plain"), child(ps, c, j), node(_, c, "keyword_separator", _, _), j < i.
 bootstrap_invariants_star_before(ps, i) :- bootstrap_invariants_pitem(ps, i, _, "plain"), bootstrap_invariants_pitem(ps, j, _, "star"), j < i.
-// mirrors python/ast.rr sig_param (fields named as CPython's arguments node's)
+// mirrors python/ast.rerail sig_param (fields named as CPython's arguments node's)
 .decl bootstrap_invariants_param(o: node, nm: node, fld: symbol, x: symbol)
 bootstrap_invariants_param(o, nm, "vararg", x) :- field(o, "parameters", ps), bootstrap_invariants_pitem(ps, _, nm, "star"), text(nm, x).
 bootstrap_invariants_param(o, nm, "kwarg", x) :- field(o, "parameters", ps), bootstrap_invariants_pitem(ps, _, nm, "dstar"), text(nm, x).
@@ -444,7 +444,7 @@ bootstrap_invariants_in(o, n) :- bootstrap_invariants_want(o), node(_, dd, "deco
     node(_, dc, "decorator", _, _), inside(n, dc, bootstrap_invariants_decok).
 // ast_function of the nodes asked: the def holding n as ast nests it.
 .decl bootstrap_invariants_fn_need(n: node)
-// mirrors python/ast.rr def_frame (a decorated class's decorators are in the class's frame)
+// mirrors python/ast.rerail def_frame (a decorated class's decorators are in the class's frame)
 .decl bootstrap_invariants_fn(n: node, f: node)
 bootstrap_invariants_fn(n, f) :- bootstrap_invariants_fn_need(n), nearest(n, f, bootstrap_invariants_framek), node(_, f, "function_definition", _, _).
 bootstrap_invariants_fn(n, f) :- bootstrap_invariants_fn_need(n), nearest(n, dc, bootstrap_invariants_framek), node(_, dc, "decorator", _, _), child(dd, dc, _), field(dd, "definition", f),

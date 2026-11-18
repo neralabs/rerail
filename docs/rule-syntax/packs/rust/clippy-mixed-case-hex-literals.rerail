@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "rust/syntax-literals.rr"
+#include "rust/syntax-literals.rerail"
 //   num_lit(n, radix, int, suffix)   a number literal's radix and integer digits
 
 // Clippy's mixed_case_hex_literals (style): a hexadecimal literal whose digits mix a-f and A-F.

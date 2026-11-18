@@ -11,8 +11,8 @@
 //   match v:
 //       case six.PY3: …                    ← YTT202: a value pattern reads six.PY3
 //   from six import PY3                    not reported: the import itself is not an expression
-#include "python/misc2-version.rr"
-#include "python/misc2-case.rr"   // case_value_name(e, q)
+#include "python/misc2-version.rerail"
+#include "python/misc2-case.rerail"   // case_value_name(e, q)
 
 .violation YTT202(at: node) code "YTT202"
     "Replace `{at}` with `not six.PY2` (in a `case` pattern, test `not six.PY2` in a guard instead); `six.PY3` is false on Python 4 and later."

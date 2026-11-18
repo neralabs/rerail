@@ -15,8 +15,8 @@
 //     SqlVersionedMergedCte(read_projection=a); a = catalog_versioned_merged_projection(M, cols)   -> VMI003
 // Only files that mention SqlVersionedMergedCte are read.
 
-#include "python/ast.rr"    // assign_target, assign_value, unparen, leaf_name; def_name from python/names
-#include "data-layer/match-frames.rr"   // mf_up, mf_def: a decorator belongs to the def it decorates
+#include "python/ast.rerail"    // assign_target, assign_value, unparen, leaf_name; def_name from python/names
+#include "data-layer/match-frames.rerail"   // mf_up, mf_def: a decorator belongs to the def it decorates
 
 // EXPECTED_CALLERS; the option expectedCallers replaces them.
 .decl vmi_default(c: symbol)

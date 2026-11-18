@@ -75,7 +75,7 @@ introspection_doc(d, p) :- introspection_gate(d, p), option_value("entryPoint", 
 
 // The defs that hold a node as `ast` nests them (a def's decorators are its own): introspection_owner(n, f)
 // for every enclosing def (`n.id BETWEEN owner.id AND owner.last`), introspection_frame(n, f) for the innermost
-// (the row's `fn`; mirrors python/ast.rr def_frame). A class's decorator is the class's, so its innermost def is
+// (the row's `fn`; mirrors python/ast.rerail def_frame). A class's decorator is the class's, so its innermost def is
 // the one around the class.
 .decl introspection_fdef(kind: symbol)
 introspection_fdef("function_definition").
@@ -103,7 +103,7 @@ introspection_word("reconcile"). introspection_word("schema"). introspection_wor
 introspection_authority(n) :- introspection_owner(n, f), field(f, "name", nm), text(nm, x), introspection_word(w),
     icontains(w, x).
 
-// The calls: callee by Name or Attribute (calls.callee), the func's parentheses taken off (mirrors python/ast.rr
+// The calls: callee by Name or Attribute (calls.callee), the func's parentheses taken off (mirrors python/ast.rerail
 // unparen and call_name, without the subscript step).
 .decl introspection_peel(c: node, e: node)
 introspection_peel(c, g) :- node(d, c, "call", _, _), introspection_doc(d, _), field(c, "function", g).

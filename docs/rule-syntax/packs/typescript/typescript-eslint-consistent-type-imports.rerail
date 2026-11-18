@@ -4,9 +4,9 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts" exclude "**/node_modules/**" exclude "**/dist/**" exclude "**/build/**" exclude "**/out/**" exclude "**/.next/**" exclude "**/coverage/**" exclude "**/vendor/**" exclude "**/.venv/**" exclude "**/.yarn/**" exclude "**/generated/**" exclude "**/__generated__/**" exclude "**/*.generated.*" exclude "**/*.gen.*" exclude "**/*.min.js" exclude "**/*.d.ts"
 
-#include "tsx/ts-a.rr"
+#include "tsx/ts-a.rerail"
 //   in_type(n)
-#include "tsx/names.rr"
+#include "tsx/names.rerail"
 //   ref_site(r, site), import_binding(site, local, src, imported)
 
 // typescript-eslint's consistent-type-imports: imports used only as types are written `import type`.

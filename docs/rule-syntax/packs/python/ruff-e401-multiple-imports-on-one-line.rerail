@@ -7,7 +7,7 @@
 // Ruff E401 (pycodestyle): one `import` statement that names several modules. `from m import a, b` is fine.
 //   import os, sys          ← E401
 //   from os import path, sep   not reported
-#include "python/pyflakes.rr"
+#include "python/pyflakes.rerail"
 
 .violation E401(at: node) code "E401"
     "Split this into one `import` statement per module, each on its own line (or separated by `;` on a line that already holds other statements)."

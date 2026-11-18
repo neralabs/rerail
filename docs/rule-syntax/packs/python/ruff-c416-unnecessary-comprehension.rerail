@@ -12,7 +12,7 @@
 //   [(k, v) for k, v in y]                   not reported: y's items may not be pairs
 //   [x for x in y if x]    [x for x, in y]   not reported
 // Only plain names are compared, as Ruff does. Its fix is unsafe; none here.
-#include "python/comprehensions.rr"
+#include "python/comprehensions.rerail"
 //   c4_comp(e, k), c4_simple(e, fc), c4_elt(e, x), dict_ref(n), c4_builtin_here(n, x)
 
 .violation C416(at: node, kind: symbol, id: symbol, msg: symbol) code "C416" "{msg}"

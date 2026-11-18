@@ -17,8 +17,8 @@
 //   2. gis_index_call: the calls that build an Index.
 //   3. missing_source: one rule per message of the linter.
 
-#include "python/ast.rr"     // def_frame, sig_param, unparen, dotted_expr, from_module_raw
-#include "python/calls.rr"   // call_arg
+#include "python/ast.rerail"     // def_frame, sig_param, unparen, dotted_expr, from_module_raw
+#include "python/calls.rerail"   // call_arg
 
 // gis_doc(d): the file's text holds one of the collector's triggers.
 .decl gis_trigger(t: symbol)

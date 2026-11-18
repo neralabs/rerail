@@ -9,7 +9,7 @@
 //   from builtins import eval; eval(t)   not reported: Bandit reads "builtins.eval"
 //   ast.literal_eval(text)               not reported
 
-#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+#include "python/security.rerail"   // blacklisted: Bandit's B001 over calls and imports
 
 .violation B307(at: node) code "B307"
     "This eval call executes supplied text as Python code and may be unsafe. Use ast.literal_eval when only Python literals need to be parsed."

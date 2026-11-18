@@ -5,7 +5,7 @@
 .scope include "**/*.php"
 .scope exclude "**/*.blade.php"
 
-#include "php/names.rr"
+#include "php/names.rerail"
 //   php_call_written(c, x), php_first_arg(c, e), php_this(n), php_fn_boundary(k)
 
 // PHP_CodeSniffer's Squiz.PHP.DisallowSizeFunctionsInLoops (code Found): count(), sizeof() or strlen() in the

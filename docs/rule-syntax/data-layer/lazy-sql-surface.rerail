@@ -20,8 +20,8 @@
 //   2. lss_term / lss_solo: the linter's _call_chain, by its last name and by "is exactly the one name x".
 //   3. One rule per pattern, all into LSS.
 
-#include "python/names.rr"
-#include "python/ast.rr"      // def_frame, unparen
+#include "python/names.rerail"
+#include "python/ast.rerail"      // def_frame, unparen
 
 // Source triggers (LAZY_SQL_SURFACE_EXTRACTOR.source_triggers): substrings of the file's text.
 .decl lss_trigger(v: symbol)

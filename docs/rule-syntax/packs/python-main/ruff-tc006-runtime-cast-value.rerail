@@ -5,9 +5,9 @@
 .mode steer
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
-// ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.
+// ast(n, {…}) atoms are JSON terms with no .rerail form yet; the engine matches them as it does today.
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // cast_callee(n): the JSON util `cast-callee`, used where the JSON says `matches: "cast-callee"`
 .decl tc006_cast_callee(n: node)
@@ -55,7 +55,7 @@ tc006_cast_in_string(n, T) :- (kind(n, "string") ; kind(n, "concatenated_string"
 
 // TC006(n): a finding at node n, from clause `unquoted-cast-type`.
 // Each rule below is one way the JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation TC006(at: node) "Quote the type expression passed to this `cast()` call, as in `cast(\"list[int]\", value)`."
     suppress noqa "TC006"
 TC006_raw(n) :- tc006_unquoted_type(n).
@@ -63,7 +63,7 @@ TC006_raw(n) :- tc006_unquoted_type(n).
 // TC006_unquoted_cast_type_in_string(n): a finding at node n, from clause `unquoted-cast-type-in-string`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation TC006_unquoted_cast_type_in_string(at: loc, t: node) code "TC006" "Quote the type expression passed to this `cast()` call, as in `cast(\"list[int]\", value)`."
     suppress noqa "TC006"
 TC006_unquoted_cast_type_in_string_raw(T, n) :- tc006_cast_in_string(n, T).
@@ -71,7 +71,7 @@ TC006_unquoted_cast_type_in_string_raw(T, n) :- tc006_cast_in_string(n, T).
 // TC006_unquoted_cast_type_generator(n): a finding at node n, from clause `unquoted-cast-type-generator`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation TC006_unquoted_cast_type_generator(at: loc, type: node) code "TC006" "Quote the type expression passed to this `cast()` call, as in `cast(\"list[int]\", value)`."
     suppress noqa "TC006"
 TC006_unquoted_cast_type_generator_raw(TYPE, n) :- kind(n, "generator_expression"),

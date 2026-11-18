@@ -4,9 +4,9 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-a-control.rr"
+#include "tsx/eslint-a-control.rerail"
 //   deparen
-#include "tsx/eslint-b-control.rr"
+#include "tsx/eslint-b-control.rerail"
 //   below_unary, below_or
 
 // ESLint's no-unneeded-ternary, with its fixes:

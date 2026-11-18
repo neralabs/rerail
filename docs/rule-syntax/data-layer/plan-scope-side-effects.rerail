@@ -24,9 +24,9 @@
 //   5. PSE_AUDIT_010 pairs eager reads bound inside a write plan (eager_site) with `if` tests in the same plan.
 // The Python linter keeps a stack of open plan scopes while walking the tree; here "inside a plan" is a tree query instead.
 
-#include "python/names.rr"
-#include "python/calls.rr"
-#include "python/ast.rr"      // unparen
+#include "python/names.rerail"
+#include "python/calls.rerail"
+#include "python/ast.rerail"      // unparen
 
 // Calls that open a plan scope (the Python linter's PLAN_OPENERS), and the subset that opens a write plan.
 .decl opener(v: symbol)

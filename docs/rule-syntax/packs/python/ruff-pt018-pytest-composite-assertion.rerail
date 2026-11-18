@@ -9,7 +9,7 @@
 //   assert a and b               ← PT018
 //   assert not (a or b)          ← PT018
 //   assert a or b                not reported
-#include "python/pytest.rr"
+#include "python/pytest.rerail"
 //   unparen(e, m)
 
 .violation PT018(at: node) code "PT018"

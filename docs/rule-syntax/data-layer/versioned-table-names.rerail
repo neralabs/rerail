@@ -27,9 +27,9 @@
 //
 // Shows: file-global state in visit order with plain recursion; f-string pieces (str_part); dotted call names.
 
-#include "python/ast.rr"
+#include "python/ast.rerail"
 //   ast_name, assign_target, assign_value, sig_param, str_const, fstring, unparen, call_dotted
-#include "python/calls.rr"
+#include "python/calls.rerail"
 //   posarg, call_arg
 
 .decl vsuffix(s: symbol)

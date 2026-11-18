@@ -9,7 +9,7 @@
 //   """Summary.
 //
 //   More text."""            ← D209
-#include "python/docstrings.rr"
+#include "python/docstrings.rerail"
 
 .violation D209(at: node) code "D209"
     "Move this docstring's closing quotes onto a new line after its last line of text."

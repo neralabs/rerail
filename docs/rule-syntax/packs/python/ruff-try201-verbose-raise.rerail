@@ -11,7 +11,7 @@
 //       raise e                ← TRY201
 //       raise e from None      not reported: the cause changes what is raised
 //       raise                  not reported
-#include "python/exceptions.rr"
+#include "python/exceptions.rerail"
 //   exc_alias(x, e), exc_reraise(x, r), exc_raise(r, e), exc_cause(r)
 
 .violation TRY201(at: node, e: symbol) code "TRY201"

@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
 .scope exclude "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.config.js", "**/*.config.mjs", "**/*.config.cjs", "**/.*rc.js", "**/.*rc.cjs"
-#include "tsx/eslint-a-globals.rr"
+#include "tsx/eslint-a-globals.rerail"
 //   callee(c, f), global_ref_to(r, x), global_object_ref(o, x), static_prop(m, o, x), global_this(t), deparen(e, l)
 
 // ESLint's no-eval. Reported at the `eval` identifier or property:

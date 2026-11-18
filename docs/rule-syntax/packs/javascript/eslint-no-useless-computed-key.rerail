@@ -3,7 +3,7 @@
 .language typescript
 .mode steer
 .scope include "**/*"
-#include "tsx/eslint-b-objects.rr"
+#include "tsx/eslint-b-objects.rerail"
 //   holder_key, estree_key, is_static, number_lit, value, touching, cannot_touch
 
 // ESLint's no-useless-computed-key: a computed key that is a string or number literal, which a plain key says

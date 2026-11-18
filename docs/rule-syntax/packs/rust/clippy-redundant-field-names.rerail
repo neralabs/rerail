@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "rust/syntax.rr"
+#include "rust/syntax.rerail"
 //   msrv_older(n, v)   n is under a #[clippy::msrv] older than v
 
 // Clippy's redundant_field_names (style): a struct expression field `x: x` whose value is a variable of

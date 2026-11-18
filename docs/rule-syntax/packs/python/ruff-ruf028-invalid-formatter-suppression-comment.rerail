@@ -14,7 +14,7 @@
 //   off as the first line of the else or finally block of a try with except clauses
 // Not modelled: Ruff's "attached to the statement above" case (another formatter comment inside the
 // statement above's brackets).
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 
 .violation RUF028(at: node, msg: symbol) code "RUF028" "{msg}"
     suppress ruff "RUF028"

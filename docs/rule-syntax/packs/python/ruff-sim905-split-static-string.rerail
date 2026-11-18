@@ -11,7 +11,7 @@
 // offered here: the parts need a str.split this language does not have (see NOTES).
 //   "a,b".split(",")    "a b".split()    "a b c".rsplit(maxsplit=1)      ← SIM905: ["a", "b"], …
 //   "a b".split(sep)    "a b".split(maxsplit=n)    f"{x} y".split()      not reported
-#include "python/simplify.rr"
+#include "python/simplify.rerail"
 //   plain_str(e, v) from python/pyflakes; ruff_arg(c, i, a), call_kwarg(c, x, v), ruff_int(e, v) from python/ruff
 
 .violation SIM905(at: node, method: symbol) code "SIM905" "Consider using a list literal instead of `str.{method}`"

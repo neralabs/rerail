@@ -28,7 +28,7 @@
 //           return 1                 first_jump(<if body>, "return")
 //       else:                        first_alternative(<if>, <if body>, <else clause>, <else>)
 //           return                   fn_return(<f>, <return>), bare_return(<return>); returns_value(<f>)
-#include "python/ast.rr"   // body_stmt, body_len, unparen, decorator, sym_of
+#include "python/ast.rerail"   // body_stmt, body_len, unparen, decorator, sym_of
 
 .decl ret_function(f: node)
 ret_function(f) :- kind(f, "function_definition"), field(f, "body", b), body_len(b, k), k > 0, !lone_return(b),

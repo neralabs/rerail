@@ -9,7 +9,7 @@
 //   field(default_factory=lambda: [])   ← PIE807 "Prefer `list` …"
 //   lambda *args: []                    not reported
 //   lambda: {**unwrap}                  not reported
-#include "python/ast.rr"
+#include "python/ast.rerail"
 
 .violation PIE807(at: node, c: symbol) code "PIE807" "Prefer `{c}` over useless lambda"
     suppress ruff "PIE807"

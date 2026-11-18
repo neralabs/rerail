@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
 
-#include "tsx/eslint-b-scope.rr"
+#include "tsx/eslint-b-scope.rerail"
 //   global_value, traced_global, called, constructed
 
 // ESLint's no-obj-calls: the global namespace objects are not functions, so calling one throws. ESLint follows

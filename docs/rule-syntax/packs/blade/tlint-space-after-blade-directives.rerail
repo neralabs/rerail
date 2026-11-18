@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.blade.php"
 
-#include "blade/syntax.rr"
+#include "blade/syntax.rerail"
 //   blade_directive(d, x)   d is directive @x
 
 // tlint's SpaceAfterBladeDirectives: a control directive written with no space before its parenthesis.

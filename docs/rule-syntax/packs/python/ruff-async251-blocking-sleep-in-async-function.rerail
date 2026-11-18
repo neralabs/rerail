@@ -9,7 +9,7 @@
 //   async def f(): time.sleep(1)           ← ASYNC251
 //   async def f(): await asyncio.sleep(1)  not reported
 //   def f(): time.sleep(1)                 not reported: not a coroutine
-#include "python/misc2-async.rr"
+#include "python/misc2-async.rerail"
 
 .violation ASYNC251(at: node) code "ASYNC251"
     "Async functions should not call `time.sleep`"

@@ -22,7 +22,7 @@
 // or another semantic class of the same file. Annotations are compared as written, where the linter reads
 // ast.unparse: they differ only on parentheses and comments inside an annotation.
 
-#include "data-layer/purity-ast.rr"
+#include "data-layer/purity-ast.rerail"
 
 // ---- APP001, APP002 ---------------------------------------------------------------------------------------------
 .decl app_step_base(x: symbol)

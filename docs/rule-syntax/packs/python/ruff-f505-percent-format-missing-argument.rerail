@@ -8,7 +8,7 @@
 // keys. Python raises KeyError. Only a dict whose keys are all str literals can be checked: a `**spread` or a
 // computed key may supply the missing one.
 //   "%(a)s %(b)s" % {"a": 1}      ← F505: no "b"
-#include "python/pyflakes-format.rr"
+#include "python/pyflakes-format.rerail"
 //   percent_fmt(b, s, r, v), pct_key(v, k), pct_positional(v, n)
 
 .violation F505(at: node) code "F505" "`%`-format string is missing argument(s) for placeholder(s)"

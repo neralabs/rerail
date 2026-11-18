@@ -1,4 +1,4 @@
-# `.rr`, step 8: aggregates, `r(n) :- n = count : { s(_) }, m = sum v by k sep "," : { t(k, v) }.`
+# `.rerail`, step 8: aggregates, `r(n) :- n = count : { s(_) }, m = sum v by k sep "," : { t(k, v) }.`
 #
 # The engine's parser (logic/rr/syntax.rs) is the reference. What this step adds:
 #   - An aggregate: its word, then for `count` a `:`, for `min`, `max`, `sum`, `mean` and

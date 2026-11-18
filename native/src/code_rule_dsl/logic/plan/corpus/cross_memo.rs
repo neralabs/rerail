@@ -3,7 +3,7 @@
 //! - A program asks with `.pragma "cross-memo" "a b …"`. That names the cross-file relations whose rows are about
 //!   the document of their first node column and are a function of that document's import closure; `"*"` names
 //!   every relation the contract's static half admits.
-//! - The run adds `components.rr` (`add`). Its file-local rules export each document's imports, module and own
+//! - The run adds `components.rerail` (`add`). Its file-local rules export each document's imports, module and own
 //!   digest, which the per-file memo keeps. Its cross-file rules make `rr_cx_component(d, c, key)`.
 //! - `split` takes those rules out of the cross-file part into a sub-program run first. It checks the contract's
 //!   static half, and gives each memoised relation an input `<rel>__cross`, a rule `rel(…) :- rel__cross(…)`, and a
@@ -66,13 +66,13 @@ pub(super) fn declared(prog: &front::Program) -> Option<BTreeSet<String>> {
     out
 }
 
-/// Adds `components.rr` to `prog`: its declarations, natives and rules, and `rr_cx_component` as an output. Core's
+/// Adds `components.rerail` to `prog`: its declarations, natives and rules, and `rr_cx_component` as an output. Core's
 /// relations and rules are the engine's, taken once.
 pub(super) fn add(prog: &mut front::Program) -> Result<()> {
-    let path = crate::code_rule_dsl::logic::rr::library().join("components.rr");
+    let path = crate::code_rule_dsl::logic::rr::library().join("components.rerail");
     let components = crate::code_rule_dsl::logic::rr::parse_file(&path).map_err(|e| Error::Plan(format!("{}: {e:?}", path.display())))?;
     // Only the engine's own rules (`rr_` heads: `rr_cx_*` and what lowering made for `components`), not what
-    // `core.rr` brings with it: a program that declares a base relation itself keeps its own declaration.
+    // `core.rerail` brings with it: a program that declares a base relation itself keeps its own declaration.
     let rules: Vec<front::Rule> = components.rules.into_iter().filter(|r| r.head.rel.starts_with("rr_")).collect();
     let mut needed: BTreeSet<String> = BTreeSet::new();
     for r in &rules {
@@ -380,7 +380,7 @@ pub(super) fn split(
             let x = r.head().args().nth(first).and_then(|t| t.var()).filter(|_| !copy)?;
             // The guard on the head's node, and on every node the body's same-document atoms join to it
             // (`same_document`): each has the head's document, or a guest or host of it, which shares its component
-            // (`components.rr`), so each guard admits the same rows. The planner applies each as soon as its node is
+            // (`components.rerail`), so each guard admits the same rows. The planner applies each as soon as its node is
             // bound, so a found document's rows stop at the first atom that binds one, before the rest of the join
             // (O114).
             let nodes: BTreeSet<Slot> = r

@@ -17,10 +17,10 @@
 //                        spread itself)
 //   php_key(a, e, k)     element e of a has key k: "i:<n>" for int n, "s:<text>" for a string
 //
-// Builds on php/values.rr (php_value). Int keys beyond nine digits are compared as text but not counted from, so
+// Builds on php/values.rerail (php_value). Int keys beyond nine digits are compared as text but not counted from, so
 // [9223372036854775806 => 1, 2] leaves 2's key unknown.
 
-#include "php/values.rr"
+#include "php/values.rerail"
 
 .decl php_item(a: node, e: node)
 php_item(a, e) :- kind(a, "array_creation_expression"), child(a, e, _), kind(e, "array_element_initializer"),

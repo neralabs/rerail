@@ -3,7 +3,7 @@
 .language typescript
 .mode steer
 .scope include "**/*"
-#include "tsx/eslint-a-expressions.rr"
+#include "tsx/eslint-a-expressions.rerail"
 
 // ESLint's no-iterator: any member access named __iterator__, SpiderMonkey's old iteration hook.
 //   Foo.prototype.__iterator__ = f;    a["__iterator__"];    a[`__iterator__`]   → reported

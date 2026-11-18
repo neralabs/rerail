@@ -26,11 +26,11 @@
 //   php_identical(e, r)    `a === b` expression e is r ("true" or "false") from the values: same type and value
 //   php_if_const(i, c, b)  `if (c)` statement i's condition is always b, in the cases PHPStan's if.always* reports
 //
-// Builds on core, php/names.rr (php_call_written) and php/phpdoc.rr (doc_comment, doc_type).
+// Builds on core, php/names.rerail (php_call_written) and php/phpdoc.rerail (doc_comment, doc_type).
 // Gaps: an octal literal written 017 reads as 17 (core's value), and a float's canonical text is its source text.
 
-#include "php/names.rr"
-#include "php/phpdoc.rr"
+#include "php/names.rerail"
+#include "php/phpdoc.rerail"
 
 .decl php_value(n: node, t: symbol, v: symbol)
 php_value(n, "int", v) :- kind(n, "integer"), value(n, v).

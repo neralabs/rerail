@@ -8,7 +8,7 @@
 // instance and class methods) is named `__x`: the PEP 484 way to say positional-only. Dunder names (`__x__`)
 // do not count, nor do keyword-only parameters.
 //   def f(__x, y): ...        ← PYI063: write `def f(x, /, y)`
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI063(at: node, x: symbol) code "PYI063" "Drop the `__` prefix from `{x}` and from the `__`-prefixed parameters right after it (renaming their uses), then add `/` after the last one; skip this if the code supports Python before 3.8."
     suppress ruff "PYI063"

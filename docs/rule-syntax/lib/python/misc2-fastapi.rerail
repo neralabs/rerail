@@ -22,9 +22,9 @@
 //   @app.get("/items/{item_id}")          fast_route(<def>, <app.get(…)>)
 //   async def read(item_id: int, q: str = Query(None)): …   fast_param(<def>, <q…>, "q", <str>, <Query(None)>),
 //                                                            fast_dependency(<Query(None)>, "Query")
-#include "python/misc2-perf.rr"
+#include "python/misc2-perf.rerail"
 //   perf_latest_site(n, site), perf_site_value(site, v), perf_site_ann(site, h); ruff_qual (python/ruff)
-#include "python/upgrade-typing.rr"
+#include "python/upgrade-typing.rerail"
 //   up_typing_sub(s, x), type_arg(s, i, a)
 
 .decl fast_route(f: node, dc: node)

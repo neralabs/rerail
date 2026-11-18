@@ -12,8 +12,8 @@
 // The keyword list is a table generated from the JSON (gen-keywords.py). Code tree-sitter-sql cannot parse is
 // left alone, as sqlfluff leaves unparsable sections.
 
-#include "sql/syntax.rr"
-#include "../packs/sql/sqlfluff-rf04-references-keywords.facts.rr"   // sql_keyword
+#include "sql/syntax.rerail"
+#include "../packs/sql/sqlfluff-rf04-references-keywords.facts.rerail"   // sql_keyword
 
 .violation RF04(at: node) code "RF04" "Keywords should not be used as identifiers."
     suppress sqlfluff "RF04", "L029", "all", "references", "references.keywords"

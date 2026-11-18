@@ -13,7 +13,7 @@
 //   def outer() -> None:
 //       def inner(): ...            ← ANN202: nested
 //   def __dunder__(): ...           ← ANN202: a module-level dunder is not a method
-#include "python/annotations.rr"
+#include "python/annotations.rerail"
 
 .violation ANN202(at: node, name: symbol) code "ANN202"
     "Add a return type annotation to `{name}` (for example `-> None` if it returns nothing)."

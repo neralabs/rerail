@@ -9,7 +9,7 @@
 //   <div>// hello</div>             reported, at the text
 //   <div>{/* hello */}</div>        not reported
 //   <a href="//x">                  not: attribute values are not text children
-#include "tsx/react.rr"
+#include "tsx/react.rerail"
 
 .violation comment_text(at: node)
     code "react/jsx-no-comment-textnodes"

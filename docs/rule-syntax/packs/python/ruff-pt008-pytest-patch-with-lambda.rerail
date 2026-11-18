@@ -10,7 +10,7 @@
 // argument). A call that already passes `return_value=` is left alone.
 //   mocker.patch("os.getcwd", lambda: "/tmp")              ← PT008
 //   mocker.patch("os.path.join", lambda *a: a[0])          not reported: the lambda reads a
-#include "python/pytest.rr"
+#include "python/pytest.rerail"
 //   exc_dotted(e, s), exc_argument(c, k, i, a), kwarg(c, k, v); names: params(f, x, i)
 
 .violation PT008(at: node, f: symbol) code "PT008"

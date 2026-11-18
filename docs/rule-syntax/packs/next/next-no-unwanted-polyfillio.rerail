@@ -9,8 +9,8 @@
 //   <script src="https://polyfill.io/v3/polyfill.min.js?features=IntersectionObserver" />  fine
 // The table (hosts and NEXT_POLYFILLED_FEATURES) is generated from the JSON; see gen-polyfillio.py.
 
-#include "tsx/next.rr"
-#include "../packs/next/next-no-unwanted-polyfillio.facts.rr"   // polyfill_host, polyfilled
+#include "tsx/next.rerail"
+#include "../packs/next/next-no-unwanted-polyfillio.facts.rerail"   // polyfill_host, polyfilled
 
 .violation polyfill(at: node, fs: symbol) code "@next/next/no-unwanted-polyfillio"
     "No duplicate polyfills from Polyfill.io are allowed. {fs} already shipped with Next.js. See: https://nextjs.org/docs/messages/no-unwanted-polyfillio"

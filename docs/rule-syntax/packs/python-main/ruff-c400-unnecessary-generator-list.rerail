@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // trivia(n): the JSON util `trivia`, used where the JSON says `matches: "trivia"`
 .decl c400_trivia(n: node)

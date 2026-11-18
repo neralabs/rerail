@@ -9,7 +9,7 @@
 //   os.makedirs("a/b", exist_ok=True)    ← PTH103: `Path("a/b").mkdir(parents=True, exist_ok=True)`
 //   from os import makedirs as md
 //   md("a/b")                            ← PTH103
-#include "python/pathlib.rr"
+#include "python/pathlib.rerail"
 //   pth_call(c, q, f)   c calls q; f the callee (python/pathlib)
 
 .violation PTH103(at: node) code "PTH103"

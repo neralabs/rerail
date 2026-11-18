@@ -9,7 +9,7 @@
 //   with self.assertRaises(ValueError): f()      ← PT027
 //   with self.assertRaises(E) as self.cm: f()    not reported: Ruff reads a target only when it is a name
 //   self.assertRaisesRegex(E, "msg", f)          ← PT027
-#include "python/pytest.rr"
+#include "python/pytest.rerail"
 //   names: attr_of(n, o, a)
 
 .violation PT027(at: node, x: symbol) code "PT027"

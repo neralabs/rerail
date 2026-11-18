@@ -1,7 +1,7 @@
-// tsx/es-globals.rr: es_global's rows, ESLint's ECMAScript globals for `ecmaVersion: "latest"` (2026), from
+// tsx/es-globals.rerail: es_global's rows, ESLint's ECMAScript globals for `ecmaVersion: "latest"` (2026), from
 // native/src/code_rule_dsl/scope/data/es_globals.generated.json (eslint@10.11.0 conf/globals.js). Generated: a test
 // (`logic::rr::tests::es_globals_match_the_engines_table`) holds it equal to that table.
-// Included by tsx/names.rr, which declares es_global.
+// Included by tsx/names.rerail, which declares es_global.
 es_global("AggregateError").
 es_global("Array").
 es_global("ArrayBuffer").

@@ -8,7 +8,7 @@
 //   <script src="https://x.com/a.js" async />    fine
 // Attributes count by name, with or without a value; a spread {...p} is not read.
 
-#include "tsx/next.rr"
+#include "tsx/next.rerail"
 
 .violation sync(at: node) code "@next/next/no-sync-scripts"
     "Synchronous scripts should not be used. See: https://nextjs.org/docs/messages/no-sync-scripts"

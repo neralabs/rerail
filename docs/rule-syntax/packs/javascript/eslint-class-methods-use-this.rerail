@@ -4,10 +4,10 @@
 .mode steer
 .scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
 
-#include "tsx/eslint-a-functions.rr"
+#include "tsx/eslint-a-functions.rerail"
 //   fn_holder, held_value, deparen, holder_key, private_key, is_static, member_kind, fn_words, fn_head,
 //   this_owner (which function, field value or static block a `this` belongs to)
-#include "tsx/modules.rr"
+#include "tsx/modules.rerail"
 //   fn_region
 
 // ESLint's class-methods-use-this: an instance method that never uses `this` or `super`.

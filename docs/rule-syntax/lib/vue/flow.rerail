@@ -9,7 +9,7 @@
 //
 //   function a(x) { if (x) { return 1 } else { throw e } }      vexits(the if): a cannot fall off its end
 //   function b(x) { if (x) return 1 }                            vfalls_off(b)
-#include "tsx/modules.rr"
+#include "tsx/modules.rerail"
 //   function_kind(k)
 
 // vcompletes(s): s can run to its end (ESLint: its final segment is reachable). It is the positive relation the

@@ -5,7 +5,7 @@
 .scope include "**/*.php"
 .scope exclude "**/*.blade.php"
 
-#include "php/arrays.rr"
+#include "php/arrays.rerail"
 //   php_item(a, e)     e is an element of array literal a (literal spreads unpacked)
 //   php_key(a, e, k)   e's key, after PHP's casts and numbering: "i:1" for 1, '1', true and 1.5; "s:a" for 'a'
 

@@ -6,9 +6,9 @@
 // Bandit's B302 (its B001 blacklist): a call to marshal.load or marshal.loads.
 //   import marshal; marshal.loads(data)        B302
 //   from marshal import load; load(f)           B302
-// How Bandit reads the call's name, and the list: python/security.rr (blacklisted).
+// How Bandit reads the call's name, and the list: python/security.rerail (blacklisted).
 
-#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+#include "python/security.rerail"   // blacklisted: Bandit's B001 over calls and imports
 
 .violation B302(at: node) code "B302"
     "Load this data with json or another data-only format instead of marshal, which is unsafe on untrusted input."

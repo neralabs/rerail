@@ -9,7 +9,7 @@
 //   def f():               ← PYI048
 //       x = 1
 //       return x
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI048(at: node) code "PYI048" "Reduce this stub function's body to a single statement, normally `...`; stub files only declare types and are never executed."
     suppress ruff "PYI048"

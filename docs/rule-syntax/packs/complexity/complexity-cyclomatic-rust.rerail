@@ -5,7 +5,7 @@
 .scope include "**/*.rs"
 .scope exclude "**/target/**", "**/generated/**", "**/tests/**", "**/tests.rs", "**/*_test.rs", "**/*_tests.rs"
 
-#include "complexity/rust.rr"
+#include "complexity/rust.rerail"
 //   cc_report(f, msg)   function f has cyclomatic complexity over 6 (lizard's decision points; nested ones apart)
 
 // The complexity pack's ceiling, with lizard 1.24.0's count: 1 + each if, for, while, `?`, &&, ||, let-chain

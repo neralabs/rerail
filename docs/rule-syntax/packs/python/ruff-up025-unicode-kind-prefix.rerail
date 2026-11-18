@@ -10,9 +10,9 @@
 //   x = u"Hello"                ← UP025: write "Hello"
 //   def f(a: u"int"): ...       ← UP025, unless the module has `from __future__ import annotations`
 //   x: list[u"int"]             ← UP025 either way: the string is not the whole annotation
-#include "python/upgrade.rr"
+#include "python/upgrade.rerail"
 //   stub_file(d), future_annotations(d); ann_root(t) and unparen (python/ast)
-#include "python/upgrade-format.rr"
+#include "python/upgrade-format.rerail"
 //   u_piece(s), lit_piece(e, s)
 
 .violation UP025(at: node) code "UP025"

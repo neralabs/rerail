@@ -9,7 +9,7 @@
 // Reported at the decorator. attrs decorators are not checked.
 //   @dataclass                ← RUF049
 //   class E(Enum): ...
-#include "python/ruff-classes.rr"
+#include "python/ruff-classes.rerail"
 
 .violation RUF049(at: node) code "RUF049"
     "Don't decorate an Enum with `@dataclass`: the generated `__eq__` can make distinct members equal. Remove it, or move the fields into a dataclass mixin listed before `Enum`."

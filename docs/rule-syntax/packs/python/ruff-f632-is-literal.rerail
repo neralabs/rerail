@@ -11,7 +11,7 @@
 //   if x is "abc": ...        ← F632 "Use `==` …"
 //   if x is not []: ...       ← F632 "Use `!=` …"
 //   if x is None: ...         not reported
-#include "python/pyflakes.rr"
+#include "python/pyflakes.rerail"
 //   cmp_pair(c, i, op, l, r)   link i of a comparison (python/ast)
 //   const_non_singleton(e), mutable_literal(e)
 

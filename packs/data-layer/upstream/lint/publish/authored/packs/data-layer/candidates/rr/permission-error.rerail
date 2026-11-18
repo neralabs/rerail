@@ -6,7 +6,7 @@
 .scope include "api/**/*.py", "impl/**/*.py", "l1100_exceptions/**/*.py"
 .scope exclude "**/.git/**", "**/.venv/**", "**/venv/**", "**/__pycache__/**", "**/tmp/**", "**/test/**", "**/tests/**"
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_permission_error.py
-#include "python/ast.rr"
+#include "python/ast.rerail"
 
 // The collector is ordered: an import encountered after a raise does not excuse it.
 .decl permission_import(i: node)

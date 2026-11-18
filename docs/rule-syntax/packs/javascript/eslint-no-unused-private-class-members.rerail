@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
 
-#include "tsx/eslint-a-functions.rr"
+#include "tsx/eslint-a-functions.rerail"
 //   private_key, holder_key, member_kind, class_member, unwrap_parens
 
 // ESLint's no-unused-private-class-members: a private field or method (`#x`) that the class never reads.

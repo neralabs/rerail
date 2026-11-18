@@ -8,7 +8,7 @@
 // segment of the package's dotted name starts with `_` (dunders aside). An empty `__init__.py` is reported too.
 // `.pyi` stubs are not checked.
 //   pkg/__init__.py:  import os        ← D104 at line 1
-#include "python/docstrings.rr"
+#include "python/docstrings.rerail"
 
 .violation D104(at: span) code "D104"
     "Add a docstring as the first statement of this package's `__init__.py`, summarizing what the package provides."

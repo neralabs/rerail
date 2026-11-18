@@ -13,7 +13,7 @@
 //   x = [1] + foo + [2]               ← RUF005 once, at the whole chain
 //   a = [1, 2] + (3, 4)               not reported: list and tuple
 //   a = foo + bar + [1]               not reported: `foo + bar` does not fold
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 
 // folds(e, t): e is, after folding, a literal of type t ("list" or "tuple"): a literal, or a `+` that folds.
 .decl folds(e: node, t: symbol)

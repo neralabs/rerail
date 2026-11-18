@@ -30,7 +30,7 @@
 //   for i in items:              perf_for(<for>, <i>, <items>)
 //       if i % 2:                perf_body(<for>, <the append statement>, <i % 2>)
 //           result.append(i)     perf_method_call(<call>, <result>, "append", <i>)
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 //   unparen(e, m), ruff_qual(e, q), call_nargs(c, n), call_nkwargs(c, n), ruff_arg(c, i, a)
 
 // ---- loop shapes --------------------------------------------------------------------------------------------

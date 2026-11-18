@@ -27,8 +27,8 @@
 //   <li v-for="(item, i) in items" :key="item.id">{{ item.name }}</li>
 //     tvar(li, "item", …, "v-for"), tvar(li, "i", …, "v-for"); `item` of :key and of {{ }} tbind to it;
 //     `items` is tfree (the v-for list is read outside the element's own variables)
-#include "vue/template.rr"
-#include "tsx/names.rr"
+#include "vue/template.rerail"
+#include "tsx/names.rerail"
 //   ref(r, x, space), ref_site(r, site), decl_site(s, x, site, form, space)
 
 .decl vcode(a: node, g: node, role: symbol)

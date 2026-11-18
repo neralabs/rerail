@@ -38,7 +38,7 @@
 //
 // Builds on tsx/ts-a (heritage), tsx/modules (string_stmt, not_stmt), tsx/names (ref_site: declarations by name,
 // in the type namespace) and core.
-#include "tsx/ts-a.rr"
+#include "tsx/ts-a.rerail"
 
 // ---- files -------------------------------------------------------------------------------------------------------
 // definition_file(d): typescript-eslint's isDefinitionFile, on the lower-cased file name.
@@ -121,7 +121,7 @@ type_ref(r, x) :- kind(r, "type_identifier"), text(r, x), child(p, r, _), !kind(
 type_name_of(p, r) :- field(p, "name", r), kind(r, "type_identifier"), !kind(p, "generic_type").
 .decl heritage_ref(r: node)  // ts-a's heritage entry, when it is a plain name (not `Array<T>`, not `N.T`)
 heritage_ref(r) :- type_ref(r, _), heritage(r).
-// type_global(r, x): names.rr resolves r among the type declarations of enclosing scopes (classes, interfaces,
+// type_global(r, x): names.rerail resolves r among the type declarations of enclosing scopes (classes, interfaces,
 // type aliases, imports). Type parameters, `infer U` and mapped `[K in …]` bind in the construct that declares
 // them; enums and namespaces declare a type in their block.
 //   let f: Function;                                  the global

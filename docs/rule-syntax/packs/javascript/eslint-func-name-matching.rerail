@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-a-functions.rr"
+#include "tsx/eslint-a-functions.rerail"
 //   deparen, fn_id, static_prop, method_call, call_arg
 
 // ESLint's func-name-matching: a named function expression stored under another name.

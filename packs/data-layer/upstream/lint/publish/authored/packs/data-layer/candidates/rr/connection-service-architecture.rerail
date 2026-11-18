@@ -31,10 +31,10 @@
 // CONN601 is `.mode log`: the linter's lint() never runs it on impl/read_through/connection.py (it reads that
 // file for CONN103 only), so it never blocks; direct calls of its check still see it.
 
-#include "python/names.rr"
-#include "python/ast.rr"      // body_stmt, body_len, docstring, plain_str, expr_ctx, ast_name, def_frame, unparen
-#include "python/security.rr" // pos_arg: positional argument i of a call (comments, keywords, `**kw` left out)
-#include "python/security.rr" // pos_arg: positional argument i of a call (comments, keywords, `**kw` left out)
+#include "python/names.rerail"
+#include "python/ast.rerail"      // body_stmt, body_len, docstring, plain_str, expr_ctx, ast_name, def_frame, unparen
+#include "python/security.rerail" // pos_arg: positional argument i of a call (comments, keywords, `**kw` left out)
+#include "python/security.rerail" // pos_arg: positional argument i of a call (comments, keywords, `**kw` left out)
 
 .decl csa_slot(v: symbol)  // SCHEMA_TRANSACTION_SLOT_NAMES
 csa_slot("_current_schema_transaction"). csa_slot("_current_async_schema_transaction").

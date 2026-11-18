@@ -14,7 +14,7 @@
 //   async def create_item(item: Item) -> Item: …        ← FAST001
 //   @app.post("/items/", response_model=str)
 //   async def create_item(item: Item) -> Item: …        not reported
-#include "python/misc2-fastapi.rr"
+#include "python/misc2-fastapi.rerail"
 //   fast_route(f, dc), fast_strip(e, m); call_kwarg (python/ruff)
 
 .violation FAST001(at: node) code "FAST001"

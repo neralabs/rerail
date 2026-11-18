@@ -6,12 +6,12 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // B905(n): a finding at node n, from clause `zip-without-explicit-strict`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation B905(at: loc, call: node) "Pass `strict=` explicitly: `strict=True` when lengths must match, `strict=False` when truncation is intended."
     suppress noqa "B905"
 B905(CALL, n) :- kind(n, "call"), b905_arg_no_strict_1(n), b905_alt_4(n, CALL), child(n, c4, _),

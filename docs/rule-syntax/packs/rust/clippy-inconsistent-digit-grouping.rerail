@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "rust/syntax-literals.rr"
+#include "rust/syntax-literals.rerail"
 //   grouping_lint(n, w, fractions)   Clippy's LiteralDigitGrouping verdict on number literal n
 
 // Clippy's inconsistent_digit_grouping (style): the `_` groups of a decimal literal differ in size, a first

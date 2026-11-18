@@ -11,7 +11,7 @@
 //   os.chmod(3, 0o644)                   not reported: a file descriptor
 //   fd = 3; os.chmod(fd, 0o644)          not reported: fd's only binding is an int
 //   os.chmod("f", 0o644, dir_fd=d)       not reported; `dir_fd=None` is reported
-#include "python/pathlib.rr"
+#include "python/pathlib.rerail"
 //   pth_call(c, q, f)   c calls q; f the callee      fd_arg(c, x)   x's argument is a file descriptor
 //   kw_set(c, k)        keyword k is not None        (python/pathlib)
 

@@ -12,7 +12,7 @@
 //   for os in range(3): ...        ← F402 at `os`
 //   def main():
 //       for os in range(3): ...    ← F402: shadows the module's import
-#include "python/pyflakes.rr"
+#include "python/pyflakes.rerail"
 
 .violation F402(at: node, x: symbol) code "F402" "Import `{x}` shadowed by loop variable"
     suppress ruff "F402"

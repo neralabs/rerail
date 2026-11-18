@@ -11,7 +11,7 @@
 //       logger.exception("failed: %s", e)        ← TRY401, at e
 //       logger.exception(f"failed: {e}")         ← TRY401
 //       logger.exception("failed: %s", e.args)   not reported
-#include "python/exceptions.rr"
+#include "python/exceptions.rerail"
 //   exc_handler_log(x, c, level), exc_arg(c, i, a); names: ref_site(n, site), site_form(site, form)
 
 .violation TRY401(at: node, e: symbol) code "TRY401"

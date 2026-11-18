@@ -12,7 +12,7 @@
 //   def g() -> "///": ...                 ← F722
 //   X: """List[int]"""'☃' = []            ← F722: the parts join into one invalid annotation
 //   def f() -> "A": ...                   not reported
-#include "python/pyflakes.rr"
+#include "python/pyflakes.rerail"
 //   annotation(n)              n is in a type annotation, or in a string annotation's parsed tree (python/names)
 //   string_annotation(s)       s is a string Ruff reads as a type: cast("T", x), TypeVar bound=… (core)
 //   parsed(s, "annotation", r) r is the tree of s's contents (core)

@@ -10,7 +10,7 @@
 //       logging.error("failed")                  ← TRY400
 //       self.logger.error("failed")              ← TRY400: the name looks like a logger
 //       logger.error("failed", exc_info=True)    not reported
-#include "python/exceptions.rr"
+#include "python/exceptions.rerail"
 //   exc_handler_log(x, c, level), exc_info_kw(c)
 
 .violation TRY400(at: node) code "TRY400"

@@ -10,7 +10,7 @@
 //   if type(a) == type(b): ...     ← E721
 //   if type(a) == int: ...         ← E721
 //   if x.dtype == float: ...       not reported
-#include "python/pyflakes.rr"
+#include "python/pyflakes.rerail"
 //   cmp_pair(c, i, op, l, r)   link i of a comparison (python/ast)
 //   resolves_builtin(e, x)     e is the name x and reads the builtin
 

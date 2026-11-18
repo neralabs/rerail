@@ -3,8 +3,8 @@
 .language typescript
 .mode steer
 .scope include "**/*"
-#include "tsx/eslint-a-expressions.rr"
-#include "tsx/eslint-b-scope.rr"
+#include "tsx/eslint-a-expressions.rerail"
+#include "tsx/eslint-b-scope.rerail"
 //   deparen, stmt_start, semi_needed, builtin_ref
 
 // ESLint's no-object-constructor: `Object()` or `new Object()` with no arguments, where Object is the global

@@ -9,7 +9,7 @@
 //   tuple([1, 2])      ← C409: (1, 2)
 //   tuple((1, 2))      ← C409: (1, 2), the call returns the same tuple
 //   tuple([x for x in y])      not reported
-#include "python/comprehensions.rr"
+#include "python/comprehensions.rerail"
 //   c4_call(c, x), c4_only(c, a), list_like(e, k)
 
 .violation C409(at: node, id: symbol, msg: symbol) code "C409" "{msg}"

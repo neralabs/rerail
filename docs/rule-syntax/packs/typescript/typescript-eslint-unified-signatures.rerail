@@ -4,8 +4,8 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-a-functions.rr"
-#include "tsx/ts-a.rr"
+#include "tsx/eslint-a-functions.rerail"
+#include "tsx/ts-a.rerail"
 //   fn_param, deparen
 
 // typescript-eslint's unified-signatures: two overloads of one function, method or signature that could be one.

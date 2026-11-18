@@ -3,7 +3,7 @@
 .language typescript
 .mode steer
 .scope include "**/*"
-#include "tsx/statements.rr"
+#include "tsx/statements.rerail"
 
 // ESLint's one-var. Each kind of declaration (var, let, const, using, await using) and each class of declarator,
 // initialized (`a = 1`) or uninitialized (`b`), has a mode:

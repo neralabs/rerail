@@ -1,17 +1,17 @@
 # Notes: tsx/modules, eslint-strict, eslint-sort-imports
 
-> The core additions proposed below are now in lib/core.rr (2026-11-05).
+> The core additions proposed below are now in lib/core.rerail (2026-11-05).
 
 These are hand-written versions of two ESLint rules. The machine translations from
 `packs/javascript/rules/*.json` run to about 200 lines each. The vocabulary they lacked
 (directive prologues, strict mode, module-ness, the shape of an import) is now
-`lib/tsx/modules.rr`, and each rule is a page of Datalog over it.
+`lib/tsx/modules.rerail`, and each rule is a page of Datalog over it.
 
 | File | Lines |
 |---|---|
-| `lib/tsx/modules.rr` | 216 |
-| `packs/javascript/eslint-strict.rr` | 89 |
-| `packs/javascript/eslint-sort-imports.rr` | 79 |
+| `lib/tsx/modules.rerail` | 216 |
+| `packs/javascript/eslint-strict.rerail` | 89 |
+| `packs/javascript/eslint-sort-imports.rerail` | 79 |
 
 ## Assumptions
 
@@ -138,8 +138,8 @@ gave exactly ESLint's reports.
 
 ## Proposed core additions
 
-They are in the block `// ---- proposed for core.rr (to be moved) ----` at the top of
-`lib/tsx/modules.rr`.
+They are in the block `// ---- proposed for core.rerail (to be moved) ----` at the top of
+`lib/tsx/modules.rerail`.
 
 | Addition | What | Why |
 |---|---|---|
@@ -147,12 +147,12 @@ They are in the block `// ---- proposed for core.rr (to be moved) ----` at the t
 | `.decl package_for(path: symbol, dir: symbol)`, `.decl package_field(dir: symbol, key: symbol, v: symbol)` (`.input`) | The nearest package.json for a file, as `tsconfig_for` does; that file's top-level string members | The engine and Node give a `.js` file a module system from its package's `type`. Core's `package(dir, name)` reads only the name. Other uses: `engines`, `private`, `main`. |
 | `.functor lower(s: symbol): symbol` | JavaScript `toLowerCase` | `ignoreCase` options compare lower-cased text. The `i*` text tests ignore case but cannot order, and `@convert(…, "lowerCase", …)` also splits words. |
 
-Two notes on `core.rr` itself, not changed:
+Two notes on `core.rerail` itself, not changed:
 - **`has` is ambiguous.** Its comment says "a is a strict ancestor of n whose kind is in set".
   The guide's table and the translator use `has(n, c, "k")` with the kind on the descendant
   `c`. These files use it that way, once: `!has(b, _, "comment")`.
 - **`code "literal"`** on `.violation` (as in `code "sort-imports"`) is what the generated
-  `.rr` uses. Core documents only `code {c}`.
+  `.rerail` uses. Core documents only `code {c}`.
 
 ## Checks
 
@@ -164,12 +164,12 @@ confirms the expected reports for the reviewer's cases:
 - line 1 for `m<T>`;
 - `module` for `'use\x20strict'`.
 
-These rules cannot run on real code until the engine runs `.rr`. So each of those cases was
+These rules cannot run on real code until the engine runs `.rerail`. So each of those cases was
 checked against the rules by reading them, not by running them.
 
 
-- **`python3 site/check_rr.py`** prints `ok`. Its groundedness pass globs `**/*.rr`, so it
-  covers `packs/`. Its strata and duplicate-declaration passes glob only `*.rr`,
+- **`python3 site/check_rr.py`** prints `ok`. Its groundedness pass globs `**/*.rerail`, so it
+  covers `packs/`. Its strata and duplicate-declaration passes glob only `*.rerail`,
   `data-layer/**` and `lib/**`, which leaves out the two rules. The same functions were run on
   the rule files directly (each program with its includes and core): no problems.
 - **Soufflé 2.5** parses, type-checks and runs both programs (core, names, modules and the

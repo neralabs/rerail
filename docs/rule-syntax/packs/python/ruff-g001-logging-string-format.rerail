@@ -10,7 +10,7 @@
 //   logging.info("Hello {}".format("World!"))                    ← G001
 //   logging.log(logging.INFO, msg="Hello {}".format("World!"))    ← G001
 //   logging.info(template.format(x))                             not reported: the receiver is not a literal
-#include "python/logging.rr"
+#include "python/logging.rerail"
 
 .violation G001(at: node) code "G001"
     "Pass the values as logger arguments with `%s` placeholders, e.g. `logger.info(\"x=%s\", x)`, instead of `.format()`, doubling any literal `%`; leave it if the logger is not from `logging`."

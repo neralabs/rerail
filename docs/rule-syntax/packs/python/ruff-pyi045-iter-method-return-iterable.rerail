@@ -8,7 +8,7 @@
 // `AsyncIterable`), from typing or collections.abc, subscripted or not. `iter()` needs an iterator back.
 // Reported at the return annotation.
 //   def __iter__(self) -> Iterable[int]: ...     ← PYI045: write `Iterator[int]`
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI045(at: node, msg: symbol) code "PYI045" "{msg}"
     suppress ruff "PYI045"

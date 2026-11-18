@@ -9,7 +9,7 @@
 // defs included.
 //   except ZeroDivisionError as e:
 //       assert e.args == ("division by zero",)       ← PT017
-#include "python/pytest.rr"
+#include "python/pytest.rerail"
 //   exc_alias(x, e), exc_body(x, b); ast: ast_name(n, x)
 
 .violation PT017(at: node, e: symbol) code "PT017"

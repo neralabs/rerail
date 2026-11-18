@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // PTH123(n): findings from clauses `builtin-open`, `builtin-open-in-string-annotation`, which say the same.
 // Each rule is one way a JSON `rule` can match.

@@ -9,7 +9,7 @@
 // is the name `self`, whatever class it is in. The finding is at `self.alias`.
 //   self.assertEquals(1, 2)       ← UP005: use assertEqual
 //   self.assertEqual(1, 2)        not reported
-#include "python/ast.rr"
+#include "python/ast.rerail"
 //   attr_of(e, o, a), unparen(e, m)
 
 .violation UP005(at: node, alias: symbol, target: symbol) code "UP005"

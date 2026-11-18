@@ -24,8 +24,8 @@
 .phase values
 .export len
 
-#include "core.rr"
-#include "python/lengths.rr"
+#include "core.rerail"
+#include "python/lengths.rerail"
 
 .decl struct__binds(m: symbol, x: symbol, how: symbol, t: symbol)
 .decl struct__member(c: symbol, x: symbol, t: symbol)

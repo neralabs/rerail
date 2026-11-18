@@ -11,7 +11,7 @@
 //   class Bar(str):              not reported
 //       __slots__ = ("foo",)
 //   class Color(str, Enum): ...  not reported
-#include "python/misc2-slots.rr"
+#include "python/misc2-slots.rerail"
 
 .violation SLOT000(at: node) code "SLOT000"
     "Add `__slots__ = ()` to this `str` subclass so instances skip the per-instance `__dict__`; if it assigns instance attributes, list their names in `__slots__` instead."

@@ -9,7 +9,7 @@
 //   raise NotImplemented              ← F901
 //   raise NotImplemented("todo")      ← F901
 //   raise NotImplementedError         not reported
-#include "python/pyflakes.rr"
+#include "python/pyflakes.rerail"
 
 .violation F901(at: node) code "F901" "`raise NotImplemented` should be `raise NotImplementedError`"
     suppress ruff "F901"

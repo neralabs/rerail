@@ -12,7 +12,7 @@
 //   xs = [1, 2]
 //   for i in list(xs): …             ← PERF101
 //   for i in list(xs): xs.append(i)  not reported: the copy is needed
-#include "python/misc2-perf.rr"
+#include "python/misc2-perf.rerail"
 //   perf_for(f, t, it), perf_latest_site(n, site), perf_site_value(site, v), perf_call_stmt(st, c)
 
 .violation PERF101(at: node) code "PERF101"

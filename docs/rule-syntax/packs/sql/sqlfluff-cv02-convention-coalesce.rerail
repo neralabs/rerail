@@ -7,7 +7,7 @@
 //   SELECT ifnull(foo, 0) AS bar FROM baz        reported; the fix is COALESCE(foo, 0)
 //   SELECT my_schema.nvl(foo, 0) FROM baz        fine: a user function
 
-#include "sql/syntax.rr"
+#include "sql/syntax.rerail"
 
 .violation CV02(at: node, f: node) code "CV02" "Use 'COALESCE' instead of '{f}'."
     suppress sqlfluff "CV02", "L060", "all", "convention", "convention.coalesce"

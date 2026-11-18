@@ -11,7 +11,7 @@
 //   asyncio.create_task(main())                  ← RUF006: an expression statement
 //   task = asyncio.create_task(main())           ← RUF006: a name that is never read (any scope)
 //   tasks.append(asyncio.create_task(main()))    not reported: the reference is kept
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 
 // task_call(c): a call that starts a task.
 .decl task_call(c: node)

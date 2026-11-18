@@ -10,7 +10,7 @@
 // The same check as n/no-unpublished-require, on import, export … from and import(). Options: ignorePrivate (default
 // true: skip a "private": true package), allowModules, ignoreTypeImport (skip `import type`). Not read: convertPath.
 
-#include "tsx/node-resolve.rr"   // spec_unpublished, spec_type_skipped
+#include "tsx/node-resolve.rerail"   // spec_unpublished, spec_type_skipped
 
 .violation unpublished_import(at: node, msg: symbol) code "n/no-unpublished-import" "{msg}"
     suppress eslint "n/no-unpublished-import"

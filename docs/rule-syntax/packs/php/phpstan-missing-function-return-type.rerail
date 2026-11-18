@@ -5,7 +5,7 @@
 .scope include "**/*.php"
 .scope exclude "**/*.blade.php"
 
-#include "php/phpdoc.rr"
+#include "php/phpdoc.rerail"
 //   doc_comment(n, c)   c is a /** */ comment right before n (only comments between)
 //   doc_type(c, t, ty)  PHPDoc c has tag @t (or @phpstan-t, @psalm-t) with type ty
 

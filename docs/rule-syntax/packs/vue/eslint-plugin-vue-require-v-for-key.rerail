@@ -3,7 +3,7 @@
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/template.rr"
+#include "vue/template.rerail"
 //   vdir(e, a, d, arg), vhas_dir(e, d, arg), vel_parent(e, p), vel_name(e, x), vcustom(e), vel_tag(e, t)
 
 // eslint-plugin-vue's require-v-for-key: an element with v-for and no `:key` is reported at its start tag, unless it

@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/ts-a.rr"
+#include "tsx/ts-a.rerail"
 //   ts_member(b, m, i), ts_ctor(m), param_property(p), class_of(b, c), extends_of(c)
 
 // typescript-eslint's no-extraneous-class: a class used as a namespace. A class that extends nothing (and,

@@ -26,7 +26,7 @@
 // differ only where a directory above the repository is called pages or …app.
 //
 // Builds on tsx/names (import_binding) and core.
-#include "tsx/names.rr"
+#include "tsx/names.rerail"
 
 // ---- tags and attributes -------------------------------------------------------------------------------------------
 // ESTree's JSXOpeningElement is tree-sitter's jsx_opening_element, or the whole jsx_self_closing_element. Rules

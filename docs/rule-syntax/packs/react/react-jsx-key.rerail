@@ -11,8 +11,8 @@
 //   xs.map(function (x) { if (x) return <a />; })  &&/||; or a `return` at the top of its body or in its if/else
 // Code inside React.Children.toArray(…) is skipped: toArray adds keys. In an array the prop must be `key`
 // exactly; in an iterator any case counts (KEY=). A spread never does. Fragments are not checked (checkFragmentShorthand is off), nor key order or duplicates.
-#include "tsx/react.rr"
-#include "tsx/eslint-a-common.rr"
+#include "tsx/react.rerail"
+#include "tsx/eslint-a-common.rerail"
 
 .violation missing_key(at: node, msg: symbol)
     code "react/jsx-key"

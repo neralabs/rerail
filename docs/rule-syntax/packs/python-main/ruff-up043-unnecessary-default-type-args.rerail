@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // none(n): the JSON util `none`, used where the JSON says `matches: "none"`
 .decl up043_none(n: node)
@@ -120,7 +120,7 @@ up043_direct_ref(n, T) :- up043_string_content(n), parsed(n, "annotation", r1), 
 // UP043(n): a finding at node n, from clause `default-type-args-in-stub`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation UP043(at: loc, t: node) "Omit the trailing `None` type arguments of this generator annotation (`Generator[int]` for `Generator[int, None, None]`); they are the defaults."
     suppress noqa "UP043"
 UP043_raw(T, n) :- up043_default_args(n), node(_, n, _, _, _), T = n.
@@ -129,7 +129,7 @@ UP043_raw(T, n) :- up043_direct_ref(n, T).
 // UP043_default_type_args(n): a finding at node n, from clause `default-type-args`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation UP043_default_type_args(at: loc, t: node) code "UP043" "Omit the trailing `None` type arguments of this generator annotation (`Generator[int]` for `Generator[int, None, None]`); Python 3.13 made them the defaults."
     suppress noqa "UP043"
 UP043_default_type_args_raw(T, n) :- up043_default_args(n), node(_, n, _, _, _), T = n.

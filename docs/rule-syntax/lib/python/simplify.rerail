@@ -19,7 +19,7 @@
 //
 //   x or True                sim_operand(<or>, "or", 0, <x>), sim_truth(<True>, "true")
 //   if a and (b or ""): …    sim_bool_test(<a and (b or "")>), sim_bool_test(<b or "">)
-#include "python/comprehensions.rr"   // c4_call, dict_ref; python/compare; python/ruff, python/upgrade
+#include "python/comprehensions.rerail"   // c4_call, dict_ref; python/compare; python/ruff, python/upgrade
 
 // ---- 1. operands -------------------------------------------------------------------------------------------------
 .decl sim_operand(t: node, o: symbol, i: number, v: node)

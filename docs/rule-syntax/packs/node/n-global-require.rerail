@@ -14,7 +14,7 @@
 //   const r = require; r("x")         not: only calls of the identifier `require`
 // A require that a local declaration shadows is not reported (`function f(require) { require("x") }`).
 
-#include "tsx/node.rr"   // bare_require, node_ancestor, node_chain
+#include "tsx/node.rerail"   // bare_require, node_ancestor, node_chain
 
 .violation global_require(at: node) code "n/global-require" "Move this require() to the top level of the module."
     suppress eslint "n/global-require"

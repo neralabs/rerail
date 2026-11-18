@@ -19,14 +19,14 @@
 //       datetime.datetime.now(None)                    naive_tz(…, "none")
 //       datetime.datetime.now().astimezone()           then_astimezone(<now()>)
 //       datetime.datetime(2000, 1, 1, tzinfo=None)     naive_tz(…, "datetime.datetime", "none")
-#include "python/ruff.rr"
-#include "python/misc-seen.rr"
+#include "python/ruff.rerail"
+#include "python/misc-seen.rerail"
 
 seen_ask("datetime").
 .decl dt_call(c: node, q: symbol)
 dt_call(c, q) :- call_q(c, q), prefix("datetime.", q), docof(c, d), seen_module(d, "datetime").
 
-// The timezone parameter of each constructor, for ruff.rr's call_param.
+// The timezone parameter of each constructor, for ruff.rerail's call_param.
 param_slot("datetime.datetime", "tzinfo", 7).
 param_slot("datetime.datetime.now", "tz", 0).
 param_slot("datetime.datetime.fromtimestamp", "tz", 1).

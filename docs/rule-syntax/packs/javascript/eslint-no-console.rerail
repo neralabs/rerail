@@ -3,8 +3,8 @@
 .language typescript
 .mode steer
 .scope include "**/*"
-#include "tsx/eslint-a-globals.rr"
-#include "layout.rr"
+#include "tsx/eslint-a-globals.rerail"
+#include "layout.rerail"
 //   free_ref(r, x), static_prop(m, o, x), callee(c, f), estree_parent(n, p), deparen(e, x)
 
 // ESLint's no-console: any member of the global console that the `allow` list does not name.

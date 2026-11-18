@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/ts-a.rr"
+#include "tsx/ts-a.rerail"
 //   ts_member, type_parent
 
 // typescript-eslint's no-empty-object-type: `{}` and an empty interface admit any value but null and undefined.

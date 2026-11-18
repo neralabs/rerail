@@ -12,7 +12,7 @@
 //       A = 1
 //       C = 1                  ← PIE796
 //       D = enum.auto()        not compared
-#include "python/bugbear.rr"
+#include "python/bugbear.rerail"
 
 .violation PIE796(at: node, v: node) code "PIE796" "Enum contains duplicate value: `{v}`"
     suppress ruff "PIE796"

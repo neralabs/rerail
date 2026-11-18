@@ -8,9 +8,9 @@
 //   from Crypto.Cipher import DES; DES.new(key)     B304
 //   algorithms.TripleDES(key)                        B304, with algorithms imported from cryptography
 //   algorithms.AES(key)                              not reported
-// How Bandit reads the call's name, and the list: python/security.rr (blacklisted).
+// How Bandit reads the call's name, and the list: python/security.rerail (blacklisted).
 
-#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+#include "python/security.rerail"   // blacklisted: Bandit's B001 over calls and imports
 
 .violation B304(at: node) code "B304"
     "Replace this weak cipher with AES in an authenticated mode such as GCM."

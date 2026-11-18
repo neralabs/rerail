@@ -14,7 +14,7 @@
 //   except ValueError as e:
 //       raise e                    not reported
 //       raise TypeError() from e   not reported
-#include "python/bugbear.rr"
+#include "python/bugbear.rerail"
 
 .violation B904(at: node) code "B904" "Raise this exception with `from err` or `from None` so the cause chain is clear."
     suppress ruff "B904"

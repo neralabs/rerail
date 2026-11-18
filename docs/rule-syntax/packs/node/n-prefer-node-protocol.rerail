@@ -10,10 +10,10 @@
 // The module names are the plugin's: built-ins that also have a `node:` form (not "constants" or "sys").
 // require() is the identifier by name, with exactly one argument, not an optional call; getBuiltinModule is a
 // member of `process` or `globalThis.process`. Imports are reported only where the configured Node.js range (the
-// version option, else values.rr's node_range) supports `node:` imports (^12.20.0 || >=14.13.1); require()
+// version option, else values.rerail's node_range) supports `node:` imports (^12.20.0 || >=14.13.1); require()
 // also needs it for require (^14.18.0 || >=16.0.0); getBuiltinModule always. The fix adds the prefix.
 
-#include "tsx/node.rr"   // called, deparen, call_arg_count, static_prop, node_runs_on
+#include "tsx/node.rerail"   // called, deparen, call_arg_count, static_prop, node_runs_on
 
 .decl esm_ok(d: number)
 esm_ok(d) :- node_runs_on(d, r), @semver_subset(r, "^12.20.0 || >=14.13.1") = 1.

@@ -10,7 +10,7 @@
 // (default "false"), as Ruff's: "true" keeps `dict(a=1)`. Ruff's fixes are unsafe; none here.
 //   dict()    list()    dict(a=1, b=2)     ← C408: {}, [], {"a": 1, "b": 2}
 //   dict(**kw)    list(x)    dict(a=1, **kw)    not reported
-#include "python/comprehensions.rr"
+#include "python/comprehensions.rerail"
 //   c4_builtin(c, x), call_nargs(c, n), call_nkwargs(c, 0)
 
 .violation C408(at: node, kind: symbol) code "C408"

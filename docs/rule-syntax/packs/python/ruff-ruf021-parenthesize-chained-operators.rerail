@@ -10,7 +10,7 @@
 //   x = a or b and c          ← RUF021 at `b and c`
 //   x = a or (b and c)        not reported
 //   x = not a or b            not reported
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 
 .violation RUF021(at: node) code "RUF021"
     "Wrap this `and` expression in parentheses, as `(a and b)`, so its precedence under `or` is explicit; the result is unchanged."

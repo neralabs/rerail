@@ -8,7 +8,7 @@
 // `Exception` or `…Error`. Ruff reads the bases as written: a bare name only, not resolved, not `mod.Error`.
 //   class C(Exception): ...          ← N818
 //   class D(BaseException): ...      not reported: the base is neither
-#include "python/naming.rr"
+#include "python/naming.rerail"
 
 .violation N818(at: node, x: symbol) code "N818"
     "Rename the exception class `{x}` to end in `Error`, e.g. `{x}Error` or swapping an `Exception` suffix for `Error`, and update references; keep it if it signals control flow, not an error."

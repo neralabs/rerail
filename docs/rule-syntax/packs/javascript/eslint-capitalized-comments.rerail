@@ -3,8 +3,8 @@
 .language typescript
 .mode steer
 .scope include "**/*"
-#include "tsx/eslint-a-text.rr"
-#include "tsx/eslint-a-common.rr"   // upper_first
+#include "tsx/eslint-a-text.rerail"
+#include "tsx/eslint-a-common.rerail"   // upper_first
 //   js_comment(c, t, v), tool_comment(c), token_neighbours(c), follows_comment(c)
 
 // ESLint's capitalized-comments: the first letter of a comment, after spaces and asterisks, is a capital.

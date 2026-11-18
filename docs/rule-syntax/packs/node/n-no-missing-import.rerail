@@ -9,9 +9,9 @@
 //   import { a } from "nope"         reported when node_modules has no nope
 //   import fs from "node:fs"         not: a built-in
 // Options: allowModules (packages never reported), ignoreTypeImport (skip `import type`; `export type … from`
-// is still checked, as in the plugin). Resolution is node-resolve.rr's proposed native input.
+// is still checked, as in the plugin). Resolution is node-resolve.rerail's proposed native input.
 
-#include "tsx/node-resolve.rr"   // node_target, builtin_spec, spec_failed, spec_allowed, spec_type_skipped
+#include "tsx/node-resolve.rerail"   // node_target, builtin_spec, spec_failed, spec_allowed, spec_type_skipped
 
 .violation missing_import(at: node) code "n/no-missing-import"
     "This module cannot be resolved: no installed package or file in the repository provides it."

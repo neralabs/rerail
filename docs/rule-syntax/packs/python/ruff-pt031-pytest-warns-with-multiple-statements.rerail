@@ -9,7 +9,7 @@
 //   with pytest.warns(UserWarning):      ← PT031
 //       x = make()
 //       x.check()
-#include "python/pytest.rr"
+#include "python/pytest.rerail"
 //   pytest_with(w, q), pytest_crowded(w)
 
 .violation PT031(at: node) code "PT031"

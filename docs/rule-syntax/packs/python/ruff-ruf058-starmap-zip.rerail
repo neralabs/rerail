@@ -9,7 +9,7 @@
 // `pythonVersion` option; the default is 3.10), where map takes `strict=`.
 //   starmap(func, zip(a, b))           ← RUF058  `map(func, a, b)`
 //   starmap(func, zip(*a))             not reported: map needs the iterables one by one
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 
 .violation RUF058(at: node, msg: symbol) code "RUF058" "{msg}"
     suppress ruff "RUF058"

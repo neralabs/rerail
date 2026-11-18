@@ -10,7 +10,7 @@
 //   Decimal(-+4.0)        ← RUF032
 //   Decimal("10.0")       not reported
 //   Decimal(~4.0)         not reported: not a signed literal
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 
 .violation RUF032(at: node) code "RUF032"
     "Pass the number as a string, such as `Decimal(\"1.2345\")`, so it keeps the exact decimal value; keep the float only if its exact binary value is intended."

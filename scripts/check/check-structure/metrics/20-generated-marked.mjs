@@ -12,7 +12,7 @@
 // Exemption `tool-owned`: lockfiles (`*.lock`, `package-lock.json`) and `.changeset/README.md` are written
 // by their tools, which mark them; they have no generator in this repository.
 // Exemption `vendored`: vendored third-party code (lib.mjs `isVendored`) carries its upstream's own generated markers.
-// Exemption `workbench` (the `.rr` workbench, kept in git as it is: docs/repository-structure.md, "Kept as they are"):
+// Exemption `workbench` (the `.rerail` workbench, kept in git as it is: docs/repository-structure.md, "Kept as they are"):
 // under `docs/rule-syntax/`, a rule's generated tables are marked by the workbench's own convention, a first line naming
 // the `gen-*.py` beside them that writes them; they are workbench records, never engine or host sources.
 // Exemption `engine-layout`: the engine line's files ENGINE_LAYOUT lists by exact path, with their reasons, until

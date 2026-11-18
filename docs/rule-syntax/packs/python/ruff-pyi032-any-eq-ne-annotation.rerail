@@ -8,7 +8,7 @@
 // parameters (positional-only ones, before `/`, do not count), the second annotated `Any`. Equality accepts any
 // object; `object` says so and keeps type checking on. Reported at the annotation.
 //   def __eq__(self, other: Any) -> bool: ...     ← PYI032: write `other: object`
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI032(at: node) code "PYI032" "Annotate the other operand of this `__eq__` or `__ne__` as `object` instead of `Any`; `==` and `!=` must accept any value, and `Any` turns type checking off."
     suppress ruff "PYI032"

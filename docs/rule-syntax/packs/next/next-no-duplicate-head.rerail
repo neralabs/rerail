@@ -10,7 +10,7 @@
 //     render() { return (<Html><Head /><Head /></Html>) }      the second Head
 //   }
 
-#include "tsx/next.rr"
+#include "tsx/next.rerail"
 
 .violation duplicate(at: node) code "@next/next/no-duplicate-head"
     "Do not include multiple instances of `<Head/>`. See: https://nextjs.org/docs/messages/no-duplicate-head"

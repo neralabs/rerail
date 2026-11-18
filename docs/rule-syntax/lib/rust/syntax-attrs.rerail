@@ -12,9 +12,9 @@
 //   from_cfg_attr(at)              lint_attr `at` came out of a cfg_attr
 //   has_reason(args)               the list ends with `reason = "…"`: allow(x, reason = "why")
 //
-// Builds on rust/syntax.rr (attr_name; msrv_older reads an attribute under its item's msrv) and core's
+// Builds on rust/syntax.rerail (attr_name; msrv_older reads an attribute under its item's msrv) and core's
 // tokens.
-#include "rust/syntax.rr"
+#include "rust/syntax.rerail"
 
 // The arguments are token trees: there the tape keeps every token but a closing bracket (each is one of the
 // grammar's token choices), so the `,`, `=` and `(` read below are on it.

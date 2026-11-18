@@ -4,10 +4,10 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/eslint-a-globals.rr"
+#include "tsx/eslint-a-globals.rerail"
 //   default_this(f) (isDefaultThisBinding), anonymous, capital_id; and this_owner, program, source_type,
 //   strict_scope, call_arg, function_kind
-#include "tsx/eslint-a-text.rr"
+#include "tsx/eslint-a-text.rerail"
 //   js_comment
 
 // typescript-eslint's no-invalid-this: ESLint's rule, where `this` is undefined, plus TypeScript's ways of

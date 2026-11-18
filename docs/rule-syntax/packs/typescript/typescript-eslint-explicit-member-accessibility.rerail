@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/ts-a.rr"
+#include "tsx/ts-a.rerail"
 //   ts_member_name, ts_ctor, param_property
 
 // typescript-eslint's explicit-member-accessibility: class members say whether they are public.

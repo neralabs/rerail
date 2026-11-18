@@ -1,4 +1,4 @@
-"""Writes cached-pure-lazy-allowlist.symbols.rr, the verifier's protected runtime symbols.
+"""Writes cached-pure-lazy-allowlist.symbols.rerail, the verifier's protected runtime symbols.
     python3 docs/rule-syntax/data-layer/gen-cached-pure-lazy-allowlist.py [--check]
 The source is scripts/verify_cached_pure_lazy_allowlist.py at the pinned commit of the data-layer repository: the
 three frozensets PURITY_RUNTIME_SYMBOLS, POLICY_RUNTIME_SYMBOLS and OPTIMIZER_CACHE_RUNTIME_SYMBOLS, whose source
@@ -10,7 +10,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = "/Users/jeremy/orca/workspaces/data-layer-base-audit"
 COMMIT = "2b1504adc4291daaf080b2e932962b134da1a69a"
 SCRIPT = "scripts/verify_cached_pure_lazy_allowlist.py"
-OUT = os.path.join(HERE, "cached-pure-lazy-allowlist.symbols.rr")
+OUT = os.path.join(HERE, "cached-pure-lazy-allowlist.symbols.rerail")
 SETS = [("PURITY_RUNTIME_SYMBOLS", "purity"), ("POLICY_RUNTIME_SYMBOLS", "policy"),
         ("OPTIMIZER_CACHE_RUNTIME_SYMBOLS", "optimizer_cache")]
 

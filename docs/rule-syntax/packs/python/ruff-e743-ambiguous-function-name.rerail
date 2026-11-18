@@ -7,7 +7,7 @@
 // Ruff E743 (pycodestyle): a function or method named `l`, `I` or `O`, letters that many fonts draw like 1 and 0.
 //   def l(): ...                 ← E743 at `l`
 //   class X: def O(self): ...    ← E743 at `O`
-#include "python/pyflakes.rr"
+#include "python/pyflakes.rerail"
 //   ambiguous_name(x)  x is "l", "I" or "O"
 
 .violation E743(at: node, x: symbol) code "E743"

@@ -9,7 +9,7 @@
 //   glob.glob("*.png")                   ← PTH207: `Path().glob("*.png")`
 //   from glob import iglob; iglob("*")   ← PTH207, with the iglob message
 //   glob.glob("*.png", dir_fd=3)         not reported
-#include "python/pathlib.rr"
+#include "python/pathlib.rerail"
 //   pth_call(c, q, f)   c calls q; f the callee      kw_set(c, k)   keyword k is not None (python/pathlib)
 
 .violation PTH207(at: node, msg: symbol) code "PTH207" "{msg}"

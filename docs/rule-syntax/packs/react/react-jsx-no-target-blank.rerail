@@ -12,7 +12,7 @@
 //   <a target="_blank" href="/local">               not: a relative link stays on the site
 //   <a target={x ? "_blank" : null} href={u} rel={x ? "noreferrer" : ""}>   not: rel follows the same test
 // ESLint's fix (add or extend rel) is not offered: the JSON has none.
-#include "tsx/react.rr"
+#include "tsx/react.rerail"
 
 .violation target_blank(at: node)
     code "react/jsx-no-target-blank"

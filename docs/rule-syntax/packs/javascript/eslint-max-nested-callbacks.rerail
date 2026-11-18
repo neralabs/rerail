@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-a-functions.rr"
+#include "tsx/eslint-a-functions.rerail"
 //   callback (a function passed to a call, or called at once), limit
 
 // ESLint's max-nested-callbacks: a function expression or arrow (a method too) that sits more than `max`

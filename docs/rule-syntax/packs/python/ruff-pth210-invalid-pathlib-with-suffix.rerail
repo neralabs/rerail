@@ -12,8 +12,8 @@
 //   Path("a").with_suffix("py")          ← PTH210: write ".py"
 //   def f(p: Path): p.with_suffix(".")   ← PTH210, the single-dot message
 //   p.with_suffix(".py"), p.with_suffix(""), x.with_suffix("py") with x unknown    not reported
-#include "python/pathlib.rr"
-#include "python/upgrade.rr"
+#include "python/pathlib.rerail"
+#include "python/upgrade.rerail"
 //   path_obj(e)   e is a pathlib path (python/pathlib)   targets(m)   the target is 3.m or later (python/upgrade)
 //   plain_str(e, v)   a str literal's value (python/pyflakes)
 

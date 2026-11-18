@@ -7,7 +7,7 @@
 //   select distinct a from b group by a          reported at DISTINCT
 //   select a from b group by a                   fine
 
-#include "sql/syntax.rr"
+#include "sql/syntax.rerail"
 
 .violation AM01(at: node) code "AM01" "Ambiguous use of 'DISTINCT' in a 'SELECT' statement with 'GROUP BY'."
     suppress sqlfluff "AM01", "L021", "all", "ambiguous", "ambiguous.distinct", "core"

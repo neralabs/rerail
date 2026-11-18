@@ -3,8 +3,8 @@
 .language typescript
 .mode steer
 .scope include "**/*"
-#include "tsx/eslint-b-objects.rr"
-#include "layout.rr"
+#include "tsx/eslint-b-objects.rerail"
+#include "layout.rerail"
 //   deparen, static_prop, global_at
 
 // ESLint's prefer-object-has-own: `hasOwnProperty.call` read off Object, Object.prototype or `{}`, where the name

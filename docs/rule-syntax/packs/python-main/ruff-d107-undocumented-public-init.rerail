@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // doc_expr(n): the JSON util `doc-expr`, used where the JSON says `matches: "doc-expr"`
 .decl d107_doc_expr(n: node)
@@ -51,7 +51,7 @@ d107_undocumented_method(n) :- kind(n, "function_definition"),
 
 // D107(n): a finding at node n, from clause `undocumented-public-init`.
 // Each rule below is one way the JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation D107(at: node) "Add a docstring to `__init__` describing its arguments, side effects and raised exceptions."
     suppress noqa "D107"
 D107_raw(n) :- kind(n, "identifier"), glob("__init__", n), node(_, n, _, _, _), NAME = n,
@@ -59,7 +59,7 @@ D107_raw(n) :- kind(n, "identifier"), glob("__init__", n), node(_, n, _, _, _), 
 
 // D107_undocumented_public_init_in_package(n): a finding at node n, from clause `undocumented-public-init-in-package`.
 // Each rule below is one way the JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation D107_undocumented_public_init_in_package(at: node) code "D107" "Add a docstring to `__init__` describing its arguments, side effects and raised exceptions."
     suppress noqa "D107"
 D107_undocumented_public_init_in_package_raw(n) :- kind(n, "identifier"),

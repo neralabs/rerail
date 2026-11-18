@@ -8,7 +8,7 @@
 // understand `__all__ += […]` but not every method call. Any `__all__` name counts, in any scope; an attribute
 // `m.__all__` does not.
 //   __all__.append("f")       ← PYI056: write `__all__ += ["f"]`
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI056(at: node, msg: symbol) code "PYI056" "{msg}"
     suppress ruff "PYI056"

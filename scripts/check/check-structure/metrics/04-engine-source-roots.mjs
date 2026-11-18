@@ -12,9 +12,9 @@
 // never compiled into the shipped engine. A `#[cfg(test)]` item extends to its brace-matched body, or to
 // its `;` when it has none, so `#[cfg(test)] mod tests;` exempts nothing that follows it. Comments,
 // string and character literals are skipped when matching braces.
-// Exemption `workbench` (the `.rr` workbench, kept in git as it is: docs/repository-structure.md, "Kept as they are"):
-// an include of a file under `docs/rule-syntax/`, the workbench's `.rr` library and rules: the engine embeds the
-// library's `core.rr` prelude, and its tests parse the library and the workbench's rules.
+// Exemption `workbench` (the `.rerail` workbench, kept in git as it is: docs/repository-structure.md, "Kept as they are"):
+// an include of a file under `docs/rule-syntax/`, the workbench's `.rerail` library and rules: the engine embeds the
+// library's `core.rerail` prelude, and its tests parse the library and the workbench's rules.
 // Exemption `engine-layout` (the engine line's layout, settled with its owner in a follow-up): the compiler's tests
 // include `docs/parser-generators/lexers/json.bitlex`, the JSON lexer the parser-generator notes define.
 

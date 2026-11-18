@@ -9,7 +9,7 @@
 // counts and `-1.0` does not). set and sorted reorder anyway; reversed undoes it.
 //   sorted(x[::-1])    set(x[::-1])     reversed(x[::-1])      ← C415
 //   sorted(x[::-2])    sorted(x[1::-1])                        not reported
-#include "python/comprehensions.rr"
+#include "python/comprehensions.rerail"
 //   c4_builtin(c, x), c4_first(c, a); slice_part(s, which, e), ruff_int(e, v) from python/ruff
 
 .violation C415(at: node, f: symbol, id: symbol, msg: symbol) code "C415" "{msg}"

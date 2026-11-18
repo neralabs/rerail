@@ -3,7 +3,7 @@
 .language typescript
 .mode steer
 .scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
-#include "tsx/eslint-a-expressions.rr"
+#include "tsx/eslint-a-expressions.rerail"
 
 // ESLint's no-magic-numbers: a number that is not given a name. A sign belongs to the number (`-1`).
 //   total * 1.07    f(-1)    x = 5    → No magic number: 1.07.   const TAX = 1.07; var a = 5;  → not

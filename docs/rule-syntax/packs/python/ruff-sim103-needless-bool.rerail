@@ -18,7 +18,7 @@
 //   return True
 //   if a: return True
 //   elif b: return False   not reported: the `elif` has no `else` after it
-#include "python/simplify.rr"
+#include "python/simplify.rerail"
 //   sim_bool_return(s, b), sim_exempt_if(i); py_orelse, body_stmt, body_len from python/ast
 
 .violation SIM103(at: node) code "SIM103"

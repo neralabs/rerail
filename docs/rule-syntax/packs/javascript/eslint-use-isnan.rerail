@@ -3,8 +3,8 @@
 .language typescript
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
-#include "tsx/eslint-a-expressions.rr"
-#include "tsx/eslint-b-literals.rr"
+#include "tsx/eslint-a-expressions.rerail"
+#include "tsx/eslint-b-literals.rerail"
 //   binop, deparen, static_prop; compare_op; ref_site (tsx/names)
 
 // ESLint's use-isnan: NaN is unequal to everything, itself included, so comparing with it is always false

@@ -8,7 +8,7 @@
 // reports it even when `.astimezone` follows. Reported at the call. Only in a file that imports datetime.
 //   datetime.date.today()                        ← DTZ011
 //   from datetime import date; date.today()      ← DTZ011
-#include "python/datetime.rr"
+#include "python/datetime.rerail"
 
 .violation DTZ011(at: node) code "DTZ011"
     "Use `datetime.datetime.now(tz=...).date()` with the timezone whose calendar date you need; `date.today()` is the naive local date, so keep it only if that is intended."

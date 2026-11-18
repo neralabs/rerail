@@ -12,7 +12,7 @@
 // The first parameter is the first name the parameter list binds: in `function f({ err }, b)` it is err. Any
 // reference counts as handling it, from a nested function too.
 
-#include "tsx/eslint-a-functions.rr"   // function_node, fn_start; names.rr's decl_site, ref_site
+#include "tsx/eslint-a-functions.rerail"   // function_node, fn_start; names.rerail's decl_site, ref_site
 
 .decl err_name(x: symbol)  // the parameter names the option asks about
 err_name(x) :- first(_, x, _), option("option", e), !prefix("^", e), x = e.

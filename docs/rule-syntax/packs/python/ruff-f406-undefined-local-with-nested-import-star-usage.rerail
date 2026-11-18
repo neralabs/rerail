@@ -8,7 +8,7 @@
 // level (in a def it is a SyntaxError).
 //   def f():
 //       from os.path import *      ← F406 (and F403)
-#include "python/pyflakes.rr"
+#include "python/pyflakes.rerail"
 //   star_import(i, m)  i is `from m import *`; m as written
 
 .violation F406(at: node, m: symbol) code "F406"

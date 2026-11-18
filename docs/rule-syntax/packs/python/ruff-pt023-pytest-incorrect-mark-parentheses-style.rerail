@@ -8,7 +8,7 @@
 // option `mark-parentheses`. At its default, false, a call with no arguments is reported; at true, a bare mark.
 //   @pytest.mark.slow()          ← PT023 at the default
 //   @pytest.mark.slow            ← PT023 with mark-parentheses = true
-#include "python/pytest.rr"
+#include "python/pytest.rerail"
 //   pytest_mark(o, d, e, m), exc_no_args(c)
 
 .violation PT023(at: node, id: symbol) code "PT023" "{id}"

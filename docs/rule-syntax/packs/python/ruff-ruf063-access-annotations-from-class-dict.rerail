@@ -8,7 +8,7 @@
 // deferred annotations (PEP 649, Python 3.14) a class's `__dict__` may not hold them yet.
 //   foo.__dict__["__annotations__"]     ← RUF063  `inspect.get_annotations(foo)`
 //   foo.__annotations__                 not reported
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 
 .violation RUF063(at: node, msg: symbol) code "RUF063" "{msg}"
     suppress ruff "RUF063"

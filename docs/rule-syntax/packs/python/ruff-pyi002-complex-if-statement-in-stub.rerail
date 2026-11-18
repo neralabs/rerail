@@ -10,7 +10,7 @@
 //   if sys.version_info >= (3, 8) and sys.platform == "linux":   fine
 //   if sys.platform.startswith("linux"):                         ← PYI002: a call
 //   if a and (b or c):                                           ← PYI002 at `b or c`: nested and/or
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI002(at: node) code "PYI002" "Rewrite this stub `if` test as unchained comparisons of `sys.version_info` or `sys.platform` joined by `and`/`or`, or keep only one branch; type checkers cannot evaluate other tests."
     suppress ruff "PYI002"

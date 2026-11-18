@@ -9,7 +9,7 @@
 //   class C:
 //       x: int
 //       pass               not this rule: PYI012
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI009(at: node) code "PYI009" "Replace this `pass` with `...`; stub bodies are never executed, so the empty body is written as an ellipsis."
     suppress ruff "PYI009"

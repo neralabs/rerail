@@ -8,7 +8,7 @@
 // None, so the AssertionError has no message.
 //   assert ok, print("not ok")        ← RUF030  `assert ok, "not ok"`
 //   assert ok, "not ok"               not reported
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 
 .violation RUF030(at: node) code "RUF030"
     "Replace the `print(...)` message with the text itself, as in `assert cond, \"text\"`, or drop the message when `print` has no arguments; `print` returns None."

@@ -6,11 +6,11 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // SLOT002(n): a finding at node n, from clause `no-slots-in-namedtuple-subclass`.
 // Each rule below is one way the JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation SLOT002(at: node) "Add `__slots__ = ()` to this named-tuple subclass so instances skip the per-instance `__dict__`; leave it if the class assigns instance attributes, which an empty `__slots__` forbids."
     suppress noqa "SLOT002"
 SLOT002_raw(n) :- kind(n, "identifier"), field(p1, "name", n),

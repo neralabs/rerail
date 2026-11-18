@@ -1,8 +1,8 @@
 // python/calls: call targets and call chains, from the engine's Python typing program.
-// COPY: Typing-support-final-shape@b193a9209:docs/rule-syntax/lib/python/calls.rr (the call relations; its type
+// COPY: Typing-support-final-shape@b193a9209:docs/rule-syntax/lib/python/calls.rerail (the call relations; its type
 // relations are python/types here), with this branch's syntax helpers (posarg skips comments; dexpr).
 //
-// The engine resolves Python calls once, in one program, typing/programs/calls.rr beside this site. It runs that
+// The engine resolves Python calls once, in one program, typing/programs/calls.rerail beside this site. It runs that
 // program over the repository, file by file and then in bounded cross-file rounds, and gives this library its
 // answers as facts keyed by file and span (`typing_calls__*`, one row per answer; each node is its path, kind,
 // start byte and end byte). The rules below join those spans back to this run's nodes. The program runs only when
@@ -24,8 +24,8 @@
 //
 // Interface: call_target, call_open, calls, calls_open, reach, owner, and the syntax helpers call, callee,
 // call_arg, posarg, dexpr, awaited.
-#include "python/names.rr"
-#include "python/imports.rr"
+#include "python/names.rerail"
+#include "python/imports.rerail"
 // fdef (a def node) comes from python/names.
 
 // ---- the program's answers ----------------------------------------------------------------------------------------
@@ -72,7 +72,7 @@ call_arg(c, -1, k, v) :- kind(c, "call"), field(c, "arguments", al), child(al, k
 callee(c, e) :- kind(c, "call"), field(c, "function", e).
 // posarg(c, i, a): a is the argument at index i of call c, when it is positional (not `k=v`, `*xs`, `**kw`).
 // The index counts all argument children but comments, so it matches param's index only while no keyword or splat
-// comes first. `f(  # why\n x, y)` gives (c, 0, x) and (c, 1, y). security.rr's pos_arg is CPython's call.args.
+// comes first. `f(  # why\n x, y)` gives (c, 0, x) and (c, 1, y). security.rerail's pos_arg is CPython's call.args.
 .decl posarg(c: node, i: number, a: node)
 posarg(c, i, a) :- kind(c, "call"), field(c, "arguments", al), kind(al, "argument_list"), child(al, a, k), !kind(a, "keyword_argument"),
     !kind(a, "list_splat"), !kind(a, "dictionary_splat"), !kind(a, "comment"),

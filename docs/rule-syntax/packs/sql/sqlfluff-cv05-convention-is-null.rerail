@@ -8,7 +8,7 @@
 //   WHERE a <> NULL          reported at <>; the fix is a IS NOT NULL
 //   SET a = NULL             fine: an assignment, not a comparison
 
-#include "sql/syntax.rr"
+#include "sql/syntax.rerail"
 
 .violation CV05(at: loc) code "CV05" "Comparisons with NULL should use \"IS\" or \"IS NOT\"."
     suppress sqlfluff "CV05", "L049", "all", "convention", "convention.is_null", "core"

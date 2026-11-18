@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/eslint-a-functions.rr"
+#include "tsx/eslint-a-functions.rerail"
 //   function_node, fn_param, this_param, fn_name_kind, fn_head, limit
 
 // typescript-eslint's max-params: ESLint's rule, also run on overload and `declare` signatures and on

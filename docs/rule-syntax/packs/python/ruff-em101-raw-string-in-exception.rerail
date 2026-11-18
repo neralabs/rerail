@@ -11,7 +11,7 @@
 //   raise RuntimeError(b"bytes")                          ← EM101
 //   msg = "hello"; raise RuntimeError(msg)                not reported
 //   raise cast(RuntimeError, "not a message")            not reported
-#include "python/misc2-messages.rr"
+#include "python/misc2-messages.rerail"
 
 .violation EM101(at: node) code "EM101"
     "Assign this string literal to a new variable such as `msg` before the `raise`, then pass that variable to the exception instead."

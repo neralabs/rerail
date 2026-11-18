@@ -3,7 +3,7 @@
 .language typescript
 .mode steer
 .scope include "**/*"
-#include "tsx/eslint-a-expressions.rr"
+#include "tsx/eslint-a-expressions.rerail"
 
 // ESLint's no-caller: `arguments.callee` and `arguments.caller`, written with a dot. Neither works in strict
 // mode. ESLint does not look at what `arguments` is bound to, nor at `arguments["callee"]`.

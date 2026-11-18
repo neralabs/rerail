@@ -10,7 +10,7 @@
 //   class B(A, metaclass=builtins.type): ...  ← UP050
 //   type = str
 //   class C(metaclass=type): ...              not reported: `type` is str here
-#include "python/upgrade.rr"
+#include "python/upgrade.rerail"
 //   builtin_at(e, x): e reads the builtin x, at that point of the module
 
 .violation UP050(at: node, cls: symbol) code "UP050"

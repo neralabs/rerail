@@ -23,7 +23,7 @@
 //     (annotations, defaults), return annotation and body.
 // Set semantics: rows of one clause with one (path, line, code) are one finding here (W keeps each identity).
 
-#include "python/ast.rr"
+#include "python/ast.rerail"
 
 .decl tape_syntax_error(d: number)
 .decl cpython_syntax_error(d: number, l: number, msg: symbol)
@@ -75,7 +75,7 @@ graph_plan_contracts_method(d, o, x, f) :- graph_plan_contracts_cand(d, o, x, f,
 .decl graph_plan_contracts_has_method(d: number, o: symbol, x: symbol)
 graph_plan_contracts_has_method(d, o, x) :- graph_plan_contracts_cand(d, o, x, _, _).
 
-// A decorator's expression without parentheses (CPython has no node for them). mirrors python/ast.rr unparen
+// A decorator's expression without parentheses (CPython has no node for them). mirrors python/ast.rerail unparen
 .decl graph_plan_contracts_unparen(e: node, m: node)
 graph_plan_contracts_unparen(e, e) :- node(_, e, k, _, _), k != "parenthesized_expression".
 graph_plan_contracts_unparen(e, m) :- node(_, e, "parenthesized_expression", _, _), child(e, i, 0), graph_plan_contracts_unparen(i, m).
@@ -84,7 +84,7 @@ graph_plan_contracts_unparen(e, m) :- node(_, e, "parenthesized_expression", _, 
 graph_plan_contracts_ref(e, x) :- node(_, e, "identifier", _, _), text(e, x).
 graph_plan_contracts_ref(e, x) :- node(_, e, "attribute", _, _), field(e, "attribute", a), text(a, x).
 // single_decorators, kind IN ('Name','Attribute'): def f's decorators by name.
-// mirrors python/names.rr decorator (by the expression's or its call's Name id / Attribute attr)
+// mirrors python/names.rerail decorator (by the expression's or its call's Name id / Attribute attr)
 .decl graph_plan_contracts_decorator(f: node, x: symbol)
 graph_plan_contracts_decorator(f, x) :- field(dd, "definition", f), child(dd, dc, _), node(_, dc, "decorator", _, _),
     child(dc, e0, 0), graph_plan_contracts_unparen(e0, e), !node(_, e, "call", _, _), graph_plan_contracts_ref(e, x).
@@ -99,7 +99,7 @@ graph_plan_contracts_params("parameters"). graph_plan_contracts_params("lambda_p
 .decl graph_plan_contracts_imports(kind: symbol)
 graph_plan_contracts_imports("import_statement"). graph_plan_contracts_imports("import_from_statement").
 graph_plan_contracts_imports("future_import_statement").
-// mirrors python/ast.rr not_name (ast_name's exclusions)
+// mirrors python/ast.rerail not_name (ast_name's exclusions)
 .decl graph_plan_contracts_not_name(n: node)
 graph_plan_contracts_not_name(n) :- field(_, "name", n).
 graph_plan_contracts_not_name(n) :- child(ps, n, _), node(_, ps, k, _, _), graph_plan_contracts_params(k).
@@ -123,7 +123,7 @@ graph_plan_contracts_not_name(n) :- node(_, s, "splat_pattern", _, _), child(s, 
 graph_plan_contracts_not_name(n) :- node(_, k, "keyword_pattern", _, _), child(k, n, 0).
 graph_plan_contracts_not_name(n) :- node(_, k, "keyword_pattern", _, _), child(k, dn, 1), node(_, dn, "dotted_name", _, _),
     child(dn, n, 0), !child(dn, _, 1).
-// PEP 695 type parameters' names are strings (TypeVar/TypeVarTuple/ParamSpec.name): python/ast.rr type_param.
+// PEP 695 type parameters' names are strings (TypeVar/TypeVarTuple/ParamSpec.name): python/ast.rerail type_param.
 graph_plan_contracts_not_name(n) :- type_param(_, _, n, _, _, _, _).
 
 // The names the mention checks look for.
@@ -152,7 +152,7 @@ graph_plan_contracts_topdef(d, x, s, "function", l) :- node(d, f, "function_defi
     field(f, "name", nm), text(nm, x), line(f, l).
 // An Assign: an assignment without an annotation that is not another's right side; its targets, the left of each
 // assignment down its chain of right sides.
-// mirrors python/ast.rr assign_chain / assign_target (Assign only: no annotation)
+// mirrors python/ast.rerail assign_chain / assign_target (Assign only: no annotation)
 .decl graph_plan_contracts_chain(a: node, b: node)
 graph_plan_contracts_chain(a, a) :- node(_, a, "assignment", _, _), !field(a, "type", _), !graph_plan_contracts_inner(a).
 graph_plan_contracts_chain(a, c) :- graph_plan_contracts_chain(a, b), field(b, "right", c), node(_, c, "assignment", _, _).

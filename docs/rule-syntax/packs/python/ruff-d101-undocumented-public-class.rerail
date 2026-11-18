@@ -10,7 +10,7 @@
 //   class Widget:              ← D101 at `Widget`
 //       x = 1
 //   class _Private: ...        not reported
-#include "python/docstrings.rr"
+#include "python/docstrings.rerail"
 
 .violation D101(at: node, x: symbol) code "D101"
     "Add a docstring as the first statement of class `{x}`, explaining what it represents and how to use it."

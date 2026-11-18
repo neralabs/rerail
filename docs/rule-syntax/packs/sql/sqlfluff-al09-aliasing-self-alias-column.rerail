@@ -10,7 +10,7 @@
 //   select "col_b" as "Col_B" from t       fine: quoting says the case change is meant
 // A qualified column is compared by its last part: t.a AS a is reported too.
 
-#include "sql/syntax.rr"
+#include "sql/syntax.rerail"
 
 .violation AL09(at: node, why: symbol) code "AL09" "{why}."
     suppress sqlfluff "AL09", "aliasing", "aliasing.self_alias.column", "all", "core"

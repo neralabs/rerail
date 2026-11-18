@@ -9,7 +9,7 @@
 //   pytest.fail()                    ← PT016
 //   pytest.fail("")                  ← PT016
 //   pytest.fail(msg="why")           not reported
-#include "python/pytest.rr"
+#include "python/pytest.rerail"
 //   exc_call(c, q), exc_argument(c, k, i, a), kwarg(c, k, v), pytest_empty_or_null(e)
 
 .violation PT016(at: node, f: symbol) code "PT016"

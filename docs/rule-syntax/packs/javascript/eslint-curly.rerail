@@ -3,7 +3,7 @@
 .language typescript
 .mode steer
 .scope include "**/*"
-#include "tsx/statements.rr"
+#include "tsx/statements.rerail"
 
 // ESLint's curly. `option` says which bodies of if, else, while, do and for need braces:
 //   "all" (the default)  every body             if (a) b();       → Expected { after 'if' condition.

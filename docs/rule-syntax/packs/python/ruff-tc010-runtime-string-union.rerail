@@ -17,7 +17,7 @@
 //   def f(): x: "int" | str            not reported: a local annotation is never evaluated
 //   y: Annotated[int, "a" | str]       not reported: Annotated's metadata is a value
 //   type A = Value["int" | str]        not reported: a `type` statement is lazy
-#include "python/misc2-typecheck.rr"
+#include "python/misc2-typecheck.rerail"
 //   tc_runtime_typedef(e), tc_union(u), tc_union_member(u, m), up_typing_sub(s, x), type_arg(s, i, a)
 
 .violation TC010(at: node) code "TC010" "Invalid string member in `X | Y`-style union type"

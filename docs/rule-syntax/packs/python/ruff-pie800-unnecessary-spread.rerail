@@ -8,7 +8,7 @@
 // write its entries directly. Reported at the spread dict, parentheses (and comments in them) off.
 //   {"foo": 1, **{"bar": 1}}   ← PIE800 at `{"bar": 1}`
 //   {**foo, "bar": True}       not reported
-#include "python/bugbear.rr"
+#include "python/bugbear.rerail"
 
 .violation PIE800(at: node) code "PIE800" "Unnecessary spread `**`"
     suppress ruff "PIE800"

@@ -4,9 +4,9 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-a-functions.rr"
+#include "tsx/eslint-a-functions.rerail"
 //   function_node, fn_name_kind, fn_start, limit
-#include "tsx/statements.rr"
+#include "tsx/statements.rerail"
 //   block_stmt, namespace_body, var_scope (functions, static blocks and the program)
 
 // ESLint's max-statements: a function whose `{ … }` blocks hold more than `max` statements in all (default 10;

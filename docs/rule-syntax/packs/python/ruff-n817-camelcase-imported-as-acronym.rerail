@@ -10,7 +10,7 @@
 // imports only; a relative `from ..xml.etree import ElementTree as ET` is reported).
 //   from mod import CamelCase as CC          ← N817
 //   import xml.etree.ElementTree as ET       not reported
-#include "python/naming.rr"
+#include "python/naming.rerail"
 
 .violation N817(at: node, x: symbol, a: symbol) code "N817"
     "Import `{x}` under its own name, or a descriptive CamelCase alias, instead of the acronym `{a}`, and update its uses; keep the alias if your project's convention requires it."

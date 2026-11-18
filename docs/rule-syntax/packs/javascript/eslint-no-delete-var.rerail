@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-a-control.rr"
+#include "tsx/eslint-a-control.rerail"
 //   deparen
 
 // ESLint's no-delete-var: `delete x` where x is a plain name, with or without parentheses.

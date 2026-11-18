@@ -11,7 +11,7 @@
 //   assert (t := f()) == 1
 //   assert isinstance(t, tuple)    not reported: only asserts read t
 // Only reads of this binding count: after the walrus, with no other binding of the name in between.
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 
 .violation RUF018(at: node, x: symbol) code "RUF018"
     "Assign `{x}` in its own statement before the `assert` and assert on `{x}`; under `python -O` asserts are skipped, so code outside the assert would not see this assignment."

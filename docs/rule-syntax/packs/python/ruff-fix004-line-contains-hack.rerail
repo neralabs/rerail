@@ -9,7 +9,7 @@
 //   # HACK: something           ← FIX004
 //   # a # hack                  ← FIX004: after another `#`
 //   # HACKS                     not reported: not the whole word
-#include "python/misc-comments.rr"
+#include "python/misc-comments.rerail"
 
 .violation FIX004(at: node, d: symbol) code "FIX004"
     "Replace the workaround this `{d}` comment describes with a proper solution, then remove the `{d}` note; if no better solution exists yet, leave it."

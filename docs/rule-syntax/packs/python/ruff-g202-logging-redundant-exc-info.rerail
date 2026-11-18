@@ -8,7 +8,7 @@
 // exception handler. `exception` already logs the traceback. Reported at the `exc_info=` keyword.
 //   except: logging.exception("Hello", exc_info=True)          ← G202
 //   logging.exception("Hello", exc_info=True)                  not reported: no handler around it
-#include "python/logging.rr"
+#include "python/logging.rerail"
 
 .violation G202(at: node) code "G202"
     "Remove this redundant `exc_info` argument: `exception(...)` already logs the active exception's traceback."

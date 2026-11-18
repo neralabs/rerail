@@ -11,9 +11,9 @@
 // pythonVersion). A string inside an annotation, as in `Literal["…"]`, is still reported.
 //   x = "𝐁ad string"      ← RUF001 at 𝐁: a bold B in an ASCII word
 //   x = "Русский"         not reported: a Russian word
-#include "python/typing.rr"
-#include "python/ruff.rr"
-#include "../packs/python/ruff-ruf001-ambiguous-unicode-character-string.confusables.rr"
+#include "python/typing.rerail"
+#include "python/ruff.rerail"
+#include "../packs/python/ruff-ruf001-ambiguous-unicode-character-string.confusables.rerail"
 
 .violation RUF001(at: span, ch: symbol) code "RUF001"
     "Replace the look-alike character `{ch}` in this string with the ASCII character it imitates, unless the text is meant to hold it (for example a word in another language)."

@@ -13,7 +13,7 @@
 //   React.createElement("button", { type })    complex, at `type`: a shorthand reads a variable
 // The type prop is found as jsx-ast-utils' getProp finds it: the first prop named type in any case (TYPE= counts),
 // or the first such key of a {...{ type: "x" }} spread literal. In createElement the key must be `type` exactly.
-#include "tsx/react.rr"
+#include "tsx/react.rerail"
 
 .violation button_type(at: node, msg: symbol)
     code "react/button-has-type"

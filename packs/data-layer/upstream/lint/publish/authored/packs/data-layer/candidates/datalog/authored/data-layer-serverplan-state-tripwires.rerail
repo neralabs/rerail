@@ -2,7 +2,7 @@
 // gate/data-layer/packs/data-layer/candidates/rules-ast/data-layer-serverplan-state-tripwires.json (the converter's
 // first source). Options are read from the converter's facts (option_on, option_value), so every configuration
 // runs as the oracle runs it; defaults oracleAnalyzer false, entryPoint "all", sourceProvided true, returnKindsHex.
-// Not started from native/src/code_rule_dsl/logic/programs/data_layer/serverplan_state_tripwires*.rr: those port the
+// Not started from native/src/code_rule_dsl/logic/programs/data_layer/serverplan_state_tripwires*.rerail: those port the
 // older candidates/rules/ policy (SQL over the syntax table, `ast(…)` atoms), not the rules-ast one.
 
 .decl intval(n: node, v: number)

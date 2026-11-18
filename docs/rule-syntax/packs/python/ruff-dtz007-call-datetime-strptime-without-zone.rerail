@@ -13,7 +13,7 @@
 //   datetime.datetime.strptime("x", "x").replace(tzinfo=None)         ← DTZ007: None
 //   datetime.datetime.strptime("x", "%H:%M:%S%z")                     not reported
 //   datetime.datetime.strptime("x", fmt).replace(tzinfo=timezone.utc) not reported
-#include "python/datetime.rr"
+#include "python/datetime.rerail"
 
 .violation DTZ007(at: node) code "DTZ007"
     "Make the result aware: parse a UTC offset with `%z`, else chain `.replace(tzinfo=...)` with the text's timezone (`.astimezone()` if it is local time); keep it naive only if that is intended."

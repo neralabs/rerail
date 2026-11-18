@@ -14,9 +14,9 @@
 //       np.all([True])
 //   except AttributeError:
 //       np.alltrue([True])       not reported: a fallback for NumPy 1.x
-#include "python/misc2-numpy.rr"
+#include "python/misc2-numpy.rerail"
 //   npy_ref(e, q), npy_guarded(e, new), npy_replacement(q, new)
-#include "../packs/python/ruff-npy201-numpy2-deprecation.members.rr"   // npy201_member(q, g), npy201_advice(g, m)
+#include "../packs/python/ruff-npy201-numpy2-deprecation.members.rerail"   // npy201_member(q, g), npy201_advice(g, m)
 
 .violation NPY201(at: node, msg: symbol) code "NPY201" "{msg}"
     suppress ruff "NPY201"

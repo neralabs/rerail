@@ -4,9 +4,9 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-a-functions.rr"
+#include "tsx/eslint-a-functions.rerail"
 //   ctor, fn_param, static_prop, deparen, estree_parent
-#include "tsx/ts-b-scope.rr"
+#include "tsx/ts-b-scope.rerail"
 //   resolves, variable
 
 // typescript-eslint's no-unnecessary-parameter-property-assignment: `constructor(private x) { this.x = x; }` sets

@@ -3,7 +3,7 @@
 .language typescript
 .mode steer
 .scope include "**/*"
-#include "tsx/eslint-a-text.rr"
+#include "tsx/eslint-a-text.rerail"
 //   code_before(c), code_after(c), pre_text(c, s), post_text(c, s), eslint_directive(c), js_comment(c, t, v)
 
 // ESLint's no-inline-comments: a comment that shares a line with code.

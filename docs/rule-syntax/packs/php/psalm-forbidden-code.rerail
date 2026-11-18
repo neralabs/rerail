@@ -5,7 +5,7 @@
 .scope include "**/*.php"
 .scope exclude "**/*.blade.php"
 
-#include "php/names.rr"
+#include "php/names.rerail"
 //   php_call(c, x)   c calls global function x (lowercase, `use function` followed)
 
 // Psalm's ForbiddenCode, as `psalm --init` configures it: a call of var_dump() or shell_exec(), in any case, and

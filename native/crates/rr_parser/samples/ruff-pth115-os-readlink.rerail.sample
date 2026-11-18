@@ -12,8 +12,8 @@
 //   from os import readlink
 //   readlink(path=p)                ← PTH115
 //   os.readlink(p, dir_fd=None)     not reported: two arguments
-#include "python/pathlib.rr"
-#include "python/upgrade.rr"
+#include "python/pathlib.rerail"
+#include "python/upgrade.rerail"
 //   single_arg(c, q, x, f, a)   c calls q with one argument a, for parameter x; f the callee (python/pathlib)
 //   targets(m)   the target is Python 3.m or later (python/upgrade)
 

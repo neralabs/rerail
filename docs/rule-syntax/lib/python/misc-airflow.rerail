@@ -32,8 +32,8 @@
 //   Imported names are not expressions, so `from airflow.x import Y` itself is not reported; each read of `Y`
 //   after it is. `airflow.a.b` is one reference per attribute: its `airflow.a` part resolves too, to a name no
 //   table lists. Ruff's seen_module is in visit order; here any import of airflow in the file counts.
-#include "python/ruff.rr"
-#include "python/misc-seen.rr"
+#include "python/ruff.rerail"
+#include "python/misc-seen.rerail"
 
 seen_ask("airflow").
 .decl air_ref(e: node, at: node, q: symbol)

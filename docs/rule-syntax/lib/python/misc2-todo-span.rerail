@@ -8,7 +8,7 @@
 //
 // The TD rules' logic is all in python/misc2-todo, keyed by the comment node; this file only places the tag,
 // with the same regex as todo_tag (a capture on a node is a span).
-#include "python/misc2-todo.rr"
+#include "python/misc2-todo.rerail"
 
 .decl todo_at(c: node, D: span)
 todo_at(c, D) :- todo_tag(c, _, _, _),

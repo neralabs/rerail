@@ -13,9 +13,9 @@
 //   if (err) { callback(err); }  f();     reported: the call is not last in the function
 // option_item("option", i, name): the list of names; ESLint's first option.
 
-#include "tsx/node.rr"                 // called
-#include "tsx/eslint-a-functions.rr"   // function_node, deparen
-#include "tsx/statements.rr"           // block_stmt
+#include "tsx/node.rerail"                 // called
+#include "tsx/eslint-a-functions.rerail"   // function_node, deparen
+#include "tsx/statements.rerail"           // block_stmt
 
 .decl cb_name(x: symbol)
 cb_name(x) :- option_item("option", _, x).

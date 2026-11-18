@@ -12,7 +12,7 @@
 //   for k, v in pairs:
 //       if v: result[k] = v            ← PERF403: `result = {k: v for k, v in pairs if v}`
 //   for k, v in pairs: result[k] = v + 1   not reported: the value is computed
-#include "python/misc2-perf.rr"
+#include "python/misc2-perf.rerail"
 //   perf_for, perf_body, perf_mentions, perf_only_binding, perf_dict_site, perf_used_after
 
 .violation PERF403(at: node, l: node) code "PERF403"

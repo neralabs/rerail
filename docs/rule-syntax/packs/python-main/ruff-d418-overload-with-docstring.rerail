@@ -6,11 +6,11 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // D418(n): a finding at node n, from clause `overload-with-docstring`.
 // Each rule below is one way the JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation D418(at: node) "Remove the docstring from this `@overload` signature and document the function on its implementation instead."
     suppress noqa "D418"
 D418_raw(n) :- kind(n, "identifier"), field(p1, "name", n),

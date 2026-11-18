@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-a-control.rr"
+#include "tsx/eslint-a-control.rerail"
 //   first_stmt, deparen
 
 // ESLint's no-useless-catch: a catch clause whose first statement rethrows its parameter, unchanged. With a

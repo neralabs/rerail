@@ -5,14 +5,14 @@ import { describe, expect, test } from "vitest";
 
 const python = process.platform === "win32" ? "python" : "python3";
 
-describe("data-layer .rr authoring contract", () => {
+describe("data-layer .rerail authoring contract", () => {
   test("protects the complete DTO comparator and rejects incomplete acceptance evidence", () => {
     expect(() => execFileSync(python, ["-m", "unittest", "discover", "-s", "test/scripts/data_layer_rr", "-p", "test_*.py"], {
       timeout: 30_000, stdio: "pipe",
     })).not.toThrow();
   });
 
-  test("binds imported and repaired .rr sources and forbids additional JSON ports", () => {
+  test("binds imported and repaired .rerail sources and forbids additional JSON ports", () => {
     execFileSync(python, ["scripts/dsl/data_layer_rr/migration.py", "inventory"], {
       timeout: 30_000, stdio: "pipe",
     });

@@ -8,7 +8,7 @@
 // no placeholder names. Only literal str keys are compared, and a `**spread` hides what the dict holds.
 //   "%(a)s" % {"a": 1, "b": 2}    ← F504: "b" is unused
 //   "%(a)s" % {"a": 1, **more}    not reported
-#include "python/pyflakes-format.rr"
+#include "python/pyflakes-format.rerail"
 //   percent_fmt(b, s, r, v), pct_key(v, k), pct_positional(v, n)
 
 .violation F504(at: node) code "F504" "`%`-format string has unused named argument(s)"

@@ -110,6 +110,6 @@ er_text_pattern(".*\\.result\\(\\).*", ".result()").
 er_text_pattern(".*\\bint\\(\\s*lazy.*", "int(lazy...)").
 er_text_pattern(".*\\bfloat\\(\\s*lazy.*", "float(lazy...)").
 er_text_pattern(".*\\bbool\\(\\s*lazy.*", "bool(lazy...)").
-// The signed lists: the grandfathered directory, the burn-down ceiling (lib/data-layer/signing.rr).
+// The signed lists: the grandfathered directory, the burn-down ceiling (lib/data-layer/signing.rerail).
 allow_sig("eager_resolve", "lint_eager_resolve", "PZLEBaWmeKr8kHf+dZzx+X/cUVp//PneTMZ3Ggs9cTuCP5VCuFOYIAjgAdBRtt2khmp5Zwy80jtN70v0yEviAQ==").
 allow_sig("eager_ceiling", "lint_eager_resolve:burn_down_ceiling", "DHa1TKy1Ddt1rmjg5D11QhT5BcpO3xU/J4qkf/n9Znu5OhcRQ6ndZY/jNjiyZGXrWB7uO3EwfOmFNaMHYZatBQ==").

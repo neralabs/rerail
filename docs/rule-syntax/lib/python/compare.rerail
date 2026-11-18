@@ -17,7 +17,7 @@
 //   - Everything else compares by kind, operators and children, in order: `a + b` is `a+b`, not `b + a`.
 //   e.g.  cmp_same(<d[ k ]>, <d[k]>)       cmp_same(<0x10>, <16>)       not cmp_same(<a.b>, <a.c>)
 //         for a, b in z: (a, b)            cmp_same(<(a, b)>, <a, b>)
-#include "python/pyflakes.rr"
+#include "python/pyflakes.rerail"
 
 .decl cmp_same_ask(a: node, b: node) extensible
 .decl cmp_same(a: node, b: node)

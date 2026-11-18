@@ -44,9 +44,9 @@
 //   1. ma_doc and the file kinds.  2. Names: ma_ref, mf_call_name (a library), ma_arg, ma_import, ma_ann, ma_static.
 //   3. One section per kind of file, then the class and def checks, then the repository checks.
 
-#include "python/ast.rr"                 // unparen, str_const, fstring, assign_target, sig_param, body_stmt, …
-#include "python/calls.rr"               // call_arg
-#include "data-layer/match-frames.rr"    // mf_class, mf_def, mf_walk, mf_fn, mf_call_name
+#include "python/ast.rerail"                 // unparen, str_const, fstring, assign_target, sig_param, body_stmt, …
+#include "python/calls.rerail"               // call_arg
+#include "data-layer/match-frames.rerail"    // mf_class, mf_def, mf_walk, mf_fn, mf_call_name
 
 // ---- 1. files ----------------------------------------------------------------------------------------------------
 .decl ma_marker(t: symbol)                       // _MATCHING_SOURCE_MARKERS

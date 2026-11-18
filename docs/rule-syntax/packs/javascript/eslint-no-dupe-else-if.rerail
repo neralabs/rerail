@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-a-control.rr"
+#include "tsx/eslint-a-control.rerail"
 //   deparen, token_text, else_of
 
 // ESLint's no-dupe-else-if: an `else if` whose condition can only be true when an earlier condition of the same

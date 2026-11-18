@@ -14,7 +14,7 @@
 //   bind_name(<a>, <t AS a>), bind_name(<b>, <u AS b>); a.x and a.k use a, so site_used(<t AS a>); b is unused.
 //
 // Builds on sql/syntax (ident_pg, the name PostgreSQL resolves an identifier to) and core.
-#include "sql/syntax.rr"
+#include "sql/syntax.rerail"
 
 // ---- query blocks ---------------------------------------------------------------------------------------------------
 // A `select`, `update`, `delete` or `insert` node opens a block. The grammar writes the clauses after the keyword

@@ -3,7 +3,7 @@
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/component.rr"
+#include "vue/component.rerail"
 //   vsetup(o, f), vvue_import_call(c, x), estree_parent(x, p)
 
 // eslint-plugin-vue's no-watch-after-await: in a component's setup(), a watch() or watchEffect() (imported from Vue)

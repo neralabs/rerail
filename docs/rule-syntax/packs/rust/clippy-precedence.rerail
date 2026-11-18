@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "rust/syntax.rr"
+#include "rust/syntax.rerail"
 //   binary(e, op, l, r)   e is `l op r`;   arith_op, shift_op, bitwise_op   the operator classes
 
 // Clippy's precedence (complexity): arithmetic as an operand of a shift or a bitwise operator, with no

@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
 
-#include "tsx/eslint-b-scope.rr"
+#include "tsx/eslint-b-scope.rerail"
 //   builtin_ref, constructed
 
 // ESLint's no-new-wrappers: `new` on the global String, Number or Boolean makes an object, not a primitive:

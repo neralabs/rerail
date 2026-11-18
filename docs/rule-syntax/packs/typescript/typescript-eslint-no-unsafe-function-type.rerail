@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/ts-b.rr"
+#include "tsx/ts-b.rerail"
 //   type_ref, type_global
 
 // typescript-eslint's no-unsafe-function-type: the global `Function` type accepts any callable and calls return any.

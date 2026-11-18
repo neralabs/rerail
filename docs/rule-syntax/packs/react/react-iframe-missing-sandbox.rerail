@@ -12,7 +12,7 @@
 //   <iframe sandbox="allow-forms nope" />                    "nope" is not a permission
 // Only literal values are read: sandbox={x} counts as present and is not checked. Tokens are split at single
 // spaces and trimmed, as in the rule, so sandbox="a  b" has an empty token, which is allowed.
-#include "tsx/react.rr"
+#include "tsx/react.rerail"
 
 .violation sandbox(at: node, msg: symbol)
     code "react/iframe-missing-sandbox"

@@ -4,9 +4,9 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/ts-b-scope.rr"
+#include "tsx/ts-b-scope.rerail"
 //   variable, space, scope_up, scope_node, fexpr_name, variable_scope, for_head, definition_file, program, source_type
-#include "tsx/eslint-b-scope.rr"
+#include "tsx/eslint-b-scope.rerail"
 //   es_builtin, global_item
 
 // typescript-eslint's no-shadow: a variable (its first declaring identifier is reported) whose name the scopes

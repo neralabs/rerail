@@ -56,9 +56,9 @@
 //
 // Builds on tsx/ts-b (type_ref, ts_namespace), tsx/statements (var_decl, for_head), tsx/names (pattern_name,
 // bound_name), tsx/eslint-a-common (deparen) and core.
-#include "tsx/ts-b.rr"
-#include "tsx/statements.rr"
-#include "tsx/eslint-a-common.rr"
+#include "tsx/ts-b.rerail"
+#include "tsx/statements.rerail"
+#include "tsx/eslint-a-common.rerail"
 
 // ---- scopes ------------------------------------------------------------------------------------------------------
 .decl scope_kind(k: symbol)
@@ -122,7 +122,7 @@ scope_type(v, "class-field-initializer") :- field_value(v).
 variable_scope(s, s) :- scope_node(s), kind(s, k), var_home(k).
 variable_scope(v, v) :- field_value(v).
 variable_scope(s, f) :- scope_node(s), kind(s, k), !var_home(k), !field_value(s), scope_up(s, u), variable_scope(u, f).
-.decl var_home(k: symbol)  // where `var` lands: names.rr's fn_scope, and a namespace (the scope manager's)
+.decl var_home(k: symbol)  // where `var` lands: names.rerail's fn_scope, and a namespace (the scope manager's)
 var_home(k) :- fn_scope(k).
 var_home("internal_module"). var_home("module").
 

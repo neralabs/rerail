@@ -17,7 +17,7 @@
 //   for x in xs:
 //       i += 1         not reported: i is read after the loop
 //   print(i)
-#include "python/simplify.rr"
+#include "python/simplify.rerail"
 //   zero_number; binding, binding_value, nameref, look from python/names
 
 .violation SIM113(at: node, index: symbol) code "SIM113" "Use `enumerate()` for index variable `{index}` in `for` loop"

@@ -397,7 +397,7 @@
 // Names starting `rr_` belong to the engine; no rule may declare one, nor redeclare a name this file declares.
 
 // ---- typing programs ----------------------------------------------------------------------------------------------
-// Call targets and types are computed by typing programs: .rr programs the engine runs over the repository before
+// Call targets and types are computed by typing programs: .rerail programs the engine runs over the repository before
 // the rules, file by file and then in bounded cross-file rounds (typing/programs/ beside this site). A rule reads
 // a program's output `o` by declaring `typing_<program>__<o>`, with each node column written as four columns
 // (path, kind, start byte, end byte); declaring it is what makes the engine run the program. The libraries do
@@ -492,7 +492,7 @@
 .functor nfkc(s: symbol): symbol                         // Unicode NFKC, as Python normalises identifiers
 // @ed25519_ok(key_hex, message, sig_b64) = 1 when sig (base64) is key's Ed25519 signature of message's UTF-8
 // bytes, else 0. With join and @json_str a rule rebuilds the canonical message a repository signs, whatever its
-// layout, and verifies it: lib/data-layer/signing.rr does this for the data layer's two layouts.
+// layout, and verifies it: lib/data-layer/signing.rerail does this for the data layer's two layouts.
 .functor ed25519_ok(key: symbol, message: symbol, sig: symbol): number
 // @tree_digest(n): a structural tree digest. It does not reproduce CPython AST identity or dump bytes.
 .functor tree_digest(n: node): symbol

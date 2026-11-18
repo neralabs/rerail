@@ -8,8 +8,8 @@
 // first statement, a lone str literal). Which characters and words count: see the table file.
 //   def f():
 //       """Returns the value）"""      ← RUF002 at the fullwidth parenthesis
-#include "python/typing.rr"
-#include "../packs/python/ruff-ruf001-ambiguous-unicode-character-string.confusables.rr"
+#include "python/typing.rerail"
+#include "../packs/python/ruff-ruf001-ambiguous-unicode-character-string.confusables.rerail"
 
 .violation RUF002(at: span, ch: symbol) code "RUF002"
     "Replace the look-alike character `{ch}` in this docstring with the ASCII character it imitates, unless the text is meant to hold it (for example a word in another language)."

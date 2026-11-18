@@ -1,4 +1,4 @@
-# `.rr`, step 10: policy documents.
+# `.rerail`, step 10: policy documents.
 #
 #   .policy {"format": "rerail.policy/v1", "id": "p", "revision": 2, "rules": [{"a": -1}]}
 #

@@ -6,12 +6,12 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // PTH115(n): a finding at node n, from clause `os-readlink`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PTH115(at: loc, f: node, s: loc) "Use `Path({s}).readlink()` from pathlib instead of `os.readlink({s})`; it returns a `Path`, not a string, so adjust code that uses the result, and leave bytes paths alone."
     suppress noqa "PTH115"
 PTH115(F, n, S) :- kind(n, "call"), field(n, "function", c1), pth115_callee(c1, F),

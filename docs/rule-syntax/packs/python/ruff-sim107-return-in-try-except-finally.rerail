@@ -9,7 +9,7 @@
 // Returns nested deeper (in an `if` of the body) and the `else` clause do not count.
 //   try:  return 1                ← SIM107 at the finally's return
 //   finally:  return 2
-#include "python/ast.rr"
+#include "python/ast.rerail"
 //   body_stmt(b, s, i)
 
 .violation SIM107(at: node) code "SIM107"

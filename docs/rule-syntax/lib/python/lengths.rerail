@@ -18,9 +18,9 @@
 // The demand never reads a length, so lengths stay outside its recursion. A name's value may be anywhere, so the
 // recursion does not move along the tree: every length is from 0 to 100000, and a cycle of definitions stops there.
 // Internal relations start `len_`.
-#include "python/ast.rr"
-#include "python/calls.rr"
-#include "python/names.rr"
+#include "python/ast.rerail"
+#include "python/calls.rerail"
+#include "python/names.rerail"
 
 .decl len_want(e: node) extensible
 .decl len_val(e: node, v: node) extensible

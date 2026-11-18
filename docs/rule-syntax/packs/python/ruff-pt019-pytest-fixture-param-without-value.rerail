@@ -12,7 +12,7 @@
 //   def test_db(_db): ...                                          ← PT019
 //   @pytest.mark.parametrize("_x", [1, 2])
 //   def test_x(_x): ...                                            not reported
-#include "python/pytest.rr"
+#include "python/pytest.rerail"
 //   exc_argument(c, k, i, a), plain_str(s, v); ast: sig_param(f, p, nm, i, kind, ann, dflt)
 
 .violation PT019(at: node, x: symbol) code "PT019"

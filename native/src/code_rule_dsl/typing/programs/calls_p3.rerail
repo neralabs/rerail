@@ -1,6 +1,6 @@
-// calls_p3.rr: the analysis phase, P3 of decision 0083 §1 (note t28). calls_cx.rr's call targets and types over the
+// calls_p3.rerail: the analysis phase, P3 of decision 0083 §1 (note t28). calls_cx.rerail's call targets and types over the
 // workspace's documents alone: no library document is loaded, and no rule here loads one. A library is read only
-// through what the typing phase (types.rr, P2, over struct.rr's P1) hands on, keyed by symbol.
+// through what the typing phase (types.rerail, P2, over struct.rerail's P1) hands on, keyed by symbol.
 //
 // So values are of two sorts. A workspace value is a node, as in calls_cx (`pv(n, k, v)`): this phase parses the
 // workspace. A library value is a symbol (`lv(n, k, s)`: n may be the library's s, of kind k):
@@ -18,10 +18,10 @@
 // classes (`list[C]`'s `__iter__`, `dict[str, C].get`), overloads fitted by arity (every overload's return is
 // taken), and `async def` in stubs. Those values are unknown here (`vopen`), never wrong.
 //
-// What follows is calls_cx.rr's header.
-// calls_cx.rr (P3's source): calls.rr with every cross-file lookup a function of the reader's import closure (decision 0076, O114),
-// so its fixpoint can be memoised per import component. Generated from calls.rr by
-// fixtures/python/calls/make_cx.py; edit calls.rr and regenerate. What differs:
+// What follows is calls_cx.rerail's header.
+// calls_cx.rerail (P3's source): calls.rerail with every cross-file lookup a function of the reader's import closure (decision 0076, O114),
+// so its fixpoint can be memoised per import component. Generated from calls.rerail by
+// fixtures/python/calls/make_cx.py; edit calls.rerail and regenerate. What differs:
 // - a module's bindings (`qv`, `tqv`, `qopen`) are keyed by the module, and a reader sees those of its closure
 //   (`rr_cx_reach`); "is q a module" is `rr_cx_sees`;
 // - attribute lookups are keyed by the node that asks (`asks`, `fv`, `attr_open`), not by the class asked, and
@@ -62,13 +62,13 @@
 .decl parsed(s: node, grammar: symbol, root: node)
 .decl host_node(n: node, h: node)
 .input parsed, host_node
-// The run's settings (the Python version and platform a branch is decided by, python/conditions.rr). No library
-// is loaded: the imports are resolved, and the libraries loaded, by phase 1 (sources.rr).
+// The run's settings (the Python version and platform a branch is decided by, python/conditions.rerail). No library
+// is loaded: the imports are resolved, and the libraries loaded, by phase 1 (sources.rerail).
 .decl env(key: symbol, value: symbol)
 .decl dir_entry(dir: symbol, name: symbol, is_dir: number)
 .decl file_line(path: symbol, i: number, text: symbol)
-#include "python/conditions.rr"
-// What the earlier phases hand on (struct.rr, types.rr): every document's structure, the workspace's and the
+#include "python/conditions.rerail"
+// What the earlier phases hand on (struct.rerail, types.rerail): every document's structure, the workspace's and the
 // libraries' its imports reach, by symbol.
 .decl struct__def(s: symbol, k: symbol)
 .decl struct__base(c: symbol, i: number, b: symbol)
@@ -92,7 +92,7 @@
 .decl types__anc(c: symbol, a: symbol)
 .decl types__proto(c: symbol)
 .decl struct__param(f: symbol, i: number, x: symbol, a: symbol)
-// The import closure, components.rr's (the engine adds it to a program that reads it): rr_cx_reach(d, e), e is in
+// The import closure, components.rerail's (the engine adds it to a program that reads it): rr_cx_reach(d, e), e is in
 // d's closure; rr_cx_sees(d, q), q is a module of d's closure.
 
 .decl scope(kind: symbol)
@@ -919,7 +919,7 @@ lval(d, "none", "builtins.None") :- types__vtype(d, _, "builtins.None"), !struct
 lret(f, "inst", t) :- types__rtype(f, _, t), struct__def(t, "class"), !struct__flag(f, "async").
 lret(f, "none", "builtins.None") :- types__rtype(f, _, "builtins.None"), !struct__flag(f, "async").
 // lopenret(f): some alternative of f's declared return is no class nor None (`Any`, a type variable, a name no
-// symbol gives; types.rr's "" row): a call of f may hold what no symbol names. lopenv(s): so is s's declared type.
+// symbol gives; types.rerail's "" row): a call of f may hold what no symbol names. lopenv(s): so is s's declared type.
 .decl lopenret(f: symbol)
 lopenret(f) :- types__ropen(f), !lself(f).
 .decl lopenv(s: symbol)

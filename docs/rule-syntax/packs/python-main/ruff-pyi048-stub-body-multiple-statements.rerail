@@ -8,7 +8,7 @@
 
 // PYI048(n): a finding at node n, from clause `stub-body-multiple-statements`.
 // Each rule below is one way the JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PYI048(at: node) "Reduce this stub function's body to a single statement, normally `...`; stub files only declare types and are never executed."
     suppress noqa "PYI048"
 PYI048_raw(n) :- kind(n, "identifier"), field(p1, "name", n),

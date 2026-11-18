@@ -7,7 +7,7 @@
 // Ruff PYI044 (flake8-pyi), stubs only: `from __future__ import annotations`, alone or with other features,
 // aliased or not. Stubs already read annotations lazily.
 //   from __future__ import annotations         ← PYI044
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI044(at: node) code "PYI044" "Delete `annotations` from this `__future__` import (and the whole line if nothing else is imported); stubs already treat annotations as forward references."
     suppress ruff "PYI044"

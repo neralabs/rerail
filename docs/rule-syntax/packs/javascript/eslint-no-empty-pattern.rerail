@@ -3,7 +3,7 @@
 .language typescript
 .mode steer
 .scope include "**/*"
-#include "tsx/eslint-a-expressions.rr"
+#include "tsx/eslint-a-expressions.rerail"
 
 // ESLint's no-empty-pattern: a destructuring pattern that binds nothing.
 //   const {} = foo;    const [] = foo;    function f({a: {}}) {}    → reported

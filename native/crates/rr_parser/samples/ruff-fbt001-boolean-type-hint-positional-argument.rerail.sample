@@ -11,8 +11,8 @@
 //   def f(flag: bool): ...                          ← FBT001
 //   def f(x: Union[list, Optional[int | bool]]): ...     ← FBT001
 //   def f(*, flag: bool): ...                       not reported
-#include "python/misc-boolean-trap.rr"
-#include "python/misc-seen.rr"
+#include "python/misc-boolean-trap.rerail"
+#include "python/misc-seen.rerail"
 
 .violation FBT001(at: node) code "FBT001"
     "Make the boolean parameter `$NAME` keyword-only by moving it after `*` and update positional callers; keep it positional only when a parent signature or callback protocol requires it."

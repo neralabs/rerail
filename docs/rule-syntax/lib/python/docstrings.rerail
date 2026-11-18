@@ -39,9 +39,9 @@
 //   class Public:                    doc_def "class", doc_public
 //       def _helper(self): ...       doc_def "method", not public
 //       """Not a docstring."""      not a docstring: a docstring is the first statement
-#include "python/pyflakes.rr"
+#include "python/pyflakes.rerail"
 //   all_entry(s, x)  string s in the module's `__all__` names x
-#include "python/naming.rr"
+#include "python/naming.rerail"
 //   dec_target(f, e), typing_dec(f, x), dunder(x)
 
 // ---- 1. definitions ----------------------------------------------------------------------------------------------

@@ -23,7 +23,7 @@
 //   3. hn_import_piece(i, s): the module and the imported names of an import, as the linter joins them.
 //   4. Each code is then one rule, or one per kind of node.
 
-#include "python/ast.rr"   // ast_name, docstring, str_const, from_module_raw
+#include "python/ast.rerail"   // ast_name, docstring, str_const, from_module_raw
 
 // The deleted classes, settings and helpers (_FORBIDDEN_NAMES).
 .decl hn_forbidden(x: symbol)

@@ -8,7 +8,7 @@
 //   const H = require("x"); new H()  not
 //   new require.cache.x()           not: the callee is a member expression
 
-#include "tsx/eslint-a-common.rr"   // deparen
+#include "tsx/eslint-a-common.rerail"   // deparen
 
 .violation new_require(at: node) code "n/no-new-require"
     "Require the module into a variable first, then call new on that variable."

@@ -10,7 +10,7 @@
 // checks the scope the store is written in.
 //   myVariable = 0                    ← N816
 //   MyObj = namedtuple("MyObj", ["a"])   not reported (and not mixedCase)
-#include "python/naming.rr"
+#include "python/naming.rerail"
 
 .violation N816(at: node, x: symbol) code "N816"
     "Rename `{x}` to lowercase snake_case, such as `my_variable`, and update its uses; keep the name if other modules import it or it mirrors an external API."

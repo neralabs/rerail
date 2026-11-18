@@ -3,7 +3,7 @@
 .language typescript
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
-#include "tsx/eslint-a-expressions.rr"
+#include "tsx/eslint-a-expressions.rerail"
 
 // ESLint's no-compare-neg-zero: a comparison with -0 on either side. `x === -0` is true for x = 0 as well.
 //   x === -0    -0 < x    x == (-0.0)    → reported;   Object.is(x, -0)  x === 0  x === -0n → not

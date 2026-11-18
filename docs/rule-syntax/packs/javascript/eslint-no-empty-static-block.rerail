@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-a-functions.rr"
+#include "tsx/eslint-a-functions.rerail"
 //   empty_block
 
 // ESLint's no-empty-static-block: a class `static { }` block with no statements and no comment inside.

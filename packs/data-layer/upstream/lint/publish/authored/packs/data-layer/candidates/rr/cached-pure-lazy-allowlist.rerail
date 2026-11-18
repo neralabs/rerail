@@ -37,9 +37,9 @@
 //   5. The differences, one rule per verifier message (cpl_msg), over item_entry: the last item and the last
 //      entry of each name, as the verifier's dicts keep them. Then the runtime hash and the signature.
 
-#include "data-layer/purity-ast.rr"
-#include "data-layer/signing.rr"
-#include "cached-pure-lazy-allowlist.symbols.rr"
+#include "data-layer/purity-ast.rerail"
+#include "data-layer/signing.rerail"
+#include "cached-pure-lazy-allowlist.symbols.rerail"
 
 .violation CPL(at: loc, m: symbol) code {m} "{m}"
 CPL(@place("l2055_lazy_result/cached_pure_lazy_policy.py", 1), m) :- cpl_msg(m), !cpl_crash(_).

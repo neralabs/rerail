@@ -12,7 +12,7 @@
 //   foo(**{**bar})             ← PIE804
 //   foo(**{"bar-foo": True})   not reported: not an identifier
 //   foo(**{**data, "a": 1})    not reported
-#include "python/bugbear.rr"
+#include "python/bugbear.rerail"
 
 .violation PIE804(at: node) code "PIE804" "Unnecessary `dict` kwargs"
     suppress ruff "PIE804"

@@ -4,9 +4,9 @@
 .mode steer
 .scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
 
-#include "tsx/modules.rr"
+#include "tsx/modules.rerail"
 //   directive
-#include "tsx/eslint-b-control.rr"
+#include "tsx/eslint-b-control.rerail"
 //   deparen
 
 // ESLint's no-unused-expressions: an expression statement whose value is thrown away and that does nothing

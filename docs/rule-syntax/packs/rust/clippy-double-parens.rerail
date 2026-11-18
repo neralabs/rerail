@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "rust/syntax.rr"
+#include "rust/syntax.rerail"
 //   paren_inner(p, e)   (e);   sole_group(p, t)   token trees ((…))
 //   expr_tokens(n)      token trees Clippy sees as code
 //   has_comment(n)      a comment among n's children

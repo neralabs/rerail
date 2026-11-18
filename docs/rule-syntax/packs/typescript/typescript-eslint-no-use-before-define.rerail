@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/ts-b-scope.rr"
+#include "tsx/ts-b-scope.rerail"
 //   use, resolves, variable, declarator_name, scope_of, variable_scope, scope_type, export_local
 
 // typescript-eslint's no-use-before-define: a use that comes before the variable's first declaration, or inside

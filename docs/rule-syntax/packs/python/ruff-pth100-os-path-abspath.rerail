@@ -11,7 +11,7 @@
 //   from os.path import abspath
 //   abspath(path=p)                 ← PTH100
 //   os.path.abspath(*ps)            not reported: Ruff does not look past `*`
-#include "python/pathlib.rr"
+#include "python/pathlib.rerail"
 //   single_arg(c, q, x, f, a)   c calls q with one argument a, for parameter x; f the callee (python/pathlib)
 
 .violation PTH100(at: node, s: node) code "PTH100"

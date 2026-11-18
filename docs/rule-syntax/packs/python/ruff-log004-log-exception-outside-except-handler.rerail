@@ -10,7 +10,7 @@
 //   logger.exception("")                          ← LOG004
 //   def _(): logging.exception("")                ← LOG004
 //   except ...: logging.exception("")             not reported
-#include "python/logging.rr"
+#include "python/logging.rerail"
 
 .violation LOG004(at: node) code "LOG004"
     "Call `error` instead of `exception` here: outside an except block there is no exception to attach. Leave it if this code only ever runs while an exception is being handled."

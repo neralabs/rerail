@@ -12,7 +12,7 @@
 //       """Doc."""
 //       def run(self): pass    ← D102 at `run`
 //       def __call__(self): …  ← D102
-#include "python/docstrings.rr"
+#include "python/docstrings.rerail"
 
 .violation D102(at: node, x: symbol) code "D102"
     "Add a docstring as the first statement of method `{x}` describing what it does, its arguments and return value; if it overrides a documented base method, decorate it with `@override` instead."

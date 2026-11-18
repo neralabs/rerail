@@ -10,7 +10,7 @@
 // string), as an argument of `@warnings.deprecated(…)` / `typing_extensions.deprecated`, or in a module-level
 // `__all__` assignment (0.16.9; 0.15.7 reports those).
 //   x = "aaaa…a"       (51 a's)   ← PYI053
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI053(at: node) code "PYI053" "Replace this literal with `...`: it is longer than 50 characters, and a stub only needs the type, so the full value is an implementation detail."
     suppress ruff "PYI053"

@@ -3,7 +3,7 @@
 .language typescript
 .mode steer
 .scope include "**/*"
-#include "tsx/eslint-b-objects.rr"
+#include "tsx/eslint-b-objects.rerail"
 //   object_prop (static key names), deparen, id_value, natural_key, nat_ask
 
 // ESLint's sort-keys: in an object literal, each key must not sort before the named key just before it.

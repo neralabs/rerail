@@ -13,7 +13,7 @@
 //   class TextEdit:
 //       start_line: int
 //       start_line: int             ← PIE794
-#include "python/ast.rr"
+#include "python/ast.rerail"
 
 .violation PIE794(at: node, x: symbol) code "PIE794" "Class field `{x}` is defined multiple times"
     suppress ruff "PIE794"

@@ -3,8 +3,8 @@
 .language typescript
 .mode steer
 .scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
-#include "tsx/eslint-b-objects.rr"
-#include "tsx/eslint-b-control.rr"
+#include "tsx/eslint-b-objects.rerail"
+#include "tsx/eslint-b-control.rerail"
 //   deparen, number_lit, value, id_value, optional_link
 
 // ESLint's prefer-destructuring: a declarator or `=` assignment whose value is a member read.

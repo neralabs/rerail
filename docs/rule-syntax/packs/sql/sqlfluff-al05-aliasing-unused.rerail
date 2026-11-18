@@ -12,7 +12,7 @@
 // A use is a qualifier (foo.x, foo.*), a whole-row reference (f(foo)) or a later FROM item read from it
 // (foo.arr), anywhere in the query, subqueries included. Names compare as PostgreSQL resolves them (alias_key).
 
-#include "sql/syntax.rr"
+#include "sql/syntax.rerail"
 
 .violation AL05(at: node, x: node) code "AL05" "Alias '{x}' is never used in SELECT statement."
     suppress sqlfluff "AL05", "L025", "aliasing", "aliasing.unused", "all", "core"

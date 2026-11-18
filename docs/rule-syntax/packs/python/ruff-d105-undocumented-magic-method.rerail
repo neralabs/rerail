@@ -10,7 +10,7 @@
 //   class C:
 //       """Doc."""
 //       def __eq__(self, o): …   ← D105 at `__eq__`
-#include "python/docstrings.rr"
+#include "python/docstrings.rerail"
 
 .violation D105(at: node, x: symbol) code "D105"
     "Add a docstring to magic method `{x}` describing its behavior, arguments and return value."

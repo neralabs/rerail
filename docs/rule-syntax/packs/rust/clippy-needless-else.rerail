@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "rust/syntax.rr"
+#include "rust/syntax.rerail"
 //   has_comment(n)   a comment among n's children
 
 // Clippy's needless_else (style): an `else {}` with nothing in it, not even a comment.

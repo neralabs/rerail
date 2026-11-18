@@ -11,7 +11,7 @@
 //   logging.info(f"Hello {name}")                    ← G004
 //   logging.info(f"no placeholders")                 ← G004
 //   info(t"{name}")                                  not reported: a template string
-#include "python/logging.rr"
+#include "python/logging.rerail"
 
 .violation G004(at: node) code "G004"
     "Replace the f-string with a `%s` format string and pass its values as logger arguments, e.g. `logger.info(\"x=%s\", x)`, doubling any literal `%`; leave it if the logger is not from `logging`."

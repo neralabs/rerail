@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
 
-#include "tsx/eslint-b-scope.rr"
+#include "tsx/eslint-b-scope.rerail"
 //   builtin_ref, called, member_call, arg_count, nth_arg
 
 // ESLint's radix: a call of the global parseInt, or of Number.parseInt with Number the global, needs a radix.
@@ -37,7 +37,7 @@ bad_radix(a) :- radix_literal(a), !radix_value(a).
 bad_radix(a) :- text(a, "undefined"), (kind(a, "undefined") ; kind(a, "identifier")), !local_undefined(a).
 .decl local_undefined(a: node)  // function f(undefined) { parseInt(s, undefined) }: a parameter, not the global
 local_undefined(a) :- text(a, "undefined"), decl_site(s, "undefined", _, _, "value"), within(a, s).
-// tree-sitter writes the parameter `undefined` as an `undefined` node, which names.rr does not bind.
+// tree-sitter writes the parameter `undefined` as an `undefined` node, which names.rerail does not bind.
 local_undefined(a) :- text(a, "undefined"), within(a, f), field(f, "parameters", ps), child(ps, p, _),
     text(p, "undefined").
 bad_radix(a) :- kind(a, "unary_expression"), op(a, "+"), field(a, "argument", n), plain_number(n), !radix_value(n).

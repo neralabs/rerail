@@ -76,7 +76,7 @@ fn underscores(s: &str) -> String {
     out
 }
 
-/// A util's relation: its name in snake case, and `_util` after a name core.rr declares (a util `field` is not the
+/// A util's relation: its name in snake case, and `_util` after a name core.rerail declares (a util `field` is not the
 /// core `field(p, f, c)` the rules beside it read).
 pub fn util_name(name: &str) -> String {
     let s = snake(name);
@@ -173,7 +173,7 @@ pub fn opt_alts(arg: &Value, render: &dyn Fn(&Lit) -> String) -> String {
     if parts.len() > 1 { format!("({})", parts.join(" ; ")) } else { parts.remove(0) }
 }
 
-/// An option's value as an operand. A list option has no `option` row, only `option_item` rows (core.rr), so
+/// An option's value as an operand. A list option has no `option` row, only `option_item` rows (core.rerail), so
 /// `{"$option": L, "join": "|", "template": T}` (the regex T around the items joined by `|`) is read per item: the
 /// joined regex matches where the regex T around some one item does. A `template` with no `join` puts a scalar
 /// option's value where the template's first `{}` is (`"^.{0,{}}$"`), as main does.
@@ -446,7 +446,7 @@ pub fn lower(px: &Patterns, prog: &mut Program, rule: &Value, v: &str, vs: &mut 
             let c = Obj(vec![("position".to_owned(), val.clone())]);
             lits.extend(nth_child(px, prog, &c, v, vs)?);
         } else if k == "binds" && vo.is_some_and(Obj::is_empty) {
-            // `binds: {}`: v is some binding's name node (names.rr's `bind_name`, in every language).
+            // `binds: {}`: v is some binding's name node (names.rerail's `bind_name`, in every language).
             prog.use_("names");
             lits.push(format!("bind_name({v}, _)"));
         } else if k == "binds" && let Some(o) = vo {

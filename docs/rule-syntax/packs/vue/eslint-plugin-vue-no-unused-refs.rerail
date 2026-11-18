@@ -3,7 +3,7 @@
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/component.rr"
+#include "vue/component.rerail"
 //   vplain(e, a, x), vval(a, v), tfree(r, x, a), vin_script(n), vname(o, g, x, n), vsetup_doc(d), vscript(p, s)
 
 // eslint-plugin-vue's no-unused-refs: a template `ref="name"` that nothing reads. A ref is read by

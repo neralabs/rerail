@@ -24,7 +24,7 @@
 //   imported_exact(n, s)  `is_module_imported_exact(s)` at n: an import before n has the entry s.
 //                         "Before" is Bandit's walk order, CPython's ast order (core's earlier, visit_index).
 //   blacklisted(n, code)  Bandit's blacklist test (B001) reports `code` at call or import n. The tables are in
-//                         python/security-blacklist.rr, generated from the rules' JSON.
+//                         python/security-blacklist.rerail, generated from the rules' JSON.
 //   catch_all_body(x, s)  handler x is `except:` or `except Exception:` and s its only statement (B110, B112).
 //   process_fn(g, q)      Bandit's shell_injection groups: "subprocess", "shell", "no_shell" (B606, B609).
 // imported_like, imported_exact and kw_none test only the strings in like_probe, exact_probe and kw_probe; a
@@ -38,8 +38,8 @@
 //   p.loads(x)                 qual_call "pickle.loads": blacklisted B301
 //   def f(p): p.loads(x)       still "pickle.loads": Bandit does not see the parameter
 //   from xml.sax import parse  import_entry "xml.sax.parse": blacklisted B406 (prefix "xml.sax")
-#include "python/ast.rr"                  // unparen, from_module_raw
-#include "python/security-blacklist.rr"   // blacklist_call, blacklist_import
+#include "python/ast.rerail"                  // unparen, from_module_raw
+#include "python/security-blacklist.rerail"   // blacklist_call, blacklist_import
 
 // ---- 1. the import table ------------------------------------------------------------------------------------------
 // alias_site(a, x, q): import alias node a maps name x to q (`import_aliases[x] = q`):

@@ -9,7 +9,7 @@
 //   import io; io.open("f.txt")             ← UP020
 //   from io import open; open("f.txt")      ← UP020
 //   open("f.txt")                           not reported: the builtin
-#include "python/upgrade.rr"
+#include "python/upgrade.rerail"
 //   sym_at(e, q)   e denotes q where it runs, through imports (python/upgrade)
 
 .violation UP020(at: node) code "UP020"

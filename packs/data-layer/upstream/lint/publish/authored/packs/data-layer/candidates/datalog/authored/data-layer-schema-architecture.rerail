@@ -3,8 +3,8 @@
 // The clauses' SQL runs over CPython `ast` rows (`pythonAst` stages); the script they port is
 // nera-data-layer scripts/lint_schema_architecture_plugin.py (and lint_schema_architecture.py for
 // schema-planning). Here the same questions are asked of tree-sitter's tree, read the way `ast` reads it:
-// parentheses are transparent, a def's decorators belong to it (python/ast.rr's view, written over the base
-// relations: including the library would bring python/names.rr and its frames for four small helpers).
+// parentheses are transparent, a def's decorators belong to it (python/ast.rerail's view, written over the base
+// relations: including the library would bring python/names.rerail and its frames for four small helpers).
 // Options: every `entryPoint` case, read from `option_value("entryPoint", v)`; `parameters` is read by no clause.
 //   schema-planning   query: lint_file/standalone; every other value `… WHERE 0` (nothing).
 //   schema-lifecycle  gate: "all" the three directories and the trigger text, any other value any valid module;
@@ -47,7 +47,7 @@ schema_planning_queue("enqueue_post_commit_schema_exit"). schema_planning_queue(
 violation("data-layer-schema-architecture", "schema-planning", "forbid-schema-callback-queues", p, l) :-
     lifecycle_callee(c, x), schema_planning_queue(x), node(d, c, _, _, _), schema_planning_doc(d, p), line(c, l).
 // In a def whose name holds materialize_schema_operation_records (the call's `fn`: its innermost def, the def's
-// decorators its own, lambdas transparent; mirrors python/ast.rr def_frame), a call that mutates or flushes the
+// decorators its own, lambdas transparent; mirrors python/ast.rerail def_frame), a call that mutates or flushes the
 // plan.
 .decl schema_planning_mutation(x: symbol)
 schema_planning_mutation("add_operation"). schema_planning_mutation("_materialize_schema_operation_records").
@@ -92,13 +92,13 @@ lifecycle_deco("decorator").
 lifecycle_type("type").
 
 // lifecycle_in_fn(x, f): x is in `ast.walk(f)` for def f: below the def, or in one of its decorators
-// (mirrors python/ast.rr ast_parent's decorator rule, as a walk).
+// (mirrors python/ast.rerail ast_parent's decorator rule, as a walk).
 .decl lifecycle_in_fn(x: node, f: node)
 lifecycle_in_fn(x, f) :- inside(x, f, lifecycle_fdef).
 lifecycle_in_fn(x, f) :- node(_, f, "function_definition", _, _), field(dd, "definition", f), child(dd, dc, _),
     node(_, dc, "decorator", _, _), inside(x, dc, lifecycle_deco).
 
-// lifecycle_func(c, u): call c's `func`, parentheses taken off (mirrors python/ast.rr unparen).
+// lifecycle_func(c, u): call c's `func`, parentheses taken off (mirrors python/ast.rerail unparen).
 .decl lifecycle_peel(c: node, e: node)
 lifecycle_peel(c, f) :- node(_, c, "call", _, _), field(c, "function", f).
 lifecycle_peel(c, i) :- lifecycle_peel(c, e), node(_, e, "parenthesized_expression", _, _), child(e, i, 0).
@@ -115,7 +115,7 @@ lifecycle_callee(c, x) :- lifecycle_name_call(c, x).
 lifecycle_callee(c, x) :- lifecycle_attr_call(c, x, _).
 
 // lifecycle_root(r, x): _root_name(r): r's Attribute chain ends at the Name x, parentheses transparent
-// (mirrors python/ast.rr chain_root, over attr and paren steps only).
+// (mirrors python/ast.rerail chain_root, over attr and paren steps only).
 .decl lifecycle_walk(r: node, e: node)
 lifecycle_walk(r, r) :- lifecycle_attr_call(_, _, r).
 lifecycle_walk(r, r) :- lifecycle_plan_value(_, r).
@@ -140,7 +140,7 @@ lifecycle_ann_name(t, x) :- node(_, i, "identifier", _, _), inside(i, t, lifecyc
     !lifecycle_kwname(i).
 
 // lifecycle_param(f, x, t): parameter x of def f among posonlyargs, args and kwonlyargs, annotated t
-// (mirrors python/ast.rr sig_param, kinds posonly/pos/kwonly with an annotation).
+// (mirrors python/ast.rerail sig_param, kinds posonly/pos/kwonly with an annotation).
 .decl lifecycle_param(f: node, x: symbol, t: node)
 lifecycle_param(f, x, t) :- field(f, "parameters", ps), child(ps, p, _), node(_, p, "typed_parameter", _, _),
     child(p, nm, 0), node(_, nm, "identifier", _, _), text(nm, x), field(p, "type", t).

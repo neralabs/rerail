@@ -10,7 +10,7 @@
 //       if x:
 //           return             ← RET502
 //       return 1
-#include "python/flow-return.rr"
+#include "python/flow-return.rerail"
 
 .violation RET502(at: node) code "RET502"
     "Write `return None` instead of a bare `return`, since this function returns a value elsewhere."

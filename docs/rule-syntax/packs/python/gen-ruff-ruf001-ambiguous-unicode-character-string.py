@@ -1,4 +1,4 @@
-"""Writes ruff-ruf001-ambiguous-unicode-character-string.confusables.rr: Ruff's look-alike characters (those with
+"""Writes ruff-ruf001-ambiguous-unicode-character-string.confusables.rerail: Ruff's look-alike characters (those with
 an ASCII representant), split as the JSON splits them into `symbol` (not alphanumeric) and `any-letter`, and the
 word logic RUF001, RUF002 and RUF003 share.
     python3 docs/rule-syntax/packs/python/gen-ruff-ruf001-ambiguous-unicode-character-string.py
@@ -7,7 +7,7 @@ import json, os, re, unicodedata
 HERE = os.path.dirname(os.path.abspath(__file__))
 JSON = os.path.join(HERE, "..", "..", "..", "..", "packs", "python", "rules",
                     "ruff-ruf001-ambiguous-unicode-character-string.json")
-OUT = os.path.join(HERE, "ruff-ruf001-ambiguous-unicode-character-string.confusables.rr")
+OUT = os.path.join(HERE, "ruff-ruf001-ambiguous-unicode-character-string.confusables.rerail")
 
 
 def parse_class(rx):
@@ -30,7 +30,7 @@ def classes(policy):
 
 
 def char(cp):
-    """A class member as the .rr regex string writes it: printable characters as themselves, others escaped."""
+    """A class member as the .rerail regex string writes it: printable characters as themselves, others escaped."""
     cat = unicodedata.category(chr(cp))
     return f"\\\\x{{{cp:x}}}" if cat[0] in "ZCM" else chr(cp)
 

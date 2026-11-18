@@ -32,9 +32,9 @@
 //   PV2-052 registered, never cited as "(scope.x)" in verifier.py
 // Follows the linter: names are compared as written, nothing is resolved.
 
-#include "python/names.rr"
-#include "python/ast.rr"      // from_module_raw, ast_name, assign_target, sig_param, unparen, str_const, fstring
-#include "python/calls.rr"    // posarg, call_arg
+#include "python/names.rerail"
+#include "python/ast.rerail"      // from_module_raw, ast_name, assign_target, sig_param, unparen, str_const, fstring
+#include "python/calls.rerail"    // posarg, call_arg
 
 // ---- the linter's lists -----------------------------------------------------------------------------------------
 .decl pv2_io_module(m: symbol)

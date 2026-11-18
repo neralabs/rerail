@@ -3,7 +3,7 @@
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/code.rr"
+#include "vue/code.rerail"
 //   tvar(e, x, id, k), tbind(r, id), tdestructured(id), vel_name(e, x)
 
 // eslint-plugin-vue's no-unused-vars: a variable a template element declares (a v-for alias, a v-slot, slot-scope or

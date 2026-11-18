@@ -8,7 +8,7 @@
 //   import Head from "next/head"; <Head><Script src="/a.js" /></Head>      reported
 // The plugin tests the tag names as written, not what they were imported as.
 
-#include "tsx/next.rr"
+#include "tsx/next.rerail"
 
 .violation script_in_head(at: node) code "@next/next/no-script-component-in-head"
     "`next/script` should not be used in `next/head` component. Move `<Script />` outside of `<Head>` instead. See: https://nextjs.org/docs/messages/no-script-component-in-head"

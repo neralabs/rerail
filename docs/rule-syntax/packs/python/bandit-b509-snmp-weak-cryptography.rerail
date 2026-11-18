@@ -11,7 +11,7 @@
 //   UsmUserData("user", authKey="a", privKey="p")        B509: Bandit counts positional arguments only
 //   UsmUserData("user", "authkey", "privkey")            not reported
 
-#include "python/security.rr"   // qual_call, arg_count
+#include "python/security.rerail"   // qual_call, arg_count
 
 .violation B509(at: node) code "B509"
     "Pass authentication and privacy keys to this UsmUserData call; without them SNMPv3 runs with no authentication or encryption."

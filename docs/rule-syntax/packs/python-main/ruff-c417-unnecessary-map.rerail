@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // fn_list_set_dict(n): the JSON util `fn-list-set-dict`, used where the JSON says `matches: "fn-list-set-dict"`
 .decl c417_fn_list_set_dict(n: node)

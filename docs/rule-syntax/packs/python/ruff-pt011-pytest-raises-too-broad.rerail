@@ -10,7 +10,7 @@
 // over the qualified name. The callable form, `pytest.raises(E, func)` or `func=`, is left alone.
 //   with pytest.raises(ValueError): …                ← PT011, at ValueError
 //   with pytest.raises(ValueError, match="bad"): …   not reported
-#include "python/pytest.rr"
+#include "python/pytest.rerail"
 //   exc_call(c, q), exc_argument(c, k, i, a), exc_arg(c, i, a), kwarg(c, k, v), pytest_empty_or_null(e),
 //   pytest_broad(c, e, s)
 

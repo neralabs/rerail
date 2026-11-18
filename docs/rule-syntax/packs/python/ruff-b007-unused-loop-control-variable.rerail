@@ -12,7 +12,7 @@
 //       print(10)                         ← B007 at `i`
 //   for i, (j, (k, l)) in g(): print(j, l)   ← B007 at `i` and at `k`
 //   for foo, bar in xs: f(**locals())     ← B007 "may not be used" at `bar`
-#include "python/bugbear-loops.rr"
+#include "python/bugbear-loops.rerail"
 
 .violation B007(at: node, x: symbol, what: symbol) code "B007" "Loop control variable `{x}` {what} within loop body"
     suppress ruff "B007"

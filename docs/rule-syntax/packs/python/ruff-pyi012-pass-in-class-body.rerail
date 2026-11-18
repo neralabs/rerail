@@ -8,7 +8,7 @@
 //   class C:
 //       x: int
 //       pass               ← PYI012
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI012(at: node) code "PYI012" "Delete this `pass`; the class body already has other statements, so it is redundant in a stub."
     suppress ruff "PYI012"

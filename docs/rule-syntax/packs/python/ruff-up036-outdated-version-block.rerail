@@ -16,7 +16,7 @@
 //   if sys.version_info >= (3, 9): ...       ← UP036 "outdated"
 //   if sys.version_info > (3, 10): ...       not reported
 //   if sys.version_info < (3, 300): ...      ← UP036 "invalid" at `(3, 300)`
-#include "python/upgrade.rr"
+#include "python/upgrade.rerail"
 //   py_if(i, test, body), sym_at(e, q), target_minor(m), unparen(e, m)
 
 .violation UP036(at: node) code "UP036"

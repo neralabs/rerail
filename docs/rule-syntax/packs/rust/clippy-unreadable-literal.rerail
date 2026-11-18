@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "rust/syntax-literals.rr"
+#include "rust/syntax-literals.rerail"
 //   grouping_lint(n, w, fractions)   Clippy's LiteralDigitGrouping verdict on number literal n
 
 // Clippy's unreadable_literal (pedantic): a number literal whose digits run longer than five with no `_`.

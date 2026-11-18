@@ -1,4 +1,4 @@
-//! The .rr front end: parsing to programs, magic sets, lowering, printing, checking.
+//! The .rerail front end: parsing to programs, magic sets, lowering, printing, checking.
 //!
 //! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
 // A mounted module re-exports its dependency's by glob, and its sources import the same items

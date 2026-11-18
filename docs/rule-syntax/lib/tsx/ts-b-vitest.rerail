@@ -34,7 +34,7 @@
 // expectTypeOf's are its own (returns, parameters, not, …).
 //
 // Builds on tsx/ts-b-scope (resolves, unresolved, variable, deparen) and core.
-#include "tsx/ts-b-scope.rr"
+#include "tsx/ts-b-scope.rerail"
 
 // ---- heads ----
 .decl vitest_name(x: symbol, g: symbol)

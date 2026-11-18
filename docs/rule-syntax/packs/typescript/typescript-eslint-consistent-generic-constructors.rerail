@@ -4,9 +4,9 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/ts-a.rr"
+#include "tsx/ts-a.rerail"
 //   deparen
-#include "tsx/eslint-a-globals.rr"
+#include "tsx/eslint-a-globals.rerail"
 //   free_ref(r, x)
 
 // typescript-eslint's consistent-generic-constructors: where a constructed value's type arguments go, when a

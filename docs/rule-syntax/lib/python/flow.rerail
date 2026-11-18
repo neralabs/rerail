@@ -1,5 +1,5 @@
 // python/flow: statement order within one body. Tree arithmetic only; no data flow.
-// Built only on lib/core.rr (within, child, kind); no other Python module. All three relations are interface.
+// Built only on lib/core.rerail (within, child, kind); no other Python module. All three relations are interface.
 // Use it for rules like "a call before the `return`" or "an import inside an `if`", where source order inside a
 // single block is enough and no value needs to be followed.
 // Note: "block" is the tree-sitter kind of an indented body (of a def, if, for, try, ...). A module's top-level

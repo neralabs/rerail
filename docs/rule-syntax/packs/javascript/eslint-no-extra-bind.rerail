@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-a-functions.rr"
+#include "tsx/eslint-a-functions.rerail"
 //   deparen, static_prop, call_arg, this_owner
 
 // ESLint's no-extra-bind: `.bind(x)` called directly on a function that cannot use it: an arrow, or a

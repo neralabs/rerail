@@ -10,7 +10,7 @@
 //   ReactDOM.render(<App />, root);                  not: the value is dropped
 //   const h = ReactDOM?.render(<App />, root);       not: ESTree wraps an optional chain in a ChainExpression
 // For React 0.13 and 0.14 the plugin also checks React.render; the recording assumes the latest React.
-#include "tsx/react-class.rr"
+#include "tsx/react-class.rerail"
 
 .violation no_render_return_value(at: node)
     code "react/no-render-return-value"

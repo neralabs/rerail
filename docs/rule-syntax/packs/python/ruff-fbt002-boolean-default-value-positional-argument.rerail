@@ -10,7 +10,7 @@
 //   def f(flag=True): ...                 ← FBT002
 //   def f(flag: int = True): ...          ← FBT002
 //   def f(*, flag=True): ...              not reported
-#include "python/misc-boolean-trap.rr"
+#include "python/misc-boolean-trap.rerail"
 
 .violation FBT002(at: node) code "FBT002"
     "Make `$NAME` keyword-only by moving it after `*` and update positional callers; keep it positional only when a parent signature or callback protocol requires it."

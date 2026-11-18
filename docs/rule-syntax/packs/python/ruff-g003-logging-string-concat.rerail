@@ -9,7 +9,7 @@
 // operands. The message is the first argument (the second for `log`) or `msg=`. Reported at the message.
 //   logging.info("Hello" + " " + "World!")           ← G003
 //   logging.info("Hello %s", "World!")               not reported
-#include "python/logging.rr"
+#include "python/logging.rerail"
 
 .violation G003(at: node) code "G003"
     "Use a `%s` format string and pass the values as logger arguments, e.g. `logger.info(\"x=%s\", x)`, doubling any literal `%`; leave it if `+` adds numbers or the logger is not from `logging`."

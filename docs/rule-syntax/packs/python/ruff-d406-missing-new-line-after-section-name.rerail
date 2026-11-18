@@ -9,7 +9,7 @@
 // sections when it is unset) are not checked.
 //   Returns:                 ← D406
 //   -------
-#include "python/docstrings-sections.rr"
+#include "python/docstrings-sections.rerail"
 
 .violation D406(at: span, k: symbol) code "D406"
     "Remove the colon or trailing whitespace after the section name `{k}` so the line holds only the name."

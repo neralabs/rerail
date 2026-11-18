@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/statements.rr"
+#include "tsx/statements.rerail"
 //   var_decl, declarator
 
 // ESLint's sort-vars: in one declaration, the plain names (not destructuring patterns) must be in order. A name

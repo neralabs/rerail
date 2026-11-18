@@ -19,8 +19,8 @@
 // Without the artifact, the first budget_exceeded rule still reports; the other two are Unknown at the baseline
 // file (FINDINGS-LAYER.md, section 2).
 
-#include "python/ast.rr"
-#include "data-layer/signing.rr"
+#include "python/ast.rerail"
+#include "data-layer/signing.rerail"
 //   nera_key (provided there): the repository's public key
 
 // ---- 1. the static lower bound -----------------------------------------------------------------------------------

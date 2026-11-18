@@ -12,7 +12,7 @@
 //   deque(iterable=())         ← RUF037
 //   deque([1, 2])              not reported
 //   deque(frozenset())         not reported: Ruff takes only set, list, dict and tuple calls
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 param_slot("collections.deque", "iterable", 0). param_slot("collections.deque", "maxlen", 1).
 
 .violation RUF037(at: node, msg: symbol) code "RUF037" "{msg}"

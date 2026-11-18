@@ -4,10 +4,10 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/ts-b-scope.rr"
+#include "tsx/ts-b-scope.rerail"
 //   variable, first_decl, declaring_stmt, resolves, use, reads, writes, initialised, variable_scope, scope_type, definition_file,
 //   declarator_name, for_head, param_target, deparen, estree_parent, source_type, program
-#include "tsx/eslint-b-scope.rr"
+#include "tsx/eslint-b-scope.rerail"
 //   global_item
 
 // typescript-eslint's no-unused-vars: a variable nothing reads. Reported at its last write in its own function,

@@ -9,10 +9,10 @@
 //   require("lodash")       reported when node_modules has no lodash
 //   require("fs")  require(name)                        not: a built-in;  not a constant
 // The require is the CommonJS global (aliases followed: `const r = require; r("x")`). Option allowModules lists
-// packages never reported. Resolution is node-resolve.rr's proposed native input; its other options
+// packages never reported. Resolution is node-resolve.rerail's proposed native input; its other options
 // (tryExtensions, resolvePaths, resolverConfig, typescriptExtensionMap, tsconfigPath) belong to the resolver.
 
-#include "tsx/node-resolve.rr"   // node_target, builtin_spec, spec_failed, spec_allowed
+#include "tsx/node-resolve.rerail"   // node_target, builtin_spec, spec_failed, spec_allowed
 
 .violation missing_require(at: node) code "n/no-missing-require"
     "This module cannot be resolved: no installed package or file in the repository provides it."

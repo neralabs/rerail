@@ -8,7 +8,7 @@
 // comprehension. Python wants a tuple and raises TypeError. One placeholder takes the dict as its value.
 //   "%s %s" % {"k": "v"}          ← F503
 //   "%s" % {"k": "v"}             not reported
-#include "python/pyflakes-format.rr"
+#include "python/pyflakes-format.rerail"
 //   percent_fmt(b, s, r, v), pct_positional(v, n)
 
 .violation F503(at: node) code "F503" "`%`-format string expected sequence but got mapping"

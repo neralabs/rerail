@@ -6,8 +6,8 @@
 .scope exclude "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.nuxt/**", "**/.output/**"
 .scope exclude "**/coverage/**", "**/generated/**", "**/__generated__/**", "**/*.test.*", "**/*.spec.*", "**/__tests__/**"
 
-#include "complexity/ecma.rr"
-#include "vue/component.rr"
+#include "complexity/ecma.rerail"
+#include "vue/component.rerail"
 //   cc_report(f, msg)   function f has cyclomatic complexity over 6 (lizard's decision points; nested ones apart)
 //   vscript(p, setup)   p is the program of a <script> block (setup "true" for <script setup>)
 

@@ -1,4 +1,4 @@
-// lib/data-layer/purity-calls.rr: the call graph the data-layer's pure-lazy linters build by spelling
+// lib/data-layer/purity-calls.rerail: the call graph the data-layer's pure-lazy linters build by spelling
 // (scripts/lint_pure_lazy_runtime_purity.py's _collect_function_records, _resolve_call_target and
 // _resolve_method_target). Nothing is type-resolved: a call names a def through the file's top-level defs, its
 // imports, or `self.` / `cls.` and the class's bases.
@@ -17,8 +17,8 @@
 //
 // The records: every def but those that are statements of a def's own body (and what is inside them). The
 // qualname joins the class and def names around it: `class C: def m(): if x: def g()` gives "C.m.g".
-#include "data-layer/purity-ast.rr"
-#include "python/security.rr"
+#include "data-layer/purity-ast.rerail"
+#include "python/security.rerail"
 
 // ---- chains -------------------------------------------------------------------------------------------------------
 // `ast` has no parentheses: `(a).b` is a.b.

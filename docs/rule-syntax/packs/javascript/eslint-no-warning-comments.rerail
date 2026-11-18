@@ -3,7 +3,7 @@
 .language typescript
 .mode steer
 .scope include "**/*"
-#include "tsx/eslint-a-text.rr"
+#include "tsx/eslint-a-text.rerail"
 //   js_comment, eslint_directive
 
 // ESLint's no-warning-comments: a comment holding a warning term, case-insensitive, as a whole word where the

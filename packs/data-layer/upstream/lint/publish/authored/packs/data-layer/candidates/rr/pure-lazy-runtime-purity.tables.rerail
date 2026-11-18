@@ -60,6 +60,6 @@ plp_name("type_subscripts", "Type"). plp_name("type_subscripts", "type").
 plp_registry_access("l1000_cache/schema_generation.py", "_callback_registry", ".contains").
 plp_registry_access("l1000_cache/schema_generation.py", "_callback_registry", ".register").
 plp_registry_access("l1000_cache/schema_generation.py", "_callback_registry", ".version").
-// The signatures written in the linter, checked by lib/data-layer/signing.rr.
+// The signatures written in the linter, checked by lib/data-layer/signing.rerail.
 allow_sig("plp", "lint_pure_lazy_runtime_purity", "ABcOeThOUBA1gKcLhVC8onMupU75NAfAZPNyLizkJ0ImSGyJlr0iZUBENcUAUL7dBUyEh1Di+XYOvLvHh7rYCQ==").
 allow_sig("plp_ceiling", "lint_pure_lazy_runtime_purity:burn_down_ceiling", "R1cZFd/dL/i+Sa5twPQ/pv52iPjS5kWv+l8+VHjdIuLTizcfXLVv4AGIsiZxqGyzMS12YhnLi3m69Y9UgTcNDg==").

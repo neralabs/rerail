@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/ts-b.rr"
+#include "tsx/ts-b.rerail"
 //   enum_member(n, m, i, x), enum_init(m, v); deparen(e, x) (eslint-a-common)
 
 // typescript-eslint's no-duplicate-enum-values: an enum member whose initializer has the same static value as

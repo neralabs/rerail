@@ -8,7 +8,7 @@
 // quotes and spacing aside, literals by value: `0x10` and `16`).
 //   x = 1 if flag else 1      ← RUF034
 //   x = 1 if flag else 2      not reported
-#include "python/compare.rr"
+#include "python/compare.rerail"
 
 .violation RUF034(at: node) code "RUF034"
     "Both branches are identical, so the condition changes nothing: use the branch value alone, or fix the branch that should differ. Keep the test only if evaluating it has side effects."

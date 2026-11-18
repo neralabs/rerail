@@ -12,7 +12,7 @@
 //            "Honey never spoils."]      ← ISC004
 //   facts = [("a"
 //             "b")]                      not reported: parenthesized
-#include "python/ast.rr"
+#include "python/ast.rerail"
 
 .violation ISC004(at: node) code "ISC004"
     "Add the missing comma if these strings are separate items; if joining them is intended, wrap the concatenation in parentheses."

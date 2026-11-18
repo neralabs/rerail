@@ -26,8 +26,8 @@
 //
 //   "foo".encode("UTF8")          str_lit(<"foo">, "foo"), utf8_only_arg(<call>)        (UP012)
 //   "\N{DIGIT ONE}".encode()      wide_escape(<"\N{DIGIT ONE}">): not a bytes literal   (UP012)
-#include "python/upgrade.rr"          // the target version, names in Ruff's order, call arguments
-#include "python/pyflakes-format.rr"   // percent_fmt, pct_spec, format_call, brace_*; includes python/pyflakes
+#include "python/upgrade.rerail"          // the target version, names in Ruff's order, call arguments
+#include "python/pyflakes-format.rerail"   // percent_fmt, pct_spec, format_call, brace_*; includes python/pyflakes
 
 // ---- 1. arguments: python/upgrade (up_arg, up_kw, up_kwarg, up_argc, up_splat) ---------------------------------
 

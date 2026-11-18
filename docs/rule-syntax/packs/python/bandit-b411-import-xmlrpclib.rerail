@@ -4,13 +4,13 @@
 .mode steer
 .scope include "**/*.py"
 // Bandit's B411 (its B001 blacklist): an import of xmlrpc (or of xmlrpclib: Bandit compares prefixes) or anything under it.
-// How Bandit matches imports (by prefix, one finding per statement), and the list: python/security.rr (blacklisted).
+// How Bandit matches imports (by prefix, one finding per statement), and the list: python/security.rerail (blacklisted).
 //   import xmlrpc.client                        B411
 //   from xmlrpc import server                   B411
 //   import defusedxml.xmlrpc                    not reported
 //   importlib.import_module("xmlrpc")           B411: a call that imports a listed module (exactly)
 
-#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+#include "python/security.rerail"   // blacklisted: Bandit's B001 over calls and imports
 
 .violation B411(at: node) code "B411"
     "xmlrpc parsing may be vulnerable to XML attacks; use defusedxml.xmlrpc.monkey_patch() to mitigate XML vulnerabilities."

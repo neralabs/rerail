@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/ts-a.rr"
+#include "tsx/ts-a.rerail"
 //   non_null(n, x), optional_on(p, x), estree_child(p, x)
 
 // typescript-eslint's no-extra-non-null-assertion: a `!` that asserts what is asserted already, or what an

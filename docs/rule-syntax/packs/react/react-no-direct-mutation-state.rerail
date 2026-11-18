@@ -11,7 +11,7 @@
 //   constructor() { this.state = { n: 0 }; }                          not: the constructor sets the first state
 //   constructor() { foo(() => { this.state.n = 1; }); }               reported: inside a call
 //   constructor() { fetch(u).then(() => { this.state.n = 1; }); }     not: fetch(u) has ended, clearing the flag
-#include "tsx/react-class.rr"
+#include "tsx/react-class.rerail"
 
 .violation no_direct_mutation_state(at: node)
     code "react/no-direct-mutation-state"

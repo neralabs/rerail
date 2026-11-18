@@ -9,7 +9,7 @@
 // `x_1` are left alone.
 //   def f():
 //       """return the total."""     ← D403
-#include "python/docstrings.rr"
+#include "python/docstrings.rerail"
 
 .violation D403(at: node) code "D403"
     "Capitalize the first word of this docstring, for example `Return the total.` instead of `return the total.`"

@@ -11,7 +11,7 @@
 //   function List({ Row }) { … <Row/> }  const Row = rows[kind]  const Row = cond ? A : B   not: nothing new
 // A value is new when it is a function, a class, a call or a `new`, directly or as a branch of ?: && || ??,
 // in the binding's initializer or a later assignment to it. Tagged templates (styled.div`…`) are not.
-#include "tsx/react-compiler.rr"
+#include "tsx/react-compiler.rerail"
 
 .violation static_components(at: node, tag: node)
     code "react-hooks/static-components"

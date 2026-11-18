@@ -32,10 +32,10 @@
 //       pass                     TC005
 //   cast(int, x)                 tc_cast_type(<call>, <int>): TC006
 //   T = TypeVar("T", int | "str", str)   tc_runtime_typedef(<int | "str">), tc_union_member(…, <"str">): TC010
-#include "python/upgrade-typing.rr"
+#include "python/upgrade-typing.rerail"
 //   targets(m), stub_file(d), future_annotations(d), typing_ref(e, x), up_arg(c, i, a), call_kw(c, k, v),
 //   up_typing_sub(s, x), type_arg(s, i, a); ann_root (python/ast)
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 //   unparen(e, m), ruff_qual(e, q), call_q(c, q)
 
 // ---- TYPE_CHECKING blocks ------------------------------------------------------------------------------------

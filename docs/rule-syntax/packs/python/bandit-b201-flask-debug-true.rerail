@@ -11,7 +11,7 @@
 //   server.run(debug=True)               B201 as well, once flask is imported
 // The JSON asked for a receiver bound to flask.Flask(...); Bandit does not (see NOTES-py-bandit.md).
 
-#include "python/security.rr"   // imported_like, qual_call, kwarg, literal, report_at
+#include "python/security.rerail"   // imported_like, qual_call, kwarg, literal, report_at
 
 .violation B201(at: node) code "B201"
     "Remove debug=True from this run call; the debugger lets anyone who reaches it run arbitrary code."

@@ -45,7 +45,7 @@ generated_fn_marks("function_definition"). generated_fn_marks("decorator").
 generated_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !tape_syntax_error(d), node(d, m, "module", _, _), node_text(m, s),
     (contains("Index(", s) ; contains("IndexSource", s) ; contains("_generated_index", s)).
 
-// mirrors python/ast.rr unparen
+// mirrors python/ast.rerail unparen
 .decl generated_unparen(e: node, m: node)
 generated_unparen(e, e) :- node(d, e, k, _, _), generated_doc(d), k != "parenthesized_expression".
 generated_unparen(e, m) :- node(d, e, "parenthesized_expression", _, _), generated_doc(d), child(e, i, 0), generated_unparen(i, m).
@@ -85,7 +85,7 @@ generated_index_call(c) :- node(d, c, "call", _, _), generated_doc(d), field(c, 
 // ---- functions and fn ----
 .decl generated_function(f: node, x: symbol)
 generated_function(f, x) :- node(d, f, "function_definition", _, _), generated_doc(d), field(f, "name", n), text(n, x).
-// python/ast.rr's def_frame, restricted to the calls asked about, and with a class's decorators given the class's
+// python/ast.rerail's def_frame, restricted to the calls asked about, and with a class's decorators given the class's
 // fn (def_frame gives them none). generated_fn(x, f) for x in generated_fn_at: a call, or the decorated_definition
 // of a class whose decorator holds one, up the tree through such classes.
 .decl generated_fn_at(x: node)

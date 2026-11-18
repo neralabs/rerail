@@ -119,7 +119,7 @@ describe("rules main ships that the candidate cannot run", () => {
   });
 });
 
-describe("a chunked .rr run", () => {
+describe("a chunked .rerail run", () => {
   const run = (chunk: number, rep: number, mode: "cold" | "warm", wallMs: number, completed = true) => ({ chunk, rep, mode, completed, wallMs, cpuMs: wallMs * 2, rssKB: 1000 * (chunk + 1) });
 
   it("sums wall and CPU over the chunks of each repetition and takes the largest chunk's peak RSS", () => {

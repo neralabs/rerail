@@ -8,7 +8,7 @@
 // or still contains `_`. Names matching `pep8-naming.ignore-names` are exempt.
 //   class bad_class: ...       ← N801
 //   class _Good: ...           not reported: leading underscores are allowed
-#include "python/naming.rr"
+#include "python/naming.rerail"
 
 .violation N801(at: node, x: symbol) code "N801"
     "Rename class `{x}` to CapWords, such as `MyClass`, and update its references; keep the name if callers outside this code import it."

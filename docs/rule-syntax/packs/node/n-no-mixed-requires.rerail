@@ -14,7 +14,7 @@
 // (no string literal argument). { allowCall: true } reads `require("a")(b)` as a require too.
 // The identifier is read by name: a local `require` counts.
 
-#include "tsx/node.rr"   // called, node_chain, deparen
+#include "tsx/node.rerail"   // called, node_chain, deparen
 
 .decl grouping()
 grouping() :- (option("option", "true") ; option("grouping", "true")).

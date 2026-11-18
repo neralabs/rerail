@@ -10,7 +10,7 @@
 //   x = 1  # noqa # pyright:ignore        ← PGH003
 //   x = 1  # type: ignore[attr-defined]   not reported
 //   x = 1  # type :ignore                 not reported: not a type comment
-#include "python/misc2-noqa.rr"
+#include "python/misc2-noqa.rerail"
 
 .violation PGH003(at: node) code "PGH003"
     "Name the error in brackets after `ignore`, as in `# type: ignore[attr-defined]` or `# pyright: ignore[reportAttributeAccessIssue]`, so other errors on this line still surface."

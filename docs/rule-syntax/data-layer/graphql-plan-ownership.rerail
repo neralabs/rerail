@@ -21,7 +21,7 @@
 //   def assemble(scope: AutoApiPlanScope[object]):
 //       return scope._returns                          GPO001
 
-#include "python/ast.rr"      // def_frame, chain_step, sig_param, assign_target, assign_value, assign_ann, unparen
+#include "python/ast.rerail"      // def_frame, chain_step, sig_param, assign_target, assign_value, assign_ann, unparen
 
 // gpo_type(t): annotation t names an authority type. A token starts at a letter or `_` after a non-word character,
 // or after digits and non-ASCII letters, which cannot start one ("1ServerPlan" holds the token ServerPlan).

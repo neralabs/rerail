@@ -25,10 +25,10 @@
 //   2. pha_callsite: the module name the linter derives from the path, and the enclosing classes and functions.
 //   3. The five messages, then the signature gate.
 
-#include "python/names.rr"
-#include "python/ast.rr"      // assign_target, assign_value, from_module_raw
-#include "data-layer/signing.rr"
-#include "plan-helpers-allowlist.tables.rr"
+#include "python/names.rerail"
+#include "python/ast.rerail"      // assign_target, assign_value, from_module_raw
+#include "data-layer/signing.rerail"
+#include "plan-helpers-allowlist.tables.rerail"
 
 // ---- helper names ----------------------------------------------------------------------------------------------
 // pha_tracked: every helper name the linter follows. pha_private: names it calls private.

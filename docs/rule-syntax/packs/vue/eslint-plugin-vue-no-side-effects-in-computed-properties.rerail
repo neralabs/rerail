@@ -3,8 +3,8 @@
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/component.rr"
-#include "vue/mutation.rr"
+#include "vue/component.rerail"
+#include "vue/mutation.rerail"
 //   vcomputed(o, x, f), vcomputed_fn(c, f), vsetup(o, f), vscript(p, setup), vmutation(s, at, how)
 
 // eslint-plugin-vue's no-side-effects-in-computed-properties. No options.

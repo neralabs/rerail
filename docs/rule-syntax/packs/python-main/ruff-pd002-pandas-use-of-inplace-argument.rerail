@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // true_literal(n): the JSON util `true-literal`, used where the JSON says `matches: "true-literal"`
 .decl pd002_true_literal(n: node)
@@ -85,7 +85,7 @@ PD002(KW, n) :- pd002_in_string(n, KW).
 // PD002_stub_annotation(n): a finding at node n, from clause `stub-annotation`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PD002_stub_annotation(at: loc, kw: node) code "PD002" "Remove `inplace=True` and assign the returned object back, e.g. `df = df.sort_values(\"a\")`; leave it if this isn't a pandas object."
     suppress noqa "PD002"
 PD002_stub_annotation_raw(KW, n) :- pd002_inplace_keyword(n), node(_, n, _, _, _), KW = n, pd002_up_1(n, p1),

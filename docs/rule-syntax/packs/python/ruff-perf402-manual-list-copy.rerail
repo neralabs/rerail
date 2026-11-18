@@ -10,7 +10,7 @@
 //   result = []
 //   for x in items: result.append(x)       ← PERF402: `result = list(items)` or `result.extend(items)`
 //   for x in items: result.append(x + 1)   not reported here: PERF401
-#include "python/misc2-perf.rr"
+#include "python/misc2-perf.rerail"
 //   perf_for, perf_body, perf_call_stmt, perf_method_call, perf_only_binding, perf_list_site
 
 .violation PERF402(at: node, l: node) code "PERF402"

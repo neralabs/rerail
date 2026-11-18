@@ -8,7 +8,7 @@
 //   SELECT * FROM t JOIN LATERAL (SELECT 1) s ON TRUE  reported
 //   SELECT * FROM foo INNER JOIN bar USING (id)      fine
 
-#include "sql/syntax.rr"
+#include "sql/syntax.rerail"
 
 .violation AM05(at: node) code "AM05" "Join clauses should be fully qualified."
     suppress sqlfluff "AM05", "L051", "all", "ambiguous", "ambiguous.join"

@@ -12,7 +12,7 @@
 //   except ValueError: …              ← B025 at the second `ValueError`
 //   except (ValueError, TypeError): …
 //   except (OSError, TypeError): …    ← B025 at `TypeError`
-#include "python/bugbear.rr"
+#include "python/bugbear.rerail"
 
 .violation B025(at: node, e: symbol) code "B025" "try-except block with duplicate exception `{e}`"
     suppress ruff "B025"

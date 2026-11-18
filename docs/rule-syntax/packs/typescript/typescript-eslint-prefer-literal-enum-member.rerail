@@ -4,9 +4,9 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/ts-b.rr"
+#include "tsx/ts-b.rerail"
 //   enum_member, enum_init
-#include "tsx/eslint-a-common.rr"
+#include "tsx/eslint-a-common.rerail"
 //   deparen, static_string
 
 // typescript-eslint's prefer-literal-enum-member: an enum member's value is a literal, so its value is plain to see.

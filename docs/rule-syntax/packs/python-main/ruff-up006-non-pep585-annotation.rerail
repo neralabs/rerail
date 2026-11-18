@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // generic_ref(n): the JSON util `generic-ref`, used where the JSON says `matches: "generic-ref"`
 .decl up006_generic_ref(n: node)
@@ -80,7 +80,7 @@ up006_in_future_annotation(n) :- up006_future_annotations(n), up006_up_1(n, p1).
 // UP006(n): findings from clauses `typing-alias`, `typing-alias-nested-string`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation UP006(at: loc, t: node) "Replace `{t}` with the builtin generic (`list`, `dict`, `set`, `frozenset`, `tuple`, `type`) or `collections.deque` / `collections.defaultdict`, and drop the typing import if unused."
     suppress noqa "UP006"
 UP006(T, n) :- up006_generic_ref(n), node(_, n, _, _, _), T = n.
@@ -90,7 +90,7 @@ UP006(T, n) :- up006_nested_ref(n, T).
 // UP006_typing_alias_stub(n): findings from clauses `typing-alias-stub`, `typing-alias-stub-nested-string`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation UP006_typing_alias_stub(at: loc, t: node) code "UP006" "Replace `{t}` with the builtin generic (`list`, `dict`, `set`, `frozenset`, `tuple`, `type`) or `collections.deque` / `collections.defaultdict`, and drop the typing import if unused."
     suppress noqa "UP006"
 UP006_typing_alias_stub_raw(T, n) :- up006_generic_ref(n), node(_, n, _, _, _), T = n.
@@ -100,7 +100,7 @@ UP006_typing_alias_stub_raw(T, n) :- up006_nested_ref(n, T).
 // UP006_typing_alias_future_annotations(n): findings from clauses `typing-alias-future-annotations`, `typing-alias-future-annotations-nested-string`, which say the same.
 // Each rule is one way a JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation UP006_typing_alias_future_annotations(at: loc, t: node) code "UP006" "Replace `{t}` with the builtin generic (`list`, `dict`, `set`, `frozenset`, `tuple`, `type`) or `collections.deque` / `collections.defaultdict`, and drop the typing import if unused."
     suppress noqa "UP006"
 UP006_typing_alias_future_annotations_raw(T, n) :- up006_alt_4(n, T), up006_in_future_annotation(n).

@@ -3,7 +3,7 @@
 .language typescript
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
-#include "tsx/eslint-a-expressions.rr"
+#include "tsx/eslint-a-expressions.rerail"
 
 // ESLint's eqeqeq. `option` (the first option):
 //   "always" (the default)  every == and != is reported:   a == b    → Expected '===' and instead saw '=='.

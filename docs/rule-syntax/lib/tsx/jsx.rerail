@@ -17,7 +17,7 @@
 //
 // Builds on tsx/names for sym_of and ref_site, tsx/modules for function_kind, and on core for the tape and
 // nearest/within.
-#include "tsx/modules.rr"
+#include "tsx/modules.rerail"
 
 // The tag name of an element. Fragments (<>…</>) have none.
 // <A x={1}>…</A> is a jsx_element whose open_tag holds the name; <A/> is a jsx_self_closing_element with the name
@@ -131,7 +131,7 @@ children_slot(f, s) :- kind(s, "jsx_expression"), child(s, m, 0), kind(m, "membe
     field(f, "parameters", ps), within(site, ps), render_root(f, r), within(s, r).
 
 // ---- edits --------------------------------------------------------------------------------------------------------
-// An `.edit` is an edit defined in Datalog that expands to core's native edits (see lib/python/flow.rr).
+// An `.edit` is an edit defined in Datalog that expands to core's native edits (see lib/python/flow.rerail).
 
 // content(e, c): c is real content of element e: a child element or expression, or non-blank text.
 .decl content(e: node, c: node)

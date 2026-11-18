@@ -4,9 +4,9 @@
 .mode steer
 .scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
 .scope exclude "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.config.js", "**/*.config.mjs", "**/*.config.cjs", "**/.*rc.js", "**/.*rc.cjs"
-#include "tsx/eslint-b-objects.rr"
+#include "tsx/eslint-b-objects.rerail"
 //   deparen, call_arg, call_arg_count
-#include "../packs/javascript/unicorn-prefer-node-protocol.modules.rr"
+#include "../packs/javascript/unicorn-prefer-node-protocol.modules.rerail"
 //   bare_builtin(m): the built-in modules, from the policy JSON (gen-unicorn-prefer-node-protocol.py)
 
 // eslint-plugin-unicorn's prefer-node-protocol: a Node.js built-in module named without `node:`.

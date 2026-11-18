@@ -11,7 +11,7 @@
 //   dct.b: test.lower()        ← B032
 //   self.test: int             not reported
 //   typed: dict[str, int] = {} not reported: it has a value
-#include "python/ast.rr"
+#include "python/ast.rerail"
 
 .violation B032(at: node) code "B032"
     "Possible unintentional type annotation (using `:`). Did you mean to assign (using `=`)?"

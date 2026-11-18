@@ -12,7 +12,7 @@
 //       def f(self, x): print(1)        ← ARG002 at x
 //       def g(self, x): ...             not reported: a stub
 //       def __exit__(self, *a): pass    not reported: a dunder
-#include "python/misc2-args.rr"
+#include "python/misc2-args.rerail"
 //   options: dummy-variable-rgx, flake8-unused-arguments.ignore-variadic-names (see the library)
 
 .violation ARG002(at: node, name: symbol) code "ARG002"

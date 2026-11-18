@@ -26,8 +26,8 @@
 //   raise ValueError("bad {}".format(x))        msg_form(<"…".format(x)>, "format"); msg_literal(<"bad {}">)
 //   _("Hello, %s!" % name)                      msg_gettext(<call>), msg_form(<"…" % name>, "printf")
 //   from gettext import gettext as tr; tr(f"{n}")   msg_gettext(<call>): tr resolves to gettext.gettext
-#include "python/ruff.rr"
-#include "python/exceptions.rr"
+#include "python/ruff.rerail"
+#include "python/exceptions.rerail"
 
 // ---- arguments and their forms ----------------------------------------------------------------------------------
 .decl msg_arg(c: node, i: number, a: node)

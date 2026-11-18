@@ -3,10 +3,10 @@
 .language typescript
 .mode steer
 .scope include "**/*"
-#include "tsx/eslint-b-literals.rr"
-#include "tsx/eslint-b-control.rr"
-#include "tsx/eslint-b-objects.rr"
-#include "tsx/eslint-a-text.rr"
+#include "tsx/eslint-b-literals.rerail"
+#include "tsx/eslint-b-control.rerail"
+#include "tsx/eslint-b-objects.rerail"
+#include "tsx/eslint-a-text.rerail"
 //   literal_like, literal_number, compare_op; binop, estree_parent, equality (tsx/eslint-a-expressions);
 //   ref_same (isSameReference, tsx/eslint-b-control); touching, cannot_touch (b-objects); end_col (a-text)
 

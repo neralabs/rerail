@@ -12,7 +12,7 @@
 //       Returns
 //           -------          ← D215
 //       """
-#include "python/docstrings-sections.rr"
+#include "python/docstrings-sections.rerail"
 
 .violation D215(at: span, k: symbol) code "D215"
     "Dedent this section underline to the indentation of the docstring's opening quotes, directly under the section name."

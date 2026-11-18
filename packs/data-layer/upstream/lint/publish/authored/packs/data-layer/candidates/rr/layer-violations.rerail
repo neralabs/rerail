@@ -28,8 +28,8 @@
 // Path tests read whole path components: path_part(d, "tests") is true when some directory of d's path is `tests`,
 // which is the Python linter's `"tests" in source_file.parts`.
 
-#include "python/imports.rr"
-#include "python/names.rr"
+#include "python/imports.rerail"
+#include "python/names.rerail"
 //   fdef
 
 // fdef (python/names): plain defs, async defs included. Used only to tell deferred imports from module-level ones

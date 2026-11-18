@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // handler_type(n): the JSON util `handler-type`, used where the JSON says `matches: "handler-type"`
 .decl up041_handler_type(n: node)
@@ -41,7 +41,7 @@ up041_element(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"), up041
 
 // UP041(n): a finding at node n, from clause `socket-timeout-alias`.
 // Each rule below is one way the JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation UP041(at: node) "Use the builtin `TimeoutError` instead of `socket.timeout`, the same class since Python 3.10; in an except tuple, name `TimeoutError` once. Skip it if this file defines its own `TimeoutError`."
     suppress noqa "UP041"
 UP041(n) :- up041_socket_timeout(n), up041_atom_site(n).
@@ -50,7 +50,7 @@ UP041(n) :- kind(n, "tuple"), up041_handler_type(n), within(c1, n), up041_socket
 
 // UP041_asyncio_timeout_alias(n): a finding at node n, from clause `asyncio-timeout-alias`.
 // Each rule below is one way the JSON `rule` can match.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation UP041_asyncio_timeout_alias(at: node) code "UP041" "Use the builtin `TimeoutError` instead of `asyncio.TimeoutError`, the same class since Python 3.11; in an except tuple, name `TimeoutError` once. Skip it if this file defines its own `TimeoutError`."
     suppress noqa "UP041"
 UP041_asyncio_timeout_alias_raw(n) :- up041_asyncio_timeout(n), up041_atom_site(n).

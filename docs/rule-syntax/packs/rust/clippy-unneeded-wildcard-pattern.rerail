@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "rust/syntax-patterns.rr"
+#include "rust/syntax-patterns.rerail"
 //   rest_pat(p, r)   the `..` of a tuple pattern;   wild_before(x, w) / wild_after(x, w)   a `_` element next to x
 //   wild_field(f)    a struct-pattern field `name: _`
 

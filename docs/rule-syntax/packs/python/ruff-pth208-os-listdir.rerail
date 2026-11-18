@@ -10,7 +10,7 @@
 //   os.listdir(".")                      ← PTH208: `Path(".").iterdir()`
 //   os.listdir()                         ← PTH208: `Path().iterdir()`
 //   fd = 3; os.listdir(fd)               not reported: a file descriptor
-#include "python/pathlib.rr"
+#include "python/pathlib.rerail"
 //   pth_call(c, q, f)   c calls q; f the callee      fd_arg(c, x)   x's argument is a file descriptor
 //   arg_value(c, x, i, a), call_len(c, n) (python/pathlib)
 

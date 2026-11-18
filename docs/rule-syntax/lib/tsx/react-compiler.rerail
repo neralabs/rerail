@@ -36,8 +36,8 @@
 // (mayContainReactCode); a file with only `export const A = memo(() => …)` is never checked.
 // Babel's tree has no parentheses, so the compiler sees through them: deparen (eslint-a-common).
 // A JSX tag <Row/> is a reference in tsx/names (jsx_tag_ref), so ref_site resolves it like any name.
-#include "tsx/react-hooks.rr"
-#include "tsx/eslint-a-functions.rr"   // fn_param; eslint-a-common (deparen, call_arg) through it
+#include "tsx/react-hooks.rerail"
+#include "tsx/eslint-a-functions.rerail"   // fn_param; eslint-a-common (deparen, call_arg) through it
 
 // ---- functions ------------------------------------------------------------------------------------------------
 // Babel's Function: what the compiler compiles. Methods are not, and classes are skipped whole. Scopes, whose

@@ -9,7 +9,7 @@
 //       """
 //       Return the total.
 //       """                  ← D200 (at the opening quotes)
-#include "python/docstrings.rr"
+#include "python/docstrings.rerail"
 
 .violation D200(at: node) code "D200"
     "Put this docstring's only line of text on one line with its quotes: `\"\"\"Text.\"\"\"`; escape a quote or backslash that would then touch the closing quotes."

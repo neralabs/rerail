@@ -15,7 +15,7 @@
 //       def g(self, o): super(B, o).f()            not reported: o is not the first parameter
 //       def h(self): [super(B, self) for _ in x]   not reported: runs in the comprehension
 //       def k(self): builtins.super(B, self)       not reported: no `__class__` cell
-#include "python/upgrade.rr"
+#include "python/upgrade.rerail"
 //   sym_at(e, q), run_scope(n, s, k), sig_param(f, p, nm, i, kind, ann, dflt), class_path(n, s)
 
 .violation UP008(at: node) code "UP008"

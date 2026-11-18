@@ -11,7 +11,7 @@
 //   from os.path import isfile
 //   isfile(path=p)                  ← PTH113
 //   os.path.isfile()                not reported: no argument
-#include "python/pathlib.rr"
+#include "python/pathlib.rerail"
 //   single_arg(c, q, x, f, a)   c calls q with one argument a, for parameter x; f the callee (python/pathlib)
 
 .violation PTH113(at: node, s: node) code "PTH113"

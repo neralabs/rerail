@@ -1,5 +1,5 @@
 //! `RERAIL_VERSION_TRACE=<dir>`: a measurement aid for decision 0173's version simulation. Each place a program is
-//! made from another (the survey's E1 to E6) notes the two: each distinct program's text, once, as `<digest>.rr`
+//! made from another (the survey's E1 to E6) notes the two: each distinct program's text, once, as `<digest>.rerail`
 //! (or its `Debug` form, `<digest>.dbg`, where the text has no form for it), and a line `site\tfrom\tto` in
 //! `trace.tsv`. Off, it costs one environment read a making.
 use super::front::Program;
@@ -35,7 +35,7 @@ pub fn note_versions(site: &str, from: &super::program_image::Version, to: &supe
 
 fn save(dir: &Path, prog: &Program) -> String {
     let (text, ext) = match super::program_text::print(prog) {
-        Ok(t) => (t, "rr"),
+        Ok(t) => (t, "rerail"),
         Err(_) => (format!("{prog:?}"), "dbg"),
     };
     save_text(dir, text, ext)

@@ -19,8 +19,8 @@
 // Both sit at line 1 of l2070_batching/semantic_plan.py, as in the linter.
 // Follows the linter: names and annotations are compared as written text, nothing is resolved.
 
-#include "python/names.rr"
-#include "python/ast.rr"      // from_module_raw, ast_name
+#include "python/names.rerail"
+#include "python/ast.rerail"      // from_module_raw, ast_name
 
 // ---- the linter's lists ---------------------------------------------------------------------------------------
 .decl spc_import_part(s: symbol)

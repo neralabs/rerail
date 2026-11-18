@@ -6,12 +6,12 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // ANN201(n): a finding at node n, from clause `missing-return-type-undocumented-public-function`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation ANN201(at: node, fn: loc) "Add a return type annotation to `{fn}` (for example `-> None` if it returns nothing)."
     suppress noqa "ANN201"
 ANN201(n, FN) :- kind(n, "identifier"), node(_, n, _, _, _), FN = n, !prefix("_", n),

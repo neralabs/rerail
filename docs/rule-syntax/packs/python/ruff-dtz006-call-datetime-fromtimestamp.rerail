@@ -11,7 +11,7 @@
 //   datetime.datetime.fromtimestamp(1234)                  ← DTZ006
 //   datetime.datetime.fromtimestamp(1234, tz=None)         ← DTZ006: None
 //   datetime.datetime.fromtimestamp(1234, datetime.timezone.utc)   not reported
-#include "python/datetime.rr"
+#include "python/datetime.rerail"
 
 .violation DTZ006(at: node) code "DTZ006"
     "Pass a timezone, e.g. `tz=datetime.timezone.utc`, so the result is aware; leave it naive only if local wall-clock time is really intended."

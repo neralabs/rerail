@@ -10,7 +10,7 @@
 //   class Foo { UNSAFE_componentWillMount() {} }                             not: not a component
 // The option checkAliases (also the unprefixed names) is not in the JSON. A member with decorators is reported
 // where its first decorator starts, as ESTree's range includes them.
-#include "tsx/react-class.rr"
+#include "tsx/react-class.rerail"
 
 .violation will_mount(at: node)
     code "react/no-unsafe"

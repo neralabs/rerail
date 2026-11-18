@@ -10,7 +10,7 @@
 // pieces), and reports the whole string otherwise.
 //   x: int = 12345678901        ← PYI054
 //   y: Literal[1_000_000_000]   ← PYI054
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI054(at: node, msg: symbol) code "PYI054" "{msg}"
     suppress ruff "PYI054"

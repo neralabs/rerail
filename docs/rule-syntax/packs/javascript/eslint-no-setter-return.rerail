@@ -4,8 +4,8 @@
 .mode steer
 .scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
 
-#include "tsx/eslint-a-functions.rr"
-#include "tsx/eslint-b-scope.rr"
+#include "tsx/eslint-a-functions.rerail"
+#include "tsx/eslint-b-scope.rerail"
 //   member_kind, fn_holder, static_key, held_value, deparen, call_arg, static_prop, own_fn; builtin_ref
 
 // ESLint's no-setter-return: `return value;` in a setter. A setter is a `set` accessor of an object or class,

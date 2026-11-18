@@ -8,7 +8,7 @@
 // (`bool(c)`, or `c` itself when it is a comparison, which may not return a bool); none here.
 //   y = True if x else False       ← SIM210: y = bool(x)
 //   y = True if x else None        not reported
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 //   unparen(e, m)
 
 .violation SIM210(at: node) code "SIM210" "Use `bool(...)` instead of `True if ... else False`"

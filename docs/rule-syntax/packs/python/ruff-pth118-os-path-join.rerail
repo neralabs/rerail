@@ -10,7 +10,7 @@
 //   os.path.join(a, b)                   ← PTH118: `Path(a) / b`
 //   os.path.join(a, *parts)              ← PTH118: `Path(a).joinpath(*parts)`
 //   os.sep.join(parts)                   ← PTH118: `Path(*parts)`
-#include "python/pathlib.rr"
+#include "python/pathlib.rerail"
 //   pth_call(c, q, f)   c calls q; f the callee (python/pathlib)   call_item(c, a, j)   (python/ruff)
 
 .violation PTH118(at: node, msg: symbol) code "PTH118" "{msg}"

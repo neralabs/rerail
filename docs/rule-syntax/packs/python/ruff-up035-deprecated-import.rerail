@@ -8,13 +8,13 @@
 // has it there: the ABCs from collections (and typing) to collections.abc, typing_extensions' backports to
 // typing, types, warnings or collections.abc, mypy_extensions to typing, typing.io and typing.re to typing and
 // re, pipes.quote to shlex, backports.strenum to enum. The table, one row per name, is generated from the JSON
-// (ruff-up035-deprecated-import.moves.rr). The statement is reported, once.
+// (ruff-up035-deprecated-import.moves.rerail). The statement is reported, once.
 //   from collections import Mapping                  ← UP035: collections.abc
 //   from typing_extensions import Literal            ← UP035 from 3.10 (typing has it)
 //   from typing_extensions import override           not reported below 3.12
-#include "python/upgrade-imports.rr"
+#include "python/upgrade-imports.rerail"
 //   from_stmt(i, m), from_name(i, a, x, l)       (python/upgrade-imports); target_minor(t) (python/upgrade)
-#include "../packs/python/ruff-up035-deprecated-import.moves.rr"
+#include "../packs/python/ruff-up035-deprecated-import.moves.rerail"
 //   moved(m, x, clause), move_says(clause, lo, hi, msg)
 
 .violation UP035(at: node, msg: symbol) code "UP035" "{msg}"

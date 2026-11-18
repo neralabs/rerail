@@ -12,7 +12,7 @@
 //   useEffect(() => { count = 0; });  <b onClick={() => { count = 0; }}/>   not: they run later
 // Changing a property of an outer object (`config.x = 1`) is react-hooks/immutability's.
 // `count++` is not reported by the compiler (an update expression is not a reassignment to it), nor here.
-#include "tsx/react-compiler.rr"
+#include "tsx/react-compiler.rerail"
 
 .violation globals(at: node, name: node)
     code "react-hooks/globals"

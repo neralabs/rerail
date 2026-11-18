@@ -8,7 +8,7 @@
 // in a spec count). Not checked when the call has `**kwargs`.
 //   "{a}".format(a=1, b=2)        ← F522: b is unused
 //   "{a:{w}}".format(a=1, w=5)    not reported
-#include "python/pyflakes-format.rr"
+#include "python/pyflakes-format.rerail"
 //   format_call(c, v), brace_keyword(v, x), call_kw(c, x, a), call_kwsplat(c)
 
 .violation F522(at: node) code "F522"

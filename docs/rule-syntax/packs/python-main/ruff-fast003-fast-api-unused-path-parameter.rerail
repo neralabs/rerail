@@ -8,7 +8,7 @@
 
 // Guest captures a host rule reads, by text (another document): K
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // FAST003(n): a finding at node n, from clause `unused-path-parameter`.
 // Each rule below is one way the JSON `rule` can match.

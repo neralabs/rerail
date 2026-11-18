@@ -3,7 +3,7 @@
 .language typescript
 .mode steer
 .scope include "**/*"
-#include "tsx/eslint-b-literals.rr"
+#include "tsx/eslint-b-literals.rerail"
 //   string_like; binop, estree_parent (tsx/eslint-a-expressions, tsx/eslint-a-common)
 
 // ESLint's prefer-template: a chain of `+` that joins a string literal (quoted or template) with anything that is

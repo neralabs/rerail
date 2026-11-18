@@ -11,7 +11,7 @@
 //   <a href=" J\na\tvascript:x">       reported
 //   <a href={"javascript:"}>           not: only a literal value, as the rule checks
 // A JSX attribute string has no escapes: "\x01javascript:" is that text, backslash and all.
-#include "tsx/react.rr"
+#include "tsx/react.rerail"
 
 .violation script_url(at: node)
     code "react/jsx-no-script-url"

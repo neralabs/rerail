@@ -9,7 +9,7 @@
 // finding is at the parenthesised arguments, where Ruff's range starts.
 //   @functools.lru_cache(maxsize=None)        ← UP033
 //   @lru_cache(user_func, maxsize=None)       not reported
-#include "python/upgrade.rr"
+#include "python/upgrade.rerail"
 //   sym_at(e, q): e names q, through the bindings visible where it runs; targets(m): Python 3.m or later
 
 .violation UP033(at: node) code "UP033"

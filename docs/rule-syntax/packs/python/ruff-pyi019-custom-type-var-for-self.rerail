@@ -13,7 +13,7 @@
 //   def m(self: _S) -> _S: ...                  ← PYI019
 //   @classmethod
 //   def make(cls: type[_S]) -> _S: ...          ← PYI019 (typing.Type[_S] and builtins.type[_S] are not checked)
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI019(at: node, x: symbol) code "PYI019" "Replace the custom type variable `{x}` with `Self` (from `typing`, or `typing_extensions` before 3.11): drop the first parameter's annotation and use `Self` for `{x}` here."
     suppress ruff "PYI019"

@@ -9,7 +9,7 @@
 //   set([1, 2])    set((1,))       ← C405: {1, 2}, {1}
 //   set([])                        ← C405: set()
 //   set([x for x in y])            not reported here (C403)
-#include "python/comprehensions.rr"
+#include "python/comprehensions.rerail"
 //   c4_call(c, x), c4_only(c, a), list_like(e, k)
 
 .violation C405(at: node, kind: symbol) code "C405"

@@ -10,7 +10,7 @@
 //   T = TypeVar("T")          ← PYI001
 //   _T = TypeVar("_T")        fine
 //   T = U = TypeVar("T")      not checked: two targets (PYI017's business)
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI001(at: node, msg: symbol) code "PYI001" "{msg}; stubs should not export type variables."
     suppress ruff "PYI001"

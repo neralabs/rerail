@@ -960,8 +960,8 @@ jobs:
       # The engine's #[cfg(windows)] tests (process starts, Windows import roots, the tree watch's oplock watch) are
       # compiled out on Linux, where the rust job runs every other test; these filters select them and the
       # Windows-neutral tests beside them: the process and tree watch tests are the engine's, the import roots'
-      # rerail-lang-ecma's, which mounts `import_target`. The `.rr` library's canonical path is joined with `/` by
-      # `bootstrap.rr`, which only Windows' verbatim paths broke: its test runs here too. A debug build, as in the rust
+      # rerail-lang-ecma's, which mounts `import_target`. The `.rerail` library's canonical path is joined with `/` by
+      # `bootstrap.rerail`, which only Windows' verbatim paths broke: its test runs here too. A debug build, as in the rust
       # job, so none of the release build above is reused.
       - name: Engine Windows tests
         if: steps.native-cache.outputs.cache-hit != 'true' && matrix.shard == 2

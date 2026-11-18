@@ -27,8 +27,8 @@
 // Builds on tsx/eslint-a-common (deparen, deparen_count, function_node, token_text; also used by the rules),
 // tsx/statements (body, block_stmt, single_statement, prev_stmt, is_comment, var_decl) and core (tokens, nearest,
 // within, earlier).
-#include "tsx/eslint-a-common.rr"
-#include "tsx/statements.rr"
+#include "tsx/eslint-a-common.rerail"
+#include "tsx/statements.rerail"
 
 // ---- statement lists ---------------------------------------------------------------------------------------------
 // first_stmt(b, x): in `{ /* note */ if (a) f(); g(); }` x is the if. guard-for-in tests the first statement.

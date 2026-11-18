@@ -7,7 +7,7 @@
 .scope exclude "**/generated/**", "**/__generated__/**", "**/*.generated.ts", "**/*.generated.tsx", "**/*.gen.ts"
 .scope exclude "**/*.test.*", "**/*.spec.*", "**/__tests__/**"
 
-#include "complexity/ecma.rr"
+#include "complexity/ecma.rerail"
 //   cc_report(f, msg)   function f has cyclomatic complexity over 6 (lizard's decision points; nested ones apart)
 
 // The complexity pack's ceiling, with lizard 1.24.0's count: 1 + each if, for, for…in/of, while, do, catch,

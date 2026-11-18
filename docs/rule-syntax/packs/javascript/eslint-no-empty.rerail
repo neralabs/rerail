@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
 .scope exclude "**/node_modules/**", "**/dist/**", "**/build/**", "**/out/**", "**/.next/**", "**/coverage/**", "**/vendor/**", "**/.venv/**", "**/.yarn/**", "**/generated/**", "**/__generated__/**", "**/*.generated.*", "**/*.gen.*", "**/*.min.js", "**/*.config.js", "**/*.config.mjs", "**/*.config.cjs", "**/.*rc.js", "**/.*rc.cjs"
-#include "tsx/eslint-a-functions.rr"   // empty_block: a trailing `} // note` comment is not inside
+#include "tsx/eslint-a-functions.rerail"   // empty_block: a trailing `} // note` comment is not inside
 
 // ESLint's no-empty: a block with nothing in it, not even a comment, and a switch with no cases.
 //   if (a) {}                    → Empty block; suggestion: `{ /* empty */ }`

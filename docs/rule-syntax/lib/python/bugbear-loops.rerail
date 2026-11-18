@@ -24,7 +24,7 @@
 //   for i in range(3):
 //       fns.append(lambda: i)       py_loop(<for>), loop_assigns(<for>, "i"), closure_reads(<for>, <lambda>, <i>, "i")
 //   for vars in [i for i in vars]:  iter_name(<for>, <vars>, "vars"); the comprehension's i is not read
-#include "python/ast.rr"   // ast_name, expr_ctx, param_named, assign_target
+#include "python/ast.rerail"   // ast_name, expr_ctx, param_named, assign_target
 
 .decl py_loop(l: node)
 py_loop(l) :- kind(l, k), (k = "for_statement" ; k = "while_statement").

@@ -11,8 +11,8 @@ Everything in it is under `authored/`, so it is Rerail's (Apache-2.0, the pack's
 | Under `authored/` | What it is | Read by |
 |---|---|---|
 | fixtures/host/data-layer-port/ | the recordings of the upstream tests (analyzer inputs and findings), the probes, the API records and evidence of batches 1 to 10 | the engine's convert tests (the replay gate and its sample), the CPython parity tests, `test/conformance/data-layer/`, `fixtures/simdjson-stage1/expected.txt` |
-| packs/data-layer/ | the pack as the port's branch held it: the rules, the candidates (JSON, the AST forms, the converter's `.rr` output and the hand-written overlays) | the engine's convert tests, the data-layer census, `test/engine/native/frontier-determinism.test.ts` |
-| final-shape/data-layer-serverplan-quality.json | the ServerPlan quality rule the final-shape `.rr` program is generated from | `gate/data-layer/final-shape/logic/gen.py`, the engine's text tests |
+| packs/data-layer/ | the pack as the port's branch held it: the rules, the candidates (JSON, the AST forms, the converter's `.rerail` output and the hand-written overlays) | the engine's convert tests, the data-layer census, `test/engine/native/frontier-determinism.test.ts` |
+| final-shape/data-layer-serverplan-quality.json | the ServerPlan quality rule the final-shape `.rerail` program is generated from | `gate/data-layer/final-shape/logic/gen.py`, the engine's text tests |
 | `conformance/`, `test/`, `scripts/` | the port branch's replay harness and its tests, kept with the data they read; no CI step runs them | none |
 
 The converter's output under `packs/data-layer/candidates/datalog/` is compared byte for byte with what the

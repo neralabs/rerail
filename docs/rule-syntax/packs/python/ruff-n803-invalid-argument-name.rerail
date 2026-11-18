@@ -11,7 +11,7 @@
 //   class C(B):
 //       @override
 //       def m(self, A): ...          not reported
-#include "python/naming.rr"
+#include "python/naming.rerail"
 
 .violation N803(at: node, x: symbol) code "N803"
     "Rename argument `{x}` to lowercase snake_case and update its uses in the body; keep the name if callers pass it by keyword."

@@ -8,7 +8,7 @@
 // Reported at the callee.
 //   os.getcwd()                          ← PTH109: `Path.cwd()`
 //   from os import getcwdb; getcwdb()    ← PTH109, with the bytes message
-#include "python/pathlib.rr"
+#include "python/pathlib.rerail"
 //   pth_call(c, q, f)   c calls q; f the callee (python/pathlib)
 
 .violation PTH109(at: node, msg: symbol) code "PTH109" "{msg}"

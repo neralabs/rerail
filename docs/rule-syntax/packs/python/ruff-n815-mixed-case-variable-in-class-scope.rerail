@@ -11,7 +11,7 @@
 //       mixedCase = 0                 ← N815
 //   class D(TypedDict):
 //       mixedCase: bool               not reported
-#include "python/naming.rr"
+#include "python/naming.rerail"
 
 .violation N815(at: node, x: symbol) code "N815"
     "Rename the class variable `{x}` to snake_case and update its uses; keep the name if outside code depends on it or it mirrors an external schema."

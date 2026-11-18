@@ -19,7 +19,7 @@
 //   __all__ = ["a10", "a9"]        unsorted, natural: "a9" < "a10"
 //   __all__ = ["Day", "APRIL"]     unsorted, isort: constants before classes
 //   __all__ = ["É", "A"]           sorted, isort: "É" is two bytes, so a constant; "A" is a class
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 
 // all_seq(v): `__all__ = v`, `__all__: T = v`, `__all__ += v` or `__all__.extend(v)` at module level (in an `if`
 // too), v a list or tuple.

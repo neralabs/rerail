@@ -13,7 +13,7 @@
 //       def make(self): ...          ← N804 at `self`
 //   class Meta(type):
 //       def m(cls): ...              not reported
-#include "python/naming.rr"
+#include "python/naming.rerail"
 
 .violation N804(at: node, x: symbol) code "N804"
     "Rename this class method's first parameter `{x}` to `cls` and update its uses in the body, unless another parameter already has that name; keep it if the project follows another convention."

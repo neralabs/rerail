@@ -12,7 +12,7 @@
 //   from ptvsd import enable_attach       not reported: not an entry point
 //   import sys                            not reported: only `sys.breakpointhook` is
 //   from .pdb import set_trace            ← T100: Ruff ignores the dots of a relative import
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 
 .violation T100(at: node, q: symbol) code "T100" "Remove this debugger use of `{q}` before committing."
     suppress ruff "T100"

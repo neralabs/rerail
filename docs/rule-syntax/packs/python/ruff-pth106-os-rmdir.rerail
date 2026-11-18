@@ -11,7 +11,7 @@
 //   from os import rmdir
 //   rmdir(path=p)                   ← PTH106
 //   os.rmdir(p, dir_fd=None)        not reported: two arguments
-#include "python/pathlib.rr"
+#include "python/pathlib.rerail"
 //   single_arg(c, q, x, f, a)   c calls q with one argument a, for parameter x; f the callee (python/pathlib)
 
 .violation PTH106(at: node, s: node) code "PTH106"

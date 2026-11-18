@@ -14,7 +14,7 @@
 //
 //   this.list.push(1)     from `this.list`: a "call" at the call;     from `this`: the same
 //   this.n = 1            from `this.n`: an "assignment"; this.f(1) is none: f is no array mutator
-#include "tsx/eslint-a-common.rr"
+#include "tsx/eslint-a-common.rerail"
 //   deparen(e, x), estree_parent(x, p), static_prop(n, o, x), call_arg(c, a, i)
 
 .decl vmut_ask(s: node) extensible

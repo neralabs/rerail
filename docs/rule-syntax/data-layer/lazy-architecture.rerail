@@ -6,7 +6,7 @@
 .scope dirs "impl", "api", "data_layer", "_internal", "l[0-9][0-9][0-9][0-9]_*"   // data_layer_production_dirs
 .scope tests false
 // Python linter: scripts/lint_lazy_architecture.py. It collects "facts" about each module-level function and method
-// (lib/data-layer/lazy-analyzer.rr: what is scanned, the alias state, the callee strings), links them into a call
+// (lib/data-layer/lazy-analyzer.rerail: what is scanned, the alias state, the callee strings), links them into a call
 // graph by symbol, and reports, at the line given:
 //   LA-001  a @pure_lazy function does plan or grammar I/O, itself or down its calls   at the I/O or the first call
 //   LA-002  a function both builds intents and does plan I/O                             at the I/O
@@ -47,9 +47,9 @@
 //   5. The whole-file scans: defer_lazy_result and compatibility imports and calls, and the LA-018 text scan.
 //   6. The policy inputs: allowlist, its signature, the budget.
 
-#include "data-layer/lazy-analyzer.rr"
-#include "../data-layer/lazy-architecture.tables.rr"   // la_set: the script's constants
-#include "data-layer/signing.rr"
+#include "data-layer/lazy-analyzer.rerail"
+#include "../data-layer/lazy-architecture.tables.rerail"   // la_set: the script's constants
+#include "data-layer/signing.rerail"
 
 // ---- 1. file classes -----------------------------------------------------------------------------------------------
 .decl la_in(d: number, what: symbol)                   // the script's _is_*_file tests

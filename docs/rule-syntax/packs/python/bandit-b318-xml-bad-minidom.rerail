@@ -5,9 +5,9 @@
 .scope include "**/*.py"
 // Bandit's B318 (its B001 blacklist): a call to xml.dom.minidom's parse or parseString.
 //   from xml.dom.minidom import parseString; parseString(s)    B318
-// How Bandit reads the call's name, and the list: python/security.rr (blacklisted).
+// How Bandit reads the call's name, and the list: python/security.rerail (blacklisted).
 
-#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+#include "python/security.rerail"   // blacklisted: Bandit's B001 over calls and imports
 
 .violation B318(at: node) code "B318"
     "Using xml.dom.minidom to parse untrusted XML is vulnerable to XML attacks; use the defusedxml equivalent."

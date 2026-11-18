@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "rust/syntax-attrs.rr"
+#include "rust/syntax-attrs.rerail"
 //   lint_attr(at, name, args, a)   a lint attribute name(…) in item a, direct or out of a live cfg_attr
 //   from_cfg_attr(at)   it came out of a cfg_attr;   has_reason(args)   the list ends with reason = "…"
 //   msrv_older(a, v)   under a #[clippy::msrv] older than v
@@ -14,7 +14,7 @@
 // attributes count too. Not under #[clippy::msrv] older than 1.81, where reasons are not stable.
 //   #[allow(dead_code)]   #![expect(unused)]   #[allow(reason = "x", dead_code)]       reported
 //   #[allow(dead_code, reason = "generated")]   #[cfg_attr(test, allow(dead_code))]   not reported
-// Clippy sees a cfg_attr's attributes only when its predicate holds; see rust/syntax-attrs.rr for the reading.
+// Clippy sees a cfg_attr's attributes only when its predicate holds; see rust/syntax-attrs.rerail for the reading.
 .violation allow_attributes_without_reason(at: node, msg: symbol) code "allow_attributes_without_reason" "{msg}"
     suppress clippy "clippy::allow_attributes_without_reason", "clippy::restriction", "warnings"
 allow_attributes_without_reason(a, "Add a reason to this attribute, e.g. #[allow(dead_code, reason = \"why\")], saying why the lint is silenced.") :-

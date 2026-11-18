@@ -1,4 +1,4 @@
-// lib/data-layer/boot-python.rr: how the data layer's schema and bootstrap scripts read Python, by spelling.
+// lib/data-layer/boot-python.rerail: how the data layer's schema and bootstrap scripts read Python, by spelling.
 // Their ast visitors name a callee by its Name id or Attribute attr, walk a def with ast.walk, and collect an
 // annotation's words with an _annotation_names helper. Nothing is resolved: these are the words as written.
 //
@@ -28,7 +28,7 @@
 //     has no row (the string is not entered); ann_value_word(<Sequence[Row]>, "Sequence"),
 //     ann_slice_word(<Sequence[Row]>, "Row"); ann_word(<Annotated[…]>, x) for Annotated, int, Field (not gt).
 
-#include "python/ast.rr"
+#include "python/ast.rerail"
 
 .decl callee_name(c: node, x: symbol)
 callee_name(c, x) :- kind(c, "call"), field(c, "function", g), kind(g, "identifier"), text(g, x).

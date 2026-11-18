@@ -11,7 +11,7 @@
 //   setattr(foo, "bar", None)          ← B010
 //   _ = lambda x: setattr(x, "bar", 1) not reported: not a statement
 //   setattr(foo, "__123abc", None)     not reported: mangled
-#include "python/bugbear.rr"
+#include "python/bugbear.rerail"
 
 .violation B010(at: node) code "B010"
     "Replace this `setattr` call with a plain assignment, such as `obj.name = value`."

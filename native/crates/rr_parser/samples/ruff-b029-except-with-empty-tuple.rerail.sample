@@ -8,7 +8,7 @@
 // never runs. Reported at the except clause; `except* ()` and `except () as e` too.
 //   except ():                 ← B029
 //   except (ValueError,):      not reported (B013)
-#include "python/bugbear.rr"
+#include "python/bugbear.rerail"
 
 .violation B029(at: node) code "B029"
     "Using `except ():` with an empty tuple does not catch anything; add exceptions to handle"

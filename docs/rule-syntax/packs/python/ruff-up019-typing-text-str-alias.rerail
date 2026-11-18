@@ -9,7 +9,7 @@
 //   from typing import Text
 //   def f(word: Text): ...                 ← UP019 at `Text`
 //   import typing as t; x = t.Text         ← UP019 at `t.Text`
-#include "python/upgrade.rr"
+#include "python/upgrade.rerail"
 //   typing_ref(e, x)   e names typing.x or typing_extensions.x
 
 .violation UP019(at: node) code "UP019"

@@ -9,7 +9,7 @@
 //   a.b = 1        ← PYI017 (attribute-target)
 //   a, b = 1, 2    ← PYI017 (multiple-targets)
 //   a = b = 1      ← PYI017 (multiple-targets)
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI017(at: node, msg: symbol) code "PYI017" "{msg}"
     suppress ruff "PYI017"

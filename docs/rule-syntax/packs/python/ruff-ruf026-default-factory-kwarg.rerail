@@ -10,7 +10,7 @@
 //   defaultdict(default_factory=list)       ← RUF026  `defaultdict(list)`
 //   defaultdict(default_factory=1)          not reported: meant as an entry
 //   defaultdict(dict, default_factory=list) not reported
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 
 .violation RUF026(at: node) code "RUF026"
     "Pass the factory positionally, as in `defaultdict(list)`; `default_factory=` is stored as a dict entry and leaves the dict without a default. Leave it if that entry is intended."

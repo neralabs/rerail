@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/ts-b.rr"
+#include "tsx/ts-b.rerail"
 //   ts_namespace, estree_at
 
 // typescript-eslint's prefer-namespace-keyword: `module A {}` declares a namespace; write `namespace A {}`, and keep

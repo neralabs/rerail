@@ -10,7 +10,7 @@
 //   type(0j)        ← UP003: `complex`
 //   type(-1)        not reported: a unary minus, not a literal
 //   type(arg)       not reported
-#include "python/upgrade.rr"
+#include "python/upgrade.rerail"
 //   builtin_at(e, x): e reads the builtin x, at that point of the module
 //   string_form(n, f): "str", "fstr", "bytes" or "tstr" (python/ast)
 

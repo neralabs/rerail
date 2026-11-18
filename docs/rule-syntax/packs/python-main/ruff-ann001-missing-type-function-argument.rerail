@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // ANN001(n): a finding at node n, from clause `missing-type-function-argument`.
 // Each rule below is one way the JSON `rule` can match.

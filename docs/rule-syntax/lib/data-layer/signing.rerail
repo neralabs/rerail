@@ -1,5 +1,5 @@
-// lib/data-layer/signing.rr: the data-layer repository's signed allowlists and ratchet baselines, verified in
-// Datalog. Readers only read files (core.rr, "Policy files"); this library rebuilds the exact bytes the
+// lib/data-layer/signing.rerail: the data-layer repository's signed allowlists and ratchet baselines, verified in
+// Datalog. Readers only read files (core.rerail, "Policy files"); this library rebuilds the exact bytes the
 // repository signs and checks the signature with @ed25519_ok. Another repository with another layout writes its
 // own version of this file; the engine needs nothing new.
 //

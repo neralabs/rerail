@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/ts-a.rr"
+#include "tsx/ts-a.rerail"
 //   assertion(n, e, w), cast_text(n, s), cast_type(n, t), const_cast(n); estree_parent, deparen
 
 // typescript-eslint's consistent-type-assertions: one way of writing type assertions.

@@ -3,7 +3,7 @@
 .language typescript
 .mode steer
 .scope include "**/*"
-#include "tsx/eslint-a-globals.rr"
+#include "tsx/eslint-a-globals.rerail"
 //   free_ref(r, x), callee(c, f), static_prop(m, o, x), global_var(d, x), in_global_scope(n)
 
 // ESLint's no-alert: a call of alert, confirm or prompt, bare or through the global object. No options.

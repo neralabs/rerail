@@ -10,7 +10,7 @@
 //   {"value1", 23, 5, "value1"}   ← B033 at the second "value1"
 //   {False, 1, 0}                 ← B033 at `0`: False == 0
 //   {5, "5"}                      not reported
-#include "python/bugbear.rr"
+#include "python/bugbear.rerail"
 
 .violation B033(at: node, v: node) code "B033" "Sets should not contain duplicate item `{v}`"
     suppress ruff "B033"

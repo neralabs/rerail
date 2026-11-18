@@ -19,7 +19,7 @@
 //   deparen(e, x)                x is expression e without its parentheses (and comments inside them): ((a)) is a
 //
 // Builds on tsx/names (import_binding: every name an import binds, with its local name) and on core.
-#include "tsx/names.rr"
+#include "tsx/names.rerail"
 
 
 .decl program(d: number, p: node)
@@ -177,7 +177,7 @@ erased(x) :- kind(x, k), (k = "interface_declaration" ; k = "type_alias_declarat
 .decl import_decl(i: node)
 import_decl(i) :- kind(i, "import_statement"), count : { child(i, c, _), kind(c, "import_require_clause") } = 0.
 // import_member(i, m, k, x): the names i binds, in order, as ESTree's `specifiers` lists them. m is the node
-// names.rr links the binding to: the import_clause for a default, the namespace_import, or the specifier.
+// names.rerail links the binding to: the import_clause for a default, the namespace_import, or the specifier.
 //   import D, { b as c, a } from "m"   (clause, 0, "D"), (spec b, 1, "c"), (spec a, 2, "a")
 //   import * as NS from "m"            (ns, 0, "NS")
 //   import "m"                         no rows

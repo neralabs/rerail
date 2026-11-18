@@ -11,7 +11,7 @@
 //   try { … } catch { return <Fallback/>; }                                      not: in the catch block
 // The compiler drops JSX whose value is unused before it validates, so a discarded or never-read element is not
 // reported. One finding per outermost element.
-#include "tsx/react-compiler.rr"
+#include "tsx/react-compiler.rerail"
 
 .violation error_boundaries(at: node)
     code "react-hooks/error-boundaries"

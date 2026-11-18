@@ -4,9 +4,9 @@
 .mode steer
 .scope include "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"
 
-#include "tsx/eslint-a-functions.rr"
-#include "tsx/eslint-a-expressions.rr"
-#include "tsx/eslint-b-control.rr"
+#include "tsx/eslint-a-functions.rerail"
+#include "tsx/eslint-a-expressions.rerail"
+#include "tsx/eslint-b-control.rerail"
 //   fn_block, own_fn, fn_name_kind, fn_head, generator, holder_key;  semi_needed;  member_runs_on
 
 // ESLint's require-await: an async function, not a generator, whose own code has no `await`, no

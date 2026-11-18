@@ -11,7 +11,7 @@
 //   environ = {}               not reported: a new meaning for a local name
 //   o.os.environ = {}          not reported: `o.os` is not the Name `os`
 //   a = os.environ = {}        not reported: two targets
-#include "python/ast.rr"
+#include "python/ast.rerail"
 
 .violation B003(at: node) code "B003"
     "Update `os.environ` in place with `.clear()` and `.update()` instead of assigning a new mapping to it."

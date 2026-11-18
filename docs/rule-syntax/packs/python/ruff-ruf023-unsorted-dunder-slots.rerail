@@ -11,7 +11,7 @@
 //       __slots__ = ("b", "a")                       ← RUF023
 //       __slots__ = {"y": "doc", "x": "doc"}         ← RUF023
 //       __slots__ = ("a2", "a10")                    not reported: natural order
-#include "python/ruff-sorting.rr"
+#include "python/ruff-sorting.rerail"
 
 .violation RUF023(at: node, c: symbol) code "RUF023"
     "Sort the entries of this `{c}.__slots__` in natural order (digit runs by number). Reordering is safe unless other code iterates `__slots__` and relies on the order."

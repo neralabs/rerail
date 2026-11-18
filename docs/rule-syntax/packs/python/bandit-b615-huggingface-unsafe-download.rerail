@@ -17,7 +17,7 @@
 //   AutoModel.from_pretrained("org/model", revision=REV)          not reported: not a constant
 //   AutoModel.from_pretrained("./local")                          not reported
 
-#include "python/security.rr"   // imported_like, qual_call, call_leaf, kwarg, kw_literal, pos_arg, truthy
+#include "python/security.rerail"   // imported_like, qual_call, call_leaf, kwarg, kw_literal, pos_arg, truthy
 
 .violation B615(at: node, api: symbol) code "B615"
     "Pin {api}() to a specific commit hash with revision=; an unpinned download can silently pull changed or tampered files."

@@ -11,7 +11,7 @@
 //!   interpreter keeps them beside each return.
 //! - **The run's state in one struct**, `S`, which each rule takes as `&mut S`, as the lean
 //!   parser's methods take `&mut self`: the token's start, end and code, the node table's
-//!   counts, the buffers. (Each kept apart costs more, measured over `.rr`'s corpus: there is
+//!   counts, the buffers. (Each kept apart costs more, measured over `.rerail`'s corpus: there is
 //!   about one call a token. The state in each rule's locals, copied out and in at each call,
 //!   cost 28% more instructions; its hot fields alone in locals, 17%; the buffers behind a
 //!   read-only reference of their own, 11%, in the registers each call saves.)

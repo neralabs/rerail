@@ -11,7 +11,7 @@
 //   for key, values in values.items(): …     ← B020 at `values`
 //   for var in [var for var in range(10)]:   not reported
 //   for vars in [i for i in vars]:           ← B020: `vars` is the comprehension's iterable
-#include "python/bugbear-loops.rr"
+#include "python/bugbear-loops.rerail"
 
 .violation B020(at: node, x: symbol) code "B020" "Loop control variable `{x}` overrides iterable it iterates"
     suppress ruff "B020"

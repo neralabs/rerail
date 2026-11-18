@@ -6,7 +6,7 @@
 .scope exclude "**/node_modules/**", "**/.venv/**", "**/venv/**", "**/site-packages/**", "**/dist/**", "**/build/**"
 .scope exclude "**/generated/**", "**/__generated__/**", "**/test_*.py", "**/*_test.py", "**/tests/**", "**/conftest.py"
 
-#include "complexity/python.rr"
+#include "complexity/python.rerail"
 //   cc_report(f, msg)   def f has cyclomatic complexity over 6 (lizard's decision points; nested defs apart)
 
 // The complexity pack's ceiling, with lizard 1.24.0's count: 1 + each if, elif, for, while, except, finally,

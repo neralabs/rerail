@@ -51,7 +51,7 @@ embedding_doc(d) :- doc(d, _, _), in_scope(d), !out_scope(d), !tape_syntax_error
     embedding_gate_word(w), contains(w, s).
 
 // ---- calls ----
-// mirrors python/ast.rr unparen
+// mirrors python/ast.rerail unparen
 .decl embedding_unparen(e: node, m: node)
 embedding_unparen(e, e) :- node(d, e, k, _, _), embedding_doc(d), k != "parenthesized_expression".
 embedding_unparen(e, m) :- node(d, e, "parenthesized_expression", _, _), embedding_doc(d), child(e, i, 0), embedding_unparen(i, m).
@@ -73,7 +73,7 @@ embedding_txn(r) :- node(d, r, "identifier", _, _), embedding_doc(d), text(r, s)
 embedding_txn(r) :- node(d, r, "attribute", _, _), embedding_doc(d), field(r, "attribute", a), text(a, s), suffix("txn", s).
 
 // ---- fn and the enclosing functions ----
-// python/ast.rr's def_frame, restricted to the calls asked about, and with a class's decorators given the class's
+// python/ast.rerail's def_frame, restricted to the calls asked about, and with a class's decorators given the class's
 // fn (def_frame gives them none). embedding_fn(x, f) for x in embedding_fn_at: a call, or the decorated_definition
 // of a class whose decorator holds one, up the tree through such classes.
 .decl embedding_fn_at(x: node)

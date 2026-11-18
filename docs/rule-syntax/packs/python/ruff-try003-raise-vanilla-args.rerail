@@ -12,7 +12,7 @@
 //   raise MyError(f"{x} {y}")             ← TRY003: the space between the fields is literal text
 //   raise MyError("single-word")          not reported
 //   raise NotImplementedError("not yet")  not reported
-#include "python/exceptions.rr"
+#include "python/exceptions.rerail"
 //   exc_raise(r, e), exc_arg(c, i, a), exc_qual(e, q)
 
 .violation TRY003(at: node) code "TRY003"

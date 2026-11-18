@@ -11,7 +11,7 @@
 //   if hasattr(o, "__call__"):            ← B004 at the call
 //   builtins.getattr(o, "__call__", None) ← B004
 //   hasattr(o, "__call__", 0)             not reported: not a valid hasattr call
-#include "python/bugbear.rr"
+#include "python/bugbear.rerail"
 
 .violation B004(at: node) code "B004"
     "Using `hasattr(x, \"__call__\")` to test if x is callable is unreliable. Use `callable(x)` for consistent results."

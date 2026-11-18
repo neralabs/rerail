@@ -10,7 +10,7 @@
 //   x: Never | int            ← RUF020 at Never
 //   Union[NoReturn, int]      ← RUF020 at NoReturn
 //   def f() -> Never: ...     not reported
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 
 .violation RUF020(at: node, n: symbol, msg: symbol) code "RUF020" "{msg}"
     suppress ruff "RUF020"

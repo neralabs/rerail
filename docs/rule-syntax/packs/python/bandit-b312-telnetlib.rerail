@@ -5,9 +5,9 @@
 .scope include "**/*.py"
 // Bandit's B312 (its B001 blacklist): a call to telnetlib.Telnet. (Importing telnetlib is B401.)
 //   import telnetlib; telnetlib.Telnet(host)   B312 (and B401 on the import)
-// How Bandit reads the call's name, and the list: python/security.rr (blacklisted).
+// How Bandit reads the call's name, and the list: python/security.rerail (blacklisted).
 
-#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+#include "python/security.rerail"   // blacklisted: Bandit's B001 over calls and imports
 
 .violation B312(at: node) code "B312"
     "Telnet is insecure; use SSH or another encrypted protocol."

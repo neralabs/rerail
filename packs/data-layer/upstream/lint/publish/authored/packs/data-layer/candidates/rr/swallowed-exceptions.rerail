@@ -32,8 +32,8 @@
 //      suppress_call).
 //   5. summary(b, s) is only for the message: it describes the body, as the Python linter's _summarize_body does.
 
-#include "python/names.rr"
-#include "python/calls.rr"
+#include "python/names.rerail"
+#include "python/calls.rerail"
 
 // An input fact from a file next to the policy, not from the code: (path, line) of each accepted finding.
 .decl ignored(path: symbol, line: number)  // each "path:line" key of .swallowed-exceptions-ignores.json

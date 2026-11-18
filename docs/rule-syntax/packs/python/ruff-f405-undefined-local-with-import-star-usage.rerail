@@ -9,7 +9,7 @@
 //   from os.path import *
 //   print(join("a", "b"))      ← F405 at `join`
 //   __all__ = ["exists"]       ← F405 at "exists"
-#include "python/pyflakes.rr"
+#include "python/pyflakes.rerail"
 //   unbound_ref(n, x)   n reads x and no scope on its LEGB chain binds it
 //   star_reach(n)       a star import in n's module, or in a def or class around n
 //   all_entry(s, x)     string s names x in the module's `__all__`

@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-a-functions.rr"
+#include "tsx/eslint-a-functions.rerail"
 //   generator, fn_block, own_fn, fn_head
 
 // ESLint's require-yield: a generator whose body has statements but no `yield` of its own. A yield inside a

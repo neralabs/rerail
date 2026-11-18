@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-a-control.rr"
+#include "tsx/eslint-a-control.rerail"
 //   label_of, jump, jump_label, loop
 
 // ESLint's no-labels: every labeled statement, and every `break x` / `continue x`.

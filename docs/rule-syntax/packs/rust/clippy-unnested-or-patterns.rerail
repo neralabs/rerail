@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "rust/syntax-patterns.rr"
+#include "rust/syntax-patterns.rerail"
 //   top_pattern(p)   a let, if-let, arm or parameter pattern;   unparen(p, q)   p without its parentheses
 //   msrv_older(n, v)   under a #[clippy::msrv] older than v;   bare_pat(p, q)   p without ref/mut
 //   elem_key(p, i, k, rest), elem_count(p, n)   the elements of a tuple-like pattern

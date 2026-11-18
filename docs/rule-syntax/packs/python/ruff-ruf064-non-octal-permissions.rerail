@@ -11,7 +11,7 @@
 //   os.chmod("foo", 644)          ← RUF064  `0o644`
 //   Path("bar").chmod(755)        ← RUF064
 //   os.chmod("foo", 0o644)        not reported
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 
 .decl mode_fn(q: symbol, i: number)
 mode_fn("os.umask", 0).

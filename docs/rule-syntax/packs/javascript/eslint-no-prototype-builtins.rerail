@@ -3,9 +3,9 @@
 .language typescript
 .mode steer
 .scope include "**/*"
-#include "tsx/names.rr"
-#include "tsx/eslint-a-expressions.rr"
-#include "tsx/eslint-b-control.rr"
+#include "tsx/names.rerail"
+#include "tsx/eslint-a-expressions.rerail"
+#include "tsx/eslint-b-control.rerail"
 //   deparen, static_prop, optional_link
 
 // ESLint's no-prototype-builtins: calling one of Object.prototype's three builtins on the object itself.

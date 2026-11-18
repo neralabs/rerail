@@ -19,9 +19,9 @@
 //   from airflow.utils.dates import days_ago       days_ago(1)  ← AIR301
 //   @task
 //   def t(**context): context["execution_date"]   ← AIR301
-#include "python/misc-airflow.rr"
-#include "python/ruff-classes.rr"   // class_base_expr
-#include "../packs/python/ruff-air301-airflow3-removal.names.rr"   // air301_name(old, how, m, x, msg)
+#include "python/misc-airflow.rerail"
+#include "python/ruff-classes.rerail"   // class_base_expr
+#include "../packs/python/ruff-air301-airflow3-removal.names.rerail"   // air301_name(old, how, m, x, msg)
 
 .violation AIR301(at: node, msg: symbol) code "AIR301" "{msg}"
     suppress ruff "AIR301"

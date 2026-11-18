@@ -9,7 +9,7 @@
 //   # XXX: something           ← FIX003
 //   # a # xxx                  ← FIX003: after another `#`
 //   # XXXS                     not reported: not the whole word
-#include "python/misc-comments.rr"
+#include "python/misc-comments.rerail"
 
 .violation FIX003(at: node, d: symbol) code "FIX003"
     "Fix the issue this `{d}` comment flags, then remove the `{d}` note; if the fix belongs in a separate change, replace `{d}` with a more descriptive tag such as `TODO`."

@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-a-control.rr"
+#include "tsx/eslint-a-control.rerail"
 //   label_of, jump_label, deparen, function_node
 
 // ESLint's no-unused-labels: a labelled statement whose label no `break` or `continue` names. It is reported at

@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/ts-a.rr"
+#include "tsx/ts-a.rerail"
 //   type_parent, type_child, heritage, has_overloads
 
 // typescript-eslint's no-invalid-void-type: `void` is for return types (and generic arguments), not values.

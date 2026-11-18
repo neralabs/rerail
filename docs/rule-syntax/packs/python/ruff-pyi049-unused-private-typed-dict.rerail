@@ -10,7 +10,7 @@
 // is reported too, with the TypedDict.
 //   class _TD(TypedDict): ...              ← PYI049 at `_TD`
 //   _TD2 = TypedDict("_TD2", {"a": int})   ← PYI049 at the statement
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI049(at: node, msg: symbol) code "PYI049" "{msg}"
     suppress ruff "PYI049"

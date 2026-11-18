@@ -6,13 +6,13 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // FAST001(n): a finding at node n, from clause `redundant-response-model`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
 // The JSON `transform` computes NRET, NRM, TRET, TRM from other metavariables' text; its literals end each rule.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation FAST001(at: node, rm: loc) "Remove `response_model={rm}`: FastAPI 0.89 and newer already use the route's return annotation, which names the same type. Keep it on older versions."
     suppress noqa "FAST001"
 // NRET, NRM: not bound by this rule, so empty (unset) here, as in ast-grep.

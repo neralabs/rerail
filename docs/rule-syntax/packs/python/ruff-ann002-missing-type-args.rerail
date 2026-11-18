@@ -9,7 +9,7 @@
 // option is not supported (its default, false, is what this rule does).
 //   def foo(*args): ...          ← ANN002
 //   def foo(*args: int): ...     not reported
-#include "python/annotations.rr"
+#include "python/annotations.rerail"
 
 .violation ANN002(at: node, name: symbol) code "ANN002"
     "Add a type annotation to `*{name}` giving the type of each extra positional argument."

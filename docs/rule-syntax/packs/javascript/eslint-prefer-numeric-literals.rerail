@@ -3,9 +3,9 @@
 .language typescript
 .mode steer
 .scope include "**/*"
-#include "tsx/names.rr"
-#include "tsx/eslint-a-expressions.rr"
-#include "tsx/eslint-b-objects.rr"
+#include "tsx/names.rerail"
+#include "tsx/eslint-a-expressions.rerail"
+#include "tsx/eslint-b-objects.rerail"
 //   ref_site; deparen, static_prop, static_string, call_arg, call_arg_count; touching, cannot_touch (b-objects)
 
 // ESLint's prefer-numeric-literals: `parseInt(s, r)` or `Number.parseInt(s, r)` with exactly two arguments, a

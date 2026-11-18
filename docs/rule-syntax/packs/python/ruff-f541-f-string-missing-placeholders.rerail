@@ -10,7 +10,7 @@
 //   f"a" "b" F"c"            ← F541 twice, at f"a" and F"c"
 //   f"{n} items" " total"    not reported
 //   f"{v:{f'.2f'}}"          ← F541 at the inner f'.2f', which is a string of its own
-#include "python/pyflakes.rr"
+#include "python/pyflakes.rerail"
 //   fstring(n)  n is an f-string, or adjacent literals one of which is (python/ast)
 
 .violation F541(at: node) code "F541"

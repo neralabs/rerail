@@ -8,7 +8,7 @@
 // CPython rejects the file. Reported at the name.
 //   from __future__ import annotations          not reported
 //   from __future__ import braces               ← F407 at `braces`
-#include "python/pyflakes.rr"
+#include "python/pyflakes.rerail"
 
 .violation F407(at: node, x: symbol) code "F407" "Future feature `{x}` is not defined"
     suppress ruff "F407"

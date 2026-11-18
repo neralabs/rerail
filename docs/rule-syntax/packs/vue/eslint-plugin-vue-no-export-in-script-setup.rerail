@@ -3,7 +3,7 @@
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/component.rr"
+#include "vue/component.rerail"
 //   vscript(p, setup)
 
 // eslint-plugin-vue's no-export-in-script-setup: an export statement in <script setup>, which compiles into the

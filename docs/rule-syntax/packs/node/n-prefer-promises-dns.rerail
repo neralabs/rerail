@@ -7,9 +7,9 @@
 //   dns.lookup(host, cb)    require("dns").resolve4(h, cb)    new dns.Resolver()        reported
 //   dns.promises.lookup(host)                                                         not
 // The functions are the plugin's list; Resolver is reported when constructed. The module is traced through
-// require(), process.getBuiltinModule() and imports (node-trace.rr).
+// require(), process.getBuiltinModule() and imports (node-trace.rerail).
 
-#include "tsx/node-trace.rr"   // module_use
+#include "tsx/node-trace.rerail"   // module_use
 trace_module("dns").
 trace_member("dns", x) :- callback_fn(x).
 trace_member("dns", "Resolver").

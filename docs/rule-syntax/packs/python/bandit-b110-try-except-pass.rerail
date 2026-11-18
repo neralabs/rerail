@@ -9,7 +9,7 @@
 //   except ValueError: pass              not reported (Bandit's check_typed_exception is off, the default)
 //   except Exception: log(); pass        not reported: two statements
 
-#include "python/security.rr"   // catch_all_body: the handler Bandit inspects, and its one statement
+#include "python/security.rerail"   // catch_all_body: the handler Bandit inspects, and its one statement
 
 .violation B110(at: node) code "B110"
     "This exception is silently discarded with pass. Handle or log it, or catch a specific expected exception when suppression is intentional."

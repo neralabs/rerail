@@ -11,7 +11,7 @@
 //   datetime.datetime(2000, 1, 1, tzinfo=None)             ← DTZ001: None
 //   datetime.datetime(2000, 1, 1, 0, 0, 0, 0, timezone.utc)    not reported
 //   datetime(2000, 1, 1, 0, 0, 0).astimezone()             not reported
-#include "python/datetime.rr"
+#include "python/datetime.rerail"
 
 .violation DTZ001(at: node) code "DTZ001"
     "Add `tzinfo=` with a timezone, such as `tzinfo=datetime.timezone.utc`, so this datetime is aware. Leave it naive only if the code receiving it requires a naive value."

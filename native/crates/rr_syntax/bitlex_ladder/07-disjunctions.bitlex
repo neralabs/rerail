@@ -1,4 +1,4 @@
-# `.rr`, step 7: disjunctions and groups, `r(x) :- s(x), (t(x); !(u(x), x > f(x) + 1)).`
+# `.rerail`, step 7: disjunctions and groups, `r(x) :- s(x), (t(x); !(u(x), x > f(x) + 1)).`
 #
 # The engine's parser (logic/rr/syntax.rs) is the reference. What this step adds:
 #   - A body: a conjunction, or a disjunction of them, `;` between. The first conjunction is

@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // overload_expr(n): the JSON util `overload-expr`, used where the JSON says `matches: "overload-expr"`
 .decl ann202_overload_expr(n: node)
@@ -220,7 +220,7 @@ ann202_export_entry(n, DEFNAME) :- ann202_demand_export_entry(n, DEFNAME),
 // ANN202(n): a finding at node n, from clause `missing-return-type-private-function`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation ANN202(at: node, fn: loc) "Add a return type annotation to `{fn}` (for example `-> None` if it returns nothing)."
     suppress noqa "ANN202"
 ANN202(n, FN) :- kind(n, "identifier"), node(_, n, _, _, _), FN = n, ann202_alt_27(n, FN).
@@ -228,7 +228,7 @@ ANN202(n, FN) :- kind(n, "identifier"), node(_, n, _, _, _), FN = n, ann202_alt_
 // ANN202_missing_return_type_function_in_private_module(n): a finding at node n, from clause `missing-return-type-function-in-private-module`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation ANN202_missing_return_type_function_in_private_module(at: node, fn: loc) code "ANN202" "Add a return type annotation to `{fn}` (for example `-> None` if it returns nothing)."
     suppress noqa "ANN202"
 ANN202_missing_return_type_function_in_private_module(n, FN) :- kind(n, "identifier"),

@@ -9,7 +9,7 @@
 // builtin there.
 //   if not not x: …        ← SIM208: if x: …
 //   y = not not x          ← SIM208: y = bool(x)
-#include "python/simplify.rr"
+#include "python/simplify.rerail"
 //   sim_bool_test(e); c4_builtin_here(n, x) from python/comprehensions
 
 .violation SIM208(at: node, operand: node) code "SIM208" "Use `{operand}` instead of `not (not {operand})`."

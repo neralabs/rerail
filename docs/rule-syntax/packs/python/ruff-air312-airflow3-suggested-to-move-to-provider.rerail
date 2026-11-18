@@ -15,8 +15,8 @@
 //   except ModuleNotFoundError:
 //       from airflow.triggers.file import FileTrigger
 //   FileTrigger()                  not reported: the fallback is guarded
-#include "python/misc-airflow.rr"
-#include "../packs/python/ruff-air312-airflow3-suggested-to-move-to-provider.moved.rr"   // air312_moved(old, m, x)
+#include "python/misc-airflow.rerail"
+#include "../packs/python/ruff-air312-airflow3-suggested-to-move-to-provider.moved.rerail"   // air312_moved(old, m, x)
 
 .violation AIR312(at: node, q: symbol, m: symbol) code "AIR312"
     "`{q}` moved to apache-airflow-providers-standard in Airflow 3.0; import it from `{m}`, keeping the old import only as an `except ImportError` fallback."

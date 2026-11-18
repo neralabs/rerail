@@ -6,7 +6,7 @@
 .scope include "data_layer/_file_locking.py", "data_layer/_mime_sniffing.py", "data_layer/rippling.py", "data_layer/versioned_merge.py", "data_layer/versioned_rebase.py", "data_layer/versioned_squash.py"
 .scope exclude "**/.git/**", "**/.venv/**", "**/tmp/**", "**/__pycache__/**", "**/tests/**"
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_data_layer_facade_purity.py
-#include "python/ast.rr"
+#include "python/ast.rerail"
 .decl fac_default(i: number, path: symbol)
 fac_default(0, "data_layer/_file_locking.py").
 fac_default(1, "data_layer/_mime_sniffing.py").

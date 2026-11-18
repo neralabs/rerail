@@ -10,7 +10,7 @@
 // For the inline form the plugin reads the first property of the object, and of its template literal only the
 // text before the first ${…}.
 
-#include "tsx/next.rr"
+#include "tsx/next.rerail"
 
 .violation ga(at: node) code "@next/next/next-script-for-ga"
     "Prefer `next/script` component when using the inline script for Google Analytics. See: https://nextjs.org/docs/messages/next-script-for-ga"

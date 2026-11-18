@@ -11,7 +11,7 @@
 //   from os.path import getmtime
 //   getmtime(filename=p)            ← PTH204
 //   os.path.getmtime(*ps)           not reported: Ruff does not look past `*`
-#include "python/pathlib.rr"
+#include "python/pathlib.rerail"
 //   single_arg(c, q, x, f, a)   c calls q with one argument a, for parameter x; f the callee (python/pathlib)
 
 .violation PTH204(at: node, s: node) code "PTH204"

@@ -34,8 +34,8 @@
 //
 // Builds on tsx/eslint-a-common (deparen, estree_parent, static_string, key_static, static_prop; also used by the
 // rules) and core (kind, field, child, op, text, value, tokens, the tree axes, @to_precision).
-#include "tsx/eslint-a-common.rr"
-#include "layout.rr"
+#include "tsx/eslint-a-common.rerail"
+#include "layout.rerail"
 
 // ---- literals ----------------------------------------------------------------------------------------------------
 // tree-sitter writes every numeric literal as `number`; a BigInt is the one that ends in `n` (no Number literal
@@ -166,7 +166,7 @@ object_prop(o, p, k, x, key) :- kind(o, "object"), child(o, p, _), kind(p, "meth
 stmt_start(x, s) :- node(_, x, _, b, _), kind(s, "expression_statement"), node(_, s, _, b, _), within(x, s).
 // semi_needed(x): the code before x's statement does not end it for sure. ESLint's needsPrecedingSemicolon, case
 // by case on the token before (comments are not tokens), read from the source before the statement and the
-// node it ends (layout.rr): the tape keeps no `)` or `}` its grammar implies. It leaves out the TypeScript
+// node it ends (layout.rerail): the tape keeps no `)` or `}` its grammar implies. It leaves out the TypeScript
 // type contexts, where ESLint also says no.
 .decl semi_needed(x: node)
 semi_needed(x) :- stmt_start(x, s), prev_code(s, t), !asi_safe(s, t).

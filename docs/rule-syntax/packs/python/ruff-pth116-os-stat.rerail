@@ -11,7 +11,7 @@
 //   os.stat("f", follow_symlinks=False)  ← PTH116: `Path.stat` takes it too
 //   def g(fd: int): os.stat(fd)          not reported: a file descriptor
 //   os.stat("f", dir_fd=d)               not reported
-#include "python/pathlib.rr"
+#include "python/pathlib.rerail"
 //   pth_call(c, q, f)   c calls q; f the callee      fd_arg(c, x)   x's argument is a file descriptor
 //   kw_set(c, k)        keyword k is not None        arg_value(c, x, i, a)   argument x (python/pathlib)
 

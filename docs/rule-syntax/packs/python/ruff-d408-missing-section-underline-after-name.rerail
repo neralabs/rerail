@@ -9,7 +9,7 @@
 //   Returns
 //
 //   -------                  ← D408
-#include "python/docstrings-sections.rr"
+#include "python/docstrings-sections.rerail"
 
 .violation D408(at: span, k: symbol) code "D408"
     "Move this underline up to the line directly below the section name, removing the blank lines between them."

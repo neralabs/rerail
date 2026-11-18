@@ -8,7 +8,7 @@
 // AssertionError to fail unconditionally. Reported at the `False`, through parentheses.
 //   assert False, "message"    ← B011 at `False`
 //   assert 1 != 2              not reported
-#include "python/ast.rr"
+#include "python/ast.rerail"
 
 .violation B011(at: node) code "B011"
     "Do not `assert False` (`python -O` removes these calls), raise `AssertionError()`"

@@ -10,7 +10,7 @@
 //   logging.info("Hello %s" % "World!")              ← G002
 //   logging.log(logging.INFO, "Hello %s" % name)     ← G002
 //   logging.info("Hello %s", "World!")               not reported
-#include "python/logging.rr"
+#include "python/logging.rerail"
 
 .violation G002(at: node) code "G002"
     "Pass the values after `%` as logger arguments, e.g. `logger.info(\"x=%s\", x)` not `logger.info(\"x=%s\" % x)`; leave it if `%` is arithmetic or the logger is not from `logging`."

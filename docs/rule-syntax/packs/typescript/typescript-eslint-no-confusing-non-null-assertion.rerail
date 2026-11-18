@@ -4,8 +4,8 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/eslint-a-common.rr"
-#include "layout.rr"
+#include "tsx/eslint-a-common.rerail"
+#include "layout.rerail"
 //   deparen(e, x)
 
 // typescript-eslint's no-confusing-non-null-assertion: an assignment or comparison whose left side ends in a

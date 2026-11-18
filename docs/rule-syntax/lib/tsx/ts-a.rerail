@@ -55,7 +55,7 @@
 //   no-dynamic-delete             delete a[k]  (not delete a?.[k])  in_chain
 //
 // Builds on tsx/eslint-a-common (deparen) and core.
-#include "tsx/eslint-a-common.rr"
+#include "tsx/eslint-a-common.rerail"
 
 // ---- expressions -------------------------------------------------------------------------------------------------
 // non_null(n, x): `a!` is a non_null_expression whose one child is the operand; `(a)!` gives a.

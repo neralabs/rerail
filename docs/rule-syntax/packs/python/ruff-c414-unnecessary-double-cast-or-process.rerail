@@ -12,7 +12,7 @@
 // `sorted(sorted(x, key=k))` only when both calls pass the same keywords: the inner sort is then redone.
 // `reversed(…)` outside is not reported, nor `sorted(sorted(x), reverse=True)`. Ruff's fix is unsafe;
 // none here.
-#include "python/comprehensions.rr"
+#include "python/comprehensions.rerail"
 //   c4_builtin(c, x), c4_first(c, a), cmp_same(a, b) (python/compare), call_kwarg(c, x, v), call_nkwargs(c, n)
 
 .violation C414(at: node, inner: symbol, outer: symbol, id: symbol) code "C414"

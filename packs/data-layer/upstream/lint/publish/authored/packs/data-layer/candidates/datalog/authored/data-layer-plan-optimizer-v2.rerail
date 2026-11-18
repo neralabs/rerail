@@ -23,7 +23,7 @@
 //
 // Approximations (named again where they are made):
 //   A1 identifiers in `case` patterns and PEP 695 type parameter names count as Names (CPython: MatchAs/TypeVar
-//      strings), as in python/ast.rr ast_name.
+//      strings), as in python/ast.rerail ast_name.
 //   A2 the gate (`syntax: valid`) is W's own verdict, tree-sitter's (`!tape_syntax_error(d)`); the `pythonAst` stage
 //      then runs CPython's `ast.parse`, and a file it rejects fails the stage (W's worker raises: the run errors).
 //      Here such a file (`cpython_syntax_error`, CPython 3.13's verdict) has no `ast` rows and gives nothing. GAP:
@@ -41,7 +41,7 @@
 // any other value (the default "all" too) is the default case, gated. PV2-050/052 need a registered invariant, so a
 // parsed verifier.py, either way. `parameters` is read by neither clause.
 //
-// python/ast.rr lowers in an overlay, but it is not included: its str_const reads str_part (CPython-only, still
+// python/ast.rerail lowers in an overlay, but it is not included: its str_const reads str_part (CPython-only, still
 // unbound), its ast_name makes no walrus target a Name, and its unparen/assign helpers would come with the whole
 // library. The small helpers below mirror it, each saying which and where they differ.
 
@@ -54,12 +54,12 @@
 
 // ---- shared: the `ast` view of the tree ------------------------------------------------------------------------
 
-// mirrors python/ast.rr unparen: e without its parentheses.
+// mirrors python/ast.rerail unparen: e without its parentheses.
 .decl optimizer_unparen(e: node, m: node)
 optimizer_unparen(e, e) :- node(_, e, k, _, _), k != "parenthesized_expression".
 optimizer_unparen(e, m) :- node(_, e, "parenthesized_expression", _, _), child(e, i, 0), optimizer_unparen(i, m).
 // An assignment target's parentheses: tree-sitter reads `(self.x) = v` as a one-element tuple_pattern; CPython has
-// a tuple only with a comma. (Not in python/ast.rr.)
+// a tuple only with a comma. (Not in python/ast.rerail.)
 .decl optimizer_paren_pattern(x: node)
 optimizer_paren_pattern(x) :- node(_, x, "tuple_pattern", _, _), child(x, _, 0), !child(x, _, 1), node_text(x, s),
     !match("(?s:.*),(?s:\\s*)\\)", s).
@@ -67,7 +67,7 @@ optimizer_paren_pattern(x) :- node(_, x, "tuple_pattern", _, _), child(x, _, 0),
 optimizer_untarget(t, m) :- optimizer_unparen(t, m), !optimizer_paren_pattern(m).
 optimizer_untarget(t, m) :- optimizer_unparen(t, x), optimizer_paren_pattern(x), child(x, i, 0), optimizer_untarget(i, m).
 
-// mirrors python/ast.rr fstring / string_form, over the string_start token's text.
+// mirrors python/ast.rerail fstring / string_form, over the string_start token's text.
 .decl optimizer_form(n: node, f: symbol)
 optimizer_form(n, "fstr") :- node(_, n, "string", _, _), child(n, s0, 0), node(_, s0, "string_start", _, _),
     node_text(s0, t), match("[rRbBuU]*[fF][rR]?[\"'].*", t).
@@ -79,13 +79,13 @@ optimizer_form(n, "str") :- node(_, n, "string", _, _), child(n, s0, 0), node(_,
 // The literals that are one `ast` value: a string not inside an implicit concatenation, or the concatenation.
 .decl optimizer_part_of(s: node, c: node)
 optimizer_part_of(s, c) :- node(_, c, "concatenated_string", _, _), child(c, s, _), node(_, s, "string", _, _).
-.decl optimizer_fstr(n: node)          // mirrors python/ast.rr fstring: an ast.JoinedStr
+.decl optimizer_fstr(n: node)          // mirrors python/ast.rerail fstring: an ast.JoinedStr
 optimizer_fstr(n) :- optimizer_form(n, "fstr"), !optimizer_part_of(n, _).
 optimizer_fstr(c) :- optimizer_part_of(s, c), optimizer_form(s, "fstr").
 .decl optimizer_has_nonstr(c: node)
 optimizer_has_nonstr(c) :- optimizer_part_of(s, c), !optimizer_form(s, "str").
 
-// mirrors python/ast.rr str_const: n is a str Constant with value v, W's decoded value: a str-form string not in a
+// mirrors python/ast.rerail str_const: n is a str Constant with value v, W's decoded value: a str-form string not in a
 // concatenation, or a concatenation of str-form strings (its parts' values joined).
 .decl optimizer_str_const(n: node, v: symbol)
 optimizer_str_const(n, v) :- optimizer_form(n, "str"), !optimizer_part_of(n, _), value(n, v).
@@ -148,7 +148,7 @@ optimizer_fline(h, i, l) :- optimizer_flit(h, i, _, k), k > 0, node(_, h, "forma
 optimizer_fpiece(h, i, v, l) :- optimizer_flit(h, i, v, _), optimizer_fline(h, i, l).
 optimizer_fpiece(h, i, v, l) :- optimizer_flit(h, i, v, _), !optimizer_fline(h, i, _), line(h, l).
 
-// mirrors python/ast.rr ast_name (nameref less not_name): identifier n is an ast.Name. Unlike ast.rr, a walrus
+// mirrors python/ast.rerail ast_name (nameref less not_name): identifier n is an ast.Name. Unlike ast.rerail, a walrus
 // target (`(x := …)`, field "name" of named_expression) is a Name, as in CPython.
 .decl optimizer_import_kinds(kind: symbol)
 optimizer_import_kinds("import_statement"). optimizer_import_kinds("import_from_statement").
@@ -185,9 +185,9 @@ optimizer_posarg(c, a, j) :- node(_, c, "call", _, _), field(c, "arguments", al)
 .decl optimizer_arg0(c: node, a: node)
 optimizer_arg0(c, m) :- optimizer_posarg(c, a, j), j = min k : { optimizer_posarg(c, _, k) }, optimizer_unparen(a, m).
 
-// mirrors python/ast.rr assign_chain / assign_target / assign_value: statement-level assignment a as one
+// mirrors python/ast.rerail assign_chain / assign_target / assign_value: statement-level assignment a as one
 // Assign/AnnAssign; t0 its first target (the outer left).
-.decl optimizer_stmt(a: node, st: node)           // mirrors names.rr asgstmt
+.decl optimizer_stmt(a: node, st: node)           // mirrors names.rerail asgstmt
 optimizer_stmt(a, st) :- node(_, st, "expression_statement", _, _), child(st, a, 0), node(_, a, "assignment", _, _).
 .decl optimizer_chain(a: node, x: node)
 optimizer_chain(a, a) :- optimizer_stmt(a, _).
@@ -254,7 +254,7 @@ violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-011", p,
 // the arg's line (its name's).
 violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-012", p, l) :- optimizer_target(_, t),
     optimizer_untarget(t, n), node(_, n, "identifier", _, _), text(n, x), suffix("_by_table", x), ofc_at(n, _, p, l).
-// mirrors python/ast.rr param_parts (the "plain" forms).
+// mirrors python/ast.rerail param_parts (the "plain" forms).
 .decl ofc_plain_param(f: node, nm: node)
 ofc_plain_param(f, p) :- node(_, f, "function_definition", _, _), field(f, "parameters", ps), child(ps, p, _),
     node(_, p, "identifier", _, _).
@@ -304,7 +304,7 @@ violation("data-layer-plan-optimizer-v2", "optimizer-file-checks", "PV2-030", p,
 // has a repair word. SQL takes every def around the raise; the innermost has the fewest strings, so it decides.
 // The word is searched with Python's `\b`, as the policy spells it: `(?:\A|[^W])(?:Fix|…|Keep)(?:\z|[^W])`, W the
 // characters Python 3.13's `re` counts as `\w` (str.isalnum() or `_`), not Rust's Unicode `\w`. The pattern is the
-// policy's text verbatim: an .rr literal reads its `\uXXXX` escapes (and the astral ranges' surrogate pairs) as
+// policy's text verbatim: an .rerail literal reads its `\uXXXX` escapes (and the astral ranges' surrogate pairs) as
 // JSON does, so the regex is W's, character for character.
 .decl ofc_hint_value(s: node, v: symbol)
 ofc_hint_value(s, v) :- optimizer_str_const(s, v).

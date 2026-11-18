@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-b-scope.rr"
+#include "tsx/eslint-b-scope.rerail"
 //   builtin_ref, called, arg_count
 
 // ESLint's symbol-description: a call of the global Symbol with no arguments.

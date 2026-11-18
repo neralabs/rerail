@@ -12,7 +12,7 @@
 //   UNKNOWN_AS_FALSY   `not ref.relation_role`, and `bool(ref.relation_role)` with exactly one positional argument
 // `ref.source_tables is None` and `ref.source_tables or default_tables` are fine.
 
-#include "python/ast.rr"    // bool_part, unparen, str_const; attr_of from python/names
+#include "python/ast.rerail"    // bool_part, unparen, str_const; attr_of from python/names
 
 .decl ucd_field(x: symbol)
 ucd_field("auxiliary_query"). ucd_field("relation_role"). ucd_field("source_tables").

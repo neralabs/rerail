@@ -21,7 +21,7 @@ dfi_contract("creates_indexes"). dfi_contract("effects_known"). dfi_contract("gu
 dfi_contract("guarded_indexes"). dfi_contract("ddl_effect_scope"). dfi_contract("modifies_rows").
 dfi_contract("relation_scope").
 
-#include "python/ast.rr"    // unparen, str_const; attr_of from python/names
+#include "python/ast.rerail"    // unparen, str_const; attr_of from python/names
 
 // dfi_file(d): the source triggers.
 .decl dfi_file(d: number)

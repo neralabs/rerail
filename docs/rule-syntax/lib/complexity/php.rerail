@@ -1,5 +1,5 @@
 // complexity/php: lizard's decision points in PHP (and the PHP a Blade template compiles to), on tree-sitter-php
-// 0.24, for complexity/cyclomatic.rr.
+// 0.24, for complexity/cyclomatic.rerail.
 //
 // A function is a function, a method or a closure (`function () use ($x) {}`), in classes, traits, enums and at the
 // top level; a closure is scored on its own. An arrow function (`fn ($x) => …`) is not one: its conditions count
@@ -17,8 +17,8 @@
 //     if ($a && $b) { return 1; }    if, &&
 //     return $a ? 2 : 3;             ?:
 //   }
-#include "complexity/cyclomatic.rr"
-#include "php/names.rr"
+#include "complexity/cyclomatic.rerail"
+#include "php/names.rerail"
 //   php_logical(b)   `&&`, `||`, `and`, `or`
 
 cc_boundary("function_definition"). cc_boundary("method_declaration"). cc_boundary("anonymous_function").

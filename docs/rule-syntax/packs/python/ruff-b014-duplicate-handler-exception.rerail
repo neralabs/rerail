@@ -9,7 +9,7 @@
 // repeated names in sorted order. Subclasses and aliases (`IOError` of `OSError`) are not looked at.
 //   except (re.error, re.error):        ← B014 "… duplicate exception: `re.error`"
 //   except (ValueError, binascii.Error) not reported: different spellings
-#include "python/bugbear.rr"
+#include "python/bugbear.rerail"
 
 .violation B014(at: node, names: symbol) code "B014" "Exception handler with duplicate exception: {names}"
     suppress ruff "B014"

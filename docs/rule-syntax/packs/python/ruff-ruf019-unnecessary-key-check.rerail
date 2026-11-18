@@ -12,8 +12,8 @@
 //   v = k in d and d[k]               not reported: the value, not a condition
 //   if f() in d and d[f()]: ...       not reported: a call
 //   if a + b in d and d[a + b]: ...   not reported: `+` may run `__add__`
-#include "python/ruff.rr"
-#include "python/compare.rr"
+#include "python/ruff.rerail"
+#include "python/compare.rerail"
 
 .violation RUF019(at: node, dt: symbol, kt: symbol) code "RUF019"
     "If `{dt}` is a dict, use `{dt}.get({kt})` instead of testing `{kt} in {dt}` before reading `{dt}[{kt}]`; leave it if `{dt}` is not a mapping."

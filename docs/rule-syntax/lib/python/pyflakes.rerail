@@ -31,7 +31,7 @@
 //   - Scopes as CPython builds them: a def's decorators, defaults and annotations run in the enclosing scope; a
 //     comprehension is a scope of its own, except its first iterable, which runs outside it.
 //   - Ruff's tree has no parentheses: `assert (a, b)` and `assert ((a, b))` are the same tuple test.
-#include "python/ast.rr"
+#include "python/ast.rerail"
 
 // ---- 1. handlers -------------------------------------------------------------------------------------------------
 // bare_except(x, kw): `except:`. The clause has no `value` (the type, or `T as e`); kw is the `except` token,

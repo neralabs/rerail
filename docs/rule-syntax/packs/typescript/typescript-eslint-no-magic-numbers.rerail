@@ -4,8 +4,8 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-a-expressions.rr"
-#include "tsx/ts-a.rr"
+#include "tsx/eslint-a-expressions.rerail"
+#include "tsx/ts-a.rerail"
 //   object_method, property_def
 
 // typescript-eslint's no-magic-numbers: ESLint's rule, with four TypeScript places. A number that is not given

@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.blade.php"
 
-#include "blade/values.rr"
+#include "blade/values.rerail"
 //   blade_code(n)            n is in the compiled PHP;  php_if_const(i, c, b)  `if (c)` is always b
 
 // Bladestan's if.alwaysTrue: PHPStan's IfConstantConditionRule (level 4) over the PHP the template compiles to.

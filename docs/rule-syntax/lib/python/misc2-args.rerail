@@ -31,7 +31,7 @@
 //       @staticmethod
 //       def g(x): ...                arg_stub(<g>): not checked
 //   lambda x: 1                      arg_unused(<lambda>, <x>, "x", "ARG005")
-#include "python/annotations.rr"   // ann_overload, ann_override; python/ruff (ruff_qual)
+#include "python/annotations.rerail"   // ann_overload, ann_override; python/ruff (ruff_qual)
 
 // ---- which defs, under which code --------------------------------------------------------------------------------
 .decl arg_checked(f: node, code: symbol, skip: number)

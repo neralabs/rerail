@@ -23,7 +23,7 @@
 //   except (IOError, KeyError):      handler_tuple(<the tuple>, <IOError>), handler_tuple(…, <KeyError>)
 //   except socket.error as e:        exc_site(<socket.error>, "handler")
 //   raise IOError(1)                 exc_site(<IOError>, "call")
-#include "python/upgrade.rr"
+#include "python/upgrade.rerail"
 
 .decl up_qual(e: node, q: symbol)
 up_qual(e, q) :- sym_at(e, q).

@@ -6,12 +6,12 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // PYI052(n): a finding at node n, from clause `unannotated-assignment-in-stub`.
 // Each rule below is one way the JSON `rule` can match.
 // Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PYI052(at: node, name: loc) "Add a type annotation to `{name}` (`{name}: <type> = ...`); stubs should declare the type rather than leave it to be inferred from the assigned value."
     suppress noqa "PYI052"
 PYI052_raw(n, NAME) :- (pyi052_leaf(n) ; pyi052_container(n)), pyi052_value_of(n, NAME).

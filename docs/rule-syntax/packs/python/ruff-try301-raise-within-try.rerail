@@ -14,7 +14,7 @@
 //   try:
 //       raise ValueError("x")             not reported: TypeError is a different expression
 //   except TypeError: ...
-#include "python/exceptions.rr"
+#include "python/exceptions.rerail"
 //   exc_handler(t, x), exc_type(x, e), exc_raise(r, e), exc_class(e, c), exc_qual(e, q), exc_dotted(e, s)
 
 .violation TRY301(at: node) code "TRY301"

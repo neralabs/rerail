@@ -252,7 +252,7 @@ impl TapeImage {
     }
 }
 
-/// A `.rr` file's tape from its lean parser, in the run's format: format 16 or 16z written in one pass over the
+/// A `.rerail` file's tape from its lean parser, in the run's format: format 16 or 16z written in one pass over the
 /// writer, as `lean` writes the other languages', else format 15's image. One per file, moved once: its variants'
 /// sizes do not matter.
 #[allow(clippy::large_enum_variant)]
@@ -261,7 +261,7 @@ pub(super) enum RrTape {
     Written(f16::Written),
 }
 
-/// The finish the `.rr` parser's writer is given (`rerail_rr_syntax::lean::tape_into`): `lean`'s, for a parser whose
+/// The finish the `.rerail` parser's writer is given (`rerail_rr_syntax::lean::tape_into`): `lean`'s, for a parser whose
 /// keys are the codes (`kf | flags << 16`, no supertypes).
 struct Rr<'s>(&'s str);
 
@@ -293,7 +293,7 @@ impl rerail_tape_format::Finish for Rr<'_> {
     }
 }
 
-/// `source`'s tape from the `.rr` parser, in the run's format (`Rr`).
+/// `source`'s tape from the `.rerail` parser, in the run's format (`Rr`).
 pub(super) fn rr_tape(source: &str) -> RrTape {
     rerail_rr_syntax::lean::tape_into(source, &mut Rr(source))
 }

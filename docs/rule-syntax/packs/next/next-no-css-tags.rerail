@@ -10,7 +10,7 @@
 //   <link rel="stylesheet" href={url} />                      fine: not a literal
 // The plugin reads `attr.value.value`, so both values must be written as plain strings, not {"…"}.
 
-#include "tsx/next.rr"
+#include "tsx/next.rerail"
 
 .violation css(at: node) code "@next/next/no-css-tags"
     "Do not include stylesheets manually. See: https://nextjs.org/docs/messages/no-css-tags"

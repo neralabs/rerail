@@ -12,7 +12,7 @@
 //   X = TypedDict("X", a=int)                     ← UP013
 //   X = TypedDict("X", {"x-y": int})              not reported: not an identifier
 //   X = TypedDict("X", {"a": int, **c})           not reported
-#include "python/upgrade.rr"
+#include "python/upgrade.rerail"
 //   functional_def(s, x, c, what), up_arg(c, i, a), call_nargs(c, n), call_kwsplat(c), identifier(x)
 
 .violation UP013(at: node, x: symbol) code "UP013"

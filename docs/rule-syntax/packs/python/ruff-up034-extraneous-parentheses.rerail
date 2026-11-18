@@ -12,7 +12,7 @@
 // an attempt that failed (`f(((1)), 2)` is not reported). The finding is at the inner `(`.
 //   x = ((1))          ← UP034 at the second `(`
 //   print((1,))        f((yield))        f((1), 2)        not reported
-#include "python/ast.rr"
+#include "python/ast.rerail"
 
 .violation UP034(at: node) code "UP034"
     "Delete the highlighted inner pair of parentheses; the enclosing parentheses already group this expression, so the meaning is unchanged."

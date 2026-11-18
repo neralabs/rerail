@@ -200,7 +200,7 @@ ref_site(r, d) :- look(r, x, "dual", s), decl_site(s, x, d, _, _).
 // Lets a rule ask "is this name a parameter?" or "was it imported?" without knowing the node kinds.
 .decl site_form(site: node, form: symbol)
 site_form(d, f) :- decl_site(_, _, d, f, _).
-// Main's binding terms (rerail.policy/v1 `binds`): the interface lib/python/names.rr defines, here. bind_name(n, site):
+// Main's binding terms (rerail.policy/v1 `binds`): the interface lib/python/names.rerail defines, here. bind_name(n, site):
 // n is the name node of the declaration at site (where ESLint reports a definition): the declared identifier, an
 // import's local name.
 .decl bind_name(n: node, site: node)
@@ -227,7 +227,7 @@ main_form(d, "import") :- decl_site(_, _, d, "import", _).
 binding_value(d, v) :- kind(d, "variable_declarator"), field(d, "value", v), decl_site(_, _, d, "let", _).
 binding_value(d, v) :- kind(d, "variable_declarator"), field(d, "value", v), decl_site(_, _, d, "var", _).
 // ---- main's binding filters (rerail.policy/v1 `binds`, `resolves.binding`, `redefines`) ----------------------------
-// What the JSON translator writes for the filters on a site (lib/python/names.rr has the same interface). Main reads
+// What the JSON translator writes for the filters on a site (lib/python/names.rerail has the same interface). Main reads
 // a variable as eslint-scope does: one scope's bindings of one name. Its filters are per variable, so a filter on
 // one site asks about every site of that variable.
 // binding(scope, x, site, form): site binds x in scope, scope as main's scope table has it; form is the library's
@@ -608,7 +608,7 @@ imported_sym(n, q) :- sym_of(n, q), ref_site(n, sp), import_binding(sp, _, _, _)
 // es_global(x): names that exist without a declaration: "window", "document", "Promise", "process", ….
 // No rules here; the facts are generated and shipped with the library.
 .decl es_global(x: symbol)  // shipped as facts, generated from ESLint's and TypeScript's lib tables
-#include "tsx/es-globals.rr"
+#include "tsx/es-globals.rerail"
 
 // write_anchor(a, d): where ESLint reports the variable that site d defines (main's `resolves.write: "last"`,
 // scope/usage/ecma.rs `anchor`): its last write made from its own function scope (eslint-scope's variableScope),

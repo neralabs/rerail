@@ -32,9 +32,9 @@
 //   list(x for x in y)           c4_call(<call>, "list"), c4_only(<call>, <gen>), c4_comp(<gen>, "generator"),
 //                                c4_simple(<gen>, <for x in y>), c4_elt(<gen>, <x>)
 //   dict([(k, v) for k, v in d]) c4_only(<call>, <listcomp>), c4_elt(<listcomp>, <(k, v)>), c4_pair(<(k, v)>)
-#include "python/ruff.rr"       // call_only, ruff_arg, call_nargs, call_nkwargs, ruff_qual
-#include "python/upgrade.rr"    // builtin_at
-#include "python/compare.rr"    // cmp_same, cmp_same_ask
+#include "python/ruff.rerail"       // call_only, ruff_arg, call_nargs, call_nkwargs, ruff_qual
+#include "python/upgrade.rerail"    // builtin_at
+#include "python/compare.rerail"    // cmp_same, cmp_same_ask
 
 // ---- 1. calls ----------------------------------------------------------------------------------------------------
 .decl c4_call(c: node, x: symbol)

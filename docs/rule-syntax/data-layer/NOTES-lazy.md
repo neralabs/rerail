@@ -1,12 +1,12 @@
 # Lazy group: notes
 
-| check | Python lines | .rr lines | rrlab dl (exact / events) | engine reader |
+| check | Python lines | .rerail lines | rrlab dl (exact / events) | engine reader |
 |---|---|---|---|---|
 | lazy_sql_surface | 446 | 124 | 36 / 36 | lowers |
 | lazy_adapter_ownership | 529 | 168 | 9 / 9 | lowers |
-| lazy_architecture | 3,840 | 484 + 503 library (`lib/data-layer/lazy-analyzer.rr`) + 318 generated table | 197 / 205 for the reach variant (see below); 176 / 205 as written | refuses `dfs_first` and `dfs_first_memo` |
+| lazy_architecture | 3,840 | 484 + 503 library (`lib/data-layer/lazy-analyzer.rerail`) + 318 generated table | 197 / 205 for the reach variant (see below); 176 / 205 as written | refuses `dfs_first` and `dfs_first_memo` |
 
-The generated table is `data-layer/lazy-architecture.tables.rr`. It is built by
+The generated table is `data-layer/lazy-architecture.tables.rerail`. It is built by
 `data-layer/gen-lazy-architecture.py`, and `--check` confirms it matches the linter at 2b1504adc. It holds every
 module-level string and string-set constant of the script, as `la_set(NAME, v)`.
 
@@ -58,7 +58,7 @@ The variant's 8 misses:
   - **LA-018 (the text scan) is `.mode log`.** The plugin never runs it, and production events drop it. It is still
     reported for `scan_files` events.
   - **No source-trigger gate.** "def " is one of its triggers, so it gates almost nothing.
-  - **Signature:** the allowlist is checked through signing.rr. A bad signature gives LA-000 at the script's line 1,
+  - **Signature:** the allowlist is checked through signing.rerail. A bad signature gives LA-000 at the script's line 1,
     as a gate.
   - **Budget:** `LA_budget` reports each code whose count of sites, taken before dedupe and allowlist, exceeds its
     ceiling in `.ratchet-baselines/lint_lazy_architecture.json` `/counts`. It reports at that file's line 1, as the

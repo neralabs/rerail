@@ -4,8 +4,8 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-a-control.rr"
-//   repeated, for_await, var_decl; fn_code (tsx/modules.rr, through the common library)
+#include "tsx/eslint-a-control.rerail"
+//   repeated, for_await, var_decl; fn_code (tsx/modules.rerail, through the common library)
 
 // ESLint's no-await-in-loop: an `await` that runs on every iteration of a loop, so the iterations wait for one
 // another. The awaiting forms are `await x`, `for await (…)` and `await using x = …`.
@@ -36,7 +36,7 @@ awaits(d, d) :- var_decl(d, "await using").
 using_await(n) :- var_decl(d, "await using"), within(n, d), kind(n, "await_expression"), node(_, d, _, s, _),
     node(_, n, _, s, _).
 // boundary(n): ESLint's climb stops at a function and at a for-await loop. For a method that is its parameters
-// and body (modules.rr's fn_code), not its computed name, which runs in the surrounding code:
+// and body (modules.rerail's fn_code), not its computed name, which runs in the surrounding code:
 //   for (;;) { class A { [await k]() {} } }      → the await
 .decl boundary(n: node)
 boundary(n) :- fn_code(n).

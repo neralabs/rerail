@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*"
 
-#include "tsx/eslint-a-control.rr"
+#include "tsx/eslint-a-control.rerail"
 //   body, lone, first_stmt, empty_body
 
 // ESLint's guard-for-in: a for-in loop whose body does not start by filtering keys. A body is guarded when it is

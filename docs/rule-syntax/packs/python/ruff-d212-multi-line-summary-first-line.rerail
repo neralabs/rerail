@@ -10,7 +10,7 @@
 //   """
 //   Summary.
 //   """                      ← D212
-#include "python/docstrings.rr"
+#include "python/docstrings.rerail"
 
 .violation D212(at: node) code "D212"
     "Move this docstring's summary onto the line with the opening quotes, removing the line break after them."

@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts" exclude "**/node_modules/**" exclude "**/dist/**" exclude "**/build/**" exclude "**/out/**" exclude "**/.next/**" exclude "**/coverage/**" exclude "**/vendor/**" exclude "**/.venv/**" exclude "**/.yarn/**" exclude "**/generated/**" exclude "**/__generated__/**" exclude "**/*.generated.*" exclude "**/*.gen.*" exclude "**/*.min.js" exclude "**/*.d.ts"
 
-#include "tsx/ts-a.rr"
+#include "tsx/ts-a.rerail"
 //   type_parent(x, p), rest_annotation(a)
 
 // typescript-eslint's no-explicit-any: every `any` type is reported.

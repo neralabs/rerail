@@ -1,7 +1,7 @@
 // tsx/node-trace: the uses of a Node.js built-in module that eslint-plugin-n's ReferenceTracker rules report
 // (prefer-global/*, prefer-promises/*, prefer-node-protocol, prefer-import/assert-strict, no-deprecated-api), in
 // the plugin's legacy mode: CommonJS require(), process.getBuiltinModule(), and ESM imports and re-exports. The
-// tracing itself is values.rr's; this library sets up its tables for a rule's trace map and sorts the uses by form.
+// tracing itself is values.rerail's; this library sets up its tables for a rule's trace map and sorts the uses by form.
 //
 // What a rule gets from this library:
 //   trace_module(m)          the rule traces built-in module m: "m" loads it, and "node:m" where Node has that
@@ -27,18 +27,18 @@
 //   n/prefer-global/console     import c from "node:console"        module_use(…, "console", "", "esm")
 //   n/prefer-promises/fs        fs.readFile(p, cb)                  module_use(…, "fs", "readFile", "call")
 //
-// The CommonJS require is the global one (values.rr: a CommonJS file's, by package type); process is a global in
+// The CommonJS require is the global one (values.rerail: a CommonJS file's, by package type); process is a global in
 // every file, as the policies declare it.
 //
 // Builds on tsx/values (api_use, export_all, node_module, node_global, api_known, module_load) and tsx/node
 // (builtin_spec).
 
-#include "tsx/node.rr"   // builtin_spec; values.rr
+#include "tsx/node.rerail"   // builtin_spec; values.rerail
 
 .decl trace_module(m: symbol) extensible
 .decl trace_member(m: symbol, x: symbol) extensible
 .decl trace_global(g: symbol)
-// The tables values.rr follows. (Other rules' tables may add rows; the uses below only ask for what is traced.)
+// The tables values.rerail follows. (Other rules' tables may add rows; the uses below only ask for what is traced.)
 node_module(m, m) :- trace_module(m).
 node_module(cat("node:", m), m) :- trace_module(m), builtin_spec(cat("node:", m)).
 api_known(@qname(m, x)) :- trace_path(m, x).
@@ -62,7 +62,7 @@ read_form("object_assignment_pattern", "destructured").
 read_form("import_specifier", "specifier"). read_form("export_specifier", "specifier").
 
 .decl global_use(at: node, g: symbol)
-// A global the file assigns is not followed (values.rr's env_written), though `globalThis.g` still is, as in
+// A global the file assigns is not followed (values.rerail's env_written), though `globalThis.g` still is, as in
 // ReferenceTracker, which checks isModifiedGlobal only on the variable it starts from.
 global_use(r, g) :- api_use(r, g, "read"), trace_global(g).
 

@@ -10,7 +10,7 @@
 //   raise RuntimeError("This is an {example} exception".format(example="example"))   ← EM103
 //   raise RuntimeError(("a " "{b}").format(b=1))                                    ← EM103
 //   raise RuntimeError(template.format(x))                                          not reported
-#include "python/misc2-messages.rr"
+#include "python/misc2-messages.rerail"
 
 .violation EM103(at: node) code "EM103"
     "Assign the result of this `.format()` call to a new variable such as `msg` before the `raise`, then pass that variable to the exception instead."

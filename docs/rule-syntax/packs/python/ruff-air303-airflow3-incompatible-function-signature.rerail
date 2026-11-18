@@ -15,8 +15,8 @@
 //   Dataset("ds1", {"extra": "metadata"})                     ← AIR303: pass `extra=`
 //   class L(BaseOperatorLink):
 //       def get_link(self, operator, dttm): ...               ← AIR303
-#include "python/misc-airflow.rr"
-#include "python/ruff-classes.rr"   // class_base_expr
+#include "python/misc-airflow.rerail"
+#include "python/ruff-classes.rerail"   // class_base_expr
 
 .violation AIR303(at: node, x: symbol, how: symbol) code "AIR303"
     "`{x}` has an incompatible signature in Airflow 3.0: {how}."

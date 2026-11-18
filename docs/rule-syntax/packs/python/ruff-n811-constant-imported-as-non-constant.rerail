@@ -9,7 +9,7 @@
 // alias matches `pep8-naming.ignore-names`. Ruff reads `import a.CONST as c` by its last segment.
 //   from mod import CONSTANT as constant     ← N811
 //   from mod import Q as Query               not reported
-#include "python/naming.rr"
+#include "python/naming.rerail"
 
 .violation N811(at: node, x: symbol, a: symbol) code "N811"
     "Drop `as {a}` or use an UPPER_CASE alias for the constant `{x}`, and update its uses; keep the alias if `{x}` is really a class."

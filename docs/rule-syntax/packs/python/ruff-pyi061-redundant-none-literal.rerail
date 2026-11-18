@@ -8,7 +8,7 @@
 // `Literal[1, None]` is `Literal[1] | None`. Nested Literals are flattened; each None is reported.
 //   x: Literal[None]           ← PYI061: write `None`
 //   y: Literal[1, None]        ← PYI061: write `Literal[1] | None`
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI061(at: node, msg: symbol) code "PYI061" "{msg}"
     suppress ruff "PYI061"

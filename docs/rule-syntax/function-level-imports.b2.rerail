@@ -28,7 +28,7 @@ allow("_internal/dynamic_import.py", "load_python_module").   // closed deferred
 //   5. candidate lists every code whose evidence holds, with a priority; FUNCTION_IMPORT takes the first.
 // Unlike the linter, nothing here matches module names against a list of internal packages; the module graph decides.
 
-#include "python/imports.rr"
+#include "python/imports.rerail"
 //   import_stmt(i)      i is an import or from-import statement
 //   module_text(i, m)   the module as written, absolute (relative imports resolved against the file's package)
 //   loads(i, q)         running i loads workspace module q, and each package above it. `from p import m` loads p.m
@@ -36,7 +36,7 @@ allow("_internal/dynamic_import.py", "load_python_module").   // closed deferred
 //   pkg_above(a, q)     q is a package containing module a (already initialising when a runs)
 //   binds(i, s)         s is a binding site that i creates, one per alias
 //   module_of(n, q)     node n is in workspace module q
-#include "python/names.rr"
+#include "python/names.rerail"
 //   ref_site(r, s)            reference r reads binding site s (the scope table behind resolves.binding)
 //   annotation(r)             r is in an annotation, including a string annotation's parsed body
 //   sym_of(n, q)              n denotes qualified name q (resolves.import)

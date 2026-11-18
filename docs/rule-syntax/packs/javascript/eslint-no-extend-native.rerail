@@ -3,7 +3,7 @@
 .language typescript
 .mode steer
 .scope include "**/*"
-#include "tsx/eslint-a-globals.rr"
+#include "tsx/eslint-a-globals.rerail"
 //   es_builtin(x), global_ref_to(r, x), static_prop(m, o, x), estree_parent(n, p), callee(c, f), call_arg(c, a, i), capital(x)
 
 // ESLint's no-extend-native: writing to the prototype of a capitalised ECMAScript built-in.

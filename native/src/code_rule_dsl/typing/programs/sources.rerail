@@ -15,12 +15,12 @@
 // the tape of that content stored. An unchanged key is no delta, so its file is not asked again: the requests and
 // their answers are kept as any stratum's reads are.
 //
-// The imports (python/modules.rr) are resolved here: each one a library file answers is loaded as a document too, and
+// The imports (python/modules.rerail) are resolved here: each one a library file answers is loaded as a document too, and
 // its imports resolved in turn, so the phase ends when the import frontier is closed. A library's tape is the same two
 // rules: its key names the resolved file's content (`file_digest`), and the result is the loaded document's tape.
 
-#include "core.rr"
-#include "python/modules.rr"
+#include "core.rerail"
+#include "python/modules.rerail"
 
 .phase sources
 .export document, library
@@ -59,7 +59,7 @@ document(p, g, c) :- doc_key(p, c, g, _), doc_tape(p, _).
 .decl library_key(q: symbol, f: symbol, c: symbol, v: symbol)
 library_key(q, f, c, "tape-1") :- py_resolves(q, f, _), file_digest(f, c).
 
-// The result: the tape of the document its load gave (python/modules.rr asks for it: `load(f, q, "python")`).
+// The result: the tape of the document its load gave (python/modules.rerail asks for it: `load(f, q, "python")`).
 .decl library_tape(q: symbol, t: tape)
 library_tape(q, t) :- library_key(q, _, _, _), loaded(f, q, "python"), doc(d, f, q), tape_of(d, t).
 .cache library_tape by library_key

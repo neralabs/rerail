@@ -12,8 +12,8 @@
 //   zip(*iterators)                   ← B905
 //   zip([1, 2], repeat(1))            not reported: infinite
 //   zip("a", "b", strict=False)       not reported
-#include "python/bugbear.rr"
-#include "python/version.rr"   // targets
+#include "python/bugbear.rerail"
+#include "python/version.rerail"   // targets
 
 .violation B905(at: node) code "B905"
     "Pass `strict=` explicitly: `strict=True` when lengths must match, `strict=False` when truncation is intended."

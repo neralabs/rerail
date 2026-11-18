@@ -29,8 +29,8 @@
 //   - Ruff's AST has no parentheses: `(x)` is x, and a tuple's parentheses belong to the tuple.
 //   - A qualified name is what Ruff's resolve_qualified_name gives: through `import` and `from … import`,
 //     aliases included. A builtin is "builtins.x" here when no binding in the file shadows it.
-#include "python/pyflakes.rr"
-#include "python/version.rr"
+#include "python/pyflakes.rerail"
+#include "python/version.rerail"
 
 // ---- 1. expressions ----------------------------------------------------------------------------------------------
 // ast_up(e, p): p is the nearest non-parenthesis ancestor of e: `(a + b) * c` gives the `*` for `a + b`.

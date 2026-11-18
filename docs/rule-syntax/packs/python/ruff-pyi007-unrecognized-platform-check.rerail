@@ -10,7 +10,7 @@
 //   if sys.platform > "linux":        ← PYI007: other operator
 //   if sys.platform == f"linux":      ← PYI007: not a plain string
 //   if sys.platform == "linux":       fine
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI007(at: node, msg: symbol) code "PYI007" "{msg}"
     suppress ruff "PYI007"

@@ -9,7 +9,7 @@
 //   for x in xs: pass
 //   else: break              ← F701
 //   while c: break           not reported
-#include "python/pyflakes.rr"
+#include "python/pyflakes.rerail"
 //   outside_loop(s)  break/continue s has no loop body around it in its def, class or module
 
 .violation F701(at: node) code "F701" "`break` outside loop"

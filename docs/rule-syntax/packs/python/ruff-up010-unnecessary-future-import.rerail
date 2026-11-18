@@ -11,7 +11,7 @@
 //   from __future__ import print_function, generators     ← UP010
 //   from __future__ import with_statement                 not reported when `print(with_statement)` follows
 //   from __future__ import annotations                    not reported: still has an effect
-#include "python/ast.rr"
+#include "python/ast.rerail"
 //   ast_name(n, x), expr_ctx(n, c), look(n, x, s)
 
 .violation UP010(at: node) code "UP010"

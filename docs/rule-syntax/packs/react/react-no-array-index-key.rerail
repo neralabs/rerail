@@ -12,8 +12,8 @@
 //   React.cloneElement(child, { key: i })                reported
 // As in the rule, the name is not resolved: inside the call, any key that uses a name some enclosing iterator call
 // gave its index is reported, even if an inner scope rebinds it.
-#include "tsx/react.rr"
-#include "tsx/eslint-a-common.rr"
+#include "tsx/react.rerail"
+#include "tsx/eslint-a-common.rerail"
 
 .violation index_key(at: node)
     code "react/no-array-index-key"

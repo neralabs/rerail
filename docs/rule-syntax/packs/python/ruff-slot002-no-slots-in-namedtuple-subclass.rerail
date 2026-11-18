@@ -11,7 +11,7 @@
 //       pass
 //   class Good(namedtuple("foo", ["str", "int"]), Enum):     not reported
 //       pass
-#include "python/misc2-slots.rr"
+#include "python/misc2-slots.rerail"
 
 .violation SLOT002(at: node) code "SLOT002"
     "Add `__slots__ = ()` to this named-tuple subclass so instances skip the per-instance `__dict__`; leave it if the class assigns instance attributes, which an empty `__slots__` forbids."

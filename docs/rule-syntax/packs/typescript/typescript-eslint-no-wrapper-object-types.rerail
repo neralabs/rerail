@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/ts-b.rr"
+#include "tsx/ts-b.rerail"
 //   type_ref, heritage_ref, type_global
 
 // typescript-eslint's no-wrapper-object-types: `String`, `Number`, `Boolean`, `BigInt`, `Symbol` and `Object` are

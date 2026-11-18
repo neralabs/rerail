@@ -13,7 +13,7 @@
 //   except (a, b) * (c, d):                  ← B030 at the product
 //   except (ValueError, *(RuntimeError, TypeError)):   not reported
 //   except (a, b) + (c, d):                  not reported
-#include "python/bugbear.rr"
+#include "python/bugbear.rerail"
 
 .violation B030(at: node) code "B030"
     "`except` handlers should only be exception classes or tuples of exception classes"

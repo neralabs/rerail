@@ -9,7 +9,7 @@
 // checked when the call has `*args` or `**kwargs`.
 //   "{} {}".format(1)             ← F524
 //   "{bar}".format()              ← F524
-#include "python/pyflakes-format.rr"
+#include "python/pyflakes-format.rerail"
 //   format_call(c, v), brace_auto(v, n), brace_index(v, i), brace_keyword(v, x), call_npos(c, n), call_kw(c, x, a)
 
 .violation F524(at: node) code "F524" "`.format` call is missing argument(s) for placeholder(s)"

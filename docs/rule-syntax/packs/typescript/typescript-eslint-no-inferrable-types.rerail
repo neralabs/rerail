@@ -4,11 +4,11 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/ts-a.rr"
+#include "tsx/ts-a.rerail"
 //   ts_keyword, type_child, deparen
-#include "tsx/eslint-a-functions.rr"
+#include "tsx/eslint-a-functions.rerail"
 //   function_node, fn_param
-#include "tsx/eslint-a-expressions.rr"
+#include "tsx/eslint-a-expressions.rerail"
 //   number_lit, bigint_lit
 
 // typescript-eslint's no-inferrable-types: an explicit type that TypeScript would infer from the initial value.

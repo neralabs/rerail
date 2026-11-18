@@ -9,7 +9,7 @@
 //   pages/_document.js:  the same                                             fine
 // The plugin tests the file name: "/app/" in it, or the part after its first "pages" named _document….
 
-#include "tsx/next.rr"
+#include "tsx/next.rerail"
 
 .violation before(at: node) code "@next/next/no-before-interactive-script-outside-document"
     "`next/script`'s `beforeInteractive` strategy should not be used outside of `pages/_document.js`. See: https://nextjs.org/docs/messages/no-before-interactive-script-outside-document"

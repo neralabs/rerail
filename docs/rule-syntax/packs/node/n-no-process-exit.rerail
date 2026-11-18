@@ -11,7 +11,7 @@
 //   const { exit } = process; exit()      not: no member expression
 // No scope analysis: a local `process` is reported too, as the selector reads names only.
 
-#include "tsx/node.rr"   // called
+#include "tsx/node.rerail"   // called
 
 .violation process_exit(at: node) code "n/no-process-exit" "Don't use process.exit(); throw an error instead."
     suppress eslint "n/no-process-exit"

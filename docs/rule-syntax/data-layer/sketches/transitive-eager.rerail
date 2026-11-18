@@ -10,11 +10,11 @@
 // One memo is shared by all functions, and a function met again while its own search is
 // still open counts as reaching nothing, so on call cycles the answer depends on order.
 
-#include "python/ast.rr"
+#include "python/ast.rerail"
 //   py_frame, visit_index
-#include "python/names.rr"
+#include "python/names.rerail"
 //   sym_of, ref_site, binding_value, site_annotation, attr_of, annotation
-#include "python/calls.rr"
+#include "python/calls.rerail"
 //   callee, call_arg
 
 // From the rest of the LEG port (data-layer/checks/group-3.md, legacy_execution_surfaces):

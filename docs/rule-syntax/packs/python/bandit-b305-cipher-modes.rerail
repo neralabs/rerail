@@ -7,9 +7,9 @@
 //   from cryptography.hazmat.primitives.ciphers import modes
 //   modes.ECB()                                B305
 //   modes.GCM(iv)                              not reported
-// How Bandit reads the call's name, and the list: python/security.rr (blacklisted).
+// How Bandit reads the call's name, and the list: python/security.rerail (blacklisted).
 
-#include "python/security.rr"   // blacklisted: Bandit's B001 over calls and imports
+#include "python/security.rerail"   // blacklisted: Bandit's B001 over calls and imports
 
 .violation B305(at: node) code "B305"
     "Replace ECB with an authenticated mode such as GCM; ECB leaks patterns in the data."

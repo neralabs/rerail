@@ -8,7 +8,7 @@
 // comparison mistyped with a comma: `assert len(xs), 2` meant `assert len(xs) == 2`.
 //   assert len(fruits), 2        ← RUF040 at 2
 //   assert ok, "always true"     not reported
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 
 .violation RUF040(at: node) code "RUF040"
     "Use a string as the assert message; if this literal was meant to be compared with the condition, write the comparison instead, as in `assert cond == value`."

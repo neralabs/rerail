@@ -13,7 +13,7 @@
 //   ec.generate_private_key(ec.SECP192R1(), b)       not reported: Bandit cannot read a call
 //   rsa.generate_private_key(65537, size)            not reported
 
-#include "python/security.rr"   // qual_call, kwarg, pos_arg, literal, truthy
+#include "python/security.rerail"   // qual_call, kwarg, pos_arg, literal, truthy
 
 .violation B505(at: node) code "B505"
     "Generate this key with at least 2048 bits for RSA or DSA, or a curve of at least 224 bits for EC; smaller keys can be broken."

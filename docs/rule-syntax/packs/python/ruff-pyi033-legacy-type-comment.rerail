@@ -9,7 +9,7 @@
 // `# noqa # type: int` is not one.
 //   x = 1  # type: int        ← PYI033
 //   x = 1  # type: ignore     fine
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI033(at: node) code "PYI033" "Replace this type comment with an inline annotation, such as `x: int = 1` or a per-parameter annotation; stubs never need type comments. Leave `type: ignore` comments alone."
     suppress ruff "PYI033"

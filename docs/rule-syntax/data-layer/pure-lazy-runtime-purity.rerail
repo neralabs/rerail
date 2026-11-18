@@ -7,7 +7,7 @@
 // Python linter: scripts/lint_pure_lazy_runtime_purity.py. Three entry points, chosen by the `entryPoint` option:
 //   scan_source  one file at a time: each def decorated @pure_lazy (by its last name), and every def inside one
 //   scan_paths   the project: the defs decorated @pure_lazy / @lazy, closed over the calls they make (cross-file,
-//                through imports and base classes; lib/data-layer/purity-calls.rr), stopping at @legacy_* defs.
+//                through imports and base classes; lib/data-layer/purity-calls.rerail), stopping at @legacy_* defs.
 //                A def reached only by the closure is "strict": any receiver of a protected attribute counts. A
 //                second closure starts at *_lazy defs with an owner parameter (txn, conn, …) that call a
 //                plan-helper terminal (grammar_rows_lazy, …); its defs report only PLP-001…005.
@@ -30,9 +30,9 @@
 // Each visit stops at the first finding in that node, so nothing under a reported node is reported again.
 // Messages are the linter's, so that the plugin can match findings with the allowlist's entries.
 
-#include "data-layer/purity-calls.rr"
-#include "data-layer/signing.rr"
-#include "../data-layer/pure-lazy-runtime-purity.tables.rr"
+#include "data-layer/purity-calls.rerail"
+#include "data-layer/signing.rerail"
+#include "../data-layer/pure-lazy-runtime-purity.tables.rerail"
 
 // ==== 1. spelling =================================================================================================
 // plp_cast(c, x): `cast(T, x)`; the linter looks through it (_unwrap_passthrough_expr).

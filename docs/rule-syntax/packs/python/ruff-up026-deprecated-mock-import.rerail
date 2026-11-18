@@ -12,7 +12,7 @@
 //                                 imports the `mock` package somewhere (Ruff's seen_module)
 //   x = mock.mock               not reported: nothing is read from it
 // The JSON's three clauses, one message each.
-#include "python/upgrade-imports.rr"
+#include "python/upgrade-imports.rerail"
 //   plain_import(i, a, m, l), from_stmt(i, m)
 
 .violation UP026(at: node, msg: symbol) code "UP026" "{msg}"

@@ -25,10 +25,10 @@
 // Builds on tsx/eslint-a-expressions (deparen, static_prop), tsx/eslint-a-functions (call_arg, call_arg_count,
 // token_text, token_text_ask), tsx/eslint-b-scope (builtin_ref, expr_name, global_off, and through it
 // eslint-a-globals' null_or_undefined) and tsx/modules (program, source_type), which brings tsx/names (decl_site).
-#include "tsx/eslint-a-functions.rr"
-#include "tsx/eslint-a-expressions.rr"
-#include "tsx/eslint-b-scope.rr"
-#include "layout.rr"
+#include "tsx/eslint-a-functions.rerail"
+#include "tsx/eslint-a-expressions.rerail"
+#include "tsx/eslint-b-scope.rerail"
+#include "layout.rerail"
 
 // ---- names ---------------------------------------------------------------------------------------------------------
 // id_value(n, x): an identifier may spell its letters as escapes, and ESTree's `name` is the decoded name, which
@@ -127,7 +127,7 @@ script_top(p) :- program(d, p), source_type(d, "script").
 .decl global_member(e: node, g: symbol, x: symbol)
 global_member(e, g, x) :- static_prop(e, o, x), deparen(o, r), global_named(r, g).
 .decl global_named(r: node, g: symbol)  // r is the global g: a built-in reference, or g read off the global object
-// values.rr's env_written is ReferenceTracker's isModifiedGlobal: the file writes the global, so it is not followed.
+// values.rerail's env_written is ReferenceTracker's isModifiedGlobal: the file writes the global, so it is not followed.
 //   Math = m;   Math.pow(a, b)        not reported
 global_named(r, g) :- builtin_ref(r, g), docof(r, d), !env_written(d, g).
 global_named(r, g) :- static_prop(r, o, g), deparen(o, w), global_named(w, x),
@@ -164,7 +164,7 @@ ts_expression("type_assertion").
 // ---- adjacent tokens -----------------------------------------------------------------------------------------------
 // A fix that swaps `Math.pow(a, b)` for `a**b` can glue its first token to the one before: `a+Math.pow(++b, c)`
 // must become `a+ ++b**c`, `typeof Math.pow(a, b)` stays apart anyway. touching(t, n): nothing between them.
-// touching(n, x): the code before n touches it; x is that code (layout.rr's touch_before, for the nodes the
+// touching(n, x): the code before n touches it; x is that code (layout.rerail's touch_before, for the nodes the
 // including rule puts in layout_at).
 .decl touching(n: node, x: symbol)
 touching(n, x) :- touch_before(n, x).

@@ -19,10 +19,10 @@
 // Compared with the same-meaning version, which stops at the first component element, this one asks what
 // that component does with its children.
 
-#include "tsx/names.rr"
+#include "tsx/names.rerail"
 //   sym_of(n, q)          identifier or member chain n denotes exported symbol q ("module#name"). Follows imports,
 //                         aliases, `import * as`, and re-export chains across files. Stops at package boundaries.
-#include "tsx/jsx.rr"
+#include "tsx/jsx.rerail"
 //   tag(e, t)             the tag name of element e (none for <>…</>)
 //   host_tag(t)           t is a lowercase intrinsic tag: div, span, …
 //   component(q, f)       function f defines component q: function, arrow, memo(…) or forwardRef(…)

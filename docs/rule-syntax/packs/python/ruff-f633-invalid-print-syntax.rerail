@@ -8,7 +8,7 @@
 // TypeError. Reported at `print`, when print is the builtin where it is read.
 //   print >> sys.stderr, "Hello"      ← F633
 //   print("Hello", file=sys.stderr)   not reported
-#include "python/pyflakes.rr"
+#include "python/pyflakes.rerail"
 
 .violation F633(at: loc) code "F633"
     "Replace `>>` with print()'s `file=` argument, as in `print(msg, file=sys.stderr)`."

@@ -16,7 +16,7 @@
 // - a Constant's value (`ast_value`, str(v)) is `value`, its `value_kind` `value_type_of`;
 // - qualified names (`replace(coalesce(rx_extract(path, …)), '/', '.')`): from the path (`conditional_module`);
 // - the `pythonAst` stage runs CPython's `ast.parse`, and a file it rejects fails the stage: CPython 3.13's verdict,
-//   `cpython_syntax_error` (core.rr's `syntax_error(d, l, msg)`), gates the documents.
+//   `cpython_syntax_error` (core.rerail's `syntax_error(d, l, msg)`), gates the documents.
 // Options: `entryPoint` (default "all") from `option_value`: `conditional_architecture_findings` runs the SQL's case
 // query (no local findings, and every structural detector; the default query keeps six). `parameters` is not read.
 
@@ -52,7 +52,7 @@ conditional_defs("function_definition").
 .decl conditional_decorated(kind: symbol)
 conditional_decorated("decorated_definition").
 
-// o: the def or class whose `ast` subtree holds n directly (no def or class between). Mirrors python/ast.rr
+// o: the def or class whose `ast` subtree holds n directly (no def or class between). Mirrors python/ast.rerail
 // def_frame / py_frame (decorator handling), extended to classes for `ast_class`.
 .decl conditional_owner(n: node, o: node)
 conditional_owner(n, o) :- nearest(n, o, conditional_frames), !node(_, o, "decorator", _, _).
@@ -74,7 +74,7 @@ conditional_defname(f, s) :- field(f, "name", nm), text(nm, s).
 conditional_in_def(n, f) :- inside(n, f, conditional_defs).
 conditional_in_def(n, f) :- inside(n, dd, conditional_decorated), field(dd, "definition", f), node(_, f, "function_definition", _, _), n != f.
 
-// unparen: CPython has no node for parentheses. Mirrors python/ast.rr unparen.
+// unparen: CPython has no node for parentheses. Mirrors python/ast.rerail unparen.
 .decl conditional_unparen(e: node, m: node)
 conditional_unparen(e, e) :- node(_, e, _, _, _), !node(_, e, "parenthesized_expression", _, _).
 conditional_unparen(e, m) :- node(_, e, "parenthesized_expression", _, _), child(e, i, 0), conditional_unparen(i, m).
@@ -86,7 +86,7 @@ conditional_callee(c, f) :- node(_, c, "call", _, _), field(c, "function", f0), 
 conditional_callee_name(c, s) :- conditional_callee(c, f), node(_, f, "identifier", _, _), text(f, s).
 conditional_callee_name(c, s) :- conditional_callee(c, f), node(_, f, "attribute", _, _), field(f, "attribute", a), text(a, s).
 
-// mirrors python/ast.rr ast_name. `ast.Name`s: identifiers in expression position (not an attribute's attr, a
+// mirrors python/ast.rerail ast_name. `ast.Name`s: identifiers in expression position (not an attribute's attr, a
 // definition's, keyword's or parameter's name, an imported name, a global/nonlocal name, an `except … as` name, a
 // match pattern's capture, keyword or star name, or a PEP 695 type parameter's name: CPython keeps those as strings).
 // In a match pattern the Names are a class pattern's class and a dotted value pattern's head (`case Color.RED`):
@@ -566,7 +566,7 @@ conditional_compile_delegates(c) :- conditional_method(c, "compile", m), conditi
 conditional_finding(p, l) :- conditional_case(1), conditional_shared_class(c, "impl.common.l2070_server_plan.steps.sql_conditional.SqlConditionalStep"),
     !conditional_compile_delegates(c), node(d, c, _, _, _), doc(d, p, _), line(c, l).
 
-// Store context (mirrors python/names.rr tgt): assignment, augmented assignment, for and comprehension targets and
+// Store context (mirrors python/names.rerail tgt): assignment, augmented assignment, for and comprehension targets and
 // `with … as` targets, through tuple and list patterns.
 .decl conditional_store(t: node)
 conditional_store(l) :- node(_, a, "assignment", _, _), field(a, "left", l).

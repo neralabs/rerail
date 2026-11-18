@@ -4,9 +4,9 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/ts-a.rr"
+#include "tsx/ts-a.rerail"
 //   in_chain(x); and from eslint-a-common, deparen(e, x)
-#include "tsx/eslint-a-expressions.rr"
+#include "tsx/eslint-a-expressions.rerail"
 //   literal_type(e, t)
 
 // typescript-eslint's no-dynamic-delete: `delete o[k]` where k is not a constant key. A string or number

@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // path_class(n): the JSON util `path-class`, used where the JSON says `matches: "path-class"`
 .decl pth210_path_class(n: node)
@@ -73,7 +73,7 @@ PTH210(n, S) :- kind(n, "call"), field(n, "function", c1), pth210_with_suffix(c1
 // PTH210_single_dot_suffix(n): a finding at node n, from clause `single-dot-suffix`.
 // Each rule below is one way the JSON `rule` can match.
 // The JSON `constraints` on S are added to every rule.
-// `options` carries JSON settings that have no .rr form yet.
+// `options` carries JSON settings that have no .rerail form yet.
 .violation PTH210_single_dot_suffix(at: node) code "PTH210" "Pass a suffix such as `\".py\"`, or `\"\"` to drop it: before Python 3.14, `with_suffix(\".\")` raises ValueError."
     suppress noqa "PTH210"
 PTH210_single_dot_suffix(n) :- kind(n, "call"), field(n, "function", c1),

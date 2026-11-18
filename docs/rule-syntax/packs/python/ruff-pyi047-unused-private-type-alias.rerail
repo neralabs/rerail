@@ -11,7 +11,7 @@
 //   _A: TypeAlias = int                              ← PYI047 at the statement when nothing mentions _A
 //   type _B = int                                    ← PYI047 at `_B` (and `type _B[T] = list[T]`)
 //   _C: TypeAlias = list[[0 for _y in range(3)]]     ← PYI047 at `_y` too, in a stub
-#include "python/typing.rr"
+#include "python/typing.rerail"
 
 .violation PYI047(at: node, msg: symbol) code "PYI047" "{msg}"
     suppress ruff "PYI047"

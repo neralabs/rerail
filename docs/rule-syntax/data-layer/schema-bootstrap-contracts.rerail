@@ -18,12 +18,12 @@
 //           and every annotated assignment below it, nested defs' included), at the annotation; or a
 //           schema_txn / schema_transaction / current_schema_txn parameter of a non-lazy def typed
 //           SyncSchemaTransaction or AsyncSchemaTransaction
-// Annotations are read by their words (lib/data-layer/boot-python.rr's ann_word_s: Name ids and Attribute
+// Annotations are read by their words (lib/data-layer/boot-python.rerail's ann_word_s: Name ids and Attribute
 // attrs; a whole-string annotation is parsed). Names are matched by spelling; nothing is resolved. Every def
 // counts, nested ones and methods included; lambdas do not.
 
-#include "python/ast.rr"
-#include "data-layer/boot-python.rr"     // callee_name, deco_word, ann_word_s, ann_value_word, ann_slice_word
+#include "python/ast.rerail"
+#include "data-layer/boot-python.rerail"     // callee_name, deco_word, ann_word_s, ann_value_word, ann_slice_word
 
 // sbc_param(f, nm, x, a): parameter x (name node nm) of def f, any kind, self and cls aside; a its annotation or unset.
 .decl sbc_param(f: node, nm: node, x: symbol, a: loc)

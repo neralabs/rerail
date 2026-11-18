@@ -12,7 +12,7 @@
 //       def __init__(self): ...      ← ANN204
 //       def __str__(self): ...       ← ANN204
 //   def __dunder__(): ...            not reported here: not a method (ANN202)
-#include "python/annotations.rr"
+#include "python/annotations.rerail"
 
 .violation ANN204(at: node, name: symbol) code "ANN204"
     "Add a return type annotation to `{name}`, such as `-> None` for `__init__` or `-> str` for `__str__`."

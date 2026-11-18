@@ -8,7 +8,7 @@
 // conversion (`d`, `s`, `r`, `f`, …). Python raises ValueError. Only the first error counts.
 //   "%y" % (1,)                   ← F509
 //   "%5.2f" % (1,)                not reported
-#include "python/pyflakes-format.rr"
+#include "python/pyflakes-format.rerail"
 //   percent_fmt(b, s, r, v), pct_error(v, what)
 
 .violation F509(at: node) code "F509"

@@ -19,7 +19,7 @@
 // brackets and quotes balance (to a depth of five), and the text has the shape of a Python statement in a small
 // grammar of expressions (names, literals, brackets, calls, attributes, operators, lambda, `x if c else y`),
 // targets, simple statements and one-line compound statements. Text over 200 characters is not tested.
-#include "python/misc2-noqa.rr"
+#include "python/misc2-noqa.rerail"
 //   own_line_comment(c): no token comes before comment c on its line
 
 .violation ERA001(at: node) code "ERA001"

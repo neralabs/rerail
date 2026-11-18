@@ -4,7 +4,7 @@
 .mode steer
 .scope include "**/*.ts", "**/*.tsx", "**/*.mts", "**/*.cts"
 
-#include "tsx/ts-a-returns.rr"
+#include "tsx/ts-a-returns.rerail"
 //   fn_value, fn_decl, valid_expr_return, ancestor_return, valid_return, return_head
 
 // typescript-eslint's explicit-function-return-type: functions and methods say what they return.

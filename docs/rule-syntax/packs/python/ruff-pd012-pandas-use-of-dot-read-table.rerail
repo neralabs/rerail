@@ -9,8 +9,8 @@
 //   pd.read_table("data.csv", sep=",")         ← PD012
 //   pd.read_table("data.tsv", sep=", ")        not reported
 //   pd.read_table("data.tsv")                  not reported
-#include "python/ruff.rr"
-#include "python/misc-seen.rr"
+#include "python/ruff.rerail"
+#include "python/misc-seen.rerail"
 
 .violation PD012(at: node) code "PD012"
     "Replace `read_table` with `read_csv` (import it if needed) and drop `sep=\",\"`; `read_csv` splits on commas by default and takes the same other arguments."

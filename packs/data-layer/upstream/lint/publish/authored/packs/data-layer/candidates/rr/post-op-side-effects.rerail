@@ -31,12 +31,12 @@
 // How to read this file
 //   1. pos_file names the four files; pos_top, pos_class and pos_member read their module-level statements.
 //   2. Each code is then a set comparison between what the files declare and what the policy signed.
-//   3. The three signatures are checked by lib/data-layer/signing.rr. The signed values that live in the linter
+//   3. The three signatures are checked by lib/data-layer/signing.rerail. The signed values that live in the linter
 //      itself (POST_OP_FATE_OVERRIDES, POST_OP_FATES_SIGNATURE, POST_OP_SURFACE_SIGNATURE) are tables here, and the
 //      options fateOverrides, fatesSignature and surfaceSignature replace them.
 
-#include "python/ast.rr"            // asgstmt, assign_target, assign_value, unparen, str_const, ast_name, sig_param
-#include "data-layer/signing.rr"   // allow_entry, allow_sig -> allow_status
+#include "python/ast.rerail"            // asgstmt, assign_target, assign_value, unparen, str_const, ast_name, sig_param
+#include "data-layer/signing.rerail"   // allow_entry, allow_sig -> allow_status
 
 // ---- the four files and their module-level statements ---------------------------------------------------------------
 .decl pos_file(d: number, role: symbol)

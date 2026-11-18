@@ -8,9 +8,9 @@
 //   const { Buffer } = require("buffer")     import { Buffer } from "node:buffer"     require("buffer").Buffer
 //   export * from "buffer"                   reported (the export re-exports Buffer)
 //   "never":  Buffer.from(x)  globalThis.Buffer                                          reported
-// The module is traced through require(), process.getBuiltinModule() and imports (node-trace.rr).
+// The module is traced through require(), process.getBuiltinModule() and imports (node-trace.rerail).
 
-#include "tsx/node-trace.rr"   // prefer_global_use
+#include "tsx/node-trace.rerail"   // prefer_global_use
 module_global("Buffer", "buffer", "Buffer").
 
 .violation prefer_global(at: node, msg: symbol) code "n/prefer-global/buffer" "{msg}"

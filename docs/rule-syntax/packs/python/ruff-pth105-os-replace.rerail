@@ -9,7 +9,7 @@
 //   os.replace("a", "b")                  ← PTH105: `Path("a").replace("b")`
 //   os.replace("a", "b", src_dir_fd=None) ← PTH105
 //   os.replace("a", "b", dst_dir_fd=3)    not reported
-#include "python/pathlib.rr"
+#include "python/pathlib.rerail"
 //   pth_call(c, q, f)   c calls q; f the callee      kw_set(c, k)   keyword k is not None (python/pathlib)
 
 .violation PTH105(at: node) code "PTH105"

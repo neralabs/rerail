@@ -8,7 +8,7 @@
 // (positionally or as `sep=`, nothing else). A version like "1.2.post1" has a part int cannot read.
 //   tuple(map(int, __version__.split(".")))           ← RUF048 at the map call
 //   tuple(map(int, __version__.split(".", 1)))        not reported: a maxsplit
-#include "python/ruff.rr"
+#include "python/ruff.rerail"
 
 .violation RUF048(at: node) code "RUF048"
     "`int` fails on non-numeric version parts such as `post1`; parse with `packaging.version.parse(...)` instead, unless the version is known to be purely numeric."

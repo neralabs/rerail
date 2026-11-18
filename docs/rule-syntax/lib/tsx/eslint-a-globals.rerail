@@ -28,7 +28,7 @@
 // Builds on tsx/eslint-a-common (deparen, estree_parent, static_prop, call_arg, call_arg_count, this_owner,
 // capital; also used by the rules), tsx/modules (program, source_type, strict_scope, function_kind) and tsx/names
 // (ref, ref_site, decl_site, directive_global, es_global).
-#include "tsx/eslint-a-common.rr"
+#include "tsx/eslint-a-common.rerail"
 
 // ---- globals -------------------------------------------------------------------------------------------------------
 // es_builtin: the `globals` package's es2026 set, which ESLint 9.39 ships as ECMASCRIPT_GLOBALS, plus the four

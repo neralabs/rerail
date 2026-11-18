@@ -2,7 +2,7 @@
 .description "A rule's input file is read from outside the repository: an absolute path, or one that climbs out of it."
 .language rr
 .mode steer
-.scope include "**/*.rr"
+.scope include "**/*.rerail"
 // Rerail checking rules with rules (decision 0061). An `.input` reads a file; a rule written for one repository
 // should read that repository's files only:
 //   .input facts(IO=file, filename="facts.csv")          fine

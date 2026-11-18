@@ -8,7 +8,7 @@
 //   <div dangerouslySetInnerHTML={{ __html: html }} />    reported
 //   <Html dangerouslySetInnerHTML={…} />                   not: a component decides what the prop does
 // The rule's one option, customComponentNames, is not in the JSON: components are never checked.
-#include "tsx/react.rr"
+#include "tsx/react.rerail"
 
 .violation no_danger(at: node)
     code "react/no-danger"

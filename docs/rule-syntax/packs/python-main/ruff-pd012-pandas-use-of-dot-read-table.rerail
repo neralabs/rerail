@@ -6,7 +6,7 @@
 .scope include "**/*"
 // Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
 
-#include "python/names.rr"
+#include "python/names.rerail"
 
 // PD012(n): a finding at node n, from clause `pandas-use-of-dot-read-table`.
 // Each rule below is one way the JSON `rule` can match.
