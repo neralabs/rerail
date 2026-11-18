@@ -1,1 +1,1 @@
-On Windows, Rerail no longer loses a running daemon of 0.1.4 or earlier: `rerail status` deleted its record and said Rerail was not installed, and `rerail daemon stop` then said the daemon was not running and left it on. Both now find it, and the stop ends it.
+On Windows, Rerail no longer loses a daemon of 0.1.4 or earlier that still runs after an upgrade: `rerail status` deleted its record, so `rerail daemon stop` said it was not running and left it on, and `rerail daemon start` started a second daemon beside it. Now they find that daemon, and the stop ends it.
