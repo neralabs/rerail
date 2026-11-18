@@ -870,8 +870,9 @@ fn anchored_walks_find_the_unanchored_roots() {
 }
 
 /// Decision 0365 on Metal: the anchors evaluated on the device (`label_formula`), for the label passes past the
-/// recursive groups, the wave's listed roots and the root records' walks. With and without them (`RERAIL_ANCHORS`),
-/// on Metal both: the settled findings of the wave's roots are the same, and so are the root records from every node.
+/// recursive groups, the wave's listed roots and the root records' walks, their text tests reading the walks' rows; and
+/// the formula passes as device formulas (§9). With and without them (`RERAIL_ANCHORS`, `RERAIL_SETS=walk`), on Metal
+/// both: the settled findings of the wave's roots are the same, and so are the root records from every node.
 #[cfg(all(target_os = "macos", feature = "metal-tests"))]
 #[test]
 fn on_metal_anchored_walks_find_the_unanchored_roots() {
@@ -893,7 +894,9 @@ fn on_metal_anchored_walks_find_the_unanchored_roots() {
     type Records = Vec<Option<Vec<BTreeSet<String>>>>;
     let run = |mode: &str| {
         // SAFETY: nextest runs each test in a process of its own.
+        // Off: no anchors, and every formula pass walked (`RERAIL_SETS=walk`).
         unsafe { std::env::set_var("RERAIL_ANCHORS", mode) };
+        unsafe { std::env::set_var("RERAIL_SETS", if mode == "off" { "walk" } else { "formulas" }) };
         drop(std::mem::take(&mut *crate::code_rule_dsl::prof::stages()));
         let started = std::time::Instant::now();
         let found: Vec<_> = waves
@@ -929,6 +932,7 @@ fn on_metal_anchored_walks_find_the_unanchored_roots() {
     let (unanchored, plain) = run("off");
     let (anchored, with) = run("on");
     unsafe { std::env::remove_var("RERAIL_ANCHORS") };
+    unsafe { std::env::remove_var("RERAIL_SETS") };
     let settled = |found: &(Vec<Vec<BTreeSet<u32>>>, Vec<(usize, usize)>, bool), w: usize, c: usize, t: usize| -> BTreeSet<u32> {
         if !found.1.contains(&(c, t)) {
             return found.0[c][t].clone();
@@ -1056,9 +1060,17 @@ fn anchor_rows_per_answer() {
                     let pass_starts: Vec<u32> = domain(d, view, sets).filter(|&n| pass_entry.admits(view, n)).collect();
                     let rows = pass_starts.len() as u64;
                     let answers = sets.get(clause.labels.offset() + at).map_or(0, |bits| bits.iter().map(|w| u64::from(w.count_ones())).sum());
-                    // Anchored starts where a pass walks from each start (a roots or targets walk).
-                    let anchor = if route != "formula" && route != "pattern" && matches!(def, Label::Roots(..) | Label::Targets(..)) {
+                    // Anchored starts where a pass walks from each start (a roots, targets or count walk).
+                    let anchor = if route != "formula" && route != "pattern" && matches!(def, Label::Roots(..) | Label::Targets(..) | Label::Count { .. }) {
                         let anchor = anchored(program, view, index);
+                        if matches!(def, Label::Count { .. }) {
+                            // A count's tally is over every node, so an unwalked start must count 0: no start outside the
+                            // anchor emits.
+                            let outside = pass_starts.iter().copied().filter(|&n| !get(&anchor, n));
+                            if let Ok((outputs, _)) = program.execute_roots_budgeted(view, outside, usize::MAX) {
+                                assert!(outputs.is_empty(), "{name}: a count's start outside its anchor emitted");
+                            }
+                        }
                         pass_starts.iter().filter(|&&n| get(&anchor, n)).count() as u64
                     } else {
                         rows

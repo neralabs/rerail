@@ -50,13 +50,6 @@ pub(in crate::code_rule_dsl) fn wave_roots(this: &LoweredWave, tapes: &[TapeDoc]
     metal(&this.clauses.iter().collect::<Vec<_>>(), this.labels, tapes, roots, None, None, Some(&w_cost))
 }
 
-/// A walk's anchor as the device evaluates it (decision 0365, `label_passes::anchor_set`): `None` where the walk is not
-/// a micro walk, or the anchor tests no more than the rule over codes.
-fn device_anchor(program: &Program) -> Option<Arc<metal_program_backend::label_passes::DeviceFormula>> {
-    use metal_program_backend::label_passes::{anchor_set, narrowing};
-    anchor_set(&Micro::of(program)?).as_ref().and_then(narrowing)
-}
-
 /// `clauses`' matches of the batch on Metal, in one command buffer: their labels (disjoint, `labels`
 /// in all) as passes, then each clause's root program from its `roots` (per tape) as one pass more.
 /// The clauses' segments are merged by phase: a clause's runs of single-label steps take even
@@ -74,7 +67,7 @@ fn metal<'a>(
     records: Option<&metal_program_backend::label_passes::RootJobs<'_>>,
     w_cost: Option<&(dyn Fn(u32, usize) -> u64 + Sync)>,
 ) -> Result<(Vec<Vec<BTreeSet<u32>>>, metal_program_backend::label_passes::Outcome), Error> {
-    use metal_program_backend::label_passes::{DeviceFormula, Pass, Plan, Roots, run};
+    use metal_program_backend::label_passes::{DeviceFormula, Pass, Plan, Roots, device_anchor, device_formula, run};
     let bases = tapes
         .iter()
         .scan(0_u32, |base, tape| {
@@ -206,6 +199,17 @@ fn metal<'a>(
         ],
     ));
     chains.push((None, false));
+    }
+    // Decision 0365 §9 (0036 on Metal): a roots pass past the recursive groups whose program is a node-set formula is
+    // that formula on the device (`Pass::Formula`), not a walk; `RERAIL_SETS=walk` walks it, as on the CPU.
+    if formulas_on() {
+        for (_, levels) in steps.iter_mut().filter(|(recursive, _)| !recursive) {
+            for pass in levels.iter_mut().flatten() {
+                let Pass::Program { target, program, roots, captured: false } = pass else { continue };
+                let Some(formula) = device_formula(program) else { continue };
+                *pass = Pass::Formula { target: *target, roots: Arc::clone(roots), formula };
+            }
+        }
     }
     // Decision 0365: a walk past the recursive groups starts within its anchor, evaluated on the device (`label_formula`).
     if anchors_on() {

@@ -1907,9 +1907,9 @@ fn fallback(label: &Label) -> &'static str {
 
 /// Whether label passes run as node-set formulas where they are ones (`compile_sets`); off with
 /// `RERAIL_SETS=walk`.
-fn formulas_on() -> bool {
-    static WALK: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_SETS").is_ok_and(|mode| mode == "walk"));
-    !*WALK
+pub fn formulas_on() -> bool {
+    // Read at each level, so a check may run both ways in one process (`on_metal_anchored_walks_find_the_unanchored_roots`).
+    std::env::var("RERAIL_SETS").map_or(true, |mode| mode != "walk")
 }
 
 fn formulas(

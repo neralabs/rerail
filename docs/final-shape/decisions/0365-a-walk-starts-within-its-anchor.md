@@ -2,7 +2,8 @@
 
 Status: decided (2026-11-17); built on the CPU (the wave's root walks, and its label passes' walks in the levels
 past the recursive groups) and on Metal (§8: the same walks, and the root records, from anchors the device
-evaluates). After 0334 §5 ("another anchor or driver"), which it
+evaluates, their text tests reading the walks' text rows; and the formula passes of 0036 as device formulas, §9).
+After 0334 §5 ("another anchor or driver"), which it
 takes out of the replanning. The user, 2026-11-17, on that item: "please take a look at the ast-index-spike design
 and journal, where this idea was comprehensively explored, and tell me what we should do with it now"; then, on the
 recommendation below: "yes go ahead, making sure that you record the decision and the evidence it's based on".
@@ -86,13 +87,16 @@ the label passes outside the fragment.
      are at most 4× the inner set's). A parent is a search on the tape (the generated read loops back), and a child,
      a next sibling or a subtree's size is not, so climbing from every member was most of the cost: 3.35 M parent
      reads on 6 files before, 0.38 M after.
-   - **A step over every node** (the anchor drops a branch's rest to every node, so `Child(All)` occurs) is a leaf
-     superset by the node's own links: "has a node below" (in preorder, the same as "has a child") or "has a next
-     sibling". No climb.
-   - Identical formulas of a level are evaluated once and written to each rule's row. A text test is every node (the
-     device's anchors read no text row), so the device anchor is a superset of the CPU's. An anchor that tests only
-     kinds and grammar supertypes is not built, since the rule over codes and the walk's entry test already cover
-     them.
+   - **A step over every node** (the anchor drops a branch's rest to every node, so `Child(All)` occurs) is a leaf by
+     the node's own links: "has a node below" (in preorder, the same as "has a child"), "has a named child", "has a
+     next sibling" or "has a next named sibling". No climb.
+   - **A text test reads the walk's own row** (`TEXT`, by slot): the rows the level's walks (or the root records)
+     read for that slot, keyed as they are (`Micro::slot_key`), bound to `label_formula`. So the device's anchor is
+     the CPU's (§4). Where a slot has no row (a fused pack's union, whose members' slots are their own) the test is
+     every node, a superset.
+   - Identical formulas of a level (by their lowered words: leaf, label and text rows) are evaluated once and written
+     to each target. An anchor that tests only kinds and grammar supertypes is not built, since the rule over codes
+     and the walk's entry test already cover them.
    - Where the anchors go:
      - **A label pass past the recursive groups.** Its rule over codes gets a row of bits (a new rule kind, 2) that
        `label_formula` sets at the start of the pass's level, after the levels before it have settled. `root_mask`
@@ -101,6 +105,12 @@ the label passes outside the fragment.
      - **The wave's listed roots** (`roots_batch`). `label_formula` clears the list's bits outside the anchor.
      - **The root records** (the engine's demand, `RootJobs`). Each walk's anchor is a row past its text rows, and a
        start outside it returns before it walks. A fused pack's anchor is the union of its members'.
+
+9. **On Metal 0036's formula passes are device formulas** (`Pass::Formula`), not walks. A roots label pass past the
+   recursive groups whose micro walk is a node-set formula (`Set::of`, exact) with no text test is evaluated by
+   `label_formula` into the pass's scratch row, within its rule over codes (`root_mask`, mode 2), and settles as a
+   program's does. `RERAIL_SETS=walk` walks them, as on the CPU (now read at each level, so one process can check
+   both ways). Targets passes (`Reached`) stay walks: a targets image has no device formula yet.
 
 ## Evidence
 
@@ -124,9 +134,11 @@ root found was inside its anchor (the census asserts it on every tape). Label pa
 | formulas (0036), roots | 23,959,296 | (no walk) | 4,203,722 |
 | micro walks, roots | 1,478,999 | 783,044 | 79,158 |
 | micro walks, targets | 1,116,264 | 323,762 | 314,142 |
-| micro walks, counts | 1,199,400 | (not measured) | 295,811 |
+| micro walks, counts | 1,199,400 | 427,840 | 295,811 |
 
-So most label passes already followed their members (0036), and the root walks were the gap.
+So most label passes already followed their members (0036), and the root walks were the gap. A count pass's tally
+is over every node, so an unwalked start must count nothing: the census walks every count start outside its anchor
+too and asserts none emits (it held on every tape).
 
 **The check** (`anchored_walks_find_the_unanchored_roots`, 10 files, every wave run without and with anchors on
 the CPU): the settled findings (roots, or W's matcher at the candidates where the clause went to W) are the same
@@ -151,14 +163,31 @@ anchors. The whole wave's process CPU was 97.7 s without and 86.5 s with; most o
   formula in turn, 7.1 s; a threadgroup per (file, formula), 1.9 s; every step read downward from every node, 3.3 s;
   shared leaves, 1.7 s; steps priced by work, 0.84 s; steps over every node as leaves and the run's leaves read once,
   0.54 s.
+- With text tests reading the walks' rows and 0036's formula passes as device formulas (§8, §9), the same check
+  (its "off" now also walks the formula passes, `RERAIL_SETS=walk`): the same settled roots and records. 1,215
+  formula passes ran as formulas, 736 text tests read a walk's row and none fell back to every node. Device time:
+
+  | | label passes' walks | formulas (anchors and passes, leaves) | total |
+  |---|---|---|---|
+  | without (anchors off, formulas walked) | 2.15 s | | 2.15 s |
+  | with | 0.98 s | 0.55 s (0.36 s, 0.19 s) | 1.53 s |
+
+  The formula passes had already walked only from their anchors (a formula's anchor is about the formula), so
+  running them as formulas saves little more device time (walks 1.06 → 0.98 s); what it removes is their walks.
+  The recursive groups (`label_group_*`, 2.6 s here) are untouched: anchors apply past them.
 - `spilled_walks_find_the_cpus_roots` (all 491 clauses in 41 waves, 12 files, every walk spilling on Metal, anchors
-  on both sides): Metal's findings are the CPU's (1,023 roots).
+  on both sides): Metal's findings are the CPU's (1,023 roots), before §9 and again after.
 - `lowered_clauses_find_the_same_roots_on_metal` (each of the 491 clauses alone, 3 files): 491 of 491 equal both
-  ways; Metal took 76.0 s without anchors and 6.5 s with, the CPU 6.9 s and 2.6 s.
+  ways; Metal took 76.0 s without anchors and 6.5 s with, the CPU 6.9 s and 2.6 s. After §9 (and text): 491 of
+  491, Metal 5.7 s, the CPU 2.3 s.
+- On the M1 Max the first check passes too (the same 21 roots and records).
 
 ## Not yet
 
-1. **Text on Metal.** The device's anchors drop text tests; a walk's text rows (or the term index's) as leaves would
-   narrow them as the CPU's do.
-2. **0036's formula passes on Metal** still run as walks from every start; they could be `label_formula`s themselves.
-3. The count passes' anchors are applied but were not measured in the census.
+Done since: text tests on Metal (§8), 0036's formula passes as device formulas (§9), the count passes' anchors
+measured (the census).
+
+1. **Targets passes on Metal** (`Reached`, 0036's targets formulas) are still walks within their anchors: a targets
+   image would need a device op of its own.
+2. **A fused pack's anchor drops text** (its members' slots are their own); a union of the members' rows would keep
+   it.

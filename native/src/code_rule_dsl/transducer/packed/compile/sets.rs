@@ -69,6 +69,10 @@ pub struct DeviceFormula {
     pub words: Vec<u32>,
     pub depth: u32,
     pub labels: Vec<u32>,
+    /// A text test's row by its slot (`TEXT`'s `arg`): each slot's key (`Micro::slot_key`), set by whoever lowered
+    /// the walk; the device reads the row the walk reads (every node where there is none, for an anchor). Part of
+    /// the formula's identity: two walks' slot 0 are different texts.
+    pub texts: Vec<String>,
 }
 
 /// `DeviceFormula`'s operations (`label_formula` in `metal_label_passes.metal`). A test pushes a set; `AND` and
@@ -97,9 +101,14 @@ pub mod device_ops {
     pub const CHILD_IN: u32 = 14;
     pub const DESCENDANT_IN: u32 = 15;
     pub const FOLLOWING_IN: u32 = 16;
-    /// A step over every node, as a superset: the nodes with a next sibling, or a node below (a child).
+    /// A step over every node: the nodes with a next sibling, a node below (a child), a named child, a next named
+    /// sibling.
     pub const HAS_NEXT: u32 = 18;
     pub const HAS_BELOW: u32 = 19;
+    pub const HAS_NAMED_CHILD: u32 = 21;
+    pub const HAS_NEXT_NAMED: u32 = 22;
+    /// A text test: `arg` its slot (`DeviceFormula::texts`); on the device, its row in the bound text rows.
+    pub const TEXT: u32 = 20;
 }
 
 /// A step from a node, as a targets label's image follows it.
@@ -150,10 +159,10 @@ impl Set {
     }
 
     /// This set as the device evaluates it (decision 0365): `None` for a targets image (`Reached`), which no anchor
-    /// holds. A text test is every node there (the device's anchors read no text rows): a superset, as every
-    /// operation's set grows with its parts'.
+    /// holds. Exact, so a formula pass may run as it (`Pass::Formula`): a text test reads its slot's row
+    /// (`DeviceFormula::texts`, set by the caller), and only an anchor reads every node where there is none.
     pub fn device(&self) -> Option<DeviceFormula> {
-        let mut formula = DeviceFormula { words: Vec::new(), depth: 0, labels: Vec::new() };
+        let mut formula = DeviceFormula { words: Vec::new(), depth: 0, labels: Vec::new(), texts: Vec::new() };
         formula.depth = self.emit(&mut formula)?;
         formula.labels.sort_unstable();
         formula.labels.dedup();
@@ -166,8 +175,12 @@ impl Set {
         let word = |op: u32, arg: u32| op | arg << 8;
         let named = |named: &bool| u32::from(*named);
         let slots = match self {
-            Set::All | Set::Text(_) => {
+            Set::All => {
                 formula.words.push(word(ALL, 0));
+                1
+            }
+            Set::Text(slot) => {
+                formula.words.push(word(TEXT, u32::from(*slot)));
                 1
             }
             Set::Kind(kind) => {
@@ -234,11 +247,16 @@ impl Set {
                 formula.words.push(word(if matches!(self, Set::And(_)) { AND } else { OR }, parts.len() as u32));
                 slots
             }
-            // A step over every node: a superset by the node's own links (a child, a next sibling, a subtree), named
-            // or not, so no climb.
-            Set::Child { of, .. } | Set::Descendant { of, .. } | Set::Following { of, .. } if **of == Set::All => {
-                // In preorder a node has a child exactly where it has a node below: one leaf for both.
-                formula.words.push(word(if matches!(self, Set::Following { .. }) { HAS_NEXT } else { HAS_BELOW }, 0));
+            // A step over every node, by the node's own links, so no climb: a node below (in preorder, the same as a
+            // child), a named child, a next sibling or a next named one. A named node below is the general step.
+            Set::Child { .. } | Set::Descendant { .. } | Set::Following { .. } if self.over_all() => {
+                let op = match self {
+                    Set::Child { named: true, .. } => HAS_NAMED_CHILD,
+                    Set::Child { .. } | Set::Descendant { .. } => HAS_BELOW,
+                    Set::Following { named: true, .. } => HAS_NEXT_NAMED,
+                    _ => HAS_NEXT,
+                };
+                formula.words.push(word(op, 0));
                 1
             }
             Set::Child { named: n, of } | Set::Descendant { named: n, of } | Set::Following { named: n, of } => {
@@ -270,7 +288,15 @@ impl Set {
 
     /// A step a conjunction evaluates within its tests' set on the device (`DeviceFormula`).
     fn within(&self) -> bool {
-        matches!(self, Set::Child { of, .. } | Set::Descendant { of, .. } | Set::Following { of, .. } if **of != Set::All)
+        matches!(self, Set::Child { .. } | Set::Descendant { .. } | Set::Following { .. }) && !self.over_all()
+    }
+
+    /// A step over every node the device reads as a leaf (`HAS_BELOW`, `HAS_NAMED_CHILD`, `HAS_NEXT`, `HAS_NEXT_NAMED`).
+    fn over_all(&self) -> bool {
+        match self {
+            Set::Child { of, .. } | Set::Following { of, .. } | Set::Descendant { named: false, of } => **of == Set::All,
+            _ => false,
+        }
     }
 
     fn and(parts: Vec<Self>) -> Self {

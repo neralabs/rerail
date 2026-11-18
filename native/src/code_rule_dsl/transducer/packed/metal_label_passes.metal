@@ -504,6 +504,8 @@ kernel void label_leaves(device const DocView* docs [[buffer(0)]],device const u
       for(uint l=0u;l<shape.targetCount;l++){
         uint test=tests[l],op=test&255u,arg=test>>8u;bool hit;
         if(op==18u)hit=tape_next(slabs,d,n)!=TAPE_NONE;
+        else if(op==22u){hit=false;for(uint c=tape_next(slabs,d,n);c!=TAPE_NONE;c=tape_next(slabs,d,c))if((tape_flags(slabs,d,c)&1u)!=0u){hit=true;break;}}
+        else if(op==21u){hit=false;for(uint c=tape_first_child(slabs,d,n);c!=TAPE_NONE;c=tape_next(slabs,d,c))if((tape_flags(slabs,d,c)&1u)!=0u){hit=true;break;}}
         else if(op==19u)hit=tape_size(slabs,d,n)>1u;
         else if(op==1u)hit=code.kind==arg;
         else if(op==2u)hit=code.field==arg;
@@ -515,7 +517,7 @@ kernel void label_leaves(device const DocView* docs [[buffer(0)]],device const u
   }
 }
 
-kernel void label_formula(device const DocView* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const Formula* formulas [[buffer(2)]],device const uint* words [[buffer(3)]],device atomic_uint* roots [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],constant Shape& shape [[buffer(6)]],device const uint* leaves [[buffer(7)]],device atomic_uint* stats [[buffer(8)]],device const FormulaTarget* targets [[buffer(9)]],device const uchar* s0 [[buffer(27)]],device const uchar* s1 [[buffer(28)]],device const uchar* s2 [[buffer(29)]],device const uchar* s3 [[buffer(30)]],uint2 group [[threadgroup_position_in_grid]],uint2 lanes [[thread_position_in_threadgroup]],uint2 widths [[threads_per_threadgroup]]){
+kernel void label_formula(device const DocView* docs [[buffer(0)]],device const uint* head [[buffer(1)]],device const Formula* formulas [[buffer(2)]],device const uint* words [[buffer(3)]],device atomic_uint* roots [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],constant Shape& shape [[buffer(6)]],device const uint* leaves [[buffer(7)]],device atomic_uint* stats [[buffer(8)]],device const FormulaTarget* targets [[buffer(9)]],device atomic_uint* labelScratch [[buffer(10)]],device const uint* rules [[buffer(11)]],device const uint* texts [[buffer(12)]],device const uchar* s0 [[buffer(27)]],device const uchar* s1 [[buffer(28)]],device const uchar* s2 [[buffer(29)]],device const uchar* s3 [[buffer(30)]],uint2 group [[threadgroup_position_in_grid]],uint2 lanes [[thread_position_in_threadgroup]],uint2 widths [[threads_per_threadgroup]]){
   Slabs slabs={s0,s1,s2,s3};
   uint file=group.x,lane=lanes.x,width=widths.x;
   // A descendant step's prefix of its members' counts (a block of words a thread, `FORMULA_WIDTH` threads), and the
@@ -529,7 +531,13 @@ kernel void label_formula(device const DocView* docs [[buffer(0)]],device const 
   Formula formula=formulas[shape.itemCount+group.y];
   // A rule over codes that does not run in this file: its row is never read here; none runs here, nothing to do.
   bool wanted=false;
-  for(uint i=0u;i<formula.targetCount&&!wanted;i++){FormulaTarget target=targets[formula.targetStart+i];wanted=target.mode!=0u||target.rule==0xffffffffu||((atomic_load_explicit(&roots[target.rule+atomic_load_explicit(&roots[target.rule+1u],memory_order_relaxed)+1u+file/32u],memory_order_relaxed)>>(file%32u))&1u)!=0u;}
+  // A rule over codes runs in a file where its bit is set (an anchored rule's after its row, `Roots::table`).
+  for(uint i=0u;i<formula.targetCount&&!wanted;i++){
+    FormulaTarget target=targets[formula.targetStart+i];
+    if(target.mode==1u||target.rule==0xffffffffu){wanted=true;continue;}
+    uint codes=rules[target.rule]==2u?target.rule+rules[target.rule+1u]:target.rule;
+    wanted=rules[codes]!=0u||((rules[codes+1u+file/32u]>>(file%32u))&1u)!=0u;
+  }
   if(!wanted)return;
   device atomic_uint* base=scratch+group.y*shape.queue+shape.round*region;
   #define SLOT(i) (base+(i)*fw)
@@ -543,14 +551,15 @@ kernel void label_formula(device const DocView* docs [[buffer(0)]],device const 
   uint top=0u;
   for(uint pc=0u;pc<formula.wordCount;pc++){
     uint word=words[formula.wordStart+pc],op=word&255u,arg=word>>8u;
-    if(op==0u||op==4u||op==12u||op==13u){
-      // A set: every node, a label (its row in `head`, in the batch's numbering), none, or a leaf's row.
+    if(op==0u||op==4u||op==12u||op==13u||op==20u){
+      // A set: every node, a label (its row in `head`, in the batch's numbering), none, a leaf's row, or a text test's
+      // row in `texts` (the batch's numbering).
       device atomic_uint* out=SLOT(top);
       for(uint w=lane;w<fw;w+=width){
         uint bits=0u;
         if(op==0u)bits=VALID(w);
         else if(op==13u)bits=leaves[arg*shape.recursive+region+w];
-        else if(op==4u){device const uint* row=head+2u+(arg-16384u)*head[1];uint b=d.nodeBase+w*32u,at=b/32u,sh=b%32u;bits=sh==0u?row[at]:(row[at]>>sh)|(row[at+1u]<<(32u-sh));bits&=VALID(w);}
+        else if(op==4u||op==20u){device const uint* row=op==4u?head+2u+(arg-16384u)*head[1]:texts+arg*shape.words;uint b=d.nodeBase+w*32u,at=b/32u,sh=b%32u;bits=sh==0u?row[at]:(row[at]>>sh)|(row[at+1u]<<(32u-sh));bits&=VALID(w);}
         atomic_store_explicit(&out[w],bits,memory_order_relaxed);
       }
       top++;
@@ -695,10 +704,12 @@ kernel void label_formula(device const DocView* docs [[buffer(0)]],device const 
   uint sh=d.nodeBase%32u;
   for(uint i=0u;i<formula.targetCount;i++){
     FormulaTarget target=targets[formula.targetStart+i];
-    device atomic_uint* row=roots+target.row;
+    // Modes 0 and 1 a rule's row in `roots`; 2 a formula pass's scratch row, within its rule.
+    device atomic_uint* row=(target.mode==2u?labelScratch:roots)+target.row;
     for(uint w=lane;w<fw;w+=width){
       uint bits=atomic_load_explicit(&anchor[w],memory_order_relaxed),valid=VALID(w),at=(d.nodeBase+w*32u)/32u;
-      if(target.mode==0u){
+      if(target.mode==2u)bits&=uint(root_mask(slabs,d,rules,target.rule,file,w/2u)>>(32u*(w%2u)));
+      if(target.mode!=1u){
         if(bits==0u)continue;
         atomic_fetch_or_explicit(&row[at],bits<<sh,memory_order_relaxed);
         if(sh!=0u)atomic_fetch_or_explicit(&row[at+1u],bits>>(32u-sh),memory_order_relaxed);
