@@ -39,7 +39,7 @@ below take it to these:
 |---|---:|---:|
 | simdjson's stage 1, by clang | **344** | 0 |
 | `stage1.rir`, by our compiler | **332** | 1 |
-| JSON's tier 1 (`14-json`) | **462** | 1 |
+| JSON's tier 1 (`14-json`) | **470** (a block with no `\u`: about 390 run) | 1 |
 | JSONC's tier 1 (`15-jsonc`) | 632 | 7 |
 
 **A correction.** The 673 quoted in 0383 and 0389 as "JSON's hot loop" is the loop of
@@ -373,6 +373,27 @@ The trace of `stage1.rir`'s loop against clang's (389 against 344):
 
 `14-json` is 118 over clang's stage 1. Its extra checks (control characters, the first bytes
 of numbers and escapes) are 130 over `stage1.rir`: the next part to trace.
+
+### What `14-json` adds over stage 1 (0423)
+
+Nine masks a block against stage 1's five. The four more:
+
+| Part | Instructions | Runs |
+|---|---:|---|
+| The surrogate check (`d`, `8 9 a b`, `c`–`f`: a second table, 3 masks) | 79 | behind its gate since 0423 |
+| The `u` of an escape | 13 | in the string-body region |
+| The token kinds' word logic (content, escapes, punctuation, words, the skip) | about 46 | every block |
+
+The surrogate check's masks were made every block, before its gate (a `\u` in the block): the
+compiler made a region's own vectors outside its branch when its members read them as words.
+Now they are made inside, and the compiler refuses a function that does otherwise. The code is
+8 longer; a block with no `\u` runs about 60 fewer, and tier 1 retires 5.4% fewer instructions
+over 17 corpus files.
+
+What is left over stage 1 is the grammar's split of the work. Tier 2 reads the token kinds
+simdjson's stage 2 finds by rescanning. The surrogate check is stage 2's in simdjson, done per
+`\u` when it converts one; moved to tier 2 as 0399 moved the hex digits, it would take the
+region, its table and the `u` mask out of tier 1.
 
 ## Reproducing
 

@@ -750,6 +750,9 @@ pub struct At<'a> {
     pub ascii_split: Option<(Value, &'a std::cell::Cell<bool>, &'a std::cell::RefCell<Vec<cranelift_codegen::ir::Block>>)>,
     /// Where the full body keeps its rare paths' blocks (`toggle`); none: not kept.
     pub rare: Option<&'a std::cell::RefCell<Vec<cranelift_codegen::ir::Block>>>,
+    /// Where the full body keeps each gated region's branch block, by region (`Emit::region`):
+    /// its values on the vectors are made there (decision 0423); none: not kept.
+    pub entered: Option<&'a std::cell::RefCell<Vec<(usize, cranelift_codegen::ir::Block)>>>,
     /// The block's row of slot words, and the slots per block (`native_ir::Passes`).
     pub scratch: Value,
     pub slots: u16,
@@ -1108,9 +1111,11 @@ fn demand_order(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, grouped: &[Op
                         stack.push((node, true));
                         let reg = &plan.regions[r];
                         let mut need: Vec<usize> = vec![reg.pre.unwrap_or(reg.gate)];
+                        // Not its own values on the vectors (`Region::vectors`): made in its
+                        // branch, as words where a member reads them so (decision 0423).
                         for &m in &reg.members {
                             for o in native.insts[m].operands() {
-                                if plan.region_of[o] != Some(r) && needs(o, m) {
+                                if plan.region_of[o] != Some(r) && !reg.vectors.contains(&o) && needs(o, m) {
                                     need.push(o);
                                 }
                             }
@@ -1521,6 +1526,8 @@ struct Emit<'a, 'b> {
     walked: Vec<bool>,
     /// Where its rare paths' blocks are kept (`At::rare`).
     rare: Option<&'b std::cell::RefCell<Vec<cranelift_codegen::ir::Block>>>,
+    /// Where its regions' branch blocks are kept (`At::entered`).
+    entered: Option<&'b std::cell::RefCell<Vec<(usize, cranelift_codegen::ir::Block)>>>,
     /// The words its sinks stored: each output's, then each of `Sinks::extra`'s, as stored
     /// (`Hand`: the token loop takes them as values, `finish` gives a sunk output as zero).
     stored_words: Vec<Option<Value>>,
@@ -1563,6 +1570,7 @@ impl<'a, 'b> Emit<'a, 'b> {
             walks: at.walks,
             walked: vec![false; native.walks.len()],
             rare: at.rare,
+            entered: at.entered,
             stored_words: vec![None; native.outputs.len() + at.sinks.map_or(0, |sk| sk.extra.len())],
             fixed: vec![None; native.outputs.len()],
         }
@@ -1919,6 +1927,16 @@ impl Emit<'_, '_> {
         // The region computed. Its carried bits are made plain, not gathered as constants: the
         // two ways must agree.
         f.switch_to_block(active);
+        if let Some(entered) = self.entered {
+            entered.borrow_mut().push((r, active));
+        }
+        // Its values on the vectors that a member reads as words (one made from words,
+        // `Emit::as_words`): their masks made here, never in a block that skips the region
+        // (decision 0423). The others are made on the vectors where read.
+        let as_words: Vec<usize> = reg.vectors.iter().copied().filter(|&v| self.live[v] && self.masked[v]).collect();
+        for v in as_words {
+            self.emit(&mut *f, v);
+        }
         if let Some(calls) = self.calls.filter(|c| !c.inline.borrow()[r]) {
             let args = self.call_region(&mut *f, r, &early, &outside, &words, calls);
             self.consts = consts;
@@ -1942,7 +1960,9 @@ impl Emit<'_, '_> {
         }
         f.ins().jump(after, &args);
         }
-        // Skipped: the values zero, the carried words as they were.
+        // Skipped: the values zero, the carried words as they were. Made for no value: the
+        // source location is not the last member's (`region_vectors_outside`).
+        f.set_srcloc(cranelift_codegen::ir::SourceLoc::default());
         f.switch_to_block(skip);
         let zero = f.ins().iconst(types::I64, 0);
         let mut args: Vec<BlockArg> = outside.iter().map(|_| BlockArg::from(zero)).collect();
@@ -2104,6 +2124,7 @@ impl Emit<'_, '_> {
                 walks: None,
                 walked: vec![false; native.walks.len()],
                 rare: None,
+                entered: None,
                 stored_words: Vec::new(),
                 fixed: vec![None; native.outputs.len()],
             };
@@ -8231,6 +8252,8 @@ fn backward(context: &mut Context, fills: &[(u16, u16, u16)], slots: u16) -> Res
 /// What a block's step needs that is the same for every block of a forward pass.
 struct Loop<'a> {
     native: &'a BlockNative,
+    /// Each gated region's branch block in the full body (`At::entered`), this round's.
+    entered: std::cell::RefCell<Vec<(usize, cranelift_codegen::ir::Block)>>,
     state: &'a State,
     counted: &'a [usize],
     /// The outputs the body stores where it makes them (`Sinks`): all but the counted.
@@ -8319,7 +8342,7 @@ fn step(f: &mut FunctionBuilder<'_>, lp: &Loop<'_>, consts: &Consts, p: &[Value]
         // One body; what an all-ASCII block knows behind one branch in it (`ascii_split`).
         let (ascii, bytes) = all_ascii(&mut *f, native, &state.plan, base, chunk0);
         last_chunk = chunk0.and(bytes[4]);
-        let (v, packed, gates, rounds, extras, e_out) = body(&mut *f, native, state, consts, At { i, len, base, packed_in, full, bytes: Some(bytes), ascii_split: Some((ascii, &lp.split, &lp.slow)), rare: Some(&lp.rare), scratch, slots, slot_of, sinks, calls, walks: lp.walks, edge, hand: &lp.hand, err: err_in });
+        let (v, packed, gates, rounds, extras, e_out) = body(&mut *f, native, state, consts, At { i, len, base, packed_in, full, bytes: Some(bytes), ascii_split: Some((ascii, &lp.split, &lp.slow)), rare: Some(&lp.rare), entered: Some(&lp.entered), scratch, slots, slot_of, sinks, calls, walks: lp.walks, edge, hand: &lp.hand, err: err_in });
         gate_branches += gates;
         round_branches += rounds.len();
         heads.extend(rounds.into_iter().map(|b| (b, Step::Round)));
@@ -8333,7 +8356,7 @@ fn step(f: &mut FunctionBuilder<'_>, lp: &Loop<'_>, consts: &Consts, p: &[Value]
             (b[0], b[4]) = (Some(v), Some(last));
             b
         });
-        let (v, packed, gates, rounds, extras, e_out) = body(&mut *f, native, state, consts, At { i, len, base, packed_in, full, bytes, ascii_split: None, rare: full.then_some(&lp.rare), scratch, slots, slot_of, sinks, calls, walks: lp.walks, edge, hand: &lp.hand, err: err_in });
+        let (v, packed, gates, rounds, extras, e_out) = body(&mut *f, native, state, consts, At { i, len, base, packed_in, full, bytes, ascii_split: None, rare: full.then_some(&lp.rare), entered: full.then_some(&lp.entered), scratch, slots, slot_of, sinks, calls, walks: lp.walks, edge, hand: &lp.hand, err: err_in });
         gate_branches += gates;
         round_branches += rounds.len();
         heads.extend(rounds.into_iter().map(|b| (b, Step::Round)));
@@ -8638,6 +8661,33 @@ fn hoist_constants(func: &mut cranelift_codegen::ir::Function, body: cranelift_c
 /// hot loop (the blocks `body` dominates) moves to just before its first reader in its block, or
 /// to the block's end, so the word is not held in an integer register over a stretch where the
 /// vector it comes from holds it. Cranelift does not move it itself (its mid-end is off, 0069).
+/// A gated region's values on the vectors (`Region::vectors`) are made in its branch, never in
+/// a block that skips it (decision 0423): the first instruction made for one (its source
+/// location, `Emit::emit`) in a warm block its branch block does not dominate, by region and
+/// value. Cold blocks (the edge part) make values without the regions.
+fn region_vectors_outside(func: &cranelift_codegen::ir::Function, plan: &crate::native_cpu_lanes::Plan, entered: &[(usize, cranelift_codegen::ir::Block)]) -> Option<(usize, usize)> {
+    if entered.is_empty() {
+        return None;
+    }
+    let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(func);
+    let domtree = cranelift_codegen::dominator_tree::DominatorTree::with_function(func, &cfg);
+    for b in func.layout.blocks().filter(|&b| domtree.is_reachable(b) && !func.layout.is_cold(b)) {
+        for i in func.layout.block_insts(b) {
+            let loc = func.srcloc(i);
+            if loc.is_default() || loc.bits() == 0 {
+                continue;
+            }
+            let v = loc.bits() as usize - 1;
+            for &(r, active) in entered {
+                if plan.regions.get(r).is_some_and(|reg| reg.vectors.contains(&v)) && !domtree.block_dominates(active, b) {
+                    return Some((r, v));
+                }
+            }
+        }
+    }
+    None
+}
+
 fn sink_extracts(func: &mut cranelift_codegen::ir::Function, body: cranelift_codegen::ir::Block) {
     use cranelift_codegen::ir::Opcode;
     let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(func);
@@ -8746,7 +8796,7 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         let sunk: Vec<bool> = early.iter().zip(&stored).map(|(&e, &s)| e && s).collect();
         flags(native, &state, &live(native, &state, true).0, slot_of, Some(&sunk)).is_some()
     };
-    let lp = Loop { native, state: &state, counted: &counted, early: &early, stored: &stored, stride: 8 * native.outputs.len() as i64, slot_of, slots, params, walks: Some(&walks), extra: &extra, split: std::cell::Cell::new(false), slow: std::cell::RefCell::new(Vec::new()), rare: std::cell::RefCell::new(Vec::new()), hand, extra_stored, edge, edge_at: std::cell::Cell::new(None), flagged };
+    let lp = Loop { native, entered: std::cell::RefCell::new(Vec::new()), state: &state, counted: &counted, early: &early, stored: &stored, stride: 8 * native.outputs.len() as i64, slot_of, slots, params, walks: Some(&walks), extra: &extra, split: std::cell::Cell::new(false), slow: std::cell::RefCell::new(Vec::new()), rare: std::cell::RefCell::new(Vec::new()), hand, extra_stored, edge, edge_at: std::cell::Cell::new(None), flagged };
     // The general body, but where the full body runs on the edge blocks too (0383).
     if !lp.edge {
         general(general_context, &lp)?;
@@ -8922,6 +8972,7 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
     lp.rare.borrow_mut().clear();
     lp.split.set(false);
     lp.slow.borrow_mut().clear();
+    lp.entered.borrow_mut().clear();
     {
         let mut f = FunctionBuilder::new(&mut context.func, &mut builder_context);
         // entry -> row (one per file) -> head -> full or general (one per block) -> head ...
@@ -9381,6 +9432,9 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         }
         if let Some(&body) = hot.first() {
             sink_extracts(&mut context.func, body);
+        }
+        if let Some((r, v)) = region_vectors_outside(&context.func, &lp.state.plan, &lp.entered.borrow()) {
+            return Err(Error::RefusedShape(format!("region {r}'s value %{v} on the vectors made outside its branch (decision 0423)")));
         }
         let mut owns = vec![own.clone()];
         owns.extend(calls.ids.iter().map(|id| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())));
