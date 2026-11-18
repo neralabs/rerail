@@ -571,7 +571,7 @@ interface WorktreeDiscovery {
   walkedFrom: number | undefined;
   /**
    * Changes a walk handed the session to record for the repository (`WalkStart.records`) that its take left to the next
-   * walk (`WorktreeTake.views`): the next take records them, though its walk finds them no new change.
+   * walk (`WorktreeTake.views`, `#leaveToNextWalk`): the next take records them, though its walk finds them no new change.
    */
   unrecorded: Set<string>;
 }
@@ -2598,16 +2598,26 @@ export class CodeRuleBridge {
 
   /**
    * Moves the session's view of each worktree the walk read to the walk's snapshot. A source a tool call of the session
-   * touched while the walk ran is not the walk's to answer for: it keeps what the session saw of it before. So does one
-   * the take leaves to the next walk (`WorktreeTake.views`).
+   * touched while the walk ran is not the walk's to answer for, nor one a shell command of it may still be writing
+   * (`#toolChanged`): it keeps what the session saw of it before (`#leaveToNextWalk`). So does one the take leaves to the
+   * next walk (`WorktreeTake.views`).
    */
   #takeSnapshots(discovery: SourceDiscovery, take: WorktreeTake): void {
     for (const [worktree, snapshot] of take.snapshots) if (discovery.worktrees.roots.has(worktree)) this.#worktreeView.take(worktree, snapshot);
     const pendingPaths = this.#pendingPaths();
     for (const path of new Set([...take.walk.previous.keys(), ...take.scan.sources.keys()])) {
-      if (this.#toolChanged(discovery, take.walk, path, pendingPaths, take.scan.sources.get(path))) this.#keepToolView(path, take.walk.previous.get(path));
+      if (this.#toolChanged(discovery, take.walk, path, pendingPaths, take.scan.sources.get(path))) this.#leaveToNextWalk(discovery, take.walk, path);
     }
     for (const [path, before] of take.views) this.#keepToolView(path, before);
+  }
+
+  /**
+   * Leaves `path` to the next walk: the session keeps what it saw of it before, and a record for the repository the walk
+   * handed this session waits with it (`WorktreeDiscovery.unrecorded`), as the shared walk hands each change over once.
+   */
+  #leaveToNextWalk(discovery: SourceDiscovery, walk: WalkStart, path: string): void {
+    this.#keepToolView(path, walk.previous.get(path));
+    if (walk.records.has(path)) discovery.worktrees.unrecorded.add(path);
   }
 
   /** Keeps `before`, what the session saw of `path` before this walk, unless it holds a view of its own of it. */

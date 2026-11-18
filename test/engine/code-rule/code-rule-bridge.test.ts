@@ -2452,6 +2452,28 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
       .toEqual([[[path], "log", "repository"], [[path], "log", "repository"]]);
   });
 
+  // A walk leaves a source to the walk after a shell command of the session still running ends, as that command may be
+  // part way through writing it. A change no session made in another worktree waits with it: the shared walk hands it
+  // over once, so a record not kept for the later walk is never written.
+  it("records for the repository, once a command of the session running elsewhere ends, a change no session made in another worktree meanwhile", async () => {
+    const root = await twoBranches();
+    const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    const recorded = () => auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits.map(edit => edit.path), batch.mode, batch.owner]);
+    await bridge.begin("shell-long", "Bash", { command: "./long.sh" }, undefined, root);
+    await writeFile(join(worktree, "src", "a.py"), "old\nviolation\nother\n");
+    // Another command's result walks while the first still runs, as Claude Code runs a turn's commands side by side.
+    await bridge.begin("shell-short", "Bash", { command: "ls" }, undefined, root);
+    await bridge.finish("shell-short");
+    await bridge.settleWorktreeWalk();
+    expect(recorded()).toEqual([]);
+    await bridge.finish("shell-long");
+    await bridge.settleWorktreeWalk();
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    expect(recorded()).toEqual([[[repositoryPath(root, join(worktree, "src", "a.py"))], "log", "repository"]]);
+  });
+
   it("records once for the repository, in Log, a shell write in another worktree made by a call that ran elsewhere", async () => {
     const root = await twoBranches();
     const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
