@@ -38,17 +38,18 @@ describe.runIf(process.platform === "win32")("On Windows, the status line in a f
   }
 
   /**
-   * A set-up, started repository of one folder outside Git, stored as `…\share\Stopped` and reached through a free drive
+   * A set-up, started repository of one folder outside Git, stored as `…\share\<name>` and reached through a free drive
    * letter mapped to `…\share`, holding the checkout row Rerail 0.1.4's store writes when `rerail stop` runs there: keyed
    * by the JS realpath of the folder as spelt, which keeps the letter, and stopped. This build recorded no row of its own.
+   * Each test names its own folder: the cases share one database, and a letter freed by one is taken by the next.
    */
-  async function stoppedBy014(): Promise<{ root: string; spelled: string }> {
+  async function stoppedBy014(name = "Stopped"): Promise<{ root: string; spelled: string }> {
     const root = realpathSync.native(await mkdtemp(join(tmpdir(), "rerail-status-earlier-")));
     made.roots.push(root);
-    mkdirSync(join(root, "share", "Stopped"), { recursive: true });
+    mkdirSync(join(root, "share", name), { recursive: true });
     const letter = substLetter(join(root, "share"));
     made.letters.push(letter);
-    const spelled = `${letter}\\Stopped`;
+    const spelled = `${letter}\\${name}`;
     expect(repositoryIdentityLocation(spelled).git).toBe(false);
     const database = openRerailDatabase(defaultRerailDatabasePath());
     try {
@@ -70,7 +71,7 @@ describe.runIf(process.platform === "win32")("On Windows, the status line in a f
   });
 
   it("reads the stop at the daemon only from the spelling apart from `repository`, and asked without one or with one it cannot use, as before", async () => {
-    const { spelled } = await stoppedBy014();
+    const { spelled } = await stoppedBy014("Asked Apart");
     const path = defaultRerailDatabasePath();
     const stores = new DatabaseApiStores(path, {
       health: () => ({ pid: process.pid, database: { path, exists: true }, native: { ok: true } }), origin: () => "http://127.0.0.1:4737",
@@ -83,8 +84,8 @@ describe.runIf(process.platform === "win32")("On Windows, the status line in a f
       };
       expect(await state({ spelling: spelled })).toEqual([200, "stopped"]);
       expect(await state({})).toEqual([200, "started"]);
-      expect(await state({ spelling: "Stopped" })).toEqual([200, "started"]);
-      expect(await state({ spelling: "Q:\\a drive no letter names\\Stopped" })).toEqual([200, "started"]);
+      expect(await state({ spelling: "Asked Apart" })).toEqual([200, "started"]);
+      expect(await state({ spelling: "Q:\\a drive no letter names\\Asked Apart" })).toEqual([200, "started"]);
     } finally {
       stores.close();
     }
