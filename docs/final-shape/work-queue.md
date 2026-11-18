@@ -889,7 +889,8 @@ pass.
   (`Lower::switch`), and the shape test refuses a `br_table`: 1,197 M cycles to 550 M, 1.14×
   rustc's. With it, extending loads (`uload8`/`16`/`32`) and branches on combined tests split
   into branches on each test (`branch_on_tests`): 2,134 M instructions to 1,966 M. The user
-  chose to ship rustc's build as the CPU path (t44, step 5).
+  chose to ship rustc's build as the CPU path (t44, step 5): `expand::native`, the
+  `generated` feature on by default.
 
 ### Q37. The pp words' ahead-of-time Rust (`clif_rust`), checked once
 

@@ -471,7 +471,9 @@ fn the_aot_words_are_the_interpreters() {
     let mut tus: Vec<(String, Vec<(&str, &[u8])>)> = EXAMPLES.iter().map(|(n, s)| ((*n).to_owned(), vec![("main.c", s.as_bytes())])).collect();
     tus.extend(TUS.iter().map(|(n, f)| ((*n).to_owned(), f.iter().map(|f| (f.0, f.1.as_bytes())).collect())));
     let (mut same, mut differ) = (0, Vec::new());
-    if let Some(&(entry, source, (structured, functions))) = rerail_pp_aot::BUILD.as_ref() {
+    if let Some(rerail_pp_aot::Build { run: entry, source, structured: (structured, functions), .. }) = rerail_pp_aot::BUILD {
+        // The CPU path takes it: made from these words.
+        assert!(aot_build().is_some(), "the build is not of the words' text");
         // Each function structured control, as rustc compiles it best (not a loop over a `match`).
         assert_eq!(structured, functions);
         let now = rerail_compiler::native_cpu_pp::rust_source(program().unwrap()).unwrap();
@@ -665,7 +667,7 @@ fn the_corpus_timed() {
                     });
                     assert_eq!(g, want);
                 };
-                if let Some(&(entry, _, _)) = rerail_pp_aot::BUILD.as_ref() {
+                if let Some(rerail_pp_aot::Build { run: entry, .. }) = rerail_pp_aot::BUILD {
                     // SAFETY: `entry` is `rust_source`'s `pp_run` for the words (`BUILD`).
                     at0(&aot, 6, &|w, f, e, b| unsafe { rerail_compiler::native_cpu_pp::run_aot(entry, w, f, e, b) });
                 }

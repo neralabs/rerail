@@ -437,6 +437,11 @@ need a profiler run, which is open.
   compares (`Lower::switch`), and the shape test refuses a `br_table`. With two smaller
   changes (extending loads, branches on each test of a combination), Cranelift's code went
   from 1,235 M cycles to 550 M: 0.50× the interpreter's, 1.14× rustc's (t44).
+- **rustc's build is the CPU path** (the user's choice, t44 step 5). `rerail-c-directives`'
+  `generated` feature is on by default, and `expand_tu` runs `expand::native`: the build
+  where it was made from the words this process has (`Build::words`, `expand.rir`'s
+  fingerprint, checked once), else Cranelift's code, compiled once a thread. Its cost is a
+  rustc compile of 3.4 MB of generated Rust when the words or the compiler change.
 
 ## Open
 

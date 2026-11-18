@@ -19,5 +19,9 @@ fn generate() {
     let words = rerail_compiler::rir_asm::assemble(&rir).expect("the words assemble");
     let src = rerail_compiler::native_cpu_pp::rust_source(&words).unwrap_or_else(|e| panic!("the words to Rust: {e}"));
     let body: String = src.lines().filter(|l| !l.starts_with("#![") && !l.starts_with("//!")).flat_map(|l| [l, "\n"]).collect();
+    // The words' text it was made from, by fingerprint: the host runs the build only for the
+    // words it has (`rerail_c_directives::expand::native`).
+    let words_fp = rerail_compiler::clif_rust::fingerprint(&rir);
+    let body = format!("{body}/// The words' text it was made from (`clif_rust::fingerprint` of `expand.rir`).\npub const WORDS: u64 = {words_fp:#x};\n");
     std::fs::write(out.join("pp.rs"), body).expect("writes the source");
 }

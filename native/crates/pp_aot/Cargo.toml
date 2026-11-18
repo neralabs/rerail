@@ -3,12 +3,12 @@ name = "rerail-pp-aot"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "The C preprocessing words built ahead of time: the JIT's Cranelift IR as Rust, compiled by rustc, checked against the JIT and timed beside it (decision 0348)."
+description = "The C preprocessing words built ahead of time: the JIT's Cranelift IR as Rust, compiled by rustc; the CPU path of rerail-c-directives (decision 0348)."
 
 [features]
-# The generated code: the build script writes the words' code as Rust (about 3 MB a build) and
-# this crate compiles it. Off by default, so a workspace build leaves it out; turned on by
-# `rerail-c-directives`' `generated` feature.
+# The generated code: the build script writes the words' code as Rust (about 3.4 MB) and this
+# crate compiles it. Turned on by `rerail-c-directives`' `generated` feature, a default one: the
+# build is the preprocessor's CPU path. Without it, the path is the JIT's code.
 generated = ["dep:rerail-compiler"]
 
 [build-dependencies]

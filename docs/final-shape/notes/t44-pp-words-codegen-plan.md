@@ -155,6 +155,8 @@ is the same program the JIT would compile when the engine runs, at 0.43× of Cra
 
 The recommendation was B, with steps 1–2 done first so the record says why Cranelift's code
 is slower. **The user chose B** (2026-11-18), after one more round on Cranelift (above).
+Built: `rerail-c-directives`' `generated` feature is on by default, and its CPU path
+(`expand::native`) runs rustc's build, else Cranelift's code.
 
 ## How each step is run
 

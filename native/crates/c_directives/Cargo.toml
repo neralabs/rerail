@@ -6,9 +6,9 @@ publish = false
 description = "C's and C++'s directives as a Bitlex grammar (decision 0327, mode (a) compiled): the directive tape, held to the lean scan's rows."
 
 [features]
-# The words' compiled code as Rust (`rerail-pp-aot`), compiled by rustc, checked against the JIT once
-# (decision 0348, stage 4b). Off by default: `cargo nextest run -p rerail-c-directives --features
-# generated --lib -E 'test(/aot/)'`.
+# The words' compiled code as Rust (`rerail-pp-aot`), compiled by rustc: the preprocessor's CPU
+# path (decision 0348, t44). On by default; without it the path is the JIT's code of the same IR.
+default = ["generated"]
 generated = ["rerail-pp-aot/generated"]
 
 [dependencies]
