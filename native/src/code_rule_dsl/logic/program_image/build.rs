@@ -1004,15 +1004,22 @@ impl Walk<'_, '_> {
                 self.enc.close(at);
             }
             kind::AGG => {
-                // Its variables as they are; its atom rewritten.
-                let at = self.open_mapped(n);
+                // Its atom rewritten; its variables (the result, `over`) renamed as everywhere else in the rule
+                // (`Rewrite::var`), so a variable is one name throughout. The result is the node's own value.
+                let at = match rw.var(Slot(self.im.node(n).2)) {
+                    Some(a) => {
+                        let s = self.enc.slot_of(a.0);
+                        self.enc.open(kd, s)
+                    }
+                    None => self.open_mapped(n),
+                };
                 let mut c = n + 1;
                 while c < n + size {
                     if self.im.node(c).0 & kind::MASK == kind::ATOM {
                         let a = AtomRef::new(self.im, c);
                         self.atom(a, Site::Atom(a), rw);
                     } else {
-                        self.copy(c);
+                        self.copy_renamed(c, rw);
                     }
                     c += self.im.node(c).1;
                 }

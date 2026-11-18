@@ -324,7 +324,7 @@ impl Text {
         #[cfg(debug_assertions)]
         let tree = lower::link_seeded_parts(lower::lower_module_seeded(own.clone(), &scoped.seeds)?, &scoped.seeds)?;
         let mut linked = lower::link_seeded_parts(lower::lower_module_seeded_written(own, &scoped.seeds)?, &scoped.seeds)?;
-        let written = own_version(&linked.own, linked.written.take())?;
+        let written = own_version(&linked.own, linked.version.take())?;
         #[cfg(debug_assertions)]
         {
             let t = version_of(&tree.own)?;
@@ -350,8 +350,8 @@ impl Text {
         let own: Vec<syntax::Statement> = own.into_iter().filter(|(item, _)| !matches!(item, syntax::Item::Include(_))).collect();
         let tree = lower::link_seeded_parts(lower::lower_module_seeded(own.clone(), &scoped.seeds)?, &scoped.seeds)?;
         let mut w = lower::link_seeded_parts(lower::lower_module_seeded_written(own, &scoped.seeds)?, &scoped.seeds)?;
-        let header_alone = w.own.rules.is_empty() && w.written.is_some();
-        Ok((header_alone, own_version(&w.own, w.written.take())?, version_of(&tree.own)?))
+        let header_alone = w.own.rules.is_empty() && w.version.is_some();
+        Ok((header_alone, own_version(&w.own, w.version.take())?, version_of(&tree.own)?))
     }
 
     /// `lower_in` as a version: the stored image handed on unread (decision 0281's path, step 7a-2); else the text
@@ -555,9 +555,17 @@ pub fn lower_library(paths: &[PathBuf], store: Option<&crate::content_store::Con
         match stored {
             Some(version) => Library::of(modules, members, keys, version, None),
             None => {
-                let program = lower::link(modules.iter().map(lower::Module::clone).collect())?;
-                let version = kept_version(store, "a linked library's image", key, &program, "rr.linked_library_written")?;
-                Library::of(modules, members, keys, version, Some(program))
+                // Linked on versions (decision 0365): the modules' rules are never a tree.
+                let version = link_library_versions(modules.iter().map(lower::Module::clone).collect())?;
+                #[cfg(debug_assertions)]
+                {
+                    let t = version_of(&lower::link(modules.iter().map(lower::Module::clone).collect())?)?;
+                    assert_eq!((t.size(), t.digest()), (version.size(), version.digest()), "the library linked on versions is the tree's: {}", super::program_image::differences(&t, &version));
+                }
+                if keep_image(store, "a linked library's image", key, version.base_bytes().expect("a folded version is a base").to_vec()) {
+                    crate::code_rule_dsl::prof::count("rr.linked_library_written", 1);
+                }
+                Library::of(modules, members, keys, version, None)
             }
         }
     };
@@ -719,7 +727,7 @@ fn library_modules_with_files(paths: &[PathBuf], files: Vec<(PathBuf, Vec<syntax
         }
         let own: Vec<syntax::Statement> = members.iter().flat_map(|&i| statements[i].take().unwrap_or_default()).collect();
         let scope: Vec<&lower::Module> = scopes[u].iter().map(|&v| &modules[v]).collect();
-        let m = lower::lower_module_in(own, &scope).map_err(|e| match e {
+        let m = lower::lower_module_in_written(own, &scope).map_err(|e| match e {
             Error::Syntax(m) => Error::Syntax(format!("{}: {m}", paths[members[0]].display())),
             e => e,
         })?;
@@ -989,18 +997,18 @@ pub fn with_cone(program: &mut Program, library: &Program, asked: &BTreeSet<Stri
 /// `DropRepeated`: aggregate demand, `unit`, the sets, then the widened contexts), then the
 /// scope's declarations taken out of its header (`lower::unseed`). A debug build runs the tree's tail beside it and
 /// checks the two images agree.
-/// A module's own program as a version: the one its walk wrote (`written`), its header set from `own`'s, or `own`
-/// encoded.
-fn own_version(own: &Program, written: Option<Box<lower::Written>>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
-    let Some(w) = written else { return version_of(own) };
-    let bytes = w.finish(own)?.finish_bytes().map_err(Error::Syntax)?;
-    super::program_image::Version::open(&bytes).map_err(Error::Syntax)
+/// A module's own program as a version: the one its walk wrote, as the link left it (`version`), or `own` encoded.
+fn own_version(own: &Program, version: Option<std::sync::Arc<super::program_image::Version>>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
+    match version {
+        Some(v) => Ok(v),
+        None => version_of(own),
+    }
 }
 
 /// The module linked in `scoped` (`lower::link_seeded_parts`), its own program `own_v` (`own_version`), appended onto
 /// the scope's version and through the lowering's tail.
 fn link_seeded_version(linked: lower::Linked, own_v: std::sync::Arc<super::program_image::Version>, scoped: &Scoped, core: &BTreeSet<String>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
-    use super::program_image::{Builder, manager::Pipeline};
+    use super::program_image::Builder;
     let seeds = &scoped.seeds;
     let lower::Linked { lowered, own, stated, own_stated, .. } = linked;
     // The tree's check below appends the module's rules too: where the walk wrote them, the version's.
@@ -1014,39 +1022,10 @@ fn link_seeded_version(linked: lower::Linked, own_v: std::sync::Arc<super::progr
     };
     #[cfg(not(debug_assertions))]
     drop(own);
-    let lower::Lowered { sets, rewritten, docof_of_locs, findings, three, modal, .. } = lowered;
-    let mut p = Pipeline::new("the lowering's tail", scoped.version()?);
-    {
-        use super::plan::corpus::preparation::{lowering_tail, on_request::SourcesOnRequest};
-        // The module linked onto the scope's version, and checked declared.
-        p.program(&mut lowering_tail::AppendModule { own: own_v, stated, own_stated }).program(&mut lowering_tail::Declared);
-        p.program(&mut lowering_tail::ThreeValued { three: three.clone(), modal: modal.clone() });
-        p.program(&mut lowering_tail::Findings { pending: findings.clone() });
-        p.program(&mut lowering_tail::CoreDecls { docof_of_locs }).program(&mut lowering_tail::SpanPatterns).program(&mut lowering_tail::GrammarNames).program(&mut lowering_tail::BuiltinsOut { rewritten: rewritten.clone() });
-        p.program(&mut lowering_tail::KindSets { sets: sets.clone() }).program(&mut lowering_tail::Unit);
-        p.program(&mut lowering_tail::BooleanRelations).program(&mut lowering_tail::ScopeGlobs);
-        for round in lower::ON_REQUEST {
-            p.program(&mut SourcesOnRequest { round });
-        }
-        p.program(&mut lowering_tail::OrderNodes).program(&mut lowering_tail::DeclareAxes);
-        // `finish`'s checks, through the tree (work queue Q83): `cycles::check` reads a tree.
-        let finished = p.current().map_err(Error::Syntax)?.program(&Default::default()).map_err(Error::Syntax)?;
-        super::front::finish_checks(&finished)?;
-    }
-    {
-        use super::plan::corpus::preparation::{DropRepeated, lowering_tail};
-        let _demand = crate::code_rule_dsl::logic::profile::span(|| "aggregate demand and sets".to_owned());
-        p.program(&mut lowering_tail::AggregateDemand).program(&mut lowering_tail::Unit).program(&mut lowering_tail::LiteralsOnce).program(&mut lowering_tail::DropSelfRules).program(&mut DropRepeated::default()).program(&mut lowering_tail::FactsOnce);
-    }
-    for _ in 0..16 {
-        let mut widen = super::plan::corpus::preparation::lowering_tail::WidenCyclicContexts::default();
-        p.program(&mut widen);
-        p.current().map_err(Error::Syntax)?;
-        if !widen.changed {
-            break;
-        }
-    }
-    let (v, _) = p.finish().map_err(Error::Syntax)?;
+    // What the tree's check below reads of the lowerer.
+    #[cfg(debug_assertions)]
+    let (sets, rewritten, docof_of_locs, findings, three, modal) = (lowered.sets.clone(), lowered.rewritten.clone(), lowered.docof_of_locs, lowered.findings.clone(), lowered.three.clone(), lowered.modal.clone());
+    let v = lowering_tail_on(scoped.version()?, vec![(own_v, stated, own_stated)], true, lowered)?;
     let was = v.header(&Default::default()).map_err(Error::Syntax)?;
     let mut head = was.clone();
     lower::unseed(&mut head, seeds, core);
@@ -1078,19 +1057,64 @@ fn link_seeded_version(linked: lower::Linked, own_v: std::sync::Arc<super::progr
     Ok(v)
 }
 
+
+/// A library's modules linked on versions (decision 0365): `lower::link_versions`, then the lowering's tail
+/// (`lowering_tail_on`), folded to a base. The program `lower::link` makes of them as a tree, as a version.
+pub fn link_library_versions(modules: Vec<lower::Module>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
+    let linked = lower::link_versions(modules)?;
+    let version = lowering_tail_on(linked.first, linked.appended, false, linked.lowered)?;
+    if version.base_bytes().is_some() { Ok(version) } else { version.fold().map_err(Error::Syntax) }
+}
+
+/// The lowering's whole-program half on versions (`lower::whole` on a tree): the modules `appended` onto `start`
+/// (`lowering_tail::AppendModule`), checked declared where `declared` (a text's link: `link_seeded`), then the passes
+/// `whole` runs, in its order, from what the lowerer knows of the modules (`lowered`).
+fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, appended: Vec<(std::sync::Arc<super::program_image::Version>, usize, usize)>, declared: bool, lowered: lower::Lowered) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
+    use super::program_image::manager::Pipeline;
+    let lower::Lowered { sets, rewritten, docof_of_locs, findings, three, modal, .. } = lowered;
+    let mut p = Pipeline::new("the lowering's tail", start);
+    {
+        use super::plan::corpus::preparation::{lowering_tail, on_request::SourcesOnRequest};
+        // The modules appended, in order, and checked declared where the tree's lowering checks it.
+        for (own, stated, own_stated) in appended {
+            p.program(&mut lowering_tail::AppendModule { own, stated, own_stated });
+        }
+        if declared {
+            p.program(&mut lowering_tail::Declared);
+        }
+        p.program(&mut lowering_tail::ThreeValued { three: three.clone(), modal: modal.clone() });
+        p.program(&mut lowering_tail::Findings { pending: findings.clone() });
+        p.program(&mut lowering_tail::CoreDecls { docof_of_locs }).program(&mut lowering_tail::SpanPatterns).program(&mut lowering_tail::GrammarNames).program(&mut lowering_tail::BuiltinsOut { rewritten: rewritten.clone() });
+        p.program(&mut lowering_tail::KindSets { sets: sets.clone() }).program(&mut lowering_tail::Unit);
+        p.program(&mut lowering_tail::BooleanRelations).program(&mut lowering_tail::ScopeGlobs);
+        for round in lower::ON_REQUEST {
+            p.program(&mut SourcesOnRequest { round });
+        }
+        p.program(&mut lowering_tail::OrderNodes).program(&mut lowering_tail::DeclareAxes);
+        // `finish`'s checks, through the tree (work queue Q83): `cycles::check` reads a tree.
+        let finished = p.current().map_err(Error::Syntax)?.program(&Default::default()).map_err(Error::Syntax)?;
+        super::front::finish_checks(&finished)?;
+    }
+    {
+        use super::plan::corpus::preparation::{DropRepeated, lowering_tail};
+        let _demand = crate::code_rule_dsl::logic::profile::span(|| "aggregate demand and sets".to_owned());
+        p.program(&mut lowering_tail::AggregateDemand).program(&mut lowering_tail::Unit).program(&mut lowering_tail::LiteralsOnce).program(&mut lowering_tail::DropSelfRules).program(&mut DropRepeated::default()).program(&mut lowering_tail::FactsOnce);
+    }
+    for _ in 0..16 {
+        let mut widen = super::plan::corpus::preparation::lowering_tail::WidenCyclicContexts::default();
+        p.program(&mut widen);
+        p.current().map_err(Error::Syntax)?;
+        if !widen.changed {
+            break;
+        }
+    }
+    let (v, _) = p.finish().map_err(Error::Syntax)?;
+    Ok(v)
+}
+
 fn version_of(program: &Program) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     let bytes = encode_program(program).map_err(Error::Syntax)?;
     super::program_image::Version::open(&bytes).map_err(Error::Syntax)
-}
-
-/// `version_of`, its image kept in `store` under `key` (`keep_image`), counted as `count` when it is.
-fn kept_version(store: Option<&crate::content_store::ContentStore>, what: &'static str, key: crate::content_store::HashKey, program: &Program, count: &'static str) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
-    let bytes = encode_program(program).map_err(Error::Syntax)?;
-    let version = super::program_image::Version::open(&bytes).map_err(Error::Syntax)?;
-    if keep_image(store, what, key, bytes) {
-        crate::code_rule_dsl::prof::count(count, 1);
-    }
-    Ok(version)
 }
 
 fn encode_program(program: &Program) -> Result<Vec<u8>, String> {

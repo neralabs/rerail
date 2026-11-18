@@ -1679,3 +1679,27 @@ mod program_facts_tests {
     }
 }
 
+
+/// `Builder::rewrite` renames an aggregate's result variable through `Rewrite::var`, as it renames the variable's
+/// other occurrences: before, the result kept its name, so a rule whose variables were renamed (a library module's
+/// helpers renumbered at its link, decision 0365) read `$rr_agg17 = count { … }, 0 = $rr_agg21`.
+#[test]
+fn a_rewrite_renames_an_aggregates_result_too() {
+    use super::{Rewrite, Slot};
+    let p = crate::code_rule_dsl::logic::rr::parse(".decl e(x: number)\n.input e\n.decl out(n: number)\nout(n) :- n = count : { e(_) }, n > 1.\n.output out\n").unwrap();
+    let v = Builder::of_program(&p).unwrap().finish().unwrap().0;
+    let r = v.rules().find(|r| v.rel_name(r.head().rel()) == "out").expect("out's rule");
+    let n = r.vars().position(|a| v.text(a) == "n").expect("its variable n");
+    let mut b = Builder::base();
+    let m = b.atom("m");
+    struct Renamed(Slot, AtomId);
+    impl Rewrite for Renamed {
+        fn var(&mut self, s: Slot) -> Option<AtomId> {
+            (s == self.0).then_some(self.1)
+        }
+    }
+    b.rewrite(&v, r, &mut Renamed(Slot(n as u32), m)).finish().unwrap();
+    let w = b.finish().unwrap().0;
+    let shown = w.show();
+    assert!(shown.contains("$m = count") && !shown.contains("$n"), "{shown}");
+}

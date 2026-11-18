@@ -67,8 +67,28 @@ moved up), the user chose: "move it down into a new crate under rerail-rr".
     (`lowered_own`); `a_texts_rules_are_written_as_a_version_in_its_walk` (two aggregates of two literals: fails with
     the merge put back). Tests: 550 of 551 lowering, link, scope, image and on-the-version tests (Q81); ep2's 317
     policies over 10 files, fresh stores, debug: 0 rows, every text's walk version the tree's.
-- **Next**: the module images (`ModuleParts`) and the seeds read a module's rules as a tree, so `Out::Tree` stays
-  until a library module is written as a version too; then `front::Program`'s rules go.
+- **Step 4: library modules as versions.** A library's module is written as a version in its walk too
+  (`lower_module_in_written`), kept as `Module::version` (finished at the walk's end, `l.prog` its header). Its
+  image copies the version's rules in their order, and an image read back keeps the opened image as the module's
+  version (`module_image`). The library is linked on versions (`rr::link_library_versions`): `lower::link_versions`
+  runs `Lowerer::link`'s steps for each module over its helpers' rules alone (decoded: what their keys read), then
+  `lower::relinked` writes the renames and the merged helpers' drops over the version's rules (one definition with
+  `rename_relations` and the merge's `retain`); `must`/`may` places count the rules linked as versions
+  (`Lowerer::appended`). The lowering's tail is `rr::lowering_tail_on`, one function for a text's link and a
+  library's (`declared` only for the text's, as `whole` checks none). The linked library keeps no tree;
+  `Library::program` decodes it where asked. `link` (the tree's) takes modules as trees (`Module::tree`), so 3a's
+  guard and the seeded skip of merges are gone: a seeded module's renames are written over its version too.
+  - Found: `Builder::rewrite` copied an aggregate's result and `over` variables as they were, ignoring
+    `Rewrite::var`, so a renamed variable kept its old name there (`$rr_agg17 = count {…}, 0 = $rr_agg21`). Fixed in
+    the core; `a_rewrite_renames_an_aggregates_result_too`.
+  - Checks: a debug build links each library as a tree too and asserts one program;
+    `library_modules_link_to_the_lowering_of_them_together` (every pack's libraries) also links their images on
+    versions and compares. Tests: 682 of 684 lowering, library, image, request and corpus tests (Q81 and Q101, both
+    failing at `caa1bfdb2` too); ep2's 317 policies over 10 files, cold then warm on one store, debug: 0 rows.
+- **What still reads rules as trees** (2026-11-17), so `front::Program`'s rules stay: the planner's front passes
+  decode versions (`plan.rs`: normalize, inline, demand, form), policies are parsed by `rr::parse`/`parse_own` into
+  `P::of_tree` (`plan/corpus.rs`), and `cross_memo`, `bridge` and `emit` parse text; with 1,382 uses of `.rules` in
+  115 files. They are 0276's steps 3–4 (preparation and the front passes on the writer), before its step 6.
 
 ## Consequences
 

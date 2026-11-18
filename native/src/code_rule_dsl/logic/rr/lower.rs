@@ -244,6 +244,8 @@ struct Lowerer {
     /// lowering added. Linking keeps every module's stated inputs before the added ones, as one lowering of them all
     /// would order them.
     stated: usize,
+    /// The rules linked as versions so far (`link`), which `prog` does not hold: a `must` or `may` rule's place.
+    appended: usize,
 }
 
 /// Where `Lowerer::write` puts a rule.
@@ -297,16 +299,17 @@ impl Written {
         }
     }
 
-    /// The builder, its header set from `header` (a program of no rules), as `Builder::of_program_less_maintenance`
-    /// sets one.
-    pub fn finish(self, header: &Program) -> Result<crate::code_rule_dsl::logic::program_image::Builder<'static>, Error> {
+    /// The version written, its header set from `header` (a program of no rules), as
+    /// `Builder::of_program_less_maintenance` sets one.
+    fn version(self, header: &Program) -> Result<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Error> {
         debug_assert!(header.rules.is_empty(), "a written program's header holds no rules");
         if let Some(e) = self.error {
             return Err(Error::Syntax(e));
         }
         let mut b = self.b;
         b.set_program_header(header);
-        Ok(b)
+        let bytes = b.finish_bytes().map_err(Error::Syntax)?;
+        crate::code_rule_dsl::logic::program_image::Version::open(&bytes).map_err(Error::Syntax)
     }
 }
 
@@ -412,6 +415,9 @@ pub struct Module {
     docof: Option<bool>,
     /// The `.violation`s of its includes that its rules give a `@place` (`Lowerer::clause`).
     places: BTreeSet<String>,
+    /// Its rules, where its walk wrote them as a version (decision 0365 step 3), or its image holds them: then
+    /// `l.prog` is its header alone.
+    version: Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>,
 }
 
 /// The lowering half that reads one clause and the declarations in scope (decision 0246 §1, "per clause"), for a
@@ -599,7 +605,16 @@ fn lower_module_seeded_as(statements: Vec<Statement>, seeds: &Seeds, as_version:
     l.stated = l.prog.inputs.iter().take_while(|r| stated.contains(*r)).count();
     l.deps = own_deps;
     let docof = declares_docof.then_some(l.docof_of_locs);
-    Ok(Module { l, written, docof, places })
+    let version = match std::mem::take(&mut l.out) {
+        Out::Tree => None,
+        Out::Version(w) => Some(w.version(&l.prog)?),
+    };
+    Ok(Module { l, written, docof, places, version })
+}
+
+/// `lower_module_in`, its rules written as a version in the walk: a library's module (`rr::lower_library`).
+pub fn lower_module_in_written(statements: Vec<Statement>, scope: &[&Module]) -> Result<Module, Error> {
+    lower_module_seeded_written(statements, &seeds(scope))
 }
 
 /// A module's parts as its image keeps them (decision 0246 §6): its program, and what lowering's whole-program half
@@ -631,6 +646,8 @@ pub struct ModuleParts {
     pub places: BTreeSet<String>,
     /// The demands its text, or an include's, states (`Lowerer::printed_demands`).
     pub printed: BTreeSet<String>,
+    /// Its rules as a version, where `prog` holds its header alone (`Module::version`).
+    pub version: Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -682,7 +699,24 @@ impl Module {
             docof: self.docof,
             places: self.places.clone(),
             printed: l.printed_demands.clone(),
+            version: self.version.clone(),
         }
+    }
+
+    /// The module with its rules as a version (`version`), its program its header alone.
+    pub fn as_version(mut self) -> Result<Module, Error> {
+        if self.version.is_none() {
+            self.version = Some(rules_version(&std::mem::take(&mut self.l.prog.rules))?);
+        }
+        Ok(self)
+    }
+
+    /// The module with its rules in its program: decoded from its version, where it holds one.
+    pub fn tree(mut self) -> Result<Module, Error> {
+        if let Some(v) = self.version.take() {
+            self.l.prog.rules = v.program(&Default::default()).map_err(Error::Syntax)?.rules;
+        }
+        Ok(self)
     }
 
     /// The module its image's parts are.
@@ -702,7 +736,7 @@ impl Module {
         for (r, x) in p.deps {
             l.deps.entry(r).or_default().insert(x);
         }
-        Ok(Module { l, written: p.written.into_iter().collect(), docof: p.docof, places: p.places })
+        Ok(Module { l, written: p.written.into_iter().collect(), docof: p.docof, places: p.places, version: p.version })
     }
 }
 
@@ -801,20 +835,27 @@ impl Lowerer {
 
     /// `m` after the modules linked so far: its helpers numbered after theirs, its parts added to theirs.
     fn append(&mut self, m: Module) {
-        let (b, b_stated, _) = self.link(m, false);
+        let (b, b_stated, own) = self.link(m).expect("a module of rules links");
+        debug_assert!(own.is_none(), "a tree's link appends trees");
         append_parts(&mut self.prog, b, &mut self.stated, b_stated);
     }
 
     /// `append` but the union of the programs: `m`'s helpers numbered after the modules linked so far, and what the
     /// lowerer knows of them added to theirs. `m`'s program, so renamed, is returned with the count of its inputs
-    /// stated first, for `append_parts`, and whether its rules were edited (a helper renamed or merged): in a seeded
-    /// scope they never are (`link_seeded_parts`), as its seeds number no helpers and hold every native's name.
+    /// stated first, for `append_parts`.
     ///
-    /// `written`: the walk wrote `m`'s rules as a version, so `m.prog` holds none to key its helpers by. Its helpers are
-    /// then taken as they are, which is what a seeded scope's link does with them anyway: its seeds hold no helpers,
-    /// and the walk wrote each of its own once (`helper_once`).
-    fn link(&mut self, m: Module, written: bool) -> (Program, usize, bool) {
-        let Module { l: mut m, docof, places, .. } = m;
+    /// A module whose rules are a version (`Module::version`) is linked by the same steps over its helpers' rules
+    /// alone, decoded (what the helpers' keys read): the renames and the merged helpers' rules dropped are then written
+    /// over its version's rules (`relinked`), and the program returned is its header alone, with that version.
+    fn link(&mut self, m: Module) -> Result<(Program, usize, Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>), Error> {
+        let Module { l: mut m, docof, places, version, .. } = m;
+        if let Some(v) = &version {
+            let helpers: BTreeSet<&str> = m.once.iter().map(|(name, _, _)| name.as_str()).collect();
+            let lists = Default::default();
+            let mut tree = crate::code_rule_dsl::logic::program_image::Tree::new(v, &lists);
+            m.prog.rules = v.rules().filter(|r| helpers.contains(v.rel_name(r.head().rel()))).map(|r| tree.rule(r)).collect();
+        }
+        let mut merged: Vec<(String, String, usize)> = Vec::new();
         let mut rename: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         for (stem, n) in &m.made {
             if self.next > 0 {
@@ -837,23 +878,18 @@ impl Lowerer {
                 rename.insert(name.clone(), new);
             }
         }
-        let mut edited = !rename.is_empty();
-        if edited {
+        if !rename.is_empty() {
             rename_relations(&mut m.prog, &rename);
         }
         // A helper `helper_once` made that equals one an earlier module made is that one, as in one lowering of them
         // all (decision 0225 §6 with 0246): in the order made, each renamed before the next's key reads it.
         for (name, stem, k) in std::mem::take(&mut m.once) {
             let name = rename.get(&name).cloned().unwrap_or(name);
-            if written {
-                self.once.push((name, stem, k));
-                continue;
-            }
             let key = self.once_key(&m.prog, &name, &stem, k);
             match self.helpers.get(&key) {
                 Some(made) => {
-                    edited = true;
                     let made = made.clone();
+                    merged.push((name.clone(), made.clone(), k));
                     m.prog.decls.remove(name.as_str());
                     let mut seen = 0;
                     m.prog.rules.retain(|r| r.head.rel != name.as_str() || {
@@ -869,7 +905,7 @@ impl Lowerer {
             }
         }
         self.next += m.next;
-        let at = self.prog.rules.len();
+        let at = self.prog.rules.len() + self.appended;
         self.modal.extend(m.modal.into_iter().map(|(i, s)| (i + at, s)));
         for v in self.violations.iter_mut().filter(|v| places.contains(&v.name)) {
             v.places = true;
@@ -881,8 +917,136 @@ impl Lowerer {
         if let Some(d) = docof {
             self.docof_of_locs = d;
         }
-        (m.prog, m.stated, edited)
+        let own = match version {
+            None => None,
+            Some(v) => {
+                m.prog.rules.clear();
+                let own = relinked(&v, &m.prog, &rename, &merged)?;
+                self.appended += own.size();
+                Some(own)
+            }
+        };
+        Ok((m.prog, m.stated, own))
     }
+}
+
+/// A module's rules, from version `v`, as `Lowerer::link` leaves them, under its linked `header`: each relation
+/// renamed by `rename`, then the first `k` rules of each helper `merged` into another (`(name, made, k)`, in order)
+/// dropped and the helper read as that one. One definition with the tree's (`rename_relations`, then each merge's
+/// `retain` and rename), over the version: no rule is decoded.
+pub fn relinked(v: &crate::code_rule_dsl::logic::program_image::Version, header: &Program, rename: &std::collections::HashMap<String, String>, merged: &[(String, String, usize)]) -> Result<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Error> {
+    use crate::code_rule_dsl::logic::program_image::{AtomId, AtomRef, Builder, Rewrite, Slot};
+    let into: std::collections::HashMap<&str, &str> = merged.iter().map(|(n, m, _)| (n.as_str(), m.as_str())).collect();
+    let to = |rel: &str| -> Option<String> {
+        let renamed = rename.get(rel).map(String::as_str);
+        let r = renamed.unwrap_or(rel);
+        into.get(r).map(|m| (*m).to_owned()).or_else(|| renamed.map(str::to_owned))
+    };
+    struct Renamed<'a, F: Fn(&str) -> Option<String>> {
+        v: &'a crate::code_rule_dsl::logic::program_image::Version,
+        to: &'a F,
+        vars: BTreeMap<Slot, AtomId>,
+    }
+    impl<F: Fn(&str) -> Option<String>> Rewrite for Renamed<'_, F> {
+        fn atom_as(&mut self, a: AtomRef<'_>) -> Option<(String, bool, bool)> {
+            (self.to)(self.v.rel_name(a.rel())).map(|r| (r, a.neg(), a.gated()))
+        }
+        fn head_as(&mut self, a: AtomRef<'_>) -> Option<String> {
+            (self.to)(self.v.rel_name(a.rel()))
+        }
+        fn kindset(&mut self, set: AtomId) -> Option<String> {
+            (self.to)(self.v.text(set))
+        }
+        fn var(&mut self, s: Slot) -> Option<AtomId> {
+            self.vars.get(&s).copied()
+        }
+    }
+    let mut left: std::collections::HashMap<&str, usize> = merged.iter().map(|(n, _, k)| (n.as_str(), *k)).collect();
+    let mut b = Builder::base();
+    let edits = !rename.is_empty() || !merged.is_empty();
+    for r in v.rules() {
+        let head = v.rel_name(r.head().rel());
+        let renamed = rename.get(head).map(String::as_str).unwrap_or(head);
+        if let Some(k) = left.get_mut(renamed)
+            && *k > 0
+        {
+            *k -= 1;
+            continue;
+        }
+        if !edits {
+            b.copy(v, r);
+            continue;
+        }
+        // A variable named as a renamed relation is renamed too, as `rename_relations` renames it.
+        let mut vars = BTreeMap::new();
+        for (i, a) in r.vars().enumerate() {
+            if let Some(new) = to(v.text(a)) {
+                vars.insert(Slot(i as u32), b.atom(&new));
+            }
+        }
+        let mut rw = Renamed { v, to: &to, vars };
+        b.rewrite(v, r, &mut rw).finish().map_err(Error::Syntax)?;
+    }
+    b.set_program_header(header);
+    let bytes = b.finish_bytes().map_err(Error::Syntax)?;
+    crate::code_rule_dsl::logic::program_image::Version::open(&bytes).map_err(Error::Syntax)
+}
+
+/// `rules` as a version of no header (what `relinked` reads of a module's rules).
+fn rules_version(rules: &[Rule]) -> Result<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Error> {
+    let mut b = crate::code_rule_dsl::logic::program_image::Builder::base();
+    for r in rules {
+        b.add(r).map_err(Error::Syntax)?;
+    }
+    crate::code_rule_dsl::logic::program_image::Version::open(&b.finish_bytes().map_err(Error::Syntax)?).map_err(Error::Syntax)
+}
+
+/// A library's modules linked as versions (`link`'s steps, the rules kept as versions): the first module's program,
+/// each module after it as `link` leaves it with the inputs stated before it and its own stated count (what
+/// `lowering_tail::AppendModule` appends), and what the lowerer knows of them all (`whole_front`), for the
+/// lowering's tail on the version (`rr::lower_library`).
+pub struct LinkedVersions {
+    pub first: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
+    pub appended: Vec<(std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, usize, usize)>,
+    pub lowered: Lowered,
+}
+
+/// `link` with the modules' rules kept as versions (`LinkedVersions`).
+pub fn link_versions(modules: Vec<Module>) -> Result<LinkedVersions, Error> {
+    let mut modules = modules.into_iter();
+    let Some(Module { mut l, version, .. }) = modules.next() else {
+        let lowered = whole_front(Lowerer::default())?;
+        let first = relinked(rules_version(&[])?.as_ref(), &Program::default(), &Default::default(), &[])?;
+        return Ok(LinkedVersions { first, appended: Vec::new(), lowered });
+    };
+    let v = match version {
+        Some(v) => v,
+        None => rules_version(&std::mem::take(&mut l.prog.rules))?,
+    };
+    // The first module's helpers by their keys (read from an image, it has none), as `link` keys them.
+    l.helpers.clear();
+    {
+        let helpers: BTreeSet<&str> = l.once.iter().map(|(name, _, _)| name.as_str()).collect();
+        let lists = Default::default();
+        let mut tree = crate::code_rule_dsl::logic::program_image::Tree::new(&v, &lists);
+        let mut keyed = l.prog.clone();
+        keyed.rules = v.rules().filter(|r| helpers.contains(v.rel_name(r.head().rel()))).map(|r| tree.rule(r)).collect();
+        for (name, stem, k) in l.once.clone() {
+            let key = l.once_key(&keyed, &name, &stem, k);
+            l.helpers.entry(key).or_insert(name);
+        }
+    }
+    let first = relinked(&v, &l.prog, &Default::default(), &[])?;
+    l.appended = first.size();
+    let mut appended = Vec::new();
+    for m in modules {
+        let (header, b_stated, own) = l.link(m.as_version()?)?;
+        let own = own.expect("a module linked as a version");
+        appended.push((own, l.stated, b_stated));
+        append_parts(&mut l.prog, header, &mut l.stated, b_stated);
+    }
+    let lowered = whole_front(l)?;
+    Ok(LinkedVersions { first, appended, lowered })
 }
 
 /// `b`, a module's program (`Lowerer::link`), added to `a`, the modules linked so far: its rules after theirs, its
@@ -1028,6 +1192,7 @@ fn rename_relations(prog: &mut Program, rename: &std::collections::HashMap<Strin
 /// rules, `declare_core`, projections, kind sets, boolean relations, `front::finish`, aggregate demand, removing
 /// repeated rules and literals, and widening cyclic contexts, over `modules` together.
 pub fn link(modules: Vec<Module>) -> Result<Program, Error> {
+    let modules = modules.into_iter().map(Module::tree).collect::<Result<Vec<_>, _>>()?;
     let mut modules = modules.into_iter();
     let Some(Module { mut l, .. }) = modules.next() else { return Ok(Program::default()) };
     // The first module's helpers by their keys (read from an image, it has none).
@@ -1056,7 +1221,7 @@ pub fn link_in(m: Module, scope: &[&Module], core: &BTreeSet<String>) -> Result<
 pub fn link_seeded(m: Module, seeds: &Seeds, core: &BTreeSet<String>) -> Result<Program, Error> {
     let mut l = seeds.l.clone();
     l.violations.clear();
-    l.append(m);
+    l.append(m.tree()?);
     let mut program = whole(l)?;
     crate::code_rule_dsl::logic::front::declared(&program)?;
     unseed(&mut program, seeds, core);
@@ -1079,22 +1244,14 @@ pub fn unseed(program: &mut Program, seeds: &Seeds, core: &BTreeSet<String>) {
 /// module's own program linked into it (`Lowerer::link`), and what the lowerer knows of them (`Lowered`, its program
 /// the scope's). `rr::link_seeded_version` makes the scope's version once (`Scoped`), appends the module's onto it
 /// (`append_parts`, `lowering_tail::AppendModule`), checks it is `declared`, and runs the analyses on it.
-pub fn link_seeded_parts(mut m: Module, seeds: &Seeds) -> Result<Linked, Error> {
+pub fn link_seeded_parts(m: Module, seeds: &Seeds) -> Result<Linked, Error> {
     let mut l = seeds.l.clone();
     l.violations.clear();
-    let written = match std::mem::take(&mut m.l.out) {
-        Out::Tree => None,
-        Out::Version(w) => Some(w),
-    };
-    let (own, own_stated, edited) = l.link(m, written.is_some());
-    // The module's rules are the walk's as written: what lets the walk write them as a version (0365 step 3).
-    if edited {
-        return Err(Error::Syntax("a module linked in a seeded scope had its helpers renamed: its rules are not the walk's".to_owned()));
-    }
+    let (own, own_stated, version) = l.link(m)?;
     let stated = l.stated;
     let lowered = whole_front(l)?;
     debug_assert!(lowered.program.rules.is_empty(), "a scope's seeds hold no rules");
-    Ok(Linked { lowered, own, written, stated, own_stated })
+    Ok(Linked { lowered, own, version, stated, own_stated })
 }
 
 /// `link_seeded_parts`'s parts.
@@ -1102,7 +1259,8 @@ pub struct Linked {
     pub lowered: Lowered,
     /// The module's own program, linked: with its rules, or its header alone where the walk wrote them (`written`).
     pub own: Program,
-    pub written: Option<Box<Written>>,
+    /// Its rules, as `Lowerer::link` leaves them, where its walk wrote them as a version (`own` its header then).
+    pub version: Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>,
     /// The scope's inputs stated first, and the module's (`append_parts`).
     pub stated: usize,
     pub own_stated: usize,

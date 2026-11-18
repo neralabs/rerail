@@ -35,6 +35,13 @@ pub enum Version {
     Overlay { parent: Arc<Version>, delta: Arc<Image>, size: usize, depth: usize, digest: u64, analyses: Held },
 }
 
+/// A version as its size and digest: what tells two apart (`differences` shows them).
+impl std::fmt::Debug for Version {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Version {{ rules: {}, digest: {:#x} }}", self.size(), self.digest())
+    }
+}
+
 /// What a version is made of over its parent (`Version::layer`).
 pub enum Layer<'v> {
     Base(&'v [u8]),
