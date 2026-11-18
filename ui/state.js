@@ -94,9 +94,9 @@ export const data = {
   /** Why the coding agents could not be checked, when `GET /api/coding-agents` failed. */
   agentsError: null,
   /**
-   * Freshness: the last successful poll (views that read more after each poll key on it), the last time the daemon was
-   * heard (a poll's answer or a message of its change stream, which the status reads), and whether the last attempt
-   * failed.
+   * Freshness: the last successful poll (views that read more after each poll key on it), the last message of the
+   * daemon's change stream (the status reads the later of the two as when the daemon was last heard), and whether the
+   * last attempt failed.
    */
   updatedAt: 0,
   heardAt: 0,

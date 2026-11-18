@@ -25,7 +25,7 @@ export { toStoredRules };
  * the page's reads than it did while it polled, so a busy daemon's hooks wait behind no more of them. Also the pause
  * before the stream is opened again after it ended with the daemon answering.
  */
-const PACE = 5_000;
+const INTERVAL = 5_000;
 const MAX_BACKOFF = 30_000;
 /**
  * Two missed beats of the change stream (the daemon beats every 5 s): the status stops saying Live, and the stream is
@@ -56,7 +56,7 @@ const EVENTS_PAGE = 500;
  */
 const etags = new Map();
 let onChange = () => {};
-let backoff = PACE;
+let backoff = INTERVAL;
 /**
  * When the last read a change asked for began (`performance.now()`, which a changed wall clock does not move), for
  * the pace; a new stream starts it over, and the person's own reads do not count.
@@ -738,12 +738,12 @@ async function poll() {
     const results = await Promise.all(ui.scope === null ? shared : [...shared, ...await scopedJobs(since)]);
     if (started !== generation) return;
     if (since === 0) { data.activityAll = data.activity; data.activityAllSessions = data.activitySessions; }
-    data.updatedAt = data.heardAt = Date.now();
+    data.updatedAt = Date.now();
     data.disconnected = false;
     data.accessRequired = false;
     data.missing = false;
     data.loaded = true;
-    backoff = PACE;
+    backoff = INTERVAL;
     onChange(results.some(Boolean));
   } catch (error) {
     if (started !== generation) return;
@@ -754,7 +754,7 @@ async function poll() {
     data.missing = !data.accessRequired && /^\/api\/repository(\/rules)?\?.* answered 404$/u.test(error.message);
     data.disconnected = !data.missing && !data.accessRequired;
     data.loaded = data.missing;
-    backoff = data.missing ? PACE : Math.min(MAX_BACKOFF, backoff * 2);
+    backoff = data.missing ? INTERVAL : Math.min(MAX_BACKOFF, backoff * 2);
     if (!data.missing) console.warn("poll failed", error);
     onChange(data.missing);
   }
@@ -782,9 +782,9 @@ function changeRead() {
   void refresh();
 }
 
-/** Read again for a change: at once when the last such read began `PACE` ago or more, else once it is that old. */
+/** Read again for a change: at once when the last such read began `INTERVAL` ago or more, else once it is that old. */
 function readSoon() {
-  const wait = lastChangeRead + PACE - performance.now();
+  const wait = lastChangeRead + INTERVAL - performance.now();
   if (wait <= 0) changeRead();
   else paceTimer ??= setTimeout(changeRead, wait);
 }

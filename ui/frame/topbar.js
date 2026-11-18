@@ -30,41 +30,68 @@ function updatedAgo(at) {
   return `${Math.round(min / 1440)}d ago`;
 }
 
+/** When the daemon was last heard: a poll's answer, or a message of its change stream. */
+const heardAt = () => Math.max(data.updatedAt, data.heardAt);
+
 /* Labels stay short and leave out the repo (it is in the pill); the tooltip says what is known and what to do. Any
  * failed poll that is not the repository's 404 counts as disconnected, so the words claim only that the daemon did not
- * answer, not why. Only running sessions lose steering: the hook that starts a session may start the daemon. */
-function status() {
+ * answer, not why. Only running sessions lose steering: the hook that starts a session may start the daemon. Each
+ * reading below says the status, or `null` when its state does not hold; the first that holds is the status. */
+
+/** Before the first answer, or a browser without the dashboard's capability. */
+function linkStatus() {
   if (!data.loaded && !data.disconnected && !data.accessRequired) return { cls: "", text: "Connecting…", title: `Waiting for the local daemon at ${location.origin}.` };
-  const rel = data.heardAt ? updatedAgo(data.heardAt) : "never";
-  const version = data.health ? ` ${data.health.version}` : "";
-  if (data.accessRequired) {
-    return { cls: "down", text: "Needs the dashboard link",
-      title: `${location.origin} answers only a browser that has opened its dashboard link once. Run rerail manage, or rerail daemon start --open, on this computer.` };
+  if (!data.accessRequired) return null;
+  return { cls: "down", text: "Needs the dashboard link",
+    title: `${location.origin} answers only a browser that has opened its dashboard link once. Run rerail manage, or rerail daemon start --open, on this computer.` };
+}
+
+/** The last read failed: reconnecting for a moment, then not responding. */
+function daemonStatus() {
+  if (!data.disconnected) return null;
+  const at = heardAt();
+  if (at && Date.now() - at <= DOWN_AFTER_MS) {
+    return { cls: "warn", text: "Reconnecting…", title: `The last refresh failed. Showing data from ${updatedAgo(at)}; retrying.` };
   }
-  if (data.disconnected) {
-    if (!data.heardAt || Date.now() - data.heardAt > DOWN_AFTER_MS) {
-      const since = data.heardAt ? ` since ${new Date(data.heardAt).toLocaleTimeString()}` : "";
-      return { cls: "down", text: "Daemon not responding",
-        title: `No answer from ${location.origin}${since}. Running sessions aren't steered until it's back; a new session starts it, or run rerail daemon start.` };
-    }
-    return { cls: "warn", text: "Reconnecting…", title: `The last refresh failed. Showing data from ${rel}; retrying.` };
-  }
-  // A model whose files do not match its manifest fails every session's attach, whichever repo the page shows.
+  const since = at ? ` since ${new Date(at).toLocaleTimeString()}` : "";
+  return { cls: "down", text: "Daemon not responding",
+    title: `No answer from ${location.origin}${since}. Running sessions aren't steered until it's back; a new session starts it, or run rerail daemon start.` };
+}
+
+/** A model whose files do not match its manifest fails every session's attach, whichever repo the page shows. */
+function modelStatus() {
   const model = data.health?.model;
-  if (model && !model.ok) {
-    return { cls: "down", text: `Model: ${model.message}`,
-      title: "The engine's model files do not match model/manifest.json, so no session can attach. Reinstall Rerail, or in a source checkout run git lfs install && git lfs pull and rebuild; then run rerail daemon stop and rerail daemon start." };
-  }
+  if (!model || model.ok) return null;
+  return { cls: "down", text: `Model: ${model.message}`,
+    title: "The engine's model files do not match model/manifest.json, so no session can attach. Reinstall Rerail, or in a source checkout run git lfs install && git lfs pull and rebuild; then run rerail daemon stop and rerail daemon start." };
+}
+
+/** The repository the page shows: none picked, unknown, not set up or stopped. */
+function repoStatus() {
   if (ui.scope === null) return { cls: "", dot: false, text: "No repo selected", title: "Open the dashboard from a session, or pick a repo." };
   if (data.missing) return { cls: "warn", text: "Repo not found", title: "The daemon has no record of this checkout. Run /rerail-start in a session there, or pick another repo." };
   if (data.repository?.setUp === false) {
     return { cls: "warn", text: "Not set up", title: "No rule packs chosen, so no rules run here. Run /rerail-start in a session here." };
   }
-  if (stateHere() === "stopped") {
-    return { cls: "warn", text: "Stopped", title: "No rules run here, and nothing is logged. Start it from Overview or Settings, or run /rerail-start." };
+  if (stateHere() !== "stopped") return null;
+  return { cls: "warn", text: "Stopped", title: "No rules run here, and nothing is logged. Start it from Overview or Settings, or run /rerail-start." };
+}
+
+/** Live while the daemon was heard within two beats, else how old the data is. */
+function freshStatus() {
+  const at = heardAt();
+  if (Date.now() - at < LIVE_MS) return { cls: "", text: "Live", title: `Connected to daemon${data.health ? ` ${data.health.version}` : ""} · up to date.` };
+  return { cls: "", text: `Updated ${at ? updatedAgo(at) : "never"}`, title: `Last refreshed ${new Date(at).toLocaleString()}. Refreshing pauses while the tab is hidden.` };
+}
+
+const STATUS_READINGS = [linkStatus, daemonStatus, modelStatus, repoStatus, freshStatus];
+
+function status() {
+  for (const reading of STATUS_READINGS) {
+    const said = reading();
+    if (said !== null) return said;
   }
-  if (Date.now() - data.heardAt < LIVE_MS) return { cls: "", text: "Live", title: `Connected to daemon${version} · up to date.` };
-  return { cls: "", text: `Updated ${rel}`, title: `Last refreshed ${new Date(data.heardAt).toLocaleString()}. Refreshing pauses while the tab is hidden.` };
+  return null;
 }
 
 /**
@@ -72,8 +99,9 @@ function status() {
  * message, Reconnecting turns red, an age moves to its next minute; `null` when time alone does not change it.
  */
 function untilStatusMoves(s) {
-  if (!data.heardAt) return null;
-  const age = Date.now() - data.heardAt;
+  const at = heardAt();
+  if (!at) return null;
+  const age = Date.now() - at;
   if (s.text === "Live") return LIVE_MS - age;
   if (data.disconnected && s.cls === "warn") return DOWN_AFTER_MS - age;
   return s.text.startsWith("Updated ") ? (Math.floor(age / MINUTE + 0.5) + 0.5) * MINUTE - age : null;
