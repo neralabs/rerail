@@ -1,47 +1,92 @@
 name: Rust compile cache
 description: >-
   Puts every rustc compile of the job, and every C and C++ compile a build script makes through the `cc` crate, through
-  sccache, whose cache is the GitHub Actions cache: one entry per compile, keyed on its inputs (sources, flags,
-  dependencies, compiler), so a crate any earlier job compiled the same way is fetched, not compiled. cc-rs wraps its C
-  and C++ compiler in RUSTC_WRAPPER when that is sccache, so CC and CXX stay as they are. Use it after the Rust
-  toolchain's set-up and before the first cargo or napi command. Its post-job step prints sccache's hit statistics,
-  as a notice and in the job's summary.
+  sccache, keyed on the compile's inputs (sources, flags, dependencies, compiler), so a crate an earlier job compiled
+  the same way is fetched, not compiled. cc-rs wraps its C and C++ compiler in RUSTC_WRAPPER when that is sccache, so CC
+  and CXX stay as they are. Use it after the Rust toolchain's set-up and before the first cargo or napi command. Its
+  post-job steps print sccache's hit statistics (a notice and the job's summary) and, with the disk store, save the
+  store.
 
   Upstream sccache caches what rustc does not link: libraries (rlib, staticlib) and C objects. A crate rustc links
   (the engine's cdylib with its thin LTO, proc macros, build scripts, test harnesses, binaries) compiles every time,
-  and a build script runs every time. Incremental compiles are never cached, so CARGO_INCREMENTAL is 0. A job's entries
-  are scoped like any cache entry: its branch (a pull request's merge ref) and the default branch, so main's runs feed
-  every pull request.
+  and a build script runs every time. Incremental compiles are never cached, so CARGO_INCREMENTAL is 0.
 
 inputs:
+  name:
+    description: >-
+      The disk store's name: one per kind of build (profile, target, features), since each kind compiles different
+      objects. Jobs that build the same kind share it.
+    required: true
+  store:
+    description: >-
+      Where the objects live. "disk": one directory per name and runner OS and arch, restored at the start (the newest
+      saved by this branch or the default branch) and saved as a new cache entry at the end; it is read by every run, so
+      the cache's LRU eviction keeps it. "gha": one GitHub Actions cache entry per object, read and written as the job
+      compiles; a pull request then stores only what it changed, but an object no run has read within the hour is the
+      first evicted while the repository's caches exceed their size limit.
+    default: disk
+  size:
+    description: The disk store's size limit, as SCCACHE_CACHE_SIZE (least recently used objects go first).
+    default: 4G
   write:
     description: >-
-      Store what the job compiles. "false" only reads (SCCACHE_GHA_RW_MODE=READ_ONLY): for a job that runs code it does
-      not trust before compiling.
+      Store what the job compiles. "false" only reads: for a job that runs code it does not trust before compiling.
     default: "true"
 
 runs:
   using: composite
   steps:
     # Downloads the release, checks its sha256, puts it on PATH, exports SCCACHE_PATH and the cache service's
-    # ACTIONS_RESULTS_URL and ACTIONS_RUNTIME_TOKEN, and its post-job step shows the statistics.
+    # ACTIONS_RESULTS_URL and ACTIONS_RUNTIME_TOKEN; its post-job step shows the statistics.
     - name: Set up sccache
       uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
       with:
         version: v0.19.0
 
-    # SCCACHE_GHA_VERSION names the cache: a new value starts an empty one. The server would stop after 10 idle
-    # minutes and lose the job's statistics (a long link or test run is idle for sccache), so it never stops.
-    - name: Route compiles through sccache
+    # The server would stop after 10 idle minutes and lose the job's statistics (a long link or test run is idle for
+    # sccache), so it never stops. SCCACHE_GHA_VERSION names the gha store: a new value starts an empty one.
+    - id: env
+      name: Route compiles through sccache
       shell: bash
       env:
+        STORE: ${{ inputs.store }}
+        SIZE: ${{ inputs.size }}
         WRITE: ${{ inputs.write }}
       run: |
+        case "$STORE" in disk | gha) ;; *) echo "::error::rust-compile-cache: store is disk or gha, not '$STORE'"; exit 1 ;; esac
+        dir="$RUNNER_TEMP/sccache"
         {
           echo "RUSTC_WRAPPER=sccache"
-          echo "SCCACHE_GHA_ENABLED=on"
-          echo "SCCACHE_GHA_VERSION=rerail-1"
-          echo "SCCACHE_GHA_RW_MODE=$([ "$WRITE" = false ] && echo READ_ONLY || echo READ_WRITE)"
           echo "SCCACHE_IDLE_TIMEOUT=0"
           echo "CARGO_INCREMENTAL=0"
+          if [ "$STORE" = gha ]; then
+            echo "SCCACHE_GHA_ENABLED=on"
+            echo "SCCACHE_GHA_VERSION=rerail-1"
+            echo "SCCACHE_GHA_RW_MODE=$([ "$WRITE" = false ] && echo READ_ONLY || echo READ_WRITE)"
+          else
+            echo "SCCACHE_DIR=$dir"
+            echo "SCCACHE_CACHE_SIZE=$SIZE"
+            [ "$WRITE" = false ] && echo "SCCACHE_LOCAL_RW_MODE=READ_ONLY"
+          fi
         } >> "$GITHUB_ENV"
+        echo "dir=$dir" >> "$GITHUB_OUTPUT"
+
+    # A new entry per run (its id), restored by prefix: the newest this branch or the default branch saved. actions/cache
+    # saves it in its post-job step, after the job's compiles, unless the job failed.
+    - name: Restore the compile cache
+      if: inputs.store == 'disk' && inputs.write != 'false'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.env.outputs.dir }}
+        key: rust-compile-cache-1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.name }}-${{ github.run_id }}-${{ github.run_attempt }}
+        restore-keys: |
+          rust-compile-cache-1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.name }}-
+
+    - name: Restore the compile cache (read only)
+      if: inputs.store == 'disk' && inputs.write == 'false'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.env.outputs.dir }}
+        key: rust-compile-cache-1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.name }}-
+        restore-keys: |
+          rust-compile-cache-1-${{ runner.os }}-${{ runner.arch }}-${{ inputs.name }}-
