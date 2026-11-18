@@ -379,18 +379,16 @@ async function routeEngineEvent(
   // Aborts once the hook that sent the event stops waiting for its answer (`watchHookRequests`); none outside a request.
   const signal = handledHookRequest.getStore();
   const lane = laneOf(runtimeKey, sessionId);
-  // On its way to the runtime: not closed for want of use until the session's use is noted.
+  // The event's work holds its runtime until it has ended: nothing closes it for want of use meanwhile, under an end
+  // too, which notes no use.
   const release = state.kept.claim(runtimeKey);
   const execution = state.lanes.run(lane, () => {
-    try {
-      const runtime = runtimeFor(state, runtimeKey, runtimeOptions, sessionId);
-      // Every event, not only a start: a session whose start was lost still uses this runtime until it ends.
-      if (event.kind !== "session-end") noteSessionUse(state, sessionId, runtimeKey, (options.now ?? Date.now)());
-      return runtime.ingest(event, { signal });
-    } finally {
-      release();
-    }
+    const runtime = runtimeFor(state, runtimeKey, runtimeOptions, sessionId);
+    // Every event, not only a start: a session whose start was lost still uses this runtime until it ends.
+    if (event.kind !== "session-end") noteSessionUse(state, sessionId, runtimeKey, (options.now ?? Date.now)());
+    return runtime.ingest(event, { signal });
   });
+  void execution.then(release, release);
   track(state, execution);
   try {
     return await execution;
@@ -587,15 +585,9 @@ async function resumeSuspended(state: EngineRoutingState, sessionId: string, now
   const entry = state.suspended.get(sessionId);
   if (entry === undefined) return;
   const { runtimeKey, suspension } = entry;
-  // On its way to the runtime: not closed for want of use until the open has noted the session's use, or ended.
-  const release = state.kept.claim(runtimeKey);
-  const resuming = state.lanes.run(laneOf(runtimeKey, sessionId), async () => {
-    try {
-      await resumeInLane(state, sessionId, entry, now);
-    } finally {
-      release();
-    }
-  });
+  // Nothing closes the runtime while the open waits in the session's lane: what runs there before it holds the runtime
+  // (the session's use, or an end's claim), and the open notes the session's use before its first wait.
+  const resuming = state.lanes.run(laneOf(runtimeKey, sessionId), () => resumeInLane(state, sessionId, entry, now));
   track(state, resuming);
   try {
     await resuming;

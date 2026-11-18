@@ -984,6 +984,38 @@ describe("the engine service's idle close", () => {
     expect(service.openRuntimes()).toBe(0);
   });
 
+  // A quiet session's end opens it again in its checkout's runtime and notes no use of it. The end's hold on the runtime
+  // ended as its work began, so the runtime read as kept while the end still ran in it, and a relief closed it under the
+  // end.
+  it("writes a quiet session's end and closes nothing under it while the daemon is short of room", async () => {
+    const gate = Promise.withResolvers<void>();
+    const { create, reopened } = recordingAuditor({ reopening: gate.promise });
+    const { clock, service, session, send, start, ended, live } = await idleService({ createAuditor: create });
+    await start("a");
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    expect(service.openRuntimes()).toBe(0);
+    const disposed = vi.spyOn(RerailRuntime.prototype, "dispose");
+    try {
+      const ending = send({ kind: "session-end", eventId: "a:end", sessionId: "a", session: session("a") });
+      await reopened;
+      // The heap watch's relief while the end opens the session: it closes every runtime no session uses.
+      const relief = service.closeUnusedRuntimes();
+      expect(disposed).not.toHaveBeenCalled();
+      gate.resolve();
+      await Promise.all([ending, relief]);
+      expect(disposed).not.toHaveBeenCalled();
+      expect(ended("a")).not.toBeNull();
+      expect(live("a")).toBe(false);
+      // Once the end's work has ended, its runtime is kept as any runtime no session uses.
+      expect(service.openRuntimes()).toBe(1);
+      await service.closeUnusedRuntimes();
+      expect(service.openRuntimes()).toBe(0);
+    } finally {
+      disposed.mockRestore();
+    }
+  });
+
   // A suspension whose close failed was kept by nobody: its next event could not open it, its owner still active, and
   // its record stayed open and owned after the daemon stopped.
   it("keeps a quiet session suspended when its close fails, so its next event opens it again", async () => {
