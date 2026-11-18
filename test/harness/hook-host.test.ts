@@ -1025,11 +1025,15 @@ function keptAnswerFile(folder: string, { pid = process.pid, startedAt = 1 }: Pi
 
 /**
  * The marks of `folder`'s start checks in the folder of marks of the daemon `daemon.json` names by `pid` and `startedAt`
- * (`countingDaemon`'s, unless given): `asking`, `waiting`, or neither.
+ * (`countingDaemon`'s, unless given): `asking` where a hook's pending mark (`<name>.<hook>.asking`) is there, `waiting`,
+ * or neither.
  */
 function askMarks(folder: string, daemon: Pick<StandInOptions, "pid" | "startedAt"> = {}): string[] {
   const named = keptAnswerFile(folder, daemon).replace(/\.json$/u, "");
-  return ["asking", "waiting"].filter(kind => existsSync(join(dirname(named), "asks", `${basename(named)}.${kind}`)));
+  const asks = join(dirname(named), "asks");
+  const entries = existsSync(asks) ? readdirSync(asks) : [];
+  const asking = entries.some(entry => entry.startsWith(`${basename(named)}.`) && entry.endsWith(".asking"));
+  return [...(asking ? ["asking"] : []), ...(entries.includes(`${basename(named)}.waiting`) ? ["waiting"] : [])];
 }
 
 /** A mark of `kind` for `folder`'s start checks in the daemon's folder of marks, made where it is not there yet. */
@@ -2342,6 +2346,7 @@ describe("the hook start check", () => {
     vi.doUnmock("../../src/runtime/start-check/stopped-answers.js");
     vi.doUnmock("../../src/engine/storage/database.js");
     vi.doUnmock("../../src/engine/catalog/checkout-control.js");
+    vi.doUnmock("../../src/runtime/daemon-control.js");
     vi.doUnmock("node:fs/promises");
     vi.doUnmock("node:fs");
     vi.resetModules();
@@ -2434,6 +2439,56 @@ describe("the hook start check", () => {
         .toEqual({ started: false, asked: 1, marks: [] });
     } finally {
       await prompt.close();
+    }
+  });
+
+  it("marks its check as waiting where a hook killed between its pending mark and its send left that mark, so the hooks after it there ask nothing", async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    const host = await startCheckHost();
+    await keptStopped(host, app);
+    const busy = await countingDaemon(process.env.RERAIL_HOME!, "started", busyTheWholeTest);
+    // The pending mark a hook killed before it sent leaves behind.
+    plantMark(app, "asking");
+    try {
+      const first = await answeredWellBeforeReadLimit(host.hookRerailStarted("claude-code", app));
+      const marks = askMarks(app);
+      const later: boolean[] = [];
+      for (let hook = 0; hook < 3; hook += 1) later.push(await answeredWellBeforeReadLimit(host.hookRerailStarted("claude-code", app)));
+      expect({ first, marks, later, asked: busy.asked.length }).toEqual({ first: false, marks: ["asking", "waiting"], later: [false, false, false], asked: 1 });
+    } finally {
+      await busy.close();
+    }
+  });
+
+  it("marks nothing and sends nothing where its grace ran out before its check reached the daemon, as the check goes on after the hook answered", async () => {
+    const root = await temporaryDirectory({ started: false });
+    const app = stoppedApp(root);
+    await keptStopped(await startCheckHost(), app);
+    const busy = await countingDaemon(process.env.RERAIL_HOME!, "started", busyTheWholeTest);
+    // The daemon's liveness is learned only once the hook has answered, as on a machine whose reads outlast the grace.
+    const late = Promise.withResolvers<void>();
+    const learned = Promise.withResolvers<void>();
+    vi.doMock("../../src/runtime/daemon-control.js", async () => {
+      const actual = await vi.importActual<typeof import("../../src/runtime/daemon-control.js")>("../../src/runtime/daemon-control.js");
+      const recordedDaemonStatus: typeof actual.recordedDaemonStatus = async (...status) => {
+        await late.promise;
+        try {
+          return await actual.recordedDaemonStatus(...status);
+        } finally {
+          setImmediate(() => learned.resolve());
+        }
+      };
+      return { ...actual, recordedDaemonStatus };
+    });
+    const host = await startCheckHost();
+    try {
+      const first = await answeredWellBeforeReadLimit(host.hookRerailStarted("claude-code", app));
+      late.resolve();
+      await learned.promise;
+      expect({ first, marks: askMarks(app), asked: busy.asked.length }).toEqual({ first: false, marks: [], asked: 0 });
+    } finally {
+      await busy.close();
     }
   });
 

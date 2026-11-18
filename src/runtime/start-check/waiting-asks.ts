@@ -1,5 +1,6 @@
 /**
- * The start checks one-shot hooks gave up on, as the daemon's queue holds them: at most one for each folder waits there.
+ * The start checks one-shot hooks gave up on, as the daemon's queue holds them: where hooks of a folder come one after
+ * another, at most one for each folder waits there.
  *
  * A hook that repeats the daemon's kept answer of stopped (`repeatsStoppedAnswer`) ends its request, but the request
  * stays queued at a busy daemon, which serves it later though nobody waits for it. Beside a daemon that admits one
@@ -7,27 +8,29 @@
  * So the hook that gives up marks its check as waiting, and the hooks after it in that folder that find the mark repeat
  * the kept answer without asking, where it holds; the daemon removes the mark as it serves a start check for the folder.
  *
- * The mark is a fact about the daemon's queue, never a clock. A hook makes `<name>.asking` (exclusively) before it sends,
- * which claims nothing and which no hook honours, and only once its request was handed to the OS (`sent`) renames it
- * to `<name>.waiting` as it ends its request (`abandoned`). The daemon removes `.asking` before `.waiting` as it serves
- * a start check for the folder (`served`). So where the daemon served one since the hook made `.asking`, the rename
- * finds nothing and no `.waiting` is made; where the rename came first, the daemon removes `.waiting`. No `.waiting`
- * outlives a served start check of its folder but where the system refuses its removal, which the daemon tries again at
- * every start check it serves after.
+ * The mark is a fact about the daemon's queue, never a clock. Before it sends, a hook makes a pending mark of its own,
+ * `<name>.<hook>.asking`, which no other hook reads; only once its request was handed to the OS (`sent`) does it rename
+ * that file to the folder's `<name>.waiting` as it ends its request (`abandoned`). The daemon removes the folder's
+ * pending marks before its `.waiting` as it serves a start check for the folder (`served`). So where the daemon served
+ * one since the hook made its pending mark, the rename finds nothing and no `.waiting` is made; where the rename came
+ * first, the daemon removes `.waiting`. No `.waiting` outlives a served start check of its folder but where the system
+ * refuses its removal, which the daemon tries again at every start check it serves after. A pending mark left by a hook
+ * killed before it sent claims nothing and stops no other hook from marking, and the daemon removes it with the rest.
  *
  * The marks live in `asks` in the daemon's own folder of kept answers, which only a daemon that removes them makes, as it
  * starts: a new daemon has a new folder, and hooks read only the folder of the daemon `daemon.json` names, once it is
  * known to be alive. `<name>` is the folder's kept answer's name: the digest of the repository string the start check
  * sends, which is the daemon's name for it too. A link in place of a folder on the way is never followed.
  */
-import { lstatSync, mkdirSync, rmSync, writeFileSync, type Stats } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { lstatSync, mkdirSync, readdirSync, rmSync, writeFileSync, type Stats } from "node:fs";
 import { dirname, join } from "node:path";
 import { renameWithRetrySync } from "../../engine/file-replace.js";
 import { answerName, daemonAnswersFolder, hasKeptAnswer, type DaemonIdentity } from "./stopped-answers.js";
 
 /** The folder of marks in a daemon's folder of kept answers. */
 const ASKS_FOLDER = "asks";
-/** A hook's start check that may be sent: made before it is, honoured by no hook. */
+/** A hook's own start check that may be sent: made before it is, read by no other hook. */
 const ASKING = ".asking";
 /** A start check for the folder that nobody waits for is queued at the daemon. */
 const WAITING = ".waiting";
@@ -46,9 +49,13 @@ export interface StartAsk {
 /** One hook's start check in one folder, as the daemon's queue of start checks holds it. */
 export class HookAsk implements StartAsk {
   readonly #repeats: () => boolean;
-  #asking: string | undefined;
+  /** This hook's part of its pending mark's name, so no other hook's mark is ever at it. */
+  readonly #hook = randomBytes(8).toString("hex");
+  /** This hook's pending mark, and the folder's `.waiting` it becomes once the request was sent and is ended. */
+  #mark: { readonly asking: string; readonly waiting: string } | undefined;
   #sent = false;
   #unasked = false;
+  #ended = false;
 
   /** `repeats` says whether the hook may repeat the daemon's kept answer of stopped in the folder now. */
   constructor(repeats: () => boolean) {
@@ -61,18 +68,20 @@ export class HookAsk implements StartAsk {
   }
 
   /**
-   * Where the daemon keeps marks and a kept answer for `workspace` is there: false, asking nothing, where a check of
-   * the folder waits at the daemon and `repeats` holds; else true, with this hook's `.asking` made where none is there.
+   * False, asking nothing, once the hook ended this ask (`abandoned`, `done`): a start check that goes on after its hook
+   * answered marks nothing and sends nothing. Where the daemon keeps marks and a kept answer for `workspace` is there:
+   * false, asking nothing, where a check of the folder waits at the daemon and `repeats` holds; else true, with this
+   * hook's pending mark made.
    */
   beforeAsking(daemon: DaemonIdentity, workspace: string): boolean {
+    if (this.#ended) return false;
     const folder = asksFolderOf(daemon);
     if (folder === undefined || !hasKeptAnswer(daemon, workspace)) return true;
     const name = join(folder, answerName(workspace));
-    if (plainFile(name + WAITING) && this.#repeats()) {
-      this.#unasked = true;
-      return false;
-    }
-    this.#asking = madeAlone(name + ASKING);
+    this.#unasked = plainFile(name + WAITING) && this.#repeats();
+    if (this.#unasked) return false;
+    const asking = madeAlone(`${name}.${this.#hook}${ASKING}`);
+    this.#mark = asking === undefined ? undefined : { asking, waiting: name + WAITING };
     return true;
   }
 
@@ -81,20 +90,22 @@ export class HookAsk implements StartAsk {
   }
 
   /**
-   * The hook ends its request without the answer: where the request was handed to the OS, its `.asking` becomes the
+   * The hook ends its request without the answer: where the request was handed to the OS, its pending mark becomes the
    * folder's `.waiting`, unless the daemon has served a start check there since it was made, which removed it. A request
    * never sent leaves nothing.
    */
   abandoned(): void {
-    const asking = this.#asking;
-    this.#asking = undefined;
-    if (asking !== undefined && !(this.#sent && renamed(asking, asking.slice(0, -ASKING.length) + WAITING))) removed(asking);
+    const mark = this.#mark;
+    this.#ended = true;
+    this.#mark = undefined;
+    if (mark !== undefined && !(this.#sent && renamed(mark.asking, mark.waiting))) removed(mark.asking);
   }
 
-  /** The hook has its answer, or waits for it no more: its `.asking` goes, where the daemon has not removed it. */
+  /** The hook has its answer, or waits for it no more: its pending mark goes, where the daemon has not removed it. */
   done(): void {
-    if (this.#asking !== undefined) removed(this.#asking);
-    this.#asking = undefined;
+    this.#ended = true;
+    if (this.#mark !== undefined) removed(this.#mark.asking);
+    this.#mark = undefined;
   }
 }
 
@@ -119,22 +130,37 @@ export class ServedAsks {
 
   /**
    * As the daemon serves a start check for `workspace` (the repository string it was sent): removes the folder's
-   * `.asking`, then its `.waiting`, and tries again each removal refused before.
+   * pending marks, then its `.waiting`, and tries again each removal refused before.
    */
   served(workspace: string): void {
     const folder = this.#folder;
     if (folder === undefined) return;
     this.#refused.add(answerName(workspace));
+    const entries = entriesOf(folder);
     for (const name of [...this.#refused]) {
-      if (bothRemoved(join(folder, name))) this.#refused.delete(name);
+      if (marksRemoved(folder, name, entries)) this.#refused.delete(name);
     }
   }
 }
 
-/** Removes `<name>.asking`, then `<name>.waiting`; whether neither is there now. */
-function bothRemoved(name: string): boolean {
-  const gone = [ASKING, WAITING].map(kind => removed(name + kind));
-  return gone.every(Boolean);
+/** The names in `folder`; undefined where it cannot be read. */
+function entriesOf(folder: string): string[] | undefined {
+  try {
+    return readdirSync(folder);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Removes the pending marks of `<name>` among `entries` of `folder`, then `<name>.waiting`; whether none of them is
+ * there now. Where the folder could not be listed (`entries` undefined), its `.waiting` still goes, and the pending
+ * marks are tried again at the next start check served.
+ */
+function marksRemoved(folder: string, name: string, entries: readonly string[] | undefined): boolean {
+  const pending = (entries ?? []).filter(entry => entry.startsWith(`${name}.`) && entry.endsWith(ASKING));
+  const gone = [...pending, name + WAITING].map(entry => removed(join(folder, entry)));
+  return entries !== undefined && gone.every(Boolean);
 }
 
 /** The folder of marks of `daemon`, where it and each folder above it in the Rerail home is a folder, not a link. */

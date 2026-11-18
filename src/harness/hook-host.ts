@@ -90,12 +90,12 @@ const DAEMON_ANSWER_GRACE_MS = 75;
  * daemon has not answered within `DAEMON_ANSWER_GRACE_MS` and the daemon's last answer in the folder was stopped and
  * still holds (`repeatsStoppedAnswer`), the hook answers stopped again and ends its request: no Git runs, and a busy
  * daemon does not hold it. Where the start check of an earlier hook there that did so still waits at the daemon, the
- * hook repeats that answer without asking at all, where it holds (`HookAsk`), so each folder leaves at most one start
- * check nobody waits for in the daemon's queue. Anywhere else it waits for the daemon, as the first hook in a folder
- * does. Without a daemon that answers, the hook reads the database itself, which never starts a daemon: with none
- * recorded the daemon's read comes back empty at once, well inside the grace. An explicit database path (tests, embedded
- * hosts) is always read directly. `graceMs` is the grace; a test that needs the daemon's answer first, however slow its
- * machine, holds it open longer.
+ * hook repeats that answer without asking at all, where it holds (`HookAsk`), so hooks of a folder that come one after
+ * another leave at most one start check nobody waits for in the daemon's queue. Anywhere else it waits for the daemon,
+ * as the first hook in a folder does. Without a daemon that answers, the hook reads the database itself, which never
+ * starts a daemon: with none recorded the daemon's read comes back empty at once, well inside the grace. An explicit
+ * database path (tests, embedded hosts) is always read directly. `graceMs` is the grace; a test that needs the daemon's
+ * answer first, however slow its machine, holds it open longer.
  */
 export async function hookRerailStarted(
   host: RerailHost, workspace: string, databasePath?: string, graceMs = DAEMON_ANSWER_GRACE_MS,

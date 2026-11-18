@@ -919,12 +919,14 @@ describe("Rerail daemon", () => {
     const name = (folder: string): string => createHash("sha256").update(folder).digest("hex").slice(0, 32);
     for (const folder of [served, other]) {
       await mkdir(folder);
-      for (const kind of ["asking", "waiting"]) await writeFile(join(asks, `${name(folder)}.${kind}`), "");
+      // Two hooks' pending marks and the folder's waiting mark.
+      for (const kind of ["0123456789abcdef.asking", "fedcba9876543210.asking", "waiting"]) await writeFile(join(asks, `${name(folder)}.${kind}`), "");
     }
     await getJson(daemon, `/api/presentation?${new URLSearchParams({ repository: served, host: "claude-code" })}`);
     // A footer's read names its session: it is no start check, and no hook marks one.
     await getJson(daemon, `/api/presentation?${new URLSearchParams({ repository: other, host: "claude-code", sessionId: "session-1" })}`);
-    expect((await readdir(asks)).sort()).toEqual([`${name(other)}.asking`, `${name(other)}.waiting`].sort());
+    expect((await readdir(asks)).sort())
+      .toEqual([`${name(other)}.0123456789abcdef.asking`, `${name(other)}.fedcba9876543210.asking`, `${name(other)}.waiting`].sort());
   });
 
   it("removes the answers of stopped the daemons before it kept for hooks once it has written its state file, removing a link as a link", { timeout: 30_000 }, async () => {

@@ -19,9 +19,15 @@ function nameOf(folder: string): string {
 
 const asksFolder = (): string => join(home, "stopped-answers", `${DAEMON.pid}-${DAEMON.startedAt}`, "asks");
 
-/** The marks of `folder`'s start checks in the daemon's folder: `asking`, `waiting`, or neither. */
+/**
+ * The marks of `folder`'s start checks in the daemon's folder: `asking` where a hook's pending mark (`<name>.<hook>.asking`)
+ * is there, `waiting`, or neither.
+ */
 function marksOf(folder: string): string[] {
-  return ["asking", "waiting"].filter(kind => existsSync(join(asksFolder(), `${nameOf(folder)}.${kind}`)));
+  const name = nameOf(folder);
+  const entries = existsSync(asksFolder()) ? readdirSync(asksFolder()) : [];
+  const asking = entries.some(entry => entry.startsWith(`${name}.`) && entry.endsWith(".asking"));
+  return [...(asking ? ["asking"] : []), ...(entries.includes(`${name}.waiting`) ? ["waiting"] : [])];
 }
 
 /** A daemon started in the home, as it makes its folders, with an answer of stopped kept for `folder`. */
@@ -49,7 +55,7 @@ describe("the start checks hooks gave up on", () => {
     removeFolderSync(home);
   });
 
-  it("leaves one waiting mark where two hooks of one folder ask at once: only the one that made the folder's pending mark leaves one", () => {
+  it("leaves one waiting mark where two hooks of one folder ask at once and both give up after they sent", () => {
     const folder = join(home, "app");
     daemonWithKeptAnswer(folder);
     const [first, second] = [asked(folder), asked(folder)];
@@ -70,7 +76,7 @@ describe("the start checks hooks gave up on", () => {
     expect(marksOf(folder)).toEqual([]);
   });
 
-  it("asks where a hook was killed after it made the folder's pending mark, which no hook reads as waiting, and the daemon removes it as it serves a start check there", () => {
+  it("marks the next hook's check as waiting where a hook killed after its pending mark left it: that mark claims nothing and stops no other hook, and the daemon removes both as it serves a start check there", () => {
     const folder = join(home, "app");
     const daemon = daemonWithKeptAnswer(folder);
     // Killed before it sent: its pending mark stays.
@@ -79,8 +85,34 @@ describe("the start checks hooks gave up on", () => {
     next.ask.sent();
     next.ask.abandoned();
     const left = marksOf(folder);
+    const after = asked(folder);
     daemon.served(folder);
-    expect({ asks: next.asks, unasked: next.ask.unasked, left, served: marksOf(folder) }).toEqual({ asks: true, unasked: false, left: ["asking"], served: [] });
+    expect({ asks: next.asks, left, after: after.asks, served: marksOf(folder) }).toEqual({ asks: true, left: ["asking", "waiting"], after: false, served: [] });
+  });
+
+  it.each(["abandoned", "done"] as const)("marks nothing and asks nothing once its hook ended the ask (%s), as a start check that goes on after its hook answered", end => {
+    const folder = join(home, "app");
+    daemonWithKeptAnswer(folder);
+    const ask = new HookAsk(() => true);
+    ask[end]();
+    expect({ asks: ask.beforeAsking(DAEMON, folder), marks: readdirSync(asksFolder()) }).toEqual({ asks: false, marks: [] });
+  });
+
+  it("removes every pending mark of the folder it serves a start check for, and none of another folder", () => {
+    const [folder, other] = [join(home, "app"), join(home, "other")];
+    const daemon = daemonWithKeptAnswer(folder);
+    writeFileSync(join(home, "stopped-answers", `${DAEMON.pid}-${DAEMON.startedAt}`, `${nameOf(other)}.json`), "{}");
+    for (const each of [folder, folder, other]) asked(each);
+    const pending = readdirSync(asksFolder()).length;
+    daemon.served(folder);
+    expect({ pending, folder: marksOf(folder), other: marksOf(other) }).toEqual({ pending: 3, folder: [], other: ["asking"] });
+  });
+
+  it("serves a start check where its folder of marks is gone, as where it cannot be listed", () => {
+    const folder = join(home, "app");
+    const daemon = daemonWithKeptAnswer(folder);
+    removeFolderSync(asksFolder());
+    expect(() => daemon.served(folder)).not.toThrow();
   });
 
   it("makes no mark where the daemon served a start check of the folder after the hook asked: the mark would claim a check it already served", () => {
