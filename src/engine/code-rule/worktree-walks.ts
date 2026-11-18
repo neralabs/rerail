@@ -30,7 +30,8 @@ export const WORKTREE_WALK_GAP_MS = 5_000;
 /**
  * How long walks trust change notices for a worktree: a walk reads one whose last read began this long ago, and one is
  * timed for it though every session watching it is idle. A write no notice tells of (through a hard link, a memory
- * map, a file another program holds open on Windows, or one the system lost without saying so) is found then.
+ * map, on Linux only one its program still holds, a file another program holds open on Windows, or one the system
+ * lost without saying so) is found then.
  */
 export const WORKTREE_FULL_WALK_MS = 600_000;
 

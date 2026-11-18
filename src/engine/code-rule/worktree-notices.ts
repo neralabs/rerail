@@ -447,6 +447,11 @@ export type SessionReads = { readonly whole: true } | { readonly whole: false; r
  * folder, which no notice of the folder tells of: a pass of noticed paths reads each such file, too. A watch the engine
  * refused is not asked for again until a whole walk walks fewer folders than it refused, or the watch it had ended:
  * each ask costs the engine a look at the folder's file system, and on Linux each watch it took up before the refusal.
+ *
+ * What no notice tells of, the next whole pass reads, at the turn's end at the latest: a write through a hard link made
+ * to a name outside the folder after the last whole walk, a write through a memory map (on Linux only one its program
+ * still holds at the result: the engine tells of one let go of), and on Windows a write that keeps the size by a
+ * program that still holds the file open (Windows tells of it as the program closes the file).
  */
 export class SessionNotices {
   readonly #root: string;
