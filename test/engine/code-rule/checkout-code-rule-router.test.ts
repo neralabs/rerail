@@ -630,6 +630,58 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     expect(opened.mock.calls.filter(([root]) => root === worktree)).toHaveLength(1);
   });
 
+  it("answers a walk's questions about a worktree another lane answers for by that worktree's own Git ignore rules", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    // Only the worktree ignores gen/: its .gitignore is not the session checkout's.
+    await writeFile(join(worktree, ".gitignore"), "gen/\n");
+    for (const checkout of [session, worktree]) {
+      await mkdir(join(checkout, "gen"), { recursive: true });
+      await writeFile(join(checkout, "gen", "x.py"), "seed\n");
+    }
+    const { recorder } = recordingAudits();
+    const auditor = router(session, databasePath, recorder, undefined, true);
+    await auditor.openWorkspace("worktree-ignores");
+    const view = auditor.walkView();
+    expect([view.acceptsPath("gen/x.py"), view.acceptsPath(walked(session, worktree, "gen/x.py"))]).toEqual([true, false]);
+  });
+
+  it("reads again the rules of a worktree another lane answers for, and answers by its own once they differ", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    const { recorder } = recordingAudits();
+    const auditor = router(session, databasePath, recorder, undefined, true);
+    await auditor.openWorkspace("worktree-rules-later");
+    const readme = walked(session, worktree, "README.md");
+    expect(auditor.walkView().acceptsPath(readme)).toBe(false);
+
+    // The worktree takes rules of its own that read Markdown, which the session checkout's do not.
+    await mkdir(join(worktree, ".rerail", "rules"), { recursive: true });
+    await writeFile(join(worktree, ".rerail", "rules", "notes.json"), JSON.stringify({ ...needle("worktree:notes", "NOTES"), scope: { include: ["**/*.md"], exclude: [] } }));
+    auditor.refreshCodeRules();
+    expect(auditor.walkView().acceptsPath(readme)).toBe(true);
+  });
+
+  it("answers a question after its close with a Git ignore matcher of its own, leaving the daemon's shared one dropped", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    await mkdir(join(worktree, "api"), { recursive: true });
+    const matchers = new GitIgnoreMatchers();
+    const opened = vi.spyOn(loadNativeBinding(), "openGitIgnoreMatcher");
+    cleanups.push(async () => { opened.mockRestore(); });
+    const opensIn = () => opened.mock.calls.filter(([root]) => root === worktree).length;
+    const { recorder } = recordingAudits();
+    const auditor = router(session, databasePath, recorder, undefined, true, undefined, matchers);
+    await auditor.openWorkspace("late-question");
+    const view = auditor.walkView();
+    const api = walked(session, worktree, "api");
+    expect(view.ignoresPath(api, true)).toBe(false);
+    expect(opensIn()).toBe(1);
+
+    await auditor.close();
+    expect(matchers.size).toBe(0);
+    // A walk still running asks once more: the router no longer holds the shared matcher, nor takes it again.
+    expect(view.ignoresPath(api, true)).toBe(false);
+    expect([opensIn(), matchers.size]).toEqual([2, 0]);
+  });
+
   it("judges a sibling worktree from a session that started in a worktree", async () => {
     const { databasePath, session, worktree, root } = await repositoryWithWorktree(outside);
     const sibling = join(root, "elsewhere", "sibling");
