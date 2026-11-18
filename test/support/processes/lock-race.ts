@@ -84,22 +84,43 @@ interface Racer {
   stderr: string;
 }
 
-/** The next message of one of `kinds` from `racer`; rejects if it exits first. */
+/** How `racer` ended, its exit code or signal; undefined while it runs. */
+function endOf(racer: Racer): string | undefined {
+  const { exitCode, signalCode } = racer.child;
+  return exitCode === null && signalCode === null ? undefined : String(exitCode ?? signalCode);
+}
+
+/**
+ * The next message of one of `kinds` from `racer`; rejects once it has exited, at once when it already has: its exit
+ * came before this listened, and waiting for another would last until the test's own timeout.
+ */
 function next(racer: Racer, kinds: readonly RacerMessage["kind"][]): Promise<RacerMessage> {
-  return new Promise((resolve, reject) => {
-    const onMessage = (message: RacerMessage): void => {
-      if (!kinds.includes(message.kind)) return;
-      racer.child.off("exit", onExit);
-      racer.child.off("message", onMessage);
-      resolve(message);
-    };
-    const onExit = (code: number | null, signal: NodeJS.Signals | null): void => {
-      racer.child.off("message", onMessage);
-      reject(new Error(`a racer exited (${code ?? signal}) before it said ${kinds.join(" or ")}: ${racer.stderr}`));
-    };
-    racer.child.on("message", onMessage);
-    racer.child.once("exit", onExit);
-  });
+  const { promise, resolve, reject } = Promise.withResolvers<RacerMessage>();
+  const gone = (end: string): void => {
+    racer.child.off("message", onMessage);
+    racer.child.off("exit", onExit);
+    reject(new Error(`a racer exited (${end}) before it said ${kinds.join(" or ")}: ${racer.stderr}`));
+  };
+  const onMessage = (message: RacerMessage): void => {
+    if (!kinds.includes(message.kind)) return;
+    racer.child.off("exit", onExit);
+    racer.child.off("message", onMessage);
+    resolve(message);
+  };
+  const onExit = (code: number | null, signal: NodeJS.Signals | null): void => gone(String(code ?? signal));
+  racer.child.on("message", onMessage);
+  racer.child.once("exit", onExit);
+  const end = endOf(racer);
+  if (end !== undefined) gone(end);
+  return promise;
+}
+
+/**
+ * Sends `message` to `racer`. One that has exited can no longer be sent to; the `next` that waits for its answer says
+ * how it ended, where the send's own failure would be an uncaught error that names no racer.
+ */
+function tell(racer: Racer, message: { kind: "hold" | "go" | "answer"; id?: number | undefined }): void {
+  racer.child.send(message, () => {});
 }
 
 async function startRacer(program: string, env: NodeJS.ProcessEnv): Promise<Racer> {
@@ -116,7 +137,7 @@ async function startRacer(program: string, env: NodeJS.ProcessEnv): Promise<Race
 }
 
 async function kill(racer: Racer): Promise<void> {
-  if (racer.child.exitCode !== null || racer.child.signalCode !== null) return;
+  if (endOf(racer) !== undefined) return;
   const exited = once(racer.child, "exit");
   racer.child.kill("SIGKILL");
   await exited;
@@ -125,7 +146,7 @@ async function kill(racer: Racer): Promise<void> {
 /** Takes the lock in `victim` and kills it there, leaving the lock as a holder that died leaves it. */
 async function dieHolding(victim: Racer): Promise<void> {
   const held = next(victim, ["held", "failed"]);
-  victim.child.send({ kind: "hold" });
+  tell(victim, { kind: "hold" });
   const outcome = await held;
   if (outcome.kind === "failed") throw new Error(`the process to be killed holding the lock could not take it: ${outcome.message}`);
   await kill(victim);
@@ -144,12 +165,12 @@ export async function raceForLock(race: LockRace): Promise<LockRaceResult> {
   try {
     const racers = await Promise.all(Array.from({ length: race.processes }, start));
     let inside = 0;
-    for (const { child } of racers) {
-      child.on("message", (message: RacerMessage) => {
+    for (const racer of racers) {
+      racer.child.on("message", (message: RacerMessage) => {
         if (message.kind !== "enter" && message.kind !== "leave") return;
         inside += message.kind === "enter" ? 1 : -1;
         if (message.kind === "enter" && inside > 1) result.overlaps += 1;
-        child.send({ kind: "answer", id: message.id });
+        tell(racer, { kind: "answer", id: message.id });
       });
     }
     let victim = start();
@@ -160,7 +181,7 @@ export async function raceForLock(race: LockRace): Promise<LockRaceResult> {
       await dieHolding(dying);
       const outcomes = await Promise.all(racers.map(racer => {
         const outcome = next(racer, ["ran", "failed"]);
-        racer.child.send({ kind: "go" });
+        tell(racer, { kind: "go" });
         return outcome;
       }));
       for (const outcome of outcomes) {
