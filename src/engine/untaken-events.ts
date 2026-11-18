@@ -12,8 +12,8 @@ import { replaceFile } from "./file-replace.js";
  * and its size. The daemon takes the folder in that order whenever its event loop runs (a watch of the folder, its
  * start, and before any event sent to it), so no event sent after a silence is checked before one left during it. As it
  * begins to take, it marks the newest event it takes (`TAKEN_MARK`), so a hook counts as untaken only what came after:
- * events the daemon is taking, or a file another program keeps it from removing, never make a hook skip a daemon that
- * reads. Its state file names the folder it watches (`untakenFolderId`), so a hook skips its wait only for events in
+ * events the daemon is taking, a file another program keeps it from removing, or one it cannot read, never make a hook
+ * skip a daemon that reads. Its state file names the folder it watches (`untakenFolderId`), so a hook skips its wait only for events in
  * that very folder. The home is private to its owner, and a process that can write here can read `daemon.json`'s
  * capability and send events itself, so the folder lets in no one the engine socket keeps out.
  */
@@ -186,9 +186,11 @@ export const NO_UNTAKEN_EVENTS: UntakenEventTaker = { taken: async () => undefin
 const PASS_SLICE = 16;
 
 /**
- * The taker of `home`'s untaken events for its daemon, which hands each to `handler`. Each pass first writes the taken
- * mark, so hooks stop counting what it takes, then hands the events on a slice at a time: the daemon answers between
- * slices. A file Windows keeps from removal is removed at a later pass and not handed on twice.
+ * The taker of `home`'s untaken events for its daemon, which hands each to `handler`. Each pass first moves the taken
+ * mark on, so hooks stop counting what it takes, then hands the events on a slice at a time: the daemon answers between
+ * slices. Each name is met once: a file Windows keeps from removal is removed at a later pass and not handed on twice,
+ * and a file the daemon cannot read fails in the pass that met it and is never read again. So a pass writes into the
+ * folder only for names it has not met, and a pass its own writes start finds none and writes nothing.
  */
 export function untakenEventTaker(home: string, handler: UntakenHandler): UntakenEventTaker {
   const taker = new Taker(home, handler);
@@ -209,8 +211,11 @@ export function untakenEventTaker(home: string, handler: UntakenHandler): Untake
 /** The passes of one taker: at most one runs, and calls meanwhile share the one after it. */
 class Taker {
   closed = false;
-  /** Events handed on whose file is still there (Windows holds it): removed at a later pass, never handed on again. */
-  readonly #handed = new Set<string>();
+  /**
+   * Events this taker is done with, handed on or failed, whose file is still there (Windows holds it, or it is no file):
+   * removed at a later pass where it can be, never handed on or failed again.
+   */
+  readonly #done = new Set<string>();
   #running: Promise<void> | undefined;
   #next: Promise<void> | undefined;
 
@@ -232,8 +237,8 @@ class Taker {
 
   async #pass(): Promise<void> {
     if (this.closed) return;
-    for (const name of [...this.#handed]) removedName(this.home, name, this.#handed);
-    const fresh = untakenNames(this.home).filter(name => !this.#handed.has(name.name));
+    for (const name of [...this.#done]) removedName(this.home, name, this.#done);
+    const fresh = untakenNames(this.home).filter(name => !this.#done.has(name.name));
     if (fresh.length === 0) return;
     await markTaken(this.home, fresh.at(-1)!);
     void reportPass(fresh, await this.#handOnInSlices(fresh), this.handler);
@@ -244,7 +249,7 @@ class Taker {
     const checks: Promise<boolean>[] = [];
     for (let start = 0; start < names.length && !this.closed; start += PASS_SLICE) {
       // Each check's end is heard at once, so one that fails while later slices are handed on is no unhandled rejection.
-      for (const name of names.slice(start, start + PASS_SLICE)) checks.push(handOn(this.home, name, this.handler, this.#handed).then(() => true, () => false));
+      for (const name of names.slice(start, start + PASS_SLICE)) checks.push(handOn(this.home, name, this.handler, this.#done).then(() => true, () => false));
       await nextTurn();
     }
     return checks;
@@ -252,30 +257,41 @@ class Taker {
 }
 
 /**
- * Writes the taken mark: `newest` and every event before it are the daemon's now. Where it cannot be written, a hook
- * still counts each of those events until the pass removes its file.
+ * Moves the taken mark on to `newest`: it and every event before it are the daemon's now. A mark already at or past it
+ * stays, since a file that stays in the folder under it (one Windows holds, one the daemon cannot read) must not count
+ * for hooks again once an event that came before it is taken. Where it cannot be written, a hook still counts each of
+ * those events until the pass removes its file.
  */
 async function markTaken(home: string, newest: UntakenName): Promise<void> {
+  const mark = takenMark(home);
+  if (mark !== undefined && earlier(newest, mark) <= 0) return;
   await replaceFile(join(untakenFolder(home), TAKEN_MARK), newest.name, { mode: 0o600 }).catch(() => undefined);
 }
 
 /**
  * Hands the event `name` holds to `handler`, removes its file, and returns its check, failed where the file cannot be
- * read (a take another daemon made first) or its check fails.
+ * read or its check fails. The taker is done with the name either way (`done`), so it is met once.
  */
-function handOn(home: string, name: UntakenName, handler: UntakenHandler, handed: Set<string>): Promise<void> {
-  const path = join(untakenFolder(home), name.name);
+function handOn(home: string, name: UntakenName, handler: UntakenHandler, done: Set<string>): Promise<void> {
+  const check = begunCheck(join(untakenFolder(home), name.name), name, handler);
+  done.add(name.name);
+  removedName(home, name.name, done);
+  return check;
+}
+
+/**
+ * The check of the event at `path`, begun before its file goes, in the folder's order: a daemon checks a session's
+ * events in the order it begins them. Failed where the file cannot be read: a take another daemon made first, a folder
+ * under an event's name, a file another user wrote, or one another program holds without read sharing.
+ */
+function begunCheck(path: string, name: UntakenName, handler: UntakenHandler): Promise<void> {
   let body: string;
   try {
     body = readFileSync(path, "utf8");
   } catch (error) {
     return Promise.reject(error instanceof Error ? error : new Error(String(error)));
   }
-  // Begun before the file goes, in the folder's order: a daemon checks a session's events in the order it begins them.
-  const check = handler.take({ body, arrivedAt: name.order[0]! });
-  handed.add(name.name);
-  removedName(home, name.name, handed);
-  return check;
+  return handler.take({ body, arrivedAt: name.order[0]! });
 }
 
 /** Tells `handler` of a pass over `names` once every check it began has ended (each true when it passed). */
@@ -289,11 +305,14 @@ async function reportPass(names: readonly UntakenName[], checks: readonly Promis
   }
 }
 
-/** Removes the event file `name`, forgetting it was handed on once it is gone; false while Windows holds it open. */
-function removedName(home: string, name: string, handed: Set<string>): boolean {
+/**
+ * Removes the event file `name`, forgetting the taker met it once it is gone; false while Windows holds it open, or
+ * where it is a folder.
+ */
+function removedName(home: string, name: string, done: Set<string>): boolean {
   try {
     rmSync(join(untakenFolder(home), name), { force: true });
-    handed.delete(name);
+    done.delete(name);
     return true;
   } catch {
     return false;

@@ -1,4 +1,6 @@
-import { chmodSync, writeFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp, readdir, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -49,6 +51,26 @@ function keeper(held?: Promise<void>): UntakenHandler & { events: UntakenEvent[]
 /** The event files in `rerailHome`'s folder, the taken mark left out. */
 async function eventFiles(rerailHome: string): Promise<string[]> {
   return (await readdir(join(rerailHome, UNTAKEN_EVENTS_DIR))).filter(name => name.endsWith(".json"));
+}
+
+/** An event's name in the folder, as `leaveUntaken` names one, for the daemon 7. */
+const eventName = (arrivedAt: number): string => `${String(arrivedAt).padStart(13, "0")}-7-1-${arrivedAt}-5.json`;
+
+/**
+ * A program other than Rerail holding `path` open, as Windows lets one: `share` is what it lets others do meanwhile
+ * ("Read" lets the daemon read it but no one remove it; "None" lets no one do either). Ends when `release` is awaited.
+ */
+async function heldOpen(path: string, share: "Read" | "None"): Promise<{ release: () => Promise<void> }> {
+  const script = `$f = [System.IO.File]::Open('${path}', 'Open', 'Read', '${share}'); [Console]::Out.WriteLine('held'); [void][Console]::In.ReadLine(); $f.Close()`;
+  const holder = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { stdio: ["pipe", "pipe", "inherit"], windowsHide: true });
+  const exited = once(holder, "exit");
+  for await (const chunk of holder.stdout) if (String(chunk).includes("held")) break;
+  return {
+    release: async () => {
+      holder.stdin.end();
+      await exited;
+    },
+  };
 }
 
 describe("the home's untaken events", () => {
@@ -193,6 +215,98 @@ describe("the home's untaken events", () => {
     await expect(leaveUntaken(other, 7, "x".repeat(11), 2_000)).rejects.toBeInstanceOf(UntakenFolderFullError);
     await leaveUntaken(other, 7, "x".repeat(10), 3_000);
   });
+
+  it("fail a name the daemon cannot read in the pass that met it, never again, and count it for no hook", async () => {
+    const rerailHome = await home();
+    await leaveUntaken(rerailHome, 7, "first", 1_000);
+    // A folder under an event's name: no read and no removal takes it, on every system.
+    mkdirSync(join(rerailHome, UNTAKEN_EVENTS_DIR, eventName(3_000)));
+    const folder = untakenFolderId(rerailHome)!;
+    const handler = keeper();
+    let reported = Promise.withResolvers<void>();
+    const taker = untakenEventTaker(rerailHome, {
+      take: handler.take,
+      passed: pass => {
+        handler.passes.push(pass);
+        reported.resolve();
+      },
+    });
+    try {
+      taker.watch(() => undefined);
+      await taker.taken();
+      await reported.promise;
+      // Before, each of these passes read it again and reported it again, and the pass's taken mark woke the watch for
+      // the next: one such file kept the daemon logging it as lost thousands of times a second.
+      await taker.taken();
+      await taker.taken();
+      expect(untakenFor(rerailHome, 7, folder)).toBe(false);
+      expect(untakenWaiting(rerailHome, 7)).toBeUndefined();
+      reported = Promise.withResolvers<void>();
+      await leaveUntaken(rerailHome, 7, "second", 4_000);
+      await taker.taken();
+      await reported.promise;
+      expect(handler.events.map(event => event.body)).toEqual(["first", "second"]);
+      expect(handler.passes).toEqual([{ events: 2, from: 1_000, to: 3_000, failed: 1 }, { events: 1, from: 4_000, to: 4_000, failed: 0 }]);
+      expect(existsSync(join(rerailHome, UNTAKEN_EVENTS_DIR, eventName(3_000)))).toBe(true);
+    } finally {
+      taker.close();
+    }
+  });
+
+  // A file mode keeps no one from reading on Windows, and root reads it anyway.
+  it.runIf(process.platform !== "win32" && process.getuid?.() !== 0)("remove a file the daemon cannot read once its pass failed it", async () => {
+    const rerailHome = await home();
+    await leaveUntaken(rerailHome, 7, "unread", 1_000);
+    const [name] = await eventFiles(rerailHome);
+    chmodSync(join(rerailHome, UNTAKEN_EVENTS_DIR, name!), 0o000);
+    const handler = keeper();
+    const taker = untakenEventTaker(rerailHome, handler);
+    await taker.taken();
+    await taker.taken();
+    expect(handler.events).toEqual([]);
+    expect(await eventFiles(rerailHome)).toEqual([]);
+  });
+
+  it("move the taken mark only on, so a name the daemon could not take stays counted by no hook once an older event is taken", async () => {
+    const rerailHome = await home();
+    mkdirSync(join(rerailHome, UNTAKEN_EVENTS_DIR), { recursive: true });
+    mkdirSync(join(rerailHome, UNTAKEN_EVENTS_DIR, eventName(2_000)));
+    await leaveUntaken(rerailHome, 7, "newest", 3_000);
+    const taker = untakenEventTaker(rerailHome, keeper());
+    await taker.taken();
+    // An event its hook met before the newest one, left once that was taken: a hook that waited out a busy daemon.
+    await leaveUntaken(rerailHome, 7, "older", 1_000);
+    await taker.taken();
+    // Before, the mark went back to the older event, and hooks counted the name that stays as waiting.
+    expect(untakenWaiting(rerailHome, 7)).toBeUndefined();
+    expect(untakenFor(rerailHome, 7, untakenFolderId(rerailHome)!)).toBe(false);
+  });
+
+  // Windows lets a program hold a file so that no one can remove it, or read it either; other systems have no such hold.
+  it.runIf(process.platform === "win32").each(["Read", "None"] as const)(
+    "count for no hook, and remove at a later pass, a file another program holds sharing %s, handed on at most once",
+    async share => {
+      const rerailHome = await home();
+      await leaveUntaken(rerailHome, 7, "held", 1_000);
+      const [name] = await eventFiles(rerailHome);
+      const folder = untakenFolderId(rerailHome)!;
+      const handler = keeper();
+      const taker = untakenEventTaker(rerailHome, handler);
+      const holder = await heldOpen(join(rerailHome, UNTAKEN_EVENTS_DIR, name!), share);
+      try {
+        await taker.taken();
+        await taker.taken();
+        expect(await eventFiles(rerailHome)).toEqual([name]);
+        expect(untakenFor(rerailHome, 7, folder)).toBe(false);
+        expect(untakenWaiting(rerailHome, 7)).toBeUndefined();
+      } finally {
+        await holder.release();
+      }
+      await taker.taken();
+      expect(await eventFiles(rerailHome)).toEqual([]);
+      expect(handler.events.map(event => event.body)).toEqual(share === "Read" ? ["held"] : []);
+    },
+  );
 
   it("report each pass once its checks end, with how many failed", async () => {
     const rerailHome = await home();
