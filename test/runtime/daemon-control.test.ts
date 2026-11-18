@@ -2,7 +2,7 @@ import * as childProcess from "node:child_process";
 import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import { connect, createServer, type AddressInfo, type Socket } from "node:net";
-import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -11,8 +11,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultEngineSocketPath, RerailDaemon } from "../../src/daemon/index.js";
 import {
+  type DaemonHealth,
   type DaemonMachine,
   type DaemonState,
+  type FoundDaemon,
   type NativeLaunch,
   type StartedChild,
   type StopDaemonResult,
@@ -1315,101 +1317,220 @@ describe("a record whose live pid is not the home's daemon", () => {
     expect(existsSync(stateFile) ? await readFile(stateFile, "utf8") : undefined).toBe(changed);
   });
 
-  // A daemon's own shutdown removes daemon.json just before it exits; one that ends so between the read of its start,
-  // which proves it the home's, and the SIGTERM has stopped, as one the signal itself finds gone.
-  it.each(["linux", "win32"] as const)("counts a daemon whose record goes with it just before its SIGTERM as stopped (%s)", async platform => {
-    const stateFile = join(home, DAEMON_STATE_FILE);
-    const signals: Array<string | number | undefined> = [];
-    await writeFile(stateFile, JSON.stringify(state(platform)));
-    let running = true;
-    const machine = fakeMachine(platform, {
-      kill: (_pid, signal) => {
-        if (!running) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
-        if (signal !== 0) signals.push(signal);
-        return true;
-      },
-      processStartedAt: () => {
-        rmSync(stateFile);
-        running = false;
-        return STARTED_AT - 500;
-      },
-    });
-    expect(await stopFoundDaemon(home, { status: "unresponsive", state: state(platform) }, machine)).toBe("stopped");
-    expect(signals).toEqual([]);
-    expect(existsSync(stateFile)).toBe(false);
-  });
-
+  /** A change to the stop's world: to daemon.json, to the process daemon.json named, or to the home's lock. */
+  type WorldChange =
+    | "record-gone" | "record-other" | "record-dead" | "record-unreadable"
+    | "exits" | "lets-go" | "reused" | "start-unread" | "another-holds";
   /**
-   * A machine where the daemon `state(platform)` names is proven the home's by its start, read just before the signal,
-   * when its own shutdown has removed daemon.json; its process then answers as running `looks` more times, and with a
-   * faked clock every look from then on moves it on by `step` ms.
+   * One state a stop can meet between its proof and its answer: how it proved `LIVE_PID` the home's daemon, what changes
+   * and when, what it sends, what it answers and what daemon.json holds after. The stop proved the daemon by its answer to
+   * the health probe while it held the home's lock (`answer`), or, while it did not answer, by that lock recorded as its
+   * own (`lock`) or by a start no later than its record (`start`). The world then changes before the stop decides its
+   * SIGTERM (`before`), as it asks the home's lock (`ask`), at the SIGTERM or, for a daemon that answers on Windows, the
+   * shutdown request (`signal`), or during the wait that follows (`wait`). `sent` names the SIGTERM, which a daemon that
+   * answers gets on Windows as the shutdown request. `rule` is the line of the rule the row checks:
+   * 1. Before each signal the stop proves the process again from what the OS shows, never from daemon.json: the home's
+   *    lock held as the pid recorded beside it, a start no later than daemon.json's `startedAt`, or, for a daemon that
+   *    answered as itself while it held no lock, that it still runs.
+   * 2. While the process lives and stays proven, the stop ends it as main does, whatever daemon.json says meanwhile.
+   * 3. A process it does not prove gets nothing: once it has exited the stop says stopped; when the home's lock belongs
+   *    to another live process and daemon.json names it no longer, it says the record changed; otherwise it says it
+   *    could not prove whose process it is. It removes daemon.json only while that record names the process it stopped.
    */
-  function shuttingDown(platform: NodeJS.Platform, signals: Array<string | number | undefined>, looks: number, step = 0): {
-    machine: DaemonMachine;
-    looksLeft: () => number;
-  } {
-    const stateFile = join(home, DAEMON_STATE_FILE);
-    let left = Number.POSITIVE_INFINITY;
-    const machine = fakeMachine(platform, {
-      kill: (_pid, signal) => {
-        if (left <= 0) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
-        left -= 1;
-        if (step > 0 && Number.isFinite(left)) vi.setSystemTime(Date.now() + step);
-        if (signal !== 0) signals.push(signal);
-        return true;
-      },
-      processStartedAt: () => {
-        rmSync(stateFile);
-        left = looks;
-        return STARTED_AT - 500;
-      },
-    });
-    return { machine, looksLeft: () => left };
+  interface StopCell {
+    cell: string;
+    rule: 1 | 2 | 3;
+    proof: "answer" | "lock" | "start";
+    before?: WorldChange[];
+    ask?: WorldChange[];
+    signal?: WorldChange[];
+    wait?: WorldChange[];
+    sent: Array<"SIGTERM" | "SIGKILL">;
+    answer: StopDaemonResult | "unproven";
+    record: "the daemon's" | "another live process's" | "a gone process's" | "none" | "unreadable";
   }
 
-  // Two stops at once: the first one's signal or shutdown request has the daemon close, and its close removes
-  // daemon.json last, an instant before its process exits. The second stop has proven that daemon the home's and finds
-  // its record gone while its process still runs: it waits for that exit, as it waits after a signal of its own.
-  it.each(["linux", "win32"] as const)("waits for a daemon whose own shutdown removed daemon.json to exit, sends it nothing and counts it as stopped (%s)", async platform => {
-    const signals: Array<string | number | undefined> = [];
-    await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(state(platform)));
-    const { machine, looksLeft } = shuttingDown(platform, signals, 3);
-    expect(await stopFoundDaemon(home, { status: "unresponsive", state: state(platform) }, machine)).toBe("stopped");
-    expect(signals).toEqual([]);
-    expect(looksLeft()).toBe(0);
-    expect(existsSync(join(home, DAEMON_STATE_FILE))).toBe(false);
-  });
+  const STOP_CELLS: readonly StopCell[] = [
+    { cell: "daemon.json names the daemon, which ends at its SIGTERM", rule: 2, proof: "lock",
+      signal: ["lets-go", "exits"], sent: ["SIGTERM"], answer: "stopped", record: "none" },
+    { cell: "daemon.json removed by another program while the daemon runs on", rule: 2, proof: "lock",
+      before: ["record-gone"], signal: ["lets-go", "exits"], sent: ["SIGTERM"], answer: "stopped", record: "none" },
+    { cell: "daemon.json removed by the daemon's own shutdown, which let go of the lock and runs on, as a second stop meets it",
+      rule: 2, proof: "start", before: ["lets-go"], signal: ["exits"], sent: ["SIGTERM"], answer: "stopped", record: "none" },
+    { cell: "daemon.json unreadable", rule: 2, proof: "lock",
+      before: ["record-unreadable"], signal: ["lets-go", "exits"], sent: ["SIGTERM"], answer: "stopped", record: "unreadable" },
+    { cell: "daemon.json names another live process while the daemon holds the lock", rule: 2, proof: "lock",
+      before: ["record-other"], signal: ["lets-go", "exits"], sent: ["SIGTERM"], answer: "stopped", record: "another live process's" },
+    { cell: "daemon.json names a process that is gone while the daemon holds the lock", rule: 2, proof: "lock",
+      before: ["record-dead"], signal: ["lets-go", "exits"], sent: ["SIGTERM"], answer: "stopped", record: "a gone process's" },
+    { cell: "daemon.json names a start's daemon, which holds the lock the daemon let go of while it runs on", rule: 3, proof: "lock",
+      before: ["lets-go", "another-holds", "record-other"], sent: [], answer: "record-changed", record: "another live process's" },
+    { cell: "daemon.json removed by a start, whose daemon takes the lock and records itself as the stop asks it", rule: 3,
+      proof: "lock", before: ["record-gone"], ask: ["another-holds"], sent: [], answer: "record-changed", record: "none" },
+    { cell: "the daemon exited just before the stop's look, its record gone with it", rule: 3, proof: "start",
+      before: ["lets-go", "exits"], sent: [], answer: "stopped", record: "none" },
+    { cell: "the pid is a process started after daemon.json, which still names it", rule: 1, proof: "start",
+      before: ["reused"], sent: [], answer: "not-daemon", record: "none" },
+    { cell: "a live pid nothing proves: no lock, no start read", rule: 1, proof: "start",
+      before: ["start-unread"], sent: [], answer: "unproven", record: "the daemon's" },
+    { cell: "the daemon outlives its SIGTERM holding the lock", rule: 2, proof: "lock",
+      sent: ["SIGTERM", "SIGKILL"], answer: "stopped", record: "none" },
+    { cell: "the daemon lets go of the lock at its SIGTERM and its exit runs on past the wait", rule: 2, proof: "answer",
+      signal: ["lets-go"], sent: ["SIGTERM", "SIGKILL"], answer: "stopped", record: "none" },
+    { cell: "the daemon lets go of the lock at its SIGTERM and its pid goes to a process started since", rule: 1, proof: "answer",
+      signal: ["lets-go", "reused"], sent: ["SIGTERM"], answer: "stopped", record: "none" },
+    { cell: "a start's daemon takes the lock the daemon let go of at its SIGTERM and records itself while that exit runs on",
+      rule: 3, proof: "lock", signal: ["lets-go"], wait: ["another-holds", "record-other"], sent: ["SIGTERM"], answer: "stopped",
+      record: "another live process's" },
+    { cell: "a start's daemon takes the lock the daemon let go of at its SIGTERM while the exit of that daemon, proven by its start, runs on",
+      rule: 2, proof: "answer", signal: ["lets-go"], wait: ["another-holds", "record-other"], sent: ["SIGTERM", "SIGKILL"],
+      answer: "stopped", record: "another live process's" },
+    { cell: "the daemon exits during the wait", rule: 3, proof: "lock",
+      wait: ["lets-go", "exits"], sent: ["SIGTERM"], answer: "stopped", record: "none" },
+    { cell: "the daemon exits at its SIGTERM and a start's daemon records itself before the stop's cleanup", rule: 3, proof: "lock",
+      signal: ["lets-go", "exits", "another-holds", "record-other"], sent: ["SIGTERM"], answer: "stopped", record: "another live process's" },
+  ];
 
-  // The pid outlives the wait a stop gives a daemon after its signal, and nothing names another process: the stop ends
-  // there, as when daemon.json names another pid.
-  it.each(["linux", "win32"] as const)("sends nothing and says the record changed when the pid whose daemon.json is gone outlives the stop's wait (%s)", async platform => {
-    const signals: Array<string | number | undefined> = [];
-    await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(state(platform)));
-    vi.useFakeTimers({ toFake: ["Date"] });
-    try {
-      const { machine } = shuttingDown(platform, signals, Number.MAX_SAFE_INTEGER, 1_000);
-      expect(await stopFoundDaemon(home, { status: "unresponsive", state: state(platform) }, machine)).toBe("record-changed");
-    } finally {
-      vi.useRealTimers();
-    }
-    expect(signals).toEqual([]);
-    expect(existsSync(join(home, DAEMON_STATE_FILE))).toBe(false);
-  });
+  /** The process daemon.json named, its start, and who holds the home's lock, as a {@link StopCell} changes them. */
+  interface StopWorld {
+    running: boolean;
+    started: number | undefined;
+    holder: number | undefined;
+  }
 
-  it.each(["linux", "win32"] as const)("ends nothing and says so when daemon.json cannot be read just before the signal (%s)", async platform => {
+  /** Applies `change` to `world` and to the files in the home, as the process or program it stands for would. */
+  function changeWorld(world: StopWorld, change: WorldChange, platform: NodeJS.Platform): void {
     const stateFile = join(home, DAEMON_STATE_FILE);
-    const signals: Array<string | number | undefined> = [];
-    await holdHome(home, LIVE_PID);
-    await writeFile(stateFile, JSON.stringify(state(platform)));
-    const machine = machineWith(platform, signals, () => true);
-    const found = await lookupDaemon(home, machine);
-    if (found.status === "absent") throw new Error("the daemon that holds the home was not found");
-    // A folder now stands where daemon.json was: no read gets a record from it, so nothing says whether it still names
-    // the pid.
-    await rm(stateFile);
-    await mkdir(stateFile);
-    await expect(stopFoundDaemon(home, found, machine)).rejects.toThrow(new RegExp(`could not prove that pid ${LIVE_PID}`, "u"));
-    expect(signals).toEqual([]);
+    const named = (pid: number): void => writeFileSync(stateFile, JSON.stringify({ ...state(platform), pid }));
+    const holdBy = (pid: number | undefined): void => {
+      world.holder = pid;
+      mkdirSync(join(home, LOCKS_DIR), { recursive: true });
+      if (pid === undefined) rmSync(join(home, LOCKS_DIR, "daemon.json"), { force: true });
+      else writeFileSync(join(home, LOCKS_DIR, "daemon.json"), JSON.stringify({ pid }));
+    };
+    const changes: Record<WorldChange, () => void> = {
+      "record-gone": () => rmSync(stateFile, { force: true }),
+      "record-other": () => named(OTHER_PID),
+      "record-dead": () => named(DEAD_PID),
+      "record-unreadable": () => {
+        rmSync(stateFile, { force: true });
+        mkdirSync(stateFile);
+      },
+      exits: () => {
+        world.running = false;
+      },
+      // The daemon's close: it removes daemon.json while it holds what it wrote, then its lock record, and lets go.
+      "lets-go": () => {
+        if (recordAfter(platform) === "the daemon's") rmSync(stateFile);
+        if (world.holder === LIVE_PID) holdBy(undefined);
+      },
+      reused: () => {
+        world.started = anHourLater();
+      },
+      "start-unread": () => {
+        world.started = undefined;
+      },
+      "another-holds": () => holdBy(OTHER_PID),
+    };
+    changes[change]();
+  }
+
+  /**
+   * A machine on `platform` for `row`: `LIVE_PID` runs until it exits or a SIGKILL reaches it, `OTHER_PID` runs, every
+   * signal and shutdown request goes to `sent`, and each look at whether `LIVE_PID` runs moves the clock on 1 s, so the
+   * stop's waits pass in a few polls.
+   */
+  function stopCellMachine(platform: NodeJS.Platform, row: StopCell, world: StopWorld, sent: string[]): DaemonMachine {
+    const fired = new Set<string>();
+    const at = (moment: "ask" | "signal" | "wait"): void => {
+      if (fired.has(moment)) return;
+      fired.add(moment);
+      for (const change of row[moment] ?? []) changeWorld(world, change, platform);
+    };
+    let looksSinceSignal = 0;
+    const look = (): true => {
+      vi.setSystemTime(Date.now() + 1_000);
+      if (fired.has("signal") && ++looksSinceSignal === 3) at("wait");
+      return true;
+    };
+    const signalled = (signal: string | number | undefined): true => {
+      sent.push(String(signal));
+      if (signal === "SIGKILL") world.running = false;
+      else at("signal");
+      return true;
+    };
+    vi.stubGlobal("fetch", vi.fn(async (url: URL) => {
+      if (!String(url).endsWith("/native/shutdown")) throw new Error("connect ECONNREFUSED 127.0.0.1:1");
+      sent.push("SIGTERM");
+      at("signal");
+      return Response.json({ stopping: true }, { status: 202 });
+    }));
+    return fakeMachine(platform, {
+      env: { RERAIL_HOME: home },
+      pipes: () => [pipeNameOf(PIPE)],
+      capabilityProof: async () => (row.proof === "answer" ? "proved" : "silent"),
+      homeDaemonLockHeld: () => {
+        at("ask");
+        return world.holder !== undefined;
+      },
+      processStartedAt: pid => (pid === LIVE_PID && world.running ? world.started : undefined),
+      kill: (pid, signal) => {
+        if (pid === OTHER_PID && signal === 0) return true;
+        if (pid !== LIVE_PID || !world.running) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+        return signal === 0 ? look() : signalled(signal);
+      },
+    });
+  }
+
+  /** What daemon.json in the home holds after a stop, in the words of {@link StopCell}'s `record`. */
+  function recordAfter(platform: NodeJS.Platform): StopCell["record"] {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    if (!existsSync(stateFile)) return "none";
+    if (statSync(stateFile).isDirectory()) return "unreadable";
+    const pid = (JSON.parse(readFileSync(stateFile, "utf8")) as { pid: number }).pid;
+    if (readFileSync(stateFile, "utf8") === JSON.stringify(state(platform))) return "the daemon's";
+    return pid === OTHER_PID ? "another live process's" : "a gone process's";
+  }
+
+  /**
+   * The home, machine and daemon a stop finds for `row` on `platform`, as its lookup proved it: daemon.json names
+   * `LIVE_PID`, which holds the home's lock as its recorded holder unless its start proves it.
+   */
+  async function stopCell(platform: NodeJS.Platform, row: StopCell): Promise<{ world: StopWorld; sent: string[]; machine: DaemonMachine; found: FoundDaemon }> {
+    const world: StopWorld = { running: true, started: row.proof === "lock" ? undefined : STARTED_AT - 500, holder: undefined };
+    await writeFile(join(home, DAEMON_STATE_FILE), JSON.stringify(state(platform)));
+    if (row.proof !== "start") {
+      await holdHome(home, LIVE_PID);
+      world.holder = LIVE_PID;
+    }
+    const sent: string[] = [];
+    const daemon: DaemonState = { ...state(platform), nativeToken: "native" };
+    const found: FoundDaemon = row.proof === "answer"
+      ? { status: "running", state: daemon, health: { status: "ok", pid: LIVE_PID } as DaemonHealth }
+      : { status: "unresponsive", state: state(platform) };
+    return { world, sent, machine: stopCellMachine(platform, row, world, sent), found };
+  }
+
+  /** `unproven` for the stop's message that it could not prove `LIVE_PID` the home's daemon; any other error is thrown. */
+  function unprovenOr(error: unknown): "unproven" {
+    if (String(error).includes(`could not prove that pid ${LIVE_PID}`)) return "unproven";
+    throw error;
+  }
+
+  describe.each(["linux", "win32"] as const)("one rule for a stop whose daemon.json or process changes under it (%s)", platform => {
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["Date"], now: Date.now() });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it.each(STOP_CELLS.map(row => [`line ${row.rule}: ${row.cell}`, row] as const))("%s", async (_name, row) => {
+      const { world, sent, machine, found } = await stopCell(platform, row);
+      for (const change of row.before ?? []) changeWorld(world, change, platform);
+      const answer = await stopFoundDaemon(home, found, machine).catch((error: unknown) => unprovenOr(error));
+      expect({ sent, answer, record: recordAfter(platform) }).toEqual({ sent: row.sent, answer: row.answer, record: row.record });
+    });
   });
 
   // A daemon of a release before the home's lock answers its health probe as itself and holds none: its stop ends it
