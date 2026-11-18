@@ -164,7 +164,8 @@ mod head {
     /// The source's newlines, u32: its newline index's count (`newlines`).
     pub const NEWLINES: usize = 12;
     /// The source's length, u64; the node count, u64.
-    pub const SOURCE_LEN: usize = 16;
+    /// Where format 15's header states it too (`header::SOURCE_LEN`): a reader of either finds it there.
+    pub const SOURCE_LEN: usize = crate::header::SOURCE_LEN;
     pub const NODES: usize = 24;
     /// The side lists' value widths, a byte each; then the slot, gap and length widths.
     pub const VW: usize = 32;
@@ -230,9 +231,10 @@ pub struct Tape16 {
     pub mark: u8,
     p: Placement,
     source_len: u64,
-    buf: Vec<u8>,
-    /// Its view without its language's choices (`Placement::frame`), or none for a source past 4 GiB, which the
-    /// reads' u32 offsets do not reach.
+    /// As stored: its own, or placed in a slab's room (decision 0353 step 4a).
+    buf: crate::home::Home,
+    /// Its view without its language's choices (`Placement::frame`), or none for a tape or a source past 4 GiB,
+    /// which the reads' u32 offsets do not reach.
     frame: Option<TapeView>,
 }
 
@@ -257,14 +259,15 @@ impl Tape16 {
     }
     /// Names the language's tape tag in its header.
     pub fn set_tag(&mut self, tag: u8) {
-        self.buf[head::LANGUAGE] = tag;
+        self.buf.own_mut()[head::LANGUAGE] = tag;
     }
     /// The tape as stored.
     pub fn as_bytes(&self) -> &[u8] {
         &self.buf
     }
-    pub fn into_bytes(self) -> Vec<u8> {
-        self.buf
+    /// Where its bytes are.
+    pub fn home(&self) -> &crate::home::Home {
+        &self.buf
     }
     /// Where its parts lie.
     pub fn placement(&self) -> &Placement {
@@ -272,10 +275,11 @@ impl Tape16 {
     }
 
     /// The stored tape, held as it is: its header and part starts are checked against its length.
-    pub fn from_bytes(buf: Vec<u8>) -> Result<Self, String> {
+    pub fn from_bytes(buf: impl Into<crate::home::Home>) -> Result<Self, String> {
+        let buf: crate::home::Home = buf.into();
         let p = placement(&buf)?;
         let source_len = u64_at(&buf, head::SOURCE_LEN)?;
-        Ok(Tape16 { mark: buf[head::MARK], p, source_len, buf, frame: p.frame_of(source_len) })
+        Ok(Tape16 { mark: buf[head::MARK], p, source_len, frame: p.frame_of(source_len), buf })
     }
 
     /// Part `j`'s start in side list `k` (one more at the end).
@@ -309,6 +313,8 @@ impl Tape16 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Placement {
     pub n: usize,
+    /// The source's length its header states: a view's spans are held to it (decision 0403).
+    pub source_len: u64,
     pub cw: usize,
     pub widths: [usize; 3],
     pub vw: [usize; 4],
@@ -324,10 +330,10 @@ pub struct Placement {
 
 impl Placement {
     /// The placement of a tape of `n` nodes whose block 0 starts at `blocks`, with these widths, side lists `sides`
-    /// bytes long and a newline index `lines` bytes long of `newlines`.
+    /// bytes long and a newline index `lines` bytes long of `newlines`, of a source `source_len` long.
     #[allow(clippy::too_many_arguments)]
-    fn of(blocks: usize, n: usize, cw: usize, widths: [usize; 3], vw: [usize; 4], sides: [usize; 4], lines: usize, newlines: u32) -> Self {
-        let mut p = Placement { n, cw, widths, vw, newlines, blocks, stride: stride_of(widths, cw), side: [0; 4], parts: [0; 4], lines: 0, end: 0 };
+    fn of(blocks: usize, n: usize, cw: usize, widths: [usize; 3], vw: [usize; 4], sides: [usize; 4], lines: usize, newlines: u32, source_len: u64) -> Self {
+        let mut p = Placement { n, source_len, cw, widths, vw, newlines, blocks, stride: stride_of(widths, cw), side: [0; 4], parts: [0; 4], lines: 0, end: 0 };
         let count = p.block_count();
         let mut at = p.blocks_end() + 8;
         for (k, len) in sides.iter().enumerate() {
@@ -367,6 +373,13 @@ impl Placement {
     /// The view a tape's reads take (decision 0310), the tape at byte `base` of what the view's offsets count from
     /// (0: the tape's own bytes).
     pub fn view(&self, lang: &Lang, base: usize) -> Result<TapeView, String> {
+        // Each block's columns at `lang`'s widths: the tape's own, which its stride and blocks were checked against
+        // when it was read in (`header`, `fits`), so a read of a node of the tape lies in its block (decision 0403;
+        // its walks give only nodes of the tape).
+        let (_, _, w) = lang.device();
+        if w != self.widths {
+            return Err(format!("a format 16 tape of widths {:?}, read with widths {w:?}", self.widths));
+        }
         bind(self.frame(base)?, lang)
     }
 
@@ -380,6 +393,7 @@ impl Placement {
         let row = |r: usize| before(self.widths, r) as u32;
         Ok(TapeView {
             nodes: u32::try_from(self.n).map_err(|_| "a tape past 4 G nodes".to_owned())?,
+            source_len: u32::try_from(self.source_len).map_err(|_| "a source past 4 GiB".to_owned())?,
             format: 16,
             widths,
             columns: [at(self.blocks)?, row(1), row(2), row(3), row(4)],
@@ -454,6 +468,7 @@ fn header(buf: &[u8]) -> Result<Placement, String> {
     let tail: [usize; TAILS] = std::array::from_fn(|t| word(head::TAIL + 4 * t));
     let p = Placement {
         n,
+        source_len: u64_at(buf, head::SOURCE_LEN)?,
         cw,
         widths,
         vw,
@@ -491,7 +506,7 @@ fn side_lengths(buf: &[u8], parts: [usize; 4], count: usize) -> Result<[usize; 4
 /// newline index's.
 fn fits(p: &Placement, buf: &[u8], parts: [usize; 4]) -> Result<[usize; 4], String> {
     let sides = side_lengths(buf, parts, p.block_count())?;
-    if Placement::of(p.blocks, p.n, p.cw, p.widths, p.vw, sides, p.end - 8 - p.lines, p.newlines) != *p {
+    if Placement::of(p.blocks, p.n, p.cw, p.widths, p.vw, sides, p.end - 8 - p.lines, p.newlines, p.source_len) != *p {
         return Err("a format 16 header that does not fit its parts".into());
     }
     Ok(sides)
@@ -682,7 +697,7 @@ impl ZOut {
     fn finish(mut self, mut p: Placement, tag: u8, mark: u8, source_len: u64, lines: &[u8]) -> Result<Tape16Z, String> {
         let count = p.block_count();
         let sides: [usize; 4] = std::array::from_fn(|k| self.part_len[k].iter().map(|&l| l as usize).sum());
-        p = Placement::of(HEAD16, p.n, p.cw, p.widths, p.vw, sides, lines.len(), p.newlines);
+        p = Placement::of(HEAD16, p.n, p.cw, p.widths, p.vw, sides, lines.len(), p.newlines, source_len);
         let o = &mut self.out;
         o.resize(o.len().next_multiple_of(4), 0);
         let parts = o.len();
@@ -1126,7 +1141,7 @@ impl<'l> Writer<'l> {
         }
         let presence = std::mem::take(&mut self.presence);
         let mark = self.lang.revision;
-        let p = Placement::of(HEAD16, n, self.cw, self.w, self.vw, [0; 4], lines.len(), newlines);
+        let p = Placement::of(HEAD16, n, self.cw, self.w, self.vw, [0; 4], lines.len(), newlines, self.source_len);
         if let Some(z) = self.z.take() {
             let tape = z.finish(p, self.tag, mark, self.source_len, &lines)?;
             return Ok(Finished { tape: Written::F16Z(tape), presence });
@@ -1164,10 +1179,10 @@ impl<'l> Writer<'l> {
         buf.extend_from_slice(&lines);
         buf.extend_from_slice(&[0; 8]);
         let sides = std::array::from_fn(|k| starts[k][count] as usize);
-        let p = Placement::of(HEAD16, n, self.cw, self.w, self.vw, sides, lines.len(), newlines);
+        let p = Placement::of(HEAD16, n, self.cw, self.w, self.vw, sides, lines.len(), newlines, self.source_len);
         debug_assert_eq!(buf.len(), p.end);
         p.head_into(&mut buf, MAGIC16, self.tag, mark, self.source_len)?;
-        Ok(Finished { tape: Written::F16(Tape16 { mark, p, source_len: self.source_len, buf, frame: p.frame_of(self.source_len) }), presence })
+        Ok(Finished { tape: Written::F16(Tape16 { mark, p, source_len: self.source_len, buf: buf.into(), frame: p.frame_of(self.source_len) }), presence })
     }
 }
 
@@ -1487,9 +1502,9 @@ impl Tape16 {
 /// - the piece index: each piece's start in the payload and its length (u32s), then each one's kind (a byte), by
 ///   piece (`PIECES` a block, in block order).
 ///
-/// Block `b`'s piece `q` decodes to array `q`'s column in block `b` and side list `q`'s part `b`, each where it lies
-/// in the format 16 tape: a block decodes in place, alone (`decode_block_into`). The CPU reads a block decoded on its
-/// own (`F16Z`).
+/// Block `b`'s piece `q` decodes to array `q`'s column in block `b` and side list `q`'s part `b`. A block decodes
+/// alone, where a read falls, and the tape is never laid out whole (decision 0353 step 4b): the CPU's `F16Z` decodes
+/// it into its thread's slots, the reads written once into a cache entry (`view`).
 #[derive(Clone, Debug)]
 pub struct Tape16Z {
     /// Which tape its decoded blocks are, in the thread's cache (a clone holds the same bytes).
@@ -1498,19 +1513,10 @@ pub struct Tape16Z {
     /// The placement of the format 16 tape it decodes to.
     p: Placement,
     source_len: u64,
-    buf: Vec<u8>,
+    /// As stored: its own, or placed in a slab's room (decision 0353 step 4a).
+    buf: crate::home::Home,
     /// Where its own regions lie (`ZPARTS` …).
     zat: [usize; ZS],
-}
-
-/// One 16z piece's decode (`Tape16Z::piece_jobs`): its stored bytes (in the tape as stored), LZ4 or raw, decoding
-/// to `fixed` (its array's column in its block) then `side` (its side list's part), in the format 16 tape.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PieceJob {
-    pub src: std::ops::Range<usize>,
-    pub lz4: bool,
-    pub fixed: std::ops::Range<usize>,
-    pub side: std::ops::Range<usize>,
 }
 
 impl Tape16Z {
@@ -1533,8 +1539,9 @@ impl Tape16Z {
     pub fn as_bytes(&self) -> &[u8] {
         &self.buf
     }
-    pub fn into_bytes(self) -> Vec<u8> {
-        self.buf
+    /// Where its bytes are.
+    pub fn home(&self) -> &crate::home::Home {
+        &self.buf
     }
 
     /// The pieces: `PIECES` a block.
@@ -1544,13 +1551,18 @@ impl Tape16Z {
 
     /// The stored tape, held as it is: its header, its regions and its piece index are checked against its length,
     /// and each piece against where it decodes to. No piece is decoded.
-    pub fn from_bytes(buf: Vec<u8>) -> Result<Self, String> {
+    pub fn from_bytes(buf: impl Into<crate::home::Home>) -> Result<Self, String> {
+        let buf: crate::home::Home = buf.into();
         if buf.len() < HEAD16 || &buf[..8] != MAGIC16Z {
             return Err("not a 16z tape".into());
         }
         let p = header(&buf)?;
         let zat: [usize; ZS] = std::array::from_fn(|t| u32_at(&buf, head::Z + 4 * t) as usize);
         let (count, n) = (p.block_count(), p.n);
+        // Its nodes numbered in a u32 (the device's), its blocks within a cache key's 22 bits (`(id << 22) | block`).
+        if u32::try_from(n).is_err() || count >= 1 << 22 {
+            return Err("a 16z tape too long for its reads".into());
+        }
         let pieces = PIECES * count;
         let lines = p.end - 8 - p.lines;
         let bad = || "a 16z tape's regions do not fit it".to_owned();
@@ -1583,7 +1595,10 @@ impl Tape16Z {
             let (kind, bytes) = t.piece(j);
             let fits = match kind {
                 RAW => bytes.len() == want,
-                LZ4 => !bytes.is_empty(),
+                // Within what LZ4 decodes its bytes to (255 bytes a byte at most): the side lengths the part starts
+                // state size every cache entry, so they are bounded by the bytes stored, not taken on trust
+                // (decision 0403).
+                LZ4 => !bytes.is_empty() && want as u64 <= 255 * bytes.len() as u64 + 64,
                 REPEAT => {
                     let other = if bytes.len() == 4 { u32_at(bytes, 0) as usize } else { usize::MAX };
                     other < pieces && other != j && t.kind(other) != REPEAT && t.decoded(other) == want
@@ -1597,8 +1612,9 @@ impl Tape16Z {
         Ok(t)
     }
 
-    /// The length of the format 16 tape it decodes to (`decode_into`).
-    pub fn decoded_len(&self) -> usize {
+    /// The length of the format 16 tape it decodes to (`decode_into`, a test's).
+    #[cfg(test)]
+    fn decoded_len(&self) -> usize {
         self.p.end
     }
 
@@ -1631,19 +1647,6 @@ impl Tape16Z {
         fixed.len() + side.len()
     }
 
-    /// Every piece's decode as a device kernel takes it (decision 0336 §8), in order: where its stored bytes lie in
-    /// `as_bytes` (a repeat's, the other piece's), whether they are LZ4, and where they decode to in the format 16
-    /// tape. With `decode_head_into`, the pieces make the tape.
-    pub fn piece_jobs(&self) -> impl Iterator<Item = PieceJob> + '_ {
-        (0..self.pieces()).map(move |j| {
-            let (kind, bytes) = self.piece(j);
-            let k = if kind == REPEAT { u32_at(bytes, 0) as usize } else { j };
-            let (s, l) = self.span(k);
-            let (fixed, side) = self.dest(j / PIECES, j % PIECES);
-            PieceJob { src: HEAD16 + s..HEAD16 + s + l, lz4: self.kind(k) == LZ4, fixed, side }
-        })
-    }
-
     /// Piece `j`'s kind and its stored bytes.
     fn piece(&self, j: usize) -> (u8, &[u8]) {
         let (s, l) = self.span(j);
@@ -1665,11 +1668,13 @@ impl Tape16Z {
         }
     }
 
-    /// The format 16 tape's parts that are not in pieces, into `out` (`decoded_len` bytes): its header, each
+    /// The format 16 tape's parts that are not in pieces, into `out` (a test's: a 16z tape is read a block at a time,
+    /// never laid out whole, decision 0353 step 4b) (`decoded_len` bytes): its header, each
     /// block's checkpoints, the side lists' part starts, the newline index, and the room after the last block, each
     /// side list and the newline index. With every block (`decode_block_into`), `out` is the format 16 tape
     /// (`decode_into`).
-    pub fn decode_head_into(&self, out: &mut [u8]) -> Result<(), String> {
+    #[cfg(test)]
+    fn decode_head_into(&self, out: &mut [u8]) -> Result<(), String> {
         let p = &self.p;
         if out.len() != p.end {
             return Err(format!("{} bytes for a format 16 tape of {}", out.len(), p.end));
@@ -1700,7 +1705,8 @@ impl Tape16Z {
 
     /// Block `b` decoded where it lies in the format 16 tape `out` (`decoded_len` bytes): each of its pieces, its
     /// array's column and its side part. No other block is read; `scratch` holds an LZ4 piece while it is copied.
-    pub fn decode_block_into(&self, b: usize, out: &mut [u8], scratch: &mut Vec<u8>) -> Result<(), String> {
+    #[cfg(test)]
+    fn decode_block_into(&self, b: usize, out: &mut [u8], scratch: &mut Vec<u8>) -> Result<(), String> {
         if out.len() != self.decoded_len() || b >= self.p.block_count() {
             return Err(format!("block {b} into {} bytes, of a format 16 tape of {}", out.len(), self.decoded_len()));
         }
@@ -1715,13 +1721,52 @@ impl Tape16Z {
     }
 
     /// The format 16 tape it is, into `out` (`decoded_len` bytes): its head, then each block where it lies.
-    pub fn decode_into(&self, out: &mut [u8]) -> Result<(), String> {
+    #[cfg(test)]
+    fn decode_into(&self, out: &mut [u8]) -> Result<(), String> {
         self.decode_head_into(out)?;
         let mut scratch = Vec::new();
         for b in 0..self.p.block_count() {
             self.decode_block_into(b, out, &mut scratch)?;
         }
         Ok(())
+    }
+
+    /// The bytes block `b` takes decoded in a cache entry, as the reads written once lay it (`rerail_clif::reads`,
+    /// `z_decode`): column `q` at `nb * C[q]`, `C[q]` the least that clears the piece before (its column, then its
+    /// side part) and 16 bytes of room; the checkpoints, 16 bytes of room, then each side list's part's starts.
+    fn entry_bytes(&self, b: usize) -> usize {
+        let nb = self.p.rows(b);
+        let mut c = 0;
+        for q in 0..PIECES {
+            let side = self.part_start(q, b + 1) - self.part_start(q, b);
+            c = (nb * c + nb * cell(self.p.widths, self.p.cw, q) + side + 16).div_ceil(nb);
+        }
+        (nb * c + nb.div_ceil(K) * self.p.cw + 16).next_multiple_of(8) + 32 + 8
+    }
+
+    /// The view the reads written once take of this tape as stored (decision 0353 step 4b,
+    /// `rerail_clif::view::F16Z_FORMAT`): its piece index, side lists' part starts, checkpoints and payload where
+    /// they lie in `as_bytes`, its newline index (raw: format 16's line reads read it in place), format 16's widths
+    /// and `lang`'s choices, its id, and the size of a cache entry that holds its largest block decoded. A reader
+    /// reads it through a cache, which the view is given (`view::Reader`, or the device's).
+    pub fn view(&self, lang: &Lang) -> Result<TapeView, String> {
+        use rerail_clif::view::{F16Z_BLOCK, F16Z_FORMAT, F16Z_PIECES, z};
+        const _: () = assert!(F16Z_BLOCK as usize == Z && F16Z_PIECES as usize == PIECES);
+        const _: () = assert!(z::RAW == RAW && z::LZ4 == LZ4 && z::REPEAT == REPEAT);
+        if self.mark != lang.revision || self.p.widths != lang.widths {
+            return Err(format!("a tape of revision {}, read with revision {}", self.mark, lang.revision));
+        }
+        let largest = (0..self.p.block_count()).map(|b| self.entry_bytes(b)).max().unwrap_or(0);
+        let entry = (z::SLOT_BYTES as usize + largest + z::SLACK).next_power_of_two();
+        let mut view = bind(self.p.frame(0)?, lang)?;
+        let at = |offset: usize| u32::try_from(offset).map_err(|_| "a tape past 4 GiB".to_owned());
+        view.format = F16Z_FORMAT;
+        view.columns = [at(self.zat[ZSTARTS])?, at(self.zat[ZPARTS])?, at(self.zat[ZCKPT])?, at(entry)?, 0];
+        view.stride = at(HEAD16)?;
+        view.lines = at(self.zat[ZLINES])?;
+        view.side = [0, 0, self.id as u32, (self.id >> 32) as u32];
+        view.parts = [0; 4];
+        Ok(view)
     }
 
     /// Read with `lang`'s choices (its revision and widths).
@@ -1798,7 +1843,7 @@ impl F16Z<'_> {
         let nb = t.p.rows(b);
         let sides: [usize; 4] = std::array::from_fn(|k| t.part_start(k, b + 1) - t.part_start(k, b));
         // No newline index: a block's view answers no line (the whole tape's does).
-        let q = Placement::of(0, nb, t.p.cw, t.p.widths, t.p.vw, sides, 0, 0);
+        let q = Placement::of(0, nb, t.p.cw, t.p.widths, t.p.vw, sides, 0, 0, t.source_len);
         slot.raw.clear();
         slot.raw.resize(q.end + 32, 0);
         let mut scratch = std::mem::take(&mut slot.scratch);
@@ -1941,17 +1986,6 @@ mod tests {
             z.decode_block_into(b, &mut by_block, &mut scratch).unwrap();
         }
         assert_eq!(by_block, plain.as_bytes(), "16z's blocks decode in place");
-        // The pieces as a device decodes them: the head, then each piece from its stored bytes alone.
-        let mut by_job = vec![0u8; z.decoded_len()];
-        z.decode_head_into(&mut by_job).unwrap();
-        for job in z.piece_jobs() {
-            let stored = &z.as_bytes()[job.src.clone()];
-            let mut out = vec![0u8; job.fixed.len() + job.side.len()];
-            if job.lz4 { lz4::decompress(stored, &mut out).unwrap() } else { out.copy_from_slice(stored) }
-            by_job[job.fixed.clone()].copy_from_slice(&out[..job.fixed.len()]);
-            by_job[job.side.clone()].copy_from_slice(&out[job.fixed.len()..]);
-        }
-        assert_eq!(by_job, plain.as_bytes(), "16z's piece jobs decode to format 16's bytes");
         let p = placement(plain.as_bytes()).unwrap();
         assert_eq!(p, plain.p, "the placement is the reader's");
         compact(&p);
@@ -2015,7 +2049,7 @@ mod tests {
             let back = Tape16::from_bytes(t.as_bytes().to_vec()).unwrap();
             lines_answer(&back.reader(&lang).unwrap(), &source);
             let Ok(Written::F16Z(z)) = write_from(&lang, &f15, &number, &source, 0, true) else { panic!("16z") };
-            let z = Tape16Z::from_bytes(z.into_bytes()).unwrap();
+            let z = Tape16Z::from_bytes(z.as_bytes().to_vec()).unwrap();
             let mut decoded = vec![0u8; z.decoded_len()];
             z.decode_into(&mut decoded).unwrap();
             assert_eq!(decoded, t.as_bytes(), "16z holds the newline index");
@@ -2059,7 +2093,7 @@ mod tests {
         let back = Tape16::from_bytes(tagged.as_bytes().to_vec()).unwrap();
         assert_eq!((back.tag(), back.source_len()), (7, 2_000));
         same(&f15, &back.reader(&lang).unwrap(), &number);
-        let z = Tape16Z::from_bytes(tagged.blocks().into_bytes()).unwrap();
+        let z = Tape16Z::from_bytes(tagged.blocks().as_bytes().to_vec()).unwrap();
         assert_eq!((z.tag(), z.source_len()), (7, 2_000));
         same(&f15, &z.reader(&lang).unwrap(), &number);
         let mut short = tagged.as_bytes().to_vec();
@@ -2108,7 +2142,7 @@ mod tests {
         t.reader(&lang).unwrap().match_groups(&set, |base, m| b.push((base, m)));
         assert_eq!(a, b, "a set past the cutoff");
         // The same tape in fixed blocks: every read decodes the block it falls in.
-        let z = Tape16Z::from_bytes(t.blocks().into_bytes()).unwrap();
+        let z = Tape16Z::from_bytes(t.blocks().as_bytes().to_vec()).unwrap();
         assert!(z.len() > 6 * Z, "several blocks");
         assert_eq!(Tape16::from_bytes(t.as_bytes().to_vec()).unwrap(), t);
         same(&plain, &z.reader(&lang).unwrap(), &number);
@@ -2127,7 +2161,7 @@ mod tests {
         let (mut a, mut b, mut c) = (Vec::new(), Vec::new(), Vec::new());
         plain_low.match_groups(&set, |base, m| a.push((base, m)));
         t_low.reader(&lang).unwrap().match_groups(&set, |base, m| b.push((base, m)));
-        Tape16Z::from_bytes(t_low.blocks().into_bytes()).unwrap().reader(&lang).unwrap().match_groups(&set, |base, m| c.push((base, m)));
+        Tape16Z::from_bytes(t_low.blocks().as_bytes().to_vec()).unwrap().reader(&lang).unwrap().match_groups(&set, |base, m| c.push((base, m)));
         assert_eq!((&a, &a), (&b, &c), "a part with no codes past the cutoff");
         // A bulk answer that reads the tape inside the matches' callback.
         let (mut near, mut near_z) = (Vec::new(), Vec::new());
@@ -2255,12 +2289,241 @@ mod tests {
         let t = sixteen(&lang, &plain, &(0..600).collect::<Vec<_>>(), pos + 2);
         let v = placement(t.as_bytes()).unwrap().view(&lang, 0).unwrap();
         same_reads(&reads, &t.reader(&lang).unwrap(), t.as_bytes(), &v);
+        // 16z, the same nodes in blocks (decision 0353 step 4b): each read decodes its block into the reader's slot.
+        let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), 0, true) else { panic!("16z") };
+        assert!(z.len() > 3 * Z, "the tape spans blocks");
+        let reader = rerail_clif::view::Reader::new(&z.view(&lang).unwrap(), z.as_bytes().as_ptr());
+        // SAFETY: the reader's view, which this thread alone reads.
+        same_reads(&reads, &z.reader(&lang).unwrap(), z.as_bytes(), unsafe { &*reader.view() });
         // Format 15.
         let (image, _) = crate::tape::tests::sample();
         let (columns, table) = crate::tape::f15_columns(&image).unwrap();
         let f15 = crate::tape::F15::new(&image, columns, &table).unwrap();
         let v = crate::tape::f15_view(&image, 0).unwrap();
         same_reads(&reads, &f15, &image, &v);
+    }
+
+    /// Decision 0403: a 16z tape's reads stay within it and its cache, whatever its blocks hold. A side length past
+    /// what its block's bytes decode to is refused when the tape is read in. A block whose literals claim more
+    /// bytes than it has is decoded no further than its own: the tape lies against a page no read may touch, and
+    /// every node is read. A node past the tape's last reads the cache's dead entry, a failure counted. The cache
+    /// is found as it was made (`Spec::check`), and its guard overwritten is found.
+    #[cfg(unix)]
+    #[test]
+    fn a_16z_tapes_reads_stay_within_its_bytes() {
+        use rerail_clif::view::cache;
+        let reads = rerail_clif::jit::Reads::new();
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let plain = Plain(&nodes, &table);
+        let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), 0, true) else { panic!("16z") };
+        let (n, blocks) = (z.len(), z.len().div_ceil(Z));
+        // A piece that states more bytes decoded than its stored bytes can give: refused. Its decoded length is
+        // its column's and its side part's, which size every cache entry (decision 0403).
+        let packed = (0..PIECES * blocks).rev().find(|&j| z.kind(j) == LZ4).expect("an LZ4 piece");
+        let mut stated = z.as_bytes().to_vec();
+        let at = z.zat[ZLENS] + 4 * packed;
+        stated[at..at + 4].copy_from_slice(&1u32.to_le_bytes());
+        let refused = Tape16Z::from_bytes(stated).err().expect("refused");
+        assert!(refused.contains(&format!("piece {packed} does not fit")), "{refused}");
+        // The last LZ4 piece's literals made to claim more bytes than the piece has, within its decoded room.
+        let mut bytes = z.as_bytes().to_vec();
+        let (start, len) = z.span(packed);
+        let (from, to) = (HEAD16 + start, HEAD16 + start + len);
+        let room = z.decoded(packed);
+        let claim = (to - from + 64).min(room - 16);
+        assert!(claim > to - from, "a piece that compresses: {} bytes for {room}", to - from);
+        let extra = claim - 15;
+        let mut block = vec![0xF0u8];
+        block.extend(std::iter::repeat_n(255u8, extra / 255));
+        block.push((extra % 255) as u8);
+        assert!(block.len() < to - from, "the claim fits the piece's bytes");
+        bytes[from..from + block.len()].copy_from_slice(&block);
+        let guarded = Guarded::new(&bytes);
+        let tape = guarded.at;
+        let reader = rerail_clif::view::Reader::new(&z.view(&lang).unwrap(), tape);
+        let f = ["tape_number", "tape_start", "tape_end", "tape_parent", "tape_size", "tape_next", "tape_child_count", "tape_first_child", "tape_length"].map(|name| reads.function(name));
+        let read = |i: u32| {
+            for &g in &f {
+                // SAFETY: a read's signature: the tape's base, its view, a node.
+                let g: extern "C" fn(*const u8, *const TapeView, u32) -> u32 = unsafe { std::mem::transmute(g) };
+                std::hint::black_box(g(tape, reader.view(), i));
+            }
+        };
+        for i in 0..n as u32 {
+            read(i);
+        }
+        assert_eq!(reader.counts().expect("a 16z cache").failed, 0, "every node of the tape found its block");
+        // Nodes past the last: the dead entry, each a failure.
+        for i in n as u32..(blocks + 3) as u32 * Z as u32 {
+            read(i);
+        }
+        read(u32::MAX);
+        assert!(reader.counts().expect("a 16z cache").failed > 0, "a node past the tape counted");
+        drop(reader);
+        drop(guarded);
+        // A cache overwritten past its slack, or in its shape, is found.
+        let spec = cache::Spec::new(3, 4, 4096);
+        let mut buf = vec![0u8; spec.bytes()];
+        spec.init(&mut buf).unwrap();
+        assert_eq!(cache::Spec::check(&buf), Ok(spec));
+        let end = buf.len() - 1;
+        buf[end] ^= 1;
+        assert!(cache::Spec::check(&buf).unwrap_err().contains("guard"));
+        buf[end] ^= 1;
+        buf[cache::DEAD as usize] ^= 8;
+        assert!(cache::Spec::check(&buf).unwrap_err().contains("overwritten"));
+    }
+
+    /// `bytes` placed so their last lies against a page no read may touch (64 KiB: a page or several, on every
+    /// host), at `at`; unmapped when dropped.
+    struct Guarded {
+        map: *mut u8,
+        span: usize,
+        at: *mut u8,
+    }
+
+    unsafe extern "C" {
+        fn mmap(addr: *mut u8, len: usize, prot: i32, flags: i32, fd: i32, offset: i64) -> *mut u8;
+        fn mprotect(addr: *mut u8, len: usize, prot: i32) -> i32;
+        fn munmap(addr: *mut u8, len: usize) -> i32;
+    }
+
+    impl Guarded {
+        fn new(bytes: &[u8]) -> Guarded {
+            const GUARD: usize = 1 << 16;
+            #[cfg(target_os = "macos")]
+            const ANON: i32 = 0x1000;
+            #[cfg(not(target_os = "macos"))]
+            const ANON: i32 = 0x20;
+            let span = bytes.len().next_multiple_of(GUARD) + GUARD;
+            // SAFETY: a fresh private mapping of `span` bytes; its last `GUARD` bytes made unreadable.
+            let map = unsafe { mmap(std::ptr::null_mut(), span, 3, 2 | ANON, -1, 0) };
+            assert!(!map.is_null() && map as isize != -1, "a mapping");
+            assert_eq!(unsafe { mprotect(map.add(span - GUARD), GUARD, 0) }, 0, "a page no read may touch");
+            // SAFETY: the readable part of the mapping holds the bytes, ending at the unreadable page.
+            let at = unsafe { map.add(span - GUARD - bytes.len()) };
+            unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), at, bytes.len()) };
+            Guarded { map, span, at }
+        }
+    }
+
+    impl Drop for Guarded {
+        fn drop(&mut self) {
+            // SAFETY: the mapping `new` made, no read of it left.
+            unsafe { munmap(self.map, self.span) };
+        }
+    }
+
+    /// Decision 0403: a node's span, from the tape's gaps and lengths, is held to the source its header states:
+    /// a tape whose spans claim more than its source reads none past it, in format 16 or 16z, and none reversed.
+    #[test]
+    fn a_tapes_spans_stay_within_its_source() {
+        let reads = rerail_clif::jit::Reads::new();
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let plain = Plain(&nodes, &table);
+        let source = pos / 2;
+        let f = ["tape_start", "tape_end"].map(|name| reads.function(name));
+        // SAFETY: a read's signature: the tape's base, its view, a node.
+        let [start, end] = f.map(|g| unsafe { std::mem::transmute::<_, extern "C" fn(*const u8, *const TapeView, u32) -> u32>(g) });
+        // The source's last byte against a page no read may touch: each node's span read byte by byte, as a
+        // kernel's text test reads it (`same_text`, `text_is`).
+        let text = Guarded::new(&vec![b'x'; source as usize]);
+        let check = |tape: *const u8, view: *const TapeView, n: usize| {
+            let mut held = 0;
+            let mut sum = 0u64;
+            for i in 0..n as u32 {
+                let (s, e) = (start(tape, view, i), end(tape, view, i));
+                assert!(s as u64 <= source && s <= e && e as u64 <= source, "node {i}: {s}..{e} of a source of {source}");
+                for k in s..e {
+                    // SAFETY: what the test asks: the span, read where the source lies.
+                    sum += u64::from(unsafe { text.at.add(k as usize).read_volatile() });
+                }
+                held += usize::from(e as u64 == source);
+            }
+            assert!(held > 1 && sum > 0, "spans past the source, held to its end");
+        };
+        // Written over the whole source, then read with a shorter one stated: a tape held with the wrong source, or
+        // corrupt. (Its header's length is checked against its newline index when it is read in; the view's is
+        // what the reads hold spans to.)
+        let Ok(Written::F16(t)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), 0, false) else { panic!("16") };
+        let mut view = placement(t.as_bytes()).unwrap().view(&lang, 0).unwrap();
+        assert_eq!(u64::from(view.source_len), pos + 2);
+        view.source_len = source as u32;
+        check(t.as_bytes().as_ptr(), &raw const view, t.len());
+        let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), 0, true) else { panic!("16z") };
+        let mut view = z.view(&lang).unwrap();
+        view.source_len = source as u32;
+        let reader = rerail_clif::view::Reader::new(&view, z.as_bytes().as_ptr());
+        check(z.as_bytes().as_ptr(), reader.view(), z.len());
+    }
+
+    /// Decision 0353 step 4b: a rolling cache shared by threads (`view::cache`, its stamps checked after each read)
+    /// reads a 16z tape as this crate does while it turns: eight threads read nodes at random through one cache of
+    /// three generations of four blocks, over a tape of more blocks than it holds. A read wrong only where the
+    /// cache counted a failure (no room: the dead entry read).
+    #[test]
+    fn a_shared_cache_reads_16z_as_the_crate_does() {
+        use rerail_clif::view::cache;
+        let reads = rerail_clif::jit::Reads::new();
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let plain = Plain(&nodes, &table);
+        let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), 0, true) else { panic!("16z") };
+        let t = z.reader(&lang).unwrap();
+        let n = t.len();
+        let want: Vec<[u32; 4]> = (0..n).map(|i| [t.code(i), t.start(i) as u32, t.end(i) as u32, t.parent(i).map_or(u32::MAX, |p| p as u32)]).collect();
+        let mut view = z.view(&lang).unwrap();
+        let spec = cache::Spec::new(3, 4, view.columns[3] as usize).with_stats();
+        let mut buf = vec![0u128; spec.bytes().div_ceil(16)];
+        // SAFETY: the buffer's bytes, 16-aligned.
+        let bytes = unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr().cast::<u8>(), spec.bytes()) };
+        spec.init(bytes).unwrap();
+        let rel = (bytes.as_ptr() as i64).wrapping_sub(z.as_bytes().as_ptr() as i64);
+        (view.side[0], view.side[1], view.columns[3], view.columns[4]) = (rel as u32, (rel >> 32) as u32, spec.entry_bytes() as u32, 1);
+        let cache_at = bytes.as_ptr() as usize;
+        let failed = || unsafe { (*((cache_at + cache::FAILED as usize) as *const std::sync::atomic::AtomicU32)).load(std::sync::atomic::Ordering::Relaxed) };
+        let f = ["tape_number", "tape_start", "tape_end", "tape_parent"].map(|name| reads.function(name) as usize);
+        let (tape, v) = (z.as_bytes().as_ptr() as usize, std::ptr::from_ref(&view) as usize);
+        let wrong: usize = std::thread::scope(|scope| {
+            let threads: Vec<_> = (0..8u64)
+                .map(|seed| {
+                    let want = &want;
+                    scope.spawn(move || {
+                        let mut x = seed * 0x9E37_79B9 + 1;
+                        let mut wrong = 0;
+                        for _ in 0..40_000 {
+                            x ^= x << 13;
+                            x ^= x >> 7;
+                            x ^= x << 17;
+                            let i = (x % n as u64) as u32;
+                            for (k, &g) in f.iter().enumerate() {
+                                // SAFETY: a read's signature: the tape's base, its view, a node.
+                                let g: extern "C" fn(*const u8, *const TapeView, u32) -> u32 = unsafe { std::mem::transmute(g) };
+                                if g(tape as *const u8, v as *const TapeView, i) != want[i as usize][k] {
+                                    wrong += 1;
+                                }
+                            }
+                        }
+                        wrong
+                    })
+                })
+                .collect();
+            threads.into_iter().map(|t| t.join().unwrap()).sum()
+        });
+        // SAFETY: the cache's header, its threads done.
+        let counts = unsafe { cache::Counts::read(cache_at as *const u8) };
+        eprintln!("{counts:?}, hit ratio {:.3}, wrong {wrong}", counts.hit_ratio());
+        assert!(counts.rotated > 100 && counts.promoted > 0 && counts.hits > 0, "the cache turned: {counts:?}");
+        assert!(wrong <= failed() as usize, "{wrong} reads wrong, {} failures", failed());
+        drop(buf);
     }
 
     /// Every shipped table loads, and its text reads back to the same choices.

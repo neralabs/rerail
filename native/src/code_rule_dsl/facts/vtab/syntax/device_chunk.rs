@@ -94,6 +94,23 @@ pub const VIEW_LOC_DOCOF: u32 = 8;
 /// The `line` view (`View::Line`): each node's id and the line its start is on, by the facts' own lines.
 pub const VIEW_LINE: u32 = 9;
 
+/// A view's number in the views' reads (`vread`'s `kind`: 1 + its place in `rerail_clif::view_reads::VIEWS`), of its
+/// device code.
+pub fn read_kind(view: u32) -> u32 {
+    match view {
+        VIEW_NODE => 1,
+        VIEW_CHILD => 2,
+        VIEW_FIELD => 3,
+        VIEW_CORE => 4,
+        VIEW_LINE => 5,
+        VIEW_LOC_LINE => 6,
+        VIEW_LOC_END => 7,
+        VIEW_LOC_COL => 8,
+        VIEW_LOC_DOCOF => 9,
+        _ => panic!("view {view} has no read"),
+    }
+}
+
 /// The device's code of `view`, for the views it makes.
 pub fn device_view(view: View) -> Option<u32> {
     Some(match view {
@@ -114,7 +131,9 @@ pub fn device_view(view: View) -> Option<u32> {
 // copy (0353 step 5): an axis's pairs copied into the chunk. It goes: the solve writes its answer once,
 // as ids, into a relation in the chunk block (decision 0353).
 pub fn put_pairs(chunk: &Chunk, pairs: &[u64]) -> Option<usize> {
+    static PAIRS: rerail_prof::copies::Site = rerail_prof::copies::Site::new(6, "5", "an axis's pairs put into the chunk (put_pairs)");
     let p: *mut u64 = chunk.block.try_alloc_t(pairs.len().max(1))?;
+    PAIRS.copied(8 * pairs.len());
     // SAFETY: `p` holds `pairs.len()` items, just allocated in the block.
     unsafe { std::ptr::copy_nonoverlapping(pairs.as_ptr(), p, pairs.len()) };
     Some(chunk.block.offset_of(p))
@@ -129,6 +148,180 @@ pub struct Chunk {
     locs: std::sync::OnceLock<bool>,
     /// Whether the facts' line starts are in the block (`fill_lines`), once asked.
     lines: std::sync::OnceLock<bool>,
+    /// The views' directory (`views_in_place`), once asked; `None` when a document's tape is not where the device
+    /// reads it.
+    #[cfg(target_os = "macos")]
+    views: std::sync::OnceLock<Option<ViewsInPlace>>,
+}
+
+/// A batch's documents as the views' reads find them on the device (decision 0353 step 4d, `ViewDir`): each one's
+/// entry, beside its projection's numbering in the batch's block, and its tape where it lies in its slab. A stage
+/// reads a view through them; nothing makes the view's rows.
+#[cfg(target_os = "macos")]
+pub struct ViewsInPlace {
+    /// The directory's GPU address, which a stage's constants point at (`Stage::v_dir`).
+    pub dir: u64,
+    /// The buffers the reads reach by address, which a pass that reads a view makes resident: the batch's block's
+    /// (the one the addresses are of), and each slab a tape lies in.
+    pub buffers: Vec<metal::Buffer>,
+    /// Whether every document's lines are in a slab (`LineTable::placed`), so the `line` view is read in place too.
+    pub lines: bool,
+    /// Whether every document's `Loc` rows are the views' reads' (`ViewEntry::locs`: a file's own tree, core.rr's
+    /// lines in the batch's block), so the `Loc` views are read in place too.
+    pub locs: bool,
+    /// The cache a 16z document's reads decode its blocks into (decision 0353 step 4b, `view::cache`), which every
+    /// stage that reads the batch's views shares: none where no tape is 16z.
+    pub cache: Option<metal::Buffer>,
+    _entries: Vec<super::view_docs::ViewEntry>,
+}
+
+
+/// The batch's cache's counts in the profile when its directory goes (the statistics mode's too, where it is on).
+#[cfg(target_os = "macos")]
+impl Drop for ViewsInPlace {
+    fn drop(&mut self) {
+        if let Some(cache) = &self.cache {
+            // SAFETY: the cache's shared buffer, all of it; no stage reads the views once the directory goes.
+            let c = rerail_clif::view::cache::Counts::checked(unsafe { std::slice::from_raw_parts(cache.contents().cast::<u8>(), cache.length() as usize) });
+            for (name, n) in c.named() {
+                crate::code_rule_dsl::prof::count(name, n as usize);
+            }
+        }
+    }
+}
+
+/// The batch's views' directory (`ViewsInPlace`), made on its first ask: `None` when a document's tape is not in a
+/// slab (a tape held in a vector of its own), or the batch has no device.
+#[cfg(target_os = "macos")]
+pub fn views_in_place<'a>(batch: &Batch, chunk: &'a Chunk) -> Option<&'a ViewsInPlace> {
+    chunk.views.get_or_init(|| build_views(batch, chunk)).as_ref()
+}
+
+#[cfg(target_os = "macos")]
+fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
+    use rerail_clif::view_reads::{ViewDir, ViewRow};
+    let _span = crate::code_rule_dsl::logic::profile::span(|| "the views' directory".into());
+    let device = crate::code_rule_dsl::tape::placed::device()?;
+    let b = &chunk.block;
+    let n = batch.docs.len();
+    let rows: *mut ViewRow = b.alloc_t(n.max(1));
+    let dir: *mut ViewDir = b.alloc_t(1);
+    let mut slabs: Vec<metal::Buffer> = Vec::new();
+    let mut entries = Vec::with_capacity(n);
+    let mut lines = true;
+    let loc_rows = batch.offsets(View::Loc(Place::Line));
+    // The 16z documents' rows, their blocks and their largest block's entry: their cache made after the rows.
+    let (mut zrows, mut zblocks, mut zentry) = (Vec::new(), 0usize, 0usize);
+    let mut locs = batch.docs.iter().all(|p| p.extra.is_some());
+    for (i, p) in batch.docs.iter().enumerate() {
+        // Each refusal counted by why: what step 4b (16z laid out apart) and the loads not yet placed leave.
+        let refused = |why: &'static str| {
+            crate::code_rule_dsl::prof::count(why, 1);
+            None
+        };
+        if !Arc::ptr_eq(p.block(), b) {
+            return refused("views.refused.block");
+        }
+        let first = batch.nodes[i] as u32;
+        let loc = loc_rows.get(i).map_or(0, |&r| r as u32);
+        let mut row = ViewRow { rows: [first, batch.children[i] as u32, batch.fields[i] as u32, first, first, loc, loc, loc, loc], ..Default::default() };
+        if locs && p.locs() > 0 && super::view_docs::ViewEntry::locs(b, p).is_none() {
+            // Why, by the guest's placement where it has one.
+            let why = match p.extra.as_ref().and_then(|x| x.host.as_ref()).map(|(_, place)| place) {
+                Some(super::Placement::Copied { .. }) => "views.refused.locs.guest_copied",
+                Some(super::Placement::Mapped { .. }) => "views.refused.locs.guest_mapped",
+                Some(super::Placement::At(_)) => "views.refused.locs.guest_at",
+                Some(super::Placement::Segments(_)) => "views.refused.locs.guest_segments",
+                None => "views.refused.locs",
+            };
+            crate::code_rule_dsl::prof::count(why, 1);
+            locs = false;
+        }
+        // A document with no nodes has rows only in the `Loc` views (a withheld one's text and lines): where its tape
+        // is not on the device, those alone are made.
+        let only_locs = p.len() == 0;
+        if p.len() > 0 || (locs && p.locs() > 0) {
+            let tape_on_device = || -> Result<_, &'static str> {
+                let tape = p.facts.tape.as_ref().ok_or("views.refused.no_tape")?;
+                let (bytes, view) = tape.in_place().map_err(|_| "views.refused.not_in_place")?;
+                let room = tape.image().room().ok_or(if tape.image().format() == crate::code_rule_dsl::tape::formats::Format::F16Z { "views.refused.unplaced_16z" } else { "views.refused.unplaced" })?;
+                let (address, slab) = crate::code_rule_dsl::tape::placed::on_device(room, bytes).ok_or("views.refused.not_in_room")?;
+                Ok((address, slab, view))
+            };
+            let (address, slab, view) = match tape_on_device() {
+                Ok(on) => on,
+                Err(why) if !only_locs => return refused(why),
+                Err(why) => {
+                    crate::code_rule_dsl::prof::count(why, 1);
+                    locs = false;
+                    // SAFETY: row `i` of the rows just allocated in `b`.
+                    unsafe { rows.add(i).write(row) };
+                    continue;
+                }
+            };
+            if !slabs.iter().any(|s| s.gpu_address() == slab.gpu_address()) {
+                slabs.push(slab);
+            }
+            // Its lines where the device reads them: else the batch's `line` view is made (counted).
+            let table = &p.facts.lines;
+            let words = table.words();
+            // SAFETY: the words as bytes, their own range.
+            let bytes = unsafe { std::slice::from_raw_parts(words.as_ptr().cast::<u8>(), 4 * words.len()) };
+            match table.room().and_then(|room| crate::code_rule_dsl::tape::placed::on_device(room, bytes)) {
+                Some((address, slab)) => {
+                    row.lines = address;
+                    if !slabs.iter().any(|s| s.gpu_address() == slab.gpu_address()) {
+                        slabs.push(slab);
+                    }
+                }
+                None if lines => {
+                    crate::code_rule_dsl::prof::count("views.refused.lines_unplaced", 1);
+                    lines = false;
+                }
+                None => {}
+            }
+            let entry = super::view_docs::ViewEntry::new(b, p, &batch.dialects[p.tag]);
+            row.entry = b.offset_of(entry.desc()) as u64;
+            row.tape = address;
+            row.view = view;
+            if view.format == rerail_clif::view::F16Z_FORMAT {
+                zrows.push(i);
+                zblocks += (view.nodes as usize).div_ceil(rerail_clif::view::F16Z_BLOCK as usize);
+                zentry = zentry.max(view.columns[3] as usize);
+            }
+            entries.push(entry);
+        }
+        // SAFETY: row `i` of the rows just allocated in `b`.
+        unsafe { rows.add(i).write(row) };
+    }
+    // The 16z documents' cache, shared by every thread of every stage that reads the views: each one's view names it
+    // by its address less its tape's, its entry size the cache's, its reads checked (shared).
+    let cache = (!zrows.is_empty()).then(|| {
+        let spec = rerail_clif::view::cache::Spec::configured(zblocks, zentry);
+        crate::code_rule_dsl::prof::count("zcache.batches", 1);
+        crate::code_rule_dsl::prof::count("zcache.blocks", zblocks);
+        crate::code_rule_dsl::prof::count("zcache.entries", spec.entries as usize);
+        crate::code_rule_dsl::prof::count("zcache.entry_kb", spec.entry_bytes() >> 10);
+        let cache = device.new_buffer(spec.bytes() as u64, metal::MTLResourceOptions::StorageModeShared);
+        // SAFETY: the buffer's bytes, shared with the host, read by no stage yet.
+        spec.init(unsafe { std::slice::from_raw_parts_mut(cache.contents().cast::<u8>(), spec.bytes()) }).expect("a cache's buffer of its size");
+        for &i in &zrows {
+            // SAFETY: row `i`, written above in `b`.
+            let row = unsafe { &mut *rows.add(i) };
+            let rel = cache.gpu_address().wrapping_sub(row.tape) as i64;
+            (row.view.side[0], row.view.side[1]) = (rel as u32, (rel >> 32) as u32);
+            (row.view.columns[3], row.view.columns[4]) = (spec.entry_bytes() as u32, 1);
+        }
+        cache
+    });
+    // The block's buffer made after the last allocation, so it covers them: the addresses are its.
+    let buffer = b.gpu_buffer(device);
+    let base = buffer.gpu_address();
+    // SAFETY: the directory just allocated in `b`.
+    unsafe { dir.write(ViewDir { chunk: base, ndocs: n as u32, pad: 0, rows: base + b.offset_of(rows) as u64 }) };
+    let mut buffers = vec![buffer];
+    buffers.extend(slabs);
+    Some(ViewsInPlace { dir: base + b.offset_of(dir) as u64, buffers, lines, locs, cache, _entries: entries })
 }
 
 /// Copies `src` into the block and points `span` at it.
@@ -184,6 +377,18 @@ fn made_in_order<T: Copy>(b: &Block, span: *const Span<T>, n: usize, values: imp
 // copy (0353 step 4): the node columns (`core`, `up`, `ord`, `fielded`, `start`, `end`, `kind`, `field`), the canonical codes
 // and the projection's arrays copied or made here. They go: the kernels read the placed tapes (decision 0353).
 pub fn build(batch: &Batch) -> Chunk {
+    static COLUMNS: rerail_prof::copies::Site = rerail_prof::copies::Site::new(3, "4", "the chunk's node columns and codes (device_chunk::build)");
+    COLUMNS.time(|| in_block(&batch.block, || build_in(batch)))
+}
+
+/// What `f` puts into `block`, with the bytes the block grew by (a copy's size, `rerail_prof::copies`).
+fn in_block<T>(block: &Block, f: impl FnOnce() -> T) -> (T, usize) {
+    let before = block.used();
+    let out = f();
+    (out, block.used().saturating_sub(before))
+}
+
+fn build_in(batch: &Batch) -> Chunk {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "a batch's chunk block".into());
     let b = Arc::clone(&batch.block);
     let root: *mut ChunkRoot = b.alloc_t(1);
@@ -255,14 +460,24 @@ pub fn build(batch: &Batch) -> Chunk {
     }
     let at = b.offset_of(root);
     b.set_root(root);
-    Chunk { block: b, root: at, locs: std::sync::OnceLock::new(), lines: std::sync::OnceLock::new() }
+    Chunk {
+        block: b,
+        root: at,
+        locs: std::sync::OnceLock::new(),
+        lines: std::sync::OnceLock::new(),
+        #[cfg(target_os = "macos")]
+        views: std::sync::OnceLock::new(),
+    }
 }
 
 /// Puts each document's facts' line starts into `batch`'s chunk, once, for the `line` view made on the device (decision
 /// 0325 step 3: it was read on the host, a row at a time, for an upload). False when the block cannot hold them: the
 /// view is then made on the host.
+// copy (0353 step 4): the facts' line starts copied into the chunk, for a batch whose `line` view is made (its tapes
+// not on the device). It goes with the made views: the views' reads read the lines where `LineTable::placed` put them.
 pub fn fill_lines(batch: &Batch, chunk: &Chunk) -> bool {
-    *chunk.lines.get_or_init(|| {
+    static LINES: rerail_prof::copies::Site = rerail_prof::copies::Site::new(14, "4", "the facts' line starts put into the chunk (fill_lines)");
+    *chunk.lines.get_or_init(|| LINES.time(|| in_block(&chunk.block, || {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "the facts' lines in the chunk block".into());
         let b = &chunk.block;
         // SAFETY: the root `build` wrote; its document table.
@@ -280,7 +495,7 @@ pub fn fill_lines(batch: &Batch, chunk: &Chunk) -> bool {
             }
         }
         true
-    })
+    })))
 }
 
 /// Puts the `Loc` views' arrays into `batch`'s chunk, once: each document's first row in them, its spans past its
@@ -288,8 +503,11 @@ pub fn fill_lines(batch: &Batch, chunk: &Chunk) -> bool {
 /// host finds them. False when a document has no places (no `core.rr` extra) or the block cannot hold them: the views
 /// are then made on the host. A batch with a guest was refused, and its views read on the host for an upload (28 MB
 /// on posthog/hogql).
+// copy (0353 step 4): the line starts and the spans past the nodes copied into the chunk for the `Loc` views. It goes:
+// the views' reads read the lines in place, and the spans where they are written once (Q184).
 pub fn fill_locs(batch: &Batch, chunk: &Chunk) -> bool {
-    *chunk.locs.get_or_init(|| {
+    static LOCS: rerail_prof::copies::Site = rerail_prof::copies::Site::new(14, "4", "the Loc views' lines and spans put into the chunk (fill_locs)");
+    *chunk.locs.get_or_init(|| LOCS.time(|| in_block(&chunk.block, || {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "core.rr's places in the chunk block".into());
         if batch.docs.iter().any(|p| p.extra.is_none()) {
             return false;
@@ -334,7 +552,7 @@ pub fn fill_locs(batch: &Batch, chunk: &Chunk) -> bool {
             }
         }
         true
-    })
+    })))
 }
 
 /// The MSL of the chunk's structures, as the kernels read them.

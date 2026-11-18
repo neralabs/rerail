@@ -342,7 +342,23 @@ impl PackedBatch {
         }
     }
 
+    /// `build_tapes_in`, its copies of the tapes counted (decision 0353's row 11): the sources and line starts a batch
+    /// holds of its own.
     fn build_tapes(
+        programs: &[Program],
+        files: &[TapeDoc],
+        anchors: &[Vec<Vec<u32>>],
+        materialize_tasks: bool,
+        layout: Layout,
+    ) -> Result<Self, Error> {
+        static PACKED: rerail_prof::copies::Site = rerail_prof::copies::Site::new(11, "7", "the transducer's packed batch: sources and line starts (PackedBatch)");
+        let copying = PACKED.start();
+        let batch = Self::build_tapes_in(programs, files, anchors, materialize_tasks, layout);
+        copying.done(batch.as_ref().map_or(0, |b| b.source.len() + std::mem::size_of_val(b.line_starts.as_slice())));
+        batch
+    }
+
+    fn build_tapes_in(
         programs: &[Program],
         files: &[TapeDoc],
         anchors: &[Vec<Vec<u32>>],
@@ -1306,6 +1322,8 @@ fn status_error(status: &TaskStatus, work_limit: u32) -> Option<Error> {
         4 if work_limit < super::MAX_WORK_PER_TASK as u32 => Error::OverBudget,
         4 => Error::WorkLimit,
         7 => Error::InvalidOperand(status.program_counter as usize),
+        // A mark or a tally of a node past the batch's (decision 0403): not written.
+        9 => Error::BackendFailure,
         _ => Error::BackendFailure,
     })
 }

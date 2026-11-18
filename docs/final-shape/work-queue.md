@@ -2622,7 +2622,7 @@ data"; blocks never get copied into other data structures for convenience. Decis
 inventory of today's copies (12 sites, marked `copy (0353 step N)`) and the plan.
 
 1. Step 1 is done: the record, `AGENTS.md`, the guard (`scripts/check/check-no-block-copies.py`, in pre-commit) and
-   the marks. Left of it: the profile's `copies (decision 0353)` counter.
+   the marks, and the profile's `copies (decision 0353)` counter (2026-11-18; hogql 16z: 792.4 MB, 0.90 s CPU).
 2. Step 2 in progress. The granule table and its rank index answer every id equal to `DefIds::low`'s, in all three
    formats, and are measured: a point read is 171 instructions, a scan 59 an id (0353, "Node identity").
    `Projected`'s `core`, `local`, `up`, `size` and `fielded` are gone: the rank index, read by passes in order, at
@@ -3672,6 +3672,9 @@ span's bytes), with the spans' eager rows as `rr_text_span`. It ran the core cas
   it is cheaper than eager there and on the data-layer pack; else record why `text` stays eager in 0353.
 - **Done when**: `text` is answered on request at or under eager's cost, or 0353 records with the measurement that
   it stays eager.
+- **Deferred** (user, 2026-11-17): `text` stays eager within its narrowing for now, and this stays open; steps 3 and
+  4 go first. The data then: on hogql the narrowed rows visit 0.84 M nodes (`node rows` 0.28–0.30 s a run, after
+  the literal fix), and rules look `text` up for 663 K rows.
 
 ### Q122. An edited include keeps its old hash in `read_file`'s file list
 
@@ -3683,6 +3686,10 @@ sha) or `program_shared`'s order may hand back the files recorded before the edi
 - Find which of `read_file`'s three sources gives the stale list, and make the files the ones the program was read
   from.
 - **Done when**: the test passes, and an edit of a same-length include gives its new hash.
+- Related, also apart from 0353 step 3 (it fails with each of the day's changes switched off: `str` eager, the old
+  `prune` gate, Extra's rows): `corpus::tests::the_run_after_a_cold_one_writes_nothing`, whose warm run exits 3 with
+  "the observer's store not asked inside the waves in a warm run (…/src: its answers unknown, read again)". Both are
+  a run's record of what it read disagreeing with a later read of the same files.
 
 ### Q167. (Q110 at django-bugs f8eaf234b) A kind no file holds, probed once per delta row
 
@@ -3711,3 +3718,116 @@ sha) or `program_shared`'s order may hand back the files recorded before the edi
   unchanged. Farm (M1 Max): `executors_are_shared` and the three `randomforest_predict` device tests pass.
 - **Also seen**: on m3 the guard reads three files the checkout deleted (`metal_frontier_conformance.rs`,
   `metal_frontier_reduce.rs`, `metal_register_conformance.rs`). That is Q63's stale mirror, not the tree.
+
+### Q184. (Q123 on Native-and-GPU-strata until 2026-11-18) Spans' places read by the `Loc` views (0353 step 3, row 7)
+
+Where `Extra` makes spans (`source`, `src_line`, `src_line_lf`, `tape_line`, a regex's matches, comments, `rx_span`),
+it also makes `line`, `end_line`, `col` and `docof` rows for every node and token, and `Batch::made` binds those in
+place of the views: copies of tape answers. The views already cover the whole source and its lines
+(`Locs::positions`, `ExtraSpan::Line`).
+- **Do**: write the other spans' byte ranges once into the batch's block where `Extra` makes them (a derived fact),
+  and have `View::Loc` read them past its own positions (`local_of` maps a span id there through
+  `granules::span_of`); then `Extra` makes no place rows, and `made` binds no place relation.
+- **Check**: the view's rows equal the rows made today, for a program reading each span relation.
+- **Done when**: no place row is made for a node or token in core.rr's shape.
+
+
+### Q185. (Q124 on Native-and-GPU-strata until 2026-11-18) The device's `str_cmp` of made texts loses rows under load — done 2026-11-18
+
+`device::parity::parity_random_texts` (seeded, deterministic cases) differed in 2 of 16 full runs (2026-11-17), each
+time a different case, each a `str_cmp` over a made text (`cat`, `sql_replace` into the arena): #216 (device 6
+rows, CPU 38) and #683 (145 against 172). The device's rows are always a subset of the CPU's. It passes alone, and
+fails about 1 in 12 runs with six copies of the test at once (the test binary run directly with `--exact`), so the
+loss depends on the device's timing, not the cases. It reads no view, and no 0353 step 4 change reaches it.
+- Suspects: the arena's text read as empty when its value is -1 (`txt_of`, "the stage runs again") with the rerun
+  not taken; a made text read by the next dispatch before its write is visible.
+- **Do**: find which (count the stage's reruns and the arena's fill in a failing run), then fix it at its cause.
+- **Done when**: 60 runs, six at a time, all pass.
+- **Done** (2026-11-18, at `3200d8871`): 300 runs of `parity_random_texts` (120 six at a time, 180 twelve at a
+  time; `tmp/gpu/q124/six.sh`), each running all 1,200 cases on the device with no refusal (`--nocapture`), all
+  equal to the CPU's. What ended it is not proven: no build of the old commit was made to tell. The likeliest is
+  `683d9f62e` (Q186): before it, a device row's stores went through `rows_at`, 8 bytes whatever its column's width
+  and unbounded by its chunks, so stores made in parallel could overwrite their neighbours in whatever order the
+  threads ran. The two suspects above were read and hold: a full arena's text sets `TEXTFN_FULL` and `complete`
+  runs the stage again from its first text function in a new batch's arena; and the join's passes are one serial
+  encoder, each dispatch seeing the last's writes.
+
+### Q186. (Q125 on Native-and-GPU-strata until 2026-11-18) A relation read with a garbage header: "an index of a full relation" (16z, 1 run in 95)
+
+hogql cold on Metal with 16z, engine of 0353 step 4b's transducer kernels (2026-11-18): one run of 95 panicked in
+a device join, `metal_join.rs` `index`, with `base_rows` 2,436,104,195. A loop of 150 since crashed once (SIGSEGV
+in `Relation::index_built`, from a wave's `Batch::finish`): the store through the descriptor's `indexes` span,
+whose offset word was data. Both runs saw a relation's descriptor overwritten with row values.
+
+- **Cause (0403, "Q186")**: the device's row writers (`view_expand`, `rows_copy` into a relation, the lattice's
+  held rows) stored through `rows_at` with no bound. A row past the chunks its relation holds finds a chunk offset
+  of 0, so its address is the column's directory, and the write goes over it and the descriptors after it
+  (`the_devices_row_writer_stays_in_its_rows` shows the address). The host sizes each write against the `DevRel`'s
+  rows, not the relation's chunks.
+- **Fixed**: one bounded writer, `rows_put` (CLIF). It writes a row only below `Rows::reserved` and a column only
+  below `ncols`, at the column's width, and otherwise counts `needed`. A batch whose kernels counted one fails,
+  naming the relation (`a device batch refused: … (Q186)`), and its strata run on the CPU.
+- Runs: 180 clean with the diagnostic engine (the descriptor compared when an index is marked built); with `rows_put`, 179 of 180 clean (no refusal, no panic, 1,629 findings each), and one killed at the 300 s cap with
+  no output (Q188), three at a time, on 2026-11-18. 180 more: 174 clean, none refused, and 6 failed in the same
+  seconds when the disk filled (the store's writes: "database or disk is full"), not the engine's work. So 353 of
+  360 runs clean with `rows_put`, against 1 to 2 in 150 lost before it; 180 more clean (no hang, the sampler on).
+- **Second chain, also bounded**: the label passes' marks and tallies (`bits[node / 32]`, `tally[node]`, atomic)
+  took any node a walk or capture gave them. Before the walk bounds and the dead entry (`4289c4f60`, `3f2c1748f`), a
+  torn 16z read could make that any number, an atomic write up to 16 GB away. Now a node past the batch's is not
+  written, and the passes rerun on the interpreter (`gpu.node_past_batch`), or the task fails (runtime error 8).
+- **Which it was**: `rows_put` refused nothing in 540 runs, and every device part's chunks cover its rows. The
+  crashes stopped with the walk bounds and the dead entry: 533 clean since, against 2 in about 245 before. The
+  garbage words look like ORed bits more than row values. So the label marks are the likely writer; both chains are
+  bounded now, which no run can tell apart from here (0403, "Open").
+- **The torn read alone does not do it**: an engine with the dead entry undone (the exhausted read back on the entry
+  as found, everything else at `e949b985b`) ran 12 runs with a 1 MB cache (10 to 16 million failed reads each) and
+  180 at the usual size: no node past a batch, no row refused, no crash, every run 1629 findings. So a torn value
+  reached a write only through a read `4289c4f60` bounded (a walk's hop, a side's offset). Those reads hold now, and
+  the writes they fed are bounded where they are made; the guards count (`gpu.node_past_batch`, the refusal), so a
+  run that still reaches one names it. 600 runs on `engine-q125d` (the guards) since: none reached one.
+
+### Q187. (Q126 on Native-and-GPU-strata until 2026-11-18) Source reads at a node's span, held to the source (0403's open part) — done 2026-11-18
+
+`tape_start` is held to the source's length (the view's `source_len`, now set by every format's view from the
+tape's header), and `tape_end` between the start and the source's end. So every kernel's text read at a span
+(`same_text`, `text_is`, the batch runtime's spans, the views' reads) stays in the source and is never reversed.
+The header's length is checked against the held source when a document is made resident. The spans as stated
+(`tape_start_stated`, `tape_end_stated`) are for the tape's check and the CPU's bounds-checked scans only.
+`a_tapes_spans_stay_within_its_source` reads every span of an overstated tape against a guarded source.
+
+### Q188. (Q127 on Native-and-GPU-strata until 2026-11-18) A hogql 16z run that hangs: 2 in about 1,500, no output
+
+Of 180 hogql 16z cold runs on Metal (2026-11-18, three at a time, load about 50), one ran to the 300 s cap with
+nothing in its log, between two warm runs of 4 s. Two cold runs before had waited about 3 minutes on the Metal
+compiler service (`xpc_connection_send_message_with_reply_sync`), then finished. This one was not cold. It was not
+sampled. `tmp/gpu/q36/hang127.sh` samples any run still going at 90 s, beside the loops (its first run read no
+elapsed time: macOS's `ps` has no `etimes`; it reads `etime` now). 180 more runs had no hang.
+
+The second (`r-ql-31`, `engine-q125d`, 2026-11-18 13:44) came while a profiling build recompiled every crate above
+`rerail-clif`, at a load of 153: again an empty log, the cap at 300 s. The sampler missed it: `pgrep -f` matched the
+loops' `zsh` wrappers, so it sampled those. It matches the engine's process name now (`pgrep -x`), with a heartbeat
+each minute, and the loops set `RERAIL_DEADLINE=120` so a run still going dumps its profile. What the samples it
+took show: runs over 90 s are cold first runs, waiting on the Metal compiler (`MTLCompiler`, the GPU's shader
+factory) while other runs compile too. 600 runs since, three at a time, with the device tests three times and two
+builds (one recompiling everything above `rerail-clif`) beside them: none past 60 s once warm, no hang.
+
+- **Likely**: a compile at very high load, not a deadlock: both hangs had empty logs (the first kernels not yet
+  made) and the second came under a build's load. Not proven until a sample catches one.
+
+- **Do**: from a sample, name where it waits (a GPU hang, a compile, or a lock), then fix it at its cause.
+- **Done when**: 180 runs, three at a time, have none past 60 s.
+
+### Q189. Format 16 on Metal: a relation's descriptor overwritten while its index was built (1 hogql run in 9)
+
+- **Found** (2026-11-18, the merge of Native-and-GPU-strata 871ac76f0 into oscar): hogql cold on Metal
+  (`tmp/hogql/run.sh`, the `len` rule, a debug engine with `test-hooks`, on the M3), in format 16: one run of 9
+  panicked 17 s in, in Q186's guard (`metal_join.rs`, `Building::check`: "a relation's descriptor overwritten while
+  its index was built"), from a host stream stratum's job. The other 8 found 1,629, as 16z (1 run) and 15 (1 run)
+  did. The failing run's log was replaced by the next run's, so the relation and the bytes that changed are not
+  known; `tmp/hogql/loop16.sh` now stops at a panic and prints it.
+- **What differs from Q186's runs**: format 16 is 0399's block-major tape (oscar), read by the views and the label
+  kernels through `block_column`; Q186's 600 clean runs were 16z on strata's own layout. Oscar never had the guard,
+  so whether oscar's format 16 wrote over a descriptor before the merge is not known either.
+- **Do**: catch one with its message (the bytes changed say which writer: ORed bits are label marks, row values a
+  row writer), then bound that writer where it writes (0403).
+- **Done when**: 180 format 16 runs, three at a time, have no panic.

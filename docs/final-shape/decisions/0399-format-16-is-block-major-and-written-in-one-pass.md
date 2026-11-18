@@ -149,6 +149,14 @@ tail        the four side lists (each block's part, as today), their part starts
   - the piece index (written at the end, since pieces are appended in the order blocks finish);
   - the payload.
 - **Placement** decodes each block into its place in the block-major tape. A block decodes alone, as before.
+  - **Since the merge of Native-and-GPU-strata (2026-11-18):** a 16z tape is never laid out whole (decision 0353
+    step 4b). It is placed as stored, and a reader decodes the block a read falls in into a cache entry
+    (`rerail_clif::reads`' `z_decode`, written once in CLIF for the CPU, the JIT and the kernels). The entry holds
+    the block as a format 16 tape of one block: column `q` at `nb × C[q]`, `C[q]` the least that clears the piece
+    before it (its column, then its side part) and 16 bytes of room. The view's `columns` hold `C`, as a
+    block-major tape's hold the bytes a row has before each column, so format 16's reads read the entry unchanged.
+    The checkpoints are copied from where they are stored raw. The newline index is read in place (`lines` in the
+    16z view). `decode_into` and its relatives remain only as a test's oracle.
 - **The 16z writer's peak** is the compressed output, plus the pending blocks (those holding open ancestors),
   plus one block's match state.
 

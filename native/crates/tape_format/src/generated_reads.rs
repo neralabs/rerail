@@ -43,82 +43,93 @@ pub mod f16 {
         let mut v17: u64 = 0;
         let mut v18: u32 = 0;
         let mut v19: u32 = 0;
-        let mut v20: u32 = 0;
-        let mut v21: u32 = 0;
-        let mut v22: u32 = 0;
-        let mut v23: u32 = 0;
+        let mut v20: u64 = 0;
+        let mut v21: u64 = 0;
+        let mut v22: u64 = 0;
+        let mut v23: u64 = 0;
         let mut v24: u32 = 0;
         let mut v25: u32 = 0;
         let mut v26: u32 = 0;
         let mut v27: u32 = 0;
-        let mut v28: u8 = 0;
+        let mut v28: u32 = 0;
         let mut v29: u32 = 0;
         let mut v30: u32 = 0;
         let mut v31: u32 = 0;
         let mut v32: u32 = 0;
         let mut v33: u32 = 0;
-        let mut v34: u64 = 0;
-        let mut v35: u64 = 0;
-        let mut v36: u64 = 0;
-        let mut v37: u64 = 0;
+        let mut v34: u8 = 0;
+        let mut v35: u32 = 0;
+        let mut v36: u32 = 0;
+        let mut v37: u32 = 0;
         let mut v38: u32 = 0;
         let mut v39: u32 = 0;
         let mut v40: u32 = 0;
-        let mut v41: u32 = 0;
+        let mut v41: u64 = 0;
         let mut v42: u64 = 0;
         let mut v43: u64 = 0;
         let mut v44: u64 = 0;
-        let mut v45: u64 = 0;
+        let mut v45: u32 = 0;
         let mut v46: u32 = 0;
         let mut v47: u32 = 0;
         let mut v48: u32 = 0;
         let mut v49: u32 = 0;
-        let mut v50: u32 = 0;
-        let mut v51: u32 = 0;
-        let mut v52: u32 = 0;
-        let mut v53: u8 = 0;
+        let mut v50: u64 = 0;
+        let mut v51: u64 = 0;
+        let mut v52: u64 = 0;
+        let mut v53: u64 = 0;
         let mut v54: u32 = 0;
         let mut v55: u32 = 0;
         let mut v56: u32 = 0;
-        let mut v57: u64 = 0;
-        let mut v58: u64 = 0;
-        let mut v59: u64 = 0;
-        let mut v60: u64 = 0;
-        let mut v61: u32 = 0;
-        let mut v62: u8 = 0;
+        let mut v57: u32 = 0;
+        let mut v58: u32 = 0;
+        let mut v59: u32 = 0;
+        let mut v60: u32 = 0;
+        let mut v61: u8 = 0;
+        let mut v62: u32 = 0;
         let mut v63: u32 = 0;
         let mut v64: u32 = 0;
         let mut v65: u32 = 0;
-        let mut v66: u32 = 0;
-        let mut v67: u32 = 0;
-        let mut v68: u32 = 0;
-        let mut v69: u32 = 0;
+        let mut v66: u64 = 0;
+        let mut v67: u64 = 0;
+        let mut v68: u64 = 0;
+        let mut v69: u64 = 0;
         let mut v70: u32 = 0;
-        let mut v71: u32 = 0;
+        let mut v71: u8 = 0;
         let mut v72: u32 = 0;
         let mut v73: u32 = 0;
-        let mut v74: u64 = 0;
-        let mut v75: u64 = 0;
-        let mut v76: u64 = 0;
-        let mut v77: u64 = 0;
+        let mut v74: u32 = 0;
+        let mut v75: u32 = 0;
+        let mut v76: u32 = 0;
+        let mut v77: u32 = 0;
         let mut v78: u32 = 0;
         let mut v79: u32 = 0;
         let mut v80: u32 = 0;
         let mut v81: u32 = 0;
-        let mut v82: u64 = 0;
-        let mut v83: u64 = 0;
+        let mut v82: u32 = 0;
+        let mut v83: u32 = 0;
         let mut v84: u64 = 0;
         let mut v85: u64 = 0;
         let mut v86: u64 = 0;
-        let mut v87: u32 = 0;
-        let mut v88: u64 = 0;
-        let mut v89: u64 = 0;
-        let mut v90: u64 = 0;
-        let mut v91: u64 = 0;
-        let mut v92: u8 = 0;
+        let mut v87: u64 = 0;
+        let mut v88: u32 = 0;
+        let mut v89: u32 = 0;
+        let mut v90: u32 = 0;
+        let mut v91: u32 = 0;
+        let mut v92: u32 = 0;
         let mut v93: u64 = 0;
         let mut v94: u64 = 0;
         let mut v95: u64 = 0;
+        let mut v96: u64 = 0;
+        let mut v97: u64 = 0;
+        let mut v98: u32 = 0;
+        let mut v99: u64 = 0;
+        let mut v100: u64 = 0;
+        let mut v101: u64 = 0;
+        let mut v102: u64 = 0;
+        let mut v103: u8 = 0;
+        let mut v104: u64 = 0;
+        let mut v105: u64 = 0;
+        let mut v106: u64 = 0;
         v0 = a0;
         v1 = a1;
         v2 = a2;
@@ -139,83 +150,94 @@ pub mod f16 {
     v16 = v0.wrapping_add(v14);
     v17 = v16.wrapping_add(v15);
     v18 = ld::<u32>(v0, len, (v17 as usize)) as u32;
-    v19 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(4isize as usize)) as *const u32) };
-    v20 = v19.wrapping_add(255i64 as u32);
-    v21 = v20.wrapping_shr(8);
-    v22 = v12.wrapping_mul(4i64 as u32);
-    v23 = v21.wrapping_sub(v22);
-    v24 = 4i64 as u32;
-    v25 = v24.min(v23);
-    v26 = v3.wrapping_shr(8);
-    v27 = v26 & (3i64 as u32);
-    v28 = ((v27 as u32) == ((0i64 as u32) as u32)) as u8;
-    v29 = v27.wrapping_add(-1i64 as u32);
-    v30 = 0i64 as u32;
-    v31 = if v28 != 0 { v30 } else { v29 };
-    v32 = v31.wrapping_mul(2i64 as u32);
-    v33 = v18.wrapping_add(v32);
-    v34 = v7 as u64;
-    v35 = v33 as u64;
-    v36 = v0.wrapping_add(v34);
-    v37 = v36.wrapping_add(v35);
-    v38 = ld::<u16>(v0, len, (v37 as usize)) as u32;
-    v39 = if v28 != 0 { v30 } else { v38 };
-    v40 = v27.wrapping_mul(2i64 as u32);
-    v41 = v18.wrapping_add(v40);
-    v42 = v7 as u64;
-    v43 = v41 as u64;
-    v44 = v0.wrapping_add(v42);
-    v45 = v44.wrapping_add(v43);
-    v46 = ld::<u16>(v0, len, (v45 as usize)) as u32;
-    v47 = v25.wrapping_mul(2i64 as u32);
+    v19 = v13.wrapping_add(4i64 as u32);
+    v20 = v11 as u64;
+    v21 = v19 as u64;
+    v22 = v0.wrapping_add(v20);
+    v23 = v22.wrapping_add(v21);
+    v24 = ld::<u32>(v0, len, (v23 as usize)) as u32;
+    v25 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(4isize as usize)) as *const u32) };
+    v26 = v25.wrapping_add(255i64 as u32);
+    v27 = v26.wrapping_shr(8);
+    v28 = v12.wrapping_mul(4i64 as u32);
+    v29 = v27.wrapping_sub(v28);
+    v30 = 4i64 as u32;
+    v31 = v30.min(v29);
+    v32 = v3.wrapping_shr(8);
+    v33 = v32 & (3i64 as u32);
+    v34 = ((v33 as u32) == ((0i64 as u32) as u32)) as u8;
+    v35 = v33.wrapping_add(-1i64 as u32);
+    v36 = 0i64 as u32;
+    v37 = if v34 != 0 { v36 } else { v35 };
+    v38 = v37.wrapping_mul(2i64 as u32);
+    v39 = v18.wrapping_add(v38);
+    v40 = v39.min(v24);
+    v41 = v7 as u64;
+    v42 = v40 as u64;
+    v43 = v0.wrapping_add(v41);
+    v44 = v43.wrapping_add(v42);
+    v45 = ld::<u16>(v0, len, (v44 as usize)) as u32;
+    v46 = if v34 != 0 { v36 } else { v45 };
+    v47 = v33.wrapping_mul(2i64 as u32);
     v48 = v18.wrapping_add(v47);
-    v49 = v3 & (255i64 as u32);
-    { let t = (v39, v46); v50 = t.0; v51 = t.1; 'b1: loop {
-    v53 = ((v50 as u32) < (v51 as u32)) as u8;
-    if v53 != 0 { v54 = v50.wrapping_add(v51);
-    v55 = v54.wrapping_shr(1);
-    v56 = v48.wrapping_add(v55);
-    v57 = v7 as u64;
-    v58 = v56 as u64;
-    v59 = v0.wrapping_add(v57);
-    v60 = v59.wrapping_add(v58);
-    v61 = ld::<u8>(v0, len, (v60 as usize)) as u32;
-    v62 = ((v61 as u32) < (v49 as u32)) as u8;
-    v63 = v55.wrapping_add(1i64 as u32);
-    v64 = if v62 != 0 { v63 } else { v50 };
-    v65 = if v62 != 0 { v51 } else { v55 };
-    { let t = (v64, v65); v50 = t.0; v51 = t.1; continue 'b1; }
-     } else { v52 = v50; v66 = v2.wrapping_mul(4i64 as u32);
-    v67 = v66.wrapping_add(16i64 as u32);
-    v68 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(16isize as usize)) as *const u32) };
-    v69 = v68.wrapping_shr(v67 as u32);
-    v70 = v69 & (15i64 as u32);
-    v71 = v25.wrapping_add(-1i64 as u32);
-    v72 = v71.wrapping_mul(2i64 as u32);
-    v73 = v18.wrapping_add(v72);
-    v74 = v7 as u64;
-    v75 = v73 as u64;
-    v76 = v0.wrapping_add(v74);
-    v77 = v76.wrapping_add(v75);
-    v78 = ld::<u16>(v0, len, (v77 as usize)) as u32;
-    v79 = v48.wrapping_add(v78);
-    v80 = v52.wrapping_mul(v70);
-    v81 = v79.wrapping_add(v80);
-    v82 = v7 as u64;
-    v83 = v81 as u64;
-    v84 = v0.wrapping_add(v82);
-    v85 = v84.wrapping_add(v83);
-    v86 = ld::<u64>(v0, len, (v85 as usize)) as u64;
-    v87 = v70.wrapping_mul(8i64 as u32);
-    v88 = 1i64 as u64;
-    v89 = v87 as u64;
-    v90 = v88.wrapping_shl(v89 as u32);
-    v91 = v90.wrapping_add(-1i64 as u64);
-    v92 = ((v70 as u32) >= ((8i64 as u32) as u32)) as u8;
-    v93 = -1i64 as u64;
-    v94 = if v92 != 0 { v93 } else { v91 };
-    v95 = v86 & v94;
-    return v95;
+    v49 = v48.min(v24);
+    v50 = v7 as u64;
+    v51 = v49 as u64;
+    v52 = v0.wrapping_add(v50);
+    v53 = v52.wrapping_add(v51);
+    v54 = ld::<u16>(v0, len, (v53 as usize)) as u32;
+    v55 = v31.wrapping_mul(2i64 as u32);
+    v56 = v18.wrapping_add(v55);
+    v57 = v3 & (255i64 as u32);
+    { let t = (v46, v54); v58 = t.0; v59 = t.1; 'b1: loop {
+    v61 = ((v58 as u32) < (v59 as u32)) as u8;
+    if v61 != 0 { v62 = v58.wrapping_add(v59);
+    v63 = v62.wrapping_shr(1);
+    v64 = v56.wrapping_add(v63);
+    v65 = v64.min(v24);
+    v66 = v7 as u64;
+    v67 = v65 as u64;
+    v68 = v0.wrapping_add(v66);
+    v69 = v68.wrapping_add(v67);
+    v70 = ld::<u8>(v0, len, (v69 as usize)) as u32;
+    v71 = ((v70 as u32) < (v57 as u32)) as u8;
+    v72 = v63.wrapping_add(1i64 as u32);
+    v73 = if v71 != 0 { v72 } else { v58 };
+    v74 = if v71 != 0 { v59 } else { v63 };
+    { let t = (v73, v74); v58 = t.0; v59 = t.1; continue 'b1; }
+     } else { v60 = v58; v75 = v2.wrapping_mul(4i64 as u32);
+    v76 = v75.wrapping_add(16i64 as u32);
+    v77 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(16isize as usize)) as *const u32) };
+    v78 = v77.wrapping_shr(v76 as u32);
+    v79 = v78 & (15i64 as u32);
+    v80 = v31.wrapping_add(-1i64 as u32);
+    v81 = v80.wrapping_mul(2i64 as u32);
+    v82 = v18.wrapping_add(v81);
+    v83 = v82.min(v24);
+    v84 = v7 as u64;
+    v85 = v83 as u64;
+    v86 = v0.wrapping_add(v84);
+    v87 = v86.wrapping_add(v85);
+    v88 = ld::<u16>(v0, len, (v87 as usize)) as u32;
+    v89 = v56.wrapping_add(v88);
+    v90 = v60.wrapping_mul(v79);
+    v91 = v89.wrapping_add(v90);
+    v92 = v91.min(v24);
+    v93 = v7 as u64;
+    v94 = v92 as u64;
+    v95 = v0.wrapping_add(v93);
+    v96 = v95.wrapping_add(v94);
+    v97 = ld::<u64>(v0, len, (v96 as usize)) as u64;
+    v98 = v79.wrapping_mul(8i64 as u32);
+    v99 = 1i64 as u64;
+    v100 = v98 as u64;
+    v101 = v99.wrapping_shl(v100 as u32);
+    v102 = v101.wrapping_add(-1i64 as u64);
+    v103 = ((v79 as u32) >= ((8i64 as u32) as u32)) as u8;
+    v104 = -1i64 as u64;
+    v105 = if v103 != 0 { v104 } else { v102 };
+    v106 = v97 & v105;
+    return v106;
      }
     }
      }
@@ -268,6 +290,7 @@ pub mod f16 {
         let mut v42: u32 = 0;
         let mut v43: u32 = 0;
         let mut v44: u32 = 0;
+        let mut v45: u32 = 0;
         v0 = a0;
         v1 = a1;
         v2 = a2;
@@ -317,8 +340,9 @@ pub mod f16 {
     v41 = v36.wrapping_shr(1);
     v42 = v41 as u32;
     v43 = 1i64 as u32;
-    v44 = if v40 != 0 { v43 } else { v42 };
-    return v44;
+    v44 = v42.max(v43);
+    v45 = if v40 != 0 { v43 } else { v44 };
+    return v45;
     }
 
     #[inline(always)]
@@ -757,8 +781,48 @@ pub mod f16 {
     return v41;
     }
 
-    #[inline(never)]
+    #[inline(always)]
     unsafe fn f5(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
+        let mut v0: u64 = 0;
+        let mut v1: u64 = 0;
+        let mut v2: u32 = 0;
+        let mut v3: u32 = 0;
+        let mut v4: u32 = 0;
+        let mut v5: u32 = 0;
+        v0 = a0;
+        v1 = a1;
+        v2 = a2;
+        let mut d: u32 = 0;
+    v3 = unsafe { f3(len, v0, v1, v2) };
+    v4 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(92isize as usize)) as *const u32) };
+    v5 = v3.min(v4);
+    return v5;
+    }
+
+    #[inline(always)]
+    unsafe fn f6(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
+        let mut v0: u64 = 0;
+        let mut v1: u64 = 0;
+        let mut v2: u32 = 0;
+        let mut v3: u32 = 0;
+        let mut v4: u32 = 0;
+        let mut v5: u32 = 0;
+        let mut v6: u32 = 0;
+        let mut v7: u32 = 0;
+        v0 = a0;
+        v1 = a1;
+        v2 = a2;
+        let mut d: u32 = 0;
+    v3 = unsafe { f5(len, v0, v1, v2) };
+    v4 = unsafe { f4(len, v0, v1, v2) };
+    v5 = v4.max(v3);
+    v6 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(92isize as usize)) as *const u32) };
+    v7 = v5.min(v6);
+    return v7;
+    }
+
+    #[inline(never)]
+    unsafe fn f7(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
         let mut v0: u64 = 0;
         let mut v1: u64 = 0;
         let mut v2: u32 = 0;
@@ -809,17 +873,19 @@ pub mod f16 {
         let mut v47: u64 = 0;
         let mut v48: u32 = 0;
         let mut v49: u32 = 0;
-        let mut v50: u64 = 0;
+        let mut v50: u8 = 0;
+        let mut v51: u32 = 0;
+        let mut v52: u64 = 0;
         v0 = a0;
         v1 = a1;
         v2 = a2;
         let mut d: u32 = 0;
-    'm11: {
+    'm12: {
     v3 = ((v2 as u32) == ((0i64 as u32) as u32)) as u8;
     if v3 != 0 { v5 = 4294967295i64 as u32;
-    { v4 = v5; break 'm11; }
+    { v4 = v5; break 'm12; }
      } else { { v6 = v2; 'b3: loop {
-    'm10: {
+    'm11: {
     v8 = 4294967295i64 as u32;
     if v6 != 0 { 'm7: {
     v9 = v6.wrapping_add(-1i64 as u32);
@@ -865,14 +931,17 @@ pub mod f16 {
     v46 = v43 & (1i64 as u64);
     if v46 != 0 { v47 = v43.wrapping_shr(2);
     v48 = v47 as u32;
-    v49 = v6.wrapping_sub(v48);
-    v50 = v43 & (2i64 as u64);
-    if v50 != 0 { v7 = v49; break 'm10; } else { { v6 = v49; continue 'b3; }
+    v49 = v48.wrapping_add(-1i64 as u32);
+    v50 = ((v49 as u32) < (v6 as u32)) as u8;
+    if v50 != 0 { v51 = v6.wrapping_sub(v48);
+    v52 = v43 & (2i64 as u64);
+    if v52 != 0 { v7 = v51; break 'm11; } else { { v6 = v51; continue 'b3; }
      }
-     } else { v7 = v9; break 'm10; }
-     } else { v7 = v8; break 'm10; }
+     } else { v7 = v8; break 'm11; }
+     } else { v7 = v9; break 'm11; }
+     } else { v7 = v8; break 'm11; }
     }
-    { v4 = v7; break 'm11; }
+    { v4 = v7; break 'm12; }
     }
      }
      }
@@ -881,23 +950,31 @@ pub mod f16 {
     }
 
     #[inline(always)]
-    unsafe fn f6(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
+    unsafe fn f8(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
         let mut v0: u64 = 0;
         let mut v1: u64 = 0;
         let mut v2: u32 = 0;
         let mut v3: u32 = 0;
         let mut v4: u32 = 0;
+        let mut v5: u32 = 0;
+        let mut v6: u32 = 0;
+        let mut v7: u32 = 0;
+        let mut v8: u32 = 0;
         v0 = a0;
         v1 = a1;
         v2 = a2;
         let mut d: u32 = 0;
     v3 = unsafe { f1(len, v0, v1, v2) };
     v4 = v2.wrapping_add(v3);
-    return v4;
+    v5 = v2.wrapping_add(1i64 as u32);
+    v6 = v4.max(v5);
+    v7 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(4isize as usize)) as *const u32) };
+    v8 = v6.min(v7);
+    return v8;
     }
 
     #[inline(always)]
-    unsafe fn f7(len: u64, a0: u64, a1: u64, a2: u32, a3: u32) -> u32 {
+    unsafe fn f9(len: u64, a0: u64, a1: u64, a2: u32, a3: u32) -> u32 {
         let mut v0: u64 = 0;
         let mut v1: u64 = 0;
         let mut v2: u32 = 0;
@@ -911,7 +988,7 @@ pub mod f16 {
         v2 = a2;
         v3 = a3;
         let mut d: u32 = 0;
-    v4 = unsafe { f6(len, v0, v1, v2) };
+    v4 = unsafe { f8(len, v0, v1, v2) };
     v5 = ((v4 as u32) < (v3 as u32)) as u8;
     v6 = 4294967295i64 as u32;
     v7 = if v5 != 0 { v4 } else { v6 };
@@ -919,7 +996,7 @@ pub mod f16 {
     }
 
     #[inline(always)]
-    unsafe fn f8(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
+    unsafe fn f10(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
         let mut v0: u64 = 0;
         let mut v1: u64 = 0;
         let mut v2: u32 = 0;
@@ -934,12 +1011,12 @@ pub mod f16 {
         v2 = a2;
         let mut d: u32 = 0;
     'm3: {
-    v3 = unsafe { f5(len, v0, v1, v2) };
+    v3 = unsafe { f7(len, v0, v1, v2) };
     v4 = ((v3 as u32) == ((4294967295i64 as u32) as u32)) as u8;
     if v4 != 0 { v6 = 4294967295i64 as u32;
     { v5 = v6; break 'm3; }
-     } else { v7 = unsafe { f6(len, v0, v1, v3) };
-    v8 = unsafe { f7(len, v0, v1, v2, v7) };
+     } else { v7 = unsafe { f8(len, v0, v1, v3) };
+    v8 = unsafe { f9(len, v0, v1, v2, v7) };
     { v5 = v8; break 'm3; }
      }
     }
@@ -947,7 +1024,7 @@ pub mod f16 {
     }
 
     #[inline(always)]
-    unsafe fn f9(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
+    unsafe fn f11(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
         let mut v0: u64 = 0;
         let mut v1: u64 = 0;
         let mut v2: u32 = 0;
@@ -969,41 +1046,7 @@ pub mod f16 {
     }
 
     #[inline(always)]
-    unsafe fn f10(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
-        let mut v0: u64 = 0;
-        let mut v1: u64 = 0;
-        let mut v2: u32 = 0;
-        let mut v3: u32 = 0;
-        let mut v4: u32 = 0;
-        let mut v5: u32 = 0;
-        let mut v6: u32 = 0;
-        let mut v7: u32 = 0;
-        let mut v8: u32 = 0;
-        let mut v9: u8 = 0;
-        let mut v10: u32 = 0;
-        let mut v11: u32 = 0;
-        let mut v12: u32 = 0;
-        v0 = a0;
-        v1 = a1;
-        v2 = a2;
-        let mut d: u32 = 0;
-    v3 = unsafe { f6(len, v0, v1, v2) };
-    v4 = v2.wrapping_add(1i64 as u32);
-    v8 = 0i64 as u32;
-    { let t = (v4, v8); v5 = t.0; v6 = t.1; 'b1: loop {
-    v9 = ((v5 as u32) < (v3 as u32)) as u8;
-    if v9 != 0 { v10 = unsafe { f1(len, v0, v1, v5) };
-    v11 = v5.wrapping_add(v10);
-    v12 = v6.wrapping_add(1i64 as u32);
-    { let t = (v11, v12); v5 = t.0; v6 = t.1; continue 'b1; }
-     } else { v7 = v6; return v7;
-     }
-    }
-     }
-    }
-
-    #[inline(always)]
-    unsafe fn f11(len: u64, a0: u64, a1: u64, a2: u32, a3: u32) -> u32 {
+    unsafe fn f12(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
         let mut v0: u64 = 0;
         let mut v1: u64 = 0;
         let mut v2: u32 = 0;
@@ -1018,12 +1061,58 @@ pub mod f16 {
         let mut v11: u32 = 0;
         let mut v12: u32 = 0;
         let mut v13: u32 = 0;
+        let mut v14: u32 = 0;
+        let mut v15: u32 = 0;
+        let mut v16: u32 = 0;
+        v0 = a0;
+        v1 = a1;
+        v2 = a2;
+        let mut d: u32 = 0;
+    v3 = unsafe { f8(len, v0, v1, v2) };
+    v4 = v2.wrapping_add(1i64 as u32);
+    v8 = 0i64 as u32;
+    { let t = (v4, v8); v5 = t.0; v6 = t.1; 'b1: loop {
+    v9 = ((v5 as u32) < (v3 as u32)) as u8;
+    if v9 != 0 { v10 = unsafe { f1(len, v0, v1, v5) };
+    v11 = v5.wrapping_add(v10);
+    v12 = v5.wrapping_add(1i64 as u32);
+    v13 = v11.max(v12);
+    v14 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(4isize as usize)) as *const u32) };
+    v15 = v13.min(v14);
+    v16 = v6.wrapping_add(1i64 as u32);
+    { let t = (v15, v16); v5 = t.0; v6 = t.1; continue 'b1; }
+     } else { v7 = v6; return v7;
+     }
+    }
+     }
+    }
+
+    #[inline(always)]
+    unsafe fn f13(len: u64, a0: u64, a1: u64, a2: u32, a3: u32) -> u32 {
+        let mut v0: u64 = 0;
+        let mut v1: u64 = 0;
+        let mut v2: u32 = 0;
+        let mut v3: u32 = 0;
+        let mut v4: u32 = 0;
+        let mut v5: u32 = 0;
+        let mut v6: u32 = 0;
+        let mut v7: u32 = 0;
+        let mut v8: u32 = 0;
+        let mut v9: u8 = 0;
+        let mut v10: u32 = 0;
+        let mut v11: u32 = 0;
+        let mut v12: u32 = 0;
+        let mut v13: u32 = 0;
+        let mut v14: u32 = 0;
+        let mut v15: u32 = 0;
+        let mut v16: u32 = 0;
+        let mut v17: u32 = 0;
         v0 = a0;
         v1 = a1;
         v2 = a2;
         v3 = a3;
         let mut d: u32 = 0;
-    v4 = unsafe { f6(len, v0, v1, v2) };
+    v4 = unsafe { f8(len, v0, v1, v2) };
     v5 = v2.wrapping_add(1i64 as u32);
     { let t = (v5, v3); v6 = t.0; v7 = t.1; 'b1: loop {
     'm4: {
@@ -1031,8 +1120,12 @@ pub mod f16 {
     v10 = 4294967295i64 as u32;
     if v9 != 0 { if v7 != 0 { v11 = unsafe { f1(len, v0, v1, v6) };
     v12 = v6.wrapping_add(v11);
-    v13 = v7.wrapping_add(-1i64 as u32);
-    { let t = (v12, v13); v6 = t.0; v7 = t.1; continue 'b1; }
+    v13 = v6.wrapping_add(1i64 as u32);
+    v14 = v12.max(v13);
+    v15 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(4isize as usize)) as *const u32) };
+    v16 = v14.min(v15);
+    v17 = v7.wrapping_add(-1i64 as u32);
+    { let t = (v16, v17); v6 = t.0; v7 = t.1; continue 'b1; }
      } else { v8 = v6; break 'm4; }
      } else { v8 = v10; break 'm4; }
     }
@@ -1042,7 +1135,7 @@ pub mod f16 {
     }
 
     #[inline(always)]
-    unsafe fn f12(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
+    unsafe fn f14(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
         let mut v0: u64 = 0;
         let mut v1: u64 = 0;
         let mut v2: u32 = 0;
@@ -1132,7 +1225,7 @@ pub mod f16 {
     }
 
     #[inline(always)]
-    unsafe fn f13(len: u64, a0: u64, a1: u64, a2: u32, a3: u32) -> u32 {
+    unsafe fn f15(len: u64, a0: u64, a1: u64, a2: u32, a3: u32) -> u32 {
         let mut v0: u64 = 0;
         let mut v1: u64 = 0;
         let mut v2: u32 = 0;
@@ -1302,7 +1395,7 @@ pub mod f16 {
     }
 
     #[inline(always)]
-    unsafe fn f14(len: u64, a0: u64, a1: u64, a2: u32) -> u64 {
+    unsafe fn f16(len: u64, a0: u64, a1: u64, a2: u32) -> u64 {
         let mut v0: u64 = 0;
         let mut v1: u64 = 0;
         let mut v2: u32 = 0;
@@ -1390,7 +1483,7 @@ pub mod f16 {
     }
 
     #[inline(never)]
-    unsafe fn f15(len: u64, a0: u64, a1: u64, a2: u32, a3: u32) -> u32 {
+    unsafe fn f17(len: u64, a0: u64, a1: u64, a2: u32, a3: u32) -> u32 {
         let mut v0: u64 = 0;
         let mut v1: u64 = 0;
         let mut v2: u32 = 0;
@@ -1645,7 +1738,7 @@ pub mod f16 {
     }
 
     #[inline(always)]
-    unsafe fn f16(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
+    unsafe fn f18(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
         let mut v0: u64 = 0;
         let mut v1: u64 = 0;
         let mut v2: u32 = 0;
@@ -1768,12 +1861,12 @@ pub mod f16 {
     if v27 != 0 { v29 = 0i64 as u32;
     { v28 = v29; break 'm5; }
      } else { v30 = v20.wrapping_add(-1i64 as u32);
-    v31 = unsafe { f15(len, v0, v1, v26, v30) };
+    v31 = unsafe { f17(len, v0, v1, v26, v30) };
     v32 = v31.wrapping_sub(v30);
     { v28 = v32; break 'm5; }
      }
     }
-    v33 = unsafe { f15(len, v0, v1, v26, v20) };
+    v33 = unsafe { f17(len, v0, v1, v26, v20) };
     v34 = v33.wrapping_sub(v20);
     { let t = (v28, v34); v35 = t.0; v36 = t.1; 'b6: loop {
     v38 = ((v35 as u32) < (v36 as u32)) as u8;
@@ -1837,7 +1930,7 @@ pub mod f16 {
     }
 
     #[inline(always)]
-    unsafe fn f17(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
+    unsafe fn f19(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
         let mut v0: u64 = 0;
         let mut v1: u64 = 0;
         let mut v2: u32 = 0;
@@ -1912,7 +2005,7 @@ pub mod f16 {
     { v4 = v5; break 'm3; }
      } else { v6 = v2.wrapping_add(-1i64 as u32);
     v7 = 1i64 as u32;
-    v8 = unsafe { f15(len, v0, v1, v7, v6) };
+    v8 = unsafe { f17(len, v0, v1, v7, v6) };
     v9 = v8.wrapping_sub(v6);
     v10 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(96isize as usize)) as *const u32) };
     v11 = 4i64 as u32;
@@ -1988,102 +2081,116 @@ pub mod f16 {
         unsafe { f2(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
     }
 
+    /// The read `tape_start_stated` of the tape in `tape`, whose `view`'s offsets count from its first byte.
+    #[inline(always)]
+    pub fn tape_start_stated(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32) -> u32 {
+        // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
+        unsafe { f3(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
+    }
+
+    /// The read `tape_end_stated` of the tape in `tape`, whose `view`'s offsets count from its first byte.
+    #[inline(always)]
+    pub fn tape_end_stated(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32) -> u32 {
+        // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
+        unsafe { f4(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
+    }
+
     /// The read `tape_start` of the tape in `tape`, whose `view`'s offsets count from its first byte.
     #[inline(always)]
     pub fn tape_start(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32) -> u32 {
         // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
-        unsafe { f3(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
+        unsafe { f5(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
     }
 
     /// The read `tape_end` of the tape in `tape`, whose `view`'s offsets count from its first byte.
     #[inline(always)]
     pub fn tape_end(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32) -> u32 {
         // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
-        unsafe { f4(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
+        unsafe { f6(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
     }
 
     /// The read `tape_parent` of the tape in `tape`, whose `view`'s offsets count from its first byte.
     #[inline(always)]
     pub fn tape_parent(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32) -> u32 {
         // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
-        unsafe { f5(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
+        unsafe { f7(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
     }
 
     /// The read `tape_end_of` of the tape in `tape`, whose `view`'s offsets count from its first byte.
     #[inline(always)]
     pub fn tape_end_of(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32) -> u32 {
         // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
-        unsafe { f6(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
+        unsafe { f8(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
     }
 
     /// The read `tape_next_in` of the tape in `tape`, whose `view`'s offsets count from its first byte.
     #[inline(always)]
     pub fn tape_next_in(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32, a3: u32) -> u32 {
         // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
-        unsafe { f7(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2, a3) }
+        unsafe { f9(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2, a3) }
     }
 
     /// The read `tape_next` of the tape in `tape`, whose `view`'s offsets count from its first byte.
     #[inline(always)]
     pub fn tape_next(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32) -> u32 {
         // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
-        unsafe { f8(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
+        unsafe { f10(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
     }
 
     /// The read `tape_first_child` of the tape in `tape`, whose `view`'s offsets count from its first byte.
     #[inline(always)]
     pub fn tape_first_child(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32) -> u32 {
         // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
-        unsafe { f9(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
+        unsafe { f11(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
     }
 
     /// The read `tape_child_count` of the tape in `tape`, whose `view`'s offsets count from its first byte.
     #[inline(always)]
     pub fn tape_child_count(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32) -> u32 {
         // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
-        unsafe { f10(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
+        unsafe { f12(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
     }
 
     /// The read `tape_child` of the tape in `tape`, whose `view`'s offsets count from its first byte.
     #[inline(always)]
     pub fn tape_child(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32, a3: u32) -> u32 {
         // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
-        unsafe { f11(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2, a3) }
+        unsafe { f13(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2, a3) }
     }
 
     /// The read `tape_length` of the tape in `tape`, whose `view`'s offsets count from its first byte.
     #[inline(always)]
     pub fn tape_length(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32) -> u32 {
         // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
-        unsafe { f12(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
+        unsafe { f14(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
     }
 
     /// The read `tape_start_next` of the tape in `tape`, whose `view`'s offsets count from its first byte.
     #[inline(always)]
     pub fn tape_start_next(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32, a3: u32) -> u32 {
         // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
-        unsafe { f13(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2, a3) }
+        unsafe { f15(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2, a3) }
     }
 
     /// The read `tape_slot` of the tape in `tape`, whose `view`'s offsets count from its first byte.
     #[inline(always)]
     pub fn tape_slot(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32) -> u64 {
         // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
-        unsafe { f14(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
+        unsafe { f16(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
     }
 
     /// The read `tape_line` of the tape in `tape`, whose `view`'s offsets count from its first byte.
     #[inline(always)]
     pub fn tape_line(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32) -> u32 {
         // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
-        unsafe { f16(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
+        unsafe { f18(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
     }
 
     /// The read `tape_line_start` of the tape in `tape`, whose `view`'s offsets count from its first byte.
     #[inline(always)]
     pub fn tape_line_start(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32) -> u32 {
         // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
-        unsafe { f17(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
+        unsafe { f19(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
     }
 
 }
@@ -2329,8 +2436,48 @@ pub mod f15 {
     return v29;
     }
 
-    #[inline(never)]
+    #[inline(always)]
     unsafe fn f5(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
+        let mut v0: u64 = 0;
+        let mut v1: u64 = 0;
+        let mut v2: u32 = 0;
+        let mut v3: u32 = 0;
+        let mut v4: u32 = 0;
+        let mut v5: u32 = 0;
+        v0 = a0;
+        v1 = a1;
+        v2 = a2;
+        let mut d: u32 = 0;
+    v3 = unsafe { f3(len, v0, v1, v2) };
+    v4 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(92isize as usize)) as *const u32) };
+    v5 = v3.min(v4);
+    return v5;
+    }
+
+    #[inline(always)]
+    unsafe fn f6(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
+        let mut v0: u64 = 0;
+        let mut v1: u64 = 0;
+        let mut v2: u32 = 0;
+        let mut v3: u32 = 0;
+        let mut v4: u32 = 0;
+        let mut v5: u32 = 0;
+        let mut v6: u32 = 0;
+        let mut v7: u32 = 0;
+        v0 = a0;
+        v1 = a1;
+        v2 = a2;
+        let mut d: u32 = 0;
+    v3 = unsafe { f5(len, v0, v1, v2) };
+    v4 = unsafe { f4(len, v0, v1, v2) };
+    v5 = v4.max(v3);
+    v6 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(92isize as usize)) as *const u32) };
+    v7 = v5.min(v6);
+    return v7;
+    }
+
+    #[inline(never)]
+    unsafe fn f7(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
         let mut v0: u64 = 0;
         let mut v1: u64 = 0;
         let mut v2: u32 = 0;
@@ -2347,17 +2494,25 @@ pub mod f15 {
         let mut v13: u32 = 0;
         let mut v14: u32 = 0;
         let mut v15: u32 = 0;
-        let mut v16: u8 = 0;
+        let mut v16: u32 = 0;
         let mut v17: u32 = 0;
         let mut v18: u32 = 0;
         let mut v19: u32 = 0;
-        let mut v20: u32 = 0;
+        let mut v20: u8 = 0;
         let mut v21: u32 = 0;
         let mut v22: u32 = 0;
         let mut v23: u32 = 0;
         let mut v24: u32 = 0;
-        let mut v25: u8 = 0;
-        let mut v26: u8 = 0;
+        let mut v25: u32 = 0;
+        let mut v26: u32 = 0;
+        let mut v27: u32 = 0;
+        let mut v28: u32 = 0;
+        let mut v29: u32 = 0;
+        let mut v30: u32 = 0;
+        let mut v31: u32 = 0;
+        let mut v32: u32 = 0;
+        let mut v33: u8 = 0;
+        let mut v34: u8 = 0;
         v0 = a0;
         v1 = a1;
         v2 = a2;
@@ -2375,20 +2530,28 @@ pub mod f15 {
     if v12 != 0 { v13 = v7.wrapping_add(-1i64 as u32);
     v14 = unsafe { f1(len, v0, v1, v13) };
     v15 = v13.wrapping_add(v14);
-    v16 = ((v15 as u32) > (v2 as u32)) as u8;
-    if v16 != 0 { v6 = v13; break 'm11; } else { v17 = v8.wrapping_add(1i64 as u32);
-    { let t = (v13, v17); v7 = t.0; v8 = t.1; continue 'b3; }
+    v16 = v13.wrapping_add(1i64 as u32);
+    v17 = v15.max(v16);
+    v18 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(4isize as usize)) as *const u32) };
+    v19 = v17.min(v18);
+    v20 = ((v19 as u32) > (v2 as u32)) as u8;
+    if v20 != 0 { v6 = v13; break 'm11; } else { v21 = v8.wrapping_add(1i64 as u32);
+    { let t = (v13, v21); v7 = t.0; v8 = t.1; continue 'b3; }
      }
-     } else { v21 = 0i64 as u32;
-    { v18 = v21; 'b7: loop {
-    v22 = v18.wrapping_add(1i64 as u32);
-    { let t = (v18, v22); v19 = t.0; v20 = t.1; 'b8: loop {
-    v23 = unsafe { f1(len, v0, v1, v20) };
-    v24 = v20.wrapping_add(v23);
-    v25 = ((v24 as u32) <= (v2 as u32)) as u8;
-    if v25 != 0 { { let t = (v19, v24); v19 = t.0; v20 = t.1; continue 'b8; }
-     } else { v26 = ((v20 as u32) == (v2 as u32)) as u8;
-    if v26 != 0 { v6 = v19; break 'm11; } else { v18 = v20; continue 'b7; }
+     } else { v25 = 0i64 as u32;
+    { v22 = v25; 'b7: loop {
+    v26 = v22.wrapping_add(1i64 as u32);
+    { let t = (v22, v26); v23 = t.0; v24 = t.1; 'b8: loop {
+    v27 = unsafe { f1(len, v0, v1, v24) };
+    v28 = v24.wrapping_add(v27);
+    v29 = v24.wrapping_add(1i64 as u32);
+    v30 = v28.max(v29);
+    v31 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(4isize as usize)) as *const u32) };
+    v32 = v30.min(v31);
+    v33 = ((v32 as u32) <= (v2 as u32)) as u8;
+    if v33 != 0 { { let t = (v23, v32); v23 = t.0; v24 = t.1; continue 'b8; }
+     } else { v34 = ((v24 as u32) == (v2 as u32)) as u8;
+    if v34 != 0 { v6 = v23; break 'm11; } else { v22 = v24; continue 'b7; }
      }
     }
      }
@@ -2405,23 +2568,31 @@ pub mod f15 {
     }
 
     #[inline(always)]
-    unsafe fn f6(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
+    unsafe fn f8(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
         let mut v0: u64 = 0;
         let mut v1: u64 = 0;
         let mut v2: u32 = 0;
         let mut v3: u32 = 0;
         let mut v4: u32 = 0;
+        let mut v5: u32 = 0;
+        let mut v6: u32 = 0;
+        let mut v7: u32 = 0;
+        let mut v8: u32 = 0;
         v0 = a0;
         v1 = a1;
         v2 = a2;
         let mut d: u32 = 0;
     v3 = unsafe { f1(len, v0, v1, v2) };
     v4 = v2.wrapping_add(v3);
-    return v4;
+    v5 = v2.wrapping_add(1i64 as u32);
+    v6 = v4.max(v5);
+    v7 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(4isize as usize)) as *const u32) };
+    v8 = v6.min(v7);
+    return v8;
     }
 
     #[inline(always)]
-    unsafe fn f7(len: u64, a0: u64, a1: u64, a2: u32, a3: u32) -> u32 {
+    unsafe fn f9(len: u64, a0: u64, a1: u64, a2: u32, a3: u32) -> u32 {
         let mut v0: u64 = 0;
         let mut v1: u64 = 0;
         let mut v2: u32 = 0;
@@ -2435,7 +2606,7 @@ pub mod f15 {
         v2 = a2;
         v3 = a3;
         let mut d: u32 = 0;
-    v4 = unsafe { f6(len, v0, v1, v2) };
+    v4 = unsafe { f8(len, v0, v1, v2) };
     v5 = ((v4 as u32) < (v3 as u32)) as u8;
     v6 = 4294967295i64 as u32;
     v7 = if v5 != 0 { v4 } else { v6 };
@@ -2443,7 +2614,7 @@ pub mod f15 {
     }
 
     #[inline(always)]
-    unsafe fn f8(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
+    unsafe fn f10(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
         let mut v0: u64 = 0;
         let mut v1: u64 = 0;
         let mut v2: u32 = 0;
@@ -2458,12 +2629,12 @@ pub mod f15 {
         v2 = a2;
         let mut d: u32 = 0;
     'm3: {
-    v3 = unsafe { f5(len, v0, v1, v2) };
+    v3 = unsafe { f7(len, v0, v1, v2) };
     v4 = ((v3 as u32) == ((4294967295i64 as u32) as u32)) as u8;
     if v4 != 0 { v6 = 4294967295i64 as u32;
     { v5 = v6; break 'm3; }
-     } else { v7 = unsafe { f6(len, v0, v1, v3) };
-    v8 = unsafe { f7(len, v0, v1, v2, v7) };
+     } else { v7 = unsafe { f8(len, v0, v1, v3) };
+    v8 = unsafe { f9(len, v0, v1, v2, v7) };
     { v5 = v8; break 'm3; }
      }
     }
@@ -2471,7 +2642,7 @@ pub mod f15 {
     }
 
     #[inline(always)]
-    unsafe fn f9(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
+    unsafe fn f11(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
         let mut v0: u64 = 0;
         let mut v1: u64 = 0;
         let mut v2: u32 = 0;
@@ -2493,41 +2664,7 @@ pub mod f15 {
     }
 
     #[inline(always)]
-    unsafe fn f10(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
-        let mut v0: u64 = 0;
-        let mut v1: u64 = 0;
-        let mut v2: u32 = 0;
-        let mut v3: u32 = 0;
-        let mut v4: u32 = 0;
-        let mut v5: u32 = 0;
-        let mut v6: u32 = 0;
-        let mut v7: u32 = 0;
-        let mut v8: u32 = 0;
-        let mut v9: u8 = 0;
-        let mut v10: u32 = 0;
-        let mut v11: u32 = 0;
-        let mut v12: u32 = 0;
-        v0 = a0;
-        v1 = a1;
-        v2 = a2;
-        let mut d: u32 = 0;
-    v3 = unsafe { f6(len, v0, v1, v2) };
-    v4 = v2.wrapping_add(1i64 as u32);
-    v8 = 0i64 as u32;
-    { let t = (v4, v8); v5 = t.0; v6 = t.1; 'b1: loop {
-    v9 = ((v5 as u32) < (v3 as u32)) as u8;
-    if v9 != 0 { v10 = unsafe { f1(len, v0, v1, v5) };
-    v11 = v5.wrapping_add(v10);
-    v12 = v6.wrapping_add(1i64 as u32);
-    { let t = (v11, v12); v5 = t.0; v6 = t.1; continue 'b1; }
-     } else { v7 = v6; return v7;
-     }
-    }
-     }
-    }
-
-    #[inline(always)]
-    unsafe fn f11(len: u64, a0: u64, a1: u64, a2: u32, a3: u32) -> u32 {
+    unsafe fn f12(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
         let mut v0: u64 = 0;
         let mut v1: u64 = 0;
         let mut v2: u32 = 0;
@@ -2542,12 +2679,58 @@ pub mod f15 {
         let mut v11: u32 = 0;
         let mut v12: u32 = 0;
         let mut v13: u32 = 0;
+        let mut v14: u32 = 0;
+        let mut v15: u32 = 0;
+        let mut v16: u32 = 0;
+        v0 = a0;
+        v1 = a1;
+        v2 = a2;
+        let mut d: u32 = 0;
+    v3 = unsafe { f8(len, v0, v1, v2) };
+    v4 = v2.wrapping_add(1i64 as u32);
+    v8 = 0i64 as u32;
+    { let t = (v4, v8); v5 = t.0; v6 = t.1; 'b1: loop {
+    v9 = ((v5 as u32) < (v3 as u32)) as u8;
+    if v9 != 0 { v10 = unsafe { f1(len, v0, v1, v5) };
+    v11 = v5.wrapping_add(v10);
+    v12 = v5.wrapping_add(1i64 as u32);
+    v13 = v11.max(v12);
+    v14 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(4isize as usize)) as *const u32) };
+    v15 = v13.min(v14);
+    v16 = v6.wrapping_add(1i64 as u32);
+    { let t = (v15, v16); v5 = t.0; v6 = t.1; continue 'b1; }
+     } else { v7 = v6; return v7;
+     }
+    }
+     }
+    }
+
+    #[inline(always)]
+    unsafe fn f13(len: u64, a0: u64, a1: u64, a2: u32, a3: u32) -> u32 {
+        let mut v0: u64 = 0;
+        let mut v1: u64 = 0;
+        let mut v2: u32 = 0;
+        let mut v3: u32 = 0;
+        let mut v4: u32 = 0;
+        let mut v5: u32 = 0;
+        let mut v6: u32 = 0;
+        let mut v7: u32 = 0;
+        let mut v8: u32 = 0;
+        let mut v9: u8 = 0;
+        let mut v10: u32 = 0;
+        let mut v11: u32 = 0;
+        let mut v12: u32 = 0;
+        let mut v13: u32 = 0;
+        let mut v14: u32 = 0;
+        let mut v15: u32 = 0;
+        let mut v16: u32 = 0;
+        let mut v17: u32 = 0;
         v0 = a0;
         v1 = a1;
         v2 = a2;
         v3 = a3;
         let mut d: u32 = 0;
-    v4 = unsafe { f6(len, v0, v1, v2) };
+    v4 = unsafe { f8(len, v0, v1, v2) };
     v5 = v2.wrapping_add(1i64 as u32);
     { let t = (v5, v3); v6 = t.0; v7 = t.1; 'b1: loop {
     'm4: {
@@ -2555,8 +2738,12 @@ pub mod f15 {
     v10 = 4294967295i64 as u32;
     if v9 != 0 { if v7 != 0 { v11 = unsafe { f1(len, v0, v1, v6) };
     v12 = v6.wrapping_add(v11);
-    v13 = v7.wrapping_add(-1i64 as u32);
-    { let t = (v12, v13); v6 = t.0; v7 = t.1; continue 'b1; }
+    v13 = v6.wrapping_add(1i64 as u32);
+    v14 = v12.max(v13);
+    v15 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(4isize as usize)) as *const u32) };
+    v16 = v14.min(v15);
+    v17 = v7.wrapping_add(-1i64 as u32);
+    { let t = (v16, v17); v6 = t.0; v7 = t.1; continue 'b1; }
      } else { v8 = v6; break 'm4; }
      } else { v8 = v10; break 'm4; }
     }
@@ -2566,7 +2753,7 @@ pub mod f15 {
     }
 
     #[inline(always)]
-    unsafe fn f12(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
+    unsafe fn f14(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
         let mut v0: u64 = 0;
         let mut v1: u64 = 0;
         let mut v2: u32 = 0;
@@ -2584,7 +2771,7 @@ pub mod f15 {
     }
 
     #[inline(always)]
-    unsafe fn f13(len: u64, a0: u64, a1: u64, a2: u32, a3: u32) -> u32 {
+    unsafe fn f15(len: u64, a0: u64, a1: u64, a2: u32, a3: u32) -> u32 {
         let mut v0: u64 = 0;
         let mut v1: u64 = 0;
         let mut v2: u32 = 0;
@@ -2595,12 +2782,12 @@ pub mod f15 {
         v2 = a2;
         v3 = a3;
         let mut d: u32 = 0;
-    return unsafe { f3(len, v0, v1, v2) };
+    return unsafe { f5(len, v0, v1, v2) };
 
     }
 
     #[inline(always)]
-    unsafe fn f16(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
+    unsafe fn f18(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
         let mut v0: u64 = 0;
         let mut v1: u64 = 0;
         let mut v2: u32 = 0;
@@ -2654,7 +2841,7 @@ pub mod f15 {
     }
 
     #[inline(always)]
-    unsafe fn f17(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
+    unsafe fn f19(len: u64, a0: u64, a1: u64, a2: u32) -> u32 {
         let mut v0: u64 = 0;
         let mut v1: u64 = 0;
         let mut v2: u32 = 0;
@@ -2693,98 +2880,112 @@ pub mod f15 {
         unsafe { f2(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
     }
 
+    /// The read `tape_start_stated` of the tape in `tape`, whose `view`'s offsets count from its first byte.
+    #[inline(always)]
+    pub fn tape_start_stated(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32) -> u32 {
+        // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
+        unsafe { f3(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
+    }
+
+    /// The read `tape_end_stated` of the tape in `tape`, whose `view`'s offsets count from its first byte.
+    #[inline(always)]
+    pub fn tape_end_stated(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32) -> u32 {
+        // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
+        unsafe { f4(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
+    }
+
     /// The read `tape_start` of the tape in `tape`, whose `view`'s offsets count from its first byte.
     #[inline(always)]
     pub fn tape_start(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32) -> u32 {
         // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
-        unsafe { f3(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
+        unsafe { f5(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
     }
 
     /// The read `tape_end` of the tape in `tape`, whose `view`'s offsets count from its first byte.
     #[inline(always)]
     pub fn tape_end(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32) -> u32 {
         // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
-        unsafe { f4(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
+        unsafe { f6(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
     }
 
     /// The read `tape_parent` of the tape in `tape`, whose `view`'s offsets count from its first byte.
     #[inline(always)]
     pub fn tape_parent(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32) -> u32 {
         // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
-        unsafe { f5(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
+        unsafe { f7(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
     }
 
     /// The read `tape_end_of` of the tape in `tape`, whose `view`'s offsets count from its first byte.
     #[inline(always)]
     pub fn tape_end_of(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32) -> u32 {
         // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
-        unsafe { f6(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
+        unsafe { f8(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
     }
 
     /// The read `tape_next_in` of the tape in `tape`, whose `view`'s offsets count from its first byte.
     #[inline(always)]
     pub fn tape_next_in(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32, a3: u32) -> u32 {
         // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
-        unsafe { f7(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2, a3) }
+        unsafe { f9(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2, a3) }
     }
 
     /// The read `tape_next` of the tape in `tape`, whose `view`'s offsets count from its first byte.
     #[inline(always)]
     pub fn tape_next(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32) -> u32 {
         // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
-        unsafe { f8(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
+        unsafe { f10(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
     }
 
     /// The read `tape_first_child` of the tape in `tape`, whose `view`'s offsets count from its first byte.
     #[inline(always)]
     pub fn tape_first_child(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32) -> u32 {
         // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
-        unsafe { f9(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
+        unsafe { f11(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
     }
 
     /// The read `tape_child_count` of the tape in `tape`, whose `view`'s offsets count from its first byte.
     #[inline(always)]
     pub fn tape_child_count(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32) -> u32 {
         // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
-        unsafe { f10(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
+        unsafe { f12(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
     }
 
     /// The read `tape_child` of the tape in `tape`, whose `view`'s offsets count from its first byte.
     #[inline(always)]
     pub fn tape_child(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32, a3: u32) -> u32 {
         // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
-        unsafe { f11(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2, a3) }
+        unsafe { f13(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2, a3) }
     }
 
     /// The read `tape_length` of the tape in `tape`, whose `view`'s offsets count from its first byte.
     #[inline(always)]
     pub fn tape_length(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32) -> u32 {
         // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
-        unsafe { f12(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
+        unsafe { f14(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
     }
 
     /// The read `tape_start_next` of the tape in `tape`, whose `view`'s offsets count from its first byte.
     #[inline(always)]
     pub fn tape_start_next(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32, a3: u32) -> u32 {
         // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
-        unsafe { f13(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2, a3) }
+        unsafe { f15(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2, a3) }
     }
 
     /// The read `tape_line` of the tape in `tape`, whose `view`'s offsets count from its first byte.
     #[inline(always)]
     pub fn tape_line(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32) -> u32 {
         // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
-        unsafe { f16(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
+        unsafe { f18(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
     }
 
     /// The read `tape_line_start` of the tape in `tape`, whose `view`'s offsets count from its first byte.
     #[inline(always)]
     pub fn tape_line_start(tape: &[u8], view: &rerail_clif::view::TapeView, a2: u32) -> u32 {
         // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).
-        unsafe { f17(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
+        unsafe { f19(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64, a2) }
     }
 
 }
 
 /// This source's fingerprint (`rust::fingerprint` of what comes before).
-pub const SOURCE: u64 = 0x8f0488e62dfd9369;
+pub const SOURCE: u64 = 0x684fb1951d7a1a22;

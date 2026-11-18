@@ -126,8 +126,8 @@ impl Columns15 {
         )
     }
 
-    /// Its columns, as format 15's reader reads them.
-    pub fn columns(&self) -> F15Columns<'_> {
+    /// Its columns, as format 15's reader reads them, over a source of `source_len` bytes (its image's).
+    pub fn columns(&self, source_len: u64) -> F15Columns<'_> {
         F15Columns {
             code: self.code(),
             size: self.size(),
@@ -136,12 +136,14 @@ impl Columns15 {
             tail: self.tail(),
             widths: [self.widths[0], self.widths[1], self.widths[2] & !TAIL_FROM_START],
             from_start: self.widths[2] & TAIL_FROM_START != 0,
+            source_len,
         }
     }
 
     /// The view the tape's reads take (decision 0310), its offsets from its bytes' first (`laid_out`): made from
-    /// the columns' places, as cheap as the columns' slices.
-    pub fn view(&self) -> rerail_clif::view::TapeView {
+    /// the columns' places, as cheap as the columns' slices; its spans held to the source's `source_len` bytes (its
+    /// image's: decision 0403).
+    pub fn view(&self, source_len: usize) -> rerail_clif::view::TapeView {
         let (_, at) = self.laid_out();
         let w = |k: usize| u32::from(self.widths[k]);
         let from_start = self.widths[2] & TAIL_FROM_START != 0;
@@ -150,6 +152,7 @@ impl Columns15 {
             format: 15,
             widths: w(0) | w(1) << 4 | u32::from(self.widths[2] & !TAIL_FROM_START) << 8 | u32::from(from_start) << 12,
             columns: at.map(|a| a as u32),
+            source_len: u32::try_from(source_len).unwrap_or(u32::MAX),
             ..Default::default()
         }
     }
@@ -385,7 +388,7 @@ impl TapeImage {
         // One pass over format 15's columns, to format 16 or straight to 16z's blocks.
         #[cfg(any(test, feature = "test-hooks"))]
         CONVERTED.set(CONVERTED.get() + 1);
-        let held = match f16::write_from(lang, &F15::over(c.laid_out().0, c.view(), table), &number, source, tag, format == Format::F16Z) {
+        let held = match f16::write_from(lang, &F15::over(c.laid_out().0, c.view(self.source_len), table), &number, source, tag, format == Format::F16Z) {
             Ok(f16::Written::F16(t)) => Held::F16(Arc::new(t)),
             Ok(f16::Written::F16Z(t)) => Held::F16Z(Arc::new(t)),
             Err(e) => {
@@ -490,9 +493,6 @@ pub struct DocTape {
     /// The document's source, which another format's tape is written over (`tape_in`: format 16 holds its newlines).
     source: Arc<String>,
     other: [OnceLock<TapeImage>; 3],
-    /// A 16z tape laid out as the format 16 tape it is the blocks of, once, for the readers that read format 16's
-    /// arrays in place (`in_place`), as the device's slab lays it out.
-    laid: OnceLock<Result<f16::Tape16, String>>,
 }
 
 impl DocTape {
@@ -502,7 +502,7 @@ impl DocTape {
         // is in the `Arc`'s allocation, which does not move, and is never changed once held; this holds the `Arc`
         // for as long as the reader, and `reader` lends it at the borrow of `self` only.
         let reader = unsafe { std::mem::transmute::<AnyTape<'_>, AnyTape<'static>>(reader) };
-        DocTape { reader, image, source, other: Default::default(), laid: OnceLock::new() }
+        DocTape { reader, image, source, other: Default::default() }
     }
 
     /// The tape's reader, made once: a node's reads dispatch on the format, and nothing is built a read.
@@ -519,12 +519,12 @@ impl DocTape {
     pub fn bytes(&self) -> usize {
         self.image.estimated_bytes()
             + self.other.iter().filter_map(OnceLock::get).map(TapeImage::estimated_bytes).sum::<usize>()
-            + self.laid.get().and_then(|laid| laid.as_ref().ok()).map_or(0, f16::Tape16::bytes)
     }
 
     /// The tape as the reads written once take it (decision 0310): the bytes every offset of its view counts
-    /// from, and the view. Format 15's columns and format 16's arrays as held; a 16z tape's blocks laid out as
-    /// format 16 once.
+    /// from, and the view. Format 15's columns and format 16's arrays as held; a 16z tape's blocks as stored, which
+    /// a reader reads through a `rerail_clif::view::Reader` of its own (a block decoded where a read falls, 0353
+    /// step 4b).
     pub fn in_place(&self) -> Result<(&[u8], rerail_clif::view::TapeView), String> {
         fn sixteen<'a>(t: &'a f16::Tape16, lang: Option<&Lang>) -> Result<(&'a [u8], rerail_clif::view::TapeView), String> {
             let lang = lang.ok_or("a format 16 tape of a language without its table")?;
@@ -532,16 +532,9 @@ impl DocTape {
         }
         let lang = self.image.lang();
         match self.image.held() {
-            Held::F15(c) => Ok((c.laid_out().0, c.view())),
+            Held::F15(c) => Ok((c.laid_out().0, c.view(self.image.source_len))),
             Held::F16(t) => sixteen(t, lang),
-            Held::F16Z(z) => {
-                let laid = self.laid.get_or_init(|| {
-                    let mut bytes = vec![0; z.decoded_len()];
-                    z.decode_into(&mut bytes)?;
-                    f16::Tape16::from_bytes(bytes)
-                });
-                sixteen(laid.as_ref().map_err(Clone::clone)?, lang)
-            }
+            Held::F16Z(z) => Ok((z.as_bytes(), z.view(lang.ok_or("a 16z tape of a language without its table")?)?)),
         }
     }
 

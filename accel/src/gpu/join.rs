@@ -102,6 +102,9 @@ pub fn compile_failed(name: &str, what: &str, error: impl std::fmt::Display) -> 
     panic!("Metal: the {what} of `{name}` does not compile (decision 0382: fatal): {error}")
 }
 
+/// The threads of a join kernel's group: every dispatch's (`Pass::dispatch*`).
+pub const GROUP: u64 = 256;
+
 /// Compiles `name` from `source` on the shared device; an error only where there is no device.
 pub fn compile(source: &str, name: &str) -> Result<ComputePipelineState, String> {
     let device = device()?;
@@ -136,7 +139,15 @@ pub fn pipeline(variant: &str, name: &str, source: impl FnOnce() -> String) -> R
         let device = device()?;
         Ok(objc::rc::autoreleasepool(|| {
             let f = library.get_function(name, None).unwrap_or_else(|e| compile_failed(name, "function", e));
-            device.new_compute_pipeline_state_with_function(&f).unwrap_or_else(|e| compile_failed(name, "pipeline", e))
+            let pipe = device.new_compute_pipeline_state_with_function(&f).unwrap_or_else(|e| compile_failed(name, "pipeline", e));
+            // Every dispatch of a join kernel is of groups of 256 threads: a kernel whose registers allow fewer
+            // cannot run them (a dispatch past its most is undefined). Such a pipeline is not made, and as one that
+            // does not compile, the run stops (decision 0382): no caller runs another path on it.
+            let most = pipe.max_total_threads_per_threadgroup();
+            if most < GROUP {
+                compile_failed(name, "pipeline", format!("at most {most} threads a group, its dispatches' {GROUP}"));
+            }
+            pipe
         }))
     })
     .inspect_err(|e| eprintln!("rerail: the Metal pipeline {variant} {name} is not made: {e}"))
@@ -403,7 +414,7 @@ impl<'a> Pass<'a> {
             self.encoder.set_buffer(i as u64, Some(b), 0);
         }
         self.encoder.set_bytes(buffers.len() as u64, bytes.len().max(4) as u64, if bytes.is_empty() { [0u32].as_ptr().cast() } else { bytes.as_ptr().cast() });
-        self.encoder.dispatch_thread_groups(MTLSize::new(groups.max(1) as u64, 1, 1), MTLSize::new(256, 1, 1));
+        self.encoder.dispatch_thread_groups(MTLSize::new(groups.max(1) as u64, 1, 1), MTLSize::new(GROUP, 1, 1));
         self.dispatches.set(self.dispatches.get() + 1);
     }
 
@@ -414,7 +425,7 @@ impl<'a> Pass<'a> {
             self.encoder.set_buffer(i as u64, Some(b), 0);
         }
         self.encoder.set_bytes(buffers.len() as u64, bytes.len().max(4) as u64, if bytes.is_empty() { [0u32].as_ptr().cast() } else { bytes.as_ptr().cast() });
-        self.encoder.dispatch_thread_groups_indirect(grid, offset, MTLSize::new(256, 1, 1));
+        self.encoder.dispatch_thread_groups_indirect(grid, offset, MTLSize::new(GROUP, 1, 1));
         self.dispatches.set(self.dispatches.get() + 1);
     }
 
@@ -425,7 +436,7 @@ impl<'a> Pass<'a> {
             self.encoder.set_buffer(i as u64, Some(b), 0);
         }
         self.encoder.set_bytes(buffers.len() as u64, std::mem::size_of_val(params).max(4) as u64, if params.is_empty() { [0u32].as_ptr().cast() } else { params.as_ptr().cast() });
-        self.encoder.dispatch_thread_groups_indirect(grid, offset, MTLSize::new(256, 1, 1));
+        self.encoder.dispatch_thread_groups_indirect(grid, offset, MTLSize::new(GROUP, 1, 1));
         self.dispatches.set(self.dispatches.get() + 1);
     }
 
@@ -441,8 +452,22 @@ impl<'a> Pass<'a> {
         if !longs.is_empty() {
             self.encoder.set_bytes(at + 1, std::mem::size_of_val(longs) as u64, longs.as_ptr().cast());
         }
-        self.encoder.dispatch_thread_groups(MTLSize::new(groups.max(1) as u64, 1, 1), MTLSize::new(256, 1, 1));
+        self.encoder.dispatch_thread_groups(MTLSize::new(groups.max(1) as u64, 1, 1), MTLSize::new(GROUP, 1, 1));
         self.dispatches.set(self.dispatches.get() + 1);
+    }
+
+    /// Makes `buffers` resident for the dispatches after it, to be read: buffers a kernel reaches by address (a
+    /// view's directory and tapes, decision 0353 step 4d), bound by none.
+    pub fn use_read(&self, buffers: &[&BufferRef]) {
+        for b in buffers {
+            self.encoder.use_resource(b, metal::MTLResourceUsage::Read);
+        }
+    }
+
+    /// Makes `buffer` resident for the dispatches after it, to be read and written: a cache a kernel's reads keep
+    /// (a 16z batch's blocks, decision 0353 step 4b), reached by address.
+    pub fn use_read_write(&self, buffer: &BufferRef) {
+        self.encoder.use_resource(buffer, metal::MTLResourceUsage::Read | metal::MTLResourceUsage::Write);
     }
 
     pub fn end(mut self) {

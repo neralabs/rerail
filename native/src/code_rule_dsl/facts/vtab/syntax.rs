@@ -60,6 +60,7 @@ mod cells;
 pub mod id_reads;
 #[cfg(target_os = "macos")]
 pub mod device_chunk;
+pub mod view_docs;
 use guests::GuestRows;
 
 /// Which projection of the tree a batch serves.
@@ -1669,8 +1670,12 @@ impl Dialect {
     }
     /// Node `id`'s kind atom as the `kind` column holds it: its name's canonical code's.
     fn kind(&self, f: &Facts, id: u32) -> i64 {
-        let code = self.code(f, id);
-        i64::from(kind_atom(self.tag, self.canonical.get(usize::from(code)).copied().unwrap_or(code)))
+        i64::from(self.kind_of_atom(f.kind(id)))
+    }
+    /// A node's kind atom (`Facts::kind`) as the `kind` column holds it: its name's canonical code's.
+    pub fn kind_of_atom(&self, atom: u32) -> u32 {
+        let code = kind_code(atom);
+        kind_atom(self.tag, self.canonical.get(usize::from(code)).copied().unwrap_or(code))
     }
     /// A kind atom's name (a token's, `Facts::tokens`).
     pub fn atom_name(&self, atom: u32) -> &'static str {
@@ -1829,7 +1834,8 @@ impl Projected {
     /// What a projection's arrays can take in a block: `core`, `local`, `up`, `low`, the ordinals and the fielded
     /// nodes, none longer than the tape, with room for alignment.
     pub fn bytes(facts: &Facts) -> usize {
-        6 * 4 * facts.len() + 6 * 16
+        // The views' entry and its codes' table too (`view_docs::ViewEntry`).
+        6 * 4 * facts.len() + 6 * 16 + 8 * facts.code_count() + 256
     }
 
     /// As `new`, but with `anchors` (`Projection::node_anchors`) a file's nodes are its root and the subtrees of the
@@ -1882,9 +1888,10 @@ impl Projected {
                 }
             }
             let mut n = 0usize;
-            // The numbered nodes open around the walk: each one's subtree end, its tape node, and whether a numbered
-            // direct child of it was marked yet (a later one is after a sibling: `next_sibling`'s rows).
-            let mut open: Vec<(u32, u32, bool)> = Vec::new();
+            // The numbered nodes on the walk's path, each with whether a numbered direct child of it was marked yet (a
+            // later one is after a sibling: `next_sibling`'s rows). A node's tape parent comes with the walk, so the
+            // path is popped down to it, with no subtree's end read: a node above it on the path is closed.
+            let mut open: Vec<(u32, bool)> = Vec::new();
             for (id, above) in ranges.iter().flat_map(|&(a, b)| f.with_parents(a, b)) {
                 if !f.named(id) {
                     // A token (`Facts::tokens`) of an included node: its span is made on first read (`Projected::span`).
@@ -1912,19 +1919,20 @@ impl Projected {
                 if n != 0 && f.field(id) != 0 {
                     marks.mark(Item::Field, id);
                 }
-                while open.last().is_some_and(|&(end, _, _)| end <= id) {
-                    open.pop();
-                }
-                // A direct child of the innermost numbered node (an anchor that hangs from the root is no child of it).
-                if let (Some(q), Some(top)) = (above, open.last_mut())
-                    && top.1 == q
-                {
-                    if top.2 {
-                        marks.mark(Item::Sibling, id);
+                // A direct child of a numbered node: its parent is on the path. An anchor that hangs from the root is no
+                // child of it, and leaves the path as it is (what it closes, the next child of an open node pops).
+                if let Some(q) = above.filter(|&q| marks.has(Item::Node, q)) {
+                    while open.last().is_some_and(|&(x, _)| x != q) {
+                        open.pop();
                     }
-                    top.2 = true;
+                    if let Some(top) = open.last_mut() {
+                        if top.1 {
+                            marks.mark(Item::Sibling, id);
+                        }
+                        top.1 = true;
+                    }
                 }
-                open.push((f.subtree_end(id), id, false));
+                open.push((id, false));
                 n += 1;
             }
         });
@@ -1943,7 +1951,7 @@ impl Projected {
         drop(identity_span);
         if shape == Shape::Core {
             let lines_span = crate::code_rule_dsl::logic::profile::span(|| "line index".into());
-            let lines = Arc::new(core_rr::Lines::shared(Arc::clone(&f.source), dialect.is_some_and(|d| d.family == Family::Python)));
+            let lines = Arc::new(core_rr::Lines::shared(Arc::clone(&f.source), dialect.is_some_and(|d| d.family == Family::Python), p.block()));
             drop(lines_span);
             let _ids_span = crate::code_rule_dsl::logic::profile::span(|| "definition ids".into());
             if definition_ids() && let Some(dialect) = dialect {
@@ -2034,6 +2042,10 @@ impl Projected {
     /// projection's first point read (decision 0353 step 3). A scan carries the place in its walk and never makes it.
     #[inline]
     pub fn idx(&self, local: usize) -> u32 {
+        self.places_column()[local]
+    }
+    /// Every numbered node's place (`idx`), the derived column, made on its first read.
+    pub fn places_column(&self) -> &Cells<u32> {
         self.idx.get_or_init(|| {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "projection places (derived, on a point read)".into());
             // copy: derived (each node's place, computed once here from the walk; no block holds it)
@@ -2044,7 +2056,7 @@ impl Projected {
                 out.len()
             })
             .expect("a batch's block holds its projection")
-        })[local]
+        })
     }
     /// Every node in preorder with its place among its parent's children and its depth (`idx`, `depth`), carried in
     /// one walk of the open subtrees: `(local id, place, depth)`.
@@ -2598,6 +2610,18 @@ type MadeSpan = (i64, std::ops::Range<usize>, Option<usize>);
 
 impl Extra {
     fn new(reads: &BTreeSet<String>, matches: &[Arc<regex::Regex>], shape: Shape, [source_text, line_text]: [bool; 2]) -> Self {
+        let mut extra = Self::made(reads, matches, shape, [source_text, line_text]);
+        // In core.rr's shape a node's and a position's places are views of the tape (`View::Loc`): made as rows only
+        // where spans are, which have places too (decision 0353 step 3). Made for every node and token beside the
+        // views, they were hogql's 0.1 s and 255 MB a run, for a program that read no span.
+        if shape == Shape::Core && !extra.spans() {
+            (extra.end_line, extra.col, extra.docof) = (false, false, false);
+        }
+        extra
+    }
+
+    /// What the program's reads ask `Extra` to make.
+    fn made(reads: &BTreeSet<String>, matches: &[Arc<regex::Regex>], shape: Shape, [source_text, line_text]: [bool; 2]) -> Self {
         let read = |rel: &str| reads.contains(rel);
         Self {
             source: read("source"),
@@ -3134,6 +3158,13 @@ struct NodeRows {
 }
 
 impl NodeRows {
+    /// The bytes of its rows so far (a copy's size, decision 0353's row 7).
+    fn bytes(&self) -> usize {
+        std::mem::size_of_val(self.text.as_slice()) + std::mem::size_of_val(self.intval.as_slice()) + std::mem::size_of_val(self.op.as_slice()) + std::mem::size_of_val(self.name.as_slice()) + std::mem::size_of_val(self.strs.as_slice()) + std::mem::size_of_val(self.strprefix.as_slice())
+    }
+}
+
+impl NodeRows {
     /// Document `p`'s rows (`dialect` its grammar's kinds; `core`: in `core.rr`'s shape).
     fn document(&mut self, p: &Projected, dialect: &Dialect, core: bool, string: &mut dyn FnMut(&str) -> usize) {
         let f = &*p.facts;
@@ -3269,6 +3300,11 @@ impl Batch {
             structural: !wants_any(&["structural_before", "structural_after"]),
         };
         let core_nodes = core && (scalar_nodes || !c.skip.structural);
+        // `rr_value_lit` holds the literals of the documents W reads no values of (`unvalued`, `values_of`): where no
+        // other relation reads a literal's value or rows, a document W values makes none, and its walk visits only the
+        // nodes whose text a rule reads. Made for every node and dropped, hogql's literals had `node rows` visit all
+        // 1.3 M nodes.
+        let value_lit_only = wants_any(&["rr_value_lit"]) && !wants_any(&["str", "strprefix", "value", "static_value", "value_type"]);
         let wants_long_text_nodes = projection.wants("rr_long_text_node");
         let mut long_text_nodes = Vec::new();
         c.long_text = projection.long_text.clone();
@@ -3370,7 +3406,7 @@ impl Batch {
             };
             let withheld = core && error.is_some() && !guest.is_some_and(|g| projection.keeps_partial(&g.grammar));
             let python_lines = dialect.is_some_and(|d| d.family == Family::Python);
-            let placed = guest.map(|g| (g, lines_of.get(&file_of(g.host)).cloned().unwrap_or_else(|| Arc::new(core_rr::Lines::shared(Arc::clone(&d.facts.source), python_lines)))));
+            let placed = guest.map(|g| (g, lines_of.get(&file_of(g.host)).cloned().unwrap_or_else(|| Arc::new(core_rr::Lines::shared(Arc::clone(&d.facts.source), python_lines, &block)))));
             let new_span = crate::code_rule_dsl::logic::profile::span(|| "projected".into());
             let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, projection.node_anchors.as_ref().filter(|_| core), &block);
             drop(new_span);
@@ -3441,6 +3477,8 @@ impl Batch {
 // copy (0353 step 3): core.rr's per-node rows. Tape answers become tape views, and derived values become
 // rules computed on demand, written once (decision 0353).
             let nodes_span = crate::code_rule_dsl::logic::profile::span(|| "node rows".into());
+            static NODE_ROWS: rerail_prof::copies::Site = rerail_prof::copies::Site::new(7, "3", "core.rr's and the vtab's per-node rows (node rows)");
+            let (copying, rows_before) = (NODE_ROWS.start(), rows.bytes() + c.bytes());
             if let Some(dialect) = dialect {
                 // In core.rr's shape `NodeRows` makes only `intval` and T's `op` (`op_t`).
                 if scalar_nodes && (!core || projection.wants("intval") || projection.wants("op_t")) {
@@ -3448,6 +3486,10 @@ impl Batch {
                     rows.document(&p, dialect, core, &mut string);
                 }
                 if core_nodes || wants_long_text_nodes {
+                    let kept = (c.skip.literal_rows, c.skip.literal_value);
+                    if value_lit_only && dialect.values {
+                        (c.skip.literal_rows, c.skip.literal_value) = (true, true);
+                    }
                     let visits = c.visits(wants_text, wants_parts, wants_part_starts, wants_words);
                     for (local, id, n) in p.node_ids() {
                         if wants_long_text_nodes && (p.facts.end(id) - p.facts.start(id)) as usize > core_rr::TEXT_INLINE {
@@ -3458,12 +3500,14 @@ impl Batch {
                             c.node(&p, dialect, local, id, n, &mut string, wants_text, wants_parts, wants_part_starts, wants_words);
                         }
                     }
+                    (c.skip.literal_rows, c.skip.literal_value) = kept;
                 }
                 if let Some((line, msg)) = &error {
                     let line = p.extra.as_ref().map_or(*line, |x| x.file_line(*line));
                     c.withheld(&p, &(line, msg.clone()), &mut string);
                 }
             }
+            copying.done((rows.bytes() + c.bytes()).saturating_sub(rows_before));
             drop(nodes_span);
             let document_span = crate::code_rule_dsl::logic::profile::span(|| "document rows".into());
             // A text-only document has core.rr's text rows too (its lines, `split_line`), and no tokens.
@@ -3835,13 +3879,36 @@ impl Source for Viewed {
     fn device_view(&self) -> Option<crate::code_rule_dsl::facts::vtab::DeviceView<'_>> {
         let view = device_chunk::device_view(self.view)?;
         let chunk = self.batch.chunk();
-        if matches!(self.view, View::Loc(_)) && !device_chunk::fill_locs(&self.batch, chunk) {
+        // The views the views' reads answer are read in place where every tape (and for `line`, every document's
+        // lines) is on the device.
+        #[cfg(target_os = "macos")]
+        let loc = matches!(self.view, View::Loc(_));
+        let in_place = (loc || matches!(view, device_chunk::VIEW_NODE | device_chunk::VIEW_CHILD | device_chunk::VIEW_FIELD | device_chunk::VIEW_CORE | device_chunk::VIEW_LINE))
+            .then(|| device_chunk::views_in_place(&self.batch, chunk))
+            .flatten()
+            .filter(|v| (view != device_chunk::VIEW_LINE || v.lines) && (!loc || v.locs))
+            .map(|v| {
+                let mut in_place = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir: v.dir, kind: device_chunk::read_kind(view), buffers: v.buffers.clone(), cache: v.cache.clone(), failed: 0, keep: Arc::clone(&self.batch) as Arc<dyn std::any::Any + Send + Sync> };
+                in_place.failed = in_place.cache_failed();
+                in_place
+            });
+        #[cfg(not(target_os = "macos"))]
+        let in_place: Option<()> = None;
+        if matches!(self.view, View::Loc(_)) && in_place.is_none() && !device_chunk::fill_locs(&self.batch, chunk) {
             return None;
         }
-        if matches!(self.view, View::Line) && !device_chunk::fill_lines(&self.batch, chunk) {
+        if matches!(self.view, View::Line) && in_place.is_none() && !device_chunk::fill_lines(&self.batch, chunk) {
             return None;
         }
-        Some(crate::code_rule_dsl::facts::vtab::DeviceView { block: &chunk.block, root: chunk.root, view, rows: self.len(), pairs: 0 })
+        Some(crate::code_rule_dsl::facts::vtab::DeviceView {
+            block: &chunk.block,
+            root: chunk.root,
+            view,
+            rows: self.len(),
+            pairs: 0,
+            #[cfg(target_os = "macos")]
+            in_place,
+        })
     }
     fn columns(&self) -> Vec<String> {
         Self::columns(self.view).iter().map(|c| (*c).to_owned()).collect()

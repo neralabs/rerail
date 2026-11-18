@@ -21,20 +21,29 @@ struct Op { uint kind,target,of,slot,minimum,maximum,row; };
 
 static void mark(device atomic_uint* bits,uint node){atomic_fetch_or_explicit(&bits[node/32u],1u<<(node%32u),memory_order_relaxed);}
 
+// A node's bit set, or its tally counted, only for a node of the batch (decision 0403): a node from a walk or a
+// capture indexes a row of `nodeCount`, and one past it would write past the row, past the buffer for the last. Any
+// other is not written: flag 256 (with 2, the passes again deep, then on the interpreter), which the host counts.
+#define NODE_OK(n) ((n)<shape.nodeCount)
+#define NODE_PAST {atomic_fetch_or_explicit(&flags[0],258u,memory_order_relaxed);}
+#define MARK(b,n) {uint mark_n=(n);if(NODE_OK(mark_n))mark(b,mark_n);else NODE_PAST}
+#define TALLY(t,n) {uint tally_n=(n);if(NODE_OK(tally_n))atomic_fetch_add_explicit(&(t)[tally_n],1u,memory_order_relaxed);else NODE_PAST}
+
 kernel void label_sink(device const Arena* arenas [[buffer(0)]],device const Result* results [[buffer(1)]],device const FinalCapture* captures [[buffer(2)]],device const Status* statuses [[buffer(3)]],device const Route* routes [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],device atomic_uint* counts [[buffer(6)]],device atomic_uint* flags [[buffer(7)]],constant Shape& shape [[buffer(8)]],uint tid [[thread_position_in_grid]]){
   if(atomic_load_explicit(&flags[2],memory_order_relaxed)!=0u)return;
   // Bit 1: a task failed. Decision 0334: bit 4, a task ran over its budget below the ceiling (status 8); bit 8, a
-  // task stopped at the ceiling (status 4). Its evaluation says which (`Runner::unfinished`).
-  if(tid<shape.taskCount&&statuses[tid].error!=0u){uint error=statuses[tid].error;atomic_fetch_or_explicit(&flags[0],error==8u?4u:error==4u?8u:1u,memory_order_relaxed);}
+  // task stopped at the ceiling (status 4). Its evaluation says which (`Runner::unfinished`). Status 9: a mark or a
+  // tally of a node past the batch's, not written (decision 0403): `NODE_PAST`'s flags.
+  if(tid<shape.taskCount&&statuses[tid].error!=0u){uint error=statuses[tid].error;atomic_fetch_or_explicit(&flags[0],error==8u?4u:error==4u?8u:error==9u?258u:1u,memory_order_relaxed);}
   Arena arena=arenas[shape.resultArena];
   if(tid>=arena.cursor)return;
   Result result=results[arena.start+tid];
   Route route=routes[result.taskOrdinal];
   device atomic_uint* bits=scratch+route.slot*shape.words;
   device atomic_uint* tally=counts+route.slot*shape.nodeCount;
-  if(route.mode==0u){mark(bits,result.start);return;}
-  if(route.mode==2u){atomic_fetch_add_explicit(&tally[result.start],1u,memory_order_relaxed);return;}
-  for(uint at=0u;at<result.captureCount;at++){uint node=captures[result.captureStart+at].node;if(route.mode==1u)mark(bits,node);else atomic_fetch_add_explicit(&tally[node],1u,memory_order_relaxed);}
+  if(route.mode==0u){MARK(bits,result.start);return;}
+  if(route.mode==2u){TALLY(tally,result.start);return;}
+  for(uint at=0u;at<result.captureCount;at++){uint node=captures[result.captureStart+at].node;if(route.mode==1u)MARK(bits,node)else TALLY(tally,node)}
 }
 
 // Each of the level's targets takes its new bits: a complement's or a count's computed here (per
@@ -564,15 +573,15 @@ static void micro_from(uint FRAMES,thread const Tree& t,device const uint* head,
           if((pass.targets&4u)!=0u){
             uint members=words[pass.wordStart+pass.wordCount];
             device atomic_uint* row=scratch+words[pass.wordStart+pass.wordCount+1u+arg]*shape.words;
-            if((pass.targets&3u)==0u){mark(row,start);fired|=1u<<arg;if(fired==(members>=32u?0xffffffffu:((1u<<members)-1u)))return;}
-            else{if(path.captured>0u)mark(row,path.capture0);if(path.captured>1u)mark(row,path.capture1);}
+            if((pass.targets&3u)==0u){MARK(row,start);fired|=1u<<arg;if(fired==(members>=32u?0xffffffffu:((1u<<members)-1u)))return;}
+            else{if(path.captured>0u)MARK(row,path.capture0);if(path.captured>1u)MARK(row,path.capture1);}
             alive=false;break;
           }
-          if(pass.targets==0u){mark(bits,start);return;}
-          if(pass.targets==1u){if(path.captured>0u)mark(bits,path.capture0);if(path.captured>1u)mark(bits,path.capture1);}
+          if(pass.targets==0u){MARK(bits,start);return;}
+          if(pass.targets==1u){if(path.captured>0u)MARK(bits,path.capture0);if(path.captured>1u)MARK(bits,path.capture1);}
           else{device atomic_uint* tally=counts+pass.target*shape.nodeCount;
-            if(pass.targets==2u)atomic_fetch_add_explicit(&tally[start],1u,memory_order_relaxed);
-            else{if(path.captured>0u)atomic_fetch_add_explicit(&tally[path.capture0],1u,memory_order_relaxed);if(path.captured>1u)atomic_fetch_add_explicit(&tally[path.capture1],1u,memory_order_relaxed);}}
+            if(pass.targets==2u)TALLY(tally,start)
+            else{if(path.captured>0u)TALLY(tally,path.capture0)if(path.captured>1u)TALLY(tally,path.capture1)}}
           alive=false;break;
         default:MICRO_FAIL
       }

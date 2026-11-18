@@ -162,7 +162,7 @@ pub struct Resident {
     pub len: usize,
     /// Bytes per pool: `tape.resident`, `source.resident`, `tape.derived`.
     pub bytes: [usize; 3],
-    /// The tape's length where it is placed (a 16z tape's laid out as format 16).
+    /// The tape's length where it is placed (as stored).
     pub tape_length: usize,
     /// The language's code table its view's codes point at, held by its slab (format 16), or `None` (format 15:
     /// its own, inside its range).
@@ -259,6 +259,68 @@ pub struct DocTable {
     pub nodes: usize,
     /// The documents, held for the batch's life.
     pub documents: Vec<Arc<Resident>>,
+    /// The cache the batch's 16z documents' reads decode their blocks into (decision 0353 step 4b, `view::cache`),
+    /// which each of their views names: none where no tape is 16z. A kernel that reads them makes it resident to
+    /// be read and written, and its batch is refused where its failures rose (`cache_failed`).
+    pub cache: Option<metal::Buffer>,
+}
+
+impl Drop for DocTable {
+    /// Its cache's counts go to the profile (`zcache.*`), its batch done.
+    fn drop(&mut self) {
+        if let Some(cache) = &self.cache {
+            zcache_report(cache);
+        }
+    }
+}
+
+/// A cache for `views`' 16z documents, made on the device, each view pointed at it: its address less the view's
+/// document's (`base` + its `at`: where a kernel's reads take the document), its entry size, its reads checked
+/// (shared). `Some(None)` where no view is 16z; `None` where there is no device to make it on, and then no view may
+/// be read (a 16z view's cache would be its tape's own bytes). Its shape goes to the profile (`zcache.*`).
+pub fn zcache_for(views: &mut [DocView], base: impl Fn(&DocView) -> u64) -> Option<Option<metal::Buffer>> {
+    use rerail_clif::view::{F16Z_BLOCK, F16Z_FORMAT};
+    let z: Vec<usize> = (0..views.len()).filter(|&i| views[i].format == F16Z_FORMAT).collect();
+    if z.is_empty() {
+        return Some(None);
+    }
+    let blocks = z.iter().map(|&i| (views[i].nodes as usize).div_ceil(F16Z_BLOCK as usize)).sum();
+    let entry = z.iter().map(|&i| views[i].columns[3] as usize).max().unwrap_or(0);
+    let spec = rerail_clif::view::cache::Spec::configured(blocks, entry);
+    let device = crate::METAL_DEVICE.as_ref()?;
+    let cache = device.new_buffer(spec.bytes() as u64, metal::MTLResourceOptions::StorageModeShared);
+    // SAFETY: the buffer's bytes, shared with the host, read by no kernel yet.
+    spec.init(unsafe { std::slice::from_raw_parts_mut(cache.contents().cast::<u8>(), spec.bytes()) }).expect("a cache's buffer of its size");
+    for &i in &z {
+        let rel = cache.gpu_address().wrapping_sub(base(&views[i])) as i64;
+        let v = &mut views[i];
+        (v.side[0], v.side[1]) = (rel as u32, (rel >> 32) as u32);
+        (v.columns[3], v.columns[4]) = (spec.entry_bytes() as u32, 1);
+    }
+    rerail_prof::count("zcache.batches", 1);
+    rerail_prof::count("zcache.blocks", blocks);
+    rerail_prof::count("zcache.entries", spec.entries as usize);
+    rerail_prof::count("zcache.entry_kb", spec.entry_bytes() >> 10);
+    Some(Some(cache))
+}
+
+/// A cache's counts in the profile (`zcache.*`; the statistics mode's too, where it is on): when its batch is done.
+pub fn zcache_report(cache: &metal::Buffer) {
+    let c = zcache_counts(cache);
+    for (name, n) in c.named() {
+        rerail_prof::count(name, n as usize);
+    }
+}
+
+/// The failures a cache has counted (no room: a read of its dead entry).
+pub fn zcache_failed(cache: &metal::Buffer) -> u32 {
+    zcache_counts(cache).failed
+}
+
+/// A cache's counts once its batch's kernels are done, the cache checked (`Spec::check`, decision 0403).
+fn zcache_counts(cache: &metal::Buffer) -> rerail_clif::view::cache::Counts {
+    // SAFETY: the cache's shared buffer, all of it; its batch's kernels are done.
+    rerail_clif::view::cache::Counts::checked(unsafe { std::slice::from_raw_parts(cache.contents().cast::<u8>(), cache.length() as usize) })
 }
 
 /// The slabs a batch of sources binds (PIAT §20.4.5, Q-R3): block programs take this many slab
@@ -300,7 +362,10 @@ impl DocTable {
         }
         u32::try_from(nodes).ok()?;
         u32::try_from(source).ok()?;
-        Some(Self { views, block, nodes, documents })
+        // A kernel's reads take a document at its block's address plus its `at` (`tape_doc`).
+        let address = block.as_ref().map_or(0, |b| b.buffer().gpu_address());
+        let cache = zcache_for(&mut views, |v| address + u64::from(v.at))?;
+        Some(Self { views, block, nodes, documents, cache })
     }
 }
 
@@ -308,6 +373,9 @@ struct SlabEntry {
     slab: Arc<Slab>,
     /// The admission clock when a document of it was last asked for.
     last_use: u64,
+    /// Whether it holds a loaded tape's home (`tape_room`, decision 0353 step 4a): while a tape holds the slab,
+    /// retiring it would free nothing, only lose its count. Retired once only the pool holds it.
+    tapes: bool,
 }
 
 #[derive(Default)]
@@ -365,7 +433,7 @@ impl State {
                     Ok(slab) => {
                         self.next_slab += 1;
                         let offset = slab.room(bytes).ok_or(Error::BackendCapacity)?;
-                        self.slabs.push(SlabEntry { slab: Arc::new(slab), last_use: self.clock });
+                        self.slabs.push(SlabEntry { slab: Arc::new(slab), last_use: self.clock, tapes: false });
                         rerail_prof::count("residency.slabs", 1);
                         return Ok((self.slabs.len() - 1, offset));
                     }
@@ -385,7 +453,7 @@ impl State {
             .slabs
             .iter()
             .enumerate()
-            .filter(|(_, entry)| !keep.contains(&entry.slab.id))
+            .filter(|(_, entry)| !keep.contains(&entry.slab.id) && (!entry.tapes || Arc::strong_count(&entry.slab) == 1))
             .min_by_key(|(_, entry)| entry.last_use)
             .map(|(at, _)| at)
         else {
@@ -521,11 +589,22 @@ pub struct Placed {
     pub table: Option<Vec<u8>>,
 }
 
-/// Places the misses, keeping the slabs of every document `digests` reads. A document of format 16 reads its
-/// language's table from its slab: placed with the first document of the language there, after its room. `ready`
-/// runs once every miss is placed and before any is published (the device's decode of 16z's pieces, decision 0336
-/// §8): a document is found only once it reads whole.
-pub fn insert(digests: &[[u8; 32]], parts: Vec<Placement<'_>>, ready: &mut dyn FnMut() -> Result<(), Error>) -> Result<(), Error> {
+/// A room of `bytes` (16-byte aligned) for a tape the store loads (decision 0353 step 4a): its slab and its offset
+/// there. The tape is written there once, by its load, and read there by the host and the device; the slab lives as
+/// long as a holder of it does, retired from the residency or not.
+pub fn tape_room(bytes: usize) -> Result<(Arc<Slab>, usize), Error> {
+    let mut state = STATE.0.lock().map_err(|_| Error::BackendFailure)?;
+    let (at, offset) = state.room(bytes, &[])?;
+    let clock = state.clock;
+    state.slabs[at].last_use = clock;
+    state.slabs[at].tapes = true;
+    Ok((Arc::clone(&state.slabs[at].slab), offset))
+}
+
+/// Places the misses, keeping the slabs of every document `digests` reads. A document of format 16 or 16z reads its
+/// language's table from its slab: placed with the first document of the language there, after its room. Every
+/// miss is placed before any is published: a document is found only once it reads whole.
+pub fn insert(digests: &[[u8; 32]], parts: Vec<Placement<'_>>) -> Result<(), Error> {
     let _admit = rerail_prof::Stage::start("residency.admit");
     let mut state = STATE.0.lock().map_err(|_| Error::BackendFailure)?;
     let mut keep = digests.iter().filter_map(|digest| state.documents.get(digest).map(|document| document.slab.id)).collect::<Vec<_>>();
@@ -560,7 +639,6 @@ pub fn insert(digests: &[[u8; 32]], parts: Vec<Placement<'_>>, ready: &mut dyn F
         keep.push(entry.slab.id);
         placed_all.push((digest, document));
     }
-    ready()?;
     for (digest, document) in placed_all {
         for (pool, bytes) in state.pools.iter_mut().zip(document.bytes) {
             *pool += bytes;
@@ -623,7 +701,9 @@ pub fn gather(documents: Vec<Arc<Resident>>) -> Result<Vec<Arc<Resident>>, Error
                 at
             }
         });
-        let moved = Arc::new(document.copied(&slab, to, table_at));
+        // copy (0353 step 7): a document copied between slabs, for a batch that reads one slab (row 13).
+        static GATHERED: rerail_prof::copies::Site = rerail_prof::copies::Site::new(13, "7", "documents copied between slabs (residency gather)");
+        let moved = Arc::new(GATHERED.time(|| (document.copied(&slab, to, table_at), document.len)));
         to += aligned(document.len);
         copied += document.len;
         // The residency finds it here now; the slab it was in may be retired once no batch reads it.

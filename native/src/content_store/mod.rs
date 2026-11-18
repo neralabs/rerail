@@ -14,7 +14,7 @@ pub use compression::{decompress, decompress_chunks, decompress_head, decompress
 mod collection_guard;
 pub use collection_guard::CollectionLease;
 mod connection;
-pub use compression::set_language_tags;
+pub use compression::{set_language_tags, set_tapes_kept_as_is};
 pub use connection::set_connection_functions;
 mod corpus_runs;
 pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, FileStat, RACY_NS, RETIRED_CORPUS_MEMO_SCHEMAS, StatIndex, live_fact_schema, stat_blob_key};
@@ -73,7 +73,7 @@ pub mod hazards;
 pub use compression::compress;
 pub use frames::forget_snapshot as forget_frames_snapshot;
 pub use segments::{SealedSegments, SegmentBytes, SegmentWriter};
-pub use object_segments::{ObjectBytes, ObjectFrame, ObjectMaps, QueuedTape};
+pub use object_segments::{ObjectBytes, ObjectFrame, ObjectMaps, QueuedTape, TapeBytes, TapeHeld};
 pub use frames::{CrossSpace as FramesCrossSpace, Unreachable as UnreachableFrames, Admitted as AdmittedFrame, Encoded as EncodedFrame, FramePlacer, Placed as PlacedFrame, Put as FramePut, Rel as FrameRel, Retag as FrameRetag, Delta as FrameDelta, Rows as FrameRows, Stored as FrameStored, local_space, MemoBlob, MemoPut, MemoRow, confirm_key as frame_confirm_key, reads_hash as frame_reads_hash};
 pub use connection::BusyRetries;
 pub use connection::OperationDeadline;

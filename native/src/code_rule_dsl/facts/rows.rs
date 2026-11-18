@@ -701,12 +701,16 @@ impl Rows {
             // A shared prefix is not its relation: a reader that binds the relation would read past it.
             ([(0, p)], None) if !p.capped() => p,
             (segs, tail) => self.merged.get_or_init(|| {
-                let parts: Vec<&Part> = segs.iter().map(|(_, p)| p).chain(tail.iter()).collect();
-                let mut one = Part::new(self.life, self.k, parts.iter().map(|p| p.len() as usize).sum());
-                for p in parts {
-                    one.copy_from(p, 0, p.len());
-                }
-                one
+                static MERGED: rerail_prof::copies::Site = rerail_prof::copies::Site::new(9, "6", "a relation's parts merged into one for the device (Rows::in_block)");
+                MERGED.time(|| {
+                    let parts: Vec<&Part> = segs.iter().map(|(_, p)| p).chain(tail.iter()).collect();
+                    let rows: usize = parts.iter().map(|p| p.len() as usize).sum();
+                    let mut one = Part::new(self.life, self.k, rows);
+                    for p in parts {
+                        one.copy_from(p, 0, p.len());
+                    }
+                    (one, 8 * self.k * rows)
+                })
             }),
         })
     }

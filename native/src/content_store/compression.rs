@@ -138,9 +138,30 @@ pub(crate) fn compress_source(bytes: &[u8], level: i32, tag: Option<u8>) -> io::
     compress_as(bytes, level, tag.and_then(|tag| dictionary_for(tag, Content::Source)))
 }
 
-/// A tape's frame: its language is in its own header.
+/// A tape's frame: its language is in its own header. A tape whose format compresses its own blocks (16z, decision
+/// 0353 step 4b) is its frame as it is (`CODEC_RAW`, [`tape_codec`]): a load is its bytes, and a reader decodes the
+/// blocks it reads, never the whole tape.
 pub(crate) fn compress_tape(bytes: &[u8], level: i32) -> io::Result<Vec<u8>> {
+    if KEPT_AS_IS.get().is_some_and(|kept| kept(bytes)) {
+        return Ok(bytes.to_vec());
+    }
     compress_as(bytes, level, tape_tag(bytes).and_then(|tag| dictionary_for(tag, Content::Tape)))
+}
+
+/// zstd's frame magic, which every frame `compress_tape` compresses starts with.
+const ZSTD_MAGIC: [u8; 4] = [0x28, 0xB5, 0x2F, 0xFD];
+
+/// The codec of a tape's frame as `compress_tape` made it: zstd's, or the tape as it is.
+pub(crate) fn tape_codec(frame: &[u8]) -> i64 {
+    if frame.starts_with(&ZSTD_MAGIC) { super::CODEC_ZSTD } else { super::object_segments::CODEC_RAW }
+}
+
+/// Which tapes are stored as they are: set by the engine, which knows the formats (`set_tapes_kept_as_is`).
+static KEPT_AS_IS: std::sync::OnceLock<fn(&[u8]) -> bool> = std::sync::OnceLock::new();
+
+/// Sets which tapes are stored as they are (`compress_tape`); the first setting stays.
+pub fn set_tapes_kept_as_is(kept: fn(&[u8]) -> bool) {
+    let _ = KEPT_AS_IS.set(kept);
 }
 
 /// How a writer finds a frame's language: the tape tag of a stored tape image, and of the language a file at a

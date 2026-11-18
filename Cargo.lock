@@ -3632,6 +3632,7 @@ dependencies = [
  "rerail-lang",
  "rerail-markdown-inline-lean",
  "rerail-markdown-lean",
+ "rerail-metal",
  "rerail-php-lean",
  "rerail-prof",
  "rerail-python-lean",
