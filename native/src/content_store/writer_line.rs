@@ -6,11 +6,13 @@
 //! release of the writer ahead of it, with no look and no pause. SQLite's own lock is then held,
 //! if at all, by a writer of another process.
 //!
-//! A wait in the line ends at the handoff or at one bound, what is left of the write's deadline
-//! (`connection::take_turn`): a holder that never lets go (a disk that stalls) costs a waiter that
-//! bound and no more. A waiter that reaches it marks the holder stalled until that holder lets go
-//! (`stalled`), so an apply, whose results can wait for a later one, leaves the store alone
-//! meanwhile instead of waiting out the bound again, and publishes at the first apply after.
+//! A wait in the line ends at the handoff, at the cancel its waiter names (`Wait::cancelled`: the
+//! waiter's owner sets it and wakes the lines, `wake_all`), or at one bound, what is left of the
+//! write's deadline (`connection::take_turn`): a holder that never lets go (a disk that stalls)
+//! costs a waiter that bound and no more. A waiter that waited the whole deadline itself marks the
+//! holder stalled until that holder lets go (`stalled`), so an apply, whose results can wait for a
+//! later one, leaves the store alone meanwhile instead of waiting out the bound again, and
+//! publishes at the first apply after.
 
 use parking_lot::{Condvar, Mutex, MutexGuard};
 use std::collections::{BTreeSet, HashMap};
@@ -74,6 +76,55 @@ impl Line {
         self.left.insert(ticket);
         false
     }
+
+    /// The holder of `ticket` lets go: its stall, if any, ends, and the turn passes on.
+    fn release(&mut self, ticket: u64) {
+        self.held = false;
+        #[cfg(debug_assertions)]
+        {
+            self.holder = None;
+        }
+        if self.stalled == Some(ticket) {
+            self.stalled = None;
+        }
+        self.advance();
+    }
+
+    /// A thread that asks for the line it holds would wait for itself.
+    #[cfg(debug_assertions)]
+    fn assert_not_held_here(&self) {
+        assert!(
+            !self.held || self.holder != Some(std::thread::current().id()),
+            "a thread asked for the store's writer line it holds"
+        );
+    }
+
+    /// The writers waiting for their turn: arrived, not passed over, and not holding.
+    #[cfg(test)]
+    fn waiting(&self) -> usize {
+        let arrived = usize::try_from(self.next - self.serving).unwrap_or(usize::MAX);
+        arrived - usize::from(self.held) - self.left.len()
+    }
+}
+
+/// How a writer waits for its turn.
+pub(super) struct Wait<'a> {
+    /// The longest it waits.
+    pub(super) bound: Duration,
+    /// How long a wait that ends at its bound must have lasted to mark the holder stalled: the
+    /// whole write deadline, so a writer whose operation already spent most of it marks nothing.
+    pub(super) stalls_after: Duration,
+    /// The fact its owner sets to end the wait, waking the lines (`wake_all`).
+    pub(super) cancelled: &'a dyn Fn() -> bool,
+}
+
+/// Why a writer was not given its turn.
+#[derive(Debug, Eq, PartialEq)]
+pub(super) enum Refusal {
+    /// It waited its whole bound.
+    Bound,
+    /// Its owner cancelled the wait.
+    Cancelled,
 }
 
 /// One store file's line of writers in this process.
@@ -103,45 +154,52 @@ impl WriterLine {
     }
 
     /// Takes the next turn: at once when nobody holds the line or waits in it, else at the
-    /// release of the writers ahead, in arrival order, waiting at most `bound`. Returns the turn,
-    /// or `None` once the bound passed, and how long it waited when it found the line held.
-    pub(super) fn take(&self, bound: Duration) -> (Option<Turn<'_>>, Option<Duration>) {
+    /// release of the writers ahead, in arrival order, until `wait` ends it. Returns the turn or
+    /// why it was refused, and how long it waited when it found the line held.
+    pub(super) fn take(&self, wait: &Wait<'_>) -> (Result<Turn<'_>, Refusal>, Option<Duration>) {
         let mut line = self.line.lock();
         #[cfg(debug_assertions)]
-        assert!(
-            !line.held || line.holder != Some(std::thread::current().id()),
-            "a thread asked for the store's writer line it holds"
-        );
+        line.assert_not_held_here();
         let ticket = line.arrive();
         if line.is_turn(ticket) {
-            return (Some(self.hold(&mut line, ticket)), None);
+            return (Ok(self.hold(&mut line, ticket)), None);
         }
         #[cfg(test)]
-        MutexGuard::unlocked(&mut line, run_wait_hook);
+        {
+            self.turn.notify_all();
+            MutexGuard::unlocked(&mut line, run_wait_hook);
+        }
         let started = Instant::now();
-        let taken = if self.wait_for_turn(&mut line, ticket, started + bound) {
-            Some(self.hold(&mut line, ticket))
-        } else {
-            // A writer with no time left to wait says nothing about the holder.
-            self.give_up(&mut line, ticket, !bound.is_zero());
-            None
+        let ended = self.wait_for_turn(&mut line, ticket, started + wait.bound, wait.cancelled);
+        let waited = started.elapsed();
+        let taken = match ended {
+            None => Ok(self.hold(&mut line, ticket)),
+            Some(refusal) => {
+                let stalls = refusal == Refusal::Bound && waited >= wait.stalls_after;
+                self.give_up(&mut line, ticket, stalls);
+                Err(refusal)
+            }
         };
-        (taken, Some(started.elapsed()))
+        (taken, Some(waited))
     }
 
-    /// Waits until `ticket`'s turn comes, or `deadline` passes: whether it came.
+    /// Waits until `ticket`'s turn comes (`None`), `cancelled` holds, or `deadline` passes.
     fn wait_for_turn(
         &self,
         line: &mut MutexGuard<'_, Line>,
         ticket: u64,
         deadline: Instant,
-    ) -> bool {
+        cancelled: &dyn Fn() -> bool,
+    ) -> Option<Refusal> {
         while !line.is_turn(ticket) {
-            if self.turn.wait_until(line, deadline).timed_out() {
-                return line.is_turn(ticket);
+            if cancelled() {
+                return Some(Refusal::Cancelled);
+            }
+            if self.turn.wait_until(line, deadline).timed_out() && !line.is_turn(ticket) {
+                return Some(Refusal::Bound);
             }
         }
-        true
+        None
     }
 
     /// The writer of `ticket` leaves the line; `stalls` marks the holder it gave up behind.
@@ -173,9 +231,37 @@ impl WriterLine {
         Some(self.hold(&mut line, ticket))
     }
 
-    /// Whether a holder outlasted a waiter's bound and holds the line still.
+    /// Whether a holder outlasted a waiter's whole deadline and holds the line still.
     pub(super) fn stalled(&self) -> bool {
         self.line.lock().stalled.is_some()
+    }
+
+    /// Returns once `count` writers wait in the line, so a test acts while they wait.
+    #[cfg(test)]
+    pub(super) fn wait_for_waiters(&self, count: usize) {
+        let mut line = self.line.lock();
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while line.waiting() < count {
+            assert!(
+                !self.turn.wait_until(&mut line, deadline).timed_out(),
+                "{count} writers never waited in the line"
+            );
+        }
+    }
+}
+
+/// Wakes every writer waiting in this process's lines, so each looks at its cancel again: called
+/// by an owner that has just set one.
+pub(super) fn wake_all() {
+    let lines = LINES
+        .lock()
+        .values()
+        .filter_map(Weak::upgrade)
+        .collect::<Vec<_>>();
+    for line in lines {
+        // Taken, so a waiter between its look at the cancel and its wait does not miss the wake.
+        drop(line.line.lock());
+        line.turn.notify_all();
     }
 }
 
@@ -210,17 +296,73 @@ pub(super) struct Turn<'a> {
 
 impl Drop for Turn<'_> {
     fn drop(&mut self) {
-        let mut line = self.line.line.lock();
-        line.held = false;
-        #[cfg(debug_assertions)]
-        {
-            line.holder = None;
-        }
-        if line.stalled == Some(self.ticket) {
-            line.stalled = None;
-        }
-        line.advance();
-        drop(line);
+        self.line.line.lock().release(self.ticket);
         self.line.turn.notify_all();
+    }
+}
+
+#[cfg(test)]
+mod line_tests {
+    //! The line's order and stall marks, with no threads.
+
+    use super::Line;
+
+    /// A holder and a line that has served it.
+    fn held() -> (Line, u64) {
+        let mut line = Line::default();
+        let holder = line.arrive();
+        assert!(line.is_turn(holder));
+        line.held = true;
+        (line, holder)
+    }
+
+    /// Two tickets behind a holder: at its release the first one's turn has come, the second
+    /// one's has not; at the first one's release the second one's comes.
+    #[test]
+    fn a_release_hands_the_turn_to_the_first_ticket_behind_the_holder_only() {
+        let (mut line, holder) = held();
+        let first = line.arrive();
+        let second = line.arrive();
+        assert!(!line.is_turn(first) && !line.is_turn(second));
+        assert_eq!(line.waiting(), 2);
+        line.release(holder);
+        assert!(line.is_turn(first), "the first ticket's turn has come");
+        assert!(!line.is_turn(second), "the second ticket's turn has not");
+        line.held = true;
+        line.release(first);
+        assert!(line.is_turn(second));
+    }
+
+    /// A ticket that left is passed over when its turn comes.
+    #[test]
+    fn a_ticket_that_left_is_passed_over() {
+        let (mut line, holder) = held();
+        let left = line.arrive();
+        let next = line.arrive();
+        assert!(
+            !line.leave(left),
+            "a ticket behind the holder leaves without moving the turn"
+        );
+        assert_eq!(line.waiting(), 1);
+        line.release(holder);
+        assert!(line.is_turn(next));
+    }
+
+    /// A stall mark ends with the release of the holder it names, not of another.
+    #[test]
+    fn a_stall_ends_with_the_holder_it_names() {
+        let (mut line, holder) = held();
+        line.stalled = Some(holder);
+        let next = line.arrive();
+        line.release(holder);
+        assert_eq!(line.stalled, None);
+        line.held = true;
+        line.stalled = Some(holder);
+        line.release(next);
+        assert_eq!(
+            line.stalled,
+            Some(holder),
+            "another holder's release leaves it"
+        );
     }
 }

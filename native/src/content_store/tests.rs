@@ -2094,6 +2094,7 @@ fn vm_steps(store: &ContentStore, work: impl FnOnce()) -> u64 {
         .connection
         .lock()
         .unwrap()
+        .instrument()
         .progress_handler(
             1,
             Some(move || {
@@ -2107,6 +2108,7 @@ fn vm_steps(store: &ContentStore, work: impl FnOnce()) -> u64 {
         .connection
         .lock()
         .unwrap()
+        .instrument()
         .progress_handler(1, None::<fn() -> bool>)
         .unwrap();
     steps.load(std::sync::atomic::Ordering::Relaxed)

@@ -36,7 +36,9 @@ use crate::code_rule_dsl::model::{
 use crate::code_rule_dsl::placement::parse_placement;
 #[cfg(feature = "code-rule-profile")]
 use crate::code_rule_dsl::{matcher::GrammarMatcher, profile};
-use crate::content_store::{OperationDeadline, StoreError, WorkspaceCompletion};
+use crate::content_store::{
+    OperationDeadline, StoreError, WaitsEndOn, WorkspaceCompletion, end_waits,
+};
 use crate::release_allocator_memory;
 use napi::bindgen_prelude::{AsyncTask, Buffer};
 use napi::{Env, Result, Task};
@@ -597,7 +599,8 @@ impl CodeRuleDslWorkspace {
 
     #[napi(catch_unwind)]
     pub fn close(&self) {
-        self.closed.store(true, Ordering::Release);
+        // Also ends the store waits of this workspace's applies (`apply_until_closed`).
+        end_waits(&self.closed);
         clear_if_unlocked(&self.state);
         match self.scopes.lock() {
             Ok(mut scopes) => *scopes = Vec::new(),
@@ -694,7 +697,7 @@ pub(super) fn close_poisoned(
     mutex: &Mutex<WorkspaceState>,
     closed: &AtomicBool,
 ) -> napi::Error {
-    closed.store(true, Ordering::Release);
+    end_waits(closed);
     drop(StateLease {
         guard: Some(guard),
         mutex,
@@ -886,7 +889,7 @@ impl Task for WorkspaceApplyTask {
             let Some(_slot) = cpu_slot().try_lock() else {
                 return Err(invalid(WORKSPACE_BUSY));
             };
-            self.apply_with_slot()
+            self.apply_until_closed()
         })
     }
     fn resolve(&mut self, _env: Env, output: ResultText) -> Result<ResultText> {
@@ -903,6 +906,14 @@ impl Task for WorkspaceApplyTask {
 }
 
 impl WorkspaceApplyTask {
+    /// `apply_with_slot`, its writes' waits for their turn in the store's writer line ending when
+    /// the workspace closes: a publication the close makes useless stops waiting at once, as it
+    /// stopped between busy attempts before the line.
+    pub(super) fn apply_until_closed(&mut self) -> Result<ResultText> {
+        let _close_ends_waits = WaitsEndOn::enter(&self.closed);
+        self.apply_with_slot()
+    }
+
     /// The apply itself, for a caller that already holds `cpu_slot`.
     pub(super) fn apply_with_slot(&mut self) -> Result<ResultText> {
         check_closed(&self.closed)?;

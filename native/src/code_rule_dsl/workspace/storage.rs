@@ -8,7 +8,7 @@ use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::tape;
 use crate::content_store::{
     CapacityState, ContentStore, MAX_COLLECTION_BATCH, OperationDeadline, SnapshotId, StoreError,
-    StoreResult, WorkspaceId, WorkspaceRegistration,
+    StoreResult, WaitsEndOn, WorkspaceId, WorkspaceRegistration, end_waits,
 };
 use crate::git_workspace;
 use napi::Result;
@@ -73,6 +73,10 @@ impl StorageMaintenance {
         let thread = std::thread::Builder::new()
             .name("rerail-store-maintenance".to_owned())
             .spawn(move || {
+                // Every write of this thread (renewals, collection, search indexes) waits in the
+                // store's writer line for the writers ahead, and the handle's drop ends that wait
+                // before it joins the thread, so a close never waits on those writers.
+                let _stop_ends_waits = WaitsEndOn::enter(&thread_stop);
                 let mut search_index_cursor = None;
                 loop {
                     std::thread::park_timeout(Duration::from_secs(30));
@@ -233,7 +237,9 @@ fn decode_stored_tape(
 
 impl Drop for StorageMaintenance {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Release);
+        // Ends a write of the thread waiting in the store's line, so the join below waits for no
+        // other writer (`WaitsEndOn` in `start`).
+        end_waits(&self.stop);
         if let Some(thread) = self.thread.take() {
             thread.thread().unpark();
             let _ = thread.join();
@@ -268,6 +274,16 @@ pub(super) struct StorageContext {
 }
 
 impl StorageContext {
+    /// Wakes the store's maintenance thread now, as its periodic wake would.
+    #[cfg(test)]
+    pub(super) fn wake_maintenance(&self) {
+        if let Some(registration) = &self._maintenance
+            && let Some(thread) = &registration.maintenance.thread
+        {
+            thread.thread().unpark();
+        }
+    }
+
     /// Whether `path` (workspace-relative) is named like one holding secrets, judged by its path in
     /// the repository: the store keeps no copy of such a file, not its source, tapes or results.
     pub(super) fn withholds(&self, path: &str) -> bool {

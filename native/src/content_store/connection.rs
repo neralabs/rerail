@@ -1,7 +1,7 @@
 //! Per-thread SQLite connections, connection pragmas, each write transaction's turn in the store's
 //! writer line, and the busy retry a write runs under for a writer of another process.
 
-use super::writer_line::{Turn, WriterLine};
+use super::writer_line::{Refusal, Turn, Wait, WriterLine};
 use super::{ContentStore, StoreError, StoreResult};
 use parking_lot::{ArcMutexGuard, Mutex as ParkingMutex, RawMutex};
 use rusqlite::{Connection, OpenFlags, Transaction, TransactionBehavior};
@@ -10,13 +10,15 @@ use std::collections::HashMap;
 use std::hash::{BuildHasher, RandomState};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 /// How long the store writes of one operation wait on other writers in all before they report
 /// `Busy`: their turns in the store's writer line (`take_turn`), which end at the release of the
-/// writer ahead and reach it only when the writers ahead stop letting go (a disk that stalls),
-/// and SQLite's lock held by a writer of another process, which each attempt waits for at most
-/// one busy timeout (`wait_for_writer`), so a cancelled write notices between attempts.
+/// writer ahead or at the cancel their owner sets (`WaitsEndOn`), and reach it only when the
+/// writers ahead stop letting go (a disk that stalls), and SQLite's lock held by a writer of
+/// another process, which each attempt waits for at most one busy timeout (`wait_for_writer`), so
+/// a cancelled write notices between attempts.
 const BUSY_DEADLINE: Duration = Duration::from_secs(10);
 /// The first and the largest backoff between a write's attempts on a store another process holds.
 const BUSY_BACKOFF_FIRST: Duration = Duration::from_millis(2);
@@ -72,6 +74,46 @@ thread_local! {
         const { std::cell::Cell::new(None) };
     /// Whether a write under this thread's `OperationDeadline` ended `Busy`.
     static OPERATION_BUSY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The fact that ends this thread's waits in the writer lines (`WaitsEndOn`).
+    static WAIT_CANCEL: RefCell<Option<Arc<AtomicBool>>> = const { RefCell::new(None) };
+}
+
+/// Ends this thread's waits for its turn in a store's writer line once `cancel` is set through
+/// `end_waits`, while it lives: the owner of the work (a workspace that closes, the maintenance
+/// handle that stops its thread) ends a wait it no longer needs at once, not at the turn or the
+/// write deadline. Such a write fails as interrupted, never as `Busy`, so it is not retried, marks
+/// no holder stalled and opens no busy window.
+pub(crate) struct WaitsEndOn {
+    previous: Option<Arc<AtomicBool>>,
+}
+
+impl WaitsEndOn {
+    pub(crate) fn enter(cancel: &Arc<AtomicBool>) -> Self {
+        let previous = WAIT_CANCEL.replace(Some(Arc::clone(cancel)));
+        Self { previous }
+    }
+}
+
+impl Drop for WaitsEndOn {
+    fn drop(&mut self) {
+        WAIT_CANCEL.set(self.previous.take());
+    }
+}
+
+/// Sets `cancel` and wakes every write waiting in this process's writer lines, so the waits under
+/// `WaitsEndOn` on it end.
+pub(crate) fn end_waits(cancel: &AtomicBool) {
+    cancel.store(true, Ordering::Release);
+    super::writer_line::wake_all();
+}
+
+/// Whether this thread's waits in the writer lines were ended (`WaitsEndOn`).
+fn waits_ended() -> bool {
+    WAIT_CANCEL.with_borrow(|cancel| {
+        cancel
+            .as_ref()
+            .is_some_and(|cancel| cancel.load(Ordering::Acquire))
+    })
 }
 
 /// Makes every store write this thread runs while it lives share one `BUSY_DEADLINE` instead of
@@ -159,6 +201,10 @@ pub(super) fn retry_busy<T>(
                             .map_or(Duration::ZERO, |hook| hook(spent))
                     }));
                 }
+                // Counted also when it ends the write: a wait that reached the deadline shows
+                // in the profile's retries and wait time.
+                retries.retries += 1;
+                add_wait(retries, attempted);
                 let Some(remaining) = deadline.checked_sub(waited) else {
                     if shared {
                         OPERATION_WAITED.set(Some(waited));
@@ -171,19 +217,14 @@ pub(super) fn retry_busy<T>(
                 if shared {
                     OPERATION_WAITED.set(Some(waited));
                 }
-                retries.retries += 1;
-                retries.wait_nanoseconds = retries.wait_nanoseconds.saturating_add(
-                    u64::try_from(attempted.saturating_add(delay).as_nanos()).unwrap_or(u64::MAX),
-                );
+                add_wait(retries, delay);
                 std::thread::sleep(delay);
                 backoff = backoff.saturating_mul(2).min(BUSY_BACKOFF_MAX);
             }
             result => {
                 // An attempt that got the lock after waiting for its turn or inside SQLite still
                 // spent that time.
-                retries.wait_nanoseconds = retries.wait_nanoseconds.saturating_add(
-                    u64::try_from(ATTEMPT_WAITED.get().as_nanos()).unwrap_or(u64::MAX),
-                );
+                add_wait(retries, ATTEMPT_WAITED.get());
                 if shared {
                     OPERATION_WAITED.set(Some(waited.saturating_add(ATTEMPT_WAITED.get())));
                 }
@@ -191,6 +232,13 @@ pub(super) fn retry_busy<T>(
             }
         }
     }
+}
+
+/// Adds `waited` to the time `retries` spent on other writers.
+fn add_wait(retries: &mut BusyRetries, waited: Duration) {
+    retries.wait_nanoseconds = retries
+        .wait_nanoseconds
+        .saturating_add(u64::try_from(waited.as_nanos()).unwrap_or(u64::MAX));
 }
 
 /// SQLite's busy handler of every store connection: waits for the write lock the way SQLite's
@@ -244,6 +292,13 @@ pub(crate) fn operation_waited() -> Option<Duration> {
     OPERATION_WAITED.get()
 }
 
+/// Counts `spent` as already waited by the writes under this thread's `OperationDeadline`, so a
+/// test gives a write only part of the deadline without waiting for the rest.
+#[cfg(test)]
+pub(crate) fn spend_operation_wait(spent: Duration) {
+    OPERATION_WAITED.set(Some(OPERATION_WAITED.get().unwrap_or_default() + spent));
+}
+
 /// `backoff` jittered to between half and all of it, so writers of several processes that found the
 /// same writer holding the store do not retry in step.
 fn jittered(backoff: Duration) -> Duration {
@@ -289,14 +344,9 @@ impl std::ops::Deref for ConnectionGuard<'_> {
     }
 }
 
-impl std::ops::DerefMut for ConnectionGuard<'_> {
-    fn deref_mut(&mut self) -> &mut Connection {
-        self.connection
-            .as_mut()
-            .expect("connection opened under the lock")
-    }
-}
-
+// The guard reads through the connection and has no mutable deref to it: a write transaction
+// begins only through `transaction_with_behavior` below, and a batch run outside a transaction
+// only through `execute_batch` below, each in a turn of the writer line.
 impl ConnectionGuard<'_> {
     /// Begins a transaction on the store, shadowing `Connection::transaction_with_behavior`. A
     /// write transaction (immediate or exclusive) first takes the write's turn in the store's
@@ -310,11 +360,30 @@ impl ConnectionGuard<'_> {
             TransactionBehavior::Deferred => None,
             _ => Some(take_turn(self.line)?),
         };
-        let connection: &mut Connection = self;
+        let connection = self
+            .connection
+            .as_mut()
+            .expect("connection opened under the lock");
         Ok(StoreTransaction {
             transaction: connection.transaction_with_behavior(behavior)?,
             _turn: turn,
         })
+    }
+
+    /// The connection itself, for a test that instruments it (a progress handler); no store code
+    /// reaches it this way.
+    #[cfg(test)]
+    pub(super) fn instrument(&mut self) -> &mut Connection {
+        self.connection
+            .as_mut()
+            .expect("connection opened under the lock")
+    }
+
+    /// Runs `sql` outside a transaction in a turn of the writer line, shadowing
+    /// `Connection::execute_batch`: such a batch may write (collection's checkpoint and vacuum).
+    pub(super) fn execute_batch(&self, sql: &str) -> rusqlite::Result<()> {
+        let _turn = take_turn(self.line)?;
+        std::ops::Deref::deref(self).execute_batch(sql)
     }
 }
 
@@ -339,33 +408,45 @@ impl StoreTransaction<'_> {
     }
 }
 
-/// Takes `line`'s turn for one write transaction: at once when the line is free, else in arrival
-/// order at the release of the writers ahead, for at most what is left of the write deadline
-/// (`busy_deadline`, less what the thread's `OperationDeadline` already waited), and not at all
-/// under `NoBusyWait`. The wait counts as time waited on another writer (`ATTEMPT_WAITED`), and a
-/// turn not given comes back as SQLite's own busy error, so every caller treats it as a busy store.
+/// Takes `line`'s turn for one write: at once when the line is free, else in arrival order at the
+/// release of the writers ahead, for at most what is left of the write deadline (`busy_deadline`,
+/// less what the thread's `OperationDeadline` already waited) and until the thread's cancel is set
+/// (`WaitsEndOn`), and not at all under `NoBusyWait`. The wait counts as time waited on another
+/// writer (`ATTEMPT_WAITED`). A turn not given in its bound comes back as SQLite's own busy error,
+/// so every caller treats it as a busy store; a cancelled wait as SQLite's interrupt, which no
+/// caller retries.
 pub(super) fn take_turn(line: &WriterLine) -> rusqlite::Result<Turn<'_>> {
-    let taken = if NO_BUSY_WAIT.get() {
-        line.try_take()
-    } else {
-        let spent = OPERATION_WAITED.get().unwrap_or_default();
-        let (turn, waited) = line.take(busy_deadline().saturating_sub(spent));
-        ATTEMPT_WAITED.set(
-            ATTEMPT_WAITED
-                .get()
-                .saturating_add(waited.unwrap_or_default()),
-        );
-        turn
+    if NO_BUSY_WAIT.get() {
+        return line.try_take().ok_or_else(|| refused(&Refusal::Bound));
+    }
+    let deadline = busy_deadline();
+    let wait = Wait {
+        bound: deadline.saturating_sub(OPERATION_WAITED.get().unwrap_or_default()),
+        stalls_after: deadline,
+        cancelled: &waits_ended,
     };
-    taken.ok_or_else(|| {
-        rusqlite::Error::SqliteFailure(
-            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
-            Some(
-                "another write of this process held the content store past the write deadline"
-                    .to_owned(),
-            ),
-        )
-    })
+    let (taken, waited) = line.take(&wait);
+    ATTEMPT_WAITED.set(
+        ATTEMPT_WAITED
+            .get()
+            .saturating_add(waited.unwrap_or_default()),
+    );
+    taken.map_err(|refusal| refused(&refusal))
+}
+
+/// The SQLite error a turn not given comes back as.
+fn refused(refusal: &Refusal) -> rusqlite::Error {
+    let (code, message) = match refusal {
+        Refusal::Bound => (
+            rusqlite::ffi::SQLITE_BUSY,
+            "another write of this process held the content store past the write deadline",
+        ),
+        Refusal::Cancelled => (
+            rusqlite::ffi::SQLITE_INTERRUPT,
+            "the content store write was cancelled while it waited for its turn",
+        ),
+    };
+    rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(code), Some(message.to_owned()))
 }
 
 impl ThreadConnection {
@@ -503,5 +584,11 @@ impl ContentStore {
     /// it, and holds it still (`WriterLine::stalled`).
     pub(crate) fn writes_stalled(&self) -> bool {
         self.connection.line.stalled()
+    }
+
+    /// Returns once `count` writes wait in this store's writer line.
+    #[cfg(test)]
+    pub(crate) fn wait_for_line_waiters(&self, count: usize) {
+        self.connection.line.wait_for_waiters(count);
     }
 }

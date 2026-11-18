@@ -297,8 +297,9 @@ impl ContentStore {
     }
 
     /// Renews the leases of `workspaces` in a single attempt: the maintenance thread renews them
-    /// again on its next wake, and closing the last workspace joins that thread, so it never
-    /// waits out other writers (`retry_busy`).
+    /// again on its next wake. Its turn in the writer line waits for the writers ahead, and the
+    /// maintenance handle's drop ends that wait (`WaitsEndOn`) before it joins the thread, so
+    /// closing the last workspace never waits on them.
     pub fn renew_workspace_leases(
         &self,
         workspaces: &[(WorkspaceId, &str)],

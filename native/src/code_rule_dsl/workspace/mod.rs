@@ -169,6 +169,14 @@ fn store_busy_now() -> Instant {
     Instant::now()
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Runs once on this thread right after a write that found the store busy was noted
+    /// (`note_store_busy`): a test lets the writer it waited behind go there.
+    pub(super) static AFTER_STORE_BUSY_NOTED: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 impl WorkspaceState {
     /// Whether an apply treats the store as busy from the start, with no write to it: a write of
     /// the current operation already found it busy (`operation_found_busy`), a write of this
@@ -217,6 +225,10 @@ impl WorkspaceState {
             eprintln!(
                 "rerail: repository reuse is paused: content store busy: another writer held it past the write deadline {during}; results stay in memory and the first apply {until} publishes them"
             );
+        }
+        #[cfg(test)]
+        if let Some(noted) = AFTER_STORE_BUSY_NOTED.take() {
+            noted();
         }
     }
 

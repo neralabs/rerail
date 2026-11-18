@@ -1,19 +1,26 @@
 //! The writer line through the store's own writes. A write is handed the store at the release of
 //! the writer ahead, in arrival order; behind a writer that commits batch after batch it waits for
-//! the batch in progress, not the run; a waiter that gives up at its bound marks the holder stalled
-//! until that holder lets go. No test waits on a clock: holders let go by channel, a waiter says it
-//! waits through `LINE_WAIT_HOOK`, and a bound passes at once under a deadline of a nanosecond.
+//! the batch in progress, not the run; a wait ends at the cancel its owner sets; a waiter that
+//! waited its whole deadline marks the holder stalled until that holder lets go. No test waits on
+//! a clock: holders let go by channel, a waiter says it waits through `LINE_WAIT_HOOK`, and a
+//! bound passes at once under a deadline of a nanosecond or with the operation's deadline spent.
 
-use super::test_support::TemporaryDatabase;
+use super::test_support::{TemporaryDatabase, TemporaryFolder};
 use super::{
-    BUSY_DEADLINE_OVERRIDE, ContentStore, LINE_WAIT_HOOK, OperationDeadline, StoreError,
-    StoreResult, operation_found_busy,
+    BUSY_DEADLINE_OVERRIDE, BUSY_WAIT_HOOK, ContentStore, LINE_WAIT_HOOK, OperationDeadline,
+    StoreError, StoreResult, WaitsEndOn, end_waits, operation_found_busy, spend_operation_wait,
 };
+use std::cell::Cell;
+use std::path::Path;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+
+/// A deadline no test waits out: a write gets only what its operation has not spent of it.
+const HOUR: Duration = Duration::from_secs(3_600);
 
 fn store(label: &str) -> (TemporaryDatabase, Arc<ContentStore>) {
     let path = TemporaryDatabase::new(&format!("rerail-writer-line-{label}"));
@@ -87,7 +94,10 @@ fn waiting_writer(
 
 /// Behind a writer that commits batch after batch, as a Git snapshot publication or a search-index
 /// build does, a write waits for the batch in progress. SQLite's lock alone gave every gap to the
-/// batch writer, so the write waited for the whole run (here 400 batches).
+/// batch writer, so the write waited for the whole run (here up to 400 batches). The batches are
+/// counted from the write's arrival (its place in the line, or its first look at SQLite's lock
+/// without one) to its own transaction, so the time its thread takes to get there counts for
+/// nothing.
 #[test]
 fn a_write_during_a_run_of_batches_waits_for_the_batch_in_progress_not_the_run() {
     let (_path, store) = store("batch-run");
@@ -110,16 +120,28 @@ fn a_write_during_a_run_of_batches_waits_for_the_batch_in_progress_not_the_run()
         })
     };
     starts.recv().unwrap();
-    let before = committed.load(Ordering::Acquire);
-    limit.store(before + 400, Ordering::Release);
-    batch(&store, 1).unwrap();
-    let after = committed.load(Ordering::Acquire);
+    limit.store(committed.load(Ordering::Acquire) + 400, Ordering::Release);
+    let arrived = Rc::new(Cell::new(None));
+    let at_arrival = {
+        let (arrived, committed) = (Rc::clone(&arrived), Arc::clone(&committed));
+        move || {
+            if arrived.get().is_none() {
+                arrived.set(Some(committed.load(Ordering::Acquire)));
+            }
+        }
+    };
+    LINE_WAIT_HOOK.set(Some(Box::new(at_arrival.clone())));
+    BUSY_WAIT_HOOK.set(Some(Box::new(move |_| at_arrival())));
+    let at_turn = store.immediate_transaction(|_| Ok(committed.load(Ordering::Acquire)));
+    LINE_WAIT_HOOK.set(None);
+    BUSY_WAIT_HOOK.set(None);
     done.store(true, Ordering::Release);
     writer.join().unwrap();
+    let at_turn = at_turn.unwrap();
+    let waited_for = arrived.get().map_or(0, |arrived| at_turn - arrived);
     assert!(
-        after - before < 20,
-        "the write waited for {} of the writer's batches, not the one in progress",
-        after - before
+        waited_for <= 2,
+        "the write waited for {waited_for} of the writer's batches, not the one in progress"
     );
 }
 
@@ -138,18 +160,36 @@ fn the_writer_ahead_hands_the_store_to_the_waiting_writers_in_arrival_order() {
     assert_eq!(*order.lock().unwrap(), ["holder", "first", "second"]);
 }
 
-/// Two stores of one process on one file, however its folder is spelled, share one line: a write
+/// A link at `link` to the folder `folder`: a symbolic link, or on Windows a junction, which needs
+/// no privilege.
+fn link_folder(folder: &Path, link: &Path) {
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(folder, link).unwrap();
+    #[cfg(windows)]
+    {
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(link)
+            .arg(folder)
+            .output()
+            .unwrap();
+        assert!(made.status.success(), "{made:?}");
+    }
+}
+
+/// Two stores of one process on one file, however its folder is reached, share one line: a write
 /// on one waits in the line for a write on the other, not in SQLite's busy handler. The first
-/// store opens the file before it exists (on Windows SQLite creates it then), the second after.
+/// store opens the file through a link to its folder before the file exists (on Windows SQLite
+/// creates it then), the second by the folder itself after, so on every system the line knows
+/// the file only by its resolved folder.
 #[test]
 fn two_stores_on_one_file_share_its_line() {
-    let (path, first) = store("shared-line");
-    let spelled = path
-        .parent()
-        .unwrap()
-        .join(".")
-        .join(path.file_name().unwrap());
-    let second = Arc::new(ContentStore::open(&spelled).unwrap());
+    let path = TemporaryDatabase::new("rerail-writer-line-shared-line");
+    let links = TemporaryFolder::new("rerail-writer-line-shared-line-link");
+    let linked = links.join("store");
+    link_folder(path.parent().unwrap(), &linked);
+    let first = Arc::new(ContentStore::open(&linked.join(path.file_name().unwrap())).unwrap());
+    let second = Arc::new(ContentStore::open(&path).unwrap());
     let order = Arc::new(Mutex::new(Vec::new()));
     let holder = Holder::hold(&first, &order);
     let waiter = waiting_writer(&second, &order, "second store");
@@ -199,19 +239,73 @@ fn a_writer_that_panics_while_holding_the_store_hands_it_on() {
     written.unwrap();
 }
 
+/// A write behind a holder after its operation spent `spent` of an hour's deadline: whether the
+/// holder was then marked stalled.
+fn stalls_after_spending(label: &str, spent: Duration) -> bool {
+    let (_path, store) = store(label);
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let holder = Holder::hold(&store, &order);
+    let operation = OperationDeadline::enter();
+    spend_operation_wait(spent);
+    BUSY_DEADLINE_OVERRIDE.set(Some(HOUR));
+    let given_up = batch(&store, 1);
+    BUSY_DEADLINE_OVERRIDE.set(None);
+    drop(operation);
+    assert!(matches!(given_up, Err(StoreError::Busy)), "{given_up:?}");
+    let stalled = store.writes_stalled();
+    holder.let_go();
+    stalled
+}
+
 /// A write with no time left in its operation's deadline gives up at once, and says nothing about
 /// the holder: the holder is not marked stalled.
 #[test]
 fn a_write_with_no_time_left_does_not_mark_the_holder_stalled() {
-    let (_path, store) = store("no-time-left");
+    assert!(!stalls_after_spending("no-time-left", HOUR));
+}
+
+/// A write whose operation already spent most of the deadline waits for the rest and gives up,
+/// but it did not itself wait the whole deadline, so it marks nothing: only such a waiter shows a
+/// holder stalled.
+#[test]
+fn a_write_with_part_of_the_deadline_left_does_not_mark_the_holder_stalled() {
+    assert!(!stalls_after_spending(
+        "part-left",
+        HOUR - Duration::from_nanos(1)
+    ));
+}
+
+/// A wait in the line ends when its owner cancels it (`end_waits`), with the holder still holding:
+/// the write fails as interrupted, not as busy, and marks no stall. A cancel that did not end the
+/// wait would leave it to its 10 s deadline, which ends as busy and marks the holder stalled.
+#[test]
+fn a_wait_in_the_line_ends_when_its_owner_cancels_it() {
+    let (_path, store) = store("cancelled");
     let order = Arc::new(Mutex::new(Vec::new()));
     let holder = Holder::hold(&store, &order);
-    BUSY_DEADLINE_OVERRIDE.set(Some(Duration::ZERO));
-    let given_up = batch(&store, 1);
-    BUSY_DEADLINE_OVERRIDE.set(None);
-    assert!(matches!(given_up, Err(StoreError::Busy)), "{given_up:?}");
-    assert!(!store.writes_stalled());
+    let cancel = Arc::new(AtomicBool::new(false));
+    let (waiting, waits) = mpsc::channel();
+    let waiter = {
+        let (store, cancel) = (Arc::clone(&store), Arc::clone(&cancel));
+        thread::spawn(move || {
+            let _ends = WaitsEndOn::enter(&cancel);
+            LINE_WAIT_HOOK.set(Some(Box::new(move || waiting.send(()).unwrap())));
+            let written = batch(&store, 1);
+            LINE_WAIT_HOOK.set(None);
+            written
+        })
+    };
+    waits.recv().unwrap();
+    end_waits(&cancel);
+    let written = waiter.join().unwrap();
+    assert!(
+        matches!(&written, Err(StoreError::Database(error)) if error.sqlite_error_code() == Some(rusqlite::ErrorCode::OperationInterrupted)),
+        "{written:?}"
+    );
+    assert!(!store.writes_stalled(), "a cancelled wait marks no stall");
     holder.let_go();
+    assert_eq!(*order.lock().unwrap(), ["holder"]);
+    batch(&store, 1).unwrap();
 }
 
 /// A write that must not wait (a workspace closing on the host's thread) gives up at once while
@@ -221,7 +315,11 @@ fn a_write_that_must_not_wait_gives_up_while_another_holds_the_store() {
     let (_path, store) = store("no-wait");
     let order = Arc::new(Mutex::new(Vec::new()));
     let holder = Holder::hold(&store, &order);
+    LINE_WAIT_HOOK.set(Some(Box::new(|| {
+        panic!("a write that must not wait took a place in the line")
+    })));
     let refused = store.immediate_transaction_no_wait(|_| Ok(()));
+    LINE_WAIT_HOOK.set(None);
     assert!(matches!(refused, Err(StoreError::Busy)), "{refused:?}");
     holder.let_go();
     store.immediate_transaction_no_wait(|_| Ok(())).unwrap();
