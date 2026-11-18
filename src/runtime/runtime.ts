@@ -2592,6 +2592,18 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       state.secretCalls.add(event.toolCallId);
     }
     const withheld = event.kind === "result" && state.secretCalls.has(event.toolCallId);
+    this.#storeEvent(state, sessionId, event, withheld);
+    if (withheld) {
+      await this.#append(state, { type: "secret-result", toolCallId: event.toolCallId, eventId: event.eventId });
+      state.secretCalls.delete(event.toolCallId);
+      state.withheldResults.add(event.eventId);
+    }
+    await this.#append(state, { type: "event", eventId: event.eventId });
+    state.processed.add(event.eventId);
+  }
+
+  /** The event's row in the session store, `withheld` when it is a result whose output Rerail keeps no copy of. */
+  #storeEvent(state: RuntimeSessionState, sessionId: string, event: AdapterEvent, withheld: boolean): void {
     this.#sessionStore.append({
       sessionId,
       eventId: event.eventId,
@@ -2600,13 +2612,6 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       payload: event.kind === "result" && withheld ? { ...event, output: withheldOutput(event.output) } : scrubValue(event),
       ...happenedAt(state),
     }, state.descriptor);
-    if (withheld) {
-      await this.#append(state, { type: "secret-result", toolCallId: event.toolCallId, eventId: event.eventId });
-      state.secretCalls.delete(event.toolCallId);
-      state.withheldResults.add(event.eventId);
-    }
-    await this.#append(state, { type: "event", eventId: event.eventId });
-    state.processed.add(event.eventId);
   }
 
   async persistTurn(sessionId: string, eventId: string): Promise<void> {

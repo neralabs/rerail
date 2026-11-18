@@ -264,17 +264,28 @@ function unrecordedSince(first: HookFailure, count: number, { total, keptSince }
  * later than `since`. A `.1` that cannot be read holds nothing, and the count starts where the live log began.
  */
 export function readHookFailures(home: string, since: number): HookFailureLog {
+  const { live, movedAside } = readLogParts(home);
+  const keptSince = keptSinceOf(live, movedAside, since);
+  const from = keptSince ?? since;
+  const parts = [movedAside, live];
+  return { failures: linesSince(parts, part => part.failures, from), keptSince, lateChecks: linesSince(parts, part => part.lateChecks, from) };
+}
+
+/** The live log and the part moved aside to `.1`, each undefined when it is missing or cannot be read. */
+function readLogParts(home: string): { live: LogPart | undefined; movedAside: LogPart | undefined } {
   const livePath = join(home, HOOK_FAILURES_FILE);
   let live = readPart(livePath);
   const movedAside = readPart(join(home, MOVED_ASIDE_FILE));
   // A hook moved the live log to `.1` between the two reads, so `.1` is the file just read as live: read the live name
   // again, which now holds the next part, rather than count the moved one twice.
   if (live !== undefined && live.id !== undefined && live.id === movedAside?.id) live = readPart(livePath);
+  return { live, movedAside };
+}
+
+/** When the log the parts are began, where that is later than `since` and failures before it may be gone; else null. */
+function keptSinceOf(live: LogPart | undefined, movedAside: LogPart | undefined, since: number): number | null {
   const start = movedAside === undefined ? live?.startedAt : movedAside.startedAt ?? oldestOf(movedAside) ?? live?.startedAt;
-  const keptSince = start !== undefined && start > since ? start : null;
-  const from = keptSince ?? since;
-  const parts = [movedAside, live];
-  return { failures: linesSince(parts, part => part.failures, from), keptSince, lateChecks: linesSince(parts, part => part.lateChecks, from) };
+  return start !== undefined && start > since ? start : null;
 }
 
 /** The lines `of` picks from each part that can be read, from `from` (epoch ms) on, oldest first. */
