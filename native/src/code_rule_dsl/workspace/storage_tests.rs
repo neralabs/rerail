@@ -1053,6 +1053,56 @@ fn a_store_that_stays_busy_costs_one_deadline_not_one_per_apply() {
     workspace.close();
 }
 
+/// A write of this process that holds the store past an apply's whole wait for it stalls the
+/// store: that apply keeps its results unpublished, later applies leave the store alone without
+/// waiting and open no window, and the first apply after the holder lets go publishes them.
+#[test]
+fn an_apply_behind_a_stalled_write_publishes_at_the_first_apply_after_it_lets_go() {
+    let _slot = test_slot();
+    let repository = Repository::new("stalled-write");
+    let store = repository.store("content.sqlite");
+    let workspace = attached_workspace(&repository, &store, &needle_code_rule());
+    let shared = Arc::clone(&workspace.state.lock().unwrap().storage.as_ref().unwrap().store);
+    let (holding, held) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel();
+    let holder = {
+        let shared = Arc::clone(&shared);
+        std::thread::spawn(move || shared.hold_write(&holding, &released))
+    };
+    held.recv().unwrap();
+    {
+        // The apply's wait in the store's line ends at once at its bound.
+        let _deadline = BusyDeadline::set(Duration::from_nanos(1));
+        assert_eq!(apply_source(&workspace, 1, "NEEDLE\n"), ["NEEDLE"]);
+    }
+    assert!(is_unpublished(&workspace, "edited.py"));
+    assert!(shared.writes_stalled());
+    assert!(
+        workspace.state.lock().unwrap().store_busy_until.is_none(),
+        "a stall behind a write of this process opens no window"
+    );
+    assert_eq!(apply_source(&workspace, 2, "NEEDLE = 2\n"), ["NEEDLE"]);
+    assert_eq!(
+        last_apply_storage_retries(),
+        (0, 0),
+        "an apply while the store is stalled never waits on it"
+    );
+    assert!(is_unpublished(&workspace, "edited.py"));
+
+    release.send(()).unwrap();
+    holder.join().unwrap().unwrap();
+    assert!(!shared.writes_stalled());
+    assert_eq!(apply_source(&workspace, 3, "NEEDLE = 3\n"), ["NEEDLE"]);
+    assert!(!is_unpublished(&workspace, "edited.py"));
+    assert!(
+        workspace.state.lock().unwrap().files["edited.py"]
+            .stored
+            .is_some(),
+        "the first apply after the holder let go publishes the file"
+    );
+    workspace.close();
+}
+
 /// Once the window has passed and the writer left, the next apply tries the store again: it
 /// deletes the removals the busy store kept, then publishes the files it left unpublished. Until
 /// then even a free store is left alone.
