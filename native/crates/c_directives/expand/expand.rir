@@ -1,0 +1,580 @@
+program - ir=7 grammar=none
+; Decision 0348: a translation unit's preprocessing, as preprocessing words (the compiler's
+; `pp_words`, which says what each word does). The lean preprocessor's `Pp` is its reference.
+; One program for C and C++: the rows marked `cpp` (and `ppsuffix`, `ppcpp`) apply where the run
+; is C++'s (`pp_words::Env::cpp`). Generated from a labeled text, the words numbered and their
+; strings listed.
+  mode set=0 query=0
+  string 0 "("
+  string 1 ")"
+  string 2 ","
+  string 3 "define"
+  string 4 "undef"
+  string 5 "if"
+  string 6 "ifdef"
+  string 7 "ifndef"
+  string 8 "elif"
+  string 9 "elifdef"
+  string 10 "elifndef"
+  string 11 "else"
+  string 12 "endif"
+  string 13 "include"
+  string 14 "include_next"
+  string 15 "import"
+  string 16 "pragma"
+  string 17 "line"
+  string 18 "embed"
+  string 19 "<<="
+  string 20 ">>="
+  string 21 "..."
+  string 22 "->"
+  string 23 "++"
+  string 24 "--"
+  string 25 "<<"
+  string 26 ">>"
+  string 27 "<="
+  string 28 ">="
+  string 29 "=="
+  string 30 "!="
+  string 31 "&&"
+  string 32 "||"
+  string 33 "*="
+  string 34 "/="
+  string 35 "%="
+  string 36 "+="
+  string 37 "-="
+  string 38 "&="
+  string 39 "^="
+  string 40 "|="
+  string 41 "::"
+  string 42 "<:"
+  string 43 ":>"
+  string 44 "<%"
+  string 45 "%>"
+  string 46 "%:"
+  string 47 "%:%:"
+  string 48 "##"
+  string 49 "#"
+  string 50 "["
+  string 51 "]"
+  string 52 "{"
+  string 53 "}"
+  string 54 ";"
+  string 55 "~"
+  string 56 "?"
+  string 57 ":"
+  string 58 "."
+  string 59 "="
+  string 60 "!"
+  string 61 "+"
+  string 62 "-"
+  string 63 "*"
+  string 64 "/"
+  string 65 "%"
+  string 66 "^"
+  string 67 "&"
+  string 68 "|"
+  string 69 "<"
+  string 70 ">"
+  string 71 "->*"
+  string 72 "<=>"
+  string 73 ".*"
+  ppop s19
+  ppop s20
+  ppop s21
+  ppop s22
+  ppop s23
+  ppop s24
+  ppop s25
+  ppop s26
+  ppop s27
+  ppop s28
+  ppop s29
+  ppop s30
+  ppop s31
+  ppop s32
+  ppop s33
+  ppop s34
+  ppop s35
+  ppop s36
+  ppop s37
+  ppop s38
+  ppop s39
+  ppop s40
+  ppop s41
+  ppop s42
+  ppop s43
+  ppop s44
+  ppop s45
+  ppop s46
+  ppop s47
+  ppop s48
+  ppop s49
+  ppop s0
+  ppop s1
+  ppop s50
+  ppop s51
+  ppop s52
+  ppop s53
+  ppop s54
+  ppop s2
+  ppop s55
+  ppop s56
+  ppop s57
+  ppop s58
+  ppop s59
+  ppop s60
+  ppop s61
+  ppop s62
+  ppop s63
+  ppop s64
+  ppop s65
+  ppop s66
+  ppop s67
+  ppop s68
+  ppop s69
+  ppop s70
+  ppop s71 cpp
+  ppop s72 cpp
+  ppop s73 cpp
+  ppsuffix
+  ppcpp
+  ; main: the TU's tokens, macros expanded, onto the output tape.
+  0000 PUSH @0002
+  0001 GOTO @0007
+  0002 IS m=0 8  ; EOF
+  0003 GOTO @0006
+  0004 PUT 0
+  0005 GOTO @0000
+  0006 ACCEPT 0
+  ; one: T <- the next token, macros expanded (lean `Pp::next`).
+  0007 PUSH @0009
+  0008 GOTO @0131
+  0009 IS m=4 0  ; in an `#if`'s line, `defined` is an operator
+  0010 GOTO @0014
+  0011 LOOKUP 0  ; an identifier, not painted, naming a macro
+  0012 GOTO @0017
+  0013 RETURN 0
+  0014 DEFINED 0
+  0015 RETURN 0
+  0016 GOTO @0011
+  0017 MACRO m=0 0  ; being expanded: painted
+  0018 GOTO @0025
+  0019 MACRO m=2 0  ; a built-in
+  0020 GOTO @0027
+  0021 MACRO m=1 0
+  0022 GOTO @0057
+  0023 FRAME 0  ; object-like
+  0024 GOTO @0086
+  0025 PAINT 0
+  0026 RETURN 0
+  ; A built-in: its value, its operand read raw to its `)` (and expanded where it asks).
+  0027 MACRO m=1 0
+  0028 GOTO @0031
+  0029 BUILTIN m=0 0
+  0030 RETURN 0
+  0031 PEEK m=1 s0
+  0032 GOTO @0034
+  0033 RETURN 0
+  0034 BUILTIN m=1 0  ; an operator here: its operand's level opened
+  0035 GOTO @0037
+  0036 RETURN 0
+  0037 READ 0  ; its `(`
+  0038 PUSH @0040
+  0039 GOTO @0131
+  0040 IS m=0 8
+  0041 GOTO @0045
+  0042 BUILTIN m=2 0
+  0043 GOTO @0045
+  0044 GOTO @0038
+  0045 BUILTIN m=3 0  ; the operand to be expanded, else T its value
+  0046 GOTO @0048
+  0047 RETURN 0
+  0048 PUSH @0050
+  0049 GOTO @0007
+  0050 IS m=0 8
+  0051 GOTO @0054
+  0052 KEEP 0
+  0053 GOTO @0048
+  0054 BUILTIN m=4 0  ; T its value, or `_Pragma` carried out
+  0055 RETURN 0
+  0056 GOTO @0007
+  0057 PEEK m=1 s0  ; a call only where `(` follows
+  0058 GOTO @0060
+  0059 RETURN 0
+  0060 FRAME 0
+  0061 READ 0  ; the `(`
+  ; args: the call's arguments, unexpanded, to its `)`.
+  0062 PUSH @0064
+  0063 GOTO @0131
+  0064 IS m=0 8  ; EOF (or a stop source's end): no `)`
+  0065 GOTO @0084
+  0066 IS m=1 s0
+  0067 GOTO @0074
+  0068 IS m=1 s1
+  0069 GOTO @0076
+  0070 IS m=1 s2
+  0071 GOTO @0079
+  0072 ARG m=0 0
+  0073 GOTO @0062
+  0074 ARG m=1 0
+  0075 GOTO @0062
+  0076 ARG m=2 0  ; the call's `)`, at depth 0
+  0077 GOTO @0081
+  0078 GOTO @0062
+  0079 ARG m=3 0
+  0080 GOTO @0062
+  0081 ARG m=4 0  ; the count right
+  0082 GOTO @0086
+  0083 RETURN 0  ; else T is the call's name, painted
+  0084 ARG m=5 0
+  0085 GOTO @0007
+  ; pre: each argument substitution expands, expanded in isolation, in the order it asks.
+  0086 PRE m=0 0
+  0087 GOTO @0089
+  0088 GOTO @0097
+  0089 PUSH @0091
+  0090 GOTO @0007
+  0091 IS m=0 8  ; the argument's end
+  0092 GOTO @0095
+  0093 KEEP 0
+  0094 GOTO @0089
+  0095 PRE m=1 0
+  0096 GOTO @0086
+  ; subst: the top frame's body substituted, a body token a turn (`SUB`), its `__VA_OPT__`s'
+  ; contents walked in place, `#`'s literals made a token a turn (`STR`), then its pastes (`GLUE`);
+  ; then read, its macro disabled while it is.
+  0097 SUB m=0 0
+  0098 SUB m=1 0  ; the body's next token, B
+  0099 GOTO @0107
+  0100 SUB m=7 0  ; a __VA_OPT__'s content ended
+  0101 GOTO @0120
+  0102 SUB m=9 0  ; the output's pastes
+  0103 GLUE 0
+  0104 GOTO @0103
+  0105 SUB m=10 0
+  0106 GOTO @0007
+  0107 SUB m=2 0  ; `#` and a parameter
+  0108 GOTO @0115
+  0109 SUB m=3 0  ; `#__VA_OPT__(`
+  0110 GOTO @0098
+  0111 SUB m=4 0  ; `__VA_OPT__(`
+  0112 GOTO @0098
+  0113 SUB m=5 0  ; a parameter's argument, or B
+  0114 GOTO @0098
+  0115 STR m=0 0
+  0116 STR m=1 0
+  0117 GOTO @0116
+  0118 STR m=2 0
+  0119 GOTO @0098
+  0120 SUB m=6 0  ; a `#__VA_OPT__`'s content: pasted, then stringized
+  0121 GOTO @0123
+  0122 GOTO @0098
+  0123 GLUE 0
+  0124 GOTO @0123
+  0125 SUB m=8 0
+  0126 STR m=0 0
+  0127 STR m=1 0
+  0128 GOTO @0127
+  0129 STR m=3 0
+  0130 GOTO @0098
+  ; raw: T <- the next token, unexpanded; directives carried out as their `#` is read.
+  0131 READ 0
+  0132 IS m=3 0
+  0133 GOTO @0135
+  0134 RETURN 0
+  0135 LINE 0
+  0136 GOTO @0138
+  0137 GOTO @0131  ; the null directive
+  0138 IS m=0 1  ; a number: GNU's line marker
+  0139 GOTO @0210
+  0140 IS m=1 s3
+  0141 GOTO @0236
+  0142 IS m=1 s4
+  0143 GOTO @0255
+  0144 IS m=1 s5
+  0145 GOTO @0283
+  0146 IS m=1 s6
+  0147 GOTO @0257
+  0148 IS m=1 s7
+  0149 GOTO @0267
+  0150 IS m=1 s8
+  0151 GOTO @0299
+  0152 IS m=1 s9
+  0153 GOTO @0299
+  0154 IS m=1 s10
+  0155 GOTO @0299
+  0156 IS m=1 s11
+  0157 GOTO @0299
+  0158 IS m=1 s12
+  0159 GOTO @0307
+  0160 IS m=1 s13
+  0161 GOTO @0222
+  0162 IS m=1 s14
+  0163 GOTO @0222
+  0164 IS m=1 s15
+  0165 GOTO @0222
+  0166 IS m=1 s16
+  0167 GOTO @0220
+  0168 IS m=1 s17
+  0169 GOTO @0211
+  0170 IS m=1 s18
+  0171 GOTO @0174
+  0172 SKIPLINE 0
+  0173 GOTO @0131
+  ; `#embed`: its name (expanded where it is not spelled), then its parameters expanded, then its
+  ; file's bytes.
+  0174 EMBED m=0 0
+  0175 GOTO @0202
+  0176 PUSH @0178
+  0177 GOTO @0007
+  0178 IS m=0 8
+  0179 GOTO @0182
+  0180 KEEP 0
+  0181 GOTO @0176
+  0182 EMBED m=2 0
+  0183 EMBED m=3 0  ; a parameter
+  0184 GOTO @0188
+  0185 EMBED m=7 0  ; the file, its first tokens
+  0186 GOTO @0197
+  0187 GOTO @0200
+  0188 EMBED m=4 0  ; an argument's token
+  0189 GOTO @0188
+  0190 EMBED m=5 0  ; `limit`
+  0191 GOTO @0193
+  0192 GOTO @0183
+  0193 PUSH @0195
+  0194 GOTO @0371
+  0195 EMBED m=6 0
+  0196 GOTO @0183
+  0197 EMBED m=8 0  ; a byte
+  0198 GOTO @0197
+  0199 EMBED m=9 0
+  0200 EMBED m=10 0
+  0201 GOTO @0131
+  0202 PUSH @0204
+  0203 GOTO @0007
+  0204 IS m=0 8
+  0205 GOTO @0208
+  0206 KEEP 0
+  0207 GOTO @0202
+  0208 EMBED m=1 0
+  0209 GOTO @0176
+  0210 LINEDIR m=0 0
+  0211 IF m=2 0  ; its line expanded
+  0212 PUSH @0214
+  0213 GOTO @0007
+  0214 IS m=0 8
+  0215 GOTO @0218
+  0216 KEEP 0
+  0217 GOTO @0212
+  0218 LINEDIR m=1 0
+  0219 GOTO @0131
+  0220 PRAGMA 0
+  0221 GOTO @0131
+  ; An include: its header name as mode (a) read it, or made of its line expanded.
+  0222 INCLUDE m=0 0
+  0223 GOTO @0234
+  0224 IF m=2 0
+  0225 PUSH @0227
+  0226 GOTO @0007
+  0227 IS m=0 8
+  0228 GOTO @0231
+  0229 KEEP 0
+  0230 GOTO @0225
+  0231 INCLUDE m=1 0
+  0232 GOTO @0234
+  0233 GOTO @0131  ; malformed, or a name the host resolves for the next round
+  0234 INCLUDE m=2 0
+  0235 GOTO @0131
+  ; `#define`: its name, its parameters, its body marked, its uses walked, a token a turn.
+  0236 DEFINE m=0 0  ; its name
+  0237 GOTO @0239
+  0238 GOTO @0131
+  0239 DEFINE m=1 0  ; `(` right after it
+  0240 GOTO @0242
+  0241 GOTO @0247
+  0242 DEFINE m=2 0  ; a parameter list's token
+  0243 GOTO @0242
+  0244 DEFINE m=3 0  ; the list closed
+  0245 GOTO @0247
+  0246 GOTO @0131
+  0247 DEFINE m=4 0
+  0248 DEFINE m=5 0  ; a body token marked
+  0249 GOTO @0248
+  0250 DEFINE m=6 0
+  0251 DEFINE m=7 0  ; a use walked
+  0252 GOTO @0251
+  0253 DEFINE m=8 0
+  0254 GOTO @0131
+  0255 UNDEF 0
+  0256 GOTO @0131
+  ; `#ifdef` and `#ifndef`: no name is not defined (the lean pass's reading).
+  0257 LINE 0
+  0258 GOTO @0261
+  0259 COND m=0 0
+  0260 GOTO @0310
+  0261 IS m=0 0  ; an identifier
+  0262 GOTO @0264
+  0263 GOTO @0280
+  0264 LOOKUP 0
+  0265 GOTO @0277
+  0266 GOTO @0280
+  0267 LINE 0
+  0268 GOTO @0271
+  0269 COND m=1 0
+  0270 GOTO @0131
+  0271 IS m=0 0
+  0272 GOTO @0274
+  0273 GOTO @0277
+  0274 LOOKUP 0
+  0275 GOTO @0280
+  0276 GOTO @0277
+  0277 SKIPLINE 0
+  0278 COND m=1 0
+  0279 GOTO @0131
+  0280 SKIPLINE 0
+  0281 COND m=0 0
+  0282 GOTO @0310
+  ; `#if`: its line expanded, `defined` an operator, then evaluated.
+  0283 IF m=0 0
+  0284 PUSH @0286
+  0285 GOTO @0007
+  0286 IS m=0 8
+  0287 GOTO @0290
+  0288 KEEP 0
+  0289 GOTO @0284
+  0290 IF m=1 0
+  0291 PUSH @0293
+  0292 GOTO @0371
+  0293 EXPR m=14 0  ; whole, and true
+  0294 GOTO @0297
+  0295 COND m=0 0
+  0296 GOTO @0310
+  0297 COND m=1 0
+  0298 GOTO @0131
+  ; An `#elif…` or `#else` read: its chain was taken, so the rest of it is passed, to its `#endif`.
+  0299 COND m=2 0
+  0300 GOTO @0303
+  0301 SKIPLINE 0  ; no group open: unmatched
+  0302 GOTO @0131
+  0303 IS m=1 s11
+  0304 COND m=5 0
+  0305 SKIPLINE 0
+  0306 GOTO @0310
+  0307 SKIPLINE 0
+  0308 COND m=6 0
+  0309 GOTO @0131
+  ; skip: a group not taken, passed by its chain to the next directive of it (lean `skip_group`).
+  0310 SKIP 0
+  0311 READ 0  ; its `#`
+  0312 IS m=0 8  ; the file's end, the chain open
+  0313 GOTO @0131
+  0314 LINE 0
+  0315 GOTO @0317
+  0316 GOTO @0310
+  0317 IS m=1 s12
+  0318 GOTO @0307
+  0319 COND m=3 0  ; taken already, or past its `#else`: passed too
+  0320 GOTO @0330
+  0321 IS m=1 s11
+  0322 GOTO @0333
+  0323 IS m=1 s8
+  0324 GOTO @0337
+  0325 IS m=1 s9
+  0326 GOTO @0350
+  0327 IS m=1 s10
+  0328 GOTO @0359
+  0329 GOTO @0310
+  0330 IS m=1 s11
+  0331 COND m=5 0
+  0332 GOTO @0310
+  0333 SKIPLINE 0
+  0334 COND m=5 0
+  0335 COND m=4 0
+  0336 GOTO @0131
+  0337 IF m=0 0
+  0338 PUSH @0340
+  0339 GOTO @0007
+  0340 IS m=0 8
+  0341 GOTO @0344
+  0342 KEEP 0
+  0343 GOTO @0338
+  0344 IF m=1 0
+  0345 PUSH @0347
+  0346 GOTO @0371
+  0347 EXPR m=14 0
+  0348 GOTO @0368
+  0349 GOTO @0310
+  0350 LINE 0
+  0351 GOTO @0353
+  0352 GOTO @0310
+  0353 IS m=0 0
+  0354 GOTO @0356
+  0355 GOTO @0310
+  0356 LOOKUP 0
+  0357 GOTO @0368
+  0358 GOTO @0310
+  0359 LINE 0
+  0360 GOTO @0362
+  0361 GOTO @0368
+  0362 IS m=0 0
+  0363 GOTO @0365
+  0364 GOTO @0368
+  0365 LOOKUP 0
+  0366 GOTO @0310
+  0367 GOTO @0368
+  0368 SKIPLINE 0
+  0369 COND m=4 0
+  0370 GOTO @0131
+  ; `#if`'s expression (`pp_expr`'s precedence climbing): `cond` is `ternary (, ternary)*`,
+  ; `ternary` is `binary(1) (? cond : ternary)?`, `binary(min)` is `unary (op binary(p+1))*` over the
+  ; operators of precedence `min` or more, `unary` a prefix operator's operand, `( cond )` or a
+  ; primary. Each value is left on the expression's stack.
+  0371 PUSH @0373
+  0372 GOTO @0378
+  0373 EXPR m=6 0  ; `,`
+  0374 GOTO @0376
+  0375 RETURN 0
+  0376 PUSH @0373
+  0377 GOTO @0378
+  0378 EXPR m=7 0
+  0379 PUSH @0381
+  0380 GOTO @0391
+  0381 EXPR m=11 0  ; `?`
+  0382 GOTO @0384
+  0383 RETURN 0
+  0384 PUSH @0386
+  0385 GOTO @0371
+  0386 EXPR m=12 0  ; `:`
+  0387 PUSH @0389
+  0388 GOTO @0378
+  0389 EXPR m=13 0
+  0390 RETURN 0
+  0391 PUSH @0393
+  0392 GOTO @0401
+  0393 EXPR m=8 0  ; a binary operator
+  0394 GOTO @0397
+  0395 EXPR m=10 0
+  0396 RETURN 0
+  0397 PUSH @0399
+  0398 GOTO @0391
+  0399 EXPR m=9 0
+  0400 GOTO @0393
+  0401 EXPR m=0 0  ; an operand's token
+  0402 GOTO @0404
+  0403 RETURN 0
+  0404 EXPR m=1 0  ; a prefix operator
+  0405 GOTO @0410
+  0406 EXPR m=3 0  ; `(`
+  0407 GOTO @0414
+  0408 EXPR m=5 0
+  0409 RETURN 0
+  0410 PUSH @0412
+  0411 GOTO @0401
+  0412 EXPR m=2 0
+  0413 RETURN 0
+  0414 PUSH @0416
+  0415 GOTO @0371
+  0416 EXPR m=4 0  ; `)`
+  0417 RETURN 0

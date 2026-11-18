@@ -62,6 +62,34 @@ pub const OPCODES: &[(u8, &str)] = &[
     (COUNT, "COUNT"),
     (CHECK, "CHECK"),
     (SETTLE, "SETTLE"),
+    (READ, "READ"),
+    (LINE, "LINE"),
+    (IS, "IS"),
+    (PEEK, "PEEK"),
+    (LOOKUP, "LOOKUP"),
+    (MACRO, "MACRO"),
+    (PAINT, "PAINT"),
+    (PUT, "PUT"),
+    (FRAME, "FRAME"),
+    (ARG, "ARG"),
+    (PRE, "PRE"),
+    (KEEP, "KEEP"),
+    (DEFINE, "DEFINE"),
+    (UNDEF, "UNDEF"),
+    (SKIPLINE, "SKIPLINE"),
+    (SKIP, "SKIP"),
+    (COND, "COND"),
+    (IF, "IF"),
+    (DEFINED, "DEFINED"),
+    (INCLUDE, "INCLUDE"),
+    (PRAGMA, "PRAGMA"),
+    (BUILTIN, "BUILTIN"),
+    (LINEDIR, "LINEDIR"),
+    (EMBED, "EMBED"),
+    (SUB, "SUB"),
+    (STR, "STR"),
+    (GLUE, "GLUE"),
+    (EXPR, "EXPR"),
 ];
 
 /// How an opcode's operand prints.
@@ -85,7 +113,8 @@ pub fn operand(opcode: u8, mode: u8) -> Operand {
     match opcode {
         RETAG if mode == 3 => Operand::Number,
         FORK | GOTO | PUSH => Operand::Target,
-        WORD_IS => Operand::String,
+        WORD_IS | PEEK => Operand::String,
+        IS if mode == 1 => Operand::String,
         SWITCH => Operand::Switch,
         OPEN | LEAF | NODE_SUPER | RETAG | MERGE | WRAP | REMEMBER => Operand::Kind,
         NODE_FIELD => Operand::Field,
@@ -417,6 +446,17 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
         }
         "switch" => switch_row(parts, line)?,
         "reading" => reading_row(parts, line)?,
+        "ppop" => {
+            let s = line.number("s")?;
+            if line.peek_word().as_deref() == Some("cpp") {
+                line.word()?;
+                parts.pp.cpp_ops.push(s);
+            } else {
+                parts.pp.ops.push(s);
+            }
+        }
+        "ppsuffix" => parts.pp.suffix = true,
+        "ppcpp" => parts.pp.cpp = true,
         "rule" => {
             index(line, parts.rules.len(), "rule")?;
             parts.rules.push(line.number("@")?);
@@ -859,6 +899,9 @@ pub fn validate(program: &Words) -> Result<(), Error> {
     if program.labels.iter().any(|&label| program.strings.get(usize::from(label)).is_none_or(|s| std::str::from_utf8(s).is_err())) {
         return Err(Error::InvalidOperand(0));
     }
+    if program.words.iter().any(|&w| crate::pp_words::is_pp(split(w).0)) {
+        return crate::pp_words::validate(program);
+    }
     if program.words.iter().any(|&w| crate::stream::is_stream(split(w).0)) {
         return crate::stream::validate_tier2(program);
     }
@@ -893,6 +936,18 @@ pub fn head_rows(out: &mut String, program: &Words) {
     crate::rir_text::count_rows(out, &program.counts);
     crate::rir_text::local_check_rows(out, &program.local_checks);
     crate::rir_text::rule_rows(out, &program.rules);
+    for s in &program.pp.ops {
+        let _ = writeln!(out, "  ppop s{s}");
+    }
+    for s in &program.pp.cpp_ops {
+        let _ = writeln!(out, "  ppop s{s} cpp");
+    }
+    if program.pp.suffix {
+        let _ = writeln!(out, "  ppsuffix");
+    }
+    if program.pp.cpp {
+        let _ = writeln!(out, "  ppcpp");
+    }
 }
 
 /// Each block program's rows (`block::block_rows`).

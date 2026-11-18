@@ -75,14 +75,16 @@ pub fn tape(src: &[u8]) -> Result<Tape, Refusal> {
 #[doc(hidden)]
 pub fn lex_only(src: &[u8]) -> Option<(usize, usize)> {
     let lx = lex::Lexer::new(src);
-    let (mut at, mut n, mut extras) = (0, 0, Vec::new());
+    let (mut at, mut n, mut extras, mut toks) = (0, 0, Vec::new(), Vec::with_capacity(16));
     loop {
-        let t = lx.token(at, &mut extras).ok()?;
-        n += 1;
-        if t.kind == lex::T::Eof {
-            return Some((n, extras.len()));
+        toks.clear();
+        at = lx.run(at, &mut extras, &mut toks, 16);
+        n += toks.len();
+        match toks.last() {
+            Some(t) if t.kind == lex::T::Eof && t.word == u8::MAX => return None,
+            Some(t) if t.kind == lex::T::Eof => return Some((n, extras.len())),
+            _ => {}
         }
-        at = t.end as usize;
     }
 }
 

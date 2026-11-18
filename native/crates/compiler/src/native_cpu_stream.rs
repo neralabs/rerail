@@ -273,8 +273,10 @@ pub struct CompiledStream {
     /// Its calls, each of an outlined function made from the same program (`outline`): the
     /// only calls the machine code may have.
     pub own_calls: usize,
-    /// Its jump tables as compiled: those `switch_trees` (0322) left, each a `br` of its own.
-    pub tables: usize,
+    /// Of those, the calls of a pass over the table's tail (`TableFns`' `shift` and `drop`, a
+    /// wrap's and a dropped node's): none where nothing wraps or is dropped. The others are the
+    /// tape's rare steps (a block's base, a commit of codes, the image's end) and the words'.
+    pub table_passes: usize,
     /// Its functions of clusters (`compile_cut`: one, the token loop's alone), and their tail
     /// calls of each other: one where a jump left its cluster.
     pub clusters: usize,
@@ -1328,7 +1330,7 @@ fn local_classes(f: &mut FunctionBuilder<'_>, e: &mut LocalWords<'_>, ti: usize,
 /// The token marks that refuse (`TokenMark::refuses`), at a token of code `c`: their bits, one
 /// test; where one is set (cold), each set bit's tokens, to `refused` where they follow. Then
 /// on, in a new block.
-fn refusal_tests(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: Value, marks: &[crate::program::TokenMark], extra_bit: u8, refused: Block, heads: &mut Vec<(Block, Step)>) {
+fn refusal_tests(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: Value, marks: &[crate::program::TokenMark], extra_bit: Option<u8>, refused: Block, heads: &mut Vec<(Block, Step)>) {
     let refusing: Vec<&crate::program::TokenMark> = marks.iter().filter(|m| m.refuses).collect();
     if refusing.is_empty() {
         return;
@@ -1355,7 +1357,7 @@ fn refusal_tests(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: Value, marks: 
     f.switch_to_block(on);
 }
 
-fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::program::TokenMark, extra_bit: u8, heads: &mut Vec<(Block, Step)>) -> Value {
+fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::program::TokenMark, extra_bit: Option<u8>, heads: &mut Vec<(Block, Step)>) -> Value {
     let flags = MemFlags::trusted();
     let codes = (e.ctx)(f, CODES);
     let n = (e.ctx)(f, NSTARTS);
@@ -1368,7 +1370,14 @@ fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::progra
         let a = f.ins().iadd(codes, off);
         f.ins().uload32(flags, a, 0)
     };
-    let shift = i64::from(crate::records::MARK_SHIFT) + i64::from(extra_bit);
+    // 1 where a record is an extra (its code has the extra's bit); with no extras, none is.
+    let is_extra = |f: &mut FunctionBuilder<'_>, c: Value| match extra_bit {
+        Some(b) => {
+            let x = f.ins().ushr_imm(c, i64::from(crate::records::MARK_SHIFT) + i64::from(b));
+            f.ins().band_imm(x, 1)
+        }
+        None => f.ins().iconst(types::I64, 0),
+    };
     // The element's test on a code: a kind of its set, or a word of its; a `not` element, none.
     let test = |f: &mut FunctionBuilder<'_>, c: Value, el: &crate::program::TokenElem| {
         let (ok, miss) = (f.create_block(), f.create_block());
@@ -1447,8 +1456,7 @@ fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::progra
                 f.switch_to_block(on);
                 let j = f.ins().iadd_imm(j, -1);
                 let c = code_at(f, j);
-                let x = f.ins().ushr_imm(c, shift);
-                let x = f.ins().band_imm(x, 1);
+                let x = is_extra(f, c);
                 let found = f.create_block();
                 f.ins().brif(x, head, &[BlockArg::from(j)], found, &[]);
                 f.switch_to_block(found);
@@ -1470,8 +1478,7 @@ fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::progra
                 f.ins().brif(past, if el.end { yes } else { no }, &[], on, &[]);
                 f.switch_to_block(on);
                 let c = code_at(f, j);
-                let x = f.ins().ushr_imm(c, shift);
-                let x = f.ins().band_imm(x, 1);
+                let x = is_extra(f, c);
                 let found = f.create_block();
                 f.ins().brif(x, head, &[BlockArg::from(j)], found, &[]);
                 f.switch_to_block(found);
@@ -2430,7 +2437,7 @@ fn take_token(f: &mut FunctionBuilder<'_>, p: &[Value], any_mark: Option<usize>,
         let at = |f: &mut FunctionBuilder<'_>, at: i32| f.ins().load(types::I64, MemFlags::trusted(), ctx, at);
         let guard = |_: &mut FunctionBuilder<'_>, _: Value| unreachable!("a token mark does not refuse");
         let env = WordEnv { get: &get, set: &set, ctx: &at, guard: &guard };
-        refusal_tests(f, &env, c, refusals, t.extra.map_or(0, |e| e.0), refused, heads);
+        refusal_tests(f, &env, c, refusals, t.extra.map(|e| e.0), refused, heads);
         let on = f.current_block().expect("in a block");
         f.switch_to_block(refused);
         f.set_cold_block(refused);
@@ -2952,8 +2959,13 @@ pub fn shared_runs(native: &Structure, pushes: &[u16]) -> SharedRuns {
 }
 
 pub fn compile(native: &Structure) -> Result<CompiledStream, Error> {
+    compile_cut(native, &one_cut(native))
+}
+
+/// `compile`'s cut: every word in one cluster, at the configured speed.
+fn one_cut(native: &Structure) -> crate::native_cpu_clusters::Cut {
     let speed = crate::native_cpu_codegen::OPTIMIZE_TIER2.load(std::sync::atomic::Ordering::Relaxed);
-    compile_cut(native, &crate::native_cpu_clusters::Cut { speed, ..crate::native_cpu_clusters::Cut::one(native.structural.len()) })
+    crate::native_cpu_clusters::Cut { speed, ..crate::native_cpu_clusters::Cut::one(native.structural.len()) }
 }
 
 /// A cluster's function, lowered: its loop heads, the places it is entered at (each with its
@@ -3082,6 +3094,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
     // A region `TOKEN` splits (decision 0323, lowering B).
     let split = split_parts(native)?;
     let table = Table { inner: crate::rust_stream::marks(native), w: widths_tag.0, fns: &table_fns, split: split.as_deref().zip(native.block_programs.first()) };
+    let passes: Vec<u32> = table_fns.shift.iter().chain(&table_fns.drop).map(|f| f.0.as_u32()).collect();
     // The words made as functions of their own (`WordFn`), with a function a grammar rule.
     let outlined = !native.rules.is_empty() && cut.calls;
     // The calls open counted by the machine's stack (`calls_on_stack`), with `ctx` pinned.
@@ -3844,7 +3857,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                     // A token mark that refuses, at this token: refused at this word.
                     if native.token_marks.iter().any(|m| m.refuses) {
                         let refused = f.create_block();
-                        refusal_tests(&mut f, &env, c, &native.token_marks, extra.map_or(0, |e| e.0), refused, &mut heads);
+                        refusal_tests(&mut f, &env, c, &native.token_marks, native.extras.first().map(|e| e.0), refused, &mut heads);
                         let on = f.current_block().expect("in a block");
                         f.switch_to_block(refused);
                         f.set_cold_block(refused);
@@ -4058,36 +4071,45 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                             f.ins().brif(at_end, holds, &[], ask, &[]);
                             f.switch_to_block(ask);
                             let key = WordFn::LazyMark { order };
-                            if !word_fns.contains_key(&key) {
-                                let bn = native.block_programs.first().ok_or(Error::UnsupportedBackend)?;
-                                let r = bn.records.as_ref().ok_or(Error::UnsupportedBackend)?;
-                                let unless: Vec<u16> = r.unless.iter().filter(|&&(k, _)| k == order).map(|&(_, w)| w).collect();
-                                let extra = r.extra;
-                                let coded = (crate::native_cpu_block::lazy_coded(r) >> order & 1 == 1).then_some(order);
-                                let name = format!("tempo_word_{}", word_fns.len());
-                                let made = outline(&mut module, &name, 1, 1, pinned_ctx, &[], |g, q, hs| {
-                                    let ctx = q[0];
-                                    let get = |f: &mut FunctionBuilder<'_>, k: Mem| field_get(f, ctx, k);
-                                    let set = |f: &mut FunctionBuilder<'_>, k: Mem, x: Value| field_set(f, ctx, k, x);
-                                    let at = |f: &mut FunctionBuilder<'_>, at: i32| f.ins().load(types::I64, MemFlags::trusted(), ctx, at);
-                                    let guard = |_: &mut FunctionBuilder<'_>, _: Value| unreachable!("a mark does not refuse");
-                                    let env = WordEnv { get: &get, set: &set, ctx: &at, guard: &guard };
-                                    let bw = crate::native_cpu_bytes::Bytewise::of(bn);
-                                    let v = lazy_mark(g, &env, &bw, o, extra, &unless, coded, hs);
-                                    g.ins().return_(&[v]);
-                                })?;
-                                word_fns.insert(key, made);
+                            let bn = native.block_programs.first().ok_or(Error::UnsupportedBackend)?;
+                            let r = bn.records.as_ref().ok_or(Error::UnsupportedBackend)?;
+                            let unless: Vec<u16> = r.unless.iter().filter(|&&(k, _)| k == order).map(|&(_, w)| w).collect();
+                            let extra = r.extra;
+                            let coded = (crate::native_cpu_block::lazy_coded(r) >> order & 1 == 1).then_some(order);
+                            // A function of its own where the state is `ctx`'s (`outlined`), as a
+                            // token mark's below; else here, the state in this function's slot or
+                            // registers, which a word's function would not read.
+                            if !outlined {
+                                let bw = crate::native_cpu_bytes::Bytewise::of(bn);
+                                let r = lazy_mark(&mut f, &env, &bw, o, extra, &unless, coded, &mut heads);
+                                f.ins().brif(r, holds, &[], skip, &[]);
+                            } else {
+                                if !word_fns.contains_key(&key) {
+                                    let name = format!("tempo_word_{}", word_fns.len());
+                                    let made = outline(&mut module, &name, 1, 1, pinned_ctx, &[], |g, q, hs| {
+                                        let ctx = q[0];
+                                        let get = |f: &mut FunctionBuilder<'_>, k: Mem| field_get(f, ctx, k);
+                                        let set = |f: &mut FunctionBuilder<'_>, k: Mem, x: Value| field_set(f, ctx, k, x);
+                                        let at = |f: &mut FunctionBuilder<'_>, at: i32| f.ins().load(types::I64, MemFlags::trusted(), ctx, at);
+                                        let guard = |_: &mut FunctionBuilder<'_>, _: Value| unreachable!("a mark does not refuse");
+                                        let env = WordEnv { get: &get, set: &set, ctx: &at, guard: &guard };
+                                        let bw = crate::native_cpu_bytes::Bytewise::of(bn);
+                                        let v = lazy_mark(g, &env, &bw, o, extra, &unless, coded, hs);
+                                        g.ins().return_(&[v]);
+                                    })?;
+                                    word_fns.insert(key, made);
+                                }
+                                let (id, sig, _) = &word_fns[&key];
+                                let c = pinned(&mut f);
+                                let r = call_word(&mut f, *id, sig, pinned_ctx, c, &[])[0];
+                                f.ins().brif(r, holds, &[], skip, &[]);
                             }
-                            let (id, sig, _) = &word_fns[&key];
-                            let c = pinned(&mut f);
-                            let r = call_word(&mut f, *id, sig, pinned_ctx, c, &[])[0];
-                            f.ins().brif(r, holds, &[], skip, &[]);
                             f.switch_to_block(holds);
                         }
                         // A token mark (decision 0129): its tokens follow, from the records.
                         if let Some(i) = pattern {
                             let m = native.token_marks[usize::from(i)].clone();
-                            let bit = native.extras.first().ok_or(Error::UnsupportedBackend)?.0;
+                            let bit = native.extras.first().map(|e| e.0);
                             let r = if outlined {
                                 let key = WordFn::TokenMark { index: i };
                                 if !word_fns.contains_key(&key) {
@@ -5124,11 +5146,11 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
     // SAFETY: `tempo_stream` was declared and defined with this signature.
     let entry = unsafe { std::mem::transmute::<*const u8, Entry>(code) };
     let own_calls = calls;
-    let tables = defined.iter().map(|c| c.func.layout.blocks().filter(|&b| c.func.layout.last_inst(b).is_some_and(|i| matches!(c.func.dfg.insts[i], cranelift_codegen::ir::InstructionData::BranchTable { .. }))).count()).sum();
+    let table_passes = crate::clif_text::callees(&clif).iter().filter(|n| passes.contains(n)).count();
     let marks = words.iter().filter_map(|b| if let Op::Mark { order, .. } = b.operation { Some(u64::from(order) + 1) } else { None }).max().unwrap_or(0);
     let wraps = framed(words);
     let two_slots = has_context(words);
-    Ok(CompiledStream { _module: module, _split: split, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, wraps, widths, tag, classes: supertype_classes(native)?, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, tables, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges, ir, entry_id: id.as_u32() })
+    Ok(CompiledStream { _module: module, _split: split, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, wraps, widths, tag, classes: supertype_classes(native)?, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, table_passes, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges, ir, entry_id: id.as_u32() })
 }
 
 /// What an instruction does to `ctx`'s fields (`state_in_registers`).
@@ -5900,28 +5922,108 @@ impl Tape {
 pub struct Parser {
     pub tier1: crate::native_cpu_block::CompiledBlock,
     pub tier2: CompiledStream,
+    /// Tier 2 at wider widths, each compiled the first time a file needs it, from the structure
+    /// and cut kept here (`again`). `None` for a parser made `from_parts`: such a file is refused.
+    wide: Option<Wide>,
+}
+
+/// What a parser compiles its wider tier 2s from, and those compiled: one a set of widths, by
+/// which of size, offset and tail take 4 bytes (`Wide::slot`).
+struct Wide {
+    native: Structure,
+    cut: crate::native_cpu_clusters::Cut,
+    streams: [std::sync::OnceLock<Option<CompiledStream>>; 8],
+}
+
+impl Wide {
+    fn new(native: &Structure, cut: crate::native_cpu_clusters::Cut) -> Option<Self> {
+        Some(Wide { native: native.clone(), cut, streams: Default::default() })
+    }
+
+    fn slot(w: rerail_tape_format::Widths) -> usize {
+        usize::from(w.size == 4) | usize::from(w.off == 4) << 1 | usize::from(w.tail == 4) << 2
+    }
+
+    /// Tier 2 at `w` (tails from the last descendant), compiled on first use; `None` where the
+    /// compiler refuses the structure at those widths.
+    fn at(&self, w: rerail_tape_format::Widths) -> Option<&CompiledStream> {
+        self.streams[Self::slot(w)].get_or_init(|| compile_at(&self.native, &self.cut, w, self.native.tag).ok()).as_ref()
+    }
+}
+
+/// The narrowest widths an image's values fit, as the engine's writer chooses them
+/// (`rerail_tape_format::Writer::finish`): sizes by the node count, offsets and tails by their
+/// largest. An image written at wider widths is written again at these, so that the tape's bytes
+/// are the writer's.
+pub fn least_widths(image: &[u8]) -> rerail_tape_format::Widths {
+    use rerail_tape_format::{CHECKPOINT_STRIDE, HEADER_BYTES, header, padded, width_for};
+    let n = u64::from_le_bytes(image[header::NODES..header::NODES + 8].try_into().expect("8 bytes")) as usize;
+    let w = |k: usize| usize::from(image[header::WIDTHS + k] & !rerail_tape_format::TAIL_FROM_START);
+    let (ws, wo, wt) = (w(0), w(1), w(2));
+    let size_at = padded(HEADER_BYTES + 2 * n);
+    let off_at = padded(padded(size_at + ws * n) + 4 * n.div_ceil(CHECKPOINT_STRIDE));
+    let tail_at = padded(off_at + wo * n);
+    let most = |at: usize, width: usize| -> u32 {
+        if width == 2 {
+            return 0;
+        }
+        image[at..at + 4 * n].chunks_exact(4).map(|c| u32::from_le_bytes(c.try_into().expect("4 bytes"))).max().unwrap_or(0)
+    };
+    rerail_tape_format::Widths { size: width_for(n as u32), off: width_for(most(off_at, wo)), tail: width_for(most(tail_at, wt)), from_start: false }
 }
 
 impl Parser {
     pub fn new(native: &Structure) -> Result<Self, Error> {
         let block = native.block_programs.first().ok_or(Error::UnsupportedBackend)?;
-        Ok(Parser { tier1: crate::native_cpu_block::compile(block)?, tier2: compile(native)? })
+        Ok(Parser { tier1: crate::native_cpu_block::compile(block)?, tier2: compile(native)?, wide: Wide::new(native, one_cut(native)) })
     }
 
     /// `new`, with tier 2 in the clusters of `cut` (`compile_cut`).
     pub fn with_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) -> Result<Self, Error> {
         let block = native.block_programs.first().ok_or(Error::UnsupportedBackend)?;
-        Ok(Parser { tier1: crate::native_cpu_block::compile(block)?, tier2: compile_cut(native, cut)? })
+        Ok(Parser { tier1: crate::native_cpu_block::compile(block)?, tier2: compile_cut(native, cut)?, wide: Wide::new(native, cut.clone()) })
+    }
+
+    /// Tiers 1 and 2 compiled elsewhere (a probe timing tier 2's compile): no wide tier 2.
+    pub fn from_parts(tier1: crate::native_cpu_block::CompiledBlock, tier2: CompiledStream) -> Self {
+        Parser { tier1, tier2, wide: None }
+    }
+
+    /// Tier 2 at `Widths::WIDE`, compiled on first use; `None` where it cannot be (a parser
+    /// `from_parts`, or a structure the compiler refuses at those widths).
+    pub fn wide(&self) -> Option<&CompiledStream> {
+        self.wide.as_ref()?.at(rerail_tape_format::Widths::WIDE)
+    }
+
+    /// A file the narrow tier 2 refused (`narrow`), read again (decision 0140's guess, then
+    /// docs/parser-generators/37's wider parse): by `read` at `Widths::WIDE`, then, where its
+    /// values fit narrower columns (`least_widths`), at those, so the image is the writer's.
+    /// A refusal at `WIDE` is the grammar's: the file goes to the fallback.
+    pub fn again(&self, narrow: Refused, read: impl Fn(&CompiledStream) -> Result<Vec<u8>, Refused>) -> Result<Vec<u8>, Refused> {
+        let (Some(w), Some(wide)) = (self.wide.as_ref(), self.wide()) else { return Err(narrow) };
+        let image = read(wide)?;
+        let least = least_widths(&image);
+        match w.at(least) {
+            Some(t2) if least != rerail_tape_format::Widths::WIDE => read(t2),
+            _ => Ok(image),
+        }
     }
 
     /// The engine's tape of `bytes` as tier 2 wrote it (its bytes), or the word that refused
-    /// it (the file goes to the fallback).
+    /// it (the file goes to the fallback). A file whose tape does not fit the narrow widths is
+    /// read again at wider ones, over the same tier 1 run (`again`).
     pub fn image(&self, bytes: &[u8]) -> Result<Vec<u8>, Refused> {
         let mut batch = crate::native_cpu_block::Batch::new(&self.tier1, &[bytes]);
         batch.call(&self.tier1);
         let mut tape = self.tape(&batch);
-        self.words(&batch, &mut tape)?;
-        Ok(tape.image())
+        match self.words(&batch, &mut tape) {
+            Ok(()) => Ok(tape.image()),
+            Err(narrow) => self.again(narrow, |t2| {
+                let mut tape = t2.tape(self.stream(&batch, t2.starts).1);
+                self.words_with(t2, &batch, &mut tape)?;
+                Ok(tape.image())
+            }),
+        }
     }
 
 
@@ -5931,8 +6033,15 @@ impl Parser {
         let mut batch = crate::native_cpu_block::Batch::new(&self.tier1, &[bytes]);
         batch.call(&self.tier1);
         let mut tape = self.tape(&batch);
-        self.words(&batch, &mut tape)?;
-        Ok(tape.nodes())
+        match self.words(&batch, &mut tape) {
+            Ok(()) => Ok(tape.nodes()),
+            Err(narrow) => {
+                let Some(wide) = self.wide() else { return Err(narrow) };
+                let mut tape = wide.tape(self.stream(&batch, wide.starts).1);
+                self.words_with(wide, &batch, &mut tape)?;
+                Ok(tape.nodes())
+            }
+        }
     }
 
     /// Tier 1's stream `e` in `batch` (its first file), as tier 1 wrote it: its positions (room
@@ -5956,16 +6065,21 @@ impl Parser {
     /// Tier 2's function over tier 1's buffers in `batch` (one file), into `tape`; or the word
     /// that refused the file.
     pub fn words(&self, batch: &crate::native_cpu_block::Batch, tape: &mut Tape) -> Result<(), Refused> {
+        self.words_with(&self.tier2, batch, tape)
+    }
+
+    /// `words`, by tier 2 `t2` (the narrow one or the wide one).
+    fn words_with(&self, t2: &CompiledStream, batch: &crate::native_cpu_block::Batch, tape: &mut Tape) -> Result<(), Refused> {
         let row = batch.rows[0];
         let extracts = self.tier1.extracts.len();
-        let starts = self.stream(batch, self.tier2.starts);
+        let starts = self.stream(batch, t2.starts);
         let outputs = batch.out[row.out as usize..].as_ptr();
-        let lasts = self.stream(batch, self.tier2.lasts);
+        let lasts = self.stream(batch, t2.lasts);
         // The records where tier 1's layout has them (`records::RecordLayout`): a token's start,
         // last and code, a column each or a row a token.
         let (layout, cols) = match &self.tier1.records {
             Some(t) => (t.layout, [u64::from(t.starts), u64::from(t.lasts), extracts as u64]),
-            None => (crate::records::RecordLayout::Columns, [self.tier2.starts.unwrap_or(0) as u64, self.tier2.lasts.unwrap_or(0) as u64, extracts as u64]),
+            None => (crate::records::RecordLayout::Columns, [t2.starts.unwrap_or(0) as u64, t2.lasts.unwrap_or(0) as u64, extracts as u64]),
         };
         let field = |k: usize| batch.positions[(row.positions + layout.index(k, 0, cols, row.capacity)) as usize..].as_ptr();
         let (starts_p, lasts_p, codes) = (field(crate::records::FIELD_START), field(crate::records::FIELD_LAST), field(crate::records::FIELD_CODE));
@@ -5974,14 +6088,14 @@ impl Parser {
             Some(t) if !t.is_empty() => t,
             _ => &none[..],
         };
-        debug_assert!(starts.0.len() >= starts.1 + 2 || self.tier2.starts.is_none());
+        debug_assert!(starts.0.len() >= starts.1 + 2 || t2.starts.is_none());
         // SAFETY: the file's bytes in the batch have `FRONT` zero bytes before them and 64 after
         // its blocks; each stream has `capacity` slots, at least two past its count; the tape is
         // sized for the stream.
         let view = Tier1View {
-            starts: if self.tier2.starts.is_some() { starts_p } else { starts.0.as_ptr() },
+            starts: if t2.starts.is_some() { starts_p } else { starts.0.as_ptr() },
             nstarts: starts.1.min(lasts.1),
-            lasts: if self.tier2.lasts.is_some() { lasts_p } else { lasts.0.as_ptr() },
+            lasts: if t2.lasts.is_some() { lasts_p } else { lasts.0.as_ptr() },
             codes,
             lasts_stride: 8 * self.tier1.outputs,
             outputs,
@@ -5991,7 +6105,7 @@ impl Parser {
             totals_mask: u64::MAX,
             record_stride: layout.stride() as usize,
         };
-        let r = unsafe { self.tier2.call(batch.bytes.as_ptr().wrapping_add(row.bytes as usize), row.len as usize, view, tape) };
+        let r = unsafe { t2.call(batch.bytes.as_ptr().wrapping_add(row.bytes as usize), row.len as usize, view, tape) };
         if r != 0 {
             return Err(Refused { pc: r as usize - 1, why: "the compiled words refuse", at: None });
         }

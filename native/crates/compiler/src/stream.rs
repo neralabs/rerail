@@ -466,7 +466,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 live = if m == 0 || at_end || mask_bit(u16::from(m - 1), start) { u32::MAX } else { 0 };
                 // A token mark that refuses (`TokenMark::refuses`): at a token its bit names,
                 // its tokens following, the file is refused.
-                let extra_bit = u32::from(program.extras.first().map_or(0, |e| e.0));
+                let extra_bit = program.extras.first().map(|e| u32::from(e.0));
                 let refused = !at_end && program.token_marks.iter().any(|t| t.refuses && code >> (crate::records::MARK_SHIFT + u32::from(t.order)) & 1 == 1 && token_mark_holds(t, &tier1.codes, next, extra_bit));
                 if refused {
                     return refuse!(pc - 1, "a token mark that refuses");
@@ -536,7 +536,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     mask_bit(operand, start) && word_ok()
                 };
                 // A token mark (`Words::token_marks`): its tokens follow too.
-                let here = here && (at_end || program.token_marks.iter().find(|m| u32::from(m.order) == k).is_none_or(|m| token_mark_holds(m, &tier1.codes, next, u32::from(program.extras.first().map_or(0, |e| e.0)))));
+                let here = here && (at_end || program.token_marks.iter().find(|m| u32::from(m.order) == k).is_none_or(|m| token_mark_holds(m, &tier1.codes, next, program.extras.first().map(|e| u32::from(e.0)))));
                 if live >> k & 1 == 1 && here {
                     // Taken: it and the marks before it are done at this token. Kept: its arm
                     // calls the level that takes it.
@@ -924,15 +924,14 @@ pub fn validate_token_marks(program: &Words) -> Result<(), Error> {
         let after = m.elems.iter().all(|e| (!e.not && !e.end) || e.offset > 0 || (e.offset == -1 && e.not && e.end)) && m.elems.iter().filter(|e| e.offset >= 0).rev().skip(1).all(|e| !e.end);
         let offsets = offsets && after;
         let words = m.elems.iter().flat_map(|e| &e.words).all(|&s| usize::from(s) < program.strings.len());
-        if !rising || !offsets || !words || usize::from(m.order) >= marks || program.extras.is_empty() {
+        // A grammar with no extras has nothing to skip between the mark's tokens.
+        if !rising || !offsets || !words || usize::from(m.order) >= marks {
             return Err(Error::InvalidOperand(i));
         }
     }
     Ok(())
 }
 
-/// Whether token mark `m` holds at the record before `next` (`Words::token_marks`): each element
-/// at its offset among the records that are no extra (`extra_bit`, the code's bit).
 /// The kind of the extra a record's `code` is (`Words::extras`), or `None` for a grammar token:
 /// an extra has the first entry's bit; its kind is the last later entry whose bit it has, or the
 /// first entry's.
@@ -945,8 +944,11 @@ pub fn extra_kind(extras: &[(u8, u16)], code: u32) -> Option<u16> {
     Some(extras[1..].iter().rev().find(|&&(b, _)| has(b)).map_or(kind, |&(_, k)| k))
 }
 
-pub fn token_mark_holds(m: &TokenMark, codes: &[u32], next: usize, extra_bit: u32) -> bool {
-    let is_extra = |c: u32| c >> (crate::records::MARK_SHIFT + extra_bit) & 1 == 1;
+/// Whether token mark `m` holds at the record before `next` (`Words::token_marks`): each element
+/// at its offset among the records that are no extra (`extra_bit`, the code's bit; none for a
+/// grammar without extras).
+pub fn token_mark_holds(m: &TokenMark, codes: &[u32], next: usize, extra_bit: Option<u32>) -> bool {
+    let is_extra = |c: u32| extra_bit.is_some_and(|b| c >> (crate::records::MARK_SHIFT + b) & 1 == 1);
     let Some(here) = next.checked_sub(1) else { return false };
     m.elems.iter().all(|e| {
         let at = match e.offset {

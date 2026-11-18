@@ -1,5 +1,5 @@
 [workspace]
-members = ["native", "accel", "forest", "native/crates/compiler", "native/crates/rr_syntax", "native/crates/tape_format", "native/crates/parser_tests", "native/crates/prof", "native/crates/metal", "native/crates/rr_parser", "native/crates/store", "native/crates/device_metal", "native/crates/facts", "native/crates/lang", "native/crates/lang_ecma", "native/crates/lang_json", "native/crates/lang_php", "native/crates/lang_python", "native/crates/lang_rust", "native/crates/lang_sql", "native/crates/logic", "native/crates/rr", "native/crates/sessions", "native/crates/transducer", "native/crates/w", "native/crates/rr_aot", "native/crates/simdjson", "native/crates/simdjson_native", "native/crates/python_lean", "native/crates/simd8", "native/crates/ecma_lean", "native/crates/rust_lean", "native/crates/java_lean", "native/crates/csharp_lean", "native/crates/php_lean", "native/crates/html_lean", "native/crates/css_lean", "native/crates/markdown_lean", "native/crates/markdown_inline_lean", "native/crates/sql_lean", "native/crates/vue_lean", "native/crates/kotlin_lean", "native/crates/swift_lean", "native/crates/scala_lean", "native/crates/blocks", "native/crates/go_lean", "native/crates/c_lean", "native/crates/clif", "native/crates/json_lean", "native/crates/kotlin_parser"]
+members = ["native", "accel", "forest", "native/crates/compiler", "native/crates/rr_syntax", "native/crates/tape_format", "native/crates/parser_tests", "native/crates/prof", "native/crates/metal", "native/crates/rr_parser", "native/crates/store", "native/crates/device_metal", "native/crates/facts", "native/crates/lang", "native/crates/lang_ecma", "native/crates/lang_json", "native/crates/lang_php", "native/crates/lang_python", "native/crates/lang_rust", "native/crates/lang_sql", "native/crates/logic", "native/crates/rr", "native/crates/sessions", "native/crates/transducer", "native/crates/w", "native/crates/rr_aot", "native/crates/pp_aot", "native/crates/simdjson", "native/crates/simdjson_native", "native/crates/python_lean", "native/crates/simd8", "native/crates/ecma_lean", "native/crates/rust_lean", "native/crates/java_lean", "native/crates/csharp_lean", "native/crates/go_lean", "native/crates/c_lean", "native/crates/c_directives", "native/crates/php_lean", "native/crates/html_lean", "native/crates/css_lean", "native/crates/markdown_lean", "native/crates/markdown_inline_lean", "native/crates/sql_lean", "native/crates/vue_lean", "native/crates/blocks", "native/crates/kotlin_lean", "native/crates/swift_lean", "native/crates/scala_lean", "native/crates/clif", "native/crates/json_lean", "native/crates/kotlin_parser"]
 # The Bitlex evaluator keeps its own workspace (its tree-sitter oracle); the engine uses its library.
 exclude = ["scripts/profiling/reachability", "scripts/profiling/preparation", "tools/bitlex"]
 resolver = "2"
@@ -104,6 +104,12 @@ opt-level = 3
 [profile.dev.package.rerail-vue-lean]
 opt-level = 3
 
+# The grammar compiler (`rerail-compiler`: Bitlex's lowering, its prover `bitlex_prove`, tier 2's
+# lowering) proves hundreds of mask questions for each grammar a test compiles (C's token grammar:
+# minutes unoptimized, work queue Q34).
+[profile.dev.package.rerail-compiler]
+opt-level = 3
+
 # simdjson's operations (`rerail-simd8`) are each a few instructions, inlined into the kernels that use them.
 [profile.dev.package.rerail-simd8]
 opt-level = 3
@@ -142,6 +148,15 @@ codegen-units = 256
 # walks without overflowing its stack; its code is the same without.
 [profile.profiling.package.rerail-rr-aot]
 debug = false
+
+# The preprocessing words' generated code (`rerail-pp-aot`), the same; and optimized in a test
+# build too, as the code the comparison is of (LLVM's best against Cranelift's).
+[profile.profiling.package.rerail-pp-aot]
+debug = false
+
+[profile.dev.package.rerail-pp-aot]
+debug = false
+opt-level = 3
 
 [profile.release]
 lto = "thin"
@@ -185,4 +200,7 @@ opt-level = 1
 opt-level = 3
 
 [profile.test-o1.package.rerail-rr-aot]
+debug = false
+
+[profile.test-o1.package.rerail-pp-aot]
 debug = false

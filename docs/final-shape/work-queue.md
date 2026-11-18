@@ -1493,6 +1493,199 @@ code. 0366's change is tier 1's alone and leaves both sides' trees as they were.
 - **Done when**: the CPU's records equal the interpreter's with the delayed stop, and a test holds it.
 
 
+### Q187. (Q30 at dd6dcc161) The dropping test red again (Q3's, after the merges)
+
+- **Found** (2026-11-17, on Go-C-and-C-support, red at 88b3e3389 before that day's change):
+  `dropping_unreached_clauses_prunes_to_the_same_program*` failed 7 of 8. Two causes were the test's and are fixed:
+  an input counted as read when its name stood quoted anywhere in the rules' text (Python's field `"value"`), now
+  read atoms and natives only; and the lowering's inlined variables (`{v}_rr_d{k}_{i}`, numbered by definitions
+  met) were not masked. 6 of 8 pass now. Two parts stay red (`_script_packs`, `_other_packs`), each a difference
+  of the programs, not of the test:
+  - `packs/javascript/eslint-class-methods-use-this.rr`: `rr_value_req_by_static_string_0`'s rule is kept only in
+    the whole program (its reader unreached in the dropped one);
+  - `packs/rust/clippy-double-parens.rr`: `rr_token_req_by_sole_group_0`'s rules differ.
+- **Done when**: the 8 tests pass, each remaining difference fixed in the lowering or explained.
+
+### Q31. A tape past 2-byte columns is parsed again at wider ones in the compiler's `Parser`
+
+- **Keep**: decision 0140's guess (2-byte columns, written once for nearly every file); page 37's
+  "parsed again at wider ones", which no caller built: `native_cpu_stream::Parser` compiled tier 2
+  at `Narrow::WIDTHS` only, so every compiled grammar refused a file whose tape needs 4 bytes, and
+  the file went to its fallback. The image stays the engine writer's, byte for byte.
+- **Done when**: `Parser` reads such a file again for every language, on the CPU and over Metal's
+  buffers, with an image equal to the writer's.
+- **Record** (2026-11-17): `Parser::again`: tier 2 at `Widths::WIDE`, then at `least_widths` of
+  that image (the writer's choice: sizes by node count, offsets and tails by their largest) when
+  narrower; each width set compiled on first use from the structure and cut the parser keeps.
+  `Parser::image`, `parse` and `tier2_on::image_on` use it; `Parser::from_parts` (a timing probe)
+  has none. Tests: `a_tape_past_two_byte_columns_is_read_at_four` (every ladder step, the image
+  the writer's), `.rr`'s `corpus_images_are_the_lean_tapes` (two large files now taken, equal),
+  C's `a_file_past_64_kib_is_read_at_wide_columns` on every backend. Fixed with it: an offset was
+  flagged wide at any width (`native_cpu_tape::blocks_from`, `rust_stream`'s `blocks`). Reviewed
+  against reviewer-brief.md: no narrow-path change (the retry runs after a refusal only).
+
+### Q188. (Q32 at dd6dcc161) A token start inside its own kind's run: refuse it the same way on every backend
+
+- **Keep**: `run R`'s meaning is `TokenRule::last`, which stops before the kind's next start
+  (Metal's last-byte mask). The CPU's and the interpreter's rule reads through such a start, and
+  JSON's tier 2 shape: no own calls, no pass over the table.
+- **Done when**: a grammar whose run holds a start of its own kind gives one answer on the
+  interpreter, Cranelift and Metal, or is refused on all of them. Bitlex's evaluator already
+  errors on it ("token starts inside the one before"). A compile-time check where the masks
+  prove it cannot happen, and a test of a grammar where it does.
+- **Record** (2026-11-17): found by C's token grammar (0348 stage 1). `"a""b"` was one string on
+  the CPU and two on Metal. Making the rule `R & ~S` gave every backend Metal's answer, but cost
+  JSON 30 own calls (`json_compiled_path_equals_the_interpreters`), so it was reverted. The C
+  grammar keeps its starts out of the run.
+
+### Q189. (Q33 at dd6dcc161) JSON's tier 2 makes 30 calls of its own (`json_compiled_path_equals_the_interpreters` red)
+
+- **Keep**: the test's shape claim: JSON defers no leaf, so tier 2 has no own call and no pass
+  over the table at its end.
+- **Done when**: the test passes, by finding out what the 30 calls are, then either removing them
+  or, if 0177 meant them, writing the new claim with its reason.
+- **Record** (2026-11-17): it fails at this branch's head, at `b6fad73e5~1`, and on both parents
+  of `534c74dbf` (the Parser-generators merge, 0177's token-loop steps), with the compiler,
+  tape-format, Metal, rr-parser and parser-tests sources of each. So it came in with that line,
+  not with 0327's or 0348's work. Found by the farm run for 0348 stage 1.
+- **Done** (2026-11-18): the 30 calls are the tape writer's (decision 0140, since 8a1762be0):
+  `tempo_tape_blocks` at 24 places (a block's base and offsets), `tempo_tape_commit` at 5 (a
+  commit of codes) and `tempo_tape_finish` at the image's end. None is a pass over the table:
+  those are `shift_rows` and `drop_rows`, which JSON has neither of. The claim is now the one
+  the test meant: `CompiledStream::table_passes` (calls of `shift` or `drop`, counted by callee in
+  the IR, `clif_text::callees`) is 0, and every call is an outlined function's. A wrap's test
+  (`a_wrap_goes_before_the_node_it_wraps`) asserts its one `shift` call, so the count is not
+  vacuous.
+
+### Q190. (Q34 at dd6dcc161) Lowering C's token grammar takes minutes in a debug build
+
+- **Keep**: the c-directives tests' claims (every backend's tape, the expansion's tokens).
+- **Done when**: a test that lowers `bitlex_tokens/tokens.bitlex` (no Cranelift) runs in well
+  under a minute on the farm, by finding which pass of `lower_kinds` takes the time and making
+  it cheaper, not by raising the timeout or the crate's opt-level (a profile setting every
+  worktree's builds share).
+- **Record** (2026-11-17): on the farm (cargo, debug), `the_examples_expand_as_the_lean_pass_does`
+  took 416 s, lowering C's and C++'s grammars and interpreting 14 small files twice; the
+  nextest override ends a c-directives test at 480 s. Under Relax the same test takes 43 s.
+- **Done** (2026-11-17): timed by phase, 13 of 13 s were `tree_section`'s proofs, 204 of 206
+  `bitlex_prove::never` questions failing after proving all 256 bytes each. `never` now stops at
+  the first class of bytes not proved, and the position's byte is asked once per class its
+  readers tell apart (`Proof::own`), in `first_bytes` too; both grammars' programs are the same
+  text as before. And `rerail-compiler` is optimized in dev builds (the root `Cargo.toml`). On
+  the farm: the lowering 1.3 s a dialect, the examples test 416 s → 2.4 s.
+
+### Q191. (Q35 at dd6dcc161) C's token grammar refuses digit separators and `u8'…'`
+
+- **Keep**: a TU the grammar does not read goes to the lean pass whole
+  (`what_the_grammar_does_not_read_is_refused` states `1'000` so).
+- **Done when**: `bitlex_tokens/tokens.bitlex` reads `1'000'000`, `0'7`, `0x'1` (C23, C++14) and
+  `u8'a'` (C23, C++17) as one token each, the lean lexer agrees on them, and the refusal test
+  drops `1'000`. Then `the_compiled_ifs_have_the_interpreters_values` compares those five cases
+  too: `pp_expr::number` and the JIT's `number` already pass separators, and `char_value`
+  takes the `u8` prefix.
+- **Record** (2026-11-17): the values test lists the five cases as refused by the grammar, in C
+  and C++, and compares the other 95.
+
+### Q192. (Q36 at dd6dcc161) The compiled pp words stall: 45% of the interpreter's instructions, 1.09× its cycles
+
+- **Keep**: the compiled words equal the interpreter on the examples and the corpus; the shape
+  test (no function over 128 KB, stated steps only).
+- **Done when**: a profile of the corpus run on the compiled words (xctrace's CPU Counters, or
+  the Time Profiler mapped to words by Cranelift's block offsets) names where the cycles go
+  (branch misses, cache misses, a load chain), and the cause is fixed in the lowering's shape.
+- **Record** (2026-11-17, 0348 stage 4d): ruled out by measurement: reservations per TU,
+  `readonly` invariant loads, `T` and `D` in SSA variables (patch not kept). Small and
+  expansion-light TUs are worst (1.28–1.48×); the half that expand most run at 0.92×.
+- **Record** (2026-11-17, later): the same IR built by rustc (`rerail-pp-aot`, Q37) runs the
+  corpus at depth 0 in 533–556 M cycles against Cranelift's 1,240–1,258 M: the stall is
+  Cranelift's code, not the words' IR (1.35× the instructions, 2.33× the cycles). Refusal
+  blocks marked cold: −1.4%, not kept. The plan: `docs/final-shape/notes/t44-pp-words-codegen-plan.md`
+  (cycles by word, the two compilers' code side by side, fixes one at a time, K judged on both,
+  and a decision for the user on which code the CPU path runs).
+- **Record** (2026-11-17, later): t44's step 4 done. `#if` flattening measured slower on both
+  compilers (depth 16 against 0: Cranelift 1.11×, rustc 1.67×) and removed; C and C++ made one
+  program, the dialect `Env::cpp`. One build each: Cranelift 1,235 M cycles, rustc 487 M, the
+  interpreter 1,098 M. Steps 1–3 and the user's choice (step 5) are open.
+- **Done** (2026-11-18): the cause was Cranelift's jump tables. Its Arm `br_table` carries a
+  speculation barrier (`csel`, `csdb`) on every dispatch, and every rir `RETURN` dispatched
+  through one; LLVM's tables have none. Dispatches are now trees of compares in Cranelift's
+  code (since Q38 the shared `native_cpu_codegen::tables_as_compares`), and the shape test
+  refuses a `csdb`: 1,197 M cycles to 550 M, 1.14× rustc's. With it, extending loads (`uload8`/`16`/`32`) and branches on combined tests split
+  into branches on each test (`branch_on_tests`): 2,134 M instructions to 1,966 M. The user
+  chose to ship rustc's build as the CPU path (t44, step 5): `expand::native`, the
+  `generated` feature on by default.
+
+### Q193. (Q37 at dd6dcc161) The pp words' ahead-of-time Rust (`clif_rust`), checked once
+
+- **Done when**: `clif_rust` writes the run's function and the outlined words as Rust, it
+  compiles, and it equals the interpreter on the examples (0348's plan, stage 4b).
+- **Done** (2026-11-17): `rerail-pp-aot` (C and C++ at depth 0, C++ at 4) equals the
+  interpreter on the examples and TUs, 90 runs (`the_aot_words_are_the_interpreters`, with
+  `--features generated`).
+
+### Q194. (Q38 at dd6dcc161) Tier 1's and tier 2's jump tables carry Cranelift's speculation barrier
+
+- **Found** (2026-11-18, Q36): on Arm, Cranelift emits every `br_table` with a `csel` and a
+  `csdb`, unconditionally (no setting turns it off). In the pp words that barrier on the return
+  dispatches was 54% of the corpus's cycles. `native_cpu_block.rs` (one `br_table`) and
+  `native_cpu_stream.rs` (three) dispatch so too.
+- **Done when**: each is measured on its own benchmark with the dispatch as a tree of compares
+  (as `native_cpu_pp`'s `Lower::switch`), and kept where it is faster, with a guard as the pp
+  words' shape test has.
+- **Done** (2026-11-18): one pass for every Cranelift backend,
+  `native_cpu_codegen::tables_as_compares`, run inside `define_function` and
+  `define_functions` and before the pp words' defines, after the IR `clif_rust` takes (rustc's
+  code keeps its tables, which carry no barrier). A bounds test, then a balanced tree over the
+  table's runs of one target. `rr_against_rust` (M1 Max, quiet run, two runs each): tier 1
+  127.0–127.3 M cycles to 112.7–112.8 M (−11%, IPC 3.1 to 3.5); tier 2 148 M either way (no
+  table on its path; `Pick::Table` is only an experiment's). The pp words with the shared pass
+  in place of their own trees: Cranelift 0.52× the interpreter's cycles (0.50× with their own),
+  at the edge of the noise, so one mechanism kept. Guards: `a_table_as_compares_is_the_table`
+  (every index, a gap, a block argument, past the end; no `csdb` in the code) and the pp shape
+  test (no `csdb` in the words' code). `parser_tests`' four red tests (Q33 and three more) failed
+  the same at the base commit; all four fixed since (Q33, Q39).
+- **At the merge into Swift-Kotlin-Scala-support** (2026-11-18): Parser-generators had the same pass for
+  tier 1 and tier 2 (0322's `switch_trees`, rustc's shape: bit tests, at most 32 runs, tables with
+  arguments kept). Both run now: `switch_trees` first, then `tables_as_compares` on what it leaves,
+  so no Cranelift code keeps a jump table (the ladder's no-`br` check) and the small ones are
+  rustc's.
+
+### Q195. (Q39 at dd6dcc161) `parser_tests`' three other red tests
+
+- **Keep**: each test's claim, the `.rr` ladder's above all: every step, every generated
+  document, the reference, the interpreters, Cranelift, the tape and the engine agree.
+- **Done** (2026-11-18), each by its cause:
+  - `only_the_compiler_reads_tier2s_states`: false hits of `.arms` on a token reader's arms
+    (`readers[i].arms`) and tier 1's counts (`shape.arms`, `cols.arms`, `c.arms`). The guard
+    now takes a `.arms` by its receiver; a real read (`g.arms`, `states[k].arms`) still fails it.
+  - `rr_cases_parse_from_their_steps`: step 22 sends a float's second `.` and a 19-digit
+    number to the engine on purpose (2b6e570bd, 69756c977; doc 39), and the cases still asked
+    the step to parse them. They are `TO_THE_ENGINE` from step 22, checked to be refused by
+    exactly those escapes, and split copies without those parts keep the rest of each case.
+  - `rr_steps_parse_as_the_reference_and_the_engine`, five causes in turn:
+    1. The jump-table check counted `br_table`s in tier 2's IR, which Q38 turns to compares in
+       Cranelift's code: it now refuses any jump table in either tier's machine code.
+    2. `hot_loop` asked for `block2` in a pass with no block loop (`bodiless_body`, 0177):
+       `PassShape::block_loop` says which passes have one, and the branch count skips the
+       others.
+    3. The ladder's `Ids` numbered kinds and fields from one count, so later steps gave fields
+       ids past the tape's 6 field bits (`FIELD_LIMIT`), and Cranelift's tape dropped the high
+       bits (31 of 33 steps differed). Fields are numbered apart, as a grammar's are.
+    4. Tier 1's comparison asked the CPU for what 0177 leaves out on purpose: the gap marks
+       tier 2 tests itself (`native_cpu_block::lazy_code_bits`, now shared with rr_parser's
+       Metal test), the outputs a bodiless pass does not make, and the codes of a file both
+       send to the fallback, which tier 2 never reads.
+    5. Two real bugs found once the ladder reached step 22's documents:
+       - bitlex's reference matched a token mark's kind after `keywords` had retagged it, so
+         `io_bare`'s `hash_word` never held at `#include` and the reference parsed what the
+         engine refuses. A kind now holds at a token whose rule made it, as the compiler's
+         code reads it.
+       - Cranelift's tier 2 tested a lazy gap mark in a word function that reads the state in
+         `ctx`, also where the state is in the function's slot (no clusters, `Parser::new`), so
+         `line` never held: a setting ran past its line. Without clusters, it is tested in place,
+         as a token mark's test already was. The production parser (clusters by rules) was not
+         affected.
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives
@@ -1593,3 +1786,19 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
   reports each one as it read it; a difference compiles here, uncached. The daemon also asks the
   host again for them before each compile. Not installed: the farm owner merges and installs it.
 - **Done when**: farm 24 (or its merge) is installed and the reproduction above no longer fails.
+
+### Q196. Tier 1 on the CPU differs from its interpreter on short files: `aligned` by a pattern, and `.rr` step 22
+
+- **Found** (2026-11-18, at the merge of Go-C-and-C-support into Swift-Kotlin-Scala-support):
+  `corpus_cranelift_equals_the_interpreter`: 14 generated grammars, every one with an `aligned(…)`
+  and every failing input under 64 bytes (one edge block). The smallest case: `mask m2 =
+  aligned(span(x, 3), 2)` (or of `toggle(x)`, `fill(x, digit)`) on `5x5`: Cranelift 0, the
+  interpreter 2. `aligned(…, 3)` (by `Phase`, not a 64-bit pattern) is right, as is each part
+  alone. Not `remat_consts`, `fold_nots` or `tables_as_compares` (each turned off, the same).
+  Parser-generators-final-shape fails the same 14 at 975117c82 (its own binary), so it predates the
+  merge; likely 0383's full body on edge blocks (`native_cpu_edge`) and a pattern constant.
+- **Also**: `rr_steps_parse_as_the_reference_and_the_engine` is red on step 22 (Go-C's `#include`
+  step): one document's tier 1 differs from the interpreter, and two sentences are refused at
+  `io_bare`, leaving too few for the engine comparison. Green at Go-C's dd6dcc161; at
+  Parser-generators' 975117c82 33 steps differ (without dd6dcc161's `tier1_equal`).
+- **Done when**: both pass; Parser-generators' area (the edge body), taken at the next merge.

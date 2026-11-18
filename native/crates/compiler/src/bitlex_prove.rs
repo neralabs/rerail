@@ -65,9 +65,26 @@ struct Proof<'a> {
     /// Each lag's byte groups: a byte of each.
     groups: HashMap<u32, Vec<u8>>,
     budget: u32,
+    /// The position's own byte: the classes its readers tell apart, a byte of each and its
+    /// members.
+    own: Vec<(u8, ByteSet)>,
 }
 
-impl Proof<'_> {
+impl<'a> Proof<'a> {
+    fn of(ops: &'a [BlockOp], tables: &'a [ClassTable], v: u16, d: u8) -> Proof<'a> {
+        let (cone, readers) = cone(ops, v);
+        let groups = readers.iter().map(|(&lag, r)| (lag, groups(tables, r))).collect();
+        let own = classes(tables, readers.get(&u32::from(d)));
+        Proof { ops, tables, d: u32::from(d), b: 0, bytes: HashMap::new(), vals: HashMap::new(), cone, groups, budget: 0, own }
+    }
+
+    /// Whether the value is zero with the position's byte `b`.
+    fn zero_at(&mut self, v: u16, b: u8) -> bool {
+        self.b = b;
+        self.budget = BUDGET;
+        self.zero(v)
+    }
+
     fn byte(&self, lag: u32, open: &mut Option<Var>) -> Option<u16> {
         if lag == self.d {
             return Some(u16::from(self.b));
@@ -314,6 +331,31 @@ fn cone(ops: &[BlockOp], v: u16) -> (HashSet<(u16, u32)>, HashMap<u32, HashSet<R
 }
 
 /// A byte of each group the readers tell apart.
+/// The bytes `readers` tell apart (none: one class of every byte), a byte of each class (its
+/// least) and its members.
+fn classes(tables: &[ClassTable], readers: Option<&HashSet<Reader>>) -> Vec<(u8, ByteSet)> {
+    let readers: Vec<Reader> = readers.map(|r| r.iter().copied().collect()).unwrap_or_default();
+    let sig = |x: u8| -> Vec<bool> {
+        readers
+            .iter()
+            .map(|&r| match r {
+                Reader::Eq(c) => x == c,
+                Reader::Class(t, bits) => tables[usize::from(t)].member(x, bits),
+            })
+            .collect()
+    };
+    let mut out: Vec<(u8, ByteSet)> = Vec::new();
+    let mut at: HashMap<Vec<bool>, usize> = HashMap::new();
+    for x in 0..=255u8 {
+        let k = *at.entry(sig(x)).or_insert_with(|| {
+            out.push((x, [0; 4]));
+            out.len() - 1
+        });
+        out[k].1[usize::from(x / 64)] |= 1 << (x % 64);
+    }
+    out
+}
+
 fn groups(tables: &[ClassTable], readers: &HashSet<Reader>) -> Vec<u8> {
     let of = group_of(tables, Some(readers));
     (0..=255u8).filter(|&x| of[usize::from(x)] == x).collect()
@@ -345,44 +387,27 @@ fn group_of(tables: &[ClassTable], readers: Option<&HashSet<Reader>>) -> [u8; 25
 
 /// The bytes a value's set bits can be at, at delay `d` (bit `i` is byte `i - d`): each byte for
 /// which the value is not proved zero. Sound: a byte left out never has a bit.
+///
+/// The position's byte is read only by its readers (`cone`), so the bytes they cannot tell
+/// apart have one answer: one proof a class (`Proof::own`).
 pub fn first_bytes(ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8) -> ByteSet {
-    bytes_of(ops, tables, v, d, false)
-}
-
-/// `first_bytes`, one search for each group of position bytes its readers do not tell apart (a
-/// byte's answer is its group's: every test of it is a reader's). `any`: stop at the first byte
-/// set, as `never` needs only that.
-fn bytes_of(ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8, any: bool) -> ByteSet {
-    let (cone, readers) = cone(ops, v);
-    let of = group_of(tables, readers.get(&u32::from(d)));
-    let groups = readers.iter().map(|(&lag, r)| (lag, groups(tables, r))).collect();
-    let mut p = Proof { ops, tables, d: u32::from(d), b: 0, bytes: HashMap::new(), vals: HashMap::new(), cone, groups, budget: 0 };
+    let mut p = Proof::of(ops, tables, v, d);
     let mut out = [0u64; 4];
-    let mut set = [false; 256];
-    for b in 0..=255u8 {
-        let g = of[usize::from(b)];
-        let hit = if g == b {
-            p.b = b;
-            p.budget = BUDGET;
-            let hit = !p.zero(v);
-            set[usize::from(b)] = hit;
-            hit
-        } else {
-            set[usize::from(g)]
-        };
-        if hit {
-            out[usize::from(b / 64)] |= 1 << (b % 64);
-            if any {
-                break;
+    for (b, members) in std::mem::take(&mut p.own) {
+        if !p.zero_at(v, b) {
+            for i in 0..4 {
+                out[i] |= members[i];
             }
         }
     }
     out
 }
 
-/// Whether a value is zero at every byte of every stream, proved.
+/// Whether a value is zero at every byte of every stream, proved: `first_bytes` empty, stopped
+/// at the first class of bytes not proved (most questions fail, and fail early).
 pub fn never(ops: &[BlockOp], tables: &[ClassTable], v: u16, d: u8) -> bool {
-    bytes_of(ops, tables, v, d, true) == [0; 4]
+    let mut p = Proof::of(ops, tables, v, d);
+    std::mem::take(&mut p.own).into_iter().all(|(b, _)| p.zero_at(v, b))
 }
 
 /// Whether a value is zero at every byte of every stream, proved by a SAT solver over a window

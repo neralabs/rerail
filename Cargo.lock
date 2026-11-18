@@ -3173,12 +3173,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-c-directives"
+version = "0.1.0"
+dependencies = [
+ "bitlex",
+ "rerail-c-lean",
+ "rerail-c-pp",
+ "rerail-compiler",
+ "rerail-metal",
+ "rerail-pp-aot",
+ "rerail-simd8",
+ "rerail-tape-format",
+]
+
+[[package]]
 name = "rerail-c-lean"
 version = "0.1.0"
 dependencies = [
  "rerail-simd8",
  "rerail-tape-format",
  "unicode-ident",
+]
+
+[[package]]
+name = "rerail-c-pp"
+version = "0.1.0"
+dependencies = [
+ "rerail-c-lean",
+ "rerail-simd8",
 ]
 
 [[package]]
@@ -3353,7 +3375,9 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-c-directives",
  "rerail-c-lean",
+ "rerail-c-pp",
  "rerail-clif",
  "rerail-compiler",
  "rerail-csharp-lean",
@@ -4191,6 +4215,13 @@ version = "0.1.0"
 dependencies = [
  "rerail-simd8",
  "rerail-tape-format",
+]
+
+[[package]]
+name = "rerail-pp-aot"
+version = "0.1.0"
+dependencies = [
+ "rerail-compiler",
 ]
 
 [[package]]

@@ -1,0 +1,13 @@
+[package]
+name = "rerail-c-pp"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "The C and C++ preprocessor (decision 0327): every directive of a file recorded as rows, and a translation unit applied in one streaming pass."
+
+[dependencies]
+# The shared lexer: the preprocessor's reading (`pp`) and the parser's tokens.
+rerail-c-lean = { path = "../c_lean" }
+
+[dependencies.rerail-simd8]
+path = "../simd8"

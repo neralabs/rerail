@@ -711,6 +711,14 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         Opcode::Isub => set(format!("{}.wrapping_sub({})", args[0], args[1])),
         Opcode::Ineg => set(format!("{}.wrapping_neg()", args[0])),
         Opcode::Imul => set(format!("{}.wrapping_mul({})", args[0], args[1])),
+        // A division traps where Cranelift's does (by zero: Rust's panic, an abort here); a
+        // signed one's overflow wraps, where Cranelift's traps (the code never divides so).
+        Opcode::Udiv => set(format!("{} / {}", args[0], args[1])),
+        Opcode::Urem => set(format!("{} % {}", args[0], args[1])),
+        Opcode::Sdiv => set(format!("(({} as {s}).wrapping_div({} as {s})) as {u}", args[0], args[1])),
+        Opcode::Srem => set(format!("(({} as {s}).wrapping_rem({} as {s})) as {u}", args[0], args[1])),
+        Opcode::Umulhi => set(format!("((({} as u128) * ({} as u128)) >> {bits}) as {u}", args[0], args[1])),
+        Opcode::RotlImm => set(format!("{}.rotate_left({})", args[0], (imm()? as u32) % bits)),
         Opcode::Band => set(format!("{} & {}", args[0], args[1])),
         Opcode::Bor => set(format!("{} | {}", args[0], args[1])),
         Opcode::Bxor => set(format!("{} ^ {}", args[0], args[1])),

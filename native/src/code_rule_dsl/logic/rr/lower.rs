@@ -2204,8 +2204,10 @@ impl Lowerer {
         let saved = self.siblings.clone();
         let mut keep = keep.into_iter();
         self.siblings.retain(|_| keep.next().unwrap_or(false));
-        // Bound by an atom, or computed from what atoms bind (`d = cat(r, "/", p)`).
+        // Bound by an atom, or computed from what atoms bind (`d = cat(r, "/", p)`, or a `match`'s named group: `match("(?<d>.*)/[^/]*", p)`
+        // is `d = @rx_group(p, …)` once lowered).
         let binds = self.siblings.iter().any(|l| match l {
+            Lit::Atom { rel, neg: false, args, .. } if matches!(rel.as_str(), "match" | "match_all") => matches!(args.first(), Some(STerm::Str(re)) if groups(re).contains(s)),
             Lit::Atom { rel, neg: false, .. } => test_of(rel).is_none() && rel != "earlier" && body_vars(std::slice::from_ref(l)).contains(s),
             Lit::Cmp { l, op: "=", r } => matches!(l, STerm::Var(v) if v == s) || matches!(r, STerm::Var(v) if v == s),
             _ => false,
@@ -5089,10 +5091,37 @@ fn rename_literal(l: &Literal, name: &dyn Fn(&str) -> String) -> Literal {
     }
 }
 
-pub const WORLD: [(&str, &str); 3] = [("dir_entry", "rr_dir_req"), ("file_line", "rr_file_req"), ("file_digest", "rr_digest_req")];
+/// The file system's answers and their requests (t21 E1).
+pub const FILE_SYSTEM: [(&str, &str); 3] = [("dir_entry", "rr_dir_req"), ("file_line", "rr_file_req"), ("file_digest", "rr_digest_req")];
 
+/// Every answer of a file and its request: the file system's (`FILE_SYSTEM`), then each language's
+/// (`answerers`), one row an answer's relation. A request of several relations has a row for each.
+pub static WORLD: World = World;
+
+/// `WORLD`'s rows. Made once the languages are installed, and not before: a process whose languages install after
+/// its first program is lowered (a test runner with no load hook, where the first store opened installs them) kept
+/// the file system's alone, and answered no language's request.
+pub struct World;
+
+impl World {
+    pub fn iter(&self) -> std::slice::Iter<'static, (&'static str, &'static str)> {
+        static FS: [(&str, &str); 3] = FILE_SYSTEM;
+        static ALL: std::sync::OnceLock<Vec<(&'static str, &'static str)>> = std::sync::OnceLock::new();
+        if !crate::code_rule_dsl::language::answerers_installed() {
+            return FS.iter();
+        }
+        ALL.get_or_init(|| {
+            let languages = crate::code_rule_dsl::language::answerers().iter().flat_map(|a| a.produces().iter().map(|r| (*r, a.request())));
+            FILE_SYSTEM.into_iter().chain(languages).collect()
+        })
+        .iter()
+    }
+}
+
+/// The request an answer's relation asks by its first column: the file system's, and a language's of one column. A
+/// request of several columns is made by rules (`c_pp_tu_req(tu, spec)`).
 fn world_demand(rel: &str) -> Option<&'static str> {
-    WORLD.iter().find(|(r, _)| *r == rel).map(|(_, d)| *d)
+    WORLD.iter().find(|(r, _)| *r == rel).map(|(_, d)| *d).filter(|d| crate::code_rule_dsl::language::answerer(d).is_none_or(|a| a.key_width() == 1))
 }
 
 fn body_vars(lits: &[Lit]) -> BTreeSet<String> {

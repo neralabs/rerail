@@ -9,24 +9,39 @@ use rerail_compiler::{block, block_native as native_ir};
 use rerail_metal::block_program;
 
 /// Every step's tier 1 on Metal, generated MSL (one lane width, the class planes), equals the
-/// CPU interpreter on every document: outputs and extracted positions.
+/// CPU interpreter on every document: outputs and extracted positions. A step whose program has
+/// a prefix (the JSON steps' byte order mark) Metal refuses (0335, 0389): it is refused alone, and
+/// the others are run.
 #[test]
 fn every_step_on_metal_equals_the_interpreter() {
     use block_program::{ClassStrategy, Executor, LaneWidth, run_split};
     let steps = steps_in(DIR);
     let compiled: Vec<Compiled> = steps.iter().map(|(n, s)| compile_step(n, s)).collect();
     let docs: Vec<Vec<Vec<u8>>> = compiled.iter().zip(&steps).map(|(c, (n, _))| documents(&Lang::of(&c.stmts), seed(n), &|b| reference(c, b).is_some()).0).collect();
-    let forms: Vec<&native_ir::BlockNative> = compiled.iter().map(|c| &c.native.block_programs[0]).collect();
-    let files: Vec<block::BatchFile<'_>> = docs.iter().enumerate().flat_map(|(p, ds)| ds.iter().map(move |b| block::BatchFile { bytes: b, program: p })).collect();
+    let all: Vec<&native_ir::BlockNative> = compiled.iter().map(|c| &c.native.block_programs[0]).collect();
+    let prefixed = |p: &native_ir::BlockNative| p.insts.iter().any(|i| matches!(i, native_ir::BlockInst::Early(..) | native_ir::BlockInst::Prefix(..))) || p.records.as_ref().is_some_and(|r| !r.prefix.is_empty());
+    let (mut forms, mut index) = (Vec::new(), vec![None; all.len()]);
+    for (k, p) in all.iter().enumerate() {
+        if prefixed(p) {
+            let one = [block::BatchFile { bytes: b"{}", program: 0 }];
+            assert!(matches!(run_split(&[*p], &one, LaneWidth::W32, Executor::Generated(ClassStrategy::Planes), 64), Err(rerail_metal::Error::UnsupportedBackend)), "{}: Metal refuses a prefix", steps[k].0);
+        } else {
+            index[k] = Some(forms.len());
+            forms.push(*p);
+        }
+    }
+    let files: Vec<block::BatchFile<'_>> = docs.iter().enumerate().filter_map(|(p, ds)| index[p].map(|i| (p, i, ds))).flat_map(|(_, i, ds)| ds.iter().map(move |b| block::BatchFile { bytes: b, program: i })).collect();
+    let step_of: Vec<usize> = (0..all.len()).filter(|&k| index[k].is_some()).collect();
     let run = run_split(&forms, &files, LaneWidth::W32, Executor::Generated(ClassStrategy::Planes), 64).unwrap_or_else(|e| panic!("metal: {e:?}"));
     let mut differ = Vec::new();
     for (f, got) in files.iter().zip(&run.files) {
-        let want = compiled[f.program].program.block_programs[0].run_files(&[f.bytes]).remove(0);
+        let k = step_of[f.program];
+        let want = compiled[k].program.block_programs[0].run_files(&[f.bytes]).remove(0);
         if got.outputs != want.outputs || got.positions != want.positions {
-            differ.push(format!("{}: {:?}", steps[f.program].0, String::from_utf8_lossy(f.bytes)));
+            differ.push(format!("{}: {:?}", steps[k].0, String::from_utf8_lossy(f.bytes)));
         }
     }
-    eprintln!("{} files over {} steps on Metal", files.len(), steps.len());
+    eprintln!("{} files over {} steps on Metal ({} refused: a prefix)", files.len(), forms.len(), all.len() - forms.len());
     assert!(differ.is_empty(), "{} files differ:\n{}", differ.len(), differ.join("\n"));
 }
 

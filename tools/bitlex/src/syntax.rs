@@ -402,7 +402,9 @@ impl Regions {
             None => e,
         });
         let plain: Vec<&Region> = self.kinds.iter().filter(|r| r.after.is_empty()).collect();
-        let ordered: Vec<&Region> = plain.iter().copied().chain(self.kinds.iter().filter(|r| !r.after.is_empty())).collect();
+        // Where two kinds open a byte the walk opens the first listed that may: each kind's
+        // opener excludes the earlier kinds' taken.
+        let mut earlier: Option<Expr> = None;
         let any = |rs: Vec<&Region>| rs.iter().fold(None, |a: Option<Expr>, r| {
             let o = name(&format!("o_{}", r.kind));
             Some(match a {
@@ -410,13 +412,23 @@ impl Regions {
                 None => o,
             })
         });
-        for r in ordered {
+        for r in &self.kinds {
             let mut open = and(r.opener.clone(), not(name(&self.hidden)));
             if !r.after.is_empty() {
                 let named = any(plain.iter().copied().filter(|k| r.after.contains(&k.kind)).collect()).expect("verified: a kind named");
                 let others = any(plain.iter().copied().filter(|k| !r.after.contains(&k.kind)).collect()).unwrap_or(Expr::Empty);
                 open = and(open, call("prev", vec![Arg::E(call("fill", vec![Arg::E(named), Arg::E(others)]))]));
             }
+            if let Some(e) = &earlier {
+                open = and(open, not(e.clone()));
+            }
+            let taken = format!("taken_{}", r.kind);
+            out.push(Stmt::Mask(taken.clone(), open));
+            let open = name(&taken);
+            earlier = Some(match earlier.take() {
+                Some(e) => Expr::Or(Box::new(e), Box::new(open.clone())),
+                None => open.clone(),
+            });
             let o = format!("o_{}", r.kind);
             let f = format!("f_{}", r.kind);
             match &r.empty {
@@ -610,7 +622,6 @@ pub enum Stmt {
     /// are their `last` mask too (`TokenRule::last`), and a CPU ends the token at its start by
     /// the rule (decision 0177), with no last mask.
     Token { kind: String, start: Expr, through: Option<Expr>, last: Option<Expr>, rule: Option<TokenRule> },
-    Munch { kind: String, over: Expr, lits: Vec<(Vec<u8>, Option<String>)> },
     Keywords { kind: String, words: Vec<(Vec<u8>, Option<String>)>, soft: Vec<Vec<u8>>, required: bool },
     Skip(Expr),
     /// `prefix B …`: a file that starts with these bytes (one to eight) is read from after them,
@@ -1372,6 +1383,10 @@ impl P {
                 }
             }
         }
+        // The kinds with `after` come last: they read the openers the plain kinds took.
+        if let Some(w) = kinds.windows(2).find(|w| !w[0].after.is_empty() && w[1].after.is_empty()) {
+            return Err(format!("region {}: a kind with no `after` after {}, which has one; the kinds with `after` come last", w[1].kind, w[0].kind));
+        }
         if kinds.len() > 15 && kinds.iter().any(|r| !r.after.is_empty()) {
             return Err("regions with `after`: at most 15 kinds".into());
         }
@@ -1420,6 +1435,76 @@ impl P {
         self.pair_sets.push((name_of.clone(), pairs));
         Ok(Stmt::Mask(name_of, mask))
     }
+    /// `munch K over O { "L" [-> KIND] … }`: operator tokens by longest match over each run of
+    /// `O` (03-bitlex.md §3.3), as masks and tokens. At each byte the longest literal that
+    /// starts there (1 to 3 bytes, all of them in `O`); a byte starts a token unless the token
+    /// one or two bytes before covers it, a fixed point taken four times from "every byte". A
+    /// run that has not settled by then (a chain of candidates such as `=====`) is an error, as
+    /// is a byte of `O` no literal starts. A token's kind is its alias, else its literal.
+    fn munch(&mut self, kind: &str, over: Expr, lits: &[(Vec<u8>, Option<String>)]) -> R<Stmt> {
+        let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
+        let or = |a: Expr, b: Expr| Expr::Or(Box::new(a), Box::new(b));
+        let not = |a: Expr| Expr::Not(Box::new(a));
+        let shift = |f: &str, e: Expr, k: usize| match k {
+            0 => e,
+            1 => Expr::Call(f.into(), vec![Arg::E(e)]),
+            k => Expr::Call(f.into(), vec![Arg::E(e), Arg::N(k as u64)]),
+        };
+        let any = |v: Vec<Expr>| v.into_iter().reduce(|a, b| or(a, b));
+        let n = |x: &str| Expr::Name(format!("munch_{kind}_{x}"));
+        if lits.iter().any(|(l, _)| l.is_empty() || l.len() > 3) {
+            return self.err("munch: literals of 1 to 3 bytes");
+        }
+        let class = |b: u8| format!("pair_byte_{b:02x}");
+        for &b in lits.iter().flat_map(|(l, _)| l) {
+            if !self.classed.contains(&b) {
+                self.classed.push(b);
+                self.before.push(Stmt::Class(class(b), vec![(u32::from(b), u32::from(b))]));
+            }
+        }
+        let mut out = vec![Stmt::Mask(format!("munch_{kind}_over"), over)];
+        // Each literal where it starts, and the bytes the longest of each length starts at.
+        let mut by_len: [Vec<Expr>; 3] = Default::default();
+        for (j, (l, _)) in lits.iter().enumerate() {
+            let at = l.iter().enumerate().map(|(k, &b)| and(shift("next", Expr::Name(class(b)), k), shift("next", n("over"), k))).reduce(|a, b| and(a, b)).expect("a byte");
+            out.push(Stmt::Mask(format!("munch_{kind}_at{j}"), at));
+            by_len[l.len() - 1].push(n(&format!("at{j}")));
+        }
+        let zero = || Expr::Name("empty".into());
+        let [one, two, three] = by_len.map(|v| any(v).unwrap_or_else(zero));
+        out.push(Stmt::Mask(format!("munch_{kind}_l3"), three));
+        out.push(Stmt::Mask(format!("munch_{kind}_l2"), and(two, not(n("l3")))));
+        out.push(Stmt::Mask(format!("munch_{kind}_l1"), and(one, not(or(n("l2"), n("l3"))))));
+        // The fixed point: a byte starts a token unless one started a byte or two before covers it.
+        out.push(Stmt::Mask(format!("munch_{kind}_win0"), n("over")));
+        for k in 1..=4 {
+            let w = n(&format!("win{}", k - 1));
+            let covered = or(shift("prev", and(w.clone(), or(n("l2"), n("l3"))), 1), shift("prev", and(w, n("l3")), 2));
+            out.push(Stmt::Mask(format!("munch_{kind}_win{k}"), and(n("over"), not(covered))));
+        }
+        out.push(Stmt::Error(format!("munch {kind}: a chain of operators longer than its bound"), Expr::Xor(Box::new(n("win3")), Box::new(n("win4")))));
+        out.push(Stmt::Error(format!("munch {kind}: a byte no operator starts"), and(n("win3"), not(or(n("l1"), or(n("l2"), n("l3")))))));
+        let last = or(or(and(n("win3"), n("l1")), shift("prev", and(n("win3"), n("l2")), 1)), shift("prev", and(n("win3"), n("l3")), 2));
+        out.push(Stmt::Mask(format!("munch_{kind}_last"), last));
+        // A token a kind: the bytes where the longest literal is one of the kind's.
+        let mut kinds: Vec<(String, Vec<Expr>)> = Vec::new();
+        for (j, (l, alias)) in lits.iter().enumerate() {
+            let k = alias.clone().unwrap_or_else(|| String::from_utf8_lossy(l).into_owned());
+            let longest = and(n(&format!("at{j}")), n(&format!("l{}", l.len())));
+            match kinds.iter_mut().find(|(x, _)| *x == k) {
+                Some((_, v)) => v.push(longest),
+                None => kinds.push((k, vec![longest])),
+            }
+        }
+        for (k, v) in kinds {
+            let start = and(n("win3"), any(v).expect("a literal"));
+            out.push(Stmt::Token { kind: k, start, through: None, last: Some(n("last")), rule: None });
+        }
+        let last = out.pop().expect("a token");
+        self.before.extend(out);
+        Ok(last)
+    }
+
     /// A token test: `count(E) at least N` or `run(E) at least N` (`TokenTest`).
     fn token_test(&mut self) -> R<(TokenTest, Expr, u32)> {
         let test = if self.eat_kw("count") {
@@ -1965,7 +2050,8 @@ impl P {
                 let kind = self.ident()?;
                 self.want_kw("over")?;
                 let over = self.expr()?;
-                Stmt::Munch { kind, over, lits: self.words()? }
+                let lits = self.words()?;
+                self.munch(&kind, over, &lits)?
             }
             "keywords" => {
                 let kind = self.ident()?;

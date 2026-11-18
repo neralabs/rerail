@@ -1012,7 +1012,8 @@ impl Lowering {
     /// every value is at one delay `D`, the largest of its openers' and closers' (one more with
     /// an `else`), so a word's bit is one byte throughout and the group is a walk
     /// (`block::Walk`) as well as a fixed point. Each opener and closer brought to `D` and cut to
-    /// the stream; the carry `H`; per kind `o_K = O & ~H`, `f_K = fill(o_K, C)`, and the hidden
+    /// the stream; the carry `H`; per kind `o_K = O & ~H & ~(an earlier kind's O)` (a byte two
+    /// kinds open is the first's, as the walk takes it), `f_K = fill(o_K, C)`, and the hidden
     /// bytes after them by `prev`s at `D`. An `else`'s "a closer after the byte" is the closer's
     /// `back_fill` at `D - 1`: the same bits, a byte on.
     pub fn regions(&mut self, regions: &::bitlex::syntax::Regions) -> Result<(), String> {
@@ -1070,25 +1071,25 @@ impl Lowering {
         let code = self.op(BlockOp::AndNot(w, hidden));
         let mut hide: Vec<u16> = Vec::new();
         let mut kinds = Vec::new();
+        // The earlier kinds' openers: a byte one of them opens is not a later kind's.
+        let mut earlier: Option<u16> = None;
         let named = |me: &mut Self, name: String, v: u16| {
             me.names.insert(name, Val { v, d, dirty: true, set: None });
         };
-        // The kinds with no `after` first: a kind with one reads their openers taken. Each
-        // kind keeps its place in the walk (`WalkKind::after` names kinds by it).
-        let n = regions.kinds.len();
-        let order: Vec<usize> = (0..n).filter(|&k| regions.kinds[k].after.is_empty()).chain((0..n).filter(|&k| !regions.kinds[k].after.is_empty())).collect();
-        let mut opens: Vec<Option<u16>> = vec![None; n];
-        let mut made: Vec<Option<crate::block::WalkKind>> = vec![None; n];
-        for at in order {
-            let (r, &(opener, closer, c_before, or)) = (&regions.kinds[at], &ins[at]);
+        // In the walk's order, which is the regions' (`after` kinds last, verified): a kind with
+        // `after` reads the plain kinds' openers taken. Where two kinds open a byte the walk opens
+        // the first listed of those that may open there, so each kind's opener excludes the
+        // earlier kinds' taken (an `after` kind's with its condition: e3927f1d7, 0332 step 35).
+        let mut opens: Vec<u16> = Vec::with_capacity(regions.kinds.len());
+        for (at, (r, &(opener, closer, c_before, or))) in regions.kinds.iter().zip(&ins).enumerate() {
             let mut taken = self.op(BlockOp::And(opener, code));
             let mut after = 0u16;
             if !r.after.is_empty() {
                 // Taken where the last plain kind's opener taken before is one `after` names.
                 let mut named = None;
                 let mut others = None;
-                for (k, q) in regions.kinds.iter().enumerate().filter(|(_, q)| q.after.is_empty()) {
-                    let o = opens[k].expect("a plain kind, made first");
+                for (k, q) in regions.kinds[..at].iter().enumerate().filter(|(_, q)| q.after.is_empty()) {
+                    let o = opens[k];
                     let side = if r.after.contains(&q.kind) {
                         after |= 1 << k;
                         &mut named
@@ -1104,6 +1105,13 @@ impl Lowering {
                 let before = self.op(BlockOp::Prev(last, 1));
                 taken = self.op(BlockOp::And(taken, before));
             }
+            if let Some(e) = earlier {
+                taken = self.op(BlockOp::AndNot(taken, e));
+            }
+            earlier = Some(match earlier {
+                Some(e) => self.op(BlockOp::Or(e, taken)),
+                None => taken,
+            });
             let (open, empty) = match &r.empty {
                 Some((e, m)) => {
                     let later = self.op(BlockOp::BackFill(c_before.expect("made with an else"), zero));
@@ -1117,7 +1125,7 @@ impl Lowering {
                 }
                 None => (taken, None),
             };
-            opens[at] = Some(open);
+            opens.push(open);
             let fill = self.op(BlockOp::Fill(open, closer));
             if r.outside {
                 let p = self.op(BlockOp::Prev(fill, 1));
@@ -1147,9 +1155,8 @@ impl Lowering {
             let before = self.prev(f, 1)?;
             let flips = self.xor(f, before)?;
             self.toggles.push((f, flips));
-            made[at] = Some(crate::block::WalkKind { opener, closer, open, fill, bytes: r.bytes, outside: r.outside, empty, or, after });
+            kinds.push(crate::block::WalkKind { opener, closer, open, fill, bytes: r.bytes, outside: r.outside, empty, or, after });
         }
-        kinds.extend(made.into_iter().map(|k| k.expect("each kind made")));
         let mut next = *hide.first().ok_or("regions that hide nothing")?;
         for &h in &hide[1..] {
             next = self.op(BlockOp::Or(next, h));
@@ -3196,7 +3203,9 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     };
     // The token marks, their kinds the records' (`Words::token_marks`).
     if !lowered.token_marks.is_empty() {
-        if !token_extras {
+        // Extras between a mark's tokens are placed in the token step only; a grammar with none
+        // has nothing to place.
+        if !token_extras && !low.extra.is_empty() {
             return Err("token marks with extras not taken in the token step".into());
         }
         let mut tms = Vec::new();
