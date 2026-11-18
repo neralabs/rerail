@@ -1,4 +1,4 @@
-import { PerformanceObserver } from "node:perf_hooks";
+import { constants, PerformanceObserver, type PerformanceEntry } from "node:perf_hooks";
 import { getHeapStatistics, setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
@@ -45,6 +45,18 @@ describe("whether the daemon needs the room what no session uses takes", () => {
       expect(reading.resident).toBeGreaterThan(0);
       expect(reading.heapUsed).toBeLessThan(reading.heapLimit);
     }
+  });
+
+  // Only a full collection leaves the live heap: after a minor one the old generation still holds its garbage, which
+  // read as the daemon's would close every kept runtime though a collection could free that garbage.
+  it("takes a heap reading from full collections only, not from minor ones or entries that name no kind", () => {
+    // A gc entry as Node makes it: the parts the reading looks at.
+    const entry = (detail: unknown) => ({ name: "gc", entryType: "gc", startTime: 0, duration: 1, detail }) as unknown as PerformanceEntry;
+    expect(isFullCollection(entry({ kind: constants.NODE_PERFORMANCE_GC_MAJOR, flags: 0 }))).toBe(true);
+    expect(isFullCollection(entry({ kind: constants.NODE_PERFORMANCE_GC_MINOR, flags: 0 }))).toBe(false);
+    expect(isFullCollection(entry({ kind: constants.NODE_PERFORMANCE_GC_INCREMENTAL, flags: 0 }))).toBe(false);
+    expect(isFullCollection(entry(undefined))).toBe(false);
+    expect(isFullCollection(entry({ flags: 0 }))).toBe(false);
   });
 
   // The heap's own count holds the garbage made since the last collection, most of a busy daemon's heap: read as it is,
