@@ -243,6 +243,20 @@ pub struct NativeTaskContext {
     pub derived: *const u32,
     pub derived_classes: u32,
     pub derived_words: u32,
+    /// The most steps a path or a candidate's predicates or outputs took (`current_steps` before each reset): with
+    /// the task's total, what the task needed of its budget (decision 0334). Folded where `current_steps` is
+    /// replaced (`fold_most_steps`), never per step.
+    pub most_steps: u32,
+}
+
+/// Folds `current_steps` into `most_steps`, before `current_steps` is replaced (decision 0334): once a path or a
+/// candidate, so a step costs nothing more.
+pub(super) fn fold_most_steps(function: &mut FunctionBuilder<'_>, task: cranelift_codegen::ir::Value) {
+    let flags = MemFlags::trusted();
+    let current = function.ins().load(types::I32, flags, task, mem::offset_of!(NativeTaskContext, current_steps) as i32);
+    let most = function.ins().load(types::I32, flags, task, mem::offset_of!(NativeTaskContext, most_steps) as i32);
+    let most = function.ins().umax(current, most);
+    function.ins().store(flags, most, task, mem::offset_of!(NativeTaskContext, most_steps) as i32);
 }
 
 // Each packed task owns disjoint mutable ranges. Shared pointers are read-only.
@@ -2286,6 +2300,7 @@ pub fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLi
             path,
             pending_path_field(mem::offset_of!(PathRecord, steps)),
         );
+        fold_most_steps(&mut function, task);
         function.ins().store(
             flags,
             resumed_steps,
@@ -2623,8 +2638,37 @@ pub fn execute_batch_packed_with_work_limit(
     result_limits: Option<&[u32]>,
     work_limit: u32,
 ) -> Result<PackedExecution, Error> {
+    super::restarting(programs, anchors, super::Budget::current(), &mut |anchors, budget, growth| {
+        execute_batch_packed_once(programs, files, anchors, result_limits, work_limit, budget, growth)
+    })
+}
+
+/// The batch with `budget` (decision 0334): an evaluation that outgrows its steps or states restarts with twice as
+/// much (`restarting`).
+pub(super) fn execute_batch_packed_budgeted(
+    programs: &[Program],
+    files: &[TapeDoc],
+    anchors: &[Vec<Vec<u32>>],
+    result_limits: Option<&[u32]>,
+    budget: super::Budget,
+) -> Result<PackedExecution, Error> {
+    super::restarting(programs, anchors, budget, &mut |anchors, budget, growth| {
+        execute_batch_packed_once(programs, files, anchors, result_limits, super::MAX_STEPS_PER_PATH as u32, budget, growth)
+    })
+}
+
+fn execute_batch_packed_once(
+    programs: &[Program],
+    files: &[TapeDoc],
+    anchors: &[Vec<Vec<u32>>],
+    result_limits: Option<&[u32]>,
+    work_limit: u32,
+    budget: super::Budget,
+    growth: &super::StateGrowth,
+) -> Result<PackedExecution, Error> {
     let stage = crate::code_rule_dsl::prof::Stage::start("jit.batch");
     let mut batch = PackedBatch::new_in_place(programs, files, anchors)?;
+    batch.apply_budget(budget, growth);
     drop(stage);
     crate::code_rule_dsl::prof::count("jit.tasks", batch.tasks.len());
     if batch.tasks.is_empty() {
@@ -2752,8 +2796,10 @@ pub fn execute_batch_packed_with_work_limit(
                 .add(arena_starts[ArenaKind::Pending as usize] as usize)
         };
         context.pending_quota_limit = batch.evaluation_limit(task, ArenaKind::Pending);
-        context.task_work_limit = super::MAX_WORK_PER_TASK as u32;
-        context.path_work_limit = work_limit;
+        // The task's budget, as the device's (decision 0334): the ceiling unless replanned.
+        context.task_work_limit = task.work_limit;
+        // A path's and a value's steps, held to the task's budget too, as the device's (`step_limit`).
+        context.path_work_limit = work_limit.min(task.work_limit);
         context.captures = unsafe {
             captures
                 .as_mut_ptr()
@@ -2891,7 +2937,14 @@ pub fn execute_batch_packed_with_work_limit(
                         );
                     }
                 }
+                context.most_steps = 0;
                 unsafe { entries[*program](context) };
+                // The task's steps: its total, or its longest path's or candidate's where that is more (what its
+                // budget had to hold, decision 0334).
+                unsafe {
+                    let most = context.most_steps.max(context.current_steps);
+                    (*context.status).reserved = (*context.status).reserved.max(most);
+                }
                 let status = unsafe { *context.status };
                 if status.error != 0 {
                     return Ok(TaskPackedOutput {

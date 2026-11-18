@@ -320,7 +320,6 @@ fn operator_cases() -> Vec<(CapturePredicate, usize)> {
 }
 
 #[test]
-#[ignore = "Q49: on the packed Metal JIT the task stops at its workspace estimate (WorkLimit) where the CPU interpreter, at 2^26, does not"]
 fn shared_capture_operators_preserve_pairing_quantifiers_empty_groups_and_properties() {
     let cases = operator_cases();
     let programs = cases
@@ -378,7 +377,6 @@ fn native_capture_operators_preserve_the_complete_group_truth_table() {
 }
 
 #[test]
-#[ignore = "Q49: on the packed Metal JIT the task stops at its workspace estimate (WorkLimit) where the CPU interpreter, at 2^26, does not"]
 fn shared_capture_operators_compare_long_utf8_spans_and_chunk_crossing_needles() {
     let text = format!("{}é{}tail", "a".repeat(71), "b".repeat(87));
     let source = format!("{text}\n");
@@ -604,7 +602,6 @@ fn shared_capture_pairs_apply_negation_before_any_or_all_and_zip_occurrences() {
 }
 
 #[test]
-#[ignore = "Q64: the packed Metal JIT refuses this batch (BackendCapacity) where the CPU interpreter runs it"]
 fn shared_ancestor_sets_exclude_self_cross_scan_groups_and_file_boundaries() {
     let language = SupportLang::Python.get_ts_language();
     let call = language.id_for_node_kind("call", true);
@@ -838,7 +835,6 @@ fn general_capture_predicates_gate_later_regex_work_and_keep_errors_evaluation_s
 }
 
 #[test]
-#[ignore = "Q49: on the packed Metal JIT the task stops at its workspace estimate (WorkLimit) where the CPU interpreter, at 2^26, does not"]
 fn ordinary_capture_operators_apply_the_complete_truth_table_at_the_assertion() {
     let cases = operator_cases();
     let programs = cases

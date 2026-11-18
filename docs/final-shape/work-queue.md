@@ -708,7 +708,10 @@ pass.
   `rule_files_use_the_core_prelude…` ("SQL output already exists"), `every_operation_runs_on_every_executor`
   (packs.tsv), `executors_are_shared` (blocks/src/gpu.rs:199 makes a command queue), `the_gate_catches_a_widened_walk`,
   `spilled_walks_find_the_cpus_roots`, `the_backends_find_the_same_keys_on_real_files`, and the replay sample
-  (63 of 268 events).
+  (63 of 268 events). `spilled_walks_find_the_cpus_roots` (2026-11-17): without the pack's test data its fixtures are
+  one tape, under its 1,000 roots; on corpus0 (`RERAIL_S1_DIR`) it compared one backend's candidates for W
+  (`WaveRun::limited`) with the other's roots. It now compares what W confirms there, and passes on 24 of corpus0's
+  files (41 waves, 1,665 roots).
 - **A run stops under strict SQL too** (2026-11-16, 93b9e0f31 and after): the bench's 317 rules (`rules/B-now`)
   with this checkout's `docs/rule-syntax/lib` over 10 of corpus0's files abort with "SQL inside the waves: `SELECT
   n, v FROM main.value`", from `setfix::input_of` under `plan::Run::native_stratum` (a native step's input read as a
@@ -1323,9 +1326,7 @@ pass.
 
 ### Q49. (Q19 at 3b6f4355b) The matcher's `metal-tests` gates: one clause past its work limit, one coverage count short
 
-Found 2026-11-16 (0293 step 5): the gated tests had not compiled (`LoweredWave::roots_metal` was private to the
-transducer crate, which the engine's `waves::matches` test calls; now `pub`). Compiled, two fail, the same in 15,
-16 and 16z, and the first the same at 6afcddb0a, before the device read format 16:
+Found 2026-11-16 (0293 step 5): the gated tests had not compiled; compiled, two failed.
 
 - `lowered_clauses_find_the_same_roots_on_the_resident_interpreter`: 114 of 122 clauses equal, 7 refused, and
   `ruff-d416-missing-section-name-colon/missing-colon-underlined` fails on the device (`BackendFailure`): a task's
@@ -1369,6 +1370,24 @@ transducer crate, which the engine's `waves::matches` test calls; now `pub`). Co
   - `shared_query_capture_text_batches_programs_and_files_without_output_directives`
   - `transformed_candidate_rejection_precedes_accepted_witness_limits`
   - `typed_output_preserves_late_operand_failures_without_publishing_failed_evaluations`
+- **At the hub's merge of oscar** (da5892e9c, 2026-11-17), oscar's record (its Q19):
+- **Fixed** (2026-11-17, decision 0334). The device read each task's workspace estimate as its work limit, where
+  the CPU's is 2^26 a task and 2^20 a path; the ABI's own comment said the estimate only sizes. The estimate and
+  the budget are now two fields, and the budget is a mode (`RERAIL_DEVICE_BUDGET`: `full`, the CPU's limits;
+  `replan`, the default since 2026-11-17). `lowered_clauses_find_the_same_roots_on_the_resident_interpreter` passes.
+- The 16 semantic fixtures listed here under Q49 were mostly not the work limit: a result limit was applied as the
+  result capacity, so an evaluation past its witness limit failed (`WorkLimit` on Metal, `BackendCapacity` on the
+  CPU JIT). It is now a selection at compaction (0334 §3). 13 of them pass; the 3 that differed are fixed (Q64).
+- `metal_catches_a_widened_walk` caught 2 widened clauses of the 3 it wanted, and so does its CPU twin
+  (`the_gate_catches_a_widened_walk`, in the slow tier, failing unseen): the pack's clauses give 2. Both now read
+  the same tapes (`widened_tapes`, Metal 16 a launch) and want 2 (`WIDENED_CAUGHT`); both pass.
+- The replanning of over-long jobs is built (2026-11-17, 0334 Progress): budgets from predicted steps (rates in
+  the cost store), restarts with twice the budget (packed batches, the label sweep), W chosen by cost in the
+  wave's root walks, states restarted when outgrown. Then (the same day): the CPU wave's label passes and sweeps
+  and the Metal wave's passes, sweeps and root walks give unfinished evaluations to W by cost; a root walk keeps
+  its finished roots and may take the micro walk on the term index; mispredictions reprice at once; `replan` is
+  the default, after the pack's 491 clauses on corpus0 gave `full`'s roots on both backends.
+- **Done.** 0334's "another anchor or driver" is decision 0365 (built on the CPU; Metal is Q133).
 
 ### Q84. (Q65 at Native-and-GPU-strata e0a0362b9; Q57 at django-bugs 49dad1939) The warm run after a cold one asks the observer's store inside the waves (the hub, 8e4b6b68e)
 
@@ -1476,24 +1495,42 @@ Their siblings, found later the same day (0310 steps 4 and 5):
 ### Q63. (Q21 at f15aac19d) The farm's mirror never removes a deleted file
 
 Found 2026-11-16 (0324, retiring the grid). A checkout's changes reach a host's copy through the farm's mirror,
-which sends changed and new files and never removes one the checkout deleted. After the grid's 151 files went
-(staged `git rm`), the host's copy still held all of them. Nothing mounted them, so builds were right. But
-`executors_are_shared`, which reads every source file, failed on the stale grid files. A deleted file that is still
-mounted somewhere would build on the host and fail here.
+which sends changed and new files and never removed one the checkout deleted. After the grid's 151 files went,
+the host's copy still held them, and `executors_are_shared` (which reads every source file) failed on them.
 
-- **Keep**: the mirror's incremental sends.
-- **Done when**: a file the checkout deleted (tracked at the host's copy's last sync, now gone) is removed from the
-  host's copy before the command runs, and a test of the mirror covers it.
+- **Written** (2026-11-17, farm version 8): `test-remote` and `live-test-remote` ask the agent to prune. It removes
+  each file under the host's copy of the checkout that the mirror wrote (its attribute) and the checkout no longer
+  has; files a command wrote, `--tree` directories and `.git` stay. `scripts/build/farm/test-agent` checks it.
+- **Not installed**: the installed farm (version 7) is another worktree's line, newer than this branch's in
+  `farm.py`, `farm-agent`, `diagnose`, `status` and `clean-target`. Installing from here would undo that. It goes in
+  when the two lines merge.
+- **Done when**: installed, and `executors_are_shared` passes on a host.
+- **At the hub's merge of oscar** (da5892e9c, 2026-11-17): not taken. The hub's farm line is build-and-test-loop-time's
+  farm 27, the installed one; oscar's prune is written against farm 7 (`VERSION = 8`) in `farm.py`, `farm-agent`,
+  `mirror.py`, `test-agent`, the README, `test-remote` and `live-test-remote`. Taken alone, those clients would ask
+  farm-27 agents for an operation they lack. The hub keeps farm 27 whole. **Hand-off**: the farm's owner ports the
+  prune onto its line as farm 28 (b5f95d7d2 is the reference, with its `test-agent` check).
 
 ### Q64. (Q22 at f15aac19d) Metal's semantic fixtures on the packed JIT: refusals, failures and different results
 
-Found 2026-11-16 (0324, retiring the grid). Metal's semantic fixtures (`metal_semantic_conformance` and the phase-four
-files) compare Metal with the CPU interpreter. They ran only on the grid machine. On the packed JIT, which the
-product runs, 79 of 115 pass, 18 fail on Q49's work limit, and 18 fail in the ways below. Each is ignored with
-"Q64". The JIT itself did not change with the grid's retirement, so these differences were there before.
+Found 2026-11-16 (0324, retiring the grid). Metal's semantic fixtures compare the packed JIT with the CPU
+interpreter. 2026-11-17 (0334): 15 of the 36 ignored pass now (the result limit and the work budget, Q49; the two
+output-directive failures were a stale rejected slot and a failed task's early results). 21 stay ignored, "Q64":
 
-- **Refused (`BackendCapacity`)**, where the CPU runs the batch (15). The cause is not traced: it may be Q49's
-  estimate sizing the workspace, or another of the JIT's caps.
+- **Refused (`BackendCapacity`)**, where the CPU runs the batch (15). The cause: the workspace is sized from the
+  workspace estimate, a step count (subtree × words × 4,096), as up to 65,536 states a kind a task, times the
+  lanes. `finite_literal_register_work_stays_broad_across_programs_and_files` (3 three-word programs, 128 files of
+  three lines) plans 471 MB, which the Metal buffer pool refuses (`metal_buffer_limit`). **Fixed** 2026-11-17
+  (0334 §9): states sized from the task, an outgrown evaluation restarted with twice its states, fewer lanes where
+  the pool refuses. 12 pass. The 3 left found other results on Metal than the interpreter (the CPU JIT agreed with
+  it) at any state size: Metal semantics, hidden behind the refusal. **Fixed** 2026-11-17 (d2ad6ee9f), all three
+  on the Metal kernel: an ordinary program's `ASSERT` was a no-op and its predicates were tested at the task's end
+  on the final captures (now at the assertion, as the CPU's;
+  `inputs_compact_stage_capture_predicates_use_the_correct_capture_generation`); the query arenas, which gate
+  admission and reduction, were sized for any program with repeats (now a tree-sitter query with repeats only;
+  `inputs_compact_stage_waves_match_cpu_navigation_and_control_flow`); the end-of-task reduction kept the later
+  of two candidates that contain each other (now the earlier, as the CPU's;
+  `inputs_nested_optional_type_captures_preserve_raw_candidate_ordinals`). No Q64 ignore is left. The 15 were:
   - `corpus_optional_test_bodies_and_regex_injections_match_cpu`
   - `finite_literal_register_work_stays_broad_across_programs_and_files`
   - `inputs_absent_field_uses_shared_facts_for_wide_and_file_local_inputs`
@@ -1509,21 +1546,43 @@ product runs, 79 of 115 pass, 18 fail on Q49's work limit, and 18 fail in the wa
   - `inputs_shared_root_predicates_intern_values_and_need_no_frontier_records`
   - `inputs_small_automata_defer_long_inputs_into_shared_value_frontiers`
   - `shared_ancestor_sets_exclude_self_cross_scan_groups_and_file_boundaries`
-  - and, found at the hub's merge of f15aac19d (46e5b3abc + oscar), four of `packed::tests` whose Metal parity
-    ran on the grid and now runs the packed JIT, ignored on macOS (their CPU parity still runs elsewhere):
-    `all_backends_execute_every_verified_instruction_and_mode`, `cpu_jit_compiles_general_scm_control_flow`,
-    `scm_host_predicates_filter_text_kinds_lines_and_relations`, `scm_quantified_runs_preserve_each_distinct_middle_capture`.
-- **Failed (`BackendFailure`)** in output directives (2): transformed text snapshots, and a selection with
-  zero-length MIME values.
-  - `selection_handles_empty_groups_missing_targets_and_zero_length_mime_values`
-  - `transformed_text_snapshots_and_utf8_offsets_preserve_directive_order`
-- **Different results** (3): the same outputs up to a point, then a difference (not yet read).
-  - `bounded_body_admission_preserves_guarded_capture_identity_and_multiplicity`
-  - `inputs_captured_membership_contains_and_ancestors_yield_with_exact_quantifiers`
-  - `inputs_repeated_disjoint_alternatives_share_a_bounded_capture_tail`
+- **Different results** (6): fixed 2026-11-17, all on the Metal kernel (the CPU JIT agreed with the interpreter):
+  - `Relation` passed only when every capture had the kind as parent or ancestor; the CPU's passes when any does.
+    `Contains` with no strings was vacuously true with captures; the CPU's is only without captures (the truth
+    tables, and `inputs_captured_membership`'s root results).
+  - A query without repeats was reduced (dominated results dropped); the CPU reduces only with repeats
+    (`program_flags` bit 2, not bit 1) (`finite_literals`).
+  - Capture containment counted occurrences, so captures of one node under labels in another order "contained"
+    each other; the CPU's (`capture_containment`) is ordered: per byte span, the right's captures are a prefix of
+    the left's (`capture_query_contains`) (`bounded_body`).
+  - A query state was admitted unless an admitted one's captures contained it; the CPU's admits unless equal
+    (`admit_query_state`). The pruned paths' candidates are numbered on the CPU: raw candidate ordinals are a
+    public contract (t6) (`inputs_repeated_disjoint`).
+  - A query's same-span captures sorted by label; the CPU keeps them in capture order (`bounded_body`).
+  - Open: the CPU JIT's containment and queue equality still count occurrences (`define_capture_contains`), as
+    the device's queue and greedy equality do; no fixture shows a difference yet.
+- **Done when**: every fixture passes on the packed JIT, or is shown to test the grid's own machinery and goes.
 
-- **Keep**: the fixtures' CPU results as the oracle.
-- **Done when**: each fixture passes on the packed JIT, or its difference is shown to be the CPU's error.
+### Q133. (Q23 on oscar) Anchors on Metal: the device evaluates `Set` formulas
+
+Found 2026-11-17 (decision 0365). The CPU's walks start within their anchors (`Set::anchor`, evaluated as 0036's
+formulas); on Metal every label pass is a micro walk per (pass, start) and the root walks' starts are kind-code rules
+(`Roots::Codes`), and no formula runs on the device (nor may the host evaluate on Metal). Next: the device evaluates
+`Set` formulas (the column tests, labels, text rows, and the axis steps over the tape's parents and subtrees) into
+label bits, and each walk's starts read its anchor's bits; 0036's formula passes then run on the device as formulas
+too, not as walks from every start.
+
+- **Done** (0365 §8): the device evaluates the anchors (`label_leaves`, `label_formula`) for the label passes past the
+  recursive groups, the wave's listed roots and the root records. Then (§8, §9) text tests read the walks' rows, and
+  0036's roots formula passes are device formulas (`Pass::Formula`); the count anchors are measured. Left: targets
+  passes as device formulas, and a fused pack's text (0365, Not yet).
+
+### Q134. (Q24 on oscar) The wave's labelling: about 80 s of 93 s process CPU outside its stages
+
+Found 2026-11-17 (measuring 0365, `anchored_walks_find_the_unanchored_roots`, 31 waves on 10 of corpus0's files,
+debug build): `labels.wave.labelled` took 93 s process CPU without anchors and 85 s with, while its stages (formulas
+8.9 s, fallback 1.8 s, packed walks 1.8 s) and the sweeps (about 3 s thread CPU) account for a small part. Find
+where the rest goes (a sample of the run), before reading the wave's CPU totals as the walks'.
 
 ### Q69. The `.rr` ladder's field ids lose 64 in the interpreters and the compiled parser
 
@@ -2008,3 +2067,13 @@ always a refusal.
   `rerail-compiler` at opt-level 3 in dev (root Cargo.toml). Its prover fix was the same as the one the hub already had
   from Swift-Kotlin-Scala. `headers_are_the_lean_parsers` then passed in 36 s on the M1 Max (it had timed out at
   240 s), and the crate's tests are unignored.
+
+### Q135. On an M1 Max, the resident interpreter finds other roots than the CPU for PYI056's `add-to-all`
+
+Found 2026-11-17, at the hub's merge of oscar (da5892e9c). `lowered_clauses_find_the_same_roots_on_the_resident_interpreter`
+on the M1 Max: 104 of 122 clauses equal, 17 refused, and `ruff-pyi056-unsupported-method-call-on-all/add-to-all`
+differs (both sides `Ok`). The merged tree and oscar's own tip give the same counts and clause, so it is not the merge.
+Oscar's record (0334) has it passing, on the M3. Like Q123, an M1 Max difference. The test is ignored (`Q135`) until fixed.
+
+- **Done when**: the test passes on the M1 Max and the M3, and the ignore is gone.
+

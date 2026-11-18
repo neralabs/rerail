@@ -77,20 +77,26 @@ inline bool code_admits(device const uint* rule,device const DeviceCode& code){
  return true;
 }
 // The roots of the rule at `at` among document `d`'s nodes 64*group.. (file `file` of the batch), as bits.
+// A row of bits over the batch's nodes, the 64 from batch node `b`.
+inline ulong root_row(device const uint* row,uint b){
+ uint w=b/32u,sh=b%32u;ulong mask=ulong(row[w])|(ulong(row[w+1u])<<32u);
+ return sh!=0u?(mask>>sh)|(ulong(row[w+2u])<<(64u-sh)):mask;
+}
+// A rule over codes with an anchor (kind 2, decision 0365): its row (set by `label_formula`) and the rule without it.
 inline ulong root_mask(device const uchar* s,DocView d,device const uint* roots,uint at,uint file,uint group){
  uint from=group*ROOT_GROUP;if(from>=d.nodes)return 0ul;
  uint count=min(ROOT_GROUP,d.nodes-from);
- ulong mask=0ul;
+ ulong mask=0ul,anchor=~0ul;
+ if(roots[at]==2u){anchor=root_row(roots+at+2u,d.node_base+from);if(anchor==0ul)return 0ul;at+=roots[at+1u];}
  if(roots[at]!=0u){
-  device const uint* row=roots+at+1u;uint b=d.node_base+from,w=b/32u,sh=b%32u;
-  mask=ulong(row[w])|(ulong(row[w+1u])<<32u);
-  if(sh!=0u)mask=(mask>>sh)|(ulong(row[w+2u])<<(64u-sh));
+  mask=root_row(roots+at+1u,d.node_base+from);
  }else{
   uint files=roots[0];
   if(((roots[at+1u+file/32u]>>(file%32u))&1u)==0u)return 0ul;
   device const uint* rule=roots+at+1u+(files+31u)/32u;
   for(uint k=0u;k<count;k++)if(code_admits(rule,tape_code(s,d,from+k)))mask|=1ul<<k;
  }
+ mask&=anchor;
  return count==ROOT_GROUP?mask:(mask&((1ul<<count)-1ul));
 }
 // The lowest set bit of a mask.

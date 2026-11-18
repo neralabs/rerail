@@ -169,6 +169,7 @@ pub(super) fn plan_shared(
                 program: tasks[end].program,
                 root: tasks[end].root,
                 workspace_work_estimate: tasks[end].workspace_work_estimate,
+                work_limit: tasks[end].work_limit,
             });
             end += 1;
         }

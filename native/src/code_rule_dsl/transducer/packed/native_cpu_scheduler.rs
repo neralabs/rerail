@@ -738,6 +738,7 @@ fn store_current_path(function: &mut FunctionBuilder<'_>, task: Value, path: Val
 
 fn restore_path(function: &mut FunctionBuilder<'_>, task: Value, path: Value) -> Value {
     let flags = MemFlags::trusted();
+    super::native_cpu::fold_most_steps(function, task);
     let pc = function.ins().load(
         types::I32,
         flags,
