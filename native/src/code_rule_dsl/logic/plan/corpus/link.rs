@@ -238,7 +238,8 @@ impl Part for Program {
 /// which copies the rules kept under the header as edited.
 pub(super) struct Versioned {
     v: Arc<Version>,
-    was: Program,
+    /// Its header as edited. The header `v` holds is decoded again where an edit is settled (`settle`), not kept
+    /// beside it: a part that is only linked never copies it.
     head: Program,
     edited: bool,
     dropped: BTreeSet<String>,
@@ -246,8 +247,8 @@ pub(super) struct Versioned {
 
 impl Versioned {
     fn of(v: Arc<Version>) -> Result<Self> {
-        let was = v.header(&Default::default()).map_err(plan)?;
-        Ok(Versioned { v, head: was.clone(), was, edited: false, dropped: BTreeSet::new() })
+        let head = v.header(&Default::default()).map_err(plan)?;
+        Ok(Versioned { v, head, edited: false, dropped: BTreeSet::new() })
     }
     fn kept(&self) -> impl Iterator<Item = crate::code_rule_dsl::logic::program_image::RuleRef<'_>> {
         self.v.rules().filter(|r| !self.dropped.contains(self.v.rel_name(r.head().rel())))
@@ -258,11 +259,11 @@ impl Versioned {
             return Ok(());
         }
         let v = Arc::clone(&self.v);
+        let was = v.header(&Default::default()).map_err(plan)?;
         let mut b = Builder::on(&v);
-        b.set_header(&self.was, &self.head);
+        b.set_header(&was, &self.head);
         b.retain(|r| !self.dropped.contains(v.rel_name(r.head().rel())));
         self.v = b.finish().map_err(plan)?.0;
-        self.was = self.head.clone();
         self.edited = false;
         self.dropped.clear();
         Ok(())
