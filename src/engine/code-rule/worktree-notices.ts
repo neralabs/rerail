@@ -442,8 +442,8 @@ export type SessionReads =
 
 /** What a pass of the session folder found, as it ended (`SessionNotices.ended`). */
 export interface SessionFound {
-  /** The files with another name (a hard link) it found. */
-  readonly linked: ReadonlySet<string>;
+  /** The files with another name (a hard link) it found, handed over: the notices keep the set. */
+  readonly linked: Set<string>;
   /** How many files it looked at. */
   readonly files: number;
 }
@@ -491,7 +491,7 @@ export class SessionNotices {
   /** The paths notices named since the last pass began. */
   #paths = new Set<string>();
   /** The files with another name a pass found since the last whole one (`ended`), read again at every pass. */
-  #linked: ReadonlySet<string> = new Set();
+  #linked = new Set<string>();
   /** How many files and folders the last whole walk looked at, which bounds what a pass of noticed paths reads. */
   #looks = 0;
   /** How many folders the engine last refused to watch: none is asked for again until a whole walk walks fewer. */
@@ -536,9 +536,12 @@ export class SessionNotices {
    * one listing: under the bound a pass looks at no more paths than the walk would, and at half as many for linked files.
    */
   #noticed(): SessionReads {
-    const linked = new Set([...this.#linked].filter(path => !this.#paths.has(path)));
-    if (2 * (this.#paths.size + linked.size) >= this.#looks) return WHOLE;
-    return { whole: false, paths: new Set([...this.#paths, ...linked]), linked };
+    const named = this.#paths;
+    // Counted before any set is built: past the bound the pass reads whole, however many files are linked.
+    const linkedOnly = this.#linked.size - [...named].filter(path => this.#linked.has(path)).length;
+    if (2 * (named.size + linkedOnly) >= this.#looks) return WHOLE;
+    const linked = new Set([...this.#linked].filter(path => !named.has(path)));
+    return { whole: false, paths: new Set([...named, ...linked]), linked };
   }
 
   /**
@@ -548,7 +551,7 @@ export class SessionNotices {
    */
   ended(seen: WorktreeRead | undefined, found: SessionFound): void {
     if (seen === undefined) {
-      this.#linked = new Set([...this.#linked, ...found.linked]);
+      for (const path of found.linked) this.#linked.add(path);
       this.#whole = false;
       return;
     }
