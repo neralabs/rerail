@@ -19,8 +19,6 @@ pub mod aggregate_demand {
     #[cfg(any(test, feature = "test-hooks"))]
     pub mod tests;
     #[allow(unused_imports)]
-    use crate::code_rule_dsl::logic::front::{self, AggOp, Atom, Literal, Program, Rule, Term};
-    #[allow(unused_imports)]
     use std::collections::{BTreeMap, BTreeSet};
 }
 pub mod from_tape;
