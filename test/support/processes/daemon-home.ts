@@ -119,10 +119,12 @@ export interface WatchedExits {
 
 /**
  * `env`, made by {@link watchedEnvironment} for `home`, with one more preload in each daemon it starts, through which a
- * test sees how the daemon's process ends. It wraps the engine's `lockExclusive` as the engine loads, to see whether
- * the wait for the home's daemon lock had ended when the daemon exited. With `holdExit`, a daemon's exit, which begins
- * once its close is done, marks itself and then waits {@link HELD_EXIT_MS} before the daemon's own exit steps run, as a
- * process slow to exit after its close; the test ends it.
+ * test sees how the daemon's process ends. It wraps the engine's lock takes as the engine loads, to see whether the
+ * wait for the home's daemon lock had ended when the daemon exited; an engine with no wait for a lock (before
+ * `lockExclusive`) is tried until the bound, so that wait has always ended. With `holdExit`, the exit of a daemon that
+ * closed cleanly (exit code 0) marks itself and then waits {@link HELD_EXIT_MS} before the daemon's own exit steps run,
+ * as a process slow to exit after its close; the test ends it. A daemon that stops on a held home exits 1 and is not
+ * held.
  */
 export function watchedExits(home: string, env: NodeJS.ProcessEnv, holdExit = false): WatchedExits {
   const script = join(home, EXIT_WATCH_FILE);
@@ -132,23 +134,28 @@ const Module = require("node:module");
 const mark = name => require("node:path").join(${JSON.stringify(home)}, name + "." + process.pid);
 if (/[\\\\/]daemon-entry\\.js$/u.test(process.argv[1] ?? "")) {
   let lockWait;
+  const daemonLock = path => /[\\\\/]daemon\\.lock$/u.test(path);
   const loadAddon = Module._extensions[".node"];
   Module._extensions[".node"] = function (module, filename) {
     loadAddon.call(this, module, filename);
     const engine = module.exports;
-    if (typeof engine.lockExclusive !== "function") return;
-    module.exports = Object.create(engine, { lockExclusive: { enumerable: true, value: (path, waitMs) => {
+    if (typeof engine.tryLockExclusive !== "function") return;
+    const watched = typeof engine.lockExclusive === "function" ? { lockExclusive: (path, waitMs) => {
       const taking = engine.lockExclusive(path, waitMs);
-      if (/[\\\\/]daemon\\.lock$/u.test(path)) {
+      if (daemonLock(path)) {
         lockWait = "waiting";
         taking.then(() => { lockWait = "ended"; }, () => { lockWait = "ended"; });
       }
       return taking;
-    } } });
+    } } : { tryLockExclusive: path => {
+      if (daemonLock(path)) lockWait = "ended";
+      return engine.tryLockExclusive(path);
+    } };
+    module.exports = Object.create(engine, Object.fromEntries(Object.entries(watched).map(([name, value]) => [name, { enumerable: true, value }])));
   };
-  process.on("exit", () => {
+  process.on("exit", code => {
     if (lockWait !== undefined) fs.writeFileSync(mark("lock-wait"), lockWait);
-    if (!${String(holdExit)}) return;
+    if (!${String(holdExit)} || code !== 0) return;
     fs.writeFileSync(mark("exiting"), "");
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ${HELD_EXIT_MS});
   });
