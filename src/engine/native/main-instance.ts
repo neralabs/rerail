@@ -114,12 +114,15 @@ export function acquireMainInstance(build: MainRerailBuild, directory: string = 
  * instance. Dev builds never take the lock, so this also keeps them, and any short-lived main process, off the
  * main store whatever `RERAIL_CONTENT_STORE_PATH` says; they reach it only through the main daemon.
  */
-export function assertContentStoreOwner(storePath: string): void {
+export function canOpenContentStore(storePath: string): boolean {
   const directory = resolve(mainContentStoreDirectory());
   const path = relative(directory, resolve(storePath));
   const insideMainDirectory = path === "" || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path));
-  if (!insideMainDirectory) return;
-  if (held !== undefined && resolve(held.directory) === directory) return;
+  return !insideMainDirectory || (held !== undefined && resolve(held.directory) === directory);
+}
+
+export function assertContentStoreOwner(storePath: string): void {
+  if (canOpenContentStore(storePath)) return;
   throw new Error(
     `The machine-wide Rerail content store ${storePath} belongs to the main Rerail daemon, and process ${process.pid} is not it. ` +
       "Main harness processes evaluate policies through the daemon; dev builds use their checkout's own store.",

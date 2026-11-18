@@ -10,6 +10,7 @@ import { runRuleApproveCommand } from "../../src/cli/rule-approval-cli.js";
 import { runHeadlessScan, type ScanReport } from "../../src/cli/headless-scan.js";
 import { acquireDirectoryAnalysisGeneration, analysisScopeHome, queueAnalysisScopeReleases, readAnalysisScopeGeneration, scanContentStore, settleAnalysisScopeReleases } from "../../src/engine/native/analysis-scope.js";
 import { loadNativeBinding } from "../../src/engine/native/native.js";
+import * as builds from "../../src/engine/native/rerail-build.js";
 import { openRerailDatabase } from "../../src/engine/storage/database.js";
 import { recordCheckout } from "../../src/engine/catalog/repository-registry.js";
 import { setCheckoutStarted, stopRerail } from "../../src/runtime/repository-start.js";
@@ -670,6 +671,36 @@ Seen(@place("commit", 1), text) :- git_source_commit(_, _), marker(text).
         db.$client.close();
       }
     } finally { vi.unstubAllEnvs(); }
+  });
+
+  it("ignores an inaccessible legacy candidate and keeps a registered store pending", async () => {
+    const root = checkout();
+    const home = `${root}-home`;
+    const main = join(home, "main");
+    mkdirSync(main, { recursive: true });
+    const unregistered = join(main, "unregistered.sqlite");
+    const registered = join(main, "registered.sqlite");
+    const databasePath = join(home, "rerail.sqlite");
+    writeFileSync(unregistered, "invalid database");
+    const registeredRoot = join(root, "registered");
+    await acquireDirectoryAnalysisGeneration(databasePath, registeredRoot, registered);
+    const machineStore = vi.spyOn(builds, "mainContentStoreDirectory").mockReturnValue(main);
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", unregistered);
+    const db = openRerailDatabase(databasePath);
+    try {
+      const pending = () => db.$client.prepare("SELECT directory FROM analysis_scope_releases").pluck().all();
+      const unrelated = join(root, "unrelated");
+      db.transaction(tx => queueAnalysisScopeReleases(tx, [unrelated], databasePath));
+      settleAnalysisScopeReleases(databasePath);
+      expect(pending()).toEqual([]);
+      db.transaction(tx => queueAnalysisScopeReleases(tx, [registeredRoot], databasePath));
+      expect(() => settleAnalysisScopeReleases(databasePath)).toThrow(/registered\.sqlite belongs to the main Rerail daemon/u);
+      expect(pending()).toEqual([registeredRoot]);
+    } finally {
+      db.$client.close();
+      vi.unstubAllEnvs();
+      machineStore.mockRestore();
+    }
   });
 
   it("services later stops while a full batch of releases waits for an unavailable store", async () => {

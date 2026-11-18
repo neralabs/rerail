@@ -6,7 +6,7 @@ import { analysisScopeGeneration, analysisScopeReleases } from "../storage/schem
 import { openRerailDatabase, openSqliteDatabase, type RerailDatabase } from "../storage/database.js";
 import { loadNativeBinding } from "./native.js";
 import { contentStoreOverride, contentStorePath } from "./rerail-build.js";
-import { assertContentStoreOwner } from "./main-instance.js";
+import { assertContentStoreOwner, canOpenContentStore } from "./main-instance.js";
 import { storedPath, withinCheckout } from "../catalog/checkout-control.js";
 
 export function scanContentStore(databasePath: string): string {
@@ -137,9 +137,12 @@ export function settleAnalysisScopeReleases(databasePath: string, limit = 32): v
       const routes = new Set(registered.filter(row => withinCheckout(root, row.directory)).map(row => row.path));
       let acknowledged = true;
       for (const store of new Set([...routes, ...fallback])) {
+        const registeredRoute = routes.has(store);
+        if (!registeredRoute && !canOpenContentStore(store)) continue;
         try {
-          assertContentStoreOwner(store);
-          if (!routes.has(store)) {
+          if (registeredRoute) {
+            assertContentStoreOwner(store);
+          } else {
             if (!binding.existingDirectoryAnalysisOwnership(store, root, home)) continue;
             registerDirectoryAnalysisStore(databasePath, root, store);
           }
