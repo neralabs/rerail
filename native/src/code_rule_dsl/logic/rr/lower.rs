@@ -717,14 +717,15 @@ impl Lowerer {
 
     /// `m` after the modules linked so far: its helpers numbered after theirs, its parts added to theirs.
     fn append(&mut self, m: Module) {
-        let (b, b_stated) = self.link(m);
+        let (b, b_stated, _) = self.link(m);
         append_parts(&mut self.prog, b, &mut self.stated, b_stated);
     }
 
     /// `append` but the union of the programs: `m`'s helpers numbered after the modules linked so far, and what the
     /// lowerer knows of them added to theirs. `m`'s program, so renamed, is returned with the count of its inputs
-    /// stated first, for `append_parts`.
-    fn link(&mut self, m: Module) -> (Program, usize) {
+    /// stated first, for `append_parts`, and whether its rules were edited (a helper renamed or merged): in a seeded
+    /// scope they never are (`link_seeded_parts`), as its seeds number no helpers and hold every native's name.
+    fn link(&mut self, m: Module) -> (Program, usize, bool) {
         let Module { l: mut m, docof, places, .. } = m;
         let mut rename: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         for (stem, n) in &m.made {
@@ -748,7 +749,8 @@ impl Lowerer {
                 rename.insert(name.clone(), new);
             }
         }
-        if !rename.is_empty() {
+        let mut edited = !rename.is_empty();
+        if edited {
             rename_relations(&mut m.prog, &rename);
         }
         // A helper `helper_once` made that equals one an earlier module made is that one, as in one lowering of them
@@ -758,6 +760,7 @@ impl Lowerer {
             let key = self.once_key(&m.prog, &name, &stem, k);
             match self.helpers.get(&key) {
                 Some(made) => {
+                    edited = true;
                     let made = made.clone();
                     m.prog.decls.remove(name.as_str());
                     let mut seen = 0;
@@ -786,7 +789,7 @@ impl Lowerer {
         if let Some(d) = docof {
             self.docof_of_locs = d;
         }
-        (m.prog, m.stated)
+        (m.prog, m.stated, edited)
     }
 }
 
@@ -987,7 +990,11 @@ pub fn unseed(program: &mut Program, seeds: &Seeds, core: &BTreeSet<String>) {
 pub fn link_seeded_parts(m: Module, seeds: &Seeds) -> Result<Linked, Error> {
     let mut l = seeds.l.clone();
     l.violations.clear();
-    let (own, own_stated) = l.link(m);
+    let (own, own_stated, edited) = l.link(m);
+    // The module's rules are the walk's as written: what lets the walk write them as a version (0365 step 3).
+    if edited {
+        return Err(Error::Syntax("a module linked in a seeded scope had its helpers renamed: its rules are not the walk's".to_owned()));
+    }
     let stated = l.stated;
     let lowered = whole_front(l)?;
     debug_assert!(lowered.program.rules.is_empty(), "a scope's seeds hold no rules");
@@ -3449,7 +3456,7 @@ impl Lowerer {
                 let native=Native::PythonCandidates{input:input.clone(),targets:targets.clone(),context,member};
                 let rel=if let Some((name,_))=self.prog.natives.iter().find(|(_,n)|**n==native) {name.clone()}else {
                     let mut serial=self.prog.natives.len();
-                    let rel=loop {let name=format!("rr_python_candidates_{serial}");if !self.prog.decls.contains_key(name.as_str()){break name;}serial+=1;};
+                    let rel=loop {let name=format!("rr_python_candidates_{serial}");if !self.prog.decls.contains_key(name.as_str()) && !self.prog.natives.contains_key(name.as_str()){break name;}serial+=1;};
                     self.python_candidates_native(&rel, native);
                     rel
                 };

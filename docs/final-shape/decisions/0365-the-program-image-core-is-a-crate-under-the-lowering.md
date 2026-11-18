@@ -46,6 +46,15 @@ moved up), the user chose: "move it down into a new crate under rerail-rr".
   - `mounts.py` cannot regenerate the mounts as a whole any more (`cratify tree` walks the engine as already
     split), so the crate's mounts are written by hand in its shape, and the map (`crate-map.tsv`, `crate_map.py`'s
     DAG, `mounts.py`'s DIRS) records the crate.
+- **Step 3a**: in a seeded scope the module's rules leave `link` as the walk wrote them, so the walk can write them
+  as a version. The seeds number no helpers and hold no `helper_once` keys, so link's renames and merges never
+  fire there; the one rename that could (a Python candidates relation named as a seeds' native) is avoided by
+  the walk, which now skips the natives' names as well as the declarations'. `link` says whether it edited the
+  rules, and `link_seeded_parts` refuses a module it did. Tests: 489 of 490 lowering, link and scope tests (Q81
+  fails, as before); ep2's 317 policies over 10 files, fresh stores, debug: 0 rows.
+- **Step 3b, next**: the walk reads what it has written (`clause`'s modal positions, `demand`'s and
+  `world_demand`'s dedup, `arity`, `demand_of`, `rules`' widening). Written through the builder, the lowerer keeps
+  its own index of them (rules by head, their content hashes, their ids), in `rr::lower`, not the core.
 
 ## Consequences
 
