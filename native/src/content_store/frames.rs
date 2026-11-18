@@ -1572,15 +1572,17 @@ pub struct Placed {
 }
 
 impl FramePlacer {
-    /// Encodes rows of `width` columns, given a window at a time (`each`, called twice), into the next entry, as
-    /// `encode_rows` encodes them: counted outside the lock, written under it. `None` where no segment takes it
+    /// Encodes rows of `width` columns, given a window at a time (`each`, called once), into the next entry, as
+    /// `encode_rows` encodes them: encoded outside the lock, copied into the entry under it. `None` where no segment takes it
     /// (the caller encodes it on the heap as before).
     pub fn place_rows(&self, width: usize, part: i64, each: &dyn Fn(&mut dyn FnMut(&[i64]))) -> Option<Placed> {
         if width == 0 {
             return None;
         }
         let mut at = None;
-        super::cross_rows::encode_windows(width, each, |len, fill| {
+        let mut cols = Vec::new();
+        // copy: not block data (a frame's encoded bytes, built once, then written into their entry)
+        super::cross_rows::encode_windows(width, each, &mut cols, |len, fill| {
             let mut w = self.w.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             w.put(len, part, &[0; 32], |out| fill(out))?;
             at = Some(w.len() - 1);
