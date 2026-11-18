@@ -439,3 +439,36 @@ variables bound, the state a recheck's candidate gives, and searches and prices 
 no line's kept plan: only `plan_rule_reused` reads or keeps those, and a recheck does not call it. The greedy order
 remains for a body none of whose priced orders has a native join, and is counted (`rechecks_unpriced`).
 `r7_the_recheck_order_is_priced` passes over the small edits and is no longer ignored.
+
+## Step 9: the data-layer scale run
+
+The data layer's own history as a replay (`scripts/profiling/o125/dl-history.sh`): 00 is the `.py` tree of one
+commit, and 01–03 are the next three commits' changes in `l2060_query_builder/`. The policy is
+`conditional-architecture.rr` reading the whole tree. Each rung runs cold and as a session; "session = cold" means
+the session's findings equal a cold run's at each step. CPU is per run, on an M3 farm host.
+
+| Files | First run | Edits (01, 02, 03) | Session = cold |
+|---|---|---|---|
+| 37 | about 10 s | 1.6–4.7 s | yes |
+| 334 | 65–72 s | 27, 24, 22 s | yes |
+| 2,410 | 508–530 s | 477–579 s | yes |
+
+At 2,410 files an edit cost as much as a first run: correct, with no saving. One edit at 334 files, profiled,
+showed why.
+
+**θ was measured against the wrong rows.** §4's share compared a stratum's changed reads' deltas with the
+stratum's own kept rows. `rr_cover41` keeps 644 rows over `child`, `docof` and `col`, the whole tree. A 2-file edit
+changes about 10,000 tree rows, so `rr_cover41` was derived again at every edit, along with 8 strata like it. That
+cost was the corpus, not the edit. A derive reads its inputs whole and the mode reads their deltas, so the share
+is now the deltas over the rows those reads hold. Where the mode's own checks still leave a stratum maintained and
+the change is past the floor, §4's second clause decides: the mode's lines, priced by the planner (`mode_costs`),
+against a derive's. These are kept plans that either path then takes as they are (`RERAIL_AGAIN_PRICE`, default 1).
+
+**A negated changed read did not lead its line.** The mode planned a line driven by `!r`'s delta with no driver
+(`first` was the positive drivers' alone), and `versioned` turned the atom positive at the place the plan had put
+it as a test. The line walked its other atoms over the whole corpus to meet a delta of a few rows: 113 removal
+joins took 10 s of the 31 s edit. Now the body is planned with the negated atom's variables bound
+(`plan_rule_bound_by`, R7's start state), and the atom's item, now reading the delta positively, goes first.
+
+After both, at 334 files, the edits take 6.4, 9.9 and 8.4 s, and the session still equals cold. O125's steps 00–02
+remain correct: 188 strata maintained, and 22 derived again where the mode was priced above a derive.

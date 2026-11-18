@@ -50,17 +50,33 @@ pub const NATIVE_OPERATOR: &str = "a native operator's stratum, made again";
 /// A read changed with no version (a relation derived again in SQL, or with its kept rows not held).
 pub const NO_VERSION: &str = "a read changed without a version";
 
-/// 0090 §4's threshold (0364 R4): whether an edit whose changed reads give `delta` rows reaches too much of a
-/// stratum of `kept` rows to maintain it: `delta ≥ θ · kept` (`RERAIL_AGAIN_THETA`, default 0.25) and `delta ≥
+/// 0090 §4's threshold (0364 R4): whether an edit whose changed reads give `delta` rows, of the `stored` rows those
+/// reads hold, reaches too much of a stratum to maintain it: `delta ≥ θ · stored` (`RERAIL_AGAIN_THETA`, default 0.25) and `delta ≥
 /// RERAIL_AGAIN_MIN` (default 1,024 rows: below it, maintaining costs little whatever the share). `RERAIL_AGAIN=off`
 /// maintains every stratum. Read at each choice, so a test can set them.
-pub fn past_threshold(delta: usize, kept: usize) -> bool {
+pub fn past_threshold(delta: usize, stored: usize) -> bool {
     if std::env::var("RERAIL_AGAIN").is_ok_and(|v| v == "off") {
         return false;
     }
     let theta = std::env::var("RERAIL_AGAIN_THETA").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.25);
     let min = std::env::var("RERAIL_AGAIN_MIN").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(1024);
-    delta >= min && delta as f64 >= theta * kept as f64
+    delta >= min && delta as f64 >= theta * stored as f64
+}
+
+/// Whether a change of `delta` rows is past `RERAIL_AGAIN_MIN` (default 1,024): below it, a stratum is maintained
+/// whatever its share or price.
+pub fn past_floor(delta: usize) -> bool {
+    if std::env::var("RERAIL_AGAIN").is_ok_and(|v| v == "off") {
+        return false;
+    }
+    delta >= std::env::var("RERAIL_AGAIN_MIN").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(1024)
+}
+
+/// 0090 §4's second clause (0364 R4): whether maintaining, priced at `mode` work, costs more than deriving again at
+/// `derive` (`RERAIL_AGAIN_PRICE`: the mode's share of a derive past which it derives again, default 1).
+pub fn costs_more(mode: f64, derive: f64) -> bool {
+    let share = std::env::var("RERAIL_AGAIN_PRICE").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(1.0);
+    mode > share * derive
 }
 
 /// The class of a reason the maintain mode gave for not taking a stratum (`Run::maintain_mode_blocks`), as the

@@ -2104,7 +2104,12 @@ impl Model {
     /// row before its first step, the search's start one row with them bound. The plan is no line's kept plan: a
     /// search with nothing bound neither reads nor keeps it.
     pub fn plan_rule_bound(&self, pf: Fields<'_>, b: &Body<'_>) -> Result<Plan> {
-        let bound = VarSet::of(b.head().args().filter_map(|t| t.var()));
+        self.plan_rule_bound_by(pf, b, VarSet::of(b.head().args().filter_map(|t| t.var())))
+    }
+
+    /// `b` planned from a start of one row with `bound` bound: a recheck's head (`plan_rule_bound`), or the variables
+    /// of a negated changed read whose delta leads the maintain mode's line.
+    pub fn plan_rule_bound_by(&self, pf: Fields<'_>, b: &Body<'_>, bound: VarSet) -> Result<Plan> {
         let was = START_BOUND.with(|s| s.replace(bound));
         let got = self.plan_inner(pf, b, None, None, false);
         START_BOUND.with(|s| s.replace(was));
@@ -7419,6 +7424,39 @@ impl<'a> Run<'a, '_> {
     /// add) and its adds are checked. Nothing but the relation is made: its versions are the change. `None`: declined;
     /// `Some(false)`: no join to run (every changed read's version that drives one is empty), the kept relation held
     /// as it is (quiet); `Some(true)`: run, its change its versions.
+    /// 0090 §4's second clause (0364 R4): what maintaining stratum `rules` would cost against deriving it again, as the
+    /// planner prices them. The mode's lines are each rule led by each changed read's delta (`deltas`: its rows gone
+    /// and added), a removal and an add; a derive is each rule's seed plan over its reads whole. Both plans are the
+    /// program's kept plans of those lines (`plan_rule_reused`), which the mode or the derive then takes as they are.
+    fn mode_costs(&mut self, rules: &[RuleKey], deltas: &BTreeMap<String, usize>) -> Result<(f64, f64)> {
+        let vs = Arc::clone(&self.versions);
+        let pf = vs.whole(self.version);
+        let bodies: Vec<Body<'_>> = rules.iter().map(|&r| vs.at(r)).collect();
+        let mut wanted = BTreeSet::new();
+        self.model.wants(bodies.iter().map(|b| (b, None)), &mut wanted);
+        self.model.make_statistics(pf, &wanted)?;
+        let (mut maintain, mut derive) = (0.0, 0.0);
+        for b in &bodies {
+            plan_site("the threshold's price of a derive (0090 §4)");
+            derive += self.model.plan_rule_reused(pf, b, None)?.0.1;
+            for k in 0..b.len() {
+                let Lit::Atom(a) = b.view(k) else { continue };
+                let rel = b.rel(a);
+                let Some(&n) = deltas.get(rel).filter(|n| **n > 0) else { continue };
+                let was = self.model.stats.delta_rows.insert(rel.to_owned(), n as f64);
+                plan_site("the threshold's price of the mode (0090 §4)");
+                let priced = self.model.plan_rule_reused(pf, b, (!a.neg()).then_some(k));
+                match was {
+                    Some(w) => self.model.stats.delta_rows.insert(rel.to_owned(), w),
+                    None => self.model.stats.delta_rows.remove(rel),
+                };
+                // A removal and an add, each over its side of the delta: priced once over the whole delta.
+                maintain += priced?.0.1;
+            }
+        }
+        Ok((maintain, derive))
+    }
+
     fn maintain_mode(&mut self, scc: &BTreeSet<String>, rules: &[RuleKey], moved: &BTreeSet<String>, olds: BTreeMap<String, Arc<super::native::component::InRel>>, ins: &ModeInputs) -> Result<Option<bool>> {
         let vs = Arc::clone(&self.versions);
         let pf = vs.whole(self.version);
@@ -7538,7 +7576,11 @@ impl<'a> Run<'a, '_> {
                 // A negated atom: its rows added remove derivations, its rows gone add them (checked: a row may be back).
                 let (remove_by, add_by) = if a.neg() { (V::Plus, V::Minus) } else { (V::Minus, V::Plus) };
                 let (remove_n, add_n) = if a.neg() { (added, gone) } else { (gone, added) };
-                // A positive driver is planned first, as a delta is; a negated one stays where its order tests it.
+                // A positive driver is planned first, as a delta is. A negated one leads its line too, its delta read
+                // positively: the body is planned with its variables bound (`plan_rule_bound_by`), and its own item
+                // goes to the front. Left where the order tests it, the line walked its other atoms over the whole
+                // corpus to meet a delta of a few rows: on the data layer, 113 removal joins took 10 s of a 2-file
+                // edit's 31 s at 334 files, and as much as a first run at 2,410.
                 let first = (!a.neg()).then_some(k);
                 for (by, n, removing) in [(remove_by, remove_n, true), (add_by, add_n, false)] {
                     if n == 0 {
@@ -7548,7 +7590,11 @@ impl<'a> Run<'a, '_> {
                     // The program's kept plan of this line, as a semi-naive probe's (decision 0364 stage 4): searched
                     // on its first sight, then taken or priced again as its sizes move (decisions 0038, 0122).
                     plan_site("the maintain mode's join");
-                    let ((order, _, _), _) = self.model.plan_rule_reused(pf, b, first)?;
+                    let led = if a.neg() { self.model.plan_rule_bound_by(pf, b, b.vars(k).clone()).ok().map(|(o, _, _)| o) } else { None };
+                    let order = match led.clone() {
+                        Some(o) => o,
+                        None => self.model.plan_rule_reused(pf, b, first)?.0.0,
+                    };
                     // The changed inputs' literals read their versions: the driver's, and as they were in a removal.
                     self.mode_reads.clear();
                     // An aggregate's atom too: read where the rule's other atoms are, as it was in a removal. Unnamed here, it
@@ -7569,7 +7615,17 @@ impl<'a> Run<'a, '_> {
                         self.why_not = Some(format!("the maintain mode: no native join for a rule of {h}"));
                         return Ok(None);
                     };
-                    let spec = Arc::new(versioned(&spec, &order, k, by, if removing { V::Old } else { V::New }));
+                    let mut spec = versioned(&spec, &order, k, by, if removing { V::Old } else { V::New });
+                    // The negated driver's item, now its delta read positively, to the front (with its plan step).
+                    if led.is_some() && let Some(at) = (0..spec.items.len()).find(|&i| lit_of(&spec, &order, i) == Some(k) && matches!(spec.items[i], JoinItem::Atom { .. })) {
+                        let item = spec.items.remove(at);
+                        spec.items.insert(0, item);
+                        if !spec.from.is_empty() {
+                            let step = spec.from.remove(at);
+                            spec.from.insert(0, step);
+                        }
+                    }
+                    let spec = Arc::new(spec);
                     lines.push(match (removing, a.neg()) {
                         (true, _) => SpecLine::Remove { head: head_i, join: spec },
                         (false, false) => SpecLine::Seed { head: head_i, join: spec },
@@ -11512,22 +11568,40 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                         let [o, mi, pl] = [Ver::Old, Ver::Minus, Ver::Plus].map(|v| h.version_view(v));
                         Some((r.clone(), ([src(&o?), src(&mi?), src(&pl?), src(&h)], cols)))
                     }).collect();
-                    // 0090 §4's threshold (0364 R4): a stratum whose changed reads' deltas reach past θ of its kept rows
-                    // is derived again, its levels fresh from that derive. The deltas are their versions' sizes.
-                    let delta_rows: usize = moved.iter().map(|r| match ins.get(r) {
-                        Some((srcs, _)) => srcs[1].len() + srcs[2].len(),
-                        None => super::native::component::held(db, r).map_or(0, |x| {
-                            [super::native::component::Ver::Minus, super::native::component::Ver::Plus].into_iter().filter_map(|v| x.version_view(v)).map(|v| v.rows()).sum()
+                    // 0090 §4's threshold (0364 R4): a stratum whose changed reads' deltas are past θ of those reads'
+                    // stored rows is derived again, its levels fresh from that derive. A derive reads its inputs whole
+                    // and the mode reads their deltas, so the share of the reads that changed is what the two cost
+                    // apart. (Measured against the stratum's own kept rows, a selective stratum over the whole tree,
+                    // `rr_cover41` with 644 rows over `child`, `docof`, `col`, was derived again at every 2-file edit
+                    // of the data layer: the edit cost the first run's 500 s at 2,410 files.)
+                    let sizes: BTreeMap<String, (usize, usize)> = moved.iter().map(|r| (r.clone(), match ins.get(r) {
+                        Some((srcs, _)) => (srcs[1].len() + srcs[2].len(), srcs[3].len()),
+                        None => super::native::component::held(db, r).map_or((0, 0), |x| {
+                            ([super::native::component::Ver::Minus, super::native::component::Ver::Plus].into_iter().filter_map(|v| x.version_view(v)).map(|v| v.rows()).sum(), x.rows())
                         }),
-                    }).sum();
+                    })).collect();
+                    let (delta_rows, read_rows) = sizes.values().fold((0, 0), |(d, n), (a, b)| (d + a, n + b));
                     let kept_rows: usize = olds.values().map(|o| o.rows()).sum();
-                    let blocks = if crate::code_rule_dsl::logic::plan::corpus::maintain::past_threshold(delta_rows, kept_rows) {
+                    // §4's second clause: the mode's lines priced against a derive's. Priced only where the first
+                    // clause and the mode's own blocks leave it maintained, and only past the floor (below it, a
+                    // maintain costs little whatever the plans say).
+                    let mut priced = None;
+                    let blocks = if crate::code_rule_dsl::logic::plan::corpus::maintain::past_threshold(delta_rows, read_rows) {
                         Some(crate::code_rule_dsl::logic::plan::corpus::maintain::THRESHOLD.to_owned())
                     } else {
-                        run.maintain_mode_blocks(scc, &rules, &moved, &olds, &ins)
+                        match run.maintain_mode_blocks(scc, &rules, &moved, &olds, &ins) {
+                            None if crate::code_rule_dsl::logic::plan::corpus::maintain::past_floor(delta_rows) => {
+                                let deltas: BTreeMap<String, usize> = sizes.iter().map(|(r, (d, _))| (r.clone(), *d)).collect();
+                                let (mw, dw) = run.mode_costs(&rules, &deltas)?;
+                                priced = Some((mw, dw));
+                                crate::code_rule_dsl::logic::plan::corpus::maintain::costs_more(mw, dw).then(|| crate::code_rule_dsl::logic::plan::corpus::maintain::THRESHOLD.to_owned())
+                            }
+                            other => other,
+                        }
                     };
                     if std::env::var_os("RERAIL_MODE_TRACE").is_some() {
-                        eprintln!("RERAIL_MODE_TRACE {key}: {} ({delta_rows} delta rows, {kept_rows} kept)", blocks.as_deref().unwrap_or("the maintain mode"));
+                        let costs = priced.map_or_else(String::new, |(m, d)| format!(", mode {m:.0} against derive {d:.0}"));
+                        eprintln!("RERAIL_MODE_TRACE {key}: {} ({delta_rows} delta rows of {read_rows} read, {kept_rows} kept{costs})", blocks.as_deref().unwrap_or("the maintain mode"));
                     }
                     match blocks {
                         None => {

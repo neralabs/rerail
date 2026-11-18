@@ -1226,6 +1226,8 @@ struct Component { store: Arc<RwLock<Store>>, edges: Vec<EdgeRule>, probes: Vec<
 #[derive(Default)]
 struct MaintMode {
     removes: Vec<(usize, JoinRule)>,
+    /// Per removal line, its spec's first two items, as the profile names the line's span.
+    remove_names: Vec<String>,
     adds: Vec<(usize, JoinRule)>,
     rechecks: Vec<(usize, JoinRule)>,
     /// A recursive component's (by levels, decision 0364 §2): per delta probe, the relation whose row drives it, its
@@ -1467,10 +1469,10 @@ impl MaintMode {
         let mut out = Vec::new();
         let mut kills: Vec<(usize, u32)> = Vec::new();
         let mut seen: rustc_hash::FxHashSet<(usize, u32)> = Default::default();
-        for (head, j) in &self.removes {
+        for (i, (head, j)) in self.removes.iter().enumerate() {
             let mut rows = Vec::new();
             {
-                let _s = crate::code_rule_dsl::logic::profile::span(|| "mode: a removal join".into());
+                let _s = crate::code_rule_dsl::logic::profile::span(|| format!("mode: a removal join: {}", self.remove_names.get(i).map_or("", String::as_str)));
                 run_join_collect(j, store, syms, &[], &mut rows)?;
             }
             let _s = crate::code_rule_dsl::logic::profile::span(|| format!("mode: rechecks ({} candidate rows)", rows.len() / store.rels[*head].k.max(1)));
@@ -1844,7 +1846,13 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
                 if device_wanted { seed_specs.push((probes.len(), join.clone())); }
                 probes.push(ProbeRule { head: *head, delta: SEED, body: Body::Join(j), whole: None, wkey: None, budget: Default::default() });
             }
-            Line::Remove { head, join } => maint.removes.push((*head, joins(join, &mut syms)?)),
+            Line::Remove { head, join } => {
+                if crate::code_rule_dsl::logic::profile::on() {
+                    let d: Vec<String> = join.items.iter().take(2).map(|i| format!("{i:?}")).collect();
+                    maint.remove_names.push(d.join(" , ").chars().take(200).collect());
+                }
+                maint.removes.push((*head, joins(join, &mut syms)?))
+            }
             Line::AddChecked { head, join } => maint.adds.push((*head, joins(join, &mut syms)?)),
             Line::Recheck { head, join } => {
                 // Its head's slots are bound by the candidate before its first step.
