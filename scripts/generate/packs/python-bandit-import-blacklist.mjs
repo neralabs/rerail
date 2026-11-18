@@ -14,8 +14,10 @@
 // each qualname's parent module (none for a top-level name), a from-import of that parent that imports the rest.
 //
 // A document keeps its committed revision when nothing else changes; one that changes gets the next revision, a
-// candidate's too; a document with no committed version starts at revision 1. A port that moves between rules/ and
-// candidates/rules/ leaves no copy behind.
+// candidate's too; a document with no committed version starts at revision 1. A port whose `candidate` flag flips
+// moves between rules/ and candidates/rules/ and leaves no copy behind. Only the document moves: the rest of a
+// promotion or demotion (the port's `policy` path in packs/python/conformance.json, the pack.json entry, the README
+// section, the changeset, the native anchors pin) is done by hand, as docs/adding-rules-to-a-pack.md lists.
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";

@@ -1,5 +1,7 @@
 // scripts/generate/packs/python-bandit-import-blacklist.mjs reads no tools, so this checks what CI can: each committed
-// Bandit import-blacklist port is exactly what the generator writes, in the folder its candidate flag names.
+// Bandit import-blacklist port is exactly what the generator writes, in the folder its candidate flag names. The
+// expected revision comes from the committed file itself, so a regenerated document whose revision was set back by
+// hand still passes; the revision rule is checked on its own, against a changed and a new document.
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
