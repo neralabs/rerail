@@ -13,7 +13,7 @@ import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadNativeBinding, LOCKS_DIR } from "../../../src/engine/index.js";
 import { DAEMON_STATE_FILE, lookupDaemon, type DaemonState } from "../../../src/runtime/daemon-control.js";
-import { engineCapabilityProof, engineHoldsCapability, engineProof } from "../../../src/runtime/engine-proof.js";
+import { engineCapabilityProof, engineHoldsCapability, engineProof } from "../../../src/runtime/daemon/engine-proof.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
 /** How far past its limit a proof may answer on a loaded test machine; the wait it must not take is 30 s. */
@@ -118,7 +118,7 @@ counting = true;
 const answer = await engineCapabilityProof(process.argv[2], "capability", 2000, { sleep: async (ms) => { tries += 1; await pause(ms); } });
 counting = false;
 process.stdout.write(JSON.stringify({ answer, tries, folderReads }) + "\\n");`;
-const PROOF_MODULE = new URL("../../../src/runtime/engine-proof.ts", import.meta.url).href;
+const PROOF_MODULE = new URL("../../../src/runtime/daemon/engine-proof.ts", import.meta.url).href;
 const TSX = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
 
 const children: ChildProcess[] = [];

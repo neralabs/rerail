@@ -1,12 +1,14 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { existsSync } from "node:fs";
+import type * as FileSystem from "node:fs/promises";
 import { mkdir, mkdtemp, rename, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type * as DaemonWaits from "../../../src/runtime/daemon/daemon-waits.js";
 import { DAEMON_PORT_FILE } from "../../../src/daemon/index.js";
 import { LOCKS_DIR } from "../../../src/engine/index.js";
 import {
@@ -31,10 +33,31 @@ import {
   olderDaemon,
   packageRoot,
   recordedPid,
+  releaseSlowStart,
   until,
   watchedEnvironment,
 } from "../../support/processes/daemon-home.js";
 import { removeFolder, runningIn } from "../../support/platform/remove-folder.js";
+
+/** How long a start waits (`START_TIMEOUT_MS`), read at each wait: the product's, unless a test sets its own. */
+const waits = vi.hoisted(() => ({ startMs: undefined as number | undefined }));
+vi.mock("../../../src/runtime/daemon/daemon-waits.js", async importOriginal => {
+  const actual = await importOriginal<typeof DaemonWaits>();
+  return { ...actual, get START_TIMEOUT_MS() { return waits.startMs ?? actual.START_TIMEOUT_MS; } };
+});
+/** Told of each file this process has read, once the read has ended, while a test listens. */
+const reads = vi.hoisted(() => ({ ended: undefined as ((path: string) => void) | undefined }));
+vi.mock("node:fs/promises", async importOriginal => {
+  const actual = await importOriginal<typeof FileSystem>();
+  const readFile = (async (...args: Parameters<typeof actual.readFile>) => {
+    try {
+      return await actual.readFile(...args);
+    } finally {
+      reads.ended?.(String(args[0]));
+    }
+  }) as typeof actual.readFile;
+  return { ...actual, readFile };
+});
 
 const originalRerailHome = process.env.RERAIL_HOME;
 /** What a daemon that finds its home's lock held says as it exits (`HomeDaemonConflictError`). */
@@ -88,6 +111,8 @@ describe("the daemons of a Rerail home", () => {
   });
 
   afterEach(async () => {
+    waits.startMs = undefined;
+    reads.ended = undefined;
     if (originalRerailHome === undefined) delete process.env.RERAIL_HOME;
     else process.env.RERAIL_HOME = originalRerailHome;
     await Promise.all(others.splice(0).map(async child => await ended(child)));
@@ -256,9 +281,20 @@ describe("the daemons of a Rerail home", () => {
     await writeFile(join(home, DAEMON_PORT_FILE), JSON.stringify({ port: await freePort() }));
     const slowStart = join(home, "slow-start");
     env = watchedEnvironment(home, undefined, slowStart);
-    // The daemon spins 17 s right after it first listens, before it can write daemon.json: past a start's 15 s wait.
-    await writeFile(slowStart, "17000");
-    await expect(startDaemon(control(), { dev: true, env })).rejects.toThrow(/did not become ready within 15s/u);
+    // The daemon holds right after it first listens, before it can write daemon.json, until the test lets it go: past
+    // the first start's whole wait for it, 3 s here rather than 15 s.
+    await writeFile(slowStart, "");
+    waits.startMs = 3_000;
+    await expect(startDaemon(control(), { dev: true, env })).rejects.toThrow(/did not become ready within 3s/u);
+    waits.startMs = undefined;
+    // The next start finds the daemon holding the home and daemon.json not written yet; once it has looked for
+    // daemon.json, the daemon goes on and writes it.
+    await until(() => existsSync(`${slowStart}.held`), 30_000);
+    reads.ended = path => {
+      if (path !== stateFile) return;
+      reads.ended = undefined;
+      releaseSlowStart(slowStart);
+    };
     const second = await startDaemon(control(), { dev: true, env });
     await until(() => !existsSync(`${slowStart}.held`), 40_000);
     const { live, recorded } = await settled();

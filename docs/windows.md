@@ -464,7 +464,7 @@ the hook still runs, and that each entry module serves its hook through `serveHo
 On Windows the daemon's engine listens on a named pipe, `\\.\pipe\rerail-<24 hex digits>`, from the SHA-256 of the
 database path (`enginePipeName`, which `defaultEngineSocketPath` in `src/daemon/daemon.ts` calls). Any local user can
 work out that name and create it first, so the daemon start never trusts whoever holds it. One module,
-`src/runtime/engine-pipe.ts`, writes and reads every engine pipe name: the prefix (`PIPE_PREFIX`), the name, the
+`src/runtime/daemon/engine-pipe.ts`, writes and reads every engine pipe name: the prefix (`PIPE_PREFIX`), the name, the
 fallback (`fallbackPipe`), and whether a listed pipe is an engine's (`isEnginePipe`, `pipeListed`,
 `enginePipeListed`). The daemon writes the names and the daemon's control reads them.
 
@@ -472,7 +472,7 @@ fallback (`fallbackPipe`), and whether a listed pipe is an engine's (`isEnginePi
 <summary>The proof, and the fallback pipe</summary>
 
 - When the name is held (libuv reports `EACCES` or `EADDRINUSE`), the start sends the holder a random challenge on
-  `POST /proof` (`engineHoldsCapability` in `src/runtime/engine-proof.ts`). Only an engine holding this home's access
+  `POST /proof` (`engineHoldsCapability` in `src/runtime/daemon/engine-proof.ts`). Only an engine holding this home's access
   capability can answer: the answer is an HMAC-SHA256 of the challenge keyed by the capability, which tells the holder
   nothing about it. The capability never leaves the daemon. An answer that is not a proof as the engine writes one
   (another type, another length, a character outside lowercase hex, such as a multibyte one) is refused before the
@@ -532,7 +532,7 @@ capability, refused every start as "alive but not answering", and `rerail daemon
   agents. The command that message gives runs PowerShell too, so there open Task Manager's Details tab, show its
   Command line column, end the process with the pid the message names if its command line runs Rerail's
   `daemon-entry.js` for this home, and run the command again. The proof's limit counts
-  from the ask and covers the connect (`engineCapabilityProof`, `src/runtime/engine-proof.ts`). It connects to the pipe
+  from the ask and covers the connect (`engineCapabilityProof`, `src/runtime/daemon/engine-proof.ts`). It connects to the pipe
   spelled
   `\\?\pipe\<name>`: Node's wait for a free instance (`WaitNamedPipe`, up to 30 s, in a thread that keeps the asking
   process alive) takes only `\\.\pipe\` names, so while a busy engine's pipe instances are all taken that connect fails

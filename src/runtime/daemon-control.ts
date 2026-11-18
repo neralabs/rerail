@@ -22,8 +22,9 @@ import { forgetMainInstanceHolder, mainInstanceLockHeld } from "../engine/native
 import { withHomeLock } from "../engine/native/file-lock.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
 import { ensureSqlite, type SqliteRepairResult } from "./sqlite-repair.js";
-import { engineCapabilityProof, type EngineProofAnswer } from "./engine-proof.js";
-import { databasePipeListed, enginePipeListed, isNamedPipe, listPipes, pipeListed, pipeNameOf } from "./engine-pipe.js";
+import { BUSY_DAEMON_WAIT_MS, PROBE_TIMEOUT_MS, START_TIMEOUT_MS } from "./daemon/daemon-waits.js";
+import { engineCapabilityProof, type EngineProofAnswer } from "./daemon/engine-proof.js";
+import { databasePipeListed, enginePipeListed, isNamedPipe, listPipes, pipeListed, pipeNameOf } from "./daemon/engine-pipe.js";
 import { processStartedAt, processStartedAtThroughEngine, processState, type ProcessSignal } from "../engine/process-liveness.js";
 import {
   DAEMON_ACCESS_TOKEN_FILE,
@@ -296,7 +297,6 @@ export const START_LOCK_DIR = "start.lock";
 /** In the Rerail home: the claim of the one autostart launch in progress, holding its launcher's pid (`claimAutostart`). */
 export const AUTOSTART_CLAIM_FILE = "autostart.claim";
 
-const START_TIMEOUT_MS = 15_000;
 /**
  * The longest a launcher keeps its autostart claim (`keepAutostartClaim`): its whole life, each of its start's waits of
  * {@link START_TIMEOUT_MS} in turn: for the start lock, for a daemon that holds the home to record itself
@@ -316,7 +316,6 @@ const AUTOSTART_CLAIM_RENEW_MS = 1_000;
 const STOP_TIMEOUT_MS = 10_000;
 const KILL_TIMEOUT_MS = 5_000;
 const POLL_INTERVAL_MS = 100;
-const PROBE_TIMEOUT_MS = 2_000;
 const MAX_MACOS_UNIX_SOCKET_PATH_BYTES = 103;
 
 export interface RunningDaemon {
@@ -1180,11 +1179,6 @@ export async function runningDaemonEngineEndpoint(deadline?: number, machine: Da
     : await daemonEngineEndpoint(true, deadline, machine);
   return { status: "running", endpoint };
 }
-
-/** How long, in all, a hook's second health probe waits for a busy daemon to answer as itself. */
-const BUSY_DAEMON_WAIT_MS = 10_000;
-/** How long, in all, a hook waits for a busy daemon from the event's arrival: the first probe and the busy wait after it. */
-export const HOOK_DAEMON_WAIT_MS = PROBE_TIMEOUT_MS + BUSY_DAEMON_WAIT_MS;
 
 /**
  * The daemon lookup a hook acts on. A daemon whose pid is alive but which missed the first probe's 2 s, as one does

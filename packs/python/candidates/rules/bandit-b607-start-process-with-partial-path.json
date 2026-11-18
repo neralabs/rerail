@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "bandit-b607-start-process-with-partial-path",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Use a full path for the executable when starting a process; a bare program name is looked up on PATH and can be hijacked.",
   "scope": {
@@ -17,7 +17,17 @@
         "ast": {
           "language": "python",
           "rule": {
-            "pattern": "$F($CMD, $$$ARGS)"
+            "pattern": "$F($$$ARGS)",
+            "arguments": {
+              "signature": [
+                "cmd",
+                "/"
+              ],
+              "bind": {
+                "CMD": "cmd"
+              },
+              "mode": "syntactic"
+            }
           },
           "constraints": {
             "F": {
@@ -25,6 +35,9 @@
                 "import": [
                   "subprocess.Popen",
                   "subprocess.call",
+                  "subprocess.check_call",
+                  "subprocess.check_output",
+                  "subprocess.run",
                   "os.system",
                   "os.popen",
                   "os.popen2",
@@ -37,6 +50,8 @@
                   "popen2.Popen4",
                   "commands.getoutput",
                   "commands.getstatusoutput",
+                  "subprocess.getoutput",
+                  "subprocess.getstatusoutput",
                   "os.execl",
                   "os.execle",
                   "os.execlp",
@@ -78,7 +93,7 @@
       },
       "violation": {
         "code": "B607",
-        "anchor": "capture.CMD",
+        "anchor": "capture.F",
         "message": "Use an absolute path for this executable; a bare program name is looked up on PATH and can be hijacked.",
         "suppress": {
           "nosec": {
@@ -95,7 +110,17 @@
         "ast": {
           "language": "python",
           "rule": {
-            "pattern": "$F([$CMD, $$$REST], $$$ARGS)"
+            "pattern": "$F($$$ARGS)",
+            "arguments": {
+              "signature": [
+                "cmd",
+                "/"
+              ],
+              "bind": {
+                "CMD": "cmd"
+              },
+              "mode": "syntactic"
+            }
           },
           "constraints": {
             "F": {
@@ -103,6 +128,9 @@
                 "import": [
                   "subprocess.Popen",
                   "subprocess.call",
+                  "subprocess.check_call",
+                  "subprocess.check_output",
+                  "subprocess.run",
                   "os.system",
                   "os.popen",
                   "os.popen2",
@@ -115,6 +143,8 @@
                   "popen2.Popen4",
                   "commands.getoutput",
                   "commands.getstatusoutput",
+                  "subprocess.getoutput",
+                  "subprocess.getstatusoutput",
                   "os.execl",
                   "os.execle",
                   "os.execlp",
@@ -136,27 +166,39 @@
               }
             },
             "CMD": {
-              "all": [
-                {
-                  "value": {
-                    "type": "str"
-                  }
-                },
-                {
-                  "not": {
-                    "value": {
-                      "regex": "^(?:[A-Za-z]:|[\\\\/.])"
+              "kind": "list",
+              "has": {
+                "stopBy": "neighbor",
+                "nthChild": {
+                  "position": 1,
+                  "ofRule": {
+                    "not": {
+                      "kind": "comment"
                     }
                   }
-                }
-              ]
+                },
+                "all": [
+                  {
+                    "value": {
+                      "type": "str"
+                    }
+                  },
+                  {
+                    "not": {
+                      "value": {
+                        "regex": "^(?:[A-Za-z]:|[\\\\/.])"
+                      }
+                    }
+                  }
+                ]
+              }
             }
           }
         }
       },
       "violation": {
         "code": "B607",
-        "anchor": "capture.CMD",
+        "anchor": "capture.F",
         "message": "Use an absolute path for this executable; a bare program name is looked up on PATH and can be hijacked.",
         "suppress": {
           "nosec": {
