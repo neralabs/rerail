@@ -16,6 +16,8 @@ let up = true;
 let streams404 = false;
 /** Reads the daemon answers with an error (500), by path, while the daemon itself stays up. */
 let failing = new Set<string>();
+/** Whether the Merge Assist status the daemon answers says a scan runs. */
+let scanning = false;
 let renders: boolean[] = [];
 let visibility: (() => void)[] = [];
 const encoder = new TextEncoder();
@@ -30,7 +32,7 @@ function answer(url: URL): Response {
     "/api/repository": { repository: { setUp: true, repositoryKey: "A" }, checkout: null },
     "/api/repository/rules": { rules: [], unavailable: [] },
     "/api/rule-packs": { packs: [] },
-    "/api/merge-assist": sampleStatus("/work/a"),
+    "/api/merge-assist": sampleStatus("/work/a", { scanning }),
   };
   const body = bodies[url.pathname];
   if (body === undefined) throw new Error(`unexpected ${url.pathname}`);
@@ -70,12 +72,14 @@ function setHidden(hidden: boolean): void {
 }
 
 beforeEach(async () => {
-  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance", "Date"] });
+  // Minutes from the next ten-minute step of a sliding activity window, which a beat would read at.
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance", "Date"], now: new Date(2026, 10, 18, 10, 1, 0) });
   streams = [];
   reads = [];
   up = true;
   streams404 = false;
   failing = new Set();
+  scanning = false;
   renders = [];
   vi.stubGlobal("location", { origin: "http://127.0.0.1:4000" });
   vi.stubGlobal("fetch", async (input: URL, init: { signal?: AbortSignal } = {}) => {
@@ -88,6 +92,7 @@ beforeEach(async () => {
   setScope({ repository: "A", checkout: "/work/a" });
   Object.assign(data, { mergeAssist: null, mergeAssistError: null, mergeAssistExperiment: null, disconnected: false, loaded: false, behindSince: 0 });
   ui.view = "settings";
+  ui.range = 7;
   ui.panel = null;
   setNeeds(currentNeeds);
   setHidden(false);
@@ -363,5 +368,42 @@ describe("the dashboard following the daemon's change stream", () => {
     for (const reply of unanswered) reply();
     await settle();
     expect(data.behindSince).toBe(0);
+  });
+
+  it("reads at the first beat past the activity window's own boundary, as Today's at local midnight", async () => {
+    vi.setSystemTime(new Date(2026, 10, 18, 23, 59, 57));
+    ui.range = 0;
+    stream().send("t1");
+    await settle();
+    const before = readsOf("/api/repositories");
+
+    await after(2_000);
+    stream().send("t1");
+    await settle();
+    expect(readsOf("/api/repositories")).toBe(before);
+
+    await after(2_000);
+    stream().send("t1");
+    await settle();
+    expect(readsOf("/api/repositories")).toBe(before + 1);
+  });
+
+  it("reads at each beat while the Merge Assist page shows a scan running, whose process can end unheard, and not after", async () => {
+    ui.view = "merge";
+    scanning = true;
+    stream().send("t1");
+    await settle();
+    expect(readsOf("/api/merge-assist")).toBe(1);
+
+    await after(5_000);
+    scanning = false;
+    stream().send("t1");
+    await settle();
+    expect(readsOf("/api/merge-assist")).toBe(2);
+
+    await after(5_000);
+    stream().send("t1");
+    await settle();
+    expect(readsOf("/api/merge-assist")).toBe(2);
   });
 });

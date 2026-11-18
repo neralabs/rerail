@@ -69,6 +69,8 @@ let stallTimer = null;
 /** The open change stream's controller, and the token the page last read at. */
 let stream = null;
 let token = null;
+/** The activity window's start (`sinceFor`) the last read asked for. */
+let windowRead = null;
 let inFlight = null;
 let queued = false;
 /** Bumped when the scope changes, so a response for the previous repository lands nowhere. */
@@ -767,6 +769,7 @@ async function poll() {
 export async function refresh() {
   if (inFlight) { queued = true; return inFlight; }
   const asked = Date.now();
+  windowRead = sinceFor();
   inFlight = poll();
   try { await inFlight; } finally { inFlight = null; }
   afterRead(asked);
@@ -820,7 +823,26 @@ function readFor(next) {
 }
 
 /** Whether a message asks for a read: a new token, a conflict event, a failed count to try again. */
-const asksRead = (event, next) => next !== token || event === "conflicts" || mergeAssistCountRetry();
+const asksRead = (event, next) => next !== token || event === "conflicts" || mergeAssistCountRetry() || windowMoved() || mergeAssistMoves();
+
+/**
+ * Whether the activity window the page shows has moved past what the last read asked for: Today at local midnight, a
+ * sliding range at its next ten-minute step (`sinceFor`). Nothing commits at that moment, so the first beat past it reads.
+ */
+const windowMoved = () => windowRead !== null && sinceFor() !== windowRead;
+
+/** gh's states a person changes outside Rerail, by signing in or installing it. */
+const GITHUB_WAITING = new Set(["signed-out", "missing", "unavailable", "unchecked"]);
+
+/**
+ * Whether the Merge Assist page shows what moves with no commit and no notice: a scan running (its process can end,
+ * or go stale, unheard) or gh not ready. Each beat then reads again, as the poll did, until it no longer shows.
+ */
+function mergeAssistMoves() {
+  const status = data.mergeAssist;
+  if (status === null || !new Set(pageNeeds()).has("mergeAssist")) return false;
+  return status.scanning || GITHUB_WAITING.has(status.readiness.github.state);
+}
 
 /**
  * A new stream's first message: what changed while none was open is not known, a conflict event included, so read
