@@ -842,8 +842,13 @@ export function gitExecutable(): string {
   return processGit.path();
 }
 
-/** Has this process's Git starts follow the home share's last answer ({@link ProcessGit.followHomeShare}): the daemon's. */
-export function followHomeShare(): void {
+/**
+ * Has this process's Git run as the daemon's, which serves the checkout in `folder` and lives on: looked for from that
+ * folder ({@link searchGitFrom}), and each start following the home share's last answer
+ * ({@link ProcessGit.followHomeShare}). The daemon calls it as it starts, before anything runs Git.
+ */
+export function prepareDaemonGit(folder: string): void {
+  searchGitFrom(folder);
   processGit.followHomeShare();
 }
 

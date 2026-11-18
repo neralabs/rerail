@@ -149,27 +149,46 @@ describe.runIf(WINDOWS)("Git for Windows' own git.exe started without its launch
     }
   });
 
-  it("runs a program only in the profile's bin as the launcher does in the daemon once the home share is known to be a folder, not at all, and in any other process", async () => {
+  /**
+   * A repository whose alias `only` runs `rerail-only-profile` through Git's shell, which finds it on Git's PATH, and the
+   * environment of a domain account with HOME unset: HOMEDRIVE and HOMEPATH name a home share that is a folder, and
+   * the program is only in the profile's bin. `first` goes on PATH before the person's own.
+   */
+  async function onlyInProfile(first: string[] = []): Promise<{ root: string; launcher: string }> {
     const root = await repository();
     const [share, profile] = [join(root, "share"), join(root, "profile")];
     await Promise.all([mkdir(join(share, "bin"), { recursive: true }), mkdir(join(profile, "bin"), { recursive: true })]);
-    // An alias Git runs through its shell, which finds the program on Git's PATH.
     await writeFile(join(profile, "bin", "rerail-only-profile"), "#!/bin/sh\necho only-profile\n");
     git(root, "config", "alias.only", "!rerail-only-profile");
     const launcher = machineLauncher();
-    for (const [name, value] of Object.entries({ HOME: undefined, HOMEDRIVE: share.slice(0, 2), HOMEPATH: share.slice(2), USERPROFILE: profile, PATH: personPath(launcher) })) vi.stubEnv(name, value);
-    // A hook or a command never asks whether the share is there: its Git gets both homes' bin, the share's first.
+    const path = [...first.map(folder => join(root, folder)), personPath(launcher)].join(delimiter);
+    for (const [name, value] of Object.entries({ HOME: undefined, HOMEDRIVE: share.slice(0, 2), HOMEPATH: share.slice(2), USERPROFILE: profile, PATH: path })) vi.stubEnv(name, value);
+    return { root, launcher };
+  }
+
+  it("runs a program only in the profile's bin through a hook's or a command's Git, which never asks whether the home share is there", async () => {
+    const { root } = await onlyInProfile();
+    // Its Git gets both homes' bin, the share's first, at every start.
     const other = await freshGit();
     expect((await other.runGitAsync(root, ["rev-parse", "--git-dir"])).status).toBe(0);
     expect([other.runGit(root, ["only"]).stdout.trim(), other.runGit(root, ["only"]).stdout.trim()]).toEqual(["only-profile", "only-profile"]);
-    const started = await freshGit();
-    started.followHomeShare();
+  });
+
+  it("readies the daemon's Git: looked for from the checkout it serves, and started as the launcher starts it once the home share is known to be a folder", async () => {
+    // A git.exe of the checkout's first on PATH: the daemon runs in the Rerail home, so only the checkout it serves
+    // keeps that program from being taken for Git.
+    const { root, launcher } = await onlyInProfile(["tools"]);
+    await mkdir(join(root, "tools"));
+    await writeFile(join(root, "tools", "git.exe"), "");
+    const daemon = await freshGit();
+    daemon.prepareDaemonGit(root);
+    expect(daemon.gitExecutable().startsWith(root)).toBe(false);
     // The first start has the share looked at off the thread; a call that does not block lets that look answer.
-    expect((await started.runGitAsync(root, ["rev-parse", "--git-dir"])).status).toBe(0);
+    expect((await daemon.runGitAsync(root, ["rev-parse", "--git-dir"])).status).toBe(0);
     const through = spawnSync(launcher, ["-c", "core.fsmonitor=false", "-c", "core.hooksPath=NUL", "-C", root, "only"], {
       encoding: "utf8", env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1" },
     });
-    const rerail = started.runGit(root, ["only"]);
+    const rerail = daemon.runGit(root, ["only"]);
     // The launcher's HOME is the share, so its PATH holds the share's bin alone, and the program is not found.
     expect([rerail.status, rerail.stdout]).toEqual([through.status, through.stdout]);
     expect(through.status).not.toBe(0);
