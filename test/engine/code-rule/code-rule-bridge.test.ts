@@ -2998,6 +2998,36 @@ describe("CodeRuleBridge and Git's own writes", () => {
     expect(asked.slice(1)).toEqual([0, 0]);
   }, 30_000);
 
+  it("takes each shell write's preimage from Git's blob without asking Git for each line-ending setting", async () => {
+    const root = await workspace();
+    const files = ["a.py", "b.py", "c.py"].map(name => join(root, "src", name));
+    for (const file of files) await writeFile(file, "old\n");
+    git(root, "init", "--quiet");
+    // Git writes the files as committed, LF, as `twoBranches` sets it.
+    git(root, "config", "core.autocrlf", "false");
+    git(root, "add", ".");
+    git(root, "commit", "--quiet", "-m", "seed");
+    await awaitClockAfter(...files);
+    // A file is taken by its stamp only once it is the reader's settle time (2 s) old: the clock the reader measures that
+    // on runs 2.1 s ahead from here on, as after a wait.
+    const now = Date.now.bind(Date);
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now() + 2_100);
+    const asked: number[] = [];
+    try {
+      const { bridge, auditGeneratedEdits } = await opened(root);
+      // Each shell write is the session's first sight of its file, so its preimage comes from Git's blob of it.
+      for (const file of files) {
+        asyncGitCalls.args.length = 0;
+        await shell(bridge, () => writeFile(file, "old\nmine\n"));
+        asked.push(asyncGitCalls.args.filter(args => args.includes("core.autocrlf") || args.includes("core.eol")).length);
+      }
+      expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits.map(edit => edit.previousText))).toEqual([["old\n"], ["old\n"], ["old\n"]]);
+    } finally {
+      clock.mockRestore();
+    }
+    expect(asked).toEqual([0, 0, 0]);
+  }, 30_000);
+
   it("reads one checkout each pass for a session opened in a subfolder of it, once a walk has found a change there too", async () => {
     const root = await twoBranches();
     const { bridge, auditGeneratedEdits } = await opened(join(root, "src"), { sourceRoot: () => root });
