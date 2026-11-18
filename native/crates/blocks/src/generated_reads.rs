@@ -193,18 +193,38 @@ unsafe fn f24(len: u64, a0: u64, a1: u32, a2: u32) -> u64 {
     let mut v1: u32 = 0;
     let mut v2: u32 = 0;
     let mut v3: u32 = 0;
-    let mut v4: u32 = 0;
-    let mut v5: u64 = 0;
-    let mut v6: u64 = 0;
+    let mut v4: u64 = 0;
+    let mut v5: u8 = 0;
+    let mut v6: u8 = 0;
+    let mut v7: u8 = 0;
+    let mut v8: u64 = 0;
+    let mut v9: u64 = 0;
+    let mut v10: u64 = 0;
+    let mut v11: u64 = 0;
+    let mut v12: u32 = 0;
+    let mut v13: u64 = 0;
+    let mut v14: u64 = 0;
     v0 = a0;
     v1 = a1;
     v2 = a2;
     let mut d: u32 = 0;
+'m3: {
 v3 = unsafe { core::ptr::read_unaligned(((v0 as usize).wrapping_add(8isize as usize)) as *const u32) };
-v4 = v1.wrapping_sub(v3);
-v5 = v0.wrapping_add(40i64 as u64);
-return unsafe { f23(len, v5, v4, v2) };
-
+v4 = unsafe { core::ptr::read_unaligned(((v0 as usize).wrapping_add(192isize as usize)) as *const u64) };
+v5 = ((v1 as u32) < (v3 as u32)) as u8;
+v6 = ((v4 as u64) != ((0i64 as u64) as u64)) as u8;
+v7 = v5 & v6;
+if v7 != 0 { v9 = v0.wrapping_add(v4);
+v10 = v9.wrapping_add(40i64 as u64);
+v11 = unsafe { f23(len, v10, v1, v2) };
+{ v8 = v11; break 'm3; }
+ } else { v12 = v1.wrapping_sub(v3);
+v13 = v0.wrapping_add(40i64 as u64);
+v14 = unsafe { f23(len, v13, v12, v2) };
+{ v8 = v14; break 'm3; }
+ }
+}
+return v8;
 }
 
 #[inline(always)]
@@ -489,4 +509,4 @@ pub unsafe fn rel_key_mix(desc: *const u8, a1: u64, a2: u64) -> u64 {
 
 
 /// This source's fingerprint (`rust::fingerprint` of what comes before).
-pub const SOURCE: u64 = 0xc473ea1bfcb23dd2;
+pub const SOURCE: u64 = 0x413099724876babc;

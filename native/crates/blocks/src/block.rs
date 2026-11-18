@@ -482,6 +482,11 @@ impl Block {
         unsafe { self.base.add(off) as *mut T }
     }
 
+    /// Whether `p` lies in this block's reserved range.
+    pub fn holds<T>(&self, p: *const T) -> bool {
+        (p as usize).wrapping_sub(self.base as usize) < self.reserved
+    }
+
     pub fn offset_of<T>(&self, p: *const T) -> usize {
         let o = p as usize - self.base as usize;
         assert!(o < self.reserved);

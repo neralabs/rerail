@@ -3510,6 +3510,25 @@ Test: `an_export_is_one_relation_of_the_chunks_new_rows`, which replaces the tes
 
 Still merged: 157 relations, nearly all of two parts. Steps 2 and 3 of 0384 cover them.
 
+### Q179. A fork goes on in a continuation of its rows' relation: step 7 of decision 0384 (done)
+
+Done 2026-11-18. The user asked to complete 0384, and picked writing the missing read over serializing forks or
+listing the fork's merge as a copy.
+- `Relation::try_continue`: a relation in its base's block whose ids below `base_rows` are its base's rows
+  (`CONTINUES`, `base_off`). `rel_get` reads them there, written once in CLIF; the host's and the kernels' reads
+  regenerated.
+- `Rows::shared` gives a fork a continuation as its tail. `Rows::one` binds a fork (and a frozen fork) as the
+  continuation, of `base_rows + own` rows.
+- Indexes of a continuation, host and device, are of every id it reads. A kills delta of one counts its base's rows.
+- A continuation moved out of a full block takes its base's rows (a growth move) and is a relation of its own.
+
+Tests: `a_continuation_reads_its_bases_rows_where_they_lie` (blocks), `a_fork_goes_on_in_a_continuation_of_its_rows`
+(facts), `the_device_reads_a_fork_through_its_base` (device), and step 2's test updated. Cold 300-file CPU and Metal
+runs: no forks, outputs the reference's.
+
+Left: a fork of a fork (a continuation's base must be a full relation) is still merged by `Rows::one`, counted
+under "rows of many parts merged into one".
+
 ### Q178. What a relation's block holds goes back to it: step 6 of decision 0384 (done)
 
 Done 2026-11-18. The user asked for Q177's leftover (a forgotten index's room was not given back) and for 0384 to

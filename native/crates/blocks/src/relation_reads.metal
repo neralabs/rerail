@@ -136,14 +136,29 @@ inline ulong clif_rel_get(device const uchar* t,ulong a0,uint a1,uint a2){
  ulong v0=0;
  uint v1=0;
  uint v2=0;
+ uint v3=0;
+ ulong v4=0;
+ ulong v8=0;
  v0=a0;
  v1=a1;
  v2=a2;
- uint v3=uint(*(device const uint*)(t+(v0+ulong(long(8)))));
- uint v4=v1-v3;
- ulong v5=v0+ulong(40ul);
- ulong v6=clif_rows_get(t,v5,v4,v2);
- return v6;
+ v3=uint(*(device const uint*)(t+(v0+ulong(long(8)))));
+ v4=ulong(*(device const ulong*)(t+(v0+ulong(long(192)))));
+ uchar v5=uchar((uint)(v1)<(uint)(v3));
+ uchar v6=uchar((ulong)(v4)!=(ulong)(ulong(0ul)));
+ uchar v7=v5&v6;
+ if(v7!=0){
+  ulong v9=v0+v4;
+  ulong v10=v9+ulong(40ul);
+  ulong v11=clif_rows_get(t,v10,v1,v2);
+  {ulong t0=v11;v8=t0;}
+ }else{
+  uint v12=v1-v3;
+  ulong v13=v0+ulong(40ul);
+  ulong v14=clif_rows_get(t,v13,v12,v2);
+  {ulong t0=v14;v8=t0;}
+ }
+ return v8;
 }
 inline uint clif_rel_dead(device const uchar* t,ulong a0,uint a1){
  ulong v0=0;

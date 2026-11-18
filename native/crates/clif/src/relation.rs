@@ -31,6 +31,7 @@ const COL_WIDTH: i32 = offset_of!(ColDir, width) as i32;
 const COL_CHUNK: i32 = offset_of!(ColDir, chunk) as i32;
 const COL_SIZE: i64 = size_of::<ColDir>() as i64;
 const REL_BASE_ROWS: i32 = offset_of!(Relation, base_rows) as i32;
+const REL_BASE_OFF: i32 = offset_of!(Relation, base_off) as i32;
 const REL_ROWS: i64 = offset_of!(Relation, rows) as i64;
 const REL_DEAD: i32 = offset_of!(Relation, dead) as i32;
 const REL_INDEXES: i32 = offset_of!(Relation, indexes) as i32;
@@ -152,13 +153,30 @@ pub fn rows_get(b: &mut B<'_, '_>) -> Value {
     b.call_at("col_get", dir, &[min_log, i])
 }
 
-/// `rel_get(rel, id, c)`: the relation's own row `id` (counted from its `base_rows`) in column `c`.
+/// `rel_get(rel, id, c)`: row `id` in column `c`: the relation's own row (counted from its `base_rows`), or, for a
+/// continuation (decision 0384 step 7: `base_off` set), an id below `base_rows` its base's row, the base's descriptor
+/// `base_off` bytes from its own in the same block.
 pub fn rel_get(b: &mut B<'_, '_>) -> Value {
     let (id, c) = (b.arg(0), b.arg(1));
     let base_rows = b.word_at(I32, b.tape, REL_BASE_ROWS);
-    let i = b.f.ins().isub(id, base_rows);
-    let rows = b.f.ins().iadd_imm(b.tape, REL_ROWS);
-    b.call_at("rows_get", rows, &[i, c])
+    let off = b.word_at(I64, b.tape, REL_BASE_OFF);
+    let below = b.f.ins().icmp(IntCC::UnsignedLessThan, id, base_rows);
+    let continues = b.f.ins().icmp_imm(IntCC::NotEqual, off, 0);
+    let in_base = b.f.ins().band(below, continues);
+    b.either(
+        I64,
+        in_base,
+        |b| {
+            let base = b.f.ins().iadd(b.tape, off);
+            let rows = b.f.ins().iadd_imm(base, REL_ROWS);
+            b.call_at("rows_get", rows, &[id, c])
+        },
+        |b| {
+            let i = b.f.ins().isub(id, base_rows);
+            let rows = b.f.ins().iadd_imm(b.tape, REL_ROWS);
+            b.call_at("rows_get", rows, &[i, c])
+        },
+    )
 }
 
 /// `rel_dead(rel, id)`: 1 if the relation's dead bits mark row `id` (a delta's kills of its base, or of its own).

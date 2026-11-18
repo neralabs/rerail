@@ -2556,7 +2556,8 @@ impl Batch {
     pub(in crate::code_rule_dsl) fn index(&mut self, rel: &DevRel, cols: &[usize]) -> Result<DevIndex, Error> {
         let home = rel.home.clone().expect("an index of a relation, not of words");
         let r = rel.relation();
-        assert_eq!(r.base_rows, 0, "an index of a full relation");
+        // A continuation's index is of every row it reads (its base's first: `ix_bucket` reads by id, `rel_get`).
+        assert!(r.base_rows == 0 || r.continues(), "an index of a full relation or a continuation");
         let key: Vec<u16> = cols.iter().map(|&c| c as u16).collect();
         let room = {
             let _g = home.ix.lock().unwrap_or_else(|e| e.into_inner());
@@ -3143,6 +3144,58 @@ pub mod tests {
             let found = later.index(dev, &cols).unwrap();
             assert!(!found.built && found.index == ix.index, "a later batch finds it");
             later.finish().unwrap();
+        }
+    }
+
+    /// Decision 0384 step 7: a fork (a second relation started from frozen rows whose writer another took) is bound
+    /// as one relation, nothing merged: the kernels read its base's rows through it (`rel_get`), and the device's
+    /// index of it is the host's, over every id.
+    #[test]
+    fn the_device_reads_a_fork_through_its_base() {
+        use crate::code_rule_dsl::facts::rows::Rows as FactRows;
+        if rerail_accel::gpu::join::device().is_err() {
+            return;
+        }
+        let n = 5_000;
+        let (c0, c1) = (rows(n, 31, 97), rows(n, 32, 13));
+        let vals = |lo: usize, hi: usize| -> Vec<i64> { (lo..hi).flat_map(|i| [c0[i], c1[i]]).collect() };
+        let mut start = FactRows::new(2);
+        // copy: not block data: a test's rows
+        start.extend_from_slice(&vals(0, 3_000));
+        let kept = start.freeze(3_000);
+        let mut first = kept.shared(3_000);
+        let mut fork = kept.shared(3_000);
+        // copy: not block data: a test's rows
+        first.extend_from_slice(&vals(3_000, 3_100));
+        // copy: not block data: a test's rows
+        fork.extend_from_slice(&vals(3_000, n));
+        let b = fork.in_block().expect("bound");
+        assert!(b.relation().continues() && b.rows == n as u32, "a continuation bound whole");
+        let dev = DevRel::in_block(&b, 2).unwrap();
+        let mut host = FactRows::new(2);
+        // copy: not block data: a test's rows
+        host.extend_from_slice(&vals(0, n));
+        let host = DevRel::in_block(&host.in_block().unwrap(), 2).unwrap();
+        for cols in [vec![0usize], vec![1, 0]] {
+            let mut batch = Batch::new().unwrap();
+            let ix = batch.index(&dev, &cols).unwrap();
+            assert!(ix.built && ix.moved.is_none(), "built in the fork's own block");
+            batch.finish().unwrap();
+            let key: Vec<u16> = cols.iter().map(|&c| c as u16).collect();
+            let (r, h) = (dev.relation(), host.relation());
+            let hosts = {
+                let home = host.home.as_ref().unwrap();
+                // SAFETY: one thread; the rows are written.
+                let room = unsafe { h.try_reserve_index(&home.block, &key, n as u32) }.unwrap();
+                unsafe {
+                    h.build_index(&room);
+                    h.index_built(&room);
+                }
+                room.index
+            };
+            let (d, w) = (r.index(ix.index as usize), h.index(hosts));
+            assert_eq!(d.offs.as_slice(), w.offs.as_slice(), "{cols:?}: the buckets");
+            assert_eq!(d.rows.as_slice(), w.rows.as_slice(), "{cols:?}: each bucket's rows, in id order");
         }
     }
 
