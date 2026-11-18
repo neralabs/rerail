@@ -49,15 +49,37 @@ impl Rng {
     }
 }
 
-/// Ids by name, for a corpus grammar: each kind or field is numbered at its first use, from 1.
+/// Ids by name, for a corpus grammar: each kind or field is numbered at its first use, from 1,
+/// kinds and fields apart.
 #[derive(Default)]
 pub struct Ids(pub std::cell::RefCell<HashMap<String, u16>>);
 
 impl Ids {
+    /// A kind's id, or a field's (`field NAME`). Fields are numbered apart from kinds, from 1, as
+    /// a grammar's are: a tape keeps a field in 6 bits (`rerail_tape_format::FIELD_LIMIT`), and
+    /// one count over both would pass it in a step with many kinds.
     pub fn of(&self, name: &str) -> u16 {
         let mut m = self.0.borrow_mut();
-        let n = m.len() as u16 + 1;
-        *m.entry(name.to_owned()).or_insert(n)
+        if let Some(&n) = m.get(name) {
+            return n;
+        }
+        let field = name.starts_with("field ");
+        let n = m.keys().filter(|k| k.starts_with("field ") == field).count() as u16 + 1;
+        assert!(!field || usize::from(n) < rerail_tape_format::FIELD_LIMIT, "a field past the tape's field bits: {name}");
+        m.insert(name.to_owned(), n);
+        n
+    }
+
+    /// The names by id: the kinds', then the fields' (without `field `).
+    pub fn names(&self) -> (HashMap<u16, String>, HashMap<u16, String>) {
+        let (mut kinds, mut fields) = (HashMap::new(), HashMap::new());
+        for (n, &i) in self.0.borrow().iter() {
+            match n.strip_prefix("field ") {
+                Some(f) => fields.insert(i, f.to_owned()),
+                None => kinds.insert(i, n.clone()),
+            };
+        }
+        (kinds, fields)
     }
 }
 
@@ -507,11 +529,11 @@ pub fn reference(c: &Compiled, bytes: &[u8]) -> Option<Vec<IdNode>> {
     )
 }
 
-/// The step's shape: tier 1's body branches only for its loop, its extracts' flattening and, when
-/// it has values known on ASCII bytes, one all-ASCII test, and one branch per gated region;
-/// tier 2 loops only over tokens, over a mask's words, 64 bytes a turn (a `check` is tier 1's
-/// masks), over the calls it pops, and (a grammar with wraps) over the node table once, at the
-/// end; nothing calls.
+/// The step's shape: tier 1's body (a pass with a block loop) branches only for its loop, its
+/// extracts' flattening and, when it has values known on ASCII bytes, one all-ASCII test, and one
+/// branch per gated region; tier 2 loops only over tokens, over a mask's words, 64 bytes a turn (a
+/// `check` is tier 1's masks), over the calls it pops, and (a grammar with wraps) over the node
+/// table once, at the end; nothing calls.
 pub fn check_shape(name: &str, c: &Compiled) {
     // Each pass of tier 1 (one, without `back_fill`): a forward pass's body as above; a
     // backward pass's function branches only for its files, its blocks and their ends.
@@ -520,6 +542,12 @@ pub fn check_shape(name: &str, c: &Compiled) {
         if pass.back {
             let lines: Vec<String> = pass.clif.lines().map(|l| l.trim().to_owned()).collect();
             assert_eq!(branches(&lines), 4, "{name}: tier 1's backward pass {k} branches beyond its loops");
+            continue;
+        }
+        // A pass whose body makes nothing has no block loop (`PassShape::block_loop`): its hot
+        // loop is the token loop's, which only the last pass has.
+        if !pass.block_loop {
+            assert_eq!(k + 1, c.parser.tier1.passes.len(), "{name}: tier 1's pass {k} has no block loop and is not the last");
             continue;
         }
         let body = crate::clif_text::body_of(&pass.clif);
@@ -540,15 +568,16 @@ pub fn check_shape(name: &str, c: &Compiled) {
     }
     // Each tier calls only its own outlined functions (`native_cpu_block::general`,
     // `native_cpu_stream::outline`).
-    // An indirect jump only through a jump table of its own: tier 2's shared arms
-    // (`native_cpu_stream::shared_runs`) end in one, a `br` each.
-    let tables = c.parser.tier2.clif.lines().filter(|l| l.contains(" br_table ")).count();
-    for (tier, asm, own, tables) in [("tier 1", &c.parser.tier1.disassembly, c.parser.tier1.own_calls(), 0), ("tier 2", &c.parser.tier2.disassembly, c.parser.tier2.own_calls, tables)] {
+    // No indirect jump: tier 2's shared arms (`native_cpu_stream::shared_runs`) end in a jump
+    // table of their own in the IR, which Cranelift's code has as a tree of compares
+    // (`native_cpu_codegen::tables_as_compares`: its Arm jump tables carry a speculation
+    // barrier), so neither tier's machine code has a jump table or a `br`.
+    for (tier, asm, own) in [("tier 1", &c.parser.tier1.disassembly, c.parser.tier1.own_calls()), ("tier 2", &c.parser.tier2.disassembly, c.parser.tier2.own_calls)] {
         // A jump table's sequence is one line, its `br` inside, its entries the function's labels.
         let (tables_asm, rest): (Vec<&str>, Vec<&str>) = asm.lines().partition(|l| l.contains("jt_entries"));
         let out: Vec<&&str> = rest.iter().filter(|l| l.contains(" bl ") || l.contains(" br ") || l.trim_start().starts_with("br ")).take(4).collect();
         assert!(out.is_empty(), "{name}: {tier} jumps out: {out:?}");
-        assert_eq!(tables_asm.len(), tables, "{name}: {tier} jumps other than by its own tables");
+        assert!(tables_asm.is_empty(), "{name}: {tier} has a jump table in Cranelift's code: {tables_asm:?}");
         assert_eq!(asm.matches("blr").count(), own, "{name}: {tier} calls out: {:?}", asm.lines().filter(|l| l.contains("blr")).collect::<Vec<_>>());
     }
 }
@@ -557,6 +586,22 @@ pub fn check_shape(name: &str, c: &Compiled) {
 /// `alphabet`, and `fixed` documents besides; and `also`, for each document, given the
 /// reference's nodes: a difference with another parser, if any. The differences, one per step at
 /// most.
+/// Tier 1 on the CPU against its interpreter, on what the CPU makes: every output but those its
+/// record pass makes instead (`BlockNative::records_made`, all of them where the pass has no
+/// block loop: `PassShape::block_loop`), the positions and totals, and the codes but for the
+/// gap marks tier 2 on the CPU tests itself (`native_cpu_block::lazy_code_bits`). A file both
+/// send to the fallback (a total set) goes no further: its outputs and codes are not read.
+fn tier1_equal(c: &Compiled, cpu: &crate::block::BlockRun, interpreted: &crate::block::BlockRun) -> bool {
+    let block = &c.native.block_programs[0];
+    let unmade = block.records_made();
+    let looped = c.parser.tier1.passes.iter().all(|p| p.back || p.block_loop);
+    let lazy = crate::native_cpu_block::lazy_code_bits(block);
+    let outputs = !looped || (cpu.outputs.len() == interpreted.outputs.len() && (0..cpu.outputs.len()).all(|o| unmade.contains(&o) || cpu.outputs[o] == interpreted.outputs[o]));
+    let codes = cpu.codes.len() == interpreted.codes.len() && cpu.codes.iter().zip(&interpreted.codes).all(|(a, b)| a & !lazy == b & !lazy);
+    let fell = interpreted.totals.iter().any(|&t| t != 0);
+    cpu.positions == interpreted.positions && cpu.totals == interpreted.totals && (fell || (outputs && codes))
+}
+
 pub fn check_ladder(
     steps: &[(String, String)],
     alphabet: &[u8],
@@ -585,7 +630,7 @@ pub fn check_ladder(
             let interp = crate::stream::run(&c.program, &bytes, &run).ok().map(as_ids);
             let compiled = c.parser.parse(&bytes).ok().map(as_ids);
             let tier1 = c.parser.tier1.extract(&bytes);
-            if tier1 != run {
+            if !tier1_equal(&c, &tier1, &run) {
                 differ.push(format!("{}: tier 1 compiled differs from its interpreter", show()));
                 break;
             }

@@ -949,8 +949,19 @@ fn only_the_compiler_reads_tier2s_states() {
                 continue;
             }
             let text = std::fs::read_to_string(&path).expect("reads a source file");
-            // A token reader's arms (`records::ReadArm`: `rd.arms`, `reader.arms`) are not the table's.
-            let table_line = |line: &str| needles.iter().any(|n| line.contains(n)) && !((line.contains("rd.arms") || line.contains("reader.arms")) && !needles[1..].iter().any(|n| line.contains(n)));
+            // A token reader's arms (`records::ReadArm`: `rd.arms`, `reader.arms`, `readers[i].arms`)
+            // and tier 1's counts of arms read in place (`shape.arms`, `cols.arms`, `c.arms`) are
+            // not the table's: a `.arms` is the table's unless its receiver is one of those.
+            let other_arms = |line: &str| {
+                line.match_indices(".arms").all(|(at, _)| {
+                    let before = &line[..at];
+                    let receiver = before.rsplit(|c: char| !(c.is_alphanumeric() || c == '_')).next().unwrap_or_default();
+                    // `readers[…].arms`: the indexed list before the `.arms` is the readers'.
+                    let indexed = before.ends_with(']') && before.rfind("readers[").is_some_and(|k| !before[k..].contains(".arms"));
+                    ["rd", "reader", "shape", "cols", "c"].contains(&receiver) || indexed
+                })
+            };
+            let table_line = |line: &str| needles[1..].iter().any(|n| line.contains(n)) || (line.contains(".arms") && !other_arms(line));
             if text.lines().any(table_line) {
                 readers.push(path.display().to_string());
             }
@@ -1174,11 +1185,13 @@ fn json_compiled_path_equals_the_interpreters() {
     let tier2 = native_cpu_stream::compile(&native).expect("tier 2 compiles");
     // JSON has no wraps and no chained returns: it pays for neither (no wrap columns). Its loop
     // heads are the stream's. The table is written as it goes (each row's parent and extra flag
-    // with the row), and JSON defers no leaf: no call, no pass at its end. A token's end is its
-    // record's (`records`): no search.
+    // with the row), and JSON defers no leaf: no pass over the table, at its end or before. A
+    // token's end is its record's (`records`): no search. Its calls are the tape's rare steps
+    // (decision 0140: a block's base, a commit of codes, the image's end), none a table pass.
     assert!(!tier2.wraps);
     assert!(tier2.heads.iter().all(|h| matches!(h.1, native_cpu_shape::Step::Token | native_cpu_shape::Step::Block)), "{:?}", tier2.heads);
-    assert_eq!(tier2.own_calls, 0, "no pass over the table");
+    assert_eq!(tier2.table_passes, 0, "no pass over the table");
+    assert!(tier2.own_calls > 0 && rerail_compiler::clif_text::callees(&tier2.clif).len() == tier2.own_calls, "every call an outlined function's: {}", tier2.own_calls);
     let files = json_tier2_files();
     for f in &files {
         let want1 = p.block_programs[0].run_files(&[f]).remove(0);

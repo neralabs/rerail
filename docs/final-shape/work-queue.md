@@ -833,6 +833,14 @@ pass.
   of `534c74dbf` (the Parser-generators merge, 0177's token-loop steps), with the compiler,
   tape-format, Metal, rr-parser and parser-tests sources of each. So it came in with that line,
   not with 0327's or 0348's work. Found by the farm run for 0348 stage 1.
+- **Done** (2026-11-18): the 30 calls are the tape writer's (decision 0140, since 8a1762be0):
+  `tempo_tape_blocks` at 24 places (a block's base and offsets), `tempo_tape_commit` at 5 (a
+  commit of codes) and `tempo_tape_finish` at the image's end. None is a pass over the table:
+  those are `shift_rows` and `drop_rows`, which JSON has neither of. The claim is now the one
+  the test meant: `CompiledStream::table_passes` (calls of `shift` or `drop`, counted by callee in
+  the IR, `clif_text::callees`) is 0, and every call is an outlined function's. A wrap's test
+  (`a_wrap_goes_before_the_node_it_wraps`) asserts its one `shift` call, so the count is not
+  vacuous.
 
 ### Q34. Lowering C's token grammar takes minutes in a debug build
 
@@ -919,8 +927,44 @@ pass.
   in place of their own trees: Cranelift 0.52× the interpreter's cycles (0.50× with their own),
   at the edge of the noise, so one mechanism kept. Guards: `a_table_as_compares_is_the_table`
   (every index, a gap, a block argument, past the end; no `csdb` in the code) and the pp shape
-  test (no `csdb` in the words' code). `parser_tests`' four red tests (Q33 and three more) fail
-  the same at the base commit.
+  test (no `csdb` in the words' code). `parser_tests`' four red tests (Q33 and three more) failed
+  the same at the base commit; all four fixed since (Q33, Q39).
+
+### Q39. `parser_tests`' three other red tests
+
+- **Keep**: each test's claim, the `.rr` ladder's above all: every step, every generated
+  document, the reference, the interpreters, Cranelift, the tape and the engine agree.
+- **Done** (2026-11-18), each by its cause:
+  - `only_the_compiler_reads_tier2s_states`: false hits of `.arms` on a token reader's arms
+    (`readers[i].arms`) and tier 1's counts (`shape.arms`, `cols.arms`, `c.arms`). The guard
+    now takes a `.arms` by its receiver; a real read (`g.arms`, `states[k].arms`) still fails it.
+  - `rr_cases_parse_from_their_steps`: step 22 sends a float's second `.` and a 19-digit
+    number to the engine on purpose (2b6e570bd, 69756c977; doc 39), and the cases still asked
+    the step to parse them. They are `TO_THE_ENGINE` from step 22, checked to be refused by
+    exactly those escapes, and split copies without those parts keep the rest of each case.
+  - `rr_steps_parse_as_the_reference_and_the_engine`, five causes in turn:
+    1. The jump-table check counted `br_table`s in tier 2's IR, which Q38 turns to compares in
+       Cranelift's code: it now refuses any jump table in either tier's machine code.
+    2. `hot_loop` asked for `block2` in a pass with no block loop (`bodiless_body`, 0177):
+       `PassShape::block_loop` says which passes have one, and the branch count skips the
+       others.
+    3. The ladder's `Ids` numbered kinds and fields from one count, so later steps gave fields
+       ids past the tape's 6 field bits (`FIELD_LIMIT`), and Cranelift's tape dropped the high
+       bits (31 of 33 steps differed). Fields are numbered apart, as a grammar's are.
+    4. Tier 1's comparison asked the CPU for what 0177 leaves out on purpose: the gap marks
+       tier 2 tests itself (`native_cpu_block::lazy_code_bits`, now shared with rr_parser's
+       Metal test), the outputs a bodiless pass does not make, and the codes of a file both
+       send to the fallback, which tier 2 never reads.
+    5. Two real bugs found once the ladder reached step 22's documents:
+       - bitlex's reference matched a token mark's kind after `keywords` had retagged it, so
+         `io_bare`'s `hash_word` never held at `#include` and the reference parsed what the
+         engine refuses. A kind now holds at a token whose rule made it, as the compiler's
+         code reads it.
+       - Cranelift's tier 2 tested a lazy gap mark in a word function that reads the state in
+         `ctx`, also where the state is in the function's slot (no clusters, `Parser::new`), so
+         `line` never held: a setting ran past its line. Without clusters, it is tested in place,
+         as a token mark's test already was. The production parser (clusters by rules) was not
+         affected.
 
 ## Questions for the user
 

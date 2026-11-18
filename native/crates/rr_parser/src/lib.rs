@@ -1754,9 +1754,8 @@ pub mod tests {
     /// The code bits of the gap marks tier 2 on the CPU tests itself
     /// (`native_cpu_block::lazy_marks`): the CPU's tier 1 sets none of them.
     fn lazy_bits(block: &rerail_compiler::block_native::BlockNative) -> u32 {
-        let r = block.records.as_ref().expect("records");
-        let bw = rerail_compiler::native_cpu_bytes::Bytewise::of(block);
-        rerail_compiler::native_cpu_block::lazy_marks(r, &|o| bw.can(o)).iter().fold(0, |a, &(k, _)| a | 1 << (rerail_compiler::records::MARK_SHIFT + u32::from(k)))
+        assert!(block.records.is_some(), "records");
+        rerail_compiler::native_cpu_block::lazy_code_bits(block)
     }
 
     /// Of those, the code bits of the marks with token tests too (`native_cpu_block::lazy_coded`):

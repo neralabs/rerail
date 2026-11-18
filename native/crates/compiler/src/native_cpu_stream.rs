@@ -271,6 +271,10 @@ pub struct CompiledStream {
     /// Its calls, each of an outlined function made from the same program (`outline`): the
     /// only calls the machine code may have.
     pub own_calls: usize,
+    /// Of those, the calls of a pass over the table's tail (`TableFns`' `shift` and `drop`, a
+    /// wrap's and a dropped node's): none where nothing wraps or is dropped. The others are the
+    /// tape's rare steps (a block's base, a commit of codes, the image's end) and the words'.
+    pub table_passes: usize,
     /// Its functions of clusters (`compile_cut`: one, the token loop's alone), and their tail
     /// calls of each other: one where a jump left its cluster.
     pub clusters: usize,
@@ -2810,6 +2814,7 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
     let image = crate::native_cpu_tape::Image { tag: widths_tag.1, widths: widths_tag.0, extras: &native.readings.extras, classes: &classes };
     let table_fns = TableFns::make(&mut module, &native.structural, image)?;
     let table = Table { inner: crate::rust_stream::marks(native), w: widths_tag.0, fns: &table_fns };
+    let passes: Vec<u32> = table_fns.shift.iter().chain(&table_fns.drop).map(|f| f.0.as_u32()).collect();
     // The words made as functions of their own (`WordFn`), with a function a grammar rule.
     let outlined = !native.rules.is_empty() && cut.calls;
     // The calls open counted by the machine's stack (`calls_on_stack`), with `ctx` pinned.
@@ -3771,30 +3776,39 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
                             f.ins().brif(at_end, holds, &[], ask, &[]);
                             f.switch_to_block(ask);
                             let key = WordFn::LazyMark { order };
-                            if !word_fns.contains_key(&key) {
-                                let bn = native.block_programs.first().ok_or(Error::UnsupportedBackend)?;
-                                let r = bn.records.as_ref().ok_or(Error::UnsupportedBackend)?;
-                                let unless: Vec<u16> = r.unless.iter().filter(|&&(k, _)| k == order).map(|&(_, w)| w).collect();
-                                let extra = r.extra;
-                                let coded = (crate::native_cpu_block::lazy_coded(r) >> order & 1 == 1).then_some(order);
-                                let name = format!("tempo_word_{}", word_fns.len());
-                                let made = outline(&mut module, &name, 1, 1, pinned_ctx, &[], |g, q, hs| {
-                                    let ctx = q[0];
-                                    let get = |f: &mut FunctionBuilder<'_>, k: Mem| field_get(f, ctx, k);
-                                    let set = |f: &mut FunctionBuilder<'_>, k: Mem, x: Value| field_set(f, ctx, k, x);
-                                    let at = |f: &mut FunctionBuilder<'_>, at: i32| f.ins().load(types::I64, MemFlags::trusted(), ctx, at);
-                                    let guard = |_: &mut FunctionBuilder<'_>, _: Value| unreachable!("a mark does not refuse");
-                                    let env = WordEnv { get: &get, set: &set, ctx: &at, guard: &guard };
-                                    let bw = crate::native_cpu_bytes::Bytewise::of(bn);
-                                    let v = lazy_mark(g, &env, &bw, o, extra, &unless, coded, hs);
-                                    g.ins().return_(&[v]);
-                                })?;
-                                word_fns.insert(key, made);
+                            let bn = native.block_programs.first().ok_or(Error::UnsupportedBackend)?;
+                            let r = bn.records.as_ref().ok_or(Error::UnsupportedBackend)?;
+                            let unless: Vec<u16> = r.unless.iter().filter(|&&(k, _)| k == order).map(|&(_, w)| w).collect();
+                            let extra = r.extra;
+                            let coded = (crate::native_cpu_block::lazy_coded(r) >> order & 1 == 1).then_some(order);
+                            // A function of its own where the state is `ctx`'s (`outlined`), as a
+                            // token mark's below; else here, the state in this function's slot or
+                            // registers, which a word's function would not read.
+                            if !outlined {
+                                let bw = crate::native_cpu_bytes::Bytewise::of(bn);
+                                let r = lazy_mark(&mut f, &env, &bw, o, extra, &unless, coded, &mut heads);
+                                f.ins().brif(r, holds, &[], skip, &[]);
+                            } else {
+                                if !word_fns.contains_key(&key) {
+                                    let name = format!("tempo_word_{}", word_fns.len());
+                                    let made = outline(&mut module, &name, 1, 1, pinned_ctx, &[], |g, q, hs| {
+                                        let ctx = q[0];
+                                        let get = |f: &mut FunctionBuilder<'_>, k: Mem| field_get(f, ctx, k);
+                                        let set = |f: &mut FunctionBuilder<'_>, k: Mem, x: Value| field_set(f, ctx, k, x);
+                                        let at = |f: &mut FunctionBuilder<'_>, at: i32| f.ins().load(types::I64, MemFlags::trusted(), ctx, at);
+                                        let guard = |_: &mut FunctionBuilder<'_>, _: Value| unreachable!("a mark does not refuse");
+                                        let env = WordEnv { get: &get, set: &set, ctx: &at, guard: &guard };
+                                        let bw = crate::native_cpu_bytes::Bytewise::of(bn);
+                                        let v = lazy_mark(g, &env, &bw, o, extra, &unless, coded, hs);
+                                        g.ins().return_(&[v]);
+                                    })?;
+                                    word_fns.insert(key, made);
+                                }
+                                let (id, sig, _) = &word_fns[&key];
+                                let c = pinned(&mut f);
+                                let r = call_word(&mut f, *id, sig, pinned_ctx, c, &[])[0];
+                                f.ins().brif(r, holds, &[], skip, &[]);
                             }
-                            let (id, sig, _) = &word_fns[&key];
-                            let c = pinned(&mut f);
-                            let r = call_word(&mut f, *id, sig, pinned_ctx, c, &[])[0];
-                            f.ins().brif(r, holds, &[], skip, &[]);
                             f.switch_to_block(holds);
                         }
                         // A token mark (decision 0129): its tokens follow, from the records.
@@ -4790,10 +4804,11 @@ pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, wid
     // SAFETY: `tempo_stream` was declared and defined with this signature.
     let entry = unsafe { std::mem::transmute::<*const u8, Entry>(code) };
     let own_calls = calls;
+    let table_passes = crate::clif_text::callees(&clif).iter().filter(|n| passes.contains(n)).count();
     let marks = words.iter().filter_map(|b| if let Op::Mark { order, .. } = b.operation { Some(u64::from(order) + 1) } else { None }).max().unwrap_or(0);
     let wraps = framed(words);
     let two_slots = has_context(words);
-    Ok(CompiledStream { _module: module, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, wraps, widths, tag, classes: supertype_classes(native)?, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges, ir, entry_id: id.as_u32() })
+    Ok(CompiledStream { _module: module, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, wraps, widths, tag, classes: supertype_classes(native)?, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, table_passes, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges, ir, entry_id: id.as_u32() })
 }
 
 /// What an instruction does to `ctx`'s fields (`state_in_registers`).
