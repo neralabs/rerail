@@ -865,6 +865,50 @@ describe("a state file Windows left behind", () => {
     expect(existsSync(stateFile)).toBe(false);
   });
 
+  // A hook's start before it sends its settings replaces a daemon of another install. One whose engine has no proof
+  // (Rerail 0.1.4 or earlier) is ended first, as `rerail daemon stop` ends it: left running, it would keep its engine
+  // pipe and the database open beside the hook's daemon, with no record naming it, and its own later starts would fail.
+  it("ends a daemon whose engine has no proof before a hook's start launches the daemon of another install", async () => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const state = stateFor({
+      pid: DEAD_PID,
+      version: "0.1.4",
+      kernelSocketPath: PIPE,
+      accessToken: "capability",
+      nativeToken: "native",
+      startedAt: OLDER_STARTED_AT,
+      packageRoot: String.raw`C:\Users\me\AppData\Roaming\npm\node_modules\@neralabs\rerail`,
+    });
+    // Each request to the older daemon's URL, signal to its pid and launch goes to `events`, in order.
+    const events: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: URL) => {
+      const path = new URL(url).pathname;
+      events.push(path);
+      return path === "/healthz" ? Response.json({ status: "ok", pid: DEAD_PID }) : new Response(null, { status: 404 });
+    }));
+    let running = true;
+    const machine: DaemonMachine = {
+      ...olderEngine(OLDER_STARTED_AT - 600),
+      env: { RERAIL_HOME: home },
+      kill: (_pid, signal) => {
+        if (!running) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+        if (signal !== 0) events.push(String(signal));
+        if (signal === "SIGTERM") running = false;
+        return true;
+      },
+      // The launched daemon has the ended daemon's pid, which no process holds now: it reads as exited at once.
+      spawnDetached: () => {
+        events.push("launch");
+        return { pid: DEAD_PID };
+      },
+    };
+    await writeFile(stateFile, JSON.stringify(state));
+    const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+    const control = { home, packageRoot, ensureSqlite: async (root: string) => ({ prefix: root, rebuilt: false }) };
+    await expect(startDaemonForPackage(control, { dev: true, port: 0 }, machine)).rejects.toThrow(/exited/u);
+    expect(events).toEqual(["/healthz", "/native/shutdown", "SIGTERM", "launch"]);
+  });
+
   it("waits for a daemon whose engine is silent to the proof, as for a busy one, and sends it nothing", async () => {
     const stateFile = join(home, DAEMON_STATE_FILE);
     const state = stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability", nativeToken: "native" });
