@@ -103,6 +103,10 @@ pub fn read_kind(view: u32) -> u32 {
         VIEW_FIELD => 3,
         VIEW_CORE => 4,
         VIEW_LINE => 5,
+        VIEW_LOC_LINE => 6,
+        VIEW_LOC_END => 7,
+        VIEW_LOC_COL => 8,
+        VIEW_LOC_DOCOF => 9,
         _ => panic!("view {view} has no read"),
     }
 }
@@ -160,6 +164,9 @@ pub struct ViewsInPlace {
     pub buffers: Vec<metal::Buffer>,
     /// Whether every document's lines are in a slab (`LineTable::placed`), so the `line` view is read in place too.
     pub lines: bool,
+    /// Whether every document's `Loc` rows are the views' reads' (`ViewEntry::locs`: a file's own tree, core.rr's
+    /// lines in the batch's block), so the `Loc` views are read in place too.
+    pub locs: bool,
     _entries: Vec<super::view_docs::ViewEntry>,
 }
 
@@ -183,6 +190,8 @@ fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
     let mut slabs: Vec<metal::Buffer> = Vec::new();
     let mut entries = Vec::with_capacity(n);
     let mut lines = true;
+    let loc_rows = batch.offsets(View::Loc(Place::Line));
+    let mut locs = batch.docs.iter().all(|p| p.extra.is_some());
     for (i, p) in batch.docs.iter().enumerate() {
         // Each refusal counted by why: what step 4b (16z laid out apart) and the loads not yet placed leave.
         let refused = |why: &'static str| {
@@ -193,12 +202,42 @@ fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
             return refused("views.refused.block");
         }
         let first = batch.nodes[i] as u32;
-        let mut row = ViewRow { rows: [first, batch.children[i] as u32, batch.fields[i] as u32, first, first], ..Default::default() };
-        if p.len() > 0 {
-            let Some(tape) = p.facts.tape.as_ref() else { return refused("views.refused.no_tape") };
-            let Ok((bytes, view)) = tape.in_place() else { return refused("views.refused.not_in_place") };
-            let Some(room) = tape.image().room() else { return refused(if tape.image().format() == crate::code_rule_dsl::tape::formats::Format::F16Z { "views.refused.unplaced_16z" } else { "views.refused.unplaced" }) };
-            let Some((address, slab)) = crate::code_rule_dsl::tape::placed::on_device(room, bytes) else { return refused("views.refused.not_in_room") };
+        let loc = loc_rows.get(i).map_or(0, |&r| r as u32);
+        let mut row = ViewRow { rows: [first, batch.children[i] as u32, batch.fields[i] as u32, first, first, loc, loc, loc, loc], ..Default::default() };
+        if locs && p.locs() > 0 && super::view_docs::ViewEntry::locs(b, p).is_none() {
+            // Why, by the guest's placement where it has one.
+            let why = match p.extra.as_ref().and_then(|x| x.host.as_ref()).map(|(_, place)| place) {
+                Some(super::Placement::Copied { .. }) => "views.refused.locs.guest_copied",
+                Some(super::Placement::Mapped { .. }) => "views.refused.locs.guest_mapped",
+                Some(super::Placement::At(_)) => "views.refused.locs.guest_at",
+                Some(super::Placement::Segments(_)) => "views.refused.locs.guest_segments",
+                None => "views.refused.locs",
+            };
+            crate::code_rule_dsl::prof::count(why, 1);
+            locs = false;
+        }
+        // A document with no nodes has rows only in the `Loc` views (a withheld one's text and lines): where its tape
+        // is not on the device, those alone are made.
+        let only_locs = p.len() == 0;
+        if p.len() > 0 || (locs && p.locs() > 0) {
+            let tape_on_device = || -> Result<_, &'static str> {
+                let tape = p.facts.tape.as_ref().ok_or("views.refused.no_tape")?;
+                let (bytes, view) = tape.in_place().map_err(|_| "views.refused.not_in_place")?;
+                let room = tape.image().room().ok_or(if tape.image().format() == crate::code_rule_dsl::tape::formats::Format::F16Z { "views.refused.unplaced_16z" } else { "views.refused.unplaced" })?;
+                let (address, slab) = crate::code_rule_dsl::tape::placed::on_device(room, bytes).ok_or("views.refused.not_in_room")?;
+                Ok((address, slab, view))
+            };
+            let (address, slab, view) = match tape_on_device() {
+                Ok(on) => on,
+                Err(why) if !only_locs => return refused(why),
+                Err(why) => {
+                    crate::code_rule_dsl::prof::count(why, 1);
+                    locs = false;
+                    // SAFETY: row `i` of the rows just allocated in `b`.
+                    unsafe { rows.add(i).write(row) };
+                    continue;
+                }
+            };
             if !slabs.iter().any(|s| s.gpu_address() == slab.gpu_address()) {
                 slabs.push(slab);
             }
@@ -236,7 +275,7 @@ fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
     unsafe { dir.write(ViewDir { chunk: base, ndocs: n as u32, pad: 0, rows: base + b.offset_of(rows) as u64 }) };
     let mut buffers = vec![buffer];
     buffers.extend(slabs);
-    Some(ViewsInPlace { dir: base + b.offset_of(dir) as u64, buffers, lines, _entries: entries })
+    Some(ViewsInPlace { dir: base + b.offset_of(dir) as u64, buffers, lines, locs, _entries: entries })
 }
 
 /// Copies `src` into the block and points `span` at it.

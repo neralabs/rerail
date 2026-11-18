@@ -908,20 +908,27 @@
                 assert!(!guest.is_empty(), "the guest's places are rows");
                 assert!(guest.iter().all(|&r| line.value(r, 1) == 2), "the guest's places are its host's lines");
             }
-            for name in ["line", "end_line", "col", "docof"] {
-                let src = &core_views.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name}")).1;
-                let d = src.device_view().unwrap_or_else(|| panic!("{name}: made on the device"));
-                let n = src.len();
-                assert_eq!(d.rows, n, "{name}");
-                assert!(n > 0, "{name}: rows");
-                for cols in [vec![0, 1], vec![1]] {
-                    let out = mj::DevRel::empty(cols.len(), n).unwrap();
-                    let mut batch = mj::Batch::new().expect("the device");
-                    batch.expand_view(&d.block.gpu_buffer(device), d.root, d.view, d.pairs, &cols, &out).unwrap();
-                    batch.finish().unwrap();
-                    for (j, &c) in cols.iter().enumerate() {
-                        let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
-                        assert_eq!(out.column(j), &host[..], "{name}: column {c}");
+            // Each document's places read in place (decision 0353 step 4d): the views' reads over the batch's
+            // directory, its tapes and core.rr's lines in the batch's block; a guest's (a copied stretch) through its
+            // host's lines and its placement. With the guest and without.
+            let own_views = shaped(&store, make(), &Projection::core()).unwrap();
+            for views in [&core_views, &own_views] {
+                for name in ["line", "end_line", "col", "docof"] {
+                    let src = &views.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name}")).1;
+                    let v = src.device_view().and_then(|d| d.in_place.clone()).unwrap_or_else(|| panic!("{name}: read in place"));
+                    let n = src.len();
+                    assert!(n > 0, "{name}: rows");
+                    for cols in [vec![0, 1], vec![1]] {
+                        let view = mj::DevRel::view(2, n, v.clone()).unwrap();
+                        let out = mj::DevRel::empty(cols.len(), n).unwrap();
+                        let mut batch = mj::Batch::new().expect("the device");
+                        let from: Vec<mj::Col> = cols.iter().map(|&c| mj::Col::From(c)).collect();
+                        batch.copy_rows(mj::Rows::Rel(&view), n, &from, mj::Rows::Rel(&out), 0).unwrap();
+                        batch.finish().unwrap();
+                        for (j, &c) in cols.iter().enumerate() {
+                            let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
+                            assert_eq!(out.column(j), &host[..], "{name}: column {c} read in place");
+                        }
                     }
                 }
             }

@@ -380,7 +380,7 @@ Each row is marked in the code with `copy (0353 step N)`.
 | 11 | The transducer's packed batch: 44 bytes a node, and its child lists | `PackedBatch::nodes` (0293 "Interim") | Each matched batch | Step 7 |
 | 12 | Findings, frames and memo entries copied into rows of their own | The output, frames and memo stores | Not yet measured | Step 8 (0325 step 7) |
 | 13 | The transducer's residency: every tape it reads copied into slabs of its own, and documents copied between slabs | `residency::slabs::admit_docs`, `insert`'s `place`; `rerail_metal::slabs::gather` | Each tape a Metal batch reads | Step 7 |
-| 14 | Found 2026-11-17: the line starts copied into the chunk block for the `line` and `Loc` views, and the spans past a document's nodes (its tokens', comments', matches') beside them; a guest's places made there. `line` reads the lines in place when the batch's tapes are on the device (step 4d); the copy is its fallback, and `Loc`'s path | `device_chunk.rs`, `fill_lines`, `fill_locs` | 4 bytes a line, 8 a span, each batch that makes the views | Step 4 (Q123) |
+| 14 | Found 2026-11-17: the line starts copied into the chunk block for the `line` and `Loc` views, and the spans past a document's nodes beside them; a guest's places made there. Both views read in place where the batch's tapes are on the device (step 4d); the copies are the fallback of a batch whose tapes are not, or with a guest placed by pieces or segments | `device_chunk.rs`, `fill_lines`, `fill_locs` | 4 bytes a line, 8 a span, each batch that makes the views | Step 4 |
 
 ## The plan
 
@@ -471,14 +471,24 @@ Each step ends with:
          family of reads, the lines' (`lines_line`: the starts at or before a byte, by bisection), which a view read
          calls with the lines' base, its fourth pointer; `ViewRow` holds the lines' GPU address. A batch where a
          document's lines are not in a slab makes `line` (counted, `views.refused.lines_unplaced`).
-       - Left made (the copies 4d removes next): the `Loc` views (`line`, `end_line`, `col`, `docof`), whose spans
-         past the nodes live in no block (Q123's spans; row 14); the axis (step 5). `expand_view`, `VIEW_EXPAND` and
-         ChunkDoc's node columns stay for them, and for a batch whose tapes are not on the device.
+       - core.rr's places (`Loc`: `line`, `end_line`, `col`, `docof`, 2026-11-17): a row is a position (a node, a
+         token, the whole text, a line, an end point), its span off the tape or off core.rr's lines, which are a
+         derived fact of the projection, written once into its block by a chunked search (`core_rr::Lines`' words
+         `[ns, starts[ns], ne, ends[ne]]`; the byte loop goes). The entry holds the positions' counts and a run to the
+         lines; `loc_line` (a relation's read of the same body as `lines_line`) finds a line. A guest's places are
+         its host's lines through its placement, a copied stretch or a point, from the entry's scalars (decision
+         0055). A normalized string's pieces and an embedder's segments live in no block: such a batch makes its
+         places (counted, `views.refused.locs.guest_*`). On hogql every guest is a copied stretch.
+       - Left made: the axis (step 5); a batch whose tapes are not on the device (the device's budget spent); a
+         batch with a guest whose placement is not a copied stretch or a point. `expand_view`, `VIEW_EXPAND`,
+         ChunkDoc's node columns and `fill_lines`/`fill_locs` (row 14) stay for them.
        - Found on the way: the slabs holding tapes were never retired (4d's first part); now they are retired once
          only the pool holds them, so a long session frees them with its tapes.
        - hogql cold, 3 pairs: views made 347–503 MB against 597–788 MB; `node` and `child` 0. With `line` (whose
          rows hogql's core.rr shape does not read: its `line` is `Loc`'s), 3 pairs against 4d at load 7–9: 67–78 B
-         instructions against 77–83 B, findings 1,629.
+         instructions against 77–83 B, findings 1,629. With `Loc`, 3 pairs at load 23–26: views made 341–502 MB,
+         the axis alone (against 397–524 MB with `Loc`'s 70–98 MB); `Loc` read in place, 4.1–5.9 M rows a run;
+         74–85 B instructions against 68–89 B; findings 1,629.
      - **4e.** Measured: the 660.8 MB is 0; refusals and strata apart, against Q68's.
    - A stage's input may be a tape view: the kernels read the chunk block's placed tapes through the generated MSL
      (`metal_tape.metal`'s reads, 0293 §9).

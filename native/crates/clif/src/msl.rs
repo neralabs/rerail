@@ -396,6 +396,8 @@ fn instruction(
         Opcode::Popcnt => set(format!("{u}(popcount({}))", args[0])),
         Opcode::Umin => set(format!("min({},{})", args[0], args[1])),
         Opcode::Umax => set(format!("max({},{})", args[0], args[1])),
+        Opcode::Smin => set(format!("{u}(min({s}({}),{s}({})))", args[0], args[1])),
+        Opcode::Smax => set(format!("{u}(max({s}({}),{s}({})))", args[0], args[1])),
         Opcode::Icmp | Opcode::IcmpImm => {
             let cc = match data {
                 InstructionData::IntCompare { cond, .. } | InstructionData::IntCompareImm { cond, .. } => *cond,

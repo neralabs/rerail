@@ -3,7 +3,7 @@
 //! code's kind atom and field atom, a few hundred u32s). No per-node column: a node's row is read off the tape.
 
 use super::cells::{Block, Cells, Desc};
-use super::{Dialect, Projected, field_atom};
+use super::{Dialect, Placement, Projected, field_atom};
 use rerail_clif::ids::Run;
 use rerail_clif::view_reads::ViewDoc;
 use std::sync::Arc;
@@ -49,8 +49,47 @@ impl ViewEntry {
             Run::set(&raw mut (*d).fields, fields.as_ptr(), fields.len());
             let places = p.places_column();
             Run::set(&raw mut (*d).places, places.as_ptr(), places.len());
+            // core.rr's positions (`Locs`), for the `Loc` views: a file's own tree's, its lines in this block.
+            if let Some(x) = Self::locs(block, p) {
+                (*d).tokens = x.tokens;
+                (*d).own_text = u32::from(x.own_text);
+                (*d).ends = x.ends;
+                (*d).source_len = u32::try_from(f.source.len()).expect("a file within 4 GB");
+                // A guest's places are its host's lines, through its placement (decision 0055).
+                let lines = match &x.host {
+                    Some((lines, place)) => {
+                        match *place {
+                            Placement::Copied { delta, within } => {
+                                (*d).placement = rerail_clif::view_reads::PLACED_COPIED;
+                                (*d).delta = delta;
+                                ((*d).within_lo, (*d).within_hi) = (within[0], within[1]);
+                            }
+                            Placement::At(at) => {
+                                (*d).placement = rerail_clif::view_reads::PLACED_AT;
+                                ((*d).within_lo, (*d).within_hi) = (at[0], at[1]);
+                            }
+                            _ => unreachable!("`locs` takes these placements alone"),
+                        }
+                        lines
+                    }
+                    None => &x.lines,
+                };
+                let words = lines.words();
+                Run::set(&raw mut (*d).lines, words.as_ptr(), words.len());
+            }
         }
         ViewEntry { desc, _kinds: kinds, _fields: fields }
+    }
+
+    /// `p`'s positions where the views' reads answer its `Loc` rows: core.rr's, its lines in `block`; a guest's
+    /// through its host's lines, where its placement is a copied stretch or a point (a string's normalized pieces
+    /// and an embedder's segments are read apart from any block: its places are made).
+    pub fn locs<'p>(block: &Arc<Block>, p: &'p Projected) -> Option<&'p super::Locs> {
+        p.extra.as_deref().filter(|x| match &x.host {
+            None => x.lines.in_block(block),
+            Some((lines, Placement::Copied { .. } | Placement::At(_))) => lines.in_block(block),
+            Some(_) => false,
+        })
     }
 
     /// The entry's address, for the reads written once.
