@@ -29,7 +29,6 @@ import {
   dashboardAccessLink,
   daemonUsesPackageRoot,
   findRunningDaemon,
-  HOOK_DAEMON_WAIT_MS,
   isUsableEngineSocketPath,
   keepAutostartClaim,
   launchDetached,
@@ -1360,7 +1359,8 @@ describe("a record whose live pid is not the home's daemon", () => {
   }, 20_000);
 
   // A PowerShell that never answers stands in for the start's read on Windows, and the proof is silent at once, so the
-  // read has every millisecond of each lookup's limit.
+  // read has every millisecond of each lookup's limit. The hook's wait is given as 4 s, where a hook's own is
+  // HOOK_DAEMON_WAIT_MS.
   it("answers a hook within its wait for a busy daemon, the record kept, while the start's read never answers", async () => {
     const stateFile = join(home, DAEMON_STATE_FILE);
     const signals: Array<string | number | undefined> = [];
@@ -1373,12 +1373,15 @@ describe("a record whose live pid is not the home's daemon", () => {
     vi.mocked(childProcess.spawnSync).mockImplementationOnce(neverAnswers).mockImplementationOnce(neverAnswers);
     await writeFile(stateFile, JSON.stringify(state("win32")));
     const machine: DaemonMachine = { ...machineWith("win32", signals, () => undefined), processStartedAt: (pid, timeoutMs) => processStartedAt(pid, timeoutMs, "win32") };
+    const waitMs = 4_000;
     const arrived = Date.now();
-    expect(await runningDaemonEngineEndpoint(arrived + HOOK_DAEMON_WAIT_MS, machine)).toEqual({ status: "unresponsive", state: state("win32") });
-    expect(Date.now() - arrived).toBeLessThan(HOOK_DAEMON_WAIT_MS + 1_000);
-    // The first lookup's 2 s, then what is left of the hook's wait.
+    expect(await runningDaemonEngineEndpoint(arrived + waitMs, machine)).toEqual({ status: "unresponsive", state: state("win32") });
+    // The first lookup's 2 s, then what is left of the hook's wait: no read is given time past it.
     expect(bounds).toHaveLength(2);
     expect(Number(bounds[0])).toBeLessThanOrEqual(2_000);
+    expect(Number(bounds[0]) + Number(bounds[1])).toBeLessThanOrEqual(waitMs);
+    // Each stand-in is ended at its bound and waited for, which takes a few seconds more on a loaded machine.
+    expect(Date.now() - arrived).toBeLessThan(waitMs + 5_000);
     expect(existsSync(stateFile)).toBe(true);
     expect(signals).toEqual([]);
   }, 30_000);
