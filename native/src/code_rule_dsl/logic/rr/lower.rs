@@ -4982,58 +4982,70 @@ impl RuleSet for Vec<Rule> {
     }
 }
 
-/// `undo_on_request` of a program's header `prog` and its rules `rules`.
-pub fn undo_on_request_in(prog: &mut crate::code_rule_dsl::logic::front::ast::Program, rules: &mut dyn RuleSet) {
+/// `undo_on_request` of a program's fields `prog` and its rules `rules`.
+pub fn undo_on_request_in(prog: &mut (impl crate::code_rule_dsl::logic::program_image::fields::FieldsMut + ?Sized), rules: &mut dyn RuleSet) {
     for round in ON_REQUEST.iter().rev() {
         undo_round(prog, rules, round);
     }
 }
 
-/// One round of `ON_REQUEST` undone (`undo_on_request`) of a program's header `prog` and its rules `rules`: its
+/// One round of `ON_REQUEST` undone (`undo_on_request`) of a program's fields `prog` and its rules `rules`: its
 /// attributes inputs again, made for every node.
-pub fn undo_round(prog: &mut crate::code_rule_dsl::logic::front::ast::Program, rules: &mut dyn RuleSet, round: &[OnRequest]) {
+pub fn undo_round(prog: &mut (impl crate::code_rule_dsl::logic::program_image::fields::FieldsMut + ?Sized), rules: &mut dyn RuleSet, round: &[OnRequest]) {
+    let answered: Vec<&OnRequest> = round.iter().filter(|a| prog.declares(a.req)).collect();
+    if answered.is_empty() {
+        return;
+    }
+    // A round's copies are named after its first attribute present (`Widen::new`): any of the round's.
+    let wide: Vec<String> = round.iter().map(|a| format!("rr_wide_{}_", a.rel)).collect();
+    // A request's narrowing relations (`<req>_by_<reader>_<col>`, decision 0291) go with it: made again with the
+    // requests, over the readers then.
+    let narrowing: Vec<String> = round.iter().map(|a| format!("{}_by_", a.req)).collect();
+    let copy = |rel: &str| wide.iter().chain(&narrowing).any(|w| rel.starts_with(w.as_str()));
+    let mut gone: BTreeSet<String> = BTreeSet::new();
+    // A request's readers' asks (decision 0291, `{req}_by_{reader}_{col}`) go with it.
+    let asks: Vec<String> = answered.iter().map(|a| format!("{}_by_", a.req)).collect();
+    let demand = |rel: &str| asks.iter().any(|d| rel.starts_with(d.as_str()));
+    for k in prog.declared_names().into_iter().filter(|k| demand(k)) {
+        prog.undeclare(&k);
+        gone.insert(k);
+    }
+    for a in answered {
+        gone.insert(a.rel.to_owned());
+        gone.insert(a.req.to_owned());
+        if prog.declares(a.req) {
+            prog.undeclare(a.req);
+        }
+        let named = match a.answer {
+            Answer::Children { named } => Some(named),
+            Answer::Function(_) => None,
+        };
+        for input in a.eager.into_iter().chain(named) {
+            if prog.declares(input) {
+                prog.undeclare(input);
+            }
+            if prog.input_names().iter().any(|i| i == input) {
+                prog.retain_inputs(&|i: &str| i != input);
+            }
+        }
+        prog.add_input(a.rel);
+    }
+    rules.drop_heads(&|head| gone.contains(head) || copy(head));
+    for k in prog.declared_names().into_iter().filter(|k| copy(k)) {
+        prog.undeclare(&k);
+    }
+    let asked = prog.asked();
+    if asked.keys().any(|k| gone.contains(k) || copy(k)) {
+        let kept: BTreeMap<String, Vec<BTreeSet<String>>> = asked.into_iter().filter(|(k, _)| !gone.contains(k) && !copy(k)).collect();
+        prog.set_field(crate::code_rule_dsl::logic::program_facts::Field::Asked(&kept));
+    }
+    // A token's answer read `node_text`, declared for it where the program had none: unread now, it goes.
+    if round.iter().any(|a| matches!(a.answer, Answer::Children { .. }) && gone.contains(a.rel))
+        && !rules.reads("node_text")
     {
-        let answered: Vec<&OnRequest> = round.iter().filter(|a| prog.decls.contains_key(a.req)).collect();
-        if answered.is_empty() {
-            return;
-        }
-        // A round's copies are named after its first attribute present (`Widen::new`): any of the round's.
-        let wide: Vec<String> = round.iter().map(|a| format!("rr_wide_{}_", a.rel)).collect();
-        // A request's narrowing relations (`<req>_by_<reader>_<col>`, decision 0291) go with it: made again with the
-        // requests, over the readers then.
-        let narrowing: Vec<String> = round.iter().map(|a| format!("{}_by_", a.req)).collect();
-        let copy = |rel: &str| wide.iter().chain(&narrowing).any(|w| rel.starts_with(w.as_str()));
-        let mut gone: BTreeSet<String> = BTreeSet::new();
-        // A request's readers' asks (decision 0291, `{req}_by_{reader}_{col}`) go with it.
-        let asks: Vec<String> = answered.iter().map(|a| format!("{}_by_", a.req)).collect();
-        let demand = |rel: &str| asks.iter().any(|d| rel.starts_with(d.as_str()));
-        gone.extend(prog.decls.keys().filter(|k| demand(k.as_str())).map(|k| k.to_string()));
-        prog.decls.retain(|k, _| !demand(k.as_str()));
-        for a in answered {
-            gone.insert(a.rel.to_owned());
-            gone.insert(a.req.to_owned());
-            prog.decls.remove(a.req);
-            let named = match a.answer {
-                Answer::Children { named } => Some(named),
-                Answer::Function(_) => None,
-            };
-            for input in a.eager.into_iter().chain(named) {
-                prog.decls.remove(input);
-                prog.inputs.retain(|i| i != input);
-            }
-            if !prog.inputs.iter().any(|i| i == a.rel) {
-                prog.inputs.push(a.rel.to_owned());
-            }
-        }
-        rules.drop_heads(&|head| gone.contains(head) || copy(head));
-        prog.decls.retain(|k, _| !copy(k.as_str()));
-        prog.asked_by.retain(|k, _| !gone.contains(k) && !copy(k));
-        // A token's answer read `node_text`, declared for it where the program had none: unread now, it goes.
-        if round.iter().any(|a| matches!(a.answer, Answer::Children { .. }) && gone.contains(a.rel))
-            && !rules.reads("node_text")
-        {
-            prog.inputs.retain(|i| i != "node_text");
-            prog.decls.remove("node_text");
+        prog.retain_inputs(&|i: &str| i != "node_text");
+        if prog.declares("node_text") {
+            prog.undeclare("node_text");
         }
     }
 }

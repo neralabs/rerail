@@ -1805,7 +1805,7 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
         let mut asking = 0;
         for (i, (prog, modules)) in parsed.iter_mut().zip(&modular).enumerate() {
             let Some(modules) = modules else { continue };
-            let (dropped, cone) = own_part(prog, modules, core);
+            let (dropped, cone) = own_part(prog, modules, core)?;
             kept += dropped;
             cones += cone.len();
             if cone.is_empty() {
@@ -1824,7 +1824,7 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
             }
             if k != n {
                 // Another program asked the same: read its copy.
-                drop_relations(prog, &unit);
+                drop_relations(prog, &unit)?;
             }
             requests[i] = Some((k, unit));
         }
@@ -1858,7 +1858,7 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
         let one = parsed.pop().expect("one program");
         return Ok((one.alone()?, Tail::One));
     }
-    let mut all = Program::default();
+    let mut all = link::Merged::new(P::fields());
     let mut sets: BTreeMap<Vec<String>, String> = BTreeMap::new();
     let core = crate::code_rule_dsl::logic::rr::core_names();
     let mut policies: Vec<scoping::Policy> = Vec::new();
@@ -1870,23 +1870,22 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
     // copies, and a request was recursive with its attribute (PYI062 with PYI059: `literal_down` negates
     // `typing_subscript`, which reads `value` through `exports`, and `rr_value_req` read `literal_leaf`).
     if let Some(l) = library.as_mut() {
-        l.undo_on_request();
+        l.undo_on_request()?;
     }
     for p in parsed.iter_mut() {
-        p.undo_on_request();
+        p.undo_on_request()?;
     }
     // The library, when held once, is the first part: its names are the run's (decision 0089 §2).
     let units = library.into_iter().map(|l| (None, l)).chain(parsed.into_iter().enumerate().map(|(i, p)| (Some(i), p)));
     let mut rules: Vec<P::Rules> = Vec::new();
     let mut interfaces: Vec<[u8; 32]> = Vec::new();
-    for (unit, mut part) in units {
+    for (unit, part) in units {
         let i = unit.unwrap_or(usize::MAX);
-        let prog = part.head_mut();
-        let scope = prog.doc_scopes.clone();
-        let (named, library) = front::globals(&prog.settings);
-        prog.settings.retain(|(k, _)| k != front::GLOBAL);
+        let prog = part.head();
+        let scope = prog.doc_scopes();
+        let (named, library) = front::globals(&prog.settings());
         // The documents read: those some policy's scope selects; every one when a policy has none.
-        all.doc_scopes = match (i, all.doc_scopes.take(), prog.doc_scopes.take()) {
+        all.doc_scopes = match (i, all.doc_scopes.take(), scope.clone()) {
             (0, _, mine) => mine,
             (_, Some(mut a), Some(b)) => {
                 a.extend(b);
@@ -1894,7 +1893,7 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
             }
             _ => None,
         };
-        let globs = std::mem::take(&mut prog.text_globs);
+        let globs = prog.text_globs();
         for g in &globs {
             if !all.text_globs.contains(g) {
                 all.text_globs.push(g.clone());
@@ -1902,7 +1901,7 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
         }
         // Kind sets by their kinds: this program's name for each, and the shared one.
         let mut set_of: BTreeMap<String, String> = BTreeMap::new();
-        let kinds_of = std::mem::take(&mut prog.kindsets);
+        let kinds_of = prog.kindsets();
         for (name, kinds) in kinds_of.clone() {
             let n = sets.len();
             let shared = sets.entry(kinds.clone()).or_insert_with(|| format!("ks{n}")).clone();
@@ -1921,12 +1920,12 @@ fn combine_linked_spliced<P: link::Part>(programs: &[&str], extra: &added::Added
         let names = link::Names { i, own, request, set_of };
         let (header, renamed) = part.into_parts(&names);
         if keeping.is_some() && let Some(u) = unit {
-            interfaces.push(kept_link::interface(&[&u, &bounds[u], &guests_of[u], &asked[u], &policies.last(), &globs, &kinds_of, &names.set_of, &names.own, &names.request, &header, &core_rules]));
+            interfaces.push(kept_link::interface(&[&u, &bounds[u], &guests_of[u], &asked[u], &policies.last(), &globs, &kinds_of, &names.set_of, &names.own, &names.request, &crate::code_rule_dsl::logic::program_image::fields::Shown(P::header_fields(&header)), &core_rules]));
         }
         rules.push(renamed);
-        link::link_header(&mut all, header, &names);
+        all.merge(P::header_fields(&header), &names);
     }
-    let (all, counts) = P::link_counted(all, rules, core)?;
+    let (all, counts) = P::link_counted(all.finish(), rules, core)?;
     let hide = (shared && makes_guests).then_some(bounds[0]);
     // The link kept for the next run's splice (decision 0373), where the libraries are held once.
     if let (Some((keys, family)), Some(store), Some(counts), Some(v), true) = (&keeping, images.as_deref(), counts, P::linked_version(&all), shared && interfaces.len() == programs.len()) {
@@ -1979,26 +1978,24 @@ fn combine_spliced<P: link::Part>(
                 return Err(Error::Plan(format!("program #{i} declares {name}, which {} it includes declares", file.0.display())));
             }
         }
-        let (_, cone) = own_part(&mut part, modules, core);
+        let (_, cone) = own_part(&mut part, modules, core)?;
         let (mut request, mut asked) = (None, None);
         if !cone.is_empty() {
             let (unit, key) = request_unit(&part, &cone, core, i, per_program);
             // A request no earlier program asks first would be numbered, and copied, otherwise.
             let Some(&(k, first)) = rec.requests.get(&key).filter(|(_, first)| *first <= i) else { return Ok(None) };
             if first != i {
-                drop_relations(&mut part, &unit);
+                drop_relations(&mut part, &unit)?;
             }
             asked = Some((key, k, first == i));
             request = Some((k, unit));
         }
-        part.undo_on_request();
-        let prog = part.head_mut();
-        let scope = prog.doc_scopes.clone();
-        let (named, library_names) = front::globals(&prog.settings);
-        prog.settings.retain(|(k, _)| k != front::GLOBAL);
-        prog.doc_scopes = None;
-        let globs = std::mem::take(&mut prog.text_globs);
-        let kinds_of = std::mem::take(&mut prog.kindsets);
+        part.undo_on_request()?;
+        let prog = part.head();
+        let scope = prog.doc_scopes();
+        let (named, library_names) = front::globals(&prog.settings());
+        let globs = prog.text_globs();
+        let kinds_of = prog.kindsets();
         let mut set_of: BTreeMap<String, String> = BTreeMap::new();
         for (name, kinds) in &kinds_of {
             let Some(shared) = rec.sets.get(kinds) else { return Ok(None) };
@@ -2009,7 +2006,7 @@ fn combine_spliced<P: link::Part>(
         let core_rules = part.shown(core);
         let names = link::Names { i, own, request, set_of };
         let (header, renamed) = part.into_parts(&names);
-        let interface = kept_link::interface(&[&i, &bound, &guests, &asked, &Some(&policy), &globs, &kinds_of, &names.set_of, &names.own, &names.request, &header, &core_rules]);
+        let interface = kept_link::interface(&[&i, &bound, &guests, &asked, &Some(&policy), &globs, &kinds_of, &names.set_of, &names.own, &names.request, &crate::code_rule_dsl::logic::program_image::fields::Shown(P::header_fields(&header)), &core_rules]);
         if interface != rec.slots[i].interface {
             crate::code_rule_dsl::logic::profile::decision("the combine's last link (decision 0373)", || format!("linked again: program #{i}'s interface changed"));
             return Ok(None);
@@ -2205,17 +2202,20 @@ fn bound(v: &crate::code_rule_dsl::logic::program_image::Version) -> std::result
 /// program's own clauses add to it or it reads one they add to, through any relation (the request's cone, §3): the
 /// program keeps its own copy of those, as before. A relation lowering made for library rules alone (every reader
 /// of it the library's) goes with them. Returns the relations taken out, and the cone's.
-fn own_part<P: link::Part>(of: &mut P, modules: &crate::code_rule_dsl::logic::rr::Modules, core: &BTreeSet<String>) -> (usize, BTreeSet<String>) {
+fn own_part<P: link::Part>(of: &mut P, modules: &crate::code_rule_dsl::logic::rr::Modules, core: &BTreeSet<String>) -> Result<(usize, BTreeSet<String>)> {
     let rules = of.rules();
     let prog = of.head();
+    let inputs = prog.input_names();
+    let natives = prog.natives();
+    let declared = prog.declared_names();
     // An input the program reads (`within`, which lowering keeps where a rule reads it) is a base relation, the run's:
     // its declaration stays with the program.
     let library: BTreeSet<&str> =
-        modules.files.iter().flat_map(|(_, _, names)| names).map(String::as_str).filter(|r| !core.contains(*r) && !prog.inputs.iter().any(|i| i == r)).collect();
+        modules.files.iter().flat_map(|(_, _, names)| names).map(String::as_str).filter(|r| !core.contains(*r) && !inputs.iter().any(|i| i == r)).collect();
     let edges: Vec<(String, Vec<String>)> = rules
         .iter()
         .cloned()
-        .chain(prog.natives.iter().map(|(rel, n)| (rel.to_string(), n.reads().into_iter().map(str::to_owned).collect())))
+        .chain(natives.iter().map(|(rel, n)| (rel.to_string(), n.reads().into_iter().map(str::to_owned).collect())))
         .collect();
     let mut cone: BTreeSet<String> = modules.heads.iter().filter(|h| library.contains(h.as_str())).cloned().collect();
     loop {
@@ -2236,12 +2236,11 @@ fn own_part<P: link::Part>(of: &mut P, modules: &crate::code_rule_dsl::logic::rr
         }
     }
     let mut part: BTreeSet<String> = library.iter().filter(|r| !cone.contains(**r)).map(|r| (*r).to_owned()).collect();
-    let candidates: BTreeSet<String> = prog
-        .decls
-        .keys()
-        .map(|r| r.as_str())
+    let candidates: BTreeSet<String> = declared
+        .iter()
+        .map(String::as_str)
         .chain(rules.iter().map(|(head, _)| head.as_str()))
-        .chain(prog.natives.keys().map(String::as_str))
+        .chain(natives.keys().map(String::as_str))
         .filter(|r| !library.contains(*r) && !core.contains(*r) && !cone.contains(*r))
         .map(str::to_owned)
         .collect();
@@ -2256,21 +2255,43 @@ fn own_part<P: link::Part>(of: &mut P, modules: &crate::code_rule_dsl::logic::rr
             break;
         }
     }
-    let taken = part.iter().filter(|r| prog.decls.contains_key(r.as_str()) || rules.iter().any(|(head, _)| head == *r)).count();
+    let taken = part.iter().filter(|r| declared.contains(*r) || rules.iter().any(|(head, _)| head == *r)).count();
     let cones = cone.into_iter().filter(|r| library.contains(r.as_str())).collect();
-    drop_relations(of, &part);
-    (taken, cones)
+    drop_relations(of, &part)?;
+    Ok((taken, cones))
 }
 
 /// `relations` taken out of `part`: their rules, declarations, rows, natives, lattices and nullary marks.
-fn drop_relations<P: link::Part>(part: &mut P, relations: &BTreeSet<String>) {
+fn drop_relations<P: link::Part>(part: &mut P, relations: &BTreeSet<String>) -> Result<()> {
+    use crate::code_rule_dsl::logic::program_facts::Field;
     part.drop_heads(&|head| relations.contains(head));
-    let prog = part.head_mut();
-    prog.decls.retain(|r, _| !relations.contains(r.as_str()));
-    prog.facts.retain(|r, _| !relations.contains(r));
-    prog.natives.retain(|r, _| !relations.contains(r));
-    prog.lattice.retain(|r, _| !relations.contains(r));
-    prog.nullary.retain(|r| !relations.contains(r));
+    part.edit_head(&mut |prog| {
+        for r in prog.declared_names() {
+            if relations.contains(&r) {
+                prog.undeclare(&r);
+            }
+        }
+        for r in prog.fact_names() {
+            if relations.contains(&r) {
+                prog.drop_facts(&r);
+            }
+        }
+        let natives = prog.natives();
+        if natives.keys().any(|r| relations.contains(r)) {
+            let kept: BTreeMap<_, _> = natives.into_iter().filter(|(r, _)| !relations.contains(r)).collect();
+            prog.set_field(Field::Natives(&kept));
+        }
+        let lattice = prog.lattice();
+        if lattice.keys().any(|r| relations.contains(r)) {
+            let kept: BTreeMap<_, _> = lattice.into_iter().filter(|(r, _)| !relations.contains(r)).collect();
+            prog.set_field(Field::Lattice(&kept));
+        }
+        let nullary = prog.nullary();
+        if nullary.iter().any(|r| relations.contains(r)) {
+            let kept: BTreeSet<String> = nullary.into_iter().filter(|r| !relations.contains(r)).collect();
+            prog.set_field(Field::Nullary(&kept));
+        }
+    })
 }
 
 /// A program's relations that take its prefix (`p<i>_`) when programs are combined: what it declares, holds facts of
@@ -2282,19 +2303,21 @@ fn own_names<P: link::Part>(part: &P, core: &BTreeSet<String>) -> BTreeSet<Strin
     // `violation`, and each finding's relation (`rr::is_diagnostic`, named by its policy).
     let shared_outputs = |r: &str| r == "violation" || crate::code_rule_dsl::logic::rr::is_diagnostic(r);
     let file_inputs = file_inputs(prog);
-    prog.decls
-        .keys()
-        .map(|r| r.as_str())
-        .chain(prog.facts.keys().map(String::as_str))
+    let inputs = prog.input_names();
+    let (declared, facts) = (prog.declared_names(), prog.fact_names());
+    declared
+        .iter()
+        .map(String::as_str)
+        .chain(facts.iter().map(String::as_str))
         .chain(heads.iter().map(String::as_str))
-        .filter(|r| (!prog.inputs.iter().any(|i| i == r) || file_inputs.contains(*r)) && !shared_outputs(r) && !core.contains(*r) && !bridge::is_bridged(r) && !phases::is_phased(r) && !guests::SHARED.contains(r))
+        .filter(|r| (!inputs.iter().any(|i| i == r) || file_inputs.contains(*r)) && !shared_outputs(r) && !core.contains(*r) && !bridge::is_bridged(r) && !phases::is_phased(r) && !guests::SHARED.contains(r))
         .map(str::to_owned)
         .collect()
 }
 
 /// The relations a policy reads from repository files (`.input r(IO=…)`): each is the policy's own.
-fn file_inputs(prog: &front::Program) -> BTreeSet<String> {
-    prog.settings.iter().filter(|(key, _)| key == "input").filter_map(|(_, text)| text.split_once('(').map(|(rel, _)| rel.to_owned())).collect()
+fn file_inputs(prog: &dyn crate::code_rule_dsl::logic::program_image::fields::ProgramFields) -> BTreeSet<String> {
+    prog.settings().iter().filter(|(key, _)| key == "input").filter_map(|(_, text)| text.split_once('(').map(|(rel, _)| rel.to_owned())).collect()
 }
 
 /// A program's request (decision 0089 §3): the library relations of its cone (`cone`) and every relation of its own
@@ -2308,12 +2331,13 @@ fn request_unit<P: link::Part>(part: &P, cone: &BTreeSet<String>, core: &BTreeSe
     let prog = part.head();
     let rules = part.rules();
     let files = file_inputs(prog);
+    let (natives, lattice, nullary) = (prog.natives(), prog.lattice(), prog.nullary());
     let mut unit: BTreeSet<String> = cone.iter().filter(|r| own.contains(*r)).cloned().collect();
     let mut work: Vec<String> = unit.iter().cloned().collect();
     let mut outside = false;
     while let Some(rel) = work.pop() {
         let mut reads: Vec<String> = rules.iter().filter(|(head, _)| *head == rel).flat_map(|(_, reads)| reads.iter().cloned()).collect();
-        if let Some(native) = prog.natives.get(&rel) {
+        if let Some(native) = natives.get(&rel) {
             reads.extend(native.reads().into_iter().map(str::to_owned));
         }
         for r in reads {
@@ -2338,11 +2362,11 @@ fn request_unit<P: link::Part>(part: &P, cone: &BTreeSet<String>, core: &BTreeSe
     for rel in &unit {
         hash.update(format!(
             "{rel} {:?} {:?} {:?} {:?} {}\n",
-            prog.decls.get(rel.as_str()),
-            prog.facts.get(rel),
-            prog.natives.get(rel),
-            prog.lattice.get(rel),
-            prog.nullary.contains(rel)
+            prog.columns_of(rel),
+            prog.states_facts(rel).then(|| prog.fact_rows(rel)),
+            natives.get(rel),
+            lattice.get(rel),
+            nullary.contains(rel)
         ));
     }
     (unit, hash.finalize().into())

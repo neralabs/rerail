@@ -155,6 +155,12 @@ impl Version {
 impl Builder<'_> {
     /// States field `f`: its relations' rows are `f`'s, every other field's kept.
     pub fn set_field(&mut self, f: Field<'_>) {
+        // The program's own row, which every field's reader asks for: a new base's first field states it (a
+        // version's from a tree has it from `about_of`).
+        if self.about_cells("program").is_empty() {
+            let p = self.cell(&Value::Str(ABOUT.into()));
+            self.set_about_rows("program", vec![vec![p]]);
+        }
         let mut facts = Facts::new();
         program_facts::write_field(&mut facts, ABOUT, &f);
         for &name in f.relations() {
@@ -667,5 +673,49 @@ impl ProgramFields for Edit<'_> {
     }
     fn about(&self, relations: &[&str]) -> Facts {
         self.b.about(relations)
+    }
+}
+
+/// A program's fields as text, for a digest of them (`plan::corpus::kept_link::interface`): every list and map the
+/// fields API reads, in one order, declarations and rows by name.
+pub struct Shown<'a>(pub &'a dyn ProgramFields);
+
+impl std::fmt::Debug for Shown<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let p = self.0;
+        let mut decls: Vec<(String, Option<Vec<(String, String)>>)> = p.declared_names().into_iter().map(|r| {
+            let cols = p.columns_of(&r);
+            (r, cols)
+        }).collect();
+        decls.sort();
+        let mut facts: Vec<(String, Vec<List<Value>>)> = p.fact_names().into_iter().map(|r| {
+            let rows = p.fact_rows(&r);
+            (r, rows)
+        }).collect();
+        facts.sort_by(|a, b| a.0.cmp(&b.0));
+        f.debug_struct("Fields")
+            .field("inputs", &p.input_names())
+            .field("outputs", &p.output_names())
+            .field("decls", &decls)
+            .field("facts", &facts)
+            .field("nullary", &p.nullary())
+            .field("qualifiers", &p.qualifiers())
+            .field("tapes", &p.tapes())
+            .field("shapes", &p.shapes())
+            .field("lattice", &p.lattice())
+            .field("kindsets", &p.kindsets())
+            .field("demand", &p.demand())
+            .field("demand_dropped", &p.demand_dropped())
+            .field("gates", &p.gates())
+            .field("policies", &p.policies())
+            .field("settings", &p.settings())
+            .field("natives", &p.natives())
+            .field("doc_scopes", &p.doc_scopes())
+            .field("text_globs", &p.text_globs())
+            .field("ast_patterns", &p.ast_patterns())
+            .field("answers", &p.answers())
+            .field("asked", &p.asked())
+            .field("rx_spans", &p.rx_spans())
+            .finish()
     }
 }

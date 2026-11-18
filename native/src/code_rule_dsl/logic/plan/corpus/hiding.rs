@@ -53,9 +53,9 @@ pub(super) fn dialect_label(grammar: &str) -> &str {
 }
 
 /// The bound of `prog`'s shown documents: files, and the run language's guests unless `.guests off`.
-pub(super) fn bound(prog: &Program) -> u32 {
+pub(super) fn bound(prog: &(impl crate::code_rule_dsl::logic::program_image::fields::ProgramFields + ?Sized)) -> u32 {
     use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, GUEST_KEYS, GUEST_POLICY};
-    let off = prog.facts.get(GUEST_POLICY).into_iter().flatten().any(|row| {
+    let off = prog.fact_rows(GUEST_POLICY).iter().any(|row| {
         matches!(row.as_slice(), [crate::code_rule_dsl::logic::front::Value::Str(k), crate::code_rule_dsl::logic::front::Value::Str(v)] if k == "library" && v == "off")
     });
     if off { GUEST_KEYS } else { ANNOTATION_KEYS }
