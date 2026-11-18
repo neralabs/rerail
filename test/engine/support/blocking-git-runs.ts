@@ -85,14 +85,24 @@ function timeLimitHeld(files: string): unknown {
   };
 }
 
+/** The exit status of a {@link pollFails} script whose PATH holds no prlimit. */
+const NO_PRLIMIT = 97;
+
 /**
  * A run whose script lowers this process's open-file limit to 2, below the three descriptors the engine's wait polls
- * (both outputs and the exit pipe), then prints and runs on for a second: each poll after that fails with EINVAL. Run
- * it only in a process of its own.
+ * (both outputs and the exit pipe), then prints and sleeps: each poll after that fails with EINVAL, and the sleep lasts
+ * until that failed poll ends it, whenever this process polls again within the run's 3 s time limit, which only bounds
+ * a run whose poll does not fail. The script exits {@link NO_PRLIMIT} when prlimit is not on PATH, and 98 when prlimit
+ * fails. Run it only in a process of its own.
  */
 function pollFails(): unknown {
-  const script = 'prlimit --nofile=2: --pid "$PPID"; echo lowered; sleep 1; echo done';
+  const script = `command -v prlimit > /dev/null || exit ${NO_PRLIMIT}; prlimit --nofile=2: --pid "$PPID" || exit 98; echo lowered; exec sleep 10`;
   return answered(runGitSync("/bin/sh", ["-c", script], process.env, { timeout: 3000 }));
+}
+
+/** Whether the "poll-fails" run's answer says its PATH holds no prlimit (util-linux), the tool it lowers the limit with. */
+export function lacksPrlimit(answer: unknown): boolean {
+  return typeof answer === "object" && answer !== null && "status" in answer && answer.status === NO_PRLIMIT;
 }
 
 /** What each set of runs answers in this process, `files` holding the files the scripts write. */

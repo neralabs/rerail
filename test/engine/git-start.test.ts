@@ -25,7 +25,7 @@ import {
 } from "../../src/engine/git-start.js";
 import { loadNativeBinding } from "../../src/engine/native/native.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
-import { blockingRuns, blockingRunsThroughEngine } from "./support/blocking-git-runs.js";
+import { blockingRuns, blockingRunsThroughEngine, lacksPrlimit } from "./support/blocking-git-runs.js";
 import { daemonProcess, packageRoot, until, watchedEnvironment } from "../support/processes/daemon-home.js";
 
 const LINUX = process.platform === "linux";
@@ -448,8 +448,9 @@ describe.runIf(LINUX)("Git started through the engine in the states where it and
     }
   }, 60_000);
 
-  it("ends a blocking Git and says why when the engine's wait on its output fails, as spawnSync ends a run whose read fails", () => {
+  it("ends a blocking Git and says why when the engine's wait on its output fails, as spawnSync ends a run whose read fails", ({ skip }) => {
     const throughEngine = blockingRunsThroughEngine("poll-fails", tmpdir());
+    if (lacksPrlimit(throughEngine)) skip("prlimit (util-linux), which this case lowers the open-file limit with, is not on PATH");
     expect(throughEngine).toMatchObject({ status: null, signal: "SIGTERM", error: { code: "EINVAL", errno: -constants.errno.EINVAL, message: "spawnSync /bin/sh EINVAL" } });
   }, 30_000);
 });

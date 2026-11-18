@@ -391,7 +391,9 @@ mod tests {
     }
 
     /// Run by the case above in a process of its own: the child lowers this process's open-file limit to 2, below the
-    /// three descriptors the run polls, so each poll after that fails with EINVAL.
+    /// three descriptors the run polls, so each poll after that fails with EINVAL. The child then sleeps until that
+    /// failed poll ends it, whenever this process polls again within the run's 3 s limit, which only bounds a run whose
+    /// poll does not fail. It exits 97 when prlimit is not on its PATH, and 98 when prlimit fails.
     #[test]
     #[ignore = "run in a process of its own by a_run_whose_poll_fails_ends_its_child_and_says_why"]
     fn a_run_in_a_process_whose_open_file_limit_drops() {
@@ -399,13 +401,21 @@ mod tests {
             return;
         }
         let ran = sh(
-            "prlimit --nofile=2: --pid \"$PPID\"; echo lowered; sleep 1; echo done",
+            "command -v prlimit > /dev/null || exit 97; prlimit --nofile=2: --pid \"$PPID\" || exit 98; echo lowered; \
+             exec sleep 10",
             Some(3_000),
             1 << 20,
         );
+        assert_ne!(
+            ran.status,
+            Some(97),
+            "this case lowers the open-file limit with prlimit (util-linux), which is not in /usr/bin or /bin"
+        );
         assert_eq!(
             (ran.status, ran.signal, ran.timed_out, ran.error),
-            (None, Some(libc::SIGTERM), false, Some(libc::EINVAL))
+            (None, Some(libc::SIGTERM), false, Some(libc::EINVAL)),
+            "{}",
+            String::from_utf8_lossy(&ran.stderr)
         );
     }
 
