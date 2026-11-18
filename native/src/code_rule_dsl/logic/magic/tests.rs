@@ -1,6 +1,10 @@
-use super::*;
-use crate::code_rule_dsl::logic::front::prune;
-use crate::code_rule_dsl::logic::rr::parse;
+use crate::code_rule_dsl::logic::plan::corpus::preparation::magic::{KeyDemand, ProgramDemand};
+use crate::code_rule_dsl::logic::plan::corpus::preparation::prune::Prune;
+use crate::code_rule_dsl::logic::program_image::Version;
+use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
+use crate::code_rule_dsl::logic::program_image::manager::Pipeline;
+use crate::code_rule_dsl::logic::rr::parse_version;
+use std::sync::Arc;
 
 fn root() -> std::path::PathBuf {
     std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src/code_rule_dsl/logic")
@@ -10,18 +14,44 @@ fn strings(items: &[String]) -> String {
     format!("[{}]", items.iter().map(|s| serde_json::to_string(s).unwrap()).collect::<Vec<_>>().join(", "))
 }
 
+/// T's `rdl.py sql` front over `src`: prune, demand (`mode`: `demand` is `.demand`'s magic sets, `adorn` the
+/// adornment of every derived relation, `gate` that with gated negations), prune.
+fn transformed(src: &str, mode: &str) -> Result<Arc<Version>, String> {
+    let v = parse_version(src).map_err(|e| e.to_string())?;
+    let mut p = Pipeline::new("T's front", v);
+    p.program(&mut Prune::default());
+    let mut keys = KeyDemand::default();
+    let mut adorned = ProgramDemand { every: true, gate: mode == "gate", ..ProgramDemand::default() };
+    if mode == "demand" {
+        p.program(&mut keys);
+    } else {
+        p.program(&mut adorned);
+    }
+    p.program(&mut Prune::default());
+    let v = p.finish()?.0;
+    if let Some(Err(e)) = adorned.outcome {
+        return Err(e);
+    }
+    Ok(v)
+}
+
 /// The program as the goldens print it (T's repr, and `json.dumps` with sorted keys for gates and the report).
-fn golden_text(p: &Program) -> String {
+fn golden_text(p: &Version) -> String {
     let mut lines = Vec::new();
-    for (r, cols) in &p.decls {
-        if r.starts_with("magic_") || r.starts_with("done_") {
-            lines.push(format!("decl {r}({})", cols.iter().map(|(c, t)| format!("{c}: {t}")).collect::<Vec<_>>().join(", ")));
-        }
+    let mut decls: Vec<(String, String)> = p
+        .decls()
+        .iter()
+        .map(|d| (p.text(d.name()).to_owned(), d.cols().map(|(c, t)| format!("{}: {}", p.text(c), p.text(t))).collect::<Vec<_>>().join(", ")))
+        .filter(|(r, _)| r.starts_with("magic_") || r.starts_with("done_"))
+        .collect();
+    decls.sort();
+    for (r, cols) in decls {
+        lines.push(format!("decl {r}({cols})"));
     }
-    for r in &p.rules {
-        lines.push(format!("rule {r}"));
+    for r in p.rules() {
+        lines.push(format!("rule {}", p.show_rule(r)));
     }
-    let mut gates = p.gates.clone();
+    let mut gates = ProgramFields::gates(p);
     gates.sort_by(|a, b| a.0.cmp(&b.0));
     for (name, g) in gates {
         let src = g.src.as_ref().map_or_else(|| "null".to_owned(), |s| serde_json::to_string(s).unwrap());
@@ -33,7 +63,7 @@ fn golden_text(p: &Program) -> String {
             serde_json::to_string(&g.rel).unwrap()
         ));
     }
-    if let Some(r) = &p.magic_report {
+    if let Some(r) = ProgramFields::magic_report(p) {
         lines.push(format!(
             "report {{\"adornments\": {}, \"extras kept\": {}, \"full\": {}, \"full for negation\": {}, \"gates\": {}, \"magic rules\": {}}}",
             strings(&r.adornments),
@@ -44,10 +74,10 @@ fn golden_text(p: &Program) -> String {
             r.magic_rules
         ));
     }
-    let dropped: Vec<String> = p.demand_dropped.iter().map(|(r, why)| strings(&[r.clone(), why.clone()])).collect();
+    let dropped: Vec<String> = ProgramFields::demand_dropped(p).iter().map(|(r, why)| strings(&[r.clone(), why.clone()])).collect();
     lines.push(format!("dropped [{}]", dropped.join(", ")));
-    lines.push(format!("extras {}", p.magic_extras.map_or_else(|| "null".to_owned(), |n| n.to_string())));
-    lines.push(format!("demand {}", strings(&p.demand)));
+    lines.push(format!("extras {}", ProgramFields::magic_extras(p).map_or_else(|| "null".to_owned(), |n| n.to_string())));
+    lines.push(format!("demand {}", strings(&ProgramFields::demand(p))));
     lines.join("\n") + "\n"
 }
 
@@ -62,15 +92,21 @@ fn t_programs_transform_like_t() {
     let renamed = regex::Regex::new(r"(^|[^A-Za-z0-9])glob(_[bf]+\b|\b)").unwrap();
     for name in ["calls", "calls_rust", "workload", "workload_demand", "workload_perdoc"] {
         let src = std::fs::read_to_string(root().join(format!("plan/golden/programs/{name}.rr"))).unwrap();
-        let p = prune(parse(&src).unwrap());
         for mode in ["demand", "adorn", "gate"] {
-            let options = Options { gate: mode == "gate", ..Options::default() };
-            let got = if mode == "demand" { magic_sets(p.clone(), &options) } else { magic_adorn(p.clone(), &options) };
-            let got = golden_text(&prune(got.unwrap_or_else(|e| panic!("{name} {mode}: {e}"))));
+            let got = golden_text(&transformed(&src, mode).unwrap_or_else(|e| panic!("{name} {mode}: {e}")));
             let expected = std::fs::read_to_string(root().join(format!("magic/golden/{name}.{mode}.txt"))).unwrap();
             // `glob` is a `.rr` built-in, so the program's relation of that name reads as `glob_` (the goldens are
             // copies, kept as written).
             let expected = renamed.replace_all(&expected, |c: &regex::Captures| format!("{}glob_{}", &c[1], &c[2])).into_owned();
+            // T declares the gates of every trial its greedy search made, a rejected one's too (`done_islocal` in
+            // `calls_rust.gate`); the version declares the gates of the program it made. A declaration no rule or
+            // gate names is not compared, for a gate.
+            let named = |rel: &str| expected.lines().filter(|l| !l.starts_with("decl ")).any(|l| l.contains(&format!("{rel}(")) || l.contains(&format!("\"{rel}\"")));
+            let expected: String = expected
+                .lines()
+                .filter(|l| l.strip_prefix("decl done_").and_then(|d| d.split_once('(')).is_none_or(|(rel, _)| named(&format!("done_{rel}"))))
+                .map(|l| format!("{l}\n"))
+                .collect();
             if got != expected {
                 let line = got.lines().zip(expected.lines()).position(|(a, b)| a != b);
                 let at = line.map_or_else(
@@ -88,14 +124,15 @@ fn t_programs_transform_like_t() {
 /// (`reach` → `!blocked` → `magic_blocked` → `reach`): that relation is computed in full instead.
 #[test]
 fn a_negative_cycle_through_demand_drops_the_demand() {
-    let p = parse(
-        ".decl start(x: node)\n.decl e(x: node, y: node)\n.decl wall(x: node)\n.decl reach(x: node)\n.decl blocked(x: node)\n\
+    let src = ".decl start(x: node)\n.decl e(x: node, y: node)\n.decl wall(x: node)\n.decl reach(x: node)\n.decl blocked(x: node)\n\
          .input start, e, wall\n.output reach\n.pragma \"magic-transform\" \"blocked\"\n\
-         reach(x) :- start(x).\nreach(y) :- reach(x), e(x, y), !blocked(y).\nblocked(y) :- wall(y).\n",
-    )
-    .unwrap();
-    assert!(strata(&p).is_ok());
-    let got = magic_sets(p, &Options::default()).unwrap();
-    assert_eq!(got.demand_dropped, [("blocked".to_owned(), "negative cycle through its demand".to_owned())]);
-    assert!(got.demand.is_empty() && !got.decls.contains_key("magic_blocked"));
+         reach(x) :- start(x).\nreach(y) :- reach(x), e(x, y), !blocked(y).\nblocked(y) :- wall(y).\n";
+    let p = parse_version(src).unwrap();
+    assert!(crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::program_image::Strata>(&p).is_ok());
+    let mut keys = KeyDemand::default();
+    let mut pipeline = Pipeline::new("demand", p);
+    pipeline.program(&mut keys);
+    let got = pipeline.finish().unwrap().0;
+    assert_eq!(ProgramFields::demand_dropped(&*got), [("blocked".to_owned(), "negative cycle through its demand".to_owned())]);
+    assert!(ProgramFields::demand(&*got).is_empty() && !got.declares("magic_blocked"));
 }
