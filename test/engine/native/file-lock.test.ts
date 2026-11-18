@@ -5,8 +5,8 @@ import { mkdir, mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { LOCKS_DIR, withHomeLock, type LockEngine, type LockHolder, type LockRequest } from "../../../src/engine/native/file-lock.js";
-import { loadNativeBinding } from "../../../src/engine/native/native.js";
+import { LOCKS_DIR, withHomeLock, type LockHolder, type LockRequest } from "../../../src/engine/native/file-lock.js";
+import { loadNativeBinding, type NativeBinding } from "../../../src/engine/native/native.js";
 import { processState } from "../../../src/engine/process-liveness.js";
 import { holdRemovals } from "../../support/platform/held-removal.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
@@ -37,6 +37,18 @@ class Busy extends Error {
 }
 
 const request = { name: "work", busy: (holder: LockHolder | undefined) => new Busy(holder) } satisfies LockRequest;
+
+/**
+ * `promise` with whether it was settled when it was made: a settled promise runs its callback within the turn of the
+ * microtask queue awaited here, while one a thread settles needs a turn of the event loop first.
+ */
+async function settledAtOnce<T>(promise: Promise<T>): Promise<{ readonly atOnce: boolean; readonly value: T }> {
+  let settled = false;
+  const marked = promise.then(value => { settled = true; return value; });
+  await Promise.resolve();
+  const atOnce = settled;
+  return { atOnce, value: await marked };
+}
 /** The engine as a Rerail whose engine does not load has it. */
 const withoutEngine = {
   ...request,
@@ -104,7 +116,7 @@ const take = inside => withHomeLock(${JSON.stringify(home)}, { ...lock, waitMs: 
 });
 
 describe("the OS lock", () => {
-  it("waits while another holds it, and is handed it at the holder's release, with no try after its first", async () => {
+  it("waits while another holds it in one call to the engine, and is handed the lock at the holder's release", async () => {
     const home = await temporaryHome();
     const events: string[] = [];
     const firstHolds = Promise.withResolvers<void>();
@@ -116,12 +128,14 @@ describe("the OS lock", () => {
       events.push("first ends");
     });
     await firstHolds.promise;
-    // The engine itself, counting tries; the first lets go only once the second waits on the engine.
+    // The engine itself, counting its calls; the first lets go only once the second waits on the engine.
     const native = loadNativeBinding();
+    const waits: number[] = [];
     let tries = 0;
-    const engine = (): LockEngine => ({
+    const engine = (): Pick<NativeBinding, "tryLockExclusive" | "lockExclusive"> => ({
       tryLockExclusive: path => { tries += 1; return native.tryLockExclusive(path); },
       lockExclusive: (path, waitMs) => {
+        waits.push(waitMs);
         const waiting = native.lockExclusive(path, waitMs);
         firstMayEnd.resolve();
         return waiting;
@@ -131,7 +145,19 @@ describe("the OS lock", () => {
 
     await Promise.all([first, second]);
     expect(events).toEqual(["first runs", "first ends", "second runs"]);
-    expect(tries).toBe(1);
+    expect({ waits, tries }).toEqual({ waits: [60_000], tries: 0 });
+  });
+
+  it("answers at once when it need not wait: the engine settles its promise before the call returns", async () => {
+    const path = join(await temporaryHome(), "work.lock");
+    const native = loadNativeBinding();
+
+    const free = await settledAtOnce(native.lockExclusive(path, 60_000));
+    const held = await settledAtOnce(native.lockExclusive(path, 0));
+    free.value?.release();
+
+    expect({ free: free.atOnce, held: held.atOnce }).toEqual({ free: true, held: true });
+    expect({ taken: free.value !== null, refused: held.value }).toEqual({ taken: true, refused: null });
   });
 
   it("names the holder when the lock is still held at the end of the wait", async () => {

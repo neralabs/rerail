@@ -24,7 +24,7 @@ import { join } from "node:path";
 import { heldOnWindows, removeWithRetry, renameWithRetry, replaceFile } from "../file-replace.js";
 import { processState } from "../process-liveness.js";
 import { keepFolderPrivate, type PrivateMachine } from "../storage/private-files.js";
-import { loadNativeBinding, type NativeBinding, type NativeExclusiveFileLock } from "./native.js";
+import { loadNativeBinding, type NativeBinding } from "./native.js";
 
 /** In the Rerail home: the lock files. */
 export const LOCKS_DIR = "locks";
@@ -37,7 +37,7 @@ export interface LockHolder {
 }
 
 /** What the OS lock comes from: the engine, which tests stand in for or make fail to load. */
-export type LockEngine = Pick<NativeBinding, "tryLockExclusive" | "lockExclusive">;
+export type LockEngine = Pick<NativeBinding, "lockExclusive">;
 
 export interface LockRequest {
   /** The lock file is `locks/<name>.lock`. */
@@ -139,7 +139,9 @@ const holderText = (): string => `${JSON.stringify({ pid: process.pid, since: ne
 async function takeOsLock(engine: LockEngine, locks: string, request: LockRequest): Promise<Taken> {
   const path = join(locks, `${request.name}.lock`);
   const record = join(locks, `${request.name}.json`);
-  const lock = await lockOrWait(engine, path, request.waitMs ?? 0);
+  // The engine tries first and waits only while another process holds the lock: the OS hands it over the moment that
+  // holder lets go or ends, and no clock paces the take.
+  const lock = await engine.lockExclusive(path, request.waitMs ?? 0);
   if (lock === null) return { kind: "busy", holder: runningHolder(record) };
   await writeRecord(record);
   return {
@@ -160,15 +162,6 @@ async function takeOsLock(engine: LockEngine, locks: string, request: LockReques
       await rm(path, { force: true }).catch(() => undefined);
     },
   };
-}
-
-/**
- * The lock on `path`: one try, as a free lock always cost; while another process holds it, the engine's wait for up to
- * `waitMs`, which ends the moment the OS hands the lock over at that holder's release or exit. No clock paces the take.
- */
-async function lockOrWait(engine: LockEngine, path: string, waitMs: number): Promise<NativeExclusiveFileLock | null> {
-  const lock = engine.tryLockExclusive(path);
-  return lock !== null || waitMs <= 0 ? lock : await engine.lockExclusive(path, waitMs);
 }
 
 /**

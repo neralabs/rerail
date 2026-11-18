@@ -5,13 +5,14 @@
 //! Both belong to the open handle, so the OS drops the lock when the holder closes it or exits for
 //! any reason, `SIGKILL` included; no stale state survives a crash and nothing is reclaimed.
 //!
-//! A waiting take ([`lock_exclusive`]) asks the OS for the lock without the fail-at-once flag, so
-//! the OS hands it over the moment its holder lets go, to the waiters it has queued. The wait runs
-//! on a thread of its own, never on the JavaScript thread or on Node's thread pool, whose threads
-//! also serve file reads; its bound is the caller's.
+//! A waiting take ([`lock_exclusive`]) tries first, on the calling thread, so a free lock costs what
+//! a try costs. While another handle holds the lock, it asks the OS without the fail-at-once flag,
+//! so the OS hands the lock over the moment its holder lets go, to the waiters it has queued. That
+//! wait runs on a thread of its own, never on the JavaScript thread or on Node's thread pool, whose
+//! threads also serve file reads; its bound is the caller's.
 
-use napi::bindgen_prelude::Object;
-use napi::{Env, Error, JsDeferred, Result, Status};
+use napi::bindgen_prelude::PromiseRaw;
+use napi::{Env, Error, JsDeferred, JsValue, Result, Status};
 use napi_derive::napi;
 use parking_lot::Mutex;
 use std::fs::{File, OpenOptions, TryLockError};
@@ -104,15 +105,45 @@ pub fn try_lock_exclusive(path: String) -> Result<Option<ExclusiveFileLock>> {
 #[cfg_attr(test, allow(dead_code))]
 type Settle = Box<dyn FnOnce(Env) -> Result<Option<ExclusiveFileLock>> + Send>;
 
+/// The promise `lock_exclusive` returns.
+// Only `lock_exclusive` uses it, which only JavaScript calls.
+#[cfg_attr(test, allow(dead_code))]
+type Taking<'env> = PromiseRaw<'env, Option<ExclusiveFileLock>>;
+
 /// Takes an exclusive lock on `path`, creating the file when missing, waiting up to `wait_ms` while
-/// another handle holds it: resolves with the lock the moment the OS hands it over, or with `null`
-/// when the other handle still holds it at the bound. A wait given up never ends up holding the
-/// lock. The file opens before this returns, so an open that fails throws here.
+/// another handle holds it; `wait_ms` 0 tries once. A free lock is taken on the calling thread, and
+/// its promise is already settled when this returns: no thread starts and the event loop need not
+/// turn. A held one is waited for on a thread of its own: the promise resolves with the lock the
+/// moment the OS hands it over, or with `null` when the other handle still holds it at the bound.
+/// A wait given up never ends up holding the lock. The open and the first try happen before this
+/// returns, so a failure of either throws here.
 #[napi(ts_return_type = "Promise<ExclusiveFileLock | null>")]
 // Only JavaScript calls it; tests drive `wait_for_lock`, the wait its thread runs.
 #[cfg_attr(test, allow(dead_code))]
-pub fn lock_exclusive(env: &Env, path: String, wait_ms: u32) -> Result<Object<'_>> {
-    let file = open_waiting_lock_file(&path)?;
+pub fn lock_exclusive(env: &Env, path: String, wait_ms: u32) -> Result<Taking<'_>> {
+    let file = open_for_take(&path, wait_ms)?;
+    match file.try_lock() {
+        Ok(()) => PromiseRaw::resolve(env, Some(ExclusiveFileLock::holding(file))),
+        Err(TryLockError::WouldBlock) if wait_ms == 0 => PromiseRaw::resolve(env, None),
+        Err(TryLockError::WouldBlock) => wait_on_its_thread(env, file, wait_ms, path),
+        Err(TryLockError::Error(error)) => Err(lock_failure("lock", &path, error)),
+    }
+}
+
+/// A take that never waits keeps the handle a try has always had; one that may wait opens its file
+/// for the wait.
+#[cfg_attr(test, allow(dead_code))]
+fn open_for_take(path: &str, wait_ms: u32) -> Result<File> {
+    if wait_ms == 0 {
+        open_lock_file(path)
+    } else {
+        open_waiting_lock_file(path)
+    }
+}
+
+/// Waits for the lock another handle holds on a thread of its own, up to `wait_ms`.
+#[cfg_attr(test, allow(dead_code))]
+fn wait_on_its_thread(env: &Env, file: File, wait_ms: u32, path: String) -> Result<Taking<'_>> {
     let wait = Duration::from_millis(wait_ms.into());
     // The promise is made only once its thread runs: a promise left unsettled would keep Node's
     // event loop, and so the process, alive for ever.
@@ -133,7 +164,7 @@ pub fn lock_exclusive(env: &Env, path: String, wait_ms: u32) -> Result<Object<'_
     let (deferred, promise) = env.create_deferred()?;
     // The thread waits in `recv` until this arrives, so the send cannot fail.
     let _ = hand.send(deferred);
-    Ok(promise)
+    Ok(PromiseRaw::new(env.raw(), promise.raw()))
 }
 
 #[cfg_attr(test, allow(dead_code))]

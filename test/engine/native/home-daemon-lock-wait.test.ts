@@ -8,7 +8,8 @@ import { removeFolder } from "../../support/platform/remove-folder.js";
 
 /**
  * How the engine answers the daemon's take of its home's lock: the lock (the OS handed it over), held at the end of the
- * wait (`null`), a failed wait (a rejection), or a lock file that does not open (a throw before any wait).
+ * wait (`null`), a failed wait (a rejection), or a lock file that does not open or a first try that fails (a throw,
+ * before any wait).
  */
 const engine = vi.hoisted(() => ({
   answer: "taken" as "taken" | "held" | "opens-not" | Error,
@@ -67,7 +68,7 @@ describe("the wait for a Rerail home's daemon lock", () => {
     await expect(holdHomeDaemonLock(await temporaryHome())).rejects.toBe(failure);
   });
 
-  it("runs without the lock where its file does not open, as where the engine does not load", async () => {
+  it("runs without the lock where its file does not open or its first try fails, as where the engine does not load", async () => {
     engine.answer = "opens-not";
     await expect(holdHomeDaemonLock(await temporaryHome())).resolves.toBeUndefined();
   });
