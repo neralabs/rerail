@@ -65,15 +65,21 @@ fn open_lock_file(path: &str) -> Result<File> {
 /// cancelled; a try keeps its synchronous handle.
 fn open_waiting_lock_file(path: &str) -> Result<File> {
     let mut options = lock_file_options();
-    #[cfg(windows)]
-    {
-        use std::os::windows::fs::OpenOptionsExt;
-        options.custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OVERLAPPED);
-    }
+    overlapped_on_windows(&mut options);
     options
         .open(path)
         .map_err(|error| lock_failure("open", path, error))
 }
+
+#[cfg(windows)]
+fn overlapped_on_windows(options: &mut OpenOptions) {
+    use std::os::windows::fs::OpenOptionsExt;
+    options.custom_flags(windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OVERLAPPED);
+}
+
+/// Unix opens a waiting take's file as any other: `flock` blocks on any descriptor.
+#[cfg(not(windows))]
+fn overlapped_on_windows(_options: &mut OpenOptions) {}
 
 fn lock_file_options() -> OpenOptions {
     let mut options = OpenOptions::new();
