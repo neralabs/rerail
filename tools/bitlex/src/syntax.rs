@@ -57,6 +57,10 @@ pub enum TokenTest {
     Count,
     /// The mask at each of the token's first bytes, from its first.
     Run,
+    /// The mask at every byte of the token, the token that long at least: `all(digit) at
+    /// least 19`, an integer's token of 19 digits or more, as a lexer knows the number it read
+    /// had no `.`.
+    All,
 }
 
 /// A mark's token test (`Stmt::Mark`'s `at` and `after`): at tokens of `kind`, `test` over
@@ -76,6 +80,10 @@ pub struct MarkCheck {
 pub enum TokenRule {
     /// Its first byte, then the bytes of the mask after it, in a row.
     Run(Expr),
+    /// `run R once D`: a run of `R` with one bit of `D` in it at most; the second ends the token
+    /// before it, as a lexer reads a number's one `.` and stops at the next (`1.2.3` is `1.2`,
+    /// `.`, `3`). Every loop cuts the run there (`TokenCheck`'s cut); the mask form below.
+    RunOnce(Expr, Expr),
     /// One byte, or two where the mask holds at its first.
     Pair(Expr),
     /// `pair P`, `P` a `pairs P = "AB" …`: one byte, or two where its first and the next are
@@ -93,6 +101,9 @@ impl TokenRule {
     ///
     /// ```text
     /// run R:  t = s | fill(prev(s) & R, ~R);   last = t & ~next(t & ~s)
+    /// run R once D: the run's bytes from the second `D` after a start on cut, each token's:
+    ///         d = t & D & ~s;  one = fill(prev(d) & ~s, ~t | s);
+    ///         t' = t & ~fill(d & one, ~t | s);   last = t' & ~next(t' & ~s)
     /// pair P: last = (s & ~P) | prev(s & P)
     /// ```
     pub fn last(&self, s: &Expr) -> Expr {
@@ -104,6 +115,17 @@ impl TokenRule {
             TokenRule::Run(r) => {
                 let after = call("fill", vec![and(call("prev", vec![s.clone()]), r.clone()), not(r.clone())]);
                 let t = or(s.clone(), after);
+                and(t.clone(), not(call("next", vec![and(t, not(s.clone()))])))
+            }
+            TokenRule::RunOnce(r, d) => {
+                let after = call("fill", vec![and(call("prev", vec![s.clone()]), r.clone()), not(r.clone())]);
+                let t = or(s.clone(), after);
+                // A start, or a byte past the run, ends what the fills carry: each token's own.
+                let stop = or(not(t.clone()), s.clone());
+                let ds = and(and(t.clone(), d.clone()), not(s.clone()));
+                let one = call("fill", vec![and(call("prev", vec![ds.clone()]), not(s.clone())), stop.clone()]);
+                let cut = call("fill", vec![and(ds, one), stop]);
+                let t = and(t, not(cut));
                 and(t.clone(), not(call("next", vec![and(t, not(s.clone()))])))
             }
             TokenRule::Pair(p) | TokenRule::Pairs { mask: p, .. } => or(and(s.clone(), not(p.clone())), call("prev", vec![and(s.clone(), p.clone())])),
@@ -1211,14 +1233,16 @@ impl P {
         Ok(last)
     }
 
-    /// A token test: `count(E) at least N` or `run(E) at least N` (`TokenTest`).
+    /// A token test: `count(E)`, `run(E)` or `all(E)`, `at least N` (`TokenTest`).
     fn token_test(&mut self) -> R<(TokenTest, Expr, u32)> {
         let test = if self.eat_kw("count") {
             TokenTest::Count
         } else if self.eat_kw("run") {
             TokenTest::Run
+        } else if self.eat_kw("all") {
+            TokenTest::All
         } else {
-            return self.err("`count` or `run`");
+            return self.err("`count`, `run` or `all`");
         };
         self.want_p("(")?;
         let expr = self.expr()?;
@@ -1635,7 +1659,8 @@ impl P {
                 let rule = if through.is_some() || last.is_some() {
                     None
                 } else if self.eat_kw("run") {
-                    Some(TokenRule::Run(self.expr()?))
+                    let r = self.expr()?;
+                    if self.eat_kw("once") { Some(TokenRule::RunOnce(r, self.expr()?)) } else { Some(TokenRule::Run(r)) }
                 } else if self.eat_kw("pair") {
                     let e = self.expr()?;
                     match &e {

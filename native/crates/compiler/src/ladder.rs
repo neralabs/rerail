@@ -550,8 +550,11 @@ pub fn check_shape(name: &str, c: &Compiled) {
             assert_eq!(k + 1, c.parser.tier1.passes.len(), "{name}: tier 1's pass {k} has no block loop and is not the last");
             continue;
         }
-        let body = crate::clif_text::body_of(&pass.clif);
-        let want = 1 + 2 * pass.extracts + usize::from(pass.ascii_branch) + pass.gate_branches + pass.round_branches;
+        let body: Vec<String> = crate::clif_text::hot_loop_until(&pass.clif, &pass.exits).into_iter().flat_map(|(_, l)| l).collect();
+        // Its back edge's branch, where it loops to itself; a body that goes on to the token
+        // loop over the final blocks jumps there instead (`PassShape::exits`).
+        let back_edge = usize::from(pass.exits.len() == 1);
+        let want = back_edge + 2 * pass.extracts + usize::from(pass.ascii_branch) + pass.gate_branches + pass.round_branches;
         assert_eq!(branches(&body), want, "{name}: tier 1's pass {k} branches beyond its loop, its flattening, its ASCII test and its gates");
     }
     let heads = &c.parser.tier2.heads;

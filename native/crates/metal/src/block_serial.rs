@@ -1354,6 +1354,9 @@ fn records_source(programs: &[&BlockNative]) -> String {
                 }
                 _ => "bad = true;".to_string(),
             }
+        } else if c.all {
+            // The mask at every byte of a token `least` long at least (`records::check_holds`).
+            format!("if (len >= {n}u) {{ bool every = true; for (uint q = s / 64u; q <= l / 64u; q++) {{ ulong want = ~0ul; if (q == s / 64u) want &= ~0ul << (s % 64u); if (q == l / 64u) want &= ~0ul >> (63u - l % 64u); every = every && (out[f.out_base + {o}u * f.groups + q] & want) == want; }} bad = bad || every; }}", n = c.least)
         } else if c.count {
             format!("uint got = 0u; for (uint q = s / 64u; q <= l / 64u; q++) {{ ulong x = out[f.out_base + {o}u * f.groups + q]; if (q == s / 64u) x &= ~0ul << (s % 64u); if (q == l / 64u) x &= ~0ul >> (63u - l % 64u); got += popcount(x); }} bad = bad || got >= {n}u;", n = c.least)
         } else {
@@ -1366,7 +1369,7 @@ fn records_source(programs: &[&BlockNative]) -> String {
         let t = rerail_compiler::records::WordTable::new(&r.words).expect("verified: the words fit a table");
         let tails: Vec<u64> = if t.tails.is_empty() { vec![0; 7] } else { t.tails.iter().flatten().copied().collect() };
         let (se, le, e, x) = (r.starts, r.lasts, n.extracts.len(), n.extracts.len());
-        let tested = r.checks.iter().any(|c| c.then != rerail_compiler::records::CheckThen::Escape);
+        let tested = r.checks.iter().any(|c| c.then.marks());
         // The tests, each once whatever rules it is at (a bit of `record_tests`).
         let mut distinct: Vec<rerail_compiler::records::TokenCheck> = Vec::new();
         for c in &r.checks {
@@ -1451,7 +1454,8 @@ fn records_source(programs: &[&BlockNative]) -> String {
                 .enumerate()
                 .filter_map(|(i, c)| {
                     let bit = match c.then {
-                        rerail_compiler::records::CheckThen::Escape => return None,
+                        // A cut is in the lasts' mask already (`TokenRule::last`).
+                        rerail_compiler::records::CheckThen::Escape | rerail_compiler::records::CheckThen::Cut => return None,
                         rerail_compiler::records::CheckThen::At(k) => 1u32 << k,
                         rerail_compiler::records::CheckThen::After(k) => 1u32 << (rerail_compiler::records::AFTER_SHIFT + u32::from(k)),
                     };

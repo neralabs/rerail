@@ -6,6 +6,12 @@
 /// the blocks it reaches before it leaves for the head (`block4`) or loops back to itself, which
 /// are its extracts' flattening.
 pub fn hot_loop(clif: &str) -> Vec<(String, Vec<String>)> {
+    hot_loop_until(clif, &["block4".to_owned()])
+}
+
+/// `hot_loop`, the body leaving for `exits` (`native_cpu_block::PassShape::exits`): the
+/// blocks' head, and the token loop where the pass runs it over the final blocks.
+pub fn hot_loop_until(clif: &str, exits: &[String]) -> Vec<(String, Vec<String>)> {
     let mut blocks: Vec<(String, Vec<String>)> = Vec::new();
     for line in clif.lines() {
         let t = line.trim();
@@ -32,7 +38,7 @@ pub fn hot_loop(clif: &str) -> Vec<(String, Vec<String>)> {
             panic!("{name} is not a block of the function (its blocks: {:?})", blocks.iter().map(|b| &b.0).take(12).collect::<Vec<_>>());
         };
         for next in successors(lines) {
-            if next != "block4" && !seen.contains(&next) {
+            if !exits.contains(&next) && !seen.contains(&next) {
                 seen.push(next.clone());
                 work.push(next);
             }
@@ -61,6 +67,43 @@ pub fn callees(clif: &str) -> Vec<u32> {
         }
     }
     out
+}
+
+/// The call lines of `clif`'s functions in blocks their entry reaches, by its branches (`brif`,
+/// `jump`, `br_table`): a call in a block no branch reaches is compiled out.
+pub fn reached_calls(clif: &str) -> usize {
+    let mut total = 0;
+    for function in clif.split("\nfunction ").filter(|f| !f.trim().is_empty()) {
+        let mut blocks: Vec<(String, Vec<&str>)> = Vec::new();
+        for line in function.lines().map(str::trim) {
+            if line.starts_with("block") && line.ends_with(':') {
+                blocks.push((line.split(['(', ':', ' ']).next().unwrap_or_default().to_owned(), Vec::new()));
+            } else if let Some((_, lines)) = blocks.last_mut()
+                && !line.is_empty()
+            {
+                lines.push(line);
+            }
+        }
+        let Some(first) = blocks.first().map(|b| b.0.clone()) else {
+            continue;
+        };
+        let (mut seen, mut work) = (vec![first.clone()], vec![first]);
+        while let Some(name) = work.pop() {
+            let Some((_, lines)) = blocks.iter().find(|b| b.0 == name) else {
+                continue;
+            };
+            for line in lines.iter().filter(|l| matches!(opcode(l), "brif" | "jump" | "br_table")) {
+                for next in line.split(|c: char| !c.is_alphanumeric()).filter(|w| w.starts_with("block")) {
+                    if !seen.iter().any(|s| s == next) {
+                        seen.push(next.to_owned());
+                        work.push(next.to_owned());
+                    }
+                }
+            }
+            total += lines.iter().filter(|l| l.starts_with("call ") || l.contains(" = call ")).count();
+        }
+    }
+    total
 }
 
 /// The CLIF opcode of an instruction line (`v3 = icmp eq v1, v2` → `icmp`).

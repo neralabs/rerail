@@ -966,6 +966,24 @@ pass.
          as a token mark's test already was. The production parser (clusters by rules) was not
          affected.
 
+### Q40. Step 22 reads float chains and long floats in tier 1 (0400)
+
+- **Keep**: tier 1 on the CPU bodiless (0177): the token loop reads what a lexer reads where
+  it reads it.
+- **Done** (2026-11-18): the user asked for the two numbers Q39 left to the engine to be read.
+  Masks for a chain's parity (`toggle`) read them, but brought the block loop back: tier 1
+  781 M instructions and 203 M cycles, against 394–396 M and 113–127 M (M1 Max). The user chose
+  the lexer's shape, which is now built:
+  - `run num_run once dot` cuts a number's run at its second `.` (`CheckThen::Cut`). The
+    interpreter (`records::cut`) and the CPU (`native_cpu_block::cut_last`) make the cut before
+    the rule's other tests. `TokenRule::last`'s mask form cuts it for Metal and the reference.
+  - `all(digit) at least 19` checks only an integer's digits.
+  - Tier 1: 398.1 M instructions, 105.5 M cycles (1.59× the lean lexer's, in the old
+    1.53–1.73). The CPU's body makes nothing (`the_cpu_reads_local_tests_at_the_token`).
+  - Found on the way: a tokened pass with a body overwrote the token loop's refusals at the
+    row's end (the totals' flag is now ORed). The shape check also learned such a body's exits
+    (`PassShape::exits`) and the calls Cranelift keeps (`clif_text::reached_calls`).
+
 ## Questions for the user
 
 1. **Q2: text tests over copies of `node_text`.** A test on a string that only a derived copy gives

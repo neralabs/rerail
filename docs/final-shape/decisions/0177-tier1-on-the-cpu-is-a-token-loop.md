@@ -195,7 +195,9 @@ token, a popcount over its words or one window compare. Metal's record kernel an
 interpreter test each token the same way.
 
 They replace the escape over `f_dot & prev(frac)` and the 19 digits' tier 2 `CHECK` (one
-local check fewer). CPU form: 249 operations, from 259; the fallback reads 85, from 130
+local check fewer). Since 0400, neither number escapes: a number's run is cut at its second
+`.` (`run num_run once dot`), and only an integer's 19 digits go to the engine
+(`all(digit) at least 19`). CPU form: 249 operations, from 259; the fallback reads 85, from 130
 (`a_numbers_checks_are_at_its_token`).
 
 ## Readers
