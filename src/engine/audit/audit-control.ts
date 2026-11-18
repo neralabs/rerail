@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { lstatSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { and, asc, eq, inArray, isNull, like, sql } from "drizzle-orm";
+import { and, asc, eq, getTableColumns, inArray, isNull, like, sql } from "drizzle-orm";
+import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
 import { z } from "zod/v4";
-import { checkoutRealpath, physicalPath } from "../catalog/checkout-control.js";
+import { checkoutRealpath, earlierRealpath, physicalPath } from "../catalog/checkout-control.js";
+import { outsideGit } from "../catalog/repository-identity.js";
 import { openRerailDatabase, type RerailDatabase } from "../storage/database.js";
 import { runGit } from "../git.js";
 import { processState } from "../process-liveness.js";
@@ -82,6 +84,23 @@ function ancestors(path: string): string[] {
   return folders;
 }
 function canonicalWorkspace(path: string): string { try { return checkoutRealpath(path); } catch { return resolve(path); } }
+/** {@link canonicalWorkspace} as Rerail 0.1.4 and earlier gave it, the key they saved a workspace's settings under. */
+function earlierWorkspace(path: string): string { try { return earlierRealpath(path); } catch { return resolve(path); } }
+/** The repository of the checkout recorded under the folder `key` names, null where none is, as a column. */
+function recordedRepository(key: SQLiteColumn | ReturnType<typeof sql.placeholder>) {
+  return sql<string | null>`(SELECT ${checkouts.repositoryKey} FROM ${checkouts} WHERE ${checkouts.checkoutPath} = ${key})`;
+}
+/**
+ * The audit settings rows saved under either of two keys, `stored` and `earlier`, as a prepared statement, each with
+ * the repository of the checkout recorded under its own key (`recorded`) and under `stored` (`own`).
+ */
+function settingsUnderEither(database: RerailDatabase) {
+  return database.select({
+    ...getTableColumns(auditSettings), recorded: recordedRepository(auditSettings.workspaceRoot), own: recordedRepository(sql.placeholder("stored")),
+  }).from(auditSettings).where(inArray(auditSettings.workspaceRoot, [sql.placeholder("stored"), sql.placeholder("earlier")])).prepare();
+}
+/** A session's folder as it spelt it, and the repository Rerail recorded the session in; a caller's folder has none. */
+interface SpeltFolder { readonly cwd: string; readonly repositoryId?: string | null }
 function controls(
   databasePath: string,
   row: { cwd: string; endedAt: number | null },
@@ -98,8 +117,8 @@ function controls(
     repositoryAudit: repositoryAudit ?? null,
   };
 }
-function requireSession(database: RerailDatabase, sessionId: string): { cwd: string; endedAt: number | null } {
-  const row = database.select({ cwd: sessions.cwd, endedAt: sessions.endedAt }).from(sessions).where(eq(sessions.sessionId, sessionId)).get();
+function requireSession(database: RerailDatabase, sessionId: string): SpeltFolder & { cwd: string; endedAt: number | null } {
+  const row = database.select({ cwd: sessions.cwd, endedAt: sessions.endedAt, repositoryId: sessions.repositoryId }).from(sessions).where(eq(sessions.sessionId, sessionId)).get();
   if (row === undefined) throw new Error(`Unknown Rerail session: ${sessionId}`);
   return row;
 }
@@ -181,9 +200,62 @@ export class SqliteAuditControlStore {
   }
 
   getWorkspaceSettings(workspaceRoot: string): AuditSettings | undefined {
-    const row = this.#database.select().from(auditSettings)
-      .where(eq(auditSettings.workspaceRoot, canonicalWorkspace(workspaceRoot))).get();
+    return this.#settings(canonicalWorkspace(workspaceRoot), { cwd: workspaceRoot });
+  }
+
+  #settings(workspaceRoot: string, spelt: SpeltFolder): AuditSettings | undefined {
+    const row = this.#settingsRow(workspaceRoot, spelt);
     return row === undefined ? undefined : parseSettings(row.settings);
+  }
+
+  /**
+   * The row saved under `workspaceRoot`, the canonical key, else the one Rerail 0.1.4 and earlier saved for the same
+   * folder under the key `spelt.cwd` (the folder as the session or caller spelt it) gave it on Windows. An older Rerail
+   * sharing the database goes on writing that row, so it is read where it is rather than copied. Both keys are read in
+   * one statement, prepared once per store, so a folder with no row under either costs no more than a read of the
+   * canonical key alone.
+   */
+  #settingsRow(workspaceRoot: string, spelt: SpeltFolder): typeof auditSettings.$inferSelect | undefined {
+    const earlier = this.#earlierKey(workspaceRoot, spelt.cwd);
+    if (earlier === workspaceRoot) return this.#database.select().from(auditSettings).where(eq(auditSettings.workspaceRoot, workspaceRoot)).get();
+    this.#settingsUnderEither ??= settingsUnderEither(this.#database);
+    const rows = this.#settingsUnderEither.all({ stored: workspaceRoot, earlier });
+    return rows.find(row => row.workspaceRoot === workspaceRoot) ?? rows.find(row => this.#savedHere(row, spelt));
+  }
+
+  #settingsUnderEither: ReturnType<typeof settingsUnderEither> | undefined;
+
+  /**
+   * Whether the row Rerail 0.1.4 saved under the spelling `spelt.cwd` was saved for this folder. A letter or 8.3 name
+   * can lead elsewhere than when 0.1.4 saved through it, so the row counts only where a fact ties it to this folder's
+   * repository: the session's, else the one recorded for the folder under its stored spelling. Outside Git 0.1.4
+   * recorded the folder under that same spelling, so the checkout recorded there names the repository the spelling
+   * reached then; with none recorded there, nothing ties the row to this folder. A Git checkout was recorded under
+   * Git's top level instead, so nothing says whose row it is, and it is read as 0.1.4 read it there.
+   */
+  #savedHere(row: { readonly recorded: string | null; readonly own: string | null }, spelt: SpeltFolder): boolean {
+    if (row.recorded !== null) return row.recorded === (spelt.repositoryId ?? row.own);
+    return !this.#outsideGit(spelt.cwd);
+  }
+
+  /** {@link outsideGit} once per folder spelling, as {@link #earlierKeys} holds its key: a `git init` there later keeps the answer. */
+  readonly #outsideGit = askedOnce(outsideGit);
+
+  /**
+   * The keys Rerail 0.1.4 and earlier gave each folder spelling this store was asked about. The runtime reads a session's
+   * settings before each of its events, so the realpath runs once per spelling rather than once per event; a link in
+   * the path changed while this process runs keeps the key it had.
+   */
+  readonly #earlierKeys = new Map<string, string>();
+
+  /** The key 0.1.4 gave `spelled` on Windows; `workspaceRoot` itself where the two cannot differ. */
+  #earlierKey(workspaceRoot: string, spelled: string): string {
+    if (process.platform !== "win32" || spelled === workspaceRoot) return workspaceRoot;
+    const known = this.#earlierKeys.get(spelled);
+    if (known !== undefined) return known;
+    const earlier = earlierWorkspace(spelled);
+    this.#earlierKeys.set(spelled, earlier);
+    return earlier;
   }
 
   getSettings(sessionId: string): AuditControls {
@@ -206,30 +278,40 @@ export class SqliteAuditControlStore {
     return controls(
       this.path,
       session,
-      this.getWorkspaceSettings(workspaceRoot),
+      this.#settings(workspaceRoot, session),
       repositoryAudit === undefined ? undefined : repositoryAuditSchema.parse(repositoryAudit),
       owner,
     );
   }
+  hasUserSettings(sessionId: string): boolean {
+    const session = requireSession(this.#database, sessionId);
+    return this.#settings(canonicalWorkspace(session.cwd), session) !== undefined;
+  }
   updateSettings(sessionId: string, patch: z.input<typeof auditSettingsPatchSchema>): AuditControls {
     const parsed = auditSettingsPatchSchema.parse(patch);
     this.#database.transaction(() => {
-      this.#saveSettings(canonicalWorkspace(requireSession(this.#database, sessionId).cwd), parsed);
+      const session = requireSession(this.#database, sessionId);
+      this.#saveSettings(canonicalWorkspace(session.cwd), parsed, session);
     });
     return this.getSettings(sessionId);
   }
-  /** `updateSettings` for a checkout by its folder, before any session there exists: what its sessions start with. */
+  /**
+   * `updateSettings` for a checkout by its folder, before any session there exists: what its sessions start with. The
+   * change starts from the settings {@link getWorkspaceSettings} reads for the folder as spelt here.
+   */
   updateWorkspaceSettings(workspaceRoot: string, patch: z.input<typeof auditSettingsPatchSchema>): AuditSettings {
     const parsed = auditSettingsPatchSchema.parse(patch);
-    return this.#database.transaction(() => this.#saveSettings(canonicalWorkspace(workspaceRoot), parsed));
+    return this.#database.transaction(() => this.#saveSettings(canonicalWorkspace(workspaceRoot), parsed, { cwd: workspaceRoot }));
   }
   /**
-   * Merges `patch` over the checkout's saved settings, else the defaults, and saves the result. The default strategy,
-   * `message`, is left out of the row, as rows read before the key existed, so a release that reads `{ scope, mode }`
-   * strictly still reads every row that does not opt into an experimental strategy.
+   * Merges `patch` over the checkout's saved settings, else the defaults, and saves the result under the canonical key.
+   * The saved settings are read as the folder spelt `spelt` finds them, so a session's own spelling starts from what
+   * Rerail 0.1.4 saved under it; that row stays for 0.1.4 to read. The default strategy, `message`, is left out of the
+   * row, as rows read before the key existed, so a release that reads `{ scope, mode }` strictly still reads every row
+   * that does not opt into an experimental strategy.
    */
-  #saveSettings(workspaceRoot: string, patch: AuditSettingsPatch): AuditSettings {
-    const previous = this.#database.select().from(auditSettings).where(eq(auditSettings.workspaceRoot, workspaceRoot)).get();
+  #saveSettings(workspaceRoot: string, patch: AuditSettingsPatch, spelt: SpeltFolder = { cwd: workspaceRoot }): AuditSettings {
+    const previous = this.#settingsRow(workspaceRoot, spelt);
     const settings = auditSettingsSchema.parse({ ...DEFAULT_AUDIT_SETTINGS, ...(previous === undefined ? {} : parseSettings(previous.settings)), ...patch });
     const { steerStrategy, ...saved } = settings;
     const row = steerStrategy === "message" ? saved : settings;
