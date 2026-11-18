@@ -412,7 +412,8 @@ fn the_compiled_words_are_the_interpreters() {
 }
 
 /// The words on Metal (`clif_msl`'s MSL of the same IR, decision 0348 stage 5) are the
-/// interpreter's, on every example and TU, in C and C++.
+/// interpreter's, on every example and TU, in C and C++: all of them one batch a round
+/// (`expand_tus_with`, 0408 L3), and the host evaluates nothing meanwhile (`host_runs`).
 #[cfg(target_os = "macos")]
 #[test]
 fn the_metal_words_are_the_interpreters() {
@@ -422,10 +423,16 @@ fn the_metal_words_are_the_interpreters() {
     let dirs = [("inc", rerail_c_pp::files::DirKind::Angle), ("sys", rerail_c_pp::files::DirKind::System), ("sys2", rerail_c_pp::files::DirKind::System)];
     let mut tus: Vec<(String, Vec<(&str, &[u8])>)> = EXAMPLES.iter().map(|(n, s)| ((*n).to_owned(), vec![("main.c", s.as_bytes())])).collect();
     tus.extend(TUS.iter().map(|(n, f)| ((*n).to_owned(), f.iter().map(|f| (f.0, f.1.as_bytes())).collect())));
+    let all: Vec<(bool, &(String, Vec<(&str, &[u8])>))> = [false, true].into_iter().flat_map(|cpp| tus.iter().map(move |t| (cpp, t))).collect();
+    let mut io: Vec<_> = all.iter().map(|(_, (_, files))| search(files, &dirs)).collect();
+    let mut batch: Vec<(&str, &mut _, bool)> = all.iter().zip(io.iter_mut()).map(|((cpp, (_, files)), io)| (files[0].0, io, *cpp)).collect();
+    let runs = pp_words::host_runs();
+    let metal = crate::expand::expand_tus_with(&mut batch, &INTERPRETED, &crate::expand::on_metal_batch);
+    assert_eq!(pp_words::host_runs(), runs, "the host ran the words during the device's batches");
     let (mut same, mut differ) = (0, Vec::new());
-    for (cpp, (name, files)) in [false, true].into_iter().flat_map(|cpp| tus.iter().map(move |t| (cpp, t))) {
+    for ((cpp, (name, files)), got) in all.iter().zip(metal) {
+        let cpp = *cpp;
         let want = expand_tu_with(files[0].0, &mut search(files, &dirs), cpp, &INTERPRETED, &pp_words::run);
-        let got = expand_tu_with(files[0].0, &mut search(files, &dirs), cpp, &INTERPRETED, &crate::expand::on_metal);
         match got {
             got if got == want => same += 1,
             got => {

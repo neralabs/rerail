@@ -101,7 +101,23 @@ Tests:
 
 ## L3. Rounds as batches
 
-To come.
+A TU runs in rounds: the words run, ask for the files an include names, and run again once
+the host has read them (the import fixpoint). `expand::expand_tus_with` runs many TUs
+together. Each round, every TU not yet done is one job of one batch (`BatchRunner`), and
+between rounds the host reads the files the TUs asked for. That is I/O, not evaluation.
+
+- **Every TU's result is `expand_tu`'s.** `expand_tu_with` is now a batch of one, so the CPU
+  paths and the device share one round loop.
+- **`expand::on_metal_batch`** runs a batch's rounds on the device, a TU a thread
+  (`pp_on::run_batch`): rungs, reruns and splits by the budget. A device error refuses every
+  job of the batch.
+- **No evaluation on the host (the guard):** `pp_words::host_runs` counts the words' runs on
+  the host on this thread: the interpreter's and the CPU's compiled code's (`run_native`).
+  The device path only lays machines out and reads them back, and the test asserts the count
+  is unchanged across the device's batches.
+
+Test: `the_metal_words_are_the_interpreters` runs the examples and `TUS`, C and C++, 124 TUs,
+as one batch a round, checks the guard, and compares each TU with the interpreter.
 
 ## L4. The gate: the corpus on Metal
 

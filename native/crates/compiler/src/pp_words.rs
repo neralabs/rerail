@@ -286,6 +286,17 @@ pub(crate) struct NamedC {
 /// The file includes nest to at most (clang's bound).
 pub const MAX_INCLUDE_DEPTH: usize = 200;
 
+thread_local! {
+    static HOST_RUNS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The words' runs on the host so far, on this thread: the interpreter's (`run`) and the
+/// compiled code's on the CPU (`run_native`). The device's path makes none (0408, L3): it
+/// lays a machine out (`prepare`) and reads it back (`complete`) only.
+pub fn host_runs() -> u64 {
+    HOST_RUNS.with(std::cell::Cell::get)
+}
+
 /// The device's rungs of `Bounds` (`Bounds::rung`), the last `Bounds::of`.
 pub const RUNGS: usize = 5;
 
@@ -1125,6 +1136,7 @@ pub(crate) const LEVEL: (usize, usize, usize) = (std::mem::size_of::<(u16, u32)>
 /// # Safety
 /// `code` reads and writes only within the `Ctx` it is given: each buffer below its room.
 pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, bounds: &Bounds, code: unsafe extern "C" fn(*mut Ctx) -> u64, reasons: &[&'static str]) -> Result<Expanded, Refused> {
+    HOST_RUNS.with(|n| n.set(n.get() + 1));
     let mut p = prepare(program, files, env, bounds, &mut |b: Buf| b.ptr as u64)?;
     // SAFETY: the caller's.
     let r = unsafe { code(&mut p.c) };
@@ -1388,6 +1400,7 @@ pub unsafe fn complete(p: Prepared<'_>, r: u64, reasons: &[&'static str]) -> Res
 }
 
 pub fn run(program: &Words, files: &[File], env: &Env, bounds: &Bounds) -> Result<Expanded, Refused> {
+    HOST_RUNS.with(|n| n.set(n.get() + 1));
     let mut m = Machine::new(program, files, env, bounds)?;
     let words = &program.words;
     let mut returns: Vec<usize> = Vec::new();
