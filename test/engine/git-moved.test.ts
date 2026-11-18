@@ -91,6 +91,25 @@ describe("the Git a process keeps, gone under it", () => {
     await removeFolder(root);
   });
 
+  /** `performance.now()` held by the test from now on: it moves only by `move`, until `release`. */
+  function holdClock(): { move(ms: number): void; release(): void } {
+    let now = performance.now();
+    const held = vi.spyOn(performance, "now").mockImplementation(() => now);
+    return {
+      move(ms) {
+        now += ms;
+      },
+      release() {
+        held.mockRestore();
+      },
+    };
+  }
+
+  /** The time limit each start of `starter` was given since the last call. */
+  function limits(starter: typeof spawnSync): unknown[] {
+    return vi.mocked(starter).mock.calls.map(call => (call[2] as { timeout?: number } | undefined)?.timeout);
+  }
+
   it("runs a blocking Git call once more with the Git a look finds within the call's time limit, and keeps that Git", async () => {
     // The repository a session works in is such a call (repository-identity.ts): it finds the repository, not a folder
     // outside Git, and the session's writes are checked.
@@ -113,6 +132,76 @@ describe("the Git a process keeps, gone under it", () => {
     started(spawn);
     const result = await runGitAsync(repository, ["rev-parse", "HEAD"]);
     expect([result.status, result.stdout.trim(), started(spawn)]).toEqual([0, head, [kept, now]]);
+  });
+
+  it("gives the look and the second start of a blocking call only what is left of the call's time limit", async () => {
+    const [kept, now] = await moveKeptGit();
+    started(spawnSync);
+    const clock = holdClock();
+    // The look's first wait for the thread it reads the disk in takes 4 s of the call's 10 s.
+    const wait = Atomics.wait.bind(Atomics);
+    vi.spyOn(Atomics, "wait").mockImplementationOnce((...args) => {
+      clock.move(4_000);
+      return wait(...args);
+    });
+    try {
+      const result = runGit(repository, ["rev-parse", "HEAD"]);
+      expect([result.status, result.stdout.trim(), limits(spawnSync), started(spawnSync)]).toEqual([0, head, [10_000, 6_000], [kept, now]]);
+    } finally {
+      vi.mocked(Atomics.wait).mockRestore();
+      clock.release();
+    }
+  });
+
+  it("gives the look and the second start of a call that does not block only what is left of the call's time limit", async () => {
+    const [kept, now] = await moveKeptGit();
+    started(spawn);
+    const clock = holdClock();
+    // The look's first question about the disk takes 6 s of the call's 10 s.
+    vi.mocked(stat).mockImplementationOnce(async (...args) => {
+      clock.move(6_000);
+      return await actualFiles.stat(...args);
+    });
+    // The second start runs a program that does not end by itself, so only a time limit ends it.
+    const second = Promise.withResolvers<void>();
+    vi.mocked(spawn)
+      .mockImplementationOnce((file, args, options) => actual.spawn(program(file), args, options))
+      .mockImplementationOnce((_file, _args, options) => {
+        second.resolve();
+        return actual.spawn(process.execPath, ["-e", "setInterval(() => {}, 1_000)"], options);
+      });
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      const call = runGitAsync(repository, ["rev-parse", "HEAD"]);
+      await second.promise;
+      // Past the call's own limit, and past a new 10 s limit a second start of its own would end at.
+      clock.move(10_000);
+      vi.advanceTimersByTime(1_000);
+      const result = await call;
+      expect([result.status, result.error?.message, started(spawn)]).toEqual([null, "Git was ended: it ran past its time limit of 4000 ms", [kept, now]]);
+    } finally {
+      vi.useRealTimers();
+      clock.release();
+    }
+  });
+
+  it("answers a call that does not block as its start did once the look has taken its whole time limit", async () => {
+    const [kept, now] = await moveKeptGit();
+    started(spawn);
+    const clock = holdClock();
+    vi.mocked(stat).mockImplementationOnce(async (...args) => {
+      clock.move(10_000);
+      return await actualFiles.stat(...args);
+    });
+    try {
+      const failed = await runGitAsync(repository, ["rev-parse", "HEAD"]);
+      expect([failed.status, (failed.error as NodeJS.ErrnoException | undefined)?.code, started(spawn)]).toEqual([null, "ENOENT", [kept]]);
+    } finally {
+      clock.release();
+    }
+    // The look found Git and kept it: the next call starts it.
+    await expect(gitHead(repository)).resolves.toBe(head);
+    expect(started(spawn)).toEqual([now]);
   });
 
   it("runs a Git call that does not block once more with the Git found again", async () => {

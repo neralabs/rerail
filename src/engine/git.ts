@@ -956,18 +956,31 @@ function gitEnvironment(executable: string): NodeJS.ProcessEnv {
 }
 
 /**
+ * What is left of a time limit of `limitMs` that starts now, in whole milliseconds, as each call asks: 0 once it has
+ * passed. A call that starts Git once more ({@link ProcessGit.afterMissing}) gives its look and that start only what
+ * is left of its own limit, so the call ends within it.
+ */
+function timeLeft(limitMs: number): () => number {
+  const deadline = performance.now() + limitMs;
+  return () => Math.max(0, Math.floor(deadline - performance.now()));
+}
+
+/**
  * `git -C <cwd> <args>` with fsmonitor and hooks disabled, in {@link gitEnvironment} (no optional locks, no lazy fetch
  * of a partial clone's missing objects), and a 10 s default timeout; throws {@link GitUnavailableError} when Git is
  * missing, never on a non-zero exit. When the Git kept for the process is gone, it runs once more with the Git found
- * again ({@link ProcessGit.replacedNow}), by a look this call waits for no longer than its time limit, since it blocks
- * the thread and a look may wait on a folder far longer; past it, the call fails as its start did.
+ * again ({@link ProcessGit.replacedNow}): the look and that second start get what is left of the call's time limit
+ * ({@link timeLeft}), since the call blocks the thread and a look may wait on a folder far longer; with none left, the
+ * call fails as its start did.
  */
 export function runGit(cwd: string, args: readonly string[], options: RunGitOptions = {}): GitResult {
-  const run = (executable: string): GitResult => runGitWith(executable, [...SAFE_CONFIG, "-C", cwd, ...args], options);
+  const command = [...SAFE_CONFIG, "-C", cwd, ...args];
+  const left = timeLeft(options.timeout ?? DEFAULT_TIMEOUT_MS);
   const executable = gitExecutable();
-  const result = run(executable);
-  const again = programMissing(result.error) ? processGit.replacedNow(executable, options.timeout ?? DEFAULT_TIMEOUT_MS) : undefined;
-  return again === undefined ? result : run(again);
+  const result = runGitWith(executable, command, options);
+  const again = programMissing(result.error) ? processGit.replacedNow(executable, left()) : undefined;
+  const rest = left();
+  return again === undefined || rest === 0 ? result : runGitWith(again, command, { ...options, timeout: rest });
 }
 
 /** One blocking start of the Git at `executable` with `args`, as {@link runGit} makes it. */
@@ -991,15 +1004,16 @@ type RunGitAsyncOptions = RunGitOptions & GitReadOptions & { input?: string };
  * answers a null status with its error. The timeout and `signal` end Git as they end a batch read
  * ({@link settleWhenDone}), with every process it started, and the answer comes once that Git has exited
  * ({@link GitReadOptions}); once `signal` is aborted it starts no Git. When the Git kept for the process is gone, it
- * runs once more with the Git found again, looked for off this thread while this call waits, within its time limit and
- * unless `signal` is aborted by then ({@link gitAgain}).
+ * runs once more with the Git found again, looked for off this thread while this call waits, all within its one time
+ * limit and unless `signal` is aborted by then ({@link startedWithin}).
  */
 export async function runGitAsync(cwd: string, args: readonly string[], options: RunGitAsyncOptions = {}): Promise<GitResult> {
-  const run = async (executable: string): Promise<GitResult> => await runGitAsyncWith(executable, [...SAFE_CONFIG, "-C", cwd, ...args], options);
-  const executable = gitExecutable();
-  const result = await run(executable);
-  const again = await gitAgain(executable, programMissing(result.error), { timeoutMs: options.timeout ?? DEFAULT_TIMEOUT_MS, signal: options.signal });
-  return again === undefined ? result : await run(again);
+  const command = [...SAFE_CONFIG, "-C", cwd, ...args];
+  const limits = { timeoutMs: options.timeout ?? DEFAULT_TIMEOUT_MS, signal: options.signal };
+  return await startedWithin(gitExecutable(), limits, async (executable, timeout) => {
+    const result = await runGitAsyncWith(executable, command, { ...options, timeout });
+    return { answer: result, missing: programMissing(result.error) };
+  });
 }
 
 /** One start of the Git at `executable` with `args`, as {@link runGitAsync} makes it. */
@@ -1108,16 +1122,28 @@ interface GitStart<T> {
 
 /**
  * `read` run with the Git to read with ({@link readerGit}), and once more with the Git found again when that start found
- * no program at its path ({@link ProcessGit.afterMissing}), within the read's time limit and unless its signal was
- * aborted by then (`limits`): a stopped read starts no other Git. Undefined without Git, or once the signal is aborted
- * before the first start.
+ * no program at its path ({@link startedWithin}), within the read's one time limit and unless its signal was aborted by
+ * then (`limits`): a stopped read starts no other Git. Undefined without Git, or once the signal is aborted before the
+ * first start.
  */
-async function readWithGit<T>(limits: ReadLimits, read: (executable: string) => Promise<GitStart<T>>): Promise<T | undefined> {
+async function readWithGit<T>(limits: ReadLimits, read: (executable: string, limits: ReadLimits) => Promise<GitStart<T>>): Promise<T | undefined> {
   const executable = readerGit(limits.signal);
   if (executable === undefined) return undefined;
-  const first = await read(executable);
-  const again = await gitAgain(executable, first.missing, limits);
-  return again === undefined ? first.answer : (await read(again)).answer;
+  return await startedWithin(executable, limits, async (git, timeoutMs) => await read(git, { ...limits, timeoutMs }));
+}
+
+/**
+ * `start` with the Git at `executable` and the call's time limit, and once more with the Git found again when that
+ * start found no program at its path ({@link gitAgain}), all within that one limit: the look and the second start get
+ * what is left of it ({@link timeLeft}), and with none left the first answer stands. So a call that starts Git twice
+ * ends within its own time limit, as one that starts it once does.
+ */
+async function startedWithin<T>(executable: string, limits: ReadLimits, start: (executable: string, timeoutMs: number) => Promise<GitStart<T>>): Promise<T> {
+  const left = timeLeft(limits.timeoutMs);
+  const first = await start(executable, limits.timeoutMs);
+  const again = await gitAgain(executable, first.missing, { ...limits, timeoutMs: left() });
+  const rest = left();
+  return again === undefined || rest === 0 ? first.answer : (await start(again, rest)).answer;
 }
 
 /**
@@ -1194,7 +1220,7 @@ type GitRead = { readonly ended: "printed"; readonly stdout: string } | { readon
  * its output has closed. Run again with the Git found again when the one kept is gone ({@link readWithGit}).
  */
 async function readGit(cwd: string, args: readonly string[], signal: AbortSignal | undefined, maxBuffer: number): Promise<GitRead> {
-  const read = await readWithGit<GitRead>({ timeoutMs: DEFAULT_TIMEOUT_MS, signal }, async executable => {
+  const read = await readWithGit<GitRead>({ timeoutMs: DEFAULT_TIMEOUT_MS, signal }, async (executable, limits) => {
     const { promise, resolve: settle } = Promise.withResolvers<GitRead>();
     const child = startGit(() => spawn(executable, [...SAFE_CONFIG, "-C", cwd, ...args], {
       env: { ...gitEnvironment(executable), GIT_TERMINAL_PROMPT: "0" },
@@ -1210,7 +1236,7 @@ async function readGit(cwd: string, args: readonly string[], signal: AbortSignal
       const stdout = printed(status);
       if (stdout !== undefined && signal?.aborted !== true) settle({ ended: "printed", stdout });
     });
-    settleWhenDone(child, ended => settle({ ended: ended ? "timed-out" : "failed" }), { timeoutMs: DEFAULT_TIMEOUT_MS, signal });
+    settleWhenDone(child, ended => settle({ ended: ended ? "timed-out" : "failed" }), limits);
     const [answer] = await Promise.all([promise, exited(child)]);
     return { answer, missing: missing() };
   });
@@ -1638,7 +1664,7 @@ interface GitStream extends GitReadOptions {
  * found again when the one kept is gone ({@link readWithGit}); a start that found no program printed nothing.
  */
 async function streamGit(cwd: string, args: readonly string[], stream: GitStream): Promise<void> {
-  await readWithGit({ timeoutMs: stream.timeout ?? DEFAULT_TIMEOUT_MS, signal: stream.signal }, async executable => {
+  await readWithGit({ timeoutMs: stream.timeout ?? DEFAULT_TIMEOUT_MS, signal: stream.signal }, async (executable, limits) => {
     const { promise, resolve: settle } = Promise.withResolvers<void>();
     const child = startGit(() => spawn(executable, [...SAFE_CONFIG, "-C", cwd, ...args], {
       env: { ...gitEnvironment(executable), GIT_TERMINAL_PROMPT: "0" },
@@ -1647,7 +1673,7 @@ async function streamGit(cwd: string, args: readonly string[], stream: GitStream
     if (child instanceof Error) return { answer: undefined, missing: false };
     const missing = startMissing(child);
     child.stdout.on("data", stream.onData);
-    settleWhenDone(child, () => settle(), { timeoutMs: stream.timeout ?? DEFAULT_TIMEOUT_MS, signal: stream.signal });
+    settleWhenDone(child, () => settle(), limits);
     // Git exits before reading every line when it cannot start in `cwd`; what it answered before that is kept.
     child.stdin.on("error", () => undefined);
     child.stdin.end(stream.input);
