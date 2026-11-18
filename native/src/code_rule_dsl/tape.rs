@@ -52,6 +52,7 @@ pub mod resident;
 pub mod validated;
 /// A document's tape through one API, in the run's format (decision 0293).
 pub mod formats;
+pub mod placed;
 pub mod token_census;
 /// Python's tape from the lean parser (`rerail_python_lean`).
 pub mod python_lean;
@@ -380,11 +381,13 @@ pub enum Held {
 /// Format 15's columns (above), its code table, and the table as the tape API reads it (made once).
 #[derive(Clone)]
 pub struct Columns15 {
-    /// The five columns (code, size, base, off, tail) in one buffer, each from a `COLUMN_ALIGN` boundary and
-    /// padded with zeros, as the stored image lays them after its header: one base addresses every column, as a
-    /// reader of the tape in place takes it (decision 0310).
-    bytes: Vec<u8>,
-    /// Each column's start in `bytes`, and its length.
+    /// The five columns (code, size, base, off, tail), from `base` in `bytes`, each from a `COLUMN_ALIGN` boundary
+    /// and padded with zeros, as the stored image lays them after its header: one base addresses every column, as a
+    /// reader of the tape in place takes it (decision 0310). A loaded image is placed: `bytes` is the stored image
+    /// in its slab's room, read where it lies (decision 0353 step 4a); a parser's holds its columns alone.
+    bytes: rerail_tape_format::home::Home,
+    base: usize,
+    /// Each column's start from `base`, and its length.
     at: [(usize, usize); 5],
     pub widths: [u8; 3],
     pub codes: Vec<Code>,
@@ -1130,7 +1133,7 @@ impl TapeImage {
         let lengths = [c.node_count(), c.codes.len(), code_bytes, c.kind_aliases.len(), alias_bytes];
         let mut bytes = Vec::with_capacity(
             HEADER_BYTES
-                + c.bytes.len()
+                + c.columns_bytes().len()
                 + code_bytes
                 + alias_bytes,
         );
@@ -1143,7 +1146,7 @@ impl TapeImage {
             bytes.extend_from_slice(&(length as u64).to_le_bytes());
         }
         debug_assert_eq!(bytes.len() % COLUMN_ALIGN, 0);
-        bytes.extend_from_slice(&c.bytes);
+        bytes.extend_from_slice(c.columns_bytes());
         for code in &c.codes {
             bytes.extend_from_slice(&code.kf.to_le_bytes());
             bytes.push(code.flags);
@@ -1165,6 +1168,17 @@ impl TapeImage {
         Ok(bytes)
     }
 
+    /// A stored tape placed in a room (decision 0353 step 4a), read where it lies: format 15's columns, or format 16
+    /// (or 16z) as stored. Nothing is copied.
+    pub fn from_home(home: rerail_tape_format::home::Home, grammar: &Arc<Grammar>) -> Result<Self, String> {
+        use rerail_tape_format::f16::{MAGIC16, MAGIC16Z};
+        let magic = home.get(..8).ok_or("a short tape")?;
+        if magic != MAGIC16 && magic != MAGIC16Z {
+            return Self::read_image_in(&home, grammar, Some(&home));
+        }
+        Self::sixteen(home, grammar)
+    }
+
     /// A stored tape, in the format it was stored in (its magic): format 15's columns, or format 16 (or 16z) held
     /// as stored.
     pub fn from_bytes(bytes: &[u8], grammar: &Arc<Grammar>) -> Result<Self, String> {
@@ -1173,17 +1187,23 @@ impl TapeImage {
         if magic != MAGIC16 && magic != MAGIC16Z {
             return Self::read_image(bytes, grammar);
         }
+        Self::sixteen(bytes.to_vec().into(), grammar)
+    }
+
+    /// A format 16 or 16z tape held as stored, in `bytes`.
+    fn sixteen(bytes: rerail_tape_format::home::Home, grammar: &Arc<Grammar>) -> Result<Self, String> {
+        use rerail_tape_format::f16::{MAGIC16, Tape16, Tape16Z};
         let tag = super::language::tape_tag(grammar.lang).ok_or("unsupported tape language")?;
-        if bytes[header::LANGUAGE] != tag {
+        if bytes.get(header::LANGUAGE) != Some(&tag) {
             return Err("tape image grammar mismatch".into());
         }
         let lang = rerail_tape_format::f16::lang(tag).ok_or("a format 16 tape of a language without its table")?;
-        let held = if magic == MAGIC16 {
-            let t = Tape16::from_bytes(bytes.to_vec())?;
+        let held = if bytes[..8] == *MAGIC16 {
+            let t = Tape16::from_bytes(bytes)?;
             t.reader(lang)?;
             Held::F16(Arc::new(t))
         } else {
-            let t = Tape16Z::from_bytes(bytes.to_vec())?;
+            let t = Tape16Z::from_bytes(bytes)?;
             t.reader(lang)?;
             Held::F16Z(Arc::new(t))
         };
@@ -1202,12 +1222,21 @@ impl TapeImage {
     /// An image of format 15's columns (code, size, base, off, tail), laid out in one buffer.
     fn of15(columns: [&[u8]; 5], widths: [u8; 3], codes: Vec<Code>, kind_aliases: Vec<(String, bool)>, language: GrammarDialect, source_len: usize, source_digest: Option<[u8; 32]>) -> Self {
         let (bytes, at) = Columns15::laid(columns);
-        Self { held: Held::F15(Columns15 { bytes, at, widths, codes, kind_aliases, table: Default::default() }), language, source_len, source_digest }
+        Self { held: Held::F15(Columns15 { bytes: bytes.into(), base: 0, at, widths, codes, kind_aliases, table: Default::default() }), language, source_len, source_digest }
     }
 
     /// The tape as held.
     pub fn held(&self) -> &Held {
         &self.held
+    }
+
+    /// Whether its bytes are placed in a room (a slab's, decision 0353 step 4a), not its own.
+    pub fn placed(&self) -> bool {
+        match &self.held {
+            Held::F15(c) => c.bytes.placed(),
+            Held::F16(t) => t.home().placed(),
+            Held::F16Z(t) => t.home().placed(),
+        }
     }
 
     /// Format 15's columns, where it is held in format 15.
@@ -1233,6 +1262,12 @@ impl TapeImage {
 
     /// The image `bytes` hold, of a `grammar` file.
     fn read_image(bytes: &[u8], grammar: &Grammar) -> Result<Self, String> {
+        Self::read_image_in(bytes, grammar, None)
+    }
+
+    /// A stored format 15 image (`read_image`), its columns read where they lie in `placed` (whose bytes are
+    /// `bytes`, decision 0353 step 4a) or laid out in a buffer of their own.
+    fn read_image_in(bytes: &[u8], grammar: &Grammar, placed: Option<&rerail_tape_format::home::Home>) -> Result<Self, String> {
         let mut reader = TapeReader { bytes, offset: 0 };
         if reader.take(8)? != TAPE_MAGIC {
             return Err("wrong tape image magic".into());
@@ -1278,6 +1313,7 @@ impl TapeImage {
             return Err("invalid contextual grammar alias count".into());
         }
         // Each column, then its padding to `COLUMN_ALIGN`, which must be zero.
+        let columns_at = reader.offset;
         let mut columns: [&[u8]; 5] = [&[]; 5];
         for (column, length) in columns.iter_mut().zip(lengths) {
             *column = reader.take(length)?;
@@ -1338,6 +1374,17 @@ impl TapeImage {
         }
         if reader.offset != bytes.len() {
             return Err("trailing tape image bytes".into());
+        }
+        if let Some(home) = placed {
+            // The columns as the stored image lays them, from `columns_at`: each padded to `COLUMN_ALIGN`.
+            let mut at = [(0, 0); 5];
+            let mut start = 0;
+            for (k, column) in columns.iter().enumerate() {
+                at[k] = (start, column.len());
+                start = padded(start + column.len());
+            }
+            let c = Columns15 { bytes: home.clone(), base: columns_at, at, widths, codes, kind_aliases, table: Default::default() };
+            return Ok(Self { held: Held::F15(c), language, source_len, source_digest: None });
         }
         Ok(Self::of15(columns, widths, codes, kind_aliases, language, source_len, None))
     }
@@ -1832,7 +1879,13 @@ impl Columns15 {
     /// Column `k` (`CODE` … `TAIL`).
     pub fn column(&self, k: usize) -> &[u8] {
         let (start, length) = self.at[k];
-        &self.bytes[start..start + length]
+        &self.bytes[self.base + start..self.base + start + length]
+    }
+
+    /// The columns, laid out from `base`, each padded.
+    fn columns_bytes(&self) -> &[u8] {
+        let (start, length) = self.at[Self::TAIL];
+        &self.bytes[self.base..self.base + padded(start + length)]
     }
 
     pub fn code(&self) -> &[u8] {
@@ -1857,7 +1910,7 @@ impl Columns15 {
 
     /// The buffer every column lies in, and where each starts in it: what a reader in place takes.
     pub fn laid_out(&self) -> (&[u8], [usize; 5]) {
-        (&self.bytes, self.at.map(|(start, _)| start))
+        (self.columns_bytes(), self.at.map(|(start, _)| start))
     }
 
     /// A test's change of column `k` (its bytes, or its length): the columns laid out again.
@@ -1865,7 +1918,8 @@ impl Columns15 {
     pub fn edit(&mut self, k: usize, change: impl FnOnce(&mut Vec<u8>)) {
         let mut columns: Vec<Vec<u8>> = (0..5).map(|k| self.column(k).to_vec()).collect();
         change(&mut columns[k]);
-        (self.bytes, self.at) = Self::laid(std::array::from_fn(|k| columns[k].as_slice()));
+        let (bytes, at) = Self::laid(std::array::from_fn(|k| columns[k].as_slice()));
+        (self.bytes, self.base, self.at) = (bytes.into(), 0, at);
         self.table = Default::default();
     }
 
@@ -1908,8 +1962,12 @@ impl Columns15 {
     }
 
     fn estimated_bytes(&self) -> usize {
-        self.bytes.capacity()
-            + self.codes.capacity() * std::mem::size_of::<Code>()
+        // A placed image's bytes are its slab's, counted there.
+        let own = match &self.bytes {
+            rerail_tape_format::home::Home::Own(v) => v.capacity(),
+            rerail_tape_format::home::Home::Placed(_) => 0,
+        };
+        own + self.codes.capacity() * std::mem::size_of::<Code>()
             + self.kind_aliases.capacity() * std::mem::size_of::<(String, bool)>()
             + self.kind_aliases.iter().map(|(name, _)| name.capacity()).sum::<usize>()
     }

@@ -440,6 +440,17 @@ pub fn resident(digests: &[[u8; 32]]) -> Result<Vec<Arc<Resident>>, Error> {
 /// offset (`bytes` of room there, its own).
 pub type Placement<'a> = ([u8; 32], usize, Box<dyn FnOnce(&Arc<Slab>, usize) -> Result<Resident, Error> + 'a>);
 
+/// A room of `bytes` (16-byte aligned) for a tape the store loads (decision 0353 step 4a): its slab and its offset
+/// there. The tape is written there once, by its load, and read there by the host and the device; the slab lives as
+/// long as a holder of it does, retired from the residency or not.
+pub fn tape_room(bytes: usize) -> Result<(Arc<Slab>, usize), Error> {
+    let mut state = STATE.0.lock().map_err(|_| Error::BackendFailure)?;
+    let (at, offset) = state.room(bytes, &[])?;
+    let clock = state.clock;
+    state.slabs[at].last_use = clock;
+    Ok((Arc::clone(&state.slabs[at].slab), offset))
+}
+
 /// Places the misses, keeping the slabs of every document `digests` reads.
 pub fn insert(digests: &[[u8; 32]], parts: Vec<Placement<'_>>) -> Result<(), Error> {
     let _admit = rerail_prof::Stage::start("residency.admit");

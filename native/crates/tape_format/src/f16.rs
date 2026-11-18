@@ -191,7 +191,8 @@ pub struct Tape16 {
     /// The checkpoints' width in bytes, from the source's length.
     cw: usize,
     source_len: u64,
-    buf: Vec<u8>,
+    /// As stored: its own, or placed in a slab's room (decision 0353 step 4a).
+    buf: crate::home::Home,
     /// Each region's start in `buf`, one more at the end.
     at: [usize; REGIONS + 1],
     vw: [usize; 4],
@@ -221,14 +222,15 @@ impl Tape16 {
     }
     /// Names the language's tape tag in its header: the writer does not know it.
     pub fn set_tag(&mut self, tag: u8) {
-        self.buf[head::LANGUAGE] = tag;
+        self.buf.own_mut()[head::LANGUAGE] = tag;
     }
     /// The tape as stored.
     pub fn as_bytes(&self) -> &[u8] {
         &self.buf
     }
-    pub fn into_bytes(self) -> Vec<u8> {
-        self.buf
+    /// Where its bytes are.
+    pub fn home(&self) -> &crate::home::Home {
+        &self.buf
     }
     /// Region `r` with its 8 bytes of room.
     fn region(&self, r: usize) -> &[u8] {
@@ -236,10 +238,11 @@ impl Tape16 {
     }
 
     /// The stored tape, held as it is: its header and part starts are checked against its length.
-    pub fn from_bytes(buf: Vec<u8>) -> Result<Self, String> {
+    pub fn from_bytes(buf: impl Into<crate::home::Home>) -> Result<Self, String> {
+        let buf: crate::home::Home = buf.into();
         let p = placement(&buf)?;
         let source_len = u64_at(&buf, head::SOURCE_LEN)?;
-        Ok(Tape16 { mark: buf[head::MARK], n: p.n, cw: p.cw, source_len, buf, at: p.at, vw: p.vw, frame: p.frame_of(source_len) })
+        Ok(Tape16 { mark: buf[head::MARK], n: p.n, cw: p.cw, source_len, at: p.at, vw: p.vw, frame: p.frame_of(source_len), buf })
     }
 
     /// Part `j`'s start in side list `k`'s region (one more at the end).
@@ -279,7 +282,7 @@ impl Tape16 {
         }
         let vw = std::array::from_fn(|k| side[k].vw);
         let p = Placement { n, cw, at, parts: std::array::from_fn(|k| HEAD16 + 4 * k * parts), vw };
-        Tape16 { mark, n, cw, source_len, buf, at, vw, frame: p.frame_of(source_len) }
+        Tape16 { mark, n, cw, source_len, buf: buf.into(), at, vw, frame: p.frame_of(source_len) }
     }
 
     /// Read with `lang`'s choices: the tape's mark is `lang`'s revision, else it is rewritten before it is read.
@@ -755,7 +758,8 @@ pub struct Tape16Z {
     source_len: u64,
     widths: [usize; 3],
     vw: [usize; 4],
-    buf: Vec<u8>,
+    /// As stored, its blocks compressed: its own, or placed in a slab's room (decision 0353 step 4a).
+    buf: crate::home::Home,
     /// Where the compressed blocks start in `buf`.
     comp: usize,
     /// Each block's start in the compressed bytes, one more at the end.
@@ -825,7 +829,7 @@ impl Tape16Z {
         }
         let start = buf.len();
         buf.extend_from_slice(&comp);
-        Tape16Z { id: next_id(), mark, n, cw, source_len, widths: w, vw, buf, comp: start, at, sides }
+        Tape16Z { id: next_id(), mark, n, cw, source_len, widths: w, vw, buf: buf.into(), comp: start, at, sides }
     }
 }
 
@@ -849,12 +853,14 @@ impl Tape16Z {
     pub fn as_bytes(&self) -> &[u8] {
         &self.buf
     }
-    pub fn into_bytes(self) -> Vec<u8> {
-        self.buf
+    /// Where its bytes are.
+    pub fn home(&self) -> &crate::home::Home {
+        &self.buf
     }
 
     /// The stored tape, held as it is: its header and block index are checked against its length.
-    pub fn from_bytes(buf: Vec<u8>) -> Result<Self, String> {
+    pub fn from_bytes(buf: impl Into<crate::home::Home>) -> Result<Self, String> {
+        let buf: crate::home::Home = buf.into();
         if buf.len() < HEAD16Z || &buf[..8] != MAGIC16Z {
             return Err("not a 16z tape".into());
         }
@@ -1172,7 +1178,7 @@ mod tests {
         let back = Tape16::from_bytes(tagged.as_bytes().to_vec()).unwrap();
         assert_eq!((back.tag(), back.source_len()), (7, 2_000));
         same(&f15, &back.reader(&lang).unwrap(), &number);
-        let z = Tape16Z::from_bytes(tagged.blocks(&lang).into_bytes()).unwrap();
+        let z = Tape16Z::from_bytes(tagged.blocks(&lang).as_bytes().to_vec()).unwrap();
         assert_eq!((z.tag(), z.source_len()), (7, 2_000));
         same(&f15, &z.reader(&lang).unwrap(), &number);
         let mut short = tagged.as_bytes().to_vec();
@@ -1199,7 +1205,7 @@ mod tests {
         t.reader(&lang).unwrap().match_groups(&set, |base, m| b.push((base, m)));
         assert_eq!(a, b, "a set past the cutoff");
         // The same tape in fixed blocks: every read decodes the block it falls in.
-        let z = Tape16Z::from_bytes(t.blocks(&lang).into_bytes()).unwrap();
+        let z = Tape16Z::from_bytes(t.blocks(&lang).as_bytes().to_vec()).unwrap();
         assert!(z.len() > 6 * Z, "several blocks");
         assert_eq!(Tape16::from_bytes(t.as_bytes().to_vec()).unwrap(), t);
         same(&plain, &z.reader(&lang).unwrap(), &number);

@@ -242,22 +242,33 @@ pub fn build_in_wave_with_tape(
     };
     let key = queued_tape(&digest, tag, gv, fv);
     let grammar = Arc::new(tape::Grammar::new(language)?);
-    let kept: Option<crate::content_store::ObjectBytes> = match found {
-        // Stored: read in its segment, or (an older row) decompressed.
+    // Stored: decompressed (or read from its segment) straight into its one home, a slab's room, and read there
+    // (decision 0353 step 4a).
+    let placed = match found {
         Some(frame) => {
             let _decode = crate::code_rule_dsl::logic::profile::span(|| "tape decompress".into());
-            Some(frame.bytes().map_err(|e| e.to_string())?)
+            let len = frame.raw_len().map_err(|e| e.to_string())?;
+            Some(tape::placed::place(len, |out| frame.copy_into(out)).map_err(|e| e.to_string())?)
         }
-        // Still queued for the writer: read where it is (gathered, placed, or a compressed frame).
+        None => None,
+    };
+    // Still queued for the writer: read where it is (gathered, placed, or a compressed frame).
+    let kept: Option<crate::content_store::ObjectBytes> = match placed {
+        Some(_) => None,
         None => cache.queued_tape(&key).transpose().map_err(|e| e.to_string())?,
     };
-    let primary = match kept {
-        Some(stored) => {
+    let primary = match (placed, kept) {
+        (Some(home), _) => {
+            crate::code_rule_dsl::logic::profile::decision("input tape cache", || "hit".into());
+            let _decode = crate::code_rule_dsl::logic::profile::span(|| "tape decode".into());
+            TapeImage::from_home(home, &grammar)?
+        }
+        (None, Some(stored)) => {
             crate::code_rule_dsl::logic::profile::decision("input tape cache", || "hit".into());
             let _decode = crate::code_rule_dsl::logic::profile::span(|| "tape decode".into());
             TapeImage::from_bytes(&stored, &grammar)?
         }
-        None => {
+        (None, None) => {
             crate::code_rule_dsl::logic::profile::decision("input tape cache", || "miss".into());
             let parse = crate::code_rule_dsl::logic::profile::span(|| "tape parse".into());
             crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, file.source().len() as u64);
@@ -331,17 +342,20 @@ pub(crate) fn build_cached_with_tape(
             cache.source_by_hash(HashKey::sha256(bytes)).map_err(e)?
         }
     };
+    // The stored tape's frame, decompressed (or read from its segment) straight into its home, a slab's room
+    // (decision 0353 step 4a).
     let stored = match source_id {
-        Some(id) => cache.tape_by_source(id, tag, gv, fv).map_err(e)?,
+        Some(id) => cache.tape_frames_for(&[id], tag, gv, fv).map_err(e)?.remove(0),
         None => None,
     };
     drop(lookup);
     let grammar = Arc::new(tape::Grammar::new(language)?);
-    let primary = match stored.and_then(|id| cache.get_tapes_bulk(&[id]).ok()?.remove(&id)) {
-        Some((stored, _)) => {
+    let primary = match stored {
+        Some(frame) => {
             crate::code_rule_dsl::logic::profile::decision("input tape cache", || "hit".into());
             let _decode = crate::code_rule_dsl::logic::profile::span(|| "tape decode".into());
-            TapeImage::from_bytes(&stored, &grammar)?
+            let len = frame.raw_len().map_err(e)?;
+            TapeImage::from_home(tape::placed::place(len, |out| frame.copy_into(out)).map_err(|e| e.to_string())?, &grammar)?
         }
         None => {
             crate::code_rule_dsl::logic::profile::decision("input tape cache", || "miss".into());

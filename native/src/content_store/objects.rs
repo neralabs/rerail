@@ -1377,4 +1377,15 @@ impl TapeFrame {
     pub fn is_empty(&self) -> bool {
         self.frame.is_empty()
     }
+
+    /// The tape's length, as its metadata gives it.
+    pub fn raw_len(&self) -> StoreResult<usize> {
+        usize::try_from(self.raw_length).map_err(|_| StoreError::Corrupt("a tape's length".to_owned()))
+    }
+
+    /// The tape's bytes into `out` (`raw_len` of them): decompressed straight there, or read from its segment
+    /// (decision 0353 step 4a: a tape's load writes its one home).
+    pub fn copy_into(&self, out: &mut [u8]) -> std::io::Result<()> {
+        self.frame.copy_into(out)
+    }
 }
