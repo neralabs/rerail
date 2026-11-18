@@ -5071,9 +5071,9 @@ pub struct Run<'a, 'b> {
     why_not: Option<String>,
     /// What kind of literal the native engine declined (`decline_class`), for the profile's SQLite fallbacks.
     why_class: Option<String>,
-    /// While the maintain mode writes its joins (decision 0364): a body literal read as a held relation of this name,
-    /// all its columns (an input's version: `r__old`, `r__minus`, `r__plus`), not as its input's query.
-    mode_reads: HashMap<usize, String>,
+    /// While the maintain mode writes its joins (decision 0364): a body literal read from this source, all its
+    /// columns (a changed input's version, `Version(r, …)`), not as its input's query.
+    mode_reads: HashMap<usize, JoinSource>,
     /// Derived relations whose table is made only when SQL first needs it (`ensure`): its `CREATE` statement. A
     /// relation the native engine derives and keeps never has one.
     pending: HashMap<String, String>,
@@ -6509,6 +6509,20 @@ impl Delta {
 
 fn kept_delta(db: &Connection, rel: &str, old: &Arc<super::native::component::InRel>, native_rels: &mut BTreeSet<String>) -> Result<bool> {
     let _span = super::profile::span(|| format!("{rel}: its delta against its kept rows"));
+    // Where it can be, the relation derived again is made a version of its kept rows in place (0364 R2): its change
+    // is then its marks, and nothing is copied or held beside it.
+    if let Some(new) = super::native::component::held(db, rel)
+        && let Some(rebased) = super::native::component::InRel::rebased(rel, old, &new)
+    {
+        let (gone, added) = rebased.version_counts().expect("started from its kept rows");
+        super::native::component::hold_as(db, rel, Arc::new(rebased));
+        return Ok(gone + added > 0);
+    }
+    if std::env::var_os("RERAIL_SHAPE_TRACE").is_some() {
+        let new = super::native::component::held(db, rel);
+        eprintln!("RERAIL_SHAPE_TRACE {rel}: not rebased (kept: view {}, levels {}, {} rows; new: {})", old.view_kind().is_some(), old.has_levels(), old.rows(),
+                  new.map_or("not held".to_owned(), |n| format!("view {}, levels {}, {} rows", n.view_kind().is_some(), n.has_levels(), n.rows())));
+    }
     let types = old.types().to_vec();
     let k = types.len();
     let new = super::native::component::derived(db, rel).ok_or_else(|| Error::Plan(format!("{rel}: derived again, but not held")))?;
@@ -7536,11 +7550,9 @@ impl<'a> Run<'a, '_> {
         let held = |rel: &str| super::native::component::held(self.db, rel);
         let mut lines = Vec::new();
         let mut input_held: Vec<String> = Vec::new();
+        // Each relation starts from its kept rows, held under its own name when the stratum opens (below).
         for r in scc {
-            let old_name = format!("{r}__old");
-            super::native::component::hold_as(self.db, &old_name, Arc::clone(&olds[r]));
-            input_held.push(old_name.clone());
-            lines.push(SpecLine::Rel { name: r.clone(), types: types[r].clone(), start: Start::Base { old: old_name, gone: "-".into(), seeded: false } });
+            lines.push(SpecLine::Rel { name: r.clone(), types: types[r].clone(), start: Start::Base { old: r.clone(), gone: "-".into(), seeded: false } });
         }
         lines.push(SpecLine::NoWrite);
         let recursive = bodies.iter().any(|b| (0..b.len()).any(|i| matches!(b.view(i), Lit::Atom(a) if scc.contains(b.rel(a)))));
@@ -7549,19 +7561,15 @@ impl<'a> Run<'a, '_> {
             lines.push(SpecLine::Leveled((0..scc.len()).collect()));
             lines.push(SpecLine::KeptOld);
         }
-        // The changed inputs' versions, held in place over their sources while the stratum runs: `r__mm_old`,
-        // `r__mm_minus`, `r__mm_plus`.
+        // The changed inputs' versions, given in place over their sources beside each input (`give_versions`) while
+        // the stratum runs: its joins read `Version(r, …)`, as they read a derived relation's.
         for (r, ([o, mi, pl], cols)) in ins {
             let t: Vec<u8> = pf.types(r).iter().map(|t| sym_char(&self.model.inputs, t) as u8).collect();
-            for (suffix, src) in [("old", o), ("minus", mi), ("plus", pl)] {
-                let name = format!("{r}__mm_{suffix}");
-                match cols {
-                    Some(cols) => super::native::component::hold_view_in_place(self.db, &name, Arc::clone(src), cols.clone(), t.clone()),
-                    None => super::native::component::hold_as(self.db, &name, super::native::component::InRel::over_source(Arc::clone(src), t.clone())),
-                }
-                input_held.push(name);
-            }
+            let given = [(Arc::clone(o), cols.clone()), (Arc::clone(mi), cols.clone()), (Arc::clone(pl), cols.clone())];
+            super::native::component::give_versions(self.db, r, t, given);
+            input_held.push(r.clone());
         }
+        let release = |given: &[String]| super::native::component::take_versions(self.db, given);
         for (bi, b) in bodies.iter().enumerate() {
             let head_i = ri[vs.head_at(rules[bi])];
             self.model.late(pf, b, None, false)?;
@@ -7586,11 +7594,8 @@ impl<'a> Run<'a, '_> {
                         JoinItem::Count { src, .. } | JoinItem::Extreme { src, .. } | JoinItem::StrJoin { src, .. } => src,
                         _ => continue,
                     };
+                    // A changed input read in its version already (`mode_reads`) is read as it is.
                     let JoinSource::Native(t) = src.clone() else { continue };
-                    // An input's version is its own relation (`r__mm_*`), read as it is.
-                    if t.contains("__mm_") {
-                        continue;
-                    }
                     if at == k {
                         *src = JoinSource::Version(t, dver);
                     } else if moved.contains(&t) && rest != super::native::component::spec::Ver::New {
@@ -7638,8 +7643,8 @@ impl<'a> Run<'a, '_> {
                         if !ins.contains_key(xr) {
                             continue;
                         }
-                        let suffix = if i == k { if by == V::Minus { "minus" } else { "plus" } } else if removing { "old" } else { continue };
-                        self.mode_reads.insert(i, format!("{xr}__mm_{suffix}"));
+                        let ver = if i == k { by } else if removing { V::Old } else { continue };
+                        self.mode_reads.insert(i, JoinSource::Version(xr.to_owned(), ver));
                     }
                     let made = self.whole_join_spec(b, &order, None, &ri, scc, &native_rels);
                     self.mode_reads.clear();
@@ -7684,7 +7689,7 @@ impl<'a> Run<'a, '_> {
                             for i in 0..b.len() {
                                 let (Lit::Atom(x) | Lit::Agg { atom: x, .. }) = b.view(i) else { continue };
                                 if ins.contains_key(b.rel(x)) {
-                                    self.mode_reads.insert(i, format!("{}__mm_old", b.rel(x)));
+                                    self.mode_reads.insert(i, JoinSource::Version(b.rel(x).to_owned(), V::Old));
                                 }
                             }
                         }
@@ -7704,11 +7709,7 @@ impl<'a> Run<'a, '_> {
                             super::native::component::spec::Arg::Local(_) => super::native::component::spec::Arg::Tok(super::native::component::spec::Tok::Wild),
                             x => x.clone(),
                         }).collect();
-                        let src = if ins.contains_key(rel) {
-                            JoinSource::Native(format!("{rel}__mm_{}", if key_ver == V::Minus { "minus" } else { "plus" }))
-                        } else {
-                            JoinSource::Version(rel.to_owned(), key_ver)
-                        };
+                        let src = JoinSource::Version(rel.to_owned(), key_ver);
                         if !spec.from.is_empty() {
                             let step = spec.from[at];
                             spec.from.insert(0, step);
@@ -7765,7 +7766,7 @@ impl<'a> Run<'a, '_> {
         }
         // Quiet: no join to run. The relation is its kept one, its statistics as kept (`quiet_card`).
         if quiet {
-            super::native::component::release(&self.db, &input_held);
+            release(&input_held);
             for (r, o) in olds {
                 let card = quiet_card(&mut self.model, &self.quiet, pf, &r, &o);
                 self.model.stats.card.insert(r.clone(), card);
@@ -7779,13 +7780,16 @@ impl<'a> Run<'a, '_> {
         let name = format!("mm_{h}");
         let spec = ComponentSpec { name: name.clone(), lines };
         let fx = Fx { db: self.db, direct: true };
+        for r in scc {
+            super::native::component::hold_as(self.db, r, Arc::clone(&olds[r]));
+        }
         fx.open(&spec)?;
         fx.run(&name, 0)?;
         for (r, live) in scc.iter().zip(fx.stats(&name, &|_, _| false)?) {
             live_stats(&mut self.model, r, live);
         }
         fx.close(&name)?;
-        super::native::component::release(&self.db, &input_held);
+        release(&input_held);
         self.native_rels.extend(scc.iter().cloned());
         // Nothing deleted, nothing derived: quiet, as a stratum whose joins all read empty deltas is.
         if scc.iter().all(|r| super::native::component::held(self.db, r).and_then(|x| x.version_counts()) == Some((0, 0))) {
@@ -9997,6 +10001,8 @@ pub trait Maintain {
     /// Stratum `scc` was maintained by the evaluator's mode (decision 0364 stage 3), not by a form: each relation's
     /// delta is its versions (held as `rel__minus`, `rel__plus`), and it counts as maintained (`recursive`: by levels).
     fn mode_ran(&mut self, scc: &BTreeSet<String>, recursive: bool);
+    /// Input `rel`'s rows gone and added, `[minus, plus]`, read in place: the maintain mode's versions of it.
+    fn given(&self, rel: &str) -> Option<[Arc<dyn crate::code_rule_dsl::facts::vtab::Source>; 2]>;
     /// Input `rel`'s rows as the last run had them, read in place (the maintain mode's `old` of an input).
     fn old_input(&self, rel: &str) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>;
 }
@@ -11482,9 +11488,16 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                     }
                     if kept_delta(db, &r, &old, &mut run.native_rels)? {
                         m.delta_made(&r);
-                        let rows = |s: &str| super::native::component::held(db, &format!("{r}__{s}")).and_then(|h| h.live_rows());
-                        if let (Some(gone), Some(added)) = (rows("minus"), rows("plus")) {
-                            outcome.deltas.insert(r.clone(), Delta::Rows { gone, added });
+                        // Made a version of its kept rows (`InRel::rebased`): its change is its marks, as a maintained
+                        // relation's. Else its delta's rows.
+                        let rebased = super::native::component::held(db, &r).filter(|h| h.start().is_some());
+                        if let Some((gone, added)) = rebased.and_then(|h| h.version_counts()) {
+                            outcome.deltas.insert(r.clone(), Delta::Marks { gone, added });
+                        } else {
+                            let rows = |s: &str| super::native::component::held(db, &format!("{r}__{s}")).and_then(|h| h.live_rows());
+                            if let (Some(gone), Some(added)) = (rows("minus"), rows("plus")) {
+                                outcome.deltas.insert(r.clone(), Delta::Rows { gone, added });
+                            }
                         }
                     } else {
                         moved_rels.remove(&r);
@@ -11620,8 +11633,8 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                             let (base, cols) = input_view_shape(v, rule, |x| f0.is_input(x))?;
                             (base, Some(cols))
                         };
-                        let b = |s: &str| crate::code_rule_dsl::facts::vtab::bound_source(db, &format!("{base}__{s}"));
-                        Some((r.clone(), ([m.old_input(&base)?, b("minus")?, b("plus")?], cols)))
+                        let [mi, pl] = m.given(&base)?;
+                        Some((r.clone(), ([m.old_input(&base)?, mi, pl], cols)))
                     }).collect();
                     // 0090 §4's threshold (0364 R4): a stratum whose changed reads' deltas reach past θ of its kept rows
                     // is derived again, its levels fresh from that derive. The deltas are their versions' sizes.
@@ -11638,7 +11651,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                         run.maintain_mode_blocks(scc, &rules, &moved, &olds, &ins)
                     };
                     if std::env::var_os("RERAIL_MODE_TRACE").is_some() {
-                        eprintln!("RERAIL_MODE_TRACE {key}: {}", blocks.as_deref().unwrap_or("the maintain mode"));
+                        eprintln!("RERAIL_MODE_TRACE {key}: {} ({delta_rows} delta rows, {kept_rows} kept)", blocks.as_deref().unwrap_or("the maintain mode"));
                     }
                     match blocks {
                         None => {
@@ -11699,14 +11712,6 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                     for r in scc {
                         let rel = super::native::component::held(db, r).ok_or_else(|| Error::Plan(format!("{r}: not held after its maintain mode")))?;
                         let (gone, added) = rel.version_counts().ok_or_else(|| Error::Plan(format!("{r}: no version after its maintain mode")))?;
-                        for (suffix, ver) in [("minus", super::native::component::Ver::Minus), ("plus", super::native::component::Ver::Plus)] {
-                            if let Some(v) = rel.version_view(ver) {
-                                // Sized, as a form's delta relation was by its run: its readers plan by it.
-                                run.model.stats.card.insert(format!("{r}__{suffix}"), (v.rows() as f64).max(1.0));
-                                super::native::component::hold_as(db, &format!("{r}__{suffix}"), v);
-                                run.native_rels.insert(format!("{r}__{suffix}"));
-                            }
-                        }
                         if added == 0 && gone == 0 {
                             outcome.unchanged.insert(r.clone());
                         } else {

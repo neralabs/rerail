@@ -230,5 +230,77 @@ maintenance relations and copies 15,000–110,000 rows to state its changes. 430
 - After that: the changed inputs' deltas from the documents' entries (1.2 s, `input delta by document`), and the kept
   rows from the frames (0.9 s).
 
+**After the index fix, the threshold and its readers' fix** (79196a432, M3 Max, `RERAIL_JOURNAL=off`: Q117). Every
+step's findings equal cold, kept and session alike:
+
+| Step | Cold (G instr.) | Kept (G instr.) | Kept / cold | qd (forms) | Session CPU s |
+|---|---|---|---|---|---|
+| 00 | 323 | 322 | 0.99 | — | 27.2 (its cold run) |
+| 01 | 324 | 180 | 0.55 | 0.64 | 15.3 |
+| 02 | 325 | 168 | 0.52 | 0.58 | 12.8 |
+| 03 | 325 | 226 | 0.69 | 0.74 | 15.4 |
+| 04 | 324 | 157 | 0.48 | 0.55 | 9.8 |
+| 05 | 329 | 287 | 0.87 | 0.59 | 19.8 |
+| 06 | 328 | 177 | 0.54 | 0.63 | 11.1 |
+| 07 | 334 | 186 | 0.56 | 0.61 | 11.3 |
+| 08 | 339 | 240 | 0.71 | 0.71 | 16.1 |
+
+Every kept step but 05 is below the forms'. A session edit costs 0.36–0.73 of the session's own cold run. The
+session's shape counters over the nine runs: 2.29 M rows copied, 7,350 maintenance relations held, 2,015 recheck
+lines unpriced. Those are step 3's and Q116's to remove.
+
+Two bugs turned up in the course of this:
+- The threshold derives again strata whose aggregate readers are maintained (`type_of`, then `type_first`, a
+  `min`). The atom-driven joins did not name an aggregate's atom's version, so it read `type_of`'s own, which a
+  relation derived again does not have. Fixed: the aggregate's atom reads the version it is given, as the aggregate
+  joins already did.
+- On the M3, the journal's replay sometimes missed the edit made just before a run, and the whole-run cutoff
+  answered the last step's findings. That is Q117, and the measurement runs without the journal until it is fixed.
+
 So the recheck was where the cost was, from a missing index rather than from the design. With that fixed, the rest of
 the plan's order stands: the copies (step 3), then the derive-again kinds (step 4).
+
+## Step 3: a change is its version, read in place (R1, R2)
+
+Every relation an edit changes now states its change the way a maintained one does, as rows its version names
+where they lie. Nothing is copied to state a change, and nothing is held under a second name.
+
+| Relation | Its change was | Now |
+|---|---|---|
+| Maintained by the mode | its marks, copied into `Delta` rows for the frames and the statistics | its marks, read in place (`DeltaIds`, `delta_each`) |
+| Derived again past θ | the kept and new rows copied, sorted and diffed into `r__minus`/`r__plus` (`kept_delta`) | the new rows made a version of the kept relation (`InRel::rebased`): rows no longer derived marked dead, rows newly derived appended, each row at the new derive's level |
+| A kept input (frames) | the changed owners' rows gained and lost, copied into sources | ids: those lost among the kept frames' rows, those gained among the layered input's appended rows (`InRel::picked`) |
+| A session's input | each changed document's whole memo entry cloned, its rows copied into sets | the memo holds entries shared (`Arc<Entry>`), and a change names each row by its entry and place (`input_delta::Delta`) |
+
+The names went the same way:
+- The mode's stratum starts from its kept relation held under its own name, not `r__old`.
+- A changed input is held under its own name while the stratum runs, as a relation whose versions are given
+  (`with_versions`), so its joins read `Version(r, …)` as they read a derived relation's. That replaces
+  `r__mm_old`, `r__mm_minus` and `r__mm_plus`.
+- The given input deltas go to the mode through the driver (`Maintain::given`). They are no longer declared as the
+  program's inputs `r__plus` and `r__minus`, nor bound by name.
+
+`r1_r2_an_edit_holds_no_maintenance_relation_and_copies_no_rows` runs again and passes. Still copying: a relation
+derived again that cannot be made a version of its kept rows (no orders to start from, or a different width). It
+keeps `kept_delta`'s diff, `Delta::Rows`, and that path is counted in the shape.
+
+Two session tests set θ = 0 and no floor, and then asserted that a stratum was maintained. They passed only while
+the threshold was gone. Under R4 they now assert what those settings mean:
+- `a_session_derives_again_the_strata_its_deltas_outgrow`: every reached stratum is derived again, none maintained,
+  and the findings are a full run's.
+- `a_session_derives_again_past_theta_and_maintains_below_it` (it was `…only_the_strata_priced_cheaper_so`): at θ
+  with no floor, some strata are derived again and some maintained in one session. The forms' pricing it once
+  named went with the forms.
+
+Over the O125 replay (M3 Max, `RERAIL_JOURNAL=off`, before the last fix below), every step's findings equal cold,
+kept and session alike. Kept edits cost 162–294 G instructions against cold's 323–339 G, as before step 3. They
+copy no row and hold no maintenance relation (before: 485–758 held an edit). Over its nine runs the session holds 16
+(before: 4,113) and copies 102 K rows (before: 2.29 M). Those copies are its outputs' derives again: `Rel::based`
+refused them when an order covered fewer rows than the relation, or when more than an eighth of its rows were
+dead. Now `based` starts from the orders that cover every row, and `rebased` compacts a kept relation that has
+too many rows dead and makes the change marks against its live rows. A unit test covers it
+(`a_relation_derived_again_is_a_version_of_its_kept_rows`); the replay has not been run since.
+
+A first form of the input versions replaced an input the engine holds with a view of it while its stratum ran, so
+its probes lost its indexes (kept step 04: 231 G against 163 G). The versions now lie beside the relation
+(`give_versions`), and its own rows are read as they are.

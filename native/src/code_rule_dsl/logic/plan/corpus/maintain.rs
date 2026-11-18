@@ -14,9 +14,9 @@ use std::sync::Arc;
 /// The part as a run evaluates it, and how its strata were evaluated.
 pub(in crate::code_rule_dsl) struct Maintained {
     pub(in crate::code_rule_dsl) program: lower::Lowered,
-    /// The changed inputs' deltas, bound as inputs of the run (`r__minus`, `r__plus`): the maintain mode's versions
-    /// of them (`super::driven_part`).
-    pub(in crate::code_rule_dsl) sources: Vec<(String, Arc<dyn Source>, Option<Arc<crate::code_rule_dsl::logic::native::component::InRel>>)>,
+    /// The changed inputs' rows gone and added, by input (`super::driven_part`): the maintain mode's versions of
+    /// them, read in place (`Maintain::given`). Not relations of the run (0364 R1).
+    pub(in crate::code_rule_dsl) given: Given,
     /// Strata maintained from deltas, and derived again.
     pub(in crate::code_rule_dsl) maintained: usize,
     pub(in crate::code_rule_dsl) derived_again: usize,
@@ -26,10 +26,13 @@ pub(in crate::code_rule_dsl) struct Maintained {
     pub(in crate::code_rule_dsl) again: Vec<(String, &'static str)>,
 }
 
+/// The changed inputs' rows gone and added (`Maintained::given`), by input: `[minus, plus]`.
+pub(in crate::code_rule_dsl) type Given = std::collections::HashMap<String, [Arc<dyn Source>; 2]>;
+
 impl Maintained {
     /// A part whose strata the cut runs are all derived again (no kept part to drive, or gates): `NOT_WALKED`.
     pub(in crate::code_rule_dsl) fn again(program: lower::Lowered, strata: usize) -> Maintained {
-        Maintained { program, sources: Vec::new(), maintained: 0, derived_again: strata, recursive: 0, again: vec![("*".to_owned(), NOT_WALKED); strata] }
+        Maintained { program, given: Given::new(), maintained: 0, derived_again: strata, recursive: 0, again: vec![("*".to_owned(), NOT_WALKED); strata] }
     }
 }
 
@@ -146,6 +149,10 @@ pub mod shape {
     pub fn held(name: &str) {
         if is_maintenance_name(name) {
             MAINTENANCE_HELD.fetch_add(1, Relaxed);
+            // `RERAIL_SHAPE_TRACE`: each one named, to find what still holds them.
+            if std::env::var_os("RERAIL_SHAPE_TRACE").is_some() {
+                eprintln!("RERAIL_SHAPE_TRACE held {name}");
+            }
         }
     }
 

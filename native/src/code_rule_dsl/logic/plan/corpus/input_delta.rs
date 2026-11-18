@@ -21,8 +21,8 @@
 //! do not add up (`old - gone + new = rows`), which another source fed.
 
 use super::memo::{self, Content, Entry};
-use rustc_hash::FxHashSet;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// The document keys guests take (decision 0055, `memo::doc_keys`): a guest's key is a hash of its host's path, the
 /// host node and the grammar, and its rows are in its host's entry alone (`host_of`).
@@ -33,10 +33,10 @@ pub(in crate::code_rule_dsl) type Docs = HashMap<String, (Content, i64)>;
 
 /// The documents that differ between two runs: each one's entry before and after (`None`: not read in that run).
 /// `None` when an entry is not in the memo (it was emptied, or a chunk's rows were not attributable).
-pub(super) fn changed(old: &Docs, new: &Docs, held: &memo::Held, program: &[u8; 32]) -> Option<Vec<(Option<Entry>, Option<Entry>)>> {
+pub(super) fn changed(old: &Docs, new: &Docs, held: &memo::Held, program: &[u8; 32]) -> Option<Vec<(Option<Arc<Entry>>, Option<Arc<Entry>>)>> {
     let held = held.lock().expect("the session memo");
     let live = std::env::var_os("RERAIL_STRATA_LIVE").is_some();
-    let entry = |path: &str, (content, key): (Content, i64)| -> Option<Entry> {
+    let entry = |path: &str, (content, key): (Content, i64)| -> Option<Arc<Entry>> {
         let Content::Held(digest) = content else {
             if live {
                 eprintln!("RERAIL_STRATA_LIVE changed documents: {path}'s content is not held ({content:?})");
@@ -68,31 +68,13 @@ pub(super) fn changed(old: &Docs, new: &Docs, held: &memo::Held, program: &[u8; 
 
 /// The rows gone and new of the input whose entry rows are under `key`, read as the input's columns: `cols[c]` is
 /// the entry column the input's column `c` holds, `None` for one it does not hold (it reads as 0). `None` when a
-/// row is not its document's alone (no node of that document in it).
-pub(super) fn delta(changes: &[(Option<Entry>, Option<Entry>)], key: &str, cols: &[Option<usize>]) -> Option<(Vec<Vec<i64>>, Vec<Vec<i64>>)> {
-    let out = delta_rows(changes, key, cols)?;
-    super::maintain::shape::rows_copied(out.0.len() + out.1.len());
-    Some(out)
-}
-
-fn delta_rows(changes: &[(Option<Entry>, Option<Entry>)], key: &str, cols: &[Option<usize>]) -> Option<(Vec<Vec<i64>>, Vec<Vec<i64>>)> {
-    let rows_of = |e: &Option<Entry>| -> Option<FxHashSet<Vec<i64>>> {
-        let mut out = FxHashSet::default();
-        let Some(e) = e else { return Some(out) };
-        let Some((width, flat)) = e.rows.get(key) else { return Some(out) };
-        if *width == 0 {
-            return if flat.is_empty() { Some(out) } else { None };
-        }
-        for row in flat.chunks(*width) {
-            if !row.iter().any(|&v| v >= 1 << 32 && (v >> 32 == e.key || GUESTS.contains(&(v >> 32)))) {
-                return None;
-            }
-            out.insert(cols.iter().map(|c| c.and_then(|c| row.get(c).copied()).unwrap_or(0)).collect());
-        }
-        Some(out)
-    };
-    let (mut gone, mut new) = (Vec::new(), Vec::new());
-    for (was, now) in changes {
+/// row is not its document's alone (no node of that document in it). Each is named where it lies (0364 R2): by its
+/// entry among `changes` and its place in that entry's rows, read in place (`Delta::source`), not copied.
+pub(super) fn delta(changes: &[(Option<Arc<Entry>>, Option<Arc<Entry>>)], key: &str, cols: &[Option<usize>]) -> Option<Delta> {
+    // The entries, each once: an old one at `2 i`, a new one at `2 i + 1`.
+    let entries: Vec<Option<Arc<Entry>>> = changes.iter().flat_map(|(w, n)| [w.clone(), n.clone()]).collect();
+    let mut out = Delta { entries, key: key.to_owned(), cols: cols.to_vec(), gone: Vec::new(), new: Vec::new() };
+    for (i, (was, now)) in changes.iter().enumerate() {
         // The same rows under the same key: nothing gone or new (an edit leaves most relations of a file as they were).
         if let (Some(w), Some(n)) = (was, now)
             && w.key == n.key
@@ -100,22 +82,138 @@ fn delta_rows(changes: &[(Option<Entry>, Option<Entry>)], key: &str, cols: &[Opt
         {
             continue;
         }
-        let (was, now) = (rows_of(was)?, rows_of(now)?);
-        gone.extend(was.difference(&now).cloned());
-        new.extend(now.difference(&was).cloned());
+        let (w, n) = (2 * i as u32, 2 * i as u32 + 1);
+        if !out.owned(w) || !out.owned(n) {
+            return None;
+        }
+        // Each side's rows as the input's columns, a row once; then those the other side lacks.
+        let (was_rows, now_rows) = (out.distinct(w), out.distinct(n));
+        let lacks = |rows: &hashbrown::HashTable<u32>, e: u32, r: u32| {
+            let h = out.hash(e, r);
+            rows.find(h, |&o| out.same((e, r), (if e == w { n } else { w }, o))).is_none()
+        };
+        let gone: Vec<(u32, u32)> = was_rows.iter().filter(|&&r| lacks(&now_rows, w, r)).map(|&r| (w, r)).collect();
+        let new: Vec<(u32, u32)> = now_rows.iter().filter(|&&r| lacks(&was_rows, n, r)).map(|&r| (n, r)).collect();
+        out.gone.extend(gone);
+        out.new.extend(new);
     }
-    if !gone.is_empty() || !new.is_empty() {
-        crate::code_rule_dsl::logic::profile::warm_fault("a non-empty delta", || format!("input {key}: {} rows gone, {} new", gone.len(), new.len()));
+    if !out.gone.is_empty() || !out.new.is_empty() {
+        crate::code_rule_dsl::logic::profile::warm_fault("a non-empty delta", || format!("input {key}: {} rows gone, {} new", out.gone.len(), out.new.len()));
     }
-    Some((gone, new))
+    Some(out)
+}
+
+/// An input's change, read from the changed documents' entries where their rows lie: each row by its entry (an index
+/// into `entries`) and its place among that entry's rows of `key`.
+pub(super) struct Delta {
+    entries: Vec<Option<Arc<Entry>>>,
+    key: String,
+    cols: Vec<Option<usize>>,
+    pub(super) gone: Vec<(u32, u32)>,
+    pub(super) new: Vec<(u32, u32)>,
+}
+
+impl Delta {
+    fn flat(&self, e: u32) -> Option<(usize, &[i64])> {
+        let (w, flat) = self.entries[e as usize].as_ref()?.rows.get(&self.key)?;
+        Some((*w, flat.as_slice()))
+    }
+    fn rows(&self, e: u32) -> u32 {
+        self.flat(e).map_or(0, |(w, f)| if w == 0 { 0 } else { (f.len() / w) as u32 })
+    }
+    /// Input column `c` of entry `e`'s row `r`.
+    fn value(&self, (e, r): (u32, u32), c: usize) -> i64 {
+        let Some((w, flat)) = self.flat(e) else { return 0 };
+        self.cols[c].and_then(|x| (x < w).then(|| flat[r as usize * w + x])).unwrap_or(0)
+    }
+    fn hash(&self, e: u32, r: u32) -> u64 {
+        let mut h = rustc_hash::FxHasher::default();
+        for c in 0..self.cols.len() {
+            std::hash::Hasher::write_i64(&mut h, self.value((e, r), c));
+        }
+        std::hash::Hasher::finish(&h)
+    }
+    fn same(&self, a: (u32, u32), b: (u32, u32)) -> bool {
+        (0..self.cols.len()).all(|c| self.value(a, c) == self.value(b, c))
+    }
+    /// Whether each of entry `e`'s rows names a node of its document or of one of its guests: its document's alone.
+    fn owned(&self, e: u32) -> bool {
+        let Some(entry) = self.entries[e as usize].as_ref() else { return true };
+        let Some((w, flat)) = self.flat(e) else { return true };
+        if w == 0 {
+            return flat.is_empty();
+        }
+        flat.chunks(w).all(|row| row.iter().any(|&v| v >= 1 << 32 && (v >> 32 == entry.key || GUESTS.contains(&(v >> 32)))))
+    }
+    /// Entry `e`'s rows as the input's columns, each distinct row once (by its first place).
+    fn distinct(&self, e: u32) -> hashbrown::HashTable<u32> {
+        let mut t = hashbrown::HashTable::new();
+        for r in 0..self.rows(e) {
+            let h = self.hash(e, r);
+            if t.find(h, |&o| self.same((e, r), (e, o))).is_none() {
+                t.insert_unique(h, r, |&o| self.hash(e, o));
+            }
+        }
+        t
+    }
+    /// The rows of `which` (`gone` or `new`) read in place, as a source of columns `names`.
+    pub(super) fn source(self: &Arc<Self>, gone: bool, names: Vec<String>) -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {
+        Arc::new(DeltaRows { delta: Arc::clone(self), gone, names })
+    }
+}
+
+/// `Delta::source`'s rows: a change's rows gone or new, read from the entries.
+struct DeltaRows {
+    delta: Arc<Delta>,
+    gone: bool,
+    names: Vec<String>,
+}
+
+impl DeltaRows {
+    fn picks(&self) -> &[(u32, u32)] {
+        if self.gone { &self.delta.gone } else { &self.delta.new }
+    }
+}
+
+impl crate::code_rule_dsl::facts::vtab::Source for DeltaRows {
+    fn columns(&self) -> Vec<String> {
+        self.names.clone()
+    }
+    fn len(&self) -> usize {
+        self.picks().len()
+    }
+    fn estimated_matches(&self, _column: usize, _batch: bool) -> usize {
+        self.len()
+    }
+    fn value(&self, row: usize, column: usize) -> i64 {
+        self.delta.value(self.picks()[row], column)
+    }
+    fn indexed(&self, _column: usize) -> bool {
+        false
+    }
+    fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
+        // A change's rows are few: tested in turn.
+        Some((0..self.len()).filter(|&r| values.contains(&self.value(r, column))).collect())
+    }
 }
 
 #[cfg(test)]
 pub mod tests {
     use super::*;
 
-    fn entry(key: i64, rel: &str, rows: &[[i64; 2]]) -> Entry {
-        Entry { key, rows: [(rel.to_owned(), (2, rows.iter().flatten().copied().collect()))].into(), ..Default::default() }
+    fn entry(key: i64, rel: &str, rows: &[[i64; 2]]) -> Arc<Entry> {
+        Arc::new(Entry { key, rows: [(rel.to_owned(), (2, rows.iter().flatten().copied().collect()))].into(), ..Default::default() })
+    }
+
+    /// A change's rows gone and new, read out to compare (`Delta::source`).
+    fn delta(changes: &[(Option<Arc<Entry>>, Option<Arc<Entry>>)], key: &str, cols: &[Option<usize>]) -> Option<(Vec<Vec<i64>>, Vec<Vec<i64>>)> {
+        use crate::code_rule_dsl::facts::vtab::Source as _;
+        let d = Arc::new(super::delta(changes, key, cols)?);
+        let read = |gone: bool| {
+            let s = d.source(gone, (0..cols.len()).map(|c| format!("c{c}")).collect());
+            (0..s.len()).map(|r| (0..cols.len()).map(|c| s.value(r, c)).collect()).collect()
+        };
+        Some((read(true), read(false)))
     }
 
     /// A changed document's rows gone and new, read as the input's columns; its unchanged relations are skipped.

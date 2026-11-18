@@ -1145,6 +1145,11 @@ impl Layered {
         Layered { names, kept, ranges, dead, before, added, appended }
     }
 
+    /// The changed owners' new rows, one after another (`OwnerPatch::plus` names its rows by their places here).
+    pub(in crate::code_rule_dsl) fn added(&self) -> &Arc<dyn Source> {
+        &self.added
+    }
+
     fn live_kept(&self) -> usize {
         self.kept.len() - *self.before.last().expect("one at least") as usize
     }

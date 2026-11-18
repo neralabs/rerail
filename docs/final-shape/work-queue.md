@@ -2630,3 +2630,18 @@ that ran right in one pass was stale in the next.
   the replay is confirmed complete some other way. A test edits a file and starts the next run within
   milliseconds, many times over, on the host where it fails.
 - **Record**: —
+
+### Q118. A cold replay step lost the findings of files its edit changed: the harness's work tree was pruned under it (closed)
+
+Found 2026-11-18, measuring 0364 over the O125 replay (`maintain-measure.sh cold` on a farm host, M3 Max).
+
+- **Seen**: in three passes, cold steps from some step on ran far fewer instructions (156–246 G, once 15 G, against
+  321–339 G) and lost thousands of findings. The step varied: 05, then 04, then 00. A rerun of the same engine's
+  cold steps was right, and the kept steps of each pass equalled the right cold ones.
+- **Cause**: not the engine. The replay's work tree and inputs were under the host's copy of the checkout
+  (`tmp/mm`, `tmp/mm-in`). Each later `test-remote` call (a targeted test run while the replay ran) syncs the
+  checkout to the host and removes its untracked files. The bad steps began right after such a call. In the last
+  pass, step 00's own log says its work tree was not a readable directory.
+- **Fixed**: `maintain-measure.sh` takes `MM_ROOT` for its outputs, and the replay's host script keeps its inputs,
+  outputs and engine under the host's `$TMPDIR`, outside the checkout.
+- **Record**: this entry.

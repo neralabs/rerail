@@ -186,7 +186,7 @@ pub(in crate::code_rule_dsl) fn run_with(
     let clean = kept.as_ref().map(|k| cut.sources(k, &|r| part_f.is_input(r))).unwrap_or_default();
     let mut bound: Vec<String> = Vec::new();
     // The clean relations, and the changed inputs' deltas.
-    for (rel, source, held) in clean.into_iter().chain(maintained.sources.iter().cloned()) {
+    for (rel, source, held) in clean {
         bound.push(rel.clone());
         super::bind_kept(&mut binder, modules, db, stats, rel, source, held, false)?;
     }
@@ -212,6 +212,7 @@ pub(in crate::code_rule_dsl) fn run_with(
                 derived_again: &derived_again,
                 maintains: BTreeSet::new(),
                 seeds,
+                given: maintained.given.clone(),
                 counts: (0, 0, 0),
                 again: Vec::new(),
                 walked: (0, 0, 0),

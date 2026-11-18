@@ -155,7 +155,6 @@ const SMALL_EDITS: &[(&str, &str, &str)] = &[
 /// the mark of its rows and kills (0328 §5, 0364 stage 2), for inputs, for strata the mode maintains and for strata
 /// derived again alike.
 #[test]
-#[ignore = "R1, R2: deltas are still held as r__minus/r__plus and copied as rows (t43 step 3)"]
 fn r1_r2_an_edit_holds_no_maintenance_relation_and_copies_no_rows() {
     let mut s = kinds("r1r2");
     s.run();

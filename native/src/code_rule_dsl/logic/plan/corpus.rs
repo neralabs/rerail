@@ -8031,7 +8031,7 @@ fn run_observed(
                 }
                 let no_holders = rustc_hash::FxHashMap::default();
                 let mut changed = 0usize;
-                let mut results: Vec<(String, usize, bool, Vec<String>, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, OwnerPatch)> = Vec::new();
+                let mut results: Vec<(String, usize, bool, Vec<String>, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, OwnerPatch, Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>)> = Vec::new();
                 // Each input's old rows (the changed files' entries) and this run's, before any is patched.
                 #[allow(clippy::type_complexity)]
                 let mut staged: Vec<(&String, usize, Option<&Vec<String>>, Vec<String>, Vec<Vec<Vec<i64>>>, Vec<Vec<i64>>)> = Vec::new();
@@ -8133,13 +8133,15 @@ fn run_observed(
                         None => (0..width).map(|c| format!("c{c}")).collect(),
                         Some(_) => names.clone(),
                     };
-                    let source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = if patch.changed.is_empty() {
-                        retain::renamed(Arc::clone(&k.source), bound.clone())
+                    let (source, added): (Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, _) = if patch.changed.is_empty() {
+                        (retain::renamed(Arc::clone(&k.source), bound.clone()), None)
                     } else {
                         changed += 1;
-                        Arc::new(retain::Layered::new(bound.clone(), Arc::clone(&k.source), Arc::clone(&k.ranges), std::mem::take(&mut patch.changed)))
+                        let layered = retain::Layered::new(bound.clone(), Arc::clone(&k.source), Arc::clone(&k.ranges), std::mem::take(&mut patch.changed));
+                        let added = Arc::clone(layered.added());
+                        (Arc::new(layered), Some(added))
                     };
-                    results.push((rel.clone(), width, base.is_some(), bound, source, patch));
+                    results.push((rel.clone(), width, base.is_some(), bound, source, patch, added));
                 }
                 if let Some(mut t) = read_trace {
                     let real = evaluated.len();
@@ -8151,19 +8153,20 @@ fn run_observed(
                 drop(_s2);
                 let _s3 = crate::code_rule_dsl::logic::profile::span(|| "the inputs adopted".into());
                 let mut adopted: HashMap<String, retain::KeptInput> = HashMap::new();
-                for (rel, width, is_base, bound, source, patch) in results {
+                for (rel, width, is_base, bound, source, patch, added) in results {
                     let k = &kept[&rel];
                     input_digests.insert(rel.clone(), patch.digest);
                     adopted.insert(rel.clone(), retain::KeptInput { source: retain::renamed(Arc::clone(&k.source), bound.clone()), docs: Arc::clone(&k.docs), digest: k.digest, ranges: Arc::clone(&k.ranges) });
                     if let Some(docs) = patch.docs {
                         // Its rows' digests by owner, for the frames written back and the next run.
                         kept_input_docs.insert(rel.clone(), Arc::new(docs));
-                        // Named as the planner reads `r__plus`'s and `r__minus`'s statistics (`sql_col`).
-                        let rows_source = |rows: &[Vec<i64>], suffix: &str| {
-                            let name = format!("{rel}__{suffix}");
-                            crate::code_rule_dsl::logic::native::component::columns_source((0..width).map(|c| super::sql_col(&name, c)).collect(), (0..width).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect())
-                        };
-                        given_deltas.insert(rel.clone(), (rows_source(&patch.plus, "plus"), rows_source(&patch.minus, "minus")));
+                        // Read where they lie (0364 R2): the rows gained among the appended ones, those lost among the kept
+                        // ones. Named as the planner reads `r__plus`'s and `r__minus`'s statistics (`sql_col`).
+                        let names = |suffix: &str| { let name = format!("{rel}__{suffix}"); (0..width).map(|c| super::sql_col(&name, c)).collect::<Vec<_>>() };
+                        let none = || crate::code_rule_dsl::logic::native::component::columns_source(names("plus"), vec![Some(Vec::new()); width]);
+                        let plus = added.map_or_else(none, |a| crate::code_rule_dsl::logic::native::component::InRel::picked(a, patch.plus, names("plus")));
+                        let minus = crate::code_rule_dsl::logic::native::component::InRel::picked(Arc::clone(&k.source), patch.minus, names("minus"));
+                        given_deltas.insert(rel.clone(), (plus, minus));
                     }
                     if is_base {
                         let held = &stored.iter().find(|(r, _)| *r == rel).expect("a base relation").1;
@@ -8829,7 +8832,7 @@ fn run_observed(
                                 None
                             };
                             // Its rows add up: the old less those gone, with those new, are its rows now.
-                            let adds_up = |(gone, plus): &(Vec<Vec<i64>>, Vec<Vec<i64>>)| kept.input_source(rel).is_some_and(|old| old.len() + plus.len() == new.len() + gone.len());
+                            let adds_up = |d: &input_delta::Delta| kept.input_source(rel).is_some_and(|old| old.len() + d.new.len() == new.len() + d.gone.len());
                             let live = std::env::var_os("RERAIL_STRATA_LIVE").is_some();
                             let read_some = read.is_some();
                             let delta = read.and_then(|(key, cols)| input_delta::delta(changes, &key, &cols));
@@ -8839,22 +8842,21 @@ fn run_observed(
                                     None => "a row not its document's alone".to_owned(),
                                     Some(d) if !adds_up(d) => format!(
                                         "rows do not add up: old {:?} + new {} != now {} + gone {}",
-                                        kept.input_source(rel).map(|o| o.len()), d.1.len(), new.len(), d.0.len()
+                                        kept.input_source(rel).map(|o| o.len()), d.new.len(), new.len(), d.gone.len()
                                     ),
-                                    Some((gone, plus)) => format!("from the changed documents' entries: {} gone, {} new, of {} rows", gone.len(), plus.len(), new.len()),
+                                    Some(d) => format!("from the changed documents' entries: {} gone, {} new, of {} rows", d.gone.len(), d.new.len(), new.len()),
                                 };
                                 eprintln!("RERAIL_STRATA_LIVE input delta {rel}: {why}");
                             }
-                            if let Some((gone, plus)) = delta.filter(adds_up) {
+                            if let Some(d) = delta.filter(adds_up) {
                                 from_entries += 1;
-                                from_entries_rows += gone.len() + plus.len();
+                                from_entries_rows += d.gone.len() + d.new.len();
                                 let width = new.columns().len();
-                                // Named as the planner reads `r__plus`'s and `r__minus`'s statistics (`sql_col`).
-                                let rows_source = |rows: &[Vec<i64>], suffix: &str| {
-                                    let name = format!("{rel}__{suffix}");
-                                    crate::code_rule_dsl::logic::native::component::columns_source((0..width).map(|c| super::sql_col(&name, c)).collect(), (0..width).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect())
-                                };
-                                return Some((rows_source(&plus, "plus"), rows_source(&gone, "minus")));
+                                // Read from the entries where the rows lie (0364 R2). Named as the planner reads
+                                // `r__plus`'s and `r__minus`'s statistics (`sql_col`).
+                                let names = |suffix: &str| { let name = format!("{rel}__{suffix}"); (0..width).map(|c| super::sql_col(&name, c)).collect::<Vec<_>>() };
+                                let d = Arc::new(d);
+                                return Some((d.source(false, names("plus")), d.source(true, names("minus"))));
                             }
                         }
                         let live = std::env::var_os("RERAIL_STRATA_LIVE").is_some();
@@ -8978,7 +8980,7 @@ fn run_observed(
                         },
                     };
                     // The clean relations, and the changed inputs' deltas.
-                    for (rel, source, held) in clean.into_iter().chain(maintained.sources.iter().cloned()) {
+                    for (rel, source, held) in clean {
                         bind_kept(&mut binder, &modules, &db, &mut stats, rel, source, held, false)?;
                     }
                     drop(s);
@@ -9088,6 +9090,7 @@ fn run_observed(
                                 derived_again: &derived_again,
                                 maintains: BTreeSet::new(),
                                 seeds: std::mem::take(&mut seeds),
+                                given: maintained.given.clone(),
                                 counts: (0, 0, 0),
                                 again: Vec::new(),
                                 walked: (0, 0, 0),
@@ -9866,6 +9869,8 @@ struct Driver<'d, 'k> {
     /// Relations of the strata maintained so far.
     maintains: BTreeSet<String>,
     seeds: Vec<String>,
+    /// The changed inputs' rows gone and added (`driven_part`).
+    given: maintain::Given,
     /// Strata maintained, derived again, and of those maintained the recursive.
     counts: (usize, usize, usize),
     again: Vec<(String, &'static str)>,
@@ -9928,6 +9933,10 @@ impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
 
     fn seeds(&mut self) -> Vec<String> {
         std::mem::take(&mut self.seeds)
+    }
+
+    fn given(&self, rel: &str) -> Option<[Arc<dyn crate::code_rule_dsl::facts::vtab::Source>; 2]> {
+        self.given.get(rel).cloned()
     }
 
     fn old_input(&self, rel: &str) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
@@ -10018,10 +10027,10 @@ pub(in crate::code_rule_dsl) fn kept_statistics(
 pub(in crate::code_rule_dsl) fn driven_part(cut: &retain::Cut, cross: &lower::Lowered, answer: &mut dyn FnMut(&str) -> Option<(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>) -> Result<(maintain::Maintained, Vec<String>, BTreeSet<String>)> {
     let mut seeds: Vec<String> = Vec::new();
     let mut given_rels: BTreeSet<String> = BTreeSet::new();
-    let mut part = cut.program(cross)?;
-    let mut sources = Vec::new();
-    // Each delta input made, and the relation it is a delta of.
-    let mut added: Vec<(String, String)> = Vec::new();
+    let part = cut.program(cross)?;
+    // Each changed input's rows gone and added, handed to the maintain mode as its versions (0364 R1): not declared
+    // as relations of the program, nor bound under names of their own.
+    let mut given = maintain::Given::new();
     for rel in &cut.changed {
         let Some((plus, minus)) = answer(rel) else {
             seeds.push(rel.clone());
@@ -10030,35 +10039,10 @@ pub(in crate::code_rule_dsl) fn driven_part(cut: &retain::Cut, cross: &lower::Lo
         if plus.len() + minus.len() > 0 {
             seeds.push(rel.clone());
         }
-        for (suffix, source) in [("plus", plus), ("minus", minus)] {
-            let name = format!("{rel}__{suffix}");
-            if let Some(d) = part.domains.get(rel).cloned() {
-                part.domains.insert(name.clone(), d);
-            }
-            added.push((name.clone(), rel.clone()));
-            sources.push((name, source, None));
-        }
+        given.insert(rel.clone(), [minus, plus]);
         given_rels.insert(rel.clone());
     }
-    // The deltas' inputs, each declared as its relation (decision 0244): over the cut's version, an overlay of fields.
-    let v = part.version.clone();
-    let placed = super::body::Placed::whole(v.clone());
-    let f = placed.fields()?;
-    let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(&v);
-    let (mut nullary, mut inputs): (Vec<&str>, Vec<String>) = (Vec::new(), f.inputs().map(str::to_owned).collect());
-    for (name, rel) in &added {
-        if let Some(cols) = f.columns(rel) {
-            b.declare(name, &cols);
-        }
-        if f.nullary(rel) {
-            nullary.push(name.as_str());
-        }
-        inputs.push(name.clone());
-    }
-    b.add_nullary(&nullary);
-    b.set_inputs(&inputs);
-    part.version = b.finish_overlay().map_err(Error::Plan)?;
-    Ok((maintain::Maintained { program: part, sources, maintained: 0, derived_again: 0, recursive: 0, again: Vec::new() }, seeds, given_rels))
+    Ok((maintain::Maintained { program: part, given, maintained: 0, derived_again: 0, recursive: 0, again: Vec::new() }, seeds, given_rels))
 }
 
 /// The constants the rules test `rel` by: a relation's own, or for its old rows (`r__old`) its relation's.
@@ -11500,7 +11484,8 @@ pub mod tests {
         let kept = kept_of(vec![1, 2]);
         let patch = patch_owners("defs", &kept, 0, None, &evaluated, &[], vec![vec![doc, 1], vec![doc, 3]], &cells).unwrap();
         assert_eq!(patch.changed, vec![(doc, vec![vec![doc, 1], vec![doc, 3]])]);
-        assert_eq!((patch.plus, patch.minus), (vec![vec![doc, 3]], vec![vec![doc, 2]]));
+        // Named by place: the second of the appended rows, the second kept one.
+        assert_eq!((patch.plus, patch.minus), (vec![1], vec![1]));
     }
 
     #[test]
@@ -11867,11 +11852,13 @@ fn maintained_cross(cross: &lower::Lowered) -> Result<lower::Lowered> {
 
 /// An input's change by owner (decision 0117 step 2, `patch_owners`): each changed owner's rows now, the rows the
 /// input gained and lost as a set (`r__plus`, `r__minus`), and its digests by owner and digest after it (`None`, the
-/// kept ones, when no owner's rows changed).
+/// kept ones, when no owner's rows changed). The rows gained and lost are named where they lie (0364 R2): `plus`
+/// by their places in `changed`'s rows, one after another (the layered input's appended rows), `minus` by their
+/// places in the kept rows. Neither is copied.
 struct OwnerPatch {
     changed: Vec<(i64, Vec<Vec<i64>>)>,
-    plus: Vec<Vec<i64>>,
-    minus: Vec<Vec<i64>>,
+    plus: Vec<u32>,
+    minus: Vec<u32>,
     docs: Option<retain::DocDigests>,
     digest: u64,
     /// Measured (`RERAIL_STATS_KEEP_TRACE`): the owners read, the kept rows read, the owners found unchanged.
@@ -11930,6 +11917,8 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&
     };
     let set = |rows: &[Vec<i64>]| rows.iter().cloned().collect::<BTreeSet<Vec<i64>>>();
     let mut read = (0usize, 0usize, 0usize);
+    // The rows of `changed` so far: where the next changed owner's rows start among the appended ones.
+    let mut appended = 0u32;
     for o in touched {
         // A real document evaluated this run, which no changed file's old entry names: its rows are this run's
         // (below), so when they are its kept digest's it is unchanged, and its kept rows are not read (Q20: read,
@@ -11954,6 +11943,7 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&
         read.0 += 1;
         read.1 += kept.ranges.get(&o).map_or(0, |r| r.1 as usize);
         // The owner's kept rows, checked against its digest: the only kept rows the edit reads.
+        let was_at = kept.ranges.get(&o).map_or(0, |r| r.0);
         let was: Vec<Vec<i64>> = match kept.ranges.get(&o) {
             Some(&(start, n)) => {
                 let mut row = vec![0i64; width];
@@ -12029,8 +12019,12 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&
             continue;
         }
         let (a, b) = (set(&was), set(&now));
-        minus.extend(a.difference(&b).cloned());
-        plus.extend(b.difference(&a).cloned());
+        // Each row once, at its first place (a base relation may hold a row once per file).
+        let mut once: rustc_hash::FxHashSet<&[i64]> = Default::default();
+        minus.extend(was.iter().enumerate().filter(|(_, r)| !b.contains(*r) && once.insert(r.as_slice())).map(|(i, _)| was_at + i as u32));
+        once.clear();
+        plus.extend(now.iter().enumerate().filter(|(_, r)| !a.contains(*r) && once.insert(r.as_slice())).map(|(i, _)| appended + i as u32));
+        appended += now.len() as u32;
         let d = docs.get_or_insert_with(|| (*kept.docs).clone());
         if now.is_empty() {
             d.remove(&o);

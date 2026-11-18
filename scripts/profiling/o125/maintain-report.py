@@ -56,6 +56,8 @@ for mode in ("kept", "session"):
         # RERAIL_MODE_TRACE: per run, each reached stratum's handling; a run's first line is its first stratum.
         why = {}
         for m in re.finditer(r"RERAIL_MODE_TRACE (\S+): ([^\n]+)", text):
-            why[m.group(2)] = why.get(m.group(2), 0) + 1
+            # Its reason, without the sizes the trace ends with (`(N delta rows, M kept)`).
+            w = re.sub(r" \(\d+ delta rows, \d+ kept\)$", "", m.group(2))
+            why[w] = why.get(w, 0) + 1
         if why:
             print(f"{mode}/{p.name} strata by handling: " + "; ".join(f"{w}: {n}" for w, n in sorted(why.items(), key=lambda x: -x[1])))
