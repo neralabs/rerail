@@ -161,9 +161,9 @@ This record is steps 2, 3 and 4, and the API they need.
    flags, alias and classes are its code's entry in the table; its span, subtree and children are the tape's.
 
    - **ast-grep's node** (`TapeNode`, what the matchers walk) carries its parent where the step that reached it
-     knew it: a child's, a walk's (`dfs`: the subtrees open around it), an ancestor's. Where no step knew it (a
-     node an anchor list or a binary search handed the matcher), it reads the document's kept parents (below). A
-     previous sibling is read forward from the parent's first child; `prev_all` reads them once.
+     knew it: a child's, a sibling's. Where no step knew it (a node an anchor list, a binary search or a walk
+     (`dfs`) handed the matcher), it reads the document's kept parents (below). A previous sibling is read forward
+     from the parent's first child; `prev_all` reads them once.
    - **A pass over every node** that wanted each node's parent takes it from the subtrees open around it
      (`TapeDoc::transducer_parents`): the transducer's packed batch (each node's children set their parent and
      next siblings), the relational syntax columns, the prefilter's statistics, the label passes' nesting, the

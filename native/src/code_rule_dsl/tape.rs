@@ -2848,8 +2848,8 @@ pub struct TapeNode<'a> {
     grammar: &'a Grammar,
     points: &'a Points,
     index: u32,
-    /// The node's parent, where the step that reached it knew it (a child's, a walk's, a climb's): `NONE` at the
-    /// root, `UNKNOWN` where it was not known, and the document's kept parents are read (`DocTape::parents`).
+    /// The node's parent, where the step that reached it knew it (a child's, a sibling's): `NONE` at the root,
+    /// `UNKNOWN` where it was not known, and the document's kept parents are read (`DocTape::parents`).
     up: u32,
 }
 
@@ -2988,31 +2988,22 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
     fn ancestors(&self, _root: Self) -> impl Iterator<Item = Self> {
         std::iter::successors(self.parent(), Self::parent)
     }
+    #[inline]
     fn children(&self) -> impl ExactSizeIterator<Item = Self> {
         let (tape, index) = (self.tape(), self.index as usize);
         let end = tape.subtree_end(index);
         Children { node: *self, next: tape.first_child(index), end, remaining: rerail_tape_format::tape::children(tape, index).count() }
     }
-    /// The subtree in preorder, each node with its parent: the subtrees open around it.
+    /// The subtree in preorder, a node's parent where asked the document's kept parents (`DocTape::parents`): the
+    /// walk reads no subtree end a node and keeps no stack of the subtrees open around it.
+    #[inline]
     fn dfs(&self) -> impl Iterator<Item = Self> {
         let start = self.index as usize;
         read!("size");
         read_at!("tape size", self.index);
         let me = *self;
         let end = self.tape().subtree_end(start);
-        let mut open: Vec<(u32, usize)> = Vec::new();
-        (start..end).map(move |index| {
-            if index == start {
-                open.push((me.index, end));
-                return me;
-            }
-            while open.last().is_some_and(|&(_, until)| until <= index) {
-                open.pop();
-            }
-            let parent = open.last().expect("the subtree's root is open").0;
-            open.push((index as u32, me.tape().subtree_end(index)));
-            me.at(index as u32, parent)
-        })
+        (start..end).map(move |index| if index == start { me } else { me.at(index as u32, UNKNOWN) })
     }
     fn child(&self, nth: usize) -> Option<Self> {
         self.children().nth(nth)
@@ -3080,10 +3071,12 @@ impl<'a> SgNode<'a> for TapeNode<'a> {
         read!("points");
         self.points.point(self.end())
     }
+    #[inline]
     fn is_named(&self) -> bool {
         read!("named");
         named_of(self.grammar, self.entry())
     }
+    #[inline]
     fn is_named_leaf(&self) -> bool {
         self.children().all(|child| !child.is_named())
     }
@@ -3146,6 +3139,8 @@ impl Doc for TapeDoc {
     fn root_node(&self) -> Self::Node<'_> {
         TapeNode { held: &self.held, grammar: &self.grammar, points: &self.points, index: 0, up: NONE }
     }
+    // A node's text, from the matcher's crate (rerail-w), as `TapeNode::range`.
+    #[inline]
     fn get_node_text<'a>(&'a self, node: &Self::Node<'a>) -> Cow<'a, str> {
         Cow::Borrowed(&self.source[node.range()])
     }
