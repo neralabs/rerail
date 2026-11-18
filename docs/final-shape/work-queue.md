@@ -283,6 +283,8 @@ into notes once the queue is done).
     by its templates), before the copy's rules and rows go; the version's rows are written in the tree's order. Test
     `a_request_merges_with_its_own_copy_only` (an equal `other` stays apart; the version is the tree's, record and
     digest).
+- **django-bugs' record** (at the hub's merge of f8eaf234b, 2026-11-18): done (2026-11-16, review 6).
+
 ### Q4. The `.rdl` comparison checks the on-request step independently
 
 - **Keep**: the `.rdl` ↔ `.rr` comparison as an independent check of lowering, 0174's requests.
@@ -2552,6 +2554,39 @@ Q86 (step 6's prices) waits for step 4: most of what it prices goes.
 - **Found, not mine:** `corpus::tests::a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test` (4 files
   held open after it) and `the_run_after_a_cold_one_writes_nothing` (a warm run records a manifest and commits a
   write) fail at 2fd15f524 too, on the M3 farm host.
+- **django-bugs' record** (at the hub's merge of f8eaf234b, 2026-11-18), lines the hub's item lacks:
+  - **Done: the totals' value columns sketched** (user: HyperLogLog, 2026-11-17; decision 0096's last section): exact
+    to 64 values and for tested ones, else HyperLogLog and AMS. The totals held 0.3 MB through the chunk phase (was
+    68 MB); findings and the cross plans the same.
+  - **The exports' encoding, measured** (2026-11-17, PostHog cold; the aid is gone, `exports packed` in the profile reports the real sizes): held as `Vec<i64>`
+    columns, 8 B a value, 220 MB (9.5 M rows of 17 exports; plus, during the chunks, the set that keeps rows distinct).
+    Packed by `rerail_blocks::col` (MLDB's `RawMappedIntTable` choices, the blocks crate's port):
+
+    | form | MB |
+    |---|---|
+    | held | 219.8 |
+    | packed, rows as held, best of whole and ranges of 4,096 | 117.1 |
+    | rows in canonical order, ranges of 4,096; a node column split at the granule | 53.0 |
+
+    - Node columns: 85.8 → 30.4 MB (2.8 B a value). A node id is `document << 32 | slot << 18 | index`
+      (`syntax::DefIds`, by definition, not preorder): a document's nodes spread over 2^14 slots, so a split at 32
+      bits saves little (4.1 B); at 18 bits, sorted, the granule is runs and the index small.
+    - Value columns (symbols, atoms, ints): 134.0 → 22.7 MB (1.35 B a value); columns a row's node determines go to
+      ~0.1 B sorted.
+    - Unsorted, ranges barely help: rows are appended chunk by chunk, so each range spans the whole id space.
+    - Of MLDB's other forms: factored packing (at most a third at some widths) and per-range predictor clusters with
+      selectors (`MappedIntTable`) find no linear structure in ids or symbols here; not worth it for exports.
+  - **Done: the exports held packed** (user, 2026-11-17; decision 0371): 198 → 54.4 MB; the cross part's most footprint 1,830 → 1,517 MB. Then (0371, "Then"): a column in order is its own index (sorted indexes 192 → 26 MB), and no set while the chunks add (66 MB, 0.8 s CPU); the run's peak 2,025 → 1,857 MB.
+  - **Found, not mine: warm runs miss the whole-run cutoff** (2026-11-17): fr2, sr1 and sd1's warm runs look up a cutoff key no cold run wrote (px3's hit). Every run's key differs; the cold runs set `RERAIL_HEAP_SAMPLE`/`RERAIL_HEAP_AT`, the warm ones don't. To check whether an aid's setting enters the key.
+  - **Was proposed:** freeze each export at `source()` into a packed relation
+    (`rerail_blocks::packed`: canonical order, a column an `IntCol`), with two additions to the blocks crate's
+    columns, shared with the sibling workstreams that use them: an `IntCol` per range of 4,096 rows with a range
+    directory (MLDB's ranges; a read is a shift to the range, then the extract), and a node column stored as two
+    columns split at the granule (0095 §6's stratified ids). Rows deduplicated by the freeze's sort instead of the
+    hash set kept through the chunks. 220 → about 55 MB held through the cross part, read in place.
+  Open: the sources' blocks put the peak resident size up 25 MB (CPU binding) to 50 MB (Metal) on hogql. And a
+  block is given back only with its last part (0325, step 2's open item).
+
 
 ### Q90. (Q90 at Native-and-GPU-strata d0224e02d) Parked strata resumed on another thread are refused to the CPU
 
@@ -3413,3 +3448,28 @@ sha) or `program_shared`'s order may hand back the files recorded before the edi
   from.
 - **Done when**: the test passes, and an edit of a same-length include gives its new hash.
 
+### Q167. (Q110 at django-bugs f8eaf234b) A kind no file holds, probed once per delta row
+
+- **Found** (2026-11-17, merging final-rerail-shape-phased-facts): that line measured `kind(n, #k)` probes at 20 s of
+  a 10-file cold run's 53 s. Exact counts give a kind no file holds a count of 0, so the planner probes it first,
+  and `assign_name`'s delta (27 rows) probed it 27 times a chunk. Its fix, a kind index of `node`'s rows
+  (`Batch::kinds`), is a copy of a view's rows, so it was not taken (0353; 0329, "The kind index not taken").
+- **Open:** measure the case here. Ours reads a probe's language alone (`of_tag`) and answers a repeated key from the
+  step's last probe. If those leave it slow, the fix is a read of the tape's kind postings or an index in the
+  block, never rows made.
+- **At the hub's merge of django-bugs** (2026-11-18): the hub had taken the kind index (at its merge of
+  Typing-support; 0329 records 20 s → under 0.8 s on that 10-file cold run). The merge removes it under 0353, so the
+  hub's case is now this item's: measure it on the hub's 10-file cold run before choosing the tape's kind postings or
+  an index in the block.
+
+### Q168. `executors_are_shared` fails on the hub: the join model's prediction makes its own command queue
+
+- **Found** (2026-11-18, at the hub's merge of django-bugs): `randomforest_predict.rs:868` makes a queue
+  (`armed_queue`, `device.new_command_queue()`) outside its owner (`forest::gpu::shared`, decision 0100 §2). It came
+  with 316bd6004 (0354, the prediction armed ahead). It fails at the hub's HEAD too, so this merge did not cause it.
+- **Why it may be right**: the prediction's command buffer is committed ahead and waits on an event for its rows.
+  On the one queue it would hold every later command buffer behind it.
+- **Open, for the user** (end of the roll-up): allow it as a reasoned exception in the guard, or give the shared
+  module a second queue for buffers that wait on events.
+- **Also seen**: on m3 the guard reads three files the checkout deleted (`metal_frontier_conformance.rs`,
+  `metal_frontier_reduce.rs`, `metal_register_conformance.rs`). That is Q63's stale mirror, not the tree.

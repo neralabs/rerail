@@ -567,7 +567,6 @@
     }
 
     #[test]
-    #[cfg_attr(target_os = "macos", ignore = "Q64: the packed Metal JIT refuses this batch (BackendCapacity); it ran on the grid until 0324")]
     fn scm_quantified_runs_preserve_each_distinct_middle_capture() {
         let middle = "(module (comment)+ (comment) @middle (comment)+)";
         let captured_run = "(module ((comment) @item)+)";
@@ -735,7 +734,6 @@
     }
 
     #[test]
-    #[cfg_attr(target_os = "macos", ignore = "Q64: the packed Metal JIT refuses this batch (BackendCapacity); it ran on the grid until 0324")]
     fn cpu_jit_compiles_general_scm_control_flow() {
         let language = SupportLang::Python.get_ts_language();
         let source = "# 0\n# 1\n# 2\n# 3\nvalue = call(arg)\n";
@@ -762,7 +760,6 @@
     }
 
     #[test]
-    #[cfg_attr(target_os = "macos", ignore = "Q64: the packed Metal JIT refuses this batch (BackendCapacity); it ran on the grid until 0324")]
     fn all_backends_execute_every_verified_instruction_and_mode() {
         let grammar = SupportLang::Python.get_ts_language();
         let identifier = grammar.id_for_node_kind("identifier", true);
@@ -1046,7 +1043,6 @@
     }
 
     #[test]
-    #[cfg_attr(target_os = "macos", ignore = "Q64: the packed Metal JIT refuses this batch (BackendCapacity); it ran on the grid until 0324")]
     fn scm_host_predicates_filter_text_kinds_lines_and_relations() {
         let language = SupportLang::Python.get_ts_language();
         let source = "insert(foo)\nvalue = 1\na = (\n  b\n)\n";

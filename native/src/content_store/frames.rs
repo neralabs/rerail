@@ -1572,10 +1572,21 @@ impl Put {
         let data = Data::Encoded { types, n, bytes: Bytes::Heap(Arc::new(Vec::new())), store: None };
         Encoded { rel, part, frame: Arc::new(Admitted { stored: Stored { digest, reads }, data }), place: Some(placed.at) }
     }
-    /// `encode_rows` of rows read a column at a time where they lie (`column(c, f)`: column `c` in row order, `f` per
-    /// batch), with no row-major copy of them.
-    pub fn encode_columns(width: usize, column: &(dyn Fn(usize, &mut dyn FnMut(&[i64])) + Sync)) -> Vec<u8> {
-        super::cross_rows::encode_columns(width, column)
+
+    /// `encode_rows`'s bytes, on the heap, of rows given a window at a time (`each`, called twice): for a frame no
+    /// segment took (`FramePlacer::place_rows` gave `None`).
+    pub fn encode_windows(width: usize, each: &dyn Fn(&mut dyn FnMut(&[i64]))) -> Vec<u8> {
+        let mut out = Vec::new();
+        // A relation of no columns has no bytes: its rows are its count.
+        if width == 0 {
+            return out;
+        }
+        let _ = super::cross_rows::encode_windows(width, each, &mut Vec::new(), |len, fill| {
+            out = vec![0u8; len];
+            fill(&mut out);
+            Ok::<(), std::convert::Infallible>(())
+        });
+        out
     }
     /// A frame of rows already encoded (`encode_rows`).
     pub fn encoded_as(rel: Rel, part: i64, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, n: usize, bytes: Vec<u8>) -> Encoded {

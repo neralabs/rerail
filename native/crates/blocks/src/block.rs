@@ -208,6 +208,10 @@ impl Block {
         // SAFETY: the block's own heads; its chunks lie in it.
         if let Some(at) = unsafe { crate::free::pop(self.base, self.heads(), class) } {
             self.ext.free.fetch_sub(size, Relaxed);
+            if let Some((p, len)) = self.spare_pages(at, size) {
+                // SAFETY: the chunk's pages past its link, which `free_chunk` gave back; it is ours now.
+                unsafe { crate::mem::reuse_pages(p, len) };
+            }
             if zeroed {
                 unsafe { zero(self.base.add(at), size) };
             }
@@ -223,15 +227,33 @@ impl Block {
     }
 
     /// Gives back a chunk `try_alloc_chunk` gave (`bytes` as asked): to the free list, when the block keeps one;
-    /// else nothing. Nothing may read it after.
-    pub fn free_chunk(&self, at: usize, bytes: usize) {
+    /// else nothing. Nothing may read it after. In an anonymous block its whole pages past the list's link go back to
+    /// the OS too (Q76: a dead relation's pages otherwise stayed in the footprint until its chunks were taken again),
+    /// and are marked in use again when the list hands the chunk out. Returns the bytes given to the OS.
+    pub fn free_chunk(&self, at: usize, bytes: usize) -> usize {
         if self.free == 0 || !self.writable {
-            return;
+            return 0;
         }
         let (class, size) = crate::free::class_of(bytes);
+        // SAFETY: the chunk is the caller's and nothing reads it after; its first page, which holds the link, stays.
+        let given = self.spare_pages(at, size).map_or(0, |(p, len)| unsafe { crate::mem::give_back(p, len) });
         // SAFETY: the block's own heads; the chunk is the caller's, of this class.
         unsafe { crate::free::push(self.base, self.heads(), class, at) };
         self.ext.free.fetch_add(size, Relaxed);
+        given
+    }
+
+    /// The whole pages of a free chunk past its link (its first 32 bits): what goes back to the OS while it is on the
+    /// free list. Only an anonymous block's: a pooled slab's pages are the device buffer's, and a file's are written
+    /// back.
+    fn spare_pages(&self, at: usize, size: usize) -> Option<(*mut u8, usize)> {
+        if self.backing.is_some() || self.file.is_some() {
+            return None;
+        }
+        let p = self.base as usize + at;
+        let (start, end) = ((p + 8).next_multiple_of(PAGE), (p + size) / PAGE * PAGE);
+        // A chunk within one page has none to give (a `then_some` would compute `end - start` anyway).
+        (end > start).then(|| (start as *mut u8, end - start))
     }
 
     /// A block in memory it does not own: `backing`'s, which may be dirty. Freezing it does not protect it (a
@@ -521,30 +543,6 @@ impl Block {
             return Err(format!("{}: header says {} bytes, the file has {len}", path.display(), at.length));
         }
         Ok(Frozen(Arc::new(b)))
-    }
-}
-
-impl Block {
-    /// Gives the whole pages of the rows' chunks back to the OS, for a relation of this block that nothing will read
-    /// or write again (its last holder gone). Only an anonymous block's (`anon`): a pooled slab's pages are the
-    /// device buffer's, and a file's are written back. The block's room is not reused: what was given back stays
-    /// out of the footprint until the block goes.
-    ///
-    /// # Safety
-    /// `rows` is a relation's of this block, and nothing reads or writes its chunks after.
-    pub unsafe fn give_back_rows(&self, rows: &crate::rows::Rows) -> usize {
-        if self.backing.is_some() || self.file.is_some() || !self.writable {
-            return 0;
-        }
-        let mut bytes = 0;
-        for (p, len) in rows.chunk_spans() {
-            if len >= PAGE {
-                // SAFETY: the chunk lies in this block's reservation, and nothing reads it after (the caller's).
-                unsafe { crate::mem::give_back(p, len) };
-                bytes += len;
-            }
-        }
-        bytes
     }
 }
 

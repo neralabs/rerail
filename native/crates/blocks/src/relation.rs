@@ -147,18 +147,16 @@ impl Relation {
         Some(rel)
     }
 
-    /// Gives its chunks back to the block's free list (decision 0342), when the block keeps one.
+    /// Gives its chunks back to the block's free list (decision 0342), when the block keeps one. Returns the bytes
+    /// given to the OS with them (`Block::free_chunk`).
     ///
     /// # Safety
     /// It lies in `block`, and no one reads or writes it after (its last holder's).
-    pub unsafe fn release(&self, block: &Block) {
-        unsafe {
-            self.rows.release(block);
-            self.killed.release(block);
-        }
+    pub unsafe fn release(&self, block: &Block) -> usize {
+        let given = unsafe { self.rows.release(block) + self.killed.release(block) };
         let (at, bytes) = (block.offset_of(std::ptr::from_ref(self)), Relation::descriptor_bytes(self.arity as usize));
         // The last use of `self`: its own memory goes back.
-        block.free_chunk(at, bytes);
+        given + block.free_chunk(at, bytes)
     }
 
     /// Where the column directories lie in a descriptor's chunk.

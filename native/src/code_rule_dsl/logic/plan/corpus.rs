@@ -5002,7 +5002,10 @@ fn run_observed(
     let mut semijoin_stats: HashMap<String, Vec<(String, i64, i64, i64, i64)>> = HashMap::new();
     // The atoms the inputs' digests read their content by (`retain::cells_of`, decision 0212).
     let input_atoms = store.atoms_handle();
-    let mut totals = Totals::default();
+    // The values the program tests, of any relation and column: per value, the totals count only those (and every
+    // value of a column of few, `ValTotals`).
+    let tested_values: rustc_hash::FxHashSet<i64> = constants_tested_in(&prepared_placed.v).into_values().flatten().map(|(_, v)| v).collect();
+    let mut totals = Totals::new(tested_values.clone());
     let (mut nodes, mut native, mut chunks) = (0, BTreeSet::new(), 0);
     let (mut memo_hits, mut memo_unattributed) = (0usize, 0usize);
     // Why a chunk's rows were not memoised: the relation, and what its row named.
@@ -8712,8 +8715,6 @@ fn run_observed(
     });
     // The cross-file part's statistics: T's for the base relations, the chunks' totals for the rest.
     let applying = crate::code_rule_dsl::logic::profile::span(|| "apply the chunks' totals".into());
-    // The values the program tests, of any relation and column: per value, the totals keep only those (`apply`).
-    let tested_values: rustc_hash::FxHashSet<i64> = constants_tested_in(&prepared_placed.v).into_values().flatten().map(|(_, v)| v).collect();
     let mut cross_stats = t_stats;
     if own {
         if memo_tree_stats {
@@ -8723,7 +8724,7 @@ fn run_observed(
             cross_stats.docs = Some(own_totals.docs);
         }
     }
-    totals.apply(&mut cross_stats, &tested_values);
+    totals.apply(&mut cross_stats);
     // Applied: the chunks' per-value counts are not read again.
     totals.vals = BTreeMap::new();
     repository_stats(&mut cross_stats);
@@ -8939,7 +8940,7 @@ fn run_observed(
         let cross_now = cross.placed()?;
         let cross_f = cross_now.fields()?;
         let read: BTreeSet<&str> = cross_now.v.rules().flat_map(|r| r.reads().map(|a| cross_now.v.rel_name(a.rel()))).collect();
-        let mut replayed = Totals::default();
+        let mut replayed = Totals::new(tested_values.clone());
         let inputs = found.inputs(&store, plan, &components, cross_mode, |r| !all_found || read.contains(format!("{r}{}", cross_memo::SUFFIX).as_str()))?;
         let replayed_rows: usize = inputs.iter().skip(1).map(|(_, _, cols)| cols.first().map_or(0, Vec::len)).sum();
         for (rel, width, cols) in inputs {
@@ -8949,7 +8950,7 @@ fn run_observed(
             replayed.add_rows(&rel, source.len(), source.as_ref(), &types.iter().map(String::as_str).collect::<Vec<_>>());
             modules.bind(&db, &rel, source)?;
         }
-        replayed.apply(&mut cross_stats, &tested_values);
+        replayed.apply(&mut cross_stats);
         // Held for storing, unless an output (written to its table, read from there): only when a component missed or
         // the run verifies. Every component found is replayed, and nothing is stored.
         if !found.misses.is_empty() || cross_mode == cross_memo::Mode::Verify {
@@ -9358,6 +9359,10 @@ fn run_observed(
                         && std::env::var_os("RERAIL_CROSS_DELTA_COUNTS").is_none()
                         && std::env::var("RERAIL_CROSS_HAND_OFF").map_or(true, |v| v != "off");
                     let handed: std::cell::RefCell<HashMap<String, retain::Handed>> = std::cell::RefCell::new(HashMap::new());
+                    // The part's write, opened before the run: a relation handed off is encoded into its segments
+                    // then (Q89), and `write_frames` queues it with the rest. Its first lease is a guess; the
+                    // segments grow as they fill.
+                    let placer = hand_off.then(|| store.frame_placer(cross_sccs.iter().map(BTreeSet::len).sum::<usize>() * 2 + 16, 64 << 20));
                     let mut unloaded: Vec<String> = Vec::new();
                     let let_go_inputs = hand_off && cut.clean.is_empty();
                     // The relations the driver derives again (`Maintain::no_delta`), as it reaches them.
@@ -9373,7 +9378,9 @@ fn run_observed(
                             return Ok(false);
                         }
                         let Some(held) = crate::code_rule_dsl::logic::native::component::held(&db, rel) else { return Ok(false) };
-                        let Some(h) = retain::Handed::of(store, &cross_placed, &cross.domains, rel, &held) else { return Ok(false) };
+                        let Some(placer) = &placer else { return Ok(false) };
+                        let was = was_frames.as_ref().and_then(|w| w.derived_digest(rel));
+                        let Some(h) = retain::Handed::of(store, &cross_placed, &cross.domains, rel, &held, was, placer) else { return Ok(false) };
                         handed.borrow_mut().insert(rel.to_owned(), h);
                         Ok(true)
                     };
@@ -9741,7 +9748,7 @@ fn run_observed(
                     let s = span("retain");
                     let mut next = retain::after(cell.take(), ckey, digests.clone(), &cut, rows, &derived_outputs, &cross_inputs, measured_kept, input_stats, input_docs, (run_docs_held.lock().expect("the run's documents").clone(), memo_whole), patched, retain::budget(), false);
                     if let Some(was) = &was_frames {
-                        let written = next.write_frames(store, was, &cross_placed, &cross.domains, &split.locations, &cross_sccs, &cut, &cross_inputs, &digests, &unchanged_rels, &run_deltas, handed, inputs_done, &semijoin_stats)?;
+                        let written = next.write_frames(store, was, &cross_placed, &cross.domains, &split.locations, &cross_sccs, &cut, &cross_inputs, &digests, &unchanged_rels, &run_deltas, handed, inputs_done, &semijoin_stats, placer)?;
                         crate::code_rule_dsl::logic::profile::decision("the kept part, to the frames (t33 K4)", || format!("{written} rows of what changed queued to the store"));
                     }
                     drop(s);
@@ -11018,19 +11025,65 @@ impl Drop for Statements {
 
 /// The cross-file pass's statistics of what the chunks wrote, as T's `stats.py` defines them, summed over the chunks
 /// as each chunk's rows are written (from the rows in memory; no scan at the end). A document is in one chunk, so
-/// per-document sums (`sqd`, `docs`) add exactly. Value columns (not node ids) keep each value's postings (`stat_val`:
-/// `n`, `docs`, `sqd`), merged across chunks, so their `ndv` and `sq` are exact too; the planner reads a constant
-/// missing from `stat_val` as matching no row (`const_freq`), so a value column without them would price every
-/// constant at zero rows. Node columns' values never cross documents, so their `ndv` adds exactly.
+/// per-document sums (`sqd`) add exactly, and node columns' values never cross documents, so their `ndv` and `sq`
+/// add exactly too. A value column's values cross chunks: its `ndv` and `sq` are of each value's total, kept as
+/// `ValTotals`: exact while it has `SMALL_NDV` values or fewer, else sketched (HyperLogLog and AMS, Q89). Its
+/// tested values are always counted exactly: the planner reads a constant missing from `stat_val` as matching no
+/// row (`const_freq`).
 #[derive(Default)]
 struct Totals {
+    /// The values the program tests, of any relation and column (`constants_tested_in`).
+    tested: Arc<rustc_hash::FxHashSet<i64>>,
     rels: BTreeMap<String, (usize, BTreeMap<String, [i64; 4]>)>,
-    /// Per (relation, value column): per value, (n, docs, sqd).
-    vals: BTreeMap<(String, String), HashMap<i64, [i64; 3]>>,
+    /// Per (relation, value column).
+    vals: BTreeMap<(String, String), ValTotals>,
     /// Constants' counts of columns whose statistics are given whole (`add`): (relation, column, value, count).
     consts: Vec<(String, String, i64, i64)>,
 }
+/// A value column's totals over the chunks.
+#[derive(Clone, Default)]
+struct ValTotals {
+    /// The sum over documents of the square of each value's rows in it.
+    sqd: i64,
+    /// Each value's rows while the column has at most `SMALL_NDV` values; `None` once it has more.
+    few: Option<HashMap<i64, i64>>,
+    /// The tested values' rows.
+    tested: HashMap<i64, i64>,
+    /// Its values sketched, for `ndv` and `sq` once `few` is dropped.
+    moments: super::sketch::Moments,
+    /// Whether `few` was dropped (a column starts with every value counted).
+    many: bool,
+}
+
+impl ValTotals {
+    fn add(&mut self, tested: &rustc_hash::FxHashSet<i64>, v: i64, n: i64) {
+        self.moments.add(v, n);
+        if tested.contains(&v) {
+            *self.tested.entry(v).or_default() += n;
+        }
+        if !self.many {
+            let few = self.few.get_or_insert_with(HashMap::new);
+            *few.entry(v).or_default() += n;
+            if few.len() as i64 > super::SMALL_NDV {
+                self.few = None;
+                self.many = true;
+            }
+        }
+    }
+    /// (ndv, sq): exact while the column has few values, else the sketch's.
+    fn moments(&self) -> (i64, i64) {
+        match &self.few {
+            Some(few) => (few.len() as i64, few.values().map(|n| n * n).sum()),
+            None => (self.moments.ndv().round() as i64, self.moments.sq().round() as i64),
+        }
+    }
+}
+
 impl Totals {
+    /// Totals that count `tested`'s values exactly (`ValTotals`).
+    fn new(tested: rustc_hash::FxHashSet<i64>) -> Self {
+        Totals { tested: Arc::new(tested), ..Default::default() }
+    }
     /// Drops `rel`'s measurements (to measure it again).
     fn forget(&mut self, rel: &str) {
         self.rels.remove(rel);
@@ -11074,36 +11127,27 @@ impl Totals {
                 }
                 continue;
             }
-            // Per value of this chunk: n, documents, and the sum of squares of its count per document.
+            // Per value of this chunk: its rows, and the sum of squares of its rows per document.
             let vals = self.vals.entry((rel.to_owned(), name.clone())).or_default();
             value_runs(rows, c, &doc, |v, count, docs| {
-                let e = vals.entry(v).or_default();
-                e[0] += count;
-                e[1] += docs.len() as i64;
-                e[2] += docs.iter().map(|k| k * k).sum::<i64>();
+                vals.add(&self.tested, v, count);
+                vals.sqd += docs.iter().map(|k| k * k).sum::<i64>();
             });
         }
     }
     /// The totals as the planner's statistics (T's `stats.py` definitions), over `stats`. Per value, only what the
-    /// planner reads (Q89): the values the program tests (`tested`, `tested_values`), and every value of a column of
-    /// `SMALL_NDV` or fewer (`small_values`); each column's moments are of all its values. Every distinct value of
-    /// every export column, kept, was 118 MB of a cold PostHog run's cross part that nothing read.
-    fn apply(&self, stats: &mut super::Stats, tested: &rustc_hash::FxHashSet<i64>) {
+    /// planner reads (Q89): the values the program tests (`tested`), and every value of a column of `SMALL_NDV` or
+    /// fewer (`small_values`). Every distinct value of every export column, kept, was 118 MB of a cold PostHog run's
+    /// cross part that nothing read.
+    fn apply(&self, stats: &mut super::Stats) {
         for (rel, (rows, measured)) in &self.rels {
             stats.measured(rel, measured.iter().map(|(col, [_, ndv, sq, sqd])| (col.clone(), [*rows as i64, (*ndv).max(1), *sq, *sqd])), []);
         }
         for ((rel, col), per) in &self.vals {
             let rows = self.rels.get(rel).map_or(0, |r| r.0 as i64);
-            let (ndv, sq, sqd) = per.values().fold((0, 0, 0), |(a, b, c), e| (a + 1, b + e[0] * e[0], c + e[2]));
-            if super::sketch::shadowing() {
-                let mut sketch = super::sketch::Sketch::default();
-                for (v, e) in per {
-                    sketch.add(*v, e[0]);
-                }
-                super::sketch::shadow(&format!("totals {rel}"), col, rows, ndv, sq, &sketch);
-            }
-            let all = ndv <= super::SMALL_NDV;
-            stats.measured(rel, [(col.clone(), [rows, ndv.max(1), sq, sqd])], per.iter().filter(|(v, _)| all || tested.contains(*v)).map(|(v, [n, _, _])| (col.clone(), *v, *n)));
+            let (ndv, sq) = per.moments();
+            let values = per.few.as_ref().unwrap_or(&per.tested);
+            stats.measured(rel, [(col.clone(), [rows, ndv.max(1), sq, per.sqd])], values.iter().map(|(v, n)| (col.clone(), *v, *n)));
         }
         for (rel, col, v, n) in &self.consts {
             stats.measured(rel, [], [(col.clone(), *v, *n)]);
@@ -11853,16 +11897,23 @@ pub mod tests {
         let many: Vec<i64> = (0..1000).map(|i| 100 + i % 500).collect();
         let few: Vec<i64> = (0..1000).map(|i| i % 3).collect();
         let source = crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into(), "c1".into()], vec![Some(many), Some(few)]);
-        let mut totals = super::Totals::default();
+        let mut totals = super::Totals::new([107].into_iter().collect());
+        // Two chunks holding the same values: each value's rows are its total over both.
+        totals.add_rows("e", 1000, source.as_ref(), &["number", "number"]);
         totals.add_rows("e", 1000, source.as_ref(), &["number", "number"]);
         let mut stats = Stats::empty(&p);
-        totals.apply(&mut stats, &[107].into_iter().collect());
+        totals.apply(&mut stats);
         let memo = &stats.memo["e"];
         let of = |col: &str| memo.keys().filter(|(c, _)| c == col).count();
         assert_eq!(of("c0"), 1, "a column of many values keeps the tested one alone");
-        assert_eq!(memo.get(&("c0".to_owned(), Constant::Int(107))), Some(&2));
+        assert_eq!(memo.get(&("c0".to_owned(), Constant::Int(107))), Some(&4));
         assert_eq!(of("c1"), 3, "a column of few keeps them all");
-        assert_eq!(stats.col.get(&("e".to_owned(), "c0".to_owned())).unwrap()[1], 500, "its distinct values counted whole");
+        let col = |c: &str| *stats.col.get(&("e".to_owned(), c.to_owned())).unwrap();
+        let [rows, ndv, sq, _] = col("c0");
+        assert_eq!(rows, 2000);
+        assert!((ndv - 500).abs() <= 25, "a column of many: its distinct values sketched, {ndv} for 500");
+        assert!(sq * 2 > 500 * 16 && sq < 500 * 16 * 2, "its squared postings sketched, {sq} for {}", 500 * 16);
+        assert_eq!(col("c1")[..3], [2000, 3, 668 * 668 + 2 * 666 * 666], "a column of few, exact: (2·334)² + 2·(2·333)²");
     }
 
     /// A corpus in a directory Git ignores has no file Git sees, and that answer is kept too (`git_files`'s record):
@@ -11974,7 +12025,10 @@ pub mod tests {
     }
 
     /// A kind's or a field's name in a rule is a branded atom (decision 0270): its postings are counted as an
-    /// integer constant's are (Q36: unread, `field($l, "left", $t)` was priced at one row, 1,159 read).
+    /// integer constant's are (Q36: unread, `field($l, "left", $t)` was priced at one row, 1,159 read). The names are
+    /// branded as lowering brands them (`plan::lower`, which needs a language's tables): by hand here. A kind is no
+    /// input since 0329 (`kind(n, k)` is a view of `node`, counted by the view's statistics, `node_column_counts`),
+    /// so its constant has no posting of its own.
     #[test]
     #[ignore = "Q138: no constants of field/kind counted on the hub (fails at f40641e9c too)"]
     fn branded_constants_have_their_postings_counted() {

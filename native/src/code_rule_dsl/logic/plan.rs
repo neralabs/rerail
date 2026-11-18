@@ -10625,14 +10625,6 @@ pub fn rows_digest(cells: &Cells, rows: &[i64], n: usize) -> u64 {
     cells.sum(rows) ^ (n as u64).wrapping_mul(0xff51_afd7_ed55_8ccd)
 }
 
-/// `rows_digest` of `n` rows given a window at a time (`each`): the sum is the same in any order, so no copy of them
-/// all is made.
-pub fn rows_digest_windows(cells: &Cells, n: usize, each: &dyn Fn(&mut dyn FnMut(&[i64]))) -> u64 {
-    let mut sum = 0u64;
-    each(&mut |rows: &[i64]| sum = sum.wrapping_add(cells.sum(rows)));
-    sum ^ (n as u64).wrapping_mul(0xff51_afd7_ed55_8ccd)
-}
-
 /// One row's part of `rows_digest`, a sum of them: a relation's digest is patched by its rows gone and added.
 pub(crate) fn row_digest(row: &[i64]) -> u64 {
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;

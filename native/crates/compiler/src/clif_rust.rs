@@ -25,7 +25,6 @@ pub fn rust_source(parser: &crate::native_cpu_stream::Parser) -> Result<String, 
 
 #[cfg(test)]
 mod tests {
-    use super::translate;
     use cranelift_codegen::ir::{AbiParam, InstBuilder, Signature, types::I64};
     use cranelift_codegen::isa::CallConv;
     use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};

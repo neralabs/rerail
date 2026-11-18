@@ -113,3 +113,19 @@ Findings 29,747, the same hash. Median footprint 1,849 and 1,837 MB. The host bl
   run's wall to 68 s. The same build's two runs differ by 82 G and 192 G: at this load a difference under about
   5% is not measurable from two runs, and none is shown. The memory is: the peak 300–500 MB under 0325's, the
   median footprint 150–300 MB under.
+
+## After the hub's 0325 step 3 (merge of 2026-11-17)
+
+0325 step 3 moved the rows' storage to `facts::rows`, in the `rerail-facts` crate, with a `Life` for each relation's
+blocks. This record's parts are carried there:
+- a run's and a batch's blocks come from the policy (`Writes::Churn`, a free list);
+- a `Part` is shared and gives its relation's chunks back with its last holder, and an `InBlock` reader (the
+  device's `DevRel::in_block`) holds it;
+- the policy's `Device::May` leaves half the Metal budget to the device's own buffers (0325 step 3's `keep`).
+
+The crate cannot see the engine's binding (`placement`), so a chunk carries what its blocks ask the policy
+(`in_chunk(device, …)`, the engine passing `placement::block_device()`). Outside a chunk a block asks `Device::May`.
+
+**Still outside the policy:** a device run's own relation (`Life::Device`, 0325 step 5) is leased as a device
+join's buffers are (`lease_block_for_join`: bounded inside the join's budget, a refusal running it on the CPU).
+The policy has no need for that yet.

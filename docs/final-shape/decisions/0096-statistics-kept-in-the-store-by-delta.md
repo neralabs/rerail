@@ -344,3 +344,26 @@ What steps 3 and 4 need:
 
 The measurement aids stay: `RERAIL_STATS_SKEW`, `RERAIL_STATS_SKEW_LOG` and `RERAIL_STATS_SHADOW`. Each step's
 claim is checked by running them again.
+
+## The corpus's chunk totals: HyperLogLog and AMS (user, 2026-11-17, Q89)
+
+The cross-file part's statistics of the exports are summed over the chunks (`corpus::Totals`). A value column's
+values cross chunks, so its `ndv` and `sq` are of each value's total: they were kept exactly, as a count per
+distinct value merged across chunks, 68 MB through PostHog cold's chunk phase and 118 MB once applied, every value
+of every export column. Decided (user): sketched.
+
+- A value column keeps each value's count while it has at most 64 (`SMALL_NDV`, `Model::small_values`' bound);
+  then exact.
+- Past it, `sketch::Moments`: `sq` by this record's AMS (3 × 64), `ndv` by HyperLogLog (2^12 registers, 1.6%
+  standard error). Chunk totals only add, so HyperLogLog's lack of deletes costs nothing, and it is far closer
+  than the counting bitmap §1 needs for deletes (1.7× worst). 4.6 KB a column.
+- The program's tested values are always counted exactly (`const_freq` reads a missing one as no rows).
+- Node columns stay exact (their values never cross documents).
+
+Measured (M3, PostHog cold, the memory line lifted, at load 30–49 from other builds): the totals held 0.3 MB
+(was 68), findings the same (29,747, one hash), the cross part's plans the same steps and scans; `P__sup0`'s
+estimate 29 rows (32 or 33 exact, as it varies run to run).
+
+`setfix/sketch.rs` (decision 0112) is a HyperLogLog of 256 registers inside a relation, made a row at a time;
+it neither merges parts nor takes a count, which the chunk totals need.
+

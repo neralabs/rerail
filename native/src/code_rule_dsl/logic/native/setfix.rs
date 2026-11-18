@@ -4427,11 +4427,6 @@ pub fn each_held_batch(src: &dyn crate::code_rule_dsl::facts::vtab::Source, widt
     let rel = held_rel(src, width)?;
     rel.each_live_batch(0, rel.n, f)
 }
-/// `src`'s column `c` in its order, a batch at a time, read where it lies: `None` unless it is a held relation's
-/// source of `width` columns.
-pub fn each_held_column(src: &dyn crate::code_rule_dsl::facts::vtab::Source, width: usize, c: usize, f: impl FnMut(&[i64])) -> Option<()> {
-    held_rel(src, width)?.each_live_column(c, f)
-}
 /// A native relation's rows as a source; `live`, a relation with dead rows' live row ids (dense, as a source's are);
 /// `orders`, each column's rows (the source's) sorted by value, built on first probe: SQL that reads a kept relation
 /// (a session's, or one a new process read back, t32 4.1) probes it as it probes any held source, not by a scan.
@@ -4634,7 +4629,11 @@ impl InRel {
             let eq: Vec<(usize, i64)> = ix.cols.iter().zip(key).map(|(&c, &k)| (v.cols[c], k)).collect();
             for r in v.src.lookup_all(&eq).unwrap_or_default() { give(RowRef::Source(v, r).read()) }
         } else if ix.sorted && let Some(v) = &self.view {
-            for &r in v.src.sorted_rows(v.cols[ix.cols[ix.lead]], key[ix.lead]).unwrap_or(&[]) { give(RowRef::Source(v, r as usize).read()) }
+            let (c, k) = (v.cols[ix.cols[ix.lead]], key[ix.lead]);
+            match v.src.sorted_range(c, k) {
+                Some(range) => for r in range { give(RowRef::Source(v, r as usize).read()) },
+                None => for &r in v.src.sorted_rows(c, k).unwrap_or(&[]) { give(RowRef::Source(v, r as usize).read()) },
+            }
         } else if ix.source && let Some(v) = &self.view {
             for r in v.find_keyed(&ix.cols, key, ix.lead) { give(RowRef::Source(v, r as usize).read()) }
         } else {
@@ -4679,8 +4678,13 @@ impl InRel {
             let rows = self.keyed_rows(ikey[ix.lead]);
             run(rows.len(), &|i| live(rows.start + i as u32))
         } else if !ix.composite && ix.sorted && let Some(v) = &self.view {
-            let rows = v.src.sorted_rows(v.cols[ix.cols[ix.lead]], ikey[ix.lead]).unwrap_or(&[]);
-            run(rows.len(), &|i| Some(RowRef::Source(v, rows[i] as usize).read()))
+            let (c, k) = (v.cols[ix.cols[ix.lead]], ikey[ix.lead]);
+            if let Some(range) = v.src.sorted_range(c, k) {
+                run(range.len(), &|i| Some(RowRef::Source(v, range.start as usize + i).read()))
+            } else {
+                let rows = v.src.sorted_rows(c, k).unwrap_or(&[]);
+                run(rows.len(), &|i| Some(RowRef::Source(v, rows[i] as usize).read()))
+            }
         } else if !ix.composite && !ix.source || self.view.is_none() {
             let ids = ix.get(self, ikey);
             run(ids.len(), &|i| live(ids[i]))
@@ -4710,7 +4714,8 @@ impl InRel {
         } else if ix.keyed {
             self.keyed_rows(ikey[ix.lead]).len() as f64
         } else if !ix.composite && ix.sorted && let Some(v) = &self.view {
-            v.src.sorted_rows(v.cols[ix.cols[ix.lead]], ikey[ix.lead]).map_or(0, |r| r.len()) as f64
+            let (c, k) = (v.cols[ix.cols[ix.lead]], ikey[ix.lead]);
+            v.src.sorted_range(c, k).map_or_else(|| v.src.sorted_rows(c, k).map_or(0, |r| r.len()), |r| r.len()) as f64
         } else if !ix.composite && !ix.source || self.view.is_none() {
             ix.get(self, ikey).len() as f64
         } else {
@@ -4827,28 +4832,6 @@ impl InRel {
     pub fn posts_all(&self) -> bool {
         self.view.is_none() && (0..self.k).all(|c| self.chains.iter().any(|ix| ix.cols.first() == Some(&c) && ix.rows() >= self.n))
     }
-    /// Its live rows a window at a time, row-major (`f` called with up to 4,096 rows): read where they lie, with no
-    /// copy of them all (a frame digested and encoded from them, Q89). `false` for a view.
-    pub fn each_live_window(&self, f: &mut dyn FnMut(&[i64])) -> bool {
-        if self.view.is_some() {
-            return false;
-        }
-        const WINDOW: usize = 4096;
-        let mut buf: Vec<i64> = Vec::with_capacity(WINDOW.min(self.n) * self.k);
-        for id in 0..self.n {
-            if self.ndead == 0 || !is_dead(&self.dead, id as u32) {
-                buf.extend_from_slice(&self.row(id));
-                if buf.len() == WINDOW * self.k {
-                    f(&buf);
-                    buf.clear();
-                }
-            }
-        }
-        if !buf.is_empty() {
-            f(&buf);
-        }
-        true
-    }
     /// Its live rows of ids `lo..hi`, row-major, read where they lie a batch at a time into one scratch of at most
     /// `LIVE_BATCH` rows (`f` per batch): a frame's digest and bytes are made from these, with no copy of the relation
     /// (`retain::held_frame`). `None` for a view.
@@ -4870,25 +4853,6 @@ impl InRel {
                         buf.extend((0..k).map(|c| p.get(i, c)));
                     }
                 }
-            });
-            f(&buf);
-            id = end;
-        }
-        Some(())
-    }
-    /// Column `c` of its live rows, in id order, read where they lie a batch at a time (`f` per batch). `None` for a
-    /// view.
-    pub fn each_live_column(&self, c: usize, mut f: impl FnMut(&[i64])) -> Option<()> {
-        if self.view.is_some() {
-            return None;
-        }
-        let mut buf: Vec<i64> = Vec::with_capacity(LIVE_BATCH.min(self.n));
-        let mut id = 0;
-        while id < self.n {
-            let end = (id + LIVE_BATCH).min(self.n);
-            buf.clear();
-            self.rows.each_run(id as u32, end as u32, |p, from, to, first| {
-                buf.extend((from..to).filter(|&i| self.ndead == 0 || !is_dead(&self.dead, first + (i - from))).map(|i| p.get(i, c)));
             });
             f(&buf);
             id = end;
@@ -5326,14 +5290,33 @@ struct Stored {
     /// Lexicographic orders over several columns, built on a first `lookup_all` over them (4 bytes a row each;
     /// the table never changes, so an order costs no insert). One serves every search whose columns are its prefix.
     orders: Mutex<Vec<(Vec<usize>, Arc<Vec<u32>>)>>,
+    /// Whether each column is in row order (a table's column read in its order): its probes are ranges found by a
+    /// search of the column (`sorted_range`), its distinct values counted along it; no `Sorted` is built for it.
+    in_order: Vec<std::sync::OnceLock<bool>>,
 }
 impl Stored {
     fn new(columns: Vec<String>, values: Vec<std::sync::OnceLock<Vec<i64>>>) -> Self {
         let k = columns.len();
-        Stored { columns, n: std::sync::OnceLock::new(), values, index: (0..k).map(|_| std::sync::OnceLock::new()).collect(), distinct: (0..k).map(|_| std::sync::OnceLock::new()).collect(), orders: Mutex::default() }
+        Stored { columns, n: std::sync::OnceLock::new(), values, index: (0..k).map(|_| std::sync::OnceLock::new()).collect(), distinct: (0..k).map(|_| std::sync::OnceLock::new()).collect(), orders: Mutex::default(), in_order: (0..k).map(|_| std::sync::OnceLock::new()).collect() }
     }
     fn distinct(&self, c: usize) -> usize {
-        *self.distinct[c].get_or_init(|| self.sorted(c).keys.len().max(1))
+        *self.distinct[c].get_or_init(|| {
+            if self.in_order(c) {
+                let col = self.col(c);
+                (1 + (1..col.len()).filter(|&i| col[i] != col[i - 1]).count()).min(col.len()).max(1)
+            } else {
+                self.sorted(c).keys.len().max(1)
+            }
+        })
+    }
+    /// Whether column `c` is held and in row order (`in_order`).
+    fn in_order(&self, c: usize) -> bool {
+        self.values[c].get().is_some() && *self.in_order[c].get_or_init(|| self.col(c).is_sorted())
+    }
+    /// Column `c`'s rows whose value is `v`, the column in row order: two searches of the column.
+    fn range_of(&self, c: usize, v: i64) -> std::ops::Range<u32> {
+        let col = self.col(c);
+        col.partition_point(|&x| x < v) as u32..col.partition_point(|&x| x <= v) as u32
     }
     /// An order whose leading columns are exactly `cols` (as a set), built most selective column first.
     fn order(&self, cols: &[usize]) -> (Vec<usize>, Arc<Vec<u32>>) {
@@ -5499,13 +5482,18 @@ impl crate::code_rule_dsl::facts::vtab::Source for Stored {
         if self.values[c].get().is_none() {
             return Some(if values.contains(&0) { (0..self.len()).collect() } else { Vec::new() });
         }
-        let mut out: Vec<usize> = values.iter().flat_map(|&v| self.rows_of(c, v).iter().map(|&r| r as usize)).collect();
+        let mut out: Vec<usize> = if self.in_order(c) {
+            values.iter().flat_map(|&v| self.range_of(c, v).map(|r| r as usize)).collect()
+        } else {
+            values.iter().flat_map(|&v| self.rows_of(c, v).iter().map(|&r| r as usize)).collect()
+        };
         out.sort_unstable();
         Some(out)
     }
     /// A column held nowhere (no rule names it, `columns_source`) reads as 0.
     fn value(&self, row: usize, c: usize) -> i64 { self.col(c).get(row).copied().unwrap_or(0) }
     fn sorted_rows(&self, c: usize, v: i64) -> Option<&[u32]> { self.values[c].get().map(|_| self.rows_of(c, v)) }
+    fn sorted_range(&self, c: usize, v: i64) -> Option<std::ops::Range<u32>> { self.in_order(c).then(|| self.range_of(c, v)) }
     fn sorts_rows(&self, c: usize) -> bool { self.values[c].get().is_some() }
 }
 /// A relation held in memory as columns (`None`: a column no rule reads, which reads as 0), read in place: a
@@ -6454,7 +6442,10 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                         let rows = v.src.lookup_all(&eq[..ix.cols.len()]).unwrap_or_default();
                         (Rows::Source(v), Cands::Owned(rows.into_iter().map(|r| r as u32).collect()))
                     }
-                    else if ix.sorted && let Some(v) = &rel.view { (Rows::Source(v), Cands::Slice(v.src.sorted_rows(v.cols[ix.cols[ix.lead]], key[ix.lead]).unwrap_or(&[]))) }
+                    else if ix.sorted && let Some(v) = &rel.view {
+                        let (c, k) = (v.cols[ix.cols[ix.lead]], key[ix.lead]);
+                        (Rows::Source(v), match v.src.sorted_range(c, k) { Some(r) => Cands::Range(r.start, r.end), None => Cands::Slice(v.src.sorted_rows(c, k).unwrap_or(&[])) })
+                    }
                     else if ix.source && let Some(v) = &rel.view {
                         let probed = match last {
                             Some((k, p)) if k.as_slice() == key && !matches!(&*p, Probed::Read(_, n) if *n != need) => p.clone(),
@@ -7757,6 +7748,33 @@ pub mod posted_tests {
             assert!(!source.sorts_rows(1));
             assert_eq!(source.sorted_rows(1, 0), None);
         }
+    }
+
+    /// A stored table's column in row order is its own index (from django-bugs' 63c36e0c0): a probe of it is a range
+    /// of row ids (`sorted_range`), the rows a sorted index gives, and its distinct values are counted along it; no
+    /// index is built for it.
+    #[test]
+    fn a_column_in_row_order_is_probed_as_a_range() {
+        use crate::code_rule_dsl::facts::vtab::Source;
+        let n = 12_299;
+        let mut rows: Vec<[i64; 2]> = (0..n as i64).map(|i| [(7 + i / 500) << 32 | (i % 50), (i * 7919) % 97]).collect();
+        rows.sort_unstable();
+        let cols: Vec<Vec<i64>> = (0..2).map(|c| rows.iter().map(|r| r[c]).collect()).collect();
+        let stored = || {
+            let t = Stored::new(vec!["n".into(), "a".into()], cols.iter().map(|c| { let l = std::sync::OnceLock::new(); let _ = l.set(c.clone()); l }).collect());
+            let _ = t.n.set(cols[0].len());
+            t
+        };
+        let (fresh, plain) = (stored(), stored());
+        let _ = plain.sorted(0);
+        for v in [cols[0][0], cols[0][2000], cols[0][cols[0].len() / 2], -5] {
+            let range: Vec<u32> = fresh.sorted_range(0, v).expect("in order").collect();
+            assert_eq!(range, plain.rows_of(0, v), "range of {v}");
+            assert_eq!(fresh.lookup(0, &[v]), plain.lookup(0, &[v]));
+        }
+        assert_eq!(fresh.distinct(0), plain.sorted(0).keys.len());
+        assert!(fresh.sorted_range(1, 40).is_none(), "a column out of order has no range");
+        assert!(fresh.index[0].get().is_none(), "no index of the column in order");
     }
 
     /// A source with no statistics of its own, so `measured` measures it.

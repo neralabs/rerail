@@ -200,8 +200,7 @@ pub fn anon_in_block(k: usize, vals: &[i64]) -> InBlock {
         }
     }
     let at = facts.block.offset_of(rel);
-    let own = Arc::new(Owned { facts: facts.clone(), rel });
-    InBlock { facts, own, at, rows: rows as u32, dead: 0, part: None }
+    InBlock { facts, at, rows: rows as u32, dead: 0, part: None }
 }
 
 /// A relation of `k` values a row, 8 bytes each, read in their order.
@@ -209,8 +208,8 @@ fn spec(k: usize) -> Spec {
     Spec { widths: vec![8; k], order: Vec::new(), indexes: Vec::new(), min_log: rerail_blocks::rows::MIN_LOG }
 }
 
-/// One relation of a block: a segment or a tail, shared by its holders; given back to the block's free list when
-/// the last lets go (decision 0342). A reader in place holds it too (`InBlock::part`).
+/// One relation of a block: a segment or a tail, shared by its holders; its chunks given back to the block's free
+/// list when the last lets go (decision 0342). A reader in place holds it too (`InBlock::part`).
 #[derive(Clone)]
 pub struct Part {
     held: Arc<Held>,
@@ -227,15 +226,24 @@ pub struct Held {
     /// Each column resolved once (its directory, which never moves while the relation is in its block): a read pays
     /// the chunk arithmetic and two loads, not the descriptor's walk too.
     cols: Arc<[ColRead]>,
-    /// The relation's claim on its block, shared by every copy of the part: the last copy's drop gives its chunks'
-    /// pages back (`Owned`).
-    own: Arc<Owned>,
+}
+
+/// The bytes of dead relations' chunks given back to the OS so far (`Held`'s drop), for a profile.
+static GIVEN_BACK: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// The bytes of dead relations' chunks given back to the OS so far.
+pub fn given_back() -> usize {
+    GIVEN_BACK.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 impl Drop for Held {
     fn drop(&mut self) {
-        // SAFETY: the relation lies in `facts`' block, and this was its last holder.
-        unsafe { (*self.rel).release(&self.facts.block) };
+        // SAFETY: the relation lies in `facts`' block, and this was its last holder. Its chunks go to the block's
+        // free list, their whole pages past the list's link back to the OS (Q76: a block lives while any relation in
+        // it does, so a chunk's dead relations otherwise kept their pages resident; about 500 MB of a 300-file cold
+        // run's footprint, Q76).
+        let given = unsafe { (*self.rel).release(&self.facts.block) };
+        GIVEN_BACK.fetch_add(given, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -250,37 +258,6 @@ impl std::ops::Deref for Part {
 // SAFETY: the relation lies in `facts`' block, which the part keeps; its writer is the one `Rows` holding it.
 unsafe impl Send for Held {}
 unsafe impl Sync for Held {}
-
-/// A relation's hold on its block's pages. A block is given back with its last relation, so before this a chunk's
-/// dead relations (a stratum's deltas, rows moved to a bigger block, a finished stratum's rows) kept their pages
-/// resident until every relation sharing the block went: on a 300-file cold run that was about 500 MB of the
-/// footprint (Q76, 0325 step 2's open item). The last holder gives the relation's chunks back to the OS; the block's
-/// room is not reused.
-struct Owned {
-    facts: Arc<Facts>,
-    rel: *const Relation,
-}
-
-// SAFETY: as `Part`'s: the relation lies in `facts`' block, which this keeps.
-unsafe impl Send for Owned {}
-unsafe impl Sync for Owned {}
-
-/// The bytes given back so far (`Owned`'s drop), for a profile.
-static GIVEN_BACK: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-/// The bytes of dead relations' chunks given back to the OS so far.
-pub fn given_back() -> usize {
-    GIVEN_BACK.load(std::sync::atomic::Ordering::Relaxed)
-}
-
-impl Drop for Owned {
-    fn drop(&mut self) {
-        // SAFETY: the relation lies in the block this keeps, and every part (and `InBlock`) that reads it held this.
-        let rel = unsafe { &*self.rel };
-        let bytes = unsafe { self.facts.block.give_back_rows(&rel.rows) + self.facts.block.give_back_rows(&rel.killed) };
-        GIVEN_BACK.fetch_add(bytes, std::sync::atomic::Ordering::Relaxed);
-    }
-}
 
 impl Part {
     /// An empty relation of `k` columns with room for `rows` rows, in the open block or a new one.
@@ -337,8 +314,7 @@ impl Part {
             {
                 let cols = (0..k).map(|c| rel.rows.reader(c)).collect();
                 let rel = std::ptr::from_ref(rel);
-                let own = Arc::new(Owned { facts: facts.clone(), rel });
-                return Ok(Part { held: Arc::new(Held { facts, life, rel, cols, own }), cap: u32::MAX });
+                return Ok(Part { held: Arc::new(Held { facts, life, rel, cols }), cap: u32::MAX });
             }
         }
         unreachable!("a new block of {} bytes holds a relation of {need}", 2 * need + MARGIN)
@@ -410,9 +386,9 @@ impl Part {
     }
 
     /// This relation where it lies, `rows` of it, for a reader or writer that binds its block (the device): it keeps
-    /// the relation's pages as the part does (`Owned`).
+    /// the relation's chunks as the part does.
     pub fn in_block(&self, rows: u32) -> InBlock {
-        InBlock { facts: self.facts.clone(), own: self.own.clone(), at: self.rel_at(), rows, dead: 0, part: Some(self.clone()) }
+        InBlock { facts: self.facts.clone(), at: self.rel_at(), rows, dead: 0, part: Some(self.clone()) }
     }
 
     /// Its rows' descriptor's offset in its block: what a writer's `rows_at` takes.
@@ -513,8 +489,6 @@ pub struct Rows {
 #[derive(Clone)]
 pub struct InBlock {
     pub facts: Arc<Facts>,
-    /// The relation's pages, kept while a reader (the device's entry) holds this.
-    own: Arc<Owned>,
     pub at: usize,
     pub rows: u32,
     /// The offset of a delta of it whose dead bits mark its dead rows (`Relation::try_kills`); 0 when none is.
@@ -704,7 +678,7 @@ impl Rows {
     /// and kept while these rows are). `None` for no rows.
     pub fn in_block(&self) -> Option<InBlock> {
         let one = self.one()?;
-        Some(InBlock { facts: one.facts.clone(), own: one.own.clone(), at: one.facts.block.offset_of(one.rel), rows: one.len(), dead: 0, part: Some(one.clone()) })
+        Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows: one.len(), dead: 0, part: Some(one.clone()) })
     }
 
     /// `in_block`, with the rows `dead` marks (bit `id`, as setfix keeps them) dead in it: a delta of the one
@@ -716,7 +690,7 @@ impl Rows {
             let block = &one.facts.block;
             Relation::try_kills(block, &spec(self.k), one.rel(), dead).map(|r| block.offset_of(r))
         }))?;
-        Some(InBlock { facts: one.facts.clone(), own: one.own.clone(), at: one.facts.block.offset_of(one.rel), rows: one.len(), dead: at, part: Some(one.clone()) })
+        Some(InBlock { facts: one.facts.clone(), at: one.facts.block.offset_of(one.rel), rows: one.len(), dead: at, part: Some(one.clone()) })
     }
 
     /// The rows as one relation: the one part, or every part merged into one (made once and kept).

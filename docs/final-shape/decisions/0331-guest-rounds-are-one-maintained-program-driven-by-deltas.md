@@ -175,9 +175,9 @@ an edit (one line added to one file). Medians, CPU:
 Outputs identical, cold and edit (660 relations, 30,449 rows). Four runs' wall stalled 46 to 147 s at their usual
 CPU, across engines, while the host's connection was dropping: the host's, not an engine's.
 
-### The record kept through every pass (Q50, 2026-11-17)
+### The record kept through every pass (Q119, 2026-11-17)
 
-Working Q50 (the red `dropping_unreached` family) found that the record still broke in four places, each now
+Working Q119 (the red `dropping_unreached` family) found that the record still broke in four places, each now
 fixed: `plan::lower`'s `expand_memberships` split a rule per set member without its source; `prune` kept readers
 it had dropped, so a later gate took them for readers gone by a rename; the pass manager's steps did not carry the
 record (60 entries against 56 rules after `drop repeated rules`, 12 against 13 after the pushed joins); and the
@@ -206,3 +206,14 @@ a request rule's readers is replaced by the relations that read it (`InlineNodeT
 that `DecidedFactTests` empties decides its readers' reads of it, to a fixpoint. The pass manager's carry takes a
 record the step's output states whole as its word for a rule it knows nothing of (`hide` rebuilds rules with no
 source and leaves the record as it was); before, such a rule fell back to the request's own name.
+
+## The request narrowing merged (2026-11-17, benchmarks-on-integration into django-bugs)
+
+Two lines fixed the dropping family's narrowing independently: benchmarks-on-integration in 4dbc395b2 (Q119, its
+Q50), django-bugs in 9be5e5356 (0291 item 4, Q3). Both gate each ask by its reader, keep a wide request for the
+reading sites that cannot narrow, and let a request merge only with its own widened copies. The merge keeps
+django-bugs' `rr::lower` form (`demand_of`'s `whole` readers, the asks deduplicated where they are made,
+`front::subsume_requests`), whose ask variables are named from the reading rule alone (`<v>_rr_d`): named by the
+reader's index, a request's text, and every key made from it, changed with any rule added elsewhere. It keeps
+benchmarks-on-integration's split of a request's class in `simplify` (a request and its copies first, apart from the
+rest) and the request record carried through every pass after lowering.

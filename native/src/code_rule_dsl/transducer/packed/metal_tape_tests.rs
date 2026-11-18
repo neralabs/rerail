@@ -233,7 +233,7 @@ fn a_label_kernel_costs_footprint() {
 
 /// Every label kernel and the fact-only pattern kernel compile, for a mixed batch (0) and for each format's own
 /// (`tape_format`). A run whose kernels fail to compile falls back to the CPU and still gives the right rows, so the
-/// label tests alone would pass with MSL that does not compile (t41, Q57).
+/// label tests alone would pass with MSL that does not compile (t41, Q62).
 #[test]
 fn the_label_kernels_compile_for_every_format() {
     if METAL_DEVICE.is_none() {

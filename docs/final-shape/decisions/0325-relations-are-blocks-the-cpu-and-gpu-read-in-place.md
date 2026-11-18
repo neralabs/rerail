@@ -347,7 +347,8 @@ Step by step, each leaving the engine working (see the commits that name this de
     resident only where written. The device can still read an anonymous block in place (a no-copy buffer).
 - **Pinned by**: `a_chunks_relations_go_in_its_own_blocks_and_go_with_it`,
   `a_job_of_the_chunk_puts_its_relations_in_the_chunks_block`, `a_cpu_run_takes_anonymous_blocks` (setfix::rows;
-  `facts::rows` since the merge into Final-shape-quality, where the rows' storage lives, step 3 above). There a
+  `facts::rows` since the merge into Final-shape-quality, where the rows' storage lives, step 3 above);
+  `a_dropped_relations_chunks_are_taken_by_the_next`, `a_reader_in_place_keeps_the_relation` (`facts::rows`). There a
   chunk's open blocks are one a `Life`.
 - **Measured** (M3, PostHog cold, profiled, two runs, load 26–35): user CPU 205.5 and 217.8 s (before 0325:
   204.1–210.8; with it: 224.6 twice); chunks 2,797 and 2,982 (2,563; 3,409); median footprint 1,189 and 1,194 MB
@@ -407,3 +408,29 @@ host index left.
     the peak before, 702 MB after, because the cross part finishes sooner and overlaps more of them;
   - findings: the reference's;
   - strict 10-file outputs: byte-identical.
+
+## Merged with django-bugs's frames and free lists (2026-11-17)
+
+Both lines changed how a dead relation's memory goes back and how frames are written. The merge keeps one form of
+each, with both sides' properties:
+
+- **A dead relation's pages.** django-bugs gave its chunks to the block's free list (0342), to be reused; this line
+  gave their pages to the OS (Q76), but never reused the room. Now a chunk freed in an anonymous
+  block goes on the free list and its whole pages past the list's link go back to the OS (`Block::free_chunk`); the
+  list marks them in use again when it hands the chunk out (`reuse_pages`). A pooled slab's or a file's pages stay.
+  Pinned by `a_dead_relations_pages_go_back_and_its_neighbours_rows_stay` (`rerail_blocks::rows`): the bytes given
+  back, the neighbour's rows, and the next relation taking the freed chunks.
+- **Frames.** django-bugs encoded each frame straight into its write's segments (`FramePlacer`, Q89); this line read
+  the rows part by part (`each_live_batch`), wrote the inputs' frames before the run, and handed derived relations
+  off after their last reader (Q74). Kept: this line's structure, with every frame placed. An input's job places
+  its granules in a placer of its own and queues it with them; the cross part opens its write's placer before the
+  run, so a handed-off relation is encoded into it then (no bytes on the heap until `write_frames`), and one whose
+  rows are the stored ones keeps its frame (its reads retagged). The heap form is left only where no segment takes
+  a frame, encoded through the same `encode_windows`; the column-at-a-time encoder is gone.
+
+At the hub's merge of django-bugs (2026-11-18) the hub had made the same merge its own way. It kept both row readers
+(`each_live_window` beside `each_live_batch`), both digests (`rows_digest_windows` beside `held_digest`) and the
+column-at-a-time encoder, and its handed-off relations were encoded on the heap. One of each is kept now:
+`each_live_batch`, `held_digest`, and the hub's `encode_windows`, which encodes outside the placer's lock. A handed-off
+relation is placed in the cross part's write, and one whose rows are stored keeps its frame. The dead relation's pages
+take the form above. The hub's `Owned` hold is folded into the relation's last holder (`Held`'s drop).

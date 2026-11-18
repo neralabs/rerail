@@ -278,6 +278,12 @@ pub trait Source: Send + Sync {
     fn sorted_rows(&self, _column: usize, _value: i64) -> Option<&[u32]> {
         None
     }
+    /// The rows whose `column` is `value` as a range of row ids, where the column is in row order (a sorted
+    /// source's leading column): found by a search of the column itself, no index of its rows built. `None`: the
+    /// column is not in order (ask `sorted_rows`). Where it answers, `sorted_rows` gives the same rows.
+    fn sorted_range(&self, _column: usize, _value: i64) -> Option<std::ops::Range<u32>> {
+        None
+    }
     /// Whether `sorted_rows` serves `column`, asked without building its index: a plan choosing among a source's
     /// columns built every candidate's sorted form to ask, where it reads one.
     fn sorts_rows(&self, column: usize) -> bool {
@@ -1499,6 +1505,13 @@ impl Source for Relation {
             return Some(&ids[self.ordered_between(column, value, value)]);
         }
         Some(&self.index(column).rows[self.between(column, value, value)])
+    }
+    /// A column pushed in order of the rows' ids: its rows a range, no identity list made.
+    fn sorted_range(&self, column: usize, value: i64) -> Option<Range<u32>> {
+        self.ordered[column].is_some().then(|| {
+            let r = self.ordered_between(column, value, value);
+            r.start as u32..r.end as u32
+        })
     }
     fn sorts_rows(&self, _column: usize) -> bool {
         true
