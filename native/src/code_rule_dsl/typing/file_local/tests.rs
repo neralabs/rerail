@@ -733,3 +733,22 @@ named(f, s) :- uses(f, _), child(p, f, _), node(_, p, "call", _, _), text(p, s).
     assert_ne!(of(&before, "first"), of(&after, "first"), "the edited rule's helper is renamed");
     assert_eq!(of(&before, "named"), of(&after, "named"), "another rule's is not");
 }
+
+/// A base relation read before it is declared (a tree axis, `rr_inside_<set>`, which lowering declares) has no
+/// location columns of its own, in the version's split as in the tree's: the version's asked for its columns'
+/// types and stopped, on any program with `inside(n, a, "kind")` (ep2's combine).
+#[test]
+fn the_split_of_a_version_reads_an_undeclared_axis_as_the_tree_does() {
+    let text = ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.input node\n\
+                .decl out(n: node)\n.output out\nout(n) :- node(_, n, \"call\", _, _), inside(n, a, \"assignment\").\n";
+    let mut program = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+    // The axis as the combine's link hands it on: read, and not declared.
+    let axes: Vec<String> = program.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom())).filter(|a| crate::code_rule_dsl::logic::front::is_axis(&a.rel)).map(|a| a.rel.to_string()).collect();
+    assert!(!axes.is_empty(), "the program reads an axis: {:?}", program.rules);
+    for a in &axes {
+        program.decls.remove(a.as_str());
+    }
+    let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&program).unwrap().finish().unwrap();
+    let split = crate::code_rule_dsl::logic::program_image::manager::analysis::<FileLocal>(&v).unwrap();
+    assert_eq!(split.local, split_located(&program).0, "the version's file-local relations are the tree's");
+}

@@ -5,9 +5,9 @@
 This is the list of open work from the merges of 2026-11-15, kept so that nobody has to remember it. The agent doing
 the work keeps it current and works through it in order, without being prompted.
 
-An item is **done** only when an independent reviewer, given the code and not the author's explanation, finds the
-result no worse than either side on every property listed. The brief the reviewer gets is
-[reviewer-brief.md](reviewer-brief.md). The author fixes what the reviewer finds and does not argue with it.
+An item is **done** once the agent doing it has reviewed its own diff against
+[reviewer-brief.md](reviewer-brief.md) (read cold, callers traced, every property listed kept) and fixed what that
+finds. No separate reviewer: the user stopped review by subagents (2026-11-15).
 
 A real tradeoff, where both properties cannot hold at once, goes to the user with evidence for each option. Such
 questions wait in "Questions for the user" and go to the user together.
@@ -559,6 +559,163 @@ pass.
   comparable with the 82.9 G above (another engine, another lib). Next lever: 0225 §7's per-module part; see 0281
   step 5 (c).
 
+- **Measured again** (2026-11-16, after 0225 §2's partial hits were made to cost their cone; same ep2 setup):
+  95.3–95.8 G, 6.4–6.6 s CPU, 3.8–4.0 s wall, from 150 G. What is left, and what each needs:
+  - **combining and preparing** (1.33 s, on the main thread, a third of the wall): each a whole-program pass over
+    about 10,000 rules, run again because the edit misses the prepared program's key. Costing the edit needs 0225 §7
+    (a prepared program kept per module), and so an input that is an edit of the last run's: 0281 steps 6–7. The
+    keyed steps (0281 §6) store the steps but reuse only an unchanged input. Pushing the joins as a rule pass alone
+    (0.15 s at most) was left out (user, 2026-11-16).
+  - **the guests of every partial hit** (0.9 s on the workers): 10,047 guest tapes parsed and written back each run,
+    since a wave reads no tape and a guest is found only in a wave (0104); and the hosts projected twice, once
+    without their guests (about 0.2 s). Reading the guests' tapes before the waves would need them named by their
+    host's content, which is a new cache, unless it is written as rules (0103).
+  - **the splits in preparation** (about 0.15 s): `FileLocal::maintain` splits whole once its cone passes half the
+    relations, and a push round's changed helpers reach most relations through their readers. A cone that stops
+    where a relation's place comes out unchanged would cost the change.
+  - **the entries read** (lookup 0.3 s, decode 0.45 s, their rows handed on 0.34 s): every file is a partial hit and
+    is read whole, so these are near what this edit must read.
+
+- **Measured again, and handed on** (2026-11-17, after 0323; ep2's B101 edit in a new process on the m3,
+  profiling build, profiled, from the profile of 2026-11-16's run, nothing new run): 2.5 s wall, 32.7 G. The
+  per-file side is gone (`local` 0.006 s, `parse` 0.04 s). `combine` (0.58 s wall) and `prepare` (0.95 s) are 61%
+  of the wall. All of it is whole-program passes:
+  - push 0.17 s, prune/simplify/demand 0.14 s, demand cut 0.06 s, factorize 0.06 s, merge 0.03 s, locate 0.03 s;
+  - hiding about 0.09 s, fact spaces 0.05 s, merging the relations that are one 0.05 s.
+
+  Rerunning these on the edit's delta in a new process is 0281's step P, decided as 0333 on Typing-support
+  (2026-11-17, the user's choice there: the last run and its analyses as stored facts), on top of its steps
+  6a–6e, 7a-1 and 7a-2 (9a67908a9). The user's call (2026-11-17): P stays there, not built here.
+- **Done when** (here): Typing-support's P is merged in, and ep2's edit is measured again against the numbers
+  above. Then the passes that 0333 §6 leaves whole (hiding's fixpoint, the fact spaces, prune) are made to cost
+  their delta, if the measurement shows them worth it.
+
+- **Measured after the merge of Typing-support** (2026-11-17, 36f97e581, with step P and 0333; ep2 on the m3,
+  profiling build, own state, cost and image stores; the m3 at load 58–76, so wall times are left out):
+  - The edit costs 64.7–70.7 G and 6.7–7.6 s CPU, against 32.7 G before the merge. Rows are h1's (0 differ).
+    Cold: 979.7 G, against 887.5 G.
+  - `combine` 8.2 G (0.60 s), about as before (0.58 s).
+  - `prepare` 38.0 G (3.14 s CPU), against 0.95 s:
+    - `columns no reader reads` (before lowering, a version pass): 0.96 s, 6,663 spans, 2.3 GB allocated. A pass
+      run per relation over the whole program; the tree's prune/simplify/demand were 0.14 s together.
+    - Using P's stored run before lowering (`the last run of before lowering`): 0.68 s and 320 MB. The stored run
+      of preparation: 0.06 s.
+    - The passes after lowering: 0.35 s (push 0.23 s).
+  - The store's writer: the run's record is 2 jobs, 71 MB encoded, 1.1 s (P's runs and the prepared program).
+  - Q30 holds: no guest tape is written (10,047 writes a run before it), and `parse` is 0.05 s.
+  - The tree detours of Q125 cost 0.05 s.
+
+  P costs more than it saves on this edit, as Typing-support found (+1.0 s writing, +0.5 s opening). The pass
+  that gained most (`columns no reader reads`) is whole-program work in either design.
+- **`columns no reader reads` made one step a round** (2026-11-17): the driver ran one pipeline step per relation
+  each round (6,663 steps, each deriving the fields and rewriting every rule, and each a stage of P's stored run).
+  Now one step projects every relation of the round in one rewrite. Within a round no projection decides another's:
+  the columns read are the round's, and a projection drops only arguments no reader names. The debug build's tree
+  check holds. ep2's edit, same m3 sequence, load 34–41:
+  - 40.7 G and 3.31 s CPU, from 70.7 G and 7.55 s;
+  - `prepare` 18.5 G, from 38.0 G; the pass 0.06 s, from 0.96 s; P's stored run 0.085 s, from 0.68 s;
+  - written per edit: 12 MB, from 71 MB.
+  - Left over 743c3de74's 32.7 G: `prepare` is 18.5 G against 9.8 G. Push is 0.18 s, the export cut and the
+    factorizing 0.06 s each.
+- **The second answer, decision 0345's stage 1, measured beside 0333** (2026-11-17): each part (the library,
+  each program's `p<i>_`, each request's `q<k>_`) is prepared alone against its interface, kept under its own key,
+  and the parts linked before lowering; `RERAIL_PREPARE=parts` selects it. ep2 on the m3, the same seed and edits,
+  a fresh state, load 14–43:
+
+  | | A: whole + P (0333) | B: parts (0345) |
+  |---|---|---|
+  | cold run | 980 G | 942 G |
+  | an edit (e2) | 40.7 G, 3.31 s CPU | 50.8 G, 4.16 s CPU |
+  | `prepare` | 18.5 G | 30.7 G |
+  | before lowering | P's last run 0.085 s + the projection 0.06 s | link 0.79 s, parts and keys 0.55 s, parts read 0.23 s |
+  | written per edit | 12 MB | 2.3 MB |
+  | rows against h1 | 0 differ | 0 differ |
+
+  B misses one part of 318 on the edit (the edited policy's); the other 317 are read from the store. Its rows,
+  and phase 0's and the sources phase's prepared programs, are the whole program's exactly; the main phase differs
+  only where no optimization crosses parts. What B costs over A is whole-program work it still does on every edit:
+  building each part's program to key it, reading every part back, and linking 10,000 rules. A reruns the delta.
+  B's next levers, in order: key a part from its rules' digests without building it; keep the link (the linked
+  version under the vector of the parts' keys, relinking only the missed part's rules); then 0345's stages 2–3.
+- **0345: a part keyed without building it** (2026-11-17): the key is the part's header (its own relations' fields,
+  and a digest of the fields every part shares, made once a run) and its rules' hashes (a rule's hash is its
+  text's); the link takes each part's header, so only a missed part is built. Same ep2 sequence, load 42–64: an
+  edit 43.9 G and 4.50 s CPU, from 50.8 G (A: 40.7 G); `prepare` 23.8 G, from 30.7 G; the front's own CPU 0.16 s,
+  from 0.55 s. The cold run 965 G. Rows h1's; phase 0 and the sources phase still the whole's exactly. Left: the
+  link 0.74 s CPU and reading 317 parts 0.27 s, the next lever (a kept link).
+- **0345: a kept part holds its own header only** (2026-11-17): profiled inside, the link's 0.74 s was not the
+  10,000 rules (under 0.05 s) but the fields every part shares (policies, natives, settings, kindsets, …): each of
+  the 318 stored images held them (0.24 s to read), each part's header was rebuilt with them (0.20 s), and the
+  header merge walked them per part (0.42 s). A part is now kept with its own header and only the shared fields its
+  passes changed; its key and the link read its own header. Same ep2 sequence, load 34–40: an edit **35.5 G** and
+  3.58 s CPU, from 43.9 G (A: 40.7 G, 3.31 s); `prepare` 15.3 G (A: 18.5 G); the cold run 957 G. Rows h1's; phase 0
+  and sources the whole's exactly. Before lowering is now about 0.4 s CPU (keys 0.14 s, the 317 images 0.11 s, the
+  parts' names 0.09 s), and the passes after lowering are the larger cost (push 0.21 s): 0345 stage 2. A kept link
+  would save at most the 0.2 s of names and images, and writes a linked program per edit.
+- **0345 stage 2: the passes after lowering per part** (2026-11-17): the nearest sets, the bound check and the
+  split run over the whole; each part's push, factorizing, export cut and locate run against its interface (its
+  inputs' place in the split given, its outputs' readers elsewhere named) and are kept under its key; the push's
+  mode is the run's (any part whose cross-file part reads a base relation), a part's share of it read from its
+  facts before any image; the merges run over the linked whole. Same ep2 sequence, load 39–44: rows h1's on the
+  cold run and every edit; an edit **36.3 G**, 2.88 s CPU (stage 1: 35.5 G; A: 40.7 G, 3.31 s); the cold run
+  1,169 G (stage 1: 957 G: every part's passes, twice where the mode is the base one). On the edit no part's
+  passes after lowering ran (0 of 589 prepared); what is left is whole: the link after lowering 0.14 s, the 317
+  images 0.07 s, the merges 0.03 s. The parts are conservative at the interface: an export another part reads is
+  neither factorized nor cut.
+- **0345: the links' and keys' whole-program work** (2026-11-17): a part keeps the names its passes made (the link
+  read them by scanning every part's rules), and a part's key hashes only its own relations' fields, the shared
+  ones and the program's inputs hashed once a run (each key formatted ~150 shared declarations, 589 keys an edit).
+  Same ep2 sequence, load 41–46: an edit **32.3 G**, 2.77 s CPU (from 36.3 G; A: 40.7 G); `prepare` 11.2 G (A:
+  18.5 G); rows h1's, phase 0 and sources the whole's exactly. Left of the whole per edit: each stage reads the
+  317 parts' images (0.09 s CPU each), stage 1 reads each part's header for the link (0.06 s), stage 2 makes
+  each part's header and interface (0.06 s). Removing the image reads needs a kept link (the linked version, with
+  each part's rules in it, edited where a part changed): 0333's mechanism, which this answer was to compare.
+  Getting it working took four fixes in the link, each a name read for its meaning: `strtest_<k>`,
+  `rr_ast_<k>_<m>` (its capture count), the requests a runner answers (never inputs), and a part's header (the
+  whole program's 3,000 declarations per part made the link quadratic and every part's key the whole's).
+- **Where the 2.65 s of an edit goes, and what removes it** (2026-11-17, read from the e14 profile above, nothing
+  run again): B101's body edited, so 1 of 318 parts misses, 1 of 2,685 cross strata runs (`chain_below`), and 0 of
+  1,030 kept inputs change. Main thread 2.12 s CPU, other threads 0.41 s. Everything below the edit's one part and
+  one stratum is work over the unchanged whole:
+  - **prepare** (0.87 s). Each stage reads the 317 parts' images (0.096 s and 0.068 s), keys the parts (0.008 s,
+    0.025 s) and links all of them again: stage 1's link 0.106 s (the names 0.060 s), stage 2's 0.141 s (the
+    headers 0.131 s), with its headers and interfaces 0.042 s and merging identical relations 0.030 s. That is
+    0.53 s. A kept link (the last linked version, with each part's names, where only the missed part is spliced in
+    when its interface is unchanged) leaves one image read and one part. The whole passes after the link (lower
+    0.062, split 0.025, folding guests 0.026, the memo's strata and program 0.044, statistics and the keep 0.026,
+    the passes' own 0.061, about 0.24 s) still run on the whole, since the linked whole changed.
+  - **combine** (0.50 s main, 0.13 s before, 0.12 s on the pool). The tail stage 3 names is 0.39 s: hiding 0.104 s
+    (20 rounds over 5,744 rules), fact spaces 0.093 s, narrowing the requests 0.039 s, merging identical relations
+    0.037 s, sources on request 0.035 s, merging the programs 0.027 s, `parse the program` itself 0.055 s. Beside it
+    are 308 programs lowered again in their libraries' scope on the pool (0.117 s), the 317 texts read (0.045 s
+    CPU, 0.110 s wall), and before the phase the rule files read (0.076 s) and phase 0's include graphs (0.046 s).
+    A part that hits needs none of these if stage 3 keys each pass's result by part. Without stage 3, a lowered
+    program kept by its image's and its libraries' digests removes the pool's 0.117 s, and a stat index on the rule
+    files (as the corpus has) removes most of the read.
+  - **wait** (0.26 s) is not waiting: it is the parse phase's lookups on the main thread. The memo lookup of the
+    300 unchanged files, each one's outputs entry from SQLite, is 0.078 s, and decoding them is 0.029 s on the pool.
+    One check that the file-local plan and every file's stat are the last run's would replace 300 lookups. The
+    atoms' lease reads every stored atom in a new process (0.045 s); mapped atoms (decision 0170) make it lazy.
+    The cross part's frame names by identity (0.031 s) are derived from the placed programs on each run and could
+    be kept with the prepared program. Preloading the cross space reads 36,409 frames, 172 MB encoded (0.035 s),
+    for one stratum that reads 396 relations' 29,821 rows.
+  - **stats** (0.21 s) measures a run where nothing changed. The kept inputs from the frames are 0.084 s: all
+    1,030 inputs' document frames are decoded and checked against their digests, for one stratum's reads. The 4
+    semi-join base relations (`docof`, `end_line`, `tree_digest`, `visit_index`) are measured again on each run,
+    because a semi-join's statistics are never kept: 8 column sorts of 427k–464k rows, 0.060 s. Binding the kept
+    inputs lazily, per relation a running stratum reads, and keeping a semi-join's statistics under its exports'
+    digests leaves about 0.03 s.
+  - **cross** (0.11 s): the kept part from the frames is 0.042 s, the one stratum 0.021 s.
+- **Built** (2026-11-17, ep2 parts on the m3, rows h1's throughout): the semi-join statistics kept with their input
+  frames (0369, cf5f56a7f): `stats` 0.24 → 0.13 s. The kept link, both stages (0368, 49567510a): `prepare`
+  0.84 → 0.52 s, an edit 32.7 → 28.7 G instructions (e26; the host at load 44, so CPU is no measure there). The
+  combine's tail is designed as 0370 (proposed): each pass's decision from kept part summaries, the changed part's
+  rules alone rewritten. Left, by size, from e26: lowering each program in its libraries' scope 0.100 s (each a
+  kept image read back, 308 of them: spans added to split it), the memo lookup 0.094 s, fact spaces 0.077 s,
+  hiding's rounds 0.066 s, the atoms' lease 0.052 s, stage 2's headers and interfaces 0.045 s (every part's,
+  for its key), the sources on request 0.042 s, the kept inputs 0.083 s (decoding 0.020, granules 0.018, ranges
+  and sources 0.042: each owner's granule now found once, batched).
+
 ### Q19. A new process reads every kept frame of the cross part, its own or not
 
 - **Found** (2026-11-15, ep2, while measuring Q18): an edit of one rule's body costs 82.9 G in a new process, of
@@ -670,6 +827,30 @@ pass.
       the local 151 MB one: the same). Left: the long-lived store's history, or code since h4–h5's build. Settled by
       one local run on the long-lived store with the current binary (cold, then two edits), when the load allows: 55
       G means a fresh store lacks something worth finding; 217 G means a regression since h4–h5.
+    - **Settled, not a store effect** (2026-11-16): the farm binaries were debug builds (`cargo build --bin`), and
+      h1–h16's were profiling builds. One debug binary on both stores (the m3, each with its own cost and image
+      stores): long-lived 222–245 G an edit, fresh 217–224 G, prepare 3.8 s on both. The long store's state cheapens
+      only the new build's cold run (2,416 G against 6,452 G: content kept across builds).
+    - **The merged build, profiling, a fresh store** (the m3, 4b6518be9): cold 800 G, 13 s wall; four B101 edits
+      28.2–29.5 G, 2.4–2.5 s CPU, 2.0–2.2 s wall, rows identical to h1. Half of h4–h5's 55 G.
+    - **Open:** two debug edits in a row (f4, f5 at 4b6518be9's debug build) hung after the frames preload until the
+      115 s cap (26,123 frames read, 2,722 identities left out, against 31,551 and 0 in the others); the next run
+      paid for three edits (685 G). Not reproduced; no sample.
+- **Done** (2026-11-17):
+  - **The blobs are out of the scan.** The hub's 0295 §4 (segments) is the format change this item waited on:
+    a frame's row holds no bytes now (`seg`, `seg_at`, `seg_len`), and `read_cross_space` skips a left-out frame
+    before `row_bytes` maps anything. So a frame that is not read costs a small key row.
+  - **The open read gap, fixed.** `frame_rels` now names, besides the declared relations, every relation the run
+    binds from an earlier phase (`repository`), as `Retained::from_frames` reads them, declared or not. Test:
+    `a_relation_bound_from_an_earlier_phase_is_read_by_identity_declared_or_not` (failed before).
+  - **ep2, measured** (the m3, a fresh store, profiling build at 51e67e692, strict; no build for this): after the
+    cold run, 13 B101 edits in a row, each a new process. Every edit read 32,002 frames, with 0 identities left out.
+    `wait` stayed at 0.23–0.27 s user, and edits at 28.9–31.3 G with rows identical to h1. The store holds 33,808
+    frames in 9 spaces and 15 manifests: 0302's lanes keep the space at its size. The done-when holds: the read is
+    the run's own identities, and `wait` does not grow with the runs kept.
+  - The debug hang of f4 and f5 was not seen again in these 13 edits, nor in the 6 before. It stays unexplained:
+    if it comes back, take a sample before the cap.
+
 
 ### Q20. After the hub's merge, an edit's kept inputs swing between missing and costing 85 G
 
@@ -744,8 +925,38 @@ pass.
     (463778 kept, 463777 held)`, `unparen (463778 kept, 463777 held)`. The keeper counts one row more than is held, in
     each, from the run that counted every file in (a new build's).
   - **Ruled out:** a row given to `Exports::add` twice (a counter of those read 0 for all three), and a value document
-    held by two files (`Keeper::holders`: none held by more than one). Not traced further: the next step is a
-    per-document comparison of the keeper's count-in against the rows held.
+    held by two files (`Keeper::holders`: none held by more than one). `holders` tracks only documents past
+    `HIDDEN_KEYS`, so it could not see the cause below.
+  - **Found** (2026-11-16, m3, a fresh ep2 store's cold run, `RERAIL_KEPT_DOCS=alias_value`, a per-document
+    comparison of the keeper's count-in against the rows held): one document, 1348786882, has 4 rows counted and 3
+    held. It is an annotation document (`ANNOTATION_KEYS..HIDDEN_KEYS`), and two files' entries name it:
+    `benchmarks/bench_versioning_git.py` gives 3 rows, `conform/l1100_rbac_schema/test_rbac_provider.py` gives 1,
+    equal to one of the 3. The held table keeps the union, and the keeper adds both.
+    - **The cause is a guest key collision**, not a shared document. A guest's key hashes (host path, place,
+      grammar) into its range (2^28 for annotations), and `guests::key` probes only against the chunk's own
+      `taken`. The two hosts are in different chunks, so both took the same key, and their nodes the same ids
+      (`key << 32 | index`). By the birthday bound, ep2's tens of thousands of guests give about one such
+      collision. On the 9,010-file repo they would give dozens.
+    - **More than a statistic.** Two documents share node ids, so the held table folds one file's row into the
+      other's. A memo hit's guests are never made, so no run-wide probe could see them either. The probe also
+      makes a key depend on the chunk's other files, against 0055's "a function of what it is".
+    - **The fix is the user's call** (a node-id or store format choice). Claiming keys in the store breaks 0104
+      (guests are made inside the waves). Reading the registry before the first wave is a read of unchanged data on
+      every edit. Provisional keys mapped at the store, as atoms are (0160/0170), are baked into memoised rows.
+      Wider keys change the node-id format.
+    - **Fixed** (2026-11-16, 51e67e692): the user chose the registry read before the first wave, decision 0323.
+      `guest_keys(identity, key, path)` is read once a process and held with the store's atoms; every chunk claims
+      in memory, probing past every key held; a run's claims are an item of its record.
+      - Tests: `two_chunks_guests_that_hash_alike_take_two_keys` (failed before), and the store's two in
+        `guest_keys::tests`.
+      - m3, fresh ep2 store, profiling build, strict:
+        - The cold run (887.5 G, 15.1 s wall) prints no `RERAIL_KEPT_DOCS` mismatch for `alias_value`, `type_bare`
+          or `unparen`, and holds 27,073 guest keys.
+        - The edits give 1334 rows, none differing from h1, at 31.3 G and 30.6 G (28–29.5 G before, on the build
+          before the Typing-support and cost-classifier merges). A profiled edit reads "983 kept; 0 measured from
+          the rows held".
+      - `RERAIL_KEPT_DOCS` is meant for cold runs only. In an edit the keeper counts no memo hit, so it prints every
+        held row: 246,000 lines, and two edits hit the 115 s cap.
   - For phased-facts' 0290: its table's "the kept inputs" (0.76 s on dl10) was measured before a2ff8071e.
 
 ### Q21. The hub's gate failures at 692cc9772
@@ -1228,9 +1439,16 @@ pass.
     `text(i, x)`, and its run fails with `@rr_node_text without the run's long-text nodes bound`
     (`native/setfix.rs`, the function step's binding of `LONG_TEXT_NODES`). Some part of a phase's run evaluates a
     node's text before the run binds its long-text nodes.
+    **Fixed** (2026-11-16): the join was made before the run bound its nodes, and took the binding then. A node read
+    now holds the binding when there is one, or the connection's scope, and looks the binding up as it runs
+    (`setfix::NodeTexts`); with none bound it reads NULL, as the SQL function does. The 15 typing oracle tests,
+    `base_relations_read_are_inputs` and this test pass.
   - `corpus::tests::every_switch_lowering_reads_is_classified`: `RERAIL_EXPORT_IMAGES`, `RERAIL_IMAGE_STORE`,
     `RERAIL_SHIPPED_IMAGES` (`rr/images.rs`) and `RERAIL_MODULE_IMAGES` (`combine_read`) are read in combining but
     are in neither list. Each needs classifying: does it change a prepared program (`COMBINING`) or not?
+    **Fixed** (2026-11-16, with 0281 step 7a-1): none changes a prepared program. An image is keyed by its text, its
+    scope and the format, so the store it comes from gives the same program; the export only writes it out too.
+    They and `RERAIL_VERSION_TRACE` (a measurement aid that writes each version) are in `NOT_PREPARING`.
   - `sql_executor::tests::rule_files_use_the_core_prelude_and_unused_inputs_need_no_binding` (red at aa36f9104):
     running a rule file after binding a snapshot fails with `value: SQL output already exists; rebind inputs to
     clear derived results` (`sql_executor/session.rs`): the core prelude's `value` is taken for an output that
@@ -1238,6 +1456,10 @@ pass.
   - `convert::tests::helpers_take_the_metavariables_bound_around_them` and
     `convert::tests::a_sample_of_the_replay_gives_the_recorded_findings` (77 of 268 events), red at a31a11e22 with
     the phases test's error (`@rr_node_text without the run's long-text nodes bound`): the same cause, likely.
+  - `corpus::base_tests::base_relations_read_are_inputs` (red at e2c15672d, 2026-11-16): `text(sp, s)` of a
+    document's `source` span fails with the same error: no phase here, so the cause is not phase-specific.
+  - `typing::oracle_tests::rust_calls_program_agrees_with_rust_analyzer` (red at 0281 step 6d, 2026-11-16, its first
+    run since): the same error, in a Rust run.
   - Also: `sql_executor` as a whole, in parallel, passes 3 GB RSS (`tmp/capped.sh 3000`); with four threads too.
 - **Done when**: each passes, the first by binding the long-text nodes before whichever part reads them (or by the
   part not reading node text), the second by classifying each switch from what it does, the third from the cause.
@@ -1395,6 +1617,16 @@ pass.
 - **Keep**: decision 0306 step 4 (the run's lease is its one hold on collection); 0104.
 - **Done when**: guests' tapes are either named by the manifest (if a later run reads them: measured) or not
   written at all, and a cold run's store holds no source its own collection deletes.
+- **Done** (2026-11-17): a guest's tape is not written at all. A guest is made in a wave, which reads no SQL
+  (0104): `build_in_wave` looks only at what this process queued, never at the store, so no later process read a
+  guest's stored tape. `guests::parse` and `taped` now parse in memory (`core::build`, `build_with_tape`). Equal
+  texts are still parsed once per process (`parse`'s kept map), and `make` takes no store. So a cold run queues no
+  guest source or tape, and its collection has none to delete.
+  - Test: `a_run_stores_no_source_of_its_guests` (rerail-engine): a cold run with one annotation stores the host's
+    source and not the guest's `(List[int])`. It failed before ("the guest's source is not").
+  - Also pass: `string_annotations_are_guests_at_their_host_lines`, `guests_that_do_not_parse_follow_the_policy`,
+    `embeds_declare_guests_and_guests_off_leaves_them_out`.
+
 
 ### Q42. `a_second_corpus_run_deletes_and_creates_its_store_again` fails now and then beside the planner's tests
 
@@ -1635,6 +1867,10 @@ which sends changed and new files and never removes one the checkout deleted. Af
 `executors_are_shared`, which reads every source file, failed on the stale grid files. A deleted file that is still
 mounted somewhere would build on the host and fail here.
 
+Seen again 2026-11-17, at the merge of final-rerail-shape-rr-align: `executors_are_shared` failed on one host's
+copy on `metal_frontier_conformance.rs`, `metal_frontier_reduce.rs` and `metal_register_conformance.rs`, which no
+side of the merge has (neither history holds them).
+
 - **Keep**: the mirror's incremental sends.
 - **Done when**: a file the checkout deleted (tracked at the host's copy's last sync, now gone) is removed from the
   host's copy before the command runs, and a test of the mirror covers it.
@@ -1741,6 +1977,7 @@ regenerated since keep the wider condition. The profiling build has none (Q13).
    Measured on 47 data-layer programs, per row vs native costs the same (+0.6%). Options: (a) leave copies per row
    (as built); (b) teach the factorized store and the export cut to see through a row-filter native, so copies can
    be native too (more work, no measured gain at 50 files).
+   **Answered (2026-11-16): leave them per row** (as built); no change.
 2. **Q2/Q5: a node's text read in the cross-file part is empty (a wrong result).** A cross-file reader
    (`passes(f) :- uses(_, f), node_text(f, t), …`, `uses` cross-file) asks for the text of another file's node.
    `@rr_node_text_any` reads only batches still held, and each chunk's batch is dropped when the chunk is done, so
@@ -1757,6 +1994,15 @@ regenerated since keep the wider condition. The profiling build has none (Q13).
    `a_cross_file_reader_finds_the_text_of_another_files_node`; `a_cross_file_text_test_is_maintained_as_a_filter`
    runs again.
 
+3. **Q13: stale jobserver warnings replayed from the shared compile cache.** sccache entries made before the farm
+   stripped `CARGO_MAKEFLAGS` (2026-11-15) hold the warning in their stderr, and every hit replays it. Options:
+   (a) remove those entries from the cache: one scan of the local cache (up to 100 GiB of entries, each opened to
+   read its stderr), then each such crate compiles once more, cleanly; (b) have the wrapper drop that one
+   diagnostic from what sccache prints: a pipe through the wrapper on every compile, and it hides the line rather
+   than removing its cause; (c) leave it until the cache evicts those entries (LRU at the 100 GiB cap).
+   Recommended: (a), run once at nice 19.
+   **Answered (2026-11-16): (c), leave it.** The cause is fixed in the farm; the replays end as the entries age out.
+
 ### Q55. (Q66 at Native-and-GPU-strata e0a0362b9) Relations are blocks the CPU and GPU read in place (0325): steps 4–7
 
 Built: steps 1 and 2 (417256f3a, b84b98d3e, 061fbbfca, 640ce085c) and step 3 (8aee765b0, 71b1ff602, 27d67f1e2,
@@ -1772,6 +2018,10 @@ views). Left, in order:
 3. Step 6 is built: placement prices no copies, per wave, and `GPU_BIAS` stays 2 after the refit. It is a measured
    loss against the old prices until the CPU's price of strata like `ann_ctx` is right (Q86).
 4. Step 7: the output's, frames' and memo's rows, and the reach closure's (`Closed`, 5.6 MB on hogql).
+
+Open: the sources' blocks put the peak resident size up 25 MB (CPU binding) to 50 MB (Metal) on hogql. And a
+block is given back only with its last part (0325, step 2's open item).
+Also left (from rr-align's list): the views (source views over a batch, 88 MB on hogql) are not relations in blocks, and still upload.
 
 ### Q58. 0325's FACTS blocks raise a CPU run's footprint, and the memory line cuts a third more chunks
 
@@ -2479,3 +2729,201 @@ always a refusal.
   poll; and each test's store added a job the process kept for its life. `ContentStore::forget` (a test store's
   drop) now takes the file's jobs out (`rerail_accel::upkeep::forget_file`, a step under way waited for), which
   closes their connections. The test passes three runs in a row on the m3; test: `a_forgotten_files_jobs_are_taken_out`.
+### Q122. (Q49 on final-rerail-shape-rr-align at 4c8152466) A stored program image's step sources are named by no run's manifest (Typing-support's)
+
+- **Found** (2026-11-16, at the merge of Typing-support with the hub's 0306 step 4): `StoredSteps` (program_text.rs)
+  pinned the image and its step facts under the run's holder; 0306 step 4 removed pins under a holder
+  (`pin_held_sources`). The merge drops the pins: `find` checks the image's alias, `keep` stores the image
+  (`store_encoded`) and the step facts. No run's manifest names their sources yet, so a collection may drop them; a
+  later run then misses and keeps them again.
+- **Done when**: Typing-support wires the steps into runs, naming their sources in the run's record
+  (`Apply::name`), with a test that a collection between two runs keeps them.
+
+### Q123. (Q50 on final-rerail-shape-rr-align at 4c8152466) `parse_splice_and_unparse_make_value_documents` fails the debug check of `locate` (Typing-support's)
+
+- **Found** (2026-11-17, at 05795a8df, with and without Q30's change): "the version's rows are located as the
+  tree's", left `Ok(["fixed", "seen", "tables"])`, right `Err(["back"])`. The tree's `locate` refuses where the
+  version's pass locates. This is 0281's debug check of a pass against its tree form, and Typing-support has changed
+  those passes since 468130306 (6a–6e).
+- **Done when**: the test passes after Typing-support's next merge here, or the difference is traced to one side.
+### Q124. (Q51 on final-rerail-shape-rr-align at 4c8152466; Q22 on Typing-support) Every run parses its 10,047 guest tapes again
+
+- **Found** (2026-11-17, ep2 at 0281 step P, with B101 edits): every run, cold or edit, reports 132–462 tape
+  cache hits and 10,047 misses (`input tape cache`), over 300 files. The writer stores 10,047 tapes each run
+  (`a tape and its source: 10047 jobs`), so the next run never finds what this one wrote.
+  - The key (`facts/core.rs`, `queued_tape`) is the content digest, the tape tag, the grammar version and the format:
+    stable across runs. The hit depends on the caller's lookup (`found`), so the guests' lookup likely misses.
+  - Cost over an edit (`prof-body5`): parsing 1.82 s, guests 1.19 s and most of the store writer's 1.20 s, of 10.3 s.
+- **Done when**: an edit's run finds the guest tapes the last run wrote, and parses none of an unchanged file.
+- **Here** (at the merge of e829e72a7): Q30 (5d32effea) stopped the writes: a guest is parsed in memory, its tape
+  not stored. The parse each run stays; what is left is this item.
+- **Fixed** (2026-11-17), for files; guests by Q30, the user's choice at the merge of rr-align (9552011a3).
+  - Files: the tapes read before the first wave were the lane's last run's (`lane_sources`). A lane is the
+    programs' texts, so every rule edit is a new lane with no last run, and the files' tapes were not read. Now one
+    read takes the tapes, in the run's grammar, of every source the root's last runs named, of any lane
+    (`ContentStore::root_sources`, `tape_frames_with_hashes`, segments included). A file finds its tape by source
+    id, or by its text's hash; a found source is named in the run's manifest, so the next run finds it too.
+    `lane_sources` is removed.
+  - Guests: Typing-support's fix stored and read their tapes. The user chose Q30's (parse in memory): the parses
+    cost about 0.01 s a run on ep2, against a 1 MB write and read. The merge keeps Q30 and Typing-support's per-run
+    memo of the parsed trees (`guests::Parses`) for Q30's process-wide static map, which no-static-memo forbids.
+  - Guard: `an_edit_parses_no_file_the_last_run_read` (two edits after a first run: no file parsed, the tapes
+    found; it failed before the fix) and `a_roots_sources_are_its_newest_runs_of_any_lane`. The run reports
+    `Report::file_tapes`, and the profile prints "files' tapes found and parsed in the waves (Q22)".
+  - ep2 before the merge: 0 misses per run, where every run missed 10,047. The edit's CPU is about the same: what
+    an edit spends is the facts built from the tapes of files whose slice is not run (a partial hit).
+
+### Q125. (Q52 on final-rerail-shape-rr-align at 4c8152466) Three passes still go through a tree on Typing-support's version path (the merge of e829e72a7) — closed
+
+- **Found** (2026-11-17, at the merge): the hub's passes that ours had on trees have no pass on the manager yet. The
+  merge keeps them correct by going through the tree:
+  - `requests_file_local` and `answers_where_documents_are` (0286, 0174 §8b) on the combine's tail
+    (`tail_version` → `requests_where_documents_are`): a program that answers an attribute on request is decoded,
+    the two run, and its image made again.
+  - A requesting text's cone (`rr::Text::lowered_in_version`): 0174 makes the on-request rewrite again over the
+    cone, and `sources_on_request` reads a tree. Typing-support's `with_cone_version` (from before 0174) copied the
+    library's on-request rules into the cone and is dropped.
+- **Done when**: each is a `ProgramPass` (as `on_request::SourcesOnRequest` is). A debug build checks it against
+  the tree, and the combine and the cone decode no tree.
+- **The cone: done** (2026-11-17, 0281 step 7b): `corpus::cone_on_version` undoes, copies and asks again on the
+  version; no tree is decoded. Left: `requests_file_local` and `answers_where_documents_are` on the combine's tail.
+- **`answers_where_documents_are`: done** (2026-11-17): on the version, by its `FileLocal` analysis, each round undone
+  through `link::undone_with` over `undo_round`. Left: `requests_file_local` (its `Narrower` unfolds a cross-file
+  atom into bodies drawn from the unfolded relation's rules, renamed apart: a rule written from several rules).
+- **`requests_file_local`: done; closed** (2026-11-17): `file_local::RequestsFileLocal`, a `ProgramPass` whose
+  narrowed bodies are pieces (a source rule's literal and its renames) written through `RuleBuilder::lit_with`. The
+  combine's tail decodes no tree; a debug build narrows the tree beside it and checks the images agree (the pass made
+  a no-op fails 3 tests there, the unfolding one among them). The tree form stays for `tail_tree` (the tools).
+
+- **Failing** (found 2026-11-17, after the hub's merge d1875e723; already so at 2fbc862df, since nothing on the
+  combine's path changed between): the debug check "the combine's tail on the version is the tree's" stops
+  `a_session_runs_the_cross_file_strata_an_edit_changed` and `combined_programs_see_guests_by_their_own_policy`. The
+  version's tail keeps `rr_node_text_req`, `rr_token_req`, `rr_token_named`, `rr_token_anon` and an `about asked` row
+  of `rr_node_text_req` the tree's has not, and the tree's `rr_value_req` rules are bounded where the version's differ.
+  To fix with the passes above (0281 step 7b).
+- **Fixed** (2026-11-17): the cause was not the tree passes above but the version's `on_request::SourcesOnRequest`,
+  written before two changes to the tree's `sources_on_request`: an attribute no rule reads stays an input
+  (734317304), and a request is narrowed by its reader's readers' asks, its witnesses wildcards (decision 0291,
+  f015b1360). Both ported (`Widen::demand_of`, `joined`, `wild_singletons` over the version's items; a demand's asks
+  renamed apart through a `Rewrite`). The two tests pass; the combine's tail check compares them on every debug run.
+
+### Q126. (Q77 on final-rerail-shape-rr-align at 4c8152466) An edit's chunks of partial hits made every guest their entries asked for
+
+- **Found** (2026-11-17, ep2 after the merges of rr-align 9552011a3 and the hub 59e862eef): on an edit of B101's body,
+  every chunk is a partial hit ("the slice not run"), yet each made the 27,373 guests its entries' requests named
+  and built a second batch with them: "guests" 1.6 s of 12.1 s CPU, 9,751 of them parsed again (0.31 s; Q30 parses
+  guests in memory, so the 0.01 s a run assumed when Q30 was chosen was wrong).
+- **Cause**: a chunk of partial hits runs its cone alone, and a rule sees a guest only through a guest relation
+  (`hiding::ENTRIES`, `guests::READS`), or an annotation through a relation whose copies for it were folded in
+  (`hiding::fold_own` widens the bound to `HIDDEN_KEYS`). B101's cone reads neither, so no guest it was given was
+  read.
+- **Fix**: `guests::guests_seen` reads off the cone's program which guests it can see (code; code and annotations;
+  every guest, also where an AST matcher's literal reads a document), and `Guests::seeing` makes no other: a guest
+  is skipped before it is parsed, a value request before it is made. `Report::guests_unseen` counts them.
+- **Test**: `a_partial_hit_makes_only_the_guests_its_cone_can_see` (partial tests): an edit of a rule naming no
+  guest makes none; one reading `parsed` makes them all; one reading a relation folded for annotations sees them
+  (`Bar`, named only in an annotation); each edit's rows are a full run's. A mutant that sees code only fails it.
+- **Measured** (ep2, profiled, an edit after a new build's first run): 104–111 G instructions and 6.7–7.3 s CPU,
+  against 123–131 G and 12.1–13.0 s (load about 35 now, 60–85 then: the instructions are the comparison).
+  "guests" is gone from the profile's head; what is left is prepare (2.0 s), parsing (1.4 s: the files' batch for
+  the cone), the store writer (0.8 s) and the partial hits' rows (0.4–0.7 s).
+
+### Q127. (Q78 on final-rerail-shape-rr-align at 4c8152466) An embedded program's guest parses its host's text again
+
+- **Found** (2026-11-17, reading `guests::Guests::program`): each embedded program (a `<script>` in a Vue file, a
+  Python string an embedder reads) parses its host's whole text into a tape again (`TapeImage::parse`) to find its
+  root, though the host's tape is in hand (`Document::tape`, kept where a matcher or `taped` relation reads it).
+- **Closed, not a problem** (2026-11-17, measured): the 958 Vue fixtures of `packs/vue/upstream` under the 23 rules
+  of the Vue pack (the only dialect that embeds programs, besides a test grammar) make 6 embedded-program guests;
+  all guest work is 0.027 s of 1.19 s CPU, and a host parses (lean parser, facts included) in about 0.23 ms. Keeping
+  every Vue host's tape for its embedders would cost memory for every file to save a few milliseconds. Reopen if a
+  pack makes a guest per file. Noted: no corpus-run test reaches `Guests::program` (a mutant that fails there passes
+  `embeds_declare_guests_and_guests_off_leaves_them_out` and the HTML guest test).
+
+### Q128. (Q79 on final-rerail-shape-rr-align at 4c8152466) `Rows::frozen` gave an empty kept relation no width
+
+- **Found** (2026-11-17, after the hub's merge, 0325's block rows): five session tests panicked ("a row of the
+  tail"): a maintained cross-file stratum started from an empty kept relation, whose `Rows` inferred its width from
+  its rows (0 of 0), so `extend_from_slice` held none of the rows pushed and a read went past the segments.
+- **Fix**: `Rows::frozen(rows, n, k)` takes the width from its caller. Test:
+  `a_relation_started_from_an_empty_kept_one_holds_its_rows`; the session tests pass but Q125's two.
+
+
+### Q129. (Q80 on final-rerail-shape-rr-align at 4c8152466) `the_run_after_a_cold_one_writes_nothing` fails here: phased-facts' Q68, fixed there, not merged yet
+
+- **Found** (2026-11-17, after the hub's merge d1875e723): the warm child run exits 3. The observer's store is asked
+  inside the waves under the root's canonical form (`/private/var/…`: `World::resolve_all` in the load rounds), and
+  the warm run then records new manifests naming 8 and 9 sources where the cold run's named 29.
+- **Already fixed** on final-rerail-shape-phased-facts (its Q68, f7e047997 and the `World::watch` commit before it):
+  the roots are watched before the first wave, and phase 0's graph image keeps its plans. Not fixed again here (a
+  preload of the canonical root cleared the first fault alone): it comes with phased-facts' next merge.
+- **Done when**: that merge is in, and the test passes here.
+- **Still failing after the merge** (2026-11-17, at cf5f56a7f, under cargo on the m3): phased-facts' fix (the
+  graph image keeps its plans) is in, and the warm run still records two new manifests, of 9 and 8 sources where
+  the cold run's twins (same plan and lane) named 24 and 29. Decoded, each warm manifest leaves out one contiguous
+  block of the cold one's (ids 49..63 and 70..90), every one a source under one alias. The lead (not yet checked
+  source by source): they are the pipelines' runs the cold run kept (`program_text::record_runs`, each run's images
+  and facts, named through the record's item), which a warm run that takes the prepared program whole neither
+  records nor names, though its next edit runs again from them (0333). If so, the manifests differ, and collection may drop the runs
+  once the cold manifest is superseded. The fix names what the warm run would use: the run's kept runs by the
+  digest the prepared program was made under (`runs_digest`), their sources found by alias without reading them
+  (as `program_text::sources` does for texts); or, as f7e047997 did for phase 0's graphs, the cold run names them
+  under `also` alone. Not chosen yet.
+- **Under Relax only**, the warm run also settles every root the journal "could not speak for", with no cursor
+  stored ("no volume"): `FSEventsCopyUUIDForDevice` returns null in the Relax-hosted process, though the host
+  answers it for the same device (ctypes on the m3) and the cargo-built test does not hit it. A Relax FFI fault,
+  for the user to raise upstream; the tests that assert a warm run writes nothing fail under Relax for it.
+
+### Q130. (Q81 on final-rerail-shape-rr-align at 4c8152466) An edited include is read with its old digest in the same process (`programs_are_kept_by_the_hashes_of_what_they_read`)
+
+- **Found** (2026-11-17, steady, at f5b6023e8 and after): after the helper's edit and `observe(|o| o.flush())`,
+  `read_file` does not reuse its program (it lowers again), but `program_shared` → `read_shared` gets the helper's
+  old digest from the observer (`Observer::digest`), so the files list equals the first and the test's
+  `assert_ne!(files, edited_files)` fails. The edit is one byte, same size, written milliseconds after the first
+  read: the observer vouches for the old answer (the journal's `trusted`, a root asked since the flush, or the
+  racy window's settling, Q45).
+- **Done when**: the cause is named in the observer and fixed there; the test passes.
+
+### Q131. (Q83 on final-rerail-shape-rr-align at 4c8152466) `front::finish`'s checks read a tree on a text's version path
+
+- **Found** (2026-11-17, 0281 step 7b): a text's version is now made before `front::finish`. Its rewrites run on the
+  version (`lowering_tail::OrderNodes`, `DeclareAxes`), but its checks (`front::finish_checks`: no computed term in
+  a body atom, bounded lattices, every input declared, `cycles::check`'s bounded value cycles, `caches::caches`)
+  read a tree: `rr::link_seeded_version` decodes the version once for them. `cycles::check` is 1,100 lines over the
+  tree; the other four are small.
+- **Done when**: each check reads the version (an analysis, or a check over its rules and header), a debug build
+  checks it refuses what the tree's refuses, and `link_seeded_version` decodes no tree.
+
+### Q132. (Q90 on final-rerail-shape-rr-align at 4c8152466) A debug build's checks of the lowering on the version fail on ep2's rules
+
+- **Found** (2026-11-17, at a1de58655 plus 0373, a debug `rerail-engine` over 3 of ep2's files with its 317 rules,
+  `RERAIL_PREPARE=parts`, cold store): `the cone copied on the version is the tree's` (rr.rs, `lowered_in_version`)
+  fails on several of the pool's threads, and on the edit run after it `the lowering's tail on the version is the
+  tree's` (rr.rs, `lower_in_version`) fails too. In both, `differences` names nothing: the two images differ in
+  size or digest, but no rule, declaration, fact or about row is in one only.
+- Not from this session's changes: those hand the stored image to `lower_in_version` (ff852c438) and do not touch
+  the lowering. The checks are 0281 step 7b's.
+- **Next**: find what the digest covers that `differences` does not show (relation order, atom ids, settings, kind
+  sets, the header's lists) on one program, then fix whichever side makes it differ.
+- **Done when**: the debug build lowers ep2's rules with both checks passing. A debug run of the combine's splice
+  (0373) waits on it; meanwhile `RERAIL_COMBINE_LINK=check` checks the splice in the profiling build.
+
+### Q133. (Q91 on final-rerail-shape-rr-align at 4c8152466) A rule edit lays out every kept input, though none changed (Q18's kept inputs laziness)
+
+- **Found** (2026-11-17, ep2 e53, profiled): "the kept inputs (decision 0117)" reports "0 of 1008 inputs changed,
+  from 0 changed files", and its patch takes 0.001 s. Yet `retain::kept_inputs` takes 0.077 s, decoding and laying
+  out all 1,008 inputs' documents frames: their rows 0.015 s, the digests rebuilt and checked against the frame's
+  0.007 s, the owners' granules (content keys, a sort) 0.012 s (20 inputs of 22,375 rows each), the granules
+  admitted 0.014 s, the ranges and sources 0.012 s. 340 of the inputs have no rows.
+- **What a rule edit reads of them**: nothing but each input's digest (`Stored::digest`, read undecoded) and,
+  where the run reads its kept statistics, the stats part. `docs` and `ranges` are read only for the evaluated
+  owners (`patch_owners`), and the rows only where the cross part reads the input (`Lazy`).
+- **Plan**: each input's layout (`docs`, `ranges`, the granules and their starts) is made on first use (a
+  `OnceLock` in `KeptInput`, `Lazy` reading it), and its failure is told as `Lazy` tells one now. What blocks it:
+  `Lazy::len` (the planner's) is the sum of the owners' row counts, which today come from decoding the documents
+  frame. The documents frame should record its rows' total where the keeper writes it (`write_frames`), a frame
+  format change. Admitting all 64 granules of each input instead would be 64k keys.
+- **Done when**: a rule edit decodes no documents frame, and `kept_inputs` on ep2 is the stats parts' admission.
+- **Done** (2026-11-17, decision 0378): the documents frame records its granules; layouts and documents are made
+  where first asked. ep2's edit: `kept_inputs` 0.077 s → 0.021 s, no documents frame decoded, rows as h1.
+

@@ -560,6 +560,20 @@ impl Builder<'_> {
             .collect();
         self.set_about_rows("answer", rows);
     }
+    /// The request record as the program being built holds it (`Version::asked`).
+    pub fn asked(&mut self) -> Asked {
+        let mut asked = Asked::new();
+        for row in self.about_rows("asked") {
+            let (Some(&Cell::Str(req)), Some(&Cell::Int(k)), Some(&Cell::Str(b))) = (row.get(1), row.get(2), row.get(3)) else { continue };
+            let Ok(k) = usize::try_from(k) else { continue };
+            let readers = asked.entry(self.text(req).to_owned()).or_default();
+            if readers.len() <= k {
+                readers.resize(k + 1, Default::default());
+            }
+            readers[k].insert(self.text(b).to_owned());
+        }
+        asked
+    }
     /// States the request record (`Program::asked_by`, `Version::asked`): each request relation's rules, in order, each
     /// with the relations whose readers it serves. Replaces the program's.
     pub fn set_asked(&mut self, asked: &Asked) {

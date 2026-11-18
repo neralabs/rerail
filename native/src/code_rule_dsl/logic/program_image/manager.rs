@@ -202,6 +202,16 @@ impl Delta {
         self.removed.len() + self.added.len() + self.decls.len()
     }
 
+    /// Whether the edit that made `output` from `input` is read off `output` (`of` does not rebuild it).
+    pub fn read_off(input: &Arc<Version>, output: &Arc<Version>) -> bool {
+        Arc::ptr_eq(input, output)
+            || match &**output {
+                Version::Overlay { parent, .. } => Arc::ptr_eq(parent, input),
+                Version::View { .. } => same_numbering(input, output),
+                Version::Base { .. } => false,
+            }
+    }
+
     /// The edit that made `output` from `input`.
     pub fn of(input: &Arc<Version>, output: &Arc<Version>) -> Delta {
         let mut d = Delta::default();
@@ -305,7 +315,23 @@ pub trait Analysis: Sized + Send + Sync + PartialEq + std::fmt::Debug + 'static 
     fn maintain(&self, _cx: &Cx<'_>, _delta: &Delta) -> Option<Self> {
         None
     }
+    /// Bumped when what `rows` writes changes: a stored value of another version is not read (decision 0333 §4).
+    const VERSION: u32 = 1;
+    /// It as rows, to store with a kept run's version (decision 0333 §4); `None`: not stored, computed again.
+    fn rows(&self, _v: &Version) -> Option<Vec<Row>> {
+        None
+    }
+    /// It read back from `rows` for `v`, the version it was stored with, reopened (its ids are the same).
+    fn of_rows(_v: &Version, _rows: &[Row]) -> Option<Self> {
+        None
+    }
 }
+
+/// A row of a stored analysis or run: values as facts hold them (decision 0333).
+pub type Row = Vec<crate::code_rule_dsl::logic::front::Value>;
+
+/// The rows stored for a reopened version's analyses, by name and version (decision 0333 §4).
+pub type StoredRows = Arc<dyn Fn(&str, u32) -> Option<Vec<Row>> + Send + Sync>;
 
 type Value = Arc<dyn Any + Send + Sync>;
 
@@ -317,6 +343,12 @@ struct Entry {
     name: &'static str,
     maintain: fn(&Value, &Cx<'_>, &Delta) -> Option<Value>,
     agrees: fn(&Value, &Cx<'_>) -> Result<bool>,
+    version: u32,
+    rows: fn(&Value, &Version) -> Option<Vec<Row>>,
+}
+
+fn rows_as<A: Analysis>(v: &Value, of: &Version) -> Option<Vec<Row>> {
+    v.downcast_ref::<A>()?.rows(of)
 }
 
 fn maintain_as<A: Analysis>(v: &Value, cx: &Cx<'_>, d: &Delta) -> Option<Value> {
@@ -350,12 +382,31 @@ pub struct Store {
     of: parking_lot::Mutex<HashMap<TypeId, Entry>>,
     /// How many times each analysis was computed for this version, by name: what a test of the cache reads.
     computed: parking_lot::Mutex<HashMap<&'static str, usize>>,
+    /// The rows a stored run kept of this version's analyses, read before computing one (decision 0333 §4).
+    stored: parking_lot::Mutex<Option<StoredRows>>,
+    /// How many analyses were read from `stored`, by name.
+    loaded: parking_lot::Mutex<HashMap<&'static str, usize>>,
 }
 
 impl Store {
     /// How many times analysis `name` was computed for this version (not carried to it).
     pub fn computed(&self, name: &str) -> usize {
         self.computed.lock().get(name).copied().unwrap_or(0)
+    }
+    /// How many times analysis `name` was read from a stored run's rows (decision 0333 §4).
+    pub fn loaded(&self, name: &str) -> usize {
+        self.loaded.lock().get(name).copied().unwrap_or(0)
+    }
+    /// The rows a stored run kept of these analyses: read before computing one.
+    pub fn read_stored(&self, rows: StoredRows) {
+        *self.stored.lock() = Some(rows);
+    }
+    /// The analyses held that can be stored, as rows of `v` (theirs): name, version and rows.
+    pub fn rows(&self, v: &Version) -> Vec<(&'static str, u32, Vec<Row>)> {
+        let held: Vec<Entry> = self.of.lock().values().cloned().collect();
+        let mut out: Vec<_> = held.iter().filter_map(|e| (e.rows)(&e.value, v).map(|rows| (e.name, e.version, rows))).collect();
+        out.sort_by_key(|(name, ..)| *name);
+        out
     }
     /// Whether analysis `A` is held.
     pub fn holds<A: Analysis>(&self) -> bool {
@@ -448,11 +499,26 @@ impl<'a> Cx<'a> {
         if let Some(e) = self.store.of.lock().get(&TypeId::of::<A>()) {
             return Ok(e.value.clone().downcast::<A>().expect("an entry of its type"));
         }
+        // A stored run's rows of it, for a version reopened from that run (decision 0333 §4).
+        let stored = self.store.stored.lock().clone();
+        let read = stored.and_then(|rows| rows(A::NAME, A::VERSION)).and_then(|rows| A::of_rows(self.v, &rows));
+        if let Some(a) = &read {
+            *self.store.loaded.lock().entry(A::NAME).or_default() += 1;
+            if cfg!(debug_assertions) && A::compute(self)? != *a {
+                return Err(format!("analysis {} read from a stored run is not what it computes", A::NAME));
+            }
+        }
         // Computed with no lock held: it may ask for other analyses. Two threads asking at once both compute it; the
         // first one stored is kept.
-        let a = Arc::new(A::compute(self)?);
-        *self.store.computed.lock().entry(A::NAME).or_default() += 1;
-        let e = Entry { value: a.clone(), reads: A::READS, name: A::NAME, maintain: maintain_as::<A>, agrees: agrees_as::<A> };
+        let a = match read {
+            Some(a) => Arc::new(a),
+            None => {
+                let a = Arc::new(A::compute(self)?);
+                *self.store.computed.lock().entry(A::NAME).or_default() += 1;
+                a
+            }
+        };
+        let e = Entry { value: a.clone(), reads: A::READS, name: A::NAME, maintain: maintain_as::<A>, agrees: agrees_as::<A>, version: A::VERSION, rows: rows_as::<A> };
         let kept = self.store.of.lock().entry(TypeId::of::<A>()).or_insert(e).value.clone();
         Ok(kept.downcast::<A>().expect("an entry of its type"))
     }
@@ -756,7 +822,7 @@ pub struct Stage {
 
 /// A step as a kept run holds it: its input and output, and what a rerun of a rule pass compares.
 struct Kept {
-    pass: &'static str,
+    pass: std::borrow::Cow<'static, str>,
     input: Arc<Version>,
     output: Arc<Version>,
     form: Form,
@@ -768,6 +834,8 @@ struct RuleKept {
     select: Select,
     /// The analyses it asked for, compared on the next input.
     asked: Vec<Asked>,
+    /// Those of a run read from the store, by name (decision 0333 §3): matched to what the pass asks for again.
+    named: Vec<String>,
     /// The input's rules below this id that the output holds as themselves (an edit's output); every other rule of
     /// the output records the input's rule it came from (`from`).
     own_end: u32,
@@ -834,7 +902,8 @@ pub struct Pipeline<'s> {
 /// The request record (`Version::asked`, decision 0174's `asked` rows) by rule id, carried through a pipeline's
 /// steps (decision 0331): a rule kept serves its readers; a rule a pass rewrote, its source's (`RuleRef::source`);
 /// a rule equal to rules the step removed (a repeat dropped, a rule made again alike), theirs too; any other rule
-/// its own relation, which `prune` keeps wherever the relation is needed. The record is by place among a relation's
+/// the readers the step's own record states for it, else its own relation, which `prune` keeps wherever the relation
+/// is needed. The record is by place among a relation's
 /// rules, which a pass that adds, drops or reorders rules shifts: the pipeline states it again at its end.
 #[derive(Clone, Debug)]
 struct AskedByRule {
@@ -863,9 +932,9 @@ impl AskedByRule {
             return;
         }
         let mut next = HashMap::new();
+        let (was, stated) = (from.asked(), out.asked());
         // A pass that states the record itself (the merge renames readers) is taken at its word where its record
         // holds an entry a rule.
-        let (was, stated) = (from.asked(), out.asked());
         for req in &self.reqs {
             let Some(rel) = out.rel(req) else { continue };
             if let Some(by) = stated.get(req).filter(|by| was.get(req) != Some(*by) && by.len() == out.heads(rel).count()) {
@@ -875,15 +944,30 @@ impl AskedByRule {
             // The input's rules of this relation the step removed (in a derivation, those no output rule came from),
             // by content: a rule equal to one (a repeat dropped) serves its readers too.
             let sourced: std::collections::HashSet<RuleId> = if delta.rebuilt { out.heads(rel).filter_map(|r| r.source()).collect() } else { Default::default() };
-            let mut gone: HashMap<u64, BTreeSet<String>> = HashMap::new();
+            let mut gone: HashMap<u64, Vec<BTreeSet<String>>> = HashMap::new();
             if let Some(old) = from.rel(req) {
                 for r in from.heads(old).filter(|r| if delta.rebuilt { !sourced.contains(&r.id()) } else { delta.removed.has(r.id()) }) {
                     if let Some(b) = self.by.get(&r.id()) {
-                        gone.entry(r.hash()).or_default().extend(b.iter().cloned());
+                        gone.entry(r.hash()).or_default().push(b.clone());
                     }
                 }
             }
+            // As many rules made alike without a source's readers as were removed: each takes one's readers, in order
+            // (a rule made again, as the tree keeps each its entry); otherwise each takes them all (repeats dropped
+            // into one).
+            let mut alike: HashMap<u64, usize> = HashMap::new();
             for r in out.heads(rel) {
+                let added = delta.rebuilt || delta.added.contains(&r.id());
+                let at = if added { r.source() } else { Some(r.id()) };
+                if at.and_then(|id| self.by.get(&id)).is_none_or(|b| b.is_empty()) {
+                    *alike.entry(r.hash()).or_default() += 1;
+                }
+            }
+            let mut seen: HashMap<u64, usize> = HashMap::new();
+            // What the step states of this relation, an entry a rule: where the carry knows nothing of a rule (made
+            // from a rule that served no reader, as a request from its reader), the step's own word for it.
+            let said = stated.get(req).filter(|by| by.len() == out.heads(rel).count());
+            for (k, r) in out.heads(rel).enumerate() {
                 let mut readers = BTreeSet::new();
                 // A rule the step kept keeps its readers; one it made, its source's (an id of this step's input: a
                 // kept rule's own `source` names an earlier derivation's).
@@ -892,11 +976,24 @@ impl AskedByRule {
                 if let Some(b) = at.and_then(|id| self.by.get(&id)) {
                     readers.extend(b.iter().cloned());
                 }
-                if let Some(b) = gone.get(&r.hash()) {
-                    readers.extend(b.iter().cloned());
+                // A rule made again without a source (or from one that served no reader) takes the readers of a
+                // removed rule alike; one whose source serves readers is that source's, not its look-alike's.
+                if let Some(b) = gone.get(&r.hash()).filter(|_| readers.is_empty()) {
+                    let j = seen.entry(r.hash()).or_default();
+                    if b.len() == alike[&r.hash()] {
+                        readers.extend(b[*j].iter().cloned());
+                    } else {
+                        readers.extend(b.iter().flatten().cloned());
+                    }
+                    *j += 1;
                 }
                 if readers.is_empty() {
-                    readers.insert(req.clone());
+                    match said {
+                        Some(by) => readers.extend(by[k].iter().cloned()),
+                        None => {
+                            readers.insert(req.clone());
+                        }
+                    }
                 }
                 next.insert(r.id(), readers);
             }
@@ -992,6 +1089,11 @@ impl<'s> Pipeline<'s> {
         if Arc::ptr_eq(&k.input, &self.v) {
             return Ok(Prior::Same(k));
         }
+        // An input not made as an edit of the last one (a step after one that ran whole): a rebuilt delta, of the
+        // whole program, is never read, so it is not made.
+        if !Delta::read_off(&k.input, &self.v) {
+            return Ok(Prior::None);
+        }
         let d = Delta::of(&k.input, &self.v);
         if d.rebuilt {
             return Ok(Prior::None);
@@ -1013,7 +1115,7 @@ impl<'s> Pipeline<'s> {
         out.analyses().carry(from.analyses(), &cx, &delta)?;
         self.stages.push(Stage { pass, ran, form, visited, input: (self.v.size(), self.v.digest()), output: (out.size(), out.digest()), delta: delta.size(), touched: delta.touched });
         if self.keep {
-            self.kept.push(Kept { pass, input: self.v.clone(), output: out.clone(), form, rule });
+            self.kept.push(Kept { pass: pass.into(), input: self.v.clone(), output: out.clone(), form, rule });
         }
         self.v = out;
         Ok(())
@@ -1056,12 +1158,15 @@ impl<'s> Pipeline<'s> {
         let made = (|| -> Result<(Arc<Version>, Ran, Form, usize, Arc<Version>, Option<RuleKept>)> {
             let cx = Cx { v: &v, store: v.analyses(), pass: P::NAME, decided: &self.decided, asked: self.keep.then_some(&asked) };
             let select = pass.begin(&cx)?;
+            // What `begin` asked for, apart from the list the comparisons below add to.
+            let asked_now: Vec<Asked> = asked.borrow().clone();
             if let Prior::Edit(k, d) = &prior
                 && let Some(rk) = &k.rule
                 && local
                 && !P::WHOLE.meets(d.touched)
                 && rk.select == select
                 && same_analyses(&rk.asked, &k.input, &cx)?
+                && same_named(&rk.named, &asked_now, &k.input, &cx)?
             {
                 let (out, form, visited, base, own_end) = rerun(pass, &cx, k, d, &select, rk.own_end)?;
                 let mut all = rk.asked.clone();
@@ -1070,7 +1175,7 @@ impl<'s> Pipeline<'s> {
                         all.push(*a);
                     }
                 }
-                let keep = (form != Form::Folded || own_end == 0).then_some(RuleKept { select, asked: all, own_end });
+                let keep = (form != Form::Folded || own_end == 0).then_some(RuleKept { select, asked: all, named: Vec::new(), own_end });
                 return Ok((out, Ran::Delta, form, visited, base, keep));
             }
             let mut w = ProgramW::new(&v);
@@ -1080,7 +1185,7 @@ impl<'s> Pipeline<'s> {
             w.apply(&cx, pass, &select)?;
             let (out, form, visited) = w.finish()?;
             let own_end = if form == Form::Derived { 0 } else { v.rule_end() };
-            let keep = (form != Form::Folded).then(|| RuleKept { select, asked: asked.take(), own_end });
+            let keep = (form != Form::Folded).then(|| RuleKept { select, asked: asked.take(), named: Vec::new(), own_end });
             Ok((out, Ran::Whole, form, visited, v.clone(), keep))
         })();
         let (out, ran, form, visited, from, keep) = made?;
@@ -1215,6 +1320,154 @@ impl<'s> Pipeline<'s> {
     }
 }
 
+// ---- stored runs (decision 0333) ----
+
+/// A version of a stored run, over the versions before it in the run's table (decision 0333 §2).
+pub enum StoredVersion<'r> {
+    /// A base: its image's bytes.
+    Base(&'r [u8]),
+    /// An overlay of version `parent`: its delta's bytes.
+    Overlay { parent: usize, delta: &'r [u8] },
+    /// A view of version `parent`: the parent's rules it leaves out, ascending.
+    View { parent: usize, removed: Vec<u32> },
+}
+
+/// What a store keeps of a run's step: its pass, its input and output (in the run's table), its writer's form, and
+/// for a rule pass what a rerun compares (decision 0333 §2, §3).
+#[derive(Clone, Debug, PartialEq)]
+pub struct StoredStep {
+    pub pass: String,
+    pub input: usize,
+    pub output: usize,
+    pub form: Form,
+    pub rule: Option<StoredRule>,
+}
+
+/// A rule pass's selection (its kind, 0–3 for `All`, `Heads`, `Readers` and `Rules`, and its ids), the names of the
+/// analyses it asked for, and its `own_end`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StoredRule {
+    pub select: (u8, Vec<u32>),
+    pub asked: Vec<String>,
+    pub own_end: u32,
+}
+
+/// A run as a store keeps it: its versions, each over those before it, the run's input and output among them, its
+/// steps, its decisions, and the analyses of each step's input that can be stored (by version: name, version, rows).
+pub struct RunParts<'r> {
+    pub versions: Vec<StoredVersion<'r>>,
+    pub input: usize,
+    pub output: usize,
+    pub steps: Vec<StoredStep>,
+    pub decided: &'r [Decided],
+    pub analyses: Vec<(usize, &'static str, u32, Vec<Row>)>,
+}
+
+impl Form {
+    pub fn code(self) -> u8 {
+        match self {
+            Form::Unchanged => 0,
+            Form::View => 1,
+            Form::Overlay => 2,
+            Form::Folded => 3,
+            Form::Derived => 4,
+        }
+    }
+    pub fn of_code(code: u8) -> Option<Form> {
+        Some(match code {
+            0 => Form::Unchanged,
+            1 => Form::View,
+            2 => Form::Overlay,
+            3 => Form::Folded,
+            4 => Form::Derived,
+            _ => return None,
+        })
+    }
+}
+
+impl Select {
+    fn stored(&self) -> (u8, Vec<u32>) {
+        match self {
+            Select::All => (0, Vec::new()),
+            Select::Heads(s) => (1, s.iter().map(|r| r.0).collect()),
+            Select::Readers(s) => (2, s.iter().map(|r| r.0).collect()),
+            Select::Rules(s) => (3, s.iter().map(|r| r.0).collect()),
+        }
+    }
+    fn of_stored((kind, ids): &(u8, Vec<u32>)) -> Option<Select> {
+        Some(match kind {
+            0 => Select::All,
+            1 => Select::Heads(ids.iter().map(|&k| RelId(k)).collect()),
+            2 => Select::Readers(ids.iter().map(|&k| RelId(k)).collect()),
+            3 => Select::Rules(ids.iter().map(|&k| RuleId(k)).collect()),
+            _ => return None,
+        })
+    }
+}
+
+impl Run {
+    /// The run as a store keeps it (decision 0333 §2): every version it holds, from its bases up, once each.
+    pub fn parts(&self) -> RunParts<'_> {
+        fn add<'r>(v: &'r Arc<Version>, table: &mut Vec<&'r Arc<Version>>, out: &mut Vec<StoredVersion<'r>>) -> usize {
+            if let Some(i) = table.iter().position(|t| Arc::ptr_eq(t, v)) {
+                return i;
+            }
+            let stored = match v.layer() {
+                super::Layer::Base(bytes) => StoredVersion::Base(bytes),
+                super::Layer::Overlay(parent, delta) => StoredVersion::Overlay { parent: add(parent, table, out), delta },
+                super::Layer::View(parent, _) => {
+                    let removed = parent.rules().map(|r| r.id()).filter(|&id| !v.contains(id)).map(|id| id.0).collect();
+                    StoredVersion::View { parent: add(parent, table, out), removed }
+                }
+            };
+            table.push(v);
+            out.push(stored);
+            table.len() - 1
+        }
+        let (mut table, mut versions) = (Vec::new(), Vec::new());
+        let input = add(&self.input, &mut table, &mut versions);
+        let mut steps = Vec::new();
+        let mut inputs = vec![input];
+        for k in &self.steps {
+            let i = add(&k.input, &mut table, &mut versions);
+            let o = add(&k.output, &mut table, &mut versions);
+            inputs.push(i);
+            let rule = k.rule.as_ref().map(|rk| StoredRule {
+                select: rk.select.stored(),
+                asked: rk.asked.iter().map(|a| a.name.to_owned()).chain(rk.named.iter().cloned()).collect(),
+                own_end: rk.own_end,
+            });
+            steps.push(StoredStep { pass: k.pass.to_string(), input: i, output: o, form: k.form, rule });
+        }
+        let output = add(&self.output, &mut table, &mut versions);
+        inputs.sort_unstable();
+        inputs.dedup();
+        let analyses = inputs.iter().flat_map(|&i| table[i].analyses().rows(table[i]).into_iter().map(move |(name, version, rows)| (i, name, version, rows))).collect();
+        RunParts { versions, input, output, steps, decided: &self.decided, analyses }
+    }
+
+    /// A run read back from a store (decision 0333 §2): `versions` its table reopened, in order, with the other
+    /// parts `parts` gives. Its stages are not kept: a pipeline run `again` from it makes its own.
+    pub fn assemble(name: &'static str, versions: &[Arc<Version>], input: usize, output: usize, steps: Vec<StoredStep>, decided: Vec<Decided>) -> Result<Run> {
+        let at = |i: usize| versions.get(i).cloned().ok_or_else(|| format!("a stored run names version {i} of {}", versions.len()));
+        let mut kept = Vec::new();
+        for s in steps {
+            let rule = match s.rule {
+                Some(r) => Some(RuleKept { select: Select::of_stored(&r.select).ok_or("a stored step's selection is not one")?, asked: Vec::new(), named: r.asked, own_end: r.own_end }),
+                None => None,
+            };
+            kept.push(Kept { pass: s.pass.into(), input: at(s.input)?, output: at(s.output)?, form: s.form, rule });
+        }
+        Ok(Run { name, input: at(input)?, output: at(output)?, stages: Vec::new(), steps: kept, decided })
+    }
+}
+
+/// Where a pipeline's last run is kept (decision 0333 §2): by its key (the pipeline's name and what found it).
+pub trait Runs {
+    fn keep(&self, key: &[u8; 32], run: &Run) -> Result<()>;
+    fn open(&self, key: &[u8; 32], name: &'static str) -> Result<Option<Run>>;
+}
+
 // ---- keyed steps (0281 §6) ----
 
 /// A step's key: the chain `Pipeline::keyed` describes.
@@ -1250,6 +1503,58 @@ struct Keyed<'s> {
     pending: Option<StepRecord>,
 }
 
+/// How many overlays deep a last input may be and still be rebased onto (`rebase`).
+pub const REBASE_DEPTH: usize = 8;
+
+/// `new` written as an edit of `last` (decision 0333 §1), so `Delta::of(last, _)` reads the edit and a pipeline run
+/// `again` from `last` reruns on it: the rules both hold (by hash, as many times as each holds them) kept as `last`'s,
+/// `last`'s others removed, `new`'s others copied in, and the header set where it differs. `None` when the edit would
+/// remove or add more than half of `last`'s rules: that is a new program, run from scratch.
+pub fn rebase(last: &Arc<Version>, new: &Arc<Version>) -> Result<Option<Arc<Version>>> {
+    if Arc::ptr_eq(last, new) {
+        return Ok(Some(last.clone()));
+    }
+    // A run is stored with every version down to its bases (decision 0333 §2): past a few edits in a row, run from
+    // scratch, which makes new bases, so a stored run stays a few layers deep.
+    if last.depth() >= REBASE_DEPTH {
+        return Ok(None);
+    }
+    let mut wanted: HashMap<u64, usize> = HashMap::new();
+    for r in new.rules() {
+        *wanted.entry(r.hash()).or_default() += 1;
+    }
+    let mut removed = Vec::new();
+    for r in last.rules() {
+        match wanted.get_mut(&r.hash()) {
+            Some(n) if *n > 0 => *n -= 1,
+            _ => removed.push(r.id()),
+        }
+    }
+    let mut added = Vec::new();
+    for r in new.rules() {
+        if let Some(n) = wanted.get_mut(&r.hash())
+            && *n > 0
+        {
+            *n -= 1;
+            added.push(r);
+        }
+    }
+    if 2 * (removed.len() + added.len()) > last.size().max(1) {
+        return Ok(None);
+    }
+    let lists = crate::code_rule_dsl::logic::front::Lists::default();
+    let (was, header) = (last.header(&lists)?, new.header(&lists)?);
+    let mut b = Builder::on(last);
+    for id in removed {
+        b.remove(id);
+    }
+    for r in added {
+        b.copy(new, r);
+    }
+    b.set_header(&was, &header);
+    b.finish_overlay().map(Some)
+}
+
 /// A version's identity for a key: its digest (a sum, blind to the rules' order), its size, and its rules' hashes in
 /// order, so a reordering (`RuleOrder`) is a different input.
 pub fn identity(v: &Version) -> [u8; 32] {
@@ -1279,6 +1584,17 @@ fn chain_next(prev: &StepKey, parts: &[&[u8]]) -> StepKey {
         h.update(p);
     }
     h.finalize().into()
+}
+
+/// Whether each analysis a stored run's step named (`named`) is one the pass asked for again (`asked`), and the same
+/// on `cx`'s version as on `before` (decision 0333 §3).
+fn same_named(named: &[String], asked: &[Asked], before: &Arc<Version>, cx: &Cx<'_>) -> Result<bool> {
+    let mut of = Vec::new();
+    for n in named {
+        let Some(a) = asked.iter().find(|a| a.name == n.as_str()) else { return Ok(false) };
+        of.push(*a);
+    }
+    same_analyses(&of, before, cx)
 }
 
 /// Whether each analysis in `asked` is the same on `cx`'s version as on `before`.

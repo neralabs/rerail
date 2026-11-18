@@ -24,7 +24,8 @@
 //! A GPU computes in 32 bits; a 64-bit add or shift is several instructions. Every offset a read computes from the
 //! tape or the view is below 4 GiB on the device (a document's parts are offsets from its first byte, u32 in its
 //! view), so a 64-bit value whose every use reads only its low 32 bits (`low_words`: an address, a modular step to
-//! another such value) is computed as a `uint`, with the same low bits, and a 64-bit load of it reads 32 bits.
+//! another such value) is computed as a `uint`, with the same low bits, and a 64-bit load of it reads 32 bits. A
+//! relation's offsets are a block's, not bounded so: its reads keep 64 bits.
 
 use cranelift_codegen::ir::{self, InstructionData, Opcode, condcodes::IntCC, types};
 use crate::reads::Family;

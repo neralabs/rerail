@@ -3806,7 +3806,8 @@ mod transducer {
             #[cfg(test)]
             pub mod engine_tests;
         }
-        #[cfg(all(test, target_os = "macos"))]
+        #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
+        #[allow(unused_imports)]
         pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_join;
         #[cfg(target_os="macos")]
         #[cfg_attr(test, path = ".")]

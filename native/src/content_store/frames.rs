@@ -292,6 +292,18 @@ impl Admitted {
         of(&self.data)
     }
 
+    /// Its rows' column types, where its rows were admitted: known without decoding them.
+    pub fn types(&self) -> Option<&[u8]> {
+        fn of(data: &Data) -> Option<&[u8]> {
+            match data {
+                Data::Encoded { types, .. } => Some(types),
+                Data::Chain { base, .. } => of(base),
+                Data::Metadata => None,
+            }
+        }
+        of(&self.data)
+    }
+
     /// Its rows' width (their columns), where its rows were admitted: known without decoding them.
     pub fn width(&self) -> Option<usize> {
         fn of(data: &Data) -> Option<usize> {

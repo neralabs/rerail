@@ -55,7 +55,7 @@ impl ProgramPass for MergeIdentical {
         let v = cx.v();
         let d = cx.get::<FieldsData>()?;
         let f = Fields::over(v, &d);
-        let groups = congruence(v, f);
+        let groups = congruence(v, f, false);
         if groups.is_empty() {
             return Ok(());
         }
@@ -168,7 +168,7 @@ impl ProgramPass for MergeIdentical {
             for (from, to) in &rename {
                 let (Some(copy), Some(_)) = (asked.get(from), asked.get(to)) else { continue };
                 let canon = |rel: &str| -> Vec<(Vec<Tok<'_>>, Vec<&str>)> {
-                    input.rel(rel).into_iter().flat_map(|id| input.heads(id)).map(|r| { let (t, read) = Canon::of(&input, r); (t, read.into_iter().map(class).collect()) }).collect()
+                    input.rel(rel).into_iter().flat_map(|id| input.heads(id)).map(|r| { let (t, read) = Canon::of(&input, r, false); (t, read.into_iter().map(class).collect()) }).collect()
                 };
                 let (theirs, ours) = (canon(from), canon(to));
                 if theirs.len() != copy.len() {
@@ -294,14 +294,16 @@ enum Tok<'v> {
 /// they read are equal under those labels, as their texts are.
 struct Canon<'v> {
     v: &'v Version,
+    /// Every constant the variable `?` (`simplify::congruence`'s `abstract_constants`).
+    abstract_constants: bool,
     names: Vec<u32>,
     out: Vec<Tok<'v>>,
     read: Vec<RelId>,
 }
 
 impl<'v> Canon<'v> {
-    fn of(v: &'v Version, r: RuleRef<'v>) -> (Vec<Tok<'v>>, Vec<RelId>) {
-        let mut c = Canon { v, names: Vec::new(), out: Vec::new(), read: Vec::new() };
+    fn of(v: &'v Version, r: RuleRef<'v>, abstract_constants: bool) -> (Vec<Tok<'v>>, Vec<RelId>) {
+        let mut c = Canon { v, abstract_constants, names: Vec::new(), out: Vec::new(), read: Vec::new() };
         c.out.push(Tok::K(1));
         r.head().args().for_each(|t| c.term(t));
         for l in r.body() {
@@ -379,6 +381,11 @@ impl<'v> Canon<'v> {
     }
 
     fn term(&mut self, t: TermRef<'v>) {
+        if self.abstract_constants && matches!(t, TermRef::Int(_) | TermRef::Str(_)) {
+            let k = self.name(Slot(u32::MAX));
+            self.out.push(Tok::V(k));
+            return;
+        }
         match t {
             TermRef::Var(s) => {
                 let k = self.name(s);
@@ -403,7 +410,7 @@ impl<'v> Canon<'v> {
 
 /// `simplify::congruence` (constants kept) on the version: the classes of more than one mergeable relation, each
 /// sorted, in the order of their first members by name.
-fn congruence(v: &Version, f: Fields<'_>) -> Vec<Vec<String>> {
+pub(super) fn congruence(v: &Version, f: Fields<'_>, abstract_constants: bool) -> Vec<Vec<String>> {
     let mut rules_of: HashMap<RelId, Vec<RuleRef<'_>>> = HashMap::new();
     for r in v.rules() {
         rules_of.entry(r.head().rel()).or_default().push(r);
@@ -444,7 +451,8 @@ fn congruence(v: &Version, f: Fields<'_>) -> Vec<Vec<String>> {
         for &r in &cands {
             let distinct = rules(r).iter().map(|x| x.hash()).collect::<HashSet<u64>>().len();
             let n = ids.len();
-            // An undeclared relation (a helper a pass made without one) has no types, as the tree's merge reads it.
+            // An undeclared relation (a helper a pass made without one, or a library's facts, `param_slot(…).`) has no
+            // types, as the tree's merge reads it.
             let types = f.columns(r).map_or_else(Vec::new, |c| c.into_iter().map(|(_, t)| t).collect());
             class.push(*ids.entry((types, distinct, facts_of(r))).or_insert(n));
         }
@@ -456,7 +464,7 @@ fn congruence(v: &Version, f: Fields<'_>) -> Vec<Vec<String>> {
             rules(r)
                 .iter()
                 .map(|&x| {
-                    let (toks, read) = Canon::of(v, x);
+                    let (toks, read) = Canon::of(v, x, abstract_constants);
                     let n = templates.len();
                     (*templates.entry(toks).or_insert(n), read)
                 })
@@ -577,6 +585,23 @@ mod tests {
         assert_eq!((out.size(), out.digest()), (want.size(), want.digest()), "{}\n---\n{}", out.show(), want.show());
     }
 
+    /// A library's facts may go undeclared (`param_slot("datetime.datetime", "tzinfo", 7).`): such relations merge by
+    /// their facts as the tree's do, and the merge does not ask for a declaration they lack.
+    #[test]
+    fn undeclared_fact_relations_merge_as_the_trees() {
+        let text = ".decl e(x: number)\n.input e\nf1(\"a\", 1).\nf2(\"a\", 1).\n\
+                    .decl uses(x: number, k: symbol)\nuses(x, k) :- e(x), f1(k, _).\nuses(x, k) :- e(x), f2(k, _).\n\
+                    .output uses\n";
+        let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+        let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+        let mut p = Pipeline::new("test", v);
+        let mut merge = super::MergeIdentical::default();
+        p.program(&mut merge);
+        p.finish().unwrap();
+        let (m, _, _) = crate::code_rule_dsl::logic::plan::corpus::merge_and_drop_repeats(&mut tree);
+        assert_eq!(merge.merged, m);
+    }
+
     /// A rule's branded atoms (decision 0270, a lowered program's names) compare as `canonical` writes them, the atom
     /// itself: `a1` and `a2` read the same branded atom and merge, `b` reads another and stays apart, though the three
     /// rules differ in nothing else. The same program, the same counts as the tree's.
@@ -615,4 +640,11 @@ mod tests {
         let (want, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
         assert_eq!((out.size(), out.digest()), (want.size(), want.digest()), "{}\n---\n{}", out.show(), want.show());
     }
+}
+
+/// Relations equal up to their constants (`simplify::similar_relations`): how many, in how many groups, and a few
+/// groups. A congruence of its own over the whole program, so asked for only when the run is profiled.
+pub fn similar_relations(v: &Version, f: Fields<'_>) -> (usize, usize, Vec<String>) {
+    let similar = congruence(v, f, true);
+    (similar.iter().map(Vec::len).sum(), similar.len(), similar.iter().take(3).map(|g| g.iter().take(4).cloned().collect::<Vec<_>>().join(" ~ ")).collect())
 }

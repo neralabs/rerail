@@ -208,3 +208,24 @@ django-bugs' `rr::lower` form (`demand_of`'s `whole` readers, the asks deduplica
 reader's index, a request's text, and every key made from it, changed with any rule added elsewhere. It keeps
 benchmarks-on-integration's split of a request's class in `simplify` (a request and its copies first, apart from the
 rest) and the request record carried through every pass after lowering.
+
+## The record on the version's passes (2026-11-17, final-rerail-shape-rr-align into django-bugs)
+
+final-rerail-shape-rr-align runs combine and preparation on the version (0281 step 7b) and checks each pipeline
+against the tree in a debug build, by size and digest. The record is by place among a relation's rules, so the
+version has to state the same readers in the same order. What it takes:
+
+- The version's request lowering (`preparation::on_request`) is 0291 item 4's: a request kept whole for readers
+  that ask for all, asks deduplicated with their readers joined, ask variables named `<v>_rr_d`. `rr::lower`'s
+  `on_request_rule` counts the `<req>_by_<reader>` demands as a request's rules.
+- A pipeline's carry (`manager::AskedByRule`) takes a rule's readers from its source. A rule made again without a
+  source takes the readers of a removed rule alike, one each in order when the counts match. A rule whose source
+  serves readers keeps them. Where the carry knows nothing of a rule, it takes the step's own record.
+- Hiding states the record by the rules it writes, each from its source, and a copy under another name joins its
+  source's readers. Folding a part's own relations renames readers. Inlining replaces an inlined reader by the
+  relations that read it.
+- The version's `prune` drops a pruned reader from an entry another reader holds. It makes an attribute whose
+  requests are all gone an input again, as `front::prune` does.
+- The memberships expansion is a derivation, so each rule's expansion stays where the rule was, as
+  `expand_memberships` keeps it on the tree. As an edit it put them after the rest, and the record moved with them.
+- The version after lowering is checked to hold one entry for each request rule, as the tree was before.

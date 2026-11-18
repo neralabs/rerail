@@ -147,7 +147,7 @@ impl Matcher {
     }
 
     /// How the patterns are matched (EXPLAIN): each plan's production, with the rewrites that led to it.
-    pub(in crate::code_rule_dsl) fn describe(&self) -> String {
+    pub fn describe(&self) -> String {
         let mut by: BTreeMap<String, usize> = BTreeMap::new();
         for p in &self.plans {
             let how = if p.rewrites.is_empty() { p.production.to_owned() } else { format!("{} after {}", p.production, p.rewrites.join(", ")) };
@@ -447,6 +447,12 @@ impl Vocabulary {
         made
     }
 
+    /// A vocabulary of these tests (each relation and matcher), their specs, the regexes and the markers, nothing
+    /// compiled or tested yet: what `as_relations` makes, from its port on the version.
+    pub fn from_parts(tests: Vec<(String, Arc<Matcher>)>, specs: Vec<(String, Vec<String>)>, matches: Vec<Arc<regex::Regex>>, markers: Vec<String>) -> Vocabulary {
+        Vocabulary { tests, specs, matches, markers, ..Vocabulary::default() }
+    }
+
     /// The tests `relations` and `specs` name, their matchers made again (a prepared program read from the store,
     /// decision 0073).
     pub fn from_specs(relations: &[String], specs: Vec<(String, Vec<String>)>) -> Result<Vocabulary, String> {
@@ -564,8 +570,10 @@ fn implied_set_tests(prog: &mut Program) {
 /// atom binds in a `node` or `loc` column.
 pub fn node_subject_tests(prog: &mut Program) {
     let decls = &prog.decls;
-    let mut fresh = 0usize;
     for rule in &mut prog.rules {
+        // Fresh names counted per rule, the first a rule does not hold: a rule's names do not depend on the others'.
+        let mut fresh = 0usize;
+        let held: HashSet<String> = rule.head.vars().into_iter().chain(rule.body.iter().flat_map(Literal::vars)).collect();
         let nodes: HashSet<String> = rule
             .body
             .iter()
@@ -591,8 +599,13 @@ pub fn node_subject_tests(prog: &mut Program) {
             if !nodes.contains(s.as_str()) {
                 continue;
             }
-            fresh += 1;
-            let t = format!("rr_node_text{fresh}");
+            let t = loop {
+                fresh += 1;
+                let t = format!("rr_node_text{fresh}");
+                if !held.contains(&t) {
+                    break t;
+                }
+            };
             added.push(Literal::Atom(Atom { rel: "text".into(), args: [Term::Var(s.clone().into()), Term::Var(t.clone().into())].into(), neg: false, gated: false }));
             *s = t.into();
         }
@@ -612,6 +625,24 @@ pub fn node_subject_tests(prog: &mut Program) {
 ///
 /// And collects the markers of `fstring_template(n, "marker", v)` (W's `interpolation`): a constant, since the
 /// batches parse each host once per marker (`facts::vtab::syntax::fstring`).
+/// A text test `as_relations` rewrites: its place in its rule, its operator and patterns (sorted, distinct), whether
+/// it holds, and what it reads.
+struct TextPlan {
+    place: usize,
+    key: (String, Vec<String>),
+    holds: bool,
+    how: TextHow,
+}
+
+enum TextHow {
+    /// Over a batch's strings `s`: an atom of its input relation `strtest_<k>(s)`.
+    Input { s: String },
+    /// Over strings answered during the run, given by column `column` of atom `at` (of `input`): its native test.
+    During { input: String, column: usize, at: usize },
+    /// The rule is the native test's own definition.
+    Defined { input: String, column: usize },
+}
+
 /// Whether a rule of `head` with `width` literals, one of them `atom` and a holding test of `atom`'s string, is a
 /// native test's definition: its head the atom's own distinct variables, in order, and nothing else in its body.
 fn definition(head: &Atom, atom: &Atom, width: usize, holds: bool) -> bool {
@@ -625,13 +656,6 @@ pub fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
     }
     implied_set_tests(prog);
     let (vocabulary_columns, answered) = vocabulary_columns(prog);
-    let mut ids: BTreeMap<(String, Vec<String>), String> = BTreeMap::new();
-    let (mut tests, mut specs) = (Vec::new(), Vec::new());
-    // Each test over strings answered during the run, by the relation and column that give them: its native relation.
-    let mut during: BTreeMap<(usize, String, usize), String> = BTreeMap::new();
-    // The rules that are a native test's own definition, `h(x…) :- input(x…), test(x_c)` (as `rr::print` writes one,
-    // and as this makes it): `h` is the native, read back as it was made, not a second native under it.
-    let mut defined: Vec<(String, String, usize, String, Vec<String>)> = Vec::new();
     // Only a relation of that one rule, no output or input, with no facts and no other native, is made so.
     let mut heads: HashMap<String, usize> = HashMap::new();
     for r in &prog.rules {
@@ -642,13 +666,18 @@ pub fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
         .filter(|(h, n)| *n == 1 && !prog.outputs.contains(h) && !prog.inputs.contains(h) && !prog.facts.contains_key(h) && !prog.natives.get(h).is_some_and(|n| !matches!(n, super::front::Native::TextTest { .. })))
         .map(|(h, _)| h)
         .collect();
-    for rule in &mut prog.rules {
+    // Planned first, rule by rule, then numbered: each test's relation, each native test's and each regex's number
+    // follow their content's order (the test's operator and patterns, the regex's text), not the rules', so a
+    // program's names do not depend on the order its rules come in (a pass on the version writes the rules it
+    // rewrites after those it keeps), and an edit of one rule does not rename another's.
+    let mut plans: Vec<Vec<TextPlan>> = Vec::with_capacity(prog.rules.len());
+    for rule in &prog.rules {
         // Each string the rule's text relations give: from a batch's column (`None`), or else from the first atom
         // that gives it over an answered `TEXT_COLUMNS` relation itself (the atom, and its column). A string only a
         // copy of an answered column gives stays tested per row: a native reading the copy would keep the copy
         // whole (a relation a native reads is not factorized, `typing::file_local::factorize_exports`), and with it
         // its reads of `node_text` in the cross-file part.
-        let mut texts: HashMap<String, Option<(Atom, usize, usize)>> = HashMap::new();
+        let mut texts: HashMap<String, Option<(usize, usize)>> = HashMap::new();
         for (at, a) in rule.body.iter().enumerate().filter_map(|(i, l)| match l {
             Literal::Atom(a) if !a.neg => Some((i, a)),
             _ => None,
@@ -658,14 +687,13 @@ pub fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
                 if !answered.contains(&(a.rel.to_string(), c)) {
                     texts.insert(v.to_string(), None);
                 } else if TEXT_COLUMNS.iter().any(|(r, _)| *r == a.rel.as_str()) {
-                    texts.entry(v.to_string()).or_insert_with(|| Some((a.clone(), c, at)));
+                    texts.entry(v.to_string()).or_insert_with(|| Some((c, at)));
                 }
             }
         }
-        // The atoms a holding native test stands for (its rows are theirs that pass), and the tests' places.
-        let (mut replaced, mut dropped): (Vec<(usize, Literal)>, HashSet<usize>) = (Vec::new(), HashSet::new());
-        let (head, width) = (rule.head.clone(), rule.body.len());
-        for (place, literal) in rule.body.make_mut().iter_mut().enumerate() {
+        let width = rule.body.len();
+        let mut plan = Vec::new();
+        for (place, literal) in rule.body.iter().enumerate() {
             let Some((op, s, mut pats, holds)) = as_test(literal) else { continue };
             let Some(from) = texts.get(s) else {
                 continue;
@@ -678,58 +706,85 @@ pub fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
             pats.sort();
             pats.dedup();
             let key = (op.to_owned(), pats);
-            let spec = key.clone();
-            let rel = match ids.get(&key) {
-                Some(r) => r.clone(),
-                None => {
-                    let rel = format!("{RELATION}{}", ids.len());
-                    let matcher = Matcher::new(&key.0, &key.1)?;
-                    super::profile::decision("text tests (decision 0037: a relation per distinct test, each string tested once)", || {
-                        let shown: Vec<String> = key.1.iter().take(6).map(|p| format!("{p:?}")).collect();
-                        let more = if key.1.len() > 6 { format!(", … {} in all", key.1.len()) } else { String::new() };
-                        format!("{rel} = @{}({{{}{more}}}): {}", key.0, shown.join(", "), matcher.describe())
-                    });
-                    tests.push((rel.clone(), Arc::new(matcher)));
-                    specs.push(key.clone());
-                    ids.insert(key, rel.clone());
-                    rel
-                }
-            };
             // A string answered during the run: the test is a relation made natively, the rows of the atom that
             // gives the string whose string passes (keyed as the atom is, so a file-local atom's stays file-local),
             // its strings tested by the run's vocabulary. A holding test reads it in the atom's place (its rows are
             // the atom's that pass); a failing one reads its negation beside the atom.
-            if let Some((atom, column, _)) = from
-                && alone.contains(head.rel.as_str())
-                && definition(&head, atom, width, holds)
-            {
-                defined.push((head.rel.to_string(), atom.rel.to_string(), *column, spec.0, spec.1));
-                continue;
-            }
-            *literal = match from {
-                None => Literal::Atom(Atom { rel: rel.into(), args: [Term::Var(s.to_owned().into())].into(), neg: !holds, gated: false }),
-                Some((atom, column, at)) => {
-                    let k: usize = rel[RELATION.len()..].parse().expect("a test's number");
-                    let key = (k, atom.rel.to_string(), *column);
-                    let n = during.len();
-                    let native = during.entry(key).or_insert_with(|| format!("{DURING}{k}_{n}")).clone();
-                    let read = Literal::Atom(Atom { rel: native.into(), args: atom.args.clone(), neg: !holds, gated: false });
-                    if holds && !replaced.iter().any(|(i, _)| i == at) {
-                        replaced.push((*at, read));
-                        dropped.insert(place);
-                        continue;
+            let how = match *from {
+                Some((column, at)) => {
+                    let Literal::Atom(atom) = &rule.body[at] else { unreachable!("a text atom") };
+                    if alone.contains(rule.head.rel.as_str()) && definition(&rule.head, atom, width, holds) {
+                        TextHow::Defined { input: atom.rel.to_string(), column }
+                    } else {
+                        TextHow::During { input: atom.rel.to_string(), column, at }
                     }
-                    read
                 }
+                None => TextHow::Input { s: s.to_owned() },
             };
+            plan.push(TextPlan { place, key, holds, how });
         }
-        if !replaced.is_empty() {
-            let mut body = rule.body.to_vec();
-            for (at, read) in replaced {
-                body[at] = read;
+        plans.push(plan);
+    }
+    let keys: std::collections::BTreeSet<&(String, Vec<String>)> = plans.iter().flatten().map(|p| &p.key).collect();
+    let ids: BTreeMap<(String, Vec<String>), usize> = keys.into_iter().cloned().enumerate().map(|(k, key)| (key, k)).collect();
+    let mut tests = Vec::with_capacity(ids.len());
+    let mut specs = Vec::with_capacity(ids.len());
+    for (key, &k) in &ids {
+        let rel = format!("{RELATION}{k}");
+        let matcher = Matcher::new(&key.0, &key.1)?;
+        super::profile::decision("text tests (decision 0037: a relation per distinct test, each string tested once)", || {
+            let shown: Vec<String> = key.1.iter().take(6).map(|p| format!("{p:?}")).collect();
+            let more = if key.1.len() > 6 { format!(", … {} in all", key.1.len()) } else { String::new() };
+            format!("{rel} = @{}({{{}{more}}}): {}", key.0, shown.join(", "), matcher.describe())
+        });
+        tests.push((rel, Arc::new(matcher)));
+        specs.push(key.clone());
+    }
+    // Each test over strings answered during the run, by the relation and column that give them: its native relation.
+    let during: BTreeMap<(usize, String, usize), String> = plans
+        .iter()
+        .flatten()
+        .filter_map(|p| match &p.how {
+            TextHow::During { input, column, .. } => Some((ids[&p.key], input.clone(), *column)),
+            _ => None,
+        })
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .enumerate()
+        .map(|(n, key)| {
+            let native = format!("{DURING}{}_{n}", key.0);
+            (key, native)
+        })
+        .collect();
+    // The rules that are a native test's own definition, `h(x…) :- input(x…), test(x_c)` (as `rr::print` writes one,
+    // and as this makes it): `h` is the native, read back as it was made, not a second native under it.
+    let mut defined: Vec<(String, String, usize, String, Vec<String>)> = Vec::new();
+    for (rule, plan) in prog.rules.iter_mut().zip(plans) {
+        // The atoms a holding native test stands for (its rows are theirs that pass), and the tests' places.
+        let (mut replaced, mut dropped): (Vec<(usize, Literal)>, HashSet<usize>) = (Vec::new(), HashSet::new());
+        let mut body = rule.body.to_vec();
+        for TextPlan { place, key, holds, how } in plan {
+            let k = ids[&key];
+            match how {
+                TextHow::Defined { input, column } => defined.push((rule.head.rel.to_string(), input, column, key.0, key.1)),
+                TextHow::Input { s } => body[place] = Literal::Atom(Atom { rel: format!("{RELATION}{k}").into(), args: [Term::Var(s.into())].into(), neg: !holds, gated: false }),
+                TextHow::During { input, column, at } => {
+                    let Literal::Atom(atom) = &rule.body[at] else { unreachable!("a text atom") };
+                    let native = during[&(k, input, column)].clone();
+                    let read = Literal::Atom(Atom { rel: native.into(), args: atom.args.clone(), neg: !holds, gated: false });
+                    if holds && !replaced.iter().any(|(i, _)| *i == at) {
+                        replaced.push((at, read));
+                        dropped.insert(place);
+                    } else {
+                        body[place] = read;
+                    }
+                }
             }
-            rule.body = body.into_iter().enumerate().filter(|(i, _)| !dropped.contains(i)).map(|(_, l)| l).collect::<Vec<_>>().into();
         }
+        for (at, read) in replaced {
+            body[at] = read;
+        }
+        rule.body = body.into_iter().enumerate().filter(|(i, _)| !dropped.contains(i)).map(|(_, l)| l).collect::<Vec<_>>().into();
     }
     // Each native test's one rule orders it after its input, and is the test row by row: what an evaluator that
     // does not make it natively (a maintained form's pieces) derives instead.
@@ -745,44 +800,49 @@ pub fn as_relations(prog: &mut Program) -> Result<Vocabulary, String> {
     for (native, input, column, op, patterns) in defined {
         prog.natives.insert(native, super::front::Native::TextTest { input, column, op, patterns });
     }
-    let mut markers: Vec<String> = Vec::new();
+    // The markers and regexes, each in its text's order.
+    let mut markers: std::collections::BTreeSet<String> = Default::default();
     let mut regexes: BTreeMap<String, usize> = BTreeMap::new();
-    let mut matches = Vec::new();
+    for a in prog.rules.iter().flat_map(|r| &r.body).filter_map(|l| match l {
+        Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a),
+        _ => None,
+    }) {
+        match (a.rel.as_str(), a.args.as_slice()) {
+            ("fstring_template", [_, Term::Str(marker), _]) => {
+                markers.insert(marker.to_string());
+            }
+            ("fstring_template", _) => return Err(format!("fstring_template takes a constant marker: fstring_template(n, \"{{...}}\", v), not {a}")),
+            ("match_all", [Term::Str(re), _, _]) | ("match_group", [Term::Str(re), _, _, _, _]) => {
+                regexes.insert(re.to_string(), 0);
+            }
+            ("match_all", _) => return Err(format!("match_all takes a constant regex, a span and its match: match_all(\"re\", sp, m), not {a}")),
+            ("match_group", _) => {
+                return Err(format!("match_group takes a constant regex, a span, its match, a group name and its span: match_group(\"re\", sp, m, g, gsp), not {a}"));
+            }
+            _ => {}
+        }
+    }
+    let mut matches = Vec::with_capacity(regexes.len());
+    for (k, (re, at)) in regexes.iter_mut().enumerate() {
+        let rel = prog.rules.iter().flat_map(|r| &r.body).filter_map(Literal::atom).find(|a| matches!(a.args.first(), Some(Term::Str(x)) if x == re.as_str()) && (a.rel == "match_all" || a.rel == "match_group")).map_or("match_all", |a| a.rel.as_str());
+        matches.push(Arc::new(regex::Regex::new(re).map_err(|e| format!("{rel}({re:?}, …): {e}"))?));
+        *at = k;
+    }
+    let markers: Vec<String> = markers.into_iter().collect();
     let mut made = BTreeMap::new();
     for rule in &mut prog.rules {
-        for literal in &mut rule.body {
+        for literal in rule.body.make_mut() {
             let (Literal::Atom(a) | Literal::Agg { atom: a, .. }) = literal else { continue };
-            if a.rel == "fstring_template" {
-                let [_, Term::Str(marker), _] = a.args.as_slice() else {
-                    return Err(format!("fstring_template takes a constant marker: fstring_template(n, \"{{...}}\", v), not {a}"));
-                };
-                if !markers.iter().any(|m| m == marker.as_str()) {
-                    markers.push(marker.to_string());
-                }
-                continue;
-            }
-            let (args, group) = match (a.rel.as_str(), a.args.as_slice()) {
-                ("match_all", [Term::Str(_), sp, m]) => (vec![sp.clone(), m.clone()], false),
-                ("match_group", [Term::Str(_), sp, m, g, gsp]) => (vec![sp.clone(), m.clone(), g.clone(), gsp.clone()], true),
-                ("match_all", _) => return Err(format!("match_all takes a constant regex, a span and its match: match_all(\"re\", sp, m), not {a}")),
-                ("match_group", _) => {
-                    return Err(format!("match_group takes a constant regex, a span, its match, a group name and its span: match_group(\"re\", sp, m, g, gsp), not {a}"));
-                }
+            let group = match a.rel.as_str() {
+                "match_all" => false,
+                "match_group" => true,
                 _ => continue,
             };
-            let Term::Str(re) = &a.args[0] else { unreachable!("matched above") };
-            let k = match regexes.get(re.as_str()) {
-                Some(&k) => k,
-                None => {
-                    let regex = regex::Regex::new(re).map_err(|e| format!("{}({re:?}, …): {e}", a.rel))?;
-                    matches.push(Arc::new(regex));
-                    regexes.insert(re.to_string(), matches.len() - 1);
-                    matches.len() - 1
-                }
-            };
+            let Term::Str(re) = &a.args[0] else { unreachable!("checked above") };
+            let k = regexes[re.as_str()];
             let rel = if group { format!("{GROUPS}{k}") } else { format!("{MATCHES}{k}") };
             made.insert(rel.clone(), group);
-            a.args = args.into();
+            a.args = a.args[1..].to_vec().into();
             a.rel = rel.into();
         }
     }

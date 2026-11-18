@@ -345,7 +345,7 @@ struct Scratch {
     numbers: Option<(metal::Buffer, usize)>,
     codes: Option<(metal::Buffer, usize)>,
     tables: Option<(metal::Buffer, usize)>,
-    /// `predict_values`' next prediction, committed ahead and waiting on `event` (`Armed`), on a queue of its own:
+    /// `predict_values`' next prediction, committed ahead and waiting on `event` (`Armed`), on the process's waiting queue (`gpu::shared`):
     /// a command buffer waiting on an event holds back the ones its queue commits after it.
     armed: Option<Armed>,
     armed_queue: Option<MetalComputeQueue>,
@@ -865,7 +865,7 @@ impl DeviceForest {
             scratch.row_plans.insert(key, k.plan(&named, &[(categorical.len() * stride) as u32])?);
         }
         let Scratch { armed_queue, row_plans, plans, .. } = scratch;
-        let queue = armed_queue.get_or_insert_with(|| MetalComputeQueue::new(&device.new_command_queue()));
+        let queue = armed_queue.get_or_insert_with(|| MetalComputeQueue::new(&shared.waiting));
         // First in the command buffer, before any encoder: the device waits here for the call's rows.
         queue.command_buffer.encode_wait_for_event(&event, value);
         {

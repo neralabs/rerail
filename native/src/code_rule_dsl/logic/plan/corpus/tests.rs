@@ -1166,7 +1166,9 @@ fn the_run_after_a_cold_one_writes_nothing() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let lines: Vec<&str> = stderr.lines().collect();
         let faults: Vec<String> = lines.iter().enumerate().filter(|(_, l)| l.starts_with("rerail: RERAIL_WARM")).map(|(i, l)| format!("{l}{}", lines.get(i + 1).map_or(String::new(), |n| format!(" ({})", n.trim())))).collect();
-        assert!(output.status.success(), "the run's process: {}; {}", output.status, faults.join("; "));
+        // No fault named: the process failed some other way, and its stderr's tail says how.
+        let tail = if faults.is_empty() { lines[lines.len().saturating_sub(30)..].join("\n") } else { String::new() };
+        assert!(output.status.success(), "the run's process: {}; {}{tail}", output.status, faults.join("; "));
     };
     run(false);
     let cold = manifests();
@@ -1478,6 +1480,15 @@ fn every_switch_lowering_reads_is_classified() {
         "RERAIL_COSTS",
         // Keyed through what it adds: the observer's facts (the source files), which the prepared key hashes.
         "RERAIL_SOURCES_PHASE",
+        // Where rule images are read from and kept (decision 0246 §6): an image is keyed by its text, its scope and
+        // the format, so whichever store gives it, it is the same program; off, the text is lowered again.
+        "RERAIL_MODULE_IMAGES",
+        "RERAIL_IMAGE_STORE",
+        "RERAIL_SHIPPED_IMAGES",
+        // A bundle's export: the images written beside the store as well.
+        "RERAIL_EXPORT_IMAGES",
+        // A measurement aid (decision 0173): each version written out, the program unchanged.
+        "RERAIL_VERSION_TRACE",
     ];
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl");
     // Every switch named, however it is read (`var`, `var_os`, a constant, a helper's argument).
@@ -1543,10 +1554,15 @@ fn every_switch_lowering_reads_is_classified() {
         let b = a + corpus[a..].find(to).unwrap_or_else(|| panic!("corpus.rs has no {to:?} after {from:?}"));
         corpus[a..b].to_owned()
     };
-    // Combining: `combine_read`, what it calls that reads a switch (`scoping::guard`), and the `.rr` lowering its
-    // `rr::parse` runs (`logic/rr`, `front`). The combined program is kept under `COMBINING` alone.
-    let mut combining = sources(&["logic/rr", "logic/front.rs", "logic/front", "logic/plan/corpus/scoping.rs"]);
-    combining.push(("corpus.rs, combine_read".to_owned(), region("\nfn combine_read(", "\n}\n")));
+    // Combining: `combine_read` (its link, `combine_linked`, and its tail on the tree and on the version), what it
+    // calls that reads a switch (`scoping::guard`, the tail's passes), and the `.rr` lowering its `rr::parse` runs
+    // (`logic/rr`, `front`). The combined program is kept under `COMBINING` alone.
+    let mut combining = sources(&[
+        "logic/rr", "logic/front.rs", "logic/front", "logic/plan/corpus/scoping.rs", "logic/plan/corpus/preparation/whole.rs",
+        "logic/plan/corpus/preparation/on_request.rs", "logic/plan/corpus/preparation/hide.rs", "logic/plan/corpus/link.rs",
+    ]);
+    combining.push(("corpus.rs, combine_read and its tail".to_owned(), region("\nfn combine_read(", "\n/// `combine_read` up to the programs linked")));
+    combining.push(("corpus.rs, combine_linked".to_owned(), region("\nfn combine_linked_as<", "Tail::Many { hide: (shared")));
     // Preparing: `run_observed` up to the prepared program, what it calls that reads a switch (`hiding::fold_own`,
     // memo, session, profile, costs) and the passes. The prepared key holds `PREPARING` and the combined program's
     // key. Not `plan/keeps.rs` and `plan/choices.rs`: what a relation keeps is chosen in `plan::run` and kept under
@@ -1555,6 +1571,8 @@ fn every_switch_lowering_reads_is_classified() {
     let mut preparing = sources(&[
         "logic/simplify.rs", "logic/strings.rs", "logic/reach_form.rs", "logic/magic.rs", "logic/magic", "logic/plan/lower.rs",
         "logic/plan/corpus/cross_memo.rs", "logic/plan/corpus/hiding.rs", "logic/plan/corpus/memo.rs", "logic/plan/corpus/prepared.rs",
+        // Its passes on the version: `fold_own`'s and the merges (`combining`), and the combine's fact spaces.
+        "logic/plan/corpus/preparation/combining.rs",
         "logic/plan/corpus/session.rs", "logic/profile.rs", "logic/costs.rs", "typing/file_local.rs", "typing/file_local",
     ]);
     preparing.push(("corpus.rs, run_observed's preparation".to_owned(), region("\nfn run_observed(", "Arc::new(Prepared {")));
@@ -1581,4 +1599,42 @@ fn every_switch_lowering_reads_is_classified() {
     }
     let unread: Vec<&str> = super::COMBINING.iter().chain(super::PREPARING).copied().filter(|s| !seen.contains(*s)).collect();
     assert!(unread.is_empty(), "switches listed as combining or preparing that nothing there reads: {unread:?}");
+}
+
+/// Q22, a guard: a run after a rule's edit parses no file the last run read. The edit makes a new lane (the programs'
+/// texts) and plan, and the tapes are found by the root's last runs (`root_sources`), read before the first wave
+/// (decision 0104). It regressed unseen: the tapes were looked up by lane, which every edit changes. A guest's tape is
+/// not stored (Q30, `a_run_stores_no_source_of_its_guests`): its parse is cheaper than storing and reading it.
+#[test]
+fn an_edit_parses_no_file_the_last_run_read() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("file-tapes");
+    let _ = std::fs::remove_dir_all(&dir);
+    let ws = dir.join("ws");
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::write(ws.join("a.py"), "from typing import List, Optional\n\nx: \"List[int]\" = []\n\ndef f(a: \"Optional[Foo]\") -> \"Baz\":\n    pass\n").unwrap();
+    std::fs::write(ws.join("b.py"), "y: \"Optional[int]\" = None\n").unwrap();
+    let program = |extra: &str| format!(r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl text(n: node, s: symbol)
+.decl names(x: symbol)
+names(x) :- string_annotation(n), parsed(n, "annotation", r), within(m, r), node(_, m, "identifier", _, _), text(m, x){extra}.
+.output names
+"#);
+    let out = dir.join("out");
+    let run = |text: &str| {
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        super::run(text, &ws, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap()
+    };
+    // The first run's files are parsed by its sources phase, which runs first, and found by the run itself.
+    let first = run(&program(""));
+    assert_eq!(first.file_tapes.0 + first.file_tapes.1, 2, "{:?}", first.file_tapes);
+    // An edited rule: a new lane and plan; the files are as they were.
+    let edited = run(&program(", x != \"q22\""));
+    assert_eq!(edited.file_tapes.1, 0, "no file is parsed again (found, parsed): {:?}", edited.file_tapes);
+    assert!(edited.file_tapes.0 > 0, "the files' tapes are the last run's: {:?}", edited.file_tapes);
+    // And again: a run that found its tapes names them, so the next finds them too.
+    let again = run(&program(", x != \"q22b\""));
+    assert_eq!(again.file_tapes.1, 0, "{:?}", again.file_tapes);
+    assert!(again.file_tapes.0 > 0, "{:?}", again.file_tapes);
+    let _ = std::fs::remove_dir_all(&dir);
 }

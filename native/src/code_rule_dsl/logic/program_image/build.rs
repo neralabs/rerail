@@ -19,7 +19,7 @@
 //!
 //! A version's digest is made with it, from the parent's and the edit's hashes.
 use super::encoder::{self, CellText, Decl, Encoder, FactRel, Parts};
-use super::handles::{AtomRef, CmpOp, LitRef, RuleRef, TermRef};
+use super::handles::{AtomRef, CmpOp, Lit, LitRef, RuleRef, TermRef};
 use super::version::{Made, Version, max_ranges};
 use super::{ABOUT_BIT, AtomId, Cell, RelId, RuleId, Slot, kind};
 use crate::code_rule_dsl::logic::front::{List, Program, Rule, Value};
@@ -40,6 +40,21 @@ pub enum T<'a> {
     Str(&'a str),
     StrAtom(AtomId),
     Call(&'a str, Vec<T<'a>>),
+    /// A call by the atom naming its function (a version's, or the builder's).
+    CallAtom(AtomId, Vec<T<'a>>),
+}
+
+/// A term of `v`'s rule `r`, to write into a builder under `v`'s ids (one on `v`, or derived from it).
+pub fn t_of<'v>(v: &'v Version, r: RuleRef<'v>, t: TermRef<'v>) -> T<'v> {
+    match t {
+        TermRef::Var(s) => T::VarAtom(r.var(s)),
+        TermRef::Wild => T::Wild,
+        TermRef::Top => T::Top,
+        TermRef::Int(i) => T::Int(i),
+        TermRef::Branded(b) => T::Branded(b),
+        TermRef::Str(a) => T::StrAtom(a),
+        TermRef::Call(f, args) => T::CallAtom(f, args.map(|a| t_of(v, r, a)).collect()),
+    }
 }
 
 /// A relation to write, by its id (the builder's parent's, or one it made) or by name.
@@ -230,6 +245,15 @@ impl<'p> Builder<'p> {
         self.enc.set_from(id.0 - self.enc.rule_base(), rule.id());
         id
     }
+    /// Adds a copy of `rule`, one of `from`'s, with the source `from` records for it (`RuleRef::source`): a rule
+    /// carried into a new base as it was, as a kept link splices the parts it did not link again.
+    pub(crate) fn copy_as_is(&mut self, from: &Version, rule: RuleRef<'_>) -> RuleId {
+        let id = self.copy(from, rule);
+        if let Some(src) = rule.source() {
+            self.enc.set_from(id.0 - self.enc.rule_base(), src);
+        }
+        id
+    }
     fn same(&self, rule: RuleRef<'_>) -> bool {
         self.ids.is_some_and(|v| v.holds_image(rule.image()))
     }
@@ -380,6 +404,37 @@ impl<'p> Builder<'p> {
         self.parts.outputs = Some((ids, encoder::names_hash(1, names.iter().map(|n| n.as_ref()))));
         self.parts_changed = true;
     }
+    /// States the fields of `header` besides its rules (`Version::header`'s, edited by a pass that reads and writes
+    /// only those): its declarations, facts, inputs, outputs and the rest of its `.about` rows, each where it differs
+    /// from `was`, the header the pass was given. Its rules are the builder's own.
+    pub fn set_header(&mut self, was: &Program, header: &Program) {
+        for (n, c) in &header.decls {
+            if was.decls.get(n) != Some(c) {
+                self.declare_names(n, c.as_slice());
+            }
+        }
+        for n in was.decls.keys().filter(|n| !header.decls.contains_key(*n)) {
+            self.undeclare(n);
+        }
+        for (r, rows) in &header.facts {
+            if was.facts.get(r) != Some(rows) {
+                self.set_facts(r, rows);
+            }
+        }
+        for r in was.facts.keys().filter(|r| !header.facts.contains_key(*r)) {
+            self.drop_facts(r);
+        }
+        if was.inputs != header.inputs {
+            self.set_inputs(&header.inputs);
+        }
+        if was.outputs != header.outputs {
+            self.set_outputs(&header.outputs);
+        }
+        let (a, b) = (super::about_of(was), super::about_of(header));
+        if a != b {
+            self.set_about(&b);
+        }
+    }
     /// States the program's other fields (`about_of`), all of them.
     pub fn set_about(&mut self, about: &Facts) {
         self.parts.facts.retain(|k, _| k & ABOUT_BIT == 0);
@@ -457,7 +512,7 @@ impl<'p> Builder<'p> {
 
 /// The view of `parent` less rules `removed` (its rules), if it is few enough ranges (`max_ranges`). A view of a view
 /// is of that view's parent, its ranges that view's less `removed`.
-fn view(parent: &Arc<Version>, removed: &[u32]) -> Option<Arc<Version>> {
+pub(super) fn view(parent: &Arc<Version>, removed: &[u32]) -> Option<Arc<Version>> {
     let (over, ranges): (&Arc<Version>, Vec<(u32, u32)>) = match &**parent {
         Version::View { parent: over, ranges, .. } => (over, ranges.clone()),
         _ => (parent, vec![(0, parent.rule_end())]),
@@ -558,6 +613,57 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
         self.atom_node(rel.into(), args, kind::NEG);
         self
     }
+    /// An `ast(document, node, matcher)` literal, its captures (name, variable) in order.
+    pub fn ast(mut self, document: T<'_>, node: T<'_>, matcher: &str, captures: &[(&str, T<'_>)]) -> Self {
+        self.body();
+        let m = self.b.enc.atom(matcher);
+        let at = self.b.enc.open(kind::AST, m);
+        self.term(&document);
+        self.term(&node);
+        for (name, var) in captures {
+            let a = self.b.enc.atom(name);
+            self.b.enc.leaf(kind::STR, a);
+            self.term(var);
+        }
+        self.b.enc.close(at);
+        self
+    }
+    /// An aggregate `var = op over : { rel(args) }`, written as the encoder writes a tree's (`over` `None` for a
+    /// count); `var` a variable. A join's separator and keys are not written term by term: refused.
+    pub fn agg(mut self, var: T<'_>, op: &crate::code_rule_dsl::logic::front::AggOp, over: Option<T<'_>>, rel: impl Into<Rel<'b>>, args: &[T<'_>]) -> Self {
+        use crate::code_rule_dsl::logic::front::AggOp;
+        self.body();
+        let code: u8 = match op {
+            AggOp::Count => 0,
+            AggOp::Min => 1,
+            AggOp::Max => 2,
+            AggOp::Sum => 3,
+            AggOp::Product => 4,
+            AggOp::Join { .. } => {
+                self.failed = Some(super::bad("a join aggregate written term by term"));
+                return self;
+            }
+        };
+        let s = match var {
+            T::Var(v) => {
+                let a = self.b.enc.atom(v);
+                self.b.enc.slot_of(a)
+            }
+            T::VarAtom(a) => self.b.enc.slot_of(a.0),
+            _ => {
+                self.failed = Some(super::bad("an aggregate's result that is not a variable"));
+                return self;
+            }
+        };
+        let at = self.b.enc.open(kind::AGG | code << 5, s);
+        match over {
+            Some(t) => self.term(&t),
+            None => self.b.enc.leaf(kind::WILD, 0),
+        }
+        self.atom_node(rel.into(), args, 0);
+        self.b.enc.close(at);
+        self
+    }
     pub fn cmp(mut self, l: T<'_>, op: CmpOp, r: T<'_>) -> Self {
         self.body();
         let at = self.b.enc.open(kind::CMP, op as u32);
@@ -598,6 +704,22 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
         self.b.enc.copy_nodes(from, rule.image(), n..n + size, &vars, same);
         self.head = true;
         self
+    }
+    /// An atom of `from`'s rule `rule`, copied through `rw` as this rule's head (its variables renamed, terms replaced).
+    pub fn head_with(mut self, from: &Version, rule: RuleRef<'_>, atom: super::AtomRef<'_>, rw: &mut impl Rewrite) -> Self {
+        if self.head {
+            self.failed = Some(super::bad("a rule with two heads"));
+        }
+        let same = self.b.same(rule);
+        let vars: Vec<u32> = rule.vars().map(|a| a.0).collect();
+        let mut w = Walk { enc: &mut self.b.enc, from, im: rule.image(), vars: &vars, same, prefix: Vec::new() };
+        w.atom(atom, Site::Head(atom), rw);
+        self.head = true;
+        self
+    }
+    /// The builder the rule is written into, for its names (`atom`, `rel`).
+    pub fn builder(&mut self) -> &mut Builder<'p> {
+        self.b
     }
     /// Records rule `id` of the derivation's input as this rule's source (§9), as `Builder::rewrite` does: for a rule
     /// written term by term from one of the input's (a maintenance rule of a source rule, decision 0258).
@@ -733,6 +855,13 @@ fn write_t(e: &mut Encoder<'_>, t: &T<'_>) {
             e.leaf(kind::STR, a);
         }
         T::StrAtom(a) => e.leaf(kind::STR, a.0),
+        T::CallAtom(a, args) => {
+            let at = e.open(kind::CALL, a.0);
+            for x in args {
+                write_t(e, x);
+            }
+            e.close(at);
+        }
         T::Call(f, args) => {
             let a = e.atom(f);
             let at = e.open(kind::CALL, a);
@@ -775,6 +904,19 @@ pub trait Rewrite {
     /// Whether to keep body literal `l`.
     fn keep(&mut self, _l: LitRef<'_>) -> bool {
         true
+    }
+    /// A term to write in place of argument `c` of atom `a` (a body atom, or an aggregate's), asked before `term`;
+    /// `None` leaves it to `term`.
+    fn arg(&mut self, _a: AtomRef<'_>, _c: usize, _t: TermRef<'_>) -> Option<T<'static>> {
+        None
+    }
+    /// The kind set (by name) to write a `nearest` literal over set `set` with; `None` keeps its own.
+    fn kindset(&mut self, _set: AtomId) -> Option<String> {
+        None
+    }
+    /// Whether to leave out argument `c` of atom `a` (`match_all`'s regex, which its relation names instead).
+    fn drop_arg(&mut self, _a: AtomRef<'_>, _c: usize) -> bool {
+        false
     }
     /// The variable (by the atom naming it, in the builder's ids) to write in place of variable `s` where no term is
     /// asked for it (`nearest`'s variables), and where `term` keeps a variable term; `None` keeps its name.
@@ -834,8 +976,15 @@ impl Walk<'_, '_> {
         let n = a.node();
         let end = n + self.im.node(n).1;
         let mut c = n + 1;
+        let mut k = 0;
         while c < end {
-            self.term(c, site, rw);
+            if !rw.drop_arg(a, k) {
+                match (!matches!(site, Site::Head(_))).then(|| rw.arg(a, k, super::handles::term(self.im, c))).flatten() {
+                    Some(t) => write_t(self.enc, &t),
+                    None => self.term(c, site, rw),
+                }
+            }
+            k += 1;
             c += self.im.node(c).1;
         }
         self.enc.close(at);
@@ -890,6 +1039,22 @@ impl Walk<'_, '_> {
                     c += self.im.node(c).1;
                 }
                 self.enc.close(at);
+            }
+            kind::NEAREST => {
+                let Lit::Nearest { kindset, .. } = l.view() else { unreachable!("a nearest literal") };
+                match rw.kindset(kindset) {
+                    Some(set) => {
+                        let a = self.enc.atom(&set);
+                        let at = self.enc.open(kd, a);
+                        let mut c = n + 1;
+                        while c < n + size {
+                            self.copy_renamed(c, rw);
+                            c += self.im.node(c).1;
+                        }
+                        self.enc.close(at);
+                    }
+                    None => self.copy_renamed(n, rw),
+                }
             }
             _ => self.copy_renamed(n, rw),
         }

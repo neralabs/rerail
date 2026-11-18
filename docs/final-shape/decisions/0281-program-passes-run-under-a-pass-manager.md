@@ -516,6 +516,156 @@ step 3 replaces what is under the writer.
      - **Not yet:** the preparation pipeline is not keyed. Its passes return results in themselves (the pushed
        relations, the demand lines) that the run reads; they move to decisions first. ep2 is measured once the
        remaining passes are ported.
+   **The order from here (2026-11-16, user: the per-policy preparation path, then the workplan to its end, no
+   step-by-step tuning).** An edit of one policy costs that policy only when the run's input is an edit of the last
+   run's input, and every pass from the rule texts to the prepared program runs on versions and reruns on an edit
+   (§3) or maintains its analyses (§2). About 16,000 lines of those passes still edit `front::Program` trees, so the
+   per-policy path is steps 6 and 7 carried through, then composed:
+   - **6a–6e**, the preparation's tree passes on the manager, last first, the image made one pass earlier each time,
+     each an exact port checked against its tree form by digest in a debug build:
+     - 6a: `bound` and `transduce_nearest` (done, b0f27d065);
+     - 6b: `lower_tree` (done, 07db32f7e);
+     - R (found 2026-11-16, before 6c): the passes from 6c on edit `prog`, the tree `Prepared` keeps, which about
+       40 sites of the run read after preparation (the projection's text demand, the settings, the outputs, the
+       world, the references, the cone, the constants). Moved, they would change what those sites read. So
+       `Prepared` first keeps the program before lowering as a version (`source`, the image 6b makes), the readers
+       read it (each checked against the tree's answer in a debug build), the store keeps it in place of the tree's
+       text, and `Prepared::prog` is deleted. From then on the source is a stage of the pipeline;
+     - 6c: `strings::as_relations`, `long_text_twins`, `node_subject_tests`, `matchers`;
+     - 6d: `reach_form`, `magic`'s two demands, `undo_in_cycles` (done, with 6e);
+     - 6e: `prune`, `simplify`, `base_inputs`, `cpython_functors` (done: the image is made from the program as the
+       rule texts give it, and every pass from there runs on the version; a debug build runs the tree's passes beside
+       them, stage by stage (`preparation::STAGES`), and checks each stage's version by digest, naming the rules,
+       facts and rows only one side has; `simplify`'s `similar_relations` is ported too, profiled runs only).
+   - **7a**, combining on versions: each policy's lowered image (0246 §6) renamed into the combined version, and
+     combining's passes (the requests, hiding's bound, the fact spaces, the merge of identical relations) on the
+     manager. In two halves, each checked stage by stage against the tree in a debug build, as 6c–6e are:
+     - 7a-1, the combined program a version: made where the parts are linked, before the passes on the whole
+       (core's projections no inputs, `retype_helpers`, `sources_on_request`, hiding's bound once, the fact spaces'
+       guards, `same_relations`), which run on it; the combine's caches (the process's and the store's `combined`
+       entry) keep the version, the store its image in place of the `.rr` text; the prepared path's edits before
+       its image (`fold_own` and its merges, `cross_memo::add`, the components' output) run on it, and the
+       prepared key reads it. The run holds no combined tree.
+       *First half done (2026-11-16):* the run takes the combined program as a version (`combine_version`, kept for
+       the process by the texts' digest) and its header. Every reader before preparation asks the header, or the
+       rules' shape (`corpus::shape::Shape`: what rules make and read): the bridged programs (over the version
+       pruned), the phases, the constants (`foldable_of`, the split's constants by the same fixpoint), the
+       repository inputs, the guests' requests (`analyses::needed`), the world and the components. The edits run
+       on the version: the bridged facts and phased inputs, the constants' rows and outputs, the inputs' rows, the
+       requests' outputs (each a header edit, `Builder::set_header`), `fold_own` and its merges
+       (`combining::fold_own_guests`), `cross_memo::add_to`. A debug build makes each edit on the tree beside it and
+       checks the two images agree before preparing.
+       *Done (2026-11-16):* `combine_read` is split at the link (`combine_linked`, which returns the linked tree and
+       what its tail does, `Tail`). `combine_version` makes the linked tree's image and runs the tail on it
+       (`tail_version`): `whole::Projected`, `whole::RetypeHelpers`, `on_request::SourcesOnRequest` per round of
+       `ON_REQUEST` (`Widen` with it), `hide::Hide` once when the libraries are held once and a program makes
+       guests, `combining::FactSpaces` and `combining::same_relations`. A debug build runs the tree's tail
+       (`tail_tree`, what the tools keep) beside it and checks the two images agree. The store's `combined` entry
+       keeps the version's image as it is (`combined::remember_version`) and opens it with no tree decoded
+       (`combined::lookup_version`). The link itself still builds a tree from the parts: 7a-2.
+     - 7a-2, the parts as versions: `lower_in` hands on the stored image unread (it decodes it today), the linked
+       library's image likewise, and the per-part passes (`own_part`, the requests' units, `undo_on_request`, each
+       part's hiding when the libraries are not held once) run on them; the link renames each part's version into
+       the combined one (`Builder`), with the kind sets shared by their kinds.
+       *Done (2026-11-16):* `combine_linked` is written once over a part (`corpus::link::Part`): a tree, the tools'
+       and a debug build's check, or a version (`link::Versioned`), the run's. What it reads of a part is its header
+       and its rules' heads and reads; what it edits is the header and which relations' rules are kept. `own_part`,
+       the requests' units (keyed by each form's own rule text), `undo_on_request` (over `rr::lower::RuleSet`) and
+       each part's hiding (`hide::Hide`) run on either. `Text::lower_in_version` hands on the stored image unread,
+       and the library keeps its linked version (`Library::version`), its tree decoded only when a cone is copied
+       from it. The link merges the headers (`link::link_header`) and copies each part's rules from its image
+       through the renames (`link::Names`, a `Rewrite`), `core.rr`'s repeated rules dropped once linked. A debug
+       build links the trees beside and checks the two images agree.
+   - **P**, the per-policy edit: the combined version is kept, and a run's is an overlay of the last one's (the
+     edited policy's rules out, its new ones in). The preparation pipeline runs `again` from its stored run. Each
+     pass reruns on the delta, or maintains what it reads, or runs whole where it must. ep2 is measured once, at the
+     end.
+     *Done (2026-11-17, decision 0333):* a pipeline's run, its versions and its step inputs' analyses are stored
+     facts; the next process opens them through the root's newest manifest, rebases its input onto the last one's
+     (`manager::rebase`), and runs `again`. `preparation::front` and `preparation::run` do. ep2's edit: preparation
+     2.24 s, the run 10.3 s CPU (0333's Measured section). A rerun is an edit of the last run only up to its first
+     program pass, which runs whole and breaks the chain: the gain waits on the program passes writing onto the last
+     run's outputs. Two version passes found differing from the tree's on the 317 rules, and fixed (the split over
+     an undeclared axis; hide's copy of a negated rows read).
+   - **7b–7c**: `rr::lower`'s per-clause half as rule passes, the loader writing versions; `front::Program` deleted.
+     The order, as 7a's (2026-11-17): the version made earlier one pass at a time, from the last reader back, each
+     checked against the tree in a debug build: the library's cone (`with_cone`); `whole()`'s tail (the widened
+     contexts, the sets of rules and facts, `unit`, aggregate demand); `front::finish`; the rest of `whole()`
+     (`sources_on_request` is a pass already, 7a-1); the link of modules (`append`); then each clause written
+     through the builder in the tape walk, form by form; then `front::Program` deleted.
+     *Done, first slice (2026-11-17):* the cone is copied on the version (`rr::with_cone_version`): the cone's
+     relations found over the library version's heads and reads (`cone_of`, one definition with the tree's), its
+     rules copied (`Builder::copy`, a rule the program holds matched by its content hash), and their declarations,
+     natives, facts and lattices set in the header. `lower_in_version` lowers the text's own program
+     (`lowered_own`), makes its image, and copies the cone onto it: the library's tree is never decoded on the
+     run's path. A debug build copies the tree's cone beside it. Test: `a_cone_copied_onto_the_version_is_the_trees`;
+     ep2's 317 policies lowered on fresh stores under a debug build give the same 427 rows.
+     *Again (2026-11-17), after the merges of the hub and rr-align:* the merge had put the cone back on the tree, as
+     0174 makes the attributes on request again over a program with its cone, which then read a tree. Now on the
+     version: the program's answers undone (`link::undone_on_request`), the cone copied (`with_cone_version`, the
+     library's own on-request rules left out, as the hub's `with_cone` does), and `on_request::SourcesOnRequest` per
+     round over both (`corpus::cone_on_version`). The version pass had fallen behind the tree's (0291's narrowing, an
+     unread attribute left an input) and is level with it. `lower_in` is the version decoded, so a key's image has one
+     encoding (the debug build queued the tree's and the version's under one key, and the store refused the second).
+     ep2's 317 policies over 10 files, fresh stores, a debug build: every check passes, 0 rows, as before the slice.
+     The combine's tail too: `answers_where_documents_are` undoes its rounds on the version (by `FileLocal`), and
+     `requests_file_local` is a program pass (`file_local::RequestsFileLocal`) that writes each narrowed request from
+     its pieces, literals of several rules renamed apart, through the builder: no tree on the combine's path.
+     `whole()`'s tail, its last pass first: a text's program is made a version before `widen_cyclic_contexts`
+     (`lower::link_seeded_front`), which runs on it as `preparation::lowering_tail::WidenCyclicContexts`, a round per
+     run of the pass as the tree's loop has them; the scope's declarations come out of its header after
+     (`lower::unseed`, `rr::link_seeded_version`). The version half lives in the logic crate, as `rr::lower` is
+     compiled below the program image. ep2's 317 policies over 10 files, fresh stores, debug: 0 rows, every check
+     passes. Then the sets (`lower::sets` on the tree): `lowering_tail::LiteralsOnce`, `DropSelfRules`, the
+     preparation's `DropRepeated` and `FactsOnce`, so the version is made after `unit`. Test:
+     `the_lowerings_sets_are_made_on_the_version` (each of the three new passes left out fails it). ep2's 317 policies
+     again: 0 rows, every check passes. Then `unit` (`lowering_tail::Unit`), so the version is made after aggregate
+     demand. Test: `a_rule_left_reading_no_relation_reads_the_unit_on_the_version` (fails with the pass left out).
+     Then aggregate demand (`lowering_tail::AggregateDemand`, `aggregate_demand::optimize` one for one: helpers
+     placed in name order, each candidate that may close a cycle stratified on an overlay of what is placed so far
+     and taken out where refused; the helpers' rules gain their demand where they stand and the demand rules follow,
+     the tree's order; then a count of zero read once an anti-join). `whole()`'s tail is all on the version, which is
+     made right after `front::finish`. Test: `aggregate_demand_is_placed_on_the_version` (fails with placement off);
+     ep2's 317 policies, 60 of them aggregating: 0 rows, every check passes. Then `front::finish`: its rewrites on
+     the version (`lowering_tail::OrderNodes`, nodes compared by `node_order` and a `min`/`max` over nodes through a
+     helper, with `RuleBuilder::agg` to write the helper's aggregate; `DeclareAxes`), its checks through a decoded
+     tree for now (`front::finish_checks`; work queue Q131: `cycles::check` reads a tree). A text's version is made
+     from the lowerer's program as `whole()` leaves it. Test: `finishs_rewrites_run_on_the_version` (each pass left
+     out fails it); ep2's 317 policies: 0 rows, every check passes. Then `whole()`'s last passes before `finish`
+     (`lower::whole_back` on the tree): `lowering_tail::BooleanRelations` (a nullary relation's unit column, through
+     a `Rewrite`'s `prefix`), `ScopeGlobs`, and `on_request::SourcesOnRequest` per round, so the version is made
+     right after the lowerer's analyses (`Lowerer::unit`). Test: `nullary_relations_and_the_scope_are_made_on_the_version`
+     (each of the three left out fails it); ep2's 317 policies: 0 rows, every check passes. Then the kind sets and
+     `unit`: `lower::kind_sets` (with `members`, `kinds_of`, `derived_axes`) is a function of the program and the
+     sets the clauses named, no longer a lowerer method; on the version `lowering_tail::KindSets { sets }` (the
+     lowerer's sets as the pass's settings) and `Unit`. `whole_front` hands on its program with those sets. Test:
+     `kind_sets_are_made_on_the_version` (a set of facts, a derived set read through its axes; fails with the pass
+     left out); ep2's 317 policies: 0 rows, every check passes. Then the grammar names and the built-ins'
+     declarations: `lower::grammar_names` and `lower::builtins_out` are functions of the program (the rewritten
+     core relations, which only the lowerer knows, handed on in `lower::Lowered`); on the version
+     `lowering_tail::GrammarNames` and `BuiltinsOut { rewritten }`. Tests: `grammar_names_and_builtins_are_checked_on_the_version`
+     (fails without `GrammarNames`), and `builtins_out_on_a_version_is_the_trees` on its own, since on a modular
+     text's path the unseeding hides it (the library declares every built-in); each fails with its pass left out.
+     ep2's 317 policies: 0 rows. Then the span patterns: `lower::span_patterns` is one analysis over a borrowed view
+     (`SpanProgram`: rules as atoms of names, variables and strings; the declared arities, inputs, natives and
+     outputs), which the tree (`SpanProgram::of_tree`) and the version (`lowering_tail::SpanPatterns`, reading the
+     image's rules and header) each build, so the analysis stays one definition. Test:
+     `span_patterns_are_found_on_the_version` (fails with the pass left out); ep2's 317 policies: 0 rows. Then
+     core.rr's declarations and `node`'s projections: `lower::core::declare_core` and `lower::projections` work on a
+     header given what the rules read (`lower::reads`), `projections` returning its rules and `projection_at` where
+     they go, so the tree (`core_and_projections`) and the version (`lowering_tail::CoreDecls { docof_of_locs }`,
+     the lowerer's flag handed on in `Lowered`) share them; `base_relation_derived` is `base_relation` for a header
+     (`KindSets` uses it too). Test: `core_declarations_and_projections_are_made_on_the_version` (fails with the
+     pass left out); ep2's 317 policies: 0 rows. Then the findings: `Lowerer::findings` sees no rules, what it read of
+     them given as `lower::RulesSeen` (a rule makes a `@place`; a rule reads `guest_policy`), and the widening of a
+     program's own five-column `violation` heads is its caller's (`widen_violation_heads`); `findings_on_header` runs
+     it on a header with the lowerer's pending `.violation`s and fresh-name count (`PendingFindings`, handed on in
+     `Lowered`) and returns the rules it appends. The tree (`lower::findings`) and the version
+     (`lowering_tail::Findings { pending }`) both call it. Test: `findings_are_written_on_the_version` (a
+     `.violation` with a message, `.on syntax_error`, an own five-column `violation` rule; fails with the pass left
+     out, and with the version's widening left out); ep2's 317 policies: 0 rows. Next: the three-valued relations,
+     the last of `whole_front` but the clauses.
+   - Then step 8, then the blocks port.
 6. **`plan::lower` and 0276 step 4's front passes** in the pipeline: `prune`, `simplify`, `reach_form`, `magic`,
    the matchers and the strings, each checked against its tree form by digest, the encode moving earlier with each.
 7. **The per-clause half of `rr::lower`** as `RulePass`es over the tape's clauses (0276 step 5), with `Domains`; the

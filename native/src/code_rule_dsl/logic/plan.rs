@@ -87,6 +87,7 @@ pub mod connection;
 pub use rerail_facts::code_rule_dsl::logic::plan::sketch;
 pub mod statkeep;
 pub mod lower;
+pub mod text_demand;
 pub mod joins;
 pub mod table;
 pub mod output;

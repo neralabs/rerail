@@ -616,8 +616,9 @@ impl Frame {
 }
 
 /// Holds the atoms an entry's symbols name (`image::hold`), as it is read before a run's waves.
-pub(super) fn hold(store: &ContentStore, blob: &crate::content_store::MemoBlob) -> StoreResult<()> {
-    image::hold(&blob.bytes, &store.atoms_handle())
+pub(super) fn hold<'a>(store: &ContentStore, blobs: impl IntoIterator<Item = &'a crate::content_store::MemoBlob>) -> StoreResult<()> {
+    let bytes: Vec<_> = blobs.into_iter().map(|b| &b.bytes).collect();
+    image::hold(&bytes, &store.atoms_handle())
 }
 
 /// The newest corpus run of `root`: the relations its memo plan holds, by name, as recorded (`.decl` columns as
@@ -703,7 +704,10 @@ pub(super) fn found_all(store: &ContentStore, program: &Program, docs: &[(Source
     let atoms = store.atoms_handle();
     let held: Vec<Option<Found>> = docs.iter().map(|(s, p)| pending(store, &queued(*s, p, program), &atoms)).collect();
     let asked: Vec<usize> = (0..docs.len()).filter(|i| held[*i].is_none()).collect();
-    let digests = store.source_digests(&asked.iter().map(|i| docs[*i].0).collect::<Vec<_>>())?;
+    let digests = {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "memo lookup: the contents' digests".into());
+        store.source_digests(&asked.iter().map(|i| docs[*i].0).collect::<Vec<_>>())?
+    };
     let wanted: Vec<(usize, [u8; 32])> = asked.iter().zip(&digests).filter_map(|(i, d)| d.map(|d| (*i, d))).collect();
     let paths: Vec<&str> = docs.iter().map(|(_, p)| *p).collect();
     let mut out: Vec<Option<Found>> = held;
@@ -723,11 +727,13 @@ fn by_digest(store: &ContentStore, program: &Program, paths: &[&str], wanted: Ve
     let space = crate::content_store::local_space(&plan_digest(program));
     let wanted: Vec<(usize, [u8; 32], i64)> = wanted.into_iter().map(|(i, d)| (i, d, part_of(&d, paths[i]))).collect();
     let parts: Vec<i64> = wanted.iter().map(|(_, _, p)| *p).collect();
-    let mut blobs = store.memo_entries(&space, &parts, stored)?;
+    let mut blobs = {
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "memo lookup: the entries read".into());
+        store.memo_entries(&space, &parts, stored)?
+    };
     if stored {
-        for blob in blobs.values() {
-            hold(store, blob)?;
-        }
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "memo lookup: the entries' atoms held".into());
+        hold(store, blobs.values().map(|b| &**b))?;
     }
     let atoms = store.atoms_handle();
     let mut out = Vec::new();

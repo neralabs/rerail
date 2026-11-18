@@ -70,7 +70,7 @@ use std::collections::{BTreeSet, HashSet};
 /// A document's text may be long: `text` holds a node's when it is at most this many bytes, or the node is
 /// token-like (a leaf, a comment, a string literal). Longer texts have no symbol: interning them all is
 /// `O(bytes × depth)` per file, and a test on them is the text layer's file scan (decision 0042 §3).
-pub(super) const TEXT_INLINE: usize = 256;
+pub const TEXT_INLINE: usize = 256;
 
 /// A language's literal and line rules.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

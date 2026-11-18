@@ -1,0 +1,1467 @@
+//! The lowering's whole-program tail on the version (decision 0281's path, step 7b): `front::finish`'s rewrites and
+//! the passes `whole()` runs once the program is finished, each one for one with its tree form in `front` and
+//! `rr::lower`, which a debug build runs beside it (`rr::link_seeded_version`).
+
+use crate::code_rule_dsl::logic::plan::body::{Body, VarSet, lit_vars};
+use crate::code_rule_dsl::logic::program_image::build::T;
+use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
+use crate::code_rule_dsl::logic::program_image::{Lit as L, RuleId, Slot, TermRef, Version};
+use std::collections::{BTreeMap, BTreeSet};
+
+/// One round of `widen_cyclic_contexts` (see there): each context relation's rule in a component a negation or an
+/// aggregate closes a cycle in, its literals of that component dropped, the tests the rest binds kept, and a node
+/// column left unbound ranging over `node`. `changed` says whether the round widened one; the caller runs rounds
+/// until none does, as the tree's loop does (16 at most).
+#[derive(Default)]
+pub struct WidenCyclicContexts {
+    pub changed: bool,
+}
+
+/// A widened rule: its kept literals by node, in order, and the head variables then ranged over `node`.
+struct Widened {
+    lits: Vec<u32>,
+    nodes: Vec<Slot>,
+}
+
+impl ProgramPass for WidenCyclicContexts {
+    const NAME: &'static str = "widen the cyclic contexts";
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        let v = cx.v();
+        let ctx_prefix = format!("{}ctx", crate::code_rule_dsl::logic::front::RESERVED);
+        let about = cx.get::<crate::code_rule_dsl::logic::program_image::About>()?;
+        let errors = crate::code_rule_dsl::logic::program_image::analyses::unstratified(v, &about);
+        let sccs: Vec<BTreeSet<String>> = errors.iter().filter_map(|e| e.unstratified().map(|(scc, _)| scc.clone())).collect();
+        if sccs.is_empty() {
+            return Ok(());
+        }
+        let header = v.header(&Default::default())?;
+        let node_declared = header.decls.contains_key("node");
+        let mut widened: BTreeMap<RuleId, Widened> = BTreeMap::new();
+        for scc in &sccs {
+            for rule in v.rules() {
+                let head = v.rel_name(rule.head().rel());
+                if !head.starts_with(&ctx_prefix) || !scc.contains(head) {
+                    continue;
+                }
+                let in_cycle = |l: &L<'_>| match l {
+                    L::Atom(a) | L::Agg { atom: a, .. } => scc.contains(v.rel_name(a.rel())),
+                    _ => false,
+                };
+                if !rule.body().any(|l| in_cycle(&l.view())) {
+                    continue;
+                }
+                let kept: Vec<_> = rule.body().filter(|l| !in_cycle(&l.view())).collect();
+                // What the positive atoms left bind; then the literals that only test.
+                let binds = |l: &L<'_>| matches!(l, L::Atom(a) if !a.neg()) || matches!(l, L::Nearest { .. } | L::Ast { .. });
+                let mut bound = VarSet::new();
+                for l in kept.iter().filter(|l| binds(&l.view())) {
+                    bound.extend(&lit_vars(*l));
+                }
+                let mut lits: Vec<u32> = kept.iter().filter(|l| binds(&l.view())).map(|l| l.node()).collect();
+                let mut rest: Vec<_> = kept.into_iter().filter(|l| !binds(&l.view())).collect();
+                let body = Body::of(v, rule);
+                loop {
+                    let before = rest.len();
+                    rest.retain(|l| {
+                        let ready = match l.view() {
+                            L::Cmp { l: a, op, r } => body.cmp_binds(a, op, r, &bound),
+                            // An aggregate is left out: it only narrows, and its body's variables are its own.
+                            L::Agg { .. } => None,
+                            _ => lit_vars(*l).is_subset(&bound).then(VarSet::new),
+                        };
+                        match ready {
+                            Some(new) => {
+                                bound.extend(&new);
+                                lits.push(l.node());
+                                false
+                            }
+                            None => true,
+                        }
+                    });
+                    if rest.len() == before {
+                        break;
+                    }
+                }
+                // The head's variables by name (the tree's `BTreeSet<String>`), each with its column's type.
+                let cols = header.decls.get(head);
+                let mut types: BTreeMap<Slot, &str> = BTreeMap::new();
+                let mut head_vars: BTreeMap<String, Slot> = BTreeMap::new();
+                for (k, t) in rule.head().args().enumerate() {
+                    if let Some(s) = t.var() {
+                        if let Some((_, ty)) = cols.and_then(|c| c.get(k)) {
+                            types.insert(s, ty.as_ref());
+                        }
+                    }
+                    let mut vs = VarSet::new();
+                    crate::code_rule_dsl::logic::plan::body::term_vars(t, &mut vs);
+                    for s in vs.iter() {
+                        head_vars.insert(v.text(rule.var(s)).to_owned(), s);
+                    }
+                }
+                let mut nodes = Vec::new();
+                let mut ok = true;
+                for s in head_vars.into_values() {
+                    if bound.contains(s) {
+                        continue;
+                    }
+                    if types.get(&s).is_some_and(|t| *t == "node") && node_declared {
+                        nodes.push(s);
+                        bound.insert(s);
+                    } else {
+                        ok = false;
+                    }
+                }
+                if ok {
+                    widened.insert(rule.id(), Widened { lits, nodes });
+                }
+            }
+        }
+        if widened.is_empty() {
+            return Ok(());
+        }
+        self.changed = true;
+        let input = std::sync::Arc::clone(w.input());
+        let b = w.derive()?;
+        for rule in input.rules() {
+            let Some(wd) = widened.get(&rule.id()) else {
+                b.keep(&input, rule);
+                continue;
+            };
+            let mut rb = b.rule().source(rule.id()).head_from(&input, rule, rule.head());
+            for &n in &wd.lits {
+                let l = rule.body().find(|l| l.node() == n).expect("a literal of the rule");
+                rb = rb.lit(&input, rule, l);
+            }
+            for &s in &wd.nodes {
+                rb = rb.atom("node", &[T::Wild, T::VarAtom(rule.var(s)), T::Wild, T::Wild, T::Wild]);
+            }
+            rb.finish()?;
+        }
+        Ok(())
+    }
+}
+
+/// A body is a conjunction: a literal twice is the literal once (`whole()`'s "a literal twice"), its first kept. Two
+/// literals of one rule are equal where they print alike: the rule's variables have one name each.
+pub struct LiteralsOnce;
+
+impl ProgramPass for LiteralsOnce {
+    const NAME: &'static str = "each literal of a body once";
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        let v = cx.v();
+        let mut once: BTreeMap<RuleId, Vec<u32>> = BTreeMap::new();
+        for rule in v.rules() {
+            let shown: Vec<(u32, String)> = rule.body().map(|l| (l.node(), v.show_lit(rule, l))).collect();
+            let mut seen: BTreeSet<&str> = BTreeSet::new();
+            let kept: Vec<u32> = shown.iter().filter(|(_, s)| seen.insert(s.as_str())).map(|(n, _)| *n).collect();
+            if kept.len() < shown.len() {
+                once.insert(rule.id(), kept);
+            }
+        }
+        if once.is_empty() {
+            return Ok(());
+        }
+        let input = std::sync::Arc::clone(w.input());
+        let b = w.derive()?;
+        for rule in input.rules() {
+            let Some(kept) = once.get(&rule.id()) else {
+                b.keep(&input, rule);
+                continue;
+            };
+            let mut rb = b.rule().source(rule.id()).head_from(&input, rule, rule.head());
+            for &n in kept {
+                let l = rule.body().find(|l| l.node() == n).expect("a literal of the rule");
+                rb = rb.lit(&input, rule, l);
+            }
+            rb.finish()?;
+        }
+        Ok(())
+    }
+}
+
+/// A rule whose body is its own head derives nothing (`r(x) :- dfs_first_memo(x, …)` printed, whose construct lowers
+/// to the relation itself): dropped, as `whole()` drops it.
+pub struct DropSelfRules;
+
+impl ProgramPass for DropSelfRules {
+    const NAME: &'static str = "drop the rules that are their own body";
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        let v = cx.v();
+        let args = |r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>, a: crate::code_rule_dsl::logic::program_image::AtomRef<'_>| a.args().map(|t| v.show_term(r, t)).collect::<Vec<_>>();
+        let own = |r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>| {
+            let mut body = r.body();
+            match (body.next().map(|l| l.view()), body.next()) {
+                (Some(L::Atom(a)), None) => !a.neg() && a.rel() == r.head().rel() && args(r, a) == args(r, r.head()),
+                _ => false,
+            }
+        };
+        if v.rules().any(own) {
+            w.keep(|r| !own(r))?;
+        }
+        Ok(())
+    }
+}
+
+/// A relation's facts are a set too (`whole()`'s last set): each row once, its first kept.
+pub struct FactsOnce;
+
+impl ProgramPass for FactsOnce {
+    const NAME: &'static str = "each fact once";
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        let v = cx.v();
+        let was = v.header(&Default::default())?;
+        let mut head = was.clone();
+        for rows in head.facts.values_mut() {
+            let mut kept: Vec<crate::code_rule_dsl::logic::front::List<crate::code_rule_dsl::logic::front::Value>> = Vec::with_capacity(rows.len());
+            for row in rows.drain(..) {
+                if !kept.contains(&row) {
+                    kept.push(row);
+                }
+            }
+            *rows = kept;
+        }
+        if head.facts != was.facts {
+            w.on()?.set_header(&was, &head);
+        }
+        Ok(())
+    }
+}
+
+/// `lower::unit` on the version: each rule that reads no relation reads `rr_unit(0)`
+/// first, and `rr_unit` is declared with its one fact. A matcher atom or a walk reads the tree itself; an aggregate
+/// reads its atom.
+pub struct Unit;
+
+impl ProgramPass for Unit {
+    const NAME: &'static str = "a rule reading no relation reads the unit";
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        const UNIT: &str = "rr_unit";
+        let v = cx.v();
+        let reads = |l: L<'_>| matches!(l, L::Atom(a) if !a.neg()) || matches!(l, L::Ast { .. } | L::Nearest { .. } | L::Agg { .. });
+        let lone: BTreeSet<RuleId> = v.rules().filter(|r| !r.body().any(|l| reads(l.view()))).map(|r| r.id()).collect();
+        if lone.is_empty() {
+            return Ok(());
+        }
+        let was = v.header(&Default::default())?;
+        let mut head = was.clone();
+        head.decls.insert(UNIT.to_owned().into(), [("x".into(), "int".into())].into());
+        head.facts.insert(UNIT.to_owned(), vec![[crate::code_rule_dsl::logic::front::Value::Int(0)].into()]);
+        let input = std::sync::Arc::clone(w.input());
+        let b = w.derive()?;
+        b.set_header(&was, &head);
+        for rule in input.rules() {
+            if !lone.contains(&rule.id()) {
+                b.keep(&input, rule);
+                continue;
+            }
+            let mut rb = b.rule().source(rule.id()).head_from(&input, rule, rule.head()).atom(UNIT, &[T::Int(0)]);
+            for l in rule.body() {
+                rb = rb.lit(&input, rule, l);
+            }
+            rb.finish()?;
+        }
+        Ok(())
+    }
+}
+
+/// `aggregate_demand::optimize` on the version (see there): each private aggregate helper (`rr_agg…`) restricted
+/// to the keys its consumers ask (`rr_demand_agg_<helper>`, read first by its rules and made from each consumer's
+/// guards), placed one helper at a time and refused where it makes the program unstratifiable; then a `count` of
+/// zero read once made an anti-join. The tree's order is kept: a helper's rules gain their demand where they stand,
+/// and the demand rules follow the program's.
+///
+/// The program is taken to be declared: `lower::link_seeded_front` checks it before this runs, and the tree's pass
+/// places nothing in a program that is not (which `link_seeded` then refuses).
+#[derive(Default)]
+pub struct AggregateDemand;
+
+/// A literal of a rule as the pass sees it: one of its own, or the demand placed first in a helper's rule.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Item {
+    Own(RuleId, u32),
+    Placed(RuleId),
+}
+
+/// A demand rule: its helper's demand, made from consumer `src`'s aggregate at `agg`, its body `body`.
+struct DemandRule {
+    demand: String,
+    src: RuleId,
+    agg: u32,
+    positions: Vec<usize>,
+    body: Vec<Item>,
+}
+
+/// What `optimize` has placed so far.
+#[derive(Default)]
+struct Placement {
+    /// A helper's rule: the demand it reads first, over its head's columns `positions`.
+    prefix: BTreeMap<RuleId, (String, Vec<usize>)>,
+    demands: Vec<DemandRule>,
+    decls: Vec<(String, Vec<(String, String)>)>,
+}
+
+impl AggregateDemand {
+    /// Item `i`'s relation, whether it is a positive atom (`Some(false)`), a negated one or an aggregate's
+    /// (`Some(true)`, an aggregate's atom counted as read), or neither (`None`).
+    fn rel<'v>(v: &'v Version, p: &'v Placement, i: Item) -> Option<(&'v str, bool, bool)> {
+        match i {
+            Item::Placed(r) => Some((p.prefix[&r].0.as_str(), true, false)),
+            Item::Own(r, n) => match lit_at(v, r, n).view() {
+                L::Atom(a) => Some((v.rel_name(a.rel()), !a.neg(), false)),
+                L::Agg { atom, .. } => Some((v.rel_name(atom.rel()), false, true)),
+                _ => None,
+            },
+        }
+    }
+    fn vars(v: &Version, p: &Placement, i: Item) -> VarSet {
+        match i {
+            Item::Placed(r) => {
+                let rule = v.rule(r).expect("a rule of the input");
+                let mut out = VarSet::new();
+                for (k, t) in rule.head().args().enumerate() {
+                    if p.prefix[&r].1.contains(&k) {
+                        crate::code_rule_dsl::logic::plan::body::term_vars(t, &mut out);
+                    }
+                }
+                out
+            }
+            Item::Own(r, n) => lit_vars(lit_at(v, r, n)),
+        }
+    }
+}
+
+fn lit_at(v: &Version, r: RuleId, n: u32) -> crate::code_rule_dsl::logic::program_image::LitRef<'_> {
+    v.rule(r).expect("a rule of the input").body().find(|l| l.node() == n).expect("a literal of the rule")
+}
+
+/// `aggregate_demand::guards` over rule `r`'s items: its safe positive guards joined to the keys, then the
+/// comparisons they let run.
+#[allow(clippy::too_many_arguments)]
+fn guards(v: &Version, p: &Placement, r: RuleId, items: &[Item], helper: &str, keys: &VarSet, deps: &BTreeMap<String, BTreeSet<String>>, reach: &crate::code_rule_dsl::logic::rr::aggregate_demand::Reach) -> Option<Vec<Item>> {
+    let rule = v.rule(r).expect("a rule of the input");
+    let head = v.rel_name(rule.head().rel());
+    let safe: Vec<(Item, VarSet)> = items
+        .iter()
+        .filter(|&&i| match i {
+            Item::Own(_, n) if matches!(lit_at(v, r, n).view(), L::Nearest { .. }) => true,
+            i => matches!(AggregateDemand::rel(v, p, i), Some((rel, true, false)) if !reach.reaches(deps, rel, helper) && !reach.reaches(deps, rel, head)),
+        })
+        .map(|&i| (i, AggregateDemand::vars(v, p, i)))
+        .collect();
+    let cmps: Vec<(usize, u32, VarSet)> = items
+        .iter()
+        .enumerate()
+        .filter_map(|(k, &i)| match i {
+            Item::Own(_, n) if matches!(lit_at(v, r, n).view(), L::Cmp { .. }) => Some((k, n, lit_vars(lit_at(v, r, n)))),
+            _ => None,
+        })
+        .collect();
+    let body = Body::of(v, rule);
+    let mut connected = keys.clone();
+    let mut grounded = VarSet::new();
+    let mut bound = VarSet::new();
+    let mut joined = vec![false; safe.len()];
+    let mut added: BTreeSet<usize> = BTreeSet::new();
+    let mut compared: Vec<Item> = Vec::new();
+    loop {
+        let before = (connected.len(), bound.len(), added.len());
+        for (k, (i, vars)) in safe.iter().enumerate() {
+            if joined[k] || vars.is_disjoint(&connected) {
+                continue;
+            }
+            joined[k] = true;
+            connected.extend(vars);
+            if AggregateDemand::rel(v, p, *i).is_some() {
+                grounded.extend(vars);
+                bound.extend(vars);
+            }
+        }
+        // A nearest binds its node once its subject is an atom's.
+        for ((i, _), _) in safe.iter().zip(&joined).filter(|(_, j)| **j) {
+            if let Item::Own(_, n) = i
+                && let L::Nearest { n: subject, a, .. } = lit_at(v, r, *n).view()
+                && grounded.contains(subject)
+            {
+                bound.insert(a);
+            }
+        }
+        for (k, n, vars) in &cmps {
+            if added.contains(k) {
+                continue;
+            }
+            if let L::Cmp { l, op, r: right } = lit_at(v, r, *n).view()
+                && let Some(more) = body.cmp_binds(l, op, right, &bound)
+                && (vars.is_empty() || !vars.is_disjoint(&connected))
+            {
+                bound.extend(&more);
+                connected.extend(vars);
+                compared.push(Item::Own(r, *n));
+                added.insert(*k);
+            }
+        }
+        if (connected.len(), bound.len(), added.len()) == before {
+            break;
+        }
+    }
+    let mut out: Vec<Item> = safe.iter().zip(&joined).filter(|(_, j)| **j).map(|((i, _), _)| *i).collect();
+    for i in &out {
+        if let Item::Own(_, n) = i
+            && let L::Nearest { n: subject, .. } = lit_at(v, r, *n).view()
+            && !grounded.contains(subject)
+        {
+            return None;
+        }
+    }
+    out.extend(compared);
+    (keys.is_subset(&bound) && !out.is_empty()).then_some(out)
+}
+
+/// Writes rule `r` of `input` as placed: its demand first, where it has one, its count-of-zero aggregates `anti`
+/// made anti-joins and their tests `gone` left out.
+fn write_placed(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>, input: &Version, p: &Placement, r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>, anti: &BTreeSet<u32>, gone: &BTreeSet<u32>) -> Result<(), String> {
+    use crate::code_rule_dsl::logic::program_image::build::t_of;
+    let mut rb = b.rule().source(r.id()).head_from(input, r, r.head());
+    if let Some((demand, positions)) = p.prefix.get(&r.id()) {
+        let args: Vec<T<'_>> = r.head().args().enumerate().filter(|(k, _)| positions.contains(k)).map(|(_, t)| t_of(input, r, t)).collect();
+        rb = rb.atom(demand.as_str(), &args);
+    }
+    for l in r.body() {
+        if gone.contains(&l.node()) {
+            continue;
+        }
+        rb = match (anti.contains(&l.node()), l.view()) {
+            (true, L::Agg { atom, .. }) => {
+                let args: Vec<T<'_>> = atom.args().map(|t| t_of(input, r, t)).collect();
+                rb.atom_with(input.rel_name(atom.rel()), &args, true, atom.gated())
+            }
+            _ => rb.lit(input, r, l),
+        };
+    }
+    rb.finish().map(drop)
+}
+
+/// Writes demand rule `d`: its head over its consumer's aggregate's keys, its body its guards.
+fn write_demand(b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>, input: &Version, p: &Placement, d: &DemandRule) -> Result<(), String> {
+    use crate::code_rule_dsl::logic::program_image::build::t_of;
+    let src = input.rule(d.src).expect("a rule of the input");
+    let L::Agg { atom, .. } = lit_at(input, d.src, d.agg).view() else { return Err("a demand's aggregate".into()) };
+    let args: Vec<T<'_>> = atom.args().enumerate().filter(|(k, _)| d.positions.contains(k)).map(|(_, t)| t_of(input, src, t)).collect();
+    let mut rb = b.rule().source(d.src).head(d.demand.as_str(), &args);
+    for &i in &d.body {
+        rb = match i {
+            Item::Own(r, n) => rb.lit(input, input.rule(r).expect("a rule"), lit_at(input, r, n)),
+            Item::Placed(r) => {
+                let rule = input.rule(r).expect("a rule");
+                let (demand, positions) = &p.prefix[&r];
+                let args: Vec<T<'_>> = rule.head().args().enumerate().filter(|(k, _)| positions.contains(k)).map(|(_, t)| t_of(input, rule, t)).collect();
+                rb.atom(demand.as_str(), &args)
+            }
+        };
+    }
+    rb.finish().map(drop)
+}
+
+impl ProgramPass for AggregateDemand {
+    const NAME: &'static str = "aggregate demand";
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        use crate::code_rule_dsl::logic::program_image::analyses;
+        use crate::code_rule_dsl::logic::rr::aggregate_demand::{Reach, depends, full_checks};
+        let input = std::sync::Arc::clone(w.input());
+        let v: &Version = &input;
+        let was = v.header(&Default::default())?;
+        let about = cx.get::<crate::code_rule_dsl::logic::program_image::About>()?;
+        let mut known: Option<crate::code_rule_dsl::logic::front::Edges> = analyses::strata(v, &about).ok().map(|_| analyses::edges_by_name(v, &about));
+        let mut names: BTreeSet<String> = BTreeSet::new();
+        for r in v.rules() {
+            for l in r.body() {
+                if let L::Agg { atom, .. } = l.view()
+                    && v.rel_name(atom.rel()).contains("rr_agg")
+                {
+                    names.insert(v.rel_name(atom.rel()).to_owned());
+                }
+            }
+        }
+        // The dependencies by name (`aggregate_demand::dependencies`): each head to the atoms its rules read, an
+        // aggregate's included, and each native to what it reads.
+        let mut deps: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        for r in v.rules() {
+            let reads = r.body().filter_map(|l| match l.view() {
+                L::Atom(a) | L::Agg { atom: a, .. } => Some(v.rel_name(a.rel()).to_owned()),
+                _ => None,
+            });
+            deps.entry(v.rel_name(r.head().rel()).to_owned()).or_default().extend(reads);
+        }
+        for (name, native) in &was.natives {
+            deps.entry(name.clone()).or_default().extend(native.reads().into_iter().map(str::to_owned));
+        }
+        let reach = Reach::default();
+        // The rules that read each helper, the input's in order and then each demand rule as it is placed.
+        #[derive(Clone, Copy)]
+        enum Reader {
+            In(RuleId),
+            Demand(usize),
+        }
+        let mut readers: BTreeMap<String, Vec<Reader>> = BTreeMap::new();
+        for r in v.rules() {
+            let mut seen = BTreeSet::new();
+            for l in r.body() {
+                if let L::Atom(a) | L::Agg { atom: a, .. } = l.view()
+                    && names.contains(v.rel_name(a.rel()))
+                    && seen.insert(v.rel_name(a.rel()))
+                {
+                    readers.entry(v.rel_name(a.rel()).to_owned()).or_default().push(Reader::In(r.id()));
+                }
+            }
+        }
+        let mut p = Placement::default();
+        let items_of = |p: &Placement, r: RuleId| -> Vec<Item> {
+            let rule = v.rule(r).expect("a rule of the input");
+            p.prefix.get(&r).map(|_| Item::Placed(r)).into_iter().chain(rule.body().map(|l| Item::Own(r, l.node()))).collect()
+        };
+        let mut decls = was.decls.clone();
+        for name in names.iter() {
+            let demand = format!("rr_demand_agg_{name}");
+            if was.outputs.contains(name) || was.inputs.contains(name) || was.natives.contains_key(name.as_str()) || was.facts.contains_key(name.as_str()) || decls.contains_key(demand.as_str()) {
+                continue;
+            }
+            let mut mask: Option<Vec<usize>> = None;
+            let mut made: Vec<DemandRule> = Vec::new();
+            let mut refused = false;
+            'readers: for reader in readers.get(name).into_iter().flatten() {
+                let (r, items) = match *reader {
+                    Reader::In(r) => (r, items_of(&p, r)),
+                    Reader::Demand(k) => {
+                        // A demand rule reads no aggregate: one that reads the helper refuses it.
+                        if p.demands[k].body.iter().any(|&i| AggregateDemand::rel(v, &p, i).is_some_and(|(rel, _, _)| rel == name)) {
+                            refused = true;
+                            break 'readers;
+                        }
+                        continue;
+                    }
+                };
+                for &i in &items {
+                    if AggregateDemand::rel(v, &p, i).is_none_or(|(rel, _, _)| rel != name) {
+                        continue;
+                    }
+                    let Item::Own(_, n) = i else {
+                        refused = true;
+                        break 'readers;
+                    };
+                    let L::Agg { atom, over, .. } = lit_at(v, r, n).view() else {
+                        refused = true;
+                        break 'readers;
+                    };
+                    let positions: Vec<usize> = atom
+                        .args()
+                        .enumerate()
+                        .filter_map(|(k, t)| match t {
+                            TermRef::Var(s) if Some(s) != over => Some(k),
+                            TermRef::Int(_) | TermRef::Str(_) => Some(k),
+                            _ => None,
+                        })
+                        .collect();
+                    if positions.is_empty() || mask.as_ref().is_some_and(|m| *m != positions) {
+                        refused = true;
+                        break 'readers;
+                    }
+                    mask = Some(positions.clone());
+                    let mut keys = VarSet::new();
+                    for (_, t) in atom.args().enumerate().filter(|(k, _)| positions.contains(k)) {
+                        crate::code_rule_dsl::logic::plan::body::term_vars(t, &mut keys);
+                    }
+                    let Some(body) = guards(v, &p, r, &items, name, &keys, &deps, &reach) else {
+                        refused = true;
+                        break 'readers;
+                    };
+                    made.push(DemandRule { demand: demand.clone(), src: r, agg: n, positions, body });
+                }
+            }
+            if refused || made.is_empty() {
+                crate::code_rule_dsl::logic::profile::decision("aggregate demand", || format!("{name}: unchanged; no safe complete consumer key or incompatible consumers"));
+                continue;
+            }
+            let positions = mask.expect("a consumer's keys");
+            let guard_rels: BTreeSet<String> = made.iter().flat_map(|d| d.body.iter()).filter_map(|&i| AggregateDemand::rel(v, &p, i)).filter(|(_, _, agg)| !agg).map(|(rel, _, _)| rel.to_owned()).collect();
+            let closes = known.as_ref().is_none_or(|edges| guard_rels.iter().any(|g| depends(edges, g, name))) || full_checks();
+            // Placed: the demand declared, read first by the helper's rules, made by its demand rules.
+            let decl: Vec<(String, String)> = positions.iter().map(|&k| { let (c, t) = &decls[name.as_str()][k]; (c.to_string(), t.to_string()) }).collect();
+            let makers: Vec<RuleId> = v.rel(name).map(|rel| v.heads(rel).map(|r| r.id()).collect()).unwrap_or_default();
+            let first = p.demands.len();
+            decls.insert(demand.clone().into(), decl.iter().map(|(c, t)| (c.as_str().into(), t.as_str().into())).collect());
+            p.decls.push((demand.clone(), decl));
+            for &m in &makers {
+                p.prefix.insert(m, (demand.clone(), positions.clone()));
+            }
+            p.demands.extend(made);
+            if closes {
+                let candidate = placed_version(&input, &was, &p)?;
+                let about = crate::code_rule_dsl::logic::program_image::About::of(&candidate);
+                match analyses::strata(&candidate, &about) {
+                    Ok(_) => known = Some(analyses::edges_by_name(&candidate, &about)),
+                    Err(_) => {
+                        // Refused: taken out again, the program as it was.
+                        p.demands.truncate(first);
+                        for m in &makers {
+                            p.prefix.remove(m);
+                        }
+                        p.decls.pop();
+                        decls.remove(demand.as_str());
+                        continue;
+                    }
+                }
+            } else {
+                let edges = known.as_mut().expect("the edges of a stratified program");
+                edges.entry(name.clone()).or_default().insert((demand.clone(), false));
+                edges.entry(demand.clone()).or_default().extend(guard_rels.iter().map(|g| (g.clone(), false)));
+            }
+            reach.placed(name, &demand, &guard_rels);
+            deps.entry(name.clone()).or_default().insert(demand.clone());
+            deps.entry(demand.clone()).or_default().extend(guard_rels);
+            for k in first..p.demands.len() {
+                let mut seen = BTreeSet::new();
+                for &i in &p.demands[k].body {
+                    if let Some((rel, _, _)) = AggregateDemand::rel(v, &p, i)
+                        && names.contains(rel)
+                        && seen.insert(rel.to_owned())
+                    {
+                        readers.entry(rel.to_owned()).or_default().push(Reader::Demand(k));
+                    }
+                }
+            }
+        }
+        // Count zero is existence, provided its scalar result has no other consumer.
+        let mut anti: BTreeMap<RuleId, (BTreeSet<u32>, BTreeSet<u32>)> = BTreeMap::new();
+        for r in v.rules() {
+            let mut head_vars = VarSet::new();
+            for t in r.head().args() {
+                crate::code_rule_dsl::logic::plan::body::term_vars(t, &mut head_vars);
+            }
+            let lits: Vec<_> = r.body().collect();
+            for (i, l) in lits.iter().enumerate() {
+                let L::Agg { var, op: crate::code_rule_dsl::logic::program_image::AggRef::Count, over: None, .. } = l.view() else { continue };
+                let uses: Vec<_> = lits.iter().enumerate().filter(|(j, x)| *j != i && lit_vars(**x).contains(var)).collect();
+                if head_vars.contains(var) || uses.len() != 1 {
+                    continue;
+                }
+                let zero = matches!(uses[0].1.view(), L::Cmp { l: TermRef::Int(0), op: crate::code_rule_dsl::logic::program_image::CmpOp::Eq, r: TermRef::Var(x) } | L::Cmp { l: TermRef::Var(x), op: crate::code_rule_dsl::logic::program_image::CmpOp::Eq, r: TermRef::Int(0) } if x == var);
+                if !zero {
+                    continue;
+                }
+                let e = anti.entry(r.id()).or_default();
+                e.0.insert(l.node());
+                e.1.insert(uses[0].1.node());
+            }
+        }
+        if p.prefix.is_empty() && p.demands.is_empty() && anti.is_empty() {
+            return Ok(());
+        }
+        let mut head = was.clone();
+        for (d, cols) in &p.decls {
+            head.decls.insert(d.clone().into(), cols.iter().map(|(c, t)| (c.as_str().into(), t.as_str().into())).collect());
+        }
+        let none = (BTreeSet::new(), BTreeSet::new());
+        let b = w.derive()?;
+        b.set_header(&was, &head);
+        for r in input.rules() {
+            let (a, g) = anti.get(&r.id()).unwrap_or(&none);
+            if !p.prefix.contains_key(&r.id()) && a.is_empty() {
+                b.keep(&input, r);
+            } else {
+                write_placed(b, &input, &p, r, a, g)?;
+            }
+        }
+        for d in &p.demands {
+            write_demand(b, &input, &p, d)?;
+        }
+        Ok(())
+    }
+}
+
+/// The program with what `p` places so far, for stratifying a candidate: an overlay of `input`, its helpers' rules
+/// replaced by their placed forms and the demand rules added (the order is not the strata's concern).
+fn placed_version(input: &std::sync::Arc<Version>, was: &crate::code_rule_dsl::logic::front::Program, p: &Placement) -> Result<std::sync::Arc<Version>, String> {
+    let mut head = was.clone();
+    for (d, cols) in &p.decls {
+        head.decls.insert(d.clone().into(), cols.iter().map(|(c, t)| (c.as_str().into(), t.as_str().into())).collect());
+    }
+    let mut b = crate::code_rule_dsl::logic::program_image::Builder::on(input);
+    b.set_header(was, &head);
+    let none = BTreeSet::new();
+    for &r in p.prefix.keys() {
+        b.remove(r);
+        write_placed(&mut b, input, p, input.rule(r).expect("a rule of the input"), &none, &none)?;
+    }
+    for d in &p.demands {
+        write_demand(&mut b, input, p, d)?;
+    }
+    b.finish_overlay()
+}
+
+/// `front::order_nodes` on the version (see there): under node ids per definition, two nodes compared by their
+/// preorder keys (`node_order`), and a `min`/`max` over nodes taken over the keys through a helper
+/// (`rr_ordered<k>`, written after the program's rules, as the tree pushes it). Fresh variables are numbered over
+/// the program in rule order, as the tree's are.
+pub struct OrderNodes;
+
+/// What a literal of a rule becomes.
+enum Ordered {
+    Keep(u32),
+    /// `x op y` over nodes: `node_order(x, kx), node_order(y, ky), kx op ky`.
+    Cmp { x: Slot, y: Slot, op: crate::code_rule_dsl::logic::program_image::CmpOp, k: usize },
+    /// `var = op o : { atom }` over a node `o`: `kv = op k : { helper(args, k) }, node_order(var, kv)`.
+    Agg { lit: u32, var: Slot, o: Slot, op: crate::code_rule_dsl::logic::front::AggOp, k: usize, helper: usize, args: Vec<Slot> },
+}
+
+impl ProgramPass for OrderNodes {
+    const NAME: &'static str = "order the nodes compared";
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        use crate::code_rule_dsl::logic::front::AggOp;
+        use crate::code_rule_dsl::logic::program_image::{AggRef, AtomRef, CmpOp};
+        if !crate::code_rule_dsl::logic::front::orders_nodes() {
+            return Ok(());
+        }
+        let v = cx.v();
+        let was = v.header(&Default::default())?;
+        let typed = |a: AtomRef<'_>, nodes: &mut BTreeSet<Slot>| {
+            let cols = was.decls.get(v.rel_name(a.rel())).map_or(&[][..], |c| c.as_slice());
+            for (t, (_, ty)) in a.args().zip(cols) {
+                if let TermRef::Var(s) = t
+                    && ty == "node"
+                {
+                    nodes.insert(s);
+                }
+            }
+        };
+        let op_of = |op: AggRef<'_>| match op {
+            AggRef::Min => Some(AggOp::Min),
+            AggRef::Max => Some(AggOp::Max),
+            _ => None,
+        };
+        let mut fresh = 0usize;
+        let mut helpers = 0usize;
+        let mut plans: BTreeMap<RuleId, Vec<Ordered>> = BTreeMap::new();
+        for r in v.rules() {
+            let mut nodes = BTreeSet::new();
+            typed(r.head(), &mut nodes);
+            for l in r.body() {
+                match l.view() {
+                    L::Atom(a) => typed(a, &mut nodes),
+                    L::Agg { atom, .. } => typed(atom, &mut nodes),
+                    L::Nearest { n, a, .. } => {
+                        nodes.insert(n);
+                        nodes.insert(a);
+                    }
+                    _ => {}
+                }
+            }
+            // A min or max over nodes is a node.
+            for l in r.body() {
+                if let L::Agg { var, op, over: Some(o), atom } = l.view()
+                    && op_of(op).is_some()
+                {
+                    let mut inner = BTreeSet::new();
+                    typed(atom, &mut inner);
+                    if inner.contains(&o) {
+                        nodes.insert(var);
+                    }
+                }
+            }
+            if nodes.is_empty() {
+                continue;
+            }
+            let mut plan = Vec::new();
+            let mut changed = false;
+            for l in r.body() {
+                match l.view() {
+                    L::Cmp { l: TermRef::Var(x), op, r: TermRef::Var(y) } if matches!(op, CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge) && nodes.contains(&x) && nodes.contains(&y) => {
+                        plan.push(Ordered::Cmp { x, y, op, k: fresh });
+                        fresh += 2;
+                        changed = true;
+                    }
+                    L::Agg { var, op, over: Some(o), atom } if op_of(op).is_some() && {
+                        let mut inner = BTreeSet::new();
+                        typed(atom, &mut inner);
+                        inner.contains(&o)
+                    } =>
+                    {
+                        // The rows aggregated, each with its node's key: the atom's variables once each, but the node.
+                        let mut args: Vec<Slot> = Vec::new();
+                        for t in atom.args() {
+                            if let TermRef::Var(s) = t
+                                && s != o
+                                && !args.contains(&s)
+                            {
+                                args.push(s);
+                            }
+                        }
+                        plan.push(Ordered::Agg { lit: l.node(), var, o, op: op_of(op).expect("min or max"), k: fresh, helper: helpers, args });
+                        fresh += 2;
+                        helpers += 1;
+                        changed = true;
+                    }
+                    _ => plan.push(Ordered::Keep(l.node())),
+                }
+            }
+            if changed {
+                plans.insert(r.id(), plan);
+            }
+        }
+        if plans.is_empty() {
+            return Ok(());
+        }
+        let node_order = crate::code_rule_dsl::logic::front::NODE_ORDER_REL;
+        let ord = |k: usize| format!("rr_ord{k}");
+        let mut head = was.clone();
+        let input = std::sync::Arc::clone(w.input());
+        // The helpers' declarations, in the order they are made.
+        let mut made: Vec<(RuleId, u32, usize, Vec<Slot>, usize)> = Vec::new();
+        for (id, plan) in &plans {
+            for o in plan {
+                if let Ordered::Agg { lit, k, helper, args, .. } = o {
+                    made.push((*id, *lit, *helper, args.clone(), *k));
+                }
+            }
+        }
+        made.sort_by_key(|m| m.2);
+        for (id, lit, helper, _, _) in &made {
+            let L::Agg { atom, over: Some(o), .. } = lit_at(&input, *id, *lit).view() else { return Err("an ordered aggregate".into()) };
+            let cols = was.decls.get(input.rel_name(atom.rel())).cloned().unwrap_or_default();
+            let mut seen: Vec<Slot> = Vec::new();
+            let mut decl: Vec<(String, String)> = Vec::new();
+            for (i, t) in atom.args().enumerate() {
+                if let TermRef::Var(s) = t
+                    && s != o
+                    && !seen.contains(&s)
+                {
+                    seen.push(s);
+                    decl.push((format!("c{i}"), cols.get(i).map_or_else(|| "int".to_owned(), |(_, ty)| ty.to_string())));
+                }
+            }
+            decl.push(("k".to_owned(), "int".to_owned()));
+            head.decls.insert(format!("rr_ordered{helper}").into(), decl.iter().map(|(c, t)| (c.as_str().into(), t.as_str().into())).collect());
+        }
+        head.decls.entry(node_order.to_owned().into()).or_insert_with(|| [("n".into(), "node".into()), ("k".into(), "int".into())].into());
+        if !head.inputs.iter().any(|i| i == node_order) {
+            head.inputs.push(node_order.to_owned());
+        }
+        let names: Vec<String> = (0..helpers).map(|h| format!("rr_ordered{h}")).collect();
+        let b = w.derive()?;
+        b.set_header(&was, &head);
+        use crate::code_rule_dsl::logic::program_image::build::t_of;
+        for r in input.rules() {
+            let Some(plan) = plans.get(&r.id()) else {
+                b.keep(&input, r);
+                continue;
+            };
+            let mut rb = b.rule().source(r.id()).head_from(&input, r, r.head());
+            for o in plan {
+                rb = match o {
+                    Ordered::Keep(n) => rb.lit(&input, r, lit_at(&input, r.id(), *n)),
+                    Ordered::Cmp { x, y, op, k } => {
+                        let (kx, ky) = (ord(*k), ord(k + 1));
+                        rb.atom(node_order, &[T::VarAtom(r.var(*x)), T::Var(&kx)]).atom(node_order, &[T::VarAtom(r.var(*y)), T::Var(&ky)]).cmp(T::Var(&kx), *op, T::Var(&ky))
+                    }
+                    Ordered::Agg { var, op, k, helper, args, .. } => {
+                        let (kk, kv) = (ord(*k), ord(k + 1));
+                        let mut agg_args: Vec<T<'_>> = args.iter().map(|s| T::VarAtom(r.var(*s))).collect();
+                        agg_args.push(T::Var(&kk));
+                        rb.agg(T::Var(&kv), op, Some(T::Var(&kk)), names[*helper].as_str(), &agg_args).atom(node_order, &[T::VarAtom(r.var(*var)), T::Var(&kv)])
+                    }
+                };
+            }
+            rb.finish()?;
+        }
+        // The helpers, after the program's rules: `rr_ordered<k>(args, k) :- atom, node_order(o, k)`.
+        for (id, lit, helper, args, k) in &made {
+            let r = input.rule(*id).expect("a rule of the input");
+            let L::Agg { atom, over: Some(o), .. } = lit_at(&input, *id, *lit).view() else { return Err("an ordered aggregate".into()) };
+            let kk = ord(*k);
+            let mut head_args: Vec<T<'_>> = args.iter().map(|s| T::VarAtom(r.var(*s))).collect();
+            head_args.push(T::Var(&kk));
+            let atom_args: Vec<T<'_>> = atom.args().map(|t| t_of(&input, r, t)).collect();
+            b.rule()
+                .source(*id)
+                .head(names[*helper].as_str(), &head_args)
+                .atom_with(input.rel_name(atom.rel()), &atom_args, false, atom.gated())
+                .atom(node_order, &[T::VarAtom(r.var(o)), T::Var(&kk)])
+                .finish()?;
+        }
+        Ok(())
+    }
+}
+
+/// `front::declare_axes` on the version: each tree axis a rule reads (an aggregate's atom included) that the program
+/// does not declare, declared `(n: node, a: node)` and an input, in the order the rules first read them.
+pub struct DeclareAxes;
+
+impl ProgramPass for DeclareAxes {
+    const NAME: &'static str = "declare the tree axes read";
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        let v = cx.v();
+        let was = v.header(&Default::default())?;
+        let mut head = was.clone();
+        for r in v.rules() {
+            for l in r.body() {
+                let (L::Atom(a) | L::Agg { atom: a, .. }) = l.view() else { continue };
+                let rel = v.rel_name(a.rel());
+                if crate::code_rule_dsl::logic::front::is_axis(rel) && !head.decls.contains_key(rel) {
+                    head.decls.insert(rel.to_owned().into(), [("n".into(), "node".into()), ("a".into(), "node".into())].into());
+                    head.inputs.push(rel.to_owned());
+                }
+            }
+        }
+        if head.decls.len() != was.decls.len() {
+            w.on()?.set_header(&was, &head);
+        }
+        Ok(())
+    }
+}
+
+/// `lower_boolean_relations` on the version: a nullary relation is a Boolean set, its one tuple the integer unit, so
+/// it gains a column `rr_unit`, its facts a `1`, and each atom of it (a head, a read, an aggregate's) a `1`.
+pub struct BooleanRelations;
+
+/// Appends the unit to an atom of a nullary relation.
+struct Unit1<'a> {
+    v: &'a Version,
+    names: &'a BTreeSet<String>,
+}
+
+impl crate::code_rule_dsl::logic::program_image::build::Rewrite for Unit1<'_> {
+    fn prefix(&mut self, a: crate::code_rule_dsl::logic::program_image::AtomRef<'_>, out: &mut Vec<T<'static>>) {
+        if self.names.contains(self.v.rel_name(a.rel())) && a.args().next().is_none() {
+            out.push(T::Int(1));
+        }
+    }
+}
+
+impl ProgramPass for BooleanRelations {
+    const NAME: &'static str = "nullary relations as sets of the unit";
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        let v = cx.v();
+        let was = v.header(&Default::default())?;
+        let names: BTreeSet<String> = was.decls.iter().filter(|(_, cols)| cols.is_empty()).map(|(name, _)| name.to_string()).collect();
+        if names.is_empty() {
+            return Ok(());
+        }
+        let mut head = was.clone();
+        head.nullary.extend(names.iter().cloned());
+        for name in &names {
+            head.decls.get_mut(name.as_str()).expect("a declared relation").push(("rr_unit".into(), "int".into()));
+            if let Some(rows) = head.facts.get_mut(name.as_str()) {
+                for row in rows {
+                    row.push(crate::code_rule_dsl::logic::front::Value::Int(1));
+                }
+            }
+        }
+        let of = |a: crate::code_rule_dsl::logic::program_image::AtomRef<'_>| names.contains(v.rel_name(a.rel())) && a.args().next().is_none();
+        let touched: BTreeSet<RuleId> = v
+            .rules()
+            .filter(|r| of(r.head()) || r.body().any(|l| matches!(l.view(), L::Atom(a) | L::Agg { atom: a, .. } if of(a))))
+            .map(|r| r.id())
+            .collect();
+        let input = std::sync::Arc::clone(w.input());
+        let b = w.derive()?;
+        b.set_header(&was, &head);
+        for r in input.rules() {
+            if touched.contains(&r.id()) {
+                b.rewrite(&input, r, &mut Unit1 { v: &input, names: &names }).finish()?;
+            } else {
+                b.keep(&input, r);
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The documents and texts a program's `.scope` settings select (`lower::scope_text_globs`, `lower::scope_globs`),
+/// set in its header as `whole()` sets them: a printed program read again selects the same.
+pub struct ScopeGlobs;
+
+impl ProgramPass for ScopeGlobs {
+    const NAME: &'static str = "the scope's globs";
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        use crate::code_rule_dsl::logic::rr::lower::{scope_globs, scope_text_globs};
+        let was = cx.v().header(&Default::default())?;
+        let mut head = was.clone();
+        head.text_globs = scope_text_globs(&head.settings);
+        if head.doc_scopes.is_none() {
+            head.doc_scopes = scope_globs(&head.settings).map(|g| vec![g]);
+        }
+        if head.text_globs != was.text_globs || head.doc_scopes != was.doc_scopes {
+            w.on()?.set_header(&was, &head);
+        }
+        Ok(())
+    }
+}
+
+/// `lower::kind_sets` on the version (see there), over the sets the clauses named (the lowerer's `sets`): each set
+/// whose kinds are known now a kind set of the header; a set no rule reads taken out (to a fixed point); and the axes
+/// over sets that rules derive written as rules (`derived_axes`), after the program's.
+pub struct KindSets {
+    pub sets: BTreeSet<String>,
+}
+
+/// `lower::kinds_of` on the version, rules gone by head left out.
+fn kinds_of(v: &Version, head: &crate::code_rule_dsl::logic::front::Program, gone: &BTreeSet<String>, set: &str, seen: &mut BTreeSet<String>) -> Option<Vec<String>> {
+    use crate::code_rule_dsl::logic::front::Value;
+    if !seen.insert(set.to_owned()) || head.inputs.iter().any(|i| i == set) || head.decls.get(set).is_some_and(|c| c.len() != 1) {
+        return None;
+    }
+    let mut kinds: Vec<String> = Vec::new();
+    for row in head.facts.get(set).into_iter().flatten() {
+        let [Value::Str(k)] = row.as_slice() else { return None };
+        kinds.push(k.to_string());
+    }
+    for r in v.rel(set).into_iter().flat_map(|rel| v.heads(rel)).filter(|_| !gone.contains(set)) {
+        let mut args = r.head().args();
+        let (Some(TermRef::Var(k)), None) = (args.next(), args.next()) else { return None };
+        let mut body = r.body();
+        let (Some(l), None) = (body.next(), body.next()) else { return None };
+        let L::Atom(a) = l.view() else { return None };
+        let mut aargs = a.args();
+        if a.neg() || !matches!((aargs.next(), aargs.next()), (Some(TermRef::Var(x)), None) if x == k) {
+            return None;
+        }
+        kinds.extend(kinds_of(v, head, gone, v.rel_name(a.rel()), seen)?);
+    }
+    let mut once = BTreeSet::new();
+    kinds.retain(|k| once.insert(k.clone()));
+    Some(kinds)
+}
+
+/// An axis literal over a derived set, rewritten (`derived_axes`): `rr_<helper>_<set>(args)`, its arguments a
+/// nearest's two variables, or the axis atom's arguments at `args`.
+struct AxisLit {
+    node: u32,
+    rel: String,
+    nearest: Option<(Slot, Slot)>,
+    args: Vec<usize>,
+    neg: bool,
+}
+
+impl ProgramPass for KindSets {
+    const NAME: &'static str = "kind sets";
+    fn settings(&self) -> Vec<u8> {
+        self.sets.iter().cloned().collect::<Vec<_>>().join("\n").into_bytes()
+    }
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        use crate::code_rule_dsl::logic::front::{Error, axis};
+        let v = cx.v();
+        let was = v.header(&Default::default())?;
+        let mut head = was.clone();
+        let mut gone: BTreeSet<String> = BTreeSet::new();
+        let mut derived: BTreeSet<String> = BTreeSet::new();
+        for set in std::mem::take(&mut self.sets) {
+            if head.kindsets.contains_key(&set) {
+                continue;
+            }
+            // `members`.
+            match kinds_of(v, &head, &gone, &set, &mut BTreeSet::new()) {
+                Some(kinds) => drop(head.kindsets.insert(set, kinds)),
+                None if matches!(head.decls.get(set.as_str()).map(|c| c.as_slice()), Some([(_, t)]) if t == "sym") => drop(derived.insert(set)),
+                None => return Err(Error::Syntax(format!("the kind set {set} is not a relation of kinds (one column of facts, or rules `{set}(k) :- s(k)` over such sets)")).to_string()),
+            }
+        }
+        // A set no rule reads is no relation of the program, to a fixed point.
+        let heads_of = |gone: &BTreeSet<String>, set: &str| v.rel(set).is_some_and(|rel| v.heads(rel).next().is_some()) && !gone.contains(set);
+        loop {
+            let unread: Vec<String> = head
+                .kindsets
+                .keys()
+                .filter(|set| head.decls.contains_key(set.as_str()) || head.facts.contains_key(*set) || heads_of(&gone, set))
+                .filter(|set| {
+                    !v.rules().filter(|r| !gone.contains(v.rel_name(r.head().rel())) && v.rel_name(r.head().rel()) != set.as_str()).any(|r| {
+                        r.body().any(|l| matches!(l.view(), L::Atom(a) | L::Agg { atom: a, .. } if v.rel_name(a.rel()) == set.as_str()))
+                    })
+                })
+                .cloned()
+                .collect();
+            if unread.is_empty() {
+                break;
+            }
+            for set in unread {
+                head.facts.remove(&set);
+                head.decls.remove(set.as_str());
+                gone.insert(set);
+            }
+        }
+        // `derived_axes`: each axis over a derived set read through a helper.
+        let mut axes: BTreeMap<RuleId, Vec<AxisLit>> = BTreeMap::new();
+        let mut need: BTreeSet<(String, &'static str)> = BTreeSet::new();
+        if !derived.is_empty() {
+            for r in v.rules().filter(|r| !gone.contains(v.rel_name(r.head().rel()))) {
+                for l in r.body() {
+                    let (set, helper, nearest, args, neg) = match l.view() {
+                        L::Nearest { n, a, kindset } if derived.contains(v.text(kindset)) => (v.text(kindset).to_owned(), "near", Some((n, a)), vec![], false),
+                        L::Atom(x) => match axis(v.rel_name(x.rel())) {
+                            Some((set, has)) if derived.contains(set) => {
+                                let xs: Vec<TermRef<'_>> = x.args().collect();
+                                let all: Vec<usize> = (0..xs.len()).collect();
+                                let (helper, args) = match (has, xs.as_slice()) {
+                                    (false, [_, TermRef::Wild]) => ("near", all),
+                                    (false, _) => ("anc", all),
+                                    (true, [TermRef::Wild, _]) => ("above", vec![1]),
+                                    (true, _) => ("desc", all),
+                                };
+                                (set.to_owned(), helper, None, args, x.neg())
+                            }
+                            _ => continue,
+                        },
+                        _ => continue,
+                    };
+                    if helper == "anc" {
+                        need.insert((set.clone(), "near"));
+                    }
+                    need.insert((set.clone(), helper));
+                    axes.entry(r.id()).or_default().push(AxisLit { node: l.node(), rel: format!("rr_{helper}_{set}"), nearest, args, neg });
+                }
+            }
+        }
+        // `base_relation` for `child` and `node`, the rules gone left out.
+        if !need.is_empty() {
+            for rel in ["child", "node"] {
+                crate::code_rule_dsl::logic::rr::lower::base_relation_derived(&mut head, rel, heads_of(&gone, rel));
+            }
+        }
+        // The helpers' rules, as `derived_axes` pushes them: a set's members once, then each helper's rules.
+        type Body = Vec<(String, Vec<&'static str>, bool)>;
+        let mut made: Vec<(String, Vec<&'static str>, Body)> = Vec::new();
+        for (set, helper) in &need {
+            let member = format!("rr_in_{set}");
+            if !head.decls.contains_key(member.as_str()) {
+                head.decls.insert(member.clone().into(), [("x".into(), "node".into())].into());
+                made.push((member.clone(), vec!["x"], vec![("node".to_owned(), vec!["_", "x", "k", "_", "_"], false), (set.clone(), vec!["k"], false)]));
+            }
+            let rel = format!("rr_{helper}_{set}");
+            let is = |x: &'static str, neg: bool| (member.clone(), vec![x], neg);
+            let child = |p: &'static str, c: &'static str| ("child".to_owned(), vec![p, c, "_"], false);
+            let me = |args: Vec<&'static str>| (rel.clone(), args, false);
+            let near = format!("rr_near_{set}");
+            let (cols, bodies): (Vec<&'static str>, Vec<Body>) = match *helper {
+                "near" => (vec!["n", "a"], vec![vec![child("a", "n"), is("a", false)], vec![child("p", "n"), is("p", true), me(vec!["p", "a"])]]),
+                "anc" => (vec!["n", "a"], vec![vec![(near.clone(), vec!["n", "a"], false)], vec![(near.clone(), vec!["n", "b"], false), me(vec!["b", "a"])]]),
+                "desc" => (vec!["n", "a"], vec![vec![is("n", false), child("a", "n")], vec![me(vec!["n", "p"]), child("a", "p")]]),
+                _ => (vec!["a"], vec![vec![is("n", false), child("a", "n")], vec![me(vec!["p"]), child("a", "p")]]),
+            };
+            head.decls.insert(rel.clone().into(), cols.iter().map(|c| ((*c).into(), "node".into())).collect());
+            for body in bodies {
+                made.push((rel.clone(), cols.clone(), body));
+            }
+        }
+        if gone.is_empty() && axes.is_empty() && made.is_empty() && head.kindsets == was.kindsets && head.decls == was.decls && head.inputs == was.inputs {
+            return Ok(());
+        }
+        let input = std::sync::Arc::clone(w.input());
+        let b = w.derive()?;
+        b.set_header(&was, &head);
+        use crate::code_rule_dsl::logic::program_image::build::t_of;
+        for r in input.rules() {
+            if gone.contains(input.rel_name(r.head().rel())) {
+                continue;
+            }
+            let Some(lits) = axes.get(&r.id()) else {
+                b.keep(&input, r);
+                continue;
+            };
+            let mut rb = b.rule().source(r.id()).head_from(&input, r, r.head());
+            for l in r.body() {
+                rb = match lits.iter().find(|x| x.node == l.node()) {
+                    None => rb.lit(&input, r, l),
+                    Some(x) => {
+                        let args: Vec<T<'_>> = match (x.nearest, l.view()) {
+                            (Some((n, a)), _) => vec![T::VarAtom(r.var(n)), T::VarAtom(r.var(a))],
+                            (None, L::Atom(a)) => {
+                                let xs: Vec<TermRef<'_>> = a.args().collect();
+                                x.args.iter().map(|&k| t_of(&input, r, xs[k])).collect()
+                            }
+                            _ => return Err("an axis atom".into()),
+                        };
+                        rb.atom_with(x.rel.as_str(), &args, x.neg, false)
+                    }
+                };
+            }
+            rb.finish()?;
+        }
+        let term = |a: &'static str| if a == "_" { T::Wild } else { T::Var(a) };
+        for (rel, cols, body) in &made {
+            let args: Vec<T<'_>> = cols.iter().map(|c| term(c)).collect();
+            let mut rb = b.rule().head(rel.as_str(), &args);
+            for (r, xs, neg) in body {
+                let args: Vec<T<'_>> = xs.iter().map(|c| term(c)).collect();
+                rb = rb.atom_with(r.as_str(), &args, *neg, false);
+            }
+            rb.finish()?;
+        }
+        Ok(())
+    }
+}
+
+/// `lower::grammar_names` on the version: every constant grammar a rule names is one the language registry has.
+pub struct GrammarNames;
+
+impl ProgramPass for GrammarNames {
+    const NAME: &'static str = "grammar names";
+    fn run(&mut self, cx: &Cx<'_>, _w: &mut ProgramW<'_>) -> Result<(), String> {
+        use crate::code_rule_dsl::logic::rr::lower::{grammar_column, no_grammar};
+        let v = cx.v();
+        for r in v.rules() {
+            let body = r.body().filter_map(|l| match l.view() {
+                L::Atom(a) => Some(a),
+                _ => None,
+            });
+            for a in std::iter::once(r.head()).chain(body) {
+                if let Some(i) = grammar_column(v.rel_name(a.rel()))
+                    && let Some(TermRef::Str(g)) = a.args().nth(i)
+                    && !crate::code_rule_dsl::language::is_grammar(v.text(g))
+                {
+                    return Err(no_grammar(v.rel_name(r.head().rel()), v.text(g)).to_string());
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+/// `lower::builtins_out` on the version: the built-ins written out, and the core relations the lowering rewrote
+/// (`rewritten`, its settings), are no relations of the program; `within` stays declared where a rule reads it.
+pub struct BuiltinsOut {
+    pub rewritten: Vec<String>,
+}
+
+impl ProgramPass for BuiltinsOut {
+    const NAME: &'static str = "built-ins out";
+    fn settings(&self) -> Vec<u8> {
+        self.rewritten.join("\n").into_bytes()
+    }
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        use crate::code_rule_dsl::facts::vtab::syntax::WITHIN;
+        let v = cx.v();
+        let was = v.header(&Default::default())?;
+        let mut head = was.clone();
+        let reads_within = v.rules().any(|r| r.body().any(|l| matches!(l.view(), L::Atom(a) if v.rel_name(a.rel()) == WITHIN)));
+        for b in crate::code_rule_dsl::logic::rr::lower::builtins(&self.rewritten).filter(|b| !(reads_within && *b == "within")) {
+            head.decls.remove(b);
+            head.inputs.retain(|i| i != b);
+        }
+        if reads_within {
+            head.decls.entry(WITHIN.to_owned().into()).or_insert_with(|| [("n".into(), "node".into()), ("a".into(), "node".into())].into());
+            if !head.inputs.iter().any(|i| i == WITHIN) {
+                head.inputs.push(WITHIN.to_owned());
+            }
+        }
+        if head.decls == was.decls && head.inputs == was.inputs {
+            return Ok(());
+        }
+        w.on()?.set_header(&was, &head);
+        Ok(())
+    }
+}
+
+/// `lower::span_patterns` on the version: the same analysis, read off the image's rules and header, the rx spans and
+/// AST patterns it finds added to the header.
+pub struct SpanPatterns;
+
+impl ProgramPass for SpanPatterns {
+    const NAME: &'static str = "span patterns";
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        use crate::code_rule_dsl::logic::rr::lower::{SpanAtom, SpanProgram, SpanRule, SpanTerm, span_patterns};
+        let v = cx.v();
+        let was = v.header(&Default::default())?;
+        let term = |r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>, t: TermRef<'_>| match t {
+            TermRef::Var(x) => SpanTerm::Var(v.text(r.var(x))),
+            TermRef::Str(x) => SpanTerm::Str(v.text(x)),
+            _ => SpanTerm::Other,
+        };
+        let program = SpanProgram {
+            rules: v
+                .rules()
+                .map(|r| SpanRule {
+                    head: SpanAtom { rel: v.rel_name(r.head().rel()), args: r.head().args().map(|t| term(r, t)).collect(), neg: false },
+                    body: r
+                        .body()
+                        .filter_map(|l| match l.view() {
+                            L::Atom(a) | L::Agg { atom: a, .. } => Some(SpanAtom { rel: v.rel_name(a.rel()), args: a.args().map(|t| term(r, t)).collect(), neg: a.neg() }),
+                            _ => None,
+                        })
+                        .collect(),
+                })
+                .collect(),
+            decls: was.decls.iter().map(|(r, c)| (r.as_str(), c.len())).collect(),
+            inputs: was.inputs.iter().map(String::as_str).collect(),
+            natives: was.natives.keys().map(String::as_str).collect(),
+            outputs: was.outputs.iter().map(String::as_str).collect(),
+        };
+        let found = span_patterns(&program).map_err(|e| e.to_string())?;
+        let mut head = was.clone();
+        head.rx_spans.extend(found.0);
+        head.ast_patterns.extend(found.1);
+        if head.rx_spans == was.rx_spans && head.ast_patterns == was.ast_patterns {
+            return Ok(());
+        }
+        w.on()?.set_header(&was, &head);
+        Ok(())
+    }
+}
+
+/// core.rr's declarations of what the rules read, then `node`'s projections (`lower::core_and_projections`) on the
+/// version: the header's declarations and inputs, and the projections' rules written first, where the tree puts them.
+/// Its setting: whether the program's `docof` is core.rr's, over spans, as the lowerer found it.
+pub struct CoreDecls {
+    pub docof_of_locs: bool,
+}
+
+impl ProgramPass for CoreDecls {
+    const NAME: &'static str = "core declarations";
+    fn settings(&self) -> Vec<u8> {
+        vec![u8::from(self.docof_of_locs)]
+    }
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        use crate::code_rule_dsl::logic::rr::lower::{core::declare_core, projection_at, projections};
+        let v = cx.v();
+        let was = v.header(&Default::default())?;
+        let mut head = was.clone();
+        let read: BTreeSet<(String, usize)> = v
+            .rules()
+            .flat_map(|r| r.body())
+            .filter_map(|l| match l.view() {
+                L::Atom(a) | L::Agg { atom: a, .. } => Some((v.rel_name(a.rel()).to_owned(), a.args().count())),
+                _ => None,
+            })
+            .collect();
+        let mut docof = self.docof_of_locs;
+        declare_core(&mut head, &read, &mut docof).map_err(|e| e.to_string())?;
+        let derives_node = v.rel("node").is_some_and(|rel| v.heads(rel).next().is_some());
+        let made = projections(&mut head, &read, docof, derives_node);
+        if made.is_empty() {
+            if head.decls != was.decls || head.inputs != was.inputs || head.tapes != was.tapes {
+                w.on()?.set_header(&was, &head);
+            }
+            return Ok(());
+        }
+        let input = std::sync::Arc::clone(w.input());
+        // The program's order, the projections inserted where the tree inserts them.
+        enum Item<'r> {
+            Old(crate::code_rule_dsl::logic::program_image::RuleRef<'r>),
+            New(&'r crate::code_rule_dsl::logic::front::Rule),
+        }
+        let mut order: Vec<Item<'_>> = input.rules().map(Item::Old).collect();
+        for rule in &made {
+            let first = order.first().map(|x| match x {
+                Item::Old(r) => input.rel_name(r.head().rel()),
+                Item::New(r) => r.head.rel.as_str(),
+            });
+            order.insert(projection_at(&rule.head.rel, first), Item::New(rule));
+        }
+        let b = w.derive()?;
+        b.set_header(&was, &head);
+        for x in order {
+            match x {
+                Item::Old(r) => drop(b.keep(&input, r)),
+                Item::New(r) => drop(b.add(r)?),
+            }
+        }
+        Ok(())
+    }
+}
+
+/// The findings of the `.violation`s (`lower::findings`) on the version: `lower::findings_on_header` writes them on
+/// the header, given what it reads of the rules (`RulesSeen`, read off the image); the rules it makes go last, and
+/// the program's own `violation` heads of five columns are widened, as the tree's are. Its settings: the pending
+/// findings, which the lowerer hands on.
+pub struct Findings {
+    pub pending: crate::code_rule_dsl::logic::rr::lower::PendingFindings,
+}
+
+impl ProgramPass for Findings {
+    const NAME: &'static str = "findings";
+    fn settings(&self) -> Vec<u8> {
+        self.pending.key()
+    }
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        use crate::code_rule_dsl::logic::rr::lower::{RulesSeen, findings_on_header, is_place_call};
+        let v = cx.v();
+        fn place(v: &Version, t: TermRef<'_>) -> bool {
+            match t {
+                TermRef::Call(f, args) => is_place_call(v.text(f)) || args.into_iter().any(|a| place(v, a)),
+                _ => false,
+            }
+        }
+        let seen = RulesSeen {
+            place_values: v.rules().any(|r| {
+                r.head().args().any(|t| place(v, t))
+                    || r.body().any(|l| match l.view() {
+                        L::Atom(a) | L::Agg { atom: a, .. } => a.args().any(|t| place(v, t)),
+                        L::Cmp { l, r, .. } => place(v, l) || place(v, r),
+                        _ => false,
+                    })
+            }),
+            reads_guest_policy: v.rules().flat_map(|r| r.body()).any(|l| matches!(l.view(), L::Atom(a) | L::Agg { atom: a, .. } if v.rel_name(a.rel()) == crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY)),
+        };
+        let was = v.header(&Default::default())?;
+        let (head, made, wrote) = findings_on_header(was.clone(), &self.pending, seen).map_err(|e| e.to_string())?;
+        let five = |r: crate::code_rule_dsl::logic::program_image::RuleRef<'_>| wrote && v.rel_name(r.head().rel()) == "violation" && r.head().args().count() == 5;
+        if made.is_empty() && !v.rules().any(five) {
+            w.on()?.set_header(&was, &head);
+            return Ok(());
+        }
+        let input = std::sync::Arc::clone(w.input());
+        let b = w.derive()?;
+        b.set_header(&was, &head);
+        use crate::code_rule_dsl::logic::program_image::build::t_of;
+        for r in input.rules() {
+            if !five(r) {
+                b.keep(&input, r);
+                continue;
+            }
+            let mut args: Vec<T<'_>> = r.head().args().map(|t| t_of(&input, r, t)).collect();
+            args.push(T::Int(0));
+            let mut rb = b.rule().source(r.id()).head("violation", &args);
+            for l in r.body() {
+                rb = rb.lit(&input, r, l);
+            }
+            rb.finish()?;
+        }
+        for rule in &made {
+            b.add(rule)?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::code_rule_dsl::logic::program_image::{build::Builder, manager::Pipeline};
+
+    /// `BuiltinsOut` on a version is the tree's `lower::builtins_out`: the built-ins' and the rewritten relations'
+    /// declarations and inputs go, and `within`, read by a rule, is declared and an input. (On a modular text's path
+    /// the unseeding hides this, since the library declares every built-in: so it is checked here, on its own.)
+    #[test]
+    fn builtins_out_on_a_version_is_the_trees() {
+        let text = ".decl e(x: number)\n.input e\n.decl r(x: number)\nr(x) :- e(x).\n.output r\n";
+        let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+        for b in ["nearest", "earlier", "precedes"] {
+            tree.decls.insert(b.to_owned().into(), [("x".into(), "number".into())].into());
+            tree.inputs.push(b.to_owned());
+        }
+        // A rule reading `within`, undeclared.
+        let mut reads = tree.rules[0].clone();
+        reads.body = [crate::code_rule_dsl::logic::front::Literal::Atom(crate::code_rule_dsl::logic::front::Atom {
+            rel: "within".to_owned().into(),
+            args: [crate::code_rule_dsl::logic::front::Term::Var("x".to_owned().into()), crate::code_rule_dsl::logic::front::Term::Wild].into(),
+            neg: false,
+            gated: false,
+        })]
+        .into();
+        tree.rules.push(reads);
+        let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+        let rewritten = vec!["precedes".to_owned()];
+        let mut p = Pipeline::new("test", v);
+        p.program(&mut super::BuiltinsOut { rewritten: rewritten.clone() });
+        let (out, _) = p.finish().unwrap();
+        crate::code_rule_dsl::logic::rr::lower::builtins_out(&mut tree, &rewritten);
+        assert!(!tree.decls.contains_key("nearest") && !tree.decls.contains_key("precedes") && tree.inputs.iter().any(|i| i == "within"), "{:?}", tree.inputs);
+        let (want, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+        assert_eq!((out.size(), out.digest()), (want.size(), want.digest()), "{}\n---\n{}", out.show(), want.show());
+    }
+}
