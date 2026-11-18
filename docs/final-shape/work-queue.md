@@ -2497,9 +2497,13 @@ fine) or in 8 runs after; the CPU path never hung (11 runs).
   chunk builder ended before a load's documents", and the run ends with its error, not a hang. t51 (the fix): 8 of 8
   cold Metal runs of the full shape ended, rc 0, 22-33 s (the M3 at load 50-90). Before it, 3 of 13 hung. No run
   failed, so the first chunk's own error is not seen yet: a run that meets it now ends with it in its log.
-- **Open**: no test fails a load's chunk (the builder is local to `run_observed`, and no hook fails a load), and
-  12 more cold Metal runs are owed for the 20.
-- **Record**: —
+- **Done** (2026-11-18): t54, 12 more cold Metal runs of the full shape all end, rc 0, 22-104 s (the M3 at load
+  50-95): 20 of 20 since the fix. A test fails a load's chunk (`FAILS_ITS_CHUNK`, a test-hooks build's file name
+  whose chunk's projection fails): `a_load_whose_chunk_fails_ends_the_run_with_its_error` (the run ends with the
+  chunk's error, within 120 s). It does not pin the hang's order: two small programs (loads from a file's lines and
+  from a directory's entries) do not get a second load posted ahead of the failing one's error, and the test passes
+  without the stopped check too. The full shape on Metal did, 3 of 13 times.
+- **Record**: the fix 1fc292eb2; the runs in working-data/bench-1118/ab41-t54.txt.
 
 ## Questions for the user
 
