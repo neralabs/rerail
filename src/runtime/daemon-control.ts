@@ -1308,24 +1308,42 @@ function createClaim(path: string): boolean {
   return true;
 }
 
+/** The claim at `path` as one look finds it: when it was made or last renewed, and what it names; undefined once it is gone. */
+function readClaim(path: string): { made: number; named: string } | undefined {
+  try {
+    return { made: statSync(path).mtimeMs, named: readFileSync(path, "utf8").trim() };
+  } catch (error) {
+    // A start ended it between this process's create and its look.
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
+/**
+ * The claim at `path` read again once the process it named, `named`, was found gone: the claim as handed over since
+ * (`handOverClaim`), or undefined when it still names that process or is gone.
+ */
+function claimHandedOver(path: string, named: string): { made: number; named: string } | undefined {
+  const again = readClaim(path);
+  return again?.named === named ? undefined : again;
+}
+
 /**
  * Whether the claim at `path` still holds: it was made or renewed under `AUTOSTART_CLAIM_LEASE_MS` from now, either way,
  * so a claim made before the clock moved back expires too, and the process it names runs (`kill`'s signal 0). A claim
- * with no pid in it yet is being written by the process that created it, and holds.
+ * with no pid in it yet is being written by the process that created it, and holds. The autostart that made a claim
+ * hands it to its launcher (`handOverClaim`) and then exits, so a claim that names a process found gone is read again:
+ * it lapses only while it still names that process, and one handed over meanwhile holds while its launcher runs.
  */
 function claimHolds(path: string, kill: ProcessSignal): boolean {
-  let made: number;
-  let text: string;
-  try {
-    made = statSync(path).mtimeMs;
-    text = readFileSync(path, "utf8").trim();
-  } catch (error) {
-    // A start ended it between this process's create and its look.
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-    throw error;
+  let claim = readClaim(path);
+  while (claim !== undefined && Math.abs(Date.now() - claim.made) < AUTOSTART_CLAIM_LEASE_MS) {
+    if (claim.named === "") return true;
+    if (!/^[1-9]\d*$/u.test(claim.named)) return false;
+    if (processAlive(Number(claim.named), kill)) return true;
+    claim = claimHandedOver(path, claim.named);
   }
-  if (Math.abs(Date.now() - made) >= AUTOSTART_CLAIM_LEASE_MS) return false;
-  return text === "" || (/^[1-9]\d*$/u.test(text) && processAlive(Number(text), kill));
+  return false;
 }
 
 /**
@@ -1455,12 +1473,19 @@ export function stillRunningMessage(pid: number, platform: NodeJS.Platform = pro
   return `Rerail daemon pid ${pid} is still running ${KILL_TIMEOUT_MS / 1_000}s after SIGKILL; check it with ${check}, then run rerail daemon stop again.`;
 }
 
-/** Sends `signal` to the daemon, saying who to ask when this user may not signal it (`EPERM`). */
+/**
+ * Sends `signal` to the daemon, saying who to ask when this user may not signal it (`EPERM`). A daemon that has ended
+ * (`ESRCH`) is what the stop wants: its own shutdown can finish between the stop's last look and the signal, as when it
+ * waits out a session's requests for about as long as the stop waits for it, and the stop then goes on as for a
+ * daemon gone by itself.
+ */
 function signalDaemon(pid: number, signal: string, machine: DaemonMachine): void {
   try {
     machine.kill(pid, signal);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "EPERM") throw error;
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") return;
+    if (code !== "EPERM") throw error;
     throw new Error(`Rerail daemon pid ${pid} runs as another user or elevated, and this user may not stop it; stop it from there.`, { cause: error });
   }
 }
