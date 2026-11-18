@@ -226,6 +226,21 @@ in place would climb the parents (a search back on format 15) every time. They a
 step 3 makes the other derived values go: rules computed on demand, written once into relations. Until then they
 are computed once a projection, on first read, into its block (row 1 below, now marked step 3).
 
+Step 3, as built for them (2026-11-17):
+- **A scan carries both in its walk.** `Viewed::each_row` keeps the open subtrees (each one's end on the tape, its id
+  and its children so far), so a row's parent id, its place and its depth come with it. `Projected::places` is the
+  same walk for the other passes (`Within`'s statistics, the device chunk's `ord`, a step 4 copy).
+- **A point read of `depth`** climbs the tape's parents and counts the numbered ones.
+- **A point read of `idx`** reads a derived column. The tape holds no sibling's place, and hops along the siblings
+  are as many as the siblings: a probe for each of a module's 17,000 functions was quadratic. So the first point
+  read of a projection writes the walk's places once into its block (`Projected::idx`, `copy: derived`). A scan
+  never makes it.
+- hogql, 4 interleaved pairs at load 112–134: findings 1,629 in each; 78.3 B instructions (median) against 77.0 B,
+  within the noise. The derived column is made for 719–783 projections a run (0.03 s, 0.2–0.3 MB); the two arrays
+  were made 2,731–2,841 times (0.075–0.081 s, 21–22 MB).
+- Check: in `node_ids_in_place_equal_the_numbered_ones`, each node's point reads equal the walk's, in every format,
+  whole and narrowed; `a_views_filter_scan_holds_the_rows_a_per_row_read_finds` holds the scans to the point reads.
+
 `DefIds`' `low`, `order` and `back` are gone. Every projection, narrowed ones too, keeps its granule table, and it
 answers ids, order keys and their inverses:
 - `order`, an order key (its run's rank, then its index in its granule): the table keeps each granule stretch's run
@@ -279,7 +294,7 @@ Each row is marked in the code with `copy (0353 step N)`.
 
 | # | Copy | Where | Size or cost (hogql) | Removed by |
 |---|---|---|---|---|
-| 1 | The projection's derived per-node arrays: `idx`, `depth` (`core`, `local`, `up`, `size` and `fielded` are gone: the rank index) | `syntax.rs`, `Projected` | 4 bytes a node each | Step 3 |
+| 1 | Gone (step 3): the projection's per-node arrays. `core`, `local`, `up`, `size` and `fielded` are the rank index; scans carry `idx` and `depth` in the walk, and a point read climbs for `depth`. Only a point read of `idx` makes a column, derived once (see "Node identity") | — | — | Done |
 | 2 | Gone (step 2): definition ids by node, `DefIds::low`, `order`, `back`. The granule table answers them. | — | — | Done |
 | 3 | The chunk block's node columns: `core`, `up`, `fielded`, `low`, `start`, `end`, `kind`, `field`, and the canonical code copy. `low` is made by one scan of the granule table. `core`, `up` and `fielded` are made here from the rank index and the walk, now that the host holds no arrays of them. | `device_chunk.rs`, `build` (`made`, `made_in_order`, `put`) | 22 bytes a node; 0.07 s a run | Step 4 |
 | 4 | Views expanded into device relations | `metal_join.rs`, `expand_view`; `device.rs`, `resident` | 660.8 MB, 111.5 ms a run | Step 4 |

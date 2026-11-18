@@ -180,19 +180,8 @@ fn made_in_order<T: Copy>(b: &Block, span: *const Span<T>, n: usize, values: imp
     }
 }
 
-/// Points `span` at `cells`, which are in `b` (a projection's, made in its batch's block); copied in when they are
-/// not (a projection made apart from the batch).
-fn point<T: Copy + rerail_blocks::Pod>(b: &Arc<Block>, span: *const Span<T>, cells: &Cells<T>) {
-    if Arc::ptr_eq(cells.block(), b) {
-        // SAFETY: `cells` are in `b`, as `span` is, and live as long as the batch, which holds both.
-        unsafe { Span::set(span, cells.as_ptr(), cells.len()) }
-    } else {
-        put(b, span, cells);
-    }
-}
-
 /// The batch's chunk, in the batch's block: every document's arrays the views read.
-// copy (0353 step 4): the node columns (`core`, `up`, `fielded`, `start`, `end`, `kind`, `field`), the canonical codes
+// copy (0353 step 4): the node columns (`core`, `up`, `ord`, `fielded`, `start`, `end`, `kind`, `field`), the canonical codes
 // and the projection's arrays copied or made here. They go: the kernels read the placed tapes (decision 0353).
 pub fn build(batch: &Batch) -> Chunk {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "a batch's chunk block".into());
@@ -244,7 +233,7 @@ pub fn build(batch: &Batch) -> Chunk {
                 }
                 None => put(&b, &raw const (*d).low, &[]),
             }
-            point(&b, &raw const (*d).ord, p.ordinals());
+            made_in_order(&b, &raw const (*d).ord, n, p.places().map(|(_, idx, _)| idx));
             made_in_order(&b, &raw const (*d).fielded, p.fielded() as usize, p.nodes().filter(|&(_, x)| p.ranks().is(Item::Field, x)).map(|(l, _)| l));
             made(&b, &raw const (*d).start, n, |l| f.start(ids(l)));
             made(&b, &raw const (*d).end, n, |l| f.end(ids(l)));

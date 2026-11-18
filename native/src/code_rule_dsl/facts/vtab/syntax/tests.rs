@@ -565,7 +565,7 @@ fn within_holds_exactly_the_contained_pairs() {
     let id = |r: usize| batch.id(r);
     // Borrow the demanded columns once, as a bulk consumer does. Keep lazy initialization
     // out of the exhaustive reference loop; that loop checks the relation, not setup cost.
-    let axes: Vec<&[u32]> = batch.docs.iter().map(|p| p.depths()).collect();
+    let axes: Vec<Vec<u32>> = batch.docs.iter().map(|p| p.places().map(|(_, _, d)| d).collect()).collect();
     // (document, local, size, depth, start, end) of node row r.
     // Read once: the reference loop below visits every pair.
     let rows: Vec<_> = (0..nodes)
@@ -891,7 +891,6 @@ fn projection_axes_and_token_spans_are_demanded_without_renumbering() {
     let f = facts("a.py", "f(a + 1)\ng(b)\n");
     let dialect = Dialect::new(tape_tag(GrammarDialect::Python).unwrap()).unwrap();
     let p = Projected::new(7, Arc::clone(&f), Some(&dialect), Shape::Core, false, None);
-    assert!(p.idx.get().is_none() && p.depth.get().is_none());
     assert!(p.extra.as_ref().unwrap().token_spans.get().is_none());
     // Independent eager reference: the named nodes' tokens in preorder (by start: they do not overlap), then source
     // and lines.
@@ -1597,6 +1596,15 @@ fn node_ids_in_place_equal_the_numbered_ones() {
                 // The walk's parents (one pass, no tape parent read) are `parent`'s.
                 for (l, _, q) in p.walk() {
                     assert_eq!(q, p.parent(l as usize), "{label} {format:?} {shape:?}: the parent of local {l}");
+                }
+                // A node's place among its parent's children and its depth, read off the tape (decision 0353 step 3),
+                // are the walk's.
+                let (mut next, mut depth) = (vec![0u32; p.len() as usize], vec![0u32; p.len() as usize]);
+                for (l, _, q) in p.walk().skip(1) {
+                    assert_eq!(p.idx(l as usize), next[q as usize], "{label} {format:?} {shape:?}: the place of local {l}");
+                    next[q as usize] += 1;
+                    depth[l as usize] = depth[q as usize] + 1;
+                    assert_eq!(p.depth(l as usize), depth[l as usize], "{label} {format:?} {shape:?}: the depth of local {l}");
                 }
                 let reference = p.reference(&dialect);
                 let low = &reference.low[..];
