@@ -209,10 +209,13 @@ describe("the home's untaken events", () => {
   it("are kept up to their bound, past which a hook's event is refused, by count and by bytes", async () => {
     const rerailHome = await home();
     for (let count = 0; count < UNTAKEN_MOST_EVENTS; count += 1) await leaveUntaken(rerailHome, 7, "e", 1_000 + count);
-    await expect(leaveUntaken(rerailHome, 7, "one more", 9_000)).rejects.toBeInstanceOf(UntakenFolderFullError);
+    await expect(leaveUntaken(rerailHome, 7, "one more", 9_000)).rejects.toThrow(new UntakenFolderFullError("256 events already wait for it, the most Rerail keeps"));
     const other = await home();
     await leaveUntaken(other, 7, "x".repeat(UNTAKEN_MOST_BYTES - 10), 1_000);
-    await expect(leaveUntaken(other, 7, "x".repeat(11), 2_000)).rejects.toBeInstanceOf(UntakenFolderFullError);
+    // The bound it met by bytes, named as such: before, the refusal said the one event waiting was the most Rerail keeps.
+    await expect(leaveUntaken(other, 7, "x".repeat(11), 2_000)).rejects.toThrow(new UntakenFolderFullError(
+      "the 1 event that already waits for it holds 16.0 MiB, and this one's 1 KiB would pass the 16 MiB Rerail keeps",
+    ));
     await leaveUntaken(other, 7, "x".repeat(10), 3_000);
   });
 

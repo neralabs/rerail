@@ -85,11 +85,21 @@ function waitingNames(home: string): UntakenName[] {
   return mark === undefined ? names : names.filter(name => earlier(name, mark) > 0);
 }
 
-/** A hook found the folder holding its bound of events (`UNTAKEN_MOST_EVENTS`, `UNTAKEN_MOST_BYTES`): its event is lost. */
-export class UntakenFolderFullError extends Error {
-  constructor(readonly events: number) {
-    super(`${events} events already wait for it, the most Rerail keeps`);
-  }
+/**
+ * A hook found the folder holding its bound of events (`UNTAKEN_MOST_EVENTS`, `UNTAKEN_MOST_BYTES`): its event is lost.
+ * The message names the bound it met.
+ */
+export class UntakenFolderFullError extends Error {}
+
+const MIB = 1024 * 1024;
+const size = (bytes: number): string => (bytes < MIB ? `${Math.ceil(bytes / 1024)} KiB` : `${(bytes / MIB).toFixed(1)} MiB`);
+
+/** Why the folder refuses an event of `bytes` while it holds `held` events of `heldBytes`; undefined while it takes one. */
+function folderRefusal(held: number, heldBytes: number, bytes: number): string | undefined {
+  if (held >= UNTAKEN_MOST_EVENTS) return `${held} events already wait for it, the most Rerail keeps`;
+  if (heldBytes + bytes <= UNTAKEN_MOST_BYTES) return undefined;
+  const waiting = held === 1 ? "the 1 event that already waits for it holds" : `the ${held} events that already wait for it hold`;
+  return `${waiting} ${size(heldBytes)}, and this one's ${size(bytes)} would pass the ${UNTAKEN_MOST_BYTES / MIB} MiB Rerail keeps`;
 }
 
 /**
@@ -101,7 +111,8 @@ export async function leaveUntaken(home: string, daemonPid: number, body: string
   const bytes = Buffer.byteLength(body);
   const held = untakenNames(home);
   const heldBytes = held.reduce((sum, name) => sum + name.bytes, 0);
-  if (held.length >= UNTAKEN_MOST_EVENTS || heldBytes + bytes > UNTAKEN_MOST_BYTES) throw new UntakenFolderFullError(held.length);
+  const refusal = folderRefusal(held.length, heldBytes, bytes);
+  if (refusal !== undefined) throw new UntakenFolderFullError(refusal);
   mkdirSync(untakenFolder(home), { recursive: true, mode: 0o700 });
   left += 1;
   const name = `${String(arrivedAt).padStart(13, "0")}-${daemonPid}-${process.pid}-${left}-${bytes}.json`;

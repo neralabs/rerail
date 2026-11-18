@@ -454,7 +454,8 @@ failed, the coding agent and its version, the Rerail version and the reason, suc
 (the daemon was down; the next hook starts it), `the Rerail daemon (pid …) is running but did not answer within 12 s`
 (it was busy, for example opening a large checkout, and the hook could not leave the event for it: the daemon is of an
 older version, or could not watch `untaken-events`; events are recorded again once it answers), `the Rerail daemon
-(pid …) is running but not reading, and 256 events already wait for it, the most Rerail keeps` (see below), `… and
+(pid …) is running but not reading, and 256 events already wait for it, the most Rerail keeps` or `… would pass the
+16 MiB Rerail keeps` (see below), `… and
 the event is larger than the 1 MiB one event may hold` (a tool call that large, which a daemon that reads refuses
 too), `… and the event could not be left for it` with the error that kept it out of `untaken-events`,
 `the Rerail daemon (pid …) refused the access capability in daemon.json` (`daemon.json` was edited or written by
