@@ -455,14 +455,22 @@ Each step ends with:
          one or two blocks as a scan's are. A probe whose block is not the group's needs a slot of its own; how
          many, and where, is decided when the kernels' part is built, against a probe-heavy stratum's misses.
        - The CPU's part (2026-11-18): a 16z tape's view (`F16Z_FORMAT`, `Tape16Z::view`) names its block index,
-         its blocks' side lengths and its compressed bytes where they lie as stored, and a slot's stride. A reader
-         (`view::Reader`) is the view and two slots after it. A format 16 read of a 16z tape (`by_format`'s third
-         case) calls `tape_z_block` (cold), which finds the node's block in a slot or decodes it there (LZ4's block
-         format in words: 8-byte copies, an offset under 8 widened as LZ4's reference decoder does, a length's
-         extension bytes one a step), writes the block's view, and the read reads the slot as format 16 with the
-         node's place in its block; `parent` walks back over blocks' starts by `tape_slot`. `DocTape::in_place`
-         gives the stored bytes (row 15's laid-out copy goes); the CPU executor gives each evaluation that reads a
-         16z tape a reader of its own, since an evaluation's tasks run in order on one worker.
+         its blocks' side lengths and its compressed bytes where they lie as stored, its id, and the cache it reads
+         through (by its address less the tape's, and its entry size). A format 16 read of a 16z tape
+         (`by_format`'s third case) calls `tape_z_block` (cold), which finds the node's block in the cache or
+         decodes it into the cache's head (LZ4's block format in words: 8-byte copies, an offset under 8 widened
+         as LZ4's reference decoder does, a length's extension bytes one a step), and the read reads the entry as
+         format 16 with the node's place in its block, every load masked to the entry; `parent` walks back over
+         blocks' starts by `tape_slot`, and a call from the block's read finds its block itself. `DocTape::in_place`
+         gives the stored bytes (row 15's laid-out copy goes). The CPU's reader (`view::Reader`) is the view and a
+         cache of its own after it (two live generations of two blocks), and the CPU executor gives each evaluation
+         that reads a 16z tape one, since an evaluation's tasks run in order on one worker.
+       - The cache is the kernels' (below), checked on the CPU first: eight threads share one cache of four
+         blocks a generation over a tape of more blocks, so it turns and copies all the time (0.9 M misses, 0.4 M
+         turns in a run), and a read is wrong only where the cache counted no room. Found by that check and fixed:
+         a reader checks its entry's key and completion before it reads and its completion after; a writer claims
+         its entry by a compare-and-swap of its completion (marked as being written in its epoch), and skips one
+         an older writer still writes, so no two write one entry.
          hogql cold with `RERAIL_TAPE=16z`, against the commit before: findings 1,629 throughout; the CPU's
          binding, 4 pairs at load 30–49, peak footprint 397–472 MB against 429–456 MB, 121.7–143.5 B instructions
          against 119.7–128.3 B (noise); the Metal binding, 1 pair at load 45, 102.7 B against 112.9 B, peak

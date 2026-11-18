@@ -1863,7 +1863,7 @@ kernel void view_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[
             let dialect = Dialect::new(core::facts_tag(&facts)).unwrap();
             let (tape, view) = facts.tape.as_ref().unwrap().in_place().unwrap();
             // A 16z tape's reads decode its blocks into the reader's slots (0353 step 4b).
-            let reader = rerail_clif::view::Reader::new(&view);
+            let reader = rerail_clif::view::Reader::new(&view, tape.as_ptr());
             let v = reader.view();
             for (shape, narrowed) in [(Shape::Core, false), (Shape::T, false), (Shape::Core, true)] {
                 let p = if narrowed { Projected::anchored(7, Arc::clone(&facts), Some(&dialect), shape, &anchors) } else { Projected::new(7, Arc::clone(&facts), Some(&dialect), shape, false, None) };

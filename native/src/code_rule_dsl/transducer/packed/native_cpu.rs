@@ -2722,7 +2722,7 @@ pub fn execute_batch_packed_with_work_limit(
         let (tape, view, codes) = &tapes[task.file as usize];
         context.tape = *tape;
         context.view = if view.format == rerail_clif::view::F16Z_FORMAT {
-            readers.entry((task.evaluation, task.file)).or_insert_with(|| rerail_clif::view::Reader::new(view)).view()
+            readers.entry((task.evaluation, task.file)).or_insert_with(|| rerail_clif::view::Reader::new(view, *tape)).view()
         } else {
             std::ptr::from_ref(view)
         };

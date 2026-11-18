@@ -946,8 +946,9 @@ impl Tape16Z {
 
     /// The view the reads written once take of this tape as stored (decision 0353 step 4b,
     /// `rerail_clif::view::F16Z_FORMAT`): its block index, side lengths and compressed bytes where they lie in
-    /// `as_bytes`, format 16's widths and `lang`'s choices, and the stride of a reader's slot (`view::Reader`), which
-    /// holds its largest block decoded. A reader of the view reads it through a `view::Reader` of its own.
+    /// `as_bytes`, format 16's widths and `lang`'s choices, its id, and the size of a cache entry that holds its
+    /// largest block decoded. A reader reads it through a cache, which the view is given (`view::Reader`, or the
+    /// device's).
     pub fn view(&self, lang: &Lang) -> Result<TapeView, String> {
         use rerail_clif::view::{F16Z_BLOCK, F16Z_FORMAT, z};
         const _: () = assert!(F16Z_BLOCK as usize == Z);
@@ -956,12 +957,13 @@ impl Tape16Z {
         }
         let blocks = self.n.div_ceil(Z);
         let largest = (0..blocks).map(|b| layout(Z.min(self.n - b * Z), self.widths, self.cw, self.sides[b])[REGIONS]).max().unwrap_or(0);
-        let stride = (z::SLOT_BYTES as usize + largest + z::SLACK).next_multiple_of(16);
+        let entry = (z::SLOT_BYTES as usize + largest + z::SLACK).next_power_of_two();
         let frame = Placement { n: self.n, cw: self.cw, at: [0; REGIONS + 1], parts: [0; 4], vw: self.vw }.frame(0)?;
         let mut view = bind(frame, lang)?;
         let at = |offset: usize| u32::try_from(offset).map_err(|_| "a tape past 4 GiB".to_owned());
         view.format = F16Z_FORMAT;
-        view.columns = [at(HEAD16Z)?, at(HEAD16Z + 4 * (blocks + 1))?, at(self.comp)?, at(stride)?, 0];
+        view.columns = [at(HEAD16Z)?, at(HEAD16Z + 4 * (blocks + 1))?, at(self.comp)?, at(entry)?, 0];
+        (view.side[2], view.side[3]) = (self.id as u32, (self.id >> 32) as u32);
         Ok(view)
     }
 
@@ -1335,7 +1337,7 @@ mod tests {
         // 16z, the same nodes in blocks (decision 0353 step 4b): each read decodes its block into the reader's slot.
         let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), pos + 2, 0, true) else { panic!("16z") };
         assert!(z.len() > 3 * Z, "the tape spans blocks");
-        let reader = rerail_clif::view::Reader::new(&z.view(&lang).unwrap());
+        let reader = rerail_clif::view::Reader::new(&z.view(&lang).unwrap(), z.as_bytes().as_ptr());
         // SAFETY: the reader's view, which this thread alone reads.
         same_reads(&reads, &z.reader(&lang).unwrap(), z.as_bytes(), unsafe { &*reader.view() });
         // Format 15.
@@ -1344,6 +1346,69 @@ mod tests {
         let f15 = crate::tape::F15::new(&image, columns, &table).unwrap();
         let v = crate::tape::f15_view(&image, 0).unwrap();
         same_reads(&reads, &f15, &image, &v);
+    }
+
+    /// Decision 0353 step 4b: a rolling cache shared by threads (`view::cache`, its stamps checked after each read)
+    /// reads a 16z tape as this crate does while it turns: eight threads read nodes at random through one cache of
+    /// three generations of four blocks, over a tape of more blocks than it holds. A read wrong only where the
+    /// cache counted a failure (no room: the dead entry read).
+    #[test]
+    fn a_shared_cache_reads_16z_as_the_crate_does() {
+        use rerail_clif::view::cache;
+        let reads = rerail_clif::jit::Reads::new();
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let plain = Plain(&nodes, &table);
+        let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), pos + 2, 0, true) else { panic!("16z") };
+        let t = z.reader(&lang).unwrap();
+        let n = t.len();
+        let want: Vec<[u32; 4]> = (0..n).map(|i| [t.code(i), t.start(i) as u32, t.end(i) as u32, t.parent(i).map_or(u32::MAX, |p| p as u32)]).collect();
+        let mut view = z.view(&lang).unwrap();
+        let spec = cache::Spec::new(3, 4, view.columns[3] as usize);
+        let mut buf = vec![0u128; spec.bytes().div_ceil(16)];
+        // SAFETY: the buffer's bytes, 16-aligned.
+        let bytes = unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr().cast::<u8>(), spec.bytes()) };
+        spec.init(bytes).unwrap();
+        let rel = (bytes.as_ptr() as i64).wrapping_sub(z.as_bytes().as_ptr() as i64);
+        (view.side[0], view.side[1], view.columns[4]) = (rel as u32, (rel >> 32) as u32, 1);
+        let cache_at = bytes.as_ptr() as usize;
+        let failed = || unsafe { (*((cache_at + cache::FAILED as usize) as *const std::sync::atomic::AtomicU32)).load(std::sync::atomic::Ordering::Relaxed) };
+        let f = ["tape_number", "tape_start", "tape_end", "tape_parent"].map(|name| reads.function(name) as usize);
+        let (tape, v) = (z.as_bytes().as_ptr() as usize, std::ptr::from_ref(&view) as usize);
+        let wrong: usize = std::thread::scope(|scope| {
+            let threads: Vec<_> = (0..std::env::var("CACHE_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(8u64))
+                .map(|seed| {
+                    let want = &want;
+                    scope.spawn(move || {
+                        let mut x = seed * 0x9E37_79B9 + 1;
+                        let mut wrong = 0;
+                        for _ in 0..40_000 {
+                            x ^= x << 13;
+                            x ^= x >> 7;
+                            x ^= x << 17;
+                            let i = (x % n as u64) as u32;
+                            for (k, &g) in f.iter().enumerate() {
+                                // SAFETY: a read's signature: the tape's base, its view, a node.
+                                let g: extern "C" fn(*const u8, *const TapeView, u32) -> u32 = unsafe { std::mem::transmute(g) };
+                                if g(tape as *const u8, v as *const TapeView, i) != want[i as usize][k] {
+                                    wrong += 1;
+                                }
+                            }
+                        }
+                        wrong
+                    })
+                })
+                .collect();
+            threads.into_iter().map(|t| t.join().unwrap()).sum()
+        });
+        let word = |at: i32| unsafe { *((cache_at + at as usize) as *const u32) };
+        let (misses, promoted, rotated) = (word(cache::MISSES), word(cache::PROMOTED), word(cache::ROTATED));
+        eprintln!("misses {misses}, promoted {promoted}, turned {rotated}, failed {}, wrong {wrong}", failed());
+        assert!(rotated > 100 && promoted > 0, "the cache turned: {rotated}, {promoted}");
+        assert!(wrong <= failed() as usize, "{wrong} reads wrong, {} failures", failed());
+        drop(buf);
     }
 
     /// Every shipped table loads, and its text reads back to the same choices.

@@ -90,45 +90,165 @@ pub const F16_BLOCK: u32 = 256;
 pub const F16_PART: u32 = 1024;
 pub const F16_SUB: u32 = F16_PART / F16_BLOCK;
 /// A 16z tape's format in its view (decision 0353 step 4b): format 16 in LZ4 blocks of `F16Z_BLOCK` nodes, read
-/// in place, a block decoded where a read falls into a slot of the reader's (`Reader`). Its view's `columns` are
+/// in place, a block decoded where a read falls into an entry of a rolling cache (`cache`). Its view's `columns` are
 /// the block index's offset (a u32 a block, one more at the end: each block's start in the compressed bytes), the
-/// blocks' side lengths' (four u32s a block), the compressed bytes' and the reader's slot stride; its widths, cut
-/// and per are format 16's.
+/// blocks' side lengths' (four u32s a block), the compressed bytes', the cache's entry size (a power of two) and
+/// whether threads share the cache (1: a read checks its entry after it); `side` is the cache's address less the
+/// tape's (an i64, low word first) and the tape's id (a u64, its blocks' keys); its widths, cut and per are format
+/// 16's.
 pub const F16Z_FORMAT: u32 = 1016;
 pub const F16Z_BLOCK: u32 = 1024;
 
-/// Where a 16z reader's view and slots lie, from the view's first byte (`Reader`): the slot a miss replaces (a
-/// u32 after the view), then two slots, each a key (its block plus one; 0 empty), the block's view (format 16's,
-/// its offsets from the slot's bytes) and the block's bytes: its regions, each side list's one part, and room for
-/// the decode's 8-byte copies past its end.
+/// A decoded 16z block in a cache entry's payload, from the entry's first byte: the block's view (format 16's, its
+/// offsets from the bytes) and its bytes (its regions, each side list's one part, and room for the decode's 8-byte
+/// copies past its end).
 pub mod z {
-    pub const NEXT: i32 = 116;
-    pub const SLOTS: i32 = 128;
     pub const SLOT_VIEW: i32 = 16;
     pub const SLOT_BYTES: i32 = 144;
     /// The room past a block's bytes: its side lists' parts (32 bytes) and the decode's copies past its end.
     pub const SLACK: usize = 64;
 }
 
-/// A reader's view of a tape (decision 0353 step 4b): the view, and for a 16z tape the two slots its reads decode
-/// blocks into, which the reads write. One reader a thread: a reader is not shared while it reads.
+/// A rolling cache (decision 0353 step 4b, the user's design): a key (a u64) to an entry of fixed size, in `gens`
+/// generations, each a hash index (u32 slots: an entry's number plus one) and an arena of entries. Of the
+/// generations, `gens - 1` are live at an epoch `E` (the head, `E`, and the frozen ones behind it, `E - 1` ...) and
+/// one, `E + 1`, is a spare, cleared ahead. A lookup looks in the live ones, head first; a miss computes its entry
+/// into the head; a full head makes the spare the head (one compare-and-swap of the epoch) and the thread that
+/// turned it clears the next spare, the oldest live one; a hit in the oldest is copied into the head. A miss waits
+/// for no thread: two that miss one key both compute it. Every loop is bounded; a lookup that finds no room
+/// counts a failure (`FAILED`) and reads the dead entry, so a caller that shares the cache refuses its work.
+pub mod cache {
+    /// The header's u32s, from the cache's first byte.
+    pub const EPOCH: i32 = 0;
+    pub const GENS: i32 = 4;
+    /// Entries a generation.
+    pub const ENTRIES: i32 = 8;
+    /// An entry's size, its log2.
+    pub const SHIFT: i32 = 12;
+    /// Index slots a generation, a power of two.
+    pub const SLOTS: i32 = 16;
+    pub const GEN_STRIDE: i32 = 20;
+    /// Where a generation's entries start, from its first byte.
+    pub const FIRST_ENTRY: i32 = 24;
+    /// The dead entry's offset from the cache.
+    pub const DEAD: i32 = 28;
+    /// Counts: lookups that found no room, misses, entries copied to the head, generations turned.
+    pub const FAILED: i32 = 32;
+    pub const MISSES: i32 = 36;
+    pub const PROMOTED: i32 = 40;
+    pub const ROTATED: i32 = 44;
+    pub const HEAD: usize = 64;
+    /// A generation's u32s: the epoch it holds (0 while it is cleared) and its entries taken; its index after.
+    pub const STAMP: i32 = 0;
+    pub const USED: i32 = 4;
+    pub const INDEX: i32 = 16;
+    /// An entry's: its key (a u64) and the epoch it was completed in (0 while it is written); its payload after.
+    pub const KEY: i32 = 0;
+    pub const READY: i32 = 8;
+    pub const PAYLOAD: i32 = 16;
+    /// An entry's completion while a writer of that epoch writes it (the epoch's bit 31 set).
+    pub const WRITING: u32 = 1 << 31;
+    /// A lookup's probes of a generation's index, and its tries.
+    pub const PROBES: u32 = 16;
+    pub const TRIES: u32 = 4;
+    /// The room past the dead entry: an entry's masked loads reach at most an entry and a word past it.
+    pub const SLACK: usize = 256;
+
+    /// A cache's shape.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct Spec {
+        /// Generations, 3 or more (one is the spare).
+        pub gens: u32,
+        pub entries: u32,
+        /// An entry's size, its log2.
+        pub shift: u32,
+        /// Index slots a generation, a power of two of at least twice the entries.
+        pub slots: u32,
+    }
+
+    impl Spec {
+        /// The smallest index for `entries`.
+        pub fn new(gens: u32, entries: u32, entry_bytes: usize) -> Spec {
+            let shift = entry_bytes.next_power_of_two().trailing_zeros();
+            Spec { gens: gens.max(3), entries: entries.max(1), shift, slots: (2 * entries.max(1)).next_power_of_two().max(8) }
+        }
+        pub fn entry_bytes(&self) -> usize {
+            1 << self.shift
+        }
+        pub fn first_entry(&self) -> usize {
+            (INDEX as usize + 4 * self.slots as usize).next_multiple_of(64)
+        }
+        pub fn gen_stride(&self) -> usize {
+            self.first_entry() + (self.entries as usize) * self.entry_bytes()
+        }
+        pub fn dead(&self) -> usize {
+            HEAD + self.gens as usize * self.gen_stride()
+        }
+        pub fn bytes(&self) -> usize {
+            self.dead() + self.entry_bytes() + SLACK
+        }
+
+        /// `buf` (`bytes()` long, 8-aligned) made an empty cache: its header, each generation stamped (the live
+        /// ones at the first epoch, the spare at the next), nothing taken.
+        pub fn init(&self, buf: &mut [u8]) -> Result<(), String> {
+            if buf.len() < self.bytes() || !self.slots.is_power_of_two() || self.gens < 3 {
+                return Err(format!("a cache of {} bytes for {self:?}", buf.len()));
+            }
+            let word = |v: usize| u32::try_from(v).map_err(|_| format!("a cache past 4 GiB: {self:?}"));
+            buf.fill(0);
+            let mut put = |at: usize, v: u32| buf[at..at + 4].copy_from_slice(&v.to_le_bytes());
+            let epoch = self.gens;
+            put(EPOCH as usize, epoch);
+            put(GENS as usize, self.gens);
+            put(ENTRIES as usize, self.entries);
+            put(SHIFT as usize, self.shift);
+            put(SLOTS as usize, self.slots);
+            put(GEN_STRIDE as usize, word(self.gen_stride())?);
+            put(FIRST_ENTRY as usize, word(self.first_entry())?);
+            put(DEAD as usize, word(self.dead())?);
+            for k in 0..self.gens {
+                // Live at `epoch - k` for k < gens - 1; the spare at `epoch + 1`.
+                let stamp = if k + 1 < self.gens { epoch - k } else { epoch + 1 };
+                put(HEAD + (stamp % self.gens) as usize * self.gen_stride() + STAMP as usize, stamp);
+            }
+            Ok(())
+        }
+    }
+}
+
+/// A reader's view of a tape (decision 0353 step 4b): the view, and for a 16z tape a cache of its own after it,
+/// which its reads write: one thread reads through a reader at a time.
 pub struct Reader {
     words: *mut u128,
     len: usize,
 }
 
+/// Where a reader's cache starts, from its view.
+const READER_CACHE: usize = 128;
+
 impl Reader {
-    /// `view`'s reader: the view alone for format 15 or 16; for 16z, its slots after it, empty.
-    pub fn new(view: &TapeView) -> Reader {
-        let bytes = if view.format == F16Z_FORMAT { z::SLOTS as usize + 2 * view.columns[3] as usize } else { z::SLOTS as usize };
+    /// `view`'s reader over `tape` (the bytes its offsets count from): the view alone for format 15 or 16; for 16z,
+    /// a cache of two live generations of two blocks after it, which the view names.
+    pub fn new(view: &TapeView, tape: *const u8) -> Reader {
+        let spec = (view.format == F16Z_FORMAT).then(|| cache::Spec::new(3, 2, view.columns[3] as usize));
+        let bytes = READER_CACHE + spec.map_or(0, |s| s.bytes());
         let len = bytes.div_ceil(16);
         let words = Box::into_raw(vec![0u128; len].into_boxed_slice()).cast::<u128>();
-        // SAFETY: the buffer is at least `SLOTS` bytes, 16-aligned; the view is plain words.
-        unsafe { words.cast::<TapeView>().write(*view) };
+        let mut view = *view;
+        if let Some(spec) = spec {
+            // SAFETY: the cache's bytes, after the view, in the buffer just made.
+            let buf = unsafe { std::slice::from_raw_parts_mut(words.cast::<u8>().add(READER_CACHE), spec.bytes()) };
+            spec.init(buf).expect("a reader's cache");
+            let rel = (buf.as_ptr() as i64).wrapping_sub(tape as i64);
+            (view.side[0], view.side[1]) = (rel as u32, (rel >> 32) as u32);
+            view.columns[4] = 0;
+        }
+        // SAFETY: the buffer is at least `READER_CACHE` bytes, 16-aligned; the view is plain words.
+        unsafe { words.cast::<TapeView>().write(view) };
         Reader { words, len }
     }
 
-    /// The view the reads take: its address, its slots after it.
+    /// The view the reads take: its address, its cache after it.
     pub fn view(&self) -> *const TapeView {
         self.words.cast()
     }
@@ -141,7 +261,7 @@ impl Drop for Reader {
     }
 }
 
-// SAFETY: a reader owns its buffer; it is read (and its slots written) by one thread at a time.
+// SAFETY: a reader owns its buffer; it is read (and its cache written) by one thread at a time.
 unsafe impl Send for Reader {}
 
 /// Format 15's checkpoint stride (`base`'s, a u32 every 16 nodes) and its tails-from-start flag.

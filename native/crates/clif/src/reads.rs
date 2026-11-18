@@ -179,7 +179,7 @@ pub fn build_formats(read: &Read, call_conv: CallConv, name: UserFuncName, calle
         Family::Relation | Family::Lines => (None, None, None),
         Family::View => (None, Some((params[1], params[2])), Some(params[3])),
     };
-    let mut b = B { f, tape: params[0], view, doc_tape, lines, args: params[pointers..].to_vec(), call_conv, callee, format, z, slot: false };
+    let mut b = B { f, tape: params[0], view, doc_tape, lines, args: params[pointers..].to_vec(), call_conv, callee, format, z, slot: None };
     let value = (read.body)(&mut b);
     b.f.ins().return_(&[value]);
     b.f.seal_all_blocks();
@@ -461,9 +461,18 @@ pub struct B<'a, 'c> {
     format: Option<u32>,
     /// Whether a 16z tape is read too (`build_formats`).
     z: bool,
-    /// Whether the tape being read is a 16z block decoded into the reader's slot, which the reads write: its loads
-    /// are not of memory no code writes.
-    slot: bool,
+    /// The 16z block being read (`in_block`): its cache entry is the tape, which the cache's writers write.
+    slot: Option<Slot>,
+}
+
+/// A 16z block read in its cache entry (`B::in_block`): the reader's tape and view, the block's first node, and the
+/// entry's mask (its size less one), which every load of it is masked by.
+#[derive(Clone, Copy)]
+struct Slot {
+    tape: Value,
+    view: Value,
+    base: Value,
+    mask: Value,
 }
 
 /// A load of the tape's bytes.
@@ -487,13 +496,14 @@ impl B<'_, '_> {
     pub(crate) fn c64(&mut self, value: i64) -> Value {
         self.f.ins().iconst(I64, value)
     }
-    /// A load of the tape's bytes: or of the slot a 16z block is decoded into.
+    /// A load of the tape's bytes: or of a 16z block's cache entry, which the cache's writers write.
     fn mem(&self) -> MemFlags {
-        if self.slot { MemFlags::new().with_notrap() } else { memory() }
+        if self.slot.is_some() { MemFlags::new().with_notrap() } else { memory() }
     }
-    /// A load of the view's fields: or of the view of a 16z block in its slot.
+    /// A load of the view's fields: or of a 16z block's view in its entry, a load of the tape's (the entry is
+    /// reached from the tape's base, not the view's).
     fn fields(&self) -> MemFlags {
-        if self.slot { MemFlags::new().with_notrap().with_aligned() } else { fields() }
+        if self.slot.is_some() { MemFlags::new().with_notrap() } else { fields() }
     }
     /// The view's u32 at byte `offset`.
     fn view(&mut self, offset: i32) -> Value {
@@ -509,10 +519,16 @@ impl B<'_, '_> {
         let flags = self.fields();
         self.f.ins().load(I32, flags, p, offset)
     }
-    /// The tape's address `base + offset` (both u32s).
+    /// The tape's address `base + offset` (both u32s): in a 16z block's entry, masked to the entry, so a read of
+    /// one being written again reads nothing outside the cache.
     fn address(&mut self, base: Value, offset: Value) -> Value {
         let base = self.f.ins().uextend(I64, base);
         let offset = self.f.ins().uextend(I64, offset);
+        if let Some(slot) = self.slot {
+            let at = self.f.ins().iadd(base, offset);
+            let at = self.f.ins().band(at, slot.mask);
+            return self.f.ins().iadd(self.tape, at);
+        }
         let p = self.f.ins().iadd(self.tape, base);
         self.f.ins().iadd(p, offset)
     }
@@ -569,7 +585,7 @@ impl B<'_, '_> {
                 let i = b.arg(0);
                 sixteen(b, i)
             },
-            |b| b.in_block(sixteen),
+            |b| b.in_block(0, sixteen),
             fifteen,
         )
     }
@@ -591,33 +607,91 @@ impl B<'_, '_> {
             }
         }
     }
-    /// A format 16 read's `body` of a tape of format 16 or, read too (`z`), 16z.
-    fn sixteen_or_z(&mut self, ty: ir::Type, body: impl Fn(&mut Self, Value) -> Value) -> Value {
+    /// A format 16 read's `body` of its argument `k`'s node, of a tape of format 16 or, read too (`z`), 16z.
+    fn sixteen_or_z(&mut self, ty: ir::Type, k: usize, body: impl Fn(&mut Self, Value) -> Value) -> Value {
         if self.format.is_some() || !self.z {
-            let i = self.arg(0);
+            let i = self.arg(k);
             return body(self, i);
         }
         let format = self.view(at::FORMAT);
         let z = self.f.ins().icmp_imm(IntCC::Equal, format, i64::from(F16Z_FORMAT));
         let body = &body;
-        self.either(ty, z, |b| b.in_block(body), |b| {
-            let i = b.arg(0);
+        self.either(ty, z, |b| b.in_block(k, body), |b| {
+            let i = b.arg(k);
             body(b, i)
         })
     }
-    /// A 16z tape's `body` of its first argument's node: its block in the reader's slot (`tape_z_block`), read as
-    /// format 16 with the node's place in it. The body's calls of other reads read the slot (format 16's).
-    fn in_block(&mut self, body: impl Fn(&mut Self, Value) -> Value) -> Value {
-        let i = self.arg(0);
+    /// A 16z tape's `body` of its argument `k`'s node: its block in the cache (`tape_z_block`), read as format 16
+    /// with the node's place in it. Where threads share the cache (the view's `columns[4]`), the entry's completion
+    /// is read again after the body, and the body read again if another thread wrote the entry meanwhile.
+    fn in_block(&mut self, k: usize, body: impl Fn(&mut Self, Value) -> Value) -> Value {
+        use crate::view::cache as c;
+        let i = self.arg(k);
         let block = self.f.ins().ushr_imm(i, i64::from(F16Z_BLOCK.trailing_zeros()));
+        let first = self.f.ins().ishl_imm(block, i64::from(F16Z_BLOCK.trailing_zeros()));
         let local = self.f.ins().band_imm(i, i64::from(F16Z_BLOCK - 1));
-        let slot = self.call("tape_z_block", &[block]);
-        let tape = self.f.ins().iadd_imm(slot, i64::from(z::SLOT_BYTES));
-        let view = self.f.ins().iadd_imm(slot, i64::from(z::SLOT_VIEW));
-        let held = (std::mem::replace(&mut self.tape, tape), self.view.replace(view), self.format.replace(16), std::mem::replace(&mut self.slot, true));
+        let size = self.column(3);
+        let size = self.f.ins().uextend(I64, size);
+        let mask = self.f.ins().iadd_imm(size, -1);
+        let shared = self.column(4);
+        let (head, check, read, again, done) = (self.f.create_block(), self.f.create_block(), self.f.create_block(), self.f.create_block(), self.f.create_block());
+        self.f.append_block_param(head, I32);
+        let zero = self.c32(0);
+        self.f.ins().jump(head, &[zero.into()]);
+        self.f.switch_to_block(head);
+        let tries = self.f.block_params(head)[0];
+        let entry = self.call("tape_z_block", &[block]);
+        let ready = self.entry_word(entry, c::READY);
+        let before = self.f.ins().atomic_load(I32, MemFlags::trusted(), ready);
+        self.f.ins().brif(shared, check, &[], read, &[]);
+        // Shared: the entry complete, of this block (another thread may have taken it since it was found).
+        self.f.switch_to_block(check);
+        self.f.ins().fence();
+        let lo = self.view(at::SIDE + 8);
+        let hi = self.view(at::SIDE + 12);
+        let id = wide(self, lo, hi);
+        let id = self.f.ins().ishl_imm(id, 22);
+        let block64 = self.f.ins().uextend(I64, block);
+        let key = self.f.ins().bor(id, block64);
+        let held = self.f.ins().load(I64, MemFlags::new().with_notrap(), entry, c::KEY);
+        let ours = self.f.ins().icmp(IntCC::Equal, held, key);
+        let writing = self.f.ins().band_imm(before, i64::from(c::WRITING));
+        let complete = self.f.ins().icmp_imm(IntCC::Equal, writing, 0);
+        let some = self.f.ins().icmp_imm(IntCC::NotEqual, before, 0);
+        let ok = self.f.ins().band(ours, complete);
+        let ok = self.f.ins().band(ok, some);
+        let spent = self.f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, tries, i64::from(c::TRIES));
+        let go = self.f.ins().bor(ok, spent);
+        self.f.ins().brif(go, read, &[], again, &[]);
+        self.f.switch_to_block(read);
+        let tape = self.f.ins().iadd_imm(entry, i64::from(z::SLOT_BYTES));
+        let view = self.f.ins().iadd_imm(entry, i64::from(z::SLOT_VIEW));
+        let slot = Slot { tape: self.tape, view: self.view.expect("a read of the tape's family"), base: first, mask };
+        let held = (std::mem::replace(&mut self.tape, tape), self.view.replace(view), self.format.replace(16), self.slot.replace(slot));
         let value = body(self, local);
         (self.tape, self.view, self.format, self.slot) = (held.0, held.1, held.2, held.3);
-        value
+        let ty = self.f.func.dfg.value_type(value);
+        self.f.append_block_param(done, ty);
+        // Read again, a bounded number of times, if a writer took the entry while the body read it.
+        let recheck = self.f.create_block();
+        self.f.ins().brif(shared, recheck, &[], done, &[value.into()]);
+        self.f.switch_to_block(recheck);
+        self.f.ins().fence();
+        let ready = self.entry_word(entry, c::READY);
+        let after = self.f.ins().atomic_load(I32, MemFlags::trusted(), ready);
+        let same = self.f.ins().icmp(IntCC::Equal, before, after);
+        let spent = self.f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, tries, i64::from(c::TRIES));
+        let ok = self.f.ins().bor(same, spent);
+        self.f.ins().brif(ok, done, &[value.into()], again, &[]);
+        self.f.switch_to_block(again);
+        let tries = self.f.ins().iadd_imm(tries, 1);
+        self.f.ins().jump(head, &[tries.into()]);
+        self.f.switch_to_block(done);
+        self.f.block_params(done)[0]
+    }
+    /// The address of an entry's (or the cache's) word at `offset`.
+    fn entry_word(&mut self, entry: Value, offset: i32) -> Value {
+        self.f.ins().iadd_imm(entry, i64::from(offset))
     }
     /// `then` where `cond`, else `otherwise`: a value of type `ty`.
     pub(crate) fn either(&mut self, ty: ir::Type, cond: Value, then: impl FnOnce(&mut Self) -> Value, otherwise: impl FnOnce(&mut Self) -> Value) -> Value {
@@ -635,6 +709,18 @@ impl B<'_, '_> {
     }
     /// The read `name` called with `args` after the tape and view.
     pub(crate) fn call(&mut self, name: &str, args: &[Value]) -> Value {
+        // A read of a 16z block calls the tape's read at the node's place in the tape, with the reader's pointers:
+        // the callee finds the block itself.
+        if let Some(slot) = self.slot.take() {
+            let node = usize::from(name == "tape_f16_side");
+            let mut args = args.to_vec();
+            args[node] = self.f.ins().iadd(args[node], slot.base);
+            let held = (std::mem::replace(&mut self.tape, slot.tape), self.view.replace(slot.view), self.format.take());
+            let value = self.call(name, &args);
+            (self.tape, self.view, self.format) = (held.0, held.1, held.2);
+            self.slot = Some(slot);
+            return value;
+        }
         let read = read(name).expect("a read");
         let signature = signature(read, self.call_conv);
         let callee = self.callee.func_ref(name, &signature, self.f.func);
@@ -713,7 +799,11 @@ impl B<'_, '_> {
 
 /// A node's value in side list `k` (0 codes' low parts, 1 slots, 2 gaps, 3 lengths), the node listed.
 fn f16_side(b: &mut B<'_, '_>) -> Value {
-    let (k, i) = (b.arg(0), b.arg(1));
+    let k = b.arg(0);
+    b.sixteen_or_z(I64, 1, |b, i| f16_side_of(b, k, i))
+}
+
+fn f16_side_of(b: &mut B<'_, '_>, k: Value, i: Value) -> Value {
     let side = b.view_at(at::SIDE, k);
     let parts = b.view_at(at::PARTS, k);
     let p = b.f.ins().ushr_imm(i, i64::from(F16_PART.trailing_zeros()));
@@ -1102,54 +1192,347 @@ fn start_next(b: &mut B<'_, '_>) -> Value {
 /// Format 16's slot of the node: an inner node's subtree size, shifted up by one; a leaf's step back to its previous
 /// sibling or (bit 1) its parent, shifted up by two, with bit 0 set.
 fn slot(b: &mut B<'_, '_>) -> Value {
-    b.sixteen_or_z(I64, |b, i| b.get(0, i))
+    b.sixteen_or_z(I64, 0, |b, i| b.get(0, i))
 }
 
-/// A 16z tape's block `block` (decision 0353 step 4b): the address of the reader's slot that holds it, decoded into
-/// it on a miss, the slot not read last replaced (a parent's walk back over a block's start keeps both). The slot's
-/// view is the block's as format 16's (its regions from the slot's bytes, each side list one part).
+/// A 16z tape's block `block` (decision 0353 step 4b): the address of the cache entry that holds it decoded, found
+/// in the cache the view names (`view::cache`) or decoded into its head; the dead entry where the cache had no room.
 fn z_block(b: &mut B<'_, '_>) -> Value {
     let block = b.arg(0);
-    let reader = b.view.expect("a read of the tape's family");
-    let rw = MemFlags::new().with_notrap().with_aligned();
-    let key = b.f.ins().iadd_imm(block, 1);
-    let stride = b.column(3);
-    let stride = b.f.ins().uextend(I64, stride);
-    let s0 = b.f.ins().iadd_imm(reader, i64::from(z::SLOTS));
-    let s1 = b.f.ins().iadd(s0, stride);
-    let (hit0, try1, hit1, miss, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
-    b.f.append_block_param(done, I64);
-    let k0 = b.f.ins().load(I32, rw, s0, 0);
-    let is0 = b.f.ins().icmp(IntCC::Equal, k0, key);
-    b.f.ins().brif(is0, hit0, &[], try1, &[]);
-    b.f.switch_to_block(hit0);
+    let lo = b.view(at::SIDE);
+    let hi = b.view(at::SIDE + 4);
+    let rel = wide(b, lo, hi);
+    let cache = b.f.ins().iadd(b.tape, rel);
+    let lo = b.view(at::SIDE + 8);
+    let hi = b.view(at::SIDE + 12);
+    let id = wide(b, lo, hi);
+    let id = b.f.ins().ishl_imm(id, 22);
+    let block64 = b.f.ins().uextend(I64, block);
+    let key = b.f.ins().bor(id, block64);
+    let size = b.column(3);
+    let size = b.f.ins().uextend(I64, size);
+    cache_get(b, cache, key, &|b, entry| z_decode(b, block, entry, size))
+}
+
+/// The u64 of two u32s, `lo` first.
+fn wide(b: &mut B<'_, '_>, lo: Value, hi: Value) -> Value {
+    let lo = b.f.ins().uextend(I64, lo);
+    let hi = b.f.ins().uextend(I64, hi);
+    let hi = b.f.ins().ishl_imm(hi, 32);
+    b.f.ins().bor(lo, hi)
+}
+
+/// A cache's u32 at `p + offset`, read or written by any thread.
+fn cache_load(b: &mut B<'_, '_>, p: Value, offset: i32) -> Value {
+    let p = b.f.ins().iadd_imm(p, i64::from(offset));
+    b.f.ins().atomic_load(I32, MemFlags::trusted(), p)
+}
+fn cache_store(b: &mut B<'_, '_>, p: Value, offset: i32, value: Value) {
+    let p = b.f.ins().iadd_imm(p, i64::from(offset));
+    b.f.ins().atomic_store(MemFlags::trusted(), value, p);
+}
+fn cache_add(b: &mut B<'_, '_>, p: Value, offset: i32, value: Value) -> Value {
+    let p = b.f.ins().iadd_imm(p, i64::from(offset));
+    b.f.ins().atomic_rmw(I32, MemFlags::trusted(), ir::AtomicRmwOp::Add, p, value)
+}
+fn cache_count(b: &mut B<'_, '_>, cache: Value, offset: i32) {
     let one = b.c32(1);
-    b.f.ins().store(rw, one, reader, z::NEXT);
-    b.f.ins().jump(done, &[s0.into()]);
-    b.f.switch_to_block(try1);
-    let k1 = b.f.ins().load(I32, rw, s1, 0);
-    let is1 = b.f.ins().icmp(IntCC::Equal, k1, key);
-    b.f.ins().brif(is1, hit1, &[], miss, &[]);
-    b.f.switch_to_block(hit1);
+    cache_add(b, cache, offset, one);
+}
+
+/// The entry of `key` in the rolling cache at `cache` (`view::cache`): looked up in its live generations, head
+/// first, a hit in the oldest copied into the head; on a miss, an entry of the head taken and `fill`ed (its payload:
+/// `fill` gives whether it fits), completed and indexed. A full head turns the spare into the head. After `TRIES`
+/// tries without room, a failure counted and the dead entry given.
+fn cache_get(b: &mut B<'_, '_>, cache: Value, key: Value, fill: &dyn Fn(&mut B<'_, '_>, Value) -> Value) -> Value {
+    use crate::view::cache as c;
+    let gens = cache_load(b, cache, c::GENS);
+    let shift = cache_load(b, cache, c::SHIFT);
+    let shift64 = b.f.ins().uextend(I64, shift);
+    let slots = cache_load(b, cache, c::SLOTS);
+    let stride = cache_load(b, cache, c::GEN_STRIDE);
+    let first = cache_load(b, cache, c::FIRST_ENTRY);
+    let entries = cache_load(b, cache, c::ENTRIES);
+    // The key's slot: its high bits of a multiplicative hash.
+    let h = b.f.ins().imul_imm(key, 0x9E37_79B9_7F4A_7C15_u64 as i64);
+    let h = b.f.ins().ushr_imm(h, 32);
+    let h = b.f.ins().ireduce(I32, h);
+    let slot_mask = b.f.ins().iadd_imm(slots, -1);
+    let done = b.f.create_block();
+    b.f.append_block_param(done, I64);
+    // The generation of epoch `e`: its address.
+    let gen_of = |b: &mut B<'_, '_>, e: Value| {
+        let g = b.f.ins().urem(e, gens);
+        let at = b.f.ins().imul(g, stride);
+        let at = b.f.ins().uextend(I64, at);
+        let at = b.f.ins().iadd_imm(at, c::HEAD as i64);
+        b.f.ins().iadd(cache, at)
+    };
+    let entry_of = |b: &mut B<'_, '_>, generation: Value, n: Value| {
+        let n = b.f.ins().uextend(I64, n);
+        let at = b.f.ins().ishl(n, shift64);
+        let first = b.f.ins().uextend(I64, first);
+        let at = b.f.ins().iadd(at, first);
+        b.f.ins().iadd(generation, at)
+    };
+    // Tries: each reads the epoch and looks in the live generations.
+    let (try_, look, gen_ok, probe, probe_on, next_gen, found, miss) =
+        (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(try_, I32);
     let zero = b.c32(0);
-    b.f.ins().store(rw, zero, reader, z::NEXT);
-    b.f.ins().jump(done, &[s1.into()]);
+    b.f.ins().jump(try_, &[zero.into()]);
+    b.f.switch_to_block(try_);
+    let tries = b.f.block_params(try_)[0];
+    let epoch = cache_load(b, cache, c::EPOCH);
+    let live = b.f.ins().iadd_imm(gens, -1);
+    b.f.append_block_param(look, I32);
+    b.f.ins().jump(look, &[zero.into()]);
+    // Generation `k` back from the head.
+    b.f.switch_to_block(look);
+    let k = b.f.block_params(look)[0];
+    let more = b.f.ins().icmp(IntCC::UnsignedLessThan, k, live);
+    let check = b.f.create_block();
+    b.f.ins().brif(more, check, &[], miss, &[]);
+    b.f.switch_to_block(check);
+    let want = b.f.ins().isub(epoch, k);
+    let generation = gen_of(b, want);
+    let stamp = cache_load(b, generation, c::STAMP);
+    let held = b.f.ins().icmp(IntCC::Equal, stamp, want);
+    b.f.ins().brif(held, gen_ok, &[], next_gen, &[]);
+    b.f.switch_to_block(gen_ok);
+    b.f.append_block_param(probe, I32);
+    b.f.ins().jump(probe, &[zero.into()]);
+    b.f.switch_to_block(probe);
+    let p = b.f.block_params(probe)[0];
+    let in_range = b.f.ins().icmp_imm(IntCC::UnsignedLessThan, p, i64::from(c::PROBES));
+    let read_slot = b.f.create_block();
+    b.f.ins().brif(in_range, read_slot, &[], next_gen, &[]);
+    b.f.switch_to_block(read_slot);
+    let j = b.f.ins().iadd(h, p);
+    let j = b.f.ins().band(j, slot_mask);
+    let j4 = b.f.ins().imul_imm(j, 4);
+    let j4 = b.f.ins().uextend(I64, j4);
+    let at = b.f.ins().iadd(generation, j4);
+    let x = cache_load(b, at, c::INDEX);
+    let empty = b.f.ins().icmp_imm(IntCC::Equal, x, 0);
+    let candidate = b.f.create_block();
+    b.f.ins().brif(empty, next_gen, &[], candidate, &[]);
+    b.f.switch_to_block(candidate);
+    let n = b.f.ins().iadd_imm(x, -1);
+    let e = entry_of(b, generation, n);
+    let k64 = b.f.ins().iadd_imm(e, i64::from(c::KEY));
+    let has = b.f.ins().load(I64, MemFlags::new().with_notrap(), k64, 0);
+    let same = b.f.ins().icmp(IntCC::Equal, has, key);
+    let ready = cache_load(b, e, c::READY);
+    let complete = b.f.ins().icmp(IntCC::Equal, ready, stamp);
+    let hit = b.f.ins().band(same, complete);
+    b.f.append_block_param(found, I64);
+    b.f.append_block_param(found, I32);
+    b.f.append_block_param(found, I32);
+    b.f.ins().brif(hit, found, &[e.into(), k.into(), stamp.into()], probe_on, &[]);
+    b.f.switch_to_block(probe_on);
+    let p = b.f.ins().iadd_imm(p, 1);
+    b.f.ins().jump(probe, &[p.into()]);
+    b.f.switch_to_block(next_gen);
+    let k = b.f.ins().iadd_imm(k, 1);
+    b.f.ins().jump(look, &[k.into()]);
+    // A hit: from the oldest live generation (of two or more), copied into the head.
+    b.f.switch_to_block(found);
+    let (e, k, stamp) = (b.f.block_params(found)[0], b.f.block_params(found)[1], b.f.block_params(found)[2]);
+    let oldest = b.f.ins().iadd_imm(live, -1);
+    let is_oldest = b.f.ins().icmp(IntCC::Equal, k, oldest);
+    let some_frozen = b.f.ins().icmp_imm(IntCC::UnsignedGreaterThan, live, 1);
+    let promote = b.f.ins().band(is_oldest, some_frozen);
+    let copy = b.f.create_block();
+    b.f.ins().brif(promote, copy, &[], done, &[e.into()]);
+    b.f.switch_to_block(copy);
+    let copied = cache_take(b, cache, epoch, key, &gen_of, &entry_of, entries, h, slot_mask, &|b, to| {
+        // The payload, a word at a time, and the source's completion read again after it.
+        let one = b.c64(1);
+        let size = b.f.ins().ishl(one, shift64);
+        let words = b.f.ins().iadd_imm(size, -i64::from(c::PAYLOAD));
+        let (head, step, after) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
+        b.f.append_block_param(head, I64);
+        let at = b.f.ins().iconst(I64, i64::from(c::PAYLOAD));
+        let end = b.f.ins().iadd_imm(words, i64::from(c::PAYLOAD));
+        b.f.ins().jump(head, &[at.into()]);
+        b.f.switch_to_block(head);
+        let at = b.f.block_params(head)[0];
+        let more = b.f.ins().icmp(IntCC::UnsignedLessThan, at, end);
+        b.f.ins().brif(more, step, &[], after, &[]);
+        b.f.switch_to_block(step);
+        let from = b.f.ins().iadd(e, at);
+        let word = b.f.ins().load(I64, MemFlags::new().with_notrap(), from, 0);
+        let into = b.f.ins().iadd(to, at);
+        b.f.ins().store(MemFlags::new().with_notrap(), word, into, 0);
+        let at = b.f.ins().iadd_imm(at, 8);
+        b.f.ins().jump(head, &[at.into()]);
+        b.f.switch_to_block(after);
+        b.f.ins().fence();
+        let still = cache_load(b, e, c::READY);
+        b.f.ins().icmp(IntCC::Equal, still, stamp)
+    });
+    let took = b.f.ins().icmp_imm(IntCC::NotEqual, copied, 0);
+    let counted = b.f.create_block();
+    b.f.ins().brif(took, counted, &[], done, &[e.into()]);
+    b.f.switch_to_block(counted);
+    cache_count(b, cache, c::PROMOTED);
+    b.f.ins().jump(done, &[copied.into()]);
+    // A miss: an entry of the head taken and filled, else (the head full) the spare turned and tried again.
     b.f.switch_to_block(miss);
-    let next = b.f.ins().load(I32, rw, reader, z::NEXT);
-    let slot = b.f.ins().select(next, s1, s0);
-    let flip = b.f.ins().bxor_imm(next, 1);
-    b.f.ins().store(rw, flip, reader, z::NEXT);
-    z_decode(b, block, slot);
-    b.f.ins().store(rw, key, slot, 0);
-    b.f.ins().jump(done, &[slot.into()]);
+    let taken = cache_take(b, cache, epoch, key, &gen_of, &entry_of, entries, h, slot_mask, fill);
+    let got = b.f.ins().icmp_imm(IntCC::NotEqual, taken, 0);
+    let (hit_miss, retry, fail) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.ins().brif(got, hit_miss, &[], retry, &[]);
+    b.f.switch_to_block(hit_miss);
+    cache_count(b, cache, c::MISSES);
+    b.f.ins().jump(done, &[taken.into()]);
+    b.f.switch_to_block(retry);
+    let tries = b.f.ins().iadd_imm(tries, 1);
+    let left = b.f.ins().icmp_imm(IntCC::UnsignedLessThan, tries, i64::from(c::TRIES));
+    b.f.ins().brif(left, try_, &[tries.into()], fail, &[]);
+    b.f.switch_to_block(fail);
+    cache_count(b, cache, c::FAILED);
+    let dead = cache_load(b, cache, c::DEAD);
+    let dead = b.f.ins().uextend(I64, dead);
+    let dead = b.f.ins().iadd(cache, dead);
+    b.f.ins().jump(done, &[dead.into()]);
     b.f.switch_to_block(done);
     b.f.block_params(done)[0]
 }
 
-/// Block `block` of the reader's 16z tape decoded into `slot`: its bytes (LZ4's block format, `z_lz4`), each side
-/// list's one part after them, and its view.
-fn z_decode(b: &mut B<'_, '_>, block: Value, slot: Value) {
-    let rw = MemFlags::new().with_notrap().with_aligned();
+/// An entry of the head at `epoch` taken for `key`, `fill`ed (it gives whether the payload fits), completed and
+/// indexed: its address, or 0 where there was none (the head full: the spare turned into the head if it was cleared,
+/// by the thread whose compare-and-swap of the epoch won, which clears the next spare; or the payload too large).
+#[allow(clippy::too_many_arguments)]
+fn cache_take(
+    b: &mut B<'_, '_>,
+    cache: Value,
+    epoch: Value,
+    key: Value,
+    gen_of: &dyn Fn(&mut B<'_, '_>, Value) -> Value,
+    entry_of: &dyn Fn(&mut B<'_, '_>, Value, Value) -> Value,
+    entries: Value,
+    h: Value,
+    slot_mask: Value,
+    fill: &dyn Fn(&mut B<'_, '_>, Value) -> Value,
+) -> Value {
+    use crate::view::cache as c;
+    let rw = MemFlags::new().with_notrap();
+    let done = b.f.create_block();
+    b.f.append_block_param(done, I64);
+    let none = b.c64(0);
+    let zero = b.c32(0);
+    let head = gen_of(b, epoch);
+    let stamp = cache_load(b, head, c::STAMP);
+    let current = b.f.ins().icmp(IntCC::Equal, stamp, epoch);
+    let (take, full) = (b.f.create_block(), b.f.create_block());
+    b.f.ins().brif(current, take, &[], done, &[none.into()]);
+    b.f.switch_to_block(take);
+    let one = b.c32(1);
+    let n = cache_add(b, head, c::USED, one);
+    let room = b.f.ins().icmp(IntCC::UnsignedLessThan, n, entries);
+    let (claim, write) = (b.f.create_block(), b.f.create_block());
+    b.f.ins().brif(room, claim, &[], full, &[]);
+    // The entry claimed: its completion marked as being written in this epoch, unless a writer of an older epoch
+    // (its generation turned under it) still writes it, which takes the next entry. So no two write one entry.
+    b.f.switch_to_block(claim);
+    let e = entry_of(b, head, n);
+    let was = cache_load(b, e, c::READY);
+    let busy = b.f.ins().band_imm(was, i64::from(c::WRITING));
+    let writing = b.f.ins().bor_imm(epoch, i64::from(c::WRITING));
+    let at = b.f.ins().iadd_imm(e, i64::from(c::READY));
+    let seen = b.f.ins().atomic_cas(MemFlags::trusted(), at, was, writing);
+    let claimed = b.f.ins().icmp(IntCC::Equal, seen, was);
+    let free = b.f.ins().icmp_imm(IntCC::Equal, busy, 0);
+    let ours = b.f.ins().band(claimed, free);
+    b.f.ins().brif(ours, write, &[], take, &[]);
+    // Its key and payload (a fence after the claim), then (a fence after them) its completion and its index.
+    b.f.switch_to_block(write);
+    b.f.ins().fence();
+    b.f.ins().store(rw, key, e, c::KEY);
+    let fits = fill(b, e);
+    let (complete, unfit) = (b.f.create_block(), b.f.create_block());
+    b.f.ins().brif(fits, complete, &[], unfit, &[]);
+    // Too large for an entry: the entry given back.
+    b.f.switch_to_block(unfit);
+    cache_store(b, e, c::READY, zero);
+    b.f.ins().jump(done, &[none.into()]);
+    b.f.switch_to_block(complete);
+    b.f.ins().fence();
+    cache_store(b, e, c::READY, epoch);
+    let (probe, place, next, placed) = (b.f.create_block(), b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(probe, I32);
+    b.f.ins().jump(probe, &[zero.into()]);
+    b.f.switch_to_block(probe);
+    let p = b.f.block_params(probe)[0];
+    let in_range = b.f.ins().icmp_imm(IntCC::UnsignedLessThan, p, i64::from(c::PROBES));
+    b.f.ins().brif(in_range, place, &[], placed, &[]);
+    b.f.switch_to_block(place);
+    let j = b.f.ins().iadd(h, p);
+    let j = b.f.ins().band(j, slot_mask);
+    let j4 = b.f.ins().imul_imm(j, 4);
+    let j4 = b.f.ins().uextend(I64, j4);
+    let at = b.f.ins().iadd(head, j4);
+    let at = b.f.ins().iadd_imm(at, i64::from(c::INDEX));
+    let number = b.f.ins().iadd_imm(n, 1);
+    let was = b.f.ins().atomic_cas(MemFlags::trusted(), at, zero, number);
+    let won = b.f.ins().icmp_imm(IntCC::Equal, was, 0);
+    b.f.ins().brif(won, placed, &[], next, &[]);
+    b.f.switch_to_block(next);
+    let p = b.f.ins().iadd_imm(p, 1);
+    b.f.ins().jump(probe, &[p.into()]);
+    b.f.switch_to_block(placed);
+    b.f.ins().jump(done, &[e.into()]);
+    // The head full: the spare (cleared ahead, stamped `epoch + 1`) turned into the head.
+    b.f.switch_to_block(full);
+    let next_epoch = b.f.ins().iadd_imm(epoch, 1);
+    let spare = gen_of(b, next_epoch);
+    let ready = cache_load(b, spare, c::STAMP);
+    let cleared = b.f.ins().icmp(IntCC::Equal, ready, next_epoch);
+    let (turn, won) = (b.f.create_block(), b.f.create_block());
+    b.f.ins().brif(cleared, turn, &[], done, &[none.into()]);
+    b.f.switch_to_block(turn);
+    let at = b.f.ins().iadd_imm(cache, i64::from(c::EPOCH));
+    let was = b.f.ins().atomic_cas(MemFlags::trusted(), at, epoch, next_epoch);
+    let turned = b.f.ins().icmp(IntCC::Equal, was, epoch);
+    b.f.ins().brif(turned, won, &[], done, &[none.into()]);
+    // The next spare: the oldest live generation of `epoch`, unstamped, its index and count cleared, stamped.
+    b.f.switch_to_block(won);
+    cache_count(b, cache, c::ROTATED);
+    let spare_epoch = b.f.ins().iadd_imm(epoch, 2);
+    let generation = gen_of(b, spare_epoch);
+    cache_store(b, generation, c::STAMP, zero);
+    b.f.ins().fence();
+    let slots = b.f.ins().iadd_imm(slot_mask, 1);
+    let (clear, step, cleared_all) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(clear, I32);
+    b.f.ins().jump(clear, &[zero.into()]);
+    b.f.switch_to_block(clear);
+    let j = b.f.block_params(clear)[0];
+    let more = b.f.ins().icmp(IntCC::UnsignedLessThan, j, slots);
+    b.f.ins().brif(more, step, &[], cleared_all, &[]);
+    b.f.switch_to_block(step);
+    let j4 = b.f.ins().imul_imm(j, 4);
+    let j4 = b.f.ins().uextend(I64, j4);
+    let at = b.f.ins().iadd(generation, j4);
+    cache_store(b, at, c::INDEX, zero);
+    let j = b.f.ins().iadd_imm(j, 1);
+    b.f.ins().jump(clear, &[j.into()]);
+    b.f.switch_to_block(cleared_all);
+    cache_store(b, generation, c::USED, zero);
+    b.f.ins().fence();
+    cache_store(b, generation, c::STAMP, spare_epoch);
+    b.f.ins().jump(done, &[none.into()]);
+    b.f.switch_to_block(done);
+    b.f.block_params(done)[0]
+}
+
+/// Block `block` of the reader's 16z tape decoded into the cache entry `slot` (`size` bytes): its bytes (LZ4's block
+/// format, `z_lz4`), each side list's one part after them, and its view. Whether it fits the entry (1), else 0 and
+/// nothing written.
+fn z_decode(b: &mut B<'_, '_>, block: Value, slot: Value, size: Value) -> Value {
+    let rw = MemFlags::new().with_notrap();
     let nodes = b.view(at::NODES);
     let first = b.f.ins().ishl_imm(block, i64::from(F16Z_BLOCK.trailing_zeros()));
     let left = b.f.ins().isub(nodes, first);
@@ -1177,6 +1560,14 @@ fn z_decode(b: &mut B<'_, '_>, block: Value, slot: Value) {
         at.push(b.f.ins().iadd_imm(end, 8));
     }
     let end = at[9];
+    let need = b.f.ins().uextend(I64, end);
+    let need = b.f.ins().iadd_imm(need, i64::from(z::SLOT_BYTES) + z::SLACK as i64);
+    let fits = b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, need, size);
+    let (decode, fitted) = (b.f.create_block(), b.f.create_block());
+    b.f.append_block_param(fitted, I32);
+    let no = b.c32(0);
+    b.f.ins().brif(fits, decode, &[], fitted, &[no.into()]);
+    b.f.switch_to_block(decode);
     // The compressed block: from its start in the block index to the next's.
     let index = b.column(0);
     let four = b.f.ins().imul_imm(block, 4);
@@ -1212,6 +1603,10 @@ fn z_decode(b: &mut B<'_, '_>, block: Value, slot: Value) {
         let part = b.f.ins().iadd_imm(end, 8 * k as i64);
         b.f.ins().store(rw, part, view, at::PARTS + 4 * k as i32);
     }
+    let yes = b.c32(1);
+    b.f.ins().jump(fitted, &[yes.into()]);
+    b.f.switch_to_block(fitted);
+    b.f.block_params(fitted)[0]
 }
 
 /// LZ4's block format decoded from `src..src_end` to `dst..dst_end` (decision 0353 step 4b), in words: a

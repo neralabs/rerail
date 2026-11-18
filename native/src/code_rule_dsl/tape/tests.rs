@@ -5133,7 +5133,14 @@ fn a_placed_tape_reads_as_one_held_in_its_own_bytes() {
             });
         });
         let ((ta, va), (tb, vb)) = (own.in_place().unwrap(), placed.in_place().unwrap());
-        assert_eq!((ta, va), (tb, vb), "{format:?}: the reads' bytes and view");
+        // A 16z view names its tape by an id of its own (its blocks' keys in a cache): the rest is the same.
+        let unnamed = |mut v: rerail_clif::view::TapeView| {
+            if v.format == rerail_clif::view::F16Z_FORMAT {
+                (v.side[2], v.side[3]) = (0, 0);
+            }
+            v
+        };
+        assert_eq!((ta, unnamed(va)), (tb, unnamed(vb)), "{format:?}: the reads' bytes and view");
     }
 }
 
@@ -5276,7 +5283,7 @@ fn the_clif_reads_read_every_format_as_the_document_does() {
             });
             assert_eq!(doc.doc_tape().image().format(), format, "held as {format:?}");
             let (tape, view) = doc.doc_tape().in_place().unwrap();
-            let reader = rerail_clif::view::Reader::new(&view);
+            let reader = rerail_clif::view::Reader::new(&view, tape.as_ptr());
             // SAFETY: the reader's view, which this thread alone reads.
             let view = unsafe { &*reader.view() };
             let codes = resident::doc_codes(&doc).unwrap();
