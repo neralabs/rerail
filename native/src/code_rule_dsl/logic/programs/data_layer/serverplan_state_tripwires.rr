@@ -7,7 +7,7 @@
 // Part files: serverplan_state_tripwires.state_signatures_1.rdl, serverplan_state_tripwires.state_projection_recovery_2.rdl;
 // state-flow-1 and state-flow-project-1 are in their own part files. Options at their defaults (oracleAnalyzer false,
 // entryPoint "all", sourceProvided true, returnKindsHex as given); here only the matchers read them, verbatim.
-// Source: gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-state-tripwires.json.
+// Source: packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/rules/data-layer-serverplan-state-tripwires.json.
 //
 // The 28 clauses have one shape: one input `events` and the same final query (dedupe on (__path, line, scope, terminal
 // [, detail]), first by (__start, __end)). Their stage relations carry the clause id as a column in place of a per-clause

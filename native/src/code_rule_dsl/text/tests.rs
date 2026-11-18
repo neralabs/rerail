@@ -214,7 +214,13 @@ fn backreferences_run_once_per_string() {
 /// census by form): `--ignored --nocapture` prints the distribution.
 #[test]
 fn serverplan_quality_s_regexes_lower() {
-    let path = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../gate/data-layer/final-shape/data-layer-serverplan-quality.json");
+    let relative = "packs/data-layer/upstream/lint/authored/final-shape/data-layer-serverplan-quality.json";
+    let path = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("..").join(relative);
+    assert!(
+        path.exists(),
+        "{relative} is missing: pack test data is not in git: run `npm run fixtures:pull` (each tool-pack's archive, \
+         which its test-data.lock pins, from S3) (CONTRIBUTING.md, \"Pack test data\")"
+    );
     let document: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     let mut patterns = std::collections::BTreeSet::new();
     fn walk(value: &serde_json::Value, out: &mut std::collections::BTreeSet<String>) {

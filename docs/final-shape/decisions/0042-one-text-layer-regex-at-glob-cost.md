@@ -120,7 +120,7 @@ How a node's verdict is read from one file-wide scan:
 
 ## Evidence: serverplan_quality's regexes
 
-252 distinct, 2,139 uses (`gate/data-layer/final-shape/data-layer-serverplan-quality.json`, a
+252 distinct, 2,139 uses (`packs/data-layer/upstream/lint/authored/final-shape/data-layer-serverplan-quality.json`, a
 census by form):
 
 | What it tests | Distinct | Uses | Canonical matcher |

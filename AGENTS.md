@@ -41,7 +41,7 @@ Keep to that one feature set in this worktree's target. The farm's wrapper tells
 compiles a workspace crate with other features than a build of the last 2 hours did, names the
 features and the earlier command, and repeats it at the checkout's next builds for 3 hours. Run a
 build with other features (`metal-tests`, `headless`, `code-rule-profile`, `--no-default-features`)
-on a farm host with `scripts/dev/test-remote`. `scripts/check/check-dev-features.py` (pre-commit)
+on a farm host with `scripts/dev/test-remote`. `scripts/check/check_dev_features.py` (pre-commit)
 keeps the manifests' features in line: a crate's `test-hooks` and `default` turn on those of the
 crates below it.
 
@@ -165,7 +165,7 @@ Read [docs/merging.md](docs/merging.md) before resolving any merge. In short:
   changed in meaning. A shared definition stays one definition.
 - Keep each side's added tests and checks, ported to the new code if it was rewritten.
 - Renumber colliding decision records yourself, past the highest number in any worktree.
-- Before committing, run `scripts/check/merge-audit.py`. Restore each finding, or name it in the
+- Before committing, run `scripts/check/merge_audit.py`. Restore each finding, or name it in the
   merge commit as superseded, with the commit or decision that supersedes it.
 - The merge commit says which invariant each contested resolution keeps. "Kept theirs" is not a
   reason.

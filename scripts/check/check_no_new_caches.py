@@ -13,7 +13,7 @@ A repeated computation is fixed by flow (computed once where first needed and pa
 fact), never by a memo map behind the callers. `facts_only`'s tests check the whole tree; this checks a commit in
 under a second, before it is made.
 
-Usage: check-no-new-caches.py [--all] [--command '<the git commit command>']
+Usage: check_no_new_caches.py [--all] [--command '<the git commit command>']
 """
 import re
 import subprocess

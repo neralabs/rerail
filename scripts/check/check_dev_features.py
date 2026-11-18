@@ -4,7 +4,7 @@ dependencies, so that a development build of the CLI (`cargo build --bin rerail-
 test-hooks`) and the tests build every dependency crate alike: one build per edit, not two
 (docs/final-shape/notes/t37-edit-loop-time.md, "One feature set").
 
-    scripts/check/check-dev-features.py [native/Cargo.toml]
+    scripts/check/check_dev_features.py [native/Cargo.toml]
 
 For each dev-dependency that is also a dependency, each feature it names and the dependency does not
 must be in `test-hooks` as `dep/feature`, and default features the dependency turns off must stay

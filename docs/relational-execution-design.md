@@ -89,7 +89,7 @@ Workload identity, native binary, allocator, measured phases, profiling modes, a
 
 ## Validation and measurements
 
-The [measurement evidence](../fixtures/host/data-layer-port/profiling/shared-sql-evidence.json) contains both matched comparisons.
+The [measurement evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/shared-sql-evidence.json) contains both matched comparisons.
 Both comparisons use five files, 1,026,452 source bytes, and the same native binary.
 
 | Measurement | Independent SQL | Shared SQL |

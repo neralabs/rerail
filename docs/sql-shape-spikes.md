@@ -31,7 +31,7 @@ The permanent path passes the upstream corpus, production gates, and 177 edit tr
 It also passes 400 native tests in each build and the five tests in the producer gate.
 The ordinary build has no profiling feature. Its bounded build check disables LTO.
 Three fresh runs record median CPU of 1,967 ms cold and 707 ms for an edit.
-The [promotion evidence](../fixtures/host/data-layer-port/profiling/sql-shape-decisions.json) records those runs and the historical control.
+The [promotion evidence](../packs/data-layer/upstream/benchmarks/authored/profiling/sql-shape-decisions.json) records those runs and the historical control.
 
 ## CPU results
 
@@ -59,7 +59,7 @@ It retains the original root selection and lets SQLite choose the join order.
 A fourth baseline run records 2,996 ms cold CPU and 1,185 ms edit CPU.
 This control agrees with the original baseline.
 
-The [evidence file](../fixtures/host/data-layer-port/profiling/sql-shape-spikes.json) contains individual measurements, hashes, build settings, counters, and parity results.
+The [evidence file](../packs/data-layer/upstream/benchmarks/authored/profiling/sql-shape-spikes.json) contains individual measurements, hashes, build settings, counters, and parity results.
 The addon uses engine optimization level 1, dependency optimization level 3, thin LTO, and 256 codegen units.
 All measurements use the same system allocator shim and four native workers.
 These results describe this workload and build. They do not establish gains for every rule or repository.

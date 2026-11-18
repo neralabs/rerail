@@ -10,7 +10,7 @@ The warm check only watches a run: it never changes how the run computes, or wha
   timestamps and the cost statistics, approved by the user. Changing either needs the user's approval; the two copies make a change
   to one alone fail here.
 
-Usage: check-warm-mode.py [--all]   (the flag is accepted for the commit hook, which passes it; the tree is read)
+Usage: check_warm_mode.py [--all]   (the flag is accepted for the commit hook, which passes it; the tree is read)
 """
 import re
 import subprocess

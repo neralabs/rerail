@@ -2,7 +2,7 @@
 // rule's main file holds it), partitionBy "repository". Options at their defaults: entryPoint "all", oracleAnalyzer
 // false, sourceProvided true, returnKindsHex its default (decoded into `return_kind_entry` facts). At entryPoint "all"
 // every input's matcher carries `filePath: \b\B` (no document) and the query ends in `WHERE 0`. Source:
-// gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-state-tripwires.json.
+// packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/rules/data-layer-serverplan-state-tripwires.json.
 //
 // One relation per SQL stage, under the stage's name; helper relations are named after their stage. A row keyed by
 // (__path, id) is a node; a nullable or boolean column is a side relation that holds where it is not NULL / true.

@@ -1,7 +1,7 @@
 // data-layer-serverplan-steps in Rerail logic: clause `step-contracts-3` (18 stages, partitionBy file), a part file
 // of serverplan_steps.rdl. Options at their defaults: entryPoint "all" (the matchers' `$option` file filter passes
 // every file; the query is the `all` case, every check's branch), strictModulesOnly true (`relaxed` matches no file).
-// Source: gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-steps.json.
+// Source: packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/rules/data-layer-serverplan-steps.json.
 //
 // One relation per SQL stage, under the stage's name; a nullable or boolean column is a side relation
 // `<stage>_<column>` that holds where the column is not NULL (true). A SQL row's id (kind:start:end) is a node; the

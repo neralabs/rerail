@@ -1,6 +1,6 @@
 // data-layer-serverplan-steps in Rerail logic: clause `step-contracts-6` (STEP-028), a part of serverplan_steps.rdl;
 // options at their defaults (entryPoint "all", strictModulesOnly true: `raw_nodes` keeps strict modules, `relaxed`
-// matches nothing). Source: gate/data-layer/packs/data-layer/candidates/rules/data-layer-serverplan-steps.json.
+// matches nothing). Source: packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/rules/data-layer-serverplan-steps.json.
 //
 // One relation per SQL stage, under the stage's name. The clause is per file (partitionBy file): a SQL row keyed by
 // (__path, id) is a node, `id = kind:start:end` being that node, and text joins stay in one document (`docof`).

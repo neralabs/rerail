@@ -1,4 +1,5 @@
-# Regenerates the goldens from T's rdl.py: python3 generate.py <dir with rdl.py and rdl/> <program.rdl> demand|adorn|gate <out>
+# Regenerates the magic-set goldens (native/src/code_rule_dsl/logic/magic/golden/) from T's rdl.py:
+#   python3 scripts/generate/logic/magic_goldens.py <dir with rdl.py and rdl/> <program.rdl> demand|adorn|gate <out>
 # (gate: run with RDL_GATE=1 RDL_NATIVE=program).
 import sys, json, os
 front, prog_name, mode, out = sys.argv[1:5]

@@ -33,7 +33,7 @@ import { SENSITIVE_FILE_NAMES, SENSITIVE_FOLDER_NAMES } from "../../../src/engin
 import * as native from "../../../src/engine/native/native.js";
 import { holdRemovals } from "../../support/platform/held-removal.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
-import { queryContentStore } from "../../support/content-store-query.js";
+import { queryContentStore } from "../../support/engine/content-store-query.js";
 
 
 vi.mock("node:fs/promises", { spy: true });

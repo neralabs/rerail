@@ -1,0 +1,2656 @@
+{
+  "format": "rerail.pack-provenance/v1",
+  "pack": "data-layer",
+  "tool": "lint",
+  "sources": {
+    "rerail": {
+      "license": "Apache-2.0"
+    }
+  },
+  "files": {
+    "authored/conformance/data-layer/batch-eight-kernels.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/conformance/data-layer/batch-nine-kernels.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/conformance/data-layer/batch-nine.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/conformance/data-layer/batch-ten.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/conformance/data-layer/cached-discovery.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/conformance/data-layer/compile-integrated.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/conformance/data-layer/execution.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/conformance/data-layer/fact-api.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/conformance/data-layer/helper-assertions.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/conformance/data-layer/incremental.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/conformance/data-layer/native-worker.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/conformance/data-layer/policies.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/conformance/data-layer/post-c-control.mjs": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/conformance/data-layer/replay.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/conformance/data-layer/signed-allowlist.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/conformance/data-layer/suite.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/conformance/data-layer/transfer.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/final-shape/data-layer-serverplan-quality.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/README.md": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-01-evidence.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-01-recording.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-02-evidence.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-02-probes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-02-recording.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-03-evidence.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-03-probes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-03-recording.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-04-evidence.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-04-probes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-04-recording.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-05-evidence.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-05-graph-probe-inputs.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-05-graph-probes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-05-probe-inputs.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-05-probes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-05-recording.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-05-relational-probe-inputs.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-05-relational-probes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-05-remaining-graph-probe-inputs.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-05-remaining-graph-probes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-06-evidence.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-06-probe-inputs.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-06-probes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-06-recording.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-07-engine-regressions.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-07-engine.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-07-evidence.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-07-local-evidence.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-07-probe-inputs.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-07-probes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-07-recording.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-08-case-coverage.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-08-complete-api.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-08-complete-facts.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-08-edge-inputs.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-08-edge-probes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-08-engine.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-08-evidence.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-08-exact-probe-inputs.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-08-exact-probes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-08-fact-api-inputs.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-08-fact-api.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-08-graph-api.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-08-graph-inputs.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-08-native-assertions.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-08-native-parity.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-08-probe-inputs.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-08-probes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-08-recording.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-09-audit-20261105.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-09-bootstrap-inventory.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-09-complete-api.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-09-configured-defaults.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-09-kernels.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-09-native-assertions.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-09-public-audit-20261105.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-09-public-scope-oracle.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-09-shape-audit.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-09-third-audit-20261105.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-10-assertion-ledger.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-10-base64-decoding.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-10-complete-api.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-10-configured-defaults.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-10-configured-defaults.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-10-dod-audit-20261106.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-10-dod-contracts.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-10-file-contract-regressions.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-10-global-queries.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-10-helper-assertions.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-10-helper-contracts.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-10-identity-inventory.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-10-lifecycle.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-10-native-assertions.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-10-original-test-inventory.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-10-reaudit.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-10-repair-regressions.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-10-shape-seeds.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batch-10-transferable-assertions.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/batches.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/escape-hatch-allowlist-signature.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/restart-20261103.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-aliases-gate-red.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-aliases-parentheses-red.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-aliases-reporter-cases.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-aliases-reporter-red.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-aliases-syntax-red.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-connection-caches-dynamic-pattern-red.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-connection-caches-helper-source-gate-red.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-connection-caches-native-direct-contracts.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-connection-caches-native-supplemental-contracts.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-connection-caches-reporter-cases.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-coupling-followup-native-direct-contracts.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-coupling-native-direct-contracts.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-coupling-native-supplemental-contracts.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-coupling-reporter-cases.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-coupling-scope-red.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-coupling-typechecking-red.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-direct-source-assertions.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-dynamic-regex-native-tdd.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-eleven-direct-contracts.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-facade-purity-native-direct-contracts.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-facade-purity-native-supplemental-contracts.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-facade-purity-original-red.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-facade-purity-reporter-cases.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-facade-purity-stats-red.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-final-shape-followup-native-contracts.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-final-shape-merge-tdd.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-forwardref-reporter-cases.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-forwardref-scope-timeout-red.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-fresh-aliases-cases.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-fresh-classvar-cases.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-fresh-connection-caches-cases.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-fresh-coupling-cases.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-fresh-facade-purity-cases.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-fresh-forwardref-cases.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-fresh-hnsw-cases.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-fresh-removed-cases.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-fresh-signatures-cases.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-fresh-type-safety-cases.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-hnsw-constant-position-red.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-hnsw-decoding-red.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-hnsw-fstring-multiplicity-red.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-hnsw-native-constant-ladder.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-hnsw-native-direct-contracts.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-hnsw-native-supplemental-contracts.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-hnsw-normalization-red.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-hnsw-reporter-cases.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-line-vocabulary-profile.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-long-source-native-repair.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-long-source-reporter-cases.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-long-source-reporter-red.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-long-source-text-red-and-audit.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-migration-recorded.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-native-syntax-and-capture-ladder.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-native-traversal-contracts.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-nullary-native-tdd.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-original-test-inventory.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-removed-ast-red.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-removed-native-direct-contracts.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-removed-native-supplemental-contracts.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-removed-reporter-cases.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-removed-reporter-red.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-signatures-first-positive-red.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-signatures-native-direct-contracts.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-signatures-native-supplemental-contracts.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-signatures-reporter-cases.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-supplementary-native-contracts.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-thirteen-direct-contracts.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-three-hnsw-regression.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-three-native-syntax-api-contracts.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-three-native-syntax-direct-contracts.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-three-native-syntax-reporting-contracts.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-type-safety-direct-contracts.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-type-safety-reporter-cases.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-type-safety-reporting-contracts.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/rr-type-safety-reporting-red.json.gz": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/testsuite-positive-coverage-20261103.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/fixtures/host/data-layer-port/testsuite-positive-coverage-20261104.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/LICENSE": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/NOTICE": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/README.md": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/UPSTREAM.md": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/README.md": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-admin-async-purity.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-async-executor.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-async-patterns.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-async-sync-delegation.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-authentication-plan-purity.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-backend-coupling.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-backend-type-strings.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-bootstrap-cache-health.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-bootstrap-eager-resolve.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-bootstrap-engine-invariants.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-bootstrap-lazy-sql.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-bounded-composed-graph-paths.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-cached-pure-lazy-allowlist.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-classvar-check.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-conditional-architecture.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-conn-or-txn-union.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-connection-caches.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-connection-mode-split.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-connection-service-architecture.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-connection-structural-boundaries.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-data-layer-compat-aliases.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-data-layer-facade-purity.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-declared-fact-interrogation.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-dynamic-module-loading.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-eager-resolve.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-embedding-vector-orchestration.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-error-handling.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-execution-authority-bypass.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-executor-publication-repairs.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-forwardref.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-generated-index-sources.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-grammar-allowlist-burndown.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-grammar-callable-constructors.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-grammar-fragment-usage.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-grammar-mutation-invalidation.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-grammar-render-methods.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-grammar-str-params.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-graph-lazy-sql-plan.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-graphql-plan-ownership.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-hasattr-async.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-history-serverplan-projection.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-hnsw-architecture.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-imperative-private-functions.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-impl-direct-execution.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-internal-dead-code.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-layer-violations.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-lazy-adapter-ownership.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-lazy-architecture.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-lazy-result-usage.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-lazy-sql-surface.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-legacy-callback-quarantine.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-legacy-execution-surfaces.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-matching-architecture.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-missing-async-pairs.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-module-level-caches.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-no-api-root-imports.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-no-blanket-grammar-bypass.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-no-source-inspection.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-permission-error.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-plan-composition-architecture.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-plan-helpers-allowlist.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-plan-optimizer-v2.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-plan-scope-ownership.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-plan-scope-side-effects.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-post-op-no-internal-dispatch.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-post-op-side-effects.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-public-api-triples.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-pure-lazy-runtime-purity.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-raw-execute-regression.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-readthrough-authority-architecture.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-regex-sql-parsing.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-render-fstrings.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-render-raw-strings.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-revision-ancestry-invariants.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-rust-sql-grammar-boundary.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-schema-architecture.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-schema-bootstrap-contracts.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-schema-introspection-data-paths.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-serverplan-bypass.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-serverplan-dispatch-architecture.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-serverplan-name-inference.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-serverplan-quality.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-serverplan-state-tripwires.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-serverplan-steps.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-serverplan-target-architecture.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-sql-grammar-escape-hatches.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-swallowed-exceptions.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-sync-async-signatures.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-transaction-callback-wrappers.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-transaction-closures.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-transaction-patterns.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-type-safety-patterns.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-unknown-contract-defaults.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-unresolved-forward-refs.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/authored/data-layer-versioned-merged-identity.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/coverage.txt": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-admin-async-purity.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-async-executor.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-async-patterns.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-async-sync-boundary.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-async-sync-delegation.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-authentication-plan-purity.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-backend-coupling.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-backend-type-strings.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-bootstrap-cache-health.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-bootstrap-eager-resolve.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-bootstrap-engine-invariants.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-bootstrap-lazy-sql.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-bounded-composed-graph-paths.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-cached-pure-lazy-allowlist.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-classvar-check.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-conditional-architecture.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-conn-or-txn-union.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-connection-caches.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-connection-mode-split.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-connection-service-architecture.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-connection-structural-boundaries.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-data-layer-compat-aliases.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-data-layer-facade-purity.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-declared-fact-interrogation.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-dynamic-module-loading.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-eager-resolve.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-embedding-vector-orchestration.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-error-handling.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-execution-authority-bypass.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-executor-publication-repairs.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-forwardref.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-generated-index-sources.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-grammar-allowlist-burndown.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-grammar-callable-constructors.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-grammar-fragment-usage.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-grammar-mutation-invalidation.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-grammar-render-methods.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-grammar-str-params.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-graph-lazy-sql-plan.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-graphql-plan-ownership.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-hasattr-async.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-history-serverplan-projection.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-hnsw-architecture.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-imperative-private-functions.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-impl-direct-execution.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-internal-dead-code.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-layer-violations.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-lazy-adapter-ownership.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-lazy-architecture.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-lazy-result-usage.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-lazy-sql-surface.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-legacy-callback-quarantine.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-legacy-execution-surfaces.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-matching-architecture.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-missing-async-pairs.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-module-level-caches.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-no-api-root-imports.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-no-blanket-grammar-bypass.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-no-source-inspection.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-permission-error.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-plan-composition-architecture.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-plan-helpers-allowlist.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-plan-optimizer-v2.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-plan-scope-ownership.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-plan-scope-side-effects.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-post-op-no-internal-dispatch.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-post-op-side-effects.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-public-api-triples.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-publication-registry-writes.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-pure-lazy-runtime-purity.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-raw-execute-regression.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-readthrough-authority-architecture.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-regex-sql-parsing.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-removed-compat-surfaces.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-render-fstrings.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-render-raw-strings.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-revision-ancestry-invariants.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-rust-sql-grammar-boundary.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-schema-architecture.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-schema-bootstrap-contracts.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-schema-introspection-data-paths.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-serverplan-bypass.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-serverplan-dispatch-architecture.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-serverplan-grammar-surface.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-serverplan-name-inference.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-serverplan-quality.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-serverplan-state-tripwires.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-serverplan-steps.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-serverplan-target-architecture.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-sql-grammar-escape-hatches.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-swallowed-exceptions.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-sync-async-signatures.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-transaction-callback-wrappers.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-transaction-closures.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-transaction-patterns.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-type-safety-patterns.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-unknown-contract-defaults.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-unresolved-forward-refs.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-versioned-lifecycle-legacy-surfaces.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/datalog/data-layer-versioned-merged-identity.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/facts/cached-policy-comparison.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/facts/lazy-analyzed.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/facts/memoized-policy-comparison.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/admin-async-purity.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/async-executor.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/authentication-plan-purity.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/backend-coupling.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/bootstrap-cache-health.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/bootstrap-eager-resolve.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/bootstrap-engine-invariants.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/bootstrap-engine-invariants.tables.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/bootstrap-lazy-sql.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/bounded-composed-graph-paths.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/cached-pure-lazy-allowlist.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/cached-pure-lazy-allowlist.symbols.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/classvar-check.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/conditional-architecture.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/connection-caches.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/connection-mode-split.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/connection-service-architecture.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/connection-structural-boundaries.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/data-layer-compat-aliases.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/data-layer-facade-purity.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/declared-fact-interrogation.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/dynamic-module-loading.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/eager-resolve.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/eager-resolve.tables.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/embedding-vector-orchestration.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/executor-publication-repairs.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/file-length.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/forwardref.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/generated-index-sources.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/grammar-mutation-invalidation.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/graph-lazy-sql-plan.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/graphql-plan-ownership.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/hasattr-async.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/history-serverplan-projection.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/hnsw-architecture.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/layer-violations.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/lazy-adapter-ownership.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/lazy-architecture.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/lazy-architecture.tables.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/lazy-sql-surface.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/legacy-callback-quarantine.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/matching-architecture.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/migration.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/missing-async-pairs.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/no-blanket-grammar-bypass.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/no-source-inspection.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/noqa-sec-ratchet.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/permission-error.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/plan-composition-architecture.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/plan-helpers-allowlist.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/plan-helpers-allowlist.tables.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/plan-optimizer-v2.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/plan-scope-side-effects.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/post-op-no-internal-dispatch.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/post-op-side-effects.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/public-api-triples.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/publication-registry-writes.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/pure-lazy-runtime-purity.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/pure-lazy-runtime-purity.tables.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/readthrough-authority-architecture.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/removed-compat-surfaces.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/revision-ancestry-invariants.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/rust-sql-grammar-boundary.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/schema-architecture.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/schema-bootstrap-contracts.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/schema-introspection-data-paths.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/schema-introspection-data-paths.tables.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/serverplan-name-inference.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/swallowed-exceptions.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/sync-async-signatures.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/test-budget.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/type-safety-patterns.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/unknown-contract-defaults.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/versioned-lifecycle-legacy-surfaces.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/versioned-merged-identity.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rr/versioned-table-names.rr": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-admin-async-purity.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-async-executor.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-async-patterns.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-async-sync-boundary.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-async-sync-delegation.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-backend-coupling.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-backend-type-strings.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-classvar-check.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-conn-or-txn-union.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-connection-caches.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-data-layer-compat-aliases.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-data-layer-facade-purity.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-dynamic-module-loading.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-error-handling.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-execution-authority-bypass.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-forwardref.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-grammar-allowlist-burndown.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-grammar-callable-constructors.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-grammar-fragment-usage.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-grammar-render-methods.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-grammar-str-params.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-hasattr-async.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-imperative-private-functions.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-impl-direct-execution.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-internal-dead-code.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-layer-violations.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-lazy-result-usage.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-legacy-execution-surfaces.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-missing-async-pairs.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-module-level-caches.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-no-api-root-imports.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-no-blanket-grammar-bypass.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-no-source-inspection.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-permission-error.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-plan-scope-ownership.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-plan-scope-side-effects.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-public-api-triples.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-raw-execute-regression.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-regex-sql-parsing.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-removed-compat-surfaces.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-render-fstrings.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-render-raw-strings.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-rust-sql-grammar-boundary.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-serverplan-bypass.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-serverplan-dispatch-architecture.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-serverplan-grammar-surface.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-serverplan-name-inference.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-serverplan-quality.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-serverplan-state-tripwires.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-serverplan-steps.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-serverplan-target-architecture.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-sql-grammar-escape-hatches.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-swallowed-exceptions.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-sync-async-signatures.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-transaction-callback-wrappers.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-transaction-closures.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-transaction-patterns.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-type-safety-patterns.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-unresolved-forward-refs.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules-ast/data-layer-versioned-lifecycle-legacy-surfaces.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-admin-async-purity.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-async-executor.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-async-patterns.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-async-sync-boundary.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-async-sync-delegation.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-backend-coupling.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-backend-type-strings.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-classvar-check.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-conn-or-txn-union.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-connection-caches.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-data-layer-compat-aliases.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-data-layer-facade-purity.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-declared-fact-interrogation.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-dynamic-module-loading.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-error-handling.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-execution-authority-bypass.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-executor-publication-repairs.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-forwardref.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-grammar-allowlist-burndown.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-grammar-callable-constructors.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-grammar-fragment-usage.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-grammar-mutation-invalidation.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-grammar-render-methods.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-grammar-str-params.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-hasattr-async.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-history-serverplan-projection.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-imperative-private-functions.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-impl-direct-execution.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-internal-dead-code.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-layer-violations.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-lazy-result-usage.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-legacy-execution-surfaces.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-missing-async-pairs.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-module-level-caches.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-no-api-root-imports.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-no-blanket-grammar-bypass.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-no-source-inspection.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-permission-error.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-plan-scope-ownership.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-plan-scope-side-effects.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-post-op-no-internal-dispatch.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-post-op-side-effects.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-public-api-triples.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-publication-registry-writes.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-raw-execute-regression.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-regex-sql-parsing.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-removed-compat-surfaces.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-render-fstrings.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-render-raw-strings.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-revision-ancestry-invariants.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-rust-sql-grammar-boundary.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-serverplan-bypass.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-serverplan-dispatch-architecture.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-serverplan-grammar-surface.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-serverplan-name-inference.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-serverplan-quality.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-serverplan-state-tripwires.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-serverplan-steps.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-serverplan-target-architecture.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-sql-grammar-escape-hatches.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-swallowed-exceptions.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-sync-async-signatures.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-transaction-callback-wrappers.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-transaction-closures.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-transaction-patterns.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-type-safety-patterns.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-unknown-contract-defaults.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-unresolved-forward-refs.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-versioned-lifecycle-legacy-surfaces.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/candidates/rules/data-layer-versioned-merged-identity.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/pack.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/package.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/rules/data-layer-authentication-plan-purity.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/rules/data-layer-bootstrap-cache-health.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/rules/data-layer-bootstrap-eager-resolve.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/rules/data-layer-bootstrap-engine-invariants.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/rules/data-layer-bootstrap-lazy-sql.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/rules/data-layer-bounded-composed-graph-paths.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/rules/data-layer-cached-pure-lazy-allowlist.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/rules/data-layer-conditional-architecture.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/rules/data-layer-connection-mode-split.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/rules/data-layer-connection-service-architecture.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/rules/data-layer-connection-structural-boundaries.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/rules/data-layer-eager-resolve.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/rules/data-layer-embedding-vector-orchestration.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/rules/data-layer-generated-index-sources.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/rules/data-layer-graph-lazy-sql-plan.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/rules/data-layer-graphql-plan-ownership.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/rules/data-layer-hnsw-architecture.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/rules/data-layer-lazy-adapter-ownership.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/rules/data-layer-lazy-architecture.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/rules/data-layer-lazy-sql-surface.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/rules/data-layer-legacy-callback-quarantine.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/rules/data-layer-matching-architecture.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/rules/data-layer-plan-composition-architecture.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/rules/data-layer-plan-helpers-allowlist.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/rules/data-layer-plan-optimizer-v2.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/rules/data-layer-pure-lazy-runtime-purity.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/rules/data-layer-readthrough-authority-architecture.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/rules/data-layer-schema-architecture.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/rules/data-layer-schema-bootstrap-contracts.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/rules/data-layer-schema-introspection-data-paths.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/runtime/approvals.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/runtime/observations.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/packs/data-layer/runtime/signing-public-key.json": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/scripts/dsl/data_layer_suite_record.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/scripts/profiling/process.py": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/batch-eight-fact-api.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/batch-eight-production.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/batch-eight.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/batch-five.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/batch-nine-production-regressions.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/batch-nine-public-contract.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/batch-nine-shape-audit.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/batch-nine.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/batch-seven.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/batch-six.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/batch-ten-configured-repository.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/batch-ten-defaults.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/batch-ten-families.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/batch-ten-file-contracts.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/batch-ten-helpers.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/batch-ten-repair.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/batch-ten-transfer.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/batch-ten.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/cached-discovery.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/diagnostic-metadata.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/dod/approvals.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/dod/commands.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/dod/global-queries.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/dod/identity-inventory.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/dod/lifecycle.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/dod/matching.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/dod/optimizer.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/integrated-compatibility.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/migration/rr-format.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/native-coverage.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/ports.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/production-runtime.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/regressions/batch-ten-reaudit.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/regressions/batch-ten-registry.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/regressions/bootstrap-inventory.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    },
+    "authored/test/conformance/data-layer/signed-allowlist.test.ts": {
+      "source": "rerail",
+      "how": "authored"
+    }
+  }
+}

@@ -895,7 +895,9 @@ fn definition_slots_stay_below_the_span_bit() {
 #[ignore]
 fn span_ids_census() {
     use granules::ExtraSpan;
-    let pack = Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/data-layer/packs/data-layer/candidates/datalog");
+    // The data-layer pack's converted programs: pack test data (`npm run fixtures:pull`), not in git.
+    let pack = Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/datalog");
+    assert!(pack.exists(), "{} is missing: pack test data is not in git: run `npm run fixtures:pull`", pack.display());
     let literal = regex::Regex::new(r#"(?:match_all|match_group|rx_span)\("((?:[^"\\]|\\.)*)""#).unwrap();
     let mut patterns: BTreeSet<String> = BTreeSet::new();
     for e in std::fs::read_dir(&pack).unwrap().flatten() {
