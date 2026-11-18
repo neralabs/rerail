@@ -7,7 +7,7 @@ import { openRerailDatabase, openSqliteDatabase, type RerailDatabase } from "../
 import { loadNativeBinding } from "./native.js";
 import { contentStoreOverride, contentStorePath } from "./rerail-build.js";
 import { assertContentStoreOwner } from "./main-instance.js";
-import { storedPath } from "../catalog/checkout-control.js";
+import { storedPath, withinCheckout } from "../catalog/checkout-control.js";
 
 export function scanContentStore(databasePath: string): string {
   return contentStoreOverride() ?? defaultScanStore(databasePath);
@@ -40,32 +40,39 @@ function storeRegistryPath(databasePath: string): string {
 }
 
 /** Register the store before acquiring a generation. A stop can then find that generation at any store it reaches. */
-export function acquireDirectoryAnalysisGeneration(databasePath: string, store: string): number {
+export function acquireDirectoryAnalysisGeneration(databasePath: string, directory: string, store: string): number {
   const index = openSqliteDatabase(storeRegistryPath(databasePath));
   try {
-    index.$client.exec("CREATE TABLE IF NOT EXISTS analysis_store (path TEXT PRIMARY KEY NOT NULL) STRICT");
-    index.$client.prepare("INSERT OR IGNORE INTO analysis_store VALUES (?)").run(storedPath(store));
+    index.$client.exec("CREATE TABLE IF NOT EXISTS analysis_directory_store (directory TEXT NOT NULL, path TEXT NOT NULL, PRIMARY KEY(directory,path)) STRICT");
+    index.$client.prepare("INSERT OR IGNORE INTO analysis_directory_store VALUES (?,?)").run(storedPath(directory), storedPath(store));
   } finally {
     index.$client.close();
   }
   return readAnalysisScopeGeneration(databasePath);
 }
 
-function analysisStores(databasePath: string): Set<string> {
-  const stores = new Set([defaultScanStore(databasePath), scanContentStore(databasePath), contentStorePath()]
+function analysisStores(databasePath: string): { fallback: Set<string>; registered: { directory: string; path: string }[] } {
+  const fallback = new Set([defaultScanStore(databasePath), scanContentStore(databasePath), contentStorePath()]
     .filter(path => existsSync(path)).map(path => storedPath(path)));
+  const registered: { directory: string; path: string }[] = [];
   const indexPath = storeRegistryPath(databasePath);
-  if (!existsSync(indexPath)) return stores;
+  if (!existsSync(indexPath)) return { fallback, registered };
   const index = openSqliteDatabase(indexPath, { readonly: true });
   try {
-    if (!index.$client.prepare("SELECT 1 FROM sqlite_schema WHERE name = 'analysis_store'").get()) return stores;
-    for (const path of index.$client.prepare("SELECT path FROM analysis_store").pluck().all() as string[]) {
-      stores.add(path);
+    const tables = index.$client.prepare("SELECT name FROM sqlite_schema WHERE name IN ('analysis_store', 'analysis_directory_store')").pluck().all();
+    if (tables.includes("analysis_store")) {
+      for (const path of index.$client.prepare("SELECT path FROM analysis_store").pluck().all() as string[]) fallback.add(path);
+    }
+    if (tables.includes("analysis_directory_store")) {
+      for (const row of index.$client.prepare("SELECT directory,path FROM analysis_directory_store").all() as typeof registered) {
+        registered.push(row);
+        fallback.delete(row.path);
+      }
     }
   } finally {
     index.$client.close();
   }
-  return stores;
+  return { fallback, registered };
 }
 
 type Transaction = Parameters<Parameters<RerailDatabase["transaction"]>[0]>[0];
@@ -84,7 +91,8 @@ export function queueAnalysisScopeReleases(tx: Transaction, directories: readonl
 
 export async function collectAnalysisCaches(databasePath: string): Promise<void> {
   const failures: string[] = [];
-  for (const store of analysisStores(databasePath)) {
+  const { fallback, registered } = analysisStores(databasePath);
+  for (const store of new Set([...fallback, ...registered.map(row => row.path)])) {
     if (!existsSync(store)) continue;
     try {
       assertContentStoreOwner(store);
@@ -105,11 +113,13 @@ export function settleAnalysisScopeReleases(databasePath: string, limit = 32): v
     finally { reader.$client.close(); }
   })();
   if (pending.length === 0) return;
-  const stores = analysisStores(databasePath);
+  const { fallback, registered } = analysisStores(databasePath);
   const database = openRerailDatabase(databasePath);
   try {
     const failed = new Map<string, unknown>();
     for (const { id, directory } of pending) {
+      const root = storedPath(directory);
+      const stores = new Set([...fallback, ...registered.filter(row => withinCheckout(root, row.directory)).map(row => row.path)]);
       let acknowledged = true;
       for (const store of stores) {
         if (failed.has(store)) {

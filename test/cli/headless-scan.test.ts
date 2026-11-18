@@ -441,10 +441,12 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
 
   it("releases a stopped directory from each store that held it and retries an unavailable store", async () => {
     const root = checkout();
+    const other = checkout();
     const home = `${root}-home`;
     const databasePath = join(home, "rerail.sqlite");
     const earlier = join(home, "first.sqlite");
     const current = join(home, "second.sqlite");
+    const unrelated = join(home, "unrelated.sqlite");
     const owners = (path: string) => {
       const db = new Database(path, { readonly: true });
       try { return db.prepare("SELECT count(*) FROM analysis_scope_workspace_snapshot").pluck().get(); }
@@ -456,6 +458,9 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
         expect((await scan(root, { databasePath })).status).toBe("completed");
         expect(owners(store)).toBe(1);
       }
+      vi.stubEnv("RERAIL_CONTENT_STORE_PATH", unrelated);
+      expect((await scan(other, { databasePath })).status).toBe("completed");
+      expect(owners(unrelated)).toBe(1);
       const homeDb = openRerailDatabase(databasePath);
       try {
         const checkout = recordCheckout(homeDb, root);
@@ -464,6 +469,7 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
         const release = binding.deleteAnalysisScope;
         const fail = vi.spyOn(binding, "deleteAnalysisScope").mockImplementation((store, ...args) => {
           if (store === earlier) throw new Error("store unavailable");
+          if (store === unrelated) throw new Error("unrelated store");
           return release(store, ...args);
         });
         const pending = () => homeDb.$client.prepare("SELECT count(*) FROM analysis_scope_releases").pluck().get();
@@ -472,10 +478,12 @@ Unreadable(@place("tree", 1), o) :- git_tree_walk_error(_, _, o, _).
           expect(pending()).toBe(1);
           expect(owners(earlier)).toBe(1);
           expect(owners(current)).toBe(0);
+          expect(fail.mock.calls.every(([store]) => store !== unrelated)).toBe(true);
         } finally { fail.mockRestore(); }
         settleAnalysisScopeReleases(databasePath);
         expect(pending()).toBe(0);
         expect(owners(earlier)).toBe(0);
+        expect(owners(unrelated)).toBe(1);
       } finally { homeDb.$client.close(); }
     } finally { vi.unstubAllEnvs(); }
   });

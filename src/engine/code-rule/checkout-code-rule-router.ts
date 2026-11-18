@@ -372,7 +372,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
         ...(this.#options.revisionSource === undefined ? {} : { revisionSource: this.#options.revisionSource }),
         ...(this.#options.analysisStore === undefined ? {} : { analysisStore: this.#options.analysisStore }),
         ...(this.#options.analysisRun === undefined ? {} : { analysisRun: this.#options.analysisRun }),
-        analysisGeneration: store => acquireDirectoryAnalysisGeneration(this.#options.catalogs.databasePath, store),
+        analysisGeneration: store => acquireDirectoryAnalysisGeneration(this.#options.catalogs.databasePath, root, store),
         analysisHome: analysisScopeHome(this.#options.catalogs.databasePath),
       });
       // The enforcer registers its code rules synchronously, so the new lane answers `acceptsPath` at once.
