@@ -460,9 +460,12 @@ Each step ends with:
        by an LZ4 block decode written once in CLIF (so the kernels have the same code), into the reader's slot. On
        the CPU a thread's slot (two blocks, as `F16Z`'s cache). On the device, a threadgroup decodes its rows'
        block into threadgroup memory, spilling to device memory past about 16 KB.
-       - Open for the kernels: a stage's probes read a view at any row, so a threadgroup's reads are not within
-         one or two blocks as a scan's are. A probe whose block is not the group's needs a slot of its own; how
-         many, and where, is decided when the kernels' part is built, against a probe-heavy stratum's misses.
+       - Probes, answered (2026-11-18): a stage's probes read a view at any row, so a threadgroup's reads are not
+         within one or two blocks as a scan's are. They need no slot of their own: every read, a scan's or a
+         probe's, goes through the batch's shared cache (below), which is sized to hold the batch's blocks. hogql
+         cold, 16z on Metal, statistics on (`RERAIL_ZCACHE_STATS=1`): 65 batches, 2,992 decodes for 3,342 blocks
+         (each at most once), 24.3 M hits, 1.8 M lookups that waited for a block being decoded, no duplicate, no
+         turn, no failure; findings 1,629.
        - The CPU's part (2026-11-18): a 16z tape's view (`F16Z_FORMAT`, `Tape16Z::view`) names its block index,
          its blocks' side lengths and its compressed bytes where they lie as stored, its id, and the cache it reads
          through (by its address less the tape's, and its entry size). A format 16 read of a 16z tape
