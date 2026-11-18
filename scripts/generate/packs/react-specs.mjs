@@ -1877,4 +1877,26 @@ export const OWN = [
   "react-practice-hoist-static-value",
   "react-practice-lifecycle-hook",
 ];
+
+/**
+ * Own rules whose run of one node kind along a nesting path is not a copy written out, with why: conformance.json's
+ * `repetitionExemptions`, which the compact gate's no-written-out-repetition check reads.
+ */
+export const REPETITION_EXEMPTIONS = [
+  {
+    rule: "react-practice-side-effect-in-render",
+    reason:
+      "The call_expression steps are the discarded side-effect call, the useState, useMemo or useReducer call whose initializer holds it, then the memo-style call wrapping the component or the hook call that marks the function as a component, which can be that same useState call.",
+  },
+  {
+    rule: "react-practice-cache-update-in-mutate-call",
+    reason:
+      "Each call_expression step is a different call: the cache update, the useMemo call whose factory returns the options object holding its onSuccess-style callback, and the mutate call that receives those options by name.",
+  },
+  {
+    rule: "react-practice-request-beside-data-library",
+    reason:
+      "Each call_expression step is a different call: the request, the .then or .subscribe call chained on it, and the state setter called in the callback or next handler that call takes.",
+  },
+];
 void H;
