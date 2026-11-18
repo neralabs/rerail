@@ -284,8 +284,16 @@ makes none, and the walk visits only the nodes whose text a rule reads. hogql, 3
 nodes visited 2.24 M to 0.84 M of 2.27 M; `node rows` 0.427–0.433 s to 0.277–0.304 s; atoms interned 0.011–0.012 s to
 0.007 s; findings 1,629 in each; instructions within the noise (71.6–82.3 B against 75.0–81.5 B).
 
-`line`, `end_line`, `col` and `docof` were views already (`View::Loc`) except where `Extra` makes spans' rows; those
-and `visit_index` (CPython's visit order, a derived fact computed once for the documents a program reads it of),
+**Step 3: places are views where no span is made** (2026-11-17). `line`, `end_line`, `col` and `docof` were views
+already (`View::Loc`), but `Extra` made `end_line`, `col` and `docof` as rows for every node and token wherever a
+program read them, and `Batch::made` bound those rows in place of the views (`line` alone waited for spans,
+`line_rows`). In core.rr's shape they are now made only where `Extra` makes spans, which have places too. hogql reads
+no span: 3 interleaved pairs at load 23–25, `extra document rows` 0.094–0.135 s and 254–271 MB allocated to none;
+findings 1,629 in each; 73.5 B instructions (median) against 80.2 B.
+
+Where spans are made, the nodes' and tokens' place rows are still made beside the spans' (the spans' are derived
+facts; the nodes' are copies of tape answers): a view over the spans too, or a union of the view and the spans'
+rows, is left for this step, with `visit_index` (CPython's visit order, a derived fact computed once for the documents a program reads it of),
 `doc_root` and `host_node` (a guest's) are left for this step.
 
 Found on the way and fixed:

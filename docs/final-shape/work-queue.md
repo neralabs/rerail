@@ -1576,4 +1576,8 @@ sha) or `program_shared`'s order may hand back the files recorded before the edi
 - Find which of `read_file`'s three sources gives the stale list, and make the files the ones the program was read
   from.
 - **Done when**: the test passes, and an edit of a same-length include gives its new hash.
+- Related, also apart from 0353 step 3 (it fails with each of the day's changes switched off: `str` eager, the old
+  `prune` gate, Extra's rows): `corpus::tests::the_run_after_a_cold_one_writes_nothing`, whose warm run exits 3 with
+  "the observer's store not asked inside the waves in a warm run (…/src: its answers unknown, read again)". Both are
+  a run's record of what it read disagreeing with a later read of the same files.
 

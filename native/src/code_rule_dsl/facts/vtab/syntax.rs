@@ -2557,6 +2557,18 @@ type MadeSpan = (i64, std::ops::Range<usize>, Option<usize>);
 
 impl Extra {
     fn new(reads: &BTreeSet<String>, matches: &[Arc<regex::Regex>], shape: Shape, [source_text, line_text]: [bool; 2]) -> Self {
+        let mut extra = Self::made(reads, matches, shape, [source_text, line_text]);
+        // In core.rr's shape a node's and a position's places are views of the tape (`View::Loc`): made as rows only
+        // where spans are, which have places too (decision 0353 step 3). Made for every node and token beside the
+        // views, they were hogql's 0.1 s and 255 MB a run, for a program that read no span.
+        if shape == Shape::Core && !extra.spans() {
+            (extra.end_line, extra.col, extra.docof) = (false, false, false);
+        }
+        extra
+    }
+
+    /// What the program's reads ask `Extra` to make.
+    fn made(reads: &BTreeSet<String>, matches: &[Arc<regex::Regex>], shape: Shape, [source_text, line_text]: [bool; 2]) -> Self {
         let read = |rel: &str| reads.contains(rel);
         Self {
             source: read("source"),
