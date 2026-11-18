@@ -2919,7 +2919,7 @@ always a refusal.
     graph image, second-run and `programs_are_kept_by_the_hashes_of_what_they_read` tests (11 of 11, four times,
     the first right after a send).
 
-### Q130. (Q81 on final-rerail-shape-rr-align at 4c8152466) An edited include is read with its old digest in the same process (`programs_are_kept_by_the_hashes_of_what_they_read`)
+### Q130. (Q81 on final-rerail-shape-rr-align at 4c8152466) (closed: not reproduced) An edited include is read with its old digest in the same process (`programs_are_kept_by_the_hashes_of_what_they_read`)
 
 - **Found** (2026-11-17, steady, at f5b6023e8 and after): after the helper's edit and `observe(|o| o.flush())`,
   `read_file` does not reuse its program (it lowers again), but `program_shared` → `read_shared` gets the helper's
@@ -2928,6 +2928,23 @@ always a refusal.
   read: the observer vouches for the old answer (the journal's `trusted`, a root asked since the flush, or the
   racy window's settling, Q45).
 - **Done when**: the cause is named in the observer and fixed there; the test passes.
+- **Record**: not reproduced (2026-11-18, at 4d9fad6fe), so no cause to name. The test passes in every way it is
+  run here:
+  - under nextest: 8 runs alone on the M3, one on the M1 Max, and every batch of Q129's (11 tests, five times);
+  - under `cargo test`, in one process with all of `rr::tests` (164 tests), twice;
+  - under Relax (`live-test-remote --once`), once;
+  - with the journal on (`RERAIL_TAPE_CACHE` set, the observer shared), 4 runs.
+
+  `observe.rs` and the read path (`read_file`, `program_shared`, `read_shared`) are as they were where it was found.
+  The observer vouches three ways, and each was read:
+  - `Entry::holds`: the same stat, and recorded more than `RACY_NS` (2 s) after the file last changed. The edit
+    changes mtime and ctime, and a coarse file system is held by the racy rule.
+  - A clean Git blob: not a temporary directory's.
+  - `trusted`: only with the journal on, and only while a root is asked since the last flush.
+
+  If it fails again, the run's environment is the lead: which runner, whether `RERAIL_TAPE_CACHE` or
+  `RERAIL_JOURNAL` is set, and where the temporary directory is. `RERAIL_OBSERVED_PATHS=1` prints each `stat` and
+  its root.
 
 ### Q131. (Q83 on final-rerail-shape-rr-align at 4c8152466) `front::finish`'s checks read a tree on a text's version path
 
