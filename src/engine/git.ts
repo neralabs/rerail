@@ -261,13 +261,14 @@ class OutOfTime extends Error {}
 
 /**
  * The code of the thread a look that must answer within a time limit reads the disk in ({@link askedInThread}): each
- * question asked as {@link machine} asks it, its answer posted back, and the waiting thread woken.
+ * question asked as {@link machine} asks it, its answer posted back, then counted in `answered` and the waiting thread
+ * woken.
  */
 const DISK_THREAD = String.raw`
 const { workerData } = require("node:worker_threads");
 const { accessSync, constants, existsSync, realpathSync, statSync } = require("node:fs");
 const { spawnSync } = require("node:child_process");
-const { woken, port } = workerData;
+const { answered, port } = workerData;
 const questions = {
   exists: path => existsSync(path),
   runnable(path) {
@@ -292,10 +293,11 @@ const questions = {
     return selected.status === 0 ? selected.stdout.trim() : undefined;
   },
 };
+// Counted once posted, so the count never runs ahead of the answers the waiting thread can read.
 port.on("message", ({ question, path }) => {
   port.postMessage(questions[question](path));
-  Atomics.store(woken, 0, 1);
-  Atomics.notify(woken, 0);
+  Atomics.add(answered, 0, 1);
+  Atomics.notify(answered, 0);
 });
 `;
 
@@ -308,22 +310,23 @@ interface DiskThread {
 
 /** A {@link DiskThread} started now, or undefined when this process cannot start one. */
 function diskThread(): DiskThread | undefined {
-  const woken = new Int32Array(new SharedArrayBuffer(4));
+  const answered = new Int32Array(new SharedArrayBuffer(4));
   const { port1, port2 } = new MessageChannel();
   let thread: Worker;
   try {
-    thread = new Worker(DISK_THREAD, { eval: true, workerData: { woken, port: port2 }, transferList: [port2] });
+    thread = new Worker(DISK_THREAD, { eval: true, workerData: { answered, port: port2 }, transferList: [port2] });
   } catch {
     port1.close();
     return undefined;
   }
   // A question on a folder that does not answer holds the thread past its use; it then keeps no process running.
   thread.unref();
+  let asked = 0;
   return {
     ask(question, path, deadline) {
-      Atomics.store(woken, 0, 0);
+      asked += 1;
       port1.postMessage({ question, path });
-      return reply(port1, woken, deadline);
+      return reply(port1, { answered, asked }, deadline);
     },
     close() {
       port1.close();
@@ -332,14 +335,26 @@ function diskThread(): DiskThread | undefined {
   };
 }
 
-/** The next message on `port`, waited for in this thread until `deadline`, past which it throws {@link OutOfTime}. */
-function reply(port: MessagePort, woken: Int32Array, deadline: number): unknown {
+/** How many questions a {@link DiskThread} was asked, and the count of answers its thread posted (`answered[0]`). */
+interface Answers {
+  readonly answered: Int32Array;
+  readonly asked: number;
+}
+
+/**
+ * The answer to the last question asked on `port`, waited for in this thread until `deadline`, past which it throws
+ * {@link OutOfTime}. It is read once the thread's count of answers reaches the questions asked, and each wait is for
+ * that count to move from what was read: an answer counted before the wait began ends the wait at once, and no count
+ * of an earlier answer can wake it with nothing to read, so the waiting thread sleeps until its answer comes.
+ */
+function reply(port: MessagePort, { answered, asked }: Answers, deadline: number): unknown {
   for (;;) {
-    const received = receiveMessageOnPort(port);
+    const count = Atomics.load(answered, 0);
+    const received = count === asked ? receiveMessageOnPort(port) : undefined;
     if (received !== undefined) return received.message;
     const left = deadline - performance.now();
     if (left <= 0) throw new OutOfTime();
-    Atomics.wait(woken, 0, 0, left);
+    Atomics.wait(answered, 0, count, left);
   }
 }
 
