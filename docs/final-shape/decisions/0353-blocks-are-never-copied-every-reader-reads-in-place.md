@@ -379,6 +379,7 @@ Each row is marked in the code with `copy (0353 step N)`.
 | 10 | A device fixpoint's total copied into a run's block at its end | `device.rs` (0325 step 4) | Each recursive stratum's rows | Step 6 |
 | 11 | The transducer's packed batch: 44 bytes a node, and its child lists | `PackedBatch::nodes` (0293 "Interim") | Each matched batch | Step 7 |
 | 12 | Findings, frames and memo entries copied into rows of their own | The output, frames and memo stores | Not yet measured | Step 8 (0325 step 7) |
+| 13 | The transducer's residency: every tape it reads copied into slabs of its own, and documents copied between slabs | `residency::slabs::admit_docs`, `insert`'s `place`; `rerail_metal::slabs::gather` | Each tape a Metal batch reads | Step 7 |
 
 ## The plan
 
@@ -422,6 +423,15 @@ Each step ends with:
        bytes in a slab room, which the store's load decompresses (a zstd frame) or reads (a segment) into;
        `residency::slabs::admit` and `admit_docs` find a placed tape and copy nothing. A parsed tape is written into
        its room. Check: every format's reads equal the heap image's.
+       Done for the facts' loads (2026-11-17): a stored tape's frame is decompressed straight into its room, and a
+       parsed tape's stored bytes are written there, which the store's writer takes (`TapeBytes`); the parser's own
+       columns remain until a parser writes into the room (`copy (0353 step 4a)`). hogql cold: 976 tapes in one
+       slab, findings 1,629, peak 800–864 MB against 864–921 MB. Found on the way, unlisted: the transducer's
+       residency copies every tape it reads into slabs of its own (`residency::slabs::admit_docs`, `insert`), and
+       `gather` copies documents between slabs; row 13 below, step 7's.
+     - A batch's tapes lie in several slabs, which no offset from one block reaches. A document's descriptor names
+       its slab and its tape's offset there, and each backend gives the reads the slabs' bases: the host its
+       pointers, the device their GPU addresses in an argument buffer (each slab made resident for the stage).
      - **4b.** 16z read in place by the reads written once (a block decoded where a read falls), on the CPU, then
        the kernels; `in_place`'s laid-out copy and the slab's `unblock_into` go.
      - **4c.** The views' reads written once (CLIF, for Rust, the JIT and MSL), over a document's `TapeView` and
