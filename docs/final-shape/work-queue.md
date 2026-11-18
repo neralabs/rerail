@@ -2956,7 +2956,7 @@ always a refusal.
 - **Done when**: each check reads the version (an analysis, or a check over its rules and header), a debug build
   checks it refuses what the tree's refuses, and `link_seeded_version` decodes no tree.
 
-### Q132. (Q90 on final-rerail-shape-rr-align at 4c8152466) A debug build's checks of the lowering on the version fail on ep2's rules
+### Q132. (Q90 on final-rerail-shape-rr-align at 4c8152466) (done) A debug build's checks of the lowering on the version fail on ep2's rules
 
 - **Found** (2026-11-17, at a1de58655 plus 0373, a debug `rerail-engine` over 3 of ep2's files with its 317 rules,
   `RERAIL_PREPARE=parts`, cold store): `the cone copied on the version is the tree's` (rr.rs, `lowered_in_version`)
@@ -2973,6 +2973,23 @@ always a refusal.
   made different requests and gates. Both ported in that merge; this item's run to be repeated on it.
 - **Done when**: the debug build lowers ep2's rules with both checks passing. A debug run of the combine's splice
   (0373) waits on it; meanwhile `RERAIL_COMBINE_LINK=check` checks the splice in the profiling build.
+- **Record** (2026-11-18): the run repeated on 4d9fad6fe's line, a debug `rerail-engine` over ep2's 317 rules and 3
+  files, cold, warm, then a rule edit (ruf048's `"."` to `","`), both `RERAIL_PREPARE=whole` and `=parts`: every
+  check passes, and the cold and warm outputs are the same rows (`rerail-engine csv`). Three faults, each fixed:
+  - **A part's prune dropped another part's requests.** The version's `prune` asked whether a request's reader is
+    needed even where the part does not have the reader (`p0_names`, in part p0, reading `rr_str_req`, made in
+    part `l`), and dropped the request. The tree's `front::reach` keeps a request whose reader the program does not
+    have (`!has(b)`); the version's prune now does too (`preparation/prune.rs`).
+  - **A pipeline's record went stale between steps.** `Pipeline` carried the request record rule by rule but wrote
+    it into a version only at `finish`. A pass reading the record between (the merge renaming its readers) read
+    rows of rules since removed: 42 entries for 39 rules. The carry then refused the merge's record and kept the
+    merged reader's old name (`rr_demand_agg_rr_agg395`), which `finish` wrote back. Each step's output now has
+    the carried record stated on it (`manager.rs`, `Pipeline::record`): the combine's tail is the tree's.
+  - **The header's check compared the record by place.** `the source's header is the tree's fields` compared
+    the request record row by row. A pass run as an edit writes its rules after the rest, so the version's record
+    is the tree's by rule in other rows. The check now leaves the record out: `same_program` compares it by rule
+    at each stage.
+  Targeted tests: the 80 named for preparation, parts, the prune, the merge, requests and pipelines pass.
 
 ### Q133. (Q91 on final-rerail-shape-rr-align at 4c8152466) (done) A rule edit lays out every kept input, though none changed (Q18's kept inputs laziness)
 

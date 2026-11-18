@@ -4333,8 +4333,11 @@ fn run_observed(
             #[cfg(debug_assertions)]
             {
                 let digest = |p: &front::Program| crate::code_rule_dsl::logic::program_image::Builder::of_program(p).and_then(|b| b.finish()).map(|(v, _)| v.digest());
-                let ruleless = front::Program { rules: Vec::new(), ..prog.clone() };
-                assert_eq!(digest(&head), digest(&ruleless), "the source's header is the tree's fields");
+                // The request record left out: it states each rule's readers by the rule's place, and a pass run as an
+                // edit writes its rules after the rest, so the version's record is the tree's by rule, in other rows
+                // (checked by `same_program` at each stage above).
+                let fields = |p: &front::Program| front::Program { rules: Vec::new(), asked_by: Default::default(), ..p.clone() };
+                assert_eq!(digest(&fields(&head)), digest(&fields(&prog)), "the source's header is the tree's fields");
             }
             #[cfg(debug_assertions)]
             drop(prog);

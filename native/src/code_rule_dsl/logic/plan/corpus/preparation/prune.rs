@@ -35,6 +35,12 @@ impl ProgramPass for Prune {
         }
         let native_reads: HashMap<&str, Vec<&str>> = about.natives.iter().map(|n| (v.rel_name(n.rel), n.reads.iter().map(|&r| v.rel_name(r)).collect())).collect();
         let reads = |i: usize| -> Vec<String> { rules[i].body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel()).to_owned()).collect() };
+        // A reader the program does not have (merged, renamed or inlined since the requests were made; or, in a part
+        // prepared alone, another part's, decision 0345) cannot be asked whether it is needed: its requests are kept,
+        // as an ungated rule is. The tree's `prune` (`front::reach`) does the same: without it a part dropped every
+        // request whose reader was in another part (`rr_str_req`, read by phase 0's `p0_names`; work queue Q132).
+        let inputs: HashSet<&str> = v.inputs().map(|a| v.text(a)).collect();
+        let has = |rel: &str| body_of.contains_key(rel) || inputs.contains(rel) || native_reads.contains_key(rel) || v.find(rel).is_some_and(|a| v.facts(a).is_some());
         let mut kept = vec![false; rules.len()];
         let (mut need, mut todo): (BTreeSet<String>, Vec<String>) = (BTreeSet::new(), roots.clone());
         loop {
@@ -56,7 +62,7 @@ impl ProgramPass for Prune {
                 if let Some(by) = by
                     && !kept[i]
                     && need.contains(head(i))
-                    && by.iter().any(|b| need.contains(b))
+                    && by.iter().any(|b| need.contains(b) || !has(b))
                 {
                     kept[i] = true;
                     todo.extend(reads(i));

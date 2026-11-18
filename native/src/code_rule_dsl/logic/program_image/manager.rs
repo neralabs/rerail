@@ -1123,9 +1123,20 @@ impl<'s> Pipeline<'s> {
     /// stage, its analyses carried from `from`'s, and, when kept, its versions.
     #[allow(clippy::too_many_arguments)]
     fn record(&mut self, pass: &'static str, out: Arc<Version>, ran: Ran, form: Form, visited: usize, from: &Arc<Version>, rule: Option<RuleKept>) -> Result<()> {
-        let delta = Delta::of(from, &out);
+        let mut delta = Delta::of(from, &out);
+        let mut out = out;
         if let Some(asked) = &mut self.asked {
             asked.step(from, &out, &delta);
+            // The record stated on each step's output, not only the last: a later pass reads it (`prune`, the merge's
+            // renaming of readers). Left to `finish`, a pass read rows of rules since removed, and a merge's renamed
+            // reader came back from the carry (work queue Q132).
+            let carried = asked.asked(&out);
+            if carried != out.asked() {
+                let mut b = out.builder();
+                b.set_asked(&carried);
+                out = b.finish_overlay()?;
+                delta = Delta::of(from, &out);
+            }
         }
         let cx = Cx { v: &out, store: out.analyses(), pass, decided: &self.decided, asked: None };
         out.analyses().carry(from.analyses(), &cx, &delta)?;
