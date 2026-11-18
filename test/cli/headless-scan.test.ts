@@ -1229,6 +1229,7 @@ Referenced(src) :- reference_edge(src, _, _).
         .map(([, count, name]) => [name, Number(count)]));
       expect(counters.get("git.tree_decodes") ?? 0).toBe(state === "warm" ? 0 : state === "cold" ? 3 : 2);
       expect(counters.get("reference.tape_summaries") ?? 0).toBe(state === "warm" ? 0 : state === "cold" ? 8 : 1);
+      expect(counters.get("reference.binding_contributions") ?? 0).toBe(state === "warm" ? 0 : state === "cold" ? 8 : 1);
       expect(counters.get("source_ast.parses") ?? 0).toBe(0);
       expect(counters.get("reference.name_links") ?? 0).toBe(state === "warm" ? 0 : state === "cold" ? 3 : 1);
     };
@@ -1247,6 +1248,65 @@ Referenced(src) :- reference_edge(src, _, _).
     git(root, "add", "src/b.py");
     git(root, "commit", "-qm", "bind the name again");
     evaluate("references-first", [references, walk], "restored");
+  }, 90_000);
+
+  it("reuses an inherited method link across unrelated edits and invalidates its absent override", () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "rerail-method-link-")));
+    roots.push(root);
+    git(root, "init", "-q");
+    mkdirSync(join(root, "pkg"));
+    writeFileSync(join(root, "pkg/__init__.py"), "# package\n");
+    const service = [
+      "class Base:", "    def hook(self):", "        return 'base'",
+      "", "class Derived(Base):", "    def call(self):", "        self.hook()", "",
+    ].join("\n");
+    writeFileSync(join(root, "pkg/service.py"), service);
+    writeFileSync(join(root, "pkg/other.py"), "def unrelated():\n    pass\n");
+    const commit = (message: string) => {
+      git(root, "add", "pkg");
+      git(root, "commit", "-qm", message);
+    };
+    commit("inherited method");
+    const policy = join(root, "method.rr");
+    writeFileSync(policy, `
+#include "core.rr"
+.policy "method" revision 1
+.language python
+.violation Method(at: node, target: symbol) "{target}"
+Method(src, text) :- reference_edge(src, dst, "self"), node_text(dst, text).
+`);
+    const script = `
+      import { runHeadlessScan } from "./src/cli/headless-scan.ts";
+      const [repo, databasePath, policy] = process.argv.slice(2);
+      console.log(JSON.stringify(await runHeadlessScan({
+        repo, databasePath, rr: [policy], revision: "HEAD", analysisScope: "methods",
+        scope: "repository", packs: [], version: "test",
+      })));
+    `;
+    const evaluate = (state: string, result: string, contributions: number, links: number) => {
+      const home = join(root, "home");
+      const profile = join(home, state);
+      const report = JSON.parse(execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-", root, join(home, "home.sqlite"), policy], {
+        input: script, encoding: "utf8",
+        env: { ...process.env, RERAIL_PROFILE: profile, RERAIL_CONTENT_STORE_PATH: join(home, "content.sqlite") },
+      })) as ScanReport;
+      expect(report.status, JSON.stringify(report.failures)).toBe("completed");
+      expect(report.violations).toHaveLength(1);
+      expect(report.violations[0]!.message).toContain(`return '${result}'`);
+      const counters = new Map([...readFileSync(join(profile, "profile.txt"), "utf8").matchAll(/^\s*count\s+(\d+)\s+([a-z._]+)$/gmu)]
+        .map(([, count, name]) => [name, Number(count)]));
+      expect(counters.get("reference.binding_contributions") ?? 0).toBe(contributions);
+      expect(counters.get("reference.name_links") ?? 0).toBe(links);
+    };
+    // The graph also links the inheritance reference to Base.
+    evaluate("cold", "base", 3, 2);
+    evaluate("warm", "base", 0, 0);
+    writeFileSync(join(root, "pkg/other.py"), "def renamed():\n    pass\n");
+    commit("unrelated definition renamed");
+    evaluate("renamed", "base", 1, 0);
+    writeFileSync(join(root, "pkg/service.py"), `${service}\n    def hook(self):\n        return 'override'\n`);
+    commit("add the prioritized override");
+    evaluate("override", "override", 1, 1);
   }, 90_000);
 
   it.each(["loose", "packed"])("rechecks a %s tree after corruption and restoration with the same cache", (representation) => {

@@ -15,4 +15,20 @@ reference_summary(c, m, s, e, b) :- reference_summary_key(c, m, s, p, f, e, v), 
 
 .decl reference_source_summary(path: symbol, bytes: symbol)
 reference_source_summary(path, b) :- reference_source(path, c, m, s, e), reference_summary(c, m, s, e, b).
-.output reference_source_summary
+
+.decl reference_file_settings(settings: symbol)
+.input reference_file_settings
+
+.decl reference_file_key(path: symbol, summary: symbol, settings: symbol, version: symbol)
+reference_file_key(p, b, s, "bindings-v1") :- reference_source_summary(p, b), reference_file_settings(s).
+
+.decl reference_file_request(path: symbol, summary: symbol, settings: symbol, version: symbol)
+reference_file_request(p, b, s, v) :- reference_file_key(p, b, s, v).
+.decl reference_file_of(path: symbol, summary: symbol, settings: symbol, version: symbol, result: symbol)
+.decl reference_file(path: symbol, summary: symbol, settings: symbol, version: symbol, result: symbol)
+reference_file(p, b, s, v, r) :- reference_file_key(p, b, s, v), reference_file_of(p, b, s, v, r).
+.cache reference_file by reference_file_key
+
+.decl reference_prepared_source(path: symbol, result: symbol)
+reference_prepared_source(p, r) :- reference_file(p, _, _, _, r).
+.output reference_prepared_source

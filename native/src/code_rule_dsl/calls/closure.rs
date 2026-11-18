@@ -14,7 +14,9 @@ use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 #[path = "closure/reference_bindings.rs"]
 mod reference_bindings;
-pub use reference_bindings::ReferenceBindings;
+#[path = "closure/reference_files.rs"]
+mod reference_files;
+pub use reference_files::ReferenceFile;
 
 /// Terms of one dense closure: bit `i` is the `i`th term.
 #[cfg(any(test, feature = "test-hooks"))]
@@ -683,7 +685,7 @@ impl Graph {
     /// answer for a name if its current bindings give that same answer.
     pub fn link_references_with<E>(
         contracts: super::contracts::Key,
-        files: Vec<(Arc<str>, Arc<Summary>)>,
+        files: Vec<(Arc<str>, ReferenceFile)>,
         resolve: impl FnOnce(&Self, &[Name]) -> Result<Vec<(Link, Vec<Name>)>, E>,
     ) -> Result<Self, E> {
         let mut graph = Self {
@@ -691,10 +693,9 @@ impl Graph {
             reference_contracts: contracts,
             ..Self::default()
         };
-        graph.update_with_links(
-            files.into_iter().map(|(path, summary)| (path, Some(summary))),
-            resolve,
-        )?;
+        let (changes, contributions): (Vec<_>, Vec<_>) = files.into_iter()
+            .map(|(path, file)| ((path, Some(file.summary)), file.bindings)).unzip();
+        graph.update_with_links(changes, Some(contributions), resolve)?;
         Ok(graph)
     }
 
@@ -703,7 +704,7 @@ impl Graph {
         &mut self,
         changes: impl IntoIterator<Item = (Arc<str>, Option<Arc<Summary>>)>,
     ) -> GraphUpdate {
-        self.update_with_links(changes, |graph, names| {
+        self.update_with_links(changes, None, |graph, names| {
             Ok(parallel(names, |name| graph.link_followed(name)))
         }).unwrap_or_else(|never: std::convert::Infallible| match never {})
     }
@@ -711,6 +712,7 @@ impl Graph {
     fn update_with_links<E>(
         &mut self,
         changes: impl IntoIterator<Item = (Arc<str>, Option<Arc<Summary>>)>,
+        prepared: Option<Vec<Contribution>>,
         resolve: impl FnOnce(&Self, &[Name]) -> Result<Vec<(Link, Vec<Name>)>, E>,
     ) -> Result<GraphUpdate, E> {
         let mut orphans = Vec::new();
@@ -762,7 +764,13 @@ impl Graph {
             };
             (of(old), of(new))
         };
-        let contributions = parallel(&staged, contribution);
+        let contributions = if let Some(prepared) = prepared {
+            debug_assert!(previous.is_empty());
+            debug_assert_eq!(prepared.len(), staged.len());
+            prepared.into_iter().map(|new| (Contribution::default(), new)).collect()
+        } else {
+            parallel(&staged, contribution)
+        };
         // Before anything is linked, no link can go stale.
         let mut keys = (!self.links.is_empty()).then(HashSet::new);
         let mut replaced = Vec::new();
@@ -1575,9 +1583,9 @@ impl Graph {
     /// aliases, and whether a binding of it is a value no name denotes or a decorator's. `None`
     /// where nothing does.
     pub fn member(&self, name: &Name, hops: u32, followed: &mut Vec<Name>) -> Option<Link> {
-        let defs = self.by_name.get(name);
-        let aliases = self.aliases.get(name);
-        let opaque = self.opaque.contains_key(name);
+        let defs = self.lookup_definitions(name);
+        let aliases = self.lookup_aliases(name);
+        let opaque = self.lookup_opaque(name);
         if defs.is_none() && aliases.is_none() && !opaque {
             return None;
         }
@@ -1626,7 +1634,7 @@ impl Graph {
             let Mro::Workspace(class) = entry else {
                 continue;
             };
-            for (_, (meta, kind)) in self.supers.get(class).into_iter().flatten() {
+            for (_, (meta, kind)) in self.lookup_bases(class).into_iter().flatten() {
                 if *kind != METACLASS {
                     continue;
                 }
@@ -1685,14 +1693,14 @@ impl Graph {
             return None;
         }
         followed.push(class.clone());
-        let [(_, (_, flags))] = self.by_name.get(class)?.as_slice() else {
+        let [(_, (_, flags))] = self.lookup_definitions(class)?.as_slice() else {
             return None;
         };
         if flags & CLASS == 0 {
             return None;
         }
         let mut bases = Vec::new();
-        for (_, (target, kind)) in self.supers.get(class).into_iter().flatten() {
+        for (_, (target, kind)) in self.lookup_bases(class).into_iter().flatten() {
             match *kind {
                 BASE => bases.push(self.class_of(target, hops + 1, followed)?),
                 UNKNOWN_BASE => return None,
@@ -1737,10 +1745,10 @@ impl Graph {
             for kind in ["imported", "class"] {
                 let key = Name::new(family, &format!("{module}.<{kind}>.{short}"));
                 followed.push(key.clone());
-                if let Some(aliases) = self.aliases.get(&key) {
+                if let Some(aliases) = self.lookup_aliases(&key) {
                     for (_, target) in aliases {
                         followed.push(target.clone());
-                        if self.by_name.get(target).is_some_and(|entries| {
+                        if self.lookup_definitions(target).is_some_and(|entries| {
                             entries.iter().all(|(_, (_, flags))| flags & CLASS != 0)
                         }) {
                             return Some(Mro::Workspace(target.clone()));
@@ -1749,19 +1757,19 @@ impl Graph {
                 }
             }
             followed.push(Name::new(family, &format!("<global-class>.{short}")));
-            return match self.reference_classes.get(short).map(Vec::as_slice) {
+            return match self.lookup_class_candidates(short).map(Vec::as_slice) {
                 Some([class]) => Some(Mro::Workspace(class.clone())),
                 _ => None,
             };
         }
         followed.push(name.clone());
-        if let Some(entries) = self.by_name.get(name) {
+        if let Some(entries) = self.lookup_definitions(name) {
             return entries
                 .iter()
                 .all(|(_, (_, flags))| flags & CLASS != 0)
                 .then(|| Mro::Workspace(name.clone()));
         }
-        if self.opaque.contains_key(name) {
+        if self.lookup_opaque(name) {
             return None;
         }
         let only = |entries: &[(u32, Name)]| {
@@ -1771,28 +1779,33 @@ impl Graph {
                 .all(|(_, target)| target == first)
                 .then(|| first.clone())
         };
-        if let Some(entries) = self.aliases.get(name) {
+        if let Some(entries) = self.lookup_aliases(name) {
             return self.class_noting(&only(entries)?, hops + 1, followed, missing);
         }
         for prefix in name.lineage().skip(1) {
             let rest = &name.text()[prefix.text().len()..];
-            if let Some(entries) = self.aliases.get(prefix)
+            if let Some(entries) = self.lookup_aliases(prefix)
                 && let Some(target) = only(entries).filter(|target| target != prefix)
             {
                 let renamed = Name::new(target.family(), &format!("{}{rest}", target.text()));
                 return self.class_noting(&renamed, hops + 1, followed, missing);
             }
-            if self.by_name.contains_key(prefix) || self.opaque.contains_key(prefix) {
+            if self.lookup_definitions(prefix).is_some() || self.lookup_opaque(prefix) {
                 return None;
             }
-            if let Some(entries) = self.modules.get(prefix) {
+            if let Some(entries) = self.lookup_module(prefix) {
                 // Only a star import binds a workspace module's member no binding gives.
                 return entries
                     .iter()
                     .flat_map(|(_, (stars, _))| stars.iter())
                     .find_map(|star| {
                         let text = format!("{}{rest}", star.text());
-                        let Some(starred) = Name::get(star.family(), &text) else {
+                        let starred = if self.references {
+                            Some(Name::new(star.family(), &text))
+                        } else {
+                            Name::get(star.family(), &text)
+                        };
+                        let Some(starred) = starred else {
                             missing.push((star.family(), text.into_boxed_str()));
                             return None;
                         };

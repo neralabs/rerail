@@ -100,7 +100,7 @@ impl PythonLinks for Graph {
         {
             let declared = Name::new(name.family(), &format!("{module}.<declared>.{short}"));
             followed.push(declared.clone());
-            if let Some(aliases) = self.aliases.get(&declared) {
+            if let Some(aliases) = self.lookup_aliases(&declared) {
                 return self.union(
                     aliases.iter().map(|(_, target)| target.clone()).collect(),
                     hops + 1,
@@ -109,7 +109,7 @@ impl PythonLinks for Graph {
             }
             let imported = Name::new(name.family(), &format!("{module}.<imported>.{short}"));
             followed.push(imported.clone());
-            if let Some(aliases) = self.aliases.get(&imported) {
+            if let Some(aliases) = self.lookup_aliases(&imported) {
                 return self.union(
                     aliases.iter().map(|(_, target)| target.clone()).collect(),
                     hops + 1,
@@ -130,7 +130,7 @@ impl PythonLinks for Graph {
         {
             let own = Name::new(name.family(), &format!("{class}.{method}"));
             followed.push(own.clone());
-            if self.by_name.get(&own).is_some_and(|definitions| {
+            if self.lookup_definitions(&own).is_some_and(|definitions| {
                 definitions.iter().any(|(_, (_, flags))| flags & CLASS == 0)
             }) {
                 return self.member(&own, hops + 1, followed).unwrap_or_default();
@@ -152,7 +152,7 @@ impl PythonLinks for Graph {
                 return found;
             }
             // Composition can supply a method to a mixin through a sibling base.
-            for child in self.subclasses.get(&class).into_iter().flatten() {
+            for child in self.lookup_subclasses(&class).into_iter().flatten() {
                 followed.push(child.clone());
                 for co_base in self.reference_bases(child, followed) {
                     if co_base != class {
@@ -182,7 +182,7 @@ impl PythonLinks for Graph {
             return self.link_late_python(name, hops, followed);
         }
         if self.references {
-            if let Some(entries) = self.by_name.get(name) {
+            if let Some(entries) = self.lookup_definitions(name) {
                 return Link {
                     defs: entries
                         .iter()
@@ -197,7 +197,7 @@ impl PythonLinks for Graph {
             if let Some((module, short)) = name.text().rsplit_once('.') {
                 let imported = Name::new(name.family(), &format!("{module}.<imported>.{short}"));
                 followed.push(imported.clone());
-                if let Some(aliases) = self.aliases.get(&imported) {
+                if let Some(aliases) = self.lookup_aliases(&imported) {
                     return self.union(
                         aliases.iter().map(|(_, target)| target.clone()).collect(),
                         hops + 1,
@@ -211,7 +211,7 @@ impl PythonLinks for Graph {
         }
         for prefix in name.lineage().skip(1) {
             let rest = &name.text()[prefix.text().len()..];
-            if let Some(entries) = self.aliases.get(prefix) {
+            if let Some(entries) = self.lookup_aliases(prefix) {
                 let targets = entries
                     .iter()
                     .filter(|(_, target)| target != prefix)
@@ -221,8 +221,8 @@ impl PythonLinks for Graph {
                     // a runtime alias relation absent from the reference graph.
                     .filter(|(_, target)| {
                         !self.references
-                            || !self.modules.contains_key(target)
-                            || self.by_name.contains_key(target)
+                            || self.lookup_module(target).is_none()
+                            || self.lookup_definitions(target).is_some()
                     })
                     .map(|(_, target)| {
                         Name::new(target.family(), &format!("{}{rest}", target.text()))
@@ -232,7 +232,7 @@ impl PythonLinks for Graph {
                     return self.union(targets, hops, followed);
                 }
             }
-            if let Some(entries) = self.by_name.get(prefix) {
+            if let Some(entries) = self.lookup_definitions(prefix) {
                 let attribute = &rest[1..];
                 if self.references
                     && entries.iter().all(|(_, (_, flags))| flags & CLASS != 0)
@@ -247,10 +247,10 @@ impl PythonLinks for Graph {
                 }
                 return OPEN_LINK;
             }
-            if self.opaque.contains_key(prefix) {
+            if self.lookup_opaque(prefix) {
                 return OPEN_LINK;
             }
-            if let Some(entries) = self.modules.get(prefix) {
+            if let Some(entries) = self.lookup_module(prefix) {
                 // A member of a workspace module that neither a definition, an alias nor another
                 // binding gives: a submodule's. Only a star import can bind it to a definition,
                 // and only an open summary can hide one.
@@ -288,7 +288,7 @@ impl PythonLinks for Graph {
                         &crate::code_rule_dsl::calls::contracts::parameter_key(base.text(), parameter),
                     );
                     followed.push(key.clone());
-                    if let Some(aliases) = self.aliases.get(&key) {
+                    if let Some(aliases) = self.lookup_aliases(&key) {
                         if aliases
                             .iter()
                             .all(|(_, target)| target.text() == crate::code_rule_dsl::calls::contracts::UNANNOTATED)
@@ -301,7 +301,7 @@ impl PythonLinks for Graph {
             }
             let key = Name::new(base.family(), &format!("{}.{field}", base.text()));
             followed.push(key.clone());
-            if let Some(aliases) = self.aliases.get(&key) {
+            if let Some(aliases) = self.lookup_aliases(&key) {
                 return self.reference_type_members(class, aliases, member, hops, followed);
             }
         }
@@ -358,7 +358,7 @@ impl PythonLinks for Graph {
         let mut seen = HashSet::from([class.clone()]);
         let mut pending = vec![class.clone()];
         while let Some(next) = pending.pop() {
-            for child in self.subclasses.get(&next).into_iter().flatten() {
+            for child in self.lookup_subclasses(&next).into_iter().flatten() {
                 if seen.insert(child.clone()) {
                     link.extend(lookup(child, followed));
                     pending.push(child.clone());
@@ -375,9 +375,9 @@ impl PythonLinks for Graph {
             link.open |= methods.iter().any(|method| {
                 Name::get(orphan.family(), &format!("{}.{method}", orphan.text())).is_some_and(
                     |member| {
-                        self.by_name.contains_key(&member)
-                            || self.aliases.contains_key(&member)
-                            || self.opaque.contains_key(&member)
+                        self.lookup_definitions(&member).is_some()
+                            || self.lookup_aliases(&member).is_some()
+                            || self.lookup_opaque(&member)
                     },
                 )
             });
@@ -412,8 +412,8 @@ impl PythonLinks for Graph {
     // constrain a single name resolution, independently of inheritance depth.
     fn reference_bases(&self, class: &Name, followed: &mut Vec<Name>) -> Vec<Name> {
         followed.push(class.clone());
-        self.supers
-            .get(class)
+        self
+            .lookup_bases(class)
             .into_iter()
             .flatten()
             .filter(|(_, (_, kind))| *kind == BASE)
@@ -450,7 +450,7 @@ impl PythonLinks for Graph {
         for class in order {
             let member = Name::new(class.family(), &format!("{}.{attribute}", class.text()));
             followed.push(member.clone());
-            if let Some(defs) = self.by_name.get(&member) {
+            if let Some(defs) = self.lookup_definitions(&member) {
                 let defs: Vec<_> = defs
                     .iter()
                     .filter(|(_, (_, flags))| flags & CLASS == 0)
@@ -472,7 +472,7 @@ impl PythonLinks for Graph {
             return None;
         }
         followed.push(name.clone());
-        if let Some(entries) = self.by_name.get(name) {
+        if let Some(entries) = self.lookup_definitions(name) {
             return entries
                 .iter()
                 .all(|(_, (_, flags))| flags & CLASS != 0)
@@ -481,8 +481,8 @@ impl PythonLinks for Graph {
         let (module, short) = name.text().rsplit_once('.')?;
         let key = Name::new(name.family(), &format!("{module}.<imported>.{short}"));
         followed.push(key.clone());
-        self.aliases
-            .get(&key)?
+        self
+            .lookup_aliases(&key)?
             .iter()
             .find_map(|(_, target)| self.reference_fq_class(target, hops + 1, followed))
     }
@@ -498,7 +498,7 @@ impl PythonLinks for Graph {
         for kind in ["imported", "class"] {
             let key = Name::new(family, &format!("{module}.<{kind}>.{short}"));
             followed.push(key.clone());
-            if let Some(aliases) = self.aliases.get(&key)
+            if let Some(aliases) = self.lookup_aliases(&key)
                 && let Some(class) = aliases
                     .iter()
                     .find_map(|(_, target)| self.reference_fq_class(target, hops + 1, followed))

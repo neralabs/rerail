@@ -8,46 +8,34 @@ use std::{collections::HashMap, path::Path, sync::{Arc, OnceLock}};
 pub(super) const INPUT: &str = "reference_source";
 pub(super) const REQUEST: &str = "reference_summary_request";
 pub(super) const ANSWER: &str = "reference_summary_of";
+pub(super) const FILE_REQUEST: &str = "reference_file_request";
+pub(super) const FILE_ANSWER: &str = "reference_file_of";
 pub(super) const LINK_REQUEST: &str = "reference_link_request";
 pub(super) const LINK_ANSWER: &str = "reference_link_of";
+pub(super) const LINK_VALIDATE: &str = "reference_link_validate";
 pub(super) const LINK_INPUT: &str = "reference_link_input";
-const STAMPS: &str = "reference_binding_stamp";
-const DEPENDENCIES: &str = "reference_link_dependency";
-const NAMES: &str = "reference_link_name";
-const CONTRACTS: &str = "reference_link_contracts";
+pub(super) const SETTINGS: &str = "reference_file_settings";
 
 pub(super) fn is_input(relation: &str) -> bool {
-    matches!(relation, INPUT | STAMPS | DEPENDENCIES | NAMES | CONTRACTS | LINK_INPUT)
+    matches!(relation, INPUT | LINK_INPUT | SETTINGS)
 }
 
 #[derive(Clone, Copy, Default)]
 pub(super) enum Input<'a> {
     #[default]
     None,
-    Sources(&'a [Source]),
-    Bindings(&'a Links<'a>),
-    Links(&'a [Vec<front::Value>], &'a (dyn Fn(&str) -> String + Sync)),
+    Sources(&'a [Source], &'a Preparation<'a>),
+    Links(&'a [Vec<front::Value>], &'a LinkProvider<'a>),
 }
 
-pub struct Links<'a> {
-    pub observations: &'a [(String, String)],
-    pub dependencies: &'a [(String, String)],
-    pub requests: &'a [(String, String)],
-    pub constructors: &'a str,
+pub struct LinkProvider<'a> {
     pub resolve: &'a (dyn Fn(&str) -> String + Sync),
+    pub is_current: &'a (dyn Fn(&str) -> bool + Sync),
 }
 
-impl Links<'_> {
-    pub(super) fn facts(&self) -> impl Iterator<Item = (String, Vec<Vec<front::Value>>)> {
-        use front::Value::Str;
-        [
-            (STAMPS, self.observations),
-            (DEPENDENCIES, self.dependencies),
-            (NAMES, self.requests),
-        ].into_iter().map(|(relation, tuples)| (relation.to_owned(), tuples.iter()
-            .map(|(left, right)| vec![Str(left.as_str().into()), Str(right.as_str().into())]).collect()))
-            .chain([(CONTRACTS.to_owned(), vec![vec![Str(self.constructors.into())]])])
-    }
+pub struct Preparation<'a> {
+    pub settings: &'a str,
+    pub prepare: &'a (dyn Fn(&str, &str) -> Result<String> + Sync),
 }
 
 #[derive(Clone)]
@@ -94,40 +82,32 @@ pub(super) fn answer(store: &ContentStore, root: &Path, path: &str, digest: &str
     SUMMARIZE.get().ok_or_else(|| Error::Plan("reference extractor is unavailable".into()))?(tape, module, stub)
 }
 
-pub fn run(root: &Path, sources: &[Source]) -> Result<HashMap<String, String>> {
+pub fn run(root: &Path, sources: &[Source], preparation: &Preparation<'_>) -> Result<HashMap<String, String>> {
     if sources.is_empty() { return Ok(HashMap::new()); }
     let program = crate::code_rule_dsl::logic::rr::parse(concat!(
         include_str!("../../../../../../docs/rule-syntax/lib/core.rr"), "\n",
         include_str!("../../../typing/programs/reference-summaries.rr"),
     )).map_err(|err| Error::Plan(err.to_string()))?;
     let options = serde_json::json!({ "reuse": false, "inputFiles": [] });
-    let image = super::run_fact_image_with_references(&program, root, &options, Input::Sources(sources))?;
+    let image = super::run_fact_image_with_references(&program, root, &options, Input::Sources(sources, preparation))?;
     let rows = Outputs::of(&image).map_err(Error::Plan)?;
-    rows.rows("reference_source_summary").into_iter().map(|row| {
+    rows.rows("reference_prepared_source").into_iter().map(|row| {
         let (Value::Text(path), Value::Text(bytes)) = (row.get(0), row.get(1))
-            else { return Err(Error::Plan("invalid reference summary fact".into())) };
+            else { return Err(Error::Plan("invalid reference file fact".into())) };
         Ok((path.to_owned(), bytes.to_owned()))
     }).collect()
 }
 
-pub fn link(root: &Path, links: &Links<'_>) -> Result<HashMap<String, String>> {
-    if links.requests.is_empty() { return Ok(HashMap::new()); }
-    let derive_keys = crate::code_rule_dsl::logic::rr::parse(concat!(
-        include_str!("../../../../../../docs/rule-syntax/lib/core.rr"), "\n",
-        include_str!("../../../typing/programs/reference-link-keys.rr"),
-    )).map_err(|err| Error::Plan(err.to_string()))?;
+pub fn link<'a>(root: &Path, names: impl Iterator<Item = &'a str>, constructors: &str, provider: &LinkProvider<'_>) -> Result<HashMap<String, String>> {
+    use front::Value::Str;
+    let keys: Vec<_> = names.map(|name| vec![Str(name.into()), Str(constructors.into())]).collect();
+    if keys.is_empty() { return Ok(HashMap::new()); }
     let options = serde_json::json!({ "reuse": false, "inputFiles": [] });
-    let image = super::run_fact_image_with_references(&derive_keys, root, &options, Input::Bindings(links))?;
-    let rows = Outputs::of(&image).map_err(Error::Plan)?;
-    let keys = rows.rows(LINK_INPUT).iter().map(|row| (0..3).map(|column| match row.get(column) {
-        Value::Text(value) => Ok(front::Value::Str(value.into())),
-        _ => Err(Error::Plan("invalid reference link input".into())),
-    }).collect::<Result<Vec<_>>>()).collect::<Result<Vec<_>>>()?;
     let program = crate::code_rule_dsl::logic::rr::parse(concat!(
         include_str!("../../../../../../docs/rule-syntax/lib/core.rr"), "\n",
         include_str!("../../../typing/programs/reference-links.rr"),
     )).map_err(|err| Error::Plan(err.to_string()))?;
-    let image = super::run_fact_image_with_references(&program, root, &options, Input::Links(&keys, links.resolve))?;
+    let image = super::run_fact_image_with_references(&program, root, &options, Input::Links(&keys, provider))?;
     let rows = Outputs::of(&image).map_err(Error::Plan)?;
     rows.rows("reference_name_result").into_iter().map(|row| {
         let (Value::Text(name), Value::Text(result)) = (row.get(0), row.get(1))

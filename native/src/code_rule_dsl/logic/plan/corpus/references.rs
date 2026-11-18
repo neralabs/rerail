@@ -17,7 +17,7 @@
 //! it the graph has neither and is over every file.
 
 use super::{Error, Result};
-use crate::code_rule_dsl::calls::{self, closure::Graph, contracts, summary::Summary};
+use crate::code_rule_dsl::calls::{self, closure::{Graph, ReferenceFile}, contracts, summary::Summary};
 use crate::code_rule_dsl::facts::core::Facts;
 use crate::code_rule_dsl::facts::vtab::syntax;
 use crate::code_rule_dsl::language::GrammarDialect;
@@ -43,6 +43,7 @@ const VIAS: [&str; 9] = ["param_type", "field", "bare", "unqualified", "self", "
 struct Config {
     key: contracts::Key,
     constructors: String,
+    bindings: String,
     scope: Option<CodeRuleScope>,
 }
 
@@ -51,7 +52,7 @@ impl Config {
     fn of(prog: &Program) -> Result<Self> {
         let mut settings = prog.settings.iter().filter(|(key, _)| key == "references");
         let Some((_, text)) = settings.next() else {
-            return Ok(Config { key: 0, constructors: "null".to_owned(), scope: Some(scope(None)?) });
+            return Ok(Config { key: 0, constructors: "null".to_owned(), bindings: "[null,null]".to_owned(), scope: Some(scope(None)?) });
         };
         if settings.next().is_some() {
             return Err(Error::Plan("more than one .references setting".into()));
@@ -66,7 +67,9 @@ impl Config {
         // A scope including nothing (an event's empty scope) holds no file; W refuses to compile one.
         let empty = object.get("scope").and_then(|s| s.get("include")).and_then(Value::as_array).is_some_and(Vec::is_empty);
         let constructors = object.get("constructorFields").unwrap_or(&Value::Null).to_string();
-        Ok(Config { key, constructors, scope: if empty { None } else { Some(scope(object.get("scope"))?) } })
+        let bindings = serde_json::to_string(&(object.get("siblingLinks"), object.get("constructorFields")))
+            .map_err(|error| bad(error.to_string()))?;
+        Ok(Config { key, constructors, bindings, scope: if empty { None } else { Some(scope(object.get("scope"))?) } })
     }
 }
 
@@ -158,30 +161,28 @@ impl Files {
         let key = self.config.key;
         let mut files = self.files.into_inner().expect("reference files");
         files.sort_unstable_by(|a, b| a.0.cmp(&b.0));
-        let sources: Vec<_> = files.iter().filter_map(|(_, summary, _)| match summary {
-            LocalSummary::Requested(source) => Some(source.clone()),
-            LocalSummary::Direct(_) => None,
-        }).collect();
-        let summaries = reference_facts::run(root, &sources)?;
-        let summaries = files.iter().map(|(path, summary, _)| {
-            let summary = match summary {
-                LocalSummary::Direct(summary) => summary.as_references(key),
-                LocalSummary::Requested(_) => {
-                    summaries.get(path.as_ref()).and_then(|bytes| decode_summary(bytes))
-                        .ok_or_else(|| Error::Plan(format!("{path}: missing or invalid reference summary")))?.as_references(key)
-                }
-            };
-            Ok((Arc::clone(path), Arc::new(summary)))
-        }).collect::<Result<_>>()?;
         let graph = if self.retained {
-            Graph::link_references_with(key, summaries, |graph, names| {
-                let bindings = graph.reference_bindings(names);
-                let links = reference_facts::link(root, &reference_facts::Links {
-                    observations: &bindings.observations,
-                    dependencies: &bindings.dependencies,
-                    requests: &bindings.requests,
-                    constructors: &self.config.constructors,
+            let sources: Vec<_> = files.iter().filter_map(|(_, summary, _)| match summary {
+                LocalSummary::Requested(source) => Some(source.clone()),
+                LocalSummary::Direct(_) => None,
+            }).collect();
+            let prepared = reference_facts::run(root, &sources, &reference_facts::Preparation {
+                settings: &self.config.bindings,
+                prepare: &|path, bytes| {
+                    let summary = decode_summary(bytes)
+                        .ok_or_else(|| Error::Plan(format!("{path}: invalid reference summary")))?;
+                    Ok(ReferenceFile::prepare(path, &summary, key))
+                },
+            })?;
+            let prepared = files.iter().map(|(path, _, _)| {
+                let file = prepared.get(path.as_ref()).and_then(|value| ReferenceFile::decode(value))
+                    .ok_or_else(|| Error::Plan(format!("{path}: missing or invalid reference file facts")))?;
+                Ok((Arc::clone(path), file))
+            }).collect::<Result<_>>()?;
+            Graph::link_references_with(key, prepared, |graph, names| {
+                let links = reference_facts::link(root, names.iter().map(|name| name.text()), &self.config.constructors, &reference_facts::LinkProvider {
                     resolve: &|name| graph.resolve_reference_link(name),
+                    is_current: &|answer| graph.reference_link_is_current(answer),
                 })?;
                 names.iter().map(|name| {
                     links.get(name.text()).and_then(|answer| graph.restore_reference_link(answer))
@@ -191,6 +192,12 @@ impl Files {
                 }).collect()
             })?
         } else {
+            let summaries = files.iter().map(|(path, summary, _)| {
+                let LocalSummary::Direct(summary) = summary else {
+                    return Err(Error::Plan(format!("{path}: missing direct reference summary")));
+                };
+                Ok((Arc::clone(path), Arc::new(summary.as_references(key))))
+            }).collect::<Result<_>>()?;
             Graph::link_references(key, summaries)
         };
         let nodes: HashMap<&str, &HashMap<(u32, u32), i64>> = files.iter().map(|(path, _, nodes)| (path.as_ref(), nodes)).collect();

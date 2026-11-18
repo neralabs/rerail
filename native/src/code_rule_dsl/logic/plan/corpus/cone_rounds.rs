@@ -471,18 +471,34 @@ impl RoundProgram {
             // answers are its answer again, and it is not asked.
             if let Some(still) = on.still {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "rounds/answers the journal keeps".into());
-                for (answer, req) in crate::code_rule_dsl::logic::rr::WORLD {
-                    let produced = self.kept_as(answer);
+                for (answer_relation, req) in crate::code_rule_dsl::logic::rr::WORLD {
+                    let produced = self.kept_as(answer_relation);
                     let Some(rows) = provisional.get(&produced) else { continue };
                     let width = self.width(req);
                     let mut by: HashMap<&[i64], Vec<&Vec<i64>>> = HashMap::new();
                     for row in rows.iter().filter(|row| row.len() >= width) {
                         by.entry(&row[..width]).or_default().push(row);
                     }
-                    let keys: Vec<_> = carried.iter()
-                        .filter(|(q, key)| q == req && key.len() == width
-                            && still(q, key, by.get(key.as_slice()).map_or(&[], Vec::as_slice)))
-                        .map(|(_, key)| key).collect();
+                    let candidates: Vec<_> = carried.iter().filter_map(|(q, key)| {
+                        (q == req && key.len() == width).then_some(key)
+                    }).collect();
+                    let keys: Vec<_> = if req == super::reference_facts::LINK_REQUEST {
+                        // The graph stays on the run's thread. Check its saved observations in one request.
+                        let prior: Vec<_> = candidates.iter().flat_map(|key| {
+                            by.get(key.as_slice()).into_iter().flatten().map(|row| (*row).clone())
+                        }).collect();
+                        let current: HashSet<Vec<i64>> = if prior.is_empty() {
+                            HashSet::new()
+                        } else {
+                            answer(super::reference_facts::LINK_VALIDATE, &prior)?.into_iter()
+                                .flat_map(|(_, rows)| rows).map(|row| row[..width].to_vec()).collect()
+                        };
+                        candidates.into_iter().filter(|key| current.contains(key.as_slice())).collect()
+                    } else {
+                        candidates.into_iter().filter(|key| {
+                            still(req, key, by.get(key.as_slice()).map_or(&[], Vec::as_slice))
+                        }).collect()
+                    };
                     let given: Vec<_> = keys.iter().flat_map(|key| by.get(key.as_slice()).into_iter().flatten().map(|row| (*row).clone())).collect();
                     still_n += keys.len();
                     answers.asked.extend(keys.into_iter().map(|k| ((*req).to_owned(), k.clone())));
