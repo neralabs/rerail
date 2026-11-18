@@ -17,7 +17,7 @@ fn main() {
     }
     let root = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src");
     let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR")).join("randomforest_kernels.metal");
-    let main = root.join("mldb/plugins/jml/randomforest_kernels.metal");
+    let main = root.join("mldb/plugins/jml/randomforest_kernels_ukl.h");
     let text = Preprocess::new(Backend::Metal { version: METAL_VERSION })
         .dir(root.to_string_lossy())
         .run(&main.to_string_lossy())

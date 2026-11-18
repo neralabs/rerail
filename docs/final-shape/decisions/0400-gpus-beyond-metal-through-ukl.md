@@ -474,6 +474,19 @@ on a Spark.
 | 12 | Several GPUs and hosts (§7.4) | two lanes on two domains give one lane's findings |
 | later | ROCm (HIP), OpenCL, WebGPU (§3.4) | planned as each is taken up |
 
+Progress (2026-11-18):
+- **Step 1: done.** The preprocessor's output is token-equal to clang's for both backends; the forest builds
+  without `cc`.
+- **Step 2, first half: done.** All 17 random-forest kernels are written once in UKL
+  (`randomforest_kernels_ukl.h`), and the hand-written Metal wrappers (`randomforest_kernels.metal`) are gone.
+  - On Metal, the forest's library is built from the UKL source, and the forest's tests pass.
+  - On CUDA, NVRTC compiles all 17 for sm_121 (GB10) into one cubin. Registers range from 10 to 76; static shared
+    memory is 0 to 32,640 bytes per kernel.
+  - UKL gained the rows the kernels needed (§3.1): `ARGS` (a structure of arguments), `CONSTBUFFER`, `SHARED`
+    (threadgroup storage declared in the kernel's own scope, which is the only place Metal allows it),
+    `TGID0..2`, `LANE` and `NLANES`.
+  - The second half, Metal's results on CUDA, needs a host that launches the kernels, which is step 4's job.
+
 Steps 1, 2 and E1 are small and settle the bets the rest rests on: the preprocessor, the shim, and in-place
 bandwidth. Step 3 can run beside them.
 

@@ -3,7 +3,7 @@
 //! macOS only (Metal); elsewhere the crate is empty.
 //!
 //! The kernels are one C source (`mldb/plugins/jml/randomforest_kernels_common.h`) written against UKL's shims; the
-//! build step preprocesses `randomforest_kernels.metal` with the Metal shim into Metal source, compiled once per
+//! build step preprocesses `randomforest_kernels_ukl.h` with the Metal shim into Metal source, compiled once per
 //! process on the shared device (`gpu::shared`; randomforest_kernels_metal.rs).
 
 #![cfg(target_os = "macos")]

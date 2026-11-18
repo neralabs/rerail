@@ -57,10 +57,20 @@ fn same_as_clang(backend: Backend, main: &str) {
     assert!(a.len() > 1000, "too few tokens ({}) for the random forest's kernels", a.len());
 }
 
-/// The random forest's Metal kernels, as `forest/build.rs` preprocesses them with `c++ -E`.
+/// The random forest's kernels for Metal, as `forest/build.rs` preprocesses them.
 #[test]
 fn metal_random_forest_kernels_preprocess_as_clang_does() {
-    same_as_clang(Backend::Metal { version: 310 }, &format!("{}/mldb/plugins/jml/randomforest_kernels.metal", forest()));
+    same_as_clang(Backend::Metal { version: 310 }, &format!("{}/mldb/plugins/jml/randomforest_kernels_ukl.h", forest()));
+}
+
+/// The same source for CUDA: one `extern "C" __global__` entry per kernel, its threadgroup storage declared.
+#[test]
+fn cuda_random_forest_kernels_preprocess_as_clang_does() {
+    let main = format!("{}/mldb/plugins/jml/randomforest_kernels_ukl.h", forest());
+    same_as_clang(Backend::Cuda { sm: 121 }, &main);
+    let out = Preprocess::new(Backend::Cuda { sm: 121 }).dir(forest()).run(&main).unwrap();
+    assert_eq!(out.matches("extern \"C\" __global__ void").count(), 17, "one entry per kernel");
+    assert!(out.contains("__shared__ WIndexed wStartBest[2];"), "a SHARED row declares its storage");
 }
 
 /// A header the search does not find fails the kernel, naming it.

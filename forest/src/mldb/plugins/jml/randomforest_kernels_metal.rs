@@ -5,7 +5,7 @@
 //!
 //! Kernels for the random forest algorithm, on Metal: the `randomforest_kernels` library. Upstream registered a
 //! generator that loaded a prebuilt `randomforest_metal.metallib` (or compiled the source file); here the build
-//! step preprocesses `randomforest_kernels.metal` through the Metal shim, and the library is compiled from that
+//! step preprocesses `randomforest_kernels_ukl.h` through the Metal shim, and the library is compiled from that
 //! source on the shared device (`gpu::shared`) the first time it is asked for, once per process. Its functions,
 //! with their pipeline states and reflected arguments, are made once each.
 
@@ -19,7 +19,7 @@ pub const SOURCE: &str = include_str!(concat!(env!("OUT_DIR"), "/randomforest_ke
 /// The library's name in the registry.
 pub const LIBRARY_NAME: &str = "randomforest_kernels";
 
-/// The trainer's kernels (`randomforest_kernels.metal`), in the order a tree's training runs them, then the
+/// The trainer's kernels (`randomforest_kernels_ukl.h`), in the order a tree's training runs them, then the
 /// forest's prediction and the feature space's columns.
 pub const KERNELS: [&str; 16] = [
     "bagRowsKernel",

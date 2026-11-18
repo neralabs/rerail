@@ -151,3 +151,18 @@ for n in range(4,max_num_args,4):
     argnames = ", ".join(["__a" + str(n) for n in range(0,n)])
     calls = ", ".join([f"Fn({an(i)},{an(i+1)},{an(i+2)},{an(i+3)})" for i in range(0,n,4)])
     print(f"#define __UKL_FOREACH_QUAD_{n}(Fn, {argnames}) __UKL_INSERT_COMMAS_{int(n/4)}({calls})")
+
+# Generate UKL_FOREACH_QUAD_NOSEP (Rerail, decision 0400): the same, with nothing between the calls; for a list of
+# statements or declarations each call ends itself (a kernel's threadgroup storage, `SHARED` rows).
+print()
+print("// Internal switch to forward to __UKL_FOREACH_QUAD_NOSEP_(numargs) to implement __UKL_FOREACH_QUAD_NOSEP")
+print("#define __UKL_FOREACH_QUAD_NOSEP_N(Name, Count, ...) __UKL_CALL2(__UKL_FOREACH_QUAD_NOSEP_, Count, Name, __VA_ARGS__)")
+print()
+print("// Call the given macro Fn(a1,a2,a3,a4) for each four arguments passed, with nothing between the calls")
+print("#define __UKL_FOREACH_QUAD_NOSEP(Fn, ...) __UKL_FOREACH_QUAD_NOSEP_N(Fn, __UKL_COUNT_ARGS(__VA_ARGS__), __VA_ARGS__)")
+print()
+print("#define __UKL_FOREACH_QUAD_NOSEP_0(Fn)")
+for n in range(4,max_num_args,4):
+    argnames = ", ".join(["__a" + str(n) for n in range(0,n)])
+    calls = " ".join([f"Fn({an(i)},{an(i+1)},{an(i+2)},{an(i+3)})" for i in range(0,n,4)])
+    print(f"#define __UKL_FOREACH_QUAD_NOSEP_{n}(Fn, {argnames}) {calls}")
