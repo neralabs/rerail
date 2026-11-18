@@ -8,7 +8,7 @@
 #   cold     a process per step over an empty store: the truth each edit's findings are compared with
 #
 # Per step: `NN.json` (findings), `NN.err` (`/usr/bin/time -l`: instructions retired, footprint; the frames queued;
-# RERAIL_KEPT_BYTES; with PROFILE_STEP=NN, that step's RERAIL_PROFILE in prof-NN/; with SAMPLE_STEP=NN, its stacks in sample-NN.txt). Steps 00 to LAST (default 08). Each run is capped (tmp/capped.sh-style: CAP_MB, CAP_S).
+# RERAIL_KEPT_BYTES; with ONLY=NN, that step alone (kept, cold); with PROFILE_STEP=NN, that step's RERAIL_PROFILE in prof-NN/; with SAMPLE_STEP=NN, its stacks in sample-NN.txt). Steps 00 to LAST (default 08). Each run is capped (tmp/capped.sh-style: CAP_MB, CAP_S).
 set -eu
 cd "${0:A:h}/../../.."; mkdir -p /tmp/ai-trash
 # On a farm host, keep $IN and $OUT outside the checkout (MM_ROOT): a later test-remote's sync of the checkout
@@ -22,7 +22,7 @@ cp -R $IN/o125-replay/00 $W
 # was sometimes missing from its replay, and the whole-run cutoff answered the last run's findings (work queue Q117).
 export RERAIL_JOURNAL=off RERAIL_SQL_STRICT=1 RERAIL_DEVICE=cpu RERAIL_RR_LIB=$PWD/docs/rule-syntax/lib RERAIL_KEPT_BYTES=1 RERAIL_MODE_TRACE=1
 export RERAIL_COSTS=$OUTA/costs.sqlite RERAIL_IMAGE_STORE=$OUTA/images
-POLICY=$INA/calls-policy.rr
+POLICY=$INA/${POLICY_NAME:-calls-policy.rr}
 steps=(00 $(seq 1 $((10#$LAST)) | xargs printf "%02d\n"))
 apply() {  # the files step $1 changed, and those it removed
   rsync -rlpc --exclude .deleted $IN/o125-replay/$1/ $W/
@@ -33,6 +33,8 @@ case $MODE in
   kept|cold)
     for s in $steps; do
       if [ $s != 00 ]; then apply $s; fi
+      # ONLY=NN: run that step alone (its edits before it applied): a cold truth for the last step of a long replay.
+      if [ -n "${ONLY:-}" ] && [ $s != $ONLY ]; then continue; fi
       store=$OUTA/store.sqlite; [ $MODE = cold ] && store=$OUTA/store-$s.sqlite
       prof=(); [ "${PROFILE_STEP:-}" = $s ] && prof=(env RERAIL_PROFILE=$OUTA/prof-$s)
       if [ "${SAMPLE_STEP:-}" = $s ]; then

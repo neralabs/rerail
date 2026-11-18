@@ -43,8 +43,10 @@ for k, s in enumerate(steps):
     ke = err_figures(kp.read_text()) if kp.exists() else {}
     # A run that stopped leaves its JSON empty: no findings to compare (`-`).
     kf = (findings((d / "kept" / f"{s}.json").read_text()) or [None])[0] if (d / "kept" / f"{s}.json").exists() else None
-    sf = session[k] if k < len(session) else None
-    sc = session_runs[k][0] if k < len(session_runs) else ""
+    # The session's runs are its steps from 00, whichever steps the cold runs measured.
+    n = int(s)
+    sf = session[n] if n < len(session) else None
+    sc = session_runs[n][0] if n < len(session_runs) else ""
     same = lambda f: "-" if f is None else ("yes" if f == cold[s] else f"NO ({len(f - cold[s])} extra, {len(cold[s] - f)} missing)")
     print(f"{s} | {c['instructions']} | {ke.get('instructions', '')} | {same(kf)} | {ke.get('frames', '')} | {sc} | {same(sf)}")
 # The kept part's size, the shape counters (cumulative in a session), and the strata by how they ran.
