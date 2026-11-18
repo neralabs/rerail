@@ -430,3 +430,12 @@ Bringing the key to the cross part (its documents' depths, as an input of the pa
 fails (by levels: 1). Its first edit only adds rows, so it pushed no candidate and passed with a key no run could
 read. It now also shrinks the body, removes the import and puts it back, each against a fresh run (R10) and with no
 levels. R5's ring, which can cycle, is still maintained by levels.
+
+## Step 8: the recheck's order is priced (R7, Q116)
+
+The recheck took one greedy pass over its body with the head bound (`bound_head_order`), unpriced. Now it is
+planned as the other lines are (`Model::plan_rule_bound`). The search starts from one row with the head's plain
+variables bound, the state a recheck's candidate gives, and searches and prices orders from there. Such a plan is
+no line's kept plan: only `plan_rule_reused` reads or keeps those, and a recheck does not call it. The greedy order
+remains for a body none of whose priced orders has a native join, and is counted (`rechecks_unpriced`).
+`r7_the_recheck_order_is_priced` passes over the small edits and is no longer ignored.

@@ -335,7 +335,6 @@ depth(a, n) :- used(a), n = count : { below(a, _) }.
 /// R7: the mode's lines are the program's plans, priced (0328 §4, 0122): the recheck's order with its head bound is
 /// priced as the other lines are, not taken from one greedy pass (Q116).
 #[test]
-#[ignore = "R7: the recheck's order is not priced (Q116, t43 step 6)"]
 fn r7_the_recheck_order_is_priced() {
     let mut s = kinds("r7");
     s.run();

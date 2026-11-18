@@ -880,6 +880,9 @@ pub struct Model {
 thread_local! {
     /// Set while a rule is searched without its join shape directives (`Model::plan_inner`).
     static NO_SHAPES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The variables bound before a rule's first step while it is searched (`Model::plan_rule_bound`): a recheck's,
+    /// its head's, bound by the one candidate row it checks. Empty for every other search.
+    static START_BOUND: std::cell::RefCell<VarSet> = std::cell::RefCell::new(VarSet::new());
 }
 
 
@@ -2095,6 +2098,17 @@ impl Model {
     /// precede its indexed probe.
     pub fn plan_rule(&self, pf: Fields<'_>, b: &Body<'_>, first: Option<usize>) -> Result<Plan> {
         Ok(self.plan_rule_explained(pf, b, first)?.0)
+    }
+
+    /// `b` planned and priced as a recheck runs it (0364 R7, Q116): its head's plain variables bound by one candidate
+    /// row before its first step, the search's start one row with them bound. The plan is no line's kept plan: a
+    /// search with nothing bound neither reads nor keeps it.
+    pub fn plan_rule_bound(&self, pf: Fields<'_>, b: &Body<'_>) -> Result<Plan> {
+        let bound = VarSet::of(b.head().args().filter_map(|t| t.var()));
+        let was = START_BOUND.with(|s| s.replace(bound));
+        let got = self.plan_inner(pf, b, None, None, false);
+        START_BOUND.with(|s| s.replace(was));
+        Ok(got?.0)
     }
 
     /// `plan_rule` for its price alone: no EXPLAIN is made of it, even when profiling (§4's pricing of a stratum's
@@ -3651,8 +3665,10 @@ impl Model {
         let mut candidates = 0u64;
         // A given order, priced now: each join step as the search prices it, each filter once ready. A kept order
         // (`fixed`), or a start the search tries first (`SearchCx::start`, decision 0258).
+        // What is bound before the first step: nothing, or a recheck's head (`plan_rule_bound`).
+        let start = START_BOUND.with(|s| s.borrow().clone());
         let price = |fixed: &[Step], candidates: &mut u64| -> Result<(f64, f64, Vec<Step>)> {
-            let (mut work, mut rows, mut bound, mut order) = (0.0, 1.0, VarSet::new(), Vec::new());
+            let (mut work, mut rows, mut bound, mut order) = (0.0, 1.0, start.clone(), Vec::new());
             if fixed.len() != b.len() {
                 return Err(Error::Plan("a kept plan of another body".into()));
             }
@@ -3689,7 +3705,7 @@ impl Model {
         let (work, rows, order, subsets) = if joins.is_empty() {
             // A body of filters and aggregates alone (`n = count : { … }`) runs over the relational unit, one empty
             // binding: ground negations and constant expressions filter it; an unbound variable still fails.
-            let (mut order, mut bound, mut rest) = (Vec::new(), VarSet::new(), (0..b.len()).collect());
+            let (mut order, mut bound, mut rest) = (Vec::new(), start.clone(), (0..b.len()).collect());
             let (rows, _) = close(&mut order, 1.0, &mut bound, &mut rest);
             if !rest.is_empty() {
                 let rest: Vec<String> = rest.iter().map(|&i: &usize| b.show(i)).collect();
@@ -3704,7 +3720,7 @@ impl Model {
         type Best = (f64, f64, Vec<Step>, VarSet, Vec<usize>);
         let mut subsets_reached = 0u64;
         let mut best_of: HashMap<u64, Best> = HashMap::new();
-        best_of.insert(0, (0.0, 1.0, Vec::new(), VarSet::new(), (0..b.len()).filter(|&i| !b.is_join(i)).collect()));
+        best_of.insert(0, (0.0, 1.0, Vec::new(), start.clone(), (0..b.len()).filter(|&i| !b.is_join(i)).collect()));
         // The greedy order's next step shares a variable with what is joined, while one can (no cross product while a
         // connected step remains, decision 0038). The search prices cross products itself: a cheap one with a tiny
         // relation is T's choice on its programs (`dec1` before `pv`: work 67, not 7,001).
@@ -7626,14 +7642,19 @@ impl<'a> Run<'a, '_> {
                     }
                 }
             }
-            // Its recheck: the head's variables bound, each literal taken as soon as its variables are, the atom that
-            // shares most of them first. One pass over the body, no search: the planner prices no order with its
-            // head bound (Q116), and a recheck reads one head row at a time.
-            // Where that order has no native join (a step that runs one way only, `docof` from its node), the
-            // planner's order: correct with the head bound too, its binds then tests.
-            let greedy = bound_head_order(b).and_then(|order| self.whole_join_spec(b, &order, None, &ri, scc, &native_rels));
-            let spec = match greedy {
-                Some(spec) => {
+            // Its recheck: planned and priced as the other lines are (0364 R7, Q116), its head's variables bound by
+            // the one candidate row it reads (`plan_rule_bound`). Where no order of that search has a native join, the
+            // greedy bound-head order, unpriced (counted); then the planner's order with nothing bound, which is
+            // correct with the head bound too.
+            plan_site("the maintain mode's recheck, its head bound");
+            let priced = match self.model.plan_rule_bound(pf, b) {
+                Ok((order, _, _)) => self.whole_join_spec(b, &order, None, &ri, scc, &native_rels),
+                Err(_) => None,
+            };
+            let greedy = || bound_head_order(b).and_then(|order| self.whole_join_spec(b, &order, None, &ri, scc, &native_rels));
+            let spec = match priced.map(Ok).or_else(|| greedy().map(Err)) {
+                Some(Ok(spec)) => spec,
+                Some(Err(spec)) => {
                     crate::code_rule_dsl::logic::plan::corpus::maintain::shape::recheck_unpriced();
                     spec
                 }
