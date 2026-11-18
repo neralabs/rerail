@@ -566,9 +566,11 @@ fn strip_outside_strings(text: &str, skip: impl Fn(&[u8], usize) -> Option<usize
     out
 }
 
-/// What a cached summary stands on: the file's modification time and length and, on unix, its
-/// status-change time and inode, which a rewrite restoring the modification time (an archive's
-/// extraction, `rsync -t`) still moves.
+/// What a cached summary stands on: the file's modification time and length, and what a rewrite
+/// restoring the modification time (an archive's extraction, `rsync -t`, a copy that keeps times)
+/// still moves: on unix its status-change time and inode; on Windows NTFS's change time, which
+/// every write and every time set moves, and its file id, both read with its folder's listing
+/// (`listing`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Stamp {
     modified: SystemTime,
@@ -577,8 +579,21 @@ struct Stamp {
     changed: (i64, i64),
     #[cfg(unix)]
     file: (u64, u64),
+    #[cfg(windows)]
+    changed: i64,
+    #[cfg(windows)]
+    file: i64,
 }
 
+#[cfg(windows)]
+impl Stamp {
+    /// The stamp the folder's listing read with the file; `None` as below.
+    fn of(facts: &listing::Facts) -> Option<Self> {
+        facts.stamp()
+    }
+}
+
+#[cfg(not(windows))]
 impl Stamp {
     /// `None` where the file system gives no modification time: such a file's summary is never
     /// cached.
@@ -788,74 +803,116 @@ fn skipped_folder(name: &str) -> bool {
 fn walk(
     top: &Path,
     directory: &Path,
-    sources: &mut Vec<(String, PathBuf, std::fs::Metadata)>,
+    sources: &mut Vec<Walked>,
     budget: &mut u64,
     entries: &mut usize,
 ) -> bool {
-    let listing = match std::fs::read_dir(directory) {
-        Ok(listing) => listing,
-        Err(error) => return gone(&error),
+    let Some(listed) = listed(directory, entries) else {
+        return false;
+    };
+    listed
+        .iter()
+        .all(|entry| visit(top, directory, entry, sources, budget, entries))
+}
+
+/// A source `walk` found: its path relative to the walk's top, its absolute path and its facts.
+type Walked = (String, PathBuf, listing::Facts);
+
+/// The entries of `directory` in name order, each counted down from `entries`: none where the
+/// folder is gone (deleted since its parent was listed); `None` where it or an entry cannot be
+/// read, or it lists more than `entries`.
+fn listed(directory: &Path, entries: &mut usize) -> Option<Vec<listing::Entry>> {
+    let found = match listing::list(directory) {
+        Ok(found) => found,
+        Err(error) => return gone(&error).then(Vec::new),
     };
     let mut listed = Vec::new();
-    for entry in listing {
-        let Some(left) = entries.checked_sub(1) else {
-            return false;
-        };
-        *entries = left;
-        let Ok(entry) = entry else {
-            return false;
-        };
-        listed.push(entry);
+    for entry in found {
+        *entries = entries.checked_sub(1)?;
+        listed.push(entry.ok()?);
     }
-    listed.sort_by_key(std::fs::DirEntry::file_name);
-    for entry in listed {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        let kind = match entry.file_type() {
-            Ok(kind) => kind,
-            Err(error) if gone(&error) => continue,
-            Err(_) => return false,
-        };
-        let path = entry.path();
-        if kind.is_dir() {
-            if skipped_folder(&name)
-                || path.join("package.json").exists()
-                || path.join(".git").exists()
-            {
-                continue;
-            }
-            if !walk(top, &path, sources, budget, entries) {
-                return false;
-            }
-        } else if kind.is_file() && ecma_label(&name).is_some() {
-            if sources.len() > MAX_GRAPH_FILES {
-                return false;
-            }
-            let metadata = match entry.metadata() {
-                Ok(metadata) => metadata,
-                Err(error) if gone(&error) => continue,
-                Err(_) => return false,
-            };
-            if metadata.len() <= MAX_SOURCE_BYTES {
-                let Some(left) = budget.checked_sub(metadata.len()) else {
-                    return false;
-                };
-                *budget = left;
-            }
-            let relative = path
-                .strip_prefix(top)
-                .map(|relative| {
-                    relative
-                        .components()
-                        .map(|component| component.as_os_str().to_string_lossy())
-                        .collect::<Vec<_>>()
-                        .join("/")
-                })
-                .unwrap_or_default();
-            sources.push((relative, path, metadata));
+    listed.sort_by_key(listing::Entry::name);
+    Some(listed)
+}
+
+/// Takes one entry of `directory` into `walk`: a folder is walked unless the walk skips it
+/// (`skips`), an ECMA source is added (`add_source`); `false` where the walk stops.
+fn visit(
+    top: &Path,
+    directory: &Path,
+    entry: &listing::Entry,
+    sources: &mut Vec<Walked>,
+    budget: &mut u64,
+    entries: &mut usize,
+) -> bool {
+    let file_name = entry.name();
+    let path = directory.join(&file_name);
+    let name = file_name.to_string_lossy();
+    match entry.kind() {
+        Ok(listing::Kind::Folder) => {
+            skips(&name, &path) || walk(top, &path, sources, budget, entries)
         }
+        Ok(listing::Kind::File) if ecma_label(&name).is_some() => {
+            add_source(top, path, entry, sources, budget)
+        }
+        Ok(_) => true,
+        Err(error) => gone(&error),
     }
+}
+
+/// Whether `walk` skips the folder `name` at `path`: one `skipped_folder` names, a nested
+/// package or a nested checkout (a folder holding `.git`).
+fn skips(name: &str, path: &Path) -> bool {
+    skipped_folder(name) || path.join("package.json").exists() || path.join(".git").exists()
+}
+
+/// Adds the source `entry` at `path` to `sources`, its bytes (of at most 1 MiB) counted down from
+/// `budget`; a source gone since its folder was listed is left out. `false` once `sources` is past
+/// `MAX_GRAPH_FILES`, past the budget, or where the source cannot be read.
+fn add_source(
+    top: &Path,
+    path: PathBuf,
+    entry: &listing::Entry,
+    sources: &mut Vec<Walked>,
+    budget: &mut u64,
+) -> bool {
+    if sources.len() > MAX_GRAPH_FILES {
+        return false;
+    }
+    let facts = match entry.facts() {
+        Ok(facts) => facts,
+        Err(error) => return gone(&error),
+    };
+    if !spend(budget, facts.len()) {
+        return false;
+    }
+    sources.push((slash_relative(top, &path), path, facts));
     true
+}
+
+/// Counts a source of `length` bytes down from `budget` (one over 1 MiB is read as empty);
+/// `false` past it.
+fn spend(budget: &mut u64, length: u64) -> bool {
+    if length > MAX_SOURCE_BYTES {
+        return true;
+    }
+    budget
+        .checked_sub(length)
+        .map(|left| *budget = left)
+        .is_some()
+}
+
+/// `path` relative to `top`, its components joined by `/`.
+fn slash_relative(top: &Path, path: &Path) -> String {
+    path.strip_prefix(top)
+        .map(|relative| {
+            relative
+                .components()
+                .map(|component| component.as_os_str().to_string_lossy())
+                .collect::<Vec<_>>()
+                .join("/")
+        })
+        .unwrap_or_default()
 }
 
 /// Whether a read failed because the entry no longer exists (deleted since its folder was
@@ -951,5 +1008,6 @@ pub(crate) fn is_module_config(path: &str) -> bool {
     name.ends_with(".json") && (name.starts_with("tsconfig") || name.starts_with("jsconfig"))
 }
 
+mod listing;
 #[cfg(test)]
 mod tests;
