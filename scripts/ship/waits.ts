@@ -127,6 +127,9 @@ class Home {
     env.BROWSER = "none";
     env.RERAIL_DEVICE_SECRET_STORE = "file";
     env.RERAIL_CONTENT_STORE_PATH = join(dir, "store", contentStoreFile(this.checkout));
+    // W1's warm-up, W4's store, W5 and W8 scan the repository (`rerail scan --session`), which the daemon refuses
+    // unless it starts with the experiment on (src/engine/experimental-features.ts); the daemon inherits it from the CLI.
+    env.RERAIL_EXPERIMENTAL_REPOSITORY_SCAN = "1";
     this.env = env;
   }
 
