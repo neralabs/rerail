@@ -285,6 +285,27 @@ pub struct Literal {
     pub value: Option<(String, &'static str)>,
 }
 
+/// Whether a node of `kind` with `children` has a part other than constant text (a Python `interpolation`, a PHP
+/// `encapsed_string`'s variable).
+fn interpolated(f: &Facts, dialect: &Dialect, kind: &str, children: &[u32]) -> bool {
+    let named_child = |k: &dyn Fn(&str) -> bool| children.iter().any(|&c| f.named(c) && k(dialect.name(f, c)));
+    match (dialect.family, kind) {
+        (Family::Python, _) => named_child(&|k| k == "interpolation"),
+        (Family::Php, "encapsed_string") => named_child(&|k| !matches!(k, "string_content" | "escape_sequence")),
+        _ => false,
+    }
+}
+
+/// Tape node `id`'s string literal's content (`str(n, s)` in `core.rr`'s shape), as `CoreRows::node` reads it: none
+/// for a comment or a node that is no string. What `str`'s answer on request reads (decision 0353 step 3, 0174).
+pub fn node_str(f: &Facts, dialect: &Dialect, id: u32) -> Option<String> {
+    let kind = dialect.name(f, id);
+    if is_comment(kind) {
+        return None;
+    }
+    literal(dialect.family, kind, f.text(id), interpolated(f, dialect, kind, &f.children(id))).str
+}
+
 /// The literal facts of a node of `kind` with source `text`; `interpolated` when it has a part other than
 /// constant text (a Python `interpolation`, a PHP `encapsed_string`'s variable).
 pub fn literal(family: Family, kind: &str, text: &str, interpolated: bool) -> Literal {
@@ -572,7 +593,6 @@ pub(super) struct CoreRows {
     value: Vec<[i64; 3]>,
     comment: Vec<[i64; 2]>,
     spread: Vec<i64>,
-    next_sibling: Vec<[i64; 2]>,
     syntax_error: Vec<[i64; 3]>,
     source: Vec<[i64; 2]>,
     src_line: Vec<[i64; 3]>,
@@ -612,7 +632,6 @@ pub(super) enum Visits {
 pub(super) struct Skip {
     /// `op`, `op_at`.
     pub(super) ops: bool,
-    pub(super) next_sibling: bool,
     pub(super) comment: bool,
     pub(super) spread: bool,
     pub(super) name: bool,
@@ -664,7 +683,7 @@ impl CoreRows {
     /// its rows without a second walk of every node of every document (the main phase's).
     pub(super) fn visits(&self, wants_text: bool, wants_parts: bool, wants_part_starts: bool, wants_words: bool) -> Visits {
         let s = &self.skip;
-        let only_text = s.ops && s.structural && s.next_sibling && s.comment && s.spread && s.name && s.literal_rows
+        let only_text = s.ops && s.structural && s.comment && s.spread && s.name && s.literal_rows
             && !(wants_parts || wants_part_starts || wants_words);
         match (only_text, wants_text, self.text_nodes.is_some()) {
             (false, _, _) | (true, true, false) => Visits::All,
@@ -733,13 +752,6 @@ impl CoreRows {
                 self.structural_after.push([c_global, string(between(f.end(c), b)) as i64]);
             }
         }
-        let mut prev = None;
-        for c in p.children_of_node(id).filter(|_| !self.skip.next_sibling) {
-            if let Some(a) = prev {
-                self.next_sibling.push([p.global(a), p.global(c)]);
-            }
-            prev = Some(c);
-        }
         let mut token_like = children.is_empty();
         if is_comment(kind) {
             if !self.skip.comment {
@@ -756,12 +768,7 @@ impl CoreRows {
             } else if dialect.family == Family::Rr && kind == "variable" {
                 self.name.push([n, string(text) as i64]);
             }
-            let named_child = |k: &dyn Fn(&str) -> bool| children.iter().any(|&c| f.named(c) && k(dialect.name(f, c)));
-            let interpolated = !self.skip.literal && match (dialect.family, kind) {
-                (Family::Python, _) => named_child(&|k| k == "interpolation"),
-                (Family::Php, "encapsed_string") => named_child(&|k| !matches!(k, "string_content" | "escape_sequence")),
-                _ => false,
-            };
+            let interpolated = !self.skip.literal && interpolated(f, dialect, kind, &children);
             let mut lit = if self.skip.literal { Literal::default() } else { literal(dialect.family, kind, text, interpolated) };
             // A format string's node: its value is its parser's (an `error`'s message, a `field_name`'s argument).
             if !self.skip.literal
@@ -1101,7 +1108,6 @@ impl CoreRows {
             ("value_type", make(&["v", "t"], &value_type, [true, true], atom)),
             ("comment", node_sym(&self.comment)),
             ("spread", make(&["n"], &spread, [false], atom)),
-            ("next_sibling", pair(&["a", "b"], &self.next_sibling)),
             ("syntax_error", make(&["d", "l", "msg"], &self.syntax_error, [false, false, true], atom)),
             ("source", pair(&["d", "sp"], &self.source)),
             ("src_line", make(&["d", "l", "sp"], &self.src_line, [false, false, false], atom)),

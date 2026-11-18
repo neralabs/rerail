@@ -668,11 +668,10 @@ impl Within {
             }
             let (mut rows, mut nodes, mut ancestors, mut sq_inner) = (0i64, 0i64, 0i64, 0i64);
             for p in &self.batch.docs {
-                let depths = p.depths();
-                for l in 0..p.len() as usize {
+                for (l, _, depth) in p.places() {
                     // Span mode counts the node itself on both sides.
                     let own = i64::from(self.mode == Mode::Span);
-                    let (d, s) = (i64::from(depths[l]) + own, i64::from(p.size(l)) + own);
+                    let (d, s) = (i64::from(depth) + own, i64::from(p.size(l as usize)) + own);
                     rows += d;
                     nodes += 1;
                     ancestors += i64::from(s > 0);
@@ -696,8 +695,6 @@ impl Within {
     fn axis_shape(&self, axis: Axis) -> Shape {
         let (mut members, mut covered, mut below, mut below_sq, mut above, mut above_sq, mut nodes) = (0i64, 0i64, 0i64, 0i64, 0i64, 0i64, 0i64);
         for (doc, p) in self.batch.docs.iter().enumerate() {
-            // The first member demands these columns; documents without members allocate neither.
-            let mut columns = None;
             // The end of the outermost member's subtree the walk is in.
             let mut until: Option<u32> = None;
             self.each_member(doc, |l, member| {
@@ -708,12 +705,11 @@ impl Within {
                 if !member {
                     return;
                 }
-                let depths = *columns.get_or_insert_with(|| p.depths());
                 let size = p.size(l as usize);
                 if !until.is_some_and(|u| l <= u) {
                     until = Some(l + size);
                 }
-                let (s, d) = (i64::from(size), i64::from(depths[l as usize]));
+                let (s, d) = (i64::from(size), i64::from(p.depth(l as usize)));
                 members += 1;
                 below += s;
                 below_sq += s * s;

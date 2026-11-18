@@ -850,7 +850,7 @@ fn kept(prog: &Program, rel: &str) -> bool {
 /// An attribute's request (decision 0174): read by name, so neither inlined nor merged into another relation. The
 /// fact layer answers `value` only where `rr_value_req` is derived (`syntax::VALUE_REQ`); inlined into its one
 /// reader, a request over one node (`rr_value_req($n) :- node(_, $n, "number", _, _)`) left `value` empty.
-fn request(rel: &str) -> bool {
+pub(in crate::code_rule_dsl) fn request(rel: &str) -> bool {
     super::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| a.req == rel)
 }
 
