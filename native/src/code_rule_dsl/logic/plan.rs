@@ -6641,11 +6641,13 @@ fn stratum_label(scc: &BTreeSet<String>) -> String {
 /// A reach index made again (decision 0119) against its old rows kept in memory (decision 0331): its delta held as
 /// `rel__minus` and `rel__plus`, the rows of each sorted and compared, so its readers are maintained rather than
 /// derived again. Returns whether it changed.
-fn reach_delta(db: &Connection, rel: &str, old: &Arc<super::native::component::InRel>, native_rels: &mut BTreeSet<String>) -> Result<bool> {
-    let _span = super::profile::span(|| format!("{rel}: the reach index's delta"));
+/// The delta of `rel`, derived again (a reach index made again, or a stratum the maintain mode does not take), against
+/// its kept rows `old`: held as `rel__minus` and `rel__plus`, its readers' versions. Whether any row moved.
+fn kept_delta(db: &Connection, rel: &str, old: &Arc<super::native::component::InRel>, native_rels: &mut BTreeSet<String>) -> Result<bool> {
+    let _span = super::profile::span(|| format!("{rel}: its delta against its kept rows"));
     let types = old.types().to_vec();
     let k = types.len();
-    let new = super::native::component::derived(db, rel).ok_or_else(|| Error::Plan(format!("{rel}: the reach index made is not held")))?;
+    let new = super::native::component::derived(db, rel).ok_or_else(|| Error::Plan(format!("{rel}: derived again, but not held")))?;
     let rows = |s: &dyn crate::code_rule_dsl::facts::vtab::Source| -> Vec<Vec<i64>> {
         let cols: Vec<usize> = (0..k).collect();
         let mut v: Vec<Vec<i64>> = (0..s.len()).map(|r| { let mut row = vec![0i64; k]; s.row_at(r, &cols, &mut row); row }).collect();
@@ -11265,6 +11267,9 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
     let mut moved_rels: HashSet<String> = maintaining.as_deref_mut().map(|m| m.seeds().into_iter().collect()).unwrap_or_default();
     // Reach indexes made again whose old rows are kept in memory: their deltas made once they are (`reach_delta`).
     let mut reach_olds: HashMap<String, Arc<super::native::component::InRel>> = HashMap::new();
+    // The strata derived again in place of the maintain mode, by relation: its kept rows, which its delta is made
+    // against once its level has run (at the next level's placement).
+    let mut again_olds: BTreeMap<String, Arc<super::native::component::InRel>> = BTreeMap::new();
     let (mut reached, mut quiet_slots) = (0usize, 0usize);
     // Each stratum as its level's start placed it (decision 0117 step 3), the strata placed so far, and the forms issued
     // as jobs and the pieces they ran.
@@ -11763,6 +11768,24 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
         // pieces a strand can run is issued as a job on the host stream (decision 0113), retired at its position.
         if let Some(m) = maintaining.as_deref_mut() {
             if prepared_to <= at {
+                // The deltas of the relations derived again below: each against its kept rows, where the engine holds
+                // what was derived (one SQL derived has none: its readers derive again).
+                for (r, old) in std::mem::take(&mut again_olds) {
+                    if super::native::component::derived(db, &r).is_none() {
+                        m.no_delta(&r);
+                        continue;
+                    }
+                    if kept_delta(db, &r, &old, &mut run.native_rels)? {
+                        m.delta_made(&r);
+                        let rows = |s: &str| super::native::component::held(db, &format!("{r}__{s}")).and_then(|h| h.live_rows());
+                        if let (Some(gone), Some(added)) = (rows("minus"), rows("plus")) {
+                            outcome.deltas.insert(r.clone(), (gone, added));
+                        }
+                    } else {
+                        moved_rels.remove(&r);
+                        outcome.unchanged.insert(r);
+                    }
+                }
                 let end = (at..sccs.len()).find(|&j| level_of[j] != level_of[at]).unwrap_or(sccs.len());
                 prepared_to = end;
                 let _level = super::profile::span(|| format!("a level of {} strata placed", end - at));
@@ -11906,72 +11929,22 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
                         }
                         Some(why) => super::profile::decision("not the maintain mode (decision 0364)", || format!("{key}: {why}")),
                     }
-                    let _span = super::profile::span(|| format!("stratum {} placed", if key.len() > 80 { format!("{}…({} relations)", &key[..80], scc.len()) } else { key.clone() }));
-                    // The driver writes the form over the run's version (decision 0241): a derivation of it.
-                    let v0 = run.versions.placed(0).clone();
-                    let (form_v, adopted) = m.form(&v0, &rules, scc, &moved, &mut run.model)?;
-                    if std::env::var_os("RERAIL_VERSION_TRACE").is_some() {
-                        let lists = super::front::Lists::default();
-                        super::version_trace::note("plan.form", &p0.program(&lists)?, &form_v.v.program(&lists).map_err(Error::Plan)?);
-                    }
-                    let k = run.add_form(form_v)?;
-                    let form_v = run.versions.placed(k).clone();
-                    let form_f = Fields::of(&form_v).expect("a whole version");
-                    run.native_rels.extend(adopted);
-                    let form_projections = super::program_image::analyses::projections(&form_v.v);
-                    Arc::make_mut(&mut run.projections).extend(form_projections.into_iter().map(|(r, eqs)| (form_v.v.rel_name(r).to_owned(), eqs)));
-                    let form_sccs = form_v.components()?;
-                    // The form's rules by head, as keys of its version (its rule `i` is the version's rule `i`).
-                    let mut by_head: HashMap<&str, Vec<RuleKey>> = HashMap::new();
-                    for i in 0..form_v.v.size() {
-                        by_head.entry(form_v.v.rel_name(form_v.rule(i).head().rel())).or_default().push(RuleKey::new(k, i));
-                    }
-                    let mut pieces: Vec<(BTreeSet<String>, Vec<RuleKey>)> = form_sccs
-                        .iter()
-                        .cloned()
-                        .map(|piece| {
-                            let rules: Vec<RuleKey> = piece.iter().flat_map(|r| by_head.get(r.as_str()).into_iter().flatten().copied()).collect();
-                            (piece, rules)
-                        })
-                        .filter(|(piece, rules)| !rules.is_empty() || piece.iter().any(|r| form_f.has_facts(r)))
-                        .collect();
-                    // Decision 0090 §4: derived again, its rules over the current reads and its deltas against its old
-                    // rows, where its input deltas are past θ of its old rows and that is priced below maintaining.
-                    let mut again = false;
-                    if let Some(fm) = form_v.maint.as_ref()
-                        && let Some(g) = fm.group_of(scc)
-                    {
-                        run.set_version(k);
-                        let chosen = run.again_wanted(fm, g, &HashMap::new());
-                        run.set_version(0);
-                        if chosen?.0 {
-                            again = true;
-                            outcome.again += 1;
-                            // Its pieces are now the form's rules for deriving it again, planned as any rules are.
-                            let again_rules = run.add_again(fm, g, false);
-                            let deltas = run.add_again(fm, g, true);
-                            pieces = std::iter::once((scc.clone(), again_rules))
-                                .chain(deltas.into_iter().map(|k| (BTreeSet::from([run.versions.head_at(k).to_owned()]), vec![k])))
-                                .collect();
+                    // Derived again from its reads as they are now, as the base program derives it (decision 0364: no
+                    // form). Its relations move; a kept one's delta is its diff against its kept rows, made once the
+                    // level has run (`again_olds`), so its readers are maintained, not derived again in turn.
+                    outcome.again += 1;
+                    for r in scc {
+                        moved_rels.insert(r.clone());
+                        match m.kept(r) {
+                            Some(old) => {
+                                again_olds.insert(r.clone(), old);
+                            }
+                            None => m.no_delta(r),
                         }
                     }
                     if native.contains("program") {
-                        run.set_version(k);
-                        for (piece, rules) in &pieces {
-                            let vs = Arc::clone(&run.versions);
-                            wants.extend(rules.iter().flat_map(|&r| {
-                                let (v, rule) = vs.rule_at(r);
-                                rule.body().filter_map(move |l| match l.view() {
-                                    Lit::Agg { op: super::program_image::AggRef::Count, atom, .. } => Some((v.rel_name(atom.rel()), atom)),
-                                    _ => None,
-                                })
-                            }).filter(|(rel, _)| !piece.contains(*rel) && run.native_rels.contains(*rel))
-                                .map(|(rel, atom)| (rel.to_owned(), atom.args().enumerate().filter(|(_, t)| !matches!(t, TermRef::Wild)).map(|(c, _)| c).collect())));
-                            specs.extend(run.seed_specs(piece, rules));
-                        }
-                        run.set_version(0);
+                        specs.extend(run.seed_specs(scc, &rules));
                     }
-                    slots[j] = Slot::Reached { form: k, pieces, again, job: None };
                 }
                 if !wants.is_empty() {
                     let _wave = super::profile::span(|| "device wave (count tables, a maintained level)".into());
@@ -12527,7 +12500,7 @@ pub fn run(program: &body::Placed, db: &Connection, inputs: Inputs, lowering: Op
             if let Some(old) = reach_olds.remove(rel.as_str())
                 && let Some(m) = maintaining.as_deref_mut()
             {
-                if reach_delta(db, rel, &old, &mut run.native_rels)? {
+                if kept_delta(db, rel, &old, &mut run.native_rels)? {
                     m.delta_made(rel);
                     moved_rels.insert((*rel).clone());
                 } else {
