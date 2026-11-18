@@ -32,7 +32,7 @@ async function idleRuntime(sessions: readonly string[]) {
     await runtime.ingest({ kind: "session-start", eventId: `start-${sessionId}`, session: { host: "claude-code", sessionId, cwd: root } });
     await runtime.codeRulesOpened(sessionId);
   }
-  return { runtime, databasePath };
+  return { runtime, databasePath, root };
 }
 
 describe("The runtime's audit control polling", () => {
@@ -81,4 +81,28 @@ describe("The runtime's audit control polling", () => {
       await runtime.dispose();
     }
   }, 20_000);
+
+  // The engine service keeps a runtime no session uses open for its checkout's next session. Its control timer read
+  // the database's version four times a second all the same, for nothing: it looks only for open sessions' changes.
+  it("reads nothing while no session is open in it, and looks again from the next session's start", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const versions = vi.spyOn(SqliteAuditControlStore.prototype, "dataVersion");
+    const { runtime, root } = await idleRuntime([]);
+    try {
+      vi.advanceTimersByTime(1_000);
+      expect(versions).not.toHaveBeenCalled();
+      const session = { host: "claude-code" as const, sessionId: "a", cwd: root };
+      await runtime.ingest({ kind: "session-start", eventId: "start-a", session });
+      versions.mockClear();
+      vi.advanceTimersByTime(1_000);
+      expect(versions).toHaveBeenCalled();
+      await runtime.ingest({ kind: "session-end", eventId: "end-a", sessionId: "a", session });
+      versions.mockClear();
+      vi.advanceTimersByTime(1_000);
+      expect(versions).not.toHaveBeenCalled();
+    } finally {
+      await runtime.dispose();
+      vi.useRealTimers();
+    }
+  });
 });
