@@ -157,6 +157,8 @@ impl ProgramPass for MergeIdentical {
                 b.set_about_rows(name, rows);
             }
         }
+        // The request record's readers (`Program::rename_readers`, decision 0331).
+        b.rename_asked_readers(&|r| rename.get(r).cloned());
         // The declarations and facts, each class's held by its name: the first member's where the name is new; an
         // output merged keeps its own declaration.
         let mut declared: HashSet<String> = taken.iter().filter(|t| f.declared(t)).cloned().collect();

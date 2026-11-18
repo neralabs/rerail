@@ -403,6 +403,8 @@ impl ProgramPass for FoldOwn<'_> {
         let named = |b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>, c: Cell, gone: &dyn Fn(&str) -> bool| matches!(c, Cell::Str(a) if gone(b.text(a)));
         let qualifiers: Vec<Vec<Cell>> = b.about_rows("qualifier").into_iter().filter(|r| !named(b, r[1], &|x| folded.contains_key(x))).collect();
         b.set_about_rows("qualifier", qualifiers);
+        // The request record's readers (`hiding::fold_own`'s `rename_readers`, decision 0331).
+        b.rename_asked_readers(&|r| folded.get(r).cloned());
         for about in ["kindset", "kindset_kind"] {
             let rows: Vec<Vec<Cell>> = b.about_rows(about).into_iter().filter(|r| !named(b, r[1], &|x| sets.contains_key(x))).collect();
             b.set_about_rows(about, rows);

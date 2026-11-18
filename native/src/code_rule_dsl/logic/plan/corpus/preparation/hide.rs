@@ -150,7 +150,8 @@ impl ProgramPass for Hide {
             let carried = &delta.carried;
             let mut edits: Vec<(usize, usize, Edit)> = Vec::new();
             let ruled = &delta.heads;
-            let mut copies: Vec<(W, Facts)> = Vec::new();
+            // Each copy with the rule it was made from (the request record follows it, `front::record_copy`).
+            let mut copies: Vec<(W, Facts, usize)> = Vec::new();
             let mut decls: Vec<(front::Name, front::List<(front::Name, front::Name)>)> = Vec::new();
             let mut axes: Vec<String> = Vec::new();
             let mut kindsets: Vec<(String, Vec<String>)> = Vec::new();
@@ -179,7 +180,7 @@ impl ProgramPass for Hide {
                 if !maybe.is_empty() && split.insert(i) {
                     let mut seed = seeds[i].clone();
                     seed.extend(maybe);
-                    copies.push((rule.clone(), seed));
+                    copies.push((rule.clone(), seed, i));
                     changed = true;
                 }
                 let grammar_of = |s: Slot| facts.get(&s).filter(|f| f.scoped && f.definite).and_then(|f| f.grammar.clone()).filter(|g| !g.is_empty());
@@ -284,7 +285,7 @@ impl ProgramPass for Hide {
                                     seed.insert(*x, Fact { scoped: true, grammar: Some(g.clone()), definite: true });
                                 }
                             }
-                            copies.push((copy, seed));
+                            copies.push((copy, seed, j));
                         }
                         if let Some(d) = prog.decls.get(orig.as_str()) {
                             decls.push((name.clone().into(), d.clone()));
@@ -313,7 +314,11 @@ impl ProgramPass for Hide {
                 }
             }
             let first_copy = rules.len();
-            for (rule, seed) in copies {
+            for (rule, seed, from) in copies {
+                if !prog.asked_by.is_empty() {
+                    let heads: Vec<&str> = rules.iter().map(|r| r.head.as_str()).collect();
+                    crate::code_rule_dsl::logic::front::record_copy(&mut prog.asked_by, &heads, from, rule.head.as_str());
+                }
                 rules.push(rule);
                 seeds.push(seed);
             }

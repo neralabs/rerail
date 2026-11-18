@@ -385,6 +385,38 @@ impl About {
 }
 
 /// The about rows' program name (`program_image::ABOUT`): each row's first cell.
+/// The request record (`Program::asked_by`, decision 0174: the `asked` rows): each request relation's rules, in its
+/// order among the program's, each with the relations whose readers it serves.
+pub type Asked = std::collections::BTreeMap<String, Vec<std::collections::BTreeSet<String>>>;
+
+impl Version {
+    /// The request record, as the `asked` rows state it.
+    pub fn asked(&self) -> Asked {
+        let mut asked = Asked::new();
+        for f in self.about_facts().into_iter().filter(|f| self.text(f.name()) == "asked") {
+            for row in f.rows() {
+                let cells: Vec<Cell> = row.collect();
+                let (Some(Cell::Str(req)), Some(&Cell::Int(k)), Some(Cell::Str(b))) = (cells.get(1), cells.get(2), cells.get(3)) else { continue };
+                let Ok(k) = usize::try_from(k) else { continue };
+                let readers = asked.entry(self.text(*req).to_owned()).or_default();
+                if readers.len() <= k {
+                    readers.resize(k + 1, Default::default());
+                }
+                readers[k].insert(self.text(*b).to_owned());
+            }
+        }
+        asked
+    }
+    /// Each request relation of the record with how many readers' entries it holds and how many rules it has: the
+    /// record holds where the two are equal.
+    pub fn asked_against_rules(&self) -> Vec<(String, usize, usize)> {
+        self.asked().into_iter().map(|(req, readers)| {
+            let rules = self.rel(&req).map_or(0, |id| self.heads(id).count());
+            (req, readers.len(), rules)
+        }).collect()
+    }
+}
+
 fn program_cell(b: &mut Builder<'_>) -> Cell {
     Cell::Str(b.atom(super::ABOUT))
 }
@@ -401,6 +433,28 @@ impl Builder<'_> {
             }
         }
         self.set_about_rows("lattice", rows);
+    }
+    /// Renames readers in the request record (`asked` rows, column 3), as `Program::rename_readers` does: a request
+    /// of a merged or folded reader serves the relation it went into. Each rule's readers are a set, so readers
+    /// renamed to one are one row.
+    pub fn rename_asked_readers(&mut self, rename: &dyn Fn(&str) -> Option<String>) {
+        let rows = self.about_rows("asked");
+        if !rows.iter().any(|row| matches!(row.get(3), Some(&Cell::Str(a)) if rename(self.text(a)).is_some())) {
+            return;
+        }
+        let mut seen = std::collections::HashSet::new();
+        let mut renamed = Vec::with_capacity(rows.len());
+        for mut row in rows {
+            if let Some(&Cell::Str(a)) = row.get(3)
+                && let Some(t) = rename(self.text(a))
+            {
+                row[3] = Cell::Str(self.atom(&t));
+            }
+            if seen.insert(format!("{row:?}")) {
+                renamed.push(row);
+            }
+        }
+        self.set_about_rows("asked", renamed);
     }
     /// Removes relation `rel`'s native operator (`Program::natives`' entry): its rows of each native about relation,
     /// every one of which names its relation in column 1.

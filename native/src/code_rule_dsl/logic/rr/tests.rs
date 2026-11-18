@@ -4196,3 +4196,55 @@ fn a_module_is_linked_and_checked_declared_on_the_version() {
     let v = lower("hit(n) :- kind(n, \"call\"), child(_, n, _).").unwrap();
     assert!(v.rules().any(|r| v.rel_name(r.head().rel()) == "hit"), "{}", v.show());
 }
+
+/// The request record (`Program::asked_by`) follows the passes that split, merge and copy request rules
+/// (`Program::set_rules_from`, `push_rule_from`, `corpus::drop_repeated_rules`): each rule keeps the readers it served,
+/// so `prune` gates it, and a slice cut from the prepared program too (decision 0331).
+#[test]
+fn the_request_record_follows_split_merged_and_copied_rules() {
+    let text = ".decl q(n: number)\n.decl a(n: number)\n.decl b(n: number)\n.decl k(n: number)\n.input k\n\
+        q($n) :- k($n), $n < 3.\nq($n) :- k($n), $n > 5.\na($n) :- q($n).\nb($n) :- q($n).\n";
+    let mut p = front::parse(text).expect("parses");
+    let by = |r: &[&str]| r.iter().map(|s| (*s).to_owned()).collect::<BTreeSet<String>>();
+    p.asked_by.insert("q".into(), vec![by(&["a"]), by(&["b"])]);
+    let rules = p.rules.clone();
+    // The first request rule split in two, the second kept, a rule of no source added.
+    let split = vec![(rules[0].clone(), vec![0]), (rules[0].clone(), vec![0]), (rules[1].clone(), vec![1]), (rules[1].clone(), vec![]), (rules[2].clone(), vec![2]), (rules[3].clone(), vec![3])];
+    p.set_rules_from(split);
+    assert_eq!(p.asked_by["q"], vec![by(&["a"]), by(&["a"]), by(&["b"]), by(&["q"])]);
+    // Repeats dropped: the rule kept serves both its own readers and its repeat's.
+    assert_eq!(crate::code_rule_dsl::logic::plan::corpus::drop_repeated_rules(&mut p), 2);
+    assert_eq!(p.asked_by["q"], vec![by(&["a"]), by(&["b", "q"])]);
+    // A copy serves its source's readers.
+    let copy = p.rules[0].clone();
+    p.push_rule_from(copy, 0);
+    assert_eq!(p.asked_by["q"], vec![by(&["a"]), by(&["b", "q"]), by(&["a"])]);
+    assert_eq!(p.readers_of_rules().iter().flatten().count(), p.rules.iter().filter(|r| r.head.rel == "q").count());
+}
+
+/// A request gated by its readers (`front::prune`) is kept while a reader is needed, and while a reader is gone from
+/// the program (merged, renamed or inlined since the requests were made: it cannot be asked); a reader's copy under
+/// another name (hiding's, `Program::push_rule_from`) is a reader too (decision 0331).
+#[test]
+fn a_request_is_kept_for_a_gone_reader_and_for_a_readers_copy() {
+    let text = ".decl q(n: number)\n.decl a(n: number)\n.decl b(n: number)\n.decl k(n: number)\n.input k\n.output b\n\
+        q($n) :- k($n), $n < 3.\nq($n) :- k($n), $n > 5.\na($n) :- q($n).\nb($n) :- q($n).\n";
+    let by = |r: &[&str]| r.iter().map(|s| (*s).to_owned()).collect::<BTreeSet<String>>();
+    let mut p = front::parse(text).expect("parses");
+    // The first request serves `a`, which `b` does not read; the second a reader no longer in the program.
+    p.asked_by.insert("q".into(), vec![by(&["a"]), by(&["gone"])]);
+    let pruned = front::prune(p.clone());
+    let q: Vec<String> = pruned.rules.iter().filter(|r| r.head.rel == "q").map(|r| r.to_string()).collect();
+    assert_eq!(q.len(), 1, "only the gone reader's request is kept: {q:?}");
+    assert!(q[0].contains("> 5"), "{q:?}");
+    // `a` copied as `a_g`, which `b` reads in its place: `a`'s request serves the copy too.
+    p.asked_by.insert("q".into(), vec![by(&["a"]), by(&["b"])]);
+    let a = p.rules.iter().position(|r| r.head.rel == "a").expect("a rule of a");
+    let mut copy = p.rules[a].clone();
+    copy.head.rel = "a_g".into();
+    p.push_rule_from(copy, a);
+    assert_eq!(p.asked_by["q"], vec![by(&["a", "a_g"]), by(&["b"])]);
+    // The copy folded back into `a` (hiding's `fold_own`), or merged: its requests serve `a`.
+    p.rename_readers(|b| (b == "a_g").then(|| "a".to_owned()));
+    assert_eq!(p.asked_by["q"], vec![by(&["a"]), by(&["b"])]);
+}
