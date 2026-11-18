@@ -127,6 +127,13 @@ impl Builder<'static> {
     }
 }
 
+/// A new base (`Builder::base`): a lowerer's header before it states anything.
+impl Default for Builder<'static> {
+    fn default() -> Self {
+        Builder::base()
+    }
+}
+
 impl<'p> Builder<'p> {
     /// An edit of `parent`.
     pub fn on(parent: &'p Arc<Version>) -> Builder<'p> {
@@ -436,6 +443,13 @@ impl<'p> Builder<'p> {
         match &self.parts.inputs {
             Some((ids, _)) => ids.iter().map(|&a| self.enc.text(a).to_owned()).collect(),
             None => self.parent.map(|p| p.input_names()).unwrap_or_default(),
+        }
+    }
+    /// Whether `rel` is an input this edit states, or its parent's: `input_names` with nothing copied.
+    pub fn has_input(&self, rel: &str) -> bool {
+        match &self.parts.inputs {
+            Some((ids, _)) => self.enc.find(rel).is_some_and(|a| ids.contains(&a)),
+            None => self.parent.is_some_and(|p| p.inputs().any(|a| p.text(a) == rel)),
         }
     }
     /// The outputs this edit states, or its parent's.

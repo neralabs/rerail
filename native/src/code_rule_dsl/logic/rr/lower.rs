@@ -65,6 +65,8 @@ use rerail_rr_syntax::syntax::{Code, Fix, Head, Item, Lit, Statement, Suppress, 
 use crate::code_rule_dsl::logic::front::{AXIS, AggOp, Atom, DESCENDANTS, Error, LatticeDecl, List, Literal, Native, Program, RESERVED, Rule, SCOPE_NOT, SpanIn, Term, Value, axis};
 use crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY;
 use crate::code_rule_dsl::logic::strings::SET;
+use crate::code_rule_dsl::logic::program_facts::Field;
+use crate::code_rule_dsl::logic::program_image::fields::{FieldsMut, ProgramFields};
 pub mod findings;
 
 /// The text tests: their `.rr` names and the engine's.
@@ -181,9 +183,12 @@ fn place_relation(v: &str) -> String {
 
 #[derive(Clone, Default)]
 struct Lowerer {
-    /// Where the walk writes its rules: the tree's `prog.rules`, or a text's version (`Written`, decision 0377 step 3).
+    /// Where the walk writes its rules: the rules written before its clauses, then a text's version (`Written`,
+    /// decision 0377 step 3).
     out: Out,
-    prog: Program,
+    /// Its header (decision 0276 §3): a module's declarations, inputs, facts and fields as the walk states them, its
+    /// rules then written onto it (`Written`); the scope's, seeded; the modules' linked so far.
+    prog: crate::code_rule_dsl::logic::program_image::Builder<'static>,
     /// `.lattice` declarations: name → (base type, its `Lub` functor).
     lattices: BTreeMap<String, (String, String)>,
     /// Relations given as a kind set.
@@ -249,19 +254,59 @@ struct Lowerer {
 }
 
 /// Where `Lowerer::write` puts a rule.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 enum Out {
-    /// `prog.rules`: a lowerer not walking a module's clauses (a scope's seeds, a link).
-    #[default]
-    Tree,
-    /// A text's own program, written as a version in the walk (decision 0377 step 3): `prog` holds its header alone.
+    /// The rules written before the module's clauses (its statements': a `.violation`'s), or by a lowerer not
+    /// walking a module's clauses.
+    Before(Vec<Rule>),
+    /// A text's own program, written as a version in the walk (decision 0377 step 3), onto the lowerer's header.
     Version(Box<Written>),
 }
 
-/// A text's rules as the walk writes them: the builder, and what the walk reads back of what it wrote.
+impl Default for Out {
+    fn default() -> Self {
+        Out::Before(Vec::new())
+    }
+}
+
+/// The lowerer's edits of its header (`Lowerer::prog`), on the builder through the fields API (decision 0276 §3): a
+/// field read, changed and stated again.
+trait Header: ProgramFields {
+    /// Declares `rel` with these columns (names and types), replacing a declaration it had.
+    fn declare_cols<C: AsRef<str>, T: AsRef<str>>(&mut self, rel: &str, cols: impl IntoIterator<Item = (C, T)>);
+    /// Field `read` reads, changed by `f` and stated again as `field` makes it.
+    fn edit<X>(&mut self, read: impl FnOnce(&Self) -> X, field: for<'a> fn(&'a X) -> Field<'a>, f: impl FnOnce(&mut X));
+    fn push_setting(&mut self, key: String, text: String) {
+        self.edit(|b| ProgramFields::settings(b), |s| Field::Settings(s), |s| s.push((key, text)));
+    }
+    fn set_native(&mut self, rel: &str, native: Native) {
+        self.edit(|b| ProgramFields::natives(b), |n| Field::Natives(n), |n| {
+            n.insert(rel.to_owned(), native);
+        });
+    }
+    fn set_kindset(&mut self, rel: &str, kinds: Vec<String>) {
+        self.edit(|b| ProgramFields::kindsets(b), |k| Field::Kindsets(k), |k| {
+            k.insert(rel.to_owned(), kinds);
+        });
+    }
+}
+
+impl Header for crate::code_rule_dsl::logic::program_image::Builder<'static> {
+    fn declare_cols<C: AsRef<str>, T: AsRef<str>>(&mut self, rel: &str, cols: impl IntoIterator<Item = (C, T)>) {
+        let cols: Vec<(C, T)> = cols.into_iter().collect();
+        let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_ref(), t.as_ref())).collect();
+        self.declare(rel, &pairs);
+    }
+    fn edit<X>(&mut self, read: impl FnOnce(&Self) -> X, field: for<'a> fn(&'a X) -> Field<'a>, f: impl FnOnce(&mut X)) {
+        let mut x = read(self);
+        f(&mut x);
+        self.set_field(field(&x));
+    }
+}
+
+/// What the walk reads back of the rules it wrote onto the lowerer's header (`Lowerer::prog`).
 #[derive(Clone)]
 pub struct Written {
-    b: crate::code_rule_dsl::logic::program_image::Builder<'static>,
     /// How many rules it wrote: a `must` or `may` head's rules are known by their place (`modal`).
     n: usize,
     /// Each rule's content, by a 128-bit hash: a demand is written once (`demand`, `world_demand`).
@@ -275,7 +320,7 @@ pub struct Written {
 
 impl Written {
     fn new(shaped: BTreeSet<String>) -> Self {
-        Written { b: crate::code_rule_dsl::logic::program_image::Builder::base(), n: 0, seen: Default::default(), shaped, kept: Vec::new(), error: None }
+        Written { n: 0, seen: Default::default(), shaped, kept: Vec::new(), error: None }
     }
 
     fn hash(rule: &Rule) -> u128 {
@@ -288,10 +333,11 @@ impl Written {
         half(0x9e37_79b9_7f4a_7c15) << 64 | half(0xc2b2_ae3d_27d4_eb4f)
     }
 
-    fn write(&mut self, rule: Rule) {
+    /// `rule` written onto `b`, the lowerer's header.
+    fn write(&mut self, b: &mut crate::code_rule_dsl::logic::program_image::Builder<'static>, rule: Rule) {
         self.seen.insert(Written::hash(&rule));
         self.n += 1;
-        if let Err(e) = self.b.add(&rule) {
+        if let Err(e) = b.add(&rule) {
             self.error.get_or_insert(e);
         }
         if self.shaped.contains(rule.head.rel.as_str()) {
@@ -299,15 +345,11 @@ impl Written {
         }
     }
 
-    /// The version written, its header set from `header` (a program of no rules), as
-    /// `Builder::of_program_less_maintenance` sets one.
-    fn version(self, header: &Program) -> Result<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Error> {
-        debug_assert!(header.rules.is_empty(), "a written program's header holds no rules");
+    /// The version written: `b`, the lowerer's header with the rules written onto it.
+    fn version(self, b: crate::code_rule_dsl::logic::program_image::Builder<'static>) -> Result<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Error> {
         if let Some(e) = self.error {
             return Err(Error::Syntax(e));
         }
-        let mut b = self.b;
-        b.set_program_header(header);
         let bytes = b.finish_bytes().map_err(Error::Syntax)?;
         crate::code_rule_dsl::logic::program_image::Version::open(&bytes).map_err(Error::Syntax)
     }
@@ -461,6 +503,8 @@ pub fn lower_module_seeded_written(statements: Vec<Statement>, seeds: &Seeds) ->
     // `.shape` binds to the rule just before it (O-join-shape-directives): its heads, then each directive and its line.
     let mut last_heads: Option<Vec<String>> = None;
     let mut shapes: Vec<(crate::code_rule_dsl::logic::front::Shape, usize)> = Vec::new();
+    // The facts its clauses state, by relation, stated on the header once read.
+    let mut own_facts: BTreeMap<String, Vec<crate::code_rule_dsl::logic::front::List<Value>>> = BTreeMap::new();
     for (item, line) in statements {
         let at = |e: Error| match e {
             Error::Syntax(m) => Error::Syntax(format!("line {line}: {m}")),
@@ -474,9 +518,11 @@ pub fn lower_module_seeded_written(statements: Vec<Statement>, seeds: &Seeds) ->
             // as the setting `input r(IO=…)` for the runner; without them r is empty.
             Item::Io { output, names, params } => {
                 for (name, text) in params {
-                    l.prog.settings.push((if output { "output" } else { "input" }.to_owned(), format!("{name}({text})")));
+                    l.prog.push_setting(if output { "output" } else { "input" }.to_owned(), format!("{name}({text})"));
                 }
-                if output { &mut l.prog.outputs } else { &mut l.prog.inputs }.extend(names)
+                for n in &names {
+                    if output { l.prog.add_output(n) } else { l.prog.add_input(n) }
+                }
             }
             Item::Lattice { name, base, ops } => {
                 let Some((_, STerm::Call { name: lub, functor: true, .. })) = ops.iter().find(|(op, _)| op == "Lub") else {
@@ -486,7 +532,7 @@ pub fn lower_module_seeded_written(statements: Vec<Statement>, seeds: &Seeds) ->
             }
             Item::Pragma(words) => match words.as_slice() {
                 [magic, relations] if magic == "magic-transform" => {
-                    l.prog.demand.extend(relations.split(',').map(str::trim).filter(|r| !r.is_empty()).map(str::to_owned));
+                    l.prog.edit(|b| b.demand(), |d| Field::Demand(d), |d| d.extend(relations.split(',').map(str::trim).filter(|r| !r.is_empty()).map(str::to_owned)));
                 }
                 // `.pragma "cross-rounds" "k"` (decision 0056), refused: bounded cross-file rounds are retired: a program's cross-file part is one fixpoint (decisions 0065, 0276 §9).
                 [key, _] if key == crate::code_rule_dsl::logic::front::PRAGMA => {
@@ -494,11 +540,11 @@ pub fn lower_module_seeded_written(statements: Vec<Statement>, seeds: &Seeds) ->
                 }
                 // `.pragma "cross-memo" "r s"` (decision 0076): cross-file relations memoised per import component.
                 [key, rels] if key == "cross-memo" => {
-                    l.prog.settings.push(("pragma".to_owned(), format!("\"cross-memo\" \"{rels}\"")));
+                    l.prog.push_setting("pragma".to_owned(), format!("\"cross-memo\" \"{rels}\""));
                 }
                 _ => return not_yet(format!(".pragma {words:?}")).map_err(at),
             },
-            Item::Policy(document) => l.prog.policies.push(document),
+            Item::Policy(document) => l.prog.edit(|b| b.policies(), |p| Field::Policies(p), |p| p.push(document)),
             // A test is never the program's (decision 0130): testing mode splices its statements into a program of
             // its own (`rr::testing`).
             Item::Test { .. } | Item::Fixtures { .. } => {}
@@ -508,12 +554,12 @@ pub fn lower_module_seeded_written(statements: Vec<Statement>, seeds: &Seeds) ->
                     shapes.push((crate::code_rule_dsl::logic::front::Shape::parse(h, &text).map_err(|m| Error::Syntax(format!("line {line}: {m}")))?, line));
                 }
             }
-            Item::Setting { key, text } => l.prog.settings.push((key, text)),
+            Item::Setting { key, text } => l.prog.push_setting(key, text),
             Item::Violation { name, cols, code, code_in, tag, suppress, fixes, message, .. } => l.violation(name, cols, code, code_in, tag, suppress, fixes, message).map_err(at)?,
             Item::Clause { heads, body, edits } => {
                 if body.is_empty() && edits.is_empty() && let Some(rows) = facts(&heads) {
                     for (rel, row) in rows {
-                        l.prog.facts.entry(rel).or_default().push(row.into());
+                        own_facts.entry(rel).or_default().push(row.into());
                     }
                     last_heads = None;
                     continue;
@@ -523,10 +569,13 @@ pub fn lower_module_seeded_written(statements: Vec<Statement>, seeds: &Seeds) ->
             }
         }
     }
+    for (rel, rows) in own_facts {
+        l.prog.add_facts(&rel, &rows);
+    }
     drop(reading);
-    let stated: BTreeSet<String> = l.prog.inputs.iter().filter(|r| !seeded.inputs.contains(*r)).cloned().collect();
+    let stated: BTreeSet<String> = l.prog.input_names().into_iter().filter(|r| !seeded.inputs.contains(r)).collect();
     let rules = crate::code_rule_dsl::logic::profile::span(|| "lower the rules".to_owned());
-    l.derived = clauses.iter().flat_map(|(heads, ..)| heads.iter().map(|h| h.rel.clone())).chain(l.prog.facts.keys().cloned()).collect();
+    l.derived = clauses.iter().flat_map(|(heads, ..)| heads.iter().map(|h| h.rel.clone())).chain(l.prog.fact_names()).collect();
     let mut own_deps: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for (heads, body, ..) in &clauses {
         let mut rels = BTreeSet::new();
@@ -540,12 +589,13 @@ pub fn lower_module_seeded_written(statements: Vec<Statement>, seeds: &Seeds) ->
     }
     // The demands the text states (a printed program's): its own declarations, as read, and those its includes
     // stated. A demand an include's lowering made is not one: this module makes its own.
-    l.printed_demands = DEMANDS.iter().chain(WORLD.iter().map(|(_, d)| d)).filter(|d| l.prog.decls.contains_key(**d) && !seeded.decls.contains(**d)).map(|d| (*d).to_owned()).collect();
+    l.printed_demands = DEMANDS.iter().chain(WORLD.iter().map(|(_, d)| d)).filter(|d| l.prog.declares(d) && !seeded.decls.contains(**d)).map(|d| (*d).to_owned()).collect();
     l.printed_demands.extend(seeds.printed.iter().cloned());
     // From here the rules go to the version; what the statements wrote before goes first, in its order.
     let mut w = Written::new(shapes.iter().map(|(shape, _)| shape.head.clone()).collect());
-    for rule in std::mem::take(&mut l.prog.rules) {
-        w.write(rule);
+    let Out::Before(before) = std::mem::take(&mut l.out) else { unreachable!("a module's walk starts once") };
+    for rule in before {
+        w.write(&mut l.prog, rule);
     }
     l.out = Out::Version(Box::new(w));
     for (heads, body, edits, line) in clauses {
@@ -572,16 +622,16 @@ pub fn lower_module_seeded_written(statements: Vec<Statement>, seeds: &Seeds) ->
         if let Some(why) = missing {
             return Err(Error::Syntax(format!("line {line}: `.shape {}`: {why}", shape.text)));
         }
-        l.prog.shapes.push(shape);
+        l.prog.edit(|b| b.shapes(), |s| Field::Shapes(s), |s| s.push(shape));
     }
     drop(rules);
     let places = l.unseed(seeded);
-    l.stated = l.prog.inputs.iter().take_while(|r| stated.contains(*r)).count();
+    l.stated = l.prog.input_names().iter().take_while(|r| stated.contains(*r)).count();
     l.deps = own_deps;
     let docof = declares_docof.then_some(l.docof_of_locs);
     // The module's header goes into its version with its rules: what the link and the modules that include it read.
     let Out::Version(w) = std::mem::take(&mut l.out) else { unreachable!("the walk writes a version") };
-    let version = w.version(&std::mem::take(&mut l.prog))?;
+    let version = w.version(std::mem::take(&mut l.prog))?;
     Ok(Module { l, written, docof, places, version })
 }
 
@@ -728,32 +778,37 @@ impl Lowerer {
             for rel in F::declared_names(p).into_iter().filter(|r| !helpers.contains(r)) {
                 let cols = F::columns_of(p, &rel).unwrap_or_default();
                 seeded.decls.insert(rel.clone());
-                self.prog.decls.insert(rel.into(), cols.into_iter().map(|(c, t)| (c.into(), t.into())).collect());
+                self.prog.declare_cols(&rel, cols);
             }
             for rel in F::input_names(p).into_iter().filter(|r| !helpers.contains(r)) {
-                if seeded.inputs.insert(rel.clone()) && !self.prog.inputs.contains(&rel) {
-                    self.prog.inputs.push(rel);
+                if seeded.inputs.insert(rel.clone()) {
+                    self.prog.add_input(&rel);
                 }
             }
-            for (rel, n) in F::natives(p) {
-                seeded.natives.insert(rel.clone());
-                self.prog.natives.insert(rel, n);
+            let natives = F::natives(p);
+            seeded.natives.extend(natives.keys().cloned());
+            if !natives.is_empty() {
+                self.prog.edit(|b| b.natives(), |n| Field::Natives(n), |n| n.extend(natives));
             }
-            for (rel, k) in F::kindsets(p) {
-                seeded.kindsets.insert(rel.clone());
-                self.prog.kindsets.insert(rel, k);
+            let kindsets = F::kindsets(p);
+            seeded.kindsets.extend(kindsets.keys().cloned());
+            if !kindsets.is_empty() {
+                self.prog.edit(|b| b.kindsets(), |k| Field::Kindsets(k), |k| k.extend(kindsets));
             }
-            for (rel, d) in F::lattice(p) {
-                seeded.lattice.insert(rel.clone());
-                self.prog.lattice.insert(rel, d);
+            let lattice = F::lattice(p);
+            seeded.lattice.extend(lattice.keys().cloned());
+            if !lattice.is_empty() {
+                self.prog.edit(|b| b.lattice(), |d| Field::Lattice(d), |d| d.extend(lattice));
             }
-            for (rel, cols) in F::tapes(p) {
-                seeded.tapes.insert(rel.clone());
-                self.prog.tapes.entry(rel).or_default().extend(cols);
+            let tapes = F::tapes(p);
+            seeded.tapes.extend(tapes.keys().cloned());
+            if !tapes.is_empty() {
+                self.prog.edit(|b| b.tapes(), |t| Field::Tapes(t), |t| tapes.into_iter().for_each(|(rel, cols)| t.entry(rel).or_default().extend(cols)));
             }
-            for (rel, q) in F::qualifiers(p) {
-                seeded.qualifiers.insert(rel.clone());
-                self.prog.qualifiers.entry(rel).or_default().extend(q);
+            let qualifiers = F::qualifiers(p);
+            seeded.qualifiers.extend(qualifiers.keys().cloned());
+            if !qualifiers.is_empty() {
+                self.prog.edit(|b| b.qualifiers(), |q| Field::Qualifiers(q), |q| qualifiers.into_iter().for_each(|(rel, qs)| q.entry(rel).or_default().extend(qs)));
             }
             for (name, l) in &m.l.lattices {
                 seeded.lattices.insert(name.clone());
@@ -781,13 +836,17 @@ impl Lowerer {
     /// gave a place to are returned.
     fn unseed(&mut self, seeded: Seeded) -> BTreeSet<String> {
         let p = &mut self.prog;
-        p.decls.retain(|r, _| !seeded.decls.contains(r.as_str()));
-        p.inputs.retain(|r| !seeded.inputs.contains(r));
-        p.natives.retain(|r, _| !seeded.natives.contains(r));
-        p.kindsets.retain(|r, _| !seeded.kindsets.contains(r));
-        p.lattice.retain(|r, _| !seeded.lattice.contains(r));
-        p.tapes.retain(|r, _| !seeded.tapes.contains(r));
-        p.qualifiers.retain(|r, _| !seeded.qualifiers.contains(r));
+        for r in p.declared_names() {
+            if seeded.decls.contains(&r) {
+                p.undeclare(&r);
+            }
+        }
+        p.retain_inputs(|r| !seeded.inputs.contains(r));
+        p.edit(|b| b.natives(), |n| Field::Natives(n), |n| n.retain(|r, _| !seeded.natives.contains(r)));
+        p.edit(|b| b.kindsets(), |k| Field::Kindsets(k), |k| k.retain(|r, _| !seeded.kindsets.contains(r)));
+        p.edit(|b| b.lattice(), |d| Field::Lattice(d), |d| d.retain(|r, _| !seeded.lattice.contains(r)));
+        p.edit(|b| b.tapes(), |t| Field::Tapes(t), |t| t.retain(|r, _| !seeded.tapes.contains(r)));
+        p.edit(|b| b.qualifiers(), |q| Field::Qualifiers(q), |q| q.retain(|r, _| !seeded.qualifiers.contains(r)));
         self.lattices.retain(|r, _| !seeded.lattices.contains(r));
         self.three.retain(|r| !seeded.three.contains(r));
         let given: Vec<Violation> = self.violations.drain(..seeded.violations.len()).collect();
@@ -814,12 +873,13 @@ impl Lowerer {
         }
         // A Python candidates relation is numbered by the natives made before it: another module's may hold the
         // number for another native.
+        let linked = self.prog.natives();
         for (name, native) in &F::natives(&*v) {
-            if name.starts_with("rr_python_candidates_") && self.prog.natives.get(name).is_some_and(|n| n != native) {
-                let mut serial = self.prog.natives.len();
+            if name.starts_with("rr_python_candidates_") && linked.get(name).is_some_and(|n| n != native) {
+                let mut serial = linked.len();
                 let new = loop {
                     let new = format!("rr_python_candidates_{serial}");
-                    if !self.prog.decls.contains_key(new.as_str()) && !F::declares(&*v, &new) {
+                    if !self.prog.declares(&new) && !F::declares(&*v, &new) {
                         break new;
                     }
                     serial += 1;
@@ -1304,7 +1364,6 @@ pub fn link_seeded_parts(m: Module, seeds: &Seeds) -> Result<Linked, Error> {
     let (own, own_stated) = l.link(m)?;
     let stated = l.stated;
     let lowered = whole_front(l)?;
-    debug_assert!(lowered.program.rules.is_empty(), "a scope's seeds hold no rules");
     Ok(Linked { lowered, own, stated, own_stated })
 }
 
@@ -1319,9 +1378,11 @@ pub struct Linked {
 }
 
 impl Seeds {
-    /// The scope's program: its seeds' header, which every module linked in it starts from (`link_seeded_parts`).
-    pub fn program(&self) -> &Program {
-        &self.l.prog
+    /// The scope's program as a version: its seeds' header, which every module linked in it starts from
+    /// (`link_seeded_parts`).
+    pub fn version(&self) -> Result<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Error> {
+        let bytes = self.l.prog.clone().finish_bytes().map_err(Error::Syntax)?;
+        crate::code_rule_dsl::logic::program_image::Version::open(&bytes).map_err(Error::Syntax)
     }
 }
 
@@ -1334,13 +1395,12 @@ fn whole_front(mut l: Lowerer) -> Result<Lowered, Error> {
     let rewritten: Vec<String> = self::core::REWRITTEN.into_iter().filter(|r| l.rewritten(r)).map(str::to_owned).collect();
     drop(analyses);
     let findings = PendingFindings { violations: std::mem::take(&mut l.violations), next: l.next };
-    Ok(Lowered { program: l.prog, sets: l.sets, rewritten, docof_of_locs: l.docof_of_locs, findings, three: l.three, modal: l.modal })
+    Ok(Lowered { sets: l.sets, rewritten, docof_of_locs: l.docof_of_locs, findings, three: l.three, modal: l.modal })
 }
 
-/// The program `whole_front` leaves, with what the lowerer knows of it that the passes after read: the sets its
+/// What the lowerer knows of the program `whole_front` leaves, which the passes after read: the sets its
 /// clauses named (`kind_sets`), and the core relations it rewrote, which it does not derive (`builtins_out`).
 pub struct Lowered {
-    pub program: Program,
     pub sets: BTreeSet<String>,
     pub rewritten: Vec<String>,
     /// Whether the program's `docof` is core.rr's, over spans (`core_and_projections`).
@@ -1824,7 +1884,7 @@ impl Lowerer {
     /// with, and lowering it again makes more.
     fn fresh(&mut self, stem: &str) -> String {
         let prog = &self.prog;
-        fresh_name(&mut self.next, &mut self.made, |n| prog.decls.contains_key(n), stem)
+        fresh_name(&mut self.next, &mut self.made, |n| prog.declares(n), stem)
     }
 
     /// A helper relation named `name` (a `fresh` one of `stem`), with these columns and rules; or, when one made
@@ -1835,15 +1895,15 @@ impl Lowerer {
     /// A rule the walk made, written where it writes (`out`).
     fn write(&mut self, rule: Rule) {
         match &mut self.out {
-            Out::Tree => self.prog.rules.push(rule),
-            Out::Version(w) => w.write(rule),
+            Out::Before(rules) => rules.push(rule),
+            Out::Version(w) => w.write(&mut self.prog, rule),
         }
     }
 
     /// How many rules the walk has written.
     fn written(&self) -> usize {
         match &self.out {
-            Out::Tree => self.prog.rules.len(),
+            Out::Before(rules) => rules.len(),
             Out::Version(w) => w.n,
         }
     }
@@ -1851,7 +1911,7 @@ impl Lowerer {
     /// Whether the walk wrote `rule` already.
     fn wrote(&self, rule: &Rule) -> bool {
         match &self.out {
-            Out::Tree => self.prog.rules.contains(rule),
+            Out::Before(rules) => rules.contains(rule),
             Out::Version(w) => w.seen.contains(&Written::hash(rule)),
         }
     }
@@ -1859,7 +1919,7 @@ impl Lowerer {
     /// The rules written of `rel`, a relation a `.shape` names.
     fn written_of(&self, rel: &str) -> Vec<&Rule> {
         match &self.out {
-            Out::Tree => self.prog.rules.iter().filter(|r| r.head.rel == rel).collect(),
+            Out::Before(rules) => rules.iter().filter(|r| r.head.rel == rel).collect(),
             Out::Version(w) => w.kept.iter().filter(|r| r.head.rel == rel).collect(),
         }
     }
@@ -1871,7 +1931,7 @@ impl Lowerer {
         if let Some(made) = self.helpers.get(&key) {
             return made.clone();
         }
-        self.prog.decls.insert(name.clone().into(), cols.into_iter().map(|(c, t)| (c.into(), t.into())).collect());
+        self.prog.declare_cols(&name, cols);
         self.once.push((name.clone(), stem.to_owned(), rules.len()));
         for rule in rules {
             self.write(rule);
@@ -1903,8 +1963,12 @@ impl Lowerer {
                 "widen" => widen = Some(words.next().and_then(|k| k.parse::<u32>().ok()).ok_or_else(|| Error::Syntax(format!("{name}: `widen` needs a count")))?),
                 // What the relation keeps (decision 0099): an override of the planner's choice.
                 q if crate::code_rule_dsl::logic::front::QUALIFIERS.contains(&q) => {
-                    let own = self.prog.qualifiers.entry(name.clone()).or_default();
-                    own.insert(q.to_owned());
+                    let mut own = BTreeSet::new();
+                    self.prog.edit(|b| b.qualifiers(), |q| Field::Qualifiers(q), |all| {
+                        let mine = all.entry(name.clone()).or_default();
+                        mine.insert(q.to_owned());
+                        own = mine.clone();
+                    });
                     for (a, b) in [("inline", "no_inline"), ("magic", "no_magic"), ("inline", "magic"), ("reach", "no_reach")] {
                         if own.contains(a) && own.contains(b) {
                             return Err(Error::Syntax(format!(".decl {name}: `{a}` and `{b}` together")));
@@ -1920,7 +1984,9 @@ impl Lowerer {
         let mut out = Vec::new();
         for (i, (c, t)) in cols.iter().enumerate() {
             if t == "tape" {
-                self.prog.tapes.entry(name.clone()).or_default().insert(i);
+                self.prog.edit(|b| b.tapes(), |t| Field::Tapes(t), |t| {
+                    t.entry(name.clone()).or_default().insert(i);
+                });
             }
             let Some(lattice) = t.strip_suffix("<>") else {
                 out.push((c.clone(), ty(t)));
@@ -1934,13 +2000,16 @@ impl Lowerer {
                 None if matches!(lattice, "flat" | "min" | "max") => (lattice.to_owned(), None),
                 None => return Err(Error::Syntax(format!("{name}: no .lattice {lattice}"))),
             };
-            self.prog.lattice.insert(name.clone(), LatticeDecl { keys: i, ty: column.clone(), merge, widen });
+            let decl = LatticeDecl { keys: i, ty: column.clone(), merge, widen };
+            self.prog.edit(|b| b.lattice(), |d| Field::Lattice(d), |d| {
+                d.insert(name.clone(), decl);
+            });
             out.push((c.clone(), column));
         }
-        if widen.is_some() && !self.prog.lattice.contains_key(&name) {
+        if widen.is_some() && !self.prog.lattice().contains_key(&name) {
             return Err(Error::Syntax(format!("{name}: `widen` on a relation with no lattice column")));
         }
-        self.prog.decls.insert(name.into(), out.iter().map(|(c, t)| (c.into(), t.into())).collect());
+        self.prog.declare_cols(&name, out);
         Ok(())
     }
 
@@ -1964,17 +2033,17 @@ impl Lowerer {
         for s in suppress {
             let rules = s.rules.iter().map(|r| quote(r)).collect::<Vec<_>>().join(", ");
             let over = s.over.map(|c| format!(" over {{{c}}}")).unwrap_or_default();
-            self.prog.settings.push(("suppress".to_owned(), format!("{name} {} {rules}{over}", s.tool)));
+            self.prog.push_setting("suppress".to_owned(), format!("{name} {} {rules}{over}", s.tool));
         }
         for f in fixes {
-            self.prog.settings.push(("fix".to_owned(), format!("{name} {}{} {}", if f.safe { "safe " } else { "" }, f.name, quote(&f.title))));
+            self.prog.push_setting("fix".to_owned(), format!("{name} {}{} {}", if f.safe { "safe " } else { "" }, f.name, quote(&f.title)));
         }
         if let Some(re) = code_in {
-            self.prog.settings.push(("code_in".to_owned(), format!("{name} {}", quote(&re))));
+            self.prog.push_setting("code_in".to_owned(), format!("{name} {}", quote(&re)));
         }
         self.violations.push(Violation { name: name.clone(), arity: cols.len(), code, node, places: false, columns: cols.clone(), message, tag });
         self.decl(name.clone(), cols, &[])?;
-        self.prog.outputs.push(name);
+        self.prog.add_output(&name);
         Ok(())
     }
 
@@ -2027,8 +2096,8 @@ impl Lowerer {
                 if !self.violations[k].places {
                     self.violations[k].places = true;
                     let mut cols = vec![("path".to_owned(), "sym".to_owned()), ("line".to_owned(), "int".to_owned())];
-                    cols.extend(self.prog.decls[head.rel.as_str()].iter().skip(1).map(|(c, t)| (c.to_string(), t.to_string())));
-                    self.prog.decls.insert(place_relation(&head.rel).into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
+                    cols.extend(self.prog.columns_of(&head.rel).expect("a `.violation` is declared").into_iter().skip(1));
+                    self.prog.declare_cols(&place_relation(&head.rel), cols);
                 }
                 rel = place_relation(&head.rel);
                 written = [path.clone(), line.clone()].into_iter().chain(head.args.iter().skip(1).cloned()).collect();
@@ -2122,10 +2191,10 @@ impl Lowerer {
                 atom_args.push(v.clone());
                 *t = v;
                 out.push(Lit::Atom { rel: rel.to_owned(), args: atom_args, neg: false });
-                if !self.prog.inputs.iter().any(|i| i == rel) {
-                    self.prog.inputs.push(rel.to_owned());
-                    self.prog.decls.insert(rel.to_owned().into(), cols.iter().map(|(c, ty)| ((*c).to_owned(), (*ty).to_owned())).map(|(c, t)| (c.into(), t.into())).collect());
-                    self.prog.tapes.entry(rel.to_owned()).or_default().extend(super::tape_type::tape_columns(rel));
+                if !self.prog.has_input(rel) {
+                    self.prog.add_input(rel);
+                    self.prog.declare_cols(rel, cols.iter().copied());
+                    self.prog.edit(|b| b.tapes(), |t| Field::Tapes(t), |t| t.entry(rel.to_owned()).or_default().extend(super::tape_type::tape_columns(rel)));
                 }
             }
             // `@tree_digest(n)` reads the tree: a variable bound by the engine's `tree_digest(n, h)`.
@@ -2135,9 +2204,9 @@ impl Lowerer {
                 let v = STerm::Var(self.fresh("digest"));
                 *t = v.clone();
                 out.push(Lit::Atom { rel: "tree_digest".to_owned(), args: vec![n, v], neg: false });
-                if !self.prog.inputs.iter().any(|i| i == "tree_digest") {
-                    self.prog.inputs.push("tree_digest".to_owned());
-                    self.prog.decls.insert("tree_digest".to_owned().into(), [("n".into(), "node".into()), ("s".into(), "sym".into())].into());
+                if !self.prog.has_input("tree_digest") {
+                    self.prog.add_input("tree_digest");
+                    self.prog.declare_cols("tree_digest", [("n", "node"), ("s", "sym")]);
                 }
             }
             STerm::Call { args, .. } => args.iter_mut().for_each(|a| self.hoist(a, out, true)),
@@ -2337,10 +2406,10 @@ impl Lowerer {
             self.siblings.retain(|_| joined.next().unwrap_or(false));
             let loc = self.siblings.iter().find_map(|l| match l {
                 Lit::Atom { rel, args, neg: false } => {
-                    let decl = self.prog.decls.get(rel.as_str());
+                    let decl = self.prog.columns_of(rel.as_str());
                     let doc = crate::code_rule_dsl::logic::front::document_column(rel);
                     args.iter().enumerate().find_map(|(c, a)| match a {
-                        STerm::Var(v) if Some(c) == doc || decl.and_then(|d| d.get(c)).is_some_and(|(_, t)| t == "node") => Some(v.clone()),
+                        STerm::Var(v) if Some(c) == doc || decl.as_ref().and_then(|d| d.get(c)).is_some_and(|(_, t)| t == "node") => Some(v.clone()),
                         _ => None,
                     })
                 }
@@ -2376,7 +2445,7 @@ impl Lowerer {
             return Ok(());
         }
         let ctx = ctx.transpose()?;
-        self.prog.decls.insert(req.to_owned().into(), given.iter().enumerate().map(|(i, (_, ty))| (format!("c{i}"), (*ty).to_owned())).map(|(c, t)| (c.into(), t.into())).collect());
+        self.prog.declare_cols(req, given.iter().enumerate().map(|(i, (_, ty))| (format!("c{i}"), (*ty).to_owned())));
         let args: Vec<Term> = given.iter().map(|(t, _)| match t {
             STerm::Var(v) => Term::Var(v.clone().into()),
             STerm::Str(s) => Term::Str(s.clone().into()),
@@ -2404,14 +2473,13 @@ impl Lowerer {
         }
         let Some(key) = args.first() else { return Ok(()) };
         let head = |key: Term| Atom { rel: demand.to_owned().into(), args: [key].into(), neg: false, gated: false };
-        self.prog.decls.insert(demand.to_owned().into(), [("k".into(), "sym".into())].into());
+        self.prog.declare_cols(demand, [("k", "sym")]);
         let s = match key {
             // A constant key is a fact, as the reader takes a bodiless clause: printed and read back, it is the same.
             STerm::Str(k) => {
                 let row: crate::code_rule_dsl::logic::front::List<Value> = [Value::Str(k.clone().into())].into();
-                let rows = self.prog.facts.entry(demand.to_owned()).or_default();
-                if !rows.contains(&row) {
-                    rows.push(row);
+                if !self.prog.fact_rows(demand).contains(&row) {
+                    self.prog.add_facts(demand, &[row]);
                 }
                 return Ok(());
             }
@@ -2476,8 +2544,8 @@ impl Lowerer {
             return keep.into_iter().chain(out).collect();
         }
         let name = self.fresh("or");
-        let cols = shared.iter().map(|c| (c.as_str().into(), self.type_of(c, &out).into())).collect();
-        self.prog.decls.insert(name.as_str().into(), cols);
+        let cols: Vec<(String, String)> = shared.iter().map(|c| (c.clone(), self.type_of(c, &out).to_string())).collect();
+        self.prog.declare_cols(&name, cols);
         let head = Atom { rel: name.into(), args: shared.iter().map(|c| Term::Var(c.as_str().into())).collect(), neg: false, gated: false };
         for body in out {
             self.write(Rule { head: head.clone(), body: merge_negated_tests(body).into() });
@@ -2510,7 +2578,7 @@ impl Lowerer {
         } else {
             (shared.iter().map(|c| (c.clone(), self.type_of(c, &bodies))).collect(), shared.iter().map(|c| Term::Var(c.clone().into())).collect())
         };
-        self.prog.decls.insert(name.clone().into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
+        self.prog.declare_cols(&name, cols.iter().map(|(c, t)| (c.to_string(), t.to_string())));
         let head = Atom { rel: name.into(), args: args.into(), neg: false, gated: false };
         for body in bodies {
             self.write(Rule { head: head.clone(), body: body.into() });
@@ -2526,7 +2594,7 @@ impl Lowerer {
             _ => "set".to_owned(),
         };
         let name = format!("{RESERVED}prec_{label}");
-        if self.prog.decls.contains_key(name.as_str()) {
+        if self.prog.declares(&name) {
             return name;
         }
         let v = |s: &str| Term::Var(s.to_owned().into());
@@ -2542,9 +2610,9 @@ impl Lowerer {
         let after = format!("{RESERVED}prec_after_{label}");
         let first = format!("{RESERVED}prec_first_{label}");
         let node_int = vec![("a".to_owned(), "node".to_owned()), ("k".to_owned(), "int".to_owned())];
-        self.prog.decls.insert(after.clone().into(), node_int.iter().map(|(c, t)| (c.into(), t.into())).collect());
-        self.prog.decls.insert(first.clone().into(), node_int.iter().map(|(c, t)| (c.into(), t.into())).collect());
-        self.prog.decls.insert(name.clone().into(), [("a".into(), "node".into()), ("b".into(), "node".into())].into());
+        self.prog.declare_cols(&after, node_int.iter().map(|(c, t)| (c.to_string(), t.to_string())));
+        self.prog.declare_cols(&first, node_int.iter().map(|(c, t)| (c.to_string(), t.to_string())));
+        self.prog.declare_cols(&name, [("a", "node"), ("b", "node")]);
         let head = |rel: &str, args: Vec<Term>| Atom { rel: rel.to_owned().into(), args: args.into(), neg: false, gated: false };
         let mut body = vec![atom("child", vec![v("p"), v("a"), v("i")], false), atom("child", vec![v("p"), v("s"), v("k")], false), cmp("i", "k")];
         body.extend(member);
@@ -2570,15 +2638,17 @@ impl Lowerer {
     /// A set argument that names a relation of nodes (`.decl block_node(n: node)`), not of kinds.
     fn node_set(&self, set: &STerm) -> Option<String> {
         let STerm::Var(name) = set else { return None };
-        let cols = self.prog.decls.get(name.as_str())?;
+        let cols = self.prog.columns_of(&name)?;
         (cols.len() == 1 && cols[0].1 == "node").then(|| name.clone())
     }
 
     /// `tape(n, par, size, depth)`, read by the tree's ranges and climbs.
     fn need_tape(&mut self) {
-        self.prog.decls.entry("tape".to_owned().into()).or_insert_with(|| ["n", "par", "size", "depth"].iter().map(|c| ((*c).to_owned(), "int".to_owned())).map(|(c, t)| (c.into(), t.into())).collect());
-        if !self.prog.inputs.iter().any(|i| i == "tape") {
-            self.prog.inputs.push("tape".to_owned());
+        if !self.prog.declares("tape") {
+            self.prog.declare_cols("tape", ["n", "par", "size", "depth"].map(|c| (c, "int")));
+        }
+        if !self.prog.has_input("tape") {
+            self.prog.add_input("tape");
         }
     }
 
@@ -2588,7 +2658,7 @@ impl Lowerer {
     fn climb(&mut self, seed: Vec<Literal>, x: &str, stop: Option<&str>) -> String {
         self.need_tape();
         let rel = self.fresh("up");
-        self.prog.decls.insert(rel.clone().into(), [("n".into(), "node".into()), ("a".into(), "node".into())].into());
+        self.prog.declare_cols(&rel, [("n", "node"), ("a", "node")]);
         let v = |s: &str| Term::Var(s.to_owned().into());
         let atom = |r: &str, args: Vec<Term>, neg: bool| Literal::Atom(Atom { rel: r.to_owned().into(), args: args.into(), neg, gated: false });
         let up = |p: &str, q: &str| atom("tape", vec![v(p), v(q), Term::Wild, Term::Wild], false);
@@ -2691,9 +2761,9 @@ impl Lowerer {
         }
         let (n, a) = (self.term(n)?, self.term(a)?);
         let within = crate::code_rule_dsl::facts::vtab::syntax::WITHIN;
-        self.prog.decls.insert(within.to_owned().into(), [("n".into(), "node".into()), ("a".into(), "node".into())].into());
-        if !self.prog.inputs.iter().any(|i| i == within) {
-            self.prog.inputs.push(within.to_owned());
+        self.prog.declare_cols(&within, [("n", "node"), ("a", "node")]);
+        if !self.prog.has_input(within) {
+            self.prog.add_input(within);
         }
         let below = |neg: bool| vec![Literal::Atom(Atom { rel: within.to_owned().into(), args: [n.clone(), a.clone()].into(), neg, gated: false })];
         let Some(stop) = stop else { return Ok(vec![below(neg)]) };
@@ -2724,11 +2794,11 @@ impl Lowerer {
             _ => "set".to_owned(),
         };
         let name = format!("{RESERVED}wstop_{label}");
-        if self.prog.decls.contains_key(name.as_str()) {
+        if self.prog.declares(&name) {
             return Ok(name);
         }
         let bodies = self.within("within_stop", &[STerm::Var("n".to_owned()), STerm::Var("a".to_owned()), stop.clone()], false)?;
-        self.prog.decls.insert(name.as_str().into(), [("n".into(), "node".into()), ("a".into(), "node".into())].into());
+        self.prog.declare_cols(&name, [("n", "node"), ("a", "node")]);
         let head = Atom { rel: name.as_str().into(), args: [Term::Var("n".into()), Term::Var("a".into())].into(), neg: false, gated: false };
         for body in bodies {
             self.write(Rule { head: head.clone(), body: body.into() });
@@ -2744,7 +2814,7 @@ impl Lowerer {
         if positions {
             cols.extend(["ordinal", "start", "end"].map(|c| (c.to_owned(), "int".to_owned())));
         }
-        self.prog.decls.insert(name.to_owned().into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
+        self.prog.declare_cols(&name, cols.iter().map(|(c, t)| (c.to_string(), t.to_string())));
         let x = |n: &str| Term::Var(n.to_owned().into());
         let mut body = vec![Literal::Atom(Atom { rel: input.to_owned().into(), args: [x("s")].into(), neg: false, gated: false })];
         body.extend(gs.iter().map(|g| Literal::Cmp { l: x(&format!("g_{g}")), op: "=", r: x("s") }));
@@ -2754,7 +2824,7 @@ impl Lowerer {
             head_args.extend([Term::Int(0), Term::Int(0), Term::Int(0)]);
         }
         self.write(Rule { head: Atom { rel: name.to_owned().into(), args: head_args.into(), neg: false, gated: false }, body: body.into() });
-        self.prog.natives.insert(name.to_owned(), Native::MatchAll { input: input.to_owned(), pattern: re.to_owned(), groups: gs.to_vec(), positions });
+        self.prog.set_native(&name, Native::MatchAll { input: input.to_owned(), pattern: re.to_owned(), groups: gs.to_vec(), positions });
     }
 
     /// A clause that is a natively made relation's definition as `print` writes it, whose relation lowering would
@@ -2768,7 +2838,7 @@ impl Lowerer {
         }
         let ([h], [Lit::Atom { rel: input, args: of, neg: false }, Lit::Atom { rel: m, args, neg: false }]) = (heads, body) else { return false };
         let ([STerm::Var(s)], Some(STerm::Str(re)), Some(STerm::Var(scanned))) = (of.as_slice(), args.first(), args.get(1)) else { return false };
-        if m != "match_all" || scanned != s || h.modal.is_some() || self.prog.natives.contains_key(&h.rel) {
+        if m != "match_all" || scanned != s || h.modal.is_some() || self.prog.natives().contains_key(h.rel.as_str()) {
             return false;
         }
         let coordinates = &args[2..];
@@ -2783,8 +2853,8 @@ impl Lowerer {
         // Over texts, as print writes it: a relation of one text column read, and the head declared (if it is) with
         // the native's columns. Over a node or span (`piece(t: loc)`) the matches are spans placed in the file,
         // which `text_matches` makes.
-        let types = |rel: &str| self.prog.decls.get(rel).map(|cols| cols.iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>());
-        if types(input).as_deref() != Some(&["sym"][..]) {
+        let types = |rel: &str| self.prog.columns_of(rel).map(|cols| cols.into_iter().map(|(_, t)| t).collect::<Vec<String>>());
+        if !types(input).is_some_and(|t| t == ["sym"]) {
             return false;
         }
         let made: Vec<&str> = std::iter::repeat_n("sym", 1 + gs.len()).chain(std::iter::repeat_n("int", coordinates.len())).collect();
@@ -2803,14 +2873,14 @@ impl Lowerer {
         let [c, f, r, o, STerm::Var(input), STerm::Var(targets), STerm::Str(context), STerm::Str(member)] = args.as_slice() else { return false };
         let cols = [c, f, r, o];
         let distinct: BTreeSet<_> = cols.iter().filter_map(|t| if let STerm::Var(x) = t { Some(x) } else { None }).collect();
-        if rel != "python_candidates" || h.modal.is_some() || distinct.len() != 4 || h.args.iter().ne(cols.into_iter()) || self.prog.natives.contains_key(&h.rel) {
+        if rel != "python_candidates" || h.modal.is_some() || distinct.len() != 4 || h.args.iter().ne(cols.into_iter()) || self.prog.natives().contains_key(h.rel.as_str()) {
             return false;
         }
         if !crate::code_rule_dsl::facts::core::PYTHON_CONTEXTS.contains(&context.as_str()) {
             return false;
         }
         let native = Native::PythonCandidates { input: input.clone(), targets: targets.clone(), context: context.clone(), member: member.clone() };
-        if self.prog.natives.values().any(|n| *n == native) {
+        if self.prog.natives().values().any(|n| *n == native) {
             return false;
         }
         self.python_candidates_native(&h.rel, native);
@@ -2920,10 +2990,10 @@ impl Lowerer {
         let STerm::Var(n) = subject else {
             return Err(Error::Syntax(format!("`{pattern}`: a pattern's subject is a variable")));
         };
-        if !self.prog.inputs.iter().any(|i| i == "ast_match") {
-            self.prog.inputs.push("ast_match".to_owned());
+        if !self.prog.has_input("ast_match") {
+            self.prog.add_input("ast_match");
             let cols = [("p", "sym"), ("n", "node"), ("g", "sym"), ("c", "node")];
-            self.prog.decls.insert("ast_match".to_owned().into(), cols.iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).map(|(c, t)| (c.into(), t.into())).collect());
+            self.prog.declare_cols("ast_match", cols.iter().copied());
         }
         let atom = |g: &str, c: Term, neg: bool| {
             Literal::Atom(Atom { rel: "ast_match".into(), args: [Term::Str(key.clone().into()), Term::Var(n.clone().into()), Term::Str(g.to_owned().into()), c].into(), neg, gated: false })
@@ -2938,10 +3008,10 @@ impl Lowerer {
 
     /// `rx_span` as an input of the program (`facts::vtab::syntax`'s `Extra` makes it).
     fn rx_span_input(&mut self) {
-        if !self.prog.inputs.iter().any(|i| i == "rx_span") {
-            self.prog.inputs.push("rx_span".to_owned());
+        if !self.prog.has_input("rx_span") {
+            self.prog.add_input("rx_span");
             let cols = [("p", "sym"), ("c", "node"), ("j", "int"), ("g", "sym"), ("m", "node")];
-            self.prog.decls.insert("rx_span".to_owned().into(), cols.iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).map(|(c, t)| (c.into(), t.into())).collect());
+            self.prog.declare_cols("rx_span", cols.iter().copied());
         }
     }
 
@@ -2991,7 +3061,7 @@ impl Lowerer {
     /// (`(php_arg(c, 1, l) ; php_named_arg(c, "level", l)), match("…", l)` tests l's text, not its id).
     fn node_in(&self, l: &Lit, v: &str) -> bool {
         match l {
-            Lit::Atom { rel, args, neg: false } => self.prog.decls.get(rel.as_str()).is_some_and(|cols| {
+            Lit::Atom { rel, args, neg: false } => self.prog.columns_of(rel.as_str()).is_some_and(|cols| {
                 args.iter().zip(cols).any(|(a, (_, t))| matches!(a, STerm::Var(x) if x == v) && t == "node")
             }),
             Lit::Group { alts, neg: false } => !alts.is_empty() && alts.iter().all(|alt| alt.iter().any(|l| self.node_in(l, v))),
@@ -3077,7 +3147,7 @@ impl Lowerer {
             }
             STerm::Str(kind) => {
                 let name = kind_set_name(kind);
-                self.prog.kindsets.insert(name.clone(), vec![kind.clone()]);
+                self.prog.set_kindset(&name, vec![kind.clone()]);
                 Ok(name)
             }
             _ => Err(Error::Syntax(format!("{rel}: the set is a relation of kinds or one kind"))),
@@ -3161,12 +3231,13 @@ impl Lowerer {
                 let (input,targets,context,member)=(name(input)?,name(targets)?,literal(context)?,literal(member)?);
                 if !crate::code_rule_dsl::logic::front::PYTHON_CONTEXTS.contains(&context.as_str()) {return Err(Error::Syntax(format!("unknown Python execution context {context}")));}
                 for name in [&input,&targets] {
-                    if !self.prog.decls.get(name.as_str()).is_some_and(|cols|cols.len()==1) {return Err(Error::Syntax(format!("python_candidates: {name} must be a declared unary relation")));}
+                    if !self.prog.columns_of(name.as_str()).is_some_and(|cols| cols.len() == 1) {return Err(Error::Syntax(format!("python_candidates: {name} must be a declared unary relation")));}
                 }
                 let native=Native::PythonCandidates{input:input.clone(),targets:targets.clone(),context,member};
-                let rel=if let Some((name,_))=self.prog.natives.iter().find(|(_,n)|**n==native) {name.clone()}else {
-                    let mut serial=self.prog.natives.len();
-                    let rel=loop {let name=format!("rr_python_candidates_{serial}");if !self.prog.decls.contains_key(name.as_str()) && !self.prog.natives.contains_key(name.as_str()){break name;}serial+=1;};
+                let natives = self.prog.natives();
+                let rel=if let Some((name,_))=natives.iter().find(|(_,n)|**n==native) {name.clone()}else {
+                    let mut serial=natives.len();
+                    let rel=loop {let name=format!("rr_python_candidates_{serial}");if !self.prog.declares(&name) && !natives.contains_key(name.as_str()){break name;}serial+=1;};
                     self.python_candidates_native(&rel, native);
                     rel
                 };
@@ -3212,9 +3283,9 @@ impl Lowerer {
         for n in ["c", "f", "r", "o"] {
             body.push(a("node", vec![v("d"), v(n), Term::Wild, Term::Wild, Term::Wild]));
         }
-        self.prog.decls.insert(name.to_owned().into(), ["c", "f", "r", "o"].into_iter().map(|n| (n.into(), "node".into())).collect());
+        self.prog.declare_cols(name, ["c", "f", "r", "o"].map(|n| (n, "node")));
         self.write(Rule { head: Atom { rel: name.to_owned().into(), args: ["c", "f", "r", "o"].into_iter().map(v).collect(), neg: false, gated: false }, body: body.into() });
-        self.prog.natives.insert(name.to_owned(), native);
+        self.prog.set_native(&name, native);
     }
 
     fn python_producer(&mut self, kind:&str, input:&str, targets:Option<&str>)->String {
@@ -3222,7 +3293,8 @@ impl Lowerer {
         let base = format!("rr_python_{kind}_{input}_{}",targets.unwrap_or(""));
         let mut rel = base.clone();
         let mut collision = 0;
-        while let Some(existing) = self.prog.natives.get(&rel) {
+        let natives = self.prog.natives();
+        while let Some(existing) = natives.get(&rel) {
             if existing == &native { return rel; }
             collision += 1;
             rel = format!("{base}__{collision}");
@@ -3240,9 +3312,9 @@ impl Lowerer {
                 }
             }
         }
-        self.prog.decls.insert(rel.clone().into(),vars.iter().map(|(n,t)|(n.to_string(),t.to_string())).map(|(c, t)| (c.into(), t.into())).collect());
+        self.prog.declare_cols(&rel, vars.iter().map(|(n, t)| (n.to_string(), t.to_string())));
         self.write(Rule{head:Atom{rel:rel.clone().into(),args:vars.iter().map(|(n,_)|v(n)).collect(),neg:false,gated:false},body: body.into()});
-        self.prog.natives.insert(rel.clone(),native);
+        self.prog.set_native(&rel, native);
         rel
     }
 
@@ -3254,7 +3326,7 @@ impl Lowerer {
             Some(roots) => format!("rr_dfsm_{edge}_{target}_{roots}"),
             None => format!("rr_dfs_{edge}_{target}"),
         };
-        if self.prog.natives.contains_key(&rel) {
+        if self.prog.natives().contains_key(rel.as_str()) {
             return rel;
         }
         let v = |n: &str| Term::Var(n.to_owned().into());
@@ -3265,10 +3337,11 @@ impl Lowerer {
         }
         self.write(Rule { head: Atom { rel: rel.clone().into(), args: [v("r"), v("hit"), v("first")].into(), neg: false, gated: false }, body: body.into() });
         // The edge relation's column types (a node, a number, a symbol); nodes where it is declared later.
-        let ty = |c: usize, or: &str| self.prog.decls.get(edge).and_then(|cols| cols.get(c)).map_or_else(|| or.to_owned(), |(_, t)| t.to_string());
+        let edge_cols = self.prog.columns_of(edge);
+        let ty = |c: usize, or: &str| edge_cols.as_ref().and_then(|cols| cols.get(c)).map_or_else(|| or.to_owned(), |(_, t)| t.clone());
         let cols = vec![("r".to_owned(), ty(0, "node")), ("hit".to_owned(), ty(1, "node")), ("first".to_owned(), ty(2, "int"))];
-        self.prog.decls.insert(rel.clone().into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
-        self.prog.natives.insert(rel.clone(), Native::DfsFirst { edge: edge.to_owned(), target: target.to_owned(), roots: roots.map(str::to_owned) });
+        self.prog.declare_cols(&rel, cols.iter().map(|(c, t)| (c.to_string(), t.to_string())));
+        self.prog.set_native(&rel, Native::DfsFirst { edge: edge.to_owned(), target: target.to_owned(), roots: roots.map(str::to_owned) });
         rel
     }
 
@@ -3277,7 +3350,7 @@ impl Lowerer {
     /// after them and in the cross-file part; the evaluator makes its rows, not the rule.
     fn components(&mut self, edge: &str, own: &str) -> String {
         let rel = format!("rr_components_{edge}_{own}");
-        if self.prog.natives.contains_key(&rel) {
+        if self.prog.natives().contains_key(rel.as_str()) {
             return rel;
         }
         let v = |n: &str| Term::Var(n.to_owned().into());
@@ -3285,8 +3358,8 @@ impl Lowerer {
         let body = vec![atom(own, vec![v("d"), v("k")]), atom(edge, vec![v("d"), v("e")]), atom(own, vec![v("e"), Term::Wild])];
         self.write(Rule { head: Atom { rel: rel.clone().into(), args: [v("d"), v("e"), v("k")].into(), neg: false, gated: false }, body: body.into() });
         let cols = vec![("d".to_owned(), "int".to_owned()), ("c".to_owned(), "int".to_owned()), ("k".to_owned(), "sym".to_owned())];
-        self.prog.decls.insert(rel.clone().into(), cols.iter().map(|(c, t)| (c.into(), t.into())).collect());
-        self.prog.natives.insert(rel.clone(), Native::Components { edge: edge.to_owned(), own: own.to_owned() });
+        self.prog.declare_cols(&rel, cols.iter().map(|(c, t)| (c.to_string(), t.to_string())));
+        self.prog.set_native(&rel, Native::Components { edge: edge.to_owned(), own: own.to_owned() });
         rel
     }
 
@@ -3361,7 +3434,7 @@ impl Lowerer {
         // to their recursion (`type_app(t, h, i, a) :- ann_input(t), …, field(m, "subscript", a), i = count : {
         // field(m, "subscript", a0), a0 < a }` with ann_input recursive through type_app would aggregate in its
         // own component). The context may hold more rows than the rule; the rule joins it with its own literals.
-        let inputs: BTreeSet<String> = self.prog.inputs.iter().cloned().collect();
+        let inputs: BTreeSet<String> = self.prog.input_names().into_iter().collect();
         // A derived atom over the head's variables alone, not of the clause's own heads, is the clause's demand
         // (`read_elsewhere(n, S) :- demand_read_elsewhere(n, S), …`): it narrows the context to the rows the rule is
         // asked for. Without it, a context of inputs over `n` is every identifier of every scope (up028: 1.7 M rows
@@ -3991,7 +4064,7 @@ impl Lowerer {
                             if crate::code_rule_dsl::logic::front::is_axis(&a.rel) {
                                 return "node".to_owned();
                             }
-                            if let Some(cols) = self.prog.decls.get(a.rel.as_str())
+                            if let Some(cols) = self.prog.columns_of(a.rel.as_str())
                                 && let Some((_, ty)) = cols.get(i)
                             {
                                 return ty.to_string();
@@ -4019,7 +4092,7 @@ impl Lowerer {
                         AggOp::Join { .. } => "sym".to_owned(),
                         AggOp::Min | AggOp::Max => {
                             let col = atom.args.iter().position(|t| over.as_ref().is_some_and(|o| *t == Term::Var(o.clone().into())));
-                            col.and_then(|c| self.prog.decls.get(atom.rel.as_str())?.get(c).map(|(_, ty)| ty.clone())).unwrap_or_else(|| "int".into()).to_string()
+                            col.and_then(|c| self.prog.columns_of(atom.rel.as_str())?.get(c).map(|(_, ty)| ty.clone())).unwrap_or_else(|| "int".to_owned())
                         }
                     };
                 }

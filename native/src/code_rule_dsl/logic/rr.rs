@@ -472,7 +472,7 @@ impl Scoped {
         if let Some(v) = self.version.get() {
             return Ok(std::sync::Arc::clone(v));
         }
-        let v = version_of(self.seeds.program())?;
+        let v = self.seeds.version()?;
         Ok(std::sync::Arc::clone(self.version.get_or_init(|| v)))
     }
 
