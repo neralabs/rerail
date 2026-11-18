@@ -92,6 +92,10 @@ pub fn schema() -> BTreeMap<String, Vec<(String, String)>> {
         ("prepared_same_doc", &["rel:sym", "i:int", "col:int"]),
         // The decisions preparing made (decision 0269): a run that reuses the program states them.
         ("prepared_decided", &["k:int", "topic:sym", "text:sym", "count:int"]),
+        // The pipelines' runs it was prepared by (decision 0333): the digest they are kept under and their images'
+        // digests, so a run that takes the program whole names them as the run that made it did (work queue Q129).
+        ("prepared_runs", &["named:sym"]),
+        ("prepared_run_image", &["k:int", "digest:sym"]),
     ];
     SCHEMA
         .iter()
@@ -214,7 +218,21 @@ fn rest_of(prepared: &Prepared) -> Facts {
     for (k, ((topic, text), count)) in prepared.decided.iter().enumerate() {
         row("prepared_decided", vec![n(k), s(topic), s(text), Value::Int(*count as i64)]);
     }
+    if let Some(runs) = &prepared.runs {
+        row("prepared_runs", vec![s(&hex(&runs.named))]);
+        for (k, image) in runs.images.iter().enumerate() {
+            row("prepared_run_image", vec![n(k), s(&hex(image))]);
+        }
+    }
     facts
+}
+
+/// The pipelines' runs of a pointer's facts (`prepared_runs`); `None` for a program prepared by parts, or kept before.
+fn runs_of(facts: &Facts) -> Result<Option<super::KeptRuns>, String> {
+    let Some(named) = facts.get("prepared_runs").and_then(|r| r.first()) else { return Ok(None) };
+    let digest = |v: &Value| text(v).and_then(|t| unhex(&t).ok_or_else(|| bad("a run's digest is not one")));
+    let images = indexed(facts, "prepared_run_image")?.iter().map(|(_, r)| digest(&r[0])).collect::<Result<_, _>>()?;
+    Ok(Some(super::KeptRuns { named: digest(&named[0])?, images }))
 }
 
 fn bad(what: impl std::fmt::Display) -> String {
@@ -398,6 +416,7 @@ pub fn prepared_of(
         maintained: Default::default(),
         parts: Default::default(),
         decided: indexed(facts, "prepared_decided")?.iter().map(|(_, r)| Ok(((text(&r[0])?, text(&r[1])?), int(&r[2])? as u64))).collect::<Result<_, String>>()?,
+        runs: runs_of(facts)?,
         memo_strata,
     })
 }
@@ -499,6 +518,11 @@ pub(super) fn lookup(store: &ContentStore, source: Option<SourceId>, dialect: Gr
         None => return Ok(None),
     };
     let got = prepared_of(&facts, source, version, dialect, lists);
+    if let Ok(p) = &got
+        && let Some(runs) = &p.runs
+    {
+        documents.extend(program_text::run_sources(store, &runs.keys(), &runs.images)?);
+    }
     if std::env::var_os("RERAIL_PREPARED_TRACE").is_some() {
         eprintln!("RERAIL_PREPARED_TRACE lookup ({}): {:.1} kB of facts; read {:.3} s, to a prepared program {:.3} s{}",
             super::phases::current().unwrap_or_else(|| "main".into()), entry.len() as f64 / 1e3, read.as_secs_f64(), at.elapsed().as_secs_f64(),
@@ -551,8 +575,8 @@ pub fn relocate(
     Some(Some(moved))
 }
 
-/// The sources of the programs' texts the program `key` names under `source` (`lookup`'s), with neither program read:
-/// for a run that holds the prepared program in memory. Empty when the store keeps none.
+/// The sources of the programs' texts the program `key` names under `source` (`lookup`'s), and of its pipelines' runs,
+/// with neither program read: for a run that holds the prepared program in memory. Empty when the store keeps none.
 pub(super) fn documents(store: &ContentStore, source: SourceId, key: &[u8; 32]) -> StoreResult<Vec<SourceId>> {
     let set = pointer_plan(key);
     let memo = store.facts_memo(FactsMemoKey { source, fact_schema: POINTER, path: PATH })?;
@@ -567,7 +591,11 @@ pub(super) fn documents(store: &ContentStore, source: SourceId, key: &[u8; 32]) 
             digests.push(digest);
         }
     }
-    program_text::sources(store, &digests)
+    let mut sources = program_text::sources(store, &digests)?;
+    if let Ok(Some(runs)) = runs_of(&facts) {
+        sources.extend(program_text::run_sources(store, &runs.keys(), &runs.images)?);
+    }
+    Ok(sources)
 }
 
 /// What the write of the program `key` is queued under (`write_back`, decision 0102).

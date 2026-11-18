@@ -640,12 +640,16 @@ fn text_ids(v: &Value) -> Result<Vec<u32>, String> {
     s.split(',').map(|x| x.parse::<u32>().map_err(|e| bad(e))).collect()
 }
 
-fn kept_run(run: &crate::code_rule_dsl::logic::program_image::manager::Run) -> (Vec<Vec<u8>>, Vec<u8>) {
+/// A run's images, their digests and its facts, as `store_run` keeps them.
+fn kept_run(run: &crate::code_rule_dsl::logic::program_image::manager::Run) -> (Vec<Vec<u8>>, Vec<[u8; 32]>, Vec<u8>) {
     use crate::code_rule_dsl::logic::program_image::manager::StoredVersion;
     let mut images: Vec<Vec<u8>> = Vec::new();
+    let mut digests: Vec<[u8; 32]> = Vec::new();
     let mut image = |bytes: &[u8]| -> [u8; 32] {
         images.push(bytes.to_vec());
-        Sha256::digest(bytes).into()
+        let d: [u8; 32] = Sha256::digest(bytes).into();
+        digests.push(d);
+        d
     };
     let parts = run.parts();
     let mut facts = Facts::new();
@@ -681,7 +685,7 @@ fn kept_run(run: &crate::code_rule_dsl::logic::program_image::manager::Run) -> (
         let head = [int(*i as i64), str_value(name), int(i64::from(*tag))];
         facts.entry("pipeline_run_analysis".into()).or_default().extend(rows.iter().map(|r| head.iter().cloned().chain(r.iter().cloned()).collect::<Vec<_>>().into()));
     }
-    (images, program_facts::encode(&facts))
+    (images, digests, program_facts::encode(&facts))
 }
 
 /// Keeps a run (`kept_run`'s images and facts) under `key`: each image under its digest, the facts under the run's
@@ -710,11 +714,16 @@ struct RecordedRun {
 /// Keeps pipeline runs behind the run, as an item of its record (decision 0306): each encoded here (`kept_run`, on
 /// the run's thread), stored by the writer, the sources named by the run's manifest. Replaces Typing-support's job of
 /// code on the writer (`StoredRuns::keep` in a closure), at the merge of e829e72a7.
-pub fn record_runs(store: &ContentStore, runs: &[([u8; 32], &crate::code_rule_dsl::logic::program_image::manager::Run)]) {
+///
+/// Gives the digests of the runs' images, which the prepared program keeps (`Prepared::runs`): a run that takes it
+/// whole names their sources without reading the runs (`run_sources`).
+pub fn record_runs(store: &ContentStore, runs: &[([u8; 32], &crate::code_rule_dsl::logic::program_image::manager::Run)]) -> Vec<[u8; 32]> {
     let mut body = Vec::new();
     let mut bytes = Vec::new();
+    let mut digests = Vec::new();
     for (key, run) in runs {
-        let (images, facts) = kept_run(run);
+        let (images, image_digests, facts) = kept_run(run);
+        digests.extend(image_digests);
         body.push(RecordedRun { key: *key, images: images.iter().map(Vec::len).collect(), facts: facts.len() });
         images.iter().for_each(|i| bytes.extend_from_slice(i));
         bytes.extend_from_slice(&facts);
@@ -735,11 +744,25 @@ pub fn record_runs(store: &ContentStore, runs: &[([u8; 32], &crate::code_rule_ds
         Ok(())
     }
     store.record("the pipelines' runs", Vec::new(), &body, Some(bytes), apply);
+    digests
+}
+
+/// The sources the runs kept under `keys` are stored as (`store_run`'s): each run's facts by its alias and its images
+/// by theirs, found with nothing read. A run or image the store no longer holds names none.
+pub fn run_sources(store: &ContentStore, keys: &[[u8; 32]], images: &[[u8; 32]]) -> StoreResult<Vec<SourceId>> {
+    let mut ids = Vec::new();
+    for d in images {
+        ids.extend(store.source_by_alias(image_key(d))?);
+    }
+    for key in keys {
+        ids.extend(store.source_by_alias(run_alias(key))?);
+    }
+    Ok(ids)
 }
 
 impl crate::code_rule_dsl::logic::program_image::manager::Runs for StoredRuns<'_> {
     fn keep(&self, key: &[u8; 32], run: &crate::code_rule_dsl::logic::program_image::manager::Run) -> Result<(), String> {
-        let (images, facts) = kept_run(run);
+        let (images, _, facts) = kept_run(run);
         store_run(self.0, key, &images.iter().map(Vec::as_slice).collect::<Vec<_>>(), &facts).map(drop).map_err(|e| e.to_string())
     }
 

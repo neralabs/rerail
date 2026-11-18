@@ -2870,7 +2870,7 @@ always a refusal.
   `a_relation_started_from_an_empty_kept_one_holds_its_rows`; the session tests pass but Q125's two.
 
 
-### Q129. (Q80 on final-rerail-shape-rr-align at 4c8152466) `the_run_after_a_cold_one_writes_nothing` fails here: phased-facts' Q68, fixed there, not merged yet
+### Q129. (Q80 on final-rerail-shape-rr-align at 4c8152466) (done) `the_run_after_a_cold_one_writes_nothing` fails here: phased-facts' Q68, fixed there, not merged yet
 
 - **Found** (2026-11-17, after the hub's merge d1875e723): the warm child run exits 3. The observer's store is asked
   inside the waves under the root's canonical form (`/private/var/…`: `World::resolve_all` in the load rounds), and
@@ -2894,6 +2894,30 @@ always a refusal.
   stored ("no volume"): `FSEventsCopyUUIDForDevice` returns null in the Relax-hosted process, though the host
   answers it for the same device (ctypes on the m3) and the cargo-built test does not hit it. A Relax FFI fault,
   for the user to raise upstream; the tests that assert a warm run writes nothing fail under Relax for it.
+- **Record**: done (2026-11-18), three causes, each checked id by id on the M3.
+  - The lead held: each warm manifest left out exactly the sources the cold run's `record_runs` items named (the
+    two pipelines' runs, their images and facts). A run that takes the prepared program whole now names them:
+    `Prepared::runs` (`KeptRuns`: the digest the runs are kept under, `runs_digest`, and their images' digests,
+    which `record_runs` gives) is kept in the pointer (`prepared_runs`, `prepared_run_image`). `prepared::lookup` and
+    `prepared::documents` add the runs' sources, found by alias with nothing read (`program_text::run_sources`).
+    The run puts the digest among its manifest's plans, as the cold run did (`kept_runs`).
+  - Then the outer manifest's plans differed: phase 0's graph image keeps the bootstrap run's plans, and a run
+    reading it names them (b68e8c7b9, Q49). But f7e047997, made where the image kept none, cleared them in the run
+    that keeps the image. So the cold run named none and the warm run named them all. The clear is gone: both name
+    them, and what the graph came from stays live while it is used (b68e8c7b9's invariant).
+    `keep_graph_image` returns nothing now: its result had no other reader.
+  - Beside other tests, the first command after the farm sent the checkout still failed now and then: "the
+    observer forgot answers the journal named changed", 16 paths under `typing/programs`. The farm's agent sets the
+    times of every file a command will read, the mtime to what it was (`had`, `seen(touch=True)`). FSEvents reports
+    that as an inode metadata change, and the journal counted every event as a change. An event that only changes
+    an item's metadata (inode metadata, Finder info, owner, extended attributes; no create, remove, rename,
+    modify or rescan) leaves its bytes as they were, and now names nothing (`journal::fsevents`, `META`,
+    `CONTENT`). Spotlight, backups and quarantine attributes make the same events on a user's machine.
+  - Tests: `the_journal_names_what_changed_since_its_cursor` sets a file's times as the agent does (not named)
+    and then writes it (named). Without the filter it fails. On the farm (M3): it and the observer's tests (26, three
+    times); `the_run_after_a_cold_one_writes_nothing` alone, and in a batch with the phase 0, prepared, preparation,
+    graph image, second-run and `programs_are_kept_by_the_hashes_of_what_they_read` tests (11 of 11, four times,
+    the first right after a send).
 
 ### Q130. (Q81 on final-rerail-shape-rr-align at 4c8152466) An edited include is read with its old digest in the same process (`programs_are_kept_by_the_hashes_of_what_they_read`)
 
@@ -2933,7 +2957,7 @@ always a refusal.
 - **Done when**: the debug build lowers ep2's rules with both checks passing. A debug run of the combine's splice
   (0373) waits on it; meanwhile `RERAIL_COMBINE_LINK=check` checks the splice in the profiling build.
 
-### Q133. (Q91 on final-rerail-shape-rr-align at 4c8152466) A rule edit lays out every kept input, though none changed (Q18's kept inputs laziness)
+### Q133. (Q91 on final-rerail-shape-rr-align at 4c8152466) (done) A rule edit lays out every kept input, though none changed (Q18's kept inputs laziness)
 
 - **Found** (2026-11-17, ep2 e53, profiled): "the kept inputs (decision 0117)" reports "0 of 1008 inputs changed,
   from 0 changed files", and its patch takes 0.001 s. Yet `retain::kept_inputs` takes 0.077 s, decoding and laying
