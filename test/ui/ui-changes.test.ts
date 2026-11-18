@@ -193,6 +193,44 @@ describe("the dashboard following the daemon's change stream", () => {
     expect(data.disconnected).toBe(false);
   });
 
+  it("opens the stream again after the pause though the read after its end never answers", async () => {
+    stream().send("t1");
+    await settle();
+    // The daemon takes connections but answers no read, as when its event loop is stuck.
+    const unanswered: (() => void)[] = [];
+    vi.stubGlobal("fetch", async (input: URL, init: { signal?: AbortSignal } = {}) => {
+      const url = new URL(input);
+      if (url.pathname === "/api/changes") return openStream(init.signal!);
+      reads.push(url.pathname);
+      return new Promise<Response>(resolve => unanswered.push(() => resolve(answer(url))));
+    });
+    stream().end();
+    await settle();
+
+    await after(5_000);
+
+    expect(streams).toHaveLength(2);
+    // The reads answer at last, so the next test's reads are not held behind them.
+    for (const reply of unanswered) reply();
+    await settle();
+  });
+
+  it("reads the sidebar's count again at a new stream's first message, since a conflict event may have come while none was open", async () => {
+    stream().send("t1");
+    await settle();
+    stream().send("t2");
+    await settle();
+    expect(readsOf("/api/merge-assist")).toBe(1);
+
+    setHidden(true);
+    setHidden(false);
+    await settle();
+    stream().send("t2");
+    await settle();
+
+    expect(readsOf("/api/merge-assist")).toBe(2);
+  });
+
   it("ends the stream while the tab is hidden, and follows a new one when it shows again", async () => {
     stream().send("t1");
     await settle();
