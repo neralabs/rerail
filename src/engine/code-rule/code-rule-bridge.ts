@@ -1413,8 +1413,9 @@ export class CodeRuleBridge {
     this.refreshCodeRules();
     const paths = generatedEditPaths(toolName, input);
     this.#auditor.refreshOwners?.(paths);
-    // What the ignore files a tool is about to write hold now is the baseline its edit is compared with.
-    await this.#rememberIgnoreFiles(paths);
+    // What the ignore files a tool is about to write hold now is the baseline its edit is compared with; one that may
+    // have run already keeps the last look's, as what they hold now may be what it wrote.
+    if (restoredPreimages !== UNSEEN_START) await this.#rememberIgnoreFiles(paths);
     if (paths.length === 0) {
       if (isCommandTool(toolName)) this.#commands.add(toolCallId);
       return {};

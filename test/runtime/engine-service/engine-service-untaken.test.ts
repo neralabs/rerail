@@ -47,6 +47,7 @@ async function serviceWithUntaken(opening: Promise<void> = Promise.resolve()) {
     await removeFolder(root);
   });
   writeFileSync(join(root, "a.py"), "def a():\n    return 1\n");
+  writeFileSync(join(root, ".gitignore"), "*.log\n");
   const databasePath = join(root, "rerail.sqlite");
   startTestRepository(root, databasePath);
   const socketPath = testEngineEndpoint(root);
@@ -150,6 +151,16 @@ function recordedEvents(databasePath: string): { eventId: string; observedAt: nu
   const reader = new SqliteSessionReader(databasePath);
   try {
     return reader.events(SESSION).filter(event => event.kind === "user-prompt").map(({ eventId, observedAt }) => ({ eventId, observedAt }));
+  } finally {
+    reader.close();
+  }
+}
+
+/** The payloads of the session's recorded events of `kind`, in order. */
+function sessionFacts(databasePath: string, kind: string): unknown[] {
+  const reader = new SqliteSessionReader(databasePath);
+  try {
+    return reader.events(SESSION).filter(event => event.kind === kind).map(event => event.payload);
   } finally {
     reader.close();
   }
@@ -261,6 +272,17 @@ describe("an engine service beside the events hooks left while its daemon did no
     await held.service.untaken.taken();
     expect((await held.send(prompt("next"))).filter(steer => steer.startsWith("print in a.py"))).toEqual([printSteer("a.py", 3)]);
     expect(checkedEdits(held, "a.py").map(read => read.previousText)).toEqual([seen]);
+  });
+
+  it("records a .gitignore a Write left untaken made ignore more as the tool's change, compared with what it held before", async () => {
+    const held = await serviceWithUntaken();
+    await firstView(held);
+    writeFileSync(join(held.root, ".gitignore"), "*.log\nout/\n");
+    await leftWrite(held, "ignore", ".gitignore", "*.log\nout/\n", Date.now());
+    await held.service.untaken.taken();
+    await held.send(prompt("next"));
+    // Its baseline was read as its late check began, after the tool wrote it: the change was never recorded.
+    expect(sessionFacts(held.databasePath, "ignore-rules-changed")).toEqual([{ path: ".gitignore", via: "tool", ignoresMore: ["out/"] }]);
   });
 
   it("takes what a shell command left untaken wrote as the session's own, from when its hooks met it", async () => {
