@@ -92,9 +92,10 @@ afterEach(async () => {
 
 /**
  * An engine service over two started checkouts, `first` (a Git repository adding `rules`) and `second`, whose daemon
- * needs the room a runtime no session uses takes whenever `needsRoom` says so.
+ * needs the room a runtime no session uses takes whenever `needsRoom` says so, and whose time is `clock.now`.
  */
 async function twoCheckouts(needsRoom: (() => boolean) | undefined, rules?: TestRepositoryRules) {
+  const clock = { now: 1_000_000 };
   const root = await mkdtemp(join(tmpdir(), "rerail-runtimes-"));
   roots.push(root);
   const databasePath = join(root, "rerail.sqlite");
@@ -112,6 +113,7 @@ async function twoCheckouts(needsRoom: (() => boolean) | undefined, rules?: Test
     storageRoot: join(root, "state"),
     databasePath,
     embedder: testEmbedder,
+    now: () => clock.now,
     ...(needsRoom === undefined ? {} : { needsRoom }),
     createAuditor: () => ({
       openWorkspace: async () => undefined,
@@ -125,8 +127,10 @@ async function twoCheckouts(needsRoom: (() => boolean) | undefined, rules?: Test
   const session = (sessionId: string, cwd: string) => ({ host: "claude-code" as const, sessionId, cwd });
   const start = (sessionId: string, cwd: string) => send({ kind: "session-start", eventId: `${sessionId}:start`, session: session(sessionId, cwd) });
   const end = (sessionId: string, cwd: string) => send({ kind: "session-end", eventId: `${sessionId}:end`, sessionId, session: session(sessionId, cwd) });
-  return { service, databasePath, first, second, start, end, send, session };
+  return { service, databasePath, first, second, start, end, send, session, clock };
 }
+
+const MINUTE = 60_000;
 
 describe("the engine service's runtimes", () => {
   // A /clear in Claude Code ends a session and starts the next in the same checkout a moment later. While the daemon
@@ -158,10 +162,11 @@ describe("the engine service's runtimes", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const disposed = vi.spyOn(RerailRuntime.prototype, "dispose");
     try {
-      const { service, first, start, end } = await twoCheckouts(() => false);
+      const { service, first, start, end, clock } = await twoCheckouts(() => false);
       await start("a", first);
       await end("a", first);
-      vi.advanceTimersByTime(2 * 60 * 60_000);
+      vi.advanceTimersByTime(2 * 60 * MINUTE);
+      clock.now += 2 * 60 * MINUTE;
       await service.closeIdleSessions();
       expect(service.openRuntimes()).toBe(1);
       await start("b", first);
@@ -173,28 +178,43 @@ describe("the engine service's runtimes", () => {
     }
   });
 
-  it("closes the kept runtimes once the daemon needs the room: all as another runtime opens, all but the one left last at the minute's sweep", async () => {
-    const room = { short: false };
-    const { service, first, second, start, end } = await twoCheckouts(() => room.short);
+  // A daemon that kept runtimes while it had room and then ran short closed every kept one as the next runtime opened,
+  // on that session's path, one full collection each, and freed the compiled rules it was about to compile again: its
+  // SessionStart took 700 to 770 ms where it took 350 to 380 ms with the runtimes closed one by one, 15 minutes after
+  // each one's last session, off any session's path.
+  it("opens a runtime in another checkout with no close on its path while the daemon needs the room", async () => {
+    const disposed = vi.spyOn(RerailRuntime.prototype, "dispose");
+    try {
+      const { service, first, second, start, end } = await twoCheckouts(() => true);
+      await start("a", first);
+      await end("a", first);
+      await start("b", second);
+      expect(service.openRuntimes()).toBe(2);
+      expect(disposed).not.toHaveBeenCalled();
+    } finally {
+      disposed.mockRestore();
+    }
+  });
+
+  // Short of room, every runtime no session uses was freed 15 minutes after its last session left, the one left last
+  // too: a daemon serving many worktrees freed each one's records. It still is, and none sooner, so a /clear or a
+  // session back within 15 minutes finds its rules compiled as it did.
+  it("frees each kept runtime at the first sweep 15 minutes after its last session left while the daemon needs the room, the one left last too", async () => {
+    const { service, first, second, start, end, clock } = await twoCheckouts(() => true);
     await start("a", first);
     await start("b", second);
     await end("a", first);
+    clock.now += 5 * MINUTE;
     await end("b", second);
+    clock.now += 10 * MINUTE - 1;
+    await service.closeIdleSessions();
     expect(service.openRuntimes()).toBe(2);
-    // The minute's sweep: the runtime left longest ago goes, and the one left last stays for its checkout's next session.
-    room.short = true;
+    clock.now += 1;
     await service.closeIdleSessions();
     expect(service.openRuntimes()).toBe(1);
-    await start("c", second);
-    expect(service.openRuntimes()).toBe(1);
-    await end("c", second);
+    clock.now += 5 * MINUTE;
     await service.closeIdleSessions();
-    expect(service.openRuntimes()).toBe(1);
-    // A runtime about to open in another checkout: the kept one goes first, and the new one stays while its session uses it.
-    await start("d", first);
-    expect(service.openRuntimes()).toBe(1);
-    await service.closeIdleSessions();
-    expect(service.openRuntimes()).toBe(1);
+    expect(service.openRuntimes()).toBe(0);
   });
 
   // The heap watch restarts the daemon at its ceiling, which makes every hook wait through a start; what the daemon keeps
@@ -243,16 +263,17 @@ describe("the engine service's runtimes", () => {
   // Every other case answers for the daemon's memory; the daemon itself reads it (`memoryRoom`), and a daemon whose own
   // reading was lost would keep every runtime whatever its size.
   it("reads the daemon's own memory when no room check is given, and closes the kept runtimes it has no room for", async () => {
-    const { service, first, second, start, end } = await twoCheckouts(undefined);
+    const { service, first, second, start, end, clock } = await twoCheckouts(undefined);
     await start("a", first);
     await start("b", second);
     await end("a", first);
     await end("b", second);
+    clock.now += 15 * MINUTE;
     // The daemon's resident size past a quarter of the machine's memory.
     const resident = vi.spyOn(process.memoryUsage, "rss").mockReturnValue(Number.MAX_SAFE_INTEGER);
     try {
       await service.closeIdleSessions();
-      expect(service.openRuntimes()).toBe(1);
+      expect(service.openRuntimes()).toBe(0);
     } finally {
       resident.mockRestore();
     }
@@ -851,7 +872,7 @@ describe("the engine service's idle close", () => {
       room.short = true;
       await service.closeUnusedRuntimes();
       expect(service.openRuntimes()).toBe(1);
-      // A runtime opening in another checkout makes room too, and leaves the reopened session's alone.
+      // A runtime opening in another checkout closes nothing.
       await start("b", second);
       expect(service.openRuntimes()).toBe(2);
       await vi.waitFor(() => {

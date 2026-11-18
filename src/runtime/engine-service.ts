@@ -46,8 +46,8 @@ export interface EngineService {
   /** How many runtimes are open: one per checkout some live session uses, and those kept for their checkout's next session. */
   openRuntimes(): number;
   /**
-   * Closes every runtime no session uses, the one its last session left most recently too, and settles once each has
-   * closed and its memory was collected: the heap watch asks it before it restarts the daemon at its ceiling.
+   * Closes every runtime no session uses, however recently its last session left, and settles once each has closed and
+   * one collection after them has run: the heap watch asks it before it restarts the daemon at its ceiling.
    */
   closeUnusedRuntimes(): Promise<void>;
   /**
@@ -226,11 +226,11 @@ type EngineServiceOptions = Omit<RerailRuntimeOptions, "workspaceRoot"> & {
   pipeFallback?: () => string;
   /** Defaults to `IDLE_SESSION_MS`; tests pass their own. */
   idleSessionMs?: number;
-  /** The clock idle sessions are measured by; defaults to `Date.now`. */
+  /** The clock idle sessions and runtimes no session uses are measured by; defaults to `Date.now`. */
   now?: () => number;
   /**
    * Whether the daemon needs the room the runtimes no session uses take (`memoryRoom` in memory-room.ts, by default):
-   * asked as a runtime opens and at each minute's sweep (`KeptRuntimes`).
+   * asked at each minute's sweep while one has been kept 15 minutes (`KeptRuntimes`).
    */
   needsRoom?: () => boolean;
 };
@@ -243,7 +243,7 @@ interface EngineRoutingState {
   lastEventAt: Map<string, number>;
   lanes: SessionLanes;
   pending: Set<Promise<readonly AdapterDelivery[]>>;
-  /** The runtimes no session uses, kept open for their checkout's next session until the daemon needs the room. */
+  /** The runtimes no session uses, kept open for their checkout's next session (`KeptRuntimes`). */
   kept: KeptRuntimes;
   /** What each open runtime was made with, by its key: a suspended session's runtime is made again from it. */
   runtimeOptions: Map<string, RerailRuntimeOptions>;
@@ -420,8 +420,6 @@ function runtimeFor(
   const open = state.runtimes.get(runtimeKey);
   if (open !== undefined) return open;
   if (runtimeOptions === undefined) throw new Error(`Kernel runtime is unavailable for session ${sessionId}`);
-  // A runtime about to open takes memory: the kept ones go first when the daemon has no room for both.
-  state.kept.beforeOpen();
   const runtime = new RerailRuntime({
     ...runtimeOptions, autostart: false, startGate: true, worktreeWalks: state.worktreeWalks,
     suspendedSessions: suspendedSessions(state, runtimeKey), ownerLockId: ownerLockFor(state, runtimeOptions.databasePath),
@@ -496,8 +494,8 @@ async function closeIdleSessions(state: EngineRoutingState, idleMs: number, now:
 
 /**
  * One idle sweep: suspends this service's quiet sessions (`closeIdleSessions`), ends those that can no longer open again
- * (`endUnopenableSessions`), closes the kept runtimes the daemon has no room for or whose checkout was removed
- * (`KeptRuntimes.sweep`), then ends what a daemon that died left open (`endAbandonedSessions`), as a start does, for
+ * (`endUnopenableSessions`), closes the runtimes kept 15 minutes while the daemon is short of room and those whose
+ * checkout was removed (`KeptRuntimes.sweep`), then ends what a daemon that died left open (`endAbandonedSessions`), as a start does, for
  * when the start's own pass failed, which it reports: with one daemon per Rerail home (`holdHomeDaemonLock`), no other
  * start comes while this one runs. Only once an owner lock beside the database is free (`someOwnerLockFreed`), which a
  * service that ended leaves: opening a writer waits for another process's write lock, up to `busy_timeout`, on the
@@ -730,15 +728,17 @@ function runtimeInUse(state: EngineRoutingState, runtimeKey: string): boolean {
 
 /**
  * The service's kept runtimes (`KeptRuntimes`) over the routing state `stateOf` gives once it is made: a runtime is in
- * use while a session's runtime keys name it, its folder is its checkout's while it is open, and it closes through
- * `disposeRuntime`.
+ * use while a session's runtime keys name it, its folder is its checkout's while it is open, it closes through
+ * `disposeRuntime`, and each batch of closes ends with one `collectGarbage`.
  */
-function keptRuntimes(stateOf: () => EngineRoutingState, needsRoom: () => boolean): KeptRuntimes {
+function keptRuntimes(stateOf: () => EngineRoutingState, needsRoom: () => boolean, now: () => number): KeptRuntimes {
   return new KeptRuntimes({
     needsRoom,
+    now,
     inUse: key => runtimeInUse(stateOf(), key),
     folderOf: key => openFolder(stateOf(), key),
     close: key => disposeRuntime(stateOf(), key),
+    collect: collectGarbage,
   });
 }
 
@@ -760,10 +760,10 @@ export function collectGarbage(): void {
 }
 
 /**
- * Closes the runtime at `runtimeKey` (`RerailRuntime.dispose`), then collects, and settles once that has: a runtime holds
- * its checkout's whole source walk (one observation for every file of the working tree, ignored ones included, about
- * 100,000 in a large repository) and its compiled rules. The next event for its checkout makes a new runtime, as the
- * first one did. A failure is reported.
+ * Closes the runtime at `runtimeKey` (`RerailRuntime.dispose`) and settles once it has: a runtime holds its checkout's
+ * whole source walk (one observation for every file of the working tree, ignored ones included, about 100,000 in a large
+ * repository) and its compiled rules, which the collection after its batch of closes frees (`KeptRuntimes`). The next
+ * event for its checkout makes a new runtime, as the first one did. A failure is reported.
  */
 function disposeRuntime(state: EngineRoutingState, runtimeKey: string): Promise<void> {
   const runtime = state.runtimes.get(runtimeKey);
@@ -772,10 +772,7 @@ function disposeRuntime(state: EngineRoutingState, runtimeKey: string): Promise<
   state.kept.forget(runtimeKey);
   state.runtimeOptions.delete(runtimeKey);
   for (const [configuration, key] of state.runtimeKeysByConfiguration) if (key === runtimeKey) state.runtimeKeysByConfiguration.delete(configuration);
-  const disposal = runtime.dispose().then(() => {
-    collectGarbage();
-    return [] as const;
-  }, (error: unknown) => {
+  const disposal = runtime.dispose().then(() => [] as const, (error: unknown) => {
     process.stderr.write(`rerail: closing an idle runtime failed: ${error instanceof Error ? error.message : String(error)}\n`);
     return [] as const;
   });
@@ -1055,7 +1052,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     lastEventAt: new Map(),
     lanes: new SessionLanes(),
     pending: new Set(),
-    kept: keptRuntimes(() => routing, options.needsRoom ?? memoryRoom()),
+    kept: keptRuntimes(() => routing, options.needsRoom ?? memoryRoom(), options.now ?? Date.now),
     runtimeOptions: new Map(),
     suspended: new Map(),
     resumeRetries: new Map(),

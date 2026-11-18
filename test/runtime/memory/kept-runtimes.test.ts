@@ -5,15 +5,20 @@ import { describe, expect, it, vi } from "vitest";
 import { folderRemoved, KeptRuntimes, type KeptRuntimesOptions } from "../../../src/runtime/memory/kept-runtimes.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
+const MINUTE = 60_000;
+
 /**
  * Kept runtimes over open runtimes named `keys`, each in the folder of the same name; `room.short` says the daemon needs
- * the room, `busy` holds the keys a session uses, and `closed` the keys closed, in order.
+ * the room, `busy` holds the keys a session uses, `closed` the keys closed, in order, `collections` counts the full
+ * collections asked for, and `clock.now` is the time.
  */
 function kept(keys: readonly string[], options: Partial<KeptRuntimesOptions> = {}) {
   const open = new Set(keys);
   const busy = new Set<string>();
   const closed: string[] = [];
   const room = { short: false, reads: 0 };
+  const clock = { now: 1_000_000 };
+  const counts = { collections: 0 };
   const runtimes = new KeptRuntimes({
     needsRoom: () => {
       room.reads += 1;
@@ -25,10 +30,14 @@ function kept(keys: readonly string[], options: Partial<KeptRuntimesOptions> = {
       open.delete(key);
       closed.push(key);
     },
+    collect: () => {
+      counts.collections += 1;
+    },
+    now: () => clock.now,
     removed: async () => false,
     ...options,
   });
-  return { runtimes, busy, closed, room };
+  return { runtimes, busy, closed, room, clock, counts };
 }
 
 describe("the runtimes no session uses, kept for their checkout's next session", () => {
@@ -41,43 +50,91 @@ describe("the runtimes no session uses, kept for their checkout's next session",
     expect(closed).toEqual([]);
   });
 
-  it("closes every kept runtime but the one left last at the sweep while the daemon needs the room, and all of them as a runtime opens", async () => {
-    const { runtimes, closed, room } = kept(["a", "b", "c", "d"]);
-    for (const key of ["a", "b", "c"]) runtimes.left(key);
+  it("keeps every runtime no session uses while the daemon has room, however long ago its last session left", async () => {
+    const { runtimes, closed, room, clock } = kept(["a", "b"]);
+    runtimes.left("a");
+    runtimes.left("b");
+    clock.now += 24 * 60 * MINUTE;
     runtimes.sweep();
-    await vi.waitFor(() => expect(room.reads).toBe(1));
+    await Promise.resolve();
+    expect(room.reads).toBe(1);
     expect(closed).toEqual([]);
-    room.short = true;
-    runtimes.sweep();
-    await vi.waitFor(() => expect(closed).toEqual(["a", "b"]));
-    runtimes.sweep();
-    runtimes.left("d");
-    runtimes.beforeOpen();
-    await vi.waitFor(() => expect(closed).toEqual(["a", "b", "c", "d"]));
   });
 
-  it("reads no memory at a sweep while one runtime or none is kept, nor as a runtime opens while none is", () => {
-    const { runtimes, room } = kept(["a"]);
-    runtimes.sweep();
-    runtimes.beforeOpen();
+  // Every runtime no session used closed 15 minutes after its last session left, whatever the memory. Short of room, a
+  // kept runtime is freed at that time again, the one left last too, and none sooner: a session back within it finds
+  // its rules compiled as it did.
+  it("closes at the sweep each runtime kept 15 minutes or longer while the daemon needs the room, the one left last too, and none kept less", async () => {
+    const { runtimes, closed, room, clock } = kept(["a", "b", "c"]);
+    room.short = true;
     runtimes.left("a");
+    clock.now += 5 * MINUTE;
+    runtimes.left("b");
+    clock.now += 9 * MINUTE;
+    runtimes.left("c");
+    runtimes.sweep();
+    await Promise.resolve();
+    expect(closed).toEqual([]);
+    clock.now += MINUTE;
+    runtimes.sweep();
+    await vi.waitFor(() => expect(closed).toEqual(["a"]));
+    clock.now += 5 * MINUTE;
+    runtimes.sweep();
+    await vi.waitFor(() => expect(closed).toEqual(["a", "b"]));
+    clock.now += 15 * MINUTE;
+    runtimes.sweep();
+    await vi.waitFor(() => expect(closed).toEqual(["a", "b", "c"]));
+  });
+
+  it("reads no memory at a sweep while no runtime has been kept 15 minutes", () => {
+    const { runtimes, room, clock } = kept(["a"]);
+    runtimes.sweep();
+    runtimes.left("a");
+    clock.now += 15 * MINUTE - 1;
     runtimes.sweep();
     expect(room.reads).toBe(0);
   });
 
-  it("keeps the order in which runtimes were last left: one used and left again is the one left last", async () => {
-    const { runtimes, closed, room } = kept(["a", "b"]);
-    runtimes.left("a");
-    runtimes.left("b");
-    runtimes.claim("a")();
+  it("counts a runtime's 15 minutes from the last time a use of it ended", async () => {
+    const { runtimes, closed, room, clock } = kept(["a"]);
     room.short = true;
+    runtimes.left("a");
+    clock.now += 14 * MINUTE;
+    runtimes.claim("a")();
+    clock.now += 14 * MINUTE;
     runtimes.sweep();
-    await vi.waitFor(() => expect(closed).toEqual(["b"]));
+    await Promise.resolve();
+    expect(closed).toEqual([]);
+    clock.now += MINUTE;
+    runtimes.sweep();
+    await vi.waitFor(() => expect(closed).toEqual(["a"]));
   });
 
-  // A scan's open came for a quiet session while its close ran: the close's release kept the runtime, and the open used
-  // it without taking it out, so the next room check closed it under the reopened session.
-  it("keeps no runtime a use is on its way to, and keeps it again once that use ends with no session in it", async () => {
+  // Each close ran a full collection of its own, one after another on the event loop: a batch of kept runtimes took one
+  // collection per runtime.
+  it("collects once for a batch of closes, once each has closed", async () => {
+    const closing = Promise.withResolvers<void>();
+    const { runtimes, closed, counts } = kept(["a", "b", "c"], {
+      close: async (key) => {
+        closed.push(key);
+        if (key === "b") await closing.promise;
+      },
+    });
+    for (const key of ["a", "b", "c"]) runtimes.left(key);
+    const all = runtimes.closeAll();
+    await Promise.resolve();
+    expect(counts.collections).toBe(0);
+    closing.resolve();
+    await all;
+    expect(closed).toEqual(["a", "b", "c"]);
+    expect(counts.collections).toBe(1);
+    await runtimes.closeAll();
+    expect(counts.collections).toBe(1);
+  });
+
+  // A quiet session's end makes or takes its runtime and notes no use of it: released as the end began, the runtime was
+  // kept and closable while the end still ran in it.
+  it("keeps no runtime an event's work is on its way to or running in, and keeps it again once that work ends with no session in it", async () => {
     const { runtimes, closed, room, busy } = kept(["a", "b"]);
     const release = runtimes.claim("a");
     runtimes.left("a");
@@ -108,11 +165,12 @@ describe("the runtimes no session uses, kept for their checkout's next session",
   });
 
   it("closes no runtime a session uses, should one be kept", async () => {
-    const { runtimes, closed, busy } = kept(["a"]);
+    const { runtimes, closed, busy, counts } = kept(["a"]);
     runtimes.left("a");
     busy.add("a");
     await runtimes.closeAll();
     expect(closed).toEqual([]);
+    expect(counts.collections).toBe(0);
   });
 
   it("settles a close of every kept runtime once each has closed", async () => {
@@ -143,15 +201,6 @@ describe("the runtimes no session uses, kept for their checkout's next session",
     await runtimes.closeAll();
     expect(closed).toEqual([]);
   });
-
-  it("keeps the one left last among those no session uses at the sweep, though a session came back to one left after it", async () => {
-    const { runtimes, closed, room } = kept(["a", "b", "c"]);
-    for (const key of ["a", "b", "c"]) runtimes.left(key);
-    runtimes.claim("c");
-    room.short = true;
-    runtimes.sweep();
-    await vi.waitFor(() => expect(closed).toEqual(["a"]));
-  });
 });
 
 describe("the look for a kept runtime's removed checkout", () => {
@@ -166,7 +215,7 @@ describe("the look for a kept runtime's removed checkout", () => {
   // A checkout on a share that stops answering: a look on the event loop held every hook for as long as the share did.
   it("looks off the sweep's own path, one look at a time, so a folder that never answers holds no sweep", async () => {
     let looks = 0;
-    const { runtimes, closed, room } = kept(["a", "b", "c"], {
+    const { runtimes, closed, room, clock } = kept(["a", "b", "c"], {
       removed: () => {
         looks += 1;
         return new Promise<boolean>(() => undefined);
@@ -174,9 +223,10 @@ describe("the look for a kept runtime's removed checkout", () => {
     });
     for (const key of ["a", "b", "c"]) runtimes.left(key);
     room.short = true;
+    clock.now += 15 * MINUTE;
     runtimes.sweep();
     runtimes.sweep();
-    await vi.waitFor(() => expect(closed).toEqual(["a", "b"]));
+    await vi.waitFor(() => expect(closed).toEqual(["a", "b", "c"]));
     expect(looks).toBe(1);
   });
 
