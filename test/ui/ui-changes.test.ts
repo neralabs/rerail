@@ -20,6 +20,8 @@ let failing = new Set<string>();
 /** Whether the Merge Assist status the daemon answers says a scan runs, and gh's state in it. */
 let scanning = false;
 let githubState: MergeAssistStatus["readiness"]["github"]["state"] = "signed-in";
+/** When the daemon says it read gh's sign-in; none where it ran no gh. */
+let githubReadAt: string | undefined;
 let renders: boolean[] = [];
 let visibility: (() => void)[] = [];
 const encoder = new TextEncoder();
@@ -34,7 +36,9 @@ function answer(url: URL): Response {
     "/api/repository": { repository: { setUp: true, repositoryKey: "A" }, checkout: null },
     "/api/repository/rules": { rules: [], unavailable: [] },
     "/api/rule-packs": { packs: [] },
-    "/api/merge-assist": sampleStatus("/work/a", { scanning, readiness: { github: { state: githubState, login: null, repository: "acme/app" } } }),
+    "/api/merge-assist": sampleStatus("/work/a", {
+      scanning, readiness: { github: { state: githubState, login: null, repository: "acme/app", ...(githubReadAt === undefined ? {} : { readAt: githubReadAt }) } },
+    }),
   };
   const body = bodies[url.pathname];
   if (body === undefined) throw new Error(`unexpected ${url.pathname}`);
@@ -83,6 +87,7 @@ beforeEach(async () => {
   failing = new Set();
   scanning = false;
   githubState = "signed-in";
+  githubReadAt = undefined;
   renders = [];
   vi.stubGlobal("location", { origin: "http://127.0.0.1:4000" });
   vi.stubGlobal("fetch", async (input: URL, init: { signal?: AbortSignal } = {}) => {
@@ -489,5 +494,38 @@ describe("the dashboard following the daemon's change stream", () => {
     await settle();
 
     expect(readsOf("/api/merge-assist")).toBe(3);
+  });
+
+  it("asks for the Merge Assist status once when the gh sign-in it shows reaches the daemon's five minutes, so a sign-out shows", async () => {
+    ui.view = "merge";
+    githubReadAt = new Date(Date.now() - 60_000).toISOString();
+    stream().send("t1");
+    await settle();
+    expect(readsOf("/api/merge-assist")).toBe(1);
+
+    await after(4 * 60_000 - 1);
+    expect(readsOf("/api/merge-assist")).toBe(1);
+    // The daemon reads gh again for a status past its five minutes: signed out since.
+    githubState = "signed-out";
+    githubReadAt = new Date(Date.now() + 1).toISOString();
+    await after(2);
+
+    expect(readsOf("/api/merge-assist")).toBe(2);
+    expect(data.mergeAssist?.readiness.github.state).toBe("signed-out");
+  });
+
+  it("wakes for gh's sign-in on no page but Merge Assist's, though the sidebar's count holds a reading", async () => {
+    githubReadAt = new Date(Date.now()).toISOString();
+    stream().send("t1");
+    await settle();
+    // The count waits for the first read, which draws the page.
+    stream().send("t2");
+    await settle();
+    expect(data.mergeAssist?.readiness.github.readAt).toBe(githubReadAt);
+    const before = reads.length;
+
+    await after(10 * 60_000);
+
+    expect(reads.length).toBe(before);
   });
 });

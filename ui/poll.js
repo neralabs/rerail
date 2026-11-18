@@ -795,6 +795,7 @@ function afterRead(asked) {
   data.readingSince = 0;
   if (!data.disconnected && data.behindSince <= asked) data.behindSince = 0;
   if (data.disconnected || atPace) retryLater();
+  armGithubRead();
 }
 
 /** The tab is in the background: nothing is followed or read until it shows again. */
@@ -851,14 +852,40 @@ const windowMoved = () => windowRead !== null && sinceFor() !== windowRead;
  */
 const GITHUB_WAITING = new Set(["signed-out", "missing", "unavailable"]);
 
+/** The Merge Assist status the page shows, when it shows the Merge Assist page; else `null`. */
+const mergeAssistShown = () => (new Set(pageNeeds()).has("mergeAssist") ? data.mergeAssist : null);
+
 /**
  * Whether the Merge Assist page shows what moves with no commit and no notice: a scan running (its process can end,
  * or go stale, unheard) or gh not ready. Each beat then reads again, as the poll did, until it no longer shows.
  */
 function mergeAssistMoves() {
-  const status = data.mergeAssist;
-  if (status === null || !new Set(pageNeeds()).has("mergeAssist")) return false;
+  const status = mergeAssistShown();
+  if (status === null) return false;
   return status.scanning || GITHUB_WAITING.has(status.readiness.github.state);
+}
+
+/**
+ * The age past which a status reads gh's sign-in again (`GITHUB_READINESS_MS` in src/runtime/merge-assist/service.ts):
+ * the daemon reuses a reading that long, as the poll's status reads found it.
+ */
+const GITHUB_READING_MS = 5 * 60_000;
+let githubTimer = null;
+
+/**
+ * While the Merge Assist page shows gh signed in, ask for the status once when the reading it shows reaches the age
+ * past which the daemon reads gh again: a sign-out, an expired token or another account then shows as soon as the
+ * poll showed it, though nothing commits or tells of it. One wake at that moment, on that page only; at least the
+ * pace away, so a reading the daemon has not read again yet (or a clock ahead of the daemon's) costs no more reads
+ * than the poll did.
+ */
+function armGithubRead() {
+  clearTimeout(githubTimer);
+  githubTimer = null;
+  const github = mergeAssistShown()?.readiness.github;
+  if (github?.state !== "signed-in" || github.readAt === undefined) return;
+  const wait = Date.parse(github.readAt) + GITHUB_READING_MS - Date.now();
+  githubTimer = setTimeout(() => { githubTimer = null; if (mergeAssistShown() !== null) void refresh(); }, Math.max(INTERVAL, wait || 0));
 }
 
 /**
@@ -969,8 +996,8 @@ function endChanges() {
   const open = stream;
   stream = null;
   open?.abort();
-  for (const timer of [retryTimer, paceTimer, stallTimer]) clearTimeout(timer);
-  retryTimer = paceTimer = stallTimer = null;
+  for (const timer of [retryTimer, paceTimer, stallTimer, githubTimer]) clearTimeout(timer);
+  retryTimer = paceTimer = stallTimer = githubTimer = null;
 }
 
 export function startPolling(listener) {
