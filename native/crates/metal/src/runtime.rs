@@ -786,6 +786,21 @@ pub fn pipeline_named_constant(
     if let Some(cached) = PIPELINES.lock().map_err(|_| Error::BackendFailure)?.get(&key).cloned() {
         return Ok(cached);
     }
+    // A measurement's sources (`RERAIL_METAL_DUMP=<dir>`): each library's source, by its digest, and the pipelines
+    // made of it, to compile apart and cold (`scripts/dev/metal/compile-time.swift`; the system's shader cache keeps
+    // a compile by its code, so a comment added to the source still finds it).
+    if let Some(dir) = std::env::var_os("RERAIL_METAL_DUMP") {
+        let digest: [u8; 32] = Sha256::digest(source.as_bytes()).into();
+        let stem = std::path::Path::new(&dir).join(digest[..6].iter().map(|b| format!("{b:02x}")).collect::<String>());
+        if !stem.with_extension("metal").exists() {
+            let _ = std::fs::write(stem.with_extension("metal"), source);
+        }
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(stem.with_extension("pipelines")) {
+            use std::io::Write as _;
+            let _ = writeln!(f, "{name} {}", constant.map_or(-1, i64::from));
+        }
+    }
+    let started = std::time::Instant::now();
     let mut library_digest = Sha256::new();
     library_digest.update(device.registry_id().to_le_bytes());
     library_digest.update(source.as_bytes());
@@ -835,6 +850,14 @@ pub fn pipeline_named_constant(
             pipelines.remove(&oldest);
         }
         pipelines.insert(key, pipeline.clone());
+    }
+    // The compile's wall (the library's, where this pipeline made it, and the pipeline's), in the profile: in all,
+    // and by kernel.
+    let ms = started.elapsed().as_millis() as usize;
+    rerail_prof::count("metal.compile_ms", ms);
+    rerail_prof::count("metal.compiles", 1);
+    if rerail_prof::on() {
+        rerail_prof::count_named(format!("metal.compile_ms.{name}"), ms);
     }
     #[cfg(any(test, feature = "test-hooks"))]
     COMPILED_HERE.set(COMPILED_HERE.get() + 1);

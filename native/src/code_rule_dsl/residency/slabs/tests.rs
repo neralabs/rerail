@@ -164,7 +164,8 @@ fn a_batch_over_several_slabs_is_gathered_into_one_block() {
 }
 
 /// The device reads a resident tape as its document reads it (decision 0293), in every format the run may store:
-/// format 15's columns, format 16's arrays, and a 16z tape laid out as format 16 where it is placed, with no parent
+/// format 15's columns, format 16's arrays, and a 16z tape as stored, read through its table's cache of decoded blocks
+/// (decision 0353 step 4b) with no failures, with no parent
 /// column, child list or index of nodes by code beside them. Every node's code (kind, field, flags, classes), its
 /// parent, next and next named siblings, children, subtree and span. One document of more than a side-list part
 /// (1,024 nodes), with gaps and lengths past a byte, reads the side lists and the parts' starts.
@@ -173,7 +174,7 @@ fn the_device_reads_every_format_as_the_document_does() {
     use crate::code_rule_dsl::tape::formats::Format;
     use crate::code_rule_dsl::transducer::packed::metal_backend::{MappedBuffer, pipeline_named};
     use metal::MTLSize;
-    let tape = format!("{}{}{}", msl(), include_str!("../../transducer/packed/metal_tape_reads.metal"), include_str!("../../transducer/packed/metal_tape.metal"));
+    let tape = format!("{}{}{}", msl(), include_str!("../../transducer/packed/metal_tape_reads_z.metal"), include_str!("../../transducer/packed/metal_tape.metal"));
     const FIELDS: usize = 12;
     const KERNEL: &str = r#"
 inline uint tape_global(DocView d,uint i){return i==TAPE_NONE?TAPE_NONE:d.node_base+i;}
@@ -219,8 +220,13 @@ kernel void tape_conformance(device const DocView* docs [[buffer(0)]],device con
             digests.push(crate::code_rule_dsl::tape::tape_identity(&Sha256::digest(source.as_bytes()).into(), &bytes));
         }
         let table = DocTable::one_block(admit(&store, &digests, &grammar).unwrap()).unwrap();
-        let expected_format = if format == Format::F15 { 15 } else { 16 };
+        let expected_format = match format {
+            Format::F15 => 15,
+            Format::F16 => 16,
+            _ => rerail_clif::view::F16Z_FORMAT,
+        };
         assert!(table.views.iter().all(|view| view.format == expected_format), "{format:?} placed as format {expected_format}");
+        assert_eq!(table.cache.is_some(), format == Format::F16Z, "a cache for 16z tapes alone");
         let node_doc = table.views.iter().enumerate().flat_map(|(doc, view)| std::iter::repeat_n(doc as u32, view.nodes as usize)).collect::<Vec<_>>();
         let views = MappedBuffer::from_slice::<DocView>(&device, &table.views).unwrap();
         let node_doc = MappedBuffer::from_slice(&device, &node_doc).unwrap();
@@ -234,12 +240,18 @@ kernel void tape_conformance(device const DocView* docs [[buffer(0)]],device con
         encoder.set_buffer(1, Some(&node_doc.buffer), 0);
         encoder.set_buffer(2, Some(&out.buffer), 0);
         encoder.set_buffer(3, Some(table.block.as_ref().expect("one block bound").buffer()), 0);
+        if let Some(cache) = &table.cache {
+            encoder.use_resource(cache, metal::MTLResourceUsage::Read | metal::MTLResourceUsage::Write);
+        }
         let count = table.nodes as u32;
         encoder.set_bytes(7, 4, std::ptr::from_ref(&count).cast());
         encoder.dispatch_threads(MTLSize::new(table.nodes as u64, 1, 1), MTLSize::new(64, 1, 1));
         encoder.end_encoding();
         command.commit();
         command.wait_until_completed();
+        if let Some(cache) = &table.cache {
+            assert_eq!(rerail_metal::slabs::zcache_failed(cache), 0, "every 16z block found room");
+        }
         // SAFETY: the kernel wrote `nodes * FIELDS` u32s, and the command finished.
         let read = unsafe { std::slice::from_raw_parts(out.buffer.contents().cast::<u32>(), table.nodes * FIELDS) };
         for (doc, (tape, view)) in docs.iter().zip(&table.views).enumerate() {

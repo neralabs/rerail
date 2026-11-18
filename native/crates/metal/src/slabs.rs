@@ -119,7 +119,7 @@ pub struct Resident {
     pub len: usize,
     /// Bytes per pool: `tape.resident`, `source.resident`, `tape.derived`.
     pub bytes: [usize; 3],
-    /// The tape's length where it is placed (a 16z tape's laid out as format 16).
+    /// The tape's length where it is placed (as stored).
     pub tape_length: usize,
 }
 
@@ -194,6 +194,64 @@ pub struct DocTable {
     pub nodes: usize,
     /// The documents, held for the batch's life.
     pub documents: Vec<Arc<Resident>>,
+    /// The cache the batch's 16z documents' reads decode their blocks into (decision 0353 step 4b, `view::cache`),
+    /// which each of their views names: none where no tape is 16z. A kernel that reads them makes it resident to
+    /// be read and written, and its batch is refused where its failures rose (`cache_failed`).
+    pub cache: Option<metal::Buffer>,
+}
+
+impl Drop for DocTable {
+    /// Its cache's counts go to the profile (`zcache.*`), its batch done.
+    fn drop(&mut self) {
+        if let Some(cache) = &self.cache {
+            zcache_report(cache);
+        }
+    }
+}
+
+/// A cache for `views`' 16z documents, made on the device, each view pointed at it: its address less the view's
+/// document's (`base` + its `at`: where a kernel's reads take the document), its entry size, its reads checked
+/// (shared). `Some(None)` where no view is 16z; `None` where there is no device to make it on, and then no view may
+/// be read (a 16z view's cache would be its tape's own bytes). Its shape goes to the profile (`zcache.*`).
+pub fn zcache_for(views: &mut [DocView], base: impl Fn(&DocView) -> u64) -> Option<Option<metal::Buffer>> {
+    use rerail_clif::view::{F16Z_BLOCK, F16Z_FORMAT};
+    let z: Vec<usize> = (0..views.len()).filter(|&i| views[i].format == F16Z_FORMAT).collect();
+    if z.is_empty() {
+        return Some(None);
+    }
+    let blocks = z.iter().map(|&i| (views[i].nodes as usize).div_ceil(F16Z_BLOCK as usize)).sum();
+    let entry = z.iter().map(|&i| views[i].columns[3] as usize).max().unwrap_or(0);
+    let spec = rerail_clif::view::cache::Spec::configured(blocks, entry);
+    let device = crate::METAL_DEVICE.as_ref()?;
+    let cache = device.new_buffer(spec.bytes() as u64, metal::MTLResourceOptions::StorageModeShared);
+    // SAFETY: the buffer's bytes, shared with the host, read by no kernel yet.
+    spec.init(unsafe { std::slice::from_raw_parts_mut(cache.contents().cast::<u8>(), spec.bytes()) }).expect("a cache's buffer of its size");
+    for &i in &z {
+        let rel = cache.gpu_address().wrapping_sub(base(&views[i])) as i64;
+        let v = &mut views[i];
+        (v.side[0], v.side[1]) = (rel as u32, (rel >> 32) as u32);
+        (v.columns[3], v.columns[4]) = (spec.entry_bytes() as u32, 1);
+    }
+    rerail_prof::count("zcache.batches", 1);
+    rerail_prof::count("zcache.blocks", blocks);
+    rerail_prof::count("zcache.entries", spec.entries as usize);
+    rerail_prof::count("zcache.entry_kb", spec.entry_bytes() >> 10);
+    Some(Some(cache))
+}
+
+/// A cache's counts in the profile (`zcache.*`; the statistics mode's too, where it is on): when its batch is done.
+pub fn zcache_report(cache: &metal::Buffer) {
+    // SAFETY: the cache's header, in its shared buffer; its batch's kernels are done.
+    let c = unsafe { rerail_clif::view::cache::Counts::read(cache.contents().cast::<u8>()) };
+    for (name, n) in c.named() {
+        rerail_prof::count(name, n as usize);
+    }
+}
+
+/// The failures a cache has counted (no room: a read of its dead entry).
+pub fn zcache_failed(cache: &metal::Buffer) -> u32 {
+    // SAFETY: as `zcache_report`'s.
+    unsafe { rerail_clif::view::cache::Counts::read(cache.contents().cast::<u8>()) }.failed
 }
 
 /// The slabs a batch of sources binds (PIAT §20.4.5, Q-R3): block programs take this many slab
@@ -235,7 +293,10 @@ impl DocTable {
         }
         u32::try_from(nodes).ok()?;
         u32::try_from(source).ok()?;
-        Some(Self { views, block, nodes, documents })
+        // A kernel's reads take a document at its block's address plus its `at` (`tape_doc`).
+        let address = block.as_ref().map_or(0, |b| b.buffer().gpu_address());
+        let cache = zcache_for(&mut views, |v| address + u64::from(v.at))?;
+        Some(Self { views, block, nodes, documents, cache })
     }
 }
 

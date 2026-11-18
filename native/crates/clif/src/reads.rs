@@ -166,6 +166,18 @@ pub fn build_for(read: &Read, call_conv: CallConv, name: UserFuncName, callee: &
 /// decoded into the reader's slot (`tape_z_block`) and read as format 16. The JIT's reads read 16z; the tape crate's
 /// Rust reads a block at a time itself (`F16Z`), and the kernels' reads do not yet.
 pub fn build_formats(read: &Read, call_conv: CallConv, name: UserFuncName, callee: &mut dyn Callee, format: Option<u32>, z: bool) -> Function {
+    build_split(read, call_conv, name, callee, format, z, false).0
+}
+
+/// A 16z body's id in a source that calls it apart (`build_split`): past every read's.
+const Z_APART: u32 = 1 << 16;
+
+/// `build_formats`, and with `split` a 16z tape's body called apart (`<read>_z`, the read built for
+/// `F16Z_FORMAT`), not inlined: with whether the read called it. The kernels' source (decision 0353 step 4b): a
+/// read inlined where a kernel reads carries format 15's and 16's bodies and the call, and the kernel one 16z body
+/// of each read, which its tape format folds away (inlined, every read's 16z body at every call site made a label
+/// kernel's compile 18 s at format 15 and 33 s at 16z, against 1.8 s without).
+fn build_split(read: &Read, call_conv: CallConv, name: UserFuncName, callee: &mut dyn Callee, format: Option<u32>, z: bool, split: bool) -> (Function, bool) {
     let mut func = Function::with_name_signature(name, signature(read, call_conv));
     let mut context = FunctionBuilderContext::new();
     let mut f = FunctionBuilder::new(&mut func, &mut context);
@@ -179,12 +191,13 @@ pub fn build_formats(read: &Read, call_conv: CallConv, name: UserFuncName, calle
         Family::Relation | Family::Lines => (None, None, None),
         Family::View => (None, Some((params[1], params[2])), Some(params[3])),
     };
-    let mut b = B { f, tape: params[0], view, doc_tape, lines, args: params[pointers..].to_vec(), call_conv, callee, format, z, slot: None };
+    let mut b = B { f, tape: params[0], view, doc_tape, lines, args: params[pointers..].to_vec(), call_conv, callee, format, z, slot: None, name: read.name, split, apart: false };
     let value = (read.body)(&mut b);
+    let apart = b.apart;
     b.f.ins().return_(&[value]);
     b.f.seal_all_blocks();
     b.f.finalize();
-    func
+    (func, apart)
 }
 
 /// The reads as Rust (decision 0310's Rust backend): a module a format (`f16`, `f15`), each read built for
@@ -239,11 +252,29 @@ pub fn msl_z_source() -> Result<String, String> {
 }
 
 fn tape_msl(z: bool) -> Result<String, String> {
-    let funcs: Vec<(u32, Function, &str)> = READS
+    let built: Vec<(u32, Function, bool)> = READS
         .iter()
         .enumerate()
         .filter(|(_, read)| read.family == Family::Tape && (z || read.name != "tape_z_block"))
-        .map(|(k, read)| (k as u32, build_formats(read, CallConv::SystemV, UserFuncName::user(0, k as u32), &mut ByIndex, None, z), read.name))
+        .map(|(k, read)| {
+            let (f, apart) = build_split(read, CallConv::SystemV, UserFuncName::user(0, k as u32), &mut ByIndex, None, z, z);
+            (k as u32, f, apart)
+        })
+        .collect();
+    // Each read's 16z body that a read calls apart: the read built for 16z alone.
+    let apart: Vec<(u32, Function, String)> = built
+        .iter()
+        .filter(|(.., apart)| *apart)
+        .map(|&(k, ..)| {
+            let read = &READS[k as usize];
+            let (f, _) = build_split(read, CallConv::SystemV, UserFuncName::user(0, Z_APART + k), &mut ByIndex, Some(F16Z_FORMAT), true, false);
+            (Z_APART + k, f, format!("{}_z", read.name))
+        })
+        .collect();
+    let funcs: Vec<(u32, Function, &str)> = apart
+        .into_iter()
+        .map(|(k, f, n)| (k, f, &*Box::leak(n.into_boxed_str())))
+        .chain(built.into_iter().map(|(k, f, _)| (k, f, READS[k as usize].name)))
         .collect();
     let body = crate::msl::translate_reads(&funcs, "clif_", Family::Tape)?;
     let (function, test) = if z { ("msl_z_source", "the_16z_kernels_reads_are_these") } else { ("msl_source", "the_kernels_reads_are_these") };
@@ -276,7 +307,11 @@ pub fn view_msl_source() -> Result<String, String> {
 struct ByIndex;
 impl Callee for ByIndex {
     fn func_ref(&mut self, name: &str, signature: &Signature, func: &mut Function) -> ir::FuncRef {
-        let index = READS.iter().position(|read| read.name == name).expect("a read") as u32;
+        // A read's 16z body called apart (`build_split`): its read's place past `Z_APART`.
+        let index = match READS.iter().position(|read| read.name == name) {
+            Some(k) => k as u32,
+            None => Z_APART + READS.iter().position(|read| name.strip_suffix("_z") == Some(read.name)).expect("a read") as u32,
+        };
         let name = func.declare_imported_user_function(ir::UserExternalName::new(0, index));
         let signature = func.import_signature(signature.clone());
         func.import_function(ir::ExtFuncData { name: ir::ExternalName::User(name), signature, colocated: true })
@@ -486,6 +521,11 @@ pub struct B<'a, 'c> {
     z: bool,
     /// The 16z block being read (`in_block`): its cache entry is the tape, which the cache's writers write.
     slot: Option<Slot>,
+    /// The read being built.
+    name: &'static str,
+    /// Whether a 16z tape's body is called apart (`build_split`), and whether it was.
+    split: bool,
+    apart: bool,
 }
 
 /// A 16z block read in its cache entry (`B::in_block`): the reader's tape and view, the block's first node, and the
@@ -616,6 +656,7 @@ impl B<'_, '_> {
     fn by_formats(&mut self, ty: ir::Type, sixteen: impl FnOnce(&mut Self) -> Value, zed: impl FnOnce(&mut Self) -> Value, fifteen: impl FnOnce(&mut Self) -> Value) -> Value {
         match self.format {
             Some(16) => sixteen(self),
+            Some(F16Z_FORMAT) => zed(self),
             Some(_) => fifteen(self),
             None => {
                 let format = self.view(at::FORMAT);
@@ -625,13 +666,31 @@ impl B<'_, '_> {
                 }
                 self.either(ty, f16, sixteen, |b| {
                     let z = b.f.ins().icmp_imm(IntCC::Equal, format, i64::from(F16Z_FORMAT));
+                    if b.split {
+                        return b.either(ty, z, B::zed_apart, fifteen);
+                    }
                     b.either(ty, z, zed, fifteen)
                 })
             }
         }
     }
+    /// This read's 16z body, called apart (`build_split`) with the read's own arguments.
+    fn zed_apart(&mut self) -> Value {
+        self.apart = true;
+        let read = read(self.name).expect("a read");
+        let signature = signature(read, self.call_conv);
+        let callee = self.callee.func_ref(&format!("{}_z", self.name), &signature, self.f.func);
+        let mut all = vec![self.tape];
+        all.extend(self.view);
+        all.extend_from_slice(&self.args.clone());
+        let call = self.f.ins().call(callee, &all);
+        self.f.inst_results(call)[0]
+    }
     /// A format 16 read's `body` of its argument `k`'s node, of a tape of format 16 or, read too (`z`), 16z.
     fn sixteen_or_z(&mut self, ty: ir::Type, k: usize, body: impl Fn(&mut Self, Value) -> Value) -> Value {
+        if self.format == Some(F16Z_FORMAT) {
+            return self.in_block(k, body);
+        }
         if self.format.is_some() || !self.z {
             let i = self.arg(k);
             return body(self, i);
@@ -639,6 +698,12 @@ impl B<'_, '_> {
         let format = self.view(at::FORMAT);
         let z = self.f.ins().icmp_imm(IntCC::Equal, format, i64::from(F16Z_FORMAT));
         let body = &body;
+        if self.split {
+            return self.either(ty, z, B::zed_apart, |b| {
+                let i = b.arg(k);
+                body(b, i)
+            });
+        }
         self.either(ty, z, |b| b.in_block(k, body), |b| {
             let i = b.arg(k);
             body(b, i)
@@ -683,9 +748,16 @@ impl B<'_, '_> {
         let some = self.f.ins().icmp_imm(IntCC::NotEqual, before, 0);
         let ok = self.f.ins().band(ours, complete);
         let ok = self.f.ins().band(ok, some);
+        // Tries spent, the entry is read as it is, a failure counted (another thread holds it): a read that may be
+        // wrong is never silent (its reader refuses the run, `cache::Counts::failed`).
+        let (gave_up, give_up) = (self.f.create_block(), self.f.create_block());
+        self.f.ins().brif(ok, read, &[], gave_up, &[]);
+        self.f.switch_to_block(gave_up);
         let spent = self.f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, tries, i64::from(c::TRIES));
-        let go = self.f.ins().bor(ok, spent);
-        self.f.ins().brif(go, read, &[], again, &[]);
+        self.f.ins().brif(spent, give_up, &[], again, &[]);
+        self.f.switch_to_block(give_up);
+        self.count_failed();
+        self.f.ins().jump(read, &[]);
         self.f.switch_to_block(read);
         let tape = self.f.ins().iadd_imm(entry, i64::from(z::SLOT_BYTES));
         let view = self.f.ins().iadd_imm(entry, i64::from(z::SLOT_VIEW));
@@ -703,14 +775,28 @@ impl B<'_, '_> {
         let ready = self.entry_word(entry, c::READY);
         let after = self.f.ins().atomic_load(I32, MemFlags::trusted(), ready);
         let same = self.f.ins().icmp(IntCC::Equal, before, after);
+        let (changed, kept) = (self.f.create_block(), self.f.create_block());
+        self.f.ins().brif(same, done, &[value.into()], changed, &[]);
+        self.f.switch_to_block(changed);
         let spent = self.f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, tries, i64::from(c::TRIES));
-        let ok = self.f.ins().bor(same, spent);
-        self.f.ins().brif(ok, done, &[value.into()], again, &[]);
+        self.f.ins().brif(spent, kept, &[], again, &[]);
+        self.f.switch_to_block(kept);
+        self.count_failed();
+        self.f.ins().jump(done, &[value.into()]);
         self.f.switch_to_block(again);
         let tries = self.f.ins().iadd_imm(tries, 1);
         self.f.ins().jump(head, &[tries.into()]);
         self.f.switch_to_block(done);
         self.f.block_params(done)[0]
+    }
+    /// One failure more in the cache the view names (`view::cache::FAILED`).
+    fn count_failed(&mut self) {
+        let lo = self.view(at::SIDE);
+        let hi = self.view(at::SIDE + 4);
+        let rel = wide(self, lo, hi);
+        let cache = self.f.ins().iadd(self.tape, rel);
+        let one = self.c32(1);
+        cache_add(self, cache, crate::view::cache::FAILED, one);
     }
     /// The address of an entry's (or the cache's) word at `offset`.
     fn entry_word(&mut self, entry: Value, offset: i32) -> Value {

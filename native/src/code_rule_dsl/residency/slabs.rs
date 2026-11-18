@@ -1,7 +1,7 @@
 //! The slab residency's documents (decision 0032): stored tapes placed in the Metal crate's slabs
 //! (`rerail_metal::slabs`: the arena, its budget, retirement, the sources and the drop). Here:
 //! reading the misses' frames in one store read (`ContentStore::resident_frames`), decompressing
-//! each straight into its slab (a 16z tape laid out as format 16), the reader's derived parts (the
+//! each straight into its slab (a 16z tape as stored), the reader's derived parts (the
 //! codes at a fixed width, the source's line starts; nothing per node), and the checks of the
 //! bytes against the tape's and the source's SHA-256 and of the image's header against the
 //! source, once. A failed check is an error, never an empty document.
@@ -29,7 +29,7 @@ pub trait ResidentParts {
         unsafe { std::slice::from_raw_parts(bytes.as_ptr().cast::<DeviceCode>(), self.resident().view.code_count as usize) }
     }
 
-    /// The tape where it is placed: as stored, or a 16z tape laid out as format 16.
+    /// The tape where it is placed, as stored.
     fn image(&self) -> &[u8] {
         self.resident().bytes_at(self.resident().view.tape, self.resident().tape_length)
     }
@@ -48,9 +48,8 @@ fn invalid(message: impl std::fmt::Display) -> Error {
 }
 
 /// Sizes of a document's parts, from its frames' raw lengths, the image's header and the source's
-/// newlines (read by one streamed decode that keeps nothing). A 16z tape is laid out as format 16
-/// where it is placed (`Tape16Z::unblock_into`): `tape` is that length, and `z` its stored bytes,
-/// read once (a store's frame) to plan and place it.
+/// newlines (read by one streamed decode that keeps nothing). A 16z tape is placed as stored, and read
+/// through a cache of its decoded blocks (decision 0353 step 4b).
 struct Plan {
     tape: usize,
     source: usize,
@@ -58,7 +57,6 @@ struct Plan {
     codes: usize,
     lines: usize,
     stored: resident::Stored,
-    z: Option<resident::Tape16Z>,
 }
 
 impl Plan {
@@ -74,24 +72,18 @@ impl Plan {
 
 /// The plan of an image whose first bytes (at least a format 15 header's, or the whole image) are
 /// `head`, `tape` bytes long as stored, and of its 16z tape where it is one (`z`, read whole).
-fn planned(head: &[u8], tape: usize, source: usize, lines: usize, z: Option<Vec<u8>>) -> Result<Plan, Error> {
+fn planned(head: &[u8], tape: usize, source: usize, lines: usize) -> Result<Plan, Error> {
     let stored = resident::stored(head).map_err(invalid)?;
-    let (tape, nodes, codes, z) = match stored {
-        resident::Stored::F15 => {
-            let (nodes, codes) = resident::header_counts(head).map_err(invalid)?;
-            (tape, nodes, codes, None)
-        }
-        resident::Stored::F16 => {
+    let (nodes, codes) = match stored {
+        resident::Stored::F15 => resident::header_counts(head).map_err(invalid)?,
+        // Format 16's and 16z's headers agree on where the node count is.
+        resident::Stored::F16 | resident::Stored::F16Z => {
             let nodes = head.get(24..32).ok_or_else(|| invalid("a short format 16 header"))?;
             let nodes = usize::try_from(u64::from_le_bytes(nodes.try_into().expect("8 bytes"))).map_err(invalid)?;
-            (tape, nodes, resident::lang_of(head).map_err(invalid)?.table().len(), None)
-        }
-        resident::Stored::F16Z => {
-            let z = resident::Tape16Z::from_bytes(z.ok_or_else(|| invalid("a 16z tape not read whole"))?).map_err(invalid)?;
-            (z.unblocked_len(), z.len(), resident::lang_of(head).map_err(invalid)?.table().len(), Some(z))
+            (nodes, resident::lang_of(head).map_err(invalid)?.table().len())
         }
     };
-    Ok(Plan { tape, source, nodes, codes, lines, stored, z })
+    Ok(Plan { tape, source, nodes, codes, lines, stored })
 }
 
 fn plan(frames: &crate::content_store::ResidentFrames) -> Result<Plan, Error> {
@@ -102,15 +94,7 @@ fn plan(frames: &crate::content_store::ResidentFrames) -> Result<Plan, Error> {
         lines += chunk.iter().filter(|&&byte| byte == b'\n').count();
     })
     .map_err(|error| invalid(format!("source frame: {error}")))?;
-    // A 16z tape is read whole: its block index sizes its format 16 layout, and its blocks are laid out from it.
-    let z = if resident::stored(&head).map_err(invalid)? == resident::Stored::F16Z {
-        let mut whole = vec![0u8; frames.tape_length];
-        frames.tape_frame.copy_into(&mut whole).map_err(|error| invalid(format!("tape frame: {error}")))?;
-        Some(whole)
-    } else {
-        None
-    };
-    planned(&head, frames.tape_length, frames.source_length, lines, z)
+    planned(&head, frames.tape_length, frames.source_length, lines)
 }
 
 /// The documents of the tapes `digests` (SHA-256), resident, in order: hits from the residency,
@@ -146,8 +130,7 @@ pub fn admit_docs(docs: &[crate::code_rule_dsl::tape::TapeDoc]) -> Result<Vec<Ar
             let at = digests.iter().position(|candidate| candidate == digest).expect("a miss is one of the digests");
             let (image, source, grammar) = docs[at].resident_parts(images[at].take()).map_err(invalid)?;
             let lines = 1 + source.bytes().filter(|&byte| byte == b'\n').count();
-            let z = matches!(resident::stored(&image), Ok(resident::Stored::F16Z)).then(|| image.clone());
-            let plan = planned(&image, image.len(), source.len(), lines, z)?;
+            let plan = planned(&image, image.len(), source.len(), lines)?;
             owned.push((*digest, plan, Arc::clone(grammar), image, source));
         }
         // The hits' images, serialized for their digests, are not copied.
@@ -195,37 +178,26 @@ fn place(
     let tape = region(tape_at, plan.tape);
     let source = region(source_at, plan.source);
     match parts {
-        // Decompressed straight into the slab, to the frames' raw lengths exactly (a 16z tape is laid out
-        // below, once checked), then checked: the store's bytes are the tape's and the source's whose digests
-        // the store holds.
+        // Decompressed straight into the slab, to the frames' raw lengths exactly (a 16z tape as stored), then
+        // checked: the store's bytes are the tape's and the source's whose digests the store holds.
         Parts::Frames(frames) => {
-            if plan.z.is_none() {
-                frames.tape_frame.copy_into(tape).map_err(|error| invalid(format!("tape frame: {error}")))?;
-            }
+            frames.tape_frame.copy_into(tape).map_err(|error| invalid(format!("tape frame: {error}")))?;
             frames.source_frame.copy_into(source).map_err(|error| invalid(format!("source frame: {error}")))?;
             let source_sha256: [u8; 32] = Sha256::digest(&*source).into();
             if source_sha256 != frames.source_sha256 {
                 return Err(invalid("a resident source's digest"));
             }
             // The key is the tape's identity: its bytes as stored and its source's (`HashKey::tape_identity`).
-            let stored = plan.z.as_ref().map_or(&*tape, |z| z.as_bytes());
-            if crate::code_rule_dsl::tape::tape_identity(&source_sha256, stored) != *digest {
+            if crate::code_rule_dsl::tape::tape_identity(&source_sha256, tape) != *digest {
                 return Err(invalid("a resident tape's digest"));
             }
         }
         // A document in memory: its digest was made from these same bytes (`TapeDoc::tape_digest`), so
         // there is nothing read to check them against.
         Parts::Bytes(image, text) => {
-            if plan.z.is_none() {
-                tape.copy_from_slice(image);
-            }
+            tape.copy_from_slice(image);
             source.copy_from_slice(text);
         }
-    }
-    if let Some(z) = &plan.z {
-        // copy (0353 step 4b): a 16z tape laid out whole as format 16 in the transducer's slab, for the kernels'
-        // reads, which do not read 16z yet; it goes when they decode a block where a read falls.
-        z.unblock_into(tape).map_err(invalid)?;
     }
     let tape = &*tape;
     let source = &*source;
@@ -254,7 +226,25 @@ fn place(
             view.columns = [at(tape_at + layout.code)?, at(tape_at + layout.size)?, at(tape_at + layout.base)?, at(tape_at + layout.off)?, at(tape_at + layout.tail)?];
             resident::device_codes(tape, &layout, grammar).map_err(invalid)?
         }
-        resident::Stored::F16 | resident::Stored::F16Z => {
+        // A 16z tape as stored (decision 0353 step 4b): its view names its block index, side lengths and compressed
+        // bytes where they lie here, its id, and its entry size; the batch's table gives it a cache (`DocTable`).
+        resident::Stored::F16Z => {
+            let lang = resident::lang_of(tape).map_err(invalid)?;
+            // SAFETY: the room `place` writes, read only while this view is made, inside the slab's mapping.
+            let room = InSlab(tape.as_ptr(), tape.len());
+            let z = resident::Tape16Z::from_bytes(resident::Home::Placed(Arc::new(room))).map_err(invalid)?;
+            if z.len() != plan.nodes || z.len() == 0 || z.source_len() != source.len() as u64 || tape[9] != lang.revision() {
+                return Err(invalid("a tape and its source or language disagree"));
+            }
+            let zv = z.view(lang).map_err(invalid)?;
+            view.format = zv.format;
+            view.widths = zv.widths;
+            view.columns = [at(tape_at + zv.columns[0] as usize)?, at(tape_at + zv.columns[1] as usize)?, at(tape_at + zv.columns[2] as usize)?, zv.columns[3], 0];
+            view.side = [0, 0, zv.side[2], zv.side[3]];
+            (view.cut, view.per) = (zv.cut, zv.per);
+            resident::device_codes_of(lang.table(), grammar).map_err(invalid)?
+        }
+        resident::Stored::F16 => {
             let p = resident::placement(tape).map_err(invalid)?;
             let lang = resident::lang_of(tape).map_err(invalid)?;
             let source_len = u64::from_le_bytes(tape[16..24].try_into().expect("8 bytes"));
@@ -300,6 +290,22 @@ fn place(
         bytes: [aligned(plan.tape), aligned(plan.source), plan.derived()],
         tape_length: plan.tape,
     })
+}
+
+/// A room's bytes borrowed while its view is made (`Tape16Z::from_bytes` over them, in place).
+#[derive(Debug)]
+struct InSlab(*const u8, usize);
+// SAFETY: read only, while the slab that holds the bytes is held by the placing thread.
+unsafe impl Send for InSlab {}
+unsafe impl Sync for InSlab {}
+impl resident::Room for InSlab {
+    fn bytes(&self) -> &[u8] {
+        // SAFETY: as `InSlab`'s maker vouches.
+        unsafe { std::slice::from_raw_parts(self.0, self.1) }
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
 }
 
 /// Releases everything resident: documents, slabs (as their last batch lets go) and compiled

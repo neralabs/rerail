@@ -184,9 +184,9 @@ This record is steps 2, 3 and 4, and the API they need.
 
 9. **The device reads the tape** (step 5, its resident half; built). A resident document is its tape where it is
    placed, its source, its code table at a fixed width and its line starts: nothing per node beside the tape.
-   - **Placed as stored:** format 15's image, format 16's tape, or a 16z tape laid out as the format 16 tape it is
-     the blocks of (`Tape16Z::unblock_into`: each block decoded and its regions laid end to end, as format 16's
-     regions are its blocks'; no node is read). `f16::placement` says where a format 16 tape's arrays, side lists
+   - **Placed as stored:** format 15's image, format 16's tape, or a 16z tape as stored, read through its batch's
+     cache of decoded blocks (decision 0353 step 4b; until 2026-11-18 it was laid out as the format 16 tape it is
+     the blocks of, `Tape16Z::unblock_into`, a copy, now deleted). `f16::placement` says where a format 16 tape's arrays, side lists
      and part starts lie, checked as `Tape16::from_bytes` checks them; the device's view (`DocView`) names them.
    - **The device's reads** (`metal_tape.metal`) are format 16's `View`'s (a value too wide for its array read from
      its side list; a start from its checkpoint and gaps), or format 15's columns. A parent is a search: format

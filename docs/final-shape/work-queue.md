@@ -1605,3 +1605,18 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   not taken; a made text read by the next dispatch before its write is visible.
 - **Do**: find which (count the stage's reruns and the arena's fill in a failing run), then fix it at its cause.
 - **Done when**: 60 runs, six at a time, all pass.
+
+### Q125. A relation read with a garbage header: "an index of a full relation" (16z, 1 run in 95)
+
+hogql cold on Metal with 16z, engine of 0353 step 4b's transducer kernels (2026-11-18): one run of 95 panicked in
+a device join, `metal_join.rs` `index`: `assert_eq!(r.base_rows, 0)` with `base_rows` 2,436,104,195, so the
+relation it read was not one (a header overwritten, or a relation gone). No format 15 run of 32 did; the 94 runs
+since were clean, 40 of them with backtraces on. Two suspects, neither shown:
+
+- A write through a 16z view's cache address that misses the cache: the cache is `t + rel`, `rel` made from the
+  view's place when its table is made. Hardened: a table whose 16z documents get no cache is refused (their
+  views' `rel` would be 0, the tape's own bytes); the views' directory panics instead.
+- Q90's kind: a stratum resumed on another thread reading another's state, which before 2026-11-17 gave a panic
+  in 1 run of 20 (`rules[k]`).
+
+- **Done when**: a backtrace of it names the writer or the reader, and the fix leaves 100 16z runs clean.

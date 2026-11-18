@@ -878,72 +878,6 @@ impl Tape16Z {
         Ok(Tape16Z { id: next_id(), mark: buf[head::MARK], n, cw: usize::from(buf[head::CW]), source_len: u64_at(&buf, head::SOURCE_LEN)?, widths, vw, buf, comp, at, sides })
     }
 
-    /// The length of this tape laid out as format 16 (`unblock_into`).
-    pub fn unblocked_len(&self) -> usize {
-        let (n, w, cw) = (self.n, self.widths, self.cw);
-        let side = |k: usize| self.sides.iter().map(|s| s[k] as usize).sum::<usize>();
-        let lens = [n, n * w[0], n * w[1], n * w[2], n.div_ceil(K) * cw, side(0), side(1), side(2), side(3)];
-        (HEAD16 + 16 * (n.div_ceil(PART) + 1)).next_multiple_of(8) + lens.iter().map(|l| l + 8).sum::<usize>()
-    }
-
-    /// This tape as the format 16 tape it is the blocks of (`Tape16::blocks`), written into `out`
-    /// (`unblocked_len` bytes): each block decoded and its regions laid end to end, as format 16's regions are its
-    /// blocks' (a block is one side-list part). No node is read; the bytes are `Tape16::as_bytes`'.
-    pub fn unblock_into(&self, out: &mut [u8]) -> Result<(), String> {
-        if out.len() != self.unblocked_len() {
-            return Err(format!("{} bytes for a format 16 tape of {}", out.len(), self.unblocked_len()));
-        }
-        let (n, w, cw) = (self.n, self.widths, self.cw);
-        let parts = n.div_ceil(PART) + 1;
-        out.fill(0);
-        out[..8].copy_from_slice(MAGIC16);
-        out[head::LANGUAGE] = self.tag();
-        out[head::MARK] = self.mark;
-        out[head::CW] = cw as u8;
-        out[head::SOURCE_LEN..head::SOURCE_LEN + 8].copy_from_slice(&self.source_len.to_le_bytes());
-        out[head::NODES..head::NODES + 8].copy_from_slice(&(n as u64).to_le_bytes());
-        for k in 0..4 {
-            out[head::VW + k] = self.vw[k] as u8;
-        }
-        let side = |k: usize| self.sides.iter().map(|s| s[k] as usize).sum::<usize>();
-        let lens = [n, n * w[0], n * w[1], n * w[2], n.div_ceil(K) * cw, side(0), side(1), side(2), side(3)];
-        let mut at = [0usize; REGIONS + 1];
-        at[0] = (HEAD16 + 16 * parts).next_multiple_of(8);
-        for r in 0..REGIONS {
-            out[head::LENGTHS + 8 * r..head::LENGTHS + 8 * r + 8].copy_from_slice(&(lens[r] as u64).to_le_bytes());
-            at[r + 1] = at[r] + lens[r] + 8;
-        }
-        // Each side list's part starts: its parts' lengths summed.
-        for k in 0..4 {
-            let mut sum = 0u32;
-            for b in 0..parts {
-                let at = HEAD16 + 4 * (k * parts + b);
-                out[at..at + 4].copy_from_slice(&sum.to_le_bytes());
-                sum += self.sides.get(b).map_or(0, |s| s[k]);
-            }
-        }
-        // Each block's regions where the tape's are: its nodes' bytes at their node's place, its side parts after
-        // the parts before them.
-        let mut raw = Vec::new();
-        let mut fill = [0usize; REGIONS];
-        for b in 0..n.div_ceil(Z) {
-            let nb = Z.min(n - b * Z);
-            let block = layout(nb, w, cw, self.sides[b]);
-            raw.resize(block[REGIONS], 0);
-            let (from, to) = (self.comp + self.at[b] as usize, self.comp + self.at[b + 1] as usize);
-            lz4::decompress(self.buf.get(from..to).ok_or("a 16z block past the tape")?, &mut raw);
-            for r in 0..REGIONS {
-                let len = block[r + 1] - block[r] - 8;
-                out[at[r] + fill[r]..at[r] + fill[r] + len].copy_from_slice(&raw[block[r]..block[r] + len]);
-                fill[r] += len;
-            }
-        }
-        if (0..REGIONS).any(|r| fill[r] != lens[r]) {
-            return Err("a 16z tape's blocks do not fill its regions".into());
-        }
-        Ok(())
-    }
-
     /// The view the reads written once take of this tape as stored (decision 0353 step 4b,
     /// `rerail_clif::view::F16Z_FORMAT`): its block index, side lengths and compressed bytes where they lie in
     /// `as_bytes`, format 16's widths and `lang`'s choices, its id, and the size of a cache entry that holds its
@@ -1156,9 +1090,6 @@ mod tests {
         let Ok(Written::F16(plain)) = write_from(lang, t, number, source_len, 0, false) else { panic!("format 16") };
         let Ok(Written::F16Z(z)) = write_from(lang, t, number, source_len, 0, true) else { panic!("16z") };
         assert_eq!(z.as_bytes(), plain.blocks(lang).as_bytes(), "16z written directly is format 16's blocks");
-        let mut unblocked = vec![0u8; z.unblocked_len()];
-        z.unblock_into(&mut unblocked).unwrap();
-        assert_eq!(unblocked, plain.as_bytes(), "16z laid out is format 16's bytes");
         let p = placement(plain.as_bytes()).unwrap();
         assert_eq!((p.n, p.cw, p.at, p.vw), (plain.n, plain.cw, plain.at, plain.vw), "the placement is the reader's");
         plain

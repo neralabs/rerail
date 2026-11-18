@@ -13,7 +13,7 @@ use crate::code_rule_dsl::transducer::packed::packed_batch::PackedBatch;
 use crate::code_rule_dsl::transducer::packed::Program;
 use metal::MTLSize;
 
-const TAPE: &str = concat!(include_str!("metal_tape_reads.metal"), include_str!("metal_tape.metal"));
+const TAPE: &str = concat!(include_str!("metal_tape_reads_z.metal"), include_str!("metal_tape.metal"));
 const FIELDS: usize = 12;
 
 const KERNEL: &str = r#"

@@ -187,6 +187,26 @@ pub mod cache {
             let entries = entries.clamp(1, NUMBER - 1);
             Spec { gens: gens.max(3), entries, shift, slots: (2 * entries).next_power_of_two().max(8), stats: false }
         }
+        /// A cache for `blocks` blocks of at most `entry` bytes decoded, in at most `budget` bytes (decision 0353
+        /// step 4b): three generations, each of four times the blocks (64 at least) where the budget allows, else
+        /// as many as it allows. The room past the blocks is the head's: a block promoted from the oldest takes a
+        /// second entry (with one entry a block, the device test's batch of five blocks turned 25 times in a pass
+        /// and 8 reads found no room).
+        pub fn sized(blocks: usize, entry: usize, budget: usize) -> Spec {
+            let gens = 3;
+            let want = (4 * blocks).max(64);
+            let whole = Spec::new(gens, u32::try_from(want).unwrap_or(u32::MAX), entry);
+            let fits = (budget / gens as usize).saturating_sub(whole.first_entry()) / whole.entry_bytes();
+            Spec::new(gens, u32::try_from(want.min(fits).max(1)).unwrap_or(u32::MAX), entry)
+        }
+        /// `sized` within the run's budget for a batch's cache (`RERAIL_ZCACHE_MB`, else 48 MB: an eighth of a
+        /// chunk's), in the statistics mode with `RERAIL_ZCACHE_STATS=1`: the views' directory's and the residency
+        /// table's.
+        pub fn configured(blocks: usize, entry: usize) -> Spec {
+            let mb = std::env::var("RERAIL_ZCACHE_MB").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(48);
+            let spec = Spec::sized(blocks, entry, mb << 20);
+            if std::env::var_os("RERAIL_ZCACHE_STATS").is_some_and(|v| v == "1") { spec.with_stats() } else { spec }
+        }
         /// The same cache in the statistics mode.
         pub fn with_stats(self) -> Spec {
             Spec { stats: true, ..self }
@@ -256,6 +276,10 @@ pub mod cache {
             // SAFETY: the header's words, 4-aligned in a buffer the caller vouches for.
             let word = |at: i32| unsafe { (*cache.add(at as usize).cast::<std::sync::atomic::AtomicU32>()).load(std::sync::atomic::Ordering::Relaxed) };
             Counts { misses: word(MISSES), promoted: word(PROMOTED), rotated: word(ROTATED), failed: word(FAILED), hits: word(HITS), waited: word(WAITED), duplicates: word(DUPLICATES) }
+        }
+        /// Each count by its name in the profile (`zcache.*`).
+        pub fn named(&self) -> [(&'static str, u32); 7] {
+            [("zcache.misses", self.misses), ("zcache.promoted", self.promoted), ("zcache.rotated", self.rotated), ("zcache.failed", self.failed), ("zcache.hits", self.hits), ("zcache.waited", self.waited), ("zcache.duplicates", self.duplicates)]
         }
         /// Lookups that found their block (complete or waited for) of all lookups that kept counts.
         pub fn hit_ratio(&self) -> f64 {

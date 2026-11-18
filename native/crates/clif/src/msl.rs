@@ -28,7 +28,7 @@ use crate::reads::Family;
 use std::fmt::Write;
 
 /// The reads compiled as calls (`__attribute__((noinline))`), by name.
-const COLD: [&str; 1] = ["tape_z_block"];
+const COLD: [&str; 2] = ["tape_z_block", "_z"];
 
 /// MSL's unsigned type for a Cranelift integer type, and its signed one.
 fn ty(t: ir::Type) -> Result<(&'static str, &'static str), String> {

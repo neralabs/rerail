@@ -381,7 +381,7 @@ Each row is marked in the code with `copy (0353 step N)`.
 | 12 | Findings, frames and memo entries copied into rows of their own | The output, frames and memo stores | Not yet measured | Step 8 (0325 step 7) |
 | 13 | The transducer's residency: every tape it reads copied into slabs of its own, and documents copied between slabs | `residency::slabs::admit_docs`, `insert`'s `place`; `rerail_metal::slabs::gather` | Each tape a Metal batch reads | Step 7 |
 | 14 | Found 2026-11-17: the line starts copied into the chunk block for the `line` and `Loc` views, and the spans past a document's nodes beside them; a guest's places made there. Both views read in place where the batch's tapes are on the device (step 4d); the copies are the fallback of a batch whose tapes are not, or with a guest placed by pieces or segments | `device_chunk.rs`, `fill_lines`, `fill_locs` | 4 bytes a line, 8 a span, each batch that makes the views | Step 4 |
-| 15 | Found 2026-11-17: a 16z tape's blocks laid out as format 16. `DocTape::in_place`'s copy went 2026-11-18 (the CPU reads 16z in place, step 4b); left, the transducer's residency's (`unblock_into` into its slab, for the kernels), and a 16z batch's views, refused on the device (`views.refused.z_on_device`) and made | `residency/slabs.rs`, `place`'s `unblock_into` | The tape's format 16 size, each 16z document a Metal batch reads (16z is opt-in: `RERAIL_TAPE=16z`) | Step 4b (the kernels) |
+| 15 | Gone (step 4b, 2026-11-18): a 16z tape's blocks laid out as format 16. `DocTape::in_place`'s copy went first (the CPU reads 16z in place); then the transducer's residency's (`unblock_into` into its slab, for the kernels: the label and program kernels read the stored bytes through the batch's cache), and a 16z batch's views made on the device (they are read in place through a cache). `unblock_into` is deleted. | — | — | Done |
 
 ## The plan
 
@@ -512,9 +512,39 @@ Each step ends with:
          1,629 three times, 73.1–90.1 B instructions against 66.2–74.3 B (noise at that load). A stage whose cache's failures rose while it ran is refused
          (`Run::failed`), and the stratum runs on the CPU. The cache's counts go to the profile (`zcache.*`)
          when the batch's directory goes, the statistics mode's with `RERAIL_ZCACHE_STATS=1`.
-       - Left for the kernels: the transducer's residency lays a 16z tape out whole in its slab
-         (`unblock_into`, row 13). It goes when the label and program kernels read the stored bytes through a
-         cache too.
+       - The transducer's kernels (done 2026-11-18): the residency places a 16z tape as stored (`place`, one
+         decompression of the store's frame, as format 16's), its `DocView` the tape's 16z view with its columns
+         where the tape lies in the document. A batch's table (`DocTable`) makes one cache for its 16z documents
+         (`zcache_for`, sized as the views' directory's, `Spec::configured`) and points each view at it; a table
+         whose 16z documents could get no cache is refused (a view's cache would be its own tape's bytes). The
+         label, pattern and interpreter kernels read the z reads; each encoder makes the cache resident to be
+         read and written; a command buffer after which the cache counted a failure fails its batch, which the
+         wave splits (`capacity`); the counts go to the profile when the table goes. `unblock_into` (row 15) is
+         deleted. Checked: `the_device_reads_every_format_as_the_document_does` (16z read on the device, no
+         failure), the matcher's Metal tests, hogql.
+         - Found: a label kernel's compile. With every read's 16z body inlined at each call site, the first run
+           of each format took 220–300 s, almost all of it the Metal compiler: `label_micro` alone 18 s at
+           format 15 and 33 s at 16z, against 1.8 s with format 15's and 16's reads; the interpreter 113 s. The
+           function constant folds the 16z branches only after the backend's costly work. Now the kernels' z
+           source calls each read's 16z body apart (`<read>_z`, the read built for `F16Z_FORMAT`, noinline;
+           `reads::build_split`), and a batch of format 15 or 16 compiles the reads without 16z at all
+           (`tape_view`). Cold: `label_micro` 3.0 s at 16z, the interpreter 8.5 s against 4.9 s; hogql's first
+           16z run compiled for 38 s in all (16 pipelines). Measured with the kernels' sources as the engine
+           compiles them (`RERAIL_METAL_DUMP=<dir>`) and `scripts/dev/metal/compile-time.swift`; each compile's
+           time is in the profile (`metal.compile_ms`). The system's shader cache keeps a compile by its code: a
+           comment added to the source still finds it, so a cold compile changes a literal.
+         - Found: a shared reader whose tries ran out read its entry without counting a failure, so a read could
+           be wrong unseen; the CPU's stress test passed only while the failures it counted outnumbered the
+           wrong reads (about 450 wrong of 1.28 M reads in every run, failures 274–879). Now a read that gives
+           up counts a failure, before its body and after it: about 2,000 failures against the same 450 wrong
+           reads, in every run.
+         - Found: the main thread's wait for its next chunk spun (263 s of CPU in a 280 s wait on a compile):
+           its poll advanced the builder, which rang the bell it waited on whether or not anything moved. It
+           rings only when a step moved (`corpus::Builder::advance`).
+         - hogql cold, the Metal binding, profiling builds, load 8–55: 16z, findings 1,629 in 72 runs (one more
+           run panicked, Q125), 99–117 B instructions, median 105 B; format 15, 1,629 in 32 runs, 65–75 B,
+           median 73 B (the runs that compiled the kernels apart: 135 B and 93 B). Statistics on: 2,187 decodes
+           for 2,820 blocks, 18.7 M hits, no failure, no duplicate.
        - The kernels' part, decided (user, 2026-11-18): "a generic rolling GPU cache to amortize the cost": an LRU
          cache, kept with atomics, of 2–4 generations, each a hash index and an arena. A lookup looks across the
          generations, the head (active) and the frozen ones behind it. A miss computes its value (here a 16z
@@ -543,7 +573,8 @@ Each step ends with:
            before), no failure and no duplicate at 1, 4 and 64 blocks a generation, hit ratio 0.993–0.999 (16–542
            lookups waited, every wait answered), the rows the host's in every case. On the CPU, eight threads over
            a cache far too small for their tape (four blocks a generation): hit ratio 0.77, 0.77 M lookups waited
-           instead of decoding, a read wrong only where a failure was counted.
+           instead of decoding. (That a read was wrong only where a failure was counted held by chance: below,
+           "a shared reader whose tries ran out".)
          - A read from a frozen generation that is dropped while it reads is caught: the read checks its
            generation's stamp after it, and reads again. An entry's loads are masked to the entry, so a read of
            one being rewritten reads nothing outside the cache.

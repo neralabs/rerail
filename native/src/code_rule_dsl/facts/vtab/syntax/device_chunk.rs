@@ -173,28 +173,6 @@ pub struct ViewsInPlace {
     _entries: Vec<super::view_docs::ViewEntry>,
 }
 
-/// A batch's 16z cache's bytes at most (`RERAIL_ZCACHE_MB`, else 48 MB: an eighth of a chunk's budget).
-#[cfg(target_os = "macos")]
-fn zcache_bytes() -> usize {
-    std::env::var("RERAIL_ZCACHE_MB").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or(48) << 20
-}
-
-/// The cache of a batch whose 16z tapes have `blocks` blocks, the largest `entry` bytes decoded: a generation holds
-/// four times every block (64 at least) where the budget allows, so a batch's passes decode each once; else as many
-/// as it allows, and the cache turns. The room past the blocks is the head's: a promoted block takes a second entry,
-/// and an entry given back by a writer that lost its index to the same block is not taken again (with one entry a
-/// block, the view test's batch of five blocks turned 25 times in one pass and 8 reads found no room). In the
-/// statistics mode with `RERAIL_ZCACHE_STATS=1`.
-#[cfg(target_os = "macos")]
-fn zcache_spec(blocks: usize, entry: usize) -> rerail_clif::view::cache::Spec {
-    use rerail_clif::view::cache::Spec;
-    let gens = 3;
-    let want = (4 * blocks).max(64);
-    let whole = Spec::new(gens, u32::try_from(want).unwrap_or(u32::MAX), entry);
-    let fits = (zcache_bytes() / gens as usize).saturating_sub(whole.first_entry()) / whole.entry_bytes();
-    let spec = Spec::new(gens, u32::try_from(want.min(fits).max(1)).unwrap_or(u32::MAX), entry);
-    if std::env::var_os("RERAIL_ZCACHE_STATS").is_some_and(|v| v == "1") { spec.with_stats() } else { spec }
-}
 
 /// The batch's cache's counts in the profile when its directory goes (the statistics mode's too, where it is on).
 #[cfg(target_os = "macos")]
@@ -203,7 +181,7 @@ impl Drop for ViewsInPlace {
         if let Some(cache) = &self.cache {
             // SAFETY: the cache's header, in its shared buffer; no stage reads the views once the directory goes.
             let c = unsafe { rerail_clif::view::cache::Counts::read(cache.contents().cast::<u8>()) };
-            for (name, n) in [("zcache.misses", c.misses), ("zcache.promoted", c.promoted), ("zcache.rotated", c.rotated), ("zcache.failed", c.failed), ("zcache.hits", c.hits), ("zcache.waited", c.waited), ("zcache.duplicates", c.duplicates)] {
+            for (name, n) in c.named() {
                 crate::code_rule_dsl::prof::count(name, n as usize);
             }
         }
@@ -317,7 +295,7 @@ fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
     // The 16z documents' cache, shared by every thread of every stage that reads the views: each one's view names it
     // by its address less its tape's, its entry size the cache's, its reads checked (shared).
     let cache = (!zrows.is_empty()).then(|| {
-        let spec = zcache_spec(zblocks, zentry);
+        let spec = rerail_clif::view::cache::Spec::configured(zblocks, zentry);
         crate::code_rule_dsl::prof::count("zcache.batches", 1);
         crate::code_rule_dsl::prof::count("zcache.blocks", zblocks);
         crate::code_rule_dsl::prof::count("zcache.entries", spec.entries as usize);

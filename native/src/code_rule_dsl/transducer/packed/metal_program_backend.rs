@@ -287,7 +287,7 @@ static RESIDENT_PREFIX: std::sync::LazyLock<String> = std::sync::LazyLock::new(|
     format!(
         "#define RERAIL_RESIDENT 1\n#include <metal_stdlib>\nusing namespace metal;\n{}{}{}",
         crate::code_rule_dsl::residency::slabs::msl(),
-        include_str!("metal_tape_reads.metal"),
+        include_str!("metal_tape_reads_z.metal"),
         include_str!("metal_tape.metal")
     )
 });
