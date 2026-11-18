@@ -520,8 +520,13 @@ impl ArrayProgram {
 
     /// Every value of a run (`run`).
     pub fn values(&self, inputs: &[&[i64]], params: &[i64], calls: &mut dyn Calls) -> Result<Values, &'static str> {
+        self.values_at(inputs, params, calls).map_err(|e| e.1)
+    }
+
+    /// `values`, a refusal with the operation that refused it.
+    pub fn values_at(&self, inputs: &[&[i64]], params: &[i64], calls: &mut dyn Calls) -> Result<Values, (usize, &'static str)> {
         if inputs.len() != usize::from(self.inputs) || params.len() != usize::from(self.params) {
-            return Err("the run's columns or parameters are not the program's");
+            return Err((0, "the run's columns or parameters are not the program's"));
         }
         let n = self.ops.len();
         let mut v = Values { arrays: vec![Vec::new(); n], parts: vec![Vec::new(); n], rounds: 1 };
@@ -530,7 +535,7 @@ impl ArrayProgram {
         ends.sort_unstable_by_key(|e| e.0);
         let mut next_end = 0;
         for i in 0..n {
-            self.step(i, &mut v, inputs, params, calls, None)?;
+            self.step(i, &mut v, inputs, params, calls, None).map_err(|e| (i, e))?;
             while next_end < ends.len() && ends[next_end].0 == i {
                 self.settle(ends[next_end].1, &mut v, inputs, params, calls)?;
                 next_end += 1;
@@ -540,7 +545,7 @@ impl ArrayProgram {
     }
 
     /// Group `group`'s rounds, its span run once: until each carry is its next.
-    fn settle(&self, group: &[(u16, u16)], v: &mut Values, inputs: &[&[i64]], params: &[i64], calls: &mut dyn Calls) -> Result<(), &'static str> {
+    fn settle(&self, group: &[(u16, u16)], v: &mut Values, inputs: &[&[i64]], params: &[i64], calls: &mut dyn Calls) -> Result<(), (usize, &'static str)> {
         let lo = usize::from(group.iter().map(|p| p.0).min().unwrap());
         let hi = usize::from(group.iter().map(|p| p.1).max().unwrap());
         // The span's values that depend on its carries.
@@ -556,13 +561,13 @@ impl ArrayProgram {
                 return Ok(());
             }
             if rounds >= MAX_ROUNDS {
-                return Err("past the rounds' bound");
+                return Err((hi, "past the rounds' bound"));
             }
             rounds += 1;
             let nexts: Vec<(usize, Vec<i64>)> = group.iter().map(|&(c, x)| (usize::from(c), v.arrays[usize::from(x)].clone())).collect();
             for i in (lo..=hi).filter(|&i| moved[i]) {
                 let carried = nexts.iter().find(|n| n.0 == i).map(|n| n.1.clone());
-                self.step(i, v, inputs, params, calls, carried)?;
+                self.step(i, v, inputs, params, calls, carried).map_err(|e| (i, e))?;
             }
         }
     }

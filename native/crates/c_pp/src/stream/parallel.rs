@@ -39,6 +39,7 @@ use crate::files::Files;
 use crate::sink::Null;
 
 mod files;
+pub mod host;
 mod rounds;
 mod text;
 #[cfg(test)]
@@ -46,6 +47,7 @@ mod tests;
 
 /// The definitions by position: `(symbol, position, definition + 1)`, sorted; 0 is an `#undef`.
 /// The built-ins are at position 0, before every other.
+#[derive(Clone)]
 pub(super) struct Vis {
     rows: Vec<(u32, u64, u32)>,
 }
