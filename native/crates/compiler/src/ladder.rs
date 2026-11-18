@@ -607,7 +607,7 @@ pub fn check_ladder(
         let (mut sentences, mut mutations) = ([0usize; 2], [0usize; 2]);
         let mut reasons: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
         let extra_ids: Vec<u16> = lang.extras.iter().map(|e| c.ids.of(e)).collect();
-        let made = crate::block_native::BlockNative::lower(&c.program.block_programs[0]).records_made();
+        let made = crate::block_native::BlockNative::lower(&c.program.block_programs[0]).cpu_unstored();
         let (mut docs, before) = documents_with(&lang, seed(name), &|b| reference(&c, b).is_some(), alphabet);
         docs.extend(fixed.iter().map(|d| d.as_bytes().to_vec()));
         for (i, bytes) in docs.into_iter().enumerate() {

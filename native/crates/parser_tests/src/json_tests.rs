@@ -588,7 +588,7 @@ fn json_tier1_vectors_equal_the_interpreter() {
             }
         }
         let block = &c.program.block_programs[0];
-        let made = rerail_compiler::block_native::BlockNative::lower(block).records_made();
+        let made = rerail_compiler::block_native::BlockNative::lower(block).cpu_unstored();
         for f in &files {
             assert_eq!(c.parser.tier1.extract(f).without(&made), block.run_files(&[f]).remove(0).without(&made), "{name}: {:?}", String::from_utf8_lossy(f));
         }
@@ -683,7 +683,7 @@ fn json_gated_regions_equal_the_interpreter() {
         let tests: usize = plan.regions.iter().map(|r| 1 + usize::from(r.pre.is_some())).sum();
         assert_eq!(c.parser.tier1.gate_branches, tests, "{name}: a region without its branch, or made twice");
         let block = &c.program.block_programs[0];
-        let made = rerail_compiler::block_native::BlockNative::lower(block).records_made();
+        let made = rerail_compiler::block_native::BlockNative::lower(block).cpu_unstored();
         let mut files: Vec<Vec<u8>> = Vec::new();
         for t in tokens {
             for at in 0..140 {

@@ -649,7 +649,9 @@ fn full_words(native: &BlockNative, lanes: &[bool]) -> Vec<Option<u64>> {
             BlockInst::Within(d) => (all(u64::MAX), all(if d == 0 { u64::MAX } else { !((1u64 << d) - 1) })),
             // None in a full block; in the first, what the file's first bytes say.
             BlockInst::Prefix(..) => (all(0), NONE),
-            _ if lanes[at] => (NONE, NONE),
+            // Bit logic is the same at each byte of a lane as at each bit of a word: a lane of
+            // known operands is known (a class the host's stripping cut, `within & ~0`).
+            _ if lanes[at] && !matches!(inst, BlockInst::Not(_) | BlockInst::And(..) | BlockInst::Or(..) | BlockInst::Xor(..) | BlockInst::AndNot(..)) => (NONE, NONE),
             BlockInst::Not(a) => {
                 let (x, y) = get(a);
                 (not(x), not(y))
@@ -1627,6 +1629,47 @@ impl<'a> Lanes<'a> {
                 Sym::Value(crate::native_cpu_block::short_mask(f, v, weights), neg)
             }
         }
+    }
+
+    /// Whether any lane of values `xs` in the block's four chunks is set, as a word nonzero
+    /// where one is: the chunks ORed, then the vector's two halves, no reduction to bits. A value made as bytes (`as_bytes`) is ORed as its bytes, untested,
+    /// as simdjson ORs its error bytes into its error register: a nonzero byte is a set lane.
+    pub fn any_of(&mut self, f: &mut FunctionBuilder<'_>, xs: &[usize]) -> Sym {
+        match self.any_bytes(f, xs) {
+            None => Sym::Known(0),
+            Some(v) => {
+                let halves = f.ins().bitcast(types::I64X2, MemFlags::new().with_endianness(cranelift_codegen::ir::Endianness::Little), v);
+                let (lo, hi) = (f.ins().extractlane(halves, 0), f.ins().extractlane(halves, 1));
+                Sym::Value(f.ins().bor(lo, hi), false)
+            }
+        }
+    }
+
+    /// Values `xs` in the block's four chunks ORed on the vectors (`any_of`): a byte nonzero
+    /// where a lane is set, unreduced, for simdjson's error register (decision 0406). `None`:
+    /// no lane can be.
+    pub fn any_bytes(&mut self, f: &mut FunctionBuilder<'_>, xs: &[usize]) -> Option<Value> {
+        let mut parts = Vec::new();
+        for &x in xs {
+            for c in 1..5 {
+                let lane = match self.as_bytes(f, x, c, 0) {
+                    Some(b) if b.bits == 0xff => Lane::V(b.v, false),
+                    Some(b) if b.bits != 0 => {
+                        let sel = self.splat(f, b.bits);
+                        Lane::V(f.ins().band(b.v, sel), false)
+                    }
+                    Some(_) => Lane::Known(false),
+                    None => self.get(f, x, c),
+                };
+                parts.push(lane);
+            }
+        }
+        if parts.iter().any(|p| matches!(p, Lane::Known(true))) {
+            return Some(self.splat(f, 0xff));
+        }
+        let vs: Vec<Value> = parts.iter().filter(|p| matches!(p, Lane::V(..))).map(|&p| self.polar(f, p, false)).collect();
+        let (&first, rest) = vs.split_first()?;
+        Some(rest.iter().fold(first, |acc, &v| f.ins().bor(acc, v)))
     }
 
     /// The block's four chunks of a value as a 64-bit mask, complemented as they are.

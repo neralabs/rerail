@@ -354,12 +354,14 @@ fn a_tokens_end_is_its_gaps_as_the_lasts_extract() {
     }
 }
 
-/// Decision 0405: the hot loop carries the bytes before its block in a register (simdjson's
-/// `prev_input_block`), and keeps the UTF-8 rules as bytes, tested once a chunk.
-/// - Its loop loads no byte before its block.
+/// Decisions 0405 and 0406: the hot loop carries the bytes before its block in a register
+/// (simdjson's `prev_input_block`), and its UTF-8 error as bytes ORed into a vector (simdjson's
+/// `error`), reduced where the loop leaves.
+/// - Its loop loads no byte before its block, and reduces one vector a block to a word (the
+///   ASCII test): no error is made a mask or a word there.
 /// - The CPU's tier 1 agrees with the interpreter on UTF-8 across the edges of full blocks,
-///   where the carried chunk is the byte before: files of five blocks, each sequence placed
-///   across the second and third blocks' edges.
+///   where the carried chunk is the byte before, and in the first and last blocks (the edge
+///   part's): files of five blocks.
 #[test]
 #[cfg(target_arch = "aarch64")]
 fn the_hot_loop_carries_the_bytes_before_its_block() {
@@ -368,10 +370,12 @@ fn the_hot_loop_carries_the_bytes_before_its_block() {
         let hot = crate::clif_text::machine_loop(&c.parser.tier1.loops_disassembly());
         let before: Vec<&String> = hot.iter().filter(|l| l.starts_with("ldr q") && l.contains(", #-")).collect();
         assert!(before.is_empty(), "{name}: the hot loop loads bytes before its block: {before:?}");
-        let made = crate::block_native::BlockNative::lower(&c.program.block_programs[0]).records_made();
+        let reduced = hot.iter().filter(|l| l.starts_with("mov x") && l.ends_with(".d[1]")).count();
+        assert_eq!(reduced, 1, "{name}: vectors reduced to words in the hot loop");
+        let made = crate::block_native::BlockNative::lower(&c.program.block_programs[0]).cpu_unstored();
         let (mut docs, mut refused) = (0, 0);
         for seq in [&[0xc3u8, 0xa9][..], &[0xe2, 0x82, 0xac], &[0xf0, 0x9f, 0x98, 0x80], &[0xed, 0xa0, 0x80], &[0xe0, 0x80, 0x80], &[0xf4, 0x90, 0x80, 0x80], &[0xc0, 0x80], &[0xf5, 0x80], &[0x80], &[0xc3], &[0xe2, 0x82], &[0xc3, 0x80, 0x80]] {
-            for edge in [128usize, 192] {
+            for edge in [20usize, 128, 192, 300] {
                 for back in 0..5 {
                     let pad = edge - 2 - back;
                     let mut doc = format!("[\"{}", "a".repeat(pad)).into_bytes();
@@ -407,7 +411,7 @@ fn utf8s_two_byte_rules_are_one_pair_lookup() {
     assert_eq!(bits, [7, 1], "{name}: the eight rules in seven boxes, then two continuations: {pairs:?}");
     assert!(pairs.iter().all(|p| (p.0, p.1) == (pairs[0].0, pairs[0].1)), "{name}: one pair of tables: {pairs:?}");
     assert_eq!(fused.tables[usize::from(pairs[0].1)].lo, [0xff; 16], "{name}: this byte's table is of high nibbles");
-    let made = native.records_made();
+    let made = native.cpu_unstored();
     let (mut docs, mut refused) = (0, 0);
     for lead in [0xc2u8, 0xdf, 0xe0, 0xe1, 0xec, 0xed, 0xee, 0xef, 0xf0, 0xf1, 0xf3, 0xf4, 0xf5] {
         let len = if lead < 0xe0 { 2 } else if lead < 0xf0 { 3 } else { 4 };

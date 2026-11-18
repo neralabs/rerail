@@ -276,6 +276,20 @@ JSONC: 735 / 8 → 693 / 9. The steady chunk is simdjson's. What is left of the 
 error's mask, about 9 instructions a block, where simdjson ORs error bytes into one vector for
 the file: that is item 2's flag (0402).
 
+### The error vector (0406)
+
+Item 2's flag now fires. A total no mask, mark or token-loop read names has no row without a
+token loop too, and the UTF-8 error's bytes are ORed into one vector carried round the hot
+loop, reduced where the loop leaves, as simdjson's `error`.
+
+| `14-json` | Hot loop | Stack accesses | UTF-8 stretch |
+|---|---:|---:|---:|
+| After 0405 | 507 | 1 | 85 |
+| 0406 | **485** | **1** | **76** |
+| simdjson | | | 72 |
+
+JSONC: 693 / 9 → 667 / 11.
+
 ## Reproducing
 
 ```

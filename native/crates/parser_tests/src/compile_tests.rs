@@ -1242,7 +1242,7 @@ fn json_compiled_path_equals_the_interpreters() {
     assert!(past.len() <= p.local_checks.len(), "no pass over the table: {callees:?}");
     let files = json_tier2_files();
     let made =
-        rerail_compiler::block_native::BlockNative::lower(&p.block_programs[0]).records_made();
+        rerail_compiler::block_native::BlockNative::lower(&p.block_programs[0]).cpu_unstored();
     for f in &files {
         let want1 = p.block_programs[0].run_files(&[f]).remove(0);
         let got1 = tier1.extract(f);
