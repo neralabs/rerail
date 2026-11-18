@@ -1320,8 +1320,8 @@ fn plans_find(key: &PlanKey, len: usize, nodes: f64) -> Option<Option<Kept>> {
         if let Some(k) = OWN_PLANS.with(|o| o.borrow().as_ref().and_then(|m| m.get(key).cloned())) {
             return Some(Some(k));
         }
-        // The run's plans as last published (decision 0301): read with no lock.
-        if let Some(e) = shared.kept.load().get(key) {
+        // The run's plans as last published (decision 0301), or as a chunk's view holds them (Q94): read with no lock.
+        if let Some(e) = shared.now().get(key) {
             return Some(Some(e.kept()));
         }
         let found = shared.stored_near(key, len, nodes);
@@ -1338,7 +1338,7 @@ fn plans_get(key: &PlanKey) -> Option<Kept> {
     PLANS.with(|p| {
         let p = p.borrow();
         let shared = p.as_ref()?;
-        OWN_PLANS.with(|o| o.borrow().as_ref().and_then(|m| m.get(key).cloned())).or_else(|| shared.kept.load().get(key).map(|e| e.kept()))
+        OWN_PLANS.with(|o| o.borrow().as_ref().and_then(|m| m.get(key).cloned())).or_else(|| shared.now().get(key).map(|e| e.kept()))
     })
 }
 
@@ -1354,7 +1354,8 @@ fn plans_put(shared: &SharedPlans, key: PlanKey, kept: Kept) {
         _ => Some(kept),
     });
     let Some(kept) = kept else { return };
-    if shared.kept.load().get(&key).is_some_and(|e| e.set(&kept)) {
+    // A chunk's view (Q94) changes no entry it shares with the run's plans: its own go in as new entries.
+    if shared.view.is_none() && shared.kept.load().get(&key).is_some_and(|e| e.set(&kept)) {
         return;
     }
     let kept = OWN_PLANS.with(|o| match o.borrow_mut().as_mut() {
@@ -1365,7 +1366,10 @@ fn plans_put(shared: &SharedPlans, key: PlanKey, kept: Kept) {
         None => Some(kept),
     });
     if let Some(kept) = kept {
-        shared.publish(vec![(key, kept)]);
+        match &shared.view {
+            Some(v) => v.put(vec![(key, kept)]),
+            None => shared.publish(vec![(key, kept)]),
+        }
     }
 }
 
@@ -1386,6 +1390,29 @@ fn plans_learnt(key: &PlanKey, learnt: Learnt) {
             }
             None
         });
+        // In a chunk's view (Q94), a copy of the entry learns it, as the chunk's own: the view's entries are the
+        // run's as filed, shared with the other chunks.
+        let learnt = match (&shared.view, learnt) {
+            (Some(v), Some(learnt)) => {
+                let Some(mut k) = shared.now().get(key).map(|e| e.kept()) else { return };
+                match learnt {
+                    Learnt::Priced(priced) => k.4 = Some(priced),
+                    Learnt::Ran(work) => k.5 = Some(work),
+                }
+                let k = OWN_PLANS.with(|o| match o.borrow_mut().as_mut() {
+                    Some(m) => {
+                        m.insert(*key, k);
+                        None
+                    }
+                    None => Some(k),
+                });
+                if let Some(k) = k {
+                    v.put(vec![(*key, k)]);
+                }
+                return;
+            }
+            (_, learnt) => learnt,
+        };
         if let Some(learnt) = learnt
             && let Some(e) = shared.kept.load().get(key)
         {
@@ -1441,7 +1468,137 @@ fn growth(then: &[f64], now: &[f64]) -> f64 {
 
 /// A run's kept plans, shared by the threads its strata run on (decision 0113): a stratum's job enters them
 /// (`enter_plans`). Each stratum plans its own rules, so no two jobs write one key.
-type SharedPlans = Arc<RunPlans>;
+/// Within a chunk (Q94), with its view of them: what it plans and learns goes into the view, and is the run's only
+/// as the main thread files the chunk (`OrderedPlans`).
+#[derive(Clone)]
+struct SharedPlans {
+    run: Arc<RunPlans>,
+    view: Option<Arc<ChunkView>>,
+}
+
+impl std::ops::Deref for SharedPlans {
+    type Target = RunPlans;
+    fn deref(&self) -> &RunPlans {
+        &self.run
+    }
+}
+
+impl SharedPlans {
+    /// The plans a planner reads: its chunk's view, else the run's as last published.
+    fn now(&self) -> arc_swap::Guard<Arc<Plans>> {
+        match &self.view {
+            Some(v) => v.kept.load(),
+            None => self.run.kept.load(),
+        }
+    }
+}
+
+/// Q94: a chunk plans from the run's plans as filed up to this many chunks before it, never from what a chunk running
+/// beside it published: up to `PLAN_WINDOW` evaluate at once (decision 0254: at most 8), so those are filed when it
+/// begins, whatever the threads' timing, and its plans are a function of the run's inputs.
+pub const PLAN_WINDOW: usize = 8;
+
+/// A chunk's view of the run's plans (Q94): the run's as filed when it began (`OrderedPlans::next`), with what it
+/// planned and learnt over them, its own entries (`own`), handed back with it (`in_view`).
+pub struct ChunkView {
+    kept: arc_swap::ArcSwap<Plans>,
+    own: parking_lot::Mutex<rustc_hash::FxHashSet<PlanKey>>,
+    observed: Option<keeps::SharedObserved>,
+}
+
+impl ChunkView {
+    /// Takes `plans` as the chunk's own, new entries over the view's.
+    fn put(&self, plans: Vec<(PlanKey, Kept)>) {
+        if plans.is_empty() {
+            return;
+        }
+        let entries: Vec<(PlanKey, Arc<Entry>)> = plans.into_iter().map(|(k, v)| (k, Entry::of(v))).collect();
+        self.own.lock().extend(entries.iter().map(|(k, _)| *k));
+        self.kept.rcu(|m| {
+            let mut m = Plans::clone(m);
+            m.extend(entries.iter().map(|(k, e)| (*k, Arc::clone(e))));
+            m
+        });
+    }
+}
+
+/// What a chunk planned, learnt and observed (`in_view`), for the run's in the chunks' order (`OrderedPlans::file`).
+#[derive(Default)]
+pub struct ChunkPlans(Vec<(PlanKey, Kept)>, Option<keeps::Observed>);
+
+/// Q94: the run's plans and observations as its chunks are filed, in their order. Chunk `n` (from 0) sees them as they
+/// were once chunks `0..=n - window` were filed; what it made is the run's when it is filed.
+pub struct OrderedPlans {
+    run: SharedPlans,
+    observed: Option<keeps::SharedObserved>,
+    window: usize,
+    /// The run's plans and observations once `first + i` chunks were filed, for those a chunk to begin may see.
+    snapshots: std::collections::VecDeque<(Arc<Plans>, Option<Arc<keeps::Observed>>)>,
+    first: usize,
+    begun: usize,
+    filed: usize,
+}
+
+impl OrderedPlans {
+    /// Over this thread's run's plans: `None` outside a corpus run.
+    pub fn begin(window: usize) -> Option<Self> {
+        let run = share_plans()?;
+        let observed = keeps::share_observed();
+        let at = (run.kept.load_full(), keeps::observed_now(&observed));
+        let observed = at.1.is_some().then_some(observed);
+        Some(OrderedPlans { run, observed, window: window.max(1), snapshots: [at].into(), first: 0, begun: 0, filed: 0 })
+    }
+
+    /// The next chunk's view.
+    pub fn next(&mut self) -> Arc<ChunkView> {
+        let n = self.begun;
+        self.begun += 1;
+        let at = (n + 1).saturating_sub(self.window);
+        assert!(at <= self.filed, "Q94: chunk {n} begins with {} filed, under {at}", self.filed);
+        while self.first < at {
+            self.snapshots.pop_front();
+            self.first += 1;
+        }
+        let (plans, observed) = self.snapshots[at - self.first].clone();
+        Arc::new(ChunkView {
+            kept: arc_swap::ArcSwap::new(plans),
+            own: Default::default(),
+            observed: self.observed.as_ref().map(|_| keeps::chunk_observed(observed)),
+        })
+    }
+
+    /// Files the next chunk's plans and observations into the run's, in the chunks' order.
+    pub fn file(&mut self, made: ChunkPlans) {
+        let ChunkPlans(plans, observed) = made;
+        self.run.publish(plans);
+        if let (Some(run), Some(o)) = (&self.observed, observed) {
+            keeps::file_observed(run, o);
+        }
+        self.filed += 1;
+        let at = (self.run.kept.load_full(), self.observed.as_ref().and_then(keeps::observed_now));
+        self.snapshots.push_back(at);
+    }
+}
+
+/// `f` planning within a chunk's view (Q94): what it plans, learns and observes stays in the view (and the jobs it
+/// starts, which enter it), and is handed back with its result for the run's (`OrderedPlans::file`).
+pub fn in_view<R>(view: &Arc<ChunkView>, f: impl FnOnce() -> R) -> (R, ChunkPlans) {
+    let Some(run) = share_plans() else { return (f(), ChunkPlans::default()) };
+    let shared = SharedPlans { run: Arc::clone(&run.run), view: Some(Arc::clone(view)) };
+    let r = {
+        let _plans = enter_plans(Some(shared));
+        let _observed = view.observed.clone().map(keeps::enter_observed);
+        f()
+    };
+    let keys: Vec<PlanKey> = {
+        let mut keys: Vec<PlanKey> = view.own.lock().drain().collect();
+        keys.sort_unstable();
+        keys
+    };
+    let kept = view.kept.load();
+    let plans = keys.into_iter().filter_map(|k| kept.get(&k).map(|e| (k, e.kept()))).collect();
+    (r, ChunkPlans(plans, view.observed.as_ref().map(keeps::observed_made)))
+}
 
 /// A kept plan as the run shares it (decision 0301): its order and what its search found of it (work per node,
 /// EXPLAIN, gap), fixed until a put replaces them, and what its runs taught (its last price, the work its line did),
@@ -1892,6 +2049,16 @@ fn enter_plans(plans: Option<SharedPlans>) -> impl Drop {
             let planned = OWN_PLANNED.with(|o| std::mem::replace(&mut *o.borrow_mut(), self.1.1.take()));
             let entered = PLANS.with(|p| std::mem::replace(&mut *p.borrow_mut(), self.0.take()));
             let Some(shared) = entered else { return };
+            // In a chunk's view (Q94), the job's plans are the chunk's own, its entries.
+            if let Some(v) = &shared.view {
+                let mut own: Vec<(PlanKey, Kept)> = own.into_iter().flatten().collect();
+                own.sort_unstable_by_key(|(k, _)| *k);
+                v.put(own);
+                if let Some(planned) = planned.filter(|p| !p.is_empty()) {
+                    shared.planned_now.lock().extend(planned);
+                }
+                return;
+            }
             // Decision 0301: the job's plans whose order the run holds go to their entries' cells; the others, new
             // keys or new orders, are published together.
             let new: Vec<(PlanKey, Kept)> = {
@@ -1967,7 +2134,7 @@ impl KeepPlans {
     pub fn start(across: Option<u64>) -> Self {
         compose::clear();
         let (kept, orders) = across.and_then(|g| SESSION_PLANS.with(|s| s.borrow_mut().take().filter(|(k, _, _)| *k == g).map(|(_, p, o)| (p, o)))).unwrap_or_default();
-        PLANS.with(|p| *p.borrow_mut() = Some(Arc::new(RunPlans::new(kept, orders, Default::default()))));
+        PLANS.with(|p| *p.borrow_mut() = Some(SharedPlans { run: Arc::new(RunPlans::new(kept, orders, Default::default())), view: None }));
         keeps::observing(true);
         KeepPlans(across)
     }
@@ -1994,7 +2161,7 @@ impl Drop for KeepPlans {
         super::profile::decision("kept plans shared by RCU (decision 0301)", || format!("{} publications of {} new plans or orders; observed sums folded {folds} times", published[0], published[1]));
         if let (Some(g), Some(plans)) = (self.0, plans) {
             // Every job that entered them has ended: the run's thread holds the last handle, or a copy is taken.
-            let (kept, orders) = match Arc::try_unwrap(plans) {
+            let (kept, orders) = match Arc::try_unwrap(plans.run) {
                 Ok(p) => p.into_kept(),
                 Err(p) => (p.kept.load().iter().map(|(k, e)| (*k, e.kept())).collect(), rustc_hash::FxHashMap::clone(&p.orders.load())),
             };
@@ -14599,5 +14766,43 @@ impl Walker<'_, '_> {
         x ^= x << 13; x ^= x >> 7; x ^= x << 17;
         self.seed.set(x);
         x
+    }
+}
+
+#[cfg(test)]
+mod ordered_tests {
+    use super::*;
+
+    /// Q94: a chunk plans from the run's plans as filed once the chunks `window` before it were, never from a chunk
+    /// beside it: what each sees is fixed by the chunks' order, whatever finishes or is filed first. What it plans and
+    /// learns is its own until it is filed.
+    #[test]
+    fn a_chunk_sees_the_plans_filed_before_its_window_never_a_neighbours() {
+        let _plans = KeepPlans::start(None);
+        let mut ordered = OrderedPlans::begin(2).expect("a corpus run's plans");
+        let put = |key: PlanKey, w: f64| PLANS.with(|p| plans_put(p.borrow().as_ref().unwrap(), key, (Arc::from(Vec::<Step>::new()), w, None, 1.0, None, None)));
+        let get = |key: PlanKey| plans_get(&key).map(|k| k.1);
+        let (v0, v1) = (ordered.next(), ordered.next());
+        let ((), m0) = in_view(&v0, || put(1, 10.0));
+        // Chunk 1 began beside chunk 0: chunk 0's plan is not in its view, though chunk 0 has finished.
+        let (seen, m1) = in_view(&v1, || {
+            let seen = get(1);
+            put(2, 20.0);
+            seen
+        });
+        assert_eq!(seen, None, "a neighbour's plan, finished first");
+        assert_eq!(get(1), None, "the run's plans hold no chunk's until it is filed");
+        ordered.file(m0);
+        assert_eq!(get(1), Some(10.0), "chunk 0 filed");
+        assert_eq!(in_view(&v1, || get(1)).0, None, "a view stays as its chunk began");
+        ordered.file(m1);
+        // Chunk 2 sees chunk 0's (`window` back), and not chunk 1's though it was filed before chunk 2 began.
+        let v2 = ordered.next();
+        assert_eq!(in_view(&v2, || (get(1), get(2))).0, (Some(10.0), None));
+        // What it learns of a plan it read is its own copy's: the run's entry is unchanged until it is filed.
+        let ((), m2) = in_view(&v2, || plans_learnt(&1, Learnt::Ran(5.0)));
+        assert_eq!(plans_get(&1).and_then(|k| k.5), None, "unfiled");
+        ordered.file(m2);
+        assert_eq!(plans_get(&1).and_then(|k| k.5), Some(5.0), "filed");
     }
 }

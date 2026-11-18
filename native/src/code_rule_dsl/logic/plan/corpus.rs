@@ -4790,8 +4790,9 @@ fn run_observed(
     // measured again, and a stray file is not a new mix.
     let mut own_once: HashMap<String, (usize, Own)> = HashMap::new();
     // The guest relations' postings per mix, measured after the guest rounds (`guests::READS`).
-    let guest_postings_once: HashMap<String, (usize, BTreeMap<(String, String, i64), i64>)> = HashMap::new();
-    let measured_once: HashMap<(String, String), (usize, Vec<(String, i64, i64, i64, i64)>)> = HashMap::new();
+    // Each with the chunk that measured it (Q94, `Once`).
+    let guest_postings_once: HashMap<String, Once<BTreeMap<(String, String, i64), i64>>> = HashMap::new();
+    let measured_once: HashMap<(String, String), Once<Vec<(String, i64, i64, i64, i64)>>> = HashMap::new();
     // `x` is the run's scratch (deleted at the start of the next): no journal and no syncs, since a run that stops
     // leaves nothing to recover. The browser build keeps it in memory, where its in-memory filesystem is anyway, so
     // its pages skip the filesystem's calls; so are the temp tables the strata make.
@@ -6296,6 +6297,11 @@ fn run_observed(
     // How many chunks evaluate at once: `RERAIL_CHUNKS_AT_ONCE`, else the pool's threads less the main thread's (which
     // files them), at most 8. One is the main thread alone, on its own connection, as before.
     let chunks_at_once = std::env::var("RERAIL_CHUNKS_AT_ONCE").ok().and_then(|v| v.parse::<usize>().ok()).unwrap_or_else(|| crate::threads::max().saturating_sub(1).min(8)).max(1);
+    // Q94: what chunk `n` plans with is the run's as filed once chunks `0..=n - plan_window` were, whether the chunks
+    // evaluate at once or one by one: the same plans either way, and whatever the threads' timing.
+    let plan_window = crate::code_rule_dsl::logic::plan::PLAN_WINDOW.max(chunks_at_once);
+    // The chunks begun, numbered in the order they are filed.
+    let chunk_seq = std::cell::Cell::new(0usize);
     crate::code_rule_dsl::logic::profile::decision("chunks at once (decision 0254)", || format!("up to {chunks_at_once} chunks evaluate at once, each on a connection of its own, as many as the run's headroom holds (Q74); the main thread files them in order"));
     // How many may be in flight now (Q74): one until a chunk's measured growth sizes the rest, then as many as share
     // the run's headroom at `CHUNK_FLOOR_MB` or more each (the chunk-size decision sets it). The chunks in flight
@@ -6362,6 +6368,9 @@ fn run_observed(
         /// its entries hold them (the slice not run).
         cone: Option<BTreeSet<String>>,
         replay: Option<Vec<BTreeMap<String, Arc<output::Rows>>>>,
+        /// Its place in the order the chunks are filed, and its view of the run's plans (Q94).
+        seq: usize,
+        view: Option<Arc<crate::code_rule_dsl::logic::plan::ChunkView>>,
     }
     /// What the main thread files of a chunk once it is evaluated: its run's outcome, its guests' hosts and askers, its
     /// sources the memo attributes, the base totals it measured, and its exports' rows.
@@ -6406,7 +6415,10 @@ fn run_observed(
     let guest_postings_once = parking_lot::Mutex::new(guest_postings_once);
     let measured_once = parking_lot::Mutex::new(measured_once);
     let evaluate_in = |task: Task, db: &Connection, modules: &Modules, hand: Option<Hand<'_>>| -> Result<Evaluated> {
-        let Task { chunk_nodes_built, sources, documents, mut stats, mix, cone, replay } = task;
+        let Task { chunk_nodes_built, sources, documents, mut stats, mix, cone, replay, seq, view: _ } = task;
+        // A measurement made once per mix (Q94): taken from a chunk filed before this one began (`plan_window` back),
+        // else made here, and kept for the chunks after as the earliest chunk's that made it.
+        let once_seen = |by: usize| by + plan_window <= seq;
         let chunk_docs_n = documents.len();
         // The slice's request lines of each round, for the entries (`memo::GUESTS`).
         let mut slice_rounds: Vec<BTreeMap<String, Arc<output::Rows>>> = Vec::new();
@@ -6469,14 +6481,14 @@ fn run_observed(
                                         Some((_, m)) if rows == 0 => m.clone(),
                                         _ => {
                                             let key = (format!("guest slice {mix}"), rel.clone());
-                                            let once = measured_once.lock().get(&key).cloned();
+                                            let once = measured_once.lock().get(&key).filter(|o| once_seen(o.0)).map(|o| (o.1, o.2.clone()));
                                             let (first, m) = match once {
                                                 Some((first, m)) if first > 0 => (first, m),
                                                 _ => {
                                                     let _m = crate::code_rule_dsl::logic::profile::span(|| "guest statistics".into());
                                                     let m = sampled_statistics(source.as_ref());
                                                     if rows > 0 {
-                                                        measured_once.lock().insert(key, (rows, m.clone()));
+                                                        once_keep(&mut measured_once.lock(), key, Once(seq, rows, m.clone()));
                                                     }
                                                     (rows, m)
                                                 }
@@ -6547,12 +6559,12 @@ fn run_observed(
                 // again over the batch with them: priced at none, `parsed($s, "annotation", $r)` read after bindings
                 // looked like a filter, and each binding read every annotation guest (O143). Once per mix, scaled.
                 if own && docs.len() > documents_len {
-                    let once = guest_postings_once.lock().get(&mix).cloned();
+                    let once = guest_postings_once.lock().get(&mix).filter(|o| once_seen(o.0)).map(|o| (o.1, o.2.clone()));
                     let postings = match once.as_ref() {
                         Some((first, p)) if *first > 0 => p.iter().map(|(k, n)| (k.clone(), (*n as f64 * chunk_nodes_built as f64 / *first as f64).round() as i64)).collect(),
                         _ => {
                             let p = Own::postings(&sources, &constants, |r| guests::READS.contains(&r));
-                            guest_postings_once.lock().insert(mix.clone(), (chunk_nodes_built, p.clone()));
+                            once_keep(&mut guest_postings_once.lock(), mix.clone(), Once(seq, chunk_nodes_built, p.clone()));
                             p
                         }
                     };
@@ -6585,13 +6597,13 @@ fn run_observed(
                 stored_bound.push((rel.clone(), Arc::clone(&source)));
             }
             let key = (mix.clone(), rel.clone());
-            let once = measured_once.lock().get(&key).cloned();
+            let once = measured_once.lock().get(&key).filter(|o| once_seen(o.0)).map(|o| (o.1, o.2.clone()));
             let measured = match once {
                 Some((first, measured)) if first > 0 => scaled_statistics(&measured, first, source.estimated_len()),
                 _ => {
                     let _measure = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel} ({mix})"));
                     let measured = sampled_statistics(source.as_ref());
-                    measured_once.lock().insert(key, (source.estimated_len(), measured.clone()));
+                    once_keep(&mut measured_once.lock(), key, Once(seq, source.estimated_len(), measured.clone()));
                     measured
                 }
             };
@@ -6673,8 +6685,13 @@ fn run_observed(
     };
     // A chunk's relations go in blocks of its own, given back with it (Q58): not in blocks every chunk at once
     // shares, which a few rows of each kept whole and the memory line counted whole.
-    let evaluate = |task: Task, db: &Connection, modules: &Modules, hand: Option<Hand<'_>>| -> Result<Evaluated> {
-        crate::code_rule_dsl::logic::native::setfix::in_chunk(crate::code_rule_dsl::logic::plan::placement::block_device(), || evaluate_in(task, db, modules, hand))
+    // Within its view of the run's plans (Q94): what it planned, learnt and observed comes back with it.
+    let evaluate = |mut task: Task, db: &Connection, modules: &Modules, hand: Option<Hand<'_>>| -> (Result<Evaluated>, crate::code_rule_dsl::logic::plan::ChunkPlans) {
+        let view = task.view.take();
+        crate::code_rule_dsl::logic::native::setfix::in_chunk(crate::code_rule_dsl::logic::plan::placement::block_device(), || match view {
+            Some(v) => crate::code_rule_dsl::logic::plan::in_view(&v, || evaluate_in(task, db, modules, hand)),
+            None => (evaluate_in(task, db, modules, hand), Default::default()),
+        })
     };
     // The connections chunks evaluate on beside the main thread's, each opened as the run's is (its atoms, the
     // engine's functions, `x` attached when SQL first runs) and given the run's inputs bound before the chunks.
@@ -6911,7 +6928,7 @@ fn run_observed(
                 };
                 phase("local", statements.count());
                 statements.enter("wait");
-                let task = Task { chunk_nodes_built, sources, documents, stats, mix, cone: cone.clone(), replay };
+                let task = Task { chunk_nodes_built, sources, documents, stats, mix, cone: cone.clone(), replay, seq: 0, view: None };
                 return Ok(Some((task, Ctx { chunk_nodes_built, chunk_docs, chunk_own, start_mb, start_max_mb, at_once, chunk_partials, cone })));
             }
         };
@@ -6992,6 +7009,9 @@ fn run_observed(
             let allowed = if per_node > 0.0 { ((headroom / env("RERAIL_CHUNK_FLOOR_MB", CHUNK_FLOOR_MB)).floor() as usize).clamp(1, chunks_at_once) } else { 1 };
             let budget = chunk.min(headroom / allowed as f64).round();
             let next = if per_node > 0.0 { ((budget * 1048576.0 / per_node) as usize).clamp(MIN_CHUNK_NODES.min(chunk_nodes), chunk_nodes) } else { chunk_nodes.min(PROBE_NODES) };
+            // `RERAIL_CHUNK_NODES` (a measurement aid): every chunk after the first of this many nodes (at most
+            // `chunk_nodes`), whatever the footprint measured, so two runs cut the corpus alike (Q94).
+            let next = std::env::var("RERAIL_CHUNK_NODES").ok().and_then(|v| v.parse::<usize>().ok()).map_or(next, |n| n.clamp(1, chunk_nodes));
             chunk_target.store(next, std::sync::atomic::Ordering::Relaxed);
             at_once_allowed.store(allowed, std::sync::atomic::Ordering::Relaxed);
             // The device pool's share of the footprint the chunk was sized under: its blocks leased and idle.
@@ -7487,40 +7507,51 @@ fn run_observed(
     // evaluates here, on the run's connection.
     let drain = |process: &mut dyn FnMut(Step) -> Result<Option<(Task, Ctx)>>, parallel: bool| -> Result<bool> {
         let k = if parallel && memoised { chunks_at_once } else { 1 };
-        type Slot = Arc<parking_lot::Mutex<Option<Result<Evaluated>>>>;
+        type Slot = Arc<parking_lot::Mutex<Option<(Result<Evaluated>, crate::code_rule_dsl::logic::plan::ChunkPlans)>>>;
         let mut flight: std::collections::VecDeque<(Ctx, Slot)> = std::collections::VecDeque::new();
+        // The run's plans as the chunks are filed (Q94): each chunk's view, and what it made taken in in their order.
+        let mut ordered = crate::code_rule_dsl::logic::plan::OrderedPlans::begin(plan_window);
         // Files the chunk at the front once it is evaluated, waiting for it (running the pool's jobs meanwhile).
-        let file_front = |flight: &mut std::collections::VecDeque<(Ctx, Slot)>, process: &mut dyn FnMut(Step) -> Result<Option<(Task, Ctx)>>| -> Result<()> {
+        let file_front = |flight: &mut std::collections::VecDeque<(Ctx, Slot)>, ordered: &mut Option<crate::code_rule_dsl::logic::plan::OrderedPlans>, process: &mut dyn FnMut(Step) -> Result<Option<(Task, Ctx)>>| -> Result<()> {
             let (ctx, slot) = flight.pop_front().expect("a chunk in flight");
             main_doing.set("wait for a chunk evaluated");
-            let ev = builder.main_wait("the main thread: a chunk evaluated", || slot.lock().take())?;
-            process(Step::Finish(ctx, ev)).map(drop)
+            let (ev, made) = builder.main_wait("the main thread: a chunk evaluated", || slot.lock().take());
+            if let Some(o) = ordered.as_mut() {
+                o.file(made);
+            }
+            process(Step::Finish(ctx, ev?)).map(drop)
         };
         let got = (|| loop {
             // The chunks evaluated at the front are filed as they are ready: their memory goes back.
             while flight.front().is_some_and(|(_, s)| s.lock().is_some()) {
-                file_front(&mut flight, process)?;
+                file_front(&mut flight, &mut ordered, process)?;
             }
             main_doing.set("wait");
             let next = crate::code_rule_dsl::logic::profile::wait("the worker's next chunk", &worker_doing, || builder.next(jobs));
             let chunk = match next {
                 Err(()) | Ok(Ok(None)) => {
                     while !flight.is_empty() {
-                        file_front(&mut flight, process)?;
+                        file_front(&mut flight, &mut ordered, process)?;
                     }
                     return Ok(next.is_ok());
                 }
                 Ok(Err(e)) => return Err(e),
                 Ok(Ok(Some(chunk))) => chunk,
             };
-            let Some((task, ctx)) = process(Step::Begin(chunk, flight.len() + 1))? else { continue };
+            let Some((mut task, ctx)) = process(Step::Begin(chunk, flight.len() + 1))? else { continue };
+            task.seq = chunk_seq.get();
+            chunk_seq.set(task.seq + 1);
+            task.view = ordered.as_mut().map(|o| o.next());
             if k == 1 {
-                let ev = if memoised {
-                    evaluate(task, &db, &modules, None)?
+                let (ev, made) = if memoised {
+                    evaluate(task, &db, &modules, None)
                 } else {
-                    evaluate(task, &db, &modules, Some(&mut |rel: &str, rows| process(Step::Hand(rel.to_owned(), rows)).map(drop)))?
+                    evaluate(task, &db, &modules, Some(&mut |rel: &str, rows| process(Step::Hand(rel.to_owned(), rows)).map(drop)))
                 };
-                process(Step::Finish(ctx, ev))?;
+                if let Some(o) = ordered.as_mut() {
+                    o.file(made);
+                }
+                process(Step::Finish(ctx, ev?))?;
                 continue;
             }
             let slot: Slot = Arc::default();
@@ -7529,22 +7560,23 @@ fn run_observed(
             jobs.spawn("a chunk evaluated", move |_| {
                 let taken = worker_conns.lock().pop();
                 // A panic is the chunk's error: the main thread waits for its slot.
-                let got = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    taken.map_or_else(open_worker, Ok).and_then(|(wdb, wmodules)| {
+                let got = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match taken.map_or_else(open_worker, Ok) {
+                    Err(e) => (Err(e), Default::default()),
+                    Ok((wdb, wmodules)) => {
                         // Beside the other chunks: its joins walk whole, the pool is busy with chunks.
                         let r = crate::code_rule_dsl::logic::native::setfix::walks_whole(|| evaluate(task, &wdb, &wmodules, None));
                         worker_conns.lock().push((wdb, wmodules));
                         r
-                    })
+                    }
                 }))
-                .unwrap_or_else(|_| Err(Error::Plan("a chunk's evaluation panicked".to_owned())));
+                .unwrap_or_else(|_| (Err(Error::Plan("a chunk's evaluation panicked".to_owned())), Default::default()));
                 *into.lock() = Some(got);
                 bell.ring();
             });
             flight.push_back((ctx, slot));
             // As many in flight as the run's headroom holds (Q74), at most `k`.
             while flight.len() >= at_once_allowed.load(std::sync::atomic::Ordering::Relaxed).clamp(1, k) {
-                file_front(&mut flight, process)?;
+                file_front(&mut flight, &mut ordered, process)?;
             }
         })();
         if got.is_err() {
@@ -12546,4 +12578,19 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&
     }
     let digest = docs.as_ref().map_or(kept.digest, retain::digest_of_docs);
     Ok(OwnerPatch { changed, plus, minus, docs, digest, read })
+}
+
+/// A measurement made once per mix (Q94): the chunk that made it (its place in the filing order), the rows it was
+/// made over, and the measurement.
+#[derive(Clone)]
+struct Once<T>(usize, usize, T);
+
+/// Keeps `once` for `key` where no earlier chunk's is kept: the earliest chunk's stands, whichever finished first.
+fn once_keep<K: std::hash::Hash + Eq, T>(map: &mut HashMap<K, Once<T>>, key: K, once: Once<T>) {
+    match map.get(&key) {
+        Some(o) if o.0 <= once.0 => {}
+        _ => {
+            map.insert(key, once);
+        }
+    }
 }
