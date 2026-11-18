@@ -4,8 +4,10 @@
 //! Clauses are lists of literals: a variable `v` (from 1) is `v` true or `-v` false. The search
 //! is the usual one: two watched literals a clause, unit propagation, a conflict's first unique
 //! implication point learned as a clause, a jump back to its second-highest level. Decisions take
-//! the most active variable (activity bumped in each learned clause). A conflict budget bounds the
-//! work: past it, the answer is "unknown", which a proof reads as "not proved" (sound).
+//! the most active variable (activity bumped in each learned clause; of equal ones, the highest),
+//! from a heap ordered by activity: a decision costs the log of the variables, not their number.
+//! A conflict budget bounds the work: past it, the answer is "unknown", which a proof reads as
+//! "not proved" (sound).
 
 /// A literal: a variable from 1, negative for its negation.
 pub type Lit = i32;
@@ -17,6 +19,9 @@ pub enum Answer {
     Unsat,
     Unknown,
 }
+
+/// Not in the heap (`Solver::at`).
+const NONE: usize = usize::MAX;
 
 fn var(l: Lit) -> usize {
     l.unsigned_abs() as usize
@@ -40,13 +45,121 @@ pub struct Solver {
     head: usize,
     activity: Vec<f64>,
     bump: f64,
+    /// The unset variables (and some set ones, dropped when they come up), a max-heap by
+    /// activity, then by number; `at` each variable's place in it (`NONE`: not in it).
+    heap: Vec<usize>,
+    at: Vec<usize>,
+    /// `analyze`'s marks, all false between conflicts.
+    seen: Vec<bool>,
     /// The clauses given empty, or two units against each other: unsatisfiable at once.
     broken: bool,
 }
 
 impl Solver {
     pub fn new(vars: usize) -> Self {
-        Solver { clauses: Vec::new(), watches: vec![Vec::new(); 2 * vars + 2], value: vec![0; vars + 1], level: vec![0; vars + 1], reason: vec![None; vars + 1], trail: Vec::new(), limits: Vec::new(), head: 0, activity: vec![0.0; vars + 1], bump: 1.0, broken: false }
+        // Every activity 0: the heap's order is the numbers', highest first, a valid heap as
+        // it stands.
+        let heap: Vec<usize> = (1..=vars).rev().collect();
+        let mut at = vec![NONE; vars + 1];
+        for (i, &v) in heap.iter().enumerate() {
+            at[v] = i;
+        }
+        Solver {
+            clauses: Vec::new(),
+            watches: vec![Vec::new(); 2 * vars + 2],
+            value: vec![0; vars + 1],
+            level: vec![0; vars + 1],
+            reason: vec![None; vars + 1],
+            trail: Vec::new(),
+            limits: Vec::new(),
+            head: 0,
+            activity: vec![0.0; vars + 1],
+            bump: 1.0,
+            heap,
+            at,
+            seen: vec![false; vars + 1],
+            broken: false,
+        }
+    }
+
+    /// Whether `a` comes before `b` in the heap: more active, or as active and higher.
+    fn before(&self, a: usize, b: usize) -> bool {
+        match self.activity[a].total_cmp(&self.activity[b]) {
+            std::cmp::Ordering::Equal => a > b,
+            o => o == std::cmp::Ordering::Greater,
+        }
+    }
+
+    fn up(&mut self, mut i: usize) {
+        let v = self.heap[i];
+        while i > 0 {
+            let p = (i - 1) / 2;
+            if !self.before(v, self.heap[p]) {
+                break;
+            }
+            self.heap[i] = self.heap[p];
+            self.at[self.heap[i]] = i;
+            i = p;
+        }
+        self.heap[i] = v;
+        self.at[v] = i;
+    }
+
+    fn down(&mut self, mut i: usize) {
+        let v = self.heap[i];
+        let n = self.heap.len();
+        loop {
+            let mut c = 2 * i + 1;
+            if c >= n {
+                break;
+            }
+            if c + 1 < n && self.before(self.heap[c + 1], self.heap[c]) {
+                c += 1;
+            }
+            if !self.before(self.heap[c], v) {
+                break;
+            }
+            self.heap[i] = self.heap[c];
+            self.at[self.heap[i]] = i;
+            i = c;
+        }
+        self.heap[i] = v;
+        self.at[v] = i;
+    }
+
+    fn insert(&mut self, v: usize) {
+        if self.at[v] == NONE {
+            self.heap.push(v);
+            let i = self.heap.len() - 1;
+            self.at[v] = i;
+            self.up(i);
+        }
+    }
+
+    fn pop(&mut self) -> Option<usize> {
+        let top = *self.heap.first()?;
+        let last = self.heap.pop().expect("one");
+        self.at[top] = NONE;
+        if !self.heap.is_empty() {
+            self.heap[0] = last;
+            self.at[last] = 0;
+            self.down(0);
+        }
+        Some(top)
+    }
+
+    /// A variable's activity raised; past 1e100, every one scaled down alike (the order kept).
+    fn bump_var(&mut self, v: usize) {
+        self.activity[v] += self.bump;
+        if self.activity[v] > 1e100 {
+            for a in &mut self.activity {
+                *a *= 1e-100;
+            }
+            self.bump *= 1e-100;
+        }
+        if self.at[v] != NONE {
+            self.up(self.at[v]);
+        }
     }
 
     fn lit_value(&self, l: Lit) -> i8 {
@@ -141,24 +254,23 @@ impl Solver {
     /// first) and the level to go back to.
     fn analyze(&mut self, conflict: usize) -> (Vec<Lit>, u32) {
         let here = self.limits.len() as u32;
-        let mut seen = vec![false; self.value.len()];
         let mut learned: Vec<Lit> = vec![0];
         let mut count = 0;
         let mut at = self.trail.len();
         let mut clause = conflict;
         let mut p: Option<Lit> = None;
         loop {
-            let lits: Vec<Lit> = self.clauses[clause].clone();
-            for &q in &lits {
+            for k in 0..self.clauses[clause].len() {
+                let q = self.clauses[clause][k];
                 if Some(q) == p {
                     continue;
                 }
                 let v = var(q);
-                if seen[v] || self.level[v] == 0 {
+                if self.seen[v] || self.level[v] == 0 {
                     continue;
                 }
-                seen[v] = true;
-                self.activity[v] += self.bump;
+                self.seen[v] = true;
+                self.bump_var(v);
                 if self.level[v] == here {
                     count += 1;
                 } else {
@@ -168,12 +280,12 @@ impl Solver {
             // The latest seen literal on the trail.
             loop {
                 at -= 1;
-                if seen[var(self.trail[at])] {
+                if self.seen[var(self.trail[at])] {
                     break;
                 }
             }
             let l = self.trail[at];
-            seen[var(l)] = false;
+            self.seen[var(l)] = false;
             count -= 1;
             if count == 0 {
                 learned[0] = -l;
@@ -181,6 +293,9 @@ impl Solver {
             }
             p = Some(l);
             clause = self.reason[var(l)].expect("an implied literal");
+        }
+        for &q in &learned[1..] {
+            self.seen[var(q)] = false;
         }
         self.bump *= 1.05;
         let back = learned[1..].iter().map(|&q| self.level[var(q)]).max().unwrap_or(0);
@@ -194,9 +309,11 @@ impl Solver {
 
     fn back_to(&mut self, level: u32) {
         let Some(&start) = self.limits.get(level as usize) else { return };
-        for &l in &self.trail[start..] {
-            self.value[var(l)] = 0;
-            self.reason[var(l)] = None;
+        for i in start..self.trail.len() {
+            let v = var(self.trail[i]);
+            self.value[v] = 0;
+            self.reason[v] = None;
+            self.insert(v);
         }
         self.trail.truncate(start);
         self.limits.truncate(level as usize);
@@ -238,7 +355,12 @@ impl Solver {
                 continue;
             }
             // A decision: the most active unset variable, false first.
-            let next = (1..self.value.len()).filter(|&v| self.value[v] == 0).max_by(|&a, &b| self.activity[a].total_cmp(&self.activity[b]));
+            let next = loop {
+                match self.pop() {
+                    Some(v) if self.value[v] != 0 => continue,
+                    other => break other,
+                }
+            };
             let Some(v) = next else { return Answer::Sat };
             self.limits.push(self.trail.len());
             self.assign(-(v as Lit), None);

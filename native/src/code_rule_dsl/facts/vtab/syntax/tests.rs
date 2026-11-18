@@ -215,6 +215,27 @@ fn a_views_filter_scan_holds_the_rows_a_per_row_read_finds() {
         let width = source.columns().len();
         let n = source.len();
         assert!(n > 0, "{name}: no rows");
+        // The view's row passes (`for_rows`, `rows_of`) give the rows a per-row read gives: every column, and the
+        // last alone (no parent read, so no walk).
+        for cols in [(0..width).collect::<Vec<_>>(), vec![width - 1]] {
+            let per_row: Vec<i64> = (0..n).flat_map(|r| cols.iter().map(move |&c| (r, c))).map(|(r, c)| source.value(r, c)).collect();
+            let mut passed = Vec::new();
+            source.for_rows(&cols, &mut |r, row| {
+                assert_eq!(r, passed.len() / cols.len(), "{name}: rows in order");
+                passed.extend_from_slice(row);
+            });
+            assert_eq!(passed, per_row, "{name} {cols:?}: for_rows");
+            let mut all = Vec::new();
+            source.rows_of(&cols, &mut all);
+            assert_eq!(all, per_row, "{name} {cols:?}: rows_of");
+        }
+        // Each row's document (`documents_of`) is its column's value's high bits, for every column.
+        for c in 0..width {
+            let per_row: Vec<(usize, i64)> = (0..n).map(|r| (r, source.value(r, c))).map(|(r, v)| (r, if v >= 1 << 32 { v >> 32 } else { v })).collect();
+            let mut docs = Vec::new();
+            source.documents_of(c, &mut |r, d| docs.push((r, d)));
+            assert_eq!(docs, per_row, "{name} column {c}: documents_of");
+        }
         for (c, eqs) in (0..width).flat_map(|c| {
             let (a, b) = (source.value(n / 3, c), source.value(n - 1, c));
             let pair = if width > 1 { vec![(c, a), ((c + 1) % width, source.value(n / 3, (c + 1) % width))] } else { vec![(c, a)] };
@@ -544,15 +565,15 @@ fn within_holds_exactly_the_contained_pairs() {
     let id = |r: usize| batch.id(r);
     // Borrow the demanded columns once, as a bulk consumer does. Keep lazy initialization
     // out of the exhaustive reference loop; that loop checks the relation, not setup cost.
-    let axes: Vec<(&[u32], &[u32])> = batch.docs.iter().map(|p| (p.sizes(), p.depths())).collect();
+    let axes: Vec<Vec<u32>> = batch.docs.iter().map(|p| p.places().map(|(_, _, d)| d).collect()).collect();
     // (document, local, size, depth, start, end) of node row r.
     // Read once: the reference loop below visits every pair.
     let rows: Vec<_> = (0..nodes)
         .map(|r| {
             let doc = batch.nodes.partition_point(|&o| o <= r) - 1;
             let (p, local) = (&batch.docs[doc], r - batch.nodes[doc]);
-            let (start, end) = p.facts.span(p.core[local]);
-            (p.key, local, axes[doc].0[local] as usize, axes[doc].1[local] as usize, start, end)
+            let (start, end) = p.facts.span(p.node(local as u32));
+            (p.key, local, p.size(local) as usize, axes[doc][local] as usize, start, end)
         })
         .collect();
     let at = |r: usize| rows[r];
@@ -593,6 +614,13 @@ fn within_holds_exactly_the_contained_pairs() {
             assert_eq!(rows(within.lookup(0, &ids).unwrap()), expected);
             assert_eq!(rows(within.lookup(1, &ids).unwrap()), expected);
             assert_eq!(rows((0..within.len()).collect()), expected);
+            // Each pair's documents (`documents_of`) are its ids' high bits.
+            for c in 0..2 {
+                let mut docs = Vec::new();
+                within.documents_of(c, &mut |r, d| docs.push((r, d)));
+                let read: Vec<(usize, i64)> = (0..within.len()).map(|r| (r, within.value(r, c))).map(|(r, v)| (r, if v >= 1 << 32 { v >> 32 } else { v })).collect();
+                assert_eq!(docs, read, "column {c}: documents_of");
+            }
             // Each node's containers are made once: the inner side's rows are exactly the pairs.
             assert_eq!(within.lookup(0, &ids).unwrap().len(), expected.len());
             let own = usize::from(mode == within::Mode::Span);
@@ -640,7 +668,7 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
     };
     let kind = |r: usize| {
         let (p, local) = batch.locate(View::Node, r);
-        let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(p.core[local]));
+        let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(p.node(local as u32)));
         i64::from(kind_atom(p.tag, batch.dialects[p.tag].canonical.get(usize::from(code)).copied().unwrap_or(code)))
     };
     // Nested kinds: the root's, and two from inside the documents; and every kind of broken.py's nodes, ERROR's
@@ -859,32 +887,28 @@ fn candidate_demands_preserve_document_scope_and_receiver_independence() {
 }
 
 #[test]
-fn projection_axes_and_token_spans_are_demanded_without_renumbering() {
+fn projection_axes_and_token_spans_are_read_without_renumbering() {
     let f = facts("a.py", "f(a + 1)\ng(b)\n");
     let dialect = Dialect::new(tape_tag(GrammarDialect::Python).unwrap()).unwrap();
     let p = Projected::new(7, Arc::clone(&f), Some(&dialect), Shape::Core, false, None);
-    // `core` is exactly its nodes: the walk's spare room was given back to the block (`Cells::build`).
-    assert_eq!(p.core.len(), p.local.iter().filter(|&&l| l != NONE).count());
-    assert!(p.idx.get().is_none() && p.size.get().is_none() && p.depth.get().is_none() && p.fielded.get().is_none());
-    assert!(p.extra.as_ref().unwrap().token_spans.get().is_none());
-    // Independent eager reference: tokens grouped by the named parent's preorder, then source and lines.
+    // Independent eager reference: the named nodes' tokens in preorder (by start: they do not overlap), then source
+    // and lines.
     let mut expected = Vec::new();
-    for &id in p.core.iter() {
+    for (_, id) in p.nodes() {
         for c in f.children(id) {
             if !f.named(c) && f.end(c) > f.start(c) { expected.push([f.start(c), f.end(c)]); }
         }
     }
+    expected.sort_unstable();
     let tokens = expected.len();
     expected.push([0,f.source.len() as u32]);
     let lines = core_rr::Lines::new(&f.source,true);
     expected.extend((1..=lines.count()).map(|l|lines.span(l)));
     assert_eq!(p.extra.as_ref().unwrap().tokens as usize,tokens);
     assert_eq!(p.locs(),p.len()+expected.len() as u32);
-    // Counting and source/line access never allocate token spans.
     for i in tokens..expected.len() { assert_eq!(p.span(p.len()+i as u32),expected[i]); }
-    assert!(p.extra.as_ref().unwrap().token_spans.get().is_none());
     for (i,&span) in expected.iter().enumerate() { assert_eq!(p.span(p.len()+i as u32),span); }
-    for l in 0..p.core.len() {
+    for l in 0..(p.len() as usize) {
         let parent=p.parent(l);
         if l==0 { assert_eq!(parent,NONE); }
         else {
@@ -894,10 +918,13 @@ fn projection_axes_and_token_spans_are_demanded_without_renumbering() {
         let mut depth=0;let mut up=parent;
         while up!=NONE { depth+=1;up=p.parent(up as usize); }
         assert_eq!(p.depth(l),depth);
-        let subtree_end=f.subtree_end(p.core[l]);
-        assert_eq!(p.size(l),p.core[l+1..].iter().filter(|&&id|id<subtree_end).count() as u32);
+        let subtree_end=f.subtree_end(p.node(l as u32));
+        assert_eq!(p.size(l),p.nodes().skip(l+1).filter(|&(_,id)|id<subtree_end).count() as u32);
     }
-    assert!(p.fielded.get().is_none(),"reading other axes must not build field rows");
+    // The `field` view's rows: the nodes below the root under a field, in order, from the rank index.
+    let fielded: Vec<u32> = p.nodes().skip(1).filter(|&(_, x)| f.field(x) != 0).map(|(l, _)| l).collect();
+    assert!(!fielded.is_empty());
+    assert_eq!((0..p.fielded()).map(|i| p.fielded_local(i)).collect::<Vec<_>>(), fielded);
 }
 
 /// `Extra`'s span ids (`granules::ExtraSpan`) never equal a node's or a position's: each kind's slots are neither the
@@ -998,7 +1025,7 @@ fn leaf_ids(label: &str, path: &str, source: &str) -> (BTreeSet<(String, i64)>, 
     let dialect = Dialect::new(core::facts_tag(&d.facts)).unwrap();
     let p = Projected::new(d.key, Arc::clone(&d.facts), Some(&dialect), Shape::Core, false, None);
     let f = &*d.facts;
-    let leaves = (0..p.len()).map(|l| (f.text(p.core[l as usize]).to_owned(), p.global(l))).collect();
+    let leaves = (0..p.len()).map(|l| (f.text(p.node(l as u32)).to_owned(), p.global(l))).collect();
     (leaves, p)
 }
 
@@ -1096,7 +1123,7 @@ fn node_order_keys_follow_preorder_and_keep_other_granules() {
         let (_, p) = leaf_ids("python", "a.py", source);
         let ascending = (1..p.len()).all(|l| p.order(l - 1) < p.order(l));
         let f = &*p.facts;
-        let leaves: BTreeSet<(String, i64, u32)> = (0..p.len()).filter(|&l| f.children(p.core[l as usize]).is_empty()).map(|l| (f.text(p.core[l as usize]).to_owned(), p.global(l), p.order(l))).collect();
+        let leaves: BTreeSet<(String, i64, u32)> = (0..p.len()).filter(|&l| f.children(p.node(l as u32)).is_empty()).map(|l| (f.text(p.node(l as u32)).to_owned(), p.global(l), p.order(l))).collect();
         assert!((0..p.len()).all(|l| p.local_of_order(p.order(l)) == Some(l)), "a key does not map back");
         (ascending, leaves)
     };
@@ -1174,12 +1201,12 @@ fn definition_ids_census() {
                         let p = Projected::new(1, Arc::clone(&facts), Some(&dialect), Shape::Core, false, None);
                         row.parse += cpu_now() - t_parse;
                         let f = &*facts;
-                        let tokens: Vec<u32> = p.core.iter().enumerate().flat_map(|(l, &id)| f.children(id).into_iter().filter(|&c| !f.named(c) && f.end(c) > f.start(c)).map(move |_| l as u32)).collect();
+                        let tokens: Vec<u32> = p.nodes().flat_map(|(l, id)| f.children(id).into_iter().filter(|&c| !f.named(c) && f.end(c) > f.start(c)).map(move |_| l as u32)).collect();
                         let t0 = cpu_now();
-                        let _ = granules::number(&p, &dialect, &tokens, &mut vec![0; p.core.len() + tokens.len()]);
+                        let _ = granules::number(&p, &dialect, &tokens, None);
                         row.cpu += cpu_now() - t0;
                         let (g, cont, biggest, fold) = granules::census(&p, &dialect, &tokens);
-                        row.nodes += p.core.len() + tokens.len();
+                        row.nodes += (p.len() as usize) + tokens.len();
                         if g > row.granules.iter().copied().max().unwrap_or(0) {
                             row.most_at = path.display().to_string();
                         }
@@ -1381,7 +1408,7 @@ fn node_order_keys_census() {
         let (_, p) = leaf_ids("python", "a.py", &src);
         let dialect = Dialect::new(core::facts_tag(&p.facts)).unwrap();
         let of = granules::granule_of(&p, &dialect);
-        let n = p.core.len();
+        let n = p.len() as usize;
         let mut pre = BTreeSet::new();
         let mut runs = BTreeSet::new();
         let mut ids = BTreeSet::new();
@@ -1495,7 +1522,10 @@ fn definition_ids_are_pinned() {
         }
     }
     let got: String = h.finalize()[..16].iter().map(|b| format!("{b:02x}")).collect();
-    assert_eq!(got, "f280acef04fbe4f44e98f401f7f7d4f8", "the definition ids moved");
+    // Moved once by decision 0353 step 2: a granule's tokens are numbered in preorder of the tokens, not by their
+    // nodes' order, so the granule table counts them off a rank index (was f280acef04fbe4f44e98f401f7f7d4f8; the
+    // nodes' and spans' ids are unchanged).
+    assert_eq!(got, "a181683bc9d837ac82beba26e6ff7057", "the definition ids moved");
 }
 
 /// What a kind is to the granules (a definition, a wrapper, a body, a container's owner) is a table by kind code,
@@ -1516,4 +1546,298 @@ fn granule_kinds_are_a_table_by_kind_code() {
         }
         assert!(seen > 0, "{label}: no kind starts or holds a granule");
     }
+}
+
+/// Decision 0353 step 2: the granule table answers every node's and token's id, equal to `DefIds::low`'s, in formats
+/// 15, 16 and 16z, in both shapes, for every language with a granule rule and a document folded past the slots;
+/// `Table::node` inverts it; the scan gives the same ids in preorder; and no other tape node has one.
+#[test]
+fn node_ids_in_place_equal_the_numbered_ones() {
+    use crate::code_rule_dsl::lines::{LineTable, Terminators};
+    use crate::code_rule_dsl::tape::{Grammar, TapeImage, formats::Format};
+    use ranks::Item;
+    if !definition_ids() {
+        return;
+    }
+    let many: String = (0..17_000).map(|i| format!("def f{i}():\n    return {i}\n")).collect();
+    let cases: &[(&str, &str)] = &[
+        ("python", "if a is not b and c not in d:\n    pass\n"),
+        ("python", "import os\nX = 1\n\n# c\n@dec\ndef f(a, b=2):\n    '''doc'''\n    return [x for x in a if x]  # t\n\nclass C(B):\n    y: int = 3\n    def m(self):\n        def inner():\n            pass\n        return inner\n\nif X:\n    print(f(1))\n"),
+        ("python", &many),
+        ("typescript", "import { a } from 'b';\nexport const App = () => 1;\nclass K { x = 1; m(): number { return this.x; } }\ninterface I { y: string }\nfunction g(n: number) { if (n) { return n; } }\n"),
+        ("tsx", "export function A() { return <div className=\"x\">{[1].map(v => <B key={v} />)}</div>; }\nconst y = 2;\n"),
+        ("javascript", "const a = 1;\nexport default class Z extends Y { static s = 1; get g() { return 1 } }\nfunction* h() { yield 1 }\n"),
+        ("rust", "use std::fmt;\nconst N: u32 = 1;\nstruct S { a: u32 }\nimpl fmt::Display for S {\n    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result { write!(f, \"{}\", self.a) }\n}\nmod m { pub fn g() -> u32 { 1 } }\nfn main() { let x = S { a: N }; println!(\"{x}\"); }\n"),
+        ("php", "<?php\nnamespace N;\nuse A\\B;\nclass C { private $p = 1; public function m() { return $this->p; } }\nfunction g($x) { return $x + 1; }\n"),
+        ("sql", "CREATE TABLE t (a int, b text);\nCREATE VIEW v AS SELECT a FROM t WHERE b = 'x';\nSELECT 1;\n"),
+    ];
+    let mut narrower = 0;
+    for &(label, source) in cases {
+        let lang = dialect_by_label(label).unwrap_or_else(|| panic!("no dialect {label}"));
+        let grammar = Grammar::new(lang).unwrap();
+        let source = Arc::new(source.to_owned());
+        let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
+        for format in Format::ALL {
+            let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
+            let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image.clone().in_format(format, source.as_bytes()), lines).unwrap());
+            let f = &*facts;
+            let dialect = Dialect::new(core::facts_tag(f)).unwrap();
+            // Whole, and narrowed to anchors (the root and each outermost anchor's subtree, as `node_anchors` asks).
+            let anchors: BTreeSet<String> = ["call", "call_expression", "function_definition", "function_item", "function_declaration", "method_definition", "class_declaration", "member_expression", "binary_expression", "select_statement"].iter().map(|s| (*s).to_owned()).collect();
+            for (shape, narrowed) in [(Shape::Core, false), (Shape::T, false), (Shape::Core, true)] {
+                let p = if narrowed {
+                    Projected::anchored(1, Arc::clone(&facts), Some(&dialect), shape, &anchors)
+                } else {
+                    Projected::new(1, Arc::clone(&facts), Some(&dialect), shape, false, None)
+                };
+                // The walk's parents (one pass, no tape parent read) are `parent`'s.
+                for (l, _, q) in p.walk() {
+                    assert_eq!(q, p.parent(l as usize), "{label} {format:?} {shape:?}: the parent of local {l}");
+                }
+                // A parent searched from the innermost granule holding the node is the tape's (`Tape::parent_within`).
+                if let Some(t) = p.table() {
+                    for x in 1..f.len() as u32 {
+                        assert_eq!(f.parent_within(x, t.holding(x)), f.parent(x), "{label} {format:?} {shape:?}: tape node {x}'s parent");
+                    }
+                }
+                // A node's place among its parent's children and its depth, read off the tape (decision 0353 step 3),
+                // are the walk's.
+                let (mut next, mut depth) = (vec![0u32; p.len() as usize], vec![0u32; p.len() as usize]);
+                for (l, _, q) in p.walk().skip(1) {
+                    assert_eq!(p.idx(l as usize), next[q as usize], "{label} {format:?} {shape:?}: the place of local {l}");
+                    next[q as usize] += 1;
+                    depth[l as usize] = depth[q as usize] + 1;
+                    assert_eq!(p.depth(l as usize), depth[l as usize], "{label} {format:?} {shape:?}: the depth of local {l}");
+                }
+                // `next_sibling` (a view, decision 0353 step 3): its pairs are each numbered node's numbered direct
+                // children, consecutive, as core.rr's rows were made; each read both ways off the tape.
+                let mut pairs = Vec::new();
+                for (_, x) in p.nodes() {
+                    let mut prev = None;
+                    for c in p.children_of_node(x) {
+                        pairs.extend(prev.map(|a| (a, c)));
+                        prev = Some(c);
+                    }
+                }
+                pairs.sort_unstable();
+                let mut read: Vec<(u32, u32)> = p.ranks().iter(Item::Sibling).map(|(_, x)| {
+                    let b = p.ranks().rank(Item::Node, x);
+                    (p.prev_sibling(b).expect("a sibling before"), b)
+                }).collect();
+                read.sort_unstable();
+                assert_eq!(read, pairs, "{label} {format:?} {shape:?} {narrowed}: next_sibling's pairs");
+                let after: HashMap<u32, u32> = pairs.iter().copied().collect();
+                for l in 0..p.len() {
+                    assert_eq!(p.next_sibling(l), after.get(&l).copied(), "{label} {format:?} {shape:?} {narrowed}: the sibling after local {l}");
+                }
+                let reference = p.reference(&dialect);
+                let low = &reference.low[..];
+                let table = p.table().expect("ids by definition");
+                let at = format!("{label} {} {shape:?}{}", format.name(), if narrowed { " narrowed" } else { "" });
+                if narrowed && p.len() > 1 && p.len() < Projected::new(1, Arc::clone(&facts), Some(&dialect), shape, false, None).len() {
+                    narrower += 1;
+                }
+                // Every item the projection numbers, by tape node: nodes, then (Core) tokens in preorder.
+                let mut want: Vec<(u32, u32, Item)> = p.nodes().map(|(l, x)| (x, low[l as usize], Item::Node)).collect();
+                if shape == Shape::Core {
+                    want.extend(p.token_order().into_iter().enumerate().map(|(i, (x, _))| (x, low[(p.len() as usize) + i], Item::Token)));
+                }
+                assert_eq!(want.len(), low.len(), "{at}: an id for each node and token");
+                let by_node: HashMap<u32, (u32, Item)> = want.iter().map(|&(x, low, item)| (x, (low, item))).collect();
+                for x in 0..f.len() as u32 {
+                    assert_eq!(table.id(p.ranks(), x), by_node.get(&x).copied(), "{at}: tape node {x} ({})", dialect.name(f, x));
+                }
+                for &(x, low, item) in &want {
+                    assert_eq!(table.node(p.ranks(), low), Some((x, item)), "{at}: the node of {low:#x}");
+                }
+                let mut scanned = Vec::new();
+                table.scan(p.ranks(), |x, low, item| scanned.push((x, low, item)));
+                want.sort_unstable();
+                assert_eq!(scanned, want, "{at}: the scan");
+                // The projection's reads: each node's and token's id, and back; each node's order key, and back.
+                let tokens = p.ranks().count(Item::Token);
+                for l in 0..p.len() + tokens {
+                    assert_eq!(p.global(l), 1 << 32 | i64::from(low[l as usize]), "{at}: the id of local {l}");
+                    assert_eq!(p.local_of(low[l as usize]), Some(l), "{at}: the local of {:#x}", low[l as usize]);
+                }
+                // The passes' ids (one walk each) are the point reads'.
+                let walked: Vec<(u32, i64)> = p.node_ids().chain(p.token_ids()).map(|(l, _, n)| (l, n)).collect();
+                assert_eq!(walked, (0..p.len() + tokens).map(|l| (l, p.global(l))).collect::<Vec<_>>(), "{at}: node_ids, token_ids");
+                assert_eq!(p.loc_ids().collect::<Vec<_>>(), (0..p.locs()).map(|l| (l, p.global(l))).collect::<Vec<_>>(), "{at}: loc_ids");
+                for (l, x) in p.nodes() {
+                    assert_eq!(table.order(p.ranks(), x), Some(reference.order[l as usize]), "{at}: the order key of tape node {x}");
+                    assert_eq!(p.order(l), reference.order[l as usize], "{at}: the order key of local {l}");
+                    assert_eq!(p.local_of_order(reference.order[l as usize]), Some(l), "{at}: the node of order key {:#x}", reference.order[l as usize]);
+                }
+                // The rank index's point reads (written once, `id_reads`) agree with its walk over the set bits.
+                let r = p.ranks();
+                for item in [Item::Node, Item::Token, Item::Field, Item::Sibling] {
+                    let walked: Vec<(u32, u32)> = r.iter(item).collect();
+                    assert_eq!(walked.len() as u32, r.count(item), "{at}: {item:?}'s count");
+                    let set: HashMap<u32, u32> = walked.iter().map(|&(k, x)| (x, k)).collect();
+                    for &(k, x) in &walked {
+                        assert_eq!(r.select(item, k), Some(x), "{at}: select {item:?} {k}");
+                    }
+                    assert_eq!(r.select(item, r.count(item)), None, "{at}: select past {item:?}'s last");
+                    let mut before = 0;
+                    for x in 0..f.len() as u32 + 64 {
+                        assert_eq!(r.rank(item, x), before, "{at}: rank {item:?} {x}");
+                        assert_eq!(r.is(item, x), set.contains_key(&x), "{at}: is {item:?} {x}");
+                        before += u32::from(set.contains_key(&x));
+                    }
+                }
+                // Lows that are no item's have no number; order keys past the last have no node.
+                for bad in [u32::MAX, 0x7fff_ffff] {
+                    assert_eq!(table.number_of(r, bad), None, "{at}: the number of {bad:#x}");
+                    assert_eq!(table.number_of_order(r, bad), None, "{at}: the node of order key {bad:#x}");
+                }
+            }
+        }
+    }
+    assert!(narrower >= 6, "anchored projections narrower than the whole: {narrower}");
+}
+
+/// An axis's row count is counted from the tree, without its batch's solve: a guest round digests each input by its
+/// length, and the solve, every node's chain of member ancestors as pairs, was made for that count alone (780 MB of
+/// a PostHog run's 2.5 GB peak). A scan over `0..len` still reads every pair, solved then.
+#[test]
+fn an_axis_counts_its_rows_without_its_solve() {
+    use crate::code_rule_dsl::facts::core::kind_atom;
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let store = ContentStore::open(&temp("axes-len")).unwrap();
+    let docs: Vec<Document> = documents().into_iter().take(4).collect();
+    let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
+    let nodes = *batch.nodes.last().unwrap();
+    let kind = |r: usize| {
+        let (p, local) = batch.locate(View::Node, r);
+        let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(p.node(local as u32)));
+        i64::from(kind_atom(p.tag, batch.dialects[p.tag].canonical.get(usize::from(code)).copied().unwrap_or(code)))
+    };
+    let set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();
+    let sources = [
+        ("containment", within::Within::new(Arc::clone(&batch), within::Mode::Tree)),
+        ("nearest", within::Within::axis(Arc::clone(&batch), within::Axis::Nearest, &set, Binding::Cpu)),
+        ("inside", within::Within::axis(Arc::clone(&batch), within::Axis::Inside, &set, Binding::Cpu)),
+    ];
+    // The last two documents' nodes, as a guest round's new documents (`retain::owners_delta`).
+    let new_from = batch.nodes[2];
+    let new_ids: BTreeSet<i64> = (new_from..nodes).map(|r| batch.id(r)).collect();
+    for (name, source) in sources {
+        let len = source.len();
+        assert!(len > 0, "{name}");
+        assert!(!source.is_solved(), "{name}: counted without its solve");
+        let owned: BTreeSet<(i64, i64)> = source.rows_owned(0, &|n| new_ids.contains(&n)).expect("a batch's view finds a document's rows").into_iter().map(|r| (source.value(r, 0), source.value(r, 1))).collect();
+        assert!(!source.is_solved(), "{name}: the new documents' rows found without its solve");
+        let scanned: BTreeSet<(i64, i64)> = (0..len).map(|r| (source.value(r, 0), source.value(r, 1))).collect();
+        assert!(!owned.is_empty(), "{name}");
+        assert_eq!(owned, scanned.iter().filter(|(n, _)| new_ids.contains(n)).copied().collect(), "{name}: exactly the new documents' rows");
+        assert_eq!(scanned.len(), len, "{name}: a scan reads every pair once");
+        assert!(source.is_solved(), "{name}: solved by the scan");
+        assert_eq!(source.len(), len, "{name}");
+    }
+}
+
+/// Decision 0353 step 2: the numbering's reads as MSL (`id_reads.metal`, written once in CLIF), run on the device
+/// over a projection's descriptor where it lies in its block, answer what the host's reads (their Rust) answer: for
+/// every tape node, its bit and ranks, the selects, the ids' low bits of nodes and tokens and back, and the order keys
+/// and back. In all three formats, whole and narrowed, a document of more nodes than a granule's slot holds.
+#[cfg(target_os = "macos")]
+#[test]
+fn the_kernels_id_reads_are_the_hosts() {
+    use crate::code_rule_dsl::lines::{LineTable, Terminators};
+    use crate::code_rule_dsl::tape::{Grammar, TapeImage, formats::Format};
+    use metal::{CompileOptions, Device, MTLResourceOptions, MTLSize};
+    if !definition_ids() {
+        return;
+    }
+    let Some(device) = Device::system_default() else { return };
+    const WIDE: usize = 12;
+    const KERNEL: &str = r#"
+kernel void ids_probe(device const uchar* b [[buffer(0)]], constant ulong& d [[buffer(1)]], constant uint& n [[buffer(2)]],
+                      device uint* out [[buffer(3)]], uint x [[thread_position_in_grid]]) {
+    if (x >= n) return;
+    device uint* o = out + x * 12u;
+    o[0] = clif_num_is(b, d, 0u, x);
+    o[1] = clif_num_rank(b, d, 0u, x);
+    o[2] = clif_num_rank(b, d, 1u, x);
+    o[3] = clif_num_select(b, d, 0u, x);
+    o[4] = clif_num_select(b, d, 1u, x);
+    o[5] = clif_num_low_of(b, d, 0u, x);
+    o[6] = clif_num_low_of(b, d, 1u, x);
+    o[7] = clif_num_order_of(b, d, x);
+    ulong k = clif_num_number_of(b, d, o[5]);
+    o[8] = uint(k); o[9] = uint(k >> 32);
+    o[10] = clif_num_number_of_order(b, d, o[7]);
+    o[11] = clif_num_is(b, d, 2u, x);
+}
+"#;
+    let lib = device.new_library_with_source(&format!("#include <metal_stdlib>\nusing namespace metal;\n{}{KERNEL}", include_str!("id_reads.metal")), &CompileOptions::new()).expect("the id reads compile");
+    let pipe = device.new_compute_pipeline_state_with_function(&lib.get_function("ids_probe", None).unwrap()).unwrap();
+    let queue = device.new_command_queue();
+    let many: String = (0..17_000).map(|i| format!("def f{i}():\n    return {i}\n")).collect();
+    let cases: &[(&str, &str)] = &[
+        ("python", "import os\nX = 1\n@dec\ndef f(a, b=2):\n    '''doc'''\n    return [x for x in a if x]\n\nclass C(B):\n    def m(self):\n        def inner():\n            pass\n        return inner\n"),
+        ("python", &many),
+        ("typescript", "import { a } from 'b';\nexport const App = () => 1;\nclass K { x = 1; m(): number { return this.x; } }\nfunction g(n: number) { if (n) { return n; } }\n"),
+    ];
+    let anchors: BTreeSet<String> = ["call", "call_expression", "function_definition", "method_definition", "class_declaration"].iter().map(|s| (*s).to_owned()).collect();
+    let mut tried = 0;
+    for &(label, source) in cases {
+        let lang = dialect_by_label(label).unwrap();
+        let grammar = Grammar::new(lang).unwrap();
+        let source = Arc::new(source.to_owned());
+        let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
+        for format in Format::ALL {
+            let lines = Arc::new(LineTable::new(&source, Terminators::of(lang)));
+            let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image.clone().in_format(format, source.as_bytes()), lines).unwrap());
+            let dialect = Dialect::new(core::facts_tag(&facts)).unwrap();
+            for (shape, narrowed) in [(Shape::Core, false), (Shape::T, false), (Shape::Core, true)] {
+                let p = if narrowed { Projected::anchored(1, Arc::clone(&facts), Some(&dialect), shape, &anchors) } else { Projected::new(1, Arc::clone(&facts), Some(&dialect), shape, false, None) };
+                let at = format!("{label} {} {shape:?}{}", format.name(), if narrowed { " narrowed" } else { "" });
+                let r = p.ranks();
+                let block = r.block();
+                let d = block.offset_of(r.desc()) as u64;
+                let n = facts.len() as u32 + 64;
+                let out = device.new_buffer(u64::from(n) * WIDE as u64 * 4, MTLResourceOptions::StorageModeShared);
+                let cmd = queue.new_command_buffer();
+                let enc = cmd.new_compute_command_encoder();
+                enc.set_compute_pipeline_state(&pipe);
+                enc.set_buffer(0, Some(&block.gpu_buffer(&device)), 0);
+                enc.set_bytes(1, 8, (&raw const d).cast());
+                enc.set_bytes(2, 4, (&raw const n).cast());
+                enc.set_buffer(3, Some(&out), 0);
+                enc.dispatch_threads(MTLSize::new(u64::from(n), 1, 1), MTLSize::new(64, 1, 1));
+                enc.end_encoding();
+                cmd.commit();
+                cmd.wait_until_completed();
+                // SAFETY: the kernel wrote WIDE u32s a node, and its command completed.
+                let got = unsafe { std::slice::from_raw_parts(out.contents().cast::<u32>(), n as usize * WIDE) };
+                let h = r.desc();
+                for x in 0..n {
+                    // SAFETY: the projection's live descriptor.
+                    let want: [u32; WIDE] = unsafe {
+                        let (low0, order) = (id_reads::num_low_of(h, 0, x), id_reads::num_order_of(h, x));
+                        let k = id_reads::num_number_of(h, low0);
+                        [
+                            id_reads::num_is(h, 0, x),
+                            id_reads::num_rank(h, 0, x),
+                            id_reads::num_rank(h, 1, x),
+                            id_reads::num_select(h, 0, x),
+                            id_reads::num_select(h, 1, x),
+                            low0,
+                            id_reads::num_low_of(h, 1, x),
+                            order,
+                            k as u32,
+                            (k >> 32) as u32,
+                            id_reads::num_number_of_order(h, order),
+                            id_reads::num_is(h, 2, x),
+                        ]
+                    };
+                    assert_eq!(&got[x as usize * WIDE..][..WIDE], &want, "{at}: tape node {x}");
+                }
+                tried += 1;
+            }
+        }
+    }
+    assert_eq!(tried, 3 * 3 * 3, "every case, format and shape");
 }

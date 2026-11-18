@@ -2237,9 +2237,13 @@ fn shown_row(values: &[&str]) -> Vec<String> {
 
 /// A run of `rule` over `files`, its outputs read by `read`.
 fn guests_run_with<T>(name: &str, files: &[(&str, &str)], rule: &str, read: impl FnOnce(&crate::code_rule_dsl::logic::plan::output::Outputs) -> T) -> T {
+    // The languages, as the library's load installs them where a load hook runs (a runner with none installs them
+    // at the first store it opens, after the program is lowered).
+    crate::install_store_functions();
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
     std::fs::create_dir_all(&dir).unwrap();
     for (path, text) in files {
+        std::fs::create_dir_all(dir.join(path).parent().unwrap()).unwrap();
         std::fs::write(dir.join(path), text).unwrap();
     }
     let path = dir.join("g.rr");
@@ -2288,6 +2292,26 @@ roots(k) :- kind(s, "string"), parsed(s, "annotation", r), kind(r, k).
     assert_eq!(nested, [["Baz", "6", "9"]]);
     assert!(!names.iter().any(|n| n[0].starts_with("Baz")), "{names:?}");
     assert!(!names.iter().any(|n| n[0].starts_with("Nope")), "{names:?}");
+}
+
+/// A guest is made in a wave, where no run reads the store (decision 0104), so no later process reads its tape: a run
+/// stores none, and its own collection has none to delete (Q30). The host's source is stored; the annotation's text,
+/// parsed as a guest (wrapped: `(List[int])`), is not.
+#[test]
+fn a_run_stores_no_source_of_its_guests() {
+    use sha2::Digest as _;
+    let py = "x: \"List[int]\" = []\n";
+    let rule = r#"
+.decl ident(x: symbol)
+ident(x) :- kind(s, "string"), parsed(s, "annotation", _), guest(g, _, s, _), node(g, i, "identifier", _, _), text(i, x).
+.output ident
+"#;
+    let [names] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("no-guest-sources", &[("a.py", py)], rule, &["ident"])).unwrap();
+    assert!(names.contains(&shown_row(&["List"])), "the guest was made: {names:?}");
+    let store = crate::content_store::ContentStore::open(&crate::code_rule_dsl::logic::plan::corpus::tape_cache_path().unwrap()).unwrap();
+    let key = |t: &str| crate::content_store::HashKey::from_sha256_digest(sha2::Sha256::digest(t.as_bytes()).into());
+    assert!(store.source_by_hash(key(py)).unwrap().is_some(), "the host's source is stored");
+    assert!(store.source_by_hash(key("(List[int])")).unwrap().is_none(), "the guest's source is not");
 }
 
 /// `.on guest_error`: a guest that does not parse is withheld (skip, the default) or keeps its partial tree, and
@@ -3552,7 +3576,19 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
                 }
             }
             let kept = p.rules.clone();
-            let mask = |s: &str| helper.replace_all(&fresh.replace_all(s, "rr_${1}#_$3"), "rr_$1#$3").into_owned();
+            // A desugared clause's variables (`k_rr_d117_4`, renamed apart `t_rr_d699_3_f258`) are numbered by the
+            // clauses before it too, inside a variable's name where `helper` sees no word boundary.
+            let desugared = regex::Regex::new(r"rr_d[0-9]+_([0-9]+)(?:_([ft])[0-9]+)?").unwrap();
+            // And a fresh variable's number before it (`rr_text20_rr_d#_0`).
+            let fresh_desugared = regex::Regex::new(r"\brr_([a-z_]*[a-z])[0-9]+_rr_d#").unwrap();
+            let mask = |s: &str| {
+                let s = desugared.replace_all(s, |c: &regex::Captures| match c.get(2) {
+                    Some(k) => format!("rr_d#_{}_{}#", &c[1], k.as_str()),
+                    None => format!("rr_d#_{}", &c[1]),
+                });
+                let s = fresh_desugared.replace_all(&s, "rr_${1}#_rr_d#");
+                helper.replace_all(&fresh.replace_all(&s, "rr_${1}#_$3"), "rr_$1#$3").into_owned()
+            };
             // A violation's rule for `@place` values (`rr_v0 < -1`) is made when any rule of the program makes one
             // (`lower`'s `place_values`): an unreached clause made it for the whole program, where no reached
             // rule makes the value it reads.
@@ -3577,8 +3613,10 @@ fn dropping_unreached_clauses_in(dirs: &[&str], skip: &[&str], part: (usize, usi
             facts.sort();
             // The inputs the rules read: the lowering declares one (`node_order`, `rr_inside_<set>`) for each clause
             // that reads it, and an unreached clause's stays among the inputs after `prune`, read by none.
-            let text = format!("{:?}{:?}", p.rules, p.natives);
-            let mut inputs: Vec<String> = p.inputs.iter().filter(|i| text.contains(&format!("\"{i}\""))).cloned().collect();
+            // Read by an atom of a rule, or named by a native: a string of a rule (Python's field `"value"`) is no read.
+            let native_text = format!("{:?}", p.natives);
+            let read: BTreeSet<&str> = p.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom).map(|a| a.rel.as_str())).collect();
+            let mut inputs: Vec<String> = p.inputs.iter().filter(|i| read.contains(i.as_str()) || native_text.contains(&format!("\"{i}\""))).cloned().collect();
             inputs.sort();
             let mut outputs = p.outputs.clone();
             outputs.sort();
@@ -3761,7 +3799,11 @@ fn library_modules_link_to_the_lowering_of_them_together() {
         let modules = library_modules(&paths, files).unwrap_or_else(|e| panic!("{}: {e}", dir.display()));
         // Each module read back from its image (decision 0246 §6) links to the same program.
         let images: Vec<lower::Module> = modules.iter().map(|m| module_image::decode(&module_image::encode(m).unwrap()).unwrap_or_else(|e| panic!("{}: a module image: {e}", dir.display()))).collect();
+        // And linked on versions from the images (decision 0377): the program the tree's link makes.
+        let on_versions = super::link_library_versions(images.clone()).unwrap_or_else(|e| panic!("{}: linked on versions: {e}", dir.display()));
         let linked = lower::link(modules).unwrap();
+        let tree = crate::code_rule_dsl::logic::program_image::Builder::of_program_less_maintenance(&linked).unwrap().finish().unwrap().0;
+        assert_eq!((tree.size(), tree.digest()), (on_versions.size(), on_versions.digest()), "{}: the library linked on versions from its images: {}", dir.display(), crate::code_rule_dsl::logic::program_image::differences(&tree, &on_versions));
         let from_images = print(&lower::link(images).unwrap()).unwrap();
         let (a, b) = (print(&together).unwrap(), print(&linked).unwrap());
         let differ = |what: &str, a: &str, b: &str| {
@@ -3892,4 +3934,505 @@ ends(l) :- kind(n, "expression_statement"), last_token(n, t), line(t, l).
     assert_eq!(cv, ["1", "2"], "the cross-file reader's values");
     // With `value`'s round undone the program still has core.rr's shape: its token leaves are made.
     assert_eq!(ends, ["1"], "a token leaf's reader");
+}
+
+/// C's directives as facts (decision 0327, mode (a)): a rule reading `c_include`, `c_guard` or `c_define` of a path
+/// asks for the file's directives (`c_pp_file_req`), answered inside the fixpoint as a file's lines are. Only the
+/// relations the program declares are made. `h.h` is no document (a `.h` file is C++'s): it is asked for in the next
+/// wave, once `a.c`'s include names it.
+#[test]
+fn c_directives_are_answered_by_file() {
+    let rule = r#"
+.language c
+#include "c/preprocess.rr"
+.decl c_file(p: symbol)
+c_file(p) :- kind(n, "translation_unit"), docof(n, d), doc(d, p, _).
+.decl inc(p: symbol, form: symbol, s: symbol)
+inc(p, f, s) :- c_file(p), c_include(p, _, "include", f, s).
+.decl seen(p: symbol)
+seen(p) :- c_file(p).
+seen(h) :- seen(p), c_include(p, _, "include", "quote", s), h = substr(s, 1, strlen(s) - 2).
+.decl guard(p: symbol, n: symbol)
+guard(p, n) :- seen(p), c_guard(p, _, n).
+.decl macro(p: symbol, n: symbol, ps: symbol, v: symbol)
+macro(p, n, ps, v) :- seen(p), c_define(p, _, n, 1, ps, v, _, _).
+.output inc, guard, macro
+"#;
+    let a = "#include \"h.h\"\n#include <stdio.h>\n#define MAX(a, b) ((a) > (b) ? (a) : (b))\n#define LOG(fmt, ...) printf(fmt, __VA_ARGS__)\nint main(void) { return MAX(1, 2); }\n";
+    let h = "#ifndef H_H\n#define H_H\n#define \\\n  SQ(x) ((x) * (x))\nint f(int);\n#endif\n";
+    let [inc, guard, macros] = <[Vec<Vec<String>>; 3]>::try_from(guests_run("cdirectives", &[("a.c", a), ("h.h", h)], rule, &["inc", "guard", "macro"])).unwrap();
+    assert_eq!(inc, [shown_row(&["a.c", "angle", "<stdio.h>"]), shown_row(&["a.c", "quote", "\"h.h\""])]);
+    assert_eq!(guard, [shown_row(&["h.h", "H_H"])]);
+    assert_eq!(macros, [shown_row(&["a.c", "LOG", "fmt", "standard"]), shown_row(&["a.c", "MAX", "a,b", ""]), shown_row(&["h.h", "SQ", "x", ""])]);
+}
+
+/// Decision 0327, mode (b): a translation unit preprocessed under each configuration rules give it. The
+/// configurations differ by a predefined macro, which takes another branch of the unit's `#ifdef` and of a header's
+/// `#if`, and so enters another header, found by the search path (`sys`).
+#[test]
+fn c_units_are_preprocessed_under_their_configurations() {
+    let rule = r#"
+.language c
+#include "c/preprocess.rr"
+.decl c_file(p: symbol)
+c_file(p) :- kind(n, "translation_unit"), docof(n, d), doc(d, p, _).
+c_lang("on", "c", "gnu17").
+c_lang("off", "c", "gnu17").
+c_predefine("on", 0, "FAST", "1").
+c_predefine("on", 1, "LEVEL", "2").
+c_predefine("off", 1, "LEVEL", "1").
+c_include_dir(c, 0, "sys", "angle") :- c_lang(c, _, _).
+c_tu(p, c) :- c_file(p), c_lang(c, _, _).
+.decl taken(c: symbol, p: symbol, at: number, t: number)
+taken(c, p, at, t) :- c_pp_cond_taken(_, s, p, at, t), c_cfg_spec(c, s).
+.decl entered(c: symbol, p: symbol, d: number)
+entered(c, p, d) :- c_pp_included(_, s, _, _, p, d), c_cfg_spec(c, s).
+.decl read(c: symbol, p: symbol)
+read(c, p) :- c_pp_read(_, s, p), c_cfg_spec(c, s).
+.output taken, entered, read
+"#;
+    let a = "#include \"h.h\"\n#ifdef FAST\nint fast;\n#else\nint slow;\n#endif\n";
+    let h = "#if LEVEL > 1\n#include <deep.h>\n#endif\n";
+    let got = joined(guests_run("cunits", &[("a.c", a), ("h.h", h), ("sys/deep.h", "int deep;\n")], rule, &["taken", "entered", "read"]));
+    let [taken, entered, read] = <[Vec<String>; 3]>::try_from(got).unwrap();
+    assert_eq!(taken, ["off\ta.c\t15\t0", "off\ta.c\t37\t1", "off\th.h\t0\t0", "on\ta.c\t15\t1", "on\ta.c\t37\t0", "on\th.h\t0\t1"]);
+    assert_eq!(entered, ["off\th.h\t1", "on\th.h\t1", "on\tsys/deep.h\t2"]);
+    assert_eq!(read, ["off\ta.c", "off\th.h", "on\ta.c", "on\th.h", "on\tsys/deep.h"]);
+}
+
+/// Decision 0327, `c/includes.rr`: each `#include` of the files a unit reaches resolves as a driver's search does,
+/// over `dir_entry` and mode (a)'s rows. `<x.h>` is the angle directory's though the includer's directory and a
+/// system one have one too; its `#include_next` goes on to the system one; a name no search finds is unresolved.
+/// The closure is the files mode (b) enters, here where no branch is skipped.
+#[test]
+fn c_includes_resolve_by_the_search_order() {
+    let rule = r#"
+.language c
+#include "c/includes.rr"
+.decl c_file(p: symbol)
+c_file(p) :- kind(n, "translation_unit"), docof(n, d), doc(d, p, _).
+c_lang("c", "c", "gnu17").
+c_include_dir("c", 0, "sys1", "angle").
+c_include_dir("c", 0, "sys2", "system").
+c_tu(p, "c") :- c_file(p).
+.decl res(f: symbol, p: symbol)
+res(f, p) :- c_resolved(_, f, _, _, p).
+.decl unres(f: symbol, n: symbol)
+unres(f, n) :- c_unresolved(_, f, _, n).
+.decl entered(p: symbol)
+entered(p) :- c_pp_included(_, _, _, _, p, _).
+.output res, unres, entered
+"#;
+    let a = "#include \"h.h\"\n#include <x.h>\n#include <none.h>\n";
+    let files = [("a.c", a), ("h.h", ""), ("x.h", ""), ("sys1/x.h", "#include_next <x.h>\n"), ("sys2/x.h", "")];
+    let [res, unres, entered] = <[Vec<String>; 3]>::try_from(joined(guests_run("cincludes", &files, rule, &["res", "unres", "entered"]))).unwrap();
+    assert_eq!(res, ["a.c\th.h", "a.c\tsys1/x.h", "sys1/x.h\tsys2/x.h"]);
+    assert_eq!(unres, ["a.c\tnone.h"]);
+    let closure: Vec<String> = res.iter().map(|r| r.split('\t').nth(1).unwrap().to_owned()).collect();
+    assert_eq!(entered, closure);
+}
+
+/// Decision 0327: phase 1 (`sources.rr`) loads the headers a C run's units include, to the closure's fixed point, as
+/// library documents, as Python's imports are: a `.h` file is C++'s by its suffix, so no document of a C run until
+/// reached. A program that reads `sources__library` has them as its documents (`struct.rr`'s way). A header no unit
+/// includes is none.
+#[test]
+fn a_c_runs_included_headers_are_its_documents() {
+    let rule = r#"
+.language c
+.decl sources__library(p: symbol, m: symbol, g: symbol, c: symbol)
+.decl docs(p: symbol)
+docs(p) :- kind(n, "translation_unit"), docof(n, d), doc(d, p, _).
+.decl libs(m: symbol)
+libs(m) :- sources__library(_, m, "c", _).
+.output docs, libs
+"#;
+    let files = [("a.c", "#include \"inc/h.h\"\nint a;\n"), ("inc/h.h", "#include \"d.h\"\n"), ("inc/d.h", "int d;\n"), ("unused.h", "int u;\n")];
+    let [docs, libs] = <[Vec<String>; 2]>::try_from(joined(guests_run("cheaders", &files, rule, &["docs", "libs"]))).unwrap();
+    let mut docs: Vec<&str> = docs.iter().map(|p| p.rsplit(".cheaders/").next().unwrap()).collect();
+    docs.sort();
+    assert_eq!(docs, ["a.c", "inc/d.h", "inc/h.h"], "parsed, each a translation unit");
+    assert_eq!(libs, ["inc/d.h", "inc/h.h"]);
+}
+
+/// Decision 0327, `c/compile-commands.rr`: a `compile_commands.json` entry is a unit under a configuration of its
+/// own, its `command` split as a shell splits it (`-DFOO="a b"`), its options joined (`-Iinc`) or apart (`-D BAR`),
+/// a relative directory its entry's; a compiler profile gives the configuration its first macros and its own search
+/// path. Mode (b) then takes the branch the configuration decides.
+#[test]
+fn c_configurations_come_from_compile_commands_and_a_profile() {
+    let rule = r#"
+.language c
+#include "c/compile-commands.rr"
+#include "c/preprocess.rr"
+.decl pre(n: symbol, b: symbol, o: number)
+pre(n, b, o) :- c_predefine(_, o, n, b).
+.decl und(n: symbol)
+und(n) :- c_config_undef(_, _, n).
+.decl dirs(d: symbol, k: symbol)
+dirs(d, k) :- c_include_dir(_, _, d, k).
+.decl lang(t: symbol, l: symbol, s: symbol)
+lang(t, l, s) :- c_tu(t, c), c_lang(c, l, s).
+.decl taken(at: number, t: number)
+taken(at, t) :- c_pp_cond_taken(_, _, "a.c", at, t).
+.output pre, und, dirs, lang, taken
+"#;
+    let cc = r#"[{"directory": ".", "command": "cc -std=gnu11 -DFOO=\"a b\" -D BAR -UBAZ -Iinc -isystem /abs -c a.c", "file": "a.c"}]"#;
+    let profile = "#define PROF 1\n#define F(a, b) a\ndir system sys2\n";
+    let a = "#if defined(PROF) && defined(BAR)\nint ok;\n#endif\n";
+    let env = "c.compile_commands = compile_commands.json\nc.profile.c = profile.txt\n";
+    let files = [("a.c", a), ("compile_commands.json", cc), ("profile.txt", profile), ("rerail.env", env)];
+    let [pre, und, dirs, lang, taken] = <[Vec<String>; 5]>::try_from(joined(guests_run("ccommands", &files, rule, &["pre", "und", "dirs", "lang", "taken"]))).unwrap();
+    assert_eq!(pre, ["BAR\t1\t1000003", "F(a, b)\ta\t2", "FOO\ta b\t1000002", "PROF\t1\t1"]);
+    assert_eq!(und, ["BAZ"]);
+    assert_eq!(dirs, ["./inc\tangle", "/abs\tsystem", "sys2\tsystem"]);
+    assert_eq!(lang, ["a.c\tc\tgnu11"]);
+    assert_eq!(taken, ["0\t1"]);
+}
+
+/// A cone that loads nothing reads the exports its requests are keyed by: `f` (located as `f_at`, each row its
+/// document) asks for each document's lines. It was left unbound, and the planner had no statistics for it.
+#[test]
+fn a_request_keyed_by_an_export_needs_no_load() {
+    let rule = r#"
+.decl f(p: symbol)
+f(p) :- kind(n, "module"), docof(n, d), doc(d, p, _).
+.decl lines(p: symbol, i: number)
+lines(p, i) :- f(p), file_line(p, i, _), i < 2.
+.output lines
+"#;
+    let [lines] = <[Vec<Vec<String>>; 1]>::try_from(guests_run("exportkeyed", &[("a.py", "x = 1\ny = 2\n")], rule, &["lines"])).unwrap();
+    assert_eq!(lines, [shown_row(&["a.py", "1"])]);
+}
+
+/// A program that adds to an extensible library relation (`cmp_same_ask`, decision 0263) asks the library for its
+/// cone (decision 0089 §3): the library rules reading it (`cmp_same`) are copied in. The version the run reads
+/// (`lower_in_version`) is the tree's (`lower_in`).
+#[test]
+fn a_cone_copied_onto_the_version_is_the_trees() {
+    let src = "#include \"python/compare.rr\"\n.decl hit(a: node)\ncmp_same_ask(a, a) :- kind(a, \"call\").\nhit(a) :- cmp_same(a, a).\n.output hit\n";
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    // A debug build copies the tree's cone beside the version's and checks the two images agree (`lowered_in_version`).
+    assert!(cfg!(debug_assertions), "the check is a debug build's");
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
+    let heads: Vec<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).collect();
+    assert!(heads.contains(&"cmp_same"), "the cone's rules are copied: {heads:?}");
+    // The attributes on request are made again over the cone: its readers ask (decision 0174), and the library's own
+    // requests are not copied.
+    assert!(heads.contains(&"rr_value_req") && heads.contains(&"value"), "{heads:?}");
+    assert!(!heads.contains(&"dunder_all"), "a library reader of `value` outside the cone is not copied: {heads:?}");
+}
+
+/// A modular text's program is made a version before `whole()`'s tail, which runs on it (decision 0281's path, step
+/// 7b): a context in a negation's cycle (`a_context_in_a_negations_cycle_is_widened`) is widened on the version, and
+/// a debug build checks the image against the tree's tail (`link_seeded_version`).
+#[test]
+fn a_context_in_a_cycle_is_widened_on_the_version() {
+    let src = concat!(
+        "#include \"python/compare.rr\"\n",
+        ".decl e(n: node, x: symbol, s: number)\n.decl seed(n: node)\n.input e, seed\n",
+        ".decl ask(n: node)\n.decl cb(n: node)\n.output cb\n",
+        "ask(n) :- seed(n).\n",
+        "ask(m) :- cb(n), e(n, x, s), e(m, x, s).\n",
+        "cb(n) :- ask(n), count : { e(m, \"x\", _), m > n } = 0.\n",
+    );
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    assert!(cfg!(debug_assertions), "the check is a debug build's");
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
+    let ctx: Vec<String> = v.rules().filter(|r| v.rel_name(r.head().rel()).starts_with("rr_ctx")).map(|r| v.show_rule(r)).collect();
+    assert!(!ctx.is_empty() && ctx.iter().all(|r| !r.contains("ask(")), "{ctx:?}");
+}
+
+/// `whole()`'s sets run on a modular text's version (decision 0281's path, step 7b): a literal twice, a rule twice, a
+/// rule that is its own body and a fact twice are each once, or gone, as the tree's `lower::sets` makes them; a debug
+/// build checks the image against the tree's (`link_seeded_version`).
+#[test]
+fn the_lowerings_sets_are_made_on_the_version() {
+    let src = concat!(
+        "#include \"python/compare.rr\"\n",
+        ".decl a(x: number)\n.decl r(x: number)\n.output r\n",
+        "a(1). a(1). a(2).\n",
+        "r(x) :- a(x), a(x).\n",
+        "r(x) :- a(x), a(x).\n",
+        "r(x) :- r(x).\n",
+    );
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
+    let r: Vec<String> = v.rules().filter(|x| v.rel_name(x.head().rel()) == "r").map(|x| v.show_rule(x)).collect();
+    assert_eq!(r.len(), 1, "one rule of r, its literal once: {r:?}");
+    assert_eq!(r[0].matches("a(").count(), 1, "{r:?}");
+    let head = v.header(&Default::default()).unwrap();
+    assert_eq!(head.facts.get("a").map(|rows| rows.len()), Some(2), "a's facts once each: {:?}", head.facts.get("a"));
+}
+
+/// `unit` after aggregate demand runs on a modular text's version (decision 0281's path, step 7b): `count : { b(_) }
+/// = 0` made an existence test reads no relation, so its rule reads `rr_unit(0)`, as the tree's `lower::unit`
+/// makes it; a debug build checks the image against the tree's (`link_seeded_version`).
+#[test]
+fn a_rule_left_reading_no_relation_reads_the_unit_on_the_version() {
+    let src = concat!(
+        "#include \"python/compare.rr\"\n",
+        ".decl b(x: number)\n.input b\n.decl r(x: number)\n.output r\n",
+        "r(1) :- count : { b(_) } = 0.\n",
+    );
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
+    let r: Vec<String> = v.rules().filter(|x| v.rel_name(x.head().rel()) == "r").map(|x| v.show_rule(x)).collect();
+    assert!(r.iter().all(|x| x.contains("rr_unit(0)")), "{r:?}");
+}
+
+/// Aggregate demand runs on a modular text's version (decision 0281's path, step 7b): the aggregate's helper is
+/// restricted to the keys its consumer asks (`rr_demand_agg_…`, read first by the helper's rules), and a count of
+/// zero becomes an anti-join, as the tree's `aggregate_demand::optimize` makes them; a debug build checks the image
+/// against the tree's (`link_seeded_version`).
+#[test]
+fn aggregate_demand_is_placed_on_the_version() {
+    let src = concat!(
+        "#include \"python/compare.rr\"\n",
+        ".decl a(x: number)\n.decl b(x: number, y: number)\n.input a, b\n.decl r(x: number)\n.decl s(x: number)\n.output r, s\n",
+        "r(x) :- a(x), n = count : { b(x, y), y > x }, n > 1.\n",
+        "s(x) :- a(x), count : { b(x, y), y > x } = 0.\n",
+    );
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
+    let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
+    assert!(rules.iter().any(|x| x.starts_with("rr_demand_agg_")), "a demand is placed: {rules:#?}");
+    let s: Vec<&String> = rules.iter().filter(|x| x.starts_with("s(")).collect();
+    assert!(s.iter().all(|x| x.contains("!") && !x.contains("count")), "a count of zero is an anti-join: {s:?}");
+}
+
+/// `front::finish`'s rewrites run on a modular text's version (decision 0281's path, step 7b): two nodes compared
+/// by their preorder keys (`node_order`), a `max` over nodes taken through a helper (`rr_ordered0`), as the tree's
+/// `order_nodes` makes them, and a tree axis read declared an input (`declare_axes`); a debug build checks the
+/// image against the tree's (`link_seeded_version`).
+#[test]
+fn finishs_rewrites_run_on_the_version() {
+    let src = concat!(
+        "#include \"python/compare.rr\"\n",
+        ".decl xs(n: node)\n.decl before(a: node, b: node)\n.decl last(n: node)\n.decl owner(n: node, a: node)\n",
+        ".output before, last, owner\n",
+        "xs(n) :- kind(n, \"identifier\").\n",
+        "before(a, b) :- xs(a), xs(b), a < b.\n",
+        "last(m) :- m = max k : { xs(k) }.\n",
+        "owner(n, a) :- xs(n), inside(n, a, \"module\").\n",
+    );
+    assert!(crate::code_rule_dsl::logic::front::orders_nodes(), "node ids per definition");
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
+    let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
+    let before = rules.iter().find(|x| x.starts_with("before(")).expect("before's rule");
+    assert!(before.contains("node_order("), "{before}");
+    assert!(rules.iter().any(|x| x.starts_with("rr_ordered0(")), "the max's helper: {rules:#?}");
+    let head = v.header(&Default::default()).unwrap();
+    let owner = rules.iter().find(|x| x.starts_with("owner(")).expect("owner's rule");
+    let axis = owner.split(|c: char| !(c.is_alphanumeric() || c == '_')).find(|w| w.starts_with("rr_inside_")).unwrap_or_else(|| panic!("an axis read: {owner}"));
+    assert!(head.inputs.iter().any(|i| i == axis) && head.decls.contains_key(axis), "the axis {axis} an input: {:?}", head.inputs);
+}
+
+/// `whole()`'s last passes before `front::finish` run on a modular text's version (decision 0281's path, step 7b): a
+/// nullary relation is a set of the unit (a column, a `1` in its atoms), the `.scope` settings set the globs, and a
+/// reader of `value` asks for it, as the tree's `lower::whole_back` makes them; a debug build checks the image against the tree's (`link_seeded_version`).
+#[test]
+fn nullary_relations_and_the_scope_are_made_on_the_version() {
+    let src = concat!(
+        "#include \"python/compare.rr\"\n",
+        ".scope include \"impl/**/*.py\"\n",
+        ".decl flag()\n.decl r(n: node)\n.decl q(n: node)\n.output r, q\n",
+        "flag() :- kind(_, \"module\").\n",
+        "r(n) :- flag(), kind(n, \"call\").\n",
+        "q(n) :- kind(n, \"string\"), value(n, _).\n",
+    );
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
+    let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
+    assert!(rules.iter().any(|x| x.starts_with("flag(1)")) && rules.iter().any(|x| x.starts_with("r(") && x.contains("flag(1)")), "{rules:#?}");
+    let head = v.header(&Default::default()).unwrap();
+    assert!(head.nullary.contains("flag") && head.decls["flag"].len() == 1, "{:?}", head.decls.get("flag"));
+    assert!(head.doc_scopes.as_ref().is_some_and(|s| s.iter().any(|(inc, _)| inc.iter().any(|g| g.contains("impl")))), "{:?}", head.doc_scopes);
+    // `value` is answered on request (decision 0174): its reader asks.
+    assert!(rules.iter().any(|x| x.starts_with("rr_value_req")), "{rules:#?}");
+}
+
+/// The kind sets are made on a modular text's version (decision 0281's path, step 7b): a set of kinds given as facts
+/// is a kind set of the program, and a set rules derive is read through helper rules over `child`
+/// (`rr_anc_<set>`, `rr_near_<set>`, `rr_in_<set>`), as the tree's `lower::kind_sets` makes them; a debug build
+/// checks the image against the tree's (`link_seeded_version`).
+#[test]
+fn kind_sets_are_made_on_the_version() {
+    let src = concat!(
+        "#include \"python/compare.rr\"\n",
+        ".decl calls(k: symbol)\ncalls(\"call\").\n",
+        ".decl code(k: symbol)\ncode(k) :- kind(_, k), k != \"comment\".\n",
+        ".decl r(n: node, a: node)\n.decl s(n: node, a: node)\n.output r, s\n",
+        "r(n, a) :- kind(n, \"name\"), nearest(n, a, calls).\n",
+        "s(n, a) :- kind(n, \"name\"), inside(n, a, code).\n",
+    );
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
+    let head = v.header(&Default::default()).unwrap();
+    assert!(head.kindsets.get("calls").is_some_and(|k| k == &["call"]), "{:?}", head.kindsets);
+    let heads: BTreeSet<&str> = v.rules().map(|x| v.rel_name(x.head().rel())).collect();
+    assert!(["rr_anc_code", "rr_near_code", "rr_in_code"].iter().all(|h| heads.contains(h)), "{heads:?}");
+}
+
+/// The grammar names are checked on a modular text's version (decision 0281's path, step 7b): a grammar the registry
+/// does not have is refused there too; and the built-ins lowering writes out (`nearest`, `earlier`, …) are no relations
+/// of the program (`BuiltinsOut`'s own test is `builtins_out_on_a_version_is_the_trees`: the unseeding hides it here), as the tree's
+/// `lower::grammar_names` and `lower::builtins_out` make them; a debug build checks the image against the tree's.
+#[test]
+fn grammar_names_and_builtins_are_checked_on_the_version() {
+    let lower = |body: &str| {
+        let src = format!("#include \"python/compare.rr\"\n.decl hit(s: node)\n.output hit\n{body}\n");
+        let files = super::read_text(&src).unwrap().files().expect("a modular text");
+        let library = super::lower_library(&files, None).unwrap();
+        let scoped = library.scoped(&files);
+        super::read_text(&src).unwrap().lower_in_version(&src, &library, &scoped, None, None).map(|v| v.expect("a modular text"))
+    };
+    let refused = lower("hit(s) :- kind(s, \"string\"), parsed(s, \"postgres\", _).").map(|_| ()).unwrap_err().to_string();
+    assert!(refused.contains("no grammar \"postgres\""), "{refused}");
+    let v = lower("hit(s) :- kind(s, \"name\"), within(s, a), kind(a, \"call\").").unwrap();
+    let head = v.header(&Default::default()).unwrap();
+    assert!(!["nearest", "earlier", "split_dot", "unset"].iter().any(|b| head.decls.contains_key(*b)), "{:?}", head.decls.keys().collect::<Vec<_>>());
+}
+
+/// The span patterns are read off a modular text's version (decision 0281's path, step 7b): a `match` over a line
+/// (`src_line`) and one over a comment give the program its rx spans, as the tree's
+/// `lower::span_patterns` finds them; a debug build checks the image against the tree's.
+#[test]
+fn span_patterns_are_found_on_the_version() {
+    let src = concat!(
+        "#include \"python/compare.rr\"\n",
+        ".decl r(l: node)\n.decl c(n: node)\n.output r, c\n",
+        "r(l) :- src_line(_, _, l), match(\"TODO.*\", l).\n",
+        "c(n) :- kind(n, \"comment\"), match(\"#.*fixme\", n).\n",
+    );
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
+    let head = v.header(&Default::default()).unwrap();
+    use crate::code_rule_dsl::logic::front::SpanIn;
+    assert!(head.rx_spans.iter().any(|(w, p)| *w == SpanIn::Line && p.contains("TODO")), "{:?}", head.rx_spans);
+    assert!(head.rx_spans.iter().any(|(w, p)| *w == SpanIn::Comment && p.contains("fixme")), "{:?}", head.rx_spans);
+}
+
+/// core.rr's declarations and `node`'s projections are made on a modular text's version (decision 0281's path, step
+/// 7b): a rule reading `kind` reads it through the projection `kind(n, k) :- node(_, n, k, _, _)`, the program's
+/// first rule, as the tree's `lower::core_and_projections` makes it; a debug build checks the image against the tree's.
+#[test]
+fn core_declarations_and_projections_are_made_on_the_version() {
+    let src = concat!("#include \"python/compare.rr\"\n", ".decl r(n: node)\n.output r\n", "r(n) :- kind(n, \"call\").\n");
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
+    let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
+    assert!(rules.first().is_some_and(|r| r.starts_with("kind($n, $k) :- node(")), "{rules:#?}");
+    let head = v.header(&Default::default()).unwrap();
+    assert!(!head.inputs.iter().any(|i| i == "kind"), "{:?}", head.inputs);
+}
+
+/// The findings of a modular text's `.violation`s are written on its version (decision 0281's path, step 7b): the
+/// `violation` rule at the anchor's line and column, the diagnostic with the message's placeholders (a fresh name per
+/// value, the lowerer's count handed on), `.on syntax_error`'s rule, and the text's own `violation` rule of five columns
+/// widened, as the tree's `lower::findings` writes them;
+/// a debug build checks the image against the tree's.
+#[test]
+fn findings_are_written_on_the_version() {
+    let src = concat!(
+        "#include \"python/compare.rr\"\n",
+        ".on syntax_error report BAD000 at line 1\n",
+        ".violation call_at(at: node) code \"C001\" \"call {at}\"\n",
+        "call_at(n) :- kind(n, \"call\").\n",
+        "violation(\"p\", \"own\", \"X\", p, 1) :- doc(_, p, _).\n",
+    );
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
+    let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
+    assert!(rules.iter().any(|r| r.starts_with("violation(") && r.contains("call_at(") && r.contains("\"C001\"")), "{rules:#?}");
+    assert!(rules.iter().any(|r| r.starts_with("violation(") && r.contains("syntax_error(")), "{rules:#?}");
+    assert!(rules.iter().any(|r| r.contains("$rr_message")), "{rules:#?}");
+    // The text's own `violation` rule, in the older five columns, read at column 0.
+    assert!(rules.iter().any(|r| r.starts_with("violation(\"p\", \"own\", \"X\", $p, 1, 0)")), "{rules:#?}");
+    let head = v.header(&Default::default()).unwrap();
+    assert!(head.outputs.iter().any(|o| o == "violation") && head.decls.get("violation").is_some_and(|c| c.len() == 6), "{:?}", head.outputs);
+}
+
+/// The three-valued relations are written on a modular text's version (decision 0281's path, step 7b): `p` declared
+/// `must, may` has a must side of its rules but the `may` one, what reads `p` is three-valued too, and a negated atom
+/// reads the other side, as the tree's `lower::three_valued` writes them; a debug build checks the image against the
+/// tree's.
+#[test]
+fn three_valued_relations_are_written_on_the_version() {
+    let src = concat!(
+        "#include \"python/compare.rr\"\n",
+        ".decl base(x: symbol)\nbase(\"a\"). base(\"b\").\n.decl known(x: symbol)\nknown(\"a\").\n",
+        ".decl p(x: symbol) must, may\nmust p(x) :- known(x).\nmay p(x) :- base(x), !known(x).\n",
+        ".decl q(x: symbol)\nq(x) :- base(x), !p(x).\n.output q, rr_must_q\n",
+    );
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let v = super::read_text(src).unwrap().lower_in_version(src, &library, &scoped, None, None).unwrap().expect("a modular text");
+    let rules: Vec<String> = v.rules().map(|x| v.show_rule(x)).collect();
+    let has = |r: &str| rules.iter().any(|x| x == r);
+    assert!(has("rr_must_p($x) :- known($x)") && has("p($x) :- known($x)") && has("p($x) :- base($x), !known($x)"), "{rules:#?}");
+    assert!(!rules.iter().any(|x| x.starts_with("rr_must_p($x) :- base(")), "{rules:#?}");
+    assert!(has("rr_must_q($x) :- base($x), !p($x)") && has("q($x) :- base($x), !rr_must_p($x)"), "{rules:#?}");
+    let head = v.header(&Default::default()).unwrap();
+    assert!(head.decls.contains_key("rr_must_p") && head.decls.contains_key("rr_must_q"), "{:?}", head.decls.keys().collect::<Vec<_>>());
+}
+
+/// A modular text's module is linked onto its scope's version and checked declared there (decision 0281's path, step
+/// 7b): a rule reading a relation no one declares is refused, and so is one reading a library relation with other
+/// columns than it declares, as the tree's `front::declared` refuses them; a rule reading the library's is linked.
+#[test]
+fn a_module_is_linked_and_checked_declared_on_the_version() {
+    let lower = |body: &str| {
+        let src = format!("#include \"python/compare.rr\"\n.decl hit(n: node)\n.output hit\n{body}\n");
+        let files = super::read_text(&src).unwrap().files().expect("a modular text");
+        let library = super::lower_library(&files, None).unwrap();
+        let scoped = library.scoped(&files);
+        super::read_text(&src).unwrap().lower_in_version(&src, &library, &scoped, None, None).map(|v| v.expect("a modular text")).map_err(|e| e.to_string())
+    };
+    let e = lower("hit(n) :- kind(n, \"call\"), nowhere(n).").map(|_| ()).unwrap_err();
+    assert!(e.contains("relation nowhere is read by the rule for hit and not declared"), "{e}");
+    let e = lower("hit(n) :- kind(n, \"call\"), child(n).").map(|_| ()).unwrap_err();
+    assert!(e.contains("relation child is declared with 3 columns and read with 1"), "{e}");
+    let v = lower("hit(n) :- kind(n, \"call\"), child(_, n, _).").unwrap();
+    assert!(v.rules().any(|r| v.rel_name(r.head().rel()) == "hit"), "{}", v.show());
+}
+
+/// A text's rules are written as a version in its walk (decision 0377 step 3): the module linked holds its header
+/// alone, its rules in the version the walk wrote, and that version is the one the tree's rules encode to.
+#[test]
+fn a_texts_rules_are_written_as_a_version_in_its_walk() {
+    // Two aggregates of two literals under one head make two helpers of one stem and column types (`helper_once`):
+    // the link keyed them by their rules, which the walk wrote into the version, and merged them.
+    let src = "#include \"python/compare.rr\"\n.decl hit(n: node)\n.output hit\n.decl near(n: node, m: node)\nnear(n, m) :- child(_, n, _), child(_, m, _), kind(n, \"call\").\nhit(n) :- kind(n, \"call\"), child(_, n, _), !near(n, n).\n.decl sizes(n: node, a: number, b: number)\n.output sizes\nsizes(n, a, b) :- kind(n, \"call\"), a = count : { child(n, c, _), kind(c, \"name\") }, b = count : { child(n, c, _), kind(c, \"call\") }.\n";
+    let files = super::read_text(src).unwrap().files().expect("a modular text");
+    let library = super::lower_library(&files, None).unwrap();
+    let scoped = library.scoped(&files);
+    let (header_alone, v, tv) = super::read_text(src).unwrap().own_written_and_tree(&scoped).unwrap();
+    assert!(header_alone, "the walk wrote the rules");
+    assert!(v.rules().count() >= 2, "{}", v.show());
+    assert_eq!((v.size(), v.digest()), (tv.size(), tv.digest()), "{}", crate::code_rule_dsl::logic::program_image::differences(&tv, &v));
 }

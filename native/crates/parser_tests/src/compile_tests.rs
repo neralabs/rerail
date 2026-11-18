@@ -747,10 +747,34 @@ fn json_loop_keeps_values_in_registers() {
     let lines = crate::block_tests::machine_loop(&compiled.loops_disassembly());
     let (stack, mvn) = crate::block_tests::loop_costs(&lines);
     eprintln!("json loop: {} instructions, {stack} stack loads or stores, {mvn} vector mvn", lines.len());
+    if let Ok(path) = std::env::var("RERAIL_DUMP_LOOP") {
+        // The loop's machine code, to read where its stack traffic is.
+        std::fs::write(path, lines.join("\n")).expect("writes");
+    }
+    if let Ok(path) = std::env::var("RERAIL_DUMP_LOOP_CLIF") {
+        std::fs::write(path, &compiled.clif).expect("writes");
+    }
+    // `RERAIL_LOOP_PRESSURE`: the values live through the hot loop while it is over the registers.
+    if std::env::var_os("RERAIL_LOOP_PRESSURE").is_some() {
+        for pass in &compiled.passes {
+            let q = &pass.pressure;
+            eprintln!("pass: {} values live through the hot loop; integer peak {}", q.hot_through, q.hot_int.iter().max().unwrap_or(&0));
+            let n = q.hot_int.len().max(1);
+            eprintln!("  integer live, 32 stretches: {:?}", (0..32).map(|k| q.hot_int[k * n / 32..((k + 1) * n / 32).max(k * n / 32 + 1).min(q.hot_int.len())].iter().copied().max().unwrap_or(0)).collect::<Vec<_>>());
+            eprintln!("  at the peak: {:?}", q.at_peak);
+            for b in q.blame.iter().take(20) {
+                eprintln!("  {:>6} / {:<6} {} {} %{:?}", b.over, b.live, if b.vector { "v" } else { "x" }, b.made, b.origin);
+            }
+        }
+    }
     assert_eq!(mvn, 0, "json's loop inverts vectors");
-    // The state is packed: one carried word per 64 state bits (decision 0070).
+    // The state is packed: one carried word per 64 state bits (decision 0070), but a chain's
+    // carry, in a word of its own as simdjson's (0346).
     let bits = crate::block_tests::state_bits(&program.block_programs[0]);
-    assert_eq!(crate::block_tests::carried_params(&compiled.clif) - crate::block_tests::sink_params(&native), bits.div_ceil(64), "json's carried state is not packed");
+    let state = native_cpu_block::State::of(&native);
+    let (chains, chain_bits) = state.chains();
+    eprintln!("json: {} carried words, {chains} of them a chain's ({chain_bits} bits); fields (instruction, bits, word): {:?}", state.words, state.fields());
+    assert_eq!(crate::block_tests::carried_params(&compiled.clif) - crate::block_tests::sink_params(&native), (bits - chain_bits).div_ceil(64) + chains, "json's carried state is not packed");
     assert!(lines.len() <= JSON_LOOP && stack <= JSON_LOOP_STACK, "json loop: {} instructions (budget {JSON_LOOP}), {stack} stack loads or stores (budget {JSON_LOOP_STACK})", lines.len());
 }
 
@@ -768,8 +792,15 @@ fn json_loop_keeps_values_in_registers() {
 /// calls has 564 instructions and 4 stack loads or stores; with the delayed outputs not held
 /// and the regions called where it is free, 566 and 4. 690 with the records: every token's last
 /// byte an extract of its own, flattened as the starts are (simdjson writes one index; a record
-/// with no end for a one-byte token would save it).
-const JSON_LOOP: usize = 690;
+/// with no end for a one-byte token would save it). 699 and 6 after 0337–0341 (the string a
+/// toggle, the classes one lookup, the multiply), not raised then. 704 and 10 with 0346: the
+/// toggle's multiply of the raw quotes adds the rounds of the escaped ones (+7), and the string's
+/// two chains in words of their own, as simdjson's (-2), hold two more registers across the loop,
+/// and Cranelift spills two values elsewhere. 667 and 4 with 0381: a class one `cmtst` (24
+/// fewer), the escaped quotes' rounds behind a branch (5), no complement of a complement (5),
+/// the bitmask's weights one load, the constants made at the body's head, and a total read
+/// back from its row at the step's end, not held through the body.
+const JSON_LOOP: usize = 667;
 const JSON_LOOP_STACK: usize = 4;
 
 // --- Tier 1 is simdjson's stage 1 (decision 0071) ---------------------------------------------
@@ -949,8 +980,17 @@ fn only_the_compiler_reads_tier2s_states() {
                 continue;
             }
             let text = std::fs::read_to_string(&path).expect("reads a source file");
-            // A token reader's arms (`records::ReadArm`: `rd.arms`, `reader.arms`) are not the table's.
-            let table_line = |line: &str| needles.iter().any(|n| line.contains(n)) && !((line.contains("rd.arms") || line.contains("reader.arms")) && !needles[1..].iter().any(|n| line.contains(n)));
+            // A token reader's arms (`records::ReadArm`: `rd.arms`, `reader.arms`, `readers[i].arms`, a part's
+            // `parted[0].arms`) are not the table's, nor a shape's or a count's (`shape.arms`, `cols.arms`,
+            // `c.arms`): an `.arms` is the table's only after another name.
+            let table_arms = |line: &str| {
+                line.match_indices(".arms").any(|(at, _)| {
+                    let before = &line[..at];
+                    let name = &before[before.trim_end_matches(|c: char| c.is_alphanumeric() || c == '_').len()..];
+                    !before.ends_with(']') && !["rd", "reader", "shape", "cols", "c"].contains(&name)
+                })
+            };
+            let table_line = |line: &str| table_arms(line) || needles[1..].iter().any(|n| line.contains(n));
             if text.lines().any(table_line) {
                 readers.push(path.display().to_string());
             }
@@ -1178,7 +1218,12 @@ fn json_compiled_path_equals_the_interpreters() {
     // record's (`records`): no search.
     assert!(!tier2.wraps);
     assert!(tier2.heads.iter().all(|h| matches!(h.1, native_cpu_shape::Step::Token | native_cpu_shape::Step::Block)), "{:?}", tier2.heads);
-    assert_eq!(tier2.own_calls, 0, "no pass over the table");
+    // Its calls are the tape's (8a1762be0: tier 2 writes the tape): a block's offsets, a commit,
+    // a code taken back, the image's end, each rare (`TableFns`), the module's ids 1 to 4. A pass
+    // over the table (a wrap's `shift`, a drop's) would be declared before them, and the tape's
+    // ids past 4.
+    let callees: Vec<u32> = tier2.clif.lines().filter_map(|l| l.trim().split_once(" = colocated u0:")).filter(|(k, _)| k.starts_with("fn")).filter_map(|(_, rest)| rest.split_whitespace().next()?.parse().ok()).collect();
+    assert!(callees.iter().all(|&id| (1..=4).contains(&id)), "no pass over the table: {callees:?}");
     let files = json_tier2_files();
     for f in &files {
         let want1 = p.block_programs[0].run_files(&[f]).remove(0);

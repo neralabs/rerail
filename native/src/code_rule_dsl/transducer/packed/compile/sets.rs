@@ -34,7 +34,7 @@ use std::sync::{Mutex, OnceLock};
 
 /// A set of nodes, as a formula over a tape's columns.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) enum Set {
+pub enum Set {
     All,
     Kind(u16),
     Field(u16),
@@ -61,9 +61,59 @@ pub(in crate::code_rule_dsl) enum Set {
     Reached { step: Step, named: bool, from: Box<Set> },
 }
 
+/// A walk's anchor as the device evaluates it (`label_formula`, decision 0365): `Set` in postfix over a stack of node
+/// sets, a word an operation (`op | arg << 8`), `depth` the stack's slots (an axis step's output a slot past its
+/// input), and the labels it reads (by index, past `DERIVED_CLASS_BASE`).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct DeviceFormula {
+    pub words: Vec<u32>,
+    pub depth: u32,
+    pub labels: Vec<u32>,
+    /// A text test's row by its slot (`TEXT`'s `arg`): each slot's key (`Micro::slot_key`), set by whoever lowered
+    /// the walk; the device reads the row the walk reads (every node where there is none, for an anchor). Part of
+    /// the formula's identity: two walks' slot 0 are different texts.
+    pub texts: Vec<String>,
+}
+
+/// `DeviceFormula`'s operations (`label_formula` in `metal_label_passes.metal`). A test pushes a set; `AND` and
+/// `OR` combine the top `arg` sets; an axis step replaces the top set (a chain the top two: through, then to); `arg`
+/// of a step is whether its nodes are named.
+pub mod device_ops {
+    pub const ALL: u32 = 0;
+    pub const KIND: u32 = 1;
+    pub const FIELD: u32 = 2;
+    /// `arg`: mode | flags << 8.
+    pub const FLAGS: u32 = 3;
+    /// A grammar supertype, or a label (from `DERIVED_CLASS_BASE`; on the device, `DERIVED_CLASS_BASE` + its row).
+    pub const CLASS: u32 = 4;
+    pub const AND: u32 = 5;
+    pub const OR: u32 = 6;
+    pub const CHILD: u32 = 7;
+    pub const DESCENDANT: u32 = 8;
+    pub const PARENT: u32 = 9;
+    pub const FOLLOWING: u32 = 10;
+    pub const CHAIN: u32 = 11;
+    pub const NONE: u32 = 12;
+    /// On the device only (`Runner::formulas`): a leaf test's shared row, `arg` its index.
+    pub const LEAF: u32 = 13;
+    /// A step within a conjunction: the top two sets, the conjunction's and the step's inner, as their intersection
+    /// with the step's (`arg` named).
+    pub const CHILD_IN: u32 = 14;
+    pub const DESCENDANT_IN: u32 = 15;
+    pub const FOLLOWING_IN: u32 = 16;
+    /// A step over every node: the nodes with a next sibling, a node below (a child), a named child, a next named
+    /// sibling.
+    pub const HAS_NEXT: u32 = 18;
+    pub const HAS_BELOW: u32 = 19;
+    pub const HAS_NAMED_CHILD: u32 = 21;
+    pub const HAS_NEXT_NAMED: u32 = 22;
+    /// A text test: `arg` its slot (`DeviceFormula::texts`); on the device, its row in the bound text rows.
+    pub const TEXT: u32 = 20;
+}
+
 /// A step from a node, as a targets label's image follows it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(in crate::code_rule_dsl) enum Step {
+pub enum Step {
     Child,
     Descendant,
     Parent,
@@ -75,7 +125,7 @@ pub(in crate::code_rule_dsl) enum Step {
 impl Set {
     /// The starts from which `words` reaches its `EMIT` (a roots label's verdicts), where the
     /// program is a formula.
-    pub(in crate::code_rule_dsl) fn of(words: &[u32]) -> Option<Self> {
+    pub fn of(words: &[u32]) -> Option<Self> {
         let mut end = words.len();
         if end == 0 || split(words[end - 1]).0 != EMIT {
             return None;
@@ -89,12 +139,164 @@ impl Set {
 
     /// The nodes `words` captures on a path that emits from a member of `starts` (a targets
     /// label's), where the capture is the walk's last act and the program is a formula.
-    pub(in crate::code_rule_dsl) fn targets(words: &[u32], starts: Self) -> Option<Self> {
+    pub fn targets(words: &[u32], starts: Self) -> Option<Self> {
         let end = words.len().checked_sub(2)?;
         if split(words[end + 1]).0 != EMIT || split(words[end]).0 != CAPTURE || words[..end].iter().any(|&word| split(word).0 == CAPTURE) {
             return None;
         }
         forward(words, 0, end, starts)
+    }
+
+    /// A walk's anchor (decision 0365): a superset of the starts from which `words` reaches its `EMIT`, for any
+    /// program, a formula or not. Its tests are a conjunction read as `of` reads them, and where the program leaves
+    /// the fragment (a capture is skipped; a next-sibling step, a backward jump, a repetition or any other operation
+    /// ends it) the rest is dropped: a conjunct fewer is a larger set, and every step's set grows with what it reads
+    /// at the node it reaches, so the anchor holds every start that emits. A `TEXT` operand is a text slot
+    /// (`Micro`'s words), read where `texts` has its row, and dropped otherwise.
+    pub fn anchor(words: &[u32], texts: &dyn Fn(u16) -> bool) -> Self {
+        let end = words.iter().position(|&word| split(word).0 == EMIT).unwrap_or(words.len());
+        bound(words, 0, end, texts).0
+    }
+
+    /// This set as the device evaluates it (decision 0365): `None` for a targets image (`Reached`), which no anchor
+    /// holds. Exact, so a formula pass may run as it (`Pass::Formula`): a text test reads its slot's row
+    /// (`DeviceFormula::texts`, set by the caller), and only an anchor reads every node where there is none.
+    pub fn device(&self) -> Option<DeviceFormula> {
+        let mut formula = DeviceFormula { words: Vec::new(), depth: 0, labels: Vec::new(), texts: Vec::new() };
+        formula.depth = self.emit(&mut formula)?;
+        formula.labels.sort_unstable();
+        formula.labels.dedup();
+        Some(formula)
+    }
+
+    /// Appends this set's postfix words: the stack slots its evaluation takes from where it starts.
+    fn emit(&self, formula: &mut DeviceFormula) -> Option<u32> {
+        use device_ops::*;
+        let word = |op: u32, arg: u32| op | arg << 8;
+        let named = |named: &bool| u32::from(*named);
+        let slots = match self {
+            Set::All => {
+                formula.words.push(word(ALL, 0));
+                1
+            }
+            Set::Text(slot) => {
+                formula.words.push(word(TEXT, u32::from(*slot)));
+                1
+            }
+            Set::Kind(kind) => {
+                formula.words.push(word(KIND, u32::from(*kind)));
+                1
+            }
+            Set::Field(field) => {
+                formula.words.push(word(FIELD, u32::from(*field)));
+                1
+            }
+            Set::Flags { mode, arg } => {
+                formula.words.push(word(FLAGS, u32::from(*mode) | u32::from(*arg) << 8));
+                1
+            }
+            Set::Class(class) => {
+                if *class >= DERIVED_CLASS_BASE {
+                    formula.labels.push(u32::from(class - DERIVED_CLASS_BASE));
+                }
+                formula.words.push(word(CLASS, u32::from(*class)));
+                1
+            }
+            Set::And(parts) | Set::Or(parts) if parts.is_empty() => {
+                formula.words.push(word(if matches!(self, Set::And(_)) { ALL } else { NONE }, 0));
+                1
+            }
+            // A conjunction of tests and steps: the tests' set first, then each child, descendant or following step
+            // within it (`CHILD_IN`, ...), so the device may read down from the conjunction's members instead of
+            // climbing from the step's (S277: climb against descent priced by work, on the device by the members).
+            Set::And(parts) if parts.iter().any(Set::within) && parts.iter().any(|part| !part.within()) => {
+                let plain: Vec<&Set> = parts.iter().filter(|part| !part.within()).collect();
+                let mut slots = 0;
+                for (at, part) in plain.iter().enumerate() {
+                    slots = slots.max(at as u32 + part.emit(formula)?);
+                }
+                if plain.len() > 1 {
+                    formula.words.push(word(AND, plain.len() as u32));
+                }
+                for part in parts.iter().filter(|part| part.within()) {
+                    let (Set::Child { named: n, of } | Set::Descendant { named: n, of } | Set::Following { named: n, of }) = part else {
+                        unreachable!("a step within")
+                    };
+                    let op = match part {
+                        Set::Child { .. } => CHILD_IN,
+                        Set::Descendant { .. } => DESCENDANT_IN,
+                        _ => FOLLOWING_IN,
+                    };
+                    // The conjunction's set, the step's, then its output and (a descendant's) its members and their
+                    // counts' prefix.
+                    let inner = of.emit(formula)?;
+                    formula.words.push(word(op, named(n)));
+                    slots = slots.max(1 + inner.max(match op {
+                        DESCENDANT_IN => 4,
+                        FOLLOWING_IN => 3,
+                        _ => 2,
+                    }));
+                }
+                slots
+            }
+            Set::And(parts) | Set::Or(parts) => {
+                let mut slots = 0;
+                for (at, part) in parts.iter().enumerate() {
+                    slots = slots.max(at as u32 + part.emit(formula)?);
+                }
+                formula.words.push(word(if matches!(self, Set::And(_)) { AND } else { OR }, parts.len() as u32));
+                slots
+            }
+            // A step over every node, by the node's own links, so no climb: a node below (in preorder, the same as a
+            // child), a named child, a next sibling or a next named one. A named node below is the general step.
+            Set::Child { .. } | Set::Descendant { .. } | Set::Following { .. } if self.over_all() => {
+                let op = match self {
+                    Set::Child { named: true, .. } => HAS_NAMED_CHILD,
+                    Set::Child { .. } | Set::Descendant { .. } => HAS_BELOW,
+                    Set::Following { named: true, .. } => HAS_NEXT_NAMED,
+                    _ => HAS_NEXT,
+                };
+                formula.words.push(word(op, 0));
+                1
+            }
+            Set::Child { named: n, of } | Set::Descendant { named: n, of } | Set::Following { named: n, of } => {
+                let slots = of.emit(formula)?;
+                let op = match self {
+                    Set::Child { .. } => CHILD,
+                    Set::Descendant { .. } => DESCENDANT,
+                    _ => FOLLOWING,
+                };
+                formula.words.push(word(op, named(n)));
+                // A following step's members' parents take a slot past its output.
+                slots.max(if op == FOLLOWING { 3 } else { 2 })
+            }
+            Set::Parent(of) => {
+                let slots = of.emit(formula)?;
+                formula.words.push(word(PARENT, 0));
+                slots.max(2)
+            }
+            Set::Chain { named: n, through, to } => {
+                let through = through.emit(formula)?;
+                let to = to.emit(formula)?;
+                formula.words.push(word(CHAIN, named(n)));
+                through.max(1 + to).max(3)
+            }
+            Set::Reached { .. } => return None,
+        };
+        Some(slots)
+    }
+
+    /// A step a conjunction evaluates within its tests' set on the device (`DeviceFormula`).
+    fn within(&self) -> bool {
+        matches!(self, Set::Child { .. } | Set::Descendant { .. } | Set::Following { .. }) && !self.over_all()
+    }
+
+    /// A step over every node the device reads as a leaf (`HAS_BELOW`, `HAS_NAMED_CHILD`, `HAS_NEXT`, `HAS_NEXT_NAMED`).
+    fn over_all(&self) -> bool {
+        match self {
+            Set::Child { of, .. } | Set::Following { of, .. } | Set::Descendant { named: false, of } => **of == Set::All,
+            _ => false,
+        }
     }
 
     fn and(parts: Vec<Self>) -> Self {
@@ -180,6 +382,71 @@ fn parse(words: &[u32], from: usize, to: usize) -> Option<(Set, bool)> {
     Some((Set::and(parts), false))
 }
 
+/// `anchor`'s superset of the starts from which `words[from..to]` goes on, and whether the code leaves the node
+/// moved (an axis step) or ends early (where it would go on is not known), where `parse` has the exact set or
+/// nothing.
+fn bound(words: &[u32], from: usize, to: usize, texts: &dyn Fn(u16) -> bool) -> (Set, bool) {
+    let mut parts = Vec::new();
+    let mut pc = from;
+    while pc < to {
+        let (op, mode, arg) = split(words[pc]);
+        match op {
+            KIND => parts.push(Set::Kind(arg)),
+            FIELD => parts.push(Set::Field(arg)),
+            FLAGS => match u8::try_from(arg) {
+                Ok(arg) => parts.push(Set::Flags { mode, arg }),
+                Err(_) => break,
+            },
+            SUPERTYPE => parts.push(Set::Class(arg)),
+            TEXT if texts(arg) => parts.push(Set::Text(arg)),
+            TEXT | CAPTURE => {}
+            SAVE_CURSOR => {
+                let Some(restore) = (pc + 1..to).find(|&at| matches!(split(words[at]), (RESTORE_CURSOR, _, cursor) if cursor == arg)) else { break };
+                parts.push(bound(words, pc + 1, restore, texts).0);
+                pc = restore + 1;
+                continue;
+            }
+            CHILD if let Some((through, after)) = chain(words, pc, to) => {
+                let (through, moved) = bound(words, pc + 2, through, texts);
+                let to = Box::new(bound(words, after, to, texts).0);
+                // A chain whose step body moves is not the formula's chain: its first child at least.
+                parts.push(if moved { Set::Child { named: mode == NAMED, of: Box::new(Set::All) } } else { Set::Chain { named: mode == NAMED, through: Box::new(through), to } });
+                return (Set::and(parts), true);
+            }
+            CHILD | DESCEND | PARENT | FOLLOWING => {
+                let named = mode == NAMED;
+                let of = Box::new(bound(words, pc + 1, to, texts).0);
+                parts.push(match op {
+                    CHILD => Set::Child { named, of },
+                    DESCEND => Set::Descendant { named, of },
+                    FOLLOWING => Set::Following { named, of },
+                    _ => Set::Parent(of),
+                });
+                return (Set::and(parts), true);
+            }
+            FORK => {
+                let at = usize::from(arg);
+                let join = (at > pc + 1 && at <= to).then(|| split(words[at - 1])).filter(|&(goto, _, join)| goto == GOTO && usize::from(join) >= at && usize::from(join) <= to);
+                let Some((_, _, join)) = join else { break };
+                let join = usize::from(join);
+                let (first, moved_first) = bound(words, pc + 1, at - 1, texts);
+                let (second, moved_second) = bound(words, at, join, texts);
+                parts.push(Set::Or(vec![first, second]));
+                // A branch that moved goes on elsewhere: the rest is not read at this node.
+                if moved_first || moved_second {
+                    return (Set::and(parts), true);
+                }
+                pc = join;
+                continue;
+            }
+            _ => break,
+        }
+        pc += 1;
+    }
+    // Ended before `to`: where the rest would have been read is not known, so it is as if moved.
+    (Set::and(parts), pc < to)
+}
+
 /// `CHILD` at `pc` as a loop: `pc: CHILD; FORK a; ψ…; GOTO pc; a:`. Where it is one, `ψ`'s end
 /// (the `GOTO`) and `a`, where the walk goes on from the node the chain stops at.
 fn chain(words: &[u32], pc: usize, to: usize) -> Option<(usize, usize)> {
@@ -254,7 +521,7 @@ fn forward(words: &[u32], from: usize, to: usize, starts: Set) -> Option<Set> {
 
 /// A tape's columns as sets for one labelling, each built the first time a formula reads it.
 #[derive(Default)]
-pub(in crate::code_rule_dsl) struct Index {
+pub struct Index {
     kinds: OnceLock<Postings>,
     fields: OnceLock<Postings>,
     flags: OnceLock<Vec<u8>>,
@@ -304,13 +571,13 @@ impl Postings {
 }
 
 /// What a formula reads on one tape.
-pub(in crate::code_rule_dsl) struct Reader<'a> {
-    pub(in crate::code_rule_dsl) tape: &'a TapeDoc,
-    pub(in crate::code_rule_dsl) index: &'a Index,
+pub struct Reader<'a> {
+    pub tape: &'a TapeDoc,
+    pub index: &'a Index,
     /// The labels so far, by class less `DERIVED_CLASS_BASE`.
-    pub(in crate::code_rule_dsl) labels: &'a [Vec<u64>],
+    pub labels: &'a [Vec<u64>],
     /// The program's text rows, by slot.
-    pub(in crate::code_rule_dsl) texts: &'a [Vec<u64>],
+    pub texts: &'a [Vec<u64>],
 }
 
 impl Reader<'_> {
@@ -331,7 +598,7 @@ impl Reader<'_> {
     }
 
     /// The members of `set`.
-    pub(in crate::code_rule_dsl) fn eval(&self, set: &Set) -> Vec<u64> {
+    pub fn eval(&self, set: &Set) -> Vec<u64> {
         let words = self.words();
         let len = self.tape.transducer_len();
         match set {
@@ -608,6 +875,41 @@ pub mod tests {
         // one of kind 2.
         let chain = [w(CHILD, 0), w(FORK, 4), w(SUPERTYPE, label), w(GOTO, 0), w(KIND, 2), w(EMIT, 1)];
         assert_eq!(Set::of(&chain), Some(Set::Chain { named: false, through: Box::new(Set::Class(label)), to: Box::new(Set::Kind(2)) }));
+    }
+
+    /// Decision 0365: a walk's anchor is its formula where it is one, and otherwise the conjunction it reads before
+    /// it leaves the fragment.
+    #[test]
+    fn an_anchor_is_the_formula_or_a_superset_of_it() {
+        let w = |op, arg| word(op, 0, arg);
+        let label = DERIVED_CLASS_BASE + 3;
+        let has = [w(SAVE_CURSOR, 0), w(DESCEND, 0), w(SUPERTYPE, label), w(RESTORE_CURSOR, 0), w(CAPTURE, 0), w(EMIT, 1)];
+        assert_eq!(Some(Set::anchor(&has, &|_| true)), Set::of(&has));
+        // A root walk's captures are not tests: kind 4 with a child of kind 5, its captures skipped.
+        let captured = [w(KIND, 4), w(CAPTURE, 0), w(SAVE_CURSOR, 0), w(CHILD, 0), w(KIND, 5), w(CAPTURE, 1), w(RESTORE_CURSOR, 0), w(CAPTURE, 2), w(EMIT, 1)];
+        assert_eq!(Set::of(&captured), None);
+        assert_eq!(Set::anchor(&captured, &|_| true), Set::And(vec![Set::Kind(4), Set::Child { named: false, of: Box::new(Set::Kind(5)) }]));
+        // A next-sibling step ends its region: what the region reads past it is dropped, and the tests after the
+        // cursor's restore are read at the start again.
+        let next = [w(KIND, 1), w(SAVE_CURSOR, 0), w(NEXT, 0), w(KIND, 2), w(RESTORE_CURSOR, 0), w(KIND, 3), w(EMIT, 1)];
+        assert_eq!(Set::anchor(&next, &|_| true), Set::And(vec![Set::Kind(1), Set::Kind(3)]));
+        // Unscoped, it ends the walk.
+        assert_eq!(Set::anchor(&[w(KIND, 1), w(NEXT, 0), w(KIND, 2), w(EMIT, 1)], &|_| true), Set::Kind(1));
+        // A branch that moves: the union of the branches, and the rest (read elsewhere on one of them) dropped.
+        let moved = [w(FORK, 3), w(CHILD, 0), w(GOTO, 4), w(KIND, 2), w(KIND, 5), w(EMIT, 1)];
+        assert_eq!(Set::anchor(&moved, &|_| true), Set::Or(vec![Set::Child { named: false, of: Box::new(Set::All) }, Set::Kind(2)]));
+        // As the device has it: postfix, with the stack's slots (an axis step's output past its input).
+        use device_ops as d;
+        let formula = Set::anchor(&captured, &|_| true).device().unwrap();
+        assert_eq!(formula.words, vec![d::KIND | 4 << 8, d::KIND | 5 << 8, d::CHILD_IN]);
+        assert_eq!(formula.depth, 3);
+        let moved = Set::anchor(&moved, &|_| true).device().unwrap();
+        assert_eq!((moved.words, moved.depth), (vec![d::HAS_BELOW, d::KIND | 2 << 8, d::OR | 2 << 8], 2));
+        let labelled = Set::anchor(&has, &|_| true).device().unwrap();
+        assert_eq!((labelled.words, labelled.depth, labelled.labels), (vec![d::CLASS | u32::from(label) << 8, d::DESCENDANT], 2, vec![3]));
+        // A text test without its row is dropped.
+        assert_eq!(Set::anchor(&[w(KIND, 1), w(TEXT, 0), w(EMIT, 1)], &|_| false), Set::Kind(1));
+        assert_eq!(Set::anchor(&[w(KIND, 1), w(TEXT, 0), w(EMIT, 1)], &|_| true), Set::And(vec![Set::Kind(1), Set::Text(0)]));
     }
 
     #[test]

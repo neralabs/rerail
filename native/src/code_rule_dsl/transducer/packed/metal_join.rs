@@ -1969,6 +1969,7 @@ impl DevRel {
 
     /// A relation of `cols` columns and `rows` rows, its values given by `fill` (column `c` at
     /// `[c * rows .. (c + 1) * rows]`) and written by the host into a relation of the device's own.
+// copy (0353 step 6): an upload of rows from the host. It goes with its last caller (decision 0353).
     pub(in crate::code_rule_dsl) fn upload(cols: usize, rows: usize, fill: impl FnOnce(&mut [i64])) -> Result<DevRel, Error> {
         let mut values = vec![0i64; cols * rows];
         fill(&mut values);
@@ -2001,7 +2002,7 @@ impl DevRel {
     pub(in crate::code_rule_dsl) fn in_block(b: &crate::code_rule_dsl::facts::rows::InBlock, cols: usize) -> Result<DevRel, Error> {
         assert!(b.at > 0, "a descriptor past the block's header");
         let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
-        // The relation's pages too, not only its block: its last holder gives them back (`rows::Owned`).
+        // The block, the relation and its pages: not given back while the device reads them (decisions 0342, Q76).
         let buffer = Held::kept(b.facts.block.gpu_buffer(device), Box::new(b.clone()));
         Ok(DevRel { buffer, rows: b.rows as usize, cols, at: b.at as u64, dead: b.dead as u64, part: None, home: Some(b.facts.clone()) })
     }
@@ -2454,7 +2455,7 @@ impl Batch {
         if self.pass.is_none() {
             // Made in a pool of its own: `new_command_buffer` gives an autoreleased buffer, and a worker thread has no
             // pool to release it. Each one so left held a slot of the queue's (64) after its batch let it go, and a
-            // run of many device strata stopped in `commandBuffer` with every slot taken (Q91).
+            // run of many device strata stopped in `commandBuffer` with every slot taken (Q170).
             let queue = queue()?;
             let command = metal::objc::rc::autoreleasepool(|| queue.new_command_buffer().to_owned());
             // SAFETY: the command buffer is owned by `self.open` and outlives the pass, which `commit` ends and drops
@@ -2484,11 +2485,24 @@ impl Batch {
         self.submit_open()
     }
 
-    /// Commits what is open and waits for every command buffer.
+    /// Commits what is open and waits for every command buffer. A command buffer the GPU failed fails the batch: its
+    /// outputs are partly written, so its strata run on the CPU, and the indexes it built are not marked built (a
+    /// later batch would find one half written).
     pub(in crate::code_rule_dsl) fn finish(&mut self) -> Result<Done, Error> {
         self.submit_open()?;
+        let mut failed = 0;
         for s in self.committed.drain(..) {
-            self.done.gpu_seconds += s.wait();
+            let (seconds, ok) = s.wait_ok();
+            self.done.gpu_seconds += seconds;
+            failed += usize::from(!ok);
+        }
+        if failed > 0 {
+            crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "a batch the GPU failed (its strata on the CPU)", failed as u64);
+            self.building.clear();
+            self.keep.clear();
+            self.read.clear();
+            self.held.clear();
+            return Err(Error::BackendFailure);
         }
         for b in self.building.drain(..) {
             let _g = b.home.ix.lock().unwrap_or_else(|e| e.into_inner());
@@ -2526,6 +2540,8 @@ impl Batch {
             if rel.dead != 0 {
                 return Err(Error::BackendCapacity);
             }
+// copy (0353 step 6): a second key's index copies the relation. It goes: a relation is made with room for
+// the indexes its readers probe (decision 0353).
             let copy = DevRel::empty(rel.cols, rel.rows)?;
             let ident: Vec<Col> = (0..rel.cols).map(Col::From).collect();
             self.copy_rows(Rows::Rel(rel), rel.rows, &ident, Rows::Rel(&copy), 0)?;
@@ -2544,8 +2560,16 @@ impl Batch {
             let words = Held::new(4 * n)?;
             let mut p = vec![n as u32, cols.len() as u32, rel.at as u32, (rel.at >> 32) as u32, room.mask as u32, (room.mask >> 32) as u32];
             p.extend(cols.iter().map(|&c| c as u32));
+            // A sort refused after the bucket's dispatch leaves `words`, which the dispatch writes, with the batch
+            // until its command buffer is done: dropped here, it would go back to the pool at once.
             pass.run(&bucket, &[&buffer.buffer, &words.buffer], &p, &[], groups(n));
-            let parts = encode_sort(pass, &words.buffer, Width::W32, bits, n)?;
+            let parts = match encode_sort(pass, &words.buffer, Width::W32, bits, n) {
+                Ok(parts) => parts,
+                Err(e) => {
+                    self.keep.push(words);
+                    return Err(e.into());
+                }
+            };
             let at = |o: usize| [o as u32, (o as u64 >> 32) as u32];
             let mut q = vec![n as u32, (room.mask + 1) as u32];
             q.extend(at(room.offs));
@@ -2561,6 +2585,8 @@ impl Batch {
     /// The columns `cols` (its source's) of a view made from a chunk block on the device (decision 0289 §2), into
     /// `out`, a relation of `out.rows` rows whose columns are `cols` in order: what `Viewed::row_at` made on the host.
     /// `pairs`: an axis's pairs' offset in the block (`device_chunk::VIEW_AXIS`), else 0.
+// copy (0353 step 4): a view expanded into a relation (660.8 MB a run on hogql). It goes: a view is a
+// read of the tape, and a stage reads it in place (decision 0353).
     pub(in crate::code_rule_dsl) fn expand_view(&mut self, block: &metal::Buffer, root: usize, view: u32, pairs: usize, cols: &[usize], out: &DevRel) -> Result<(), Error> {
         let expand = pipeline("chunk_views", "view_expand", chunk_views_source)?;
         let pass = self.pass(1)?;

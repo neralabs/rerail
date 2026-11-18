@@ -24,6 +24,7 @@ use super::program_image::passes::{PartOf, Retain, SetAnswers};
 use super::program_image::{AtomRef, Builder, Lit, LitRef, PartFields, Rewrite, RuleRef, T, TermRef, Version};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
+use crate::code_rule_dsl::logic::program_image::passes::Parts as _;
 
 /// An answer's rows under `HELD_BACK` + a request's name are request rows the answerer holds back: asked again once
 /// the stratum is otherwise quiet (`setfix::defer`; the load budget's levels, decision 0145).

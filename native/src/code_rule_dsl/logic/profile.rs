@@ -273,6 +273,7 @@ impl State {
             s.planned_work += t.planned_work;
             s.planned_scanned += t.planned_scanned;
             s.steps += t.steps;
+            s.rules += t.rules;
             s.work += t.work;
             s.cpu_estimate += t.cpu_estimate;
             s.gpu_estimate += t.gpu_estimate;
@@ -286,6 +287,9 @@ impl State {
                 a.3 += b.3;
             }
             s.gpu.add(&t.gpu);
+            for (a, b) in s.gpu_terms.iter_mut().zip(t.gpu_terms) {
+                *a += b;
+            }
             if t.refused.is_some() {
                 s.refused = t.refused;
             }
@@ -327,6 +331,8 @@ pub struct PlacedTotal {
     /// Of the planned work, the rows its scans read (`Shape::scanned`), and its rules' steps, over its runs.
     pub planned_scanned: f64,
     pub steps: u64,
+    /// Its rules, over its runs.
+    pub rules: u64,
     pub work: u64,
     pub cpu_estimate: f64,
     pub gpu_estimate: f64,
@@ -343,6 +349,9 @@ pub struct PlacedTotal {
     /// refused it, when it was placed there and did not run there.
     pub gpu: GpuTotal,
     pub refused: Option<String>,
+    /// The device price's terms over its runs on the device, as priced (`placement::DeviceTerms::array`: rules,
+    /// steps, sorts, values read, rows made, joins' device seconds, other work, views read).
+    pub gpu_terms: [f64; 8],
 }
 
 #[derive(Default, Clone)]
@@ -1912,7 +1921,8 @@ pub fn now() -> f64 {
 /// function of the step's inputs, not of whether the process that made them profiled.
 pub fn decision(topic: &str, text: impl FnOnce() -> String) {
     let deciding = DECIDING.with(|d| !d.borrow().is_empty());
-    if !on() && !deciding {
+    // A debug build's tree check beside a pass decides nothing (`quiet`): the pass itself records its decisions.
+    if QUIET.get() || (!on() && !deciding) {
         return;
     }
     // The text first: making it may profile too (a split's span), and the state's lock is not reentrant.
@@ -1983,6 +1993,19 @@ pub fn reused(from: &'static str, made: &[Decided]) {
         *state.decisions.entry(k.clone()).or_default() += n;
         state.kept.insert(k.clone(), from);
     }
+}
+
+thread_local! {
+    static QUIET: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `f` with this thread's decisions unrecorded: a debug build's check that runs a pass's tree form beside it,
+/// whose decisions the pass itself records.
+pub fn quiet<T>(f: impl FnOnce() -> T) -> T {
+    let was = QUIET.replace(true);
+    let out = f();
+    QUIET.set(was);
+    out
 }
 
 /// The decisions made so far (none when profiling is off).
@@ -2573,6 +2596,11 @@ pub fn open_spans() -> String {
 /// Record why expensive input relations are requested, before projection planning.
 pub fn projection_plan(prog: &crate::code_rule_dsl::logic::front::Program, reads: &std::collections::BTreeSet<String>) {
     if on() { analysis_report::projection(prog, reads); }
+}
+
+/// `projection_plan` from the relations' readers and the outputs (`analysis_report::projection_of`).
+pub fn projection_plan_of(users: impl FnOnce() -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>>, outputs: &std::collections::BTreeSet<String>, reads: &std::collections::BTreeSet<String>) {
+    if on() { analysis_report::projection_of(&users(), outputs, reads); }
 }
 
 #[cfg(test)]

@@ -112,9 +112,9 @@ Recursion keeps a fact only when it is declared, or proved by the base case and 
 Done when a cold 300-file run plans nothing at run time outside the exceptions, its findings are the reference's,
 and the planning share of its profile (cold13: 3.2 % plus statistics) is gone.
 
-## Step 7: a count below a bound, by form (2026-11-17, Q89)
+## Step 7: a count below a bound, by form (2026-11-17, Q164)
 
-**No rewrite is keyed on a relation's name** (the user, 2026-11-17). A first form (Q88) took `count : { child(g, y,
+**No rewrite is keyed on a relation's name** (the user, 2026-11-17). A first form (Q163) took `count : { child(g, y,
 _), F(y), y < x }` by `child`'s name and its dense index, and lowered it to a running count. It is removed. It
 stopped applying when a rule was written another way, and it relied on facts the program never states.
 

@@ -155,6 +155,27 @@ pub fn read(store: Option<&ContentStore>, key: HashKey) -> Option<(Cow<'static, 
     Some((Cow::Owned(bytes), Some(id)))
 }
 
+/// An image `read` found: its bytes, and the store's source for it (`None` for one shipped with the engine).
+pub type Found = (Cow<'static, [u8]>, Option<SourceId>);
+
+/// `read` of many keys, in their order: the shipped ones from the bundle, the rest from the store in a few
+/// statements (their aliases, then their bytes), not three statements each from as many threads.
+pub fn read_all(store: Option<&ContentStore>, keys: &[HashKey]) -> Vec<Option<Found>> {
+    let mut out: Vec<Option<Found>> = keys.iter().map(|key| shipped().and_then(|b| b.get(*key)).map(|bytes| (Cow::Borrowed(bytes), None))).collect();
+    let Some(store) = store else { return out };
+    let asked: Vec<usize> = (0..keys.len()).filter(|&i| out[i].is_none()).collect();
+    let Ok(ids) = store.sources_by_aliases(&asked.iter().map(|&i| keys[i]).collect::<Vec<_>>()) else { return out };
+    let found: Vec<(usize, SourceId)> = asked.iter().zip(ids).filter_map(|(&i, id)| Some((i, id?))).collect();
+    let Ok(mut bytes) = store.get_sources_bulk(&found.iter().map(|(_, id)| *id).collect::<Vec<_>>()) else { return out };
+    for (i, id) in found {
+        if let Some((b, _)) = bytes.remove(&id) {
+            out[i] = Some((Cow::Owned(b.to_vec()), Some(id)));
+        }
+    }
+    crate::code_rule_dsl::prof::count("rr.image_shipped", out.iter().filter(|f| f.as_ref().is_some_and(|f| f.1.is_none())).count());
+    out
+}
+
 /// With `RERAIL_EXPORT_IMAGES=<dir>`, `bytes` written there as `<key>.img` too: what a bundle is packed from
 /// (`pack`).
 pub fn export(key: HashKey, bytes: &[u8]) {

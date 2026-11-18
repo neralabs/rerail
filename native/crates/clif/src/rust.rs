@@ -466,8 +466,8 @@ impl Shape {
             for part in parts {
                 let inside: std::collections::HashSet<usize> = part.iter().copied().collect();
                 let mut entries: Vec<usize> = Vec::new();
-                for u in 0..succ.len() {
-                    for &t in &succ[u] {
+                for (u, next) in succ.iter().enumerate() {
+                    for &t in next {
                         if inside.contains(&t) && !inside.contains(&u) && !entries.contains(&t) {
                             entries.push(t);
                         }
@@ -484,11 +484,11 @@ impl Shape {
                     return None;
                 }
                 let d = block.len();
-                for u in 0..succ.len() {
-                    for k in 0..succ[u].len() {
-                        if let Some(j) = entries.iter().position(|&e| e == succ[u][k]) {
+                for (u, next) in succ.iter_mut().enumerate() {
+                    for (k, t) in next.iter_mut().enumerate() {
+                        if let Some(j) = entries.iter().position(|&e| e == *t) {
                             label.insert((u, k), j);
-                            succ[u][k] = d;
+                            *t = d;
                         }
                     }
                 }
@@ -715,6 +715,10 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         Opcode::Bor => set(format!("{} | {}", args[0], args[1])),
         Opcode::Bxor => set(format!("{} ^ {}", args[0], args[1])),
         Opcode::Bnot => set(format!("!{}", args[0])),
+        // The vendored Cranelift's carry-less multiply (`native_cpu_block::prefix_xor`), as
+        // simdjson's `prefix_xor` writes it: PMULL, `aes`, a default feature of every arm64 Mac.
+        #[cfg(cranelift_clmul)]
+        Opcode::Clmul if bits == 64 => set(format!("(unsafe {{ core::arch::aarch64::vmull_p64({}, {}) }} as u64)", args[0], args[1])),
         Opcode::IaddImm => set(format!("{}.wrapping_add({}i64 as {u})", args[0], imm()?)),
         Opcode::ImulImm => set(format!("{}.wrapping_mul({}i64 as {u})", args[0], imm()?)),
         // A divisor that is a constant and not zero (Cranelift's verifier refuses a zero one).

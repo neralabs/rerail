@@ -200,7 +200,7 @@ fn decode(src: &[u8], at: usize) -> Option<(u32, usize)> {
 
 pub struct Lexer<'s> {
     pub src: &'s [u8],
-    blocks: Blocks<'s>,
+    blocks: Blocks,
 }
 
 impl<'s> Lexer<'s> {

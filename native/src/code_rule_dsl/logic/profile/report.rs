@@ -54,6 +54,9 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
     if ran {
         t.gpu_cpu += cpu;
         t.gpu_work += work;
+        for (t, v) in t.gpu_terms.iter_mut().zip(p.terms.array()) {
+            *t += v;
+        }
     }
     t.gpu_cheaper += u64::from(p.gpu_cheaper);
     t.device |= p.device;
@@ -62,6 +65,7 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
     t.planned_work += shape.work;
     t.planned_scanned += shape.scanned.min(shape.work).max(0.0);
     t.steps += shape.steps as u64;
+    t.rules += shape.rules as u64;
     t.work += work;
     t.cpu_estimate += p.cpu_s;
     t.gpu_estimate += p.gpu_s;
@@ -104,8 +108,8 @@ pub(in crate::code_rule_dsl) fn placements(r: &mut String, state: &State) {
         if device { "Metal" } else { "CPU" }
     );
     {
-        use crate::code_rule_dsl::logic::plan::placement::{CPU_PER_STRATUM, CPU_PER_WORK, GPU_BIAS};
-        let _ = writeln!(r, "Prices: CPU measured ({:.0} ns a unit of planned work, {:.2} ms a stratum); GPU: each join step on its device form (the relational lab's measures), each stage and submission at the host's measured cost; the GPU taken while under {GPU_BIAS} times the CPU's price (decision 0321).", CPU_PER_WORK * 1e9, CPU_PER_STRATUM * 1e3);
+        use crate::code_rule_dsl::logic::plan::placement::{CPU_PER_STRATUM, CPU_PER_WORK, gpu_bias};
+        let _ = writeln!(r, "Prices: CPU measured ({:.0} ns a unit of planned work, {:.2} ms a stratum); GPU: each join step on its device form (the relational lab's measures), each run, stage, index and input read at the host's measured cost, no copies (decision 0325 step 6); the GPU taken while under {} times the CPU's price (decision 0321).", CPU_PER_WORK * 1e9, CPU_PER_STRATUM * 1e3, gpu_bias());
     }
     device_strata(r, all);
     // The strata whose GPU price was within its bias in at least one run, and that did not run there.
@@ -284,12 +288,15 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
         let _ = writeln!(native_tsv, "{p}\t{}\t{}\t{plan}\t{cpu:.4}\t{}", work(steps), s.join(","), stepped.join(","));
     }
     std::fs::write(dir.join("native.tsv"), native_tsv)?;
-    let mut placement_tsv = String::from("stratum\truns\ton_gpu\tgpu_cheaper\tplanned_work\twork\tcpu_s\tcpu_estimate_s\tgpu_estimate_s\tforms\tmissing\tplanned_scanned\tsteps\n");
+    let mut placement_tsv = String::from("stratum\truns\ton_gpu\tgpu_cheaper\tplanned_work\twork\tcpu_s\tcpu_estimate_s\tgpu_estimate_s\tforms\tmissing\tplanned_scanned\tsteps\tgpu_cpu_s\tgpu_encode_s\tgpu_upload_s\tgpu_wait_s\tgpu_decode_s\tgpu_submissions\tgpu_waved\tgpu_rules\tgpu_steps\tgpu_sorts\tgpu_values\tgpu_rows\tgpu_joins_s\tgpu_other_work\tgpu_sorts_made\tgpu_rows_made\tgpu_upload_values\trules\tgpu_views\n");
     for (key, t) in &state.placements {
         let _ = writeln!(
             placement_tsv,
-            "{key}\t{}\t{}\t{}\t{:.0}\t{}\t{:.4}\t{:.4}\t{:.4}\t{}\t{}\t{:.0}\t{}",
-            t.runs, t.on_gpu, t.gpu_cheaper, t.planned_work, t.work, t.cpu, t.cpu_estimate, t.gpu_estimate, t.forms.join(","), t.missing.join(","), t.planned_scanned, t.steps
+            "{key}\t{}\t{}\t{}\t{:.0}\t{}\t{:.4}\t{:.4}\t{:.4}\t{}\t{}\t{:.0}\t{}\t{:.5}\t{:.5}\t{:.5}\t{:.5}\t{:.5}\t{}\t{}\t{:.0}\t{:.0}\t{:.0}\t{:.0}\t{:.0}\t{:.6}\t{:.0}\t{}\t{}\t{}\t{}\t{:.0}",
+            t.runs, t.on_gpu, t.gpu_cheaper, t.planned_work, t.work, t.cpu, t.cpu_estimate, t.gpu_estimate, t.forms.join(","), t.missing.join(","), t.planned_scanned, t.steps,
+            t.gpu_cpu, t.gpu.encode, t.gpu.upload, t.gpu.wait, t.gpu.decode, t.gpu.submissions, t.gpu.waved,
+            t.gpu_terms[0], t.gpu_terms[1], t.gpu_terms[2], t.gpu_terms[3], t.gpu_terms[4], t.gpu_terms[5], t.gpu_terms[6],
+            t.gpu.sorts, t.gpu.rows, t.gpu.upload_bytes / 8, t.rules, t.gpu_terms[7]
         );
     }
     std::fs::write(dir.join("placement.tsv"), placement_tsv)?;
@@ -614,6 +621,15 @@ fn stages(r: &mut String) {
         walks.sort_by(|a, b| b.1.cmp(&a.1));
         let total: usize = walks.iter().map(|w| w.1).sum();
         let _ = writeln!(r, "\n  micro walks by steps ({total} steps in all; t0 = 8 frames, t2 = the loop tier):");
+        // Each tier's walks and steps over every pass, not the 30 listed: two runs walked the same starts where these
+        // match (a deep rerun walks the loop tier's again).
+        for tier in ["t0:", "t1:", "t2:"] {
+            let of = walks.iter().filter(|(w, _)| w.starts_with(tier));
+            let (steps, items) = of.fold((0usize, 0usize), |(s, i), (w, n)| (s + n, i + stages.get(&format!("walk_items.{w}")).map_or(0, |e| e.1)));
+            if items > 0 {
+                let _ = writeln!(r, "  {tier} {items} walks, {steps} steps");
+            }
+        }
         let _ = writeln!(r, "{:>14} {:>10} {:>10} {:>10}  walk words", "steps", "walks", "per walk", "longest");
         for (w, steps) in walks.iter().take(30) {
             let items = stages.get(&format!("walk_items.{w}")).map_or(0, |e| e.1);
@@ -710,6 +726,13 @@ fn metal_summary(r: &mut String, state: &State) {
         let _ = writeln!(r, "  {form:<26} {:<4} {n:>6} launches {wall:>9.2} s wall {cpu:>9.2} s job CPU ({:.2} ms wall a launch)", lane.name(), wall * 1e3 / *n as f64);
     }
     let _ = writeln!(r, "  matcher label passes: {label_gpu:.1} ms on the GPU (command buffers); the GPU lane's wall less it is the host's part and the waits");
+    #[cfg(target_os = "macos")]
+    let (begun, beside) = rerail_accel::gpu::programs_begun();
+    #[cfg(not(target_os = "macos"))]
+    let (begun, beside) = (0, 0);
+    if begun > 0 {
+        let _ = writeln!(r, "  GPU lane programs: {begun} batches begun, {beside} of them while another ran (decision 0344: one's host part beside another's command buffers)");
+    }
     if walks > 0 {
         let _ = writeln!(r, "  micro walks: {walks} steps, the longest {longest} (== Stages: a long walk is a dispatch's critical path)");
     } else {

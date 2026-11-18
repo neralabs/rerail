@@ -111,7 +111,10 @@ impl Relation {
     /// `create`, or `None` when the block cannot hold the relation's descriptor and directories (what it took of
     /// the block then stays unused).
     pub fn try_create<'b>(block: &'b Block, spec: &Spec, base: Option<&Relation>) -> Option<&'b Relation> {
-        let p: *mut Relation = block.try_alloc_t(1)?;
+        // The descriptor and both row sets' column directories, one chunk: given back whole (`release`).
+        let at = block.try_alloc_chunk(Relation::descriptor_bytes(spec.widths.len()), 64)?;
+        let p: *mut Relation = block.ptr(at);
+        let cols: *mut crate::rows::ColDir = block.ptr(at + Relation::DIRS_AT);
         unsafe {
             (*p).arity = spec.widths.len() as u32;
             (*p).flags.store(if base.is_some() { DELTA } else { 0 }, Relaxed);
@@ -124,9 +127,8 @@ impl Relation {
                 (*p).okey[i] = c;
             }
             (*p).nokey = spec.order.len() as u32;
-            if !Rows::try_init(&raw mut (*p).rows, block, &spec.widths, spec.min_log) || !Rows::try_init(&raw mut (*p).killed, block, &[4], 6) {
-                return None;
-            }
+            Rows::init_in(&raw mut (*p).rows, cols, &spec.widths, spec.min_log);
+            Rows::init_in(&raw mut (*p).killed, cols.add(spec.widths.len()), &[4], 6);
             Some(&*p)
         }
     }
@@ -143,6 +145,26 @@ impl Relation {
             Span::set(&rel.dead, w, words.len());
         }
         Some(rel)
+    }
+
+    /// Gives its chunks back to the block's free list (decision 0342), when the block keeps one. Returns the bytes
+    /// given to the OS with them (`Block::free_chunk`).
+    ///
+    /// # Safety
+    /// It lies in `block`, and no one reads or writes it after (its last holder's).
+    pub unsafe fn release(&self, block: &Block) -> usize {
+        let given = unsafe { self.rows.release(block) + self.killed.release(block) };
+        let (at, bytes) = (block.offset_of(std::ptr::from_ref(self)), Relation::descriptor_bytes(self.arity as usize));
+        // The last use of `self`: its own memory goes back.
+        given + block.free_chunk(at, bytes)
+    }
+
+    /// Where the column directories lie in a descriptor's chunk.
+    const DIRS_AT: usize = size_of::<Relation>().next_multiple_of(64);
+
+    /// A descriptor's chunk: the relation, and the directories of its `arity` columns and its killed rows' one.
+    pub fn descriptor_bytes(arity: usize) -> usize {
+        Relation::DIRS_AT + (arity + 1) * size_of::<crate::rows::ColDir>()
     }
 
     #[inline]
@@ -971,6 +993,34 @@ impl<A: Iterator<Item = u32>, B: Iterator<Item = u32>> Iterator for Merge<'_, A,
 
 #[cfg(test)]
 mod tests {
+    /// A relation released in a free-listed block (decision 0342) gives its chunks back: the next relation of its
+    /// shape takes them, so the block grows by the descriptors alone, and reads its own rows.
+    #[test]
+    fn a_released_relations_chunks_are_taken_by_the_next() {
+        let block = Block::anon(kind::FACTS, 64 << 20).with_free_list();
+        let spec = Spec { widths: vec![8, 8, 8], order: Vec::new(), indexes: Vec::new(), min_log: crate::rows::MIN_LOG };
+        let fill = |r: &Relation, base: i64| {
+            assert!(r.rows.try_reserve(&block, 50_000));
+            unsafe {
+                r.rows.claim_reserved(50_000);
+                for i in 0..50_000u32 {
+                    for c in 0..3 {
+                        r.rows.put(i, c, base + i as i64 * 3 + c as i64);
+                    }
+                }
+            }
+        };
+        let a = Relation::try_create(&block, &spec, None).unwrap();
+        fill(a, 0);
+        let after_one = block.used();
+        unsafe { a.release(&block) };
+        assert!(block.free_bytes() >= 50_000 * 24, "its chunks are free: {}", block.free_bytes());
+        let b = Relation::try_create(&block, &spec, None).unwrap();
+        fill(b, 1_000_000);
+        assert_eq!(block.used(), after_one, "the next took its chunks and its descriptor: nothing new from the front");
+        assert_eq!(b.rows.get(49_999, 2), 1_000_000 + 49_999 * 3 + 2);
+    }
+
     use super::*;
     use crate::block::kind;
     use std::collections::BTreeSet;

@@ -1232,6 +1232,21 @@ impl Resident {
     }
 }
 
+/// `r`, after a refusal at run time dropped what this thread's device cache holds: a batch refused while it was
+/// encoded is dropped uncommitted, and a wave that failed did not run to its end, so the views, texts, verdicts and
+/// indexes they made (cached as they were encoded) were never written. Later strata would read them as made.
+fn unrun<T>(r: Result<T, String>) -> Result<T, String> {
+    if r.is_err() {
+        RESIDENT.with_borrow_mut(|res| {
+            res.entries.clear();
+            res.unions.clear();
+            res.bytes = 0;
+        });
+        crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "device caches dropped after a refusal", 1);
+    }
+    r
+}
+
 /// The report of the last stratum the device ran or refused on this thread (taken).
 pub(in crate::code_rule_dsl) fn take_report() -> Option<Report> {
     LAST.with_borrow_mut(Option::take)
@@ -1331,6 +1346,7 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                     mj::give_back();
                 }
                 // A whole view its batch's chunk block makes (decision 0289 §2): its columns made on the device.
+// copy (0353 step 4): a view made on the device, cached as a relation (decision 0353).
                 let made = match (&owner, &rel.view) {
                     (Owner::Src(_), Some(view)) if ids.is_none() && view.whole() => view.src.device_view().filter(|d| d.rows == n),
                     _ => None,
@@ -1351,18 +1367,20 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                     res.bytes = res.bytes();
                     res.entries.len() - 1
                 } else {
+// copy (0353 step 6): rows uploaded from the host (decision 0353).
                 let dev = mj::DevRel::upload(k, n, |v| {
                     let row_of = |r: usize| ids.as_ref().map_or(r, |ids| ids[r]);
                     match (&owner, &rel.view) {
                         (Owner::Src(_), Some(view)) => {
-                            // The source's rows, the columns held read at once per row (`Source::row_at`).
-                            let mut row = vec![0i64; k];
-                            for r in 0..n {
-                                view.src.row_at(r, &want, &mut row);
+                            // The source's rows in order, the columns held read at once per row (`Source::for_rows`).
+                            view.src.for_rows(&want, &mut |r, row| {
+                                if r >= n {
+                                    return;
+                                }
                                 for (c, &x) in row.iter().enumerate() {
                                     v[c * n + r] = x;
                                 }
-                            }
+                            });
                         }
                         (_, None) => {
                             // Each wanted value read where it lies (`RowRef::Rows`), not the row copied whole.
@@ -1645,6 +1663,8 @@ fn column_symbols(rel: &InRel, col: usize) -> Vec<i64> {
 
 /// The texts of columns `cols`' symbols and of `consts`, on the device together (`str_cmp` reads them), copied once
 /// and kept while the relations are.
+// copy (0353 step 6): symbols' names copied for the device. They go: the kernels read the strings block
+// (decision 0353).
 fn texts(cols: &[(Arc<InRel>, usize)], consts: &[i64], rep: &mut Report, names: &Interner) -> Result<Rc<mj::DevText>, String> {
     RESIDENT.with_borrow_mut(|res| {
         let found = res.unions.iter().find(|(cs, ks, _)| {
@@ -1893,6 +1913,10 @@ impl<'p> Run<'p> {
 /// `fresh` as the CPU's run would add them. Returns each rule's head rows (before the store's set). The rules go in
 /// as few submissions as their tables' space allows (`BATCH_MAX`): one, for most strata.
 pub(in crate::code_rule_dsl) fn run(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
+    unrun(run_(rules, store, names, fresh))
+}
+
+fn run_(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
     on_lane("stratum joins", rules.len(), || run_here(rules, store, names, fresh))
 }
 
@@ -1967,7 +1991,6 @@ thread_local! {
     /// into it and wait for the wave, so a level's small strata go out in one commit and one wait. Its number, and
     /// whether it is open.
     static WAVE: RefCell<Option<(u64, mj::Batch)>> = const { RefCell::new(None) };
-    static WAVES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
     /// The waves flushed, by number: their completion (or why they failed), and the device's seconds not yet
     /// counted by a stratum.
     static FLUSHED: RefCell<HashMap<u64, Result<Option<mj::Done>, String>>> = RefCell::new(HashMap::new());
@@ -1975,9 +1998,12 @@ thread_local! {
     static SUSPENDED: RefCell<HashMap<u64, (Vec<Run<'static>>, u64, Report, Vec<usize>)>> = RefCell::new(HashMap::new());
 }
 
-/// The strata's tickets, numbered across the process: a stratum's suspended runs and its wave are its thread's
-/// (`SUSPENDED`, `FLUSHED`), and a ticket looked up on another thread finds nothing there (`resume`'s error), where a
-/// count of each thread's own found that thread's stratum of the same number (Q91).
+/// The waves' and the tickets' numbers, of the process. A parked stratum can resume on another thread than the one it
+/// was submitted on (a job run while its thread waited, which joined a wave that thread had open, `plan::issue`). That
+/// thread's `SUSPENDED` must then miss it, and a miss refuses the stratum to the CPU. With numbers of one thread, it
+/// found that thread's own stratum of the same number instead, and resumed it with these rules: a panic on a rule
+/// index, or another stratum's rows.
+static WAVES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 static TICKETS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// A batch of its own (not the wave's), with a text arena of `arena` bytes when given. The thread's open wave is
@@ -2013,6 +2039,10 @@ fn commit_wave() -> Result<(), String> {
 /// commits it once, for every stratum in it): its ticket for `resume`. `None` when they do not all fit one
 /// submission's space (the stratum then runs on its own, `run`).
 pub(in crate::code_rule_dsl) fn submit(rules: &[(&Plan, &JoinRule, usize)], names: &Interner) -> Result<Option<u64>, String> {
+    unrun(submit_(rules, names))
+}
+
+fn submit_(rules: &[(&Plan, &JoinRule, usize)], names: &Interner) -> Result<Option<u64>, String> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "device joins (to the wave)".into());
     // A wave holds its strata's buffers to the level's end: with the budget's headroom gone (the wave's own leases
     // count, `device_bytes_left`), this stratum runs in a submission of its own, whose buffers go back when it ends.
@@ -2028,8 +2058,7 @@ pub(in crate::code_rule_dsl) fn submit(rules: &[(&Plan, &JoinRule, usize)], name
     let mut rep = Report { rules: rules.len() as u32, stages: rules.iter().map(|r| r.0.stages.len() as u32).sum(), ..Report::default() };
     let opened = WAVE.with_borrow(Option::is_none);
     if opened {
-        let n = WAVES.get() + 1;
-        WAVES.set(n);
+        let n = WAVES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
         WAVE.with_borrow_mut(|w| -> Result<(), String> {
             *w = Some((n, mj::Batch::new().map_err(|e| format!("{e:?}"))?));
             Ok(())
@@ -2063,6 +2092,10 @@ pub(in crate::code_rule_dsl) fn submit(rules: &[(&Plan, &JoinRule, usize)], name
 
 /// A stratum that waited for its wave (`submit`'s `ticket`), finished: as `run`, from the flushed submission.
 pub(in crate::code_rule_dsl) fn resume(ticket: u64, rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
+    unrun(resume_(ticket, rules, store, names, fresh))
+}
+
+fn resume_(ticket: u64, rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "device joins (after the wave)".into());
     let Some((runs, wave, mut rep, live)) = SUSPENDED.with_borrow_mut(|s| s.remove(&ticket)) else { return Err("a stratum's device joins were not submitted".into()) };
     let all = rules.len();
@@ -2525,6 +2558,10 @@ fn round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, names: &Inte
 /// the new rows once, at the end, into `fresh` as the CPU's waves would add them. `heads` are the component's
 /// relations, which must be empty when it starts. Returns each rule's rows made, seeds then deltas.
 pub(in crate::code_rule_dsl) fn fixpoint(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
+    unrun(fixpoint_(seeds, deltas, heads, store, names, fresh))
+}
+
+fn fixpoint_(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRule, usize)], heads: &[usize], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
     on_lane("stratum rounds", seeds.len() + deltas.len(), || fixpoint_here(seeds, deltas, heads, store, names, fresh))
 }
 
@@ -2761,6 +2798,8 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
             Some(b) => b,
             None => batch.insert(direct_batch(None)?),
         };
+// copy (0353 step 6): the fixpoint's total copied into a run's block. It goes: the total lives in a block
+// of the run's life from its start (decision 0353).
         let part = crate::code_rule_dsl::facts::rows::Part::for_writes(k, total.rows);
         let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
         let dst = mj::DevRel::in_block(&part.in_block(total.rows as u32), k).map_err(|e| format!("{e:?}"))?;

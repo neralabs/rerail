@@ -281,10 +281,11 @@ fn decode_stored_tape(
     let source = String::from_utf8(unindexed.source).ok()?;
     let image = tape::TapeImage::from_bytes(&unindexed.image, &grammar).ok()?;
     let lines = Arc::new(LineTable::new(&source, Terminators::of(language)));
+    let image = tape::FileImage::single(image, &source);
     tape::TapeDoc::restore_with_lines(
         Arc::new(source),
         grammar,
-        &tape::FileImage::single(image),
+        &image,
         lines,
         &|| stop.load(Ordering::Acquire),
     )

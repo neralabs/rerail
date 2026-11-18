@@ -282,17 +282,20 @@ impl Drop for MetalWorkspaceLease {
 
 const BATCH_ENTRY: &str = include_str!("metal_batch_runtime.metal");
 /// The tape's reads and readers (decision 0310), before the runtime: every batch reads its documents in the
-/// batch's chunk block through the tape view (decisions 0032, 0289 §4), with no node records.
-static TAPE_PREFIX: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+/// batch's chunk block through the tape view (decision 0032), with no node records: the document table's entry as
+/// generated (`slabs::msl`, decision 0289 §4), the reads written once (decision 0310), then the readers.
+static TAPE_PREFIX: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| prefix(""));
+/// The interpreter of resident label batches: tasks from roots, not records (decision 0033).
+static RESIDENT_PREFIX: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| prefix("#define RERAIL_RESIDENT 1\n"));
+
+fn prefix(defines: &str) -> String {
     format!(
-        "#include <metal_stdlib>\nusing namespace metal;\n{}{}{}",
+        "{defines}#include <metal_stdlib>\nusing namespace metal;\n{}{}{}",
         crate::code_rule_dsl::residency::slabs::msl(),
         include_str!("metal_tape_reads.metal"),
         include_str!("metal_tape.metal")
     )
-});
-/// The interpreter of resident label batches: tasks from roots, not records (decision 0033).
-static RESIDENT_PREFIX: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| format!("#define RERAIL_RESIDENT 1\n{}", *TAPE_PREFIX));
+}
 
 #[derive(Clone, Eq, PartialEq)]
 pub(super) struct ProgramBufferKey {
@@ -543,6 +546,10 @@ fn jit_support(
                 source.push_str(&format!(
                     "case {pc}u:return jit_value_{program_index}_{operand}(context);"
                 ));
+            } else if opcode == ASSERT && !program.tree_sitter_query {
+                // An ordinary program tests the capture predicate where it asserts it, on the captures so far, as the
+                // CPU's (`ASSERT`); a tree-sitter query's are tested on its candidates at the task's end.
+                source.push_str(&format!("case {pc}u:return jit_capture_{program_index}_{operand}(context);"));
             } else if opcode == ASSERT {
                 source.push_str(&format!("case {pc}u:return true;"));
             } else {
@@ -735,7 +742,32 @@ pub fn execute_packed_with_result_limits(
     anchors: &[Vec<Vec<u32>>],
     result_limits: Option<&[u32]>,
 ) -> Result<PackedExecution, Error> {
-    let _evaluation = super::metal_backend::metal_execution_guard()?;
+    execute_packed_budgeted(engine, programs, files, anchors, result_limits, super::Budget::current())
+}
+
+/// The batch with `budget` (decision 0334): an evaluation that outgrows its steps or states restarts with twice as
+/// much (`restarting`).
+pub fn execute_packed_budgeted(
+    engine: &Engine,
+    programs: &[Program],
+    files: &[TapeDoc],
+    anchors: &[Vec<Vec<u32>>],
+    result_limits: Option<&[u32]>,
+    budget: super::Budget,
+) -> Result<PackedExecution, Error> {
+    super::restarting(programs, anchors, budget, &mut |anchors, budget, growth| execute_packed_once(engine, programs, files, anchors, result_limits, budget, growth))
+}
+
+fn execute_packed_once(
+    engine: &Engine,
+    programs: &[Program],
+    files: &[TapeDoc],
+    anchors: &[Vec<Vec<u32>>],
+    result_limits: Option<&[u32]>,
+    budget: super::Budget,
+    growth: &super::StateGrowth,
+) -> Result<PackedExecution, Error> {
+    let _evaluation = super::metal_backend::evaluation_scope();
     if matches!(engine, Engine::Jit { programs: count, .. } if *count != programs.len()) {
         return Err(Error::InvalidAnchor);
     }
@@ -746,35 +778,47 @@ pub fn execute_packed_with_result_limits(
         }
         error
     })?;
+    batch.apply_budget(budget, growth);
     if batch.tasks.is_empty() {
         return Ok(PackedExecution::new(batch, PackedResultPage::empty()));
-    }
-    let totals = batch
-        .assign_workspace_with_result_limits_and_lanes(programs, result_limits, EXECUTION_LANES)
-        .map_err(|error| {
-            if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
-                eprintln!("TEMPO_PACKED_BATCH_ERROR stage=workspace error={error:?}");
-            }
-            error
-        })?;
-    if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
-        eprintln!(
-            "TEMPO_PACKED_BATCH_PROFILE backend=metal programs={} tasks={} workspaceBytes={} totals={totals:?}",
-            programs.len(),
-            batch.tasks.len(),
-            batch.workspace_allocation_bytes(totals).unwrap_or(u64::MAX),
-        );
     }
     let allocation_started = std::time::Instant::now();
     let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
     let queue = rerail_metal::queue()?;
-    let workspace = MetalWorkspaceLease::acquire(
-        device,
-        totals,
-        batch.header.scheduler_byte_count,
-        batch.header.workspace_byte_count,
-        batch.tasks.len(),
-    )?;
+    // Every lane reserves the widest evaluation's states: a workspace the pool refuses runs with half the lanes,
+    // down to one (decision 0334 §9). Fewer lanes run its tasks in fewer at a time; the results are the same.
+    let mut lanes = EXECUTION_LANES;
+    let (totals, workspace) = loop {
+        let totals = batch
+            .assign_workspace_with_result_limits_and_lanes(programs, result_limits, lanes)
+            .map_err(|error| {
+                if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+                    eprintln!("TEMPO_PACKED_BATCH_ERROR stage=workspace error={error:?}");
+                }
+                error
+            })?;
+        if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+            eprintln!(
+                "TEMPO_PACKED_BATCH_PROFILE backend=metal programs={} tasks={} lanes={lanes} workspaceBytes={} totals={totals:?}",
+                programs.len(),
+                batch.tasks.len(),
+                batch.workspace_allocation_bytes(totals).unwrap_or(u64::MAX),
+            );
+        }
+        match MetalWorkspaceLease::acquire(
+            device,
+            totals,
+            batch.header.scheduler_byte_count,
+            batch.header.workspace_byte_count,
+            batch.tasks.len(),
+        ) {
+            Err(Error::BackendCapacity) if lanes > 1 => {
+                crate::code_rule_dsl::prof::count("metal.fewer_lanes", 1);
+                lanes /= 2;
+            }
+            workspace => break (totals, workspace?),
+        }
+    };
     for evaluation in &mut batch.evaluations {
         evaluation.generation = workspace.generation;
     }
@@ -784,16 +828,16 @@ pub fn execute_packed_with_result_limits(
     let program_buffers = engine.program_buffers(device, &batch)?;
     let task_buffer = MappedBuffer::from_slice(device, &batch.tasks)?;
     let header_buffer = MappedBuffer::from_slice(device, &[batch.header])?;
-    // The documents in one chunk block (0289 §4), in the batch's numbering: their views where the files were, and
-    // the block where the node records were (bound in the children's, source's and line starts' slots too, which
-    // the runtime no longer reads). A batch whose documents cannot share a block is over capacity.
+    // The documents resident, gathered into one block (decision 0289 §4), in the batch's numbering: their views
+    // where the files were, and the block where the node records were. The kernel reads nothing from the
+    // children, source and line start slots; the block stands in for them.
     let table = crate::code_rule_dsl::residency::slabs::admit_docs(files)?;
     let table = crate::code_rule_dsl::residency::slabs::DocTable::one_block(table).ok_or(Error::BackendCapacity)?;
     if table.nodes != files.iter().map(TapeDoc::transducer_len).sum::<usize>() {
         return Err(Error::BackendFailure);
     }
     let file_buffer = MappedBuffer::from_slice(device, &table.views)?;
-    let block = &MappedBuffer::wrap(table.block.as_ref().ok_or(Error::BackendFailure)?.buffer().clone());
+    let block = table.block.as_ref().ok_or(Error::BackendFailure)?.buffer();
     // The derived classes alone (`has_supertype`): the classes are the codes', read on the tape.
     let supertypes = batch.metal_supertypes();
     let supertype_buffer = MappedBuffer::from_slice(device, &supertypes)?;
@@ -846,42 +890,42 @@ pub fn execute_packed_with_result_limits(
     encoder.set_label("Tempo packed transducer kernel");
     encoder.set_compute_pipeline_state(engine.pipeline());
     for (index, buffer) in [
-        &task_buffer,
-        &header_buffer,
-        &file_buffer,
+        &task_buffer.buffer,
+        &header_buffer.buffer,
+        &file_buffer.buffer,
         block,
-        &program_buffers.programs,
-        &program_buffers.words,
-        &program_buffers.longs,
+        &program_buffers.programs.buffer,
+        &program_buffers.words.buffer,
+        &program_buffers.longs.buffer,
         block,
-        &supertype_buffer,
-        pending_buffer,
-        capture_buffer,
-        cursor_buffer,
-        repeat_buffer,
-        scheduler_buffer,
-        result_buffer,
-        status_buffer,
-        &program_buffers.values,
-        &program_buffers.strings,
-        &program_buffers.nfa_states,
-        &program_buffers.nfa_data,
-        &program_buffers.nfa_ranges,
-        &program_buffers.lua_instructions,
-        &program_buffers.lua_members,
-        &program_buffers.assertions,
-        &program_buffers.assertion_data,
-        &program_buffers.string_bytes,
+        &supertype_buffer.buffer,
+        &pending_buffer.buffer,
+        &capture_buffer.buffer,
+        &cursor_buffer.buffer,
+        &repeat_buffer.buffer,
+        &scheduler_buffer.buffer,
+        &result_buffer.buffer,
+        &status_buffer.buffer,
+        &program_buffers.values.buffer,
+        &program_buffers.strings.buffer,
+        &program_buffers.nfa_states.buffer,
+        &program_buffers.nfa_data.buffer,
+        &program_buffers.nfa_ranges.buffer,
+        &program_buffers.lua_instructions.buffer,
+        &program_buffers.lua_members.buffer,
+        &program_buffers.assertions.buffer,
+        &program_buffers.assertion_data.buffer,
+        &program_buffers.string_bytes.buffer,
         block,
-        value_state_buffer,
+        &value_state_buffer.buffer,
         block,
-        final_capture_buffer,
-        output_storage_buffer,
+        &final_capture_buffer.buffer,
+        &output_storage_buffer.buffer,
     ]
     .into_iter()
     .enumerate()
     {
-        encoder.set_buffer(index as u64, Some(&buffer.buffer), 0);
+        encoder.set_buffer(index as u64, Some(buffer), 0);
     }
     let width = engine.pipeline().thread_execution_width().max(1);
     encoder.checked_dispatch_threads(

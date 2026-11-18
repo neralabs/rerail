@@ -2,7 +2,7 @@
 //! `metal_tape.metal`'s hand port.
 //!
 //! A read's function takes the tape (`device const uchar* t`, where the view's offsets count from: the
-//! document's first byte in its batch's block) and its view as u32s (`thread const uint* v`, the device's `ChunkTape` past its `at`), then its own
+//! document's first byte in its batch's block) and its view as u32s (`thread const uint* v`, the device's `DocView`, `at` first), then its own
 //! parameters. In the body the tape and the view are byte offsets from those pointers, 0 where they come in, so
 //! an address the read computes is an offset: a load of the view (marked aligned: its fields) reads `v`, a load of
 //! the tape reads `t`, at any alignment (two aligned words shifted together where it is not aligned to its size;
@@ -630,7 +630,7 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         let off = data.load_store_offset().unwrap_or(0);
         let address_low = dfg.inst_args(inst).first().is_some_and(|a| low.contains(&dfg.resolve_aliases(*a)));
         if off == 0 {
-            format!("{p}")
+            p.to_string()
         } else if address_low {
             format!("({p}+uint({}u))", off as i64 as u64 as u32)
         } else {
@@ -671,6 +671,8 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         Opcode::UshrImm => set(shift(&args[0], &(imm()? as u64 & 63).to_string(), ">>", false)),
         Opcode::SshrImm => set(shift(&args[0], &(imm()? as u64 & 63).to_string(), ">>", true)),
         Opcode::Clz => set(format!("{u}(clz({}))", args[0])),
+        Opcode::Popcnt => set(format!("{u}(popcount({}))", args[0])),
+        Opcode::Ctz => set(format!("{u}(ctz({}))", args[0])),
         Opcode::Umin => set(format!("min({},{})", args[0], args[1])),
         Opcode::Umax => set(format!("max({},{})", args[0], args[1])),
         Opcode::Icmp | Opcode::IcmpImm => {

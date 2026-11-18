@@ -29,7 +29,7 @@ whole. A relation is never a list of parts that a reader must merge.
 
 ## Steps
 
-1. **An export is one relation** (built, Q93). When a chunk is filed, its derived relation is read where it lies.
+1. **An export is one relation** (built, Q172). When a chunk is filed, its derived relation is read where it lies.
    Each live row that no earlier chunk gave is written once into the export's relation, and the room for the whole
    chunk is reserved first. Repeats and rows dead in the chunk's relation are not written, so the export has no
    dead rows. The export holds none of the chunk's parts, which go when the chunk is filed.

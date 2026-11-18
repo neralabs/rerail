@@ -298,7 +298,7 @@ relation's digest, and one edited file changes it. So each step rebuilds these f
 - **The rows are already per document.** They come one memo entry per file (`plan/corpus.rs`, the memo
   hits), and a node id carries its document (`id >> 32`).
 
-**Superseded (2026-11-17, Q90).** The carry described here is removed. Held rows are one block relation probed by its
+**Superseded (2026-11-17, Q165).** The carry described here is removed. Held rows are one block relation probed by its
 own hashed indexes (0325, "Held rows probed by their own indexes"), so nothing is sorted to carry.
 
 **What was built** (it differs from the first proposal). This run's copy of a base relation is still made

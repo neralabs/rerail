@@ -53,6 +53,7 @@
 //! changed read whose old rows were not kept, is derived again from its inputs: its rules unchanged.
 //! Either way its relations' deltas feed the strata after it, and an empty delta derives nothing there.
 
+use crate::code_rule_dsl::logic::program_image::t_of;
 use super::retain::{Cut, Retained};
 use super::{Error, Result, lower};
 use crate::code_rule_dsl::facts::vtab::Source;
@@ -380,18 +381,6 @@ impl<'v> Named<'v> {
     }
 }
 
-/// A term of `v`'s rule `r`, to write into a builder under `v`'s ids.
-fn t_of<'v>(v: &'v Version, r: RuleRef<'v>, t: TermRef<'v>) -> T<'v> {
-    match t {
-        TermRef::Var(s) => T::VarAtom(r.var(s)),
-        TermRef::Wild => T::Wild,
-        TermRef::Top => T::Top,
-        TermRef::Int(i) => T::Int(i),
-        TermRef::Branded(b) => T::Branded(b),
-        TermRef::Str(a) => T::StrAtom(a),
-        TermRef::Call(f, args) => T::Call(v.text(f), args.map(|a| t_of(v, r, a)).collect()),
-    }
-}
 
 fn tm(t: &Tm) -> T<'_> {
     match t {
@@ -748,7 +737,10 @@ pub(in crate::code_rule_dsl) fn rewrite_over<'b>(src: &Part<'_>, mut b: Builder<
         }
         if let Some(why) = why {
             let name = scc.iter().max_by_key(|r| count_of(r)).cloned().unwrap_or_default();
-            again.push((format!("{name} ({} relations)", scc.len()), why));
+            // The changed read with no old rows, named beside the stratum.
+            let read = mine.iter().flat_map(|r| r.lits.iter().filter_map(move |l| l.atom().map(|a| r.rel(a)))).find(|r| changed.contains(*r) && !scc.contains(*r) && !old(r));
+            let read = read.map(|r| format!(", reads {r}")).unwrap_or_default();
+            again.push((format!("{name} ({} relations{read})", scc.len()), why));
             derived_again += 1;
             rules.extend(at.iter().map(|&k| Ir::Copy(k)));
             changed.extend(scc.iter().cloned());

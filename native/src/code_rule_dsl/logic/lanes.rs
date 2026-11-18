@@ -178,7 +178,7 @@ pub mod wave {
     /// with its own: their results are this thread's then, and the deferred count no longer shows them. A stratum's
     /// submission that joined a wave opened before `mark` deferred nothing, and counts as `joined`. Before this,
     /// a stratum so handed on was resumed on another thread, whose ticket of the same number was another stratum's:
-    /// it read that one's rows, or panicked on its rules (Q91).
+    /// it read that one's rows, or panicked on its rules (Q170).
     pub fn kept_here(mark: Mark) -> bool {
         deferred_since(mark) || FLUSHES.get() > mark.2 || JOINED.get() > mark.3
     }
@@ -352,7 +352,7 @@ mod wave_tests {
         assert_eq!(wave::flushed().0 - before.0, 1, "another thread's wave is not the run's");
     }
 
-    /// Q91: a job's strata that wait on their wave finish on its thread when anything they wait on is the thread's: a
+    /// Q170: a job's strata that wait on their wave finish on its thread when anything they wait on is the thread's: a
     /// submission deferred since its mark, a submission that joined a wave opened before it, or a wave flushed here
     /// meanwhile by a job run while this one waited (which took this job's deferred commit with it). Only with none
     /// of these do they go back to the run's wave.

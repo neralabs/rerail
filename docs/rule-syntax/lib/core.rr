@@ -514,6 +514,9 @@
 .functor ast_dump(n: node): symbol
 // @py_repr(s): CPython's repr of the str s: 'it' for it, "it's" for it's, a non-printable character escaped.
 .functor py_repr(s: symbol): symbol
+// @shell_unquote(w): a POSIX shell word's value, its quotes and backslashes undone: `-DNAME="a b"` is `-DNAME=a b`.
+// A command's words are its `match_all` of `(?:[^\s'"\\]|\\.|'[^']*'|"(?:[^"\\]|\\.)*")+` (`c/compile-commands.rr`).
+.functor shell_unquote(s: symbol): symbol
 
 
 // ---- repository inputs (native readers, one derivation per file) ---------------------------------------------

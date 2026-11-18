@@ -7,6 +7,9 @@
 //! The pass needs no state of its own: it reads the module's declarations and builds the bodies of the
 //! hot reads the function reaches. The module defines its cold reads once, when it is made
 //! (`define_cold`).
+//!
+//! The functions here return Cranelift's own `ModuleError`, as `Module`'s methods do: its size is Cranelift's.
+#![allow(clippy::result_large_err)]
 
 use crate::reads::{self, READS, Read};
 use cranelift_codegen::Context;

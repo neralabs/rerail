@@ -158,3 +158,10 @@ MSL from the Rust fields). The final shape's steps go on the work queue as their
   regions of a block's nodes as one LZ4 block (checkpoints too), has no raw or repeat blocks, and computes a
   decoded block's region starts by `layout`. So a full decode is a scatter of each block's regions into the whole
   tape's (`unblock_into`), not blocks decoded where they belong, and a read of one array decodes all nine.
+
+## Built after the corrections (2026-11-17)
+
+The user: "yes go ahead and do that", on both corrections. The format 16 header holds each region's start (u32s from
+the tape's first byte) and the slot, gap and length widths; 16z is 0156 §2.1's blocking: a piece an array a block,
+raw, LZ4 or a repeat, checkpoints raw, each block decoded in place. Decision 0336 §4 and §5 record it; Q65–Q67 hold
+what is left of §1–§3.

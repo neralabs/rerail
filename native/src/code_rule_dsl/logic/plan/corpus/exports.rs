@@ -743,4 +743,27 @@ pub mod tests {
         rows.sort();
         assert_eq!(rows, vec![(node(1, 0), 7), (node(1, 1), 8), (node(1, 2), 8), (node(2, 0), 9), (node(3, 0), 1)]);
     }
+
+    #[test]
+    fn a_documents_own_rows_and_others_given_again_are_kept_once() {
+        let chunk = |rows: Vec<[i64; 2]>| {
+            let names = vec!["c0".to_owned(), "c1".to_owned()];
+            crate::code_rule_dsl::logic::native::component::columns_source(names, (0..2).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect())
+        };
+        let node = |doc: i64, i: i64| (doc << 32) | i;
+        let mut exports = Exports::default();
+        // Document 1's own rows, then document 2's.
+        exports.add("e", 2, chunk(vec![[node(1, 0), 7], [node(1, 1), 8]]).as_ref());
+        exports.add("e", 2, chunk(vec![[node(2, 0), 9]]).as_ref());
+        // Another document's row twice, and a row of document 1 again.
+        exports.add("e", 2, chunk(vec![[node(3, 0), 1], [node(3, 0), 1]]).as_ref());
+        exports.add("e", 2, chunk(vec![[node(1, 1), 8], [node(1, 2), 8]]).as_ref());
+        let mut docs = std::collections::HashSet::new();
+        docs.insert(1);
+        assert_eq!(exports.rows_of("e", 2, 0, &docs), vec![vec![node(1, 0), 7], vec![node(1, 1), 8], vec![node(1, 2), 8]]);
+        let s = exports.source("e", 2);
+        let mut rows: Vec<(i64, i64)> = (0..s.len()).map(|r| (s.value(r, 0), s.value(r, 1))).collect();
+        rows.sort();
+        assert_eq!(rows, vec![(node(1, 0), 7), (node(1, 1), 8), (node(1, 2), 8), (node(2, 0), 9), (node(3, 0), 1)]);
+    }
 }

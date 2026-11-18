@@ -103,12 +103,15 @@ struct MatcherWave {
 /// What a wave's launch returns: per matcher, per tape, the matched roots; how it ran; its wall seconds on the lane.
 type WaveFound = Result<(Vec<Vec<BTreeSet<u32>>>, crate::code_rule_dsl::transducer::packed::WaveRun, f64), String>;
 
-/// The cores' interpreter: seconds a tape node and pass (one thread), and the GPU's. Priors, replaced by the
-/// executor's learned rates once it has measured the form. Measured over the data layer (M5, under load): the cores
-/// 1.1e-8 to 2.4e-8, the GPU's interpreter 2.5e-8 to 2.5e-7 (one wave of large files 5.6e-5 a node): no faster a
-/// unit than one core, on one lane against the cores' many.
-const WAVE_CPU_PER_NODE_PASS: f64 = 2e-8;
-const WAVE_GPU_PER_NODE_PASS: f64 = 2.5e-8;
+/// The cores' interpreter: seconds a tape node and pass (one thread), and the GPU's: priors, until a run has measured
+/// its own launches (`price::observe`: a line of a launch's fixed cost and a unit's). Measured 2026-11-17 on s1000
+/// (M5, format 16, the structured MSL, the machine's load 40 to 110): the GPU 6.2 ms a launch + 1.5e-8 s a unit of
+/// wall, 4.3 ms + 3.7e-9 s of host CPU; the cores 7 launches of 7.1e6 units in 0.77 s, 1.1e-7 s a unit under a load
+/// of about 50 on 18 threads, so about 4e-8 unloaded (the price scales the cores by their load itself). The
+/// GPU's was 2.5e-8 and its host CPU nothing; the cores' 2e-8 (2026-11-16, before format 16 and the structured MSL).
+const WAVE_CPU_PER_NODE_PASS: f64 = 4e-8;
+const WAVE_GPU_PER_NODE_PASS: f64 = 1.5e-8;
+const WAVE_GPU_HOST_PER_NODE_PASS: f64 = 4e-9;
 
 /// The profile's topic for a wave the GPU lane ran on the CPU, its Metal run having failed (`MatcherWave::run`).
 #[cfg(target_os = "macos")]
@@ -137,6 +140,13 @@ impl rerail_accel::kernel::Program for MatcherWave {
             rerail_accel::Lane::Cpu => Some(WAVE_CPU_PER_NODE_PASS),
             rerail_accel::Lane::Gpu if self.gpu => Some(WAVE_GPU_PER_NODE_PASS),
             _ => None,
+        }
+    }
+
+    fn host_per_unit(&self, lane: rerail_accel::Lane) -> Option<f64> {
+        match lane {
+            rerail_accel::Lane::Gpu => self.per_unit(lane).map(|_| WAVE_GPU_HOST_PER_NODE_PASS),
+            _ => self.per_unit(lane),
         }
     }
 
@@ -235,7 +245,7 @@ fn matched(
             let _confirm = profile::span(|| "ast roots over the work limit, confirmed (W's matcher at each root)".into());
             let held_over: Vec<usize> = over.iter().map(|&t| held[t]).collect();
             let found_over: Vec<BTreeSet<u32>> = over.iter().map(|&t| found[t].clone()).collect();
-            let (found_rows, budget) = captured_rows(m, &held_over, &found_over, &at, tapes, atoms)?;
+            let (found_rows, budget) = captured_rows(m, &held_over, &found_over, &at, tapes, atoms, Some(wave.w_key(c)))?;
             if budget > 0 {
                 profile::decision("ast captures over a file's visit budget (no rows)", || format!("{}: {budget} roots", m.rel));
             }
@@ -251,7 +261,7 @@ fn matched(
                 }
                 let p = at[i].expect("held");
                 for core in found {
-                    let local = p.local.get(core as usize).copied().unwrap_or(NONE);
+                    let local = p.local_of_node(core);
                     if local != NONE {
                         r.push(&[p.global(local)]);
                         rows += 1;
@@ -262,7 +272,7 @@ fn matched(
             // Captures, or a relaxed matcher's roots to confirm (decision 0107): W's matcher at each root.
             let _captures = profile::span(|| "ast captures and confirmations (W's matcher at each root)".into());
             let roots: usize = found.iter().map(BTreeSet::len).sum();
-            let (found_rows, limited) = captured_rows(m, &held, &found, &at, tapes, atoms)?;
+            let (found_rows, limited) = captured_rows(m, &held, &found, &at, tapes, atoms, Some(wave.w_key(c)))?;
             if limited > 0 {
                 profile::decision("ast captures over a file's visit budget (no rows)", || format!("{}: {limited} roots", m.rel));
             }
@@ -294,17 +304,22 @@ fn captured_rows(
     at: &[Option<&Projected>],
     tapes: &[(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)],
     atoms: &crate::content_store::atoms::Atoms,
+    w_key: Option<String>,
 ) -> StoreResult<(Vec<Vec<i64>>, usize)> {
+    use crate::code_rule_dsl::transducer::packed::evaluation_costs as costs;
     use crate::code_rule_dsl::waves::findings::Capture;
     use rayon::prelude::*;
-    let per: Vec<StoreResult<(Vec<Vec<i64>>, usize)>> = held
+    // W's steps at the roots and their subtrees' nodes, for its rate in the cost store (decision 0334): what the
+    // wave weighs a clause over its budget against.
+    let measure = w_key.is_some();
+    let per: Vec<StoreResult<(Vec<Vec<i64>>, usize, u64, u64)>> = held
         .par_iter()
         .zip(found.par_iter())
         .map(crate::code_rule_dsl::logic::profile::carried("ast captures (pool)", |(&i, roots): (&usize, &BTreeSet<u32>)| {
             let mut rows = Vec::new();
-            let mut limited = 0;
+            let (mut limited, mut steps, mut nodes) = (0, 0_u64, 0_u64);
             if roots.is_empty() {
-                return Ok((rows, limited));
+                return Ok((rows, limited, steps, nodes));
             }
             let p = at[i].expect("held");
             let tape = &tapes[i].1;
@@ -313,12 +328,17 @@ fn captured_rows(
             let root = ast_grep_core::AstGrep::doc(tape.clone());
             let work = m.captor.limits.visits_for(tape.transducer_len());
             let global = |core: u32| -> Option<i64> {
-                let local = p.local.get(core as usize).copied().unwrap_or(NONE);
+                let local = p.local_of_node(core);
                 (local != NONE).then(|| p.global(local))
             };
             for &n in roots {
                 let Some(n_global) = global(n) else { continue };
-                let names = match crate::code_rule_dsl::waves::findings::captured(&m.captor.grammar, &root, n, &m.captures, work) {
+                let (names, used) = crate::code_rule_dsl::waves::findings::captured_counted(&m.captor.grammar, &root, n, &m.captures, work);
+                if measure {
+                    steps += used as u64;
+                    nodes += u64::from(tape.transducer_descendants(n).end.saturating_sub(n).max(1));
+                }
+                let names = match names {
                     Ok(Some(names)) => names,
                     Ok(None) => continue,
                     Err(_) => {
@@ -341,11 +361,17 @@ fn captured_rows(
                 }
                 rows.extend(product);
             }
-            Ok((rows, limited))
+            Ok((rows, limited, steps, nodes))
         }))
         .collect();
     let per = per.into_iter().collect::<StoreResult<Vec<_>>>()?;
-    let limited = per.iter().map(|(_, l)| l).sum();
-    Ok((per.into_iter().flat_map(|(rows, _)| rows).collect(), limited))
+    let limited = per.iter().map(|(_, l, _, _)| l).sum();
+    if let Some(key) = w_key.filter(|_| measure) {
+        let (steps, nodes) = per.iter().fold((0, 0), |(s, n), (_, _, steps, nodes)| (s + steps, n + nodes));
+        if steps > 0 {
+            costs::observe([costs::Observation { program: key, steps, size: nodes, predicted: 0, over_budget: false }]);
+        }
+    }
+    Ok((per.into_iter().flat_map(|(rows, _, _, _)| rows).collect(), limited))
 }
 

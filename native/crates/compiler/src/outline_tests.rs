@@ -24,9 +24,8 @@ fn the_general_body_is_a_call_not_a_copy() {
         for (k, pass) in compiled.passes.iter().enumerate().filter(|(_, p)| !p.back) {
             assert!(!pass.outlined.is_empty(), "{name} pass {k}: the general body is not outlined");
             let calls = instructions(&pass.clif).iter().filter(|l| opcode(l) == "call").count();
-            // The general body's call, and each region's, once in each body that has it.
-            let bodies = 1 + usize::from(pass.ascii_branch);
-            assert_eq!(calls, 1 + bodies * (pass.outlined.len() - 1), "{name} pass {k}: a call each");
+            // The general body's call, and each region's, once: the full body is one (0364).
+            assert_eq!(calls, 1 + (pass.outlined.len() - 1), "{name} pass {k}: a call each");
             let general = &pass.outlined[0].clif;
             for o in &pass.outlined {
                 assert!(instructions(&o.clif).iter().all(|l| opcode(l) != "call"), "{name} pass {k}: an outlined function calls nothing");

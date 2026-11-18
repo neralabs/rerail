@@ -11,6 +11,8 @@ rerail-clif = { path = "../clif", default-features = false }
 sha2 = "0.10"
 # Format 16 in fixed blocks (16z), at the version the lab measured it with.
 lz4-sys = "=1.11.1"
+# The newlines of a document, a chunk at a time, for its newline index (0156 §1.6).
+memchr = "=2.8.3"
 
 # SHA-256 on the CPU's SHA instructions, as the engine has it (its Cargo.toml says why).
 [target.'cfg(all(target_arch = "aarch64", not(windows)))'.dependencies]

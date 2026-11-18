@@ -74,11 +74,12 @@ pub unsafe fn protect_read(p: *mut u8, len: usize) {
 /// leaves them counted until the OS wants them); elsewhere `MADV_FREE`. Pages the range only partly covers stay.
 ///
 /// # Safety
-/// The range lies in a reservation of `reserve`'s, and nothing reads or writes it after.
-pub unsafe fn give_back(p: *mut u8, len: usize) {
+/// The range lies in a reservation of `reserve`'s, and nothing reads or writes it until `reuse_pages` marks it in
+/// use again. Returns the bytes given back.
+pub unsafe fn give_back(p: *mut u8, len: usize) -> usize {
     let (start, end) = ((p as usize).next_multiple_of(PAGE), (p as usize + len) / PAGE * PAGE);
     if end <= start {
-        return;
+        return 0;
     }
     #[cfg(target_vendor = "apple")]
     unsafe {
@@ -88,8 +89,7 @@ pub unsafe fn give_back(p: *mut u8, len: usize) {
     unsafe {
         libc::madvise(start as *mut libc::c_void, end - start, libc::MADV_FREE);
     }
-    #[cfg(not(unix))]
-    let _ = (start, end);
+    end - start
 }
 
 /// Marks pages `free_pages` gave back as in use again, before they are written: macOS counts them in the footprint

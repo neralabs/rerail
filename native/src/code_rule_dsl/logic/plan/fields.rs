@@ -21,12 +21,37 @@ pub struct FieldsData {
 
 impl FieldsData {
     fn of(v: &Version) -> FieldsData {
-        let inputs: Vec<AtomId> = v.inputs().collect();
+        let about = About::of(v);
+        // A part's relations another part derives (decision 0345 stage 2, `GIVEN`): derived, by rules elsewhere, to
+        // every analysis; never an input.
+        let given: BTreeSet<AtomId> = match v.find(GIVEN) {
+            Some(w) => about.qualifiers.iter().filter(|q| q.1 == w).map(|q| q.0).collect(),
+            None => BTreeSet::new(),
+        };
+        let inputs: Vec<AtomId> = v.inputs().filter(|a| !given.contains(a)).collect();
         let outputs: Vec<AtomId> = v.outputs().collect();
-        let heads = v.rules().map(|r| r.head().rel()).collect();
-        FieldsData { about: About::of(v), input_set: inputs.iter().copied().collect(), output_set: outputs.iter().copied().collect(), inputs, outputs, heads }
+        let heads = v.rules().map(|r| r.head().rel()).chain(given.iter().filter_map(|&a| v.rel(v.text(a)))).collect();
+        FieldsData { about, input_set: inputs.iter().copied().collect(), output_set: outputs.iter().copied().collect(), inputs, outputs, heads }
     }
 }
+
+/// The qualifier of a part's relation another part derives (decision 0345 stage 2): every analysis reads it as
+/// derived, its place in the file-local split given by the part's other `part:` qualifiers (`file_local`'s
+/// `given_split`).
+pub const GIVEN: &str = "part:given";
+/// A part's output another part reads, not an output of the program (decision 0345 stage 2): kept, never handed
+/// on for that alone.
+pub const PART_OUT: &str = "part:out";
+/// A part's relation a cross-file rule of another part reads: an export.
+pub const PART_CROSS_READ: &str = "part:cross-read";
+/// A part's relation a file-local rule of another part reads: never located.
+pub const PART_LOCAL_READ: &str = "part:local-read";
+/// The name a part's whole-program decisions qualify (no relation's): `PUSH_BASE`, `PUSH_DECIDED`.
+pub const PART_WHOLE: &str = "part:whole";
+/// The run pushes in the mode for a cross-file part that reads base relations (`file_local::PushLocalJoins`).
+pub const PUSH_BASE: &str = "part:push-base";
+/// The run decided the push's mode for every part: `PUSH_BASE` or not.
+pub const PUSH_DECIDED: &str = "part:push-decided";
 
 /// A version's fields, read once (at the first `of` of its `Placed`) and borrowed after.
 #[derive(Clone, Copy)]
@@ -104,7 +129,12 @@ impl<'v> Fields<'v> {
         self.atom(rel).is_some_and(|a| self.d.input_set.contains(&a))
     }
 
-    /// Whether a rule of the program derives `rel` (a rule's head).
+    /// Whether `rel` is a part's relation another part derives (`GIVEN`): derived here, by no rule of this version.
+    pub fn given(&self, rel: &str) -> bool {
+        self.qualified(rel, GIVEN)
+    }
+
+    /// Whether a rule of the program derives `rel` (a rule's head), or another part does (`given`).
     pub fn derives(&self, rel: &str) -> bool {
         self.rel(rel).is_some_and(|r| self.d.heads.contains(&r))
     }

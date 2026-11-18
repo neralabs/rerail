@@ -85,13 +85,14 @@ const BUILTINS: [(&str, &[Kind], &str); 7] = [
 /// The functors `plan::sql_term` computes by an arm of its own (beyond `strings::functions`' registry), each with its
 /// arguments' kinds. `doc`, `in` and `place*` read nodes and atoms, which these facts have none of; they are probed
 /// by the comparisons that use them where they are written (`@doc(x) = @doc(y)`).
-const SQL_FUNCTORS: [(&str, &[Kind]); 9] = [
+const SQL_FUNCTORS: [(&str, &[Kind]); 10] = [
     ("dot", &[Kind::Text, Kind::Text]),
     ("concat", &[Kind::Text, Kind::Text]),
     ("replace_all", &[Kind::Text, Kind::Text, Kind::Text]),
     ("json_str", &[Kind::Text]),
     ("nfkc", &[Kind::Text]),
     ("py_repr", &[Kind::Text]),
+    ("shell_unquote", &[Kind::Text]),
     ("ed25519_ok", &[Kind::Text, Kind::Text, Kind::Text]),
     ("rx_replace", &[Kind::Text, Kind::Text, Kind::Text]),
     ("rx_group", &[Kind::Text, Kind::Text, Kind::Text]),

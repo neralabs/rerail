@@ -38,7 +38,7 @@ device's `execute_shared_corpus`). That path now runs the packed JIT. No rule ne
    program shapes and routes. The tests that built the grid's inputs by hand go as well.
    The suite now runs in the engine's test binary, where the languages its fixtures parse are registered. In the
    device crate's binary, every fixture failed for want of Python. On the packed JIT, 79 of the 115 pass. 18 stop
-   at the device's work limit (Q19), and 18 are refused, fail or differ (Q22). Each of those is ignored with its
+   at the device's work limit (Q49, Q19 at f15aac19d), and 18 are refused, fail or differ (Q64, Q22 there). Each of those is ignored with its
    item. The JIT did not change here, so its differences from the CPU were there before; the grid's tests had
    only never run on it.
 5. **The CPU interpreter's publication no longer builds grid inputs.** `PackedExecution::interpret` (CpuBackground,

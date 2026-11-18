@@ -134,6 +134,9 @@ const BODY_OPCODES: &[&str] = &[
     "band_imm",
     // The extracts' flattening (simdjson's): a position per set bit, eight at a time.
     "ctz", "istore32", "icmp_imm", "jump",
+    // A toggle's prefix XOR as one carry-less multiply (0346), its escaped quotes' correction
+    // behind a cold branch (0381).
+    "clmul",
 ];
 
 /// Check the lowered forms of a program and print them.
@@ -147,7 +150,10 @@ fn check_lowering(name: &str, p: &Program) {
     }
     // The loop's branch, and two per extract: more than eight bits in the block, and the loop
     // over them eight at a time, which steps its count by 8 and loops on itself.
-    let branches = body.iter().filter(|l| opcode(l) == "brif").count();
+    // A branch to a cold block (a toggle's escaped quotes' correction, 0381) is not counted:
+    // the rare path, off the loop's.
+    let cold: Vec<String> = compiled.clif.lines().filter_map(|l| l.trim().strip_suffix(" cold:").map(str::to_owned)).collect();
+    let branches = body.iter().filter(|l| opcode(l) == "brif" && !cold.iter().any(|c| l.contains(&format!("{c},")) || l.contains(&format!("{c}(")))).count();
     assert_eq!(branches, 1 + 2 * native.extracts.len() + usize::from(compiled.ascii_branch) + compiled.gate_branches + compiled.round_branches, "{name}: the body's only branches are the loop's, the flattening's, the ASCII test's and the gates'");
     for (block, lines) in hot_loop(&compiled.clif).iter().skip(1) {
         if lines.iter().any(|l| opcode(l) == "brif" && l.contains(&format!("{block}("))) {
@@ -1278,8 +1284,9 @@ fn within_lowers_to_straight_bit_operations() {
 
 
 
-/// Stage 1's loop's stack loads and stores (a ratchet, to reach 0).
-const STAGE1_LOOP_STACK: usize = 9;
+/// Stage 1's loop's stack loads and stores (a ratchet, to reach 0). 3 when the body makes its
+/// constants at its head and a class is one `cmtst` (0381).
+const STAGE1_LOOP_STACK: usize = 3;
 
 /// Stage 1 compiles to a loop with little stack traffic and no vector `mvn`: its values and
 /// constants in registers, its carried state packed into words.
@@ -1297,8 +1304,10 @@ fn stage1_loop_keeps_values_in_registers() {
     // head, stored on the back edge), 9 since.
     assert!(stack <= STAGE1_LOOP_STACK && mvn == 0, "stage 1's loop spills ({stack}, budget {STAGE1_LOOP_STACK}) or inverts vectors ({mvn}):\n{}", lines.join("\n"));
     let block = &p.block_programs[0];
-    // The state is packed: one carried word per 64 state bits (decision 0048).
-    let words = state_bits(block).div_ceil(64);
+    // The state is packed: one carried word per 64 state bits (decision 0048), but a chain's
+    // carry, in a word of its own as simdjson's (0346).
+    let (chains, chain_bits) = native_cpu_block::State::of(&native).chains();
+    let words = (state_bits(block) - chain_bits).div_ceil(64) + chains;
     assert_eq!(carried_params(&compiled.clif) - sink_params(&native), words, "stage 1's carried state is not packed");
 }
 

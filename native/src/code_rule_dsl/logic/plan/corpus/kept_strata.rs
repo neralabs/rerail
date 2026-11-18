@@ -417,16 +417,21 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
         // Its symbols typed, so the writer maps them; an input of no declared width is not kept.
         let Some(types) = part.types.get(rel).filter(|t| t.len() == w).cloned() else { continue };
         let n = source.len();
-        // Each column read from the source a batch at a time, never copied whole.
-        let bytes = FramePut::encode_columns(w, &|c, f| {
-            // A held relation's column, read where it lies, part by part.
-            if crate::code_rule_dsl::logic::native::component::each_held_column(source.as_ref(), w, c, &mut *f).is_some() {
+        // Read from the source a batch of rows at a time, never copied whole.
+        let bytes = FramePut::encode_windows(w, &|f| {
+            // A held relation's rows, read where they lie, part by part.
+            if crate::code_rule_dsl::logic::native::component::each_held_batch(source.as_ref(), w, &mut *f).is_some() {
                 return;
             }
-            let mut buf: Vec<i64> = Vec::with_capacity(LIVE_BATCH.min(n));
+            let all: Vec<usize> = (0..w).collect();
+            let mut buf: Vec<i64> = Vec::with_capacity(LIVE_BATCH.min(n) * w);
             for lo in (0..n).step_by(LIVE_BATCH) {
+                let hi = (lo + LIVE_BATCH).min(n);
                 buf.clear();
-                buf.extend((lo..(lo + LIVE_BATCH).min(n)).map(|i| source.value(i, c)));
+                buf.resize((hi - lo) * w, 0);
+                for (i, row) in (lo..hi).zip(buf.chunks_exact_mut(w.max(1))) {
+                    source.row_at(i, &all, row);
+                }
                 f(&buf);
             }
         });
