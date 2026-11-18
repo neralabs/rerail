@@ -42,6 +42,10 @@ files. Raw entry facts also include symlinks and gitlinks. The source inventory
 excludes those entries. Its `.rr` rules request each child through the path and
 ignore filter before they ask Git for the child tree. The filter uses the
 selected tree's `.rerailignore` and Rerail's mandatory ignore patterns.
+The filter can skip an ignored tree if no descendant can match a rule that
+includes it after the later rules apply. It checks files and directories
+separately because a rule can apply only to directories.
+If the filter cannot prove that the tree is excluded, it keeps the tree.
 The inventory returns its rows through an in-memory fact image.
 
 The library first derives the set of reachable tree IDs. That set bounds the

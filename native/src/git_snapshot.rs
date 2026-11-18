@@ -10,6 +10,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 use super::HashKey;
 use gix::bstr::ByteSlice;
 
+#[path = "git_ignore_coverage.rs"]
+mod ignore_coverage;
+
 #[derive(Debug)]
 struct View {
     id: u64,
@@ -462,6 +465,7 @@ pub struct InventoryFilter {
     prefix: PathBuf,
     paths: Option<Vec<String>>,
     rules: super::IgnoreRules,
+    coverage: ignore_coverage::IgnoreCoverage,
 }
 
 impl InventoryFilter {
@@ -479,33 +483,13 @@ impl InventoryFilter {
         }
         if super::search_ignored_path(&self.rules.mandatory, &path, self.rules.case, directory)
             || (super::search_ignored_path(&self.rules.workspace, &path, self.rules.case, directory)
-                && (!directory || !self.may_reinclude(&path)))
+                && (!directory || !self.coverage.may_reinclude(&path)))
         {
             return None;
         }
         Some(path)
     }
 
-    fn may_reinclude(&self, directory: &str) -> bool {
-        use gix::ignore::glob::pattern::Mode;
-        use gix::bstr::ByteSlice as _;
-        use gix::ignore::glob::{wildmatch, wildmatch::Mode as Match};
-        let below = format!("{directory}/");
-        let mut later = std::collections::HashSet::new();
-        self.rules.workspace.patterns.iter().rev().flat_map(|list| list.patterns.iter().rev()).any(|entry| {
-            let pattern = &entry.pattern;
-            if !later.insert((&pattern.text, pattern.mode - Mode::NEGATIVE)) || !pattern.is_negative() {
-                return false;
-            }
-            if pattern.mode.contains(Mode::NO_SUB_DIR) && !pattern.mode.contains(Mode::ABSOLUTE) {
-                return true;
-            }
-            // A descendant can match when the directory matches a prefix ending at a path separator.
-            let matches = |prefix: &[u8]| wildmatch(prefix.as_bstr(), below.as_bytes().as_bstr(), Match::NO_MATCH_SLASH_LITERAL);
-            pattern.text.iter().enumerate().any(|(at, &byte)| byte == b'/' && matches(&pattern.text[..=at]))
-                || (pattern.text.ends_with(b"/**") && matches(&pattern.text))
-        })
-    }
 }
 
 pub fn inventory_filter(root: &Path) -> Result<InventoryFilter, String> {
@@ -516,8 +500,11 @@ pub fn inventory_filter(root: &Path) -> Result<InventoryFilter, String> {
     };
     let rules = super::ignore_patterns(Path::new("/"), gix::ignore::glob::pattern::Case::Sensitive, &bytes)
         .map_err(|err| err.to_string())?;
+    let coverage = ignore_coverage::IgnoreCoverage::new(
+        rules.workspace.patterns.iter().flat_map(|list| &list.patterns).map(|entry| &entry.pattern),
+    );
     let paths = v.paths.lock().unwrap_or_else(|err| err.into_inner()).clone();
-    Ok(InventoryFilter { rules, paths, prefix: v.prefix.clone() })
+    Ok(InventoryFilter { rules, coverage, paths, prefix: v.prefix.clone() })
 }
 
 pub fn inventory_selection(root: &Path) -> Option<String> {
@@ -529,7 +516,7 @@ pub fn inventory_selection(root: &Path) -> Option<String> {
         Ok(None) => String::new(),
         Err(_) => format!("unreadable:{}", v.tree),
     };
-    serde_json::to_string(&("ignore-v3", ignores, &v.prefix, &*paths)).ok()
+    serde_json::to_string(&("ignore-v4", ignores, &v.prefix, &*paths)).ok()
 }
 
 pub fn source_languages(root: &Path) -> Option<SourceLanguages> {

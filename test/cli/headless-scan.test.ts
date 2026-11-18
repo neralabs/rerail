@@ -212,15 +212,37 @@ Message(@place("commit", 1), subject) :- git_source_commit(r,c), git_subject(r,c
     const missingA = execFileSync("git", ["mktree", "--missing"], {
       cwd: root, input: `040000 tree ${"1".repeat(40)}\ta\n`, encoding: "utf8",
     }).trim();
-    writeFileSync(join(root, ".rerailignore"), "/data/a/\n!/data/[ab]/a.py\n/data/[ab]/a.py\n");
-    const cancelledIgnore = git(root, "hash-object", "-w", ".rerailignore");
-    const cancelled = await scan(root, {
-      revision: makeTree(`100644 blob ${cancelledIgnore}\t.rerailignore\n040000 tree ${missingA}\tdata\n`),
+    for (const [include, exclude] of [
+      ["/data/[ab]/a.py", "/data/[ab]/a.py"],
+      ["/data/a/a.py", "/data/a/*.py"],
+      ["/data/a/[ab].py", "/data/**/[[:alpha:]].py"],
+    ]) {
+      writeFileSync(join(root, ".rerailignore"), `/data/a/\n!${include}\n${exclude}\n`);
+      const cancelledIgnore = git(root, "hash-object", "-w", ".rerailignore");
+      const cancelled = await scan(root, {
+        revision: makeTree(`100644 blob ${cancelledIgnore}\t.rerailignore\n040000 tree ${missingA}\tdata\n`),
+        analysisScope: "ignore",
+        paths: ["a.py", "data"],
+      });
+      expect(cancelled.status, JSON.stringify(cancelled.failures)).toBe("completed");
+      expect(cancelled.violations.map(finding => finding.path)).toEqual(["a.py"]);
+    }
+
+    const twoFiles = execFileSync("git", ["mktree"], {
+      cwd: root, input: `100644 blob ${blob}\ta.py\n100644 blob ${blob}\tb.py\n`, encoding: "utf8",
+    }).trim();
+    const partialData = execFileSync("git", ["mktree"], {
+      cwd: root, input: `040000 tree ${twoFiles}\ta\n`, encoding: "utf8",
+    }).trim();
+    writeFileSync(join(root, ".rerailignore"), "/data/a/\n!/data/a/[ab].py\n/data/a/a.py\n");
+    const partialIgnore = git(root, "hash-object", "-w", ".rerailignore");
+    const partial = await scan(root, {
+      revision: makeTree(`100644 blob ${partialIgnore}\t.rerailignore\n040000 tree ${partialData}\tdata\n`),
       analysisScope: "ignore",
       paths: ["a.py", "data"],
     });
-    expect(cancelled.status, JSON.stringify(cancelled.failures)).toBe("completed");
-    expect(cancelled.violations.map(finding => finding.path)).toEqual(["a.py"]);
+    expect(partial.status, JSON.stringify(partial.failures)).toBe("completed");
+    expect(partial.violations.map(finding => finding.path)).toEqual(["a.py", "data/a/b.py"]);
   });
 
   it("reports completeness for the requested tree and exposes failures for an incomplete walk", async () => {
