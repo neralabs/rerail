@@ -30,7 +30,9 @@ const SELF = fileURLToPath(import.meta.url);
 
 /** One leg: the tests whose path holds any of `filters` (every test when empty) and none of `skip`. */
 const SELECTED = [
-  // Nine tests, two of them 8 minutes each (scratch run 44354698909, `--report-time`): the slowest leg.
+  // Nine tests hold 25 of the 108 test-minutes, two of them 8 minutes each (scratch run 44354698909, `--report-time`):
+  // the slowest leg, at 7.5 minutes. The legs run 4.7 to 7.5 minutes each (scratch run 44360932319); logic and typing
+  // with the SQL executor and slice in one leg ran 9.
   { id: "waves", name: "tests, waves", filters: ["code_rule_dsl::waves::"], skip: [] },
   {
     id: "workspace",
@@ -41,10 +43,11 @@ const SELECTED = [
   { id: "logic-rules", name: "tests, logic rules and converters", filters: ["code_rule_dsl::logic::rr::", "code_rule_dsl::logic::convert::"], skip: [] },
   {
     id: "logic",
-    name: "tests, logic, typing, SQL executor and slice",
-    filters: ["code_rule_dsl::logic::", "code_rule_dsl::typing::", "code_rule_dsl::sql_executor::", "code_rule_dsl::slice::"],
+    name: "tests, logic and typing",
+    filters: ["code_rule_dsl::logic::", "code_rule_dsl::typing::"],
     skip: ["code_rule_dsl::logic::rr::", "code_rule_dsl::logic::convert::"],
   },
+  { id: "sql", name: "tests, SQL executor and slice", filters: ["code_rule_dsl::sql_executor::", "code_rule_dsl::slice::"], skip: [] },
 ];
 
 /** The legs, in order; the last runs every test the others' filters do not name. */

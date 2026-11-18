@@ -517,9 +517,10 @@ jobs:
 
   # The engine's test binaries, compiled once for the legs of the rust job (scripts/check/native-test-legs.mjs): it runs
   # `cargo test --workspace` with that script as cargo's target runner, which records each test binary with the
-  # working directory and environment cargo gives it instead of running it, while cargo runs the doc tests itself. It
-  # then lists every binary's tests whole and under each leg's filters, fails unless each test is in exactly one leg,
-  # and hands the binaries on as an artifact. It reads no pack test data, so it starts with the test-data job.
+  # working directory and environment cargo gives it instead of running it, and runs the doc tests. It then lists every
+  # binary's tests whole and under each leg's filters, fails unless each test is in exactly one leg, and hands the
+  # binaries on as an artifact (1.5 GB). It reads no pack test data, so it starts with the test-data job. A cold compile
+  # takes 13 to 17 minutes on the 4-vCPU runner.
   rust-tests-build:
     name: Rust engine (test build)
     needs: changes
@@ -594,7 +595,9 @@ jobs:
   # test data (native/src/code_rule_dsl/test_support.rs's callers): Ruff's fixtures, SQLFluff's expected findings and
   # fixtures, eslint-plugin-vue's fixtures, and the data-layer port's recordings and rule corpus (the converter, census,
   # replay and text tests), restored from what the test-data job saved, so the job runs where that job does (the note
-  # at the top). TIMING_PLACEHOLDER
+  # at the top). Each leg runs 3 to 8 minutes of tests after a minute taking the binaries; the slowest, the waves', is
+  # bounded by its two 8-minute tests. The test watchdog stops a hung test at 10 minutes (native/src/test_watchdog.rs):
+  # the timeout leaves room for that.
   rust:
     name: Rust engine (${{ matrix.name }})
     needs: [changes, test-data, rust-tests-build]
@@ -607,7 +610,7 @@ jobs:
         )
       }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 20
     permissions:
       contents: read
     strategy:
@@ -666,7 +669,8 @@ jobs:
         run: node scripts/check/native-test-legs.mjs run "${{ matrix.leg }}" "$RUNNER_TEMP/native-tests"
 
   # The profiling labs: the reachability spike and the SQL preparation lab, each its own manifest and target directory,
-  # checked, built and tested apart from the engine's tests, with their own cache.
+  # checked, built and tested apart from the engine's tests. Their builds are small (the job takes 2 minutes cold), so
+  # they keep no cache.
   rust-profiling:
     name: Rust engine (profiling labs)
     needs: changes
@@ -679,11 +683,10 @@ jobs:
         )
       }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 15
     permissions:
       contents: read
-    # Line tables keep file:line in panics at a fraction of full debuginfo; incremental state only
-    # bloats the cache, since dependencies never build incrementally.
+    # Line tables keep file:line in panics at a fraction of full debuginfo; nothing here builds twice incrementally.
     env:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
       CARGO_INCREMENTAL: "0"
@@ -707,19 +710,6 @@ jobs:
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
           components: rustfmt, clippy
-
-      - name: Cache cargo artifacts
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target/reachability-spike
-            target/sql-preparation-lab
-            scripts/profiling/reachability/target
-          key: rerail-profiling-${{ runner.os }}-${{ steps.rust-toolchain.outputs.channel }}-${{ hashFiles('Cargo.lock', 'scripts/profiling/reachability/Cargo.lock', 'scripts/profiling/preparation/Cargo.lock') }}
-          restore-keys: |
-            rerail-profiling-${{ runner.os }}-${{ steps.rust-toolchain.outputs.channel }}-
 
       - name: Check isolated reachability spike
         run: |
