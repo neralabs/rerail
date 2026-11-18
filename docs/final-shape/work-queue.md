@@ -3830,4 +3830,27 @@ builds (one recompiling everything above `rerail-clif`) beside them: none past 6
   so whether oscar's format 16 wrote over a descriptor before the merge is not known either.
 - **Do**: catch one with its message (the bytes changed say which writer: ORed bits are label marks, row values a
   row writer), then bound that writer where it writes (0403).
+- **Not caught again** in 52 more runs (28 of format 16 alone, then 24 of 16z and 16 in turn, the failing run's
+  order; three at a time, 2026-11-18).
+- **A hole found meanwhile**: oscar's scans in the label kernels (0396's `scan_marks`, `sibling_pass`) marked and
+  tallied start and capture nodes without 0403's node bound, which the merge ported onto strata's `MARK`/`TALLY`
+  callers only. Those are Q186's likely writer (ORed bits, atomic adds at a node's offset). They are bounded now; a
+  node past the batch is counted (`gpu.node_past_batch`) and its passes run on the interpreter, so a run that
+  reaches one names it.
+- **Caught** (2026-11-18, `tmp/hogql/failed-16z-a-5` on the M3; a 16z run, so not format 16's alone): "its batch
+  done, at 384 of a block of kind 1, index 1 (4230 rows); bytes changed at [0, 40, 48]". Before → now: `arity` 2 →
+  0x406; `rows.len` 4230 → 0, `rows.reserved` 5104 → 0; `rows.nchunks` 33 → 0; `min_log`, `ncols` and `cols` as
+  they were. No label bound fired (`gpu.node_past_batch` 0).
+- **Cause**: exactly `Rows::release`'s writes (`nchunks`, `reserved`, `len` to 0), then the block's free list's link
+  over the descriptor's first word: the relation was given back (`Held`'s drop, decision 0342) while the batch was
+  still building its index. `Building` kept the block (`home`) and the descriptor's address, never the relation, and
+  nothing else in the batch kept the `DevRel`, so a stratum that dropped the relation once its index was encoded
+  freed it under the GPU. Both branches had it before the merge; strata's `in_block` did not even keep the relation
+  in the `DevRel` (only its block), so this is likely Q186's writer too, and the reason the bounds changed its rate
+  without proving which chain it was.
+- **Fixed**: `Building` and `Written` (each relation a batch writes, checked when it is done) hold the relation
+  (`DevRel::holder`: its own `Part`, or the one `in_block` reads, now kept as `kept`) until the batch is done or
+  failed.
+- **Since the fix**: 30 hogql runs (16z and 16 in turn, three at a time, M3), all 1,629, no panic, no bound fired;
+  the device join's 29 tests pass. Short of the 180 this item asks.
 - **Done when**: 180 format 16 runs, three at a time, have no panic.

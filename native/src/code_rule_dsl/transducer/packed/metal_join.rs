@@ -2012,6 +2012,9 @@ pub(in crate::code_rule_dsl) struct DevRel {
     /// Its descriptor's arity and base rows when it was made (Q186): a descriptor found otherwise later was
     /// overwritten, not misread.
     made: (u32, u32),
+    /// The relation's holder, for one read where it lies in its block (`in_block`): what an index built into it keeps
+    /// until its batch is done (`Building`, Q189).
+    kept: Option<crate::code_rule_dsl::facts::rows::Part>,
 }
 
 impl DevRel {
@@ -2032,7 +2035,7 @@ impl DevRel {
         let buffer = Held::kept(part.facts().block.gpu_buffer(device), Box::new(part.facts().clone()));
         debug_assert_eq!(part.rows_at(), part.rel_at() + REL_ROWS as usize);
         let home = Some(part.facts().clone());
-        Ok(DevRel { buffer, rows, cols, at: part.rel_at() as u64, dead: 0, part: Some(part), home, view: None, made: (0, 0) }.noted())
+        Ok(DevRel { buffer, rows, cols, at: part.rel_at() as u64, dead: 0, part: Some(part), home, view: None, made: (0, 0), kept: None }.noted())
     }
 
     /// A view of `cols` columns and `rows` rows read in place (decision 0353 step 4d): a relation of no columns of
@@ -2088,7 +2091,7 @@ impl DevRel {
 
     /// The words of `buffer`, `words` of them (not a relation).
     fn raw(buffer: Held, words: usize) -> DevRel {
-        DevRel { buffer, rows: words, cols: 1, at: 0, dead: 0, part: None, home: None, view: None, made: (0, 0) }
+        DevRel { buffer, rows: words, cols: 1, at: 0, dead: 0, part: None, home: None, view: None, made: (0, 0), kept: None }
     }
 
     /// A relation the device reads where it lies (decision 0325): `b`'s, of `cols` columns, bound by its block's own
@@ -2098,7 +2101,13 @@ impl DevRel {
         let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         // The block, the relation and its pages: not given back while the device reads them (decisions 0342, Q76).
         let buffer = Held::kept(b.facts.block.gpu_buffer(device), Box::new(b.clone()));
-        Ok(DevRel { buffer, rows: b.rows as usize, cols, at: b.at as u64, dead: b.dead as u64, part: None, home: Some(b.facts.clone()), view: None, made: (0, 0) }.noted())
+        Ok(DevRel { buffer, rows: b.rows as usize, cols, at: b.at as u64, dead: b.dead as u64, part: None, home: Some(b.facts.clone()), view: None, made: (0, 0), kept: b.part.clone() }.noted())
+    }
+
+    /// What holds its relation: its own, or the one read in its block (none for words, or a test's relation no
+    /// `Part` holds).
+    fn holder(&self) -> Option<crate::code_rule_dsl::facts::rows::Part> {
+        self.part.clone().or_else(|| self.kept.clone())
     }
 
     /// Its relation's descriptor.
@@ -2330,6 +2339,10 @@ fn bind_right(stage: &mut Stage, rel: &DevRel, index: Option<&DevIndex>) {
 struct Building {
     home: std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>,
     rel: *const rerail_blocks::relation::Relation,
+    /// The relation, held until the batch's work, which writes its index into it, is done (Q189): its last holder
+    /// otherwise gives its descriptor and chunks back to the block's free list (`Held`'s drop, decision 0342) while the
+    /// index is still being built, and the free list's links and the next relation made there are written over it.
+    _holds: Option<crate::code_rule_dsl::facts::rows::Part>,
     room: rerail_blocks::relation::IndexRoom,
     /// The relation's descriptor as it was once the index was reserved (Q186): checked before the index is marked
     /// built, so a descriptor something overwrote meanwhile names what changed instead of being followed.
@@ -2562,6 +2575,9 @@ pub(in crate::code_rule_dsl) struct Batch {
 /// A relation a batch's kernels write (`Batch::written`).
 struct Written {
     home: std::sync::Arc<crate::code_rule_dsl::facts::rows::Facts>,
+    /// The relation, held until the batch is done, as `Building`'s (Q189): its descriptor is read then, and the
+    /// kernels write its rows meanwhile.
+    _holds: Option<crate::code_rule_dsl::facts::rows::Part>,
     at: u64,
     rows: usize,
     needed: u32,
@@ -2584,7 +2600,7 @@ impl Batch {
     fn writes(&mut self, rel: &DevRel, what: &'static str) {
         let Some(home) = &rel.home else { return };
         let needed = rel.relation().rows.needed.load(std::sync::atomic::Ordering::Relaxed);
-        self.written.push(Written { home: home.clone(), at: rel.at, rows: rel.rows, needed, what });
+        self.written.push(Written { home: home.clone(), _holds: rel.holder(), at: rel.at, rows: rel.rows, needed, what });
     }
 
     /// The relations its kernels wrote whose rows counted one they could not write (decision 0403): each named.
@@ -2784,7 +2800,7 @@ impl Batch {
         }
         let index = room.index as u32;
         let before = Building::descriptor(std::ptr::from_ref(r));
-        self.building.push(Building { home, rel: std::ptr::from_ref(r), room, before });
+        self.building.push(Building { home, rel: std::ptr::from_ref(r), _holds: rel.holder(), room, before });
         Ok(DevIndex { index, rows: n, moved: None, built: true, buffer })
     }
 

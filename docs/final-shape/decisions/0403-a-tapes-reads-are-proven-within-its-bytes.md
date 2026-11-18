@@ -100,7 +100,10 @@ The reads are the CLIF ones (`crates/clif/src/reads.rs`). Each line is why one k
   tally (`tally[node]`) at a node a pattern started at or captured, often reached by a walk. These are atomic
   writes at an offset from the node: unbounded, a node from a bad read reaches 512 MB past the bits and 16 GB past
   the tallies. Each is written only for a node below the batch's (`MARK`, `TALLY` in `metal_label_passes.metal`;
-  the runtime's own, in `metal_batch_runtime.metal`). Any other is not written: the label kernels set flag 256,
+  the runtime's own, in `metal_batch_runtime.metal`). Oscar's scans (decision 0396's formula reader: `scan_marks` and
+  `sibling_pass`, which mark a window of 64 nodes as words or add a count at the start or a capture) wrote theirs
+  directly, and the merge of the two branches kept them so; they write through the same bound now (`MARK`,
+  `TALLY_BY`, and `MARK_WINDOW` for a window that starts at a node of the batch). Any other is not written: the label kernels set flag 256,
   and the passes run again on the interpreter, counted (`gpu.node_past_batch`) and said once; the runtime fails
   its task (status 9; 8 is decision 0334's budget stop, which oscar's branch had taken), and the batch runs on the
   CPU. A walk's hop can give the tape's node count itself, one past
@@ -177,6 +180,13 @@ The same descriptor words were written over in both: a row writer that missed it
   The torn read alone does not reach one: with the dead entry undone, 192 runs (12 with a 1 MB cache, 10 to 16
   million failed reads each) had no node past a batch and no row refused. A torn value reached a write only through
   a read `4289c4f60` bounded, so those bounds are what ended the crashes; the write guards stay as the proof.
+- **A third writer, outside the tape's reads (Q189, 2026-11-18).** After the merge with oscar, Q186's guard caught
+  a descriptor overwritten with every bound above in place: `Rows::release`'s zeros and a free list's link. A
+  relation whose index the batch was building was given back by its last holder before the batch was done; the
+  batch kept its block, not it. That is a lifetime fault, not a read past bounds, and neither the walk bounds nor
+  the write guards can stop it. The batch now holds every relation it builds an index in or writes (Q189). The
+  garbage of Q186's two crashes (ORed bits, an offset of data) fits it as well as the label marks: a freed
+  descriptor's memory goes to the next relation made in the block.
 
 ## What it replaces
 

@@ -27,7 +27,10 @@ static void mark(device atomic_uint* bits,uint node){atomic_fetch_or_explicit(&b
 #define NODE_OK(n) ((n)<shape.nodeCount)
 #define NODE_PAST {atomic_fetch_or_explicit(&flags[0],258u,memory_order_relaxed);}
 #define MARK(b,n) {uint mark_n=(n);if(NODE_OK(mark_n))mark(b,mark_n);else NODE_PAST}
-#define TALLY(t,n) {uint tally_n=(n);if(NODE_OK(tally_n))atomic_fetch_add_explicit(&(t)[tally_n],1u,memory_order_relaxed);else NODE_PAST}
+#define TALLY(t,n) TALLY_BY(t,n,1u)
+#define TALLY_BY(t,n,k) {uint tally_n=(n);if(NODE_OK(tally_n))atomic_fetch_add_explicit(&(t)[tally_n],(k),memory_order_relaxed);else NODE_PAST}
+// A window's words of a row (64 nodes from `b`), for a window that starts at a node of the batch.
+#define MARK_WINDOW(row,b,out) {uint window_b=(b);ulong window_out=(out);if(NODE_OK(window_b)){uint w0=uint(window_out),w1=uint(window_out>>32u);if(w0!=0u)atomic_fetch_or_explicit(&(row)[window_b/32u],w0,memory_order_relaxed);if(w1!=0u)atomic_fetch_or_explicit(&(row)[window_b/32u+1u],w1,memory_order_relaxed);}else NODE_PAST}
 
 kernel void label_sink(device const Arena* arenas [[buffer(0)]],device const Result* results [[buffer(1)]],device const FinalCapture* captures [[buffer(2)]],device const Status* statuses [[buffer(3)]],device const Route* routes [[buffer(4)]],device atomic_uint* scratch [[buffer(5)]],device atomic_uint* counts [[buffer(6)]],device atomic_uint* flags [[buffer(7)]],constant Shape& shape [[buffer(8)]],uint tid [[thread_position_in_grid]]){
   if(atomic_load_explicit(&flags[2],memory_order_relaxed)!=0u)return;
@@ -361,7 +364,7 @@ static bool scan_fixed(thread const Tree& t,WalkRead r,ScanTail x,uint node){
 // it finds the last that passes, and marks each sibling before it that is a start of the pass (`root_admits`) and
 // passes the tests of the loaded node. Every other sibling's walk, where the leader is a start, leaves the scan to it.
 // Each of a block's n starts scanned the siblings after it: n² hops, against the n of one pass. A step is a window.
-static uint sibling_pass(thread const Tree& t,thread MicroFrame& f,WalkRead r,ScanTail x,MicroPass pass,device atomic_uint* row,constant Shape& shape,uint start,uint label,bool pack,uint route,thread uint& fired,thread uint& steps,MicroQ q){
+static uint sibling_pass(thread const Tree& t,thread MicroFrame& f,WalkRead r,ScanTail x,MicroPass pass,device atomic_uint* row,device atomic_uint* flags,constant Shape& shape,uint start,uint label,bool pack,uint route,thread uint& fired,thread uint& steps,MicroQ q){
   uint first=start,bound=f.end,last=MICRO_NONE;bool named=(f.named&1u)!=0u;
   for(uint hop=first;hop<bound;){
     if(++steps>shape.steps)return 2u;
@@ -379,9 +382,7 @@ static uint sibling_pass(thread const Tree& t,thread MicroFrame& f,WalkRead r,Sc
       if(root_admits(t.s,t.d,q.roots,pass.itemStart,q.doc,tree_local(t,hop))&&scan_fixed(t,r,x,hop))marks|=1ul<<(hop-b);
       hop=tree_end(t,hop);
     }
-    uint w0=uint(marks),w1=uint(marks>>32u);
-    if(w0!=0u)atomic_fetch_or_explicit(&row[b/32u],w0,memory_order_relaxed);
-    if(w1!=0u)atomic_fetch_or_explicit(&row[b/32u+1u],w1,memory_order_relaxed);
+    MARK_WINDOW(row,b,marks)
   }
   // The leader's own output, as its emit's.
   if(route==0u&&start<last&&scan_fixed(t,r,x,start)){
@@ -403,7 +404,7 @@ static uint sibling_pass(thread const Tree& t,thread MicroFrame& f,WalkRead r,Sc
 // budgets of nodes (2,048 at the budget of 512) is halved into the work queue (`scan_cut`) before it starts, until
 // its piece fits, so its pieces run side by side. A step is a window. 0: the scan is done; 1: the walk is (its start marked, as every emit's in the pass);
 // 2: past the step bound, or a load of a node never saved.
-static uint scan_marks(thread const Tree& t,thread MicroFrame& f,WalkRead r,MicroPass pass,device atomic_uint* scratch,device atomic_uint* counts,constant Shape& shape,uint start,thread uint& fired,thread uint& steps,MicroQ q,bool straight=false){
+static uint scan_marks(thread const Tree& t,thread MicroFrame& f,WalkRead r,MicroPass pass,device atomic_uint* scratch,device atomic_uint* counts,device atomic_uint* flags,constant Shape& shape,uint start,thread uint& fired,thread uint& steps,MicroQ q,bool straight=false){
   ScanTail x;scan_tail(r,pass,f.pc,x);
   bool pack=(pass.targets&4u)!=0u,named=(f.named&1u)!=0u;
   uint label=r.words[x.emit]>>16u;
@@ -420,7 +421,7 @@ static uint scan_marks(thread const Tree& t,thread MicroFrame& f,WalkRead r,Micr
   if(straight&&parent!=TAPE_NONE&&q.roots!=nullptr&&(route==0u||(route==1u&&x.capture!=0u&&f.captured==0u))
      &&(x.load==MICRO_NONE?route==0u:f.cursors[x.load]==start)){
     uint first=parent+1u;
-    if(start==first)return sibling_pass(t,f,r,x,pass,row,shape,start,label,pack,route,fired,steps,q);
+    if(start==first)return sibling_pass(t,f,r,x,pass,row,flags,shape,start,label,pack,route,fired,steps,q);
     if(root_admits(t.s,t.d,q.roots,pass.itemStart,q.doc,tree_local(t,first))){f.next=f.end;return 0u;}
   }
   bool closure=f.resume==4u,chain=f.resume==5u;
@@ -478,35 +479,32 @@ static uint scan_marks(thread const Tree& t,thread MicroFrame& f,WalkRead r,Micr
     if(!each&&route!=2u&&route!=3u){
       // One output makes every mark.
       if(route==0u){
-        mark(row,start);
+        MARK(row,start)
         if(!pack)return 1u;
         uint members=r.words[pass.wordCount];
         fired|=1u<<label;
         if(fired==(members>=32u?0xffffffffu:((1u<<members)-1u)))return 1u;
       }else{
-        if(f.captured>0u)mark(row,f.capture0);
-        if(f.captured>1u)mark(row,f.capture1);
-        if(x.capture!=0u)mark(row,fixed);
+        if(f.captured>0u)MARK(row,f.capture0)
+        if(f.captured>1u)MARK(row,f.capture1)
+        if(x.capture!=0u)MARK(row,fixed)
       }
       f.next=f.end;return 0u;
     }
     total+=popcount(out);
-    if(each&&route==1u){
-      uint w0=uint(out),w1=uint(out>>32u);
-      if(w0!=0u)atomic_fetch_or_explicit(&row[b/32u],w0,memory_order_relaxed);
-      if(w1!=0u)atomic_fetch_or_explicit(&row[b/32u+1u],w1,memory_order_relaxed);
-    }else if(each)for(ulong o=out;o!=0ul;o&=o-1ul)atomic_fetch_add_explicit(&tally[b+ctz(o)],1u,memory_order_relaxed);
+    if(each&&route==1u)MARK_WINDOW(row,b,out)
+    else if(each)for(ulong o=out;o!=0ul;o&=o-1ul)TALLY(tally,b+ctz(o))
   }
   f.next=f.end;
   if(total==0u)return 0u;
-  if(route==2u)atomic_fetch_add_explicit(&tally[start],total,memory_order_relaxed);
+  if(route==2u)TALLY_BY(tally,start,total)
   else if(route==3u){
-    if(f.captured>0u)atomic_fetch_add_explicit(&tally[f.capture0],total,memory_order_relaxed);
-    if(f.captured>1u)atomic_fetch_add_explicit(&tally[f.capture1],total,memory_order_relaxed);
-    if(x.capture!=0u&&fixed!=MICRO_NONE)atomic_fetch_add_explicit(&tally[fixed],total,memory_order_relaxed);
+    if(f.captured>0u)TALLY_BY(tally,f.capture0,total)
+    if(f.captured>1u)TALLY_BY(tally,f.capture1,total)
+    if(x.capture!=0u&&fixed!=MICRO_NONE)TALLY_BY(tally,fixed,total)
   }else{
-    if(f.captured>0u)mark(row,f.capture0);
-    if(f.captured>1u)mark(row,f.capture1);
+    if(f.captured>0u)MARK(row,f.capture0)
+    if(f.captured>1u)MARK(row,f.capture1)
   }
   return 0u;
 }
@@ -544,7 +542,7 @@ static void micro_from(uint FRAMES,thread const Tree& t,device const uint* head,
           if(op==16u){frame.resume=1u;frame.next=tree_first(t,path.node);frame.end=path.node;}
           else if(op==19u){frame.resume=2u;frame.next=path.node+1u;frame.end=tree_end(t,path.node);}
           else{frame.resume=3u;frame.end=path.end!=MICRO_NONE?path.end:tree_parent(t,path.node);frame.next=frame.end==TAPE_NONE?MICRO_NONE:tree_next_in(t,path.node,tree_end(t,frame.end),named);}
-          if(scan_marks_at(r,pass,frame)){uint ended=scan_marks(t,frame,r,pass,scratch,counts,shape,start,fired,steps,q,op==20u&&wasStraight&&path.node==start);if(ended==2u)MICRO_FAIL if(ended==1u)return;alive=false;break;}
+          if(scan_marks_at(r,pass,frame)){uint ended=scan_marks(t,frame,r,pass,scratch,counts,flags,shape,start,fired,steps,q,op==20u&&wasStraight&&path.node==start);if(ended==2u)MICRO_FAIL if(ended==1u)return;alive=false;break;}
           uint candidate=walk_next(t,frame,r);
           if(candidate==MICRO_NONE){alive=false;break;}
           if(depth==FRAMES)MICRO_FAIL
@@ -554,7 +552,7 @@ static void micro_from(uint FRAMES,thread const Tree& t,device const uint* head,
         case 23u:{
           MicroFrame frame=path;frame.pc=words[pass.wordStart+path.pc+2u]>>16u;frame.resume=4u;frame.named=(named?1u:0u)|(path.pc<<1u);
           frame.next=path.node+1u;frame.end=tree_end(t,path.node);
-          if(scan_marks_at(r,pass,frame)){uint ended=scan_marks(t,frame,r,pass,scratch,counts,shape,start,fired,steps,q);if(ended==2u)MICRO_FAIL if(ended==1u)return;alive=false;break;}
+          if(scan_marks_at(r,pass,frame)){uint ended=scan_marks(t,frame,r,pass,scratch,counts,flags,shape,start,fired,steps,q);if(ended==2u)MICRO_FAIL if(ended==1u)return;alive=false;break;}
           uint candidate=walk_next(t,frame,r);
           if(candidate==MICRO_NONE){alive=false;break;}
           if(depth==FRAMES)MICRO_FAIL
@@ -595,7 +593,7 @@ static void micro_from(uint FRAMES,thread const Tree& t,device const uint* head,
       // The top frame advanced in thread memory (the stack may be in device memory).
       MicroFrame top=stack[depth-1u];
       // A frame taken from the queue scans as the walk's own does (a walk's own scans never stay on its stack).
-      if(received&&depth==1u){received=false;if(scan_marks_at(r,pass,top)){uint ended=scan_marks(t,top,r,pass,scratch,counts,shape,start,fired,steps,q);if(ended==2u)MICRO_FAIL if(ended==1u)return;depth--;continue;}}
+      if(received&&depth==1u){received=false;if(scan_marks_at(r,pass,top)){uint ended=scan_marks(t,top,r,pass,scratch,counts,flags,shape,start,fired,steps,q);if(ended==2u)MICRO_FAIL if(ended==1u)return;depth--;continue;}}
       uint candidate=walk_next(t,top,r);
       if(candidate==MICRO_NONE){depth--;continue;}
       stack[depth-1u]=top;path=top;path.node=candidate;if(top.resume>=4u||top.resume==2u)path.end=MICRO_NONE;break;
