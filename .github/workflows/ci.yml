@@ -9,10 +9,28 @@ on:
   # pull_request run skips every job that needs a secret or the OIDC token; this run is not Dependabot's, so it runs
   # everything, like a push, and its CI result on the same commit is what arms auto-merge. Without a pull request it
   # has no base, so the conformance check runs without comparing its lists to the base.
+  # A manual run may also name the branch whose warm-start artifacts it reads, and save its own, to prove a change to
+  # the warm starts before main has saved any (the `env` below).
   workflow_dispatch:
+    inputs:
+      warm-ref:
+        description: The branch whose saved cargo targets, compile caches and engines this run starts from.
+        default: main
+      save-warm:
+        description: Save this run's cargo targets and compile caches, as a push to main does.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+
+# Warm starts: the engine builds and Rust jobs start from the cargo targets and compile caches the latest push to main
+# saved as artifacts (.github/actions/cargo-target, .github/actions/rust-compile-cache), and every engine build reuses
+# an engine built from the same inputs (.github/actions/engine-artifact). Only pushes to main save the targets and
+# caches, unless a manual run asks to (`save-warm`).
+env:
+  WARM_REF: ${{ inputs.warm-ref || 'main' }}
+  SAVE_WARM: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.save-warm) }}
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
@@ -596,6 +614,7 @@ jobs:
         uses: ./.github/actions/rust-compile-cache
         with:
           name: test
+          ref: ${{ env.WARM_REF }}
 
       # The crates a pull request's changes reach (the changes job): `--workspace`, or `-p <package>` for each.
       - id: build
@@ -614,7 +633,7 @@ jobs:
           retention-days: 3
 
       - name: Save the compile cache for later runs
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: env.SAVE_WARM == 'true'
         uses: ./.github/actions/rust-compile-cache/save
         with:
           artifact: ${{ steps.compile-cache.outputs.artifact }}
@@ -873,27 +892,29 @@ jobs:
         uses: ./.github/actions/rust-compile-cache
         with:
           name: test
+          ref: ${{ env.WARM_REF }}
 
       - name: Tree watch tests
         run: "cargo test --manifest-path native/Cargo.toml --lib tree_watch::"
 
       - name: Save the compile cache for later runs
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: env.SAVE_WARM == 'true'
         uses: ./.github/actions/rust-compile-cache/save
         with:
           artifact: ${{ steps.compile-cache.outputs.artifact }}
           dir: ${{ steps.compile-cache.outputs.dir }}
 
-  # Builds the package once: dist/ and the release native engine, handed to every test job as an artifact. The engine
-  # builds incrementally from the cargo target main's last run uploaded (.github/actions/cargo-target); pushes to main
-  # upload theirs.
+  # Builds the package once: dist/ and the release native engine, handed to every test job as an artifact. An engine an
+  # earlier run built from the same inputs is downloaded, not built (.github/actions/engine-artifact); otherwise the
+  # engine builds incrementally from the cargo target main's last run uploaded (.github/actions/cargo-target), and
+  # pushes to main upload theirs.
   build:
     name: Build
     needs: changes
     if: needs.changes.outputs.release-pr != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    # actions: read finds and downloads main's cargo target.
+    # actions: read finds and downloads an earlier engine and main's cargo target.
     permissions:
       actions: read
       contents: read
@@ -906,19 +927,30 @@ jobs:
 
       - uses: ./.github/actions/lfs
 
+      # An engine an earlier run built from the same inputs (main's, or this branch's last push): then no cargo at all.
+      - id: engine
+        uses: ./.github/actions/engine-artifact
+        with:
+          target: x86_64-unknown-linux-gnu
+          mode: find
+          ref: ${{ env.WARM_REF }}
+
       - id: rust-toolchain
         name: Read pinned Rust toolchain
         run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
 
       - name: Install pinned Rust toolchain
+        if: steps.engine.outputs.hit != 'true'
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
 
-      - uses: ./.github/actions/cargo-target
+      - if: steps.engine.outputs.hit != 'true'
+        uses: ./.github/actions/cargo-target
         with:
           name: cargo-target-x86_64-unknown-linux-gnu
           mode: restore
+          ref: ${{ env.WARM_REF }}
 
       - uses: ./.github/actions/node-deps
 
@@ -926,11 +958,19 @@ jobs:
       # links against the runner's glibc and C++ runtime, so only this form shows a pull request whose engine a
       # release could not link, or one that needs more than the oldest supported Linux has.
       - name: Build the native engine
+        if: steps.engine.outputs.hit != 'true'
         run: node scripts/build/release-engine.mjs x86_64-unknown-linux-gnu
 
       # Straight after the build, so a later step's failure keeps it.
+      - name: Upload the engine for later runs
+        if: steps.engine.outputs.hit != 'true'
+        uses: ./.github/actions/engine-artifact
+        with:
+          target: x86_64-unknown-linux-gnu
+          mode: upload
+
       - name: Save the cargo target
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: env.SAVE_WARM == 'true' && steps.engine.outputs.hit != 'true'
         uses: ./.github/actions/cargo-target
         with:
           name: cargo-target-x86_64-unknown-linux-gnu
@@ -1004,8 +1044,8 @@ jobs:
         run: npm run test:coverage:lint-config
 
   # The Windows engine the Windows unit shards load, built once per run and handed to them as an artifact, as the build
-  # job hands Linux's to the Linux jobs: the release form package.yml builds, incrementally from the cargo target main's
-  # last run uploaded (main uploads its own). Gated as the shards are.
+  # job hands Linux's to the Linux jobs: the release form package.yml builds, downloaded or built as in the build job.
+  # Gated as the shards are.
   build-windows:
     name: Build (Windows)
     needs: changes
@@ -1020,7 +1060,7 @@ jobs:
     runs-on: windows-2025
     # A cold release build took 27 minutes on windows-2025 (44363497802, with rerail-logic and rerail-engine split).
     timeout-minutes: 45
-    # actions: read finds and downloads main's cargo target.
+    # actions: read finds and downloads an earlier engine and main's cargo target.
     permissions:
       actions: read
       contents: read
@@ -1041,24 +1081,37 @@ jobs:
 
       - uses: ./.github/actions/lfs
 
+      # An engine an earlier run built from the same inputs (main's, or this branch's last push): then no cargo at all.
+      - id: engine
+        uses: ./.github/actions/engine-artifact
+        with:
+          target: x86_64-pc-windows-msvc
+          mode: find
+          ref: ${{ env.WARM_REF }}
+
       - id: rust-toolchain
         name: Read pinned Rust toolchain
         run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
 
       - name: Install pinned Rust toolchain
+        if: steps.engine.outputs.hit != 'true'
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
 
-      - uses: ./.github/actions/cargo-target
+      - if: steps.engine.outputs.hit != 'true'
+        uses: ./.github/actions/cargo-target
         with:
           name: cargo-target-x86_64-pc-windows-msvc
           mode: restore
+          ref: ${{ env.WARM_REF }}
 
-      - uses: ./.github/actions/node-deps
+      - if: steps.engine.outputs.hit != 'true'
+        uses: ./.github/actions/node-deps
 
       # build:native's checks, then the release build as package.yml runs it.
       - name: Build the native engine
+        if: steps.engine.outputs.hit != 'true'
         run: |
           node scripts/build/require-cargo.mjs
           node scripts/build/require-lfs.mjs
@@ -1075,8 +1128,15 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      - name: Upload the engine for later runs
+        if: steps.engine.outputs.hit != 'true'
+        uses: ./.github/actions/engine-artifact
+        with:
+          target: x86_64-pc-windows-msvc
+          mode: upload
+
       - name: Save the cargo target
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: env.SAVE_WARM == 'true' && steps.engine.outputs.hit != 'true'
         uses: ./.github/actions/cargo-target
         with:
           name: cargo-target-x86_64-pc-windows-msvc
@@ -1140,12 +1200,13 @@ jobs:
         uses: ./.github/actions/rust-compile-cache
         with:
           name: test-windows-engine
+          ref: ${{ env.WARM_REF }}
 
       - name: Engine Windows tests
         run: "cargo test --manifest-path Cargo.toml -p rerail-engine -p rerail-lang-ecma --lib -- process:: code_rule_dsl::import_target:: tree_watch:: code_rule_dsl::logic::rr::tests::the_canonical_library_joins_with_a_slash_as_bootstrap_joins_it"
 
       - name: Save the compile cache
-        if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        if: ${{ !cancelled() && env.SAVE_WARM == 'true' }}
         uses: ./.github/actions/rust-compile-cache/save
         with:
           artifact: ${{ steps.compile-cache.outputs.artifact }}
@@ -1615,8 +1676,8 @@ jobs:
           exit "$status"
 
   # The macOS engine the real-session smoke loads (it runs the hosts under sandbox-exec, so on macOS only), built as
-  # build-windows builds Windows' and handed over as an artifact, in its own job so a smoke that times out or is re-run
-  # never costs a build. Gated as the smoke is.
+  # build-windows builds Windows' (downloaded when an earlier run built it from the same inputs) and handed over as an
+  # artifact, in its own job so a smoke that times out or is re-run never costs a build. Gated as the smoke is.
   build-macos:
     name: Build (macOS)
     needs: changes
@@ -1635,7 +1696,7 @@ jobs:
     runs-on: macos-15
     # A cold release build took 20 minutes on macos-15 (44363497802, with rerail-logic and rerail-engine split).
     timeout-minutes: 35
-    # actions: read finds and downloads main's cargo target.
+    # actions: read finds and downloads an earlier engine and main's cargo target.
     permissions:
       actions: read
       contents: read
@@ -1648,24 +1709,37 @@ jobs:
 
       - uses: ./.github/actions/lfs
 
+      # An engine an earlier run built from the same inputs (main's, or this branch's last push): then no cargo at all.
+      - id: engine
+        uses: ./.github/actions/engine-artifact
+        with:
+          target: aarch64-apple-darwin
+          mode: find
+          ref: ${{ env.WARM_REF }}
+
       - id: rust-toolchain
         name: Read pinned Rust toolchain
         run: echo "channel=$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)" >> "$GITHUB_OUTPUT"
 
       - name: Install pinned Rust toolchain
+        if: steps.engine.outputs.hit != 'true'
         uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # v1
         with:
           toolchain: ${{ steps.rust-toolchain.outputs.channel }}
 
-      - uses: ./.github/actions/cargo-target
+      - if: steps.engine.outputs.hit != 'true'
+        uses: ./.github/actions/cargo-target
         with:
           name: cargo-target-aarch64-apple-darwin
           mode: restore
+          ref: ${{ env.WARM_REF }}
 
-      - uses: ./.github/actions/node-deps
+      - if: steps.engine.outputs.hit != 'true'
+        uses: ./.github/actions/node-deps
 
       # build:native's checks, then the release build as package.yml runs it.
       - name: Build the native engine
+        if: steps.engine.outputs.hit != 'true'
         run: |
           node scripts/build/require-cargo.mjs
           node scripts/build/require-lfs.mjs
@@ -1682,8 +1756,15 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      - name: Upload the engine for later runs
+        if: steps.engine.outputs.hit != 'true'
+        uses: ./.github/actions/engine-artifact
+        with:
+          target: aarch64-apple-darwin
+          mode: upload
+
       - name: Save the cargo target
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: env.SAVE_WARM == 'true' && steps.engine.outputs.hit != 'true'
         uses: ./.github/actions/cargo-target
         with:
           name: cargo-target-aarch64-apple-darwin

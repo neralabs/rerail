@@ -21,6 +21,11 @@ inputs:
   warm:
     description: Start from main's newest store. "false" starts empty.
     default: "true"
+  ref:
+    description: >-
+      The branch whose newest store `warm` starts from: main, unless a manual run of ci.yml names another (`warm-ref`)
+      to prove a change here before main has a store.
+    default: main
   size:
     description: The store's size limit, as SCCACHE_CACHE_SIZE (least recently used objects go first).
     default: 4G
@@ -71,17 +76,18 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
+        REF: ${{ inputs.ref }}
         ARTIFACT: ${{ steps.env.outputs.artifact }}
         DIR: ${{ steps.env.outputs.dir }}
       run: |
         id=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=$ARTIFACT&per_page=30" \
-          --jq '[.artifacts[] | select(.expired | not) | select(.workflow_run.head_branch == "main" and .workflow_run.head_repository_id == .workflow_run.repository_id)][0].id // empty' || true)
-        if [ -z "$id" ]; then echo "No store from main: compiling cold."; exit 0; fi
+          --jq '[.artifacts[] | select(.expired | not) | select(.workflow_run.head_branch == $ENV.REF and .workflow_run.head_repository_id == .workflow_run.repository_id)][0].id // empty' || true)
+        if [ -z "$id" ]; then echo "No store from $REF: compiling cold."; exit 0; fi
         if gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$RUNNER_TEMP/sccache.zip" \
           && { unzip -q -o "$RUNNER_TEMP/sccache.zip" -d "$DIR" || 7z x -y -o"$DIR" "$RUNNER_TEMP/sccache.zip" > /dev/null; }; then
           echo "Store from main's artifact $id: $(du -sh "$DIR" | cut -f1)."
         else
-          echo "::warning::rust-compile-cache: main's store $id did not download; compiling cold."
+          echo "::warning::rust-compile-cache: $REF's store $id did not download; compiling cold."
           rm -rf "$DIR" && mkdir -p "$DIR"
         fi
         rm -f "$RUNNER_TEMP/sccache.zip"
