@@ -348,6 +348,33 @@ fn destructured_parameters_are_the_lean_parsers() {
 }
 
 #[test]
+fn types_and_aliases_are_the_lean_parsers() {
+    same(&[
+        "fun f(s: (() -> Int)?) = 1\n",
+        "val c: ((Boolean) -> Unit)? = null\n",
+        "val l = mutableListOf<(Int) -> Unit>()\n",
+        "typealias O = (Int) -> Unit\n",
+        "public typealias W = Int\n",
+        "typealias M<T> = Map<String, T>\n",
+        "@Entity(primaryKeys = [A, B])\nclass E\n",
+        "class A\n@Inject\nconstructor(\n    private val b: B,\n)\n",
+        "class A\n@JvmOverloads\nconstructor(context: C) : B(context)\n",
+        "class A @Inject constructor(b: B)\n",
+        "@Ann\nclass A\n@Ann\nclass B\n",
+    ]);
+}
+
+#[test]
+fn what_step_23_does_not_read_is_refused() {
+    refused(&[
+        "fun interface P {\n    fun f()\n}\n",
+        "fun f(w: suspend () -> T) {}\n",
+        "fun f() {\n    @Suppress(\"D\")\n    if (a) b()\n}\n",
+        "fun f(g: ((Int) -> Int) -> Int) {}\n",
+    ]);
+}
+
+#[test]
 fn what_step_22_does_not_read_is_refused() {
     refused(&[
         "fun f() {\n    val d = x as java.util.List<Int>\n    g(d)\n}\n",

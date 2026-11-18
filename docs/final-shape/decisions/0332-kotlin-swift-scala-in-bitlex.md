@@ -576,6 +576,32 @@ parameters (`val <T> List<T>.second`).
 
 Corpus: 355 the same (step 21: 327), 136 refused, 0 differ.
 
+## Kotlin, step 23 (`23-types-and-aliases.bitlex`)
+
+```kotlin
+fun f(s: (() -> Int)?) = 1
+val l = mutableListOf<(Int) -> Unit>()
+typealias O = (Int) -> Unit
+@Entity(primaryKeys = [A, B])
+class A
+@Inject
+constructor(private val b: B)
+```
+
+- A parenthesized type (`parenthesized_type`, nullable over it) where a `:` is before its
+  `(` and another `(` after it. Its mark shares `generic`'s: no type starts with `<`. A
+  function type whose first parameter is a function type is refused there.
+- `(` and `)` are type bytes for `generic`, so type arguments hold function types.
+- `typealias`, with modifiers and type parameters (`type_alias`).
+- A collection literal is a primary expression (tree-sitter-kotlin reads it anywhere).
+- A line of a class's header that starts with an annotation (no arguments) before its
+  `constructor` goes on the line before: the primary constructor's modifiers.
+
+Still refused: `fun interface` (its `fun` opens a function too), `suspend` function types,
+an annotated expression (`@Suppress("x") if …`), `constructor` and `by` as names.
+
+Corpus: 375 the same (step 22: 355), 116 refused, 0 differ.
+
 ## The compiler's additions
 
 1. **Several kinds of extras in the token step.** Kotlin, Swift and Scala each have two comment
