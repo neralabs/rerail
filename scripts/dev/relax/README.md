@@ -175,6 +175,27 @@ Relax's `compiler/tests/cast_open_slice_referent.rs` covers it. The 46 of Relax'
 cast to a reference, pointer or smart pointer, and that rustc compiles, print the same `| ` lines
 as `rustc --test` (`t2.rs`, which spins on purpose, was left out).
 
+### 7. A registry crate's build script gets the mount (`RELAX_SHARE`)
+
+Under `RELAX_SHARE` every engine test that builds on the JIT failed before compiling the engine:
+`cranelift-assembler-x64`'s build script could not load `cranelift_assembler_x64_meta` ("No such
+file or directory", on a path that exists). The root `Cargo.toml` patches that meta crate in from
+`native/vendor`, so its source lies in the mount, at a virtual path. The assembler crate itself is
+the registry's, on disk, and Relax handed the mount table (`RELAX_VFS`) only to a script whose own
+package is virtual. The script's run then read the meta crate's virtual path with nothing serving
+it (Relax prints virtual paths in their disk spelling, so the error showed the real one). The
+fork gives every build script the mount table while one is active. A script on disk still gets no
+`RELAX_WORKSPACE` (that broke rustix's build script: its relative paths resolved against it), and
+the mount table is no part of a script's rerun key.
+
+### 8. The SHA-512 instructions in `asm!`
+
+`sha2` 0.10 with its `asm` feature (which `rerail-tape-format` turns on for aarch64) writes
+`sha512h`, `sha512h2`, `sha512su0` and `sha512su1` in `asm!`. Relax's assembler lacked them, so
+any test that hashes with SHA-512 (ed25519 signatures: `shared_signing_library_verifies_an_existing_empty_allowlist`)
+failed with "unsupported instruction `sha512h`". The fork encodes and decodes them;
+`backend/src/asm/tests_arm64.rs` checks the words against clang's.
+
 ## Sharing between worktrees
 
 Relax keys a run's stores by the workspace's absolute paths. Under `RELAX_SHARE=rerail` every
