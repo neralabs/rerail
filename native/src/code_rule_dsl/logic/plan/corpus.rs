@@ -10123,10 +10123,14 @@ impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
         self.kept.old_source(rel, rel).filter(|(_, held)| held.is_none()).map(|(s, _)| s)
     }
 
-    fn mode_ran(&mut self, rel: &str) {
-        self.has_delta.insert(rel.to_owned());
-        self.maintains.insert(rel.to_owned());
+    fn mode_ran(&mut self, scc: &BTreeSet<String>, recursive: bool) {
+        self.has_delta.extend(scc.iter().cloned());
+        self.maintains.extend(scc.iter().cloned());
         self.counts.0 += 1;
+        if recursive {
+            self.counts.2 += 1;
+            maintain::by_levels_ran();
+        }
     }
 }
 

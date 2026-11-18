@@ -83,7 +83,7 @@ mod base_probe;
 mod inputs_tests;
 #[cfg(all(test, target_os = "macos"))]
 mod blocks_compare_tests;
-use spec::{ComponentSpec, InputKey, JoinItem, JoinSpec, Line, Reprobe, Source, Start, Tok};
+use spec::{Arg, ComponentSpec, InputKey, JoinItem, JoinSpec, Line, Reprobe, Source, Start, Tok};
 pub mod closure;
 pub mod table;
 pub mod level;
@@ -421,7 +421,11 @@ pub struct Rel { table: String, types: Vec<u8>, pub k: usize, pub n: usize, data
              stats: Option<KeptStats>, stats_dead: Vec<u64>,
              /// A lattice relation's key and join (`lattice` lines): one live row a key, its value the join of all the
              /// key's values derived (`Lat::fold`). `None`: a set.
-             lat: Option<Box<Lat>> }
+             lat: Option<Box<Lat>>,
+             /// The maintain mode's level cap (decision 0364): while a recursive candidate is checked, a row of this
+             /// level or above is no row (`dead`), as a row present only below the candidate's level supports it.
+             /// `u32::MAX`: none.
+             cap: u32 }
 
 /// A lattice relation's state (decision 0124): its last column is the value, the columns before it the key. A key's
 /// row is replaced when a wave's values for it join to a new value: the old row dead, the new one the next wave's
@@ -509,7 +513,7 @@ impl Rel {
         Rel { table: table.to_string(), types: types.to_vec(), k, n: 0, data: Rows::new(k), stored: 0, lo: 0, hi: 0, wave: 0,
               idx: vec![Index::new((0..k).collect())], serves: vec![Vec::new()], indexed: 0, pending: HashTable::new(),
               sketches: vec![Sketch::default(); k], dead: Vec::new(), ndead: 0, summaries: Default::default(), sorted: Default::default(), from: None,
-              level: Vec::new(), lbase: 0, leveled: true, stats: None, stats_dead: Vec::new(), lat: None }
+              level: Vec::new(), lbase: 0, leveled: true, stats: None, stats_dead: Vec::new(), lat: None, cap: u32::MAX }
     }
     /// Makes this relation a lattice's (its `lattice` line): the rows it holds so far fold by key, as a wave's do.
     fn set_lattice(&mut self, name: &str, keys: usize, lattice: Arc<dyn super::Lattice>, widen: Option<u32>) -> Result<()> {
@@ -662,7 +666,7 @@ impl Rel {
         let from = Some(Origin::Based { at: old as *const InRel as usize, n: old.n, dead: Arc::new(old.dead.clone()) });
         Some(Rel { table: table.to_string(), types: types.to_vec(), k, n: old.n, data: old.rows.shared(old.n), stored: 0, lo: 0, hi: 0, wave: 0, idx, serves,
                    indexed: old.n, pending: HashTable::new(), sketches, dead, ndead, summaries: Default::default(), sorted: old.sorted.clone(), from, level,
-                   lbase: 0, leveled: true, stats: old.stats.clone(), stats_dead: old.dead.clone(), lat: None })
+                   lbase: 0, leveled: true, stats: old.stats.clone(), stats_dead: old.dead.clone(), lat: None, cap: u32::MAX })
     }
     /// `based`'s relation, made from `old`'s rows less those of `gone` rather than in place (compacted).
     fn compacted(table: &str, types: &[u8], old: &InRel, gone: Option<&InRel>) -> Rel {
@@ -691,7 +695,7 @@ impl Rel {
     }
     #[inline]
     fn dead(&self, id: u32) -> bool {
-        is_dead(&self.dead, id)
+        is_dead(&self.dead, id) || (self.cap != u32::MAX && self.level.get(id as usize).is_some_and(|&l| l >= self.cap))
     }
     fn row(&self, id: usize) -> Row { self.data.row(id as u32, self.k) }
     /// Row `id`'s value in column `c`, read where it lies.
@@ -1207,6 +1211,11 @@ struct MaintMode {
     removes: Vec<(usize, JoinRule)>,
     adds: Vec<(usize, JoinRule)>,
     rechecks: Vec<(usize, JoinRule)>,
+    /// A recursive component's (by levels, decision 0364 §2): per delta probe, the relation whose row drives it, its
+    /// head, the probe's join without that atom (its slots bound), and that atom's arguments: the rows that read a
+    /// row gone, found from the row.
+    drivers: Vec<(usize, usize, JoinRule, Vec<Arg>)>,
+    leveled: bool,
     done: bool,
     /// Candidates, those killed, and checked adds added: the run's report.
     counts: [u64; 3],
@@ -1226,6 +1235,111 @@ impl MaintMode {
         Ok(false)
     }
 
+    /// The rows of `driver`'s head that read `row` of its relation (`drivers`): its atom's slots preset from the row,
+    /// where the row matches the atom's constants and repeated slots.
+    fn readers(driver: &(usize, usize, JoinRule, Vec<Arg>), row: &[i64], store: &Store, syms: &mut Interner, out: &mut Vec<i64>) -> Result<()> {
+        let (_, _, j, args) = driver;
+        let mut preset: Vec<(usize, i64)> = Vec::with_capacity(args.len());
+        for (a, &v) in args.iter().zip(row) {
+            match a {
+                Arg::Tok(Tok::Slot(s)) => match preset.iter().find(|(x, _)| x == s) {
+                    Some(&(_, w)) if w != v => return Ok(()),
+                    Some(_) => {}
+                    None => preset.push((*s, v)),
+                },
+                Arg::Tok(Tok::Int(i)) if *i != v => return Ok(()),
+                Arg::Tok(Tok::Sym(x)) if syms.id(x) != v => return Ok(()),
+                _ => {}
+            }
+        }
+        out.clear();
+        run_join_collect(j, store, syms, &preset, out)?;
+        Ok(())
+    }
+
+    /// A recursive component by levels (decision 0364 §2): candidates in level order, lowest first. One stays when a
+    /// rule derives it from rows of its component present and below its level (`Rel::cap`); else it goes for now,
+    /// and the rows that read it are candidates at their own levels. Then each row gone that a rule derives now is
+    /// added again (a new row, above every kept level: a rewrite is a kill and an add), with the checked adds, as the
+    /// first wave's delta: the waves carry them on.
+    fn run_leveled(&mut self, store: &mut Store, syms: &mut Interner) -> Result<()> {
+        use std::cmp::Reverse;
+        let mut out = Vec::new();
+        let mut heap: std::collections::BinaryHeap<Reverse<(u32, usize, u32)>> = Default::default();
+        let mut seen: rustc_hash::FxHashSet<(usize, u32)> = Default::default();
+        let level_of = |store: &Store, r: usize, id: u32| store.rels[r].level.get(id as usize).copied().unwrap_or(0);
+        let mut push = |heap: &mut std::collections::BinaryHeap<Reverse<(u32, usize, u32)>>, store: &Store, r: usize, rows: &[i64], seen: &mut rustc_hash::FxHashSet<(usize, u32)>, counts: &mut [u64; 3]| {
+            let rel = &store.rels[r];
+            for row in rows.chunks_exact(rel.k.max(1)) {
+                if let Some(id) = rel.find(row, |id| is_dead(&rel.dead, id)) && seen.insert((r, id)) {
+                    counts[0] += 1;
+                    heap.push(Reverse((level_of(store, r, id), r, id)));
+                }
+            }
+        };
+        for (head, j) in &self.removes {
+            let mut rows = Vec::new();
+            run_join_collect(j, store, syms, &[], &mut rows)?;
+            push(&mut heap, store, *head, &rows, &mut seen, &mut self.counts);
+        }
+        let mut gone: Vec<(usize, Vec<i64>)> = Vec::new();
+        while let Some(Reverse((l, r, id))) = heap.pop() {
+            let row: Vec<i64> = store.rels[r].row(id as usize).to_vec();
+            for rel in &mut store.rels {
+                rel.cap = l;
+            }
+            let stays = self.derives(r, &row, store, syms, &mut out);
+            for rel in &mut store.rels {
+                rel.cap = u32::MAX;
+            }
+            if stays? {
+                continue;
+            }
+            let rel = &mut store.rels[r];
+            if kill(&mut rel.dead, id) {
+                rel.ndead += 1;
+                self.counts[1] += 1;
+            }
+            for d in self.drivers.iter().filter(|d| d.0 == r) {
+                Self::readers(d, &row, store, syms, &mut out)?;
+                let rows = std::mem::take(&mut out);
+                push(&mut heap, store, d.1, &rows, &mut seen, &mut self.counts);
+                out = rows;
+            }
+            gone.push((r, row));
+        }
+        // Added again where a rule derives it now, and the checked adds; then the first wave's delta.
+        let before: Vec<usize> = store.rels.iter().map(|r| r.n).collect();
+        let mut again: Vec<(usize, Vec<i64>)> = Vec::new();
+        for (r, row) in gone {
+            if self.derives(r, &row, store, syms, &mut out)? {
+                again.push((r, row));
+            }
+        }
+        for (head, j) in &self.adds {
+            let mut rows = Vec::new();
+            run_join_collect(j, store, syms, &[], &mut rows)?;
+            let k = store.rels[*head].k;
+            for row in rows.chunks_exact(k.max(1)) {
+                let rel = &store.rels[*head];
+                if rel.find(row, |id| rel.dead(id)).is_none() && self.derives(*head, row, store, syms, &mut out)? {
+                    again.push((*head, row.to_vec()));
+                }
+            }
+        }
+        for (r, row) in again {
+            if store.rels[r].push(&row) {
+                self.counts[2] += 1;
+            }
+        }
+        for (r, rel) in store.rels.iter_mut().enumerate() {
+            if rel.n > before[r] {
+                rel.set_delta(before[r], rel.n);
+            }
+        }
+        Ok(())
+    }
+
     /// The removals, then the checked adds (decision 0364 stage 3). A non-recursive component's rules read no
     /// relation of it, so a recheck reads only lower strata, whose rows are final: candidates are decided in any order.
     fn run(&mut self, store: &mut Store, syms: &mut Interner) -> Result<()> {
@@ -1233,6 +1347,9 @@ impl MaintMode {
             return Ok(());
         }
         self.done = true;
+        if self.leveled {
+            return self.run_leveled(store, syms);
+        }
         let mut out = Vec::new();
         let mut kills: Vec<(usize, u32)> = Vec::new();
         let mut seen: rustc_hash::FxHashSet<(usize, u32)> = Default::default();
@@ -1752,6 +1869,24 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
             }
         }
     }
+    // A recursive component in the maintain mode (decision 0364 §2): each delta probe is also a driver, its delta atom
+    // taken out and its slots bound, to find the rows that read a row gone.
+    if !maint.removes.is_empty() || !maint.adds.is_empty() {
+        for line in &spec.lines {
+            let Line::Join { head, delta, join, .. } = line else { continue };
+            let Some(at) = join.items.iter().position(|i| matches!(i, JoinItem::Atom { neg: false, src: spec::Source::Delta(d), .. } if d == delta)) else { continue };
+            let JoinItem::Atom { args, .. } = &join.items[at] else { unreachable!() };
+            let pre: Vec<usize> = args.iter().filter_map(|a| match a { Arg::Tok(Tok::Slot(s)) => Some(*s), _ => None }).collect();
+            let mut rest = (**join).clone();
+            rest.items.remove(at);
+            if at < rest.from.len() {
+                rest.from.remove(at);
+            }
+            let j = join_rule_bound(conn, &rest, &mut syms, true, &pre)?;
+            maint.drivers.push((*delta, *head, j, args.clone()));
+        }
+        maint.leveled = spec.lines.iter().any(|l| matches!(l, Line::Join { .. }));
+    }
     // The device's plans of the seeds, or why it takes none of them: then they are parsed again with the CPU's indexes.
     let device_plans = if let Some(dev) = solver().filter(|_| device_wanted) {
         let _plan = crate::code_rule_dsl::logic::profile::span(|| "open: device plans".into());
@@ -1884,7 +2019,8 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
         _ => false,
     };
     // A levels stratum is run by its driver, step by step (`Levels`), not as a closure.
-    if comp.levels.lines.is_empty() && !on_device_rounds {
+    // The maintain mode's component neither: its first wave's delta is the rows its removals put back.
+    if comp.levels.lines.is_empty() && !on_device_rounds && comp.maint.drivers.is_empty() {
         comp.closure = {
             let _h = crate::code_rule_dsl::logic::lanes::prof::host("closure", "plan: recognize the form");
             closure::recognize(&comp)

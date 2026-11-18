@@ -1047,6 +1047,11 @@ pub fn strata_by_levels() -> usize {
     BY_LEVELS.with(std::cell::Cell::get)
 }
 
+/// A recursive stratum the evaluator's maintain mode maintained by levels (decision 0364 §2): counted as a form's.
+pub fn by_levels_ran() {
+    BY_LEVELS.with(|c| c.set(c.get() + 1));
+}
+
 /// The sets of pieces run as one component so far by this thread's runs (`together`).
 pub fn pieces_together() -> usize {
     TOGETHER.with(std::cell::Cell::get)

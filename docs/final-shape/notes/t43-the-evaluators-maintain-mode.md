@@ -70,3 +70,24 @@ A session's relations stay in their blocks between runs; nothing moves to frames
   version: that comes with stage 3's mode, which is the first reader.
 - Found on the way: the version's prune lacked the tree's revival of a pruned on-request attribute as an input
   (44dfb61af); every session test had stopped on it.
+- Stage 3: done.
+  - b3d2c3419, the engine: `Source::Version` and the `remove`, `addchecked` and `recheck` lines (`MaintMode`).
+  - f116df144, non-recursive strata: the driver gives a reached stratum the mode, with no form, where it fits
+    (`Run::maintain_mode_blocks`). A changed input's versions are its sources, held while the stratum runs
+    (`r__mm_*`, `Run::mode_reads`).
+  - This commit, recursive strata by levels (0364 §2):
+    - candidates in level order; a recheck sees only rows below the candidate's level (`Rel::cap`);
+    - a row gone makes its readers candidates, through each delta probe run from that one row (`drivers`);
+    - rows gone that a rule derives now come back as new rows, and they and the checked adds are the first wave's
+      delta;
+    - a view of an input's columns has its input's versions, through its columns.
+  - In the session tests, 927 reached strata take the mode. The rest read a relation with no version (a native
+    operator's, one derived again), or keep their rows on disk only.
+  - `a_cycle_closed_by_an_empty_relation_still_keeps_levels` passes now.
+  - Still on forms:
+    - strata over a relation without a version;
+    - aggregates, `nearest` and `ast` literals;
+    - lattices, gates and requests;
+    - strata whose kept rows are not in memory.
+    0090 §4's "derive again" choice is not made for a mode stratum yet. Both are for stage 4.
+
