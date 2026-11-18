@@ -73,6 +73,16 @@ function environmentMovesLookup(): boolean {
   return LOOKUP_VARIABLES.some(name => process.env[name] !== undefined);
 }
 
+/**
+ * The lookup variables set in this process's environment with their values, one per line; undefined when none is set.
+ * A process's environment does not change once it runs, so while it holds one, Git's answer for a folder moves only
+ * with that folder's own inputs.
+ */
+export function lookupEnvironment(): string | undefined {
+  const set = LOOKUP_VARIABLES.filter(name => process.env[name] !== undefined);
+  return set.length === 0 ? undefined : set.map(name => `${name}=${process.env[name]}`).join("\n");
+}
+
 type Looked = Stats | "none" | undefined;
 
 /** An lstat that answers `"none"` for a missing path and undefined for one it cannot read. */
@@ -210,7 +220,12 @@ function commonOf(gitFolder: string): CommonFolder | undefined {
  * Git's lookup. A few lstats, reads of small files and two real paths, and no Git process.
  */
 export function placementInputs(folder: string): PlacementInputs | undefined {
-  const entry = environmentMovesLookup() ? undefined : gitFolderAt(folder);
+  return environmentMovesLookup() ? undefined : filePlacementInputs(folder);
+}
+
+/** {@link placementInputs} read from the files whatever the environment says, for an answer Git still gives. */
+export function filePlacementInputs(folder: string): PlacementInputs | undefined {
+  const entry = gitFolderAt(folder);
   const common = entry === undefined ? undefined : commonOf(entry.gitFolder);
   return entry === undefined || common === undefined ? undefined : withCommon(folder, entry, common);
 }

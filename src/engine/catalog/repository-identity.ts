@@ -16,7 +16,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { checkoutRealpath, physicalPath, storedPath } from "./checkout-control.js";
-import { linkedWorktreeFromFiles, placementInputs, type PlacementInputs } from "./checkouts/git-placement.js";
+import { filePlacementInputs, linkedWorktreeFromFiles, lookupEnvironment, placementInputs, type PlacementInputs } from "./checkouts/git-placement.js";
 import { openNoFollowSync } from "../no-follow.js";
 import { GitUnavailableError, gitText, runGit } from "../git.js";
 import type { RepositoryKey } from "./repository-model.js";
@@ -294,12 +294,34 @@ export function worktreeRegistry(checkout: string): WorktreeRegistry | undefined
  * every call, and a placement is kept only while what Git reads at the folder is unchanged: a recorded checkout's folder
  * can be removed and become another repository's checkout, the folder above it renamed, or its `.git` file rewritten to
  * name another repository, and the registry to read is then that repository's. A kept placement costs a few lstats,
- * reads of small files and two real paths. For folders another account owns, Git's last acceptance.
+ * reads of small files and two real paths. For folders another account owns, Git's last acceptance; while the
+ * environment moves Git's lookup, Git's acceptance under the variables' values ({@link placedUnderEnvironment}).
  */
 function registryCommonDirectory(checkout: string): string | undefined {
   if (!existsSync(checkout)) return undefined;
-  const location = placed(resolve(checkout), true);
+  const requested = resolve(checkout);
+  const environment = lookupEnvironment();
+  const location = environment === undefined ? placed(requested, true) : placedUnderEnvironment(requested, environment);
   return location.git ? physicalPath(dirname(location.identityPath)) : undefined;
+}
+
+/** Git's acceptances of recorded checkouts while the environment moves Git's lookup, for the worktree registry alone. */
+const environmentTopLevels = new Map<string, { readonly stamp: string; readonly location: RepositoryIdentityLocation }>();
+
+/**
+ * Git's placement of `requested` while `environment`, the lookup variables' values, moves Git's lookup: every placement
+ * asks Git then, and the registry, asked at every tool call, takes Git's acceptance kept under the folder's own inputs
+ * ({@link filePlacementInputs}) and those values, which do not change while the process runs. A refusal is not kept.
+ */
+function placedUnderEnvironment(requested: string, environment: string): RepositoryIdentityLocation {
+  const inputs = filePlacementInputs(requested);
+  const stamp = inputs === undefined ? undefined : `${inputs.stamp}\n${environment}`;
+  const held = environmentTopLevels.get(requested);
+  if (stamp !== undefined && held?.stamp === stamp) return { ...held.location };
+  const { location } = locatedByGit(requested);
+  if (stamp !== undefined && location.git) environmentTopLevels.set(requested, { stamp, location });
+  else environmentTopLevels.delete(requested);
+  return { ...location };
 }
 
 function listWorktrees(checkout: string, commonDirectory: string, contents: string): WorktreeRegistry & { readonly contents: string } | undefined {

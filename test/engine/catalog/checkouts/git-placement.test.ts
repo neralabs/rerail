@@ -209,6 +209,38 @@ describe("every other folder, and every worktree whose files Git might read othe
     vi.stubEnv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1");
     expect(expectGitsAnswers(join(root, "linked"), main)).toBe(2);
   });
+
+  it("lists a checkout's worktrees with one placement while a lookup variable is set, as Git lists them", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    const other = repository(join(root, "other"));
+    git(main, "worktree", "add", "--quiet", "-b", "linked", join(root, "linked"));
+    git(other, "worktree", "add", "--quiet", "-b", "elsewhere", join(root, "elsewhere"));
+    const lists = (): number => vi.mocked(runGit).mock.calls.filter(([cwd, args]) => cwd === main && args[0] === "worktree").length;
+    // Each value names another common folder, so each lists once; the second is Git's answer only under its value.
+    const variables: Array<[string, string]> = [["GIT_OBJECT_DIRECTORY", join(main, ".git", "objects")], ["GIT_DIR", join(other, ".git")]];
+    for (const [name, value] of variables) {
+      vi.unstubAllEnvs();
+      vi.stubEnv(name, value);
+      const [placements, listed] = [locateCalls(main), lists()];
+      for (let use = 0; use < 3; use += 1) {
+        const registry = worktreeRegistry(main);
+        expect(registry?.worktrees, `${name}=${value}`).toEqual(gitsRegistry(main));
+        expect(registry?.commonDirectory, `${name}=${value}`).toBe(physicalPath(dirname(gitsAnswer(main).identityPath)));
+      }
+      // Main's registry kept the common folder Git first named; each value of the variables is asked once.
+      expect({ placements: locateCalls(main) - placements, lists: lists() - listed }, `${name}=${value}`).toEqual({ placements: 1, lists: 1 });
+    }
+
+    // A refusal is not kept: Git takes the folder once the repository the variable names is there.
+    vi.unstubAllEnvs();
+    vi.stubEnv("GIT_DIR", join(root, "later", ".git"));
+    expect(worktreeRegistry(main)).toBeUndefined();
+    vi.unstubAllEnvs();
+    repository(join(root, "later"));
+    vi.stubEnv("GIT_DIR", join(root, "later", ".git"));
+    expect(worktreeRegistry(main)?.worktrees).toEqual(gitsRegistry(main));
+  });
 });
 
 describe("GIT_CEILING_DIRECTORIES, which stops Git's search only above the folder whose own .git Git reads first", () => {
