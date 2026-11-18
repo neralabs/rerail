@@ -5198,7 +5198,7 @@ impl<'a> Widen<'a> {
             return None;
         }
         let mut asks: Vec<(Vec<Literal>, BTreeSet<String>)> = Vec::new();
-        let mut blockers: BTreeSet<String> = BTreeSet::new();
+        let mut whole: BTreeSet<String> = BTreeSet::new();
         for r in &self.prog.rules {
             for (i, l) in r.body.iter().enumerate() {
                 let a = match l {
