@@ -420,12 +420,12 @@ export class SqliteSessionStore {
 
 type EventRow = typeof events.$inferInsert & { eventId: string; payloadJson: string; payloadV8: Buffer };
 
-/** The row `event` is stored as, its id and time taken now: a write that waits for the lock is made later. */
 /** The event a steer's receipt is recorded as: its id is the receipt's, so a receipt recorded twice counts once. */
 function steerEvent(session: AdapterSession, receiptId: string, ruleIds: readonly string[]): SessionEvent {
   return { sessionId: session.sessionId, eventId: `steering-delivered:${receiptId}`, kind: "steering-delivered", payload: { ruleIds: [...ruleIds] } };
 }
 
+/** The row `event` is stored as, its id and time taken now: a write that waits for the lock is made later. */
 function eventRow(event: SessionEvent): EventRow {
   return {
     sessionId: event.sessionId,
@@ -714,35 +714,6 @@ export function lastObservedEventAt(databasePath: string): number | null {
     return null;
   } finally {
     database?.$client.close();
-  }
-}
-
-/** The repository key of the checkout `cwd` is in, read without recording anything; undefined when unknown. */
-function repositoryKeyOf(cwd: string, databasePath: string): string | undefined {
-  let database: RerailDatabase | undefined;
-  try {
-    database = openRerailDatabase(databasePath, { readonly: true });
-    return lookupCheckout(database, cwd)?.repositoryKey;
-  } catch {
-    return undefined;
-  } finally {
-    database?.$client.close();
-  }
-}
-
-/**
- * Records `receipt` in the database at `databasePath` on connections of its own, crediting the repository of the
- * checkout its session's folder is in: for a hook that runs its own runtime (tests, embedded hosts). Each open waits up
- * to the busy timeout for another connection's write lock.
- */
-export function recordSteerReceipt(databasePath: string, { session, receiptId, ruleIds }: SteerReceipt): void {
-  // Attribution matters only when a reset removed the session row and this receipt restores it.
-  const repositoryKey = repositoryKeyOf(session.cwd, databasePath);
-  const store = new SqliteSessionStore(databasePath);
-  try {
-    store.recordSteer(session, receiptId, ruleIds, repositoryKey === undefined ? {} : { repositoryKey });
-  } finally {
-    store.close();
   }
 }
 

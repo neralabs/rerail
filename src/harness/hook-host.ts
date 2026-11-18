@@ -24,7 +24,7 @@ import {
   type SessionLock,
 } from "./hook-adapter.js";
 import type { SemanticEmbedder } from "../engine/native/semantic-types.js";
-import { recordSteerReceipt, steerReceiptWrite } from "../runtime/session-store.js";
+import { steerReceiptWrite } from "../runtime/session-store.js";
 import type { SteerReceipt } from "../runtime/event-protocol.js";
 import { openRecordWriter } from "../engine/storage/record-writes.js";
 import { defaultRerailDatabasePath } from "../engine/storage/database.js";
@@ -51,6 +51,20 @@ async function recordReceipt(link: EngineLink, configuration: EngineRuntimeConfi
     await Promise.race([written, link.handReceipt(receipt, configuration, stop.signal).then(taken => taken || written)]);
   } finally {
     stop.abort();
+    writer.close();
+  }
+}
+
+/**
+ * Records the receipt of a steer the answer of a hook that runs its own runtime (tests, embedded hosts) carried, once
+ * that answer is written: through the record writer, whose use's close makes it, waiting for another connection's write
+ * lock no longer than the busy timeout, as the hook's own record always did.
+ */
+function recordOwnReceipt(databasePath: string, receipt: SteerReceipt): void {
+  const writer = openRecordWriter(databasePath);
+  try {
+    writer.write(steerReceiptWrite(databasePath, receipt));
+  } finally {
     writer.close();
   }
 }
@@ -175,7 +189,7 @@ async function runHostHookOnce(
       const runtime = new RerailRuntime({ storageRoot, databasePath, workspaceRoot: workspace, embedder });
       try {
         const output = await handle(runtime, storageRoot, lock);
-        return bindSteerReceipt(output, (receiptId, ruleIds) => recordSteerReceipt(databasePath, { session, receiptId, ruleIds: [...ruleIds] }));
+        return bindSteerReceipt(output, (receiptId, ruleIds) => recordOwnReceipt(databasePath, { session, receiptId, ruleIds: [...ruleIds] }));
       } finally {
         await runtime.dispose();
       }
