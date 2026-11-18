@@ -138,6 +138,20 @@ codegen-units = 1
 # dyld rejects the cdylib ("mis-aligned LINKEDIT string pool"). Unstripped costs ~1 MB.
 strip = "none"
 
+# The two units a cold release build waits on alone, split so the runner's cores share them (cold Linux x64 on 4
+# cores: 943 s to 566 s). Every other crate, the matcher, tape, store and lean parsers among them, keeps one unit.
+# - `rerail-logic`, the Datalog engine, no part of the product's audit path: at one unit its LLVM pass was 425 of the
+#   build's 960 s, 380 of them with nothing else running.
+# - `rerail-engine`, the addon's own crate: its one unit and the link took 170 s on about one core. Its override
+#   repeats `strip`: without it cargo strips the crate's debug info through rustc, which overrides the release
+#   script's `-s` (the Linux engine kept its symbol tables, 17 MB) and would hit the Xcode bug above.
+[profile.release.package.rerail-logic]
+codegen-units = 16
+
+[profile.release.package.rerail-engine]
+codegen-units = 16
+strip = "none"
+
 # The build script generates the vendored grammars' parsers (native/build.rs): tree-sitter-generate runs several times
 # faster optimised (TypeScript's parser in 1 s rather than 7 s), and regenerating SQL's committed parser takes 7 to 10
 # minutes rather than half an hour.
