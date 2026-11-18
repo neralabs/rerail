@@ -199,9 +199,6 @@ pub(in crate::code_rule_dsl) fn run_with(
             let derived_again = std::cell::RefCell::new(BTreeSet::new());
             let mut driver = super::Driver {
                 cross: prog,
-                // The slice's strata get their forms as they are reached: no general forms are written for it (0298
-                // writes the cross-file part's).
-                general: None,
                 cross_placed: &placed,
                 kept: k,
                 store: None,
@@ -221,6 +218,8 @@ pub(in crate::code_rule_dsl) fn run_with(
                 again: Vec::new(),
                 walked: (0, 0, 0),
                 atoms: None,
+                // The slice's general forms are not stored (decision 0298 §4): each reached stratum's form is made for it.
+                general: super::maintain::StoredForms::unstored(),
             };
             let hooks = super::super::Hooks { maintain: Some(&mut driver), texts: Some(Arc::clone(texts)), ..Default::default() };
             let got = super::super::run_atoms_native_hooked(part, db, "main", stats.clone(), wanted, modes, hooks)?;

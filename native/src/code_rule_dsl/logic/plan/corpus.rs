@@ -65,7 +65,6 @@ pub fn install_cross_file(make: MakeCrossFile) {
 }
 pub mod prepared;
 pub mod maintain;
-pub mod supports;
 pub mod retain;
 pub mod keptstats;
 pub mod input_delta;
@@ -904,7 +903,7 @@ fn combine_tail(programs: &[&str], extra: &added::Added, read: Option<&front::Pr
     let tree = {
         let (tree, _) = crate::code_rule_dsl::logic::profile::quiet(|| combine_linked(programs, extra, read, None))?;
         let (of_tree, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&tree).and_then(|b| b.finish()).map_err(Error::Plan)?;
-        assert_eq!((of_tree.size(), of_tree.digest()), (v.size(), v.digest()), "the parts linked as versions are the trees linked: {}", crate::code_rule_dsl::logic::program_image::differences(&of_tree, &v));
+        assert!(crate::code_rule_dsl::logic::program_image::same_program(&of_tree, &v), "the parts linked as versions are the trees linked: {}", crate::code_rule_dsl::logic::program_image::differences(&of_tree, &v));
         tree
     };
     let (v, run) = match &tail {
@@ -925,7 +924,7 @@ fn combine_tail(programs: &[&str], extra: &added::Added, read: Option<&front::Pr
     {
         let tree = crate::code_rule_dsl::logic::profile::quiet(|| tail_tree(tree, &tail))?;
         let (of_tree, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&tree).and_then(|b| b.finish()).map_err(Error::Plan)?;
-        assert_eq!((of_tree.size(), of_tree.digest()), (v.size(), v.digest()), "the combine's tail on the version is the tree's: {}", crate::code_rule_dsl::logic::program_image::differences(&of_tree, &v));
+        assert!(crate::code_rule_dsl::logic::program_image::same_program(&of_tree, &v), "the combine's tail on the version is the tree's: {}", crate::code_rule_dsl::logic::program_image::differences(&of_tree, &v));
     }
     Ok((v, run))
 }
@@ -1075,7 +1074,7 @@ pub struct Prepared {
     pub(in crate::code_rule_dsl) cone: std::sync::OnceLock<std::result::Result<Arc<Cone>, String>>,
     /// The cross-file part as a session maintains it (`maintained_cross`), made by the first run that keeps it, for
     /// the part it was made of (by digest) and the process's settings of it: a later run of the same part shares it.
-    pub(in crate::code_rule_dsl) maintained: std::sync::OnceLock<(MaintainedOf, (lower::Lowered, Option<(usize, usize)>))>,
+    pub(in crate::code_rule_dsl) maintained: std::sync::OnceLock<(MaintainedOf, lower::Lowered)>,
     /// The run's file-local and cross-file parts, and its constants' program (`run_constants`), made by the first run
     /// for the constants it found (`once`): a later run finding the same ones shares them.
     pub(in crate::code_rule_dsl) parts: std::sync::OnceLock<(BTreeSet<String>, RunParts)>,
@@ -1083,10 +1082,6 @@ pub struct Prepared {
     /// (`memo::program_digest`): made by the first run, or read with the prepared program from the store (decision
     /// 0246 §4); a run whose part is that one adds its options, phases' rows and projection to them.
     pub(in crate::code_rule_dsl) memo_strata: std::sync::OnceLock<([u8; 32], memo::Strata)>,
-    /// The maintained cross-file part's general forms (decision 0298), made by the first run that maintains it, for
-    /// the part and the old rows its kept part held (by digest, `olds_signature`): a later run of the same selects
-    /// from them.
-    pub(in crate::code_rule_dsl) general: std::sync::OnceLock<((u64, u64), std::result::Result<Arc<maintain::GeneralForms>, String>)>,
 }
 
 impl Prepared {
@@ -1106,7 +1101,7 @@ impl Prepared {
 type RunParts = (lower::Lowered, lower::Lowered, Option<(lower::Lowered, Vec<String>)>);
 
 /// What `Prepared::maintained` is made of: the cross-file part's digest and `maintained_cross`'s settings.
-type MaintainedOf = (u64, [bool; 3]);
+type MaintainedOf = (u64, [bool; 2]);
 
 /// The cross-file part's requests answered inside the fixpoint (decision 0065 §2a, `cone_of`): the cone's program
 /// (`load`) and the relations it reads, the rest of the part, and each one's version (decision 0244).
@@ -1150,6 +1145,11 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
     use std::io::Write;
     // The two parts' rules beside it, a line each (printed from their versions, 0276 §6), and the exports.
     let rules = |v: &Version| v.rules().map(|r| format!("{}\n", v.show_rule(r))).collect::<String>();
+    // One set of files a program: a batch (`run-policies`) splits several, each to the next free number.
+    let stem = path.file_stem().map_or_else(|| "split".into(), |s| s.to_string_lossy().into_owned());
+    let n = (0..).find(|n| !path.with_file_name(format!("{stem}-{n}.cross.rr")).exists()).unwrap_or(0);
+    let numbered = path.with_file_name(format!("{stem}-{n}.txt"));
+    let path = numbered.as_path();
     let _ = std::fs::write(path.with_extension("local.rr"), rules(&split.versions.local));
     let _ = std::fs::write(path.with_extension("cross.rr"), rules(&split.versions.cross));
     let _ = std::fs::write(path.with_extension("exports.txt"), split.exports.join("\n"));
@@ -1666,7 +1666,7 @@ fn requests_where_documents_are<'s>(mut p: crate::code_rule_dsl::logic::program_
         let mut tree = before.program(&front::Lists::default()).map_err(Error::Plan)?;
         requests_file_local(&mut tree);
         let (t, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&tree).and_then(|b| b.finish()).map_err(Error::Plan)?;
-        assert_eq!((t.size(), t.digest()), (v.size(), v.digest()), "the requests narrowed on the version are the tree's: {}", crate::code_rule_dsl::logic::program_image::differences(&t, v));
+        assert!(crate::code_rule_dsl::logic::program_image::same_program(&t, &v), "the requests narrowed on the version are the tree's: {}", crate::code_rule_dsl::logic::program_image::differences(&t, &v));
     }
     // In the same pipeline (decision 0393): a kept tail keeps the steps after this one too.
     p.program(&mut AnswersWhereDocumentsAre);
@@ -4205,7 +4205,7 @@ fn run_observed(
             #[cfg(debug_assertions)]
             let mut prog = {
                 let (of_tree, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&tree).and_then(|b| b.finish()).map_err(Error::Plan)?;
-                assert_eq!((of_tree.size(), of_tree.digest()), (version.size(), version.digest()), "the combined program's version is the tree's, edited alike: {}", crate::code_rule_dsl::logic::program_image::differences(&of_tree, &version));
+                assert!(crate::code_rule_dsl::logic::program_image::same_program(&of_tree, &version), "the combined program's version is the tree's, edited alike: {}", crate::code_rule_dsl::logic::program_image::differences(&of_tree, &version));
                 tree
             };
             #[cfg(not(debug_assertions))]
@@ -4287,7 +4287,7 @@ fn run_observed(
                     };
                 });
                 let (tree_version, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&prog).and_then(|b| b.finish()).expect("the tree's image");
-                assert_eq!((tree_version.size(), tree_version.digest()), (v.size(), v.digest()), "the version after `{stage}` is the tree's: {}", crate::code_rule_dsl::logic::program_image::differences(&tree_version, v));
+                assert!(crate::code_rule_dsl::logic::program_image::same_program(&tree_version, &v), "the version after `{stage}` is the tree's: {}", crate::code_rule_dsl::logic::program_image::differences(&tree_version, v));
             };
             #[cfg(not(debug_assertions))]
             let mut check = |_: &'static str, _: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>| {};
@@ -4395,7 +4395,7 @@ fn run_observed(
                 assert_eq!(given.domains, lowered.domains, "the version's domains before lowering are the tree's");
                 assert_eq!(given.ops, lowered.ops, "the version's operator atoms are the tree's");
                 let (tree_version, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&given.program).and_then(|b| b.finish()).map_err(Error::Plan)?;
-                assert_eq!((tree_version.size(), tree_version.digest()), (version.size(), version.digest()), "the version is lowered as the tree is: {}", crate::code_rule_dsl::logic::program_image::differences(&tree_version, &version));
+                assert!(crate::code_rule_dsl::logic::program_image::same_program(&tree_version, &version), "the version is lowered as the tree is: {}", crate::code_rule_dsl::logic::program_image::differences(&tree_version, &version));
                 let sets = given.transduce_nearest();
                 // Every pass so far stated its rules' sources: the request record is one entry a rule (decision 0331),
                 // which the image's pipelines carry from here.
@@ -4472,7 +4472,7 @@ fn run_observed(
                 let outputs = program.outputs.clone();
                 program.inputs.retain(|rel| read.contains(rel) || outputs.contains(rel));
                 let (tree_version, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&program).and_then(|b| b.finish()).map_err(Error::Plan)?;
-                assert_eq!((tree_version.size(), tree_version.digest()), (version.size(), version.digest()), "the version's program is the tree's after the merges: {}", crate::code_rule_dsl::logic::program_image::differences(&tree_version, &version));
+                assert!(crate::code_rule_dsl::logic::program_image::same_program(&tree_version, &version), "the version's program is the tree's after the merges: {}", crate::code_rule_dsl::logic::program_image::differences(&tree_version, &version));
                 assert_eq!(lower::domains(&program)?, lowered.domains, "the version's domains are the tree's");
                 crate::code_rule_dsl::typing::file_local::programs_over(&program, version.clone()).map_err(Error::Plan)?;
             }
@@ -4517,7 +4517,7 @@ fn run_observed(
             #[cfg(debug_assertions)]
             drop(prog);
             let decided = deciding.close();
-            let prepared = Arc::new(Prepared { source, head, vocabulary: Arc::new(vocabulary), lowered, sets, matchers, demanded, pushed, factorized, located, merged, split, interned, documents: Default::default(), cone: Default::default(), maintained: Default::default(), parts: Default::default(), decided, memo_strata, general: Default::default() });
+            let prepared = Arc::new(Prepared { source, head, vocabulary: Arc::new(vocabulary), lowered, sets, matchers, demanded, pushed, factorized, located, merged, split, interned, documents: Default::default(), cone: Default::default(), maintained: Default::default(), parts: Default::default(), decided, memo_strata });
             if std::env::var_os("RERAIL_PREPARED_TRACE").is_some() {
                 eprintln!("RERAIL_PREPARED_TRACE ({}) {} {label}: prepared, durable {:?}", phases::current().unwrap_or_else(|| "main".into()), prepared_key[..6].iter().map(|b| format!("{b:02x}")).collect::<String>(), durable.map(|d| d.is_some()));
             }
@@ -4533,7 +4533,7 @@ fn run_observed(
         (false, _) if durable.is_some() => "prepared, and stored for later processes (decision 0073)".to_owned(),
         (false, _) => "prepared".to_owned(),
     });
-    let Prepared { source, head, vocabulary, lowered, sets, matchers, demanded, pushed, factorized, located, merged: (remerged, reshared), split: shared_split, interned: _, documents: _, cone: shared_cone, maintained: shared_maintained, parts: shared_parts, decided: _, memo_strata: shared_strata, general: shared_general } = &*prepared;
+    let Prepared { source, head, vocabulary, lowered, sets, matchers, demanded, pushed, factorized, located, merged: (remerged, reshared), split: shared_split, interned: _, documents: _, cone: shared_cone, maintained: shared_maintained, parts: shared_parts, decided: _, memo_strata: shared_strata } = &*prepared;
     let (remerged, reshared) = (*remerged, *reshared);
     // The run takes the split's programs apart (`part` below): its own copy, the kept one shared.
     let split = shared_split.clone();
@@ -5358,13 +5358,13 @@ fn run_observed(
     // And only when the cross part kept its inputs (decision 0104: the waves read no entry of the store): its first
     // run, or the first after a rule edit, decodes its hits whole as it finds them. The maintained cross program the
     // kept inputs' key is made of is made once, here, and handed to them.
-    let mut early_maintained: Option<(lower::Lowered, Option<(usize, usize)>)> = None;
+    let mut early_maintained: Option<lower::Lowered> = None;
     let kept_route = kept_route && {
         let maintained = maintained_cross_of(shared_maintained, &cross)?;
-        let (ckey, binds) = retain::keys(&prepared_key, maintained.0.digest()?);
+        let (ckey, binds) = retain::keys(&prepared_key, maintained.digest()?);
         part_keys.lock().expect("the parts' keys").push(ckey);
         let rels: Vec<String> = split.exports.iter().cloned().chain(stored.iter().map(|(r, _)| r.clone())).collect();
-        let found = retain::kept_inputs_stored(store, kept_strata::space(root), binds, &maintained.0.placed()?, &rels)?;
+        let found = retain::kept_inputs_stored(store, kept_strata::space(root), binds, &maintained.placed()?, &rels)?;
         early_maintained = Some(maintained);
         match found {
             Ok(()) => true,
@@ -5393,7 +5393,7 @@ fn run_observed(
     let mut given_deltas: HashMap<String, (Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = HashMap::new();
     let mut kept_input_docs: HashMap<String, Arc<retain::DocDigests>> = HashMap::new();
     let mut base_layered: HashMap<String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> = HashMap::new();
-    let maintained_early: std::cell::RefCell<Option<(lower::Lowered, Option<(usize, usize)>)>> = std::cell::RefCell::new(None);
+    let maintained_early: std::cell::RefCell<Option<lower::Lowered>> = std::cell::RefCell::new(None);
     // The memo hits' exports are not measured while the keeper counts them: their statistics are its (after the chunks).
     let mut hits_unmeasured = false;
     let mut memo_kept = (0usize, 0usize);
@@ -5755,12 +5755,12 @@ fn run_observed(
         let cross_rels = match early_maintained.as_ref().filter(|_| by_identity) {
             Some(maintained) => {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "the cross part's frames, by identity".into());
-                let (_, binds) = retain::keys(&prepared_key, maintained.0.digest()?);
+                let (_, binds) = retain::keys(&prepared_key, maintained.digest()?);
                 {
                     // And what the run binds from an earlier phase, which `Retained::from_frames` reads as an input,
                     // declared or not.
                     let bound: Vec<&str> = repository.iter().map(|(rel, _, _)| rel.as_str()).collect();
-                    let progs = [cross.placed()?, maintained.0.placed()?];
+                    let progs = [cross.placed()?, maintained.placed()?];
                     let (rels, strata) = retain::frame_rels_kept(store, &[&progs[0], &progs[1]], &binds, &bound)?;
                     cross_idents = progs.iter().map(super::body::Placed::digest).zip(strata).collect();
                     Some(rels)
@@ -8526,9 +8526,9 @@ fn run_observed(
                     Some(m) => m,
                     None => maintained_cross_of(shared_maintained, &cross).map_err(|e| e.to_string())?,
                 };
-                let (_, binds) = retain::keys(&prepared_key, maintained.0.digest().map_err(|e| e.to_string())?);
+                let (_, binds) = retain::keys(&prepared_key, maintained.digest().map_err(|e| e.to_string())?);
                 // The run reads the program's version, not its tree (t36 item 7).
-                let placed = maintained.0.placed().map_err(|e| e.to_string())?;
+                let placed = maintained.placed().map_err(|e| e.to_string())?;
                 let prog = &placed;
                 let fields = prog.fields().map_err(|e| e.to_string())?;
                 let rels: Vec<String> = split.exports.iter().cloned().chain(stored.iter().map(|(r, _)| r.clone())).collect();
@@ -8633,7 +8633,7 @@ fn run_observed(
                     // `RERAIL_KEPT_INPUTS_TRACE`: each input's old and new rows of the changed files, and its patch.
                     let trace_rows = std::env::var_os("RERAIL_KEPT_INPUTS_TRACE").is_some().then(|| (old.clone(), new.clone()));
                     let atoms = store.atoms_handle();
-                    let cells = retain::cells_of(&atoms, prog, &maintained.0.domains, rel, width);
+                    let cells = retain::cells_of(&atoms, prog, &maintained.domains, rel, width);
                     let mut patch = patch_owners(rel, k, g, holders, &evaluated, &old, new, &cells)?;
                     if let Some(t) = read_trace.as_mut() {
                         t.push((patch.read.1, patch.read.0, patch.read.2, rel.clone()));
@@ -9219,13 +9219,7 @@ fn run_observed(
                         Some(m) => m,
                         None => maintained_cross_of(shared_maintained, &cross)?,
                     };
-                    if let Some((through, kept)) = maintained_part.1 {
-                        crate::code_rule_dsl::logic::profile::decision("maintenance by counting (supports)", || format!("{through} rules through support relations, {kept} kept their form"));
-                        if std::env::var_os("RERAIL_SPIKE_DELTA").is_some() {
-                            eprintln!("O125 counting: {through} rules through supports, {kept} kept their form");
-                        }
-                    }
-                    let cross = &maintained_part.0;
+                    let cross = &maintained_part;
                     // The run reads its version, not its tree (t36 item 7).
                     let cross_placed = cross.placed()?;
                     let cross_f = cross_placed.fields()?;
@@ -9429,7 +9423,10 @@ fn run_observed(
                         given_rels = g;
                         m
                     } else {
-                        maintain::rewrite(&cut, cell.as_ref(), &cross, &cross_sccs, &mut answer)?
+                        // No kept part, or a part with gates (which the level driver does not walk): the strata the cut
+                        // runs are derived again from their reads, the clean ones bound as kept (decision 0364: no
+                        // maintained forms).
+                        maintain::Maintained { program: cut.program(cross)?, sources: Vec::new(), maintained: 0, derived_again: cut.strata.0, recursive: 0, again: Vec::new(), views: BTreeSet::new() }
                     };
                     if maintain::levels_wanted() && !driven {
                         qualify(&mut maintained.program, |heads, qualifiers| {
@@ -9616,7 +9613,7 @@ fn run_observed(
                                 stats.lazily(rel, rows, Arc::new(crate::code_rule_dsl::logic::plan::Unbound { rel: rel.clone(), width, rows }));
                             }
                             let mut driver = Driver {
-                                general: general_forms_of(shared_general, cross, kept),
+                                general: maintain::StoredForms::new(store),
                                 cross,
                                 cross_placed: &cross_placed,
                                 kept,
@@ -10453,8 +10450,8 @@ pub(in crate::code_rule_dsl) struct Binder<'k> {
 /// reads bound here with their statistics, as the whole program's rewrite bound every one before the run.
 struct Driver<'d, 'k> {
     cross: &'d lower::Lowered,
-    /// `cross`'s general forms (decision 0298), where a reached stratum selects from them.
-    general: Option<Arc<maintain::GeneralForms>>,
+    /// Where a reached stratum's general form is (decision 0298): the store's steps.
+    general: maintain::StoredForms<'d>,
     /// `cross`'s version: what the run reads of it.
     cross_placed: &'d super::body::Placed,
     kept: &'k retain::Retained,
@@ -10489,11 +10486,6 @@ struct Driver<'d, 'k> {
     /// The run's version's atoms and relations alone (`Builder::under`, made at the first form): each form is an
     /// overlay of it (decision 0241), so a form costs its own size, not the run's names.
     atoms: Option<Arc<crate::code_rule_dsl::logic::program_image::Version>>,
-}
-
-/// Whether a reached stratum runs its selection from its general form (decision 0298), not a form written for it.
-fn general_forms() -> bool {
-    std::env::var_os("RERAIL_GENERAL_FORMS").is_some()
 }
 
 /// A stratum's form for the reads `moved` changed, selected from its general form `g` (decision 0298): its rules those
@@ -10589,10 +10581,16 @@ impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
         };
         // A recursive stratum whose kept rows all have levels is maintained by them, where its form can be (its
         // general form by levels); else as every other stratum.
-        let key = maintain::stratum_key(scc);
         let by_levels = scc.iter().all(|r| maintain::Olds::levels(self.kept, r).is_some_and(|(has, _)| has));
-        let general = self.general.as_ref().and_then(|g| by_levels.then(|| g.by_levels.get(&key)).flatten().or_else(|| g.by_stratum.get(&key)));
-        let selection = match general {
+        let steps = &self.general;
+        let identity = steps.over(v0, &atoms);
+        let levels = by_levels && maintain::levels_wanted() && maintain::recursive(v0, &places, scc);
+        let mut general = maintain::general_of(&atoms, v0, identity, steps, &places, scc, &self.cross.domains, self.kept, levels)?;
+        // A form that cannot be by levels (a rule not a join) is the one without.
+        if levels && general.as_ref().is_some_and(|g| g.form.by_levels == 0) {
+            general = maintain::general_of(&atoms, v0, identity, steps, &places, scc, &self.cross.domains, self.kept, false)?;
+        }
+        let selection = match &general {
             Some(g) => general_selection(g, moved, self.kept, &|r| has_delta.contains(r), &|r| bound_olds.contains(r), &|r| inputs.contains(r))?,
             None => None,
         };
@@ -10659,6 +10657,20 @@ impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
 
     fn seeds(&mut self) -> Vec<String> {
         std::mem::take(&mut self.seeds)
+    }
+
+    fn old_input(&self, rel: &str) -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
+        self.kept.old_source(rel, rel).filter(|(_, held)| held.is_none()).map(|(s, _)| s)
+    }
+
+    fn mode_ran(&mut self, scc: &BTreeSet<String>, recursive: bool) {
+        self.has_delta.extend(scc.iter().cloned());
+        self.maintains.extend(scc.iter().cloned());
+        self.counts.0 += 1;
+        if recursive {
+            self.counts.2 += 1;
+            maintain::by_levels_ran();
+        }
     }
 }
 
@@ -11011,7 +11023,7 @@ fn kept_counts(stats: &super::statkeep::RelStats, tested: &BTreeSet<(usize, i64)
 }
 
 /// A relation the cross-file part makes as a copy of some columns of one input, or of such a copy
-/// (`kind__sup0(n, k, a, b, c) :- node(a, n, k, b, c)`, `kind(n, k) :- kind__sup0(n, k, _, _, _)`): that input, and
+/// (`kind(n, k) :- node(_, n, k, _, _)`): that input, and
 /// for each of the relation's columns the input's column it copies. When it holds as many rows as the input, its
 /// rows are the input's one for one, so its statistics are the input's by column: kept with the input's, never
 /// counted (a full count of `kind` and `docof` was 0.32 s of a one-file edit's 0.38 s of statistics).
@@ -12532,24 +12544,8 @@ fn set_qualifiers(v: &Arc<crate::code_rule_dsl::logic::program_image::Version>, 
 
 /// `maintained_cross(cross)`, made once for a prepared program (`Prepared::maintained`) and shared: made again only
 /// for another part than the one kept (another digest) or other settings, and then not kept.
-/// The general forms of `cross`, the maintained cross-file part (decision 0298), for the old rows `kept` holds, from
-/// `slot` where it holds those; `None` where they are not used (`general_forms`) or cannot be written.
-fn general_forms_of(slot: &std::sync::OnceLock<((u64, u64), std::result::Result<Arc<maintain::GeneralForms>, String>)>, cross: &lower::Lowered, kept: &retain::Retained) -> Option<Arc<maintain::GeneralForms>> {
-    if !general_forms() {
-        return None;
-    }
-    let placed = cross.placed().ok()?;
-    let digest = (cross.digest().ok()?, maintain::olds_signature(&placed, &maintain::Holds(kept, false)).ok()?);
-    let make = || -> std::result::Result<Arc<maintain::GeneralForms>, String> { maintain::general_forms(&placed, &cross.domains, kept).map(Arc::new).map_err(|e| e.to_string()) };
-    match slot.get() {
-        Some((d, made)) if *d == digest => made.clone().ok(),
-        Some(_) => make().ok(),
-        None => slot.get_or_init(|| (digest, make())).1.clone().ok(),
-    }
-}
-
-fn maintained_cross_of(slot: &std::sync::OnceLock<(MaintainedOf, (lower::Lowered, Option<(usize, usize)>))>, cross: &lower::Lowered) -> Result<(lower::Lowered, Option<(usize, usize)>)> {
-    let settings = [std::env::var("RERAIL_SESSION_INLINE").is_ok_and(|v| v == "on"), maintain::levels_wanted(), supports::counting()];
+fn maintained_cross_of(slot: &std::sync::OnceLock<(MaintainedOf, lower::Lowered)>, cross: &lower::Lowered) -> Result<lower::Lowered> {
+    let settings = [std::env::var("RERAIL_SESSION_INLINE").is_ok_and(|v| v == "on"), maintain::levels_wanted()];
     let digest = cross.digest()?;
     if let Some((of, made)) = slot.get() {
         if *of == (digest, settings) {
@@ -12564,14 +12560,12 @@ fn maintained_cross_of(slot: &std::sync::OnceLock<(MaintainedOf, (lower::Lowered
 /// The cross-file part as a run that keeps it maintains it (decision 0077): each derived relation stored, not
 /// inlined (decision 0099), so the next run has its old rows, unless the program declares it `inline`
 /// (`RERAIL_SESSION_INLINE=on` inlines as a full run does); its recursive relations with their levels where wanted
-/// (decision 0090); and, under counting (the default; `RERAIL_MAINTAIN=dred` compares), each rule's derivations
-/// held as its support relation (`supports`), with the counts of rules through supports and kept in their form.
+/// (decision 0090). No rule's derivations are kept (decision 0364: counting and its support relations are gone).
 /// Made where a run first needs it: the kept inputs' key at the waves' end (decision 0117 step 1), else the cross
 /// part.
 ///
-/// The supports are made first, then the qualifiers set on the cross part's own heads (`qualify`): neither reads the
-/// other, and so each is made on the version where the part has one, copying no tree.
-fn maintained_cross(cross: &lower::Lowered) -> Result<(lower::Lowered, Option<(usize, usize)>)> {
+/// The qualifiers are set on the cross part's own heads (`qualify`), on its version, copying no tree.
+fn maintained_cross(cross: &lower::Lowered) -> Result<lower::Lowered> {
     let inline_too = std::env::var("RERAIL_SESSION_INLINE").is_ok_and(|v| v == "on");
     // Read from the part's version, not its tree.
     let (declared_inline, heads) = {
@@ -12581,12 +12575,7 @@ fn maintained_cross(cross: &lower::Lowered) -> Result<(lower::Lowered, Option<(u
         (declared_inline, p.v.rules().map(|r| p.v.rel_name(r.head().rel()).to_owned()).collect::<BTreeSet<String>>())
     };
     let levels = maintain::levels_wanted();
-    let (mut stored, counts) = if supports::counting() {
-        let (counted, through, kept) = supports::supports(cross);
-        (counted, Some((through, kept)))
-    } else {
-        (cross.clone(), None)
-    };
+    let mut stored = cross.clone();
     qualify(&mut stored, |_, qualifiers| {
         for rel in heads {
             if levels {
@@ -12600,7 +12589,7 @@ fn maintained_cross(cross: &lower::Lowered) -> Result<(lower::Lowered, Option<(u
     if crate::code_rule_dsl::logic::version_trace::on() {
         crate::code_rule_dsl::logic::version_trace::note_versions("session.maintained", &cross.version, &stored.version);
     }
-    Ok((stored, counts))
+    Ok(stored)
 }
 
 /// An input's change by owner (decision 0117 step 2, `patch_owners`): each changed owner's rows now, the rows the

@@ -26,7 +26,7 @@
 //! of them reads back as the same program. Ids (`r`, `l`, `a`, `t`) are numbered per program.
 
 use super::front::name::Name;
-use super::front::ast::{AggOp, Atom, LatticeDecl, Literal, Native, Program, Rule, Shape, ShapeWait, SpanIn, Term, Value};
+use super::front::ast::{AggOp, Atom, LatticeDecl, LayoutFact, Literal, Native, Program, Rule, Shape, ShapeWait, SpanIn, Term, Value};
 use super::front::ast::{Gate, Report};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -150,6 +150,8 @@ pub fn schema() -> BTreeMap<Name, crate::code_rule_dsl::logic::front::name::List
         ("shape", &["p:sym", "k:int", "head:sym", "lit:sym", "text:sym"]),
         ("shape_after", &["p:sym", "k:int", "rel:sym"]),
         ("shape_bound", &["p:sym", "k:int", "i:int", "var:sym"]),
+        // `layouts`: each relation's facts (`.layout`, decision 0361), in order, each with its columns by place.
+        ("layout", &["p:sym", "rel:sym", "k:int", "fact:sym"]),
     ];
     SCHEMA
         .iter()
@@ -329,6 +331,11 @@ impl Writer<'_> {
         for (rel, cols) in &prog.tapes {
             for i in cols {
                 self.row("tape_column", vec![s(rel), n(*i)]);
+            }
+        }
+        for (rel, facts) in &prog.layouts {
+            for (k, f) in facts.iter().enumerate() {
+                self.row("layout", vec![s(rel), n(k), s(&f.placed())]);
             }
         }
         for (k, shape) in prog.shapes.iter().enumerate() {
@@ -790,6 +797,11 @@ impl<'a, C: Cell> Reader<'a, C> {
             shapes.push((k, Shape { head: text(&row[1])?, lit: text(&row[2])?, wait, text: text(&row[3])? }));
         }
         prog.shapes = ordered(shapes);
+        let mut layouts: BTreeMap<String, Vec<(i64, LayoutFact)>> = BTreeMap::new();
+        for row in self.get("layout") {
+            layouts.entry(text(&row[0])?).or_default().push((int(&row[1])?, LayoutFact::of_placed(&text(&row[2])?)?));
+        }
+        prog.layouts = layouts.into_iter().map(|(rel, facts)| (rel, ordered(facts))).collect();
         prog.policies = ordered(self.get("policy").iter().map(|r| Ok((int(&r[0])?, serde_json::from_str(&text(&r[1])?).map_err(|e| bad(e))?))).collect::<Result<Vec<_>, String>>()?);
         prog.settings = ordered(self.get("setting").iter().map(|r| Ok((int(&r[0])?, (text(&r[1])?, text(&r[2])?)))).collect::<Result<Vec<_>, String>>()?);
         let roots = self.by_id_text("native_roots")?;

@@ -1430,6 +1430,36 @@ fn a_stored_run_reruns_on_an_edit_in_a_new_process() {
     ContentStore::forget(&path);
 }
 
+/// A rebased version (`manager::rebase`) holds the last input's rules in its order and the new program's others after
+/// them: the request record is restated by rule, so each request rule keeps the readers the new program gave it
+/// (decision 0331). Taken by place, `q`'s two rules swapped their readers: `a_library_held_once_is_read_by_each_policy_in_its_own_scope`
+/// failed `same_program` in the runs that found their last run stored.
+#[test]
+fn a_rebased_version_keeps_each_request_rules_readers() {
+    use std::collections::BTreeSet;
+    let program = |order: &[usize], extra: &str| {
+        let rules = ["q($n) :- k($n), $n < 3.", "q($n) :- k($n), $n > 5."];
+        let mut text = String::from(".decl q(n: number)\n.decl a(n: number)\n.decl b(n: number)\n.decl k(n: number)\n.input k\n");
+        for &i in order {
+            text.push_str(rules[i]);
+            text.push('\n');
+        }
+        text.push_str("a($n) :- q($n).\nb($n) :- q($n).\n");
+        text.push_str(extra);
+        let mut p = crate::code_rule_dsl::logic::front::parse(&text).unwrap();
+        // The rule `< 3` serves `a`, the rule `> 5` serves `b`, wherever each lies.
+        p.asked_by.insert("q".into(), order.iter().map(|&i| BTreeSet::from([["a", "b"][i].to_owned()])).collect());
+        Builder::of_program(&p).unwrap().finish().unwrap().0
+    };
+    let last = program(&[0, 1], "");
+    let new = program(&[1, 0], ".decl c(n: number)\nc($n) :- a($n).\n");
+    let v = super::manager::rebase(&last, &new).unwrap().expect("an edit of the last input");
+    // The case: `q`'s rules lie in the last input's order, the new program's reversed.
+    let first = |x: &Version| x.heads(x.rel("q").unwrap()).next().map(|r| x.show_rule(r)).unwrap();
+    assert!(first(&v).contains("< 3") && first(&new).contains("> 5"), "{} / {}", first(&v), first(&new));
+    assert!(super::same_program(&v, &new), "{}", super::differences(&v, &new));
+}
+
 /// A rerun runs a step whole when it cannot run on the edit alone: a program pass, a rule pass that keeps the
 /// default `WHOLE`, and a rule pass whose analyses the edit changed. Across the edit, the analyses the last input
 /// held are carried to the new input.
@@ -1845,4 +1875,154 @@ fn a_stored_run_is_read_in_place() {
     assert_eq!((run.output().digest(), run.output().size()), (want.digest(), want.size()));
     drop(store);
     ContentStore::forget(&path);
+}
+/// A debug check compares a version with the tree's image as one program (`same_program`): the digest is blind to the
+/// rules' order, and the request record (decision 0331), stated by a rule's place among its relation's rules, is
+/// compared by rule. The same rules in another order, each with its readers, are one program; a reader on the other
+/// rule is not, though its digest is the same.
+#[test]
+fn a_record_by_place_is_compared_by_rule() {
+    use std::collections::BTreeSet;
+    let text = ".decl a(x: number)\n.input a\n.decl b(x: number)\n.input b\n.decl q(x: number)\n.output q\nq(x) :- a(x).\nq(x) :- b(x).\n";
+    let image = |swap: bool, readers: [&str; 2]| {
+        let mut p = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+        if swap {
+            p.rules.swap(0, 1);
+        }
+        p.asked_by.insert("q".into(), readers.iter().map(|r| BTreeSet::from([(*r).to_owned()])).collect());
+        Builder::of_program(&p).unwrap().finish().unwrap().0
+    };
+    let (first, moved, wrong) = (image(false, ["r1", "r2"]), image(true, ["r2", "r1"]), image(true, ["r1", "r2"]));
+    assert_ne!(first.digest(), moved.digest(), "the record by place differs");
+    assert!(super::same_program(&first, &moved), "{}", super::differences(&first, &moved));
+    // The digest alone takes it for the same: a sum over the rules, and the same rows by place.
+    assert_eq!(first.digest(), wrong.digest());
+    assert!(!super::same_program(&first, &wrong), "a reader on the other rule");
+}
+
+/// A step that drops a request relation's record (`prune`'s `revived`: its readers all went, its rules kept) leaves
+/// it dropped: the record the pipeline states at its end holds the relations still requested, not those it began with.
+#[test]
+fn a_request_record_a_step_drops_stays_dropped() {
+    use std::collections::BTreeSet;
+    struct DropRecord;
+    impl super::manager::ProgramPass for DropRecord {
+        const NAME: &'static str = "drop the record";
+        fn run(&mut self, _: &super::manager::Cx<'_>, w: &mut super::manager::ProgramW<'_>) -> Result<(), String> {
+            w.on()?.keep_asked(&|r| r != "q");
+            Ok(())
+        }
+    }
+    // Then a step that changes rules (drops `t`'s), after which the pipeline states the record again.
+    struct DropT;
+    impl super::manager::ProgramPass for DropT {
+        const NAME: &'static str = "drop t";
+        fn run(&mut self, cx: &super::manager::Cx<'_>, w: &mut super::manager::ProgramW<'_>) -> Result<(), String> {
+            let t = cx.v().rel("t").unwrap();
+            w.keep(|r| r.head().rel() != t)
+        }
+    }
+    let text = ".decl a(x: number)\n.input a\n.decl b(x: number)\n.input b\n.decl q(x: number)\n.output q\nq(x) :- a(x).\nq(x) :- b(x).\n\
+                .decl s(x: number)\n.output s\ns(x) :- a(x).\n.decl t(x: number)\n.output t\nt(x) :- b(x).\n";
+    let mut p = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+    p.asked_by.insert("q".into(), vec![BTreeSet::from(["r1".to_owned()]), BTreeSet::from(["r2".to_owned()])]);
+    p.asked_by.insert("s".into(), vec![BTreeSet::from(["r3".to_owned()])]);
+    let v = Builder::of_program(&p).unwrap().finish().unwrap().0;
+    let mut pipe = super::manager::Pipeline::new("test", v);
+    pipe.program(&mut DropRecord).program(&mut DropT);
+    let out = pipe.finish().unwrap().0;
+    let asked = out.asked();
+    assert!(out.rel("q").is_some_and(|q| out.heads(q).count() == 2), "q's rules are kept");
+    assert!(!asked.contains_key("q"), "{asked:?}");
+    assert_eq!(asked.get("s"), Some(&vec![BTreeSet::from(["r3".to_owned()])]));
+}
+
+/// Each relation's layout, declared or inferred (`layouts`, decision 0361 step 3).
+mod layouts {
+    use crate::code_rule_dsl::logic::program_image::layouts::{Layouts, Origin};
+    use crate::code_rule_dsl::logic::program_image::{RelId, Version};
+    use std::collections::BTreeSet;
+    use crate::code_rule_dsl::logic::front::{Fan, LayoutFact as F};
+    use std::sync::Arc;
+
+    const BASE: &str = ".decl e(p: node, c: node, i: number)\n.input e\n\
+                        .layout e key(c) key(p, i) fanout(p -> c, few) order(i dense in p) tree(p -> c) local\n\
+                        .decl k(n: node, s: symbol)\n.input k\n.layout k key(n) local\n";
+
+    /// The facts of each relation `rules` derive over `BASE`.
+    fn of(rules: &str) -> (Arc<Version>, Layouts) {
+        let p = crate::code_rule_dsl::logic::rr::parse(&format!("{BASE}{rules}")).unwrap();
+        let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
+        let l = crate::code_rule_dsl::logic::program_image::manager::analysis::<Layouts>(&v).unwrap();
+        (v.clone(), (*l).clone())
+    }
+    fn facts(v: &Version, l: &Layouts, rel: &str) -> Vec<F> {
+        l.of(v.rel(rel).unwrap()).cloned().collect()
+    }
+
+    /// A projection keeps the key its columns hold, the fan-out and the tree; a filter keeps them too, and the order
+    /// but not its density; the relation renamed keeps the order dense (decision 0361 step 3).
+    #[test]
+    fn a_projection_or_a_filter_keeps_the_facts_its_columns_hold() {
+        let (v, l) = of(".decl f(c: node, p: node)\n.output f\nf(c, p) :- e(p, c, _).\n\
+                         .decl g(p: node, c: node, i: number)\n.output g\ng(p, c, i) :- e(p, c, i), i > 0.\n\
+                         .decl h(p: node, c: node, i: number)\n.output h\nh(p, c, i) :- e(p, c, i).\n");
+        assert_eq!(facts(&v, &l, "f"), [F::Key(vec![0]), F::Fanout { from: vec![1], to: vec![0], fan: Fan::Few }, F::Tree { from: 1, to: 0 }, F::Local]);
+        let g = facts(&v, &l, "g");
+        assert!(g.contains(&F::Key(vec![1])) && g.contains(&F::Key(vec![0, 2])) && g.contains(&F::Local), "{g:?}");
+        assert!(g.contains(&F::Order { col: 2, within: vec![0], dense: false }), "{g:?}");
+        assert!(facts(&v, &l, "h").contains(&F::Order { col: 2, within: vec![0], dense: true }));
+    }
+
+    /// A join along a key keeps the other side's key: `c` fixes `e`'s row and, by `k`'s key, `s`. Two atoms that
+    /// share no node are neither keyed by one side nor local.
+    #[test]
+    fn a_join_along_a_key_keeps_the_key_and_a_cross_product_neither() {
+        let (v, l) = of(".decl j(c: node, s: symbol)\n.output j\nj(c, s) :- e(_, c, _), k(c, s).\n\
+                         .decl x(a: node, b: node)\n.output x\nx(a, b) :- e(_, a, _), e(_, b, _).\n");
+        assert_eq!(facts(&v, &l, "j"), [F::Key(vec![0]), F::Local]);
+        assert_eq!(facts(&v, &l, "x"), []);
+    }
+
+    /// A relation of two rules, or a recursive one, keeps `local` where every rule gives it, and its declared facts
+    /// alone besides.
+    #[test]
+    fn a_union_or_a_recursion_keeps_local_alone() {
+        let (v, l) = of(".decl u(c: node)\n.output u\nu(c) :- e(_, c, _).\nu(n) :- k(n, _).\n\
+                         .decl t(a: node, b: node)\n.output t\nt(a, b) :- e(a, b, _).\nt(a, c) :- t(a, b), e(b, c, _).\n\
+                         .decl d(a: node, b: node)\n.layout d key(b)\n.output d\nd(a, b) :- d(a, c), e(c, b, _).\nd(a, b) :- e(a, b, _).\n");
+        assert_eq!(facts(&v, &l, "u"), [F::Local]);
+        assert_eq!(facts(&v, &l, "t"), [F::Local]);
+        assert_eq!(facts(&v, &l, "d"), [F::Key(vec![1]), F::Local]);
+        // A branch that joins two documents' nodes unjoined is not local, nor is the union.
+        let (v, l) = of(".decl w(a: node, b: node)\n.output w\nw(a, b) :- e(a, b, _).\nw(a, b) :- e(_, a, _), e(_, b, _).\n");
+        assert_eq!(facts(&v, &l, "w"), []);
+    }
+
+    /// Over a Python policy's program (python/ast.rr's library and core.rr): the library's derived relations take
+    /// facts from core.rr's base ones. The counts are printed for decision 0361's record.
+    #[test]
+    fn the_python_library_infers_facts_of_its_derived_relations() {
+        let text = ".policy \"t:a\" revision 1\n.language python\n#include \"python/ast.rr\"\n.violation Fn(at: node) \"a call\"\nFn(c) :- call_name(c, _).\n";
+        let p = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+        let (v, _) = crate::code_rule_dsl::logic::program_image::Builder::of_program(&p).unwrap().finish().unwrap();
+        let l = crate::code_rule_dsl::logic::program_image::manager::analysis::<Layouts>(&v).unwrap();
+        let by = |o: fn(&Origin) -> bool| l.0.values().filter(|fs| fs.iter().any(|(_, x)| o(x))).count();
+        let (declared, inferred) = (by(|o| *o == Origin::Declared), by(|o| matches!(o, Origin::Rule(_))));
+        let keyed = l.0.values().filter(|fs| fs.iter().any(|(f, o)| matches!(o, Origin::Rule(_)) && matches!(f, F::Key(_)))).count();
+        let local = l.0.values().filter(|fs| fs.iter().any(|(f, o)| matches!(o, Origin::Rule(_)) && *f == F::Local)).count();
+        let derived: BTreeSet<RelId> = v.rules().map(|r| r.head().rel()).collect();
+        eprintln!("layouts: {} relations derived; {declared} declared, {inferred} with inferred facts ({keyed} keyed, {local} local)", derived.len());
+        assert!(declared >= 9 && inferred > 0 && keyed > 0, "{}", l.show(&v));
+    }
+
+    /// EXPLAIN's lines: each relation's facts, their columns named, each with where it came from.
+    #[test]
+    fn explain_names_each_facts_columns_and_origin() {
+        let (v, l) = of(".decl f(c: node, p: node)\n.output f\nf(c, p) :- e(p, c, _).\n");
+        let shown = l.show(&v);
+        assert!(shown.contains("e: key(c) (declared), key(p, i) (declared)"), "{shown}");
+        assert!(shown.contains("f: key(c) (by rule #"), "{shown}");
+        assert!(shown.contains("tree(p -> c) (by rule #"), "{shown}");
+    }
 }

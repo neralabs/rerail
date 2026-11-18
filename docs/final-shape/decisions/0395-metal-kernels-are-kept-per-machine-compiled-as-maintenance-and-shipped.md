@@ -13,7 +13,7 @@ A Metal pipeline costs two compiles:
 Before this decision the engine kept compiled pipelines only in memory, so every process compiled again. It relied
 on macOS's shader cache, a per-user cache that is evicted, to make repeats cheap. When that cache missed, a run's
 critical path waited on the compile. The 300-file Metal run waited 26 s in two compiles, and its AST matcher wave
-waited 16.5 s on 1.2 ms of GPU work (Q178).
+waited 16.5 s on 1.2 ms of GPU work (Q202).
 
 The user asked for three things (2026-11-18):
 1. a machine-wide store of compiled kernels, which can be pointed elsewhere, background compilation as maintenance,
