@@ -42,6 +42,12 @@ impl std::ops::Deref for Home {
     }
 }
 
+impl AsRef<[u8]> for Home {
+    fn as_ref(&self) -> &[u8] {
+        self
+    }
+}
+
 impl PartialEq for Home {
     fn eq(&self, other: &Self) -> bool {
         **self == **other

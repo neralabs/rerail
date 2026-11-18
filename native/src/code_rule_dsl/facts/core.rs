@@ -200,6 +200,22 @@ fn queued_tape(source: &[u8; 32], tag: i64, gv: i64, fv: i64) -> crate::content_
     crate::content_store::write_back::Key::of(&[b"tape", source, &tag.to_le_bytes(), &gv.to_le_bytes(), &fv.to_le_bytes()])
 }
 
+/// A parsed tape's stored bytes in their home and the image read there (decision 0353 step 4a): written straight
+/// into a slab's room, which the store's writer and every reader take. A host whose tape is not placed (no device,
+/// or the pool refused the room) keeps the parser's image, and the writer its bytes.
+// copy (0353 step 4a): the parsers write their columns into a vector of their own, which goes once its stored bytes
+// are in their room. It goes when a parser writes into the room (decision 0353).
+fn placed_parse(image: crate::code_rule_dsl::tape::TapeImage, grammar: &Arc<crate::code_rule_dsl::tape::Grammar>) -> Result<(crate::content_store::TapeBytes, crate::code_rule_dsl::tape::TapeImage), String> {
+    use crate::code_rule_dsl::tape::TapeImage;
+    let home = image.place_stored()?;
+    if !home.placed() {
+        return Ok((Arc::new(home), image));
+    }
+    let mut primary = TapeImage::from_home(home.clone(), grammar)?;
+    primary.source_digest = image.source_digest;
+    Ok((Arc::new(home), primary))
+}
+
 /// [`build`] in a run's waves (decision 0104): no SQL is read or written. The tape is `found` (read before the
 /// first wave), or one still queued by this process, else the file is parsed and its source and tape are handed to
 /// the store's writer, behind the run (`named`: the run's manifest names the source it stores, decision 0306). `digest` is the source's
@@ -277,14 +293,14 @@ pub fn build_in_wave_with_tape(
             };
             let image = image?;
             drop(parse);
-            let tape = std::sync::Arc::new(image.primary.to_bytes()?);
-            crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, tape.len() as u64);
+            let (tape, primary) = placed_parse(image.primary, &grammar)?;
+            crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, (*tape).as_ref().len() as u64);
             // The run's gather takes the source and tape as they are (no copy), placed in a segment of the store's
             // when it is full or the wave ends, and read there until written (decision 0295 step 5). No wave waits for
             // the writer (decision 0104).
             let canonical = HashKey::from_sha256_digest(digest);
             cache.queue_source_and_tape(key, canonical, tag, gv, fv, file.source(), tape, named).map_err(|e| e.to_string())?;
-            image.primary
+            primary
         }
     };
     let lines = Arc::new(LineTable::new(file.source(), Terminators::of(language)));
@@ -367,8 +383,8 @@ pub(crate) fn build_cached_with_tape(
             };
             let image = image?;
             drop(parse);
-            let tape = std::sync::Arc::new(image.primary.to_bytes()?);
-            crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, tape.len() as u64);
+            let (tape, primary) = placed_parse(image.primary, &grammar)?;
+            crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, (*tape).as_ref().len() as u64);
             // Handed to the store's writer, behind the run (decision 0104), and read from memory until written
             // (`pending`, above): the source's id is the writer's, so none is returned for a source not stored yet.
             use sha2::Digest as _;
@@ -376,7 +392,7 @@ pub(crate) fn build_cached_with_tape(
             // Queued as `build_in_wave` queues it: gathered in a run's waves, else compressed here and queued alone.
             let canonical = HashKey::from_sha256_digest(digest);
             cache.queue_source_and_tape(queued_tape(&digest, tag, gv, fv), canonical, tag, gv, fv, file.source(), tape, false).map_err(|e| e.to_string())?;
-            image.primary
+            primary
         }
     };
     let lines = Arc::new(LineTable::new(file.source(), Terminators::of(language)));

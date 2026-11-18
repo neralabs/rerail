@@ -1118,54 +1118,86 @@ fn encode_node<'l>(
 impl TapeImage {
     /// The tape as the store keeps it: format 15's bytes, or format 16's (or 16z's) as held.
     pub fn to_bytes(&self) -> Result<Vec<u8>, String> {
+        let mut bytes = Vec::with_capacity(self.stored_len());
+        self.emit(&mut |b| bytes.extend_from_slice(b))?;
+        Ok(bytes)
+    }
+
+    /// The tape as the store keeps it (`to_bytes`), written straight into its home, a slab's room (decision 0353
+    /// step 4a): the store's writer and every reader take it there.
+    pub fn place_stored(&self) -> Result<rerail_tape_format::home::Home, String> {
+        let len = self.stored_len();
+        placed::place(len, |out| {
+            let mut at = 0;
+            self.emit(&mut |b| {
+                out[at..at + b.len()].copy_from_slice(b);
+                at += b.len();
+            })
+            .map_err(std::io::Error::other)?;
+            debug_assert_eq!(at, len, "the stored length");
+            Ok(())
+        })
+        .map_err(|e| e.to_string())
+    }
+
+    /// The length of the bytes the store keeps (`to_bytes`).
+    pub fn stored_len(&self) -> usize {
         match &self.held {
-            Held::F15(c) => self.to_bytes15(c),
-            Held::F16(t) => Ok(t.as_bytes().to_vec()),
-            Held::F16Z(t) => Ok(t.as_bytes().to_vec()),
+            Held::F15(c) => {
+                let alias_bytes = c.kind_aliases.iter().map(|(name, _)| 5 + name.len()).sum::<usize>();
+                let code_bytes = c.codes.iter().map(Code::stored_len).sum::<usize>();
+                HEADER_BYTES + c.columns_bytes().len() + code_bytes + alias_bytes
+            }
+            Held::F16(t) => t.as_bytes().len(),
+            Held::F16Z(t) => t.as_bytes().len(),
         }
     }
 
-    fn to_bytes15(&self, c: &Columns15) -> Result<Vec<u8>, String> {
+    /// The bytes the store keeps, in order, to `put`.
+    fn emit(&self, put: &mut dyn FnMut(&[u8])) -> Result<(), String> {
+        match &self.held {
+            Held::F15(c) => self.emit15(c, put),
+            Held::F16(t) => {
+                put(t.as_bytes());
+                Ok(())
+            }
+            Held::F16Z(t) => {
+                put(t.as_bytes());
+                Ok(())
+            }
+        }
+    }
+
+    fn emit15(&self, c: &Columns15, put: &mut dyn FnMut(&[u8])) -> Result<(), String> {
         let language =
             super::language::tape_tag(self.language).ok_or("unsupported tape language")?;
         let alias_bytes = c.kind_aliases.iter().map(|(name, _)| 5 + name.len()).sum::<usize>();
         let code_bytes = c.codes.iter().map(Code::stored_len).sum::<usize>();
         let lengths = [c.node_count(), c.codes.len(), code_bytes, c.kind_aliases.len(), alias_bytes];
-        let mut bytes = Vec::with_capacity(
-            HEADER_BYTES
-                + c.columns_bytes().len()
-                + code_bytes
-                + alias_bytes,
-        );
-        bytes.extend_from_slice(TAPE_MAGIC);
-        bytes.push(language);
-        bytes.extend_from_slice(&c.widths);
-        bytes.extend_from_slice(&TAPE_FORMAT_VERSION.to_le_bytes());
-        bytes.extend_from_slice(&(self.source_len as u64).to_le_bytes());
+        put(TAPE_MAGIC);
+        put(&[language]);
+        put(&c.widths);
+        put(&TAPE_FORMAT_VERSION.to_le_bytes());
+        put(&(self.source_len as u64).to_le_bytes());
         for length in lengths {
-            bytes.extend_from_slice(&(length as u64).to_le_bytes());
+            put(&(length as u64).to_le_bytes());
         }
-        debug_assert_eq!(bytes.len() % COLUMN_ALIGN, 0);
-        bytes.extend_from_slice(c.columns_bytes());
+        put(c.columns_bytes());
         for code in &c.codes {
-            bytes.extend_from_slice(&code.kf.to_le_bytes());
-            bytes.push(code.flags);
-            bytes.extend_from_slice(&code.alias.to_le_bytes());
-            bytes.push(code.class_count);
+            put(&code.kf.to_le_bytes());
+            put(&[code.flags]);
+            put(&code.alias.to_le_bytes());
+            put(&[code.class_count]);
             for class in code.classes() {
-                bytes.extend_from_slice(&class.to_le_bytes());
+                put(&class.to_le_bytes());
             }
         }
         for (name, named) in &c.kind_aliases {
-            bytes.push(u8::from(*named));
-            bytes.extend_from_slice(
-                &u32::try_from(name.len())
-                    .map_err(|_| "contextual grammar alias length overflow")?
-                    .to_le_bytes(),
-            );
-            bytes.extend_from_slice(name.as_bytes());
+            put(&[u8::from(*named)]);
+            put(&u32::try_from(name.len()).map_err(|_| "contextual grammar alias length overflow")?.to_le_bytes());
+            put(name.as_bytes());
         }
-        Ok(bytes)
+        Ok(())
     }
 
     /// A stored tape placed in a room (decision 0353 step 4a), read where it lies: format 15's columns, or format 16
