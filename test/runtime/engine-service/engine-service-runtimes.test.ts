@@ -218,6 +218,32 @@ describe("the engine service's runtimes", () => {
     expect(service.openRuntimes()).toBe(0);
   });
 
+  // A runtime's 15 minutes were a timer's, on the monotonic clock: a wall clock set forward by an hour meanwhile closed
+  // nothing sooner. Read from the wall clock, the age jumped with it, and the runtime of a person back within 15 minutes
+  // was gone.
+  it("counts a kept runtime's 15 minutes on a clock the wall clock's jumps do not move", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-runtimes-"));
+    roots.push(root);
+    const databasePath = join(root, "rerail.sqlite");
+    const checkout = join(root, "first");
+    await mkdir(checkout);
+    startTestRepository(checkout, databasePath);
+    const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-clock-${process.pid}-${Date.now()}` : join(root, "engine.sock");
+    const service = await startEngineService({ socketPath, storageRoot: join(root, "state"), databasePath, embedder: testEmbedder, needsRoom: () => true, createAuditor: quietAuditor });
+    services.push(service);
+    const session = { host: "claude-code" as const, sessionId: "a", cwd: checkout };
+    await ingestEngineEvent({ socketPath }, { kind: "session-start", eventId: "a:start", session });
+    await ingestEngineEvent({ socketPath }, { kind: "session-end", eventId: "a:end", sessionId: "a", session });
+    const wall = Date.now();
+    const jumped = vi.spyOn(Date, "now").mockReturnValue(wall + 60 * MINUTE);
+    try {
+      await service.closeIdleSessions();
+      expect(service.openRuntimes()).toBe(1);
+    } finally {
+      jumped.mockRestore();
+    }
+  });
+
   // The heap watch restarts the daemon at its ceiling, which makes every hook wait through a start; what the daemon keeps
   // for its checkouts' next sessions goes first.
   it("closes every runtime no session uses when asked, the one left last too, and none a session uses", async () => {

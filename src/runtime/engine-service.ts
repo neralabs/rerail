@@ -226,7 +226,10 @@ type EngineServiceOptions = Omit<RerailRuntimeOptions, "workspaceRoot"> & {
   pipeFallback?: () => string;
   /** Defaults to `IDLE_SESSION_MS`; tests pass their own. */
   idleSessionMs?: number;
-  /** The clock idle sessions and runtimes no session uses are measured by; defaults to `Date.now`. */
+  /**
+   * The clock idle sessions are measured by, `Date.now` by default; the runtimes no session uses are measured by it too
+   * when it is given, else by the monotonic clock, as their timers were, so a wall clock set forward closes none sooner.
+   */
   now?: () => number;
   /**
    * Whether the daemon needs the room the runtimes no session uses take (`memoryRoom` in memory-room.ts, by default):
@@ -1044,7 +1047,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     lastEventAt: new Map(),
     lanes: new SessionLanes(),
     pending: new Set(),
-    kept: keptRuntimes(() => routing, options.needsRoom ?? memoryRoom(), options.now ?? Date.now),
+    kept: keptRuntimes(() => routing, options.needsRoom ?? memoryRoom(), options.now ?? (() => performance.now())),
     runtimeOptions: new Map(),
     suspended: new Map(),
     resumeRetries: new Map(),
