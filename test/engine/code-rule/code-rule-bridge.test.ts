@@ -1526,6 +1526,35 @@ describe("CodeRuleBridge", () => {
       expect(onDiscoveryGaps).not.toHaveBeenCalled();
     });
 
+    it("settles a walk that outlasted its checkpoint's wait only once it ends, and the next checkpoint says what it met", async () => {
+      const root = await workspace();
+      const locked = join(root, "src", "locked");
+      await mkdir(locked);
+      const pending: string[] = [];
+      const onDiscoveryGaps = vi.fn();
+      const bridge = createBridge(root, auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))), {
+        discoveryWaitMs: 50, onDiscoveryPending: boundary => { pending.push(boundary); }, onDiscoveryGaps,
+      });
+      await bridge.openWorkspace("session-1");
+      await bridge.settleWalk();
+      const denial = denyFolder(locked);
+      // The walk stops at src's listing until the test lets it go, past the checkpoint's wait.
+      const held = holdDiscovery("directories", join(root, "src"));
+      await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({
+        failures: [expect.objectContaining({ message: "Source reconciliation is still pending" })],
+      }));
+      expect(pending).toEqual(["turn"]);
+      await held.entered;
+      let settled = false;
+      const settling = bridge.settleWalk().then(() => { settled = true; });
+      await new Promise(resolve => setImmediate(resolve));
+      expect(settled).toBe(false);
+      held.release();
+      await settling;
+      await expect(bridge.checkpoint("turn")).resolves.toEqual(failedWith(`src/locked: ${denial}`));
+      expect(onDiscoveryGaps.mock.calls).toEqual([[[toldGap("src/locked", denial, "EACCES")]]]);
+    });
+
     it("answers a turn checkpoint with its gap when recording the gap fails", async () => {
       const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
       const root = await workspace();
