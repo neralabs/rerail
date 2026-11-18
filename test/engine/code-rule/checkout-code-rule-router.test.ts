@@ -660,6 +660,26 @@ describe("CheckoutCodeRuleRouter and linked worktrees", () => {
     expect(auditor.walkView().acceptsPath(readme)).toBe(true);
   });
 
+  it("stops answering for a worktree another lane answered for once that worktree is stopped", async () => {
+    const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
+    await mkdir(join(worktree, "api"), { recursive: true });
+    await writeFile(join(worktree, "api", "x.py"), "seed\n");
+    const { recorder } = recordingAudits();
+    const auditor = router(session, databasePath, recorder, undefined, true);
+    await auditor.openWorkspace("worktree-stopped-later");
+    const file = walked(session, worktree, "api/x.py");
+    expect(auditor.walkView().acceptsPath(file)).toBe(true);
+
+    const database = openRerailDatabase(databasePath);
+    try {
+      setCheckoutStarted(database, recordCheckout(database, worktree), false);
+    } finally {
+      database.$client.close();
+    }
+    auditor.refreshCodeRules();
+    expect(auditor.walkView().acceptsPath(file)).toBe(false);
+  });
+
   it("answers a question after its close with a Git ignore matcher of its own, leaving the daemon's shared one dropped", async () => {
     const { databasePath, session, worktree } = await repositoryWithWorktree(outside);
     await mkdir(join(worktree, "api"), { recursive: true });

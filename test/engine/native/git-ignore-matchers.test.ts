@@ -73,6 +73,15 @@ describe("GitIgnoreMatchers", () => {
     expect(opened).toHaveBeenCalledTimes(1);
     for (const name of ["first", "second", "third"]) matchers.release(user(name));
     expect(matchers.size).toBe(0);
+    // Once no router holds it, the matcher and its index are dropped: a later router gets one opened then.
+    expect(matchers.matcher(main, user("later"))).not.toBe(first);
+    expect(opened).toHaveBeenCalledTimes(2);
+  });
+
+  it("holds nothing for a folder outside Git, where no matcher opens", () => {
+    const matchers = new GitIgnoreMatchers(() => null);
+    expect(matchers.matcher(join(tmpdir(), "outside-git"), user("outside"))).toBeNull();
+    expect(matchers.size).toBe(0);
   });
 
   it("opens a fresh matcher for a router when the shared one cannot say whether what it read changed", async () => {
