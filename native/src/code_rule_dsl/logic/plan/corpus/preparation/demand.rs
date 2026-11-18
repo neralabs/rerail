@@ -1,15 +1,13 @@
-//! The reach form and the demand for negated tests, on the version (decision 0281's path, step 6d), each the tree's
-//! function ported onto the version's rules:
+//! The reach form and the demand for negated tests, on the version (decision 0281's path, step 6d):
 //!
-//! - `ReachForm` (`reach_form::find`): the closures held as each start's bitmap, and the relations through them
-//!   (decision 0119);
+//! - `ReachForm`: the closures held as each start's bitmap, and the relations through them (decision 0119,
+//!   `reach_form`);
 //! - `NegatedDemand` (`magic::demand_negated_tests`): a relation some rule negates computed for the keys its readers
 //!   test (decision 0038);
-//! - `UndoInCycles` (`reach_form::undo_in_cycles`): a closure a later rewrite put in a cycle of other relations made
-//!   rows again.
+//! - `UndoInCycles`: a closure a later rewrite put in a cycle of other relations made rows again.
 //!
-//! The first and the last edit the program one relation at a time, each edit read by the next relation's shape, as
-//! the tree's do: they keep a model of what each relation reads, edited as they go, and write the program once.
+//! The first and the last edit the program one relation at a time, each edit read by the next relation's shape: they
+//! keep a model of what each relation reads, edited as they go, and write the program once.
 
 use crate::code_rule_dsl::logic::front::AXIS;
 use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
@@ -63,7 +61,7 @@ fn var(t: Option<TermRef<'_>>) -> Option<crate::code_rule_dsl::logic::program_im
     t.and_then(|t| t.var())
 }
 
-/// The two positive, ungated atoms of a body of exactly two literals (`reach_form::two_atoms`).
+/// The two positive, ungated atoms of a body of exactly two literals.
 fn two_atoms<'v>(r: RuleRef<'v>) -> Option<(AtomRef<'v>, AtomRef<'v>)> {
     let body: Vec<Lit<'v>> = r.body().map(|l| l.view()).collect();
     match body.as_slice() {
@@ -72,7 +70,7 @@ fn two_atoms<'v>(r: RuleRef<'v>) -> Option<(AtomRef<'v>, AtomRef<'v>)> {
     }
 }
 
-/// What each relation's rules and natives read, as the passes edit it (`reach_form::reads`).
+/// What each relation's rules and natives read, as the passes edit it.
 struct Model {
     /// Each rule's head and the relations its body reads, by id, in the version's order; a rule made anew has none.
     rules: Vec<(Option<RuleId>, String, Vec<String>)>,
@@ -86,6 +84,7 @@ impl Model {
         let natives = about.natives.iter().map(|n| (v.rel_name(n.rel).to_owned(), (n.kind, n.reads.iter().map(|&r| v.rel_name(r).to_owned()).collect()))).collect();
         Model { rules, natives }
     }
+    /// The relations each relation's rules and native read.
     fn reads(&self) -> BTreeMap<&str, BTreeSet<&str>> {
         let mut out: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
         for (_, head, body) in &self.rules {
@@ -96,9 +95,10 @@ impl Model {
         }
         out
     }
-    /// A relation `rel`'s rules read (but `rel` itself) that reads `rel` back (`reach_form::cycle_through`).
+    /// A relation `rel`'s rules read (but `rel` itself) that reads `rel` back: `rel` is in a cycle of others.
     fn cycle_through(&self, rel: &str) -> Option<String> {
         let reads = self.reads();
+        // Whether `from` reads `rel`, directly or through other relations.
         let depends = |from: &str| {
             let mut seen = BTreeSet::new();
             let mut todo = vec![from];
@@ -117,9 +117,10 @@ impl Model {
     }
 }
 
-// ---- reach_form::find ----
+// ---- the reach form ----
 
-/// The closures and the relations through them: how many of each.
+/// Each relation found in the reach form (`reach_form`, decision 0119), rewritten: the closures and the relations
+/// through them, how many of each.
 #[derive(Default)]
 pub struct ReachForm {
     pub reaches: usize,
@@ -141,6 +142,7 @@ impl ProgramPass for ReachForm {
         let gates: HashSet<&str> = about.gate_keys.iter().map(|a| v.text(*a)).collect();
         let requests: HashSet<&str> = about.answers.iter().map(|(q, _)| v.rel_name(*q)).collect();
         let mut model = Model::of(v, &about);
+        // Why `rel` may not be held otherwise than as its rules make it: what the planner reads of it by name.
         let held_by_name = |model: &Model, rel: &str| -> Option<&'static str> {
             if model.natives.contains_key(rel) {
                 Some("made natively already")
@@ -157,12 +159,14 @@ impl ProgramPass for ReachForm {
             }
         };
         let heads = |rel: &str| -> Vec<RuleRef<'_>> { v.rel(rel).map(|id| v.heads(id).collect()).unwrap_or_default() };
+        // Whether `rel`'s rules could be a relation through a reach (its one rule reads one), for the directive's error.
         let is_through = |rel: &str| {
             let rules = heads(rel);
             rules.len() == 1 && rules[0].body().count() == 2
         };
         // Each reach: its recursive rule (replaced), its seeds' rules (renamed) and its edge.
         let mut reaches: BTreeMap<String, (RuleId, String)> = BTreeMap::new();
+        // The recursive rule and its edge relation, or why `rel` is not a reach.
         let shape = |rel: &str, model: &Model| -> std::result::Result<(RuleId, String), String> {
             if let Some(why) = held_by_name(model, rel) {
                 return Err(why.into());
@@ -198,8 +202,10 @@ impl ProgramPass for ReachForm {
             if seeds == 0 {
                 return Err("no rule seeds it".into());
             }
+            // Its only cycle is its own rule: nothing its rules read (the seeds' bodies and the edges) reads it back.
             if let Some(back) = model.cycle_through(rel) {
                 let why = format!("`{back}` reads it and it reads `{back}`");
+                // A closure kept as rows by a cycle through other relations, in the explain output.
                 crate::code_rule_dsl::logic::profile::decision("reach index: cycles and connected graphs (decision 0119)", || format!("{rel}: a closure left as rows, in a cycle of relations: {why}"));
                 return Err(why);
             }
@@ -210,6 +216,7 @@ impl ProgramPass for ReachForm {
                 continue;
             }
             match shape(rel, &model) {
+                // `rel`'s seeds as `rr_reach_seed_<rel>`'s rules, and `rel` made natively from them and `edge`.
                 Ok((at, edge)) => {
                     let seed = format!("{SEED}{rel}");
                     for (id, head, body) in &mut model.rules {
@@ -231,6 +238,7 @@ impl ProgramPass for ReachForm {
             if model.natives.contains_key(rel) || (!auto && !asked.contains(rel)) {
                 continue;
             }
+            // The reach and the map `rel` is made through, or why it is not.
             let through = (|| -> std::result::Result<(String, String), String> {
                 if let Some(why) = held_by_name(&model, rel) {
                     return Err(why.into());
@@ -322,9 +330,14 @@ impl Rewrite for Seeds<'_> {
     }
 }
 
-// ---- reach_form::undo_in_cycles ----
+// ---- reaches in cycles ----
 
-/// The reaches made rows again, and the relations through them.
+/// The reaches a later rewrite put in a cycle of other relations, made rows again. `ReachForm` takes a closure only
+/// when nothing it reads reads it back, but the rewrites after it (magic sets' demand, decision 0145) add readers: at
+/// O125, `magic_found_bbf` reads `anc` and feeds `found`, which `base`, `anc`'s edge, reads. A native operator's
+/// stratum has no maintained form (`plan`, decision 0119), so the 44 relations of that component were derived from
+/// scratch at every edit. Each such reach's rules are its own again, and a relation made through it is rows too.
+/// `undone`: those made rows; one declared `reach` is an error.
 #[derive(Default)]
 pub struct UndoInCycles {
     pub undone: Vec<String>,

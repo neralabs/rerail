@@ -13,7 +13,7 @@ pub(super) mod hide;
 pub(crate) mod on_request;
 pub(super) mod whole;
 pub(crate) mod lowering_tail;
-mod demand;
+pub mod demand;
 mod magic;
 mod prune;
 pub mod simplify;

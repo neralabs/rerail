@@ -64,68 +64,96 @@ fn the_shape_names_the_cycles_and_the_connected_parts_largest_first() {
 
 mod form {
     use crate::code_rule_dsl::logic::front::Native;
-    use crate::code_rule_dsl::logic::reach_form::find;
-    use crate::code_rule_dsl::logic::rr::parse_own;
+    use crate::code_rule_dsl::logic::plan::corpus::preparation::demand::{ReachForm, UndoInCycles};
+    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
+    use crate::code_rule_dsl::logic::program_image::manager::Pipeline;
+    use crate::code_rule_dsl::logic::program_image::{Builder, T, Version};
+    use crate::code_rule_dsl::logic::rr::parse_own_version;
+    use std::sync::Arc;
 
     const CLOSURE: &str = ".decl e(a: number, b: number)\n.input e\n.decl own(a: number)\n.input own\n\
         .decl r(a: number, b: number){q}\nr(d, d) :- own(d).\nr(d, f) :- r(d, x), e(x, f).\n\
         .decl m(a: number, b: number)\n.input m\n.decl s(a: number, q: number)\ns(d, q) :- r(d, x), m(x, q).\n\
         .decl out(a: number, b: number)\n.output out\nout(a, b) :- s(a, b), r(a, b).\n";
 
-    fn program(qualifier: &str, extra: &str) -> crate::code_rule_dsl::logic::front::Program {
-        parse_own(&(CLOSURE.replace("{q}", qualifier) + extra)).unwrap()
+    fn program(qualifier: &str, extra: &str) -> Arc<Version> {
+        parse_own_version(&(CLOSURE.replace("{q}", qualifier) + extra)).unwrap()
+    }
+
+    /// `ReachForm` over `v`: the version it makes, and the closures and relations through them it found.
+    fn find(v: Arc<Version>) -> Result<(Arc<Version>, (usize, usize)), String> {
+        let mut p = Pipeline::new("the reach form", v);
+        let mut pass = ReachForm::default();
+        p.program(&mut pass);
+        Ok((p.finish()?.0, (pass.reaches, pass.throughs)))
+    }
+
+    /// `UndoInCycles` over `v`: the version it makes, and the relations it made rows again.
+    fn undo_in_cycles(v: Arc<Version>) -> (Arc<Version>, Vec<String>) {
+        let mut p = Pipeline::new("reaches in cycles made rows", v);
+        let mut pass = UndoInCycles::default();
+        p.program(&mut pass);
+        (p.finish().unwrap().0, pass.undone)
+    }
+
+    /// The rules of `v` whose head is `rel`, as written.
+    fn rules_of(v: &Version, rel: &str) -> Vec<String> {
+        v.rules().filter(|r| v.rel_name(r.head().rel()) == rel).map(|r| v.show_rule(r)).collect()
     }
 
     #[test]
     fn a_closure_and_a_relation_through_it_are_found() {
-        let mut prog = program("", "");
-        assert_eq!(find(&mut prog).unwrap(), (1, 1));
-        assert_eq!(prog.natives.get("r"), Some(&Native::Reach { seed: "rr_reach_seed_r".into(), edge: "e".into() }));
-        assert_eq!(prog.natives.get("s"), Some(&Native::ReachThrough { reach: "r".into(), map: "m".into() }));
+        let (prog, found) = find(program("", "")).unwrap();
+        assert_eq!(found, (1, 1));
+        let natives = ProgramFields::natives(&*prog);
+        assert_eq!(natives.get("r"), Some(&Native::Reach { seed: "rr_reach_seed_r".into(), edge: "e".into() }));
+        assert_eq!(natives.get("s"), Some(&Native::ReachThrough { reach: "r".into(), map: "m".into() }));
         // The seeds are their own relation's rules; `r`'s one rule orders it after them and the edges.
-        assert_eq!(prog.rules.iter().filter(|r| r.head.rel == "rr_reach_seed_r").count(), 1);
-        let own: Vec<_> = prog.rules.iter().filter(|r| r.head.rel == "r").collect();
+        assert_eq!(rules_of(&prog, "rr_reach_seed_r").len(), 1);
+        let own: Vec<_> = prog.rules().filter(|r| prog.rel_name(r.head().rel()) == "r").collect();
         assert_eq!(own.len(), 1);
-        assert!(!own[0].body.iter().any(|l| l.atom().is_some_and(|a| a.rel == "r")));
+        assert!(!own[0].body().any(|l| l.atom().is_some_and(|a| prog.rel_name(a.rel()) == "r")));
     }
 
     #[test]
     fn a_closure_inside_a_larger_cycle_is_left_as_rows() {
         // The seeds read `r` back through `back`: `r` is not its own component.
-        let mut prog = program("", ".decl back(a: number)\nback(a) :- r(a, _).\nr(d, d) :- back(d).\n");
-        assert_eq!(find(&mut prog).unwrap(), (0, 0));
-        assert!(prog.natives.is_empty());
+        let (prog, found) = find(program("", ".decl back(a: number)\nback(a) :- r(a, _).\nr(d, d) :- back(d).\n")).unwrap();
+        assert_eq!(found, (0, 0));
+        assert!(ProgramFields::natives(&*prog).is_empty());
     }
 
     #[test]
     fn the_directive_asks_for_the_form_and_no_reach_refuses_it() {
-        let mut prog = program(" no_reach", "");
-        assert_eq!(find(&mut prog).unwrap(), (0, 0));
-        let mut prog = program(" reach", "");
-        assert_eq!(find(&mut prog).unwrap(), (1, 1));
+        assert_eq!(find(program(" no_reach", "")).unwrap().1, (0, 0));
+        assert_eq!(find(program(" reach", "")).unwrap().1, (1, 1));
         // A second recursive rule breaks the shape: declared `reach`, that is an error naming why.
-        let mut prog = program(" reach", "r(d, f) :- r(x, d), e(x, f).\n");
-        let err = format!("{:?}", find(&mut prog).unwrap_err());
+        let err = find(program(" reach", "r(d, f) :- r(x, d), e(x, f).\n")).unwrap_err();
         assert!(err.contains("more than one rule reads it"), "{err}");
     }
-    /// A rewrite after `find` (magic sets' demand, decision 0145) can read a closure inside its edges' or seeds'
+    /// A rewrite after `ReachForm` (magic sets' demand, decision 0145) can read a closure inside its edges' or seeds'
     /// component: then it is rows again, with its rules as written, and so is a relation through it. At O125 the
     /// demand put `anc` in a component of 44 relations, which had no maintained form and was derived at every edit.
     #[test]
     fn a_closure_a_later_rewrite_puts_in_a_cycle_is_rows_again() {
-        let mut prog = program("", ".decl w(a: number)\n.input w\nr(d, d) :- w(d).\n");
-        assert_eq!(find(&mut prog).unwrap(), (1, 1));
-        assert!(crate::code_rule_dsl::logic::reach_form::undo_in_cycles(&mut prog).unwrap().is_empty(), "no cycle yet");
+        let (prog, found) = find(program("", ".decl w(a: number)\n.input w\nr(d, d) :- w(d).\n")).unwrap();
+        assert_eq!(found, (1, 1));
+        let (prog, undone) = undo_in_cycles(prog);
+        assert!(undone.is_empty(), "no cycle yet");
         // As a demand rewrite would: `w` is made from `r`, which a seed reads.
-        let rule = parse_own(".decl r(a: number, b: number)\n.decl w(a: number)\nw(a) :- r(a, _).\n").unwrap().rules.remove(0);
-        prog.rules.push(rule);
-        prog.inputs.retain(|i| i != "w");
-        let mut undone = crate::code_rule_dsl::logic::reach_form::undo_in_cycles(&mut prog).unwrap();
+        let prog = {
+            let mut b = Builder::on(&prog);
+            b.rule().head("w", &[T::Var("a")]).atom("r", &[T::Var("a"), T::Wild]).finish().unwrap();
+            let inputs: Vec<String> = prog.input_names().into_iter().filter(|i| i != "w").collect();
+            b.set_inputs(&inputs);
+            b.finish().unwrap().0
+        };
+        let (prog, mut undone) = undo_in_cycles(prog);
         undone.sort();
         assert_eq!(undone, vec!["r".to_owned(), "s".to_owned()]);
-        assert!(prog.natives.is_empty());
-        assert!(!prog.decls.contains_key("rr_reach_seed_r") && prog.rules.iter().all(|r| !r.to_string().contains("rr_reach_seed_r")));
-        let own: Vec<String> = prog.rules.iter().filter(|r| r.head.rel == "r").map(|r| r.to_string()).collect();
+        assert!(ProgramFields::natives(&*prog).is_empty());
+        assert!(!prog.declares("rr_reach_seed_r") && prog.rules().all(|r| !prog.show_rule(r).contains("rr_reach_seed_r")));
+        let own = rules_of(&prog, "r");
         assert_eq!(own.len(), 3, "{own:#?}");
         assert!(own.iter().any(|r| r.contains(":- r(") && r.contains("e(")), "its recursive rule again: {own:#?}");
     }
