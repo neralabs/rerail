@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pull request 801 report</title>
+<style>
+/* Base: the team page's tokens, type, layout, figures and tables. */
+/* Layout: a contents rail beside one reading column; every idea is a figure with a caption that says what to notice. */
+:root { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: 0 1px 2px rgba(0,0,0,.05), 0 2px 8px rgba(0,0,0,.04); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; } }
+:root[data-theme="dark"] { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: none; color-scheme: light; } }
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.layout { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 40px; max-width: 1200px; margin: 0 auto;
+  padding-block: 32px 80px; padding-left: max(24px, env(safe-area-inset-left, 0px)); padding-right: max(24px, env(safe-area-inset-right, 0px)); }
+nav.toc { position: sticky; top: 24px; align-self: start; font-size: 14px; max-height: calc(100vh - 48px); overflow-y: auto; }
+nav.toc .brand { font-weight: 700; font-size: 15px; margin-bottom: 12px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; counter-reset: s; }
+nav.toc li { counter-increment: s; }
+nav.toc a { display: block; padding: 5px 10px; border-radius: 6px; color: var(--muted); text-decoration: none; }
+nav.toc a::before { content: counter(s) ". "; opacity: .7; }
+nav.toc a:hover { background: var(--surface2); color: var(--text); }
+nav.toc .theme { margin-top: 16px; }
+nav.toc button { font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+main { min-width: 0; }
+header.hero { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 28px 32px; box-shadow: var(--shadow); }
+.eyebrow { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+h1 { font-size: 34px; line-height: 1.2; margin: 6px 0 10px; text-wrap: balance; }
+h2 { font-size: 26px; line-height: 1.25; margin: 0 0 6px; text-wrap: balance; }
+h3 { font-size: 19px; margin: 34px 0 8px; text-wrap: balance; }
+h4 { font-size: 17px; margin: 0 0 6px; line-height: 1.35; text-wrap: balance; }
+.lede { font-size: 18px; color: var(--muted); margin: 0; max-width: 64ch; }
+section { margin-top: 52px; scroll-margin-top: 20px; }
+.sub { color: var(--muted); margin: 0 0 18px; max-width: 72ch; }
+p { max-width: 72ch; margin: 10px 0; }
+.muted { color: var(--muted); } .small { font-size: 14px; }
+.state { font-size: 14px; color: var(--muted); margin: 10px 0 0; max-width: none; }
+.callout { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 14px 18px; border-radius: 0 10px 10px 0; margin: 16px 0; max-width: 78ch; }
+.callout strong:first-child { display: block; margin-bottom: 2px; }
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+th { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; background: var(--surface2); }
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); margin: 14px 0; }
+.table-wrap table tr:last-child td { border-bottom: 0; }
+.numc { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.k { font-weight: 700; min-width: 8.5em; }
+td.n { white-space: nowrap; }
+.tag { margin-left: 6px; font-weight: 600; font-size: 12px; padding: 1px 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); white-space: nowrap; vertical-align: 1px; }
+.tag.new { background: var(--accentsoft); border-color: var(--accent); color: var(--accent); }
+
+/* The words a section needs, defined once */
+.words { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.word { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.word b { display: block; } .word span { font-size: 14.5px; color: var(--muted); }
+
+/* Figures */
+figure.fg { margin: 16px 0 0; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+figure.fg figcaption { font-size: 14px; color: var(--muted); margin-top: 10px; max-width: 86ch; }
+.pns { display: grid; gap: 12px; } .pns.c2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pn { border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: var(--bg); min-width: 0; }
+.pt { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; color: var(--muted); margin-bottom: 6px; }
+.pn.before .pt { color: var(--bad); } .pn.after .pt { color: var(--good); } .pn.mid .pt { color: var(--accent); }
+svg.dg { display: block; width: 100%; height: auto; max-width: 440px; margin: 0 auto; }
+svg.dg.wide { max-width: 840px; }
+svg.dg.narrow { display: none; max-width: 380px; }
+svg.dg.mock { max-width: 420px; margin: 0; }
+svg.defs { position: absolute; }
+.t { font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; fill: var(--text); }
+.t.b { font-weight: 700; } .t.s { font-size: 11px; fill: var(--muted); }
+.t.inv { fill: var(--surface); } .t.acc { fill: var(--accent); }
+.bx { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+.bx.good { fill: var(--goodsoft); stroke: var(--good); } .bx.warn { fill: var(--warnsoft); stroke: var(--warn); }
+.bx.acc { fill: var(--accentsoft); stroke: var(--accent); } .bx.info { fill: var(--infosoft); stroke: var(--info); }
+.bx.ghost { fill: none; stroke: var(--muted); stroke-dasharray: 5 4; } .bx.mono { fill: var(--surface2); }
+.bx.accf { fill: var(--accent); stroke: none; }
+.bx.zone { fill: var(--surface2); stroke: none; } .bx.zoneacc { fill: var(--accentsoft); stroke: none; }
+.sq { fill: var(--surface2); stroke: var(--line); stroke-width: .8; }
+.sq.acc { fill: var(--accent); stroke: var(--accent); } .sq.good { fill: var(--good); stroke: var(--good); }
+.sq.draft { fill: none; stroke: var(--muted); stroke-dasharray: 3 2; } .sq.hollow { fill: var(--surface); stroke: var(--line); stroke-width: 1; }
+.ar { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.ar.good { stroke: var(--good); } .ar.acc { stroke: var(--accent); }
+.ar.thin { stroke-width: .7; } .ar.dash { stroke-dasharray: 5 4; }
+line.ar.thin:not(.acc) { stroke: var(--border); stroke-width: 1; }
+.mk { fill: var(--muted); } .mk.bad { fill: var(--bad); } .mk.good { fill: var(--good); } .mk.acc { fill: var(--accent); }
+.nc { fill: var(--accent); }
+.cm { stroke: var(--muted); stroke-width: 1.5; fill: var(--surface); }
+.cm.on { fill: var(--accent); stroke: var(--accent); } .cm.off { stroke-dasharray: 3 2; }
+.bar { fill: var(--accent); } .barrm { fill: var(--before); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13.5px; color: var(--muted); margin: 10px 0 0; align-items: center; }
+.legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.legend .sw { width: 16px; height: 10px; border-radius: 3px; display: inline-block; border: 1px solid var(--line); background: var(--surface); }
+.legend .sw.f { background: var(--good); border-color: var(--good); } .legend .sw.a { background: var(--accent); border-color: var(--accent); }
+.legend .sw.r { background: var(--before); border-color: var(--before); } .legend .sw.d { border: 1px dashed var(--muted); background: none; }
+.legend .sw.l { width: 0; height: 12px; border: 0; border-left: 1.5px dashed var(--accent); border-radius: 0; background: none; }
+
+/* Numbers, lists, rules, questions */
+.big { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 18px 0 0; }
+.big div { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--bg); }
+.big b { display: block; font-size: 28px; line-height: 1.15; font-variant-numeric: tabular-nums; } .big span { font-size: 14px; color: var(--muted); }
+.three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 14px 0; }
+.lesson { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.lesson b { display: block; margin-bottom: 4px; } .lesson span { font-size: 14.5px; color: var(--muted); }
+.facts { margin: 12px 0; padding-left: 20px; } .facts li { margin: 5px 0; max-width: 76ch; }
+.rules { counter-reset: r; list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 8px; }
+.rules li { counter-increment: r; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; max-width: 80ch; }
+.rules li::before { content: counter(r); width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.rl { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 8px; }
+.rl li { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 12px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 11px 14px; }
+.rl .rn { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); padding-top: 4px; white-space: nowrap; }
+.rl .x { display: block; color: var(--muted); font-size: 15px; max-width: 78ch; }
+.asks { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 12px; counter-reset: q; }
+.asks li { counter-increment: q; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; box-shadow: var(--shadow); }
+.asks li::before { content: counter(q); width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 14px; display: grid; place-items: center; }
+.asks h4 { margin: 2px 0 4px; } .asks p { margin: 4px 0; }
+.asks .now { font-size: 14.5px; color: var(--muted); }
+.anat { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 22px; align-items: start; }
+.anat .rules { margin: 0; font-size: 15px; }
+.dec { display: grid; gap: 18px; }
+.dp { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; }
+.dp > .dn { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.dp h4 { margin: 2px 0 4px; } .dp p { margin: 4px 0; }
+.dp ul { margin: 4px 0; padding-left: 20px; } .dp li { margin: 5px 0; max-width: 76ch; }
+.dp .table-wrap { margin: 8px 0 2px; box-shadow: none; }
+.t.n { font-size: 11px; font-weight: 600; }
+.opn { fill: none; stroke: var(--accent); stroke-width: 2; }
+.legend .sw.gs { background: var(--goodsoft); border-color: var(--good); } .legend .sw.ws { background: var(--warnsoft); border-color: var(--warn); }
+.legend .sw.o { border: 2px solid var(--accent); }
+.legend .sw.as { background: var(--accentsoft); border-color: var(--accent); }
+/* The mock-up is drawn narrow, so its small lines are one unit larger than elsewhere. */
+svg.dg.anat .t.s { font-size: 12px; }
+.big a { color: inherit; }
+.ord { display: inline-block; min-width: 26px; padding: 0 6px; margin-right: 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); font-size: 13px; font-variant-numeric: tabular-nums; text-align: center; }
+.sm { display: block; font-size: 13px; color: var(--muted); font-weight: 400; overflow-wrap: anywhere; }
+table.tight { font-size: 14px; } table.tight th, table.tight td { padding: 8px 10px; } table.tight td.k { min-width: 0; }
+dl.gloss { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 8px 16px; margin: 0; }
+dl.gloss dt { font-weight: 600; } dl.gloss dd { margin: 0; color: var(--muted); }
+footer { margin-top: 56px; font-size: 14px; color: var(--muted); }
+footer p { max-width: 86ch; }
+
+@media (max-width: 980px) {
+  .layout { grid-template-columns: 1fr; gap: 16px; padding-block: 16px 60px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  nav.toc { position: static; max-height: none; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+  nav.toc ol { columns: 2; }
+  .layout { display: flex; flex-direction: column; } main { display: contents; }
+  main > header.hero { order: 0; } nav.toc { order: 1; } main > section, main > footer { order: 2; }
+  .pns.c3 { grid-template-columns: 1fr; }
+  .anat { grid-template-columns: 1fr; } svg.dg.mock { margin: 0 auto; }
+}
+@media (max-width: 760px) {
+  svg.dg.wide { display: none; }
+  svg.dg.narrow { display: block; }
+}
+@media (max-width: 680px) {
+  h1 { font-size: 27px; } h2 { font-size: 22px; }
+  header.hero { padding: 20px; }
+  nav.toc ol { columns: 1; }
+  .pns.c2, .three, .words { grid-template-columns: 1fr; }
+  dl.gloss { grid-template-columns: 1fr; gap: 2px; } dl.gloss dd { margin-bottom: 8px; }
+  .rl li { grid-template-columns: 1fr; gap: 2px; }
+  .dp { grid-template-columns: 1fr; gap: 4px; }
+  figure.fg { padding: 10px; }
+  /* Tables become one card per row, each cell named by its column */
+  table.tc, table.tc tbody, table.tc tr, table.tc td { display: block; }
+  table.tc thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  table.tc tr { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  table.tc tr:last-child { border-bottom: 0; }
+  table.tc td { padding: 2px 0; border-bottom: 0; white-space: normal; }
+  table.tc td[data-l]::before { content: attr(data-l) ": "; font-size: 13px; font-weight: 600; color: var(--muted); }
+  table.tc td:first-child { font-weight: 700; font-size: 16px; }
+  table.tc td:first-child::before { content: none; }
+}
+@media print {
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  nav.toc { display: none; } .layout { grid-template-columns: 1fr; max-width: none; padding: 0; }
+  @page { size: Letter; margin: 12mm; }
+  /* A drawing, a card or a table row never splits across two pages; a long table may, between rows. */
+  figure.fg, .lesson, .callout, .rl li, .asks li, svg, .pn, .dp, .word, .big > div, tr, .rules li, .facts li { break-inside: avoid; }
+  .table-wrap { overflow: visible; } thead { display: table-header-group; }
+  /* Print keeps the wide drawings, and the mock-up at a width whose height fits one page. */
+  svg.dg.wide { display: block; } svg.dg.narrow { display: none; }
+  .anat { grid-template-columns: 1fr; } svg.dg.anat { max-width: 400px; margin: 0 auto; }
+  /* Print is denser than the screen: the whole page at 82%, full-width text, no page tint. */
+  body { zoom: 0.82; background: #fff; }
+  p, .sub, .lede, figure.fg figcaption, .facts li, .rules li, .callout, footer p, .rl .x { max-width: none; }
+  .big { grid-template-columns: repeat(4, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  h2, h3, h4, .sub { break-after: avoid; } .sub { break-inside: avoid; }
+  section { margin-top: 26px; }
+  header.hero, .asks li { box-shadow: none; }
+  a { color: inherit; text-decoration: none; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+/* The report's own parts. Risk is an ordered scale, so it is one hue from light to dark, and every use carries its word. */
+:root { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; } }
+:root[data-theme="dark"] { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; } }
+.rk { stroke: none; } .rk.high { fill: var(--r-high); } .rk.med { fill: var(--r-med); }
+.rk.low { fill: var(--r-low); stroke: var(--r-med); stroke-width: 1; } .rk.skim, .rk.was { fill: var(--before); } .rk.now { fill: var(--accent); } .rk.tick { fill: var(--text); }
+.bx.hib { fill: var(--surface2); stroke: var(--r-high); stroke-width: 1.5; }
+.lt { fill: var(--surface); stroke: var(--text); stroke-width: 1.3; }
+.mh { fill: var(--good); } .mt { fill: none; stroke: var(--surface); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ml { fill: var(--surface); stroke: var(--warn); stroke-width: 1.6; } .mlf { fill: var(--warn); }
+/* A check that does not hold yet: an empty dashed ring. */
+.mo { fill: var(--surface); stroke: var(--muted); stroke-width: 1.6; stroke-dasharray: 3 2; }
+.rule { stroke: var(--line); stroke-width: 1; }
+svg.dg.grid { max-width: 470px; } svg.dg.pic { max-width: 380px; margin: 0; }
+/* The flag of an answer changed on purpose: filled for the change of intent, hollow for the others. */
+svg.fl { width: 13px; height: 15px; flex: none; vertical-align: -2px; margin-right: 5px; fill: var(--surface); stroke: var(--warn); stroke-width: 1.7; stroke-linejoin: round; }
+svg.fl.full { fill: var(--warn); }
+.q { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 12px 18px; border-radius: 0 10px 10px 0; margin: 12px 0 10px; }
+.q .ql { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; font-weight: 700; color: var(--accent); }
+.q p { font-size: 18px; line-height: 1.4; margin: 3px 0 6px; max-width: 80ch; }
+.q ol { margin: 0; padding-left: 22px; font-size: 15px; } .q li { margin: 1px 0; }
+.rec { margin: 10px 0 0; max-width: 100ch; font-size: 16px; }
+.hero .big { margin-top: 12px; } .hero .big div { padding: 10px 14px; }
+.big b.w { font-size: 21px; } .hero .big span { font-size: 13.5px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface2); white-space: nowrap; }
+.chip i { width: 13px; height: 9px; border-radius: 2px; display: inline-block; }
+.chip svg.fl { margin-right: 0; }
+.chip.high i { background: var(--r-high); } .chip.medium i { background: var(--r-med); } .chip.low i { background: var(--r-low); outline: 1px solid var(--r-med); }
+.chip.intent { border-color: var(--warn); background: var(--warnsoft); } .chip.answer { border-color: var(--warn); }
+.lb { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; border: 1.5px solid var(--text); font-weight: 700; font-size: 13.5px; background: var(--surface); flex: none; }
+/* Part 2: a row per change, three cells joined by arrows. A table, so a screen reader reads it by row and a phone stacks it. */
+table.it { border-collapse: separate; border-spacing: 14px 9px; font-size: 14.5px; line-height: 1.45; }
+table.it th { background: none; padding: 0 2px; border: 0; }
+table.it td { border: 1.2px solid var(--line); border-radius: 9px; padding: 9px 11px; position: relative; }
+table.it td.k { border: 0; padding: 9px 0 0; min-width: 0; font-weight: 400; }
+table.it td.k b { display: block; margin: 5px 0 4px; }
+table.it td.in { background: var(--surface2); }
+table.it td.now { background: var(--goodsoft); border-color: var(--good); }
+table.it tr.intent td.now { background: var(--warnsoft); border-color: var(--warn); }
+table.it tr.intent td:not(.k) { border-width: 2.4px; border-color: var(--warn); }
+table.it td.fo::after, table.it td.now::after { content: ""; position: absolute; left: -12px; top: 50%; margin-top: -5px; border: 5px solid transparent; border-left: 7px solid var(--muted); border-right: 0; }
+.tagx { display: inline-block; font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 0 6px; background: var(--surface); white-space: nowrap; }
+figure.fg.flat { padding: 4px; } figure.fg.flat figcaption { margin: 6px 12px 10px; }
+/* A drawing beside its text: side by side on a desktop and on paper, stacked on a phone. */
+.duo { display: grid; grid-template-columns: minmax(0, 430px) minmax(0, 1fr); gap: 22px; align-items: start; margin-top: 14px; }
+.duo figure.fg { margin: 0; } .duo > div > :first-child { margin-top: 0; }
+.steps { counter-reset: st; list-style: none; padding: 0; margin: 0 0 8px; display: grid; gap: 7px; }
+.steps li, .skim { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; font-size: 14.5px; line-height: 1.45; }
+.steps li { counter-increment: st; }
+.steps li::before { content: counter(st); width: 24px; height: 24px; border-radius: 50%; background: var(--surface2); border: 1px solid var(--line); font-weight: 700; font-size: 13px; display: grid; place-items: center; }
+.steps li.first::before { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.steps .min, .skim .min { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); white-space: nowrap; margin-left: 6px; }
+.steps .x, .skim .x { display: block; color: var(--muted); } .steps b code { white-space: nowrap; }
+#grid figure.fg { max-width: 560px; }
+.steps .rf, .skim .rf { font-size: 11.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); margin-right: 6px; }
+/* What can be skimmed is set apart from the steps: a dashed frame, a grey bar where a step has its number. */
+.skim { border-style: dashed; background: var(--surface2); } .skim .rf { color: var(--muted); }
+.skim i { width: 22px; height: 10px; border-radius: 3px; background: var(--before); margin-top: 7px; }
+.dblock { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; box-shadow: var(--shadow); margin: 12px 0; }
+.dblock h3 { margin: 0 0 4px; font-size: 17.5px; } .dblock p { margin: 4px 0; max-width: none; }
+.dblock .table-wrap { box-shadow: none; } .dblock .pns { margin: 12px 0; }
+.lines { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 7px; }
+.lines > li { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 14px; }
+ol.lines { counter-reset: q; } ol.lines > li { counter-increment: q; display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; }
+ol.lines > li::before { content: counter(q); width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+/* Folded parts. A card's summary is its one line in view. */
+details.ev, details.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin: 8px 0; }
+details.ev { padding: 2px 14px; } details.ev > summary { cursor: pointer; font-weight: 600; font-size: 14.5px; padding: 7px 0; color: var(--muted); }
+details.ev[open] > summary { border-bottom: 1px solid var(--border); margin-bottom: 8px; color: var(--text); }
+details.ev .table-wrap { box-shadow: none; }
+details.card > summary { list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; gap: 5px 9px; align-items: center; padding: 9px 14px; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary .sx { flex: 1 1 320px; font-size: 15px; }
+details.card > summary::after { content: "+"; font-weight: 700; font-size: 18px; line-height: 1; color: var(--accent); }
+details.card[open] > summary { border-bottom: 1px solid var(--border); } details.card[open] > summary::after { content: "\2212"; }
+.card .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); gap: 20px; align-items: start; padding: 12px 14px 14px; }
+.kv { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 6px 12px; margin: 0; }
+.kv dt { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; padding-top: 3px; }
+.kv dd { margin: 0; font-size: 14.5px; }
+.card figure { margin: 0; } .card figcaption { font-size: 13px; color: var(--muted); margin-top: 6px; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; background: var(--surface2); padding: 1px 4px; border-radius: 4px; overflow-wrap: anywhere; }
+td .src { display: block; font-size: 13px; color: var(--muted); margin-top: 3px; overflow-wrap: anywhere; }
+@media (max-width: 840px) { .duo { grid-template-columns: 1fr; } .card .two { grid-template-columns: 1fr; } }
+@media (max-width: 680px) {
+  .kv { grid-template-columns: 1fr; gap: 2px; } .kv dd { margin-bottom: 8px; }
+  .dblock { padding: 12px 14px; } .q p { font-size: 17px; }
+  figure.fg.flat { padding: 0; }
+  table.it { border-spacing: 0; } table.it tr { padding: 12px; }
+  table.it td:not(.k) { padding: 8px 10px; margin-top: 6px; }
+  table.it td.k { padding: 0; } table.it td.k b { display: inline; margin: 0 6px; }
+  table.it td.fo::after, table.it td.now::after { content: none; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" class="defs" aria-hidden="true"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk "/></marker><marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk bad"/></marker><marker id="ah-good" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk good"/></marker><marker id="ah-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk acc"/></marker></defs></svg>
+<div class="layout">
+<nav class="toc" aria-label="Contents">
+  <div class="brand">Decision report</div>
+  <ol><li><a href="#decision">The decision</a></li>
+<li><a href="#intent">Intent and the gap</a></li>
+<li><a href="#look">Where to look</a></li>
+<li><a href="#grid">Risk and verification</a></li>
+<li><a href="#changes">The changes</a></li>
+<li><a href="#decisions">The decisions</a></li>
+<li><a href="#fits">How it fits</a></li>
+<li><a href="#gaps">Not covered</a></li>
+<li><a href="#asks">Our asks</a></li>
+<li><a href="#evidence">Evidence</a></li>
+</ol>
+  <div class="theme"><button type="button" id="theme-toggle">Light or dark</button></div>
+</nav>
+<main>
+<header class="hero" id="decision">
+  <div class="eyebrow">Decision report &middot; Rerail pull request #801</div>
+  <h1>On Windows: one git.exe per Git call, Git found again after upgrades</h1>
+  <div class="q"><div class="ql">1. The one question</div>
+  <p>Can a Git call whose Git is gone now wait longer, or answer differently, than the same call at <code>main</code>?</p>
+  </div>
+  <p class="rec"><b>We recommend:</b> approve it: such a call waits for the look for another Git only within its own time limit, and a session that starts just after an upgrade is checked again.</p>
+  <div class="big">
+    <div><b class="w">1,879 lines</b><span>in 9 files. 807 ship, 1,072 are tests and text.</span></div><div><b class="w">Careful review</b><span>A code owner approves: it changes which Git runs.</span></div><div><b class="w">Waits on Nothing</b><span>No other pull request needs to merge first.</span></div><div><b class="w">4 not verified</b><span><a href="#gaps">Part 8</a> lists each.</span></div>
+  </div>
+  <p class="state">Read from <a href="https://github.com/neralabs/rerail/pull/801">GitHub</a> on 18 November 2026, at head 014cbd380.</p>
+</header>
+<section id="intent"><h2>2. Intent, and the gap</h2>
+<figure class="fg flat"><table class="tc it"><colgroup><col style="width:15%"><col style="width:25%"><col style="width:29%"><col style="width:31%"></colgroup><thead><tr><th>Change</th><th>Intended</th><th>Found</th><th>Now</th></tr></thead><tbody><tr><td class="k"><b>Git behind its launcher</b></td><td class="in" data-l="Intended">&quot;The Git program behind Git for Windows&#x27; launcher&quot;: Rerail starts the build&#x27;s own <code>git.exe</code>, one process per call. <span class="tagx">code comment</span></td><td class="fo" data-l="Found">On 2.56 x64 the build folder is <code>ucrt64</code>, which the list lacks: every call starts the launcher and its child, 2 <code>git.exe</code>. <span class="tagx">Windows 11 runs</span></td><td class="now" data-l="Now"><b>Closes the gap</b> by adding <code>ucrt64</code> last to the build folders and giving that <code>git.exe</code> its launcher&#x27;s environment.</td></tr><tr><td class="k"><b>The Git kept</b></td><td class="in" data-l="Intended">&quot;The system Git ({@link findGit}), probed once per process&quot;: the daemon keeps the Git it found first. <span class="tagx">code comment</span></td><td class="fo" data-l="Found">An upgrade from 2.55 to 2.56 removes the <code>git.exe</code> a running daemon kept: every call fails, 0 of 3 writes steered. <span class="tagx">a real daemon</span></td><td class="now" data-l="Now"><b>Closes the gap</b> by looking again when a start finds no program, by the first look&#x27;s inputs, within the call&#x27;s own time limit.</td></tr></tbody></table>
+<figcaption>Found in November 2026 on Windows 11 with Git for Windows 2.56.0, in a real daemon with real hooks.</figcaption></figure>
+<details class="ev"><summary>Sources at main, and causes</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:42%"><col style="width:42%"></colgroup><thead><tr><th>Change</th><th>Where main states the intent</th><th>The cause, and what was measured</th></tr></thead><tbody><tr><td class="k">Git behind its launcher</td><td data-l="Where main states the intent"><code>src/engine/git.ts</code> at <code>main</code>, <code>gitBehindLauncher</code>: &quot;The Git program behind Git for Windows&#x27; launcher at `path`, or `path` itself.&quot; <code>GIT_FOR_WINDOWS_BUILDS</code> lists <code>mingw64</code>, <code>clangarm64</code> and <code>mingw32</code>.</td><td data-l="The cause, and what was measured">Git for Windows 2.56&#x27;s x64 build keeps its <code>git.exe</code> in <code>ucrt64\bin</code> and has no <code>mingw64</code>. The look finds no build folder and keeps <code>cmd\git.exe</code>, the launcher, which starts the build&#x27;s <code>git.exe</code> as its child. Started bare instead, that <code>git.exe</code> with <code>MSYSTEM</code> set and no <code>sh.exe</code> on <code>PATH</code> crashes on any command that runs Git&#x27;s shell.</td></tr><tr><td class="k">The Git kept</td><td data-l="Where main states the intent"><code>src/engine/git.ts</code> at <code>main</code>, line 297, on <code>gitExecutable</code>: &quot;The system Git ({@link findGit}), probed once per process&quot;. <code>docs/threat-model.md</code>, T11: &quot;The daemon finds Git once, from the folder and <code>PATH</code> it started with, and keeps it.&quot;</td><td data-l="The cause, and what was measured"><code>probed</code> is set at the first ask and never cleared. A start of a path that is gone fails with <code>ENOENT</code>, and so does every later one, until the daemon restarts. Through a real daemon on Windows 11, at <code>main</code>, each step after the removal steered 0 of 3 rule-breaking writes.</td></tr></tbody></table></div></details>
+</section><section id="look"><h2>3. Where to look</h2>
+<p class="sub">Minutes are our estimate.</p>
+<ol class="steps"><li class="first"><div><span class="rf">Read first</span><b><code>git.ts</code>: <code>ProcessGit</code> (with <code>followHomeShare</code>), <code>askedInThread</code>, <code>withinLimits</code>, <code>gitStartEnvironment</code>, <code>launcherHomes</code>, <code>HomeShare</code>, <code>prepareDaemonGit</code></b><span class="min">15 min</span><span class="x">Can a call whose Git is gone wait past its time limit, or start a Git the first look refused?</span></div></li><li><div><b><code>daemon.ts</code>: the call to <code>prepareDaemonGit</code> at the daemon&#x27;s start</b><span class="min">2 min</span><span class="x">Does only the daemon ask the home share?</span></div></li></ol>
+<div class="skim"><i></i><div><span class="rf">Then skim</span><b>Tests and text</b><span class="min">10 min</span><span class="x">Four test files: <code>git.test.ts</code> (ProcessGit with a disk the test holds), <code>git-moved.test.ts</code>, <code>git-second-look.test.ts</code> and the Windows-only <code>git-launcher-environment.test.ts</code>.</span></div></div>
+</section><section id="grid"><h2>4. Risk against verification</h2>
+<figure class="fg"><svg viewBox="0 0 340 159" role="img" aria-label="The changes by risk, high on top, against six checks. Git on Windows, high risk: the first five checks hold. CI at this head does not hold yet for every change." class="dg grid"><text x="150" y="13" text-anchor="middle" class="t b">1</text><text x="184" y="13" text-anchor="middle" class="t b">2</text><text x="218" y="13" text-anchor="middle" class="t b">3</text><text x="252" y="13" text-anchor="middle" class="t b">4</text><text x="286" y="13" text-anchor="middle" class="t b">5</text><text x="320" y="13" text-anchor="middle" class="t b">6</text><rect x="1" y="20" width="338" height="50" rx="8" class="bx hib"/><rect x="9" y="25" width="14" height="10" rx="2" class="rk high"/><text x="28" y="34" class="t s b">High risk</text><text x="12" y="56" class="t b">Git on Windows</text><g><title>Git on Windows, fails without the fix: Over the merge of `main` with the old source: 9 of the new cases fail on Windows 11, among them a blocking call after the kept Git is moved, a stopped read and a 50 ms limit left waiting, and a program only in the profile&#x27;s `bin` that runs. At the head each passes, 20 runs in a row.</title><circle cx="150" cy="52" r="8" class="mh"/><path d="M146 52l3 3l5 -6" class="mt"/></g><g><title>Git on Windows, independent review: A real hook that starts Git, `HOME` unset, home share not answering, 5 runs a side: every hook steered, and it ends 10,058 to 10,077 ms after its answer here, 10,051 to 10,263 ms at `main` and once each 12.7 and 27.8 s (Windows 11, Git 2.56 and 2.43). With every process asking the share it lived 21.06 s.</title><circle cx="184" cy="52" r="8" class="mh"/><path d="M180 52l3 3l5 -6" class="mt"/></g><g><title>Git on Windows, users lose nothing: Through a real daemon and real hooks on Windows 11, with Git removed under the daemon: the session that starts then gets 3 of 3 writes steered here, 0 of 3 with this change&#x27;s earlier `git.ts`, and 0 at `main`. With a home share that does not answer, each call ends at its time limit, as at `main`.</title><circle cx="218" cy="52" r="8" class="mh"/><path d="M214 52l3 3l5 -6" class="mt"/></g><g><title>Git on Windows, rules scan: nothing new: No new finding with the published 0.1.5 or with Rerail built from `main`, and none in code this change edits. The highest complexity of a function added or edited is 6, `behindLauncher` (6 at `main`) and `gitForWindowsBuild`; `runRerailDaemon` stays at 4.</title><circle cx="252" cy="52" r="8" class="mh"/><path d="M248 52l3 3l5 -6" class="mt"/></g><g><title>Git on Windows, Windows 11: no new failure: Windows 11 x64, Node 24.21.0, Git for Windows 2.56.0: the 17 test files that import `git.ts` or `daemon.ts`, 552 passed, 2 timing cases failed beside four other runs and then passed 5 of 5 at the head and at `main`. 19 calls in four set-ups answer as through the launcher where `main` crashes or differs.</title><circle cx="286" cy="52" r="8" class="mh"/><path d="M282 52l3 3l5 -6" class="mt"/></g><g><title>Git on Windows, CI at this head: The pull request is not on GitHub: CI runs when it opens. CI&#x27;s `Integration tests` job ran on Linux x64 at the head: 22 files passed, 1 skipped, 0 failed.</title><circle cx="320" cy="52" r="7.4" class="mo"/></g><text x="8" y="89" class="t s">1  fails without the fix</text><text x="168" y="89" class="t s">2  independent review</text><text x="8" y="105" class="t s">3  users lose nothing</text><text x="168" y="105" class="t s">4  rules scan: nothing new</text><text x="8" y="121" class="t s">5  Windows 11: no new failure</text><text x="168" y="121" class="t s">6  CI at this head</text><g><title>holds</title><circle cx="14" cy="145" r="8" class="mh"/><path d="M10 145l3 3l5 -6" class="mt"/></g><text x="28" y="149" class="t s">holds</text><g><title>does not hold yet</title><circle cx="92" cy="145" r="7.4" class="mo"/></g><text x="106" y="149" class="t s">not yet</text></svg>
+<figcaption>Start at the second look in <code>git.ts</code>: it decides which program runs while a process lives.</figcaption></figure>
+<details class="ev"><summary>Each limit, and each check that does not hold yet</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:18%"><col style="width:22%"><col style="width:60%"></colgroup><thead><tr><th>Change</th><th>Check</th><th>Its limit, or why it does not hold yet</th></tr></thead><tbody><tr><td class="k">Git on Windows</td><td data-l="Check">CI at this head</td><td data-l="Its limit, or why it does not hold yet">The pull request is not on GitHub: CI runs when it opens. CI&#x27;s <code>Integration tests</code> job ran on Linux x64 at the head: 22 files passed, 1 skipped, 0 failed.</td></tr></tbody></table></div></details>
+</section><section id="changes"><h2>5. The changes</h2>
+<ul class="lines"><li><span class="chip high"><i></i>High risk</span> <b>Git started without its launcher</b>: On Git for Windows 2.56, 2 <code>git.exe</code> per Git call at <code>main</code>, 1 here.</li></ul>
+</section><section id="decisions"><h2>6. The decisions</h2>
+<div class="dblock"><h3>How does a call wait for the look for another Git?</h3>
+<p><b>We chose</b> each call within its time limit; a blocking call asks the disk in a worker thread.</p>
+<p><b>Would change our mind:</b> a host where a worker thread cannot start.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">A worker thread for blocking calls, the thread pool for the others <span class='tag new'>chosen</span></td><td data-l="What a user gets">The session that starts just after the kept Git is gone is checked: 3 of 3 writes steered on Windows 11.</td><td data-l="Cost">The daemon&#x27;s thread waits for the worker thread: 60 to 330 ms on Windows 11, 20 to 30 ms on Linux, once per blocking call while no Git is found. A blocking call waits at most its own time limit.</td><td data-l="What it breaks">With a share that does not answer on <code>PATH</code> before the Git found, each blocking call holds the daemon&#x27;s thread up to its 10 s limit (10,052 and 10,206 ms) and fails, where <code>main</code> fails at once.</td></tr><tr><td class="k">A blocking call fails as its start did; the look runs for later calls</td><td data-l="What a user gets">Later calls run the Git found.</td><td data-l="Cost">None.</td><td data-l="What it breaks">The session&#x27;s first call finds its repository: it is taken as a folder outside Git, and 0 of 3 writes are steered.</td></tr><tr><td class="k">The look in Rerail&#x27;s thread</td><td data-l="What a user gets">Every call runs the Git found.</td><td data-l="Cost">None.</td><td data-l="What it breaks">A <code>PATH</code> entry on a share that does not answer freezes the daemon about 21 s per look.</td></tr><tr><td class="k">A child process for the look</td><td data-l="What a user gets">As chosen.</td><td data-l="Cost">The look&#x27;s code is bundled into each entry point, so a child cannot load it alone.</td><td data-l="What it breaks">Nothing, but it needs a new entry point in every bundle.</td></tr></tbody></table></div><div class="pns c2"><div class="pn before"><div class="pt">main: the kept git.exe is gone</div><svg viewBox="0 0 340 122" role="img" aria-label="At main the call starts the kept git.exe, the start finds no program, and that call and every later one fail until the daemon restarts: 0 of 3 writes steered after an upgrade." class="dg "><rect x="20" y="8" width="300" height="28" rx="8" class="bx "/><text x="170" y="26" text-anchor="middle" class="t s">a call starts the kept `git.exe`</text><line x1="170" y1="37" x2="170" y2="46" class="ar " marker-end="url(#ah)"/><rect x="20" y="47" width="300" height="28" rx="8" class="bx "/><text x="170" y="65" text-anchor="middle" class="t s">the start finds no program: `ENOENT`</text><line x1="170" y1="76" x2="170" y2="85" class="ar " marker-end="url(#ah)"/><rect x="20" y="86" width="300" height="28" rx="8" class="bx "/><text x="170" y="104" text-anchor="middle" class="t s">the call fails, and every later call</text></svg></div><div class="pn after"><div class="pt">this change: the first look again, within the time limit</div><svg viewBox="0 0 340 170" role="img" aria-label="With this change the look runs again by the first look&#x27;s inputs. Found within the call&#x27;s time limit, the call runs once more and the Git is kept: 3 of 3 writes steered. Past the limit or once stopped, the call fails as its start did; the look goes on." class="dg "><rect x="20" y="8" width="300" height="28" rx="8" class="bx "/><text x="170" y="26" text-anchor="middle" class="t s">a call starts the kept `git.exe`</text><line x1="170" y1="37" x2="170" y2="46" class="ar " marker-end="url(#ah)"/><rect x="20" y="47" width="300" height="28" rx="8" class="bx "/><text x="170" y="65" text-anchor="middle" class="t s">the start finds no program: `ENOENT`</text><line x1="170" y1="76" x2="170" y2="85" class="ar " marker-end="url(#ah)"/><rect x="20" y="86" width="300" height="28" rx="8" class="bx acc"/><text x="170" y="104" text-anchor="middle" class="t s">the first look again, by its inputs</text><line x1="95" y1="115" x2="95" y2="131" class="ar " marker-end="url(#ah)"/><line x1="245" y1="115" x2="245" y2="131" class="ar " marker-end="url(#ah)"/><text x="101" y="127" class="t s">found in time</text><text x="251" y="127" class="t s">limit or stop</text><rect x="20" y="132" width="146" height="30" rx="8" class="bx good"/><text x="93" y="151" text-anchor="middle" class="t s">the call runs once more</text><rect x="174" y="132" width="146" height="30" rx="8" class="bx "/><text x="247" y="151" text-anchor="middle" class="t s">fails; the look goes on</text></svg></div></div><p><b>Evidence.</b> Windows 11, a real daemon and real hooks, Git removed under the daemon, 3 runs each: 0 of 3 writes steered with the previous <code>git.ts</code>, 3 of 3 here. With a share that does not answer on <code>PATH</code> after the removed Git, each call that does not block ends at its 10 s limit (<code>main</code> fails in 2 to 43 ms).</p></details></div>
+<div class="dblock"><h3>Does Rerail start Git through the launcher or build the launcher&#x27;s environment?</h3>
+<p><b>We chose</b> the launcher&#x27;s environment for the build&#x27;s <code>git.exe</code>: one process per call, and a time limit ends the whole Git.</p>
+<p><b>Would change our mind:</b> a launcher that sets more than <code>git-wrapper.c</code> sets today.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">The build&#x27;s <code>git.exe</code> with the launcher&#x27;s <code>MSYSTEM</code>, <code>PATH</code> and <code>PLINK_PROTOCOL</code> <span class='tag new'>chosen</span></td><td data-l="What a user gets">One <code>git.exe</code> per call; filters, textconv, aliases, helpers and hooks get the launcher&#x27;s environment.</td><td data-l="Cost">An environment built per start and one <code>stat</code> off the thread; on a 2.55 layout a call is 1 to 25 ms slower in four runs of 200.</td><td data-l="What it breaks">On 2.56 with <code>MSYSTEM=MINGW64</code>, 2 of 19 programs Git runs see another commit time than through the launcher.</td></tr><tr><td class="k">Start through the launcher</td><td data-l="What a user gets">The launcher&#x27;s environment.</td><td data-l="Cost">Two <code>git.exe</code> per call.</td><td data-l="What it breaks">A time limit ends the launcher only; on Windows its child runs on in the repository.</td></tr><tr><td class="k">The build&#x27;s <code>git.exe</code> bare</td><td data-l="What a user gets">One process per call.</td><td data-l="Cost">None.</td><td data-l="What it breaks">With <code>MSYSTEM</code> set and no <code>sh.exe</code> on <code>PATH</code> it crashes on any command that runs Git&#x27;s shell: 6 of 19 calls answer on MinGit 2.55.</td></tr></tbody></table></div><p><b>Evidence.</b> 19 calls (Git LFS, a filter, a textconv, an alias, a credential helper, hooks, <code>core.fsmonitor</code>, <code>core.sshCommand</code>, <code>core.editor</code>), each against the launcher started by hand, on Windows 11: on 2.56, 17 of 19 answer as through the launcher with <code>MSYSTEM</code> unset and with <code>MINGW64</code> (<code>main</code> 17 and 19; the others differ in a commit&#x27;s time); on MinGit 2.55, 15 and 16 (<code>main</code> 5 and 6).</p></details></div>
+<div class="dblock"><h3>Which home&#x27;s <code>bin</code> goes on <code>PATH</code>, and which process asks?</h3>
+<p><b>We chose</b> the daemon follows the home share&#x27;s last answer; other processes ask nothing.</p>
+<p><b>Would change our mind:</b> a hook runner that ends a hook once its answer is written.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">The daemon follows the last look off its thread; other processes ask nothing <span class='tag new'>chosen</span></td><td data-l="What a user gets">The launcher&#x27;s <code>PATH</code> in the daemon from its second start. A hook ends when its Git call does, steered: 10,058 to 10,077 ms after its answer with a share that does not answer, <code>main</code> 10,051 to 10,263 ms.</td><td data-l="Cost">One <code>stat</code> off the daemon&#x27;s thread per start when <code>HOME</code> is unset.</td><td data-l="What it breaks">A hook&#x27;s or a command&#x27;s Git has one <code>bin</code> more than the launcher&#x27;s, the profile&#x27;s, as before this change: a program there is found before the rest of <code>PATH</code>.</td></tr><tr><td class="k">Every process follows the last answer</td><td data-l="What a user gets">The launcher&#x27;s <code>PATH</code> from each process&#x27;s second start.</td><td data-l="Cost">One <code>stat</code> off the thread per start in every process.</td><td data-l="What it breaks">A hook that starts Git lives 21.06 to 21.07 s after its answer when the share does not answer: the pending <code>stat</code> holds its event loop.</td></tr><tr><td class="k">Both homes&#x27; <code>bin</code>, always</td><td data-l="What a user gets">Every program the launcher finds.</td><td data-l="Cost">None.</td><td data-l="What it breaks">A program only in the profile&#x27;s <code>bin</code> runs where the person&#x27;s own Git fails it.</td></tr><tr><td class="k">A look in Rerail&#x27;s thread before each start</td><td data-l="What a user gets">The launcher&#x27;s <code>PATH</code> at every start.</td><td data-l="Cost">None on a local disk.</td><td data-l="What it breaks">A home share that does not answer freezes the daemon about 21 s per start.</td></tr></tbody></table></div><p><b>Evidence.</b> On Windows 11, a program only in the profile&#x27;s <code>bin</code>, called through an alias with the share a folder: a hook&#x27;s Git runs it, the daemon&#x27;s fails it from its second start, as the launcher does. The case of <code>prepareDaemonGit</code> fails with either of its calls taken out. A real daemon whose home share is a folder gives a filter the share&#x27;s <code>bin</code> alone. Real hooks: as in the chosen row.</p></details></div>
+</section><section id="fits"><h2>7. How it fits</h2>
+<p>Nothing has to merge first: it holds <code>main</code> at 9abe89233. No pull request needs it.</p>
+<p>#674 and #677 share files with it and merge clean in them. #756 has merge conflicts in <code>git.ts</code>, resolved in the description.</p>
+<details class="ev"><summary>Trial merges with our open pull requests</summary><p>#674 shares <code>docs/threat-model.md</code> and <code>daemon.ts</code>, which merge clean; its merge conflicts in two other files come from <code>main</code> alone. #677 shares <code>docs/windows.md</code>: clean. #756 changes how <code>git.ts</code> starts Git: five merge conflicts, each resolved by this change&#x27;s retry around #756&#x27;s starts (<code>runGitWith</code> calls its <code>runGitSync</code>). No order is required.</p></details>
+</section><section id="gaps"><h2>8. What is not covered</h2>
+<ul class="lines">
+<li><b>macOS</b> never ran.</li>
+<li><b>A blocking call per removal</b> behind a silent share holds the daemon&#x27;s thread up to its 10 s limit each time; <code>main</code> fails at once.</li>
+<li><b>A daemon whose home share is silent</b> steers nothing, at <code>main</code> and here alike, for a cause outside this change.</li>
+<li><b>A start that found no program</b> is taken by the repository lookup as outside Git, at <code>main</code> and here.</li>
+</ul>
+<details class="ev"><summary>Two smaller gaps, two limits that stay</summary><ul class="facts">
+<li><b>Two of a daemon&#x27;s Git starts</b> are not Rerail&#x27;s own Git calls and still go through the launcher, once per process each. This change does not touch them.</li>
+<li><b>A hook&#x27;s or a command&#x27;s Git</b> with <code>HOME</code> unset and a home share other than the profile gets both homes&#x27; <code>bin</code> on <code>PATH</code>, the share&#x27;s first, as before this change: a program in the profile&#x27;s <code>bin</code> comes before the rest of <code>PATH</code>.</li>
+</ul>
+<p><b>Limits that stay.</b></p>
+<ul class="facts">
+<li>The first look for Git stays synchronous in Rerail&#x27;s thread, as at <code>main</code>: a <code>PATH</code> entry on a share that does not answer, before the Git found, holds the first Git call.</li>
+<li><code>gitHome</code> still looks at the home share in Rerail&#x27;s thread, as at <code>main</code>: its own bug report. With Git for Windows its callers reach it only after a Git call that has waited on the same share.</li>
+</ul></details>
+</section><section id="asks"><h2>9. What we ask of you</h2>
+<ol class="lines">
+<li><div><b>May a running Rerail look for Git again, which threat model T11 says it does not?</b> We recommend yes, by the first look&#x27;s inputs and checks.</div></li>
+</ol>
+</section><section id="evidence"><h2>10. Evidence</h2>
+<p>The description on GitHub is the record. &quot;How you tested it&quot; holds the failing tests, each run and its counts.</p>
+<details class="ev"><summary>Runs at this head</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:40%"><col style="width:44%"></colgroup><thead><tr><th>Where</th><th>What ran</th><th>Result</th></tr></thead><tbody><tr><td class="k">Windows 11</td><td data-l="What ran">A real daemon and real hooks, a copy of MinGit 2.55 first on <code>PATH</code>, upgraded to 2.56&#x27;s layout under the daemon and then removed, 3 runs, with the previous <code>git.ts</code> and this one</td><td data-l="Result">Writes steered of 3 once the copy is removed: 0, 0, 0 with the previous <code>git.ts</code>; 3, 3, 3 here. Before the removal both give the same counts.</td></tr><tr><td class="k">Windows 11 and Linux x64</td><td data-l="What ran">Real Claude Code hooks that start Git, <code>HOME</code> unset and a home share that does not answer, 5 runs a side against <code>main</code> on Git for Windows 2.56 and 2.43</td><td data-l="Result">Every hook steered at both. Time from the answer to the end: 2.56, here 10,058 to 10,077 ms, <code>main</code> 10,059 to 12,746 ms; 2.43, here 10,058 to 10,074 ms, <code>main</code> 10,051 to 10,148 ms and once 27,770 ms. Every process asking the share: 21,061 to 21,073 ms. Usual home 98 to 129 ms here, 104 to 150 ms at <code>main</code>.</td></tr><tr><td class="k">Windows 11</td><td data-l="What ran"><code>HOME</code> unset and a home share that does not answer; then the kept Git removed with such a share on <code>PATH</code> after it; 5 runs a side against <code>main</code></td><td data-l="Result">Home share: each first call ends at the 10 s limit at both, later calls answer at both. Git removed: each call that does not block ends at its 10 s limit here (10,005 to 10,378 ms), <code>main</code> fails at once. Loop gaps on a quiet machine: 24 to 89 ms at <code>main</code>, 21 to 71 ms here.</td></tr><tr><td class="k">Windows 11</td><td data-l="What ran">19 calls, Git for Windows 2.56 and MinGit 2.55, <code>MSYSTEM</code> unset and <code>MINGW64</code>, each against the launcher</td><td data-l="Result">on 2.56, 17 of 19 answer as through the launcher with <code>MSYSTEM</code> unset and with <code>MINGW64</code> (<code>main</code> 17 and 19; the others differ in a commit&#x27;s time); on MinGit 2.55, 15 and 16 (<code>main</code> 5 and 6)</td></tr><tr><td class="k">Windows 11</td><td data-l="What ran">200 calls of <code>main</code>&#x27;s Git module and this one&#x27;s, alternating, four times</td><td data-l="Result">Git for Windows 2.56: 2.00 <code>git.exe</code> per call at <code>main</code>, 1.00 here; medians 59 to 76 ms against 47 to 61 ms. MinGit 2.55 first: 1.00 at both; 28 to 74 ms against 30 to 99 ms, slower in each run by 1 to 25 ms.</td></tr><tr><td class="k">Windows 11 and Linux x64</td><td data-l="What ran">The new cases over the merge of <code>main</code> with the old source, then at the head, then 20 times in a row; and mutations of each new line</td><td data-l="Result">Over the merge with the old source: 9 cases fail on Windows 11, 8 on Linux x64. At the head the changed files pass on both; 0 of 20 runs failed on each. 22 one-line changes each fail a case on both. Five more for the home share each fail a case. The case of <code>prepareDaemonGit</code> fails 20 of 20 without the follow, and without the look from the checkout.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">The rules scan as the automated reviewer runs it, against <code>main</code> at 9abe89233</td><td data-l="Result">No new finding with the published 0.1.5 or with Rerail built from <code>main</code>, and none in code this change edits. The highest complexity of a function added or edited is 6, <code>behindLauncher</code> (6 at <code>main</code>) and <code>gitForWindowsBuild</code>; <code>runRerailDaemon</code> stays at 4.</td></tr></tbody></table></div></details>
+<details class="ev"><summary>Sources</summary><p>Issue #662. Rerail at <code>main</code> (9abe89233) for each quoted intent. Each count names the run it comes from; the trial merges were made on 18 November 2026 with our open pull requests&#x27; local heads.</p></details>
+</section>
+<footer><p>A figure we could not source is left out.</p></footer>
+</main>
+</div>
+<script>
+(function () {
+  var root = document.documentElement, key = "pr-report-theme";
+  try { var saved = localStorage.getItem(key); if (saved) root.setAttribute("data-theme", saved); } catch (e) {}
+  document.getElementById("theme-toggle").addEventListener("click", function () {
+    var dark = root.getAttribute("data-theme") === "dark" || (!root.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    var next = dark ? "light" : "dark"; root.setAttribute("data-theme", next);
+    try { localStorage.setItem(key, next); } catch (e) {}
+  });
+})();
+</script>
+</body>
+</html>
