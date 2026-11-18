@@ -83,7 +83,11 @@ fn set_written(file: &std::fs::File, when: std::time::SystemTime) {
         FILE_BASIC_INFO, FileBasicInfo, SetFileInformationByHandle,
     };
     // A file time counts 100 ns intervals from 1601; a time left at 0 stays as it is.
-    let since_1601 = when.duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos() / 100
+    let since_1601 = when
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos()
+        / 100
         + 116_444_736_000_000_000;
     let time = i64::try_from(since_1601).unwrap();
     let info = FILE_BASIC_INFO {

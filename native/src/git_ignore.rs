@@ -330,7 +330,9 @@ mod tests {
                 .map_or_else(|| root.to_string_lossy().into_owned(), str::to_owned),
         );
         let source = |path: &str| {
-            let file = path.split('/').fold(root.clone(), |file, part| file.join(part));
+            let file = path
+                .split('/')
+                .fold(root.clone(), |file, part| file.join(part));
             Some(file.to_string_lossy().into_owned())
         };
         let matched = |pattern: &str, path: &str, line: u32| GitIgnoreMatch {
