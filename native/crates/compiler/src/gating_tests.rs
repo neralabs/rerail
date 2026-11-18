@@ -13,8 +13,12 @@ pub(super) struct Small {
     values: Vec<bitlex_masks::Named>,
 }
 
+/// The IR's tests' backward fill (decision 0406): a mask or a number named `ahead`, written
+/// `fill(…)`, is a `back_fill` (`syntax::backward`).
 pub(super) fn small(text: &str) -> Small {
     let stmts = ::bitlex::syntax::parse(text).expect("parses");
+    let backward = stmts.iter().any(|s| matches!(s, ::bitlex::syntax::Stmt::Mask(n, _) | ::bitlex::syntax::Stmt::Number(n, _) if n == "ahead"));
+    let stmts = if backward { ::bitlex::syntax::backward(stmts, &["ahead"]).expect("a fill named `ahead`") } else { stmts };
     let compiled = bitlex_masks::compile(&stmts, &[FALLBACK], None).expect("compiles");
     let native = BlockNative::lower(&compiled.program);
     Small { block: compiled.program, native, values: compiled.values }
@@ -116,16 +120,16 @@ fn a_gated_region_equals_the_interpreter() {
 
 /// `.rr`'s `\u` check (`h4`, the `\u{…}` forms, `u_ok`) is behind the gate of a `\u` in a
 /// string: set in 0.02% of the corpus's blocks.
-/// The gate after a `back_fill`, as `.rr`'s `uesc` is (a string's fill comes after one): the
+/// The gate after a `back_fill` (`ahead`, `small`), as `.rr`'s `uesc` is (a string's fill comes
+/// after one): the
 /// hex check, made from the bytes alone, must not be made in the first pass and stored.
 pub(super) const LATE: &str = "lexer t
-deprecated back_fill
 class bs  = '\\\\'
 class u   = 'u'
 class hex = '0'..'9' 'a'..'f'
 class sp  = ' '
 class z   = 'z'
-mask ahead = back_fill(z, ~sp)
+mask ahead = fill(z, ~sp)
 mask e  = escaped(bs)
 mask ue = e & u & ahead
 mask h4 = next(hex) & next(hex, 2) & next(hex, 3) & next(hex, 4)

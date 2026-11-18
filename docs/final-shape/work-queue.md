@@ -1864,3 +1864,6 @@ The views (source views over a batch, 88 MB on hogql) are not relations in block
 - **Done when**: the `.rr` steps are moved as Kotlin's was, or they stop being compiled. Step 35 is
   history, kept or dropped from the tests. The IR's tests write the `BackFill` op directly, and
   the parse refuses `back_fill` with no way back.
+- **Done** (2026-11-18): the `.rr` steps 15–21 are moved (token marks, step 22's regions); Kotlin's
+  steps 1–35 are an uncompiled record (0406); `deprecated back_fill` is refused; the IR's tests
+  make their back fill with `syntax::backward`. Reviewer not yet run.

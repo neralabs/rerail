@@ -32,16 +32,36 @@ A grammar may not write `back_fill`, as a mask or as a number. The parse refuses
 | the token's own later bytes | a test at the token: `escape "…" at KIND when …`, a mark's `at KIND when …` | the token's reader |
 | what the text is inside: a header, a declaration's run | the tree's rules | the parser's state |
 
-A grammar not yet moved says `deprecated back_fill` on a line of its own. That is the
-deprecation period: Kotlin's step 35 and the `.rr` ladder's steps 15 to 21 carry the line, and
-so do the tests of the IR's backward pass. Kotlin's step 36 is moved: it has no `back_fill`
-and no such line (below).
+There was a deprecation period, while the grammars moved: a grammar could say `deprecated
+back_fill` on a line of its own. It is over. That line is refused now too, with the same message,
+and no grammar the tests compile has a `back_fill`:
+- Kotlin's step 36 is moved (below).
+- The `.rr` ladder's steps 15 to 21 are moved: their look-ahead marks are token marks, as step 21's
+  are, and their later `` `` `` is step 22's region with `else` (below).
+- Kotlin's steps 1 to 35 are the ladder's record: each is the grammar a section of 0332 describes,
+  and no test compiles them (`GRAMMAR` is step 36). They keep their back fills, and do not parse.
+  So does `docs/parser-generators/lexers/python.bitlex`, a document no test compiles.
+- The tests of the IR's backward pass write a `fill` named `ahead` and make it a back fill in the
+  parsed statements, `syntax::backward(stmts, names)`. A grammar's text cannot reach it.
 
 **What stays.** The block program's `BackFill` operation stays an operation of the IR: Metal's
 lowering and the interpreter's keep it. The language writes one itself for a region kind with
 `else` (`Regions::body`). There it means "this region's closer comes later in the file", and on
 the CPU that meaning is the region's reader, which looks for its closer from its opener: `.rr`
 step 22's tier 1 makes no backward pass.
+
+## The `.rr` ladder's steps 15 to 21
+
+Each look-ahead mark of these steps was a word and a back fill over the bytes after it, past
+blanks and comments: `fix_on = fix_w & next(id_ahead, 3)`. Each is now the token mark step 21
+made of it: `mark fix_on = tokens "fix" identifier`, and so on for `suppress_on`, `options_on`,
+`over_on`, `one_name`, `empty_parens` and `no_value`. The masks that only fed them (`id_ahead`,
+`str_ahead`, `brace_ahead`, the aggregate words, `rp_colon`) are gone.
+
+Steps 17 to 21 told two backticks with no `` `` `` later in the file by a back fill
+(`tt_later`) and a fixed point over the strings and comments. They now have step 22's regions,
+`t2 = tick2 .. tt bytes 2 else e_t2 bytes 2`: the region's reader looks for its closer.
+`rr_steps_parse_as_the_reference_and_the_engine` passes on every step.
 
 ## A gap mark's next token: `before`
 
@@ -161,7 +181,8 @@ The forward scans differ from the lean parser's in two places, each an open item
 - `kotlin_parser::tests::swallowed_comments_are_the_lean_parsers`: the dropped comments, on
   Cranelift and the interpreter; the corpus and `aot_tapes_are_the_jits` for the generated Rust.
 - `syntax::tier2_tests::back_fill_is_refused`: a mask's and a number's `back_fill` are refused
-  with the message; with `deprecated back_fill`, parsed.
+  with the message, with `deprecated back_fill` too; `syntax::backward` makes a mask's and a
+  number's `fill` a back fill, and refuses a name that is no fill.
 - `syntax::tier2_tests::a_mark_is_before_a_token`: `before` and `unless before` parse to their
   sequences, several on one mark, a run among them; `before ~X`, `before end`, a run first or
   last, two runs and a run of a `~` are refused.
@@ -172,4 +193,5 @@ The forward scans differ from the lean parser's in two places, each an open item
   on the grammar's sentences, their mutations and fixed documents. Its grammar has no `settles`,
   which the reference does not implement (Q220).
 - The tests of the backward pass (`remade_tests`, `gating_tests`, `compile_tests`' aligned
-  ones, bitlex's number tests) say `deprecated back_fill`: they test the IR, which keeps it.
+  and number ones, bitlex's number tests) name their fill `ahead` (or by name) and make it a back
+  fill with `syntax::backward`: they test the IR, which keeps it.
