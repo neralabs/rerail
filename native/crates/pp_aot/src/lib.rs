@@ -7,27 +7,23 @@
 #[cfg(feature = "generated")]
 #[allow(unused_mut, unused_variables, unused_assignments, unreachable_code, unused_labels, unused_unsafe, unused_imports, unused_parens, non_snake_case, clippy::all)]
 mod generated {
-    pub mod pp_c_k0 {
-        include!(concat!(env!("OUT_DIR"), "/pp_c_k0.rs"));
+    pub mod pp_k0 {
+        include!(concat!(env!("OUT_DIR"), "/pp_k0.rs"));
     }
-    pub mod pp_cpp_k0 {
-        include!(concat!(env!("OUT_DIR"), "/pp_cpp_k0.rs"));
-    }
-    pub mod pp_cpp_k4 {
-        include!(concat!(env!("OUT_DIR"), "/pp_cpp_k4.rs"));
+    pub mod pp_k16 {
+        include!(concat!(env!("OUT_DIR"), "/pp_k16.rs"));
     }
 }
 
-/// An ahead-of-time build: its dialect (C++ or not), its entry, its `#if` depth, its
-/// fingerprint, and its functions structured and in all (`clif_rust`'s `STRUCTURED`).
-pub type Build = (bool, unsafe extern "C" fn(u64) -> u64, usize, u64, (usize, usize));
+/// An ahead-of-time build: its entry, its `#if` depth, its fingerprint, and its functions
+/// structured and in all (`clif_rust`'s `STRUCTURED`). C's and C++'s: the dialect is a run's.
+pub type Build = (unsafe extern "C" fn(u64) -> u64, usize, u64, (usize, usize));
 
 /// Each build (none without the `generated` feature).
 #[cfg(feature = "generated")]
 pub const BUILDS: &[Build] = &[
-    (false, generated::pp_c_k0::pp_run, generated::pp_c_k0::K, generated::pp_c_k0::SOURCE, generated::pp_c_k0::STRUCTURED),
-    (true, generated::pp_cpp_k0::pp_run, generated::pp_cpp_k0::K, generated::pp_cpp_k0::SOURCE, generated::pp_cpp_k0::STRUCTURED),
-    (true, generated::pp_cpp_k4::pp_run, generated::pp_cpp_k4::K, generated::pp_cpp_k4::SOURCE, generated::pp_cpp_k4::STRUCTURED),
+    (generated::pp_k0::pp_run, generated::pp_k0::K, generated::pp_k0::SOURCE, generated::pp_k0::STRUCTURED),
+    (generated::pp_k16::pp_run, generated::pp_k16::K, generated::pp_k16::SOURCE, generated::pp_k16::STRUCTURED),
 ];
 
 #[cfg(not(feature = "generated"))]

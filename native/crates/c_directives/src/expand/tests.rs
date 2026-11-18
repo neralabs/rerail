@@ -21,12 +21,21 @@ fn same(src: &str) {
     }
 }
 
+/// The examples that tell the dialects apart do: the lean pass expands each differently in C
+/// and C++, so equal to it in both, the words read the run's dialect (`Env::cpp`).
 #[test]
-fn the_programs_assemble() {
-    for cpp in [false, true] {
-        program(cpp).unwrap_or_else(|e| panic!("cpp {cpp}: {e}"));
+fn the_dialects_examples_differ() {
+    for name in ["pastes by dialect", "#if, #elif and their expressions"] {
+        let src = EXAMPLES.iter().find(|e| e.0 == name).unwrap().1;
+        assert_ne!(lean(src.as_bytes(), false), lean(src.as_bytes(), true), "{name}");
     }
-    assert!(program(true).unwrap().pp.suffix && !program(false).unwrap().pp.suffix);
+}
+
+#[test]
+fn the_program_assembles() {
+    // One program; C++'s rows in it, applied where the run is C++'s.
+    let p = program().unwrap();
+    assert!(p.pp.suffix && p.pp.cpp && p.pp.cpp_ops.len() == 3);
 }
 
 /// The examples: the standard's (C17 §6.10.3.3–5, C++20's `__VA_OPT__`) and the cases the lean
@@ -199,6 +208,8 @@ H5C(H5A())
             "#define N 2\n_Pragma(\" push_macro/**/( \\\"N\\\" ) \")\n#undef N\nN\n_Pragma(\"pop_macro(\\\"N\\\")\")\nN\n_Pragma(\"pop_macro(\\\"N\\\")\") N\n",
         ),
     ),
+    // C++'s punctuators and literal suffixes paste into one token in C++ only.
+    ("pastes by dialect", "#define P(a, b) a ## b\nP(->, *) P(<=, >) P(., *) P(\"s\", _x) P(1, _x)\n"),
     ("undefines and redefinitions", "#define A 1\nA\n#undef A\nA\n#define A 2\nA\n#undef B\n#define F(x) x\n#undef F\nF(1)\n# \n#pragma x\nA\n"),
 ];
 
@@ -389,11 +400,11 @@ fn the_compiled_words_are_the_interpreters() {
     let mut tus: Vec<(String, Vec<(&str, &[u8])>)> = EXAMPLES.iter().map(|(n, s)| ((*n).to_owned(), vec![("main.c", s.as_bytes())])).collect();
     tus.extend(TUS.iter().map(|(n, f)| ((*n).to_owned(), f.iter().map(|f| (f.0, f.1.as_bytes())).collect())));
     let (mut same, mut differ) = (0, Vec::new());
-    for (cpp, k) in [false, true].into_iter().flat_map(|c| DEPTHS.map(|k| (c, k))) {
-        let p = program(cpp).unwrap();
-        let c = compile_k(p, k).unwrap_or_else(|e| panic!("cpp {cpp} k {k}: {e:?}"));
+    for k in DEPTHS {
+        let c = compile_k(program().unwrap(), k).unwrap_or_else(|e| panic!("k {k}: {e:?}"));
         let jit = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| c.run(w, f, e, b);
-        for (name, files) in &tus {
+        // One compiled program; the dialect is the run's.
+        for (cpp, (name, files)) in [false, true].into_iter().flat_map(|cpp| tus.iter().map(move |t| (cpp, t))) {
             let want = expand_tu_with(files[0].0, &mut search(files, &dirs), cpp, &INTERPRETED, &pp_words::run);
             let got = expand_tu_with(files[0].0, &mut search(files, &dirs), cpp, &INTERPRETED, &jit);
             match got {
@@ -409,8 +420,8 @@ fn the_compiled_words_are_the_interpreters() {
 /// function's nesting shallow enough for rustc. `RERAIL_PP_AOT_DIR` set: written there.
 #[test]
 fn the_words_translate_to_rust() {
-    for (cpp, k) in [(false, 0), (true, 0), (true, 4)] {
-        let src = rerail_compiler::native_cpu_pp::rust_source(program(cpp).unwrap(), k).unwrap_or_else(|e| panic!("cpp {cpp} k {k}: {e}"));
+    for k in [0, 16] {
+        let src = rerail_compiler::native_cpu_pp::rust_source(program().unwrap(), k).unwrap_or_else(|e| panic!("k {k}: {e}"));
         let (mut depth, mut deepest) = (0usize, 0usize);
         for c in src.bytes() {
             match c {
@@ -422,9 +433,9 @@ fn the_words_translate_to_rust() {
                 _ => {}
             }
         }
-        eprintln!("cpp {cpp} k {k}: {} KB, {} lines, nesting {deepest}", src.len() >> 10, src.lines().count());
+        eprintln!("k {k}: {} KB, {} lines, nesting {deepest}", src.len() >> 10, src.lines().count());
         if let Ok(dir) = std::env::var("RERAIL_PP_AOT_DIR") {
-            std::fs::write(std::path::Path::new(&dir).join(format!("pp_{}_k{k}.rs", if cpp { "cpp" } else { "c" })), &src).unwrap();
+            std::fs::write(std::path::Path::new(&dir).join(format!("pp_k{k}.rs")), &src).unwrap();
         }
     }
 }
@@ -437,7 +448,7 @@ fn the_words_translate_to_rust() {
 #[test]
 #[ignore = "a report (Q36)"]
 fn the_compiled_words_code_counted() {
-    let c = rerail_compiler::native_cpu_pp::disassemble(program(false).unwrap(), 0).unwrap();
+    let c = rerail_compiler::native_cpu_pp::disassemble(program().unwrap(), 0).unwrap();
     let text = &c.disasm[0];
     let insts: Vec<&str> = text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.ends_with(':') && !l.starts_with(';')).collect();
     let count = |f: &dyn Fn(&str) -> bool| insts.iter().filter(|l| f(l)).count();
@@ -465,16 +476,15 @@ fn the_aot_words_are_the_interpreters() {
     let mut tus: Vec<(String, Vec<(&str, &[u8])>)> = EXAMPLES.iter().map(|(n, s)| ((*n).to_owned(), vec![("main.c", s.as_bytes())])).collect();
     tus.extend(TUS.iter().map(|(n, f)| ((*n).to_owned(), f.iter().map(|f| (f.0, f.1.as_bytes())).collect())));
     let (mut same, mut differ) = (0, Vec::new());
-    for &(cpp, entry, k, source, (structured, functions)) in rerail_pp_aot::BUILDS {
+    for &(entry, k, source, (structured, functions)) in rerail_pp_aot::BUILDS {
         // Each function structured control, as rustc compiles it best (not a loop over a `match`).
-        assert_eq!(structured, functions, "cpp {cpp} k {k}");
-        let p = program(cpp).unwrap();
-        let now = rerail_compiler::native_cpu_pp::rust_source(p, k).unwrap();
+        assert_eq!(structured, functions, "k {k}");
+        let now = rerail_compiler::native_cpu_pp::rust_source(program().unwrap(), k).unwrap();
         let fp = now.lines().find_map(|l| l.strip_prefix("pub const SOURCE: u64 = ")).unwrap();
-        assert_eq!(fp.trim_end_matches(';'), format!("{source:#x}"), "cpp {cpp} k {k}: the build is not the words' code now; rebuild with the feature");
+        assert_eq!(fp.trim_end_matches(';'), format!("{source:#x}"), "k {k}: the build is not the words' code now; rebuild with the feature");
         // SAFETY: `entry` is `rust_source`'s `pp_run` for this program (the fingerprint).
         let aot = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| unsafe { rerail_compiler::native_cpu_pp::run_aot(entry, w, f, e, b) };
-        for (name, files) in &tus {
+        for (cpp, (name, files)) in [false, true].into_iter().flat_map(|cpp| tus.iter().map(move |t| (cpp, t))) {
             let want = expand_tu_with(files[0].0, &mut search(files, &dirs), cpp, &INTERPRETED, &pp_words::run);
             let got = expand_tu_with(files[0].0, &mut search(files, &dirs), cpp, &INTERPRETED, &aot);
             match got {
@@ -543,14 +553,14 @@ fn the_corpus_compiled_is_the_interpreters() {
 fn the_compiled_words_have_their_shape() {
     use rerail_compiler::native_cpu_pp::{MAX_K, compile_k};
     use rerail_compiler::native_cpu_shape::Step;
-    for cpp in [false, true] {
-        let p = program(cpp).unwrap();
+    {
+        let p = program().unwrap();
         let returns = |k: usize| compile_k(p, k).unwrap().heads.iter().filter(|&&h| h == Step::Return).count();
         let (r0, r1) = (returns(0), returns(1));
         let at0 = compile_k(p, 0).unwrap().code_bytes.len();
         for k in [0, 1, 2, 4, 8, MAX_K] {
-            let c = compile_k(p, k).unwrap_or_else(|e| panic!("cpp {cpp} k {k}: {e:?}"));
-            eprintln!("cpp {cpp} k {k}: code {:?} bytes, {} CLIF instructions", c.code_bytes, c.clif.lines().filter(|l| l.starts_with("    ") && !l.trim_end().ends_with(':')).count());
+            let c = compile_k(p, k).unwrap_or_else(|e| panic!("k {k}: {e:?}"));
+            eprintln!("k {k}: code {:?} bytes, {} CLIF instructions", c.code_bytes, c.clif.lines().filter(|l| l.starts_with("    ") && !l.trim_end().ends_with(':')).count());
             if k == 0 {
                 let mut by: Vec<(usize, usize)> = c.word_insts.iter().copied().enumerate().map(|(pc, n)| (n, pc)).collect();
                 by.sort_unstable_by(|a, b| b.cmp(a));
@@ -571,13 +581,13 @@ fn the_compiled_words_have_their_shape() {
                 eprintln!("  by word: {}", ops.iter().take(25).map(|(k, (n, c))| format!("{k} {n}/{c}")).collect::<Vec<_>>().join(", "));
             }
             let functions = c.clif.matches("function ").count();
-            assert!(!c.clif.contains("call_indirect") && !c.clif.contains("return_call"), "cpp {cpp} k {k}");
+            assert!(!c.clif.contains("call_indirect") && !c.clif.contains("return_call"), "k {k}");
             let calls = c.clif.lines().filter(|l| l.contains(" = call ") || l.trim_start().starts_with("call ")).count();
-            assert_eq!(functions, c.code_bytes.len(), "cpp {cpp} k {k}");
-            assert!(calls > 0 && (k == 0 || functions > at0), "cpp {cpp} k {k}");
-            assert!(c.code_bytes.iter().all(|&b| b <= 128 << 10), "cpp {cpp} k {k}: {:?}", c.code_bytes);
+            assert_eq!(functions, c.code_bytes.len(), "k {k}");
+            assert!(calls > 0 && (k == 0 || functions > at0), "k {k}");
+            assert!(c.code_bytes.iter().all(|&b| b <= 128 << 10), "k {k}: {:?}", c.code_bytes);
             // Each depth past 0 adds the evaluator's `RETURN`s' dispatches once more.
-            assert_eq!(c.heads.iter().filter(|&&h| h == Step::Return).count(), r0 + k * (r1 - r0), "cpp {cpp} k {k}");
+            assert_eq!(c.heads.iter().filter(|&&h| h == Step::Return).count(), r0 + k * (r1 - r0), "k {k}");
         }
     }
 }
@@ -621,8 +631,8 @@ fn the_corpus_timed() {
         paths.sort();
         let srcs: Vec<Vec<u8>> = paths.iter().map(|p| std::fs::read(p).unwrap()).collect();
         let c = Compiled::new();
-        let k0 = rerail_compiler::native_cpu_pp::compile_k(program(cpp).unwrap(), 0).unwrap();
-        let aot = rerail_pp_aot::BUILDS.iter().find(|b| b.0 == cpp && b.2 == 0).map(|b| b.1);
+        let k0 = rerail_compiler::native_cpu_pp::compile_k(program().unwrap(), 0).unwrap();
+        let aot = rerail_pp_aot::BUILDS.iter().find(|b| b.1 == 0).map(|b| b.0);
         for pass in 0..2 {
             let on = Cell::new(pass == 1);
             let run_words = |w: &Words, f: &[File], e: &pp_words::Env, b: &Bounds| {
@@ -763,9 +773,8 @@ fn the_compiled_ifs_have_the_interpreters_values() {
     ];
     let words = |v: &[Out]| v.iter().map(|t| String::from_utf8_lossy(&t.2).into_owned()).collect::<String>();
     let mut unlexed = Vec::new();
+    let compiled: Vec<_> = DEPTHS.iter().map(|&k| compile_k(program().unwrap(), k).unwrap_or_else(|e| panic!("k {k}: {e:?}"))).collect();
     for cpp in [false, true] {
-        let p = program(cpp).unwrap();
-        let compiled: Vec<_> = DEPTHS.iter().map(|&k| compile_k(p, k).unwrap_or_else(|e| panic!("cpp {cpp} k {k}: {e:?}"))).collect();
         let mut differ = Vec::new();
         for case in CASES {
             let mut src = format!("#if ({case}) == ({case})\nok\n#else\nerr\n#endif\n#if ({case}) * 0 - 1 > 0\nu\n#else\ns\n#endif\n");

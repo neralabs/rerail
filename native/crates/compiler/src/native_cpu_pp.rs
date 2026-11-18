@@ -2648,7 +2648,14 @@ impl Lower<'_, '_> {
         let lr = self.f.ins().band(ll, ri);
         let not_lr = branch(self, lr);
         if self.pp.suffix {
+            // C++'s: where the run is C++'s.
+            let cpp = self.is_cpp();
+            let (yes, no) = (self.f.create_block(), self.f.create_block());
+            self.f.ins().brif(cpp, yes, &[], no, &[]);
+            self.f.switch_to_block(yes);
             kind(self, LITERAL);
+            self.f.switch_to_block(no);
+            none(self);
         } else {
             none(self);
         }
@@ -2666,18 +2673,33 @@ impl Lower<'_, '_> {
         let b = op_like(self, rk);
         let ops = self.f.ins().band(a, b);
         let not_ops = branch(self, ops);
-        let ops: Vec<Vec<u8>> = self.pp.ops.iter().map(|&i| self.strings[usize::from(i)].clone()).collect();
-        for op in ops {
-            let eq = self.spelled_at(lp, tn, &op);
-            let k = match &op[..] {
-                b"#" | b"%:" => HASH,
-                b"##" | b"%:%:" => HASHHASH,
-                b"<:" | b":>" | b"<%" | b"%>" => DIGRAPH,
-                _ => PUNCT,
-            };
-            let not_this = branch(self, eq);
-            kind(self, k);
-            self.f.switch_to_block(not_this);
+        // Then C++'s own, where the run is C++'s.
+        let strings = |l: &Self, ops: &[u16]| -> Vec<Vec<u8>> { ops.iter().map(|&i| l.strings[usize::from(i)].clone()).collect() };
+        let (ops, cpp_ops) = (strings(self, &self.pp.ops), strings(self, &self.pp.cpp_ops));
+        for (k, list) in [ops, cpp_ops].into_iter().enumerate() {
+            if k == 1 {
+                if list.is_empty() {
+                    break;
+                }
+                let cpp = self.is_cpp();
+                let (yes, no) = (self.f.create_block(), self.f.create_block());
+                self.f.ins().brif(cpp, yes, &[], no, &[]);
+                self.f.switch_to_block(no);
+                none(self);
+                self.f.switch_to_block(yes);
+            }
+            for op in list {
+                let eq = self.spelled_at(lp, tn, &op);
+                let k = match &op[..] {
+                    b"#" | b"%:" => HASH,
+                    b"##" | b"%:%:" => HASHHASH,
+                    b"<:" | b":>" | b"<%" | b"%>" => DIGRAPH,
+                    _ => PUNCT,
+                };
+                let not_this = branch(self, eq);
+                kind(self, k);
+                self.f.switch_to_block(not_this);
+            }
         }
         none(self);
         self.f.switch_to_block(not_ops);
@@ -2685,6 +2707,12 @@ impl Lower<'_, '_> {
         self.f.switch_to_block(join);
         let r = self.f.block_params(join);
         (r[0], r[1])
+    }
+
+    /// Whether the run is C++'s (`Env::cpp`), as an `i8` 0 or 1.
+    fn is_cpp(&mut self) -> Value {
+        let c = ld(self.f, types::I64, self.ctx, at!(cpp));
+        self.f.ins().icmp_imm(IntCC::NotEqual, c, 0)
     }
 
     /// `Machine::file_src`: the top source (a file's): its address.
@@ -4869,7 +4897,10 @@ impl Lower<'_, '_> {
         self.f.ins().jump(join, &[k.into()]);
         self.f.switch_to_block(other);
         if self.pp.cpp {
+            // C++'s alternative tokens, where the run is C++'s.
             let ident = self.f.ins().icmp_imm(IntCC::Equal, kind, i64::from(IDENT));
+            let cpp = self.is_cpp();
+            let ident = self.f.ins().band(ident, cpp);
             let alt = self.f.create_block();
             let none = self.f.ins().iconst(types::I64, NO_OP);
             self.f.ins().brif(ident, alt, &[], join, &[none.into()]);
@@ -5673,8 +5704,15 @@ impl Lower<'_, '_> {
         self.f.ins().brif(is_id, ident, &[], other, &[]);
         self.f.switch_to_block(ident);
         let f8 = self.f.ins().iconst(types::I8, 0);
+        // C's: an identifier is 0.
+        let c_ident = self.f.create_block();
         if self.pp.cpp {
-            // An alternative token is an operator, no primary; `true` is 1.
+            // C++'s, where the run is C++'s: an alternative token is an operator, no primary;
+            // `true` is 1.
+            let cpp = self.is_cpp();
+            let cpp_ident = self.f.create_block();
+            self.f.ins().brif(cpp, cpp_ident, &[], c_ident, &[]);
+            self.f.switch_to_block(cpp_ident);
             let mut alt = self.f.ins().iconst(types::I8, 0);
             for (name, _) in crate::pp_expr::ALT {
                 let e = self.spelled_at(p, n, name);
@@ -5685,10 +5723,13 @@ impl Lower<'_, '_> {
             let ok = self.f.ins().bxor_imm(alt, 1);
             self.f.ins().jump(join, &[ok.into(), tv.into(), f8.into()]);
         } else {
-            let one = self.f.ins().iconst(types::I8, 1);
-            let z = self.f.ins().iconst(types::I64, 0);
-            self.f.ins().jump(join, &[one.into(), z.into(), f8.into()]);
+            self.f.ins().jump(c_ident, &[]);
         }
+        self.f.switch_to_block(c_ident);
+        let f8 = self.f.ins().iconst(types::I8, 0);
+        let one = self.f.ins().iconst(types::I8, 1);
+        let z = self.f.ins().iconst(types::I64, 0);
+        self.f.ins().jump(join, &[one.into(), z.into(), f8.into()]);
         self.f.switch_to_block(other);
         let f8 = self.f.ins().iconst(types::I8, 0);
         let z = self.f.ins().iconst(types::I64, 0);

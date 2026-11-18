@@ -288,10 +288,13 @@ pub struct Words {
 pub struct PpTables {
     /// The punctuators (`ppop sN`): two punctuators paste into one where their bytes spell one.
     pub ops: Vec<u16>,
-    /// A literal pastes with an identifier after it into one literal, its suffix (`ppsuffix`,
-    /// C++'s user-defined literals).
+    /// The punctuators C++ has and C does not (`ppop sN cpp`): one where the run is C++'s
+    /// (`pp_words::Env::cpp`).
+    pub cpp_ops: Vec<u16>,
+    /// In C++, a literal pastes with an identifier after it into one literal, its suffix
+    /// (`ppsuffix`, user-defined literals).
     pub suffix: bool,
-    /// `#if` reads C++'s alternative tokens as operators and `true` as 1 (`ppcpp`).
+    /// In C++, `#if` reads the alternative tokens as operators and `true` as 1 (`ppcpp`).
     pub cpp: bool,
 }
 

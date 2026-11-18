@@ -1,5 +1,5 @@
 # The expansion program numbered: `python3 gen.py expand.lab > expand.rir` (a dev tool: words with
-# labels and strings by text, numbered; the string table, the punctuators and the C++ rows listed).
+# labels and strings by text, numbered; the string table, the punctuators (C++'s marked) listed).
 import sys, re
 lines = open(sys.argv[1]).read().splitlines()
 strings = []
@@ -23,13 +23,14 @@ for k, w in words:
     pc += 1
 ops = ['<<=','>>=','...','->*','<=>','->','++','--','<<','>>','<=','>=','==','!=','&&','||','*=','/=','%=','+=','-=','&=','^=','|=','::','.*','<:',':>','<%','%>','%:','%:%:','##','#'] + list('()[]{};,~?:.=!+-*/%^&|<>')
 cpp_only = {'->*','<=>','.*'}
-oprows = ['  ppop s%d%s' % (s(o), '  ; C++ only' if o in cpp_only else '') for o in ops]
+oprows = ['  ppop s%d' % s(o) for o in ops if o not in cpp_only] + ['  ppop s%d cpp' % s(o) for o in ops if o in cpp_only]
 head = '''program - ir=7 grammar=none
 ; Decision 0348: a translation unit's preprocessing, as preprocessing words (the compiler's
 ; `pp_words`, which says what each word does). The lean preprocessor's `Pp` is its reference.
-; A line ending `; C++ only` is left out of C's program (`expand::program`). Generated from a
-; labeled text, the words numbered and their strings listed.
+; One program for C and C++: the rows marked `cpp` (and `ppsuffix`, `ppcpp`) apply where the run
+; is C++'s (`pp_words::Env::cpp`). Generated from a labeled text, the words numbered and their
+; strings listed.
   mode set=0 query=0
 '''
 rows = ['  string %d "%s"' % (i, t) for i, t in enumerate(strings)]
-print(head + '\n'.join(rows + oprows) + '\n  ppsuffix  ; C++ only\n  ppcpp  ; C++ only\n' + '\n'.join(out))
+print(head + '\n'.join(rows + oprows) + '\n  ppsuffix\n  ppcpp\n' + '\n'.join(out))

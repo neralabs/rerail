@@ -130,6 +130,8 @@ pub(crate) const B_HAS_EMBED: u8 = 12;
 /// built-in, operand, value; a test not there is 0, but for `__is_identifier`, 1).
 #[derive(Clone, Copy)]
 pub struct Env<'a> {
+    /// The dialect: C++ where set, else C (`PpTables`' C++ rows apply).
+    pub cpp: bool,
     pub date: &'a [u8],
     pub time: &'a [u8],
     pub timestamp: &'a [u8],
@@ -138,7 +140,7 @@ pub struct Env<'a> {
 
 impl Env<'static> {
     /// The lean pass's defaults (`rerail_c_pp::Config::new`).
-    pub const DEFAULT: Env<'static> = Env { date: b"Jan  1 1970", time: b"00:00:00", timestamp: b"Thu Jan  1 00:00:00 1970", features: &[] };
+    pub const DEFAULT: Env<'static> = Env { cpp: false, date: b"Jan  1 1970", time: b"00:00:00", timestamp: b"Thu Jan  1 00:00:00 1970", features: &[] };
 }
 
 /// A file of the TU: its bytes, its token tape (`buf` its index + 1), its conditionals' chains
@@ -400,7 +402,7 @@ pub fn validate(program: &Words) -> Result<(), Error> {
             return Err(Error::InvalidTarget(pc));
         }
     }
-    if program.pp.ops.iter().any(|&s| program.strings.get(usize::from(s)).is_none_or(|b| !(1..=4).contains(&b.len()))) {
+    if program.pp.ops.iter().chain(&program.pp.cpp_ops).any(|&s| program.strings.get(usize::from(s)).is_none_or(|b| !(1..=4).contains(&b.len()))) {
         return Err(Error::InvalidOperand(0));
     }
     let mut memo: HashMap<usize, Option<bool>> = HashMap::new();
@@ -1016,6 +1018,8 @@ pub(crate) struct Ctx {
     pub nreturns: u64,
     pub room_returns: u64,
     pub collecting: u64,
+    /// The dialect (`Env::cpp`): 1 C++.
+    pub cpp: u64,
     pub t: Tok,
     pub line_last: Tok,
     /// The built-in call being read, `__COUNTER__`'s count, and a line marker's number token.
@@ -1211,6 +1215,7 @@ pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, boun
         nreturns: 0,
         room_returns: bounds.depth as u64,
         collecting: u64::from(m.collecting),
+        cpp: u64::from(env.cpp),
         t: m.t,
         line_last: m.line_last,
         pragma_toks: [Tok::default(); 3],
@@ -1783,10 +1788,11 @@ impl<'a> Machine<'a> {
             (NUMBER, IDENT | NUMBER) => Some(NUMBER),
             (NUMBER, PUNCT) => (rb.iter().all(|&c| c == b'.') || (matches!(rb, b"+" | b"-") && matches!(lb.last(), Some(b'e' | b'E' | b'p' | b'P')))).then_some(NUMBER),
             (PUNCT, NUMBER) => (lb == b"." && rb.first().is_some_and(u8::is_ascii_digit)).then_some(NUMBER),
-            (LITERAL, IDENT) => self.program.pp.suffix.then_some(LITERAL),
+            (LITERAL, IDENT) => (self.program.pp.suffix && self.env.cpp).then_some(LITERAL),
             (a, b) if op_like(a) && op_like(b) => {
                 let strings = &self.program.strings;
-                self.program.pp.ops.iter().any(|&s| strings[usize::from(s)] == text).then(|| match text {
+                let cpp_ops: &[u16] = if self.env.cpp { &self.program.pp.cpp_ops } else { &[] };
+                self.program.pp.ops.iter().chain(cpp_ops).any(|&s| strings[usize::from(s)] == text).then(|| match text {
                     b"#" | b"%:" => HASH,
                     b"##" | b"%:%:" => HASHHASH,
                     b"<:" | b":>" | b"<%" | b"%>" => DIGRAPH,
@@ -2225,7 +2231,7 @@ impl<'a> Machine<'a> {
     /// A token's operator: a punctuator's spelling (or an alternative token's punctuator), as
     /// one of the evaluator's operators; `None` for any other token.
     fn expr_op(&self, t: &Tok) -> Option<u8> {
-        let it = crate::pp_expr::item(t.kind, self.text(t), self.program.pp.cpp);
+        let it = crate::pp_expr::item(t.kind, self.text(t), self.program.pp.cpp && self.env.cpp);
         let op = it.op?;
         Some(OPS.iter().position(|o| *o == op).unwrap_or(OPS.len()) as u8)
     }
@@ -2302,8 +2308,9 @@ impl<'a> Machine<'a> {
             }
             5 => {
                 let t = self.ex.t;
-                let it = crate::pp_expr::item(t.kind, self.text(&t), self.program.pp.cpp);
-                let v = crate::pp_expr::primary(&it, self.program.pp.cpp);
+                let cpp = self.program.pp.cpp && self.env.cpp;
+                let it = crate::pp_expr::item(t.kind, self.text(&t), cpp);
+                let v = crate::pp_expr::primary(&it, cpp);
                 if v.is_none() {
                     self.ex.err = true;
                 }

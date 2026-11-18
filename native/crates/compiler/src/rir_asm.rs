@@ -445,7 +445,15 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
         }
         "switch" => switch_row(parts, line)?,
         "reading" => reading_row(parts, line)?,
-        "ppop" => parts.pp.ops.push(line.number("s")?),
+        "ppop" => {
+            let s = line.number("s")?;
+            if line.peek_word().as_deref() == Some("cpp") {
+                line.word()?;
+                parts.pp.cpp_ops.push(s);
+            } else {
+                parts.pp.ops.push(s);
+            }
+        }
         "ppsuffix" => parts.pp.suffix = true,
         "ppcpp" => parts.pp.cpp = true,
         "rule" => {
@@ -878,6 +886,9 @@ pub fn head_rows(out: &mut String, program: &Words) {
     crate::rir_text::rule_rows(out, &program.rules);
     for s in &program.pp.ops {
         let _ = writeln!(out, "  ppop s{s}");
+    }
+    for s in &program.pp.cpp_ops {
+        let _ = writeln!(out, "  ppop s{s} cpp");
     }
     if program.pp.suffix {
         let _ = writeln!(out, "  ppsuffix");

@@ -8,20 +8,12 @@ use rerail_compiler::program::Words;
 
 pub const EXPAND: &str = include_str!("../expand/expand.rir");
 
-include!("expand_text.rs");
+static PROGRAM: std::sync::OnceLock<Result<Words, String>> = std::sync::OnceLock::new();
 
-/// The program's text for C (its `; C++ only` lines left out) or C++.
-pub fn text(cpp: bool) -> String {
-    text_of(EXPAND, cpp)
-}
-
-static C: std::sync::OnceLock<Result<Words, String>> = std::sync::OnceLock::new();
-static CPP: std::sync::OnceLock<Result<Words, String>> = std::sync::OnceLock::new();
-
-/// The process's expansion program for C or C++, assembled and verified the first time.
-pub fn program(cpp: bool) -> Result<&'static Words, &'static str> {
-    let cell = if cpp { &CPP } else { &C };
-    cell.get_or_init(|| rerail_compiler::rir_asm::assemble(&text(cpp))).as_ref().map_err(String::as_str)
+/// The process's expansion program, assembled and verified the first time: one for C and C++,
+/// the dialect a run's (`pp_words::Env::cpp`).
+pub fn program() -> Result<&'static Words, &'static str> {
+    PROGRAM.get_or_init(|| rerail_compiler::rir_asm::assemble(EXPAND)).as_ref().map_err(String::as_str)
 }
 
 /// A token tape's kind, as the words know it.
@@ -346,7 +338,8 @@ pub type Runner<'r> = dyn Fn(&rerail_compiler::program::Words, &[File], &pp_word
 
 /// `expand_tu`, the words run by `run`.
 pub fn expand_tu_with<F: rerail_c_pp::files::Files>(main: &str, io: &mut F, cpp: bool, g: &Grammars, run: &Runner<'_>) -> Result<Vec<Out>, String> {
-    let program = program(cpp)?;
+    let program = program()?;
+    let env = pp_words::Env { cpp, ..pp_words::Env::DEFAULT };
     let mut tu = Tu { io, g, cpp, units: Vec::new(), spelled: Vec::new() };
     if tu.file(main.to_string(), None, true)? == pp_words::NONE {
         return Err(format!("{main} cannot be read"));
@@ -358,7 +351,7 @@ pub fn expand_tu_with<F: rerail_c_pp::files::Files>(main: &str, io: &mut F, cpp:
         let tapes: Vec<Vec<Tok>> = tu.units.iter().map(|u| u.lexed.as_ref().map_or(Vec::new(), |l| l.tape.iter().map(|t| if t.buf == u32::MAX { Tok { buf: n + 1, ..*t } } else { *t }).collect())).collect();
         let mut files: Vec<File> = tu.units.iter().zip(&tapes).map(|(u, t)| File { path: u.path.as_bytes(), bytes: &u.src, lines: &u.lines, toks: t, chains: u.lexed.as_ref().map_or(&[][..], |l| &l.chains), includes: &u.includes, named: &u.named, if_depth: u.lexed.as_ref().map_or(0, |l| l.if_depth) }).collect();
         files.push(File { bytes: &tu.spelled, ..File::default() });
-        let e = run(program, &files, &pp_words::Env::DEFAULT, &Bounds::of(&files)).map_err(|r| format!("refused at word {}: {}", r.pc, r.why))?;
+        let e = run(program, &files, &env, &Bounds::of(&files)).map_err(|r| format!("refused at word {}: {}", r.pc, r.why))?;
         if e.wanted.is_empty() {
             return Ok(e.toks.iter().map(|t| (t.kind, t.flags & (pp_words::BOL | pp_words::SPACE), e.text(&files, t).to_vec())).collect());
         }
