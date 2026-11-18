@@ -422,9 +422,9 @@ export function resolveNativeBindingPath(configuredPath = process.env.RERAIL_ENG
 }
 
 /**
- * The engine's busy refusal, kept when the addon first loads. `isWorkspaceBusy` runs in a retry's `catch`, after the
- * failed call loaded the addon, so it reads this instead of resolving the addon there again, where a moved addon would
- * throw over the error it classifies.
+ * The engine's busy refusal, kept when the addon first loads. `isWorkspaceBusy` runs in the evaluation line's `catch`
+ * (`EvaluationSlot`), after the failed call loaded the addon, so it reads this instead of resolving the addon there
+ * again, where a moved addon would throw over the error it classifies.
  */
 let workspaceBusy: unknown;
 

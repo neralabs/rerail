@@ -868,7 +868,7 @@ pub struct WorkspaceApplyTask {
     pub(super) request_direct: Option<Request>,
 }
 /// The message a workspace task fails with while another apply holds `cpu_slot`: the host reads this
-/// constant (`isWorkspaceBusy`), pauses and calls again.
+/// constant (`isWorkspaceBusy`) and calls again once the call holding the slot has settled.
 #[napi]
 pub const WORKSPACE_BUSY: &str = "WORKSPACE_BUSY";
 
