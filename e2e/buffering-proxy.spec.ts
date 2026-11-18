@@ -1,4 +1,9 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { expect, test } from "./dashboard-test.js";
+import { startHoldingProxy } from "./support/holding-proxy.js";
+import { scenarioDashboardUrl, seedScenarioFolder, startScenarioDaemon } from "./support/scenario-daemon.js";
 
 /**
  * Something between the browser and the daemon can hold a streamed response until it ends: a proxy that buffers
@@ -26,4 +31,40 @@ test("the dashboard loads and keeps reading behind a proxy that holds the change
   await expect(page.locator("#statusText")).toHaveText("Live", { timeout: 20_000 });
   const first = reads;
   await expect.poll(() => reads, { timeout: 15_000 }).toBeGreaterThanOrEqual(first + 2);
+});
+
+/**
+ * Such a proxy passes on what it held when the daemon's connection closes, so a daemon restart hands the page a
+ * stream's messages after all. When the daemon is back the page must read again and say Live, as it did when it polled.
+ */
+test("the dashboard reads again and says Live after a daemon restart behind a proxy that hands on the held stream when the daemon's connection closes", async ({ page, context }) => {
+  // Two missed beats and a read, a stop, a start, the retry's pause (up to 30 s) and two reads at the pace.
+  test.setTimeout(150_000);
+  const root = mkdtempSync(join(tmpdir(), "rerail-e2e-restart-"));
+  const manifest = await seedScenarioFolder("no-packs", root);
+  let daemon = await startScenarioDaemon(manifest);
+  const port = Number(new URL(daemon.origin).port);
+  const proxy = await startHoldingProxy(port);
+  try {
+    await context.addInitScript(([origin, token]) => {
+      if (location.origin === origin) localStorage.setItem("rerail-access", token);
+    }, [proxy.origin, daemon.accessToken] as const);
+    let reads = 0;
+    page.on("request", request => { if (new URL(request.url()).pathname === "/api/repositories") reads += 1; });
+    const status = page.locator("#statusText");
+    await page.goto(scenarioDashboardUrl(proxy.origin, manifest.primary));
+    await expect(status).toHaveText("Live", { timeout: 20_000 });
+
+    await daemon.stop();
+    await expect(status).not.toHaveText("Live", { timeout: 15_000 });
+    daemon = await startScenarioDaemon(manifest, { port });
+
+    await expect(status).toHaveText("Live", { timeout: 45_000 });
+    const back = reads;
+    await expect.poll(() => reads, { timeout: 15_000 }).toBeGreaterThanOrEqual(back + 2);
+  } finally {
+    await proxy.close();
+    await daemon.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
 });

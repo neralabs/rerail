@@ -442,10 +442,12 @@ The daemon writes rules and work links; the shared runtime records harness event
   commit at once, several in a row at most 5 s after the first. It also reads at a 5 s message once its activity
   window has moved on, or while its Merge Assist page shows a scan running or gh signed out, missing or unavailable,
   and, while that page shows gh signed in, once when the status says the daemon reads gh again (`readAgainInMs`). A
-  failed read is tried again after 10 s, doubling to 30 s. A stream that never brings a message, as behind a proxy or a scanner that
-  holds streamed responses until they end, makes the page read every 5 s while it keeps trying the stream. A browser
-  without Web Locks, or a page that is not a secure context, holds no stream and reads every 5 s. A daemon that stops
-  closes the stream.
+  failed read is tried again after 10 s, doubling to 30 s, and the read that answers again opens a new stream. A stream
+  that misses two 5 s messages before its first one, as behind a proxy or a scanner that holds streamed responses until
+  they end, makes the page read every 5 s until a stream brings a message, whatever earlier streams did. Behind such a
+  proxy the page shows Connecting… for those 12 s after it loads, and after a daemon restart reads nothing for the 12 s
+  after the read that found the daemon back. A browser without Web Locks, or a page that is not a secure context, holds
+  no stream and reads every 5 s. A daemon that stops closes the stream.
 - UI client-side routes fall back to `index.html`.
 
 Without the native addon the daemon still runs: `status`, `/healthz` and the UI header report the kernel unavailable, and transcripts stay readable. Model files can fail `model/manifest.json`; a clone without Git LFS has a pointer for `model.safetensors`. Then `rerail status` prints `Model: checksum mismatch (model.safetensors)` and exits 5, and `/healthz` reports it. The dashboard header turns red naming the file, and session attaches fail until the files are fetched and the daemon restarted.

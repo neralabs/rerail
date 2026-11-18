@@ -314,10 +314,89 @@ describe("the dashboard following the daemon's change stream", () => {
     await settle();
 
     await after(12_000);
-    await after(12_000);
+    await after(11_000);
 
-    expect(streams).toHaveLength(3);
+    expect(streams).toHaveLength(2);
     expect(readsOf("/api/repositories")).toBe(1);
+  });
+
+  it("reads at the pace when a stream opened after one that brought messages misses two beats before its first message", async () => {
+    stream().send("t1");
+    await settle();
+    await after(12_000);
+    expect(readsOf("/api/repositories")).toBe(1);
+
+    // The new stream brings nothing: the path may hold it whole now, whatever the first one did.
+    await after(12_000);
+    await after(10_000);
+
+    expect(readsOf("/api/repositories")).toBe(4);
+  });
+
+  it("says the daemon answers at the first retry after a restart behind a proxy that holds every stream and hands on what it held when the connection closed, then reads at the pace", async () => {
+    for (let second = 0; second < 40; second += 5) await after(5_000);
+    // The daemon stops: the proxy hands on the open stream's token and a beat, and the connection ends.
+    up = false;
+    stream().send("t1");
+    stream().send("t1");
+    stream().end();
+    await settle();
+    await after(20_000);
+    // Back; from then the proxy holds every stream again. The pause doubled to 20 s at the second failed read, as the
+    // poll's did, so the first retry after it is 10 s on.
+    up = true;
+    const back = readsOf("/api/repositories");
+
+    await after(12_000);
+    expect(data.disconnected).toBe(false);
+    expect(readsOf("/api/repositories")).toBe(back + 1);
+
+    await after(18_000);
+    const steady = readsOf("/api/repositories");
+    await after(30_000);
+    expect(readsOf("/api/repositories")).toBe(steady + 6);
+  });
+
+  it("reads no second time when the stream ends while a read is out, whose answer says whether the daemon answers", async () => {
+    stream().send("t1");
+    await settle();
+    const unanswered: (() => void)[] = [];
+    vi.stubGlobal("fetch", async (input: URL, init: { signal?: AbortSignal } = {}) => {
+      const url = new URL(input);
+      if (url.pathname === "/api/changes") return openStream(init.signal!);
+      reads.push(url.pathname);
+      return new Promise<Response>(resolve => unanswered.push(() => resolve(answer(url))));
+    });
+    const before = readsOf("/api/repositories");
+    void refreshNow();
+    await settle();
+
+    stream().end();
+    await settle();
+    for (let round = 0; round < 2; round += 1) {
+      for (const reply of unanswered.splice(0)) reply();
+      await settle();
+    }
+
+    expect(readsOf("/api/repositories")).toBe(before + 1);
+  });
+
+  it("reads nothing when the stream ends after a read failed, and tries again once that failure's pause ends, as the poll did", async () => {
+    stream().send("t1");
+    await settle();
+    failing.add("/api/repositories");
+    stream().send("t2");
+    await settle();
+    expect(data.disconnected).toBe(true);
+    const before = readsOf("/api/repositories");
+
+    stream().end();
+    await settle();
+    expect(readsOf("/api/repositories")).toBe(before);
+
+    // The pace doubled at the failure, from 5 s to 10 s.
+    await after(10_000);
+    expect(readsOf("/api/repositories")).toBe(before + 1);
   });
 
   it("reads every 5 s as before when the daemon serves no stream, as an older Rerail does", async () => {

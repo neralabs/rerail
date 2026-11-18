@@ -4,9 +4,10 @@
  * conflict event, and the token again at the daemon's 5 s beat) and reads again when it says something changed: one
  * conditional GET per resource (`If-None-Match`; 304 means nothing changed), at once after a quiet spell and at most
  * every 5 s while changes keep coming. Nothing is read while nothing changes or the tab is hidden. When the stream
- * ends (the daemon stopped) the page reads once, which says whether the daemon answers, and opens it again after a
- * pause that backs off to 30 s while the daemon is unreachable; a stream that never brings a message (something between
- * holds it whole) makes the page read at that pace until one does. Data lands in the store; the caller re-renders and
+ * ends (the daemon stopped) the page reads once, which says whether the daemon answers; while it does not, the page
+ * reads again after a pause that backs off to 30 s, as the poll did, and follows a new stream once a read answers. A
+ * stream that misses two beats before its first message (something between holds it whole) makes the page read at the
+ * 5 s pace until a message comes. Data lands in the store; the caller re-renders and
  * reconciles in place. Every poll reads the repository list and the daemon's health, and with a repository in scope
  * its context; beyond that only the needs the page names (`setNeeds`: the open view's, the sidebar's and an open
  * sheet's, from `views/index.js`). Long lists are paged with a cursor: a poll refreshes their first page and keeps the
@@ -71,11 +72,11 @@ let stallTimer = null;
 let stream = null;
 let token = null;
 /**
- * Whether a stream this page opened ever brought a message, and whether the page reads at the pace because one that
- * never did missed two beats: something between the browser and the daemon may hold a streamed response until it
- * ends (a proxy or a scanner that buffers responses), so no stream will ever bring one. The first message ends it.
+ * Whether the page reads at the pace because its last stream missed two beats before its first message: something
+ * between the browser and the daemon may hold a streamed response until it ends (a proxy or a scanner that buffers
+ * responses), so that stream may never bring one. Decided by each stream alone, since a path that held one stream may
+ * hand on another's messages (a proxy passes on what it held when the daemon's connection closes). A message ends it.
  */
-let delivered = false;
 let atPace = false;
 /** The activity window's start (`sinceFor`) the last read asked for. */
 let windowRead = null;
@@ -803,13 +804,20 @@ export async function refresh() {
 /**
  * What a read's outcome moves, whatever asked for it: one that failed is tried again at the poll's own pace (`backoff`),
  * as the poll tried it, even while the stream stays open, and so is every read while the page reads at the pace
- * (`atPace`); one that answered holds what the daemon had when it began.
+ * (`atPace`); one that answered holds what the daemon had when it began. A read that answers while no stream is open
+ * or due (the daemon came back) follows a new one at once.
  */
 function afterRead(asked) {
   data.readingSince = 0;
   if (!data.disconnected && data.behindSince <= asked) data.behindSince = 0;
   if (data.disconnected || atPace) retryLater();
+  else followIfClosed();
   armGithubRead();
+}
+
+/** Follow a new stream when none is open or due: the daemon answers again after it was unreachable. */
+function followIfClosed() {
+  if (stream === null && retryTimer === null) followChanges();
 }
 
 /** The tab is in the background: nothing is followed or read until it shows again. */
@@ -836,7 +844,6 @@ function readSoon() {
  */
 function onMessage({ event, data: next }, first) {
   data.heardAt = Date.now();
-  delivered = true;
   atPace = false;
   if (event === "conflicts") mergeAssistCountDue = true;
   if (first) startOver(next);
@@ -931,23 +938,24 @@ async function inStreamSlot(run) {
   return false;
 }
 
-/** Watch the stream `controller` for two missed beats. */
-function watchStall(controller) {
+/** Watch the stream `controller` for two missed beats; `heard` says whether it brought a message yet. */
+function watchStall(controller, heard) {
   clearTimeout(stallTimer);
-  stallTimer = setTimeout(() => stalled(controller), LIVE_MS);
+  stallTimer = setTimeout(() => stalled(controller, heard), LIVE_MS);
 }
 
 /**
  * The stream `controller` missed two beats: the daemon's loop is stuck, a network dropped the connection unclosed, or
- * something between holds the response until it ends. Another is opened, which reads at its first message. While no
- * stream of this page has brought one, it may never come: the page reads at the pace from now on, as it read before the
- * stream, until a message does.
+ * something between holds the response until it ends. Another is opened, which reads at its first message. When this
+ * one brought none (`heard`), whatever earlier streams did, none may ever come: the page reads at the pace from now on,
+ * as it read before the stream, until a message does. One that brought messages reopens without the pace, so a page
+ * whose stream delivers never polls.
  */
-function stalled(controller) {
+function stalled(controller, heard) {
   if (stream !== controller) return;
   stream = null;
   controller.abort();
-  atPace ||= !delivered;
+  if (!heard) atPace = true;
   followChanges();
 }
 
@@ -960,8 +968,8 @@ function followChanges() {
   const controller = new AbortController();
   stream = controller;
   let first = true;
-  const each = message => { watchStall(controller); onMessage(message, first); first = false; };
-  watchStall(controller);
+  const each = message => { watchStall(controller, true); onMessage(message, first); first = false; };
+  watchStall(controller, false);
   // How it ended needs no reading here: the read after it says whether the daemon answers.
   inStreamSlot(() => follow(changesPath(), each, controller.signal)).catch(() => {}).then(() => changesEnded(controller));
   keepPace();
@@ -973,28 +981,32 @@ function keepPace() {
 }
 
 /**
- * The stream ended, or found no slot: read once, and open it again after `backoff`, which that read's outcome moves
- * for the next time. The retry waits for no read, so a read that never answers cannot keep the stream closed.
+ * The stream ended, or found no slot: read once, which says whether the daemon answers, and try again after `backoff`,
+ * which that read's outcome moves for the next time. No read when one is out, whose answer says it as well, or when
+ * the last one failed, whose retry is due: the poll doubled its pause once per failed poll, and two failed reads at one
+ * moment would double it twice. The retry waits for no read, so a read that never answers cannot keep the stream closed.
  */
 function changesEnded(controller) {
   if (stream !== controller) return; // ended from here: the tab hid, the scope changed, or two beats were missed
   stream = null;
   clearTimeout(stallTimer);
   retryLater();
-  void refresh();
+  if (inFlight === null && !data.disconnected) void refresh();
 }
 
 /**
- * Try again after `backoff`, the poll's own pace (doubling to 30 s while reads fail): open the stream again if it is
- * closed, else read again if the last read failed or the page reads at the pace. The one retry for a stream that
- * ended, a read that failed and a stream that never brought a message.
+ * Try again after `backoff`, the poll's own pace (doubling to 30 s while reads fail): read again if the last read
+ * failed, as the poll did, since a stream something between holds would not say the daemon is back (the read that
+ * answers opens the stream, `afterRead`); else open the stream again if it is closed, or read if the page reads at the
+ * pace. The one retry for a stream that ended, a read that failed and a stream that never brought a message.
  */
 function retryLater() {
   clearTimeout(retryTimer);
   retryTimer = setTimeout(() => {
     retryTimer = null;
-    if (stream === null) followChanges();
-    else if (data.disconnected || atPace) void refresh();
+    if (data.disconnected) void refresh();
+    else if (stream === null) followChanges();
+    else if (atPace) void refresh();
   }, backoff);
 }
 
@@ -1009,8 +1021,6 @@ function endChanges() {
 
 export function startPolling(listener) {
   onChange = listener;
-  // The page starts: no stream of it has brought a message yet.
-  delivered = false;
   atPace = false;
   followChanges();
   document.addEventListener("visibilitychange", () => { if (hidden()) endChanges(); else followChanges(); });
