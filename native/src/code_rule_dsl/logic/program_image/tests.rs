@@ -1797,6 +1797,38 @@ fn a_request_record_a_step_drops_stays_dropped() {
     assert_eq!(asked.get("s"), Some(&vec![BTreeSet::from(["r3".to_owned()])]));
 }
 
+/// Q180: a step that changes a request relation's rules and does not state the record (here drops `q`'s first
+/// rule) leaves it by place over other rules. The pipeline states it again by rule at once, so the next pass reads it
+/// aligned (`request rules another subsumes` read it misaligned and kept it whole), not only at the pipeline's end.
+#[test]
+fn a_request_record_a_step_misaligns_is_stated_again_at_once() {
+    use std::collections::BTreeSet;
+    struct DropFirstQ;
+    impl super::manager::ProgramPass for DropFirstQ {
+        const NAME: &'static str = "drop q's first rule";
+        fn run(&mut self, cx: &super::manager::Cx<'_>, w: &mut super::manager::ProgramW<'_>) -> Result<(), String> {
+            let v = cx.v();
+            let first = v.heads(v.rel("q").unwrap()).next().unwrap().id();
+            w.keep(|r| r.id() != first)
+        }
+    }
+    let text = ".decl a(x: number)\n.input a\n.decl b(x: number)\n.input b\n.decl c(x: number)\n.input c\n.decl q(x: number)\n.output q\n\
+                q(x) :- a(x).\nq(x) :- b(x).\nq(x) :- c(x).\n";
+    let mut p = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+    p.asked_by.insert("q".into(), ["r1", "r2", "r3"].iter().map(|r| BTreeSet::from([(*r).to_owned()])).collect());
+    let v = Builder::of_program(&p).unwrap().finish().unwrap().0;
+    let mut pipe = super::manager::Pipeline::new("test", v);
+    pipe.program(&mut DropFirstQ);
+    let now = pipe.current().unwrap().clone();
+    let by = |r: &str| BTreeSet::from([r.to_owned()]);
+    assert_eq!(now.asked().get("q"), Some(&vec![by("r2"), by("r3")]), "stated by rule after the step");
+    // As the tree states it: the rule dropped, its entry with it.
+    p.rules.remove(0);
+    p.asked_by.insert("q".into(), vec![by("r2"), by("r3")]);
+    let want = Builder::of_program(&p).unwrap().finish().unwrap().0;
+    assert!(super::same_program(&want, &now), "{}", super::differences(&want, &now));
+}
+
 /// Each relation's layout, declared or inferred (`layouts`, decision 0361 step 3).
 mod layouts {
     use crate::code_rule_dsl::logic::program_image::layouts::{Layouts, Origin};

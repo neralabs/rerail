@@ -3728,7 +3728,7 @@ native join it falls back to the planner's whole-rule order.
   checks it against the tree's; 252 tests of preparation, program_image, the corpus, the merges, simplify and rr
   pass (M3).
 
-### Q180. The version after `simplify` keeps a request record by place where the tree's states it by rule
+### Q180. The version after `simplify` keeps a request record by place where the tree's states it by rule (done)
 
 - **Found** (2026-11-18, the same run past Q179): the preparation's check after `simplify` fails. `rr_value_req`'s
   record on the version has more entries than rules, and its readers sit on other rules; the tree's is by rule.
@@ -3738,6 +3738,17 @@ native join it falls back to the planner's whole-rule order.
   A debug assert at every pipeline step that a request relation's entries match its rules, or the step stated none,
   would find each such pass at once, not one per run.
 - **Done when**: a debug run of corpus0 x B-now passes every stage check.
+- **Done** (2026-11-18): a probe on the pipeline's steps named it: `inline filters` made three of `rr_value_req`'s
+  rules (51 to 54) and did not state the record, so `request rules another subsumes` read it misaligned (51 entries,
+  54 rules) and kept it whole while dropping 28 rules; past it, a text pass replaced one rule (the count the same).
+  Not one pass's fault but the shape: the pipeline carried the record by rule and stated it only at its end. Now it
+  states it again after any step whose rules leave the version's record other than the carried one
+  (`AskedByRule::restated`), so every pass reads it aligned, as the tree's passes state it after each.
+  Past the stages, the prepared program's header check compared ruleless images by digest, the record by place
+  under two rule orders; it now leaves the record out (checked by rule after the merges) and prints the
+  differences. And Q179's test never built its repeat (the parser keeps one of a rule written twice): it adds it
+  after parsing now. Debug run of corpus0 x B-now: every check passes, 463 findings, d067ec2ebf6f. Tests:
+  `a_request_record_a_step_misaligns_is_stated_again_at_once`, Q179's, and the record tests (cargo, M3).
 
 ### Q182. Relax cannot load the engine under `RELAX_SHARE` (a patched `native/vendor` crate)
 

@@ -4318,9 +4318,16 @@ fn run_observed(
             let head = source.header(&lists).map_err(Error::Plan)?;
             #[cfg(debug_assertions)]
             {
-                let digest = |p: &front::Program| crate::code_rule_dsl::logic::program_image::Builder::of_program(p).and_then(|b| b.finish()).map(|(v, _)| v.digest());
-                let ruleless = front::Program { rules: Vec::new(), ..prog.clone() };
-                assert_eq!(digest(&head), digest(&ruleless), "the source's header is the tree's fields");
+                let image = |p: &front::Program| crate::code_rule_dsl::logic::program_image::Builder::of_program(p).and_then(|b| b.finish()).map(|(v, _)| v);
+                // The request record is by place among a relation's rules (decision 0331), and the version keeps its
+                // rules in its own order (a pass's new rules after the rest, where the tree's replace in place): with
+                // no rules it reads by place, so it is left out here. `same_program` checked it by rule after the merges.
+                let ruleless = front::Program { rules: Vec::new(), asked_by: Default::default(), ..prog.clone() };
+                let head = front::Program { asked_by: Default::default(), ..head.clone() };
+                match (image(&head), image(&ruleless)) {
+                    (Ok(h), Ok(t)) => assert!(h.digest() == t.digest(), "the source's header is the tree's fields: {}", crate::code_rule_dsl::logic::program_image::differences(&h, &t)),
+                    (h, t) => assert_eq!(h.map(|v| v.digest()), t.map(|v| v.digest()), "the source's header is the tree's fields"),
+                }
             }
             #[cfg(debug_assertions)]
             drop(prog);

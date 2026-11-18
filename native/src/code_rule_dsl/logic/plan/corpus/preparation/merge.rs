@@ -585,15 +585,19 @@ mod tests {
     fn a_repeated_request_rule_dropped_keeps_both_readers_by_rule() {
         use std::collections::BTreeSet;
         let text = ".decl a(x: number)\n.input a\n.decl b(x: number)\n.input b\n.decl q(x: number)\n.output q\n\
-                    q(x) :- a(x).\nq(x) :- b(x).\nq(x) :- a(x).\n";
+                    q(x) :- a(x).\nq(x) :- b(x).\n";
         let mut tree = crate::code_rule_dsl::logic::rr::parse(text).unwrap();
+        // The repeat as a merge makes it: the parser keeps one of a rule written twice.
+        let repeat = tree.rules[0].clone();
+        tree.rules.push(repeat);
         tree.asked_by.insert("q".into(), ["r1", "r2", "r3"].iter().map(|r| BTreeSet::from([(*r).to_owned()])).collect());
         let (v, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
+        assert_eq!(v.rules().count(), 3, "the repeat built");
         let mut p = Pipeline::new("test", v);
         let mut repeats = super::DropRepeated::default();
         p.program(&mut repeats);
         let out = p.current().unwrap().clone();
-        assert_eq!(repeats.0, 1);
+        assert_eq!((repeats.0, out.rules().count()), (1, 2));
         crate::code_rule_dsl::logic::plan::corpus::drop_repeated_rules(&mut tree);
         let (want, _) = Builder::of_program(&tree).unwrap().finish().unwrap();
         assert_eq!(out.asked().get("q"), Some(&vec![BTreeSet::from(["r1".to_owned(), "r3".to_owned()]), BTreeSet::from(["r2".to_owned()])]), "the step's own record, by rule");
