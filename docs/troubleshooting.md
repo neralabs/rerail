@@ -479,11 +479,16 @@ event in `untaken-events` in the Rerail home and answers, and while such an even
 its own behind it at once without asking the daemon. A session's start still waits. As soon as the daemon reads again
 it checks those events as it checks any event, in the order their hooks met them and before any later event; what a
 check finds reaches the agent with the session's next answer, not with the hook that left the event. Rerail never saw
-such a tool call's files before it ran, so an edit is compared with what the session last saw of each file, unless
-that already holds what the call left (the session first saw the file after the call ran, as in a busy spell that
-starts with the session, or the call left the file as it was): then the whole file the call left is checked, and a
-finding can name lines the call did not write. A tool's output is not kept
-with them. The folder keeps at most 256 events and 16 MiB, so what a daemon that reads again has to check
+such a tool call's files before it ran, so an Edit is compared with the file it left with its own edit put back, its
+new text replaced by its old text where the file holds the new text once (every place, for an edit of every place):
+it is told exactly its own lines, as when Rerail sees it run. Any other such call (a Write, or an Edit whose new text
+the file no longer holds once, as another program or a later call changed it) is compared with what the session last
+saw of each file, unless that already holds what the call left (the session first saw the file after the call ran, as
+in a busy spell that starts with the session, or the call left the file as it was): then the whole file the call left
+is checked, and a finding can name lines the call did not write. When another program changed the file after the
+session last saw it, a line that program added can be named as the call's, and a line the call wrote back after that
+program removed it is not named. A tool's output is not kept with them. The folder keeps at most 256 events and
+16 MiB, so what a daemon that reads again has to check
 is bounded; past that a hook's event is lost and the line above counts it. An entry there the daemon cannot read (a
 folder under an event's name, a file another user or program left, one another program holds open) counts once as
 an event it could not check, and is removed where it can be. While events wait, `rerail status` says
