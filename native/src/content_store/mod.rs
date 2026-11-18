@@ -29,9 +29,11 @@ pub(crate) use compression::compress;
 pub(crate) use connection::BusyRetries;
 pub(crate) use connection::OperationDeadline;
 pub(crate) use connection::operation_found_busy;
-pub(crate) use connection::{WaitsEndOn, end_waits};
+pub(crate) use connection::{WritesOnlyWhenFree, end_waits, waits_end_when};
 pub use schema::STORE_FILE_NAME;
 
+#[cfg(test)]
+pub(crate) use connection::CHECKPOINT_HOOK;
 #[cfg(test)]
 pub(crate) use connection::spend_operation_wait;
 #[cfg(test)]

@@ -771,7 +771,7 @@ impl WorkspaceIndexTask {
                 }),
             };
             let mut output: Value =
-                serde_json::from_str(&apply.apply_until_closed()?.text).map_err(json_error)?;
+                serde_json::from_str(&apply.apply_with_slot()?.text).map_err(json_error)?;
             output["evaluation"].take()
         })
     }

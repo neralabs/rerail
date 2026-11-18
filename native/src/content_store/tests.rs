@@ -926,29 +926,31 @@ fn context_results_cascade_when_sources_and_clauses_are_deleted() {
                 },
             )
             .unwrap();
-        let connection = store.connection.lock().unwrap();
-        if delete_source {
-            connection
-                .execute(
-                    "DELETE FROM workspace_overlay WHERE workspace_id=?1",
-                    [workspace.0],
-                )
-                .unwrap();
-            connection
-                .execute(
-                    "DELETE FROM source_objects WHERE source_id=?1",
-                    [stored.source.0],
-                )
-                .unwrap();
-        } else {
-            connection
-                .execute(
-                    "DELETE FROM candidate_checks WHERE check_id=(SELECT check_id FROM context_check_results LIMIT 1)",
-                    [],
-                )
-                .unwrap();
-        }
-        let count: i64 = connection
+        // In a turn of the writer line, as every store write.
+        store
+            .immediate_transaction_once(|connection| {
+                if delete_source {
+                    connection.execute(
+                        "DELETE FROM workspace_overlay WHERE workspace_id=?1",
+                        [workspace.0],
+                    )?;
+                    connection.execute(
+                        "DELETE FROM source_objects WHERE source_id=?1",
+                        [stored.source.0],
+                    )?;
+                } else {
+                    connection.execute(
+                        "DELETE FROM candidate_checks WHERE check_id=(SELECT check_id FROM context_check_results LIMIT 1)",
+                        [],
+                    )?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        let count: i64 = store
+            .connection
+            .lock()
+            .unwrap()
             .query_row("SELECT count(*) FROM context_check_results", [], |row| {
                 row.get(0)
             })
@@ -1604,21 +1606,20 @@ fn corrupt_zstandard_frames_fail_closed() {
     let (_path, store) = store("corrupt-frames");
     let source = store.put_source(b"source", &[]).unwrap();
     let tape = store.put_tape(source, 1, 1, 1, b"tape").unwrap();
-    {
-        let connection = store.connection.lock().unwrap();
-        connection
-            .execute(
+    // In a turn of the writer line, as every store write.
+    store
+        .immediate_transaction_once(|connection| {
+            connection.execute(
                 "UPDATE source_objects SET frame=x'000102' WHERE source_id=?1",
                 [source.0],
-            )
-            .unwrap();
-        connection
-            .execute(
+            )?;
+            connection.execute(
                 "UPDATE tape_objects SET frame=x'000102' WHERE tape_id=?1",
                 [tape.0],
-            )
-            .unwrap();
-    }
+            )?;
+            Ok(())
+        })
+        .unwrap();
     assert!(store.get_source(source).is_err());
     assert!(store.get_tape(tape).is_err());
 }

@@ -5,10 +5,12 @@
 //! a clock: holders let go by channel, a waiter says it waits through `LINE_WAIT_HOOK`, and a
 //! bound passes at once under a deadline of a nanosecond or with the operation's deadline spent.
 
+use super::connection::retry_busy;
 use super::test_support::{TemporaryDatabase, TemporaryFolder};
 use super::{
-    BUSY_DEADLINE_OVERRIDE, BUSY_WAIT_HOOK, ContentStore, LINE_WAIT_HOOK, OperationDeadline,
-    StoreError, StoreResult, WaitsEndOn, end_waits, operation_found_busy, spend_operation_wait,
+    BUSY_DEADLINE_OVERRIDE, BUSY_WAIT_HOOK, BusyRetries, CHECKPOINT_HOOK, ContentStore,
+    LINE_WAIT_HOOK, OperationDeadline, StoreError, StoreResult, WritesOnlyWhenFree, end_waits,
+    operation_found_busy, spend_operation_wait, waits_end_when,
 };
 use std::cell::Cell;
 use std::path::Path;
@@ -71,25 +73,42 @@ impl Holder {
     }
 }
 
-/// Starts a write named `name` on its own thread and returns once it waits in the store's line.
+/// A write waiting in the store's line on its own thread (`waiting_writer`).
+struct Waiter(mpsc::Receiver<StoreResult<()>>);
+
+impl Waiter {
+    /// The write's result once it was handed the store. Its deadline is an hour, so only the
+    /// release's wake hands it the store before this guard of a minute fails the test: a release
+    /// that woke nobody fails here, not at a bound.
+    fn handed(self) -> StoreResult<()> {
+        self.0
+            .recv_timeout(Duration::from_secs(60))
+            .expect("the waiting writer was not handed the store at the release")
+    }
+}
+
+/// Starts a write named `name` on its own thread, with a deadline of an hour, and returns once it
+/// waits in the store's line.
 fn waiting_writer(
     store: &Arc<ContentStore>,
     order: &Arc<Mutex<Vec<&'static str>>>,
     name: &'static str,
-) -> thread::JoinHandle<StoreResult<()>> {
+) -> Waiter {
     let (waiting, waits) = mpsc::channel();
+    let (done, written) = mpsc::channel();
     let (store, order) = (Arc::clone(store), Arc::clone(order));
-    let handle = thread::spawn(move || {
+    thread::spawn(move || {
+        BUSY_DEADLINE_OVERRIDE.set(Some(HOUR));
         LINE_WAIT_HOOK.set(Some(Box::new(move || waiting.send(()).unwrap())));
-        let written = store.immediate_transaction(|_| {
+        let result = store.immediate_transaction(|_| {
             order.lock().unwrap().push(name);
             Ok(())
         });
         LINE_WAIT_HOOK.set(None);
-        written
+        let _ = done.send(result);
     });
     waits.recv().unwrap();
-    handle
+    Waiter(written)
 }
 
 /// Behind a writer that commits batch after batch, as a Git snapshot publication or a search-index
@@ -146,7 +165,8 @@ fn a_write_during_a_run_of_batches_waits_for_the_batch_in_progress_not_the_run()
 }
 
 /// The writer holding the store hands it, at its commit, to the writers waiting for it in the
-/// order they arrived.
+/// order they arrived. Their deadline is an hour, so only the release's wake can hand it to them
+/// before the test's guard (`Waiter::handed`).
 #[test]
 fn the_writer_ahead_hands_the_store_to_the_waiting_writers_in_arrival_order() {
     let (_path, store) = store("arrival-order");
@@ -155,8 +175,8 @@ fn the_writer_ahead_hands_the_store_to_the_waiting_writers_in_arrival_order() {
     let first = waiting_writer(&store, &order, "first");
     let second = waiting_writer(&store, &order, "second");
     holder.let_go();
-    first.join().unwrap().unwrap();
-    second.join().unwrap().unwrap();
+    first.handed().unwrap();
+    second.handed().unwrap();
     assert_eq!(*order.lock().unwrap(), ["holder", "first", "second"]);
 }
 
@@ -194,7 +214,7 @@ fn two_stores_on_one_file_share_its_line() {
     let holder = Holder::hold(&first, &order);
     let waiter = waiting_writer(&second, &order, "second store");
     holder.let_go();
-    waiter.join().unwrap().unwrap();
+    waiter.handed().unwrap();
     assert_eq!(*order.lock().unwrap(), ["holder", "second store"]);
 }
 
@@ -304,10 +324,10 @@ fn a_write_with_part_of_the_deadline_left_does_not_mark_the_holder_stalled() {
     ));
 }
 
-/// A wait in the line ends when its owner cancels it (`end_waits`), with the holder still holding:
-/// the write fails as interrupted, not as busy, and marks no stall. The cancel lands while the
-/// writer is inside its wait, so it must wake the writer: a cancel that did not would leave the
-/// wait to its 10 s deadline, which ends as busy and marks the holder stalled.
+/// A wait in the line ends when its owner cancels it (`waits_end_when`, `end_waits`), with the
+/// holder still holding: the write fails as interrupted, not as busy, and marks no stall. The
+/// cancel lands while the writer is inside its wait, so it must wake the writer: a cancel that did
+/// not would leave the wait to its 10 s deadline, which ends as busy and marks the holder stalled.
 #[test]
 fn a_wait_in_the_line_ends_when_its_owner_cancels_it() {
     let (_path, store) = store("cancelled");
@@ -318,9 +338,8 @@ fn a_wait_in_the_line_ends_when_its_owner_cancels_it() {
     let waiter = {
         let (store, cancel) = (Arc::clone(&store), Arc::clone(&cancel));
         thread::spawn(move || {
-            let _ends = WaitsEndOn::enter(&cancel);
             LINE_WAIT_HOOK.set(Some(Box::new(move || waiting.send(()).unwrap())));
-            let written = batch(&store, 1);
+            let written = waits_end_when(&|| cancel.load(Ordering::Acquire), || batch(&store, 1));
             LINE_WAIT_HOOK.set(None);
             written
         })
@@ -376,4 +395,154 @@ fn an_operation_remembers_a_write_that_ended_busy() {
     }
     let _next = OperationDeadline::enter();
     assert!(!operation_found_busy());
+}
+
+/// A write handed the store after a wait in the line counts that wait, with no retry: the
+/// workspace profile's store wait shows it (`storageRetryWaitNanoseconds`).
+#[test]
+fn a_write_handed_the_store_after_a_wait_counts_the_wait() {
+    let (_path, store) = store("counted-wait");
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let holder = Holder::hold(&store, &order);
+    let (waiting, waits) = mpsc::channel();
+    let waiter = {
+        let store = Arc::clone(&store);
+        thread::spawn(move || {
+            LINE_WAIT_HOOK.set(Some(Box::new(move || waiting.send(()).unwrap())));
+            let mut retries = BusyRetries::default();
+            let written = retry_busy(&mut retries, || {
+                store.immediate_transaction_once(|_| Ok(()))
+            });
+            LINE_WAIT_HOOK.set(None);
+            written.map(|()| retries)
+        })
+    };
+    waits.recv().unwrap();
+    store.sync_writer_line();
+    holder.let_go();
+    let retries = waiter.join().unwrap().unwrap();
+    assert_eq!(retries.retries, 0, "a turn handed on is no retry");
+    assert!(
+        retries.wait_nanoseconds > 0,
+        "the wait for the turn is counted"
+    );
+}
+
+/// A write that commits on a store connection outside a turn of the writer line is rolled back in
+/// debug builds, so a test that runs a new write made beside the line fails at once.
+#[cfg(debug_assertions)]
+#[test]
+fn a_write_outside_a_turn_is_rolled_back_in_debug_builds() {
+    let (_path, store) = store("outside-a-turn");
+    let connection = store.connection.lock().unwrap();
+    let outside: &rusqlite::Connection = &connection;
+    let written = outside.execute("CREATE TABLE outside_a_turn(value INTEGER)", []);
+    assert!(written.is_err(), "{written:?}");
+    let tables: i64 = outside
+        .query_row(
+            "SELECT count(*) FROM sqlite_schema WHERE name='outside_a_turn'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(tables, 0, "the write was rolled back");
+    drop(connection);
+    batch(&store, 1).unwrap();
+}
+
+/// A commit that leaves the write-ahead log at the size SQLite checkpoints at hands the line to
+/// the next writer before it runs that checkpoint: SQLite itself releases its write lock before
+/// its automatic checkpoint, so a writer waiting for the store is not held behind the checkpoint's
+/// copying and flushes. The committing thread's checkpoint waits here until the next writer has
+/// committed; with the checkpoint still inside the turn that writer could not, and this test's
+/// guard fails it.
+#[test]
+fn a_commit_hands_the_line_on_before_the_checkpoint_it_leaves_due() {
+    let (_path, store) = store("checkpoint-after-turn");
+    batch(&store, 1).unwrap();
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let (holding, held) = mpsc::channel();
+    let (release, released) = mpsc::channel::<()>();
+    let (next_committed, committed) = mpsc::channel::<()>();
+    let checkpoints = Arc::new(AtomicUsize::new(0));
+    let large = {
+        let (store, order, checkpoints) = (
+            Arc::clone(&store),
+            Arc::clone(&order),
+            Arc::clone(&checkpoints),
+        );
+        thread::spawn(move || {
+            CHECKPOINT_HOOK.set(Some(Box::new(move || {
+                committed
+                    .recv_timeout(Duration::from_secs(60))
+                    .expect("the next writer waited for the checkpoint");
+                checkpoints.fetch_add(1, Ordering::AcqRel);
+            })));
+            let written = large_batch_after(&store, &holding, &released);
+            order.lock().unwrap().push("large");
+            CHECKPOINT_HOOK.set(None);
+            written
+        })
+    };
+    held.recv().unwrap();
+    let next = waiting_writer(&store, &order, "next");
+    release.send(()).unwrap();
+    next.handed().unwrap();
+    next_committed.send(()).unwrap();
+    large.join().unwrap().unwrap();
+    assert_eq!(
+        checkpoints.load(Ordering::Acquire),
+        1,
+        "the commit left a checkpoint due"
+    );
+    assert_eq!(*order.lock().unwrap(), ["next", "large"]);
+}
+
+/// One write transaction of about 5 MB, past the 1,000 pages of write-ahead log at which SQLite's
+/// own automatic checkpoint starts: says it holds the store once its rows are written, and commits
+/// once `release` says so.
+fn large_batch_after(
+    store: &ContentStore,
+    holding: &mpsc::Sender<()>,
+    release: &mpsc::Receiver<()>,
+) -> StoreResult<()> {
+    store.immediate_transaction(|transaction| {
+        transaction.execute_batch("CREATE TABLE IF NOT EXISTS blobs(value BLOB)")?;
+        transaction.execute(
+            "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n WHERE x < 1300) \
+             INSERT INTO blobs SELECT randomblob(4000) FROM n",
+            [],
+        )?;
+        holding.send(()).unwrap();
+        release.recv().unwrap();
+        Ok(())
+    })
+}
+
+/// A background write that takes the store only when it is free (`WritesOnlyWhenFree`, the
+/// search-index batches) never takes a place in the line: behind a holder it gives up at once as
+/// busy, so the write that arrives after it is the first to be handed the store.
+#[test]
+fn a_write_only_when_free_gives_up_behind_a_holder_and_the_next_write_goes_first() {
+    let (_path, store) = store("only-when-free");
+    let order = Arc::new(Mutex::new(Vec::new()));
+    let holder = Holder::hold(&store, &order);
+    LINE_WAIT_HOOK.set(Some(Box::new(|| {
+        panic!("a write that takes only a free store waited in the line")
+    })));
+    let refused = {
+        let _only_when_free = WritesOnlyWhenFree::enter();
+        store.put_unavailable_search_indexes(&[], 1)
+    };
+    LINE_WAIT_HOOK.set(None);
+    assert!(matches!(refused, Err(StoreError::Busy)), "{refused:?}");
+    assert!(
+        !store.writes_stalled(),
+        "a write that never waited marks no stall"
+    );
+    let next = waiting_writer(&store, &order, "checked edit");
+    holder.let_go();
+    next.handed().unwrap();
+    assert_eq!(*order.lock().unwrap(), ["holder", "checked edit"]);
+    store.put_unavailable_search_indexes(&[], 1).unwrap();
 }

@@ -131,6 +131,22 @@ pub(super) enum Refusal {
 pub(super) struct WriterLine {
     line: Mutex<Line>,
     turn: Condvar,
+    /// Woken at each arrival behind another writer, for a test that acts once writers wait
+    /// (`wait_for_waiters`); the turn's own wake comes only at a release or a cancel.
+    #[cfg(test)]
+    arrivals: Condvar,
+}
+
+#[cfg(debug_assertions)]
+thread_local! {
+    /// How many turns this thread holds, for the debug check that every commit runs in one.
+    static TURNS_HELD: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Whether this thread holds a turn in some store's line (debug builds).
+#[cfg(debug_assertions)]
+pub(super) fn holds_a_turn() -> bool {
+    TURNS_HELD.get() > 0
 }
 
 static LINES: LazyLock<Mutex<HashMap<PathBuf, Weak<WriterLine>>>> = LazyLock::new(Mutex::default);
@@ -148,6 +164,8 @@ impl WriterLine {
         let line = Arc::new(Self {
             line: Mutex::default(),
             turn: Condvar::new(),
+            #[cfg(test)]
+            arrivals: Condvar::new(),
         });
         lines.insert(key, Arc::downgrade(&line));
         line
@@ -168,7 +186,7 @@ impl WriterLine {
         // that takes the line after the hook acts while the writer waits (`sync`).
         #[cfg(test)]
         {
-            self.turn.notify_all();
+            self.arrivals.notify_all();
             run_wait_hook();
         }
         let started = Instant::now();
@@ -219,6 +237,7 @@ impl WriterLine {
         #[cfg(debug_assertions)]
         {
             line.holder = Some(std::thread::current().id());
+            TURNS_HELD.set(TURNS_HELD.get() + 1);
         }
         Turn { line: self, ticket }
     }
@@ -252,7 +271,7 @@ impl WriterLine {
         let deadline = Instant::now() + Duration::from_secs(60);
         while line.waiting() < count {
             assert!(
-                !self.turn.wait_until(&mut line, deadline).timed_out(),
+                !self.arrivals.wait_until(&mut line, deadline).timed_out(),
                 "{count} writers never waited in the line"
             );
         }
@@ -305,6 +324,8 @@ pub(super) struct Turn<'a> {
 
 impl Drop for Turn<'_> {
     fn drop(&mut self) {
+        #[cfg(debug_assertions)]
+        TURNS_HELD.set(TURNS_HELD.get().saturating_sub(1));
         self.line.line.lock().release(self.ticket);
         self.line.turn.notify_all();
     }
@@ -314,7 +335,7 @@ impl Drop for Turn<'_> {
 mod line_tests {
     //! The line's order and stall marks, with no threads.
 
-    use super::Line;
+    use super::{Line, WriterLine};
 
     /// A holder and a line that has served it.
     fn held() -> (Line, u64) {
@@ -355,6 +376,23 @@ mod line_tests {
         assert_eq!(line.waiting(), 1);
         line.release(holder);
         assert!(line.is_turn(next));
+    }
+
+    /// A write that must not wait is refused while a turn is handed to a waiter that has not
+    /// taken it yet: taking the line then would pass that waiter over, and it would wait out its
+    /// deadline.
+    #[test]
+    fn a_write_that_must_not_wait_is_refused_while_a_handed_turn_is_not_taken() {
+        let (mut line, holder) = held();
+        let waiter = line.arrive();
+        line.release(holder);
+        assert!(line.is_turn(waiter), "the turn is handed to the waiter");
+        let writers = WriterLine {
+            line: parking_lot::Mutex::new(line),
+            turn: parking_lot::Condvar::new(),
+            arrivals: parking_lot::Condvar::new(),
+        };
+        assert!(writers.try_take().is_none());
     }
 
     /// A stall mark ends with the release of the holder it names, not of another.

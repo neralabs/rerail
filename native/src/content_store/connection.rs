@@ -1,21 +1,26 @@
 //! Per-thread SQLite connections, connection pragmas, each write transaction's turn in the store's
-//! writer line, and the busy retry a write runs under for a writer of another process.
+//! writer line, the checkpoint a commit leaves for after its turn, and the busy retry a write runs
+//! under for a writer of another process.
 
 use super::writer_line::{Refusal, Turn, Wait, WriterLine};
 use super::{ContentStore, StoreError, StoreResult};
 use parking_lot::{ArcMutexGuard, Mutex as ParkingMutex, RawMutex};
-use rusqlite::{Connection, OpenFlags, Transaction, TransactionBehavior};
-use std::cell::RefCell;
+use rusqlite::hooks::Wal;
+use rusqlite::wal::CheckpointMode;
+use rusqlite::{Connection, MAIN_DB, OpenFlags, Transaction, TransactionBehavior};
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::ffi::c_int;
 use std::hash::{BuildHasher, RandomState};
 use std::path::{Path, PathBuf};
+use std::ptr::NonNull;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 /// How long the store writes of one operation wait on other writers in all before they report
 /// `Busy`: their turns in the store's writer line (`take_turn`), which end at the release of the
-/// writer ahead or at the cancel their owner sets (`WaitsEndOn`), and reach it only when the
+/// writer ahead or at their owner's cancel (`waits_end_when`), and reach it only when the
 /// writers ahead stop letting go (a disk that stalls), and SQLite's lock held by a writer of
 /// another process, which each attempt waits for at most one busy timeout (`wait_for_writer`), so
 /// a cancelled write notices between attempts.
@@ -62,9 +67,23 @@ thread_local! {
     /// since its write attempt began.
     static ATTEMPT_WAITED: std::cell::Cell<Duration> =
         const { std::cell::Cell::new(Duration::ZERO) };
-    /// Whether this thread's waits for another writer give up at once
-    /// (`immediate_transaction_no_wait`).
-    static NO_BUSY_WAIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// How this thread's writes wait for other writers (`Waits`).
+    static WAITS: Cell<Waits> = const { Cell::new(Waits::InLine) };
+    /// Whether this thread's last commit left the store's write-ahead log at the size SQLite's
+    /// own automatic checkpoint starts at (`checkpoint_after_turn`).
+    static CHECKPOINT_DUE: Cell<bool> = const { Cell::new(false) };
+}
+
+/// How a thread's writes wait for other writers.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum Waits {
+    /// In the writer line for this process's writers, then inside SQLite for another process's.
+    InLine,
+    /// Only inside SQLite, for another process's writer: the line's turn is taken only while no
+    /// writer of this process holds the store or waits for it (`WritesOnlyWhenFree`).
+    OnlyWhenFree,
+    /// Never: the write gives up while any writer holds the store (`NoBusyWait`).
+    Never,
 }
 
 thread_local! {
@@ -74,46 +93,50 @@ thread_local! {
         const { std::cell::Cell::new(None) };
     /// Whether a write under this thread's `OperationDeadline` ended `Busy`.
     static OPERATION_BUSY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// The fact that ends this thread's waits in the writer lines (`WaitsEndOn`).
-    static WAIT_CANCEL: RefCell<Option<Arc<AtomicBool>>> = const { RefCell::new(None) };
+    /// The cancel of the work this thread runs (`waits_end_when`), only while that call runs.
+    static WAIT_CANCEL: Cell<Option<NonNull<dyn Fn() -> bool>>> = const { Cell::new(None) };
 }
 
-/// Ends this thread's waits for its turn in a store's writer line once `cancel` is set through
-/// `end_waits`, while it lives: the owner of the work (a workspace that closes, the maintenance
-/// handle that stops its thread) ends a wait it no longer needs at once, not at the turn or the
-/// write deadline. Such a write fails as interrupted, never as `Busy`, so it is not retried, marks
-/// no holder stalled and opens no busy window.
-pub(crate) struct WaitsEndOn {
-    previous: Option<Arc<AtomicBool>>,
-}
-
-impl WaitsEndOn {
-    pub(crate) fn enter(cancel: &Arc<AtomicBool>) -> Self {
-        let previous = WAIT_CANCEL.replace(Some(Arc::clone(cancel)));
-        Self { previous }
+/// Runs `body` with this thread's waits for a turn in the store's writer lines ending once
+/// `cancelled` holds, and returns what it returns: the owner of the work (a publication whose
+/// workspace closes, the maintenance thread whose handle stops it) ends a wait it no longer needs at
+/// once, not at the turn or the write deadline. Whoever makes `cancelled` hold wakes the waits
+/// (`end_waits`), and a woken wait reads it again. Such a write fails as interrupted, never as
+/// `Busy`, so it is not retried, marks no holder stalled and opens no busy window. A call inside
+/// another reads only its own `cancelled` while it runs.
+pub(crate) fn waits_end_when<T>(cancelled: &dyn Fn() -> bool, body: impl FnOnce() -> T) -> T {
+    /// Puts the outer call's cancel back when `body` returns or unwinds.
+    struct Restore(Option<NonNull<dyn Fn() -> bool>>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            WAIT_CANCEL.set(self.0);
+        }
     }
+    // SAFETY: only the lifetime is erased. The pointer is read by `waits_ended`, on this thread
+    // only, while `body` runs, and `Restore` takes it out when `body` returns or unwinds, so it is
+    // never read after `cancelled`'s borrow ends; no caller can keep it past this call.
+    let erased = unsafe {
+        std::mem::transmute::<NonNull<dyn Fn() -> bool + '_>, NonNull<dyn Fn() -> bool + 'static>>(
+            NonNull::from(cancelled),
+        )
+    };
+    let _restore = Restore(WAIT_CANCEL.replace(Some(erased)));
+    body()
 }
 
-impl Drop for WaitsEndOn {
-    fn drop(&mut self) {
-        WAIT_CANCEL.set(self.previous.take());
-    }
-}
-
-/// Sets `cancel` and wakes every write waiting in this process's writer lines, so the waits under
-/// `WaitsEndOn` on it end.
+/// Sets `cancel` and wakes every write waiting in this process's writer lines, so a wait whose
+/// cancel reads it (`waits_end_when`) ends.
 pub(crate) fn end_waits(cancel: &AtomicBool) {
     cancel.store(true, Ordering::Release);
     super::writer_line::wake_all();
 }
 
-/// Whether this thread's waits in the writer lines were ended (`WaitsEndOn`).
+/// Whether the work this thread runs was cancelled (`waits_end_when`).
 fn waits_ended() -> bool {
-    WAIT_CANCEL.with_borrow(|cancel| {
-        cancel
-            .as_ref()
-            .is_some_and(|cancel| cancel.load(Ordering::Acquire))
-    })
+    // SAFETY: `waits_end_when` keeps the pointer valid while it is set (see there).
+    WAIT_CANCEL
+        .get()
+        .is_some_and(|cancelled| unsafe { cancelled.as_ref()() })
 }
 
 /// Makes every store write this thread runs while it lives share one `BUSY_DEADLINE` instead of
@@ -247,7 +270,7 @@ fn add_wait(retries: &mut BusyRetries, waited: Duration) {
 /// uncounted. It runs on the thread that runs the statement. A write transaction asks SQLite for
 /// the lock only in its turn in the writer line, so it waits here for a writer of another process.
 fn wait_for_writer(checks: i32) -> bool {
-    if NO_BUSY_WAIT.get() {
+    if WAITS.get() == Waits::Never {
         return false;
     }
     let spent = if checks <= 0 {
@@ -344,9 +367,10 @@ impl std::ops::Deref for ConnectionGuard<'_> {
     }
 }
 
-// The guard reads through the connection and has no mutable deref to it: a write transaction
-// begins only through `transaction_with_behavior` below, and a batch run outside a transaction
-// only through `execute_batch` below, each in a turn of the writer line.
+// The guard reads through the connection: the store writes only through
+// `transaction_with_behavior` and `execute_batch` below, each in a turn of the writer line. The
+// connection it derefs to could still run a write outside a turn, so in debug builds every commit
+// on a store connection checks that its thread holds a turn (`commits_only_in_a_turn`).
 impl ConnectionGuard<'_> {
     /// Begins a transaction on the store, shadowing `Connection::transaction_with_behavior`. A
     /// write transaction (immediate or exclusive) first takes the write's turn in the store's
@@ -360,13 +384,12 @@ impl ConnectionGuard<'_> {
             TransactionBehavior::Deferred => None,
             _ => Some(take_turn(self.line)?),
         };
-        let connection = self
-            .connection
-            .as_mut()
-            .expect("connection opened under the lock");
+        // `&mut self` keeps a second transaction off this connection while this one lives.
+        let connection: &Connection = self;
         Ok(StoreTransaction {
-            transaction: connection.transaction_with_behavior(behavior)?,
-            _turn: turn,
+            transaction: Transaction::new_unchecked(connection, behavior)?,
+            connection,
+            turn,
         })
     }
 
@@ -381,9 +404,15 @@ impl ConnectionGuard<'_> {
 
     /// Runs `sql` outside a transaction in a turn of the writer line, shadowing
     /// `Connection::execute_batch`: such a batch may write (collection's checkpoint and vacuum).
+    /// A checkpoint its writes leave due runs after the turn is handed on.
     pub(super) fn execute_batch(&self, sql: &str) -> rusqlite::Result<()> {
-        let _turn = take_turn(self.line)?;
-        std::ops::Deref::deref(self).execute_batch(sql)
+        let connection: &Connection = self;
+        CHECKPOINT_DUE.set(false);
+        let turn = take_turn(self.line)?;
+        let ran = connection.execute_batch(sql);
+        drop(turn);
+        checkpoint_if_due(connection);
+        ran
     }
 }
 
@@ -391,7 +420,8 @@ impl ConnectionGuard<'_> {
 /// back: the next writer is handed the line at that moment.
 pub(super) struct StoreTransaction<'a> {
     transaction: Transaction<'a>,
-    _turn: Option<Turn<'a>>,
+    connection: &'a Connection,
+    turn: Option<Turn<'a>>,
 }
 
 impl<'a> std::ops::Deref for StoreTransaction<'a> {
@@ -402,21 +432,82 @@ impl<'a> std::ops::Deref for StoreTransaction<'a> {
 }
 
 impl StoreTransaction<'_> {
-    /// Commits, then hands the line to the next writer.
+    /// Commits, hands the line to the next writer, then runs the checkpoint the commit left due
+    /// (`checkpoint_after_turn`): SQLite releases its write lock before its automatic checkpoint,
+    /// so the next writer is handed the line at that same point, not after the checkpoint.
     pub(super) fn commit(self) -> rusqlite::Result<()> {
-        self.transaction.commit()
+        let Self {
+            transaction,
+            connection,
+            turn,
+        } = self;
+        CHECKPOINT_DUE.set(false);
+        transaction.commit()?;
+        drop(turn);
+        checkpoint_if_due(connection);
+        Ok(())
     }
+}
+
+/// Puts SQLite's automatic checkpoint of `connection` after the write's turn. SQLite runs it inside
+/// the commit, once the write-ahead log holds `wal_autocheckpoint` pages (1,000 by default), after
+/// it has released its write lock, so a writer of another connection can write during it; the
+/// commit returns, and the turn is handed on, only after it. So the store replaces it with SQLite's
+/// own notice of the log's size at each commit (`sqlite3_wal_hook`, which turns the automatic
+/// checkpoint off), which marks the checkpoint due at that same size, and the committing thread runs
+/// it once its turn is handed on (`checkpoint_if_due`). Like SQLite's, it is passive and runs at
+/// every commit that leaves the log at that size or more: a reader that holds the log back lets it
+/// grow until that reader ends, as before, and `journal_size_limit` shortens the file once a
+/// checkpoint has copied the whole log and the next writer starts it over.
+fn checkpoint_after_turn(connection: &mut Connection) -> StoreResult<()> {
+    let due_at: c_int =
+        connection.pragma_query_value(None, "wal_autocheckpoint", |row| row.get(0))?;
+    connection.wal_hook(Some(move |_: &mut Wal, pages: c_int| {
+        if due_at > 0 && pages >= due_at {
+            CHECKPOINT_DUE.set(true);
+        }
+        Ok(())
+    }))?;
+    Ok(())
+}
+
+/// Runs the passive checkpoint this thread's last commit left due (`checkpoint_after_turn`).
+fn checkpoint_if_due(connection: &Connection) {
+    if CHECKPOINT_DUE.replace(false) {
+        #[cfg(test)]
+        run_checkpoint_hook();
+        // As SQLite's own automatic checkpoint: it copies what no reader still needs, never waits,
+        // and its result is not the commit's.
+        let _ = connection.wal_checkpoint_v2(Some(MAIN_DB), CheckpointMode::PASSIVE);
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Runs on this thread right before it runs a checkpoint its commit left due: a test lets
+    /// the next writer write there, to show it was handed the line before the checkpoint.
+    pub(crate) static CHECKPOINT_HOOK: RefCell<Option<Box<dyn FnMut()>>> =
+        const { RefCell::new(None) };
+}
+
+#[cfg(test)]
+fn run_checkpoint_hook() {
+    CHECKPOINT_HOOK.with(|hook| {
+        if let Some(hook) = hook.borrow_mut().as_mut() {
+            hook();
+        }
+    });
 }
 
 /// Takes `line`'s turn for one write: at once when the line is free, else in arrival order at the
 /// release of the writers ahead, for at most what is left of the write deadline (`busy_deadline`,
-/// less what the thread's `OperationDeadline` already waited) and until the thread's cancel is set
-/// (`WaitsEndOn`), and not at all under `NoBusyWait`. The wait counts as time waited on another
-/// writer (`ATTEMPT_WAITED`). A turn not given in its bound comes back as SQLite's own busy error,
-/// so every caller treats it as a busy store; a cancelled wait as SQLite's interrupt, which no
-/// caller retries.
+/// less what the thread's `OperationDeadline` already waited) and until the work's cancel holds
+/// (`waits_end_when`); only when the line is free under `WritesOnlyWhenFree` and `NoBusyWait`. The
+/// wait counts as time waited on another writer (`ATTEMPT_WAITED`). A turn not given in its bound
+/// comes back as SQLite's own busy error, so every caller treats it as a busy store; a cancelled
+/// wait as SQLite's interrupt, which no caller retries.
 pub(super) fn take_turn(line: &WriterLine) -> rusqlite::Result<Turn<'_>> {
-    if NO_BUSY_WAIT.get() {
+    if WAITS.get() != Waits::InLine {
         return line.try_take().ok_or_else(|| refused(&Refusal::Bound));
     }
     let deadline = busy_deadline();
@@ -506,6 +597,26 @@ pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<(
     connection.pragma_update(None, "cache_size", -1_024_i64)?;
     connection.pragma_update(None, "mmap_size", 0_i64)?;
     connection.pragma_update(None, "journal_size_limit", 16_777_216_i64)?;
+    checkpoint_after_turn(connection)?;
+    #[cfg(debug_assertions)]
+    commits_only_in_a_turn(connection)?;
+    Ok(())
+}
+
+/// Rolls back, in debug builds (every test), a write that commits on a store connection while its
+/// thread holds no turn of a writer line: the store writes only in a turn, and the connection the
+/// guard derefs to would let a new write skip it unseen.
+#[cfg(debug_assertions)]
+fn commits_only_in_a_turn(connection: &mut Connection) -> StoreResult<()> {
+    connection.commit_hook(Some(|| {
+        let outside = !super::writer_line::holds_a_turn();
+        if outside {
+            eprintln!(
+                "rerail: a content store write committed outside its turn in the writer line"
+            );
+        }
+        outside
+    }))?;
     Ok(())
 }
 
@@ -520,18 +631,35 @@ fn open_runtime_connection(path: &Path) -> StoreResult<Connection> {
 
 /// Makes this thread's waits for another writer, in the writer line and inside SQLite, give up at
 /// once while it lives.
-struct NoBusyWait;
+struct NoBusyWait(Waits);
 
 impl NoBusyWait {
     fn enter() -> Self {
-        NO_BUSY_WAIT.set(true);
-        Self
+        Self(WAITS.replace(Waits::Never))
     }
 }
 
 impl Drop for NoBusyWait {
     fn drop(&mut self) {
-        NO_BUSY_WAIT.set(false);
+        WAITS.set(self.0);
+    }
+}
+
+/// Makes this thread's writes take the store, while it lives, only when no writer of this process
+/// holds it or waits for it: a background write that runs again later (a search-index batch) never
+/// joins the line ahead of a write a person waits for, and gives up as `Busy` instead. A writer of
+/// another process it still waits for one SQLite busy timeout, as such a write did before the line.
+pub(crate) struct WritesOnlyWhenFree(Waits);
+
+impl WritesOnlyWhenFree {
+    pub(crate) fn enter() -> Self {
+        Self(WAITS.replace(Waits::OnlyWhenFree))
+    }
+}
+
+impl Drop for WritesOnlyWhenFree {
+    fn drop(&mut self) {
+        WAITS.set(self.0);
     }
 }
 

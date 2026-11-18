@@ -8,7 +8,7 @@ use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::tape;
 use crate::content_store::{
     CapacityState, ContentStore, MAX_COLLECTION_BATCH, OperationDeadline, SnapshotId, StoreError,
-    StoreResult, WaitsEndOn, WorkspaceId, WorkspaceRegistration, end_waits,
+    StoreResult, WorkspaceId, WorkspaceRegistration, WritesOnlyWhenFree, end_waits, waits_end_when,
 };
 use crate::git_workspace;
 use napi::Result;
@@ -73,40 +73,47 @@ impl StorageMaintenance {
         let thread = std::thread::Builder::new()
             .name("rerail-store-maintenance".to_owned())
             .spawn(move || {
-                // Every write of this thread (renewals, collection, search indexes) waits in the
-                // store's writer line for the writers ahead, and the handle's drop ends that wait
-                // before it joins the thread, so a close never waits on those writers.
-                let _stop_ends_waits = WaitsEndOn::enter(&thread_stop);
-                let mut search_index_cursor = None;
-                loop {
-                    std::thread::park_timeout(Duration::from_secs(30));
-                    if thread_stop.load(Ordering::Acquire) {
-                        break;
-                    }
-                    let active = thread_workspaces
-                        .lock()
-                        .map(|workspaces| {
-                            workspaces
-                                .iter()
-                                .map(|(workspace_id, (owner, _))| (*workspace_id, owner.clone()))
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default();
-                    if let Ok(now) = unix_seconds() {
-                        let leases = active
-                            .iter()
-                            .map(|(workspace_id, owner)| (*workspace_id, owner.as_str()))
-                            .collect::<Vec<_>>();
-                        let _ = store.renew_workspace_leases(&leases, now + 120);
-                        if store
-                            .capacity()
-                            .is_ok_and(|capacity| !matches!(capacity.state, CapacityState::Normal))
-                        {
-                            let _ = store.collect(now, MAX_COLLECTION_BATCH);
+                // The renewals and collection wait in the store's writer line for the writers
+                // ahead, and the handle's drop ends that wait before it joins the thread, so a
+                // close never waits on those writers.
+                let stopped = || thread_stop.load(Ordering::Acquire);
+                waits_end_when(&stopped, || {
+                    let mut search_index_cursor = None;
+                    loop {
+                        std::thread::park_timeout(Duration::from_secs(30));
+                        if stopped() {
+                            break;
                         }
+                        let active = thread_workspaces
+                            .lock()
+                            .map(|workspaces| {
+                                workspaces
+                                    .iter()
+                                    .map(|(workspace_id, (owner, _))| {
+                                        (*workspace_id, owner.clone())
+                                    })
+                                    .collect::<Vec<_>>()
+                            })
+                            .unwrap_or_default();
+                        if let Ok(now) = unix_seconds() {
+                            let leases = active
+                                .iter()
+                                .map(|(workspace_id, owner)| (*workspace_id, owner.as_str()))
+                                .collect::<Vec<_>>();
+                            let _ = store.renew_workspace_leases(&leases, now + 120);
+                            if store.capacity().is_ok_and(|capacity| {
+                                !matches!(capacity.state, CapacityState::Normal)
+                            }) {
+                                let _ = store.collect(now, MAX_COLLECTION_BATCH);
+                            }
+                        }
+                        index_stored_tapes_when_free(
+                            &store,
+                            &thread_stop,
+                            &mut search_index_cursor,
+                        );
                     }
-                    index_stored_tapes(&store, &thread_stop, &mut search_index_cursor);
-                }
+                });
             })
             .expect("start content-store maintenance thread");
         Self {
@@ -136,6 +143,19 @@ impl StorageMaintenance {
             }
         }
     }
+}
+
+/// `index_stored_tapes`, its writes taking the store only while no other writer of this process
+/// holds it or waits for it (`WritesOnlyWhenFree`): a batch that would wait gives up and runs again
+/// at the next wake, as it did before the writer line, so a checked edit that arrives while it
+/// would have waited never waits behind it.
+pub(super) fn index_stored_tapes_when_free(
+    store: &ContentStore,
+    stop: &AtomicBool,
+    cursor: &mut Option<crate::content_store::TapeId>,
+) {
+    let _only_when_free = WritesOnlyWhenFree::enter();
+    index_stored_tapes(store, stop, cursor);
 }
 
 /// Builds the search (selector) indexes of stored tapes that have none, for at most about a
@@ -238,7 +258,7 @@ fn decode_stored_tape(
 impl Drop for StorageMaintenance {
     fn drop(&mut self) {
         // Ends a write of the thread waiting in the store's line, so the join below waits for no
-        // other writer (`WaitsEndOn` in `start`).
+        // other writer (`waits_end_when` in `start`).
         end_waits(&self.stop);
         if let Some(thread) = self.thread.take() {
             thread.thread().unpark();
