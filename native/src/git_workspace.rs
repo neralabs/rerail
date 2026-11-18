@@ -183,24 +183,19 @@ impl WorktreeStat {
     }
 
     /// One handle answers both questions, opened as `lstat` opens a file: a link is not followed.
-    /// Where the file's permissions refuse even that handle, `lstat` gives the stat alone, as Git
-    /// for Windows reads it, and nothing proves the file unchanged since its last write.
+    /// A denial of the file's read does not refuse this handle: reading attributes is a right of
+    /// its own, which NTFS also grants to whoever may list the folder.
     #[cfg(windows)]
     fn read(path: &Path) -> Option<Self> {
         use std::os::windows::fs::OpenOptionsExt;
         use windows_sys::Win32::Storage::FileSystem::{
             FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
         };
-        let Ok(file) = std::fs::OpenOptions::new()
+        let file = std::fs::OpenOptions::new()
             .access_mode(FILE_READ_ATTRIBUTES)
             .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS)
             .open(path)
-        else {
-            return Some(Self {
-                metadata: gix::index::fs::Metadata::from_path_no_follow(path).ok()?,
-                unchanged_since_written: false,
-            });
-        };
+            .ok()?;
         let metadata = gix::index::fs::Metadata::from_file(&file).ok()?;
         Some(Self {
             metadata,
