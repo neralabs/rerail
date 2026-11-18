@@ -6,6 +6,8 @@ the same linear data"; "it must be clear EVERYWHERE that blocks NEVER get copied
 "What it replaces". Follows 0140 (the tape is the engine's bytes), 0266 (blocks), 0293 (one tape API, read in place),
 0310 (reads written once, three backends) and 0325 (relations are blocks).
 
+Amended between memory domains by 0400 §7.2 (the user, 2026-11-18): within one domain (a host's RAM and its unified GPUs) this holds as written; between domains (a discrete GPU's memory, another host) a block is copied as the same bytes, never into another data structure, and the engine keeps the copies coherent.
+
 ## Intro
 
 **The problem.** The engine holds its data in blocks: each document's tape, and every relation the rules derive

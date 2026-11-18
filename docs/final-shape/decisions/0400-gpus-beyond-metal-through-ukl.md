@@ -1,10 +1,11 @@
 # 0400. GPUs beyond Metal: kernels written once in UKL, a device layer under the lanes, memory by class
 
-Status: draft (2026-11-18). This is a survey and a proposed approach, not yet decided. The user asked for Rerail to
+Status: draft (2026-11-18); the four questions of §9 answered by the user the same day (recorded there, and folded
+into §3.3, §5, §7 and §8). The user asked for Rerail to
 run on any GPU, starting with CUDA, "without rewriting all of the kernels over and over again", by way of MLDB's
 UKL (the Ugly Kernel Language). It covers the platform layer, the kernel language, subroutines, the C
-preprocessor, a library of primitives (prefix sums and the like), and memory: shared against partitioned, and GPUs
-with little RAM. Questions for the user are at the end.
+preprocessor, a library of primitives (prefix sums and the like), and memory: shared against partitioned, GPUs
+with little RAM, and several GPUs and hosts. Amends 0353 between memory domains (§7.2).
 
 ## Intro
 
@@ -241,7 +242,8 @@ its MSL-specific parts become macros:
 
 So decision 0310's three backends (Cranelift, Rust, Metal) become Cranelift, Rust and UKL, and UKL reaches every
 GPU. The other emitters (block programs, join stages, matcher, tiles) change in the same way, one at a time, each
-checked against the MSL it wrote before.
+checked against the MSL it wrote before. Decided (the user, Q2: "write UKL"): there is one emitter per kind of
+code, and it writes UKL; no emitter writes a backend's language.
 
 ### 3.4 WebGPU
 
@@ -289,14 +291,22 @@ files, and the library gathers them into UKL headers, with each primitive's inte
 | Work queue in a persistent dispatch | `metal_work_queue.metal`, 0027 | device-wide |
 | Tape and relation reads | generated from CLIF (0310, 0325) | thread |
 
-**Two rules for the library:**
+**Three rules for the library:**
 
-- **Device-wide scans are written for the weakest progress guarantee.** Metal guarantees no forward progress
-  between threadgroups, so a single-pass scan's decoupled look-back can hang. The default is the two-level form
-  (reduce, scan, then downsweep) everywhere. A backend that guarantees progress (CUDA with a cooperative or
-  occupancy-bounded launch) may use a single pass behind the same interface. As with 0027, every wait is bounded.
-- **A vendor library (CUB on CUDA, rocPRIM on ROCm) is a measured alternative behind the same interface, never the
-  only implementation.** NVRTC can compile CUB's headers, so it is available if it wins (§9, Q3).
+- **The call is the interface; the implementation is per backend** (the user, Q3: "same code, high-level calls
+  will optimize per backend behind the call"). A kernel or a host plan calls `ukl_scan_exclusive`,
+  `ukl_radix_sort_pairs`, `ukl_compact`, and so on. Behind each call:
+  - a portable UKL implementation, which every backend has and which is the reference in tests;
+  - per backend, the fastest known form: CUB (CUDA, compiled by NVRTC from its headers), rocPRIM (ROCm), Metal's
+    own SIMD-group operations, a single-pass scan where the backend guarantees progress.
+  The choice is the backend's and the measurement's, never the caller's. A backend form replaces the reference
+  only when it gives the reference's results on the library's tests.
+- **Device-wide scans are written for the weakest progress guarantee by default.** Metal guarantees no forward
+  progress between threadgroups, so a single-pass scan's decoupled look-back can hang. The reference is the
+  two-level form (reduce, scan, then downsweep). As with 0027, every wait is bounded.
+- **Calls at two levels.** Device-wide calls are made from the host plan (a sort, a scan of a whole column).
+  Group-level calls (`ukl_simdgroup_*`, `ukl_threadgroup_*`) are made inside kernels. Both are behind the same
+  rule.
 
 ## 6. The device layer (host)
 
@@ -352,20 +362,58 @@ and the rest) gain a CUDA run.
 The device layer reports the class from the device's attributes (`integrated`, `pageableMemoryAccess`,
 `hostNativeAtomics` on CUDA; `hasUnifiedMemory` on Metal). It never guesses from the name.
 
-### 7.2 Blocks on a partitioned device
+### 7.2 Blocks across memory domains: copies, and the coherency the engine manages
 
-This is where decision 0353 ("blocks are never copied") meets hardware it was not written for. The proposal (§9,
-Q1):
+Decided (the user, Q1): "blocks will need to be copied to and from devices, and for us to manage coherency
+between blocks read and written by different kernels on different hosts and GPUs (a host may have more than one GPU
+too)". This amends 0353: **within one memory domain** no block is copied, and every reader reads it where it lives,
+as 0353 says. **Between domains** a block is copied, and the engine, not the driver, keeps the copies coherent.
 
-- **A block has one home at a time.** On a P device, a block that kernels read many times gets a device-resident
-  home for as long as it is hot. Its host pages become evictable, and the move is the residency's (0032) eviction
-  and fill, generalized from tapes to blocks.
-- **Nothing reads a stale copy.** A block is frozen before it moves (0260's mutable-then-frozen). A block being
-  written lives on the device that writes it.
-- **The planner prices the bus.** Placement (0304, 0312, 0321) adds a transfer term: bytes not yet resident on the
-  device, divided by the link's measured bandwidth. On a U device the term is zero, so today's plans are unchanged.
-- **Data read once is read over the bus in place.** A tape or a batch's sources are read through pinned memory
-  with no device copy. 0353 holds for it as written.
+**Memory domains.** A domain is memory that every processor attached to it reads in place:
+- a host's RAM, shared by its CPUs and by its unified GPUs (Apple, GB10);
+- each partitioned GPU's own memory: a host with two discrete cards has three domains;
+- another host's RAM, reached over the network;
+- disk: a block's mapped file (0260, 0295) is where a frozen block can always be read back from.
+
+Every device in the device layer (§6) names its domain. Two devices in one domain share their blocks with no copy.
+
+**Replicas and versions.** A block is named by its id and its version. Frozen versions never change (0260's
+mutable-then-frozen, 0266's deltas), so a frozen version may have any number of replicas, one per domain, and they
+never need to be invalidated: a write makes a new version, it never changes an old one. That turns coherency from a
+cache protocol into bookkeeping:
+
+| A block's state | Replicas | A kernel may |
+|---|---|---|
+| frozen version v | any number, one per domain, all identical | read v in any domain that holds it |
+| mutable (being written) | exactly one, in the writer's domain | write it there; readers elsewhere read the last frozen version |
+| frozen v+1 from a delta | the delta is shipped to replicas of v and applied there (O(delta), 0260) | read v+1 where it has been made |
+
+**The directory.** One table per process (`rerail_blocks`, beside 0342's allocator) records, for each block: its
+current version, the domain that owns its mutable version if any, and which domains hold which frozen versions,
+with an event per replica for when its copy completes. Across hosts the directory is per host, and a host asks the
+block's owner (named in the block's id) for a version it lacks.
+
+**Kernels state their reads and writes.** UKL's parameter rows already say it: `ROBUFFER` is a read, `RWBUFFER`
+and `WOBUFFER` are writes (MLDB used the same rows for its hazard tracking, which `forest/` did not bring over).
+Before a launch on a device, the scheduler, for each argument:
+1. **read:** finds or makes a replica of the needed version in the device's domain, and waits on its event;
+2. **write:** takes ownership of the block's mutable version in the device's domain (moving it if another domain
+   owns it), so no two domains write one block;
+3. **after:** a written block is frozen when its writer's work ends (0386: device work belongs to its job and is
+   committed before a wait), which publishes the new version to the directory.
+
+Copies run on the devices' copy engines and the network, overlapped with kernels, and the scoreboard (0113) waits
+on their events as it waits on a kernel's. Within one domain each step is a no-op, so a unified device pays nothing
+and today's plans run unchanged.
+
+**Eviction.** A frozen replica can be dropped whenever another domain, or the disk, holds the same version. A
+mutable block is written back (or frozen and published) before its pages go. The evictor (0126, 0342) chooses
+among replicas by least recent use and by what re-fetching them would cost.
+
+**The planner prices copies.** Placement (0304, 0312, 0321) adds a transfer term: the bytes of each read block's
+version not already in the device's domain, divided by the measured bandwidth of the link between domains
+(on-host copy engine, PCIe, NVLink, network). Data read once in order can instead be read over the link in place
+(pinned host memory read by a partitioned GPU, "zero-copy"), and the planner prices that choice the same way.
 
 ### 7.3 GPUs with little memory
 
@@ -390,11 +438,13 @@ The machinery to stay inside it exists and is generalized, not replaced:
 - **Work budgets never change results** (0334). A smaller device changes where and in how many pieces work runs,
   never its findings.
 
-### 7.4 More than one GPU
+### 7.4 More than one GPU, more than one host
 
-Out of scope for the first CUDA slice. The trait holds a device per lane, so a second GPU is a second lane with
-its own budget and residency. Blocks moving between GPUs follow §7.2, with NVLink or PCIe peer bandwidth as the
-link's price.
+Several GPUs on a host, and several hosts, are the same model as §7.2: each is a lane with its own domain, budget
+and directory entries; the scoreboard places work on lanes, and the directory moves versions between domains. Peer
+copies between GPUs use NVLink or PCIe peer-to-peer where the devices allow it, and go through host memory
+otherwise. The first CUDA slice runs one GPU; the directory is built with domains from the start so that a second
+GPU or host adds a lane, not a redesign.
 
 ## 8. Order of work, with gates
 
@@ -413,25 +463,22 @@ on a Spark.
 | 7 | The hand-written MSL ported to UKL, file by file (copy into place first), in the product path's order: tape reads, label passes, views and ids, the batch runtime, block programs, joins | each file's Metal output passes its semantic conformance tests, unchanged, before the MSL file goes |
 | 8 | The remaining emitters write UKL | as 7 |
 | 9 | CUDA end to end on a Spark | the data layer's 142 checks give native's findings with the GPU lane on CUDA |
-| 10 | Partitioned memory (§7.2, §7.3) | needs a discrete-GPU host (§9, Q4) |
+| 10 | The block directory (§7.2): domains, versions, replicas, events; kernels' read and write rows drive it | on a unified device every step is a no-op (no copies counted); with a P-class policy forced on a Spark, findings unchanged and copies counted |
+| 11 | Partitioned memory on a discrete GPU (§7.2, §7.3), on a cloud VM with a discrete NVIDIA card (§9, Q4) | the data layer's checks give native's findings on the discrete card; copies and their bytes reported per run |
+| 12 | Several GPUs and hosts (§7.4) | two lanes on two domains give one lane's findings |
 | later | ROCm (HIP), OpenCL, WebGPU (§3.4) | planned as each is taken up |
 
 Steps 1, 2 and E1 are small and settle the bets the rest rests on: the preprocessor, the shim, and in-place
 bandwidth. Step 3 can run beside them.
 
-## 9. Questions for the user
+## 9. Questions for the user, and the answers (2026-11-18)
 
-- **Q1. Blocks on a partitioned GPU.** 0353 says no block is ever copied. On a discrete card, a block read many
-  times must have a home in device memory. Proposed: a frozen block's home moves (the residency's fill and
-  eviction, §7.2), and is not counted as a copy, because only one home is live. Data read once is read over the
-  bus in place. Is that consistent with 0353, or should 0353 be amended for partitioned devices?
-- **Q2. Generated code as UKL text.** Proposed: every emitter writes UKL, and the backends differ only by shim
-  (§3.3). The alternative, per-backend emitters in Rust, gives each backend's best code at the cost of N copies of
-  each emitter. UKL text is recommended, with a backend-specific branch inside a primitive only where a
-  measurement asks for it.
-- **Q3. Vendor libraries.** May CUDA use CUB, and ROCm use rocPRIM, for device-wide sort and scan where they
-  measure faster, behind the library's interface (§5)? Or should our UKL library be the only implementation
-  everywhere?
-- **Q4. A discrete GPU.** The farm's CUDA machines (the Sparks) are unified memory, so they cannot test §7.2. Is
-  there a discrete NVIDIA (or AMD) card we can use? Otherwise partitioned memory waits, or is tested only by
-  forcing the P-class policy on a Spark.
+- **Q1. Blocks on a partitioned GPU.** Answer: "blocks will need to be copied to and from devices, and for us to
+  manage coherency between blocks read and written by different kernels on different hosts and GPUs (a host may
+  have more than one GPU too)". Folded into §7.2 (copies between memory domains, coherency by versions and a
+  directory; 0353 holds within a domain) and §7.4.
+- **Q2. Generated code as UKL text.** Answer: "write UKL". Folded into §3.3.
+- **Q3. Vendor libraries.** Answer: "yes, that is the goal: same code, high-level calls will optimize per backend
+  behind the call". Folded into §5.
+- **Q4. A discrete GPU.** Answer: a cloud VM with a discrete NVIDIA card, used before for embedding benchmarks.
+  Its access is kept outside the repository. Folded into §8, step 11.
