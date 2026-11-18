@@ -2724,6 +2724,17 @@ submitted" now hold device memory at once.
 
 - **Done when**: a budget refusal says so, with its numbers, in the profile's refusals (an error kind of its own);
   the 512 MB budget's refusals measured against the strata a wave holds at once.
+- **Measured** (2026-11-18, the full shape cold on Metal, t41 beside t54 at load 86-91): t41 0 refusals, 7 chunks,
+  548.6 G instructions, 33.1 s wall; t54 111 refusals (28 in another run), 10 chunks, 596.9 G instructions
+  (+8.8%), 47.1 s wall. Each refused stratum runs on the CPU. This is the Metal side's backslide since t41.
+- **Cause** (t54's Metal profile, profm41-side/t54.txt): the refused are binding tables of 0.5-1.4 M rows (8 slots)
+  past the budget, while 430-445 MB of the 512 MB is leased: the chunks' row blocks (a run's 23, 1023 MB written of
+  1472 MB) take slabs inside it. Since t41 (9a9b270ce) the hub put the device's relations in blocks (0325 steps 4-6),
+  made every block through one policy that gives a `Device::May` block a slab while half the budget is spare (0342,
+  9e08ed961), and kept each job's device work apart (0386). The budget is the user's (half the memory limit, row
+  blocks inside it); the bench lifts `RERAIL_RUN_MB`, the chunks' line, not `RERAIL_MEMORY_MB`, which sets it.
+  Options for the user: the Metal allowance follows the lifted line; `May` blocks leave the device's half alone
+  when a wave is under way; or a refused stratum waits for the wave's leases to come back before it runs on the CPU.
 - **Record**: —
 
 ### Q189. (bend's Q117, benchmarks-on-integration's Q54, then Q179 there) The journal's answer across processes is not a guarantee FSEvents makes
@@ -2825,6 +2836,50 @@ with the default line takes the slow pass.
   `sources.rr` includes `c/includes.rr`). The pair needs t41 built from a worktree at its own commit, its own
   target (no shared target across worktrees), or a t48 built with the hub's chunk changes taken out one at a time
   (47785e475 first).
+- **Hot spots, found without t41 beside** (t41's, t48's and t50's profiles side by side, and a `sample` of t48's
+  chunks): join probes 32.9 s CPU at t41, 41.1 s at t50, over the same planned work (417 M and 404 M units).
+  (1) `p299_attempt`'s kept greedy order was a cross product. After `$k = #k1249` it read `kind($m, $k)` by its
+  kind alone (11 rows a binding priced, 75 read) for each of 15 k texts: 1.16 M rows, none kept. That made `kind`
+  lookups by kind +2.3 s, `text` membership +2.2 s and `child` lookups +0.7 s. The cause: a variable an equality binds
+  to a constant counted as joining its atom to the rest, so the greedy order's "no cross product while a connected
+  step remains" (decision 0038) let it through. t41 priced that step at 4,657 a binding (postings) and so never
+  took it; 6d34fde07's kind frequency priced it at 11. Fixed (this commit): such a variable joins nothing, in the
+  greedy order's connectivity, the search's crossing mask and the cross product's floor. Test:
+  `a_variable_bound_to_a_constant_does_not_connect_a_step` (fails without the fix, as the run did). The 140 planner
+  tests pass.
+  (2) The derived `kind` is now read as a view of the held projection (0353, no copy). A first step `kind($c, K)`
+  reads the same 165 k rows at 142 ns a row against 9 at t41: each lookup walks every document's nodes of the kind
+  (`Facts::of_kind`), then ranks each match (`local_of_node`) and selects its id (`Projected::global`), per row. Its
+  scans and memberships too: 61 against 13 ns a row, 216 against 130. Together about 4 s of CPU. In the sample,
+  view reads (`find_read`, `find_keyed`, `row_at`) are a third of the joins, and the block index's compares
+  (`Run::find`'s `Rows::get` a value) half of `find_at`.
+  Done for (2), with no copy: a lookup of a kind by value walks a document's numbered nodes (`node_ids`) where the
+  kind is at least one node in 16 (`KIND_WALK_SHARE`), so each match has its local id and id from the walk, with no
+  rank or select. A node's document is searched in a dense index of the batch's keys, not across the projections
+  (`Batch::doc`). A join's scan of a whole view, put in the next step's key order (decision 0112), is read in one
+  walk with the values the step needs and ordered by them (`walked_in_order`, up to 2^18 rows). Before, each row was
+  read alone twice: its keys to sort by, then its values. Tests: `a_kind_lookup_reads_the_rows_a_per_row_read_finds`
+  (every kind, both ways), the view tests and setfix's 60.
+  t53 (those, and the cross product closed) against t50, CPU cold on the M3, alternated: 77.41 and 69.02 against
+  77.89 and 75.31 s; findings identical. Its profile and a sample showed what was left. (3) A probe `kind($m, $k)`
+  still scanned every document's tape for the kind's codes (`Facts::of_kind`): 55 k probes at 39 µs. The batch now
+  keeps an index of the `node` view's rows by kind (`Batch::by_kind`, made once in a walk of the numbered nodes, each
+  match with its local id and tape node): an index, not a copy (0353). The walk by `KIND_WALK_SHARE` and the
+  dialects' `codes` and the batch's `of_tag`, which only that scan read, are gone. (4) Membership by id
+  (`kind($n, K)`, 26 M probes at 184 ns against 130 at t41) is an id's number (`num_number_of`) then a select:
+  10% of the join samples, in the CLIF reads. Open.
+  Not a regression: the A/B and profile runs here lower all 317 programs (4.1 s CPU), since no bundle
+  (`rerail-library.images`) is beside `tmp/m3slow/bin/tNN`; the bench's `run.sh` packs one beside the engine.
+  t41 runs with m3bench2's library (the 11-16 inputs), so it was profiled beside t54 after all (`prof41.sh`, the
+  images kept in each binary's store, the M3 at load 57-60). Findings identical by value (660 relations, 30,449
+  rows). Work: t54 921.3 -> 942.4 G instructions (+2.3%), 250.6 -> 260.3 G cycles (+3.8%); span CPU 76.70 -> 78.02 s.
+  CPU seconds alone mislead on the M3: t41 took 60.8-81.2 s across runs, as its threads landed on efficiency cores
+  under other jobs' load; instructions are the measure. Wall 20.7 -> 28.9 s: chunks' wait 10.3 -> 11.2 (t54's main
+  thread runs no job while it waits, 75848623b, decision 0254 §5: 5.4 s of t41's main thread's CPU was chunk
+  work), `local` 4.7 -> 8.4 and `cross` 3.9 -> 6.2. Those two are the main thread's serial work: its own CPU
+  +1.0 s (base rows for the memo +0.35, hold the export +0.28, publishing entries +0.15) and +0.8 s, and the rest
+  its time off a core (t54's `local` 20.2 s of threads ready with no core, t41's 6.8). At a load of 57-95 all day
+  on the one farm host, the wall's remaining 1.8 s of serial CPU is the part that is the engine's.
 
 ### Q221. (Q184 on benchmarks-on-integration) A warm run waits on the journal's cookies far longer than a `stat` of what it trusts would take
 
@@ -2901,9 +2956,13 @@ fine) or in 8 runs after; the CPU path never hung (11 runs).
   chunk builder ended before a load's documents", and the run ends with its error, not a hang. t51 (the fix): 8 of 8
   cold Metal runs of the full shape ended, rc 0, 22-33 s (the M3 at load 50-90). Before it, 3 of 13 hung. No run
   failed, so the first chunk's own error is not seen yet: a run that meets it now ends with it in its log.
-- **Open**: no test fails a load's chunk (the builder is local to `run_observed`, and no hook fails a load), and
-  12 more cold Metal runs are owed for the 20.
-- **Record**: —
+- **Done** (2026-11-18): t54, 12 more cold Metal runs of the full shape all end, rc 0, 22-104 s (the M3 at load
+  50-95): 20 of 20 since the fix. A test fails a load's chunk (`FAILS_ITS_CHUNK`, a test-hooks build's file name
+  whose chunk's projection fails): `a_load_whose_chunk_fails_ends_the_run_with_its_error` (the run ends with the
+  chunk's error, within 120 s). It does not pin the hang's order: two small programs (loads from a file's lines and
+  from a directory's entries) do not get a second load posted ahead of the failing one's error, and the test passes
+  without the stopped check too. The full shape on Metal did, 3 of 13 times.
+- **Record**: the fix 1fc292eb2; the runs in working-data/bench-1118/ab41-t54.txt.
 
 ### Q232. (Q40 on Go-C-and-C-support) Step 22 reads float chains and long floats in tier 1 (0413)
 

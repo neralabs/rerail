@@ -28,7 +28,7 @@
 
 use super::{Modules, Relation, Source};
 use crate::code_rule_dsl::facts::Graph;
-use crate::code_rule_dsl::facts::core::{Facts, KIND_STRIDE, NONE, TEXT, kind_atom, kind_code};
+use crate::code_rule_dsl::facts::core::{Facts, NONE, TEXT, kind_atom, kind_code};
 use crate::code_rule_dsl::language::{KindCatalog, from_tape_tag};
 use crate::content_store::{ContentStore, StoreError, StoreResult};
 use rusqlite::Connection;
@@ -1605,7 +1605,6 @@ pub struct Dialect {
     /// The `operators` field: a comparison's operator tokens (`a < b <= c`).
     operators: Option<u16>,
     pub canonical: Vec<u16>,
-    codes: HashMap<u16, Vec<u16>>,
     /// Whether W reads values of the dialect's nodes (its family's `ValueRules::SUPPORTED`): `Extra`'s `value` and
     /// `value_type` are W's for its documents, `core_rr`'s literal values for the others (an `.rr` file's).
     values: bool,
@@ -1642,13 +1641,9 @@ impl Dialect {
                 _ => k,
             })
             .collect();
-        let mut codes: HashMap<u16, Vec<u16>> = HashMap::new();
-        for (k, &c) in canonical.iter().enumerate() {
-            codes.entry(c).or_default().push(k as u16);
-        }
         let family = Family::of(from_tape_tag(tag).and_then(crate::code_rule_dsl::language::label));
         let grammar = crate::code_rule_dsl::tape::tokens::TokenGrammar::of_dialect(dialect);
-        Ok(Self { tag, family, catalog, names, classes, granule_kinds, operator: catalog.field_id("operator"), operators: catalog.field_id("operators"), canonical, codes, values, grammar })
+        Ok(Self { tag, family, catalog, names, classes, granule_kinds, operator: catalog.field_id("operator"), operators: catalog.field_id("operators"), canonical, values, grammar })
     }
     /// What kind code `code` is to the granules (`granules::kind_flags`); ERROR and an unknown code are nothing.
     pub fn granule_kind(&self, code: u16) -> u8 {
@@ -2270,19 +2265,22 @@ impl Projected {
 /// One wave's documents, sorted by key, and the row offsets of the views.
 pub struct Batch {
     pub docs: Vec<Projected>,
+    /// The documents' keys, in their order (ascending): the index a node's document is searched in (`doc`). Searched
+    /// in `docs` itself, each step read a different projection's line (Q220: `Batch::node` was a fifth of a join's
+    /// view reads).
+    keys: Vec<u32>,
     /// Each document's tape, for W's values answered on request (`LongTexts::value_any`, decision 0174), and its values,
     /// read off it at the first request; empty where no program asks for values.
     valued: Vec<Option<Valued>>,
     pub dialects: Dialects,
-    /// The documents of each tape tag, ascending: a probe by kind reads its language's documents alone (a batch's
-    /// guests are documents of other languages, most of a Python batch's).
-    of_tag: [Vec<u32>; 256],
     pub nodes: Vec<usize>,
     children: Vec<usize>,
     fields: Vec<usize>,
     siblings: Vec<usize>,
     /// Nodes and spans (`Projected::locs`).
     locs: OnceLock<Vec<usize>>,
+    /// The `node` view's rows by kind (`by_kind`), made at the first lookup by kind.
+    kinds: OnceLock<KindRows>,
     shape: Shape,
     /// The registered lazy families (`Families`, Python's `py.*`: list step 25), by registration; `None` for one
     /// whose dialect has no document in the batch.
@@ -2296,6 +2294,41 @@ pub struct Batch {
     /// The batch's chunk (decision 0289): its views' arrays, made on the device's first read of a view.
     #[cfg(target_os = "macos")]
     chunk: OnceLock<device_chunk::Chunk>,
+}
+
+/// The `node` view's rows by kind: an index of the view (decision 0353: an index in its relation's place, not a copy of
+/// its rows), made in one walk of each document's numbered nodes (`Projected::nodes`, no select) at the batch's first
+/// lookup by kind. Each match keeps its document, local id and tape node, so a lookup reads no rank and no select.
+/// Q220: a probe `kind($m, $k)` scanned every document's tape for the kind's codes (`Facts::of_kind`), 55 k probes
+/// of a cold run at 39 µs each, where t41's `kind`, a relation of its own, had an index.
+struct KindRows {
+    /// The kinds, ascending.
+    keys: Vec<i64>,
+    /// Where each kind's matches start in `at`, and one past the last.
+    starts: Vec<u32>,
+    /// Each kind's nodes in row order: `(document, local id, tape node)`.
+    at: Vec<(u32, u32, u32)>,
+}
+
+impl KindRows {
+    fn new(b: &Batch) -> Self {
+        let mut all: Vec<(i64, u32, u32, u32)> = Vec::with_capacity(b.nodes.last().copied().unwrap_or(0));
+        for (doc, p) in b.docs.iter().enumerate() {
+            let Some(dialect) = b.dialects.get(p.tag) else { continue };
+            all.extend(p.nodes().map(|(l, x)| (dialect.kind(&p.facts, x), doc as u32, l, x)));
+        }
+        // Stable: within a kind, the rows stay in order.
+        all.sort_by_key(|e| e.0);
+        let (mut keys, mut starts) = (Vec::new(), Vec::new());
+        for (i, e) in all.iter().enumerate() {
+            if keys.last() != Some(&e.0) {
+                keys.push(e.0);
+                starts.push(i as u32);
+            }
+        }
+        starts.push(all.len() as u32);
+        KindRows { keys, starts, at: all.into_iter().map(|(_, d, l, x)| (d, l, x)).collect() }
+    }
 }
 
 /// A span's id (core.rr's `span`: a piece of a document's text): `d << 32 | granules::extra_low(kind, i)`, in slots of
@@ -3655,20 +3688,19 @@ impl Batch {
         } else {
             Vec::new()
         };
-        let mut of_tag: [Vec<u32>; 256] = std::array::from_fn(|_| Vec::new());
-        for (doc, p) in docs.iter().enumerate() {
-            of_tag[usize::from(p.tag)].push(doc as u32);
-        }
+        let keys: Vec<u32> = docs.iter().map(|p| p.key).collect();
+        debug_assert!(keys.is_sorted(), "a batch's documents ascend by key");
         let batch = Arc::new(Batch {
             docs,
+            keys,
             valued,
             dialects,
-            of_tag,
             nodes,
             children,
             fields,
             siblings,
             locs,
+            kinds: OnceLock::new(),
             shape,
             families: bound,
             made,
@@ -3729,7 +3761,7 @@ impl Batch {
         if hit.is_some() {
             return hit;
         }
-        let i = self.docs.binary_search_by_key(&d, |p| p.key).ok()?;
+        let i = self.keys.binary_search(&d).ok()?;
         DOC.with(|h| h.set((key, i)));
         Some(i)
     }
@@ -3738,6 +3770,11 @@ impl Batch {
         let doc = self.doc(n >> 32)?;
         let local = self.docs[doc].local_of((n & 0xffff_ffff) as u32)?;
         (n >= 0 && local < self.docs[doc].len()).then_some((doc, local))
+    }
+    /// The nodes whose `kind` (the `node` view's column 2) is `kind`, in row order: `(document, local id, tape node)`.
+    fn by_kind(&self, kind: i64) -> &[(u32, u32, u32)] {
+        let k = self.kinds.get_or_init(|| KindRows::new(self));
+        k.keys.binary_search(&kind).map_or(&[][..], |i| &k.at[k.starts[i] as usize..k.starts[i + 1] as usize])
     }
     /// The document index and node or span of id `n`.
     fn loc(&self, n: i64) -> Option<(usize, u32)> {
@@ -4175,17 +4212,7 @@ impl Viewed {
                     }
                 }
             } else if matches!(self.view, View::Node) && column == 2 {
-                let (Ok(tag), Ok(code)) = (u8::try_from(v / i64::from(KIND_STRIDE)), u16::try_from(v % i64::from(KIND_STRIDE))) else {
-                    continue;
-                };
-                let Some(dialect) = b.dialects.get(tag).filter(|_| v >= 0) else { continue };
-                let atoms: Vec<u32> = dialect.codes.get(&code).map_or(&[][..], Vec::as_slice).iter().map(|&c| kind_atom(tag, c)).collect();
-                for doc in b.of_tag[usize::from(tag)].iter().map(|&d| d as usize).filter(kept) {
-                    let p = &b.docs[doc];
-                    for &kind in &atoms {
-                        rows.extend(p.facts.of_kind(kind).iter().map(|&id| p.local_of_node(id as u32)).filter(|&l| l != NONE).map(|l| b.nodes[doc] + l as usize));
-                    }
-                }
+                rows.extend(b.by_kind(v).iter().filter(|&&(doc, _, _)| kept(&(doc as usize))).map(|&(doc, local, _)| b.nodes[doc as usize] + local as usize));
             } else {
                 return None;
             }
@@ -4250,21 +4277,9 @@ impl Viewed {
                 }
             }
         } else if matches!(self.view, View::Node) && column == 2 {
-            let (Ok(tag), Ok(code)) = (u8::try_from(value / i64::from(KIND_STRIDE)), u16::try_from(value % i64::from(KIND_STRIDE))) else {
-                return true;
-            };
-            let Some(dialect) = b.dialects.get(tag).filter(|_| value >= 0) else { return true };
-            let atoms: Vec<u32> = dialect.codes.get(&code).map_or(&[][..], Vec::as_slice).iter().map(|&c| kind_atom(tag, c)).collect();
-            for doc in b.of_tag[usize::from(tag)].iter().map(|&d| d as usize) {
-                let p = &b.docs[doc];
-                for &kind in &atoms {
-                    for id in p.facts.of_kind(kind) {
-                        let l = p.local_of_node(id as u32);
-                        if l != NONE {
-                            emit(doc, l, id as u32, None, None);
-                        }
-                    }
-                }
+            // The batch's index by kind (`Batch::by_kind`): each match with its local id and tape node.
+            for &(doc, local, x) in b.by_kind(value) {
+                emit(doc as usize, local, x, None, None);
             }
         } else {
             return false;

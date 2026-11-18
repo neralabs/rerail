@@ -3231,6 +3231,10 @@ fn compose_messages(part: &output::Rows, holes: usize, templates: &HashMap<(Stri
 }
 
 #[allow(clippy::too_many_arguments)]
+/// The file name whose chunk's projection fails, in a build for tests: a test of a run whose chunk fails (Q224).
+#[cfg(any(test, feature = "test-hooks"))]
+pub const FAILS_ITS_CHUNK: &str = "rerail_test_fails_its_chunk.pyi";
+
 fn run_observed(
     given: &Texts<'_>,
     root: &Path,
@@ -5689,6 +5693,13 @@ fn run_observed(
     };
     let project = |docs: Vec<syntax::Document>| -> (Result<Sources>, (f64, f64)) {
         let from = thread_usage();
+        // A test's chunk that fails (Q224): one holding a document of this file name.
+        #[cfg(any(test, feature = "test-hooks"))]
+        if docs.iter().any(|d| d.path.ends_with(FAILS_ITS_CHUNK)) {
+            // Late, so that the cone posts the requests an earlier answer led to before this one's error is read.
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            return (Err(Error::Plan(format!("{FAILS_ITS_CHUNK}: its chunk fails (a test's)"))), (0.0, 0.0));
+        }
         let built = {
             let _batch = crate::code_rule_dsl::logic::profile::span(|| "worker batch".into());
             let coned = {

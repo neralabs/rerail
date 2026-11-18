@@ -606,6 +606,42 @@ fn the_cone_maintained_by_rounds_loads_what_a_fresh_cone_loads() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Q224: a run whose loaded document's chunk fails ends with that chunk's error, not waits. Two loads here, one from
+/// a file's lines and one from a directory's entries. The hang needed a second load posted ahead and answered after
+/// the first's error (the full shape on Metal, 3 of 13 runs); this program's cone does not post them so, and the test
+/// passes without `Builder::next`'s stopped check too: it keeps the error's way out, not that order.
+#[test]
+fn a_load_whose_chunk_fails_ends_the_run_with_its_error() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("load-fails");
+    let _ = std::fs::remove_dir_all(&dir);
+    let (ws, lib) = (dir.join("ws"), dir.join("lib"));
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::create_dir_all(&lib).unwrap();
+    let (fails, other) = (lib.join(super::FAILS_ITS_CHUNK), lib.join("b.pyi"));
+    std::fs::write(&fails, "def f() -> None: ...\n").unwrap();
+    std::fs::write(&other, "def b() -> None: ...\n").unwrap();
+    std::fs::write(ws.join("rerail.env"), "test.libraries = ../lib\n").unwrap();
+    std::fs::write(ws.join("main.py"), "x = 1\n").unwrap();
+    std::fs::write(ws.join("later.txt"), format!("{}\n", fails.display())).unwrap();
+    let rule = dir.join("p.rr");
+    std::fs::write(&rule, format!(
+        "#include \"core.rr\"\nload(p, \"f\", \"python\") :- file_line(\"later.txt\", 1, p).\nload(p, \"b\", \"python\") :- dir_entry(\"{lib}\", \"b.pyi\", 0), p = cat(\"{lib}\", \"/b.pyi\").\n.decl n_loaded(p: symbol)\nn_loaded(p) :- loaded(p, _, _).\n.output n_loaded\n",
+        lib = lib.display()
+    )).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let (out, store) = (dir.join("out"), dir.join("store.sqlite"));
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store));
+        let r = super::run(&text, &ws, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
+        let _ = tx.send(r.err().map(|e| e.to_string()));
+    });
+    let err = rx.recv_timeout(std::time::Duration::from_secs(120)).expect("the run ends, not waits for ever");
+    let err = err.expect("the run fails");
+    assert!(err.contains(super::FAILS_ITS_CHUNK), "the run ends with the chunk's error: {err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Decision 0327, mode (b): a translation unit's answer is kept while the files it read are unchanged. An edit to a
 /// header asks again for the units that read it, and for no other; a header made where a unit's search looked first
 /// is one it read (its path was looked at). The outputs are those of a run with nothing kept.
