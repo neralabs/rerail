@@ -479,16 +479,16 @@ event in `untaken-events` in the Rerail home and answers, and while such an even
 its own behind it at once without asking the daemon. A session's start still waits. As soon as the daemon reads again
 it checks those events as it checks any event, in the order their hooks met them and before any later event; what a
 check finds reaches the agent with the session's next answer, not with the hook that left the event. Rerail never saw
-such a tool call's files before it ran, so an Edit is compared with the file it left with its own edit put back, its
-new text replaced by its old text where the file holds the new text once (every place, for an edit of every place):
-it is told exactly its own lines, as when Rerail sees it run. Any other such call (a Write, or an Edit whose new text
-the file no longer holds once, as another program or a later call changed it) is compared with what the session last
-saw of each file, unless that already holds what the call left (the session first saw the file after the call ran, as
-in a busy spell that starts with the session, or the call left the file as it was): then the whole file the call left
-is checked, and a finding can name lines the call did not write. When another program changed the file after the
-session last saw it, a line that program added can be named as the call's, and a line the call wrote back after that
-program removed it is not named. A tool's output is not kept with them. The folder keeps at most 256 events and
-16 MiB, so what a daemon that reads again has to check
+such a tool call's files before it ran, so it tells the call its own lines only where the file before the call is
+certain, and checks the whole file the call left everywhere else. The file before the call is certain only when the
+call is an Edit or MultiEdit (not a Write), its edits put back (each new text, found exactly once, replaced by its old
+text, at every place for an edit of every place) give a text on which the tool would make them again and leave
+exactly the file as it is, and that text is the file as the session last saw it. Then the call is told exactly its
+own lines, as when Rerail sees it run. Anything else is checked whole, and a finding can name lines the call did not
+write, but none of its own is missed: a Write; an Edit that created its file; an Edit whose new text the file no
+longer holds once; a file another program or another such call changed since the session last saw it, or that the
+session first saw after the call ran, as in a busy spell that starts with the session. A tool's output is not kept
+with them. The folder keeps at most 256 events and 16 MiB, so what a daemon that reads again has to check
 is bounded; past that a hook's event is lost and the line above counts it. An entry there the daemon cannot read (a
 folder under an event's name, a file another user or program left, one another program holds open) counts once as
 an event it could not check, and is removed where it can be. While events wait, `rerail status` says
