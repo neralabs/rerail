@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { createServer as createNetServer, type AddressInfo, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -340,6 +340,14 @@ describe("the folder as spelt, which the daemon's start check reads what Rerail 
     await readPresentation({ sessionId, host: "claude-code", cwd: spelt });
     await readRepositoryState(spelt, "claude-code");
     expect(askedFor()).toEqual(Array(2).fill([await realpath(cwd), null]));
+  });
+
+  it("goes only on Windows where a link makes the folder's spelling another path than its real one", async () => {
+    await writeFile(join(home, "daemon.json"), JSON.stringify({ ...state, readsSpelling: true }));
+    const link = join(home, "linked-workspace");
+    await symlink(cwd, link, "junction");
+    await readRepositoryState(link, "claude-code");
+    expect(askedFor()).toEqual([[await realpath(cwd), process.platform === "win32" ? link : null]]);
   });
 
   it("does not go where the folder is spelt as its real path", async () => {
