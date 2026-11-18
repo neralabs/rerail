@@ -125,11 +125,28 @@ pub struct Body<'v> {
     /// The version the rule's source (`RuleRef::source`) is a rule of: the run's version 0, for a rule of a
     /// maintained form (`Versions::at`); `None` for every other rule.
     sources: Option<&'v Version>,
+    /// Its head's plain variables bound before its first step (`with_head_bound`): a recheck's, run once per
+    /// candidate row (decision 0364 stage 3, Q145).
+    head_bound: bool,
 }
 
 impl<'v> Body<'v> {
     pub fn of(v: &'v Version, rule: RuleRef<'v>) -> Body<'v> {
-        Body { v, rule, lits: rule.body().collect(), vars: OnceCell::new(), args: OnceCell::new(), key: OnceCell::new(), sources: None }
+        Body { v, rule, lits: rule.body().collect(), vars: OnceCell::new(), args: OnceCell::new(), key: OnceCell::new(), sources: None, head_bound: false }
+    }
+    /// The rule with its head's plain variables bound before its first step: a recheck of one candidate row
+    /// (decision 0364 stage 3). The planner prices and keeps its order apart from the rule's own (`key` names it):
+    /// each step starts from those variables bound and one row (Q145).
+    pub fn with_head_bound(&self) -> Body<'v> {
+        Body { v: self.v, rule: self.rule, lits: self.lits.clone(), vars: OnceCell::new(), args: OnceCell::new(), key: OnceCell::new(), sources: self.sources, head_bound: true }
+    }
+    /// The variables bound before its first step: its head's plain ones for a recheck (`with_head_bound`), else none.
+    /// A computed term's variables are not bound by the candidate.
+    pub fn bound_before(&self) -> VarSet {
+        if !self.head_bound {
+            return VarSet::new();
+        }
+        VarSet::of(self.head().args().filter_map(|t| t.var()))
     }
     /// The rule this one was written from (decision 0258): for a maintenance rule of a session's form (`h__del`,
     /// `h__ins`, `h__redo`, …), its source rule `h :- …` of the run's version. `None` for a rule not written from one.
@@ -387,6 +404,10 @@ impl<'v> Body<'v> {
 
     /// The rule written into a digest, as `plan::digest_atom` and `plan::digest_literal` write the tree's head and body.
     pub(in crate::code_rule_dsl) fn digest(&self, d: &mut super::super::derived::Inputs) {
+        // A recheck's order is not the rule's: kept apart (Q145).
+        if self.head_bound {
+            d.str("head bound");
+        }
         self.digest_atom(d, self.head());
         d.u64(self.lits.len() as u64);
         for &l in &self.lits {

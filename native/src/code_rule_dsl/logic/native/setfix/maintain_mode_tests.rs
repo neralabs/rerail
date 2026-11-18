@@ -74,6 +74,15 @@ fn a_maintained_component_kills_the_candidates_no_rule_derives_and_adds_the_new_
     );
     open(&db, &spec).unwrap();
     run(&db, "mm_h", 0).unwrap();
+    // Each line's work by its plan steps, for the planning budget (Q145): the removal read a's row gone and found
+    // its two candidates; each recheck ran; the counts restart once read.
+    let [removes, adds, rechecks] = maint_step_counts(&db, "mm_h").unwrap();
+    let worked = |line: &Vec<(i64, i64)>| line.iter().any(|&(i, o)| i > 0 || o > 0);
+    assert_eq!((removes.len(), adds.len(), rechecks.len()), (1, 0, 2), "one removal, two rechecks");
+    assert!(worked(&removes[0]), "the removal's steps counted: {removes:?}");
+    assert!(rechecks.iter().all(worked), "each recheck's steps counted: {rechecks:?}");
+    let [removes, _, rechecks] = maint_step_counts(&db, "mm_h").unwrap();
+    assert!(!removes.iter().chain(&rechecks).any(worked), "read once: {removes:?} {rechecks:?}");
     close(&db, "mm_h").unwrap();
     let h = held(&db, "mm_h").expect("the maintained relation");
     assert_eq!(unpadded(live(&h)), vec![vec![1, 10], vec![2, 20], vec![3, 30], vec![4, 40]]);

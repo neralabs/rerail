@@ -2823,6 +2823,22 @@ pub fn step_counts(conn: impl Scoped, name: &str) -> Result<Vec<Vec<(i64, i64)>>
     }).collect())
 }
 
+/// The maintain mode's lines of component `name` (decision 0364 stage 3): its removal joins, its checked adds and its
+/// rechecks, each in spec order, with each one's steps' (in, out) binding counts by plan step since the last call (as
+/// `step_counts`'s); the counts restart. Their work, for the next run's planning budget (Q145).
+pub fn maint_step_counts(conn: impl Scoped, name: &str) -> Result<[Vec<Vec<(i64, i64)>>; 3]> {
+    let conn = conn.db();
+    let comp = component(conn, name)?;
+    let comp = comp.lock().unwrap();
+    let of = |js: &[(usize, JoinRule)]| -> Vec<Vec<(i64, i64)>> {
+        js.iter().map(|(_, j)| {
+            let c: Vec<(u64, u64)> = j.counts.iter().map(|[a, b]| (a.replace(0), b.replace(0))).collect();
+            j.plan_counts(&c).into_iter().map(|(a, b)| (a as i64, b as i64)).collect()
+        }).collect()
+    };
+    Ok([of(&comp.maint.removes), of(&comp.maint.adds), of(&comp.maint.rechecks)])
+}
+
 /// Profiled: per probe of component `name`, its plan steps' CPU seconds since the last call, and last its head's
 /// (its computed terms and rows made: `JoinRule::step_ns`, `plan_cpu`); the clocks restart. Taken when `step_counts` is, so the two cover the same walks.
 pub fn step_cpu(conn: impl Scoped, name: &str) -> Result<Vec<Vec<f64>>> {

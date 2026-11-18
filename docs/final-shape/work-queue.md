@@ -3040,7 +3040,7 @@ row `("a", "rr_value_req", 0, "vals")` against `… 1 …`), `tests::a_pair_of_p
   by `same_program` (equal digest without the record, and the record equal by each rule's content), so a record
   whose rules are only in another order is the same program. The three tests pass on the merge.
 
-### Q145. (Q116 on investigate-bend-vs-datalog at 0098f4340) The maintain mode's recheck order is not priced
+### Q145. (Q116 on investigate-bend-vs-datalog at 0098f4340) (done) The maintain mode's recheck order is not priced
 
 Found 2026-11-17, during 0364 stage 4. A mode stratum's removal, add and probe lines take the program's kept plans
 (`plan_rule_reused`), as a semi-naive probe does. Its recheck (a rule with its head bound, run once per candidate)
@@ -3052,3 +3052,20 @@ native join it falls back to the planner's whole-rule order.
   order is then kept as the other lines' are.
 - **Also open**: the mode's lines report no work to `Model::ran`, because `MaintMode` counts per kind, not per line.
   The 0122 budget therefore prices their kept plans again rather than taking them as they are.
+- **Record**: done (2026-11-18). The planner prices a body with variables bound before its first step:
+  `Body::with_head_bound` marks a recheck (its head's plain variables; a computed term's are not), and its digest
+  names it, so the recheck's kept plan has a key of its own. The search (`plan_search`) starts every order from
+  that binding and one row: the empty order's bound set and the filters it makes ready (`best_of[0]`, the subsets'
+  `closure`, cell 0's rows and work), a kept order's pricing (`price`), the rebuilt order and a body of filters alone.
+  The recheck is planned through `plan_rule_reused` like every other line (searched at first sight, then taken or
+  priced again as its sizes move); where its order has no native join, the rule's own order, as before.
+  `bound_head_order` is gone. The mode's lines report their work: `setfix::maint_step_counts` gives the removals',
+  checked adds' and rechecks' step counts by plan step (the probes' are `step_counts`'), and `maintain_mode` gives
+  each line's work to `Model::ran` under its key (a removal and its add, planned alike, summed under one). A
+  recursive component's drivers (a probe's join less its delta atom) report none: their order is the probe's, run
+  another way. Tests: `a_recheck_is_priced_with_its_head_bound_and_kept_apart` (plan: alone `c(y)` leads, with the
+  head bound `a(x, y)` does, its kept plan taken as it is and the rule's own order untouched) and the counts in
+  `a_maintained_component_kills_the_candidates_no_rule_derives_and_adds_the_new_rows` (setfix). On the farm (M3):
+  those, setfix's three maintain-mode tests, the two corpus maintain-mode tests, the session tests (19) and the plan
+  budget tests. Reviewer: an ordinary body's search is unchanged (`pre` empty: every new branch is skipped, and
+  its key's digest is as before).

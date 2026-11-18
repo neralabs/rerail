@@ -3828,6 +3828,8 @@ impl Model {
         // factorized part's key, `fzk($d) :- demand($d), node($d, $v, …), col($v, $c)`, was planned from `col` (31,191
         // rows est., 4 M read) where `demand` first reads one node a document.
         let head_vars = body::atom_vars(b.head());
+        // What is bound before the first step: a recheck's head (`Body::with_head_bound`, Q145), one candidate row.
+        let pre = b.bound_before();
         let step_all = |l: usize, rows: f64, bound: &VarSet| -> Option<(f64, f64, Option<Mode>)> {
             // In a long body's greedy order, a step that reads with no bound variable (a scan, a cross product) is
             // priced from at least one binding (Postgres's `clamp_row_est`): an estimate near 0 would make every next
@@ -3927,7 +3929,7 @@ impl Model {
         // A given order, priced now: each join step as the search prices it, each filter once ready. A kept order
         // (`fixed`), or a start the search tries first (`SearchCx::start`, decision 0258).
         let price = |fixed: &[Step], candidates: &mut u64| -> Result<(f64, f64, Vec<Step>)> {
-            let (mut work, mut rows, mut bound, mut order) = (0.0, 1.0, VarSet::new(), Vec::new());
+            let (mut work, mut rows, mut bound, mut order) = (0.0, 1.0, pre.clone(), Vec::new());
             if fixed.len() != b.len() {
                 return Err(Error::Plan("a kept plan of another body".into()));
             }
@@ -3964,7 +3966,7 @@ impl Model {
         let (work, rows, order, subsets) = if joins.is_empty() {
             // A body of filters and aggregates alone (`n = count : { … }`) runs over the relational unit, one empty
             // binding: ground negations and constant expressions filter it; an unbound variable still fails.
-            let (mut order, mut bound, mut rest) = (Vec::new(), VarSet::new(), (0..b.len()).collect());
+            let (mut order, mut bound, mut rest) = (Vec::new(), pre.clone(), (0..b.len()).collect());
             let (rows, _) = close(&mut order, 1.0, &mut bound, &mut rest);
             if !rest.is_empty() {
                 let rest: Vec<String> = rest.iter().map(|&i: &usize| b.show(i)).collect();
@@ -3979,7 +3981,12 @@ impl Model {
         type Best = (f64, f64, Vec<Step>, VarSet, Vec<usize>);
         let mut subsets_reached = 0u64;
         let mut best_of: HashMap<u64, Best> = HashMap::new();
-        best_of.insert(0, (0.0, 1.0, Vec::new(), VarSet::new(), (0..b.len()).filter(|&i| !b.is_join(i)).collect()));
+        best_of.insert(0, {
+            let (mut order, mut bound, mut rest) = (Vec::new(), pre.clone(), (0..b.len()).filter(|&i| !b.is_join(i)).collect());
+            // A recheck's tests of its head alone run before any join (Q145).
+            let (rows, work) = if pre.is_empty() { (1.0, 0.0) } else { close(&mut order, 1.0, &mut bound, &mut rest) };
+            (work, rows, order, bound, rest)
+        });
         // The greedy order's next step shares a variable with what is joined, while one can (no cross product while a
         // connected step remains, decision 0038). The search prices cross products itself: a cheap one with a tiny
         // relation is T's choice on its programs (`dec1` before `pv`: work 67, not 7,001).
@@ -4125,9 +4132,11 @@ impl Model {
         let mut readiness = Readiness::new(&lit_bits);
         let mut ready_at = |f: usize, bound: u128| -> bool { readiness.ready(f, bound, |own| b.ready(f, &set_of(own))) };
         // A subset's bound variables and the filters it has placed (bit `k`: `filters[k]`).
+        // A recheck's head (`pre`), bound before every subset: its variables that the body reads.
+        let pre_bits = pre.iter().filter_map(|v| var_ids[v.index()]).fold(0u128, |m, k| if k < 128 { m | 1u128 << k } else { m });
         let mut closure = |mask: u64| -> (u128, u128) {
-            let mut bound = 0u128;
-            if mask == 0 {
+            let mut bound = pre_bits;
+            if mask == 0 && pre_bits == 0 {
                 return (bound, 0);
             }
             for (i, &j) in joins.iter().enumerate() {
@@ -4227,8 +4236,19 @@ impl Model {
         // By subset mask (at most `GREEDY` joins, so 4,096 subsets).
         let mut cells: Vec<Option<Cell>> = (0..1usize << joins.len()).map(|_| None).collect();
         let mut closed: Vec<(u128, u128)> = vec![(0, 0); 1 << joins.len()];
-        cells[0] = Some(Cell { work: 0.0, rows: 1.0, prev: 0, last: usize::MAX, mode: None, unfounded: false, fan: 1.0, basis: "" });
         closed[0] = closure(0);
+        // The filters a recheck's head makes ready before any join (Q145), each passing its share on.
+        let (rows0, work0) = {
+            let (mut rows, mut work, mut placed) = (1.0, 0.0, closed[0].1);
+            while placed != 0 {
+                let k = placed.trailing_zeros() as usize;
+                placed &= placed - 1;
+                rows *= pass[k];
+                work += rows;
+            }
+            (rows, work)
+        };
+        cells[0] = Some(Cell { work: work0, rows: rows0, prev: 0, last: usize::MAX, mode: None, unfounded: false, fan: 1.0, basis: "" });
         // Only the subsets one join more than a subset reached (with the delta first, half of them or fewer): a
         // subset no order reaches has no cell, and its closure is not worked out. Each is solved as before, its last
         // joins tried in the same order, so the plan is the same.
@@ -4316,7 +4336,10 @@ impl Model {
                 path.push((c.last, c.mode));
                 at = c.prev;
             }
-            let (mut order, mut bound, mut rest) = (Vec::new(), VarSet::new(), filters.clone());
+            let (mut order, mut bound, mut rest) = (Vec::new(), pre.clone(), filters.clone());
+            if !pre.is_empty() {
+                close(&mut order, 1.0, &mut bound, &mut rest);
+            }
             for (i, mode) in path.into_iter().rev() {
                 order.push(Step { at: joins[i], mode });
                 bound.extend(b.vars(joins[i]));
@@ -6628,12 +6651,20 @@ fn observed_fans(stats: &Stats, rule: u64, order: Order<'_, '_>) -> Vec<Option<f
         .collect()
 }
 
-/// A column's type in the native store's spec: `s`, a symbol it reads as text, only where symbols are text. Over
-/// atoms every column is an integer (a name, kind or field atom), as the planner's SQL holds it (O13).
 /// The changed inputs a stratum in the maintain mode reads (decision 0364): each one's old rows, rows gone and rows
 /// added, as sources.
 /// A view of an input's columns (`input_view_shape`, Q37) has its input's, read through its columns (`Some`).
 type ModeInputs = BTreeMap<String, ([Arc<dyn crate::code_rule_dsl::facts::vtab::Source>; 3], Option<Vec<usize>>)>;
+
+/// The engine's list a maintain mode's joined line runs in (`setfix`): its probes (seeds and delta probes), then its
+/// removals, checked adds and rechecks (`maint_step_counts`), each in spec order.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ModeLine {
+    Probe,
+    Remove,
+    Add,
+    Recheck,
+}
 
 /// Strata the evaluator's maintain mode maintained (decision 0364 stage 3), over the process.
 static MODE_STRATA: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -6642,69 +6673,8 @@ pub fn mode_strata() -> u64 {
     MODE_STRATA.load(std::sync::atomic::Ordering::Relaxed)
 }
 
-/// A rule body's order with its head's variables bound first (a recheck, decision 0364 stage 3): each step the
-/// first literal whose variables are all bound (a test), else a comparison that binds one side from the other, else
-/// the positive atom with most of its variables bound. `None` when a literal never can run.
-fn bound_head_order(b: &Body<'_>) -> Option<Vec<Step>> {
-    fn vars<'v>(t: TermRef<'v>, out: &mut Vec<VarSlot>) {
-        match t {
-            TermRef::Var(v) => out.push(v),
-            TermRef::Call(_, args) => args.for_each(|a| vars(a, out)),
-            _ => {}
-        }
-    }
-    let mut bound: BTreeSet<VarSlot> = BTreeSet::new();
-    // Only a plain variable of the head is bound by the candidate: a computed term's are not.
-    bound.extend(b.head().args().filter_map(|t| t.var()));
-    let mut left: Vec<usize> = (0..b.len()).collect();
-    let mut order = Vec::new();
-    while !left.is_empty() {
-        let mut pick: Option<(usize, i64)> = None;
-        for (i, &at) in left.iter().enumerate() {
-            let score = match b.view(at) {
-                Lit::Atom(a) => {
-                    let mut vs = Vec::new();
-                    a.args().for_each(|t| vars(t, &mut vs));
-                    let free = vs.iter().filter(|v| !bound.contains(v)).count();
-                    if free == 0 { 1_000_000 } else if a.neg() { continue } else { (vs.len() - free) as i64 * 1000 - free as i64 }
-                }
-                Lit::Cmp { l, op, r } => {
-                    let (mut lv, mut rv) = (Vec::new(), Vec::new());
-                    vars(l, &mut lv);
-                    vars(r, &mut rv);
-                    let lf = lv.iter().all(|v| bound.contains(v));
-                    let rf = rv.iter().all(|v| bound.contains(v));
-                    if lf && rf {
-                        1_000_000
-                    } else if op == CmpOp::Eq && ((lf && matches!(r, TermRef::Var(_))) || (rf && matches!(l, TermRef::Var(_)))) {
-                        999_999
-                    } else {
-                        continue;
-                    }
-                }
-                _ => return None,
-            };
-            if pick.is_none_or(|(_, s)| score > s) {
-                pick = Some((i, score));
-            }
-        }
-        let (i, _) = pick?;
-        let at = left.remove(i);
-        let mut vs = Vec::new();
-        match b.view(at) {
-            Lit::Atom(a) if !a.neg() => a.args().for_each(|t| vars(t, &mut vs)),
-            Lit::Cmp { l, r, .. } => {
-                vars(l, &mut vs);
-                vars(r, &mut vs);
-            }
-            _ => {}
-        }
-        bound.extend(vs);
-        order.push(Step { at, mode: None });
-    }
-    Some(order)
-}
-
+/// A column's type in the native store's spec: `s`, a symbol it reads as text, only where symbols are text. Over
+/// atoms every column is an integer (a name, kind or field atom), as the planner's SQL holds it (O13).
 fn sym_char(inputs: &Inputs, t: &str) -> char {
     if t == "sym" && inputs.atoms.is_none() { 's' } else { 'i' }
 }
@@ -7979,6 +7949,9 @@ impl<'a> Run<'a, '_> {
         self.model.make_statistics(pf, &wanted)?;
         let held = |rel: &str| super::native::component::held(self.db, rel);
         let mut lines = Vec::new();
+        // Each joined line's kept-plan key, by the engine's list it runs in (`ModeLine`), in spec order: its work goes
+        // to the next run's planning budget (decision 0122, Q145).
+        let mut mode_keys: Vec<(ModeLine, PlanKey)> = Vec::new();
         let mut input_held: Vec<String> = Vec::new();
         for r in scc {
             let old_name = format!("{r}__old");
@@ -8071,6 +8044,7 @@ impl<'a> Run<'a, '_> {
                     // on its first sight, then taken or priced again as its sizes move (decisions 0038, 0122).
                     plan_site("the maintain mode's join");
                     let ((order, _, _), _) = self.model.plan_rule_reused(pf, b, first)?;
+                    let key = self.model.reused_key(b, first);
                     // The changed inputs' literals read their versions: the driver's, and as they were in a removal.
                     self.mode_reads.clear();
                     for i in 0..b.len() {
@@ -8089,11 +8063,13 @@ impl<'a> Run<'a, '_> {
                         return Ok(None);
                     };
                     let spec = Arc::new(versioned(&spec, &order, k, by, if removing { V::Old } else { V::New }));
-                    lines.push(match (removing, a.neg()) {
-                        (true, _) => SpecLine::Remove { head: head_i, join: spec },
-                        (false, false) => SpecLine::Seed { head: head_i, join: spec },
-                        (false, true) => SpecLine::AddChecked { head: head_i, join: spec },
-                    });
+                    let (line, kind) = match (removing, a.neg()) {
+                        (true, _) => (SpecLine::Remove { head: head_i, join: spec }, ModeLine::Remove),
+                        (false, false) => (SpecLine::Seed { head: head_i, join: spec }, ModeLine::Probe),
+                        (false, true) => (SpecLine::AddChecked { head: head_i, join: spec }, ModeLine::Add),
+                    };
+                    lines.push(line);
+                    mode_keys.push((kind, key));
                 }
             }
             // An aggregate over a changed relation (as the forms' `__grp` relations): its groups whose key is in the
@@ -8120,6 +8096,7 @@ impl<'a> Run<'a, '_> {
                     for removing in [true, false] {
                         plan_site("the maintain mode's aggregate join");
                         let ((order, _, _), _) = self.model.plan_rule_reused(pf, b, None)?;
+                        let key = self.model.reused_key(b, None);
                         self.mode_reads.clear();
                         if removing {
                             for i in 0..b.len() {
@@ -8157,28 +8134,36 @@ impl<'a> Run<'a, '_> {
                         spec.items.insert(0, JoinItem::Atom { neg: false, src, args });
                         let spec = Arc::new(spec);
                         lines.push(if removing { SpecLine::Remove { head: head_i, join: spec } } else { SpecLine::Seed { head: head_i, join: spec } });
+                        mode_keys.push((if removing { ModeLine::Remove } else { ModeLine::Probe }, key));
                     }
                 }
             }
-            // Its recheck: the head's variables bound, each literal taken as soon as its variables are, the atom that
-            // shares most of them first. One pass over the body, no search: the planner prices no order with its
-            // head bound (Q145), and a recheck reads one head row at a time.
-            // Where that order has no native join (a step that runs one way only, `docof` from its node), the
-            // planner's order: correct with the head bound too, its binds then tests.
-            let greedy = bound_head_order(b).and_then(|order| self.whole_join_spec(b, &order, None, &ri, scc, &native_rels));
-            let spec = match greedy {
-                Some(spec) => spec,
+            // Its recheck: the rule run once per candidate row, its head's variables bound before its first step. The
+            // planner prices its orders from that binding and one row, and keeps the order chosen under the recheck's
+            // own key (`Body::with_head_bound`, Q145), taken or priced again as the other lines' are.
+            // Where that order has no native join (a step that runs one way only, `docof` from its node), the rule's
+            // own order: correct with the head bound too, its binds then tests.
+            let bound = b.with_head_bound();
+            self.model.late(pf, &bound, None, false)?;
+            plan_site("the maintain mode's recheck");
+            let priced = match self.model.plan_rule_reused(pf, &bound, None) {
+                Ok(((order, _, _), _)) => self.whole_join_spec(b, &order, None, &ri, scc, &native_rels).map(|spec| (spec, self.model.reused_key(&bound, None))),
+                Err(_) => None,
+            };
+            let (spec, key) = match priced {
+                Some(got) => got,
                 None => {
-                    plan_site("the maintain mode's recheck");
+                    plan_site("the maintain mode's recheck, the rule's order");
                     let ((order, _, _), _) = self.model.plan_rule_reused(pf, b, None)?;
                     let Some(spec) = self.whole_join_spec(b, &order, None, &ri, scc, &native_rels) else {
                         self.why_not = Some(format!("the maintain mode: no native recheck for a rule of {h}"));
                         return Ok(None);
                     };
-                    spec
+                    (spec, self.model.reused_key(b, None))
                 }
             };
             lines.push(SpecLine::Recheck { head: head_i, join: spec });
+            mode_keys.push((ModeLine::Recheck, key));
         }
         let quiet = !lines.iter().any(|l| matches!(l, SpecLine::Remove { .. } | SpecLine::Seed { .. } | SpecLine::AddChecked { .. }));
         // A recursive rule's delta probes: the waves that carry the rows put back and added, and the drivers that find
@@ -8193,12 +8178,14 @@ impl<'a> Run<'a, '_> {
                 self.model.late(pf, b, Some(i), false)?;
                 plan_site("the maintain mode's probe");
                 let ((order, _, _), _) = self.model.plan_rule_reused(pf, b, Some(i))?;
+                let key = self.model.reused_key(b, Some(i));
                 let at = order.iter().position(|st| st.at == i).expect("the delta atom");
                 let Some(spec) = self.whole_join_spec(b, &order, Some(at), &ri, scc, &native_rels) else {
                     self.why_not = Some(format!("the maintain mode: no native probe for a rule of {h}"));
                     return Ok(None);
                 };
                 lines.push(SpecLine::Join { head: head_i, delta: ri[b.rel(a)], join: spec, whole: None });
+                mode_keys.push((ModeLine::Probe, key));
             }
         }
         // Quiet: no join to run. The relation is its kept one, its statistics as kept (`quiet_card`).
@@ -8221,6 +8208,25 @@ impl<'a> Run<'a, '_> {
         fx.run(&name, 0)?;
         for (r, live) in scc.iter().zip(fx.stats(&name, &|_, _| false)?) {
             live_stats(&mut self.model, r, live);
+        }
+        // Each line's work, under its kept plan's key, for the next run's planning budget (decision 0122): a removal
+        // and its add, planned alike, under one key, their work summed (Q145).
+        {
+            let probes = super::native::component::step_counts(self.db, &name)?;
+            let [removes, adds, rechecks] = super::native::component::maint_step_counts(self.db, &name)?;
+            let mut lists: [std::vec::IntoIter<Vec<(i64, i64)>>; 4] = [probes.into_iter(), removes.into_iter(), adds.into_iter(), rechecks.into_iter()];
+            let mut work: Vec<(PlanKey, f64)> = Vec::new();
+            for (kind, key) in &mode_keys {
+                let Some(line) = lists[*kind as usize].next() else { continue };
+                let w = super::profile::plan_work(&line.iter().map(|&(a, b)| (a as u64, b as u64)).collect::<Vec<_>>()) as f64;
+                match work.iter_mut().find(|(k, _)| k == key) {
+                    Some((_, at)) => *at += w,
+                    None => work.push((*key, w)),
+                }
+            }
+            for (key, w) in work {
+                Model::ran(key, w);
+            }
         }
         fx.close(&name)?;
         super::native::component::release(&self.db, &input_held);
