@@ -1367,6 +1367,31 @@ transducer crate, which the engine's `waves::matches` test calls; now `pub`). Co
   test checks the shape in 9 fixture walks on Metal. At s1000 the pack's steps fell by 5.4% (10.12 M to 9.57 M),
   with the same findings: the n² hops were a small part there. The longest walk is a leader's 288 steps, its two
   passes serial.
+- **Done** (2026-11-17, 0390 item 1): the 288 steps were the scan started at nodes nothing reads. A label made in
+  an `all` now starts from the kinds its conjuncts allow. At s1000 the longest walk is 63 (internal_dead_code) and
+  78 (public_api_triples), under Q56's bound.
+
+### Q142. Three relations of internal_dead_code have 0 rows unless an unread copy of their rule exists
+
+- **Found** (2026-11-17, 0390): `raw_base`, `raw_parameter` and `raw_decorator` have 0 rows at s1000, natively and
+  on Metal. `sg scan` over the policy's 339 files finds 913, 14,717 and 2,272. Add an identical rule into a new
+  relation that nothing reads (`twin_raw_base(c, b, name) :- <the same body>`), and both relations get the rows
+  (913, 14,717, 2,271). A copy with no capture, or with `text` only, finds 913 as well. So the matching and
+  captures are right. Adding `.output` alone changes nothing.
+- What the three share: each is read by rules that bind its first column, a capture rather than the matched
+  node (`base_name(…) :- raw_base(c, r, name), declarations(id, c, …)`). `raw_class`, keyed by its matched
+  node, is right (1,083). The suspect is the demand of the readers (`waves/policies.rs` `demand_program`,
+  `magic::magic_sets`) restricting the atom by a capture column.
+- **Done when**: the three relations' rows match ast-grep's on the 339 files without a twin (the decorator's one
+  row apart explained), with a test of a relation read through a captured column.
+- Side note: decorator 2,271 against ast-grep's 2,272 with the twin.
+
+### Q143. execution_authority_bypass aborts at s1000
+
+- **Found** (2026-11-17, 0390's runs): the program aborts (rc=134) on Metal, with and without 0390's narrowing.
+  `RERAIL_SQL_STRICT` stops it: "stratum site_context: the native engine declined: rule #0025: `$q =
+  @qualname($f)` has no native step; function @qualname". Without strict it would fall back to SQLite.
+- **Done when**: `@qualname` has a native step, and the program runs strict at s1000.
 
 ### Q50. A device run's matcher launches: the host's part and the GPU's in series, and prices 3× high
 

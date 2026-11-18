@@ -80,7 +80,8 @@ the closures below cut the loop tier's steps from 19.0 M to 3.9 M, and `label_mi
 
 ## Measured
 
-Same command, findings md5 db93ef6db62fb0961f159c0c667254e1 in every run (unchanged from before).
+Same command. These runs were checked by a findings md5, which was the md5 of a constant: the program finds
+nothing at s1000 (0390). The check that holds is each output relation's rows, which 0390's runs compare.
 
 | Engine | `label_micro_8` | `label_micro` | Walk steps t0 / t2 | Load |
 |---|---|---|---|---|
@@ -150,8 +151,8 @@ sibling, so:
 Nothing is precomputed: the leader reads the tape in place, and its marks are the label's own. The spill test
 checks that 9 of its fixtures' walks have the shape, and the device's roots there are the CPU's.
 
-At s1000 the shared shape is the `save0 after kind=238 load0 capture emit0` branch of a pack that every node starts.
-Findings were unchanged (load 19–22):
+At s1000 the shared shape is the `save0 after kind=238 load0 capture emit0` branch of a pack that every node starts
+(load 19–22; the findings check here was the constant md5 above):
 
 | | `label_micro_8` | `label_micro` | The pack's steps | Longest walk |
 |---|---|---|---|---|

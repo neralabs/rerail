@@ -28,6 +28,7 @@
 //! last, a branch that moves and does not come back) is not a formula, and runs as a walk.
 
 use super::*;
+use super::compile_micro::CLOSURE;
 use crate::code_rule_dsl::tape::{DERIVED_CLASS_BASE, TapeDoc};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -134,8 +135,8 @@ fn parse(words: &[u32], from: usize, to: usize) -> Option<(Set, bool)> {
                 continue;
             }
             // A chain of child steps: the rest of the region read where it stops.
-            CHILD if let Some((through, after)) = chain(words, pc, to) => {
-                let (through, _) = parse(words, pc + 2, through).filter(|(_, moved)| !moved)?;
+            CHILD | CLOSURE if let Some((from, through, after)) = chain(words, pc, to) => {
+                let (through, _) = parse(words, from, through).filter(|(_, moved)| !moved)?;
                 let to = Box::new(parse(words, after, to)?.0);
                 parts.push(Set::Chain { named: mode == NAMED, through: Box::new(through), to });
                 return Some((Set::and(parts), true));
@@ -180,16 +181,29 @@ fn parse(words: &[u32], from: usize, to: usize) -> Option<(Set, bool)> {
     Some((Set::and(parts), false))
 }
 
-/// `CHILD` at `pc` as a loop: `pc: CHILD; FORK a; ψ…; GOTO pc; a:`. Where it is one, `ψ`'s end
-/// (the `GOTO`) and `a`, where the walk goes on from the node the chain stops at.
-fn chain(words: &[u32], pc: usize, to: usize) -> Option<(usize, usize)> {
+/// `CHILD` at `pc` as a loop (or a micro walk's `CLOSURE`, which keeps the loop's other words), in either order of
+/// its paths: `pc: CHILD; FORK a; ψ…; GOTO pc; a:` (the
+/// path that goes on first), or `pc: CHILD; FORK on; GOTO a; on: ψ…; GOTO pc; a:` (the one that stops
+/// first, `bounded`'s). Where it is one, `ψ`'s range and `a`, where the walk goes on from the node the
+/// chain stops at.
+fn chain(words: &[u32], pc: usize, to: usize) -> Option<(usize, usize, usize)> {
     let (fork, _, at) = split(*words.get(pc + 1)?);
     let at = usize::from(at);
     if fork != FORK || at <= pc + 2 || at > to {
         return None;
     }
     let (goto, _, back) = split(words[at - 1]);
-    (goto == GOTO && usize::from(back) == pc).then_some((at - 1, at))
+    if goto == GOTO && usize::from(back) == pc {
+        return Some((pc + 2, at - 1, at));
+    }
+    // `pc + 2` jumps past the loop, whose last word jumps back to `pc`.
+    let (exit, _, after) = split(words[pc + 2]);
+    let after = usize::from(after);
+    if exit != GOTO || at != pc + 3 || after <= at || after > to {
+        return None;
+    }
+    let (goto, _, back) = split(words[after - 1]);
+    (goto == GOTO && usize::from(back) == pc).then_some((at, after - 1, after))
 }
 
 /// The nodes `words[from..to]` reaches from the members of `starts`, its tests applied where they
@@ -213,8 +227,8 @@ fn forward(words: &[u32], from: usize, to: usize, starts: Set) -> Option<Set> {
                 pc = restore + 1;
                 continue;
             }
-            CHILD if let Some((through, after)) = chain(words, pc, to) => {
-                let (through, _) = parse(words, pc + 2, through).filter(|(_, moved)| !moved)?;
+            CHILD | CLOSURE if let Some((from, through, after)) = chain(words, pc, to) => {
+                let (through, _) = parse(words, from, through).filter(|(_, moved)| !moved)?;
                 at = Set::Reached { step: Step::Chain(Box::new(through)), named, from: Box::new(at) };
                 pc = after;
                 continue;
@@ -236,7 +250,15 @@ fn forward(words: &[u32], from: usize, to: usize, starts: Set) -> Option<Set> {
                 }
                 let (goto, _, join) = split(words[fork - 1]);
                 let join = usize::from(join);
-                if goto != GOTO || join < fork || join > to {
+                if goto != GOTO {
+                    // `FORK a; steps…; a:`: the steps or none (`inside` through a field to `end`: the
+                    // field child, or below it), both going on at `a`.
+                    let stepped = forward(words, pc + 1, fork, at.clone())?;
+                    at = Set::Or(vec![at, stepped]);
+                    pc = fork;
+                    continue;
+                }
+                if join < fork || join > to {
                     return None;
                 }
                 let first = forward(words, pc + 1, fork - 1, at.clone())?;
@@ -625,6 +647,25 @@ pub mod tests {
         assert_eq!(
             Set::targets(&chain, Set::Kind(7)),
             Some(Set::Reached { step: Step::Chain(Box::new(Set::Class(label))), named: false, from: Box::new(Set::Kind(7)) })
+        );
+        // The same chain with the path that stops first (`bounded`'s order, a closure on the device):
+        // `CHILD; FORK 3; GOTO 5; SUPERTYPE L; GOTO 0; CAPTURE; EMIT`.
+        let stops_first = [w(CHILD, 0), w(FORK, 3), w(GOTO, 5), w(SUPERTYPE, label), w(GOTO, 0), w(CAPTURE, 0), w(EMIT, 1)];
+        assert_eq!(
+            Set::targets(&stops_first, Set::Kind(7)),
+            Some(Set::Reached { step: Step::Chain(Box::new(Set::Class(label))), named: false, from: Box::new(Set::Kind(7)) })
+        );
+        assert_eq!(
+            Set::of(&[w(CHILD, 0), w(FORK, 3), w(GOTO, 5), w(SUPERTYPE, label), w(GOTO, 0), w(KIND, 2), w(EMIT, 1)]),
+            Some(Set::Chain { named: false, through: Box::new(Set::Class(label)), to: Box::new(Set::Kind(2)) })
+        );
+        // `inside` through a field to `end`: from kind 7, the field child or below it.
+        // `CHILD; FIELD 24; FORK 4; DESCEND; 4: CAPTURE; EMIT`.
+        let field = [w(CHILD, 0), w(FIELD, 24), w(FORK, 4), w(DESCEND, 0), w(CAPTURE, 0), w(EMIT, 1)];
+        let child = Set::and(vec![Set::Reached { step: Step::Child, named: false, from: Box::new(Set::Kind(7)) }, Set::Field(24)]);
+        assert_eq!(
+            Set::targets(&field, Set::Kind(7)),
+            Some(Set::Or(vec![child.clone(), Set::Reached { step: Step::Descendant, named: false, from: Box::new(child) }]))
         );
         // A capture before a test is not an image.
         assert_eq!(Set::targets(&[w(CAPTURE, 0), w(KIND, 1), w(CAPTURE, 0), w(EMIT, 1)], Set::All), None);

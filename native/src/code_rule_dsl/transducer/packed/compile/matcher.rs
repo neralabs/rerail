@@ -1555,7 +1555,7 @@ impl Packs {
 /// `micro` where it is not a micro walk. Each common reason is a formula form to add (`compile_sets`).
 fn fallback(label: &Label) -> &'static str {
     static NAMES: std::sync::LazyLock<std::sync::Mutex<HashMap<String, &'static str>>> = std::sync::LazyLock::new(Default::default);
-    const FRAGMENT: [u8; 15] = [KIND, FIELD, FLAGS, SUPERTYPE, TEXT, SAVE_CURSOR, RESTORE_CURSOR, CHILD, DESCEND, PARENT, FOLLOWING, FORK, GOTO, CAPTURE, EMIT];
+    const FRAGMENT: [u8; 16] = [KIND, FIELD, FLAGS, SUPERTYPE, TEXT, SAVE_CURSOR, RESTORE_CURSOR, CHILD, compile_micro::CLOSURE, DESCEND, PARENT, FOLLOWING, FORK, GOTO, CAPTURE, EMIT];
     let outside = |program: &Program| match Micro::of(program) {
         None => "micro".to_owned(),
         Some(walk) => walk.words.iter().map(|&word| split(word).0).filter(|op| !FRAGMENT.contains(op)).collect::<BTreeSet<_>>().iter().map(|op| format!("{op:02x}")).collect::<Vec<_>>().join(","),
@@ -2066,6 +2066,12 @@ struct Builder<'a> {
     predicates: Vec<TextPredicate>,
     cursors: u16,
     labels: &'a mut Labels,
+    /// The kinds the node under test can have where it matters (`None`: any): an `all`'s conjuncts all hold at the
+    /// node, so a label read there is needed only at nodes of the kinds they allow. A label made here starts there
+    /// only (`narrowed`, work queue Q65): `not: {precedes: …}` beside `inside: parameters` ran its sibling scan from
+    /// all 877,007 nodes at s1000, a module's statements included. A walk moves the node, so its rules are made with
+    /// none.
+    demand: Option<BTreeSet<u16>>,
 }
 
 impl<'a> Builder<'a> {
@@ -2076,6 +2082,33 @@ impl<'a> Builder<'a> {
             predicates: Vec::new(),
             cursors: 0,
             labels,
+            demand: None,
+        }
+    }
+
+    /// `domain` within the kinds the node under test can have where it matters (`demand`).
+    fn narrowed(&self, domain: Domain) -> Domain {
+        match (domain, &self.demand) {
+            (Domain::All, Some(demand)) => Domain::Kinds(demand.iter().copied().collect()),
+            (Domain::Kinds(kinds), Some(demand)) => Domain::Kinds(kinds.into_iter().filter(|kind| demand.contains(kind)).collect()),
+            (domain, _) => domain,
+        }
+    }
+
+    /// `f` with `demand` in place of the builder's, which is restored after.
+    fn demanding<T>(&mut self, demand: Option<BTreeSet<u16>>, f: impl FnOnce(&mut Self) -> T) -> T {
+        let outer = std::mem::replace(&mut self.demand, demand);
+        let result = f(self);
+        self.demand = outer;
+        result
+    }
+
+    /// The demand where `tree` holds too: the kinds both allow.
+    fn within(&self, tree: &MatchTree) -> Option<BTreeSet<u16>> {
+        match (self.demand.as_ref(), tree.kinds()) {
+            (Some(demand), Some(kinds)) => Some(demand.intersection(&kinds).copied().collect()),
+            (Some(demand), None) => Some(demand.clone()),
+            (None, kinds) => kinds,
         }
     }
 
@@ -2113,29 +2146,33 @@ impl<'a> Builder<'a> {
         match tree {
             MatchTree::Pattern(pattern) => {
                 let program = Program::compile_ast_grep_pattern(pattern)?;
-                return Ok(self.label(Label::Pattern(program, Domain::of(tree))));
+                let starts = self.narrowed(Domain::of(tree));
+                return Ok(self.label(Label::Pattern(program, starts)));
             }
             MatchTree::Constrained(pattern, constraints) => {
-                let constraints = constraints
-                    .iter()
-                    .map(|(name, rule)| Ok((name.clone(), self.label_of(rule)?)))
-                    .collect::<Result<Vec<_>, Error>>()?;
+                // A constraint is tested at its capture's node, not this one.
+                let constraints = self.demanding(None, |b| {
+                    constraints.iter().map(|(name, rule)| Ok((name.clone(), b.label_of(rule)?))).collect::<Result<Vec<_>, Error>>()
+                })?;
                 let program = Program::compile_ast_grep_pattern(pattern)?;
-                return Ok(self.label(Label::Constrained(program, Domain::of(tree), constraints)));
+                let starts = self.narrowed(Domain::of(tree));
+                return Ok(self.label(Label::Constrained(program, starts, constraints)));
             }
             MatchTree::Recursive(id, inner) => return self.recursive(*id, inner),
             MatchTree::Recur(id) => {
                 return self.labels.recursive.get(id).copied().ok_or(Error::InvalidOperand(0));
             }
             MatchTree::Fact(fact) => {
-                let slots = fact.slots.iter().map(|slot| self.label_of(slot)).collect::<Result<Vec<_>, Error>>()?;
+                // A slot is tested at its target's node, not this one.
+                let slots = self.demanding(None, |b| fact.slots.iter().map(|slot| b.label_of(slot)).collect::<Result<Vec<_>, Error>>())?;
                 return Ok(self.label(Label::Fact(Arc::clone(fact), slots)));
             }
             _ => {}
         }
         // A roots label is the starts that emit: set mode.
+        let starts = self.narrowed(Domain::of(tree));
         let program = Builder::new(self.labels).roots(tree)?.in_set_mode();
-        Ok(self.label(Label::Roots(program, Domain::of(tree))))
+        Ok(self.label(Label::Roots(program, starts)))
     }
 
     /// A recursive utility's label: its program and the labels compiled for it form one group,
@@ -2208,10 +2245,8 @@ impl<'a> Builder<'a> {
                 };
                 self.push(SUPERTYPE, 0, label);
             }
-            MatchTree::All(trees) => {
-                for tree in trees {
-                    self.test(tree)?;
-                }
+            MatchTree::All(all) => {
+                self.demanding(self.within(tree), |b| all.iter().try_for_each(|tree| b.test(tree)))?;
             }
             MatchTree::Any(trees) => {
                 let Some((last, alternatives)) = trees.split_last() else {
@@ -2222,12 +2257,12 @@ impl<'a> Builder<'a> {
                 let mut ends = Vec::new();
                 for tree in alternatives {
                     let fork = self.push(FORK, 0, 0);
-                    self.test(tree)?;
+                    self.demanding(self.within(tree), |b| b.test(tree))?;
                     ends.push(self.push(GOTO, 0, 0));
                     let next = self.here()?;
                     self.patch(fork, next);
                 }
-                self.test(last)?;
+                self.demanding(self.within(last), |b| b.test(last))?;
                 let end = self.here()?;
                 for at in ends {
                     self.patch(at, end);
@@ -2259,6 +2294,13 @@ impl<'a> Builder<'a> {
     /// matches and is tallied by the node it reaches, as `reaches` does. The rule is a label, so
     /// no `any` forks a node into two paths.
     fn count(&mut self, axis: Axis, rule: &MatchTree, stop: &Stop, min: usize, max: Option<usize>) -> Result<u16, Error> {
+        // Its rule and stop are tested at the nodes it reaches.
+        // A forward count is read at its start, so it starts where that is needed (`narrowed`).
+        let demand = self.demand.clone();
+        self.demanding(None, |b| b.count_moved(axis, rule, stop, min, max, demand))
+    }
+
+    fn count_moved(&mut self, axis: Axis, rule: &MatchTree, stop: &Stop, min: usize, max: Option<usize>, demand: Option<BTreeSet<u16>>) -> Result<u16, Error> {
         let rule = self.label_of(rule)?;
         let bound = match stop {
             Stop::Rule(stop) => Some(self.complement_of(stop)?),
@@ -2292,7 +2334,7 @@ impl<'a> Builder<'a> {
         let (domain, by) = if backward {
             (Domain::Label(rule), Tally::Capture)
         } else {
-            (Domain::All, Tally::Start)
+            (demand.map_or(Domain::All, |demand| Domain::Kinds(demand.into_iter().collect())), Tally::Start)
         };
         Ok(self.label(Label::Count {
             program,
@@ -2328,6 +2370,10 @@ impl<'a> Builder<'a> {
     }
 
     fn walk(&mut self, axis: Axis, field: Option<u16>, rule: &MatchTree, stop: &Stop) -> Result<(), Error> {
+        self.demanding(None, |b| b.walk_moved(axis, field, rule, stop))
+    }
+
+    fn walk_moved(&mut self, axis: Axis, field: Option<u16>, rule: &MatchTree, stop: &Stop) -> Result<(), Error> {
         if axis == Axis::Follows || axis == Axis::Inside && !matches!(stop, Stop::Neighbor) {
             // No backward walk that verifies: a loop must move forward in preorder
             // (`cycle_progress`). The nodes a forward walk from each match reaches are the nodes
@@ -2440,6 +2486,9 @@ impl<'a> Builder<'a> {
                 (_, Some(bound)) => builder.bounded(NEXT, bound)?,
             },
             (Axis::Inside, None) => match bound {
+                // `end`: every descendant of a match, a range the device scans 64 nodes at a time.
+                // Stopping at a nested match (a closure bounded by the rule's complement) marks each
+                // node once, but at s1000 it saved no step and moved the walks to the loop tier (0381).
                 None => {
                     builder.push(DESCEND, 0, 0);
                 }
